@@ -119,6 +119,60 @@ command that prints honors `--json` / `--ndjson`.
 `$TREKR_DB` overrides the database path (default
 `~/.local/share/trekr/trekr.db`); the e2e tests use it for isolation.
 
+## Measurements
+
+2026-08-24, Apple M2 (8 cores), release build, warm page cache. Wall time is
+the median of repeated runs; counts are exact.
+
+| corpus | files | cold | no-op reindex | defs | const refs | call sites | DB |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| rails | 3,307 | 1.1 s | **63 ms** | 50,353 | 91,178 | 308,453 | 44 MB |
+| discourse | 11,287 | 3.2 s | **124 ms** | 59,194 | 206,215 | 1,227,403 | 111 MB |
+| CRuby | 7,931 | 4.9 s | **104 ms** | 59,224 | 174,711 | 676,971 | 69 MB |
+
+- **A no-op reindex parses nothing** — the property the whole design exists for.
+  About 40 ms of rails' 63 ms is the three `git` calls (`ls-files -s` 7 ms,
+  `diff-files` 9 ms, `ls-files -o` 24 ms); the rest is rewriting the file map.
+  Rubydex pays 177 ms on rails and 845 ms on GitLab for the same no-op (PLAN
+  §8), *and* pays it again on every process boot.
+- **A second worktree costs 152 ms and zero parses.** A `--shared` clone of
+  rails indexed in 152 ms with `parsed: 0` — the facts were already on disk.
+- **One edited file costs 75 ms**, of which ~63 ms is the scan floor above.
+- Cold time is not the headline and is not uniformly better than Rubydex's
+  (rails 1.1 s vs their 1.35 s index+resolve; discourse 3.2 s vs their 2.4 s).
+  The difference is that ours happens once per machine and theirs happens once
+  per process, and ours ends with the facts on disk rather than in RAM. It is
+  also not yet a like-for-like comparison: they resolve, and this layer does not.
+
+Fact shape across all three corpora (2.2 M call sites):
+
+| receiver shape | share | what it costs to resolve |
+|---|---:|---|
+| implicit | 44.6 % | nothing — the enclosing class is the receiver |
+| other | 26.1 % | chains, literals, operators — the residue |
+| local | 14.3 % | a constructor / identity walk |
+| const | 11.4 % | constant resolution |
+| ivar | 3.1 % | an assignment walk |
+| self | 0.4 % | nothing |
+
+So **56 % of call sites need no inference at all**, and 71 % are reachable by
+the first three rungs of the ladder. (rwr measured implicit self at 53–66 %;
+the gap is a counting difference — this figure includes operator calls, which
+inflate `other`.)
+
+Sorbet `sig` extraction is exercised at scale on `graph_weaver`: 3,757 of its
+methods get a concrete return class. None of the three corpora above use
+Sorbet, so the sig path contributes nothing to their numbers.
+
+**Where the bytes go.** ~10 KB per blob, dominated by `call_site` (2.2 M rows
+of 22.4 M total). Extrapolating linearly to a 100k-file repo gives ~1 GB. Not
+optimized, deliberately: the encoding is boring on purpose and there is no
+measurement yet saying it needs to be otherwise.
+
+*Provenance: the local `discourse` and `mastodon` checkouts carry no `.git`, so
+discourse was staged into a scratch git repo to be measured. That is DEC-001
+biting on a real corpus.*
+
 ## Known gaps
 
 Deliberate, and cheap to close when they earn it:
