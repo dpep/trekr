@@ -311,6 +311,56 @@ traces to something not indexed** — `ENV`, `ArgumentError`, `Nokogiri`,
 the ladder. Gem and core indexing is PLAN Phase 3; when it lands, this number
 moves without the resolver changing. Reproduce with `make bench`.
 
+**How much of real code's method dispatch resolves.** 120 call sites sampled
+per corpus, each asked through `--def`:
+
+| corpus | resolved | `self` | `const` | `local:new` | residue |
+|---|---:|---:|---:|---:|---:|
+| rails | **27 %** | 24 % | 0 % | 3 % | 73 % |
+| discourse | **16 %** | 10 % | 4 % | 2 % | 84 % |
+| CRuby | **27 %** | 19 % | 4 % | 3 % | 73 % |
+
+Session 1 measured receiver *shapes* and predicted 56 % would need no
+inference at all (implicit 44.6 % + self 0.4 % + const 11.4 %). The delivered
+figure is 24 %. **That prediction was wrong, and the way it was wrong is the
+useful part**: a receiver shape needing no inference is not the same as the
+method being *findable*. Diagnosed by bucketing 150 implicit-receiver residues
+per corpus:
+
+| why the implicit call did not resolve | rails | discourse |
+|---|---:|---:|
+| resolved | 47 % | 42 % |
+| enclosing scope not in the index (top level — `self` is `main`) | 9 % | 9 % |
+| ancestor chain truncated by an unindexed gem | 5 % | 25 % |
+| the name is defined nowhere in the index | 9 % | 10 % |
+| the name is defined elsewhere, chain complete | 29 % | 13 % |
+
+Three separate things, none of them a wrong turn on the ladder:
+
+1. **`self` is not always a class.** ~9 % of implicit calls sit at the top
+   level of a Rakefile, Gemfile, or migration, where `self` is `main` — an
+   `Object` instance, and `Object` is not indexed.
+2. **The method may not be in the index at all.** `puts`, `raise`,
+   `block_given?` (Kernel); `prepend`, `new`, `class_attribute` (Module/Class
+   and ActiveSupport's extensions to them); anything below a gem ancestor. In
+   discourse a quarter of implicit calls sit under an unresolved
+   `ActiveRecord::Base`.
+3. **The enclosing scope is often a module, and a module is not the
+   receiver.** This is the Rails concern pattern:
+   `ActiveRecord::Transactions#destroyed?` is defined in
+   `ActiveRecord::Persistence`; neither includes the other, and both are mixed
+   into `ActiveRecord::Base`. Lexical resolution cannot see that. Measured over
+   200 implicit call sites in rails: **67 % resolve inside a class (77/115) and
+   30 % inside a module (21/69)**.
+
+So the honest denominator is not "call sites whose receiver needs no
+inference" but **"call sites whose receiver type is determinable *and* whose
+method is inside the indexed set."** Two of the three causes above are
+addressed directly by gem and core indexing (PLAN Phase 3) — the same change
+that moves constants from 82 % toward the high 90s. The third wants a rung that
+does not exist yet: when a module is included by exactly one class, that class
+*is* the receiver, and the index already knows it.
+
 **The query planner needs statistics, and this is not optional.** Without them
 SQLite plans `--refs` as a nested scan of the checkout's files: `--refs new` on
 rails took **90 seconds** for 13,684 rows. With `ANALYZE` run, the planner
