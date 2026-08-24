@@ -3,16 +3,20 @@
 
     script/bench.py ~/code/lib/ruby/rails ~/code/lib/ruby/ruby
 
-Uses a throwaway database, so it never touches the real index. Every corpus
-must be a git checkout (DEC-001); a source drop with no `.git` is skipped
-loudly rather than silently.
+Uses a throwaway database, so it never touches the real index.
+
+Every corpus must be a git checkout (DEC-001). Some useful ones are not:
+`discourse` and `mastodon` are commonly kept as source drops with no `.git`,
+so those are staged into a scratch repo first. That staging is here rather
+than in a README step because a number nobody can re-run is halfway to not
+having happened.
 
 Cold time is measured once — the second run is by definition not cold. The
 no-op and query timings are medians of five, which is the precision those
 numbers are reported to.
 """
 
-import json, os, shutil, subprocess, sys, time
+import json, os, shutil, subprocess, sys, tempfile, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(ROOT, "target/release/trekr")
@@ -20,6 +24,35 @@ DB = "/tmp/trekr-bench.db"
 # Names spanning three orders of magnitude of match count. `new` is the one
 # that took 90 s before the store learned to keep statistics.
 QUERIES = ["find_each", "save", "each", "new"]
+
+
+STAGING = os.path.join(tempfile.gettempdir(), "trekr-bench-corpora")
+
+
+def as_git_checkout(repo):
+    """A path trekr can index: `repo` itself, or a staged copy of it.
+
+    Content-addressing needs git (DEC-001), so a source drop is copied into a
+    scratch repo and committed once. Staging is kept across runs — it costs a
+    minute and the corpus does not change.
+    """
+    if os.path.isdir(os.path.join(repo, ".git")):
+        return repo
+    staged = os.path.join(STAGING, os.path.basename(repo.rstrip("/")))
+    if os.path.isdir(os.path.join(staged, ".git")):
+        return staged
+    print(f"  staging {os.path.basename(repo)} into a scratch repo (no .git)...")
+    os.makedirs(staged, exist_ok=True)
+    subprocess.run(
+        ["rsync", "-a", "--exclude", ".git", "--exclude", "node_modules",
+         "--exclude", "tmp", repo.rstrip("/") + "/", staged + "/"],
+        check=True,
+    )
+    for cmd in (["git", "init", "-q"], ["git", "add", "-A"],
+                ["git", "-c", "user.email=b@e.st", "-c", "user.name=bench",
+                 "commit", "-qm", "corpus"]):
+        subprocess.run(cmd, cwd=staged, capture_output=True)
+    return staged
 
 
 def trekr(args, cwd=None):
@@ -49,11 +82,12 @@ def main(corpora):
 
     indexed = []
     for repo in corpora:
-        repo = os.path.expanduser(repo)
         name = os.path.basename(repo.rstrip("/"))
-        if not os.path.isdir(os.path.join(repo, ".git")):
-            print(f"{name}: not a git checkout — skipped (DEC-001)")
+        repo = os.path.expanduser(repo)
+        if not os.path.isdir(repo):
+            print(f"{name}: no such directory — skipped")
             continue
+        repo = as_git_checkout(repo)
         before = os.path.getsize(DB) / 1e6 if os.path.exists(DB) else 0
 
         start = time.perf_counter()

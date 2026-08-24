@@ -198,9 +198,22 @@ entirely.
 | `each` | 1,994 | 26 ms |
 | `new` | 13,684 | 70 ms |
 
-**Where the bytes go.** ~10 KB per blob, dominated by `call_site` (2.2 M rows
-across the three corpora). Extrapolating linearly to a 100k-file repo gives
-~1 GB. Not
+**Where the bytes go.** 236 MB for the three corpora, ~10 KB per blob. Measured
+with `dbstat`:
+
+| | MB | share |
+|---|---:|---:|
+| `call_site` + its two indexes | 171 | **72.5 %** |
+| `const_ref` + indexes | 37 | 15.8 % |
+| `def` + indexes | 21 | 8.9 % |
+| `file`, `blob`, everything else | 7 | 2.8 % |
+
+Call sites are the index. Extrapolating linearly to a 100k-file repo gives
+~1 GB. Two things that would move the number are recorded but **not** acted on
+until there is a reason: the `other` receiver shape is 26 % of call-site rows
+(so ~19 % of the whole database) and may not earn its bytes once the resolve
+layer says what it can do with it; and `call_site_blob` / `const_ref_blob`
+(34 MB, 14 %) exist for a foreign-key cascade that DEC-003 means never fires. Not
 optimized, deliberately: the encoding is boring on purpose and there is no
 measurement yet saying it needs to be otherwise.
 

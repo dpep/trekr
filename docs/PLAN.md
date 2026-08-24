@@ -226,6 +226,10 @@ Each ends in something runnable; earlier phases don't assume later ones.
 
 **Phase 0 — Spikes and the gate (1–2 weeks)**
 - Harness: corpus checkout, TracePoint labeller, baseline runner for ruby-lsp 0.26/0.27.
+  **The harness must not assume a corpus is a git checkout.** `~/code/lib/ruby/discourse`
+  and `~/code/lib/ruby/mastodon` are source drops with no `.git`, and trekr requires one
+  (DECISIONS DEC-001). `script/bench.py` stages such a corpus into a scratch repo; the
+  baseline runner needs the same courtesy or its numbers will not be comparable.
 - Spike A: can the `rubydex` crate (MIT, crates.io) be driven from Rust without a Ruby
   runtime, and does its model admit persistence? If yes, it may replace half of Phase 1.
 - Spike B: blob-OID indexing on the largest corpus — parse throughput, DB size, cost of
