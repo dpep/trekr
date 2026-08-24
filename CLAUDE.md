@@ -1,0 +1,62 @@
+# trekr development conventions
+
+`trekr` is a **Ruby code-intelligence engine** — position→meaning and
+definition→references for massive legacy Rails monorepos, agent-first. Read
+[docs/PLAN.md](docs/PLAN.md) before anything else: it carries the research, the
+competitive read (Ruby LSP / Rubydex / Sorbet), the architecture, the measurement
+gate, and the phased roadmap. Keep it — and the docs that grow out of it — in sync
+with the code in the same commit, rq/rwr style.
+
+## First principles
+
+- **Measured, or it didn't happen.** Every precision or performance claim traces to
+  a run (the TracePoint gold set, the bench corpora). Negative results get written
+  down so they aren't re-proposed. Numbers keep the sig figs they earned.
+- **Three layers, strictly separated** (PLAN §4): blob layer (facts as a pure
+  function of content, keyed by git blob OID, SQLite WAL), tree layer (per-checkout
+  assembly: constants, MRO, method tables — cheap to rebuild, memoized), resolve+rank
+  (receiver ladder, confidence, explain). Cross-layer leaks are the failure mode
+  Glean/Kythe warn about.
+- **Full disclosure, ranked.** Every answer carries `status: resolved | ambiguous |
+  residue`, `confidence`, `resolved_via`. Residue still returns ranked candidates
+  with the reason. Nothing silently dropped, nothing silently promoted.
+- **Ruby-free, bundle-free, daemon-free engine.** Prism (`ruby-prism` crate) parses;
+  no project Ruby, no `bundle install`, no bootable app. Resident processes (a
+  future LSP front) are thin fronts over the on-disk state, never the owner of it.
+- **Agent/script-friendly CLI** (rq house rules): `--json`/`--ndjson` everywhere,
+  stable field names, meaningful exit codes, `--explain`.
+
+## Lifting from neighbors
+
+- **Rubydex (MIT, with attribution)**: `docs/ruby-behaviors.md` is the conformance
+  spec; `ruby_indexer_tests.rs`/`resolution_tests.rs` are the corpus to port; take
+  the Name model (str + parent_scope + nesting), worklist constant resolution,
+  ancestor order `[prepends, self, includes, superclass]`. Do NOT depend on its
+  `Graph` (in-memory, unpersisted — PLAN §8).
+- **rwr** (`~/code/lib/rust/rwr`): Prism node machinery (`src/pattern/generated.rs`),
+  `hierarchy/`, `sigs.rs`, `resolve_type`, mmap+rayon walker. Copy with a pointer to
+  the source, extract a shared crate only at a second consumer.
+- **rq** (`~/code/lib/rust/rq`): store/identity conventions, CLI affordances,
+  DECISIONS.md discipline. No schema compatibility required.
+
+## Toolchain
+
+Rust, single crate until there's a concrete reason to split. `cargo` is keg-only:
+`/opt/homebrew/opt/rustup/bin/cargo` (or add to PATH). Gate before commit:
+`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`.
+
+## Testing
+
+- Fixture repos under `tests/fixtures/`, generic names (`Widget`, `HandlerA`) —
+  public repo, nothing employer-identifying.
+- Verify through `cargo test`, not hand-run binaries; e2e drives the built binary
+  with an isolated DB env var and a temp repo.
+- Bench corpora (large, real): `~/code/lib/ruby/rails`, `~/code/lib/ruby/discourse`,
+  `~/code/lib/ruby/mastodon`. Ranking/scale checks belong there, not in unit tests.
+
+## Landing changes
+
+Solo repo: no PRs, commit directly to `main`, small logically-connected commits,
+behavior or structure but not both. `CHANGELOG.md` gets its entry in the commit
+that earns it, under `## Unreleased`. Not released anywhere yet — no version
+ceremony until there's a user.
