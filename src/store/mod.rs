@@ -215,12 +215,65 @@ impl Store {
         rows.collect()
     }
 
+    /// Every mention of a name in one checkout: definitions, constant
+    /// references, and call sites, in source order.
+    ///
+    /// **Name-level, not resolved.** Two unrelated classes called `Config` both
+    /// answer here, and so does every `#save` on every receiver. Each row says
+    /// what sort of mention it is and — for a call — what shape the receiver
+    /// had, which is what the resolve layer will narrow on. Saying that plainly
+    /// is better than a number that implies more than it knows.
+    pub(crate) fn refs(&self, root: &str, name: &str) -> Result<Vec<Ref>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT f.path, x.line, x.col, x.role, x.kind, x.recv, x.recv_text, x.nesting
+               FROM (
+                 SELECT blob_id, line, col, 'definition' AS role, kind,
+                        NULL AS recv, NULL AS recv_text, nesting
+                   FROM def WHERE name = ?2
+                 UNION ALL
+                 SELECT blob_id, line, col, 'constant', NULL, NULL, NULL, nesting
+                   FROM const_ref WHERE name = ?2
+                 UNION ALL
+                 SELECT blob_id, line, col, 'call', NULL, recv, recv_text, nesting
+                   FROM call_site WHERE name = ?2
+               ) x
+               JOIN file f ON f.blob_id = x.blob_id
+               JOIN checkout c ON c.id = f.checkout_id
+              WHERE c.root = ?1
+              ORDER BY f.path, x.line, x.col",
+        )?;
+        let rows = stmt.query_map(params![root, name], |r| {
+            Ok(Ref {
+                path: r.get(0)?,
+                line: r.get(1)?,
+                col: r.get(2)?,
+                role: r.get(3)?,
+                kind: r.get(4)?,
+                recv: r.get(5)?,
+                recv_text: r.get(6)?,
+                nesting: split_nesting(&r.get::<_, String>(7)?),
+            })
+        })?;
+        rows.collect()
+    }
+
     /// Forget a checkout's file map. Its blobs stay: another worktree may
     /// share them, and re-reading bytes we have already parsed is the one cost
     /// this design exists to avoid.
     pub(crate) fn drop_checkout(&self, root: &str) -> Result<usize> {
         self.conn
             .execute("DELETE FROM checkout WHERE root = ?1", params![root])
+    }
+}
+
+impl Drop for Store {
+    /// `PRAGMA optimize` runs `ANALYZE` on tables whose size has moved enough
+    /// to matter, and does nothing otherwise. Without statistics SQLite plans
+    /// `refs` as a nested scan of the checkout's files — 90 s for a name as
+    /// common as `new`, against 45 ms with them. Best effort: a failure here
+    /// must not fail a command that already produced its answer.
+    fn drop(&mut self) {
+        let _ = self.conn.execute_batch("PRAGMA optimize;");
     }
 }
 
@@ -238,6 +291,23 @@ pub(crate) struct Totals {
     pub(crate) defs: i64,
     pub(crate) const_refs: i64,
     pub(crate) calls: i64,
+}
+
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct Ref {
+    pub(crate) path: String,
+    pub(crate) line: u32,
+    pub(crate) col: u32,
+    /// definition | constant | call
+    pub(crate) role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) recv: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) recv_text: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) nesting: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -430,6 +500,32 @@ mod tests {
         store.drop_checkout("/a").unwrap();
         assert_eq!(store.status().unwrap().len(), 1);
         assert_eq!(store.totals().unwrap().blobs, 1);
+    }
+
+    #[test]
+    fn refs_report_every_mention_and_what_sort_it_is() {
+        let mut store = Store::open_in_memory().unwrap();
+        indexed(
+            &mut store,
+            "/a",
+            "w.rb",
+            "class Widget\n  def save\n  end\n  def go\n    save\n    other.save\n  end\nend\n",
+        );
+        let refs = store.refs("/a", "save").unwrap();
+        let seen: Vec<_> = refs
+            .iter()
+            .map(|r| (r.role.as_str(), r.recv.as_deref()))
+            .collect();
+        assert_eq!(
+            seen,
+            [
+                ("definition", None),
+                ("call", Some("implicit")),
+                ("call", Some("other")),
+            ],
+            "a name-level answer discloses the receiver rather than guessing"
+        );
+        assert!(store.refs("/a", "absent").unwrap().is_empty());
     }
 
     #[test]

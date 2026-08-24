@@ -110,6 +110,19 @@ Operations are flags, not subcommands (rq's convention), so no word is reserved
 and the default action stays free for the query verbs layer 3 will add. Every
 command that prints honors `--json` / `--ndjson`.
 
+| command | answers |
+|---|---|
+| `--index [PATH]` | scan a checkout and store what is new |
+| `--status` | what is indexed, per checkout, plus the shared totals |
+| `--symbols FILE` | one file's definitions, in source order |
+| `--refs NAME` | every mention of a name in this checkout |
+| `--drop [PATH]` | forget a checkout's file map |
+
+`--refs` is **name-level, not resolved**: two unrelated `Config` classes both
+answer, and so does every `#save` on every receiver. Each row says what sort of
+mention it is and, for a call, what shape the receiver had — disclosure instead
+of a guess. Narrowing it is layer 3's job.
+
 | exit | meaning |
 |---|---|
 | 0 | something was indexed, or a query matched |
@@ -163,6 +176,23 @@ inflate `other`.)
 Sorbet `sig` extraction is exercised at scale on `graph_weaver`: 3,757 of its
 methods get a concrete return class. None of the three corpora above use
 Sorbet, so the sig path contributes nothing to their numbers.
+
+**The query planner needs statistics, and this is not optional.** Without them
+SQLite plans `--refs` as a nested scan of the checkout's files: `--refs new` on
+rails took **90 seconds** for 13,684 rows. With `ANALYZE` run, the planner
+reverses the join — files drive, a bloom filter rejects — and the same query
+takes **66 ms**. `PRAGMA optimize` on close is what keeps it that way; it
+re-analyzes only tables that have grown enough to matter, so a no-op reindex is
+still 67 ms. Anyone adding a query over these tables should check
+`EXPLAIN QUERY PLAN` on a *populated* database — a fixture-sized one hides this
+entirely.
+
+| `--refs NAME` on rails | rows | time |
+|---|---:|---:|
+| `find_each` | 26 | 8.6 ms |
+| `save` | 625 | 11 ms |
+| `each` | 1,994 | 25 ms |
+| `new` | 13,684 | 66 ms |
 
 **Where the bytes go.** ~10 KB per blob, dominated by `call_site` (2.2 M rows
 of 22.4 M total). Extrapolating linearly to a 100k-file repo gives ~1 GB. Not

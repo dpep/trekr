@@ -40,6 +40,11 @@ struct Cli {
     #[arg(long, value_name = "FILE", conflicts_with_all = ["index", "drop"])]
     symbols: Option<PathBuf>,
 
+    /// Every mention of a name in this checkout: definitions, constant
+    /// references, and call sites. Name-level — not yet resolved.
+    #[arg(long, value_name = "NAME", conflicts_with_all = ["index", "drop", "symbols"])]
+    refs: Option<String>,
+
     /// Forget a checkout's file map (its blobs stay, for the worktrees that
     /// share them).
     #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = ".")]
@@ -75,12 +80,14 @@ pub fn run() -> ExitCode {
         cmd_index(out, path)
     } else if let Some(path) = &cli.symbols {
         cmd_symbols(out, path)
+    } else if let Some(name) = &cli.refs {
+        cmd_refs(out, name)
     } else if let Some(path) = &cli.drop {
         cmd_drop(out, path)
     } else if cli.status {
         cmd_status(out)
     } else {
-        eprintln!("trekr: nothing to do (try --index, --status, --symbols FILE)");
+        eprintln!("trekr: nothing to do (try --index, --status, --symbols FILE, --refs NAME)");
         return ExitCode::from(1);
     };
 
@@ -233,6 +240,33 @@ fn cmd_symbols(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
             "{:>5}  {:<8} {}{}{}",
             s.line, s.kind, marker, s.name, params
         );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+fn cmd_refs(out: Output, name: &str) -> anyhow::Result<ExitCode> {
+    let root = scan::repo_root(Path::new("."))?;
+    let store = open_store()?;
+    let refs = store.refs(&root.to_string_lossy(), name)?;
+
+    if emit_rows(out, &refs)? {
+        return Ok(exit_on(!refs.is_empty()));
+    }
+    if refs.is_empty() {
+        println!("no mention of {name} (indexed? try `trekr --index`)");
+        return Ok(ExitCode::from(1));
+    }
+    for r in &refs {
+        // The receiver shape is the disclosure: `implicit` is already resolved
+        // to the enclosing class, `other` is residue. Nothing is dropped and
+        // nothing is silently promoted.
+        let detail = match (&r.kind, &r.recv, &r.recv_text) {
+            (Some(kind), _, _) => kind.clone(),
+            (_, Some(recv), Some(text)) => format!("{recv} {text}"),
+            (_, Some(recv), None) => recv.clone(),
+            _ => String::new(),
+        };
+        println!("{}:{}:{}  {:<11} {}", r.path, r.line, r.col, r.role, detail);
     }
     Ok(ExitCode::SUCCESS)
 }

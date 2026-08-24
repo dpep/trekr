@@ -74,3 +74,19 @@ what makes Sorbet `sig` pairing free: a sig and the thing it describes are alway
 adjacent statements.
 
 **Reverses if** a future pass genuinely needs to hold nodes across visits.
+
+## DEC-006 — Query speed comes from statistics, not from a planner override
+
+**Decided.** `PRAGMA optimize` runs on every `Store` close. `--refs` is written
+as a plain join with no `INDEXED BY`.
+
+**Why.** Without statistics, `--refs new` on rails takes 90 s; `INDEXED BY
+file_blob_checkout` brings it to 50 ms and `ANALYZE` brings it to 45 ms. The
+hint is worse than the statistics at the same speed: it silently pins one plan,
+breaks if the index is ever renamed, and teaches nothing to the *next* query
+somebody writes over these tables. `PRAGMA optimize` re-analyzes only tables
+that have moved, so a no-op reindex stays at 67 ms.
+
+**Reverses if** a query is found that the planner gets wrong even with current
+statistics. Then pin that one query and say why in a comment, rather than
+adopting hints generally.

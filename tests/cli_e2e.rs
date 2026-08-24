@@ -188,6 +188,7 @@ fn every_command_speaks_ndjson_as_well_as_json() {
         vec!["--index", "--ndjson"],
         vec!["--status", "--ndjson"],
         vec!["--symbols", "widget.rb", "--ndjson"],
+        vec!["--refs", "helper", "--ndjson"],
     ] {
         let out = trekr(&db, &dir, &args);
         for line in stdout(&out).lines() {
@@ -195,6 +196,38 @@ fn every_command_speaks_ndjson_as_well_as_json() {
                 .unwrap_or_else(|e| panic!("{args:?} emitted a non-JSON line: {line} ({e})"));
         }
     }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn refs_disclose_the_receiver_rather_than_guessing_at_it() {
+    let (dir, db) = scratch("refs");
+    repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+
+    let refs = json(&trekr(&db, &dir, &["--refs", "helper", "--json"]));
+    let seen: Vec<(&str, Option<&str>)> = refs
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["role"].as_str().unwrap(), r["recv"].as_str()))
+        .collect();
+    assert_eq!(
+        seen,
+        [("call", Some("implicit")), ("definition", None)],
+        "source order, and every mention says what sort it is"
+    );
+
+    // A name-level answer includes the mixin's constant reference.
+    let trackable = json(&trekr(&db, &dir, &["--refs", "Trackable", "--json"]));
+    assert_eq!(trackable[0]["role"], "constant");
+
+    assert_eq!(
+        trekr(&db, &dir, &["--refs", "Absent"]).status.code(),
+        Some(1),
+        "a name nobody mentions is a definitive no"
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }
