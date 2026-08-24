@@ -5,8 +5,9 @@ references**. Built for legacy Rails monorepos with many worktrees, where the
 incumbents cost gigabytes per workspace and answer "the first ten methods with
 that name."
 
-> **Early.** The blob layer (below) is built, tested, and measured. Resolution
-> and ranking are not. See [docs/PLAN.md](docs/PLAN.md) for where it goes and
+> **Early.** The blob layer is built, tested, and measured, and **constants
+> resolve**. Method resolution and ranking are not started. See
+> [docs/PLAN.md](docs/PLAN.md) for where it goes and
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for what exists.
 
 ## The idea
@@ -29,10 +30,12 @@ remembers.
 ```sh
 cargo build --release
 
-trekr --index                 # index the checkout you are standing in
-trekr --status                # what is indexed, and what the checkouts share
-trekr --symbols lib/thing.rb  # outline a file before reading it
-trekr --refs Widget           # every mention of a name in this checkout
+trekr --index                    # index the checkout you are standing in
+trekr --status                   # what is indexed, and what the checkouts share
+trekr --symbols lib/thing.rb     # outline a file before reading it
+trekr --refs Widget              # every mention of a name in this checkout
+trekr --def lib/thing.rb:12:5    # what is this name, and where is it defined
+trekr --ancestors Widget         # the linearized ancestor chain
 ```
 
 Every command honors `--json` and `--ndjson`, because the intended caller is an
@@ -46,6 +49,26 @@ activerecord/test/cases/batches_test.rb:20:12  call        const Post
 activerecord/test/cases/batches_test.rb:562:33  call        local incorrectly_sorted_orders
 activerecord/lib/active_record/destroy_association_async_job.rb:28:82  call        other
 ```
+
+`--def` is where the tree layer shows: it reparses the one file with Prism, then
+walks Ruby's own constant-lookup ladder — enclosing lexical scopes, then the
+innermost scope's ancestors, then the top level.
+
+```console
+$ trekr --def activerecord/lib/active_record/relation.rb:68:70
+activerecord/lib/active_record/relation/batches.rb:7:10  ActiveRecord::Batches
+
+$ trekr --ancestors ActiveRecord::Relation | head -3
+ActiveRecord::Relation
+ActiveRecord::TokenFor::RelationMethods
+ActiveRecord::SignedId::RelationMethods
+```
+
+**82 % of rails constant references resolve** (78 % discourse), and every one
+that does not names a gem or a core class that is not indexed yet — none is a
+wrong turn on the ladder. Every answer carries `status`, `confidence`, and
+`resolved_via`; a method call comes back as honest residue with its receiver
+shape, because narrowing that needs a ladder that does not exist yet.
 
 `--refs` is **name-level**: two unrelated `Config` classes both answer, and so
 does every `#save` on every receiver. Each row says what sort of mention it is
