@@ -16,7 +16,7 @@ no-op and query timings are medians of five, which is the precision those
 numbers are reported to.
 """
 
-import json, os, shutil, subprocess, sys, tempfile, time
+import json, os, shutil, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(ROOT, "target/release/trekr")
@@ -26,7 +26,9 @@ DB = "/tmp/trekr-bench.db"
 QUERIES = ["find_each", "save", "each", "new"]
 
 
-STAGING = os.path.join(tempfile.gettempdir(), "trekr-bench-corpora")
+# Deliberately not tempfile.gettempdir(): on macOS that is a per-user directory
+# the OS prunes, and re-rsyncing 11k files to reproduce a number is a tax.
+STAGING = "/tmp/trekr-bench-corpora"
 
 
 def as_git_checkout(repo):
@@ -121,6 +123,17 @@ def main(corpora):
         count = len(json.loads(rows)) if rows.strip() else 0
         print(f"  {name:<12} {count:>7,} rows  "
               f"{median_ms(['--refs', name, '--json'], cwd=where):6.1f} ms")
+
+    # The tree layer is rebuilt from SQL on every invocation, with no
+    # incremental machinery. `--refs` needs no tree and `--ancestors` needs a
+    # whole one, so the gap between them is what a rebuild costs.
+    print("\n=== tree rebuild (whole checkout, from facts)")
+    for repo in indexed:
+        name = os.path.basename(repo.rstrip("/"))
+        baseline = median_ms(["--refs", "Widget", "--json"], repo)
+        whole = median_ms(["--ancestors", "Object", "--json"], repo)
+        print(f"  {name:<12} {whole - baseline:6.0f} ms "
+              f"({whole:.0f} ms total, {baseline:.0f} ms of it process + query)")
 
     # A worktree that shares every blob should cost a scan and no parsing.
     clone = "/tmp/trekr-bench-worktree"

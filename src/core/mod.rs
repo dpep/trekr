@@ -168,8 +168,11 @@ impl ParamKind {
 /// (`[prepends, self, includes, superclass]`) is the tree layer's business.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct Ancestry {
-    /// Scope stack of the receiving class/module, innermost first.
-    pub(crate) nesting: Vec<String>,
+    /// The scope stack **including the receiving class or module itself**,
+    /// innermost first. Not the same as where the target name is written: a
+    /// superclass expression is evaluated outside the body it opens, so the
+    /// tree layer drops the first entry for that one relation.
+    pub(crate) owner: Vec<String>,
     pub(crate) relation: Relation,
     /// Target constant as written (`Bar`, `A::B`, `::Foo`), or `self` for
     /// `extend self`.

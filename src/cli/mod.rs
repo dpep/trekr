@@ -5,8 +5,11 @@
 //! reserved, and the default action stays free for the query verbs the resolve
 //! layer will add.
 
+mod position;
+
 use crate::core::Oid;
 use crate::store::Store;
+use crate::tree::{Status, Tree};
 use crate::{extract, scan};
 use clap::Parser;
 use rayon::prelude::*;
@@ -45,6 +48,14 @@ struct Cli {
     #[arg(long, value_name = "NAME", conflicts_with_all = ["index", "drop", "symbols"])]
     refs: Option<String>,
 
+    /// What is the name at this position, and where is it defined?
+    #[arg(long, value_name = "FILE:LINE:COL", conflicts_with_all = ["index", "drop", "symbols", "refs"])]
+    def: Option<String>,
+
+    /// The linearized ancestor chain of a class or module.
+    #[arg(long, value_name = "NAME", conflicts_with_all = ["index", "drop", "symbols", "refs", "def"])]
+    ancestors: Option<String>,
+
     /// Forget a checkout's file map (its blobs stay, for the worktrees that
     /// share them).
     #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = ".")]
@@ -82,12 +93,19 @@ pub fn run() -> ExitCode {
         cmd_symbols(out, path)
     } else if let Some(name) = &cli.refs {
         cmd_refs(out, name)
+    } else if let Some(spec) = &cli.def {
+        cmd_def(out, spec)
+    } else if let Some(name) = &cli.ancestors {
+        cmd_ancestors(out, name)
     } else if let Some(path) = &cli.drop {
         cmd_drop(out, path)
     } else if cli.status {
         cmd_status(out)
     } else {
-        eprintln!("trekr: nothing to do (try --index, --status, --symbols FILE, --refs NAME)");
+        eprintln!(
+            "trekr: nothing to do (try --index, --status, --symbols FILE, \
+             --refs NAME, --def FILE:LINE:COL)"
+        );
         return ExitCode::from(1);
     };
 
@@ -269,6 +287,152 @@ fn cmd_refs(out: Output, name: &str) -> anyhow::Result<ExitCode> {
         println!("{}:{}:{}  {:<11} {}", r.path, r.line, r.col, r.role, detail);
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// The checkout we are standing in, and its assembled namespace.
+///
+/// The tree is rebuilt from SQL every invocation. PLAN §4 chose that over
+/// incremental machinery, and the measurement in docs/ARCHITECTURE.md is why it
+/// stays chosen.
+fn tree_here() -> anyhow::Result<(PathBuf, Store, Tree)> {
+    let root = scan::repo_root(Path::new("."))?;
+    let store = open_store()?;
+    let tree = Tree::build(&store, &root.to_string_lossy())?;
+    Ok((root, store, tree))
+}
+
+fn cmd_def(out: Output, spec: &str) -> anyhow::Result<ExitCode> {
+    let spec = position::Spec::parse(spec)
+        .ok_or_else(|| anyhow::anyhow!("expected FILE:LINE:COL, got `{spec}`"))?;
+    let source = std::fs::read(&spec.path)?;
+    let Some(under) = position::at(&source, spec.line, spec.col) else {
+        return report(
+            out,
+            serde_json::json!({
+                "query": format!("{}:{}:{}", spec.path, spec.line, spec.col),
+                "status": "residue",
+                "confidence": 0.0,
+                "reason": "no name at this position",
+            }),
+            false,
+            "nothing at that position",
+        );
+    };
+
+    let query = format!("{}:{}:{}", spec.path, spec.line, spec.col);
+    let answer = match under {
+        // The cursor is on the declaration itself. Ruby has no indirection to
+        // follow here, so the honest answer is "you are already there".
+        position::Under::Definition(def) => serde_json::json!({
+            "query": query,
+            "under": "definition",
+            "name": def.name,
+            "status": "resolved",
+            "confidence": 1.0,
+            "resolved_via": "definition",
+            "sites": [{
+                "path": spec.path, "line": def.pos.line,
+                "col": def.pos.col, "kind": def.kind.as_str(),
+            }],
+        }),
+        position::Under::Constant(reference) => {
+            let (_, _, tree) = tree_here()?;
+            let resolution = tree.resolve(&reference.name, &reference.nesting);
+            let mut value = serde_json::to_value(&resolution)?;
+            let object = value.as_object_mut().expect("resolution is an object");
+            object.insert("query".into(), query.clone().into());
+            object.insert("under".into(), "constant".into());
+            object.insert("name".into(), reference.name.clone().into());
+            if resolution.status == Status::Residue {
+                object.insert(
+                    "reason".into(),
+                    "no indexed constant by that name; it may belong to a gem \
+                     or be defined at runtime"
+                        .into(),
+                );
+            }
+            value
+        }
+        // Narrowing this needs the receiver ladder. Saying so — and handing
+        // over the shape the ladder will start from — beats the "first ten
+        // methods with that name" that Ruby LSP falls back to.
+        position::Under::Call(call) => serde_json::json!({
+            "query": query,
+            "under": "call",
+            "name": call.name,
+            "status": "residue",
+            "confidence": 0.0,
+            "receiver": call.recv.as_str(),
+            "receiver_text": call.recv_text,
+            "reason": "method resolution is not implemented yet; \
+                       try --refs for every mention of this name",
+        }),
+    };
+
+    let resolved = answer["status"] == "resolved";
+    let text = match answer["sites"].as_array().and_then(|s| s.first()) {
+        Some(site) => format!(
+            "{}:{}:{}  {}",
+            site["path"].as_str().unwrap_or_default(),
+            site["line"],
+            site["col"],
+            answer["fqn"]
+                .as_str()
+                .unwrap_or(answer["name"].as_str().unwrap_or_default()),
+        ),
+        None => format!(
+            "{}  {}",
+            answer["name"].as_str().unwrap_or("?"),
+            answer["reason"].as_str().unwrap_or("unresolved"),
+        ),
+    };
+    report(out, answer, resolved, &text)
+}
+
+fn cmd_ancestors(out: Output, name: &str) -> anyhow::Result<ExitCode> {
+    let (_, _, tree) = tree_here()?;
+    let resolution = tree.resolve(name, &[]);
+    let Some(fqn) = resolution.fqn.clone() else {
+        return report(
+            out,
+            serde_json::json!({
+                "name": name,
+                "status": "residue",
+                "confidence": 0.0,
+                "scopes_tried": resolution.scopes_tried,
+            }),
+            false,
+            &format!("no indexed constant named {name}"),
+        );
+    };
+    let chain = tree.ancestors(&fqn);
+    let text = chain.chain.join("\n");
+    report(
+        out,
+        serde_json::json!({
+            "name": name,
+            "fqn": fqn,
+            "status": "resolved",
+            "ancestors": chain.chain,
+            "unresolved": chain.unresolved,
+        }),
+        true,
+        &text,
+    )
+}
+
+/// One answer, in whichever shape the caller asked for.
+fn report(
+    out: Output,
+    value: serde_json::Value,
+    matched: bool,
+    text: &str,
+) -> anyhow::Result<ExitCode> {
+    match out {
+        Output::Text => println!("{text}"),
+        _ => emit_json(out, &value)?,
+    }
+    Ok(exit_on(matched))
 }
 
 fn cmd_drop(out: Output, path: &Path) -> anyhow::Result<ExitCode> {

@@ -52,16 +52,17 @@ impl Store {
              PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32768;",
         )?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        if version == 0 {
-            conn.execute_batch(schema::SCHEMA)?;
-        } else {
-            for (v, sql) in schema::MIGRATIONS {
-                if version < v {
-                    conn.execute_batch(sql)?;
-                }
-            }
-        }
         if version != schema::VERSION {
+            // No migration, by design: see schema::VERSION. Reindexing costs
+            // seconds and cannot leave the store half-converted.
+            if version != 0 {
+                conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+                for table in schema::TABLES {
+                    conn.execute_batch(&format!("DROP TABLE IF EXISTS {table};"))?;
+                }
+                conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+            }
+            conn.execute_batch(schema::SCHEMA)?;
             conn.pragma_update(None, "user_version", schema::VERSION)?;
         }
         Ok(Store { conn })
@@ -257,6 +258,57 @@ impl Store {
         rows.collect()
     }
 
+    /// Every class, module, and constant declared in a checkout, in a stable
+    /// order (by path, then line) so that reopening a class reads the same way
+    /// on every rebuild.
+    ///
+    /// This and [`Store::ancestry`] are the tree layer's whole input. Note what
+    /// is *not* here: no resolution, no ordering by significance. The blob
+    /// layer hands over facts and stops.
+    pub(crate) fn declarations(&self, root: &str) -> Result<Vec<DeclRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT d.name, d.kind, d.nesting, d.target, f.path, d.line, d.col
+               FROM def d
+               JOIN file f ON f.blob_id = d.blob_id
+               JOIN checkout c ON c.id = f.checkout_id
+              WHERE c.root = ?1 AND d.kind IN ('class','module','constant')
+              ORDER BY f.path, d.line, d.col",
+        )?;
+        let rows = stmt.query_map(params![root], |r| {
+            Ok(DeclRow {
+                name: r.get(0)?,
+                kind: r.get(1)?,
+                nesting: split_nesting(&r.get::<_, String>(2)?),
+                target: r.get(3)?,
+                path: r.get(4)?,
+                line: r.get(5)?,
+                col: r.get(6)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Every ancestry edge in a checkout, in source order — which is the order
+    /// Ruby applies them in, and therefore the order linearization reverses.
+    pub(crate) fn ancestry(&self, root: &str) -> Result<Vec<EdgeRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT a.owner, a.relation, a.target
+               FROM ancestry a
+               JOIN file f ON f.blob_id = a.blob_id
+               JOIN checkout c ON c.id = f.checkout_id
+              WHERE c.root = ?1
+              ORDER BY f.path, a.line, a.col",
+        )?;
+        let rows = stmt.query_map(params![root], |r| {
+            Ok(EdgeRow {
+                owner: split_nesting(&r.get::<_, String>(0)?),
+                relation: r.get(1)?,
+                target: r.get(2)?,
+            })
+        })?;
+        rows.collect()
+    }
+
     /// Forget a checkout's file map. Its blobs stay: another worktree may
     /// share them, and re-reading bytes we have already parsed is the one cost
     /// this design exists to avoid.
@@ -291,6 +343,27 @@ pub(crate) struct Totals {
     pub(crate) defs: i64,
     pub(crate) const_refs: i64,
     pub(crate) calls: i64,
+}
+
+/// A class, module, or constant declaration, as the blob layer recorded it —
+/// name as written, nesting unresolved.
+#[derive(Debug)]
+pub(crate) struct DeclRow {
+    pub(crate) name: String,
+    pub(crate) kind: String,
+    pub(crate) nesting: Vec<String>,
+    pub(crate) target: Option<String>,
+    pub(crate) path: String,
+    pub(crate) line: u32,
+    pub(crate) col: u32,
+}
+
+#[derive(Debug)]
+pub(crate) struct EdgeRow {
+    /// Scope stack including the receiving class or module, innermost first.
+    pub(crate) owner: Vec<String>,
+    pub(crate) relation: String,
+    pub(crate) target: String,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -388,13 +461,13 @@ fn insert_facts(tx: &rusqlite::Transaction<'_>, oid: &Oid, facts: &Facts) -> Res
     }
 
     let mut ancestry = tx.prepare_cached(
-        "INSERT INTO ancestry (blob_id, nesting, relation, target, line, col)
+        "INSERT INTO ancestry (blob_id, owner, relation, target, line, col)
          VALUES (?1,?2,?3,?4,?5,?6)",
     )?;
     for a in &facts.ancestry {
         ancestry.execute(params![
             blob_id,
-            join_nesting(&a.nesting),
+            join_nesting(&a.owner),
             a.relation.as_str(),
             a.target,
             a.pos.line,

@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- Tree layer (`tree/`): a checkout's constant namespace and ancestor
+  linearization, assembled from blob facts. Ruby's own lookup ladder — lexical
+  scopes, then the innermost scope's ancestors, then the top level — with
+  path segments descending through ancestors only. Constant aliases are
+  followed wherever a namespace is wanted.
+- `--def FILE:LINE:COL`: what is the name at this position and where is it
+  defined. Reparses the one file, so it answers correctly on an unindexed edit.
+  Constants resolve exactly; a method call is honest residue carrying its
+  receiver shape.
+- `--ancestors NAME`: the linearized chain, with anything unresolvable named
+  rather than dropped.
+- A schema change now drops the database and reindexes instead of migrating
+  (DEC-009). The store is a cache of a pure function; **existing databases will
+  reindex once** on first use of this version.
+
 - `--refs NAME`: every mention of a name in a checkout — definitions, constant
   references, and call sites — each disclosing what sort of mention it is and,
   for a call, the receiver's shape. Name-level; narrowing is the resolve

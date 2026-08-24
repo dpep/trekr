@@ -300,8 +300,12 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             });
             if let Some(target) = named {
                 let pos = self.pos(sup.location().start_offset());
+                // The owner is the class being opened, so it is recorded even
+                // though the frame for it does not exist yet.
+                let mut owner = self.nesting.clone();
+                owner.insert(0, name.clone());
                 self.facts.ancestry.push(Ancestry {
-                    nesting: self.nesting.clone(),
+                    owner,
                     relation: Relation::Superclass,
                     target,
                     pos,
@@ -609,7 +613,7 @@ impl<'pr> Extractor<'_> {
             };
             let pos = self.pos(arg.location().start_offset());
             self.facts.ancestry.push(Ancestry {
-                nesting: self.nesting.clone(),
+                owner: self.nesting.clone(),
                 relation,
                 target,
                 pos,

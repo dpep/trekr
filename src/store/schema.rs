@@ -1,8 +1,12 @@
 //! The on-disk schema. Kept in sync with `docs/ARCHITECTURE.md` in the same
 //! commit — that document is the contract, this file is its implementation.
 
-/// Bump with every migration appended below.
-pub(crate) const VERSION: i64 = 1;
+/// Bump on any schema change. There are no migrations, and that is deliberate:
+/// every row below `blob` is derived from bytes this machine can read again, so
+/// the database is a **cache of a pure function**, not a system of record. A
+/// version mismatch drops it and reindexes — which costs seconds and removes an
+/// entire class of migration bug.
+pub(crate) const VERSION: i64 = 2;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -39,9 +43,13 @@ CREATE TABLE def (
 
 -- `class Foo < Bar`, include, prepend, extend: one shape, so one table. The
 -- linearization order they imply is the tree layer's business, not this one's.
+-- `owner` is the scope stack **including the receiving class or module**,
+-- which is not the same as where the target name is written: Ruby evaluates a
+-- superclass expression outside the body it opens. The tree layer drops the
+-- first entry for that one relation.
 CREATE TABLE ancestry (
   blob_id  INTEGER NOT NULL REFERENCES blob(id) ON DELETE CASCADE,
-  nesting  TEXT    NOT NULL,
+  owner    TEXT    NOT NULL,
   relation TEXT    NOT NULL,              -- superclass | include | prepend | extend
   target   TEXT    NOT NULL,              -- constant as written, or 'self'
   line     INTEGER NOT NULL,
@@ -95,5 +103,14 @@ CREATE INDEX call_site_blob ON call_site(blob_id);
 CREATE INDEX file_blob      ON file(blob_id);
 "#;
 
-/// Cumulative migrations for databases already on disk. Append, never edit.
-pub(crate) const MIGRATIONS: [(i64, &str); 0] = [];
+/// Every table, newest first, so dropping respects nothing (foreign keys are
+/// off during the drop anyway).
+pub(crate) const TABLES: [&str; 7] = [
+    "file",
+    "checkout",
+    "call_site",
+    "const_ref",
+    "ancestry",
+    "def",
+    "blob",
+];

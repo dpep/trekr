@@ -189,6 +189,7 @@ fn every_command_speaks_ndjson_as_well_as_json() {
         vec!["--status", "--ndjson"],
         vec!["--symbols", "widget.rb", "--ndjson"],
         vec!["--refs", "helper", "--ndjson"],
+        vec!["--def", "widget.rb:1:7", "--ndjson"],
     ] {
         let out = trekr(&db, &dir, &args);
         for line in stdout(&out).lines() {
@@ -227,6 +228,152 @@ fn refs_disclose_the_receiver_rather_than_guessing_at_it() {
         trekr(&db, &dir, &["--refs", "Absent"]).status.code(),
         Some(1),
         "a name nobody mentions is a definitive no"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A repo whose namespace has something to resolve *through*.
+fn nested_repo(dir: &Path) {
+    git(dir, &["init", "-q"]);
+    fs::write(
+        dir.join("app.rb"),
+        // Line 1  module Shop
+        // Line 2    class Base
+        // Line 3      SIZE = 1
+        // Line 4    end
+        // Line 5    class Widget < Base
+        // Line 6      def go
+        // Line 7        SIZE
+        // Line 8        helper
+        "module Shop\n  class Base\n    SIZE = 1\n  end\n  class Widget < Base\n             def go\n      SIZE\n      helper\n    end\n  end\nend\n",
+    )
+    .unwrap();
+    git(dir, &["add", "-A"]);
+    git(
+        dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+}
+
+#[test]
+fn def_resolves_a_constant_through_the_ancestor_chain() {
+    let (dir, db) = scratch("def");
+    nested_repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+
+    // `SIZE` on line 7 is not in Widget, but it is in Widget's superclass.
+    let answer = json(&trekr(&db, &dir, &["--def", "app.rb:7:7", "--json"]));
+    assert_eq!(answer["status"], "resolved");
+    assert_eq!(answer["fqn"], "Shop::Base::SIZE");
+    assert_eq!(answer["resolved_via"], "ancestor");
+    assert_eq!(answer["confidence"], 1.0);
+    assert_eq!(answer["sites"][0]["line"], 3);
+    assert_eq!(
+        trekr(&db, &dir, &["--def", "app.rb:7:7"]).status.code(),
+        Some(0)
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn def_on_a_declaration_answers_with_the_declaration_itself() {
+    let (dir, db) = scratch("defself");
+    nested_repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+
+    let answer = json(&trekr(&db, &dir, &["--def", "app.rb:5:9", "--json"]));
+    assert_eq!(answer["under"], "definition");
+    assert_eq!(answer["name"], "Widget");
+    assert_eq!(answer["resolved_via"], "definition");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn def_on_a_method_call_is_residue_that_says_what_it_knows() {
+    let (dir, db) = scratch("defcall");
+    nested_repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+
+    let answer = json(&trekr(&db, &dir, &["--def", "app.rb:8:7", "--json"]));
+    assert_eq!(answer["under"], "call");
+    assert_eq!(answer["name"], "helper");
+    assert_eq!(answer["status"], "residue");
+    assert_eq!(
+        answer["receiver"], "implicit",
+        "the shape the ladder will start from travels with the honest 'no'"
+    );
+    assert!(answer["reason"].as_str().unwrap().contains("--refs"));
+    assert_eq!(
+        trekr(&db, &dir, &["--def", "app.rb:8:7"]).status.code(),
+        Some(1),
+        "residue is a definitive answer, not an error"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn def_reads_the_working_tree_rather_than_the_index() {
+    let (dir, db) = scratch("defdirty");
+    nested_repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+
+    // Push everything down a line; the answer must move with it.
+    let source = fs::read_to_string(dir.join("app.rb")).unwrap();
+    fs::write(dir.join("app.rb"), format!("# added\n{source}")).unwrap();
+    let answer = json(&trekr(&db, &dir, &["--def", "app.rb:8:7", "--json"]));
+    assert_eq!(
+        answer["fqn"], "Shop::Base::SIZE",
+        "the file is reparsed, so an unindexed edit does not shift the answer"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn ancestors_linearize_in_rubys_order() {
+    let (dir, db) = scratch("anc");
+    git(&dir, &["init", "-q"]);
+    fs::write(
+        dir.join("app.rb"),
+        "module P\nend\nmodule I\nend\nclass Base\nend\n\
+         class C < Base\n  include I\n  prepend P\nend\n",
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    trekr(&db, &dir, &["--index"]);
+
+    let answer = json(&trekr(&db, &dir, &["--ancestors", "C", "--json"]));
+    assert_eq!(
+        answer["ancestors"].as_array().unwrap(),
+        &vec!["P", "C", "I", "Base"]
+    );
+    assert_eq!(
+        trekr(&db, &dir, &["--ancestors", "Nope"]).status.code(),
+        Some(1)
     );
 
     let _ = fs::remove_dir_all(&dir);

@@ -3,8 +3,8 @@
 The design contract. [PLAN.md](PLAN.md) says *why*; this says *what is built*.
 Change them in the same commit as the code, per [CLAUDE.md](../CLAUDE.md).
 
-Status: **Phase 1 (blob layer) built.** Layers 2 and 3 are sketched in PLAN §4
-and not started.
+Status: **Phase 1 (blob layer) built. Layer 2 resolves constants.** Method
+resolution and ranking (layer 3) are not started.
 
 ## The one idea
 
@@ -20,9 +20,11 @@ boundary below is stated as a prohibition rather than a preference.
 
 ```text
 ┌─ 3. resolve + rank ────────────────── not started ─┐
-│    receiver ladder, confidence, --explain          │
-├─ 2. tree layer ────────────────────── not started ─┤
-│    per checkout: constant namespace, MRO, methods  │
+│    receiver ladder for METHODS, ranking, --explain │
+├─ 2. tree layer ───────────── constants BUILT ──────┤
+│    tree/     per checkout: constant namespace,     │
+│              ancestor linearization. Method tables │
+│              and singleton chains not yet.         │
 ├─ 1. blob layer ───────────────────────── BUILT ────┤
 │    scan/     checkout → path→OID map               │
 │    extract/  bytes → facts       (pure)            │
@@ -71,6 +73,44 @@ Macros are expanded at extraction, so no later layer needs to know they exist:
 public singleton method and a private instance one; `alias` and `alias_method`
 become methods with a `target`.
 
+### `tree/` — a checkout's namespace, rebuilt not patched
+
+Blob facts are deliberately ignorant of each other: `class Widget < Base`
+records the string `Base` and stops. This layer turns a checkout's facts into a
+constant namespace and an ancestor order.
+
+**Constant lookup** is Ruby's own ladder, in order:
+
+1. every enclosing lexical scope's **own** constants (never their ancestors);
+2. the **ancestors of the innermost scope** only;
+3. the top level.
+
+A path `A::B::C` uses that ladder for `A` alone. Every later segment descends
+through the previous one's ancestors — lexical nesting never applies past the
+head.
+
+**Linearization** is `[prepends, self, includes, superclass's whole chain]`,
+and prepend/include are **not** symmetrical:
+
+- an *include* dedups first-wins against prepends, earlier includes, and the
+  parent chain — anything already reachable keeps its deeper position;
+- a *prepend* re-orders last-wins, pulling an existing entry to the front, and
+  does **not** dedup against includes.
+
+So `prepend A; include A` gives `[A, Foo]` while `include A; prepend A` gives
+`[A, Foo, A]`. A single "seen" set gets that wrong and looks right on every
+simple case; the ported Rubydex torture tests in `src/tree/mod.rs` pin it.
+
+Two things the blob layer cannot know, resolved here:
+
+- **`Module.nesting`.** The blob layer records nesting *as written* (`["B", "A"]`
+  inside `module A; module B`) because that is all the bytes determine. Only a
+  namespace can qualify it to `["A::B", "A"]`, since a compact `module A::B`
+  inside `module X` may land under `X` or at the top level.
+- **Constant aliases.** `Bar = Foo` keeps its own declaration site — that is
+  where go-to-definition on `Bar` belongs — but anywhere a *namespace* is
+  wanted (`Bar::Baz`, `class Foo < Bar`) the alias is followed through.
+
 ### `store/` — SQLite, WAL, no cleverness
 
 Schema in [`src/store/schema.rs`](../src/store/schema.rs); it is the authority
@@ -116,6 +156,8 @@ command that prints honors `--json` / `--ndjson`.
 | `--status` | what is indexed, per checkout, plus the shared totals |
 | `--symbols FILE` | one file's definitions, in source order |
 | `--refs NAME` | every mention of a name in this checkout |
+| `--def FILE:LINE:COL` | what is the name here, and where is it defined |
+| `--ancestors NAME` | the linearized ancestor chain |
 | `--drop [PATH]` | forget a checkout's file map |
 
 `--refs` is **name-level, not resolved**: two unrelated `Config` classes both
@@ -128,6 +170,17 @@ of a guess. Narrowing it is layer 3's job.
 | 0 | something was indexed, or a query matched |
 | 1 | nothing matched, nothing to do — a definitive answer |
 | 2 | the request could not be served (not a repo, unreadable file) |
+
+`--def` reparses the one file with Prism rather than reading stored spans, so
+it answers correctly on a file edited since the last index.
+
+Every answer carries `status` (`resolved` | `residue`) and `confidence`. For
+constants that confidence is 1 or 0, and **that is not a hedge**: the ladder
+above is Ruby's own algorithm, so within the indexed set a hit is exact rather
+than ranked. The uncertainty that does exist is reported as evidence —
+`scopes_tried`, `unresolved_ancestors` — rather than smeared into a number that
+would look like a measurement (DEC-008). A method call is `residue` carrying its
+receiver shape, which is where layer 3 will start.
 
 `$TREKR_DB` overrides the database path (default
 `~/.local/share/trekr/trekr.db`); the e2e tests use it for isolation.
@@ -180,6 +233,28 @@ inflate `other`.)
 Sorbet `sig` extraction is exercised at scale on `graph_weaver`: 3,757 of its
 methods get a concrete return class. None of the three corpora above use
 Sorbet, so the sig path contributes nothing to their numbers.
+
+**The tree layer is rebuilt on every invocation, and that is the design.**
+`--refs` needs no tree; `--ancestors` needs a whole one. The gap between them is
+what a full rebuild from SQL costs:
+
+| corpus | rebuild | total for `--ancestors` |
+|---|---:|---:|
+| rails | 41 ms | 49 ms |
+| discourse | 58 ms | 66 ms |
+| CRuby | 36 ms | 44 ms |
+
+PLAN §4 said keep the tree cheap to rebuild rather than clever to patch, and
+gated that on a measurement. At ~50 ms for 11k files there is nothing to
+invalidate incrementally — memoizing per namespace on contributing blob OIDs
+would be paying interest on a debt we do not have (DEC-007). Linearization *is*
+memoized within a single build, because a file's every constant reference asks
+for the chain of the same enclosing class.
+
+Sanity on real code: `--ancestors ActiveRecord::Base` in rails linearizes 40+
+concerns with **nothing unresolved**; `--ancestors Topic` in discourse gets its
+concerns in order and honestly reports `ActiveRecord::Base` unresolved, because
+gems are not indexed yet.
 
 **The query planner needs statistics, and this is not optional.** Without them
 SQLite plans `--refs` as a nested scan of the checkout's files: `--refs new` on

@@ -90,3 +90,72 @@ that have moved, so a no-op reindex stays at 67 ms.
 **Reverses if** a query is found that the planner gets wrong even with current
 statistics. Then pin that one query and say why in a comment, rather than
 adopting hints generally.
+
+## DEC-007 — The tree layer is rebuilt, never invalidated
+
+**Decided.** Every invocation assembles the whole checkout's namespace from SQL.
+No incremental machinery, no persistence, no memo keyed on contributing blob
+OIDs.
+
+**Why.** PLAN §4 took the Glean/Kythe lesson — per-file facts cache perfectly,
+the cross-file graph is where invalidation bites — and said keep the tree cheap
+to rebuild. Measured: 41 ms for rails, 58 ms for discourse's 11k files. At that
+price an invalidation scheme buys nothing and costs a whole class of staleness
+bug. Linearization is memoized *within* one build, which is where the repeated
+work actually is.
+
+**Reverses if** a resident LSP front makes per-keystroke rebuilds visible, or a
+100k-file repo pushes the rebuild past ~200 ms. The first fix then is caching
+one built tree per process, not patching one in place.
+
+## DEC-008 — Constant confidence is 1 or 0, and the doubt is reported separately
+
+**Decided.** A resolved constant carries `confidence: 1.0`, a residue `0.0`.
+There is no decay by ladder depth.
+
+**Why.** The house rule is that a score must be derived from what backs it, and
+that a flat score is a guess wearing the clothes of a measurement. The honest
+reading here is that the judgement genuinely *is* binary: the ladder is Ruby's
+own constant lookup, so within the indexed set a hit is what Ruby would find,
+not a ranked guess. Inventing a decay constant per rung would be exactly the
+fake measurement the rule warns about. What is genuinely uncertain — that the
+index is partial — is reported as countable evidence instead: `scopes_tried`,
+and `unresolved_ancestors` when a gem superclass truncated the chain, so a
+residue with an incomplete chain is visibly a weaker "no" than one without.
+
+**Reverses if** the method ladder arrives (session 3), where the rungs have
+*measured* yields (rwr: 64% of sigs name a usable class against 3.9% from
+syntax). Grading there will be derived from those numbers, not picked.
+
+## DEC-009 — A schema change drops the database instead of migrating it
+
+**Decided.** `store::init` compares `user_version` and, on a mismatch, drops
+every table and recreates. `MIGRATIONS` no longer exists.
+
+**Why.** Every row below `blob` is a pure function of bytes this machine can
+read again — the database is a **cache**, not a system of record. Reindexing
+costs seconds (1.5 s for rails) and removes an entire class of bug: a migration
+that half-converts, or that has to reason about facts extracted by an older
+extractor. This came up immediately: renaming `ancestry.nesting` to `owner`
+changed what the column *means*, so a column rename would have silently kept
+wrong data.
+
+**Reverses if** indexing ever becomes expensive enough that a rebuild is a real
+cost — gems keyed by `(gem, version)` might get there, since they are shared
+across projects.
+
+## DEC-010 — A partial ancestor chain reports, it does not stop
+
+**Decided.** When linearization cannot resolve an ancestor, the chain continues
+without it and the answer carries `unresolved_ancestors`.
+
+**Why.** Rubydex stops at the first unresolved ancestor and retries, so that a
+later ancestor cannot win a lookup an earlier unresolved one might have
+shadowed. That is right for them: they index RBS core, so a partial chain is
+rare and usually temporary. Here gems are not indexed at all, so nearly every
+Rails model has an unresolved `ActiveRecord::Base` — stopping would turn almost
+every answer into a refusal. Full disclosure says return the ranked answer with
+the reason, not nothing.
+
+**Reverses if** gem indexing (PLAN Phase 3) lands, at which point a partial
+chain becomes rare enough that stopping is the more accurate choice.
