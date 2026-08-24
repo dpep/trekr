@@ -1,0 +1,470 @@
+//! Layer 3: which method does this call site run?
+//!
+//! The ladder, in the order rwr measured to pay (PLAN §2):
+//!
+//! | rung | share of call sites | what it costs |
+//! |---|---|---|
+//! | implicit / explicit `self` | ~45 % | nothing — the enclosing scope *is* the receiver |
+//! | constant receiver | ~11 % | one constant resolution |
+//! | local from `X.new` or an identity method | ~14 % | an assignment scan of the file |
+//! | instance variable | ~3 % | the same scan |
+//! | inline Sorbet `sig` | — | a second method lookup |
+//!
+//! Everything below that is residue, and residue is not nothing: it comes back
+//! as ordered candidates with the receiver shape as the reason.
+
+use crate::core::{Assign, Call, Facts, RecvShape, ValueShape};
+use crate::tree::{Site, Status, Tree};
+use serde::Serialize;
+
+/// How the receiver's type was established, and how strongly.
+struct Receiver {
+    fqn: String,
+    /// A class-method lookup rather than an instance-method one.
+    singleton: bool,
+    via: &'static str,
+    /// Assignments that agreed on this type, out of those considered. For the
+    /// rungs that are a language rule rather than an inference, both are 1.
+    agreeing: usize,
+    total: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct Candidate {
+    pub(crate) owner: String,
+    pub(crate) singleton: bool,
+    /// Why this candidate is ranked where it is — a named tier, not a weight.
+    pub(crate) why: &'static str,
+    pub(crate) site: Site,
+}
+
+#[derive(Debug, Serialize)]
+pub(crate) struct MethodAnswer {
+    pub(crate) status: Status,
+    /// 1 when the receiver's type is settled and Ruby's lookup finds the method
+    /// in it. For the assignment rungs it is the share of assignments that
+    /// agreed — a count, not a calibration (DEC-011).
+    pub(crate) confidence: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) resolved_via: Option<String>,
+    /// The receiver's syntactic shape, always — it is the reason a residue is a
+    /// residue.
+    pub(crate) receiver: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) receiver_type: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) owner: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) sites: Vec<Site>,
+    /// Assignments that agreed / were considered, when a rung inferred a type.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) agreement: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) candidates: Vec<Candidate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) reason: Option<String>,
+}
+
+/// How many candidates a residue answer offers. Enough to be useful, few
+/// enough that an agent is not being handed Ruby LSP's "first ten" by another
+/// name — these are ordered by named evidence, and the count is disclosed.
+const MAX_CANDIDATES: usize = 8;
+
+/// `path` is the call site's file, relative to the checkout — one of the tiers
+/// residue candidates are ordered by.
+pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer {
+    let shape = call.recv.as_str();
+    match receiver_of(tree, facts, call) {
+        Some(receiver) => {
+            match tree.lookup(&receiver.fqn, receiver.singleton, &call.name) {
+                Some(found) => MethodAnswer {
+                    status: Status::Resolved,
+                    confidence: receiver.agreeing as f64 / receiver.total as f64,
+                    resolved_via: Some(receiver.via.to_string()),
+                    receiver: shape,
+                    receiver_type: Some(receiver.fqn.clone()),
+                    owner: Some(found.owner.clone()),
+                    sites: vec![found.site.clone()],
+                    agreement: agreement(&receiver),
+                    candidates: Vec::new(),
+                    reason: None,
+                },
+                // The type is settled and Ruby would still not find the method
+                // here. That is a different "no" from an unknown receiver, and
+                // usually means a gem, a DSL, or `method_missing`.
+                None => residue(
+                    tree,
+                    call,
+                    path,
+                    Some(receiver),
+                    "the receiver's type is known but nothing in its ancestors \
+                     defines this name — a gem, a DSL, or method_missing",
+                ),
+            }
+        }
+        None => residue(
+            tree,
+            call,
+            path,
+            None,
+            "the receiver's type is not determined by this file",
+        ),
+    }
+}
+
+fn agreement(receiver: &Receiver) -> Option<String> {
+    (receiver.total > 1 || receiver.agreeing != receiver.total)
+        .then(|| format!("{}/{}", receiver.agreeing, receiver.total))
+}
+
+/// Climb the ladder until a rung names a type.
+fn receiver_of(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
+    match call.recv {
+        // The enclosing scope is the receiver by language rule. No inference
+        // happens, which is why this rung is both the largest and the cheapest.
+        RecvShape::Implicit | RecvShape::SelfRecv => {
+            let fqn = tree.scope_fqn(&call.nesting)?;
+            tree.is_known(&fqn).then_some(Receiver {
+                fqn,
+                singleton: call.singleton,
+                via: "self",
+                agreeing: 1,
+                total: 1,
+            })
+        }
+        RecvShape::Const => {
+            let name = call.recv_text.as_ref()?;
+            let fqn = tree.resolve(name, &call.nesting).fqn?;
+            Some(Receiver {
+                fqn,
+                // `Foo.bar` runs a class method.
+                singleton: true,
+                via: "const",
+                agreeing: 1,
+                total: 1,
+            })
+        }
+        RecvShape::Local | RecvShape::Ivar => from_assignments(tree, facts, call),
+        RecvShape::Other => None,
+    }
+}
+
+/// What a local or instance variable holds, judged from every assignment to it
+/// in this file.
+///
+/// The scan is file-wide rather than flow-sensitive. That over-counts — an
+/// assignment in an unrelated method still votes — but it errs toward *lower*
+/// confidence, which is the safe direction for a number a caller may trust.
+fn from_assignments(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
+    let target = call.recv_text.as_ref()?;
+    let scope = call.nesting.first();
+    let relevant: Vec<&Assign> = facts
+        .assigns
+        .iter()
+        .filter(|a| &a.target == target && a.nesting.first() == scope)
+        .collect();
+    if relevant.is_empty() {
+        return None;
+    }
+
+    let mut votes: Vec<(String, bool, &'static str)> = Vec::new();
+    for assign in &relevant {
+        if let Some(vote) = type_of(tree, facts, &assign.value, &assign.nesting, 0) {
+            votes.push(vote);
+        }
+    }
+    let (fqn, singleton, via) = votes.first().cloned()?;
+    let agreeing = votes.iter().filter(|(f, _, _)| *f == fqn).count();
+    Some(Receiver {
+        fqn,
+        singleton,
+        via,
+        agreeing,
+        total: relevant.len(),
+    })
+}
+
+/// The class a value expression produces, if syntax or a `sig` names one.
+fn type_of(
+    tree: &Tree,
+    facts: &Facts,
+    value: &ValueShape,
+    nesting: &[String],
+    depth: usize,
+) -> Option<(String, bool, &'static str)> {
+    // `x = y; y = x` is legal Ruby and would otherwise spin.
+    if depth > 4 {
+        return None;
+    }
+    match value {
+        ValueShape::New(name) => Some((tree.resolve(name, nesting).fqn?, false, "local:new")),
+        // `x = Foo` holds the class itself, so `x.bar` is a class method.
+        ValueShape::Const(name) => Some((tree.resolve(name, nesting).fqn?, true, "local:const")),
+        ValueShape::Same(other) => {
+            let next = facts.assigns.iter().find(|a| &a.target == other)?;
+            type_of(tree, facts, &next.value, &next.nesting, depth + 1)
+        }
+        // A `sig` names a usable class for 64 % of signatures against 3.9 %
+        // from syntax alone (PLAN §2) — the highest-yield rung on the ladder.
+        ValueShape::SelfCall(name) => {
+            let scope = tree.scope_fqn(nesting)?;
+            let returns = tree.lookup(&scope, false, name)?.sig_returns.clone()?;
+            Some((tree.resolve(&returns, nesting).fqn?, false, "sig"))
+        }
+        ValueShape::ConstCall { recv, name } => {
+            let owner = tree.resolve(recv, nesting).fqn?;
+            let returns = tree.lookup(&owner, true, name)?.sig_returns.clone()?;
+            Some((tree.resolve(&returns, nesting).fqn?, false, "sig"))
+        }
+        ValueShape::Other => None,
+    }
+}
+
+/// An honest no, with the candidates ordered by evidence a reader can check.
+fn residue(
+    tree: &Tree,
+    call: &Call,
+    path: &str,
+    receiver: Option<Receiver>,
+    reason: &str,
+) -> MethodAnswer {
+    let here = call
+        .nesting
+        .first()
+        .and_then(|_| tree.scope_fqn(&call.nesting));
+    let ancestors: Vec<String> = here
+        .as_ref()
+        .map(|fqn| tree.ancestors(fqn).chain.clone())
+        .unwrap_or_default();
+    let mut ranked: Vec<(u8, Candidate)> = tree
+        .named(&call.name)
+        .into_iter()
+        .map(|method| {
+            let fits = method.accepts(call.argc);
+            // Named tiers, not weights: every one of these is a fact a reader
+            // can check, and none of them is a constant somebody invented.
+            let (tier, why) = match (fits, &here) {
+                (true, _) if ancestors.contains(&method.owner) => (
+                    0,
+                    "arity fits, and the enclosing class inherits from its owner",
+                ),
+                (true, Some(scope)) if shares_namespace(scope, &method.owner) => (
+                    1,
+                    "arity fits, and its owner shares a namespace with the call",
+                ),
+                (true, _) if method.site.path == path => (2, "arity fits, same file"),
+                (true, _) => (3, "arity fits"),
+                (false, _) => (4, "defined elsewhere; arity does not fit"),
+            };
+            (
+                tier,
+                Candidate {
+                    owner: method.owner.clone(),
+                    singleton: method.singleton,
+                    why,
+                    site: method.site.clone(),
+                },
+            )
+        })
+        .collect();
+    ranked.sort_by_key(|(tier, _)| *tier);
+
+    let total = ranked.len();
+    let candidates: Vec<Candidate> = ranked
+        .into_iter()
+        .take(MAX_CANDIDATES)
+        .map(|(_, c)| c)
+        .collect();
+    let reason = if total > candidates.len() {
+        format!(
+            "{reason}; showing {} of {total} definitions",
+            candidates.len()
+        )
+    } else {
+        reason.to_string()
+    };
+
+    MethodAnswer {
+        status: Status::Residue,
+        confidence: 0.0,
+        resolved_via: None,
+        receiver: call.recv.as_str(),
+        receiver_type: receiver.map(|r| r.fqn),
+        owner: None,
+        sites: Vec::new(),
+        agreement: None,
+        candidates,
+        reason: Some(reason),
+    }
+}
+
+/// Do two names share an outer namespace? `A::B::C` and `A::B::D` do.
+fn shares_namespace(one: &str, other: &str) -> bool {
+    match (one.rsplit_once("::"), other.rsplit_once("::")) {
+        (Some((a, _)), Some((b, _))) => a == b,
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Resolve the first call to `name` in this source.
+    fn answer(source: &str, name: &str) -> MethodAnswer {
+        let tree = crate::tree::for_test(&[("a.rb", source)]);
+        let facts = crate::extract::extract(source.as_bytes());
+        let call = facts
+            .calls
+            .iter()
+            .find(|c| c.name == name)
+            .unwrap_or_else(|| panic!("no call to {name}"))
+            .clone();
+        method_at(&tree, &facts, &call, "a.rb")
+    }
+
+    fn owner(source: &str, name: &str) -> Option<String> {
+        answer(source, name).owner
+    }
+
+    #[test]
+    fn an_implicit_receiver_needs_no_inference_at_all() {
+        let source = "class W\n  def helper\n  end\n  def go\n    helper\n  end\nend\n";
+        let found = answer(source, "helper");
+        assert_eq!(found.status, Status::Resolved);
+        assert_eq!(found.owner.as_deref(), Some("W"));
+        assert_eq!(found.resolved_via.as_deref(), Some("self"));
+        assert_eq!(
+            found.confidence, 1.0,
+            "the enclosing class is the receiver by language rule"
+        );
+    }
+
+    #[test]
+    fn an_implicit_receiver_inside_a_singleton_method_means_the_class() {
+        // The same source line means two different lookups depending on which
+        // kind of method encloses it.
+        let source = "class W\n  def self.made\n  end\n  def made\n  end\n  \
+                      def self.go\n    made\n  end\nend\n";
+        let found = answer(source, "made");
+        assert_eq!(found.receiver_type.as_deref(), Some("W"));
+        assert_eq!(
+            found.sites[0].line, 2,
+            "inside `def self.go`, `made` is the class method on line 2"
+        );
+    }
+
+    #[test]
+    fn an_explicit_self_resolves_the_same_way() {
+        let source = "class W\n  def size=(v)\n  end\n  def go\n    self.size = 1\n  end\nend\n";
+        assert_eq!(owner(source, "size=").as_deref(), Some("W"));
+    }
+
+    #[test]
+    fn a_constant_receiver_looks_up_a_class_method() {
+        let source = "class Reg\n  def self.lookup\n  end\n  def lookup\n  end\nend\n\
+                      class W\n  def go\n    Reg.lookup\n  end\nend\n";
+        let found = answer(source, "lookup");
+        assert_eq!(found.resolved_via.as_deref(), Some("const"));
+        assert_eq!(
+            found.sites[0].line, 2,
+            "the singleton one, not the instance one"
+        );
+    }
+
+    #[test]
+    fn a_local_assigned_from_new_carries_that_class() {
+        let source = "class Box\n  def open\n  end\nend\n\
+                      class W\n  def go\n    b = Box.new\n    b.open\n  end\nend\n";
+        let found = answer(source, "open");
+        assert_eq!(found.owner.as_deref(), Some("Box"));
+        assert_eq!(found.resolved_via.as_deref(), Some("local:new"));
+    }
+
+    #[test]
+    fn an_identity_method_does_not_lose_the_type() {
+        let source = "class Box\n  def open\n  end\nend\n\
+                      class W\n  def go\n    b = Box.new.freeze\n    b.open\n  end\nend\n";
+        assert_eq!(owner(source, "open").as_deref(), Some("Box"));
+    }
+
+    #[test]
+    fn a_local_holding_a_constant_gets_that_classs_class_methods() {
+        let source = "class Box\n  def self.build\n  end\nend\n\
+                      class W\n  def go\n    k = Box\n    k.build\n  end\nend\n";
+        assert_eq!(owner(source, "build").as_deref(), Some("Box"));
+    }
+
+    #[test]
+    fn an_instance_variable_is_typed_from_its_assignment() {
+        let source = "class Box\n  def open\n  end\nend\n\
+                      class W\n  def initialize\n    @box = Box.new\n  end\n  \
+                      def go\n    @box.open\n  end\nend\n";
+        assert_eq!(owner(source, "open").as_deref(), Some("Box"));
+    }
+
+    #[test]
+    fn a_sorbet_signature_types_what_syntax_cannot() {
+        let source = "class Box\n  def open\n  end\nend\n\
+                      class W\n  sig { returns(Box) }\n  def fetch\n  end\n  \
+                      def go\n    b = fetch\n    b.open\n  end\nend\n";
+        let found = answer(source, "open");
+        assert_eq!(found.owner.as_deref(), Some("Box"));
+        assert_eq!(found.resolved_via.as_deref(), Some("sig"));
+    }
+
+    #[test]
+    fn assignments_that_disagree_lower_the_confidence_they_produced() {
+        let source = "class A\n  def go\n  end\nend\nclass B\n  def go\n  end\nend\n\
+                      class W\n  def one\n    x = A.new\n    x.go\n  end\n  \
+                      def two\n    x = B.new\n  end\nend\n";
+        let found = answer(source, "go");
+        assert_eq!(found.status, Status::Resolved);
+        assert_eq!(
+            found.confidence, 0.5,
+            "two assignments were seen and only one agreed — a count, not a guess"
+        );
+        assert_eq!(found.agreement.as_deref(), Some("1/2"));
+    }
+
+    #[test]
+    fn an_undetermined_receiver_returns_ordered_candidates_not_nothing() {
+        let source = "class Near\n  def save\n  end\nend\n\
+                      class Far\n  def save(a, b)\n  end\nend\n\
+                      class W < Near\n  def go\n    thing.save\n  end\nend\n";
+        let found = answer(source, "save");
+        assert_eq!(found.status, Status::Residue);
+        assert_eq!(found.confidence, 0.0);
+        assert_eq!(found.receiver, "other", "the shape is the reason");
+        assert_eq!(
+            found.candidates[0].owner, "Near",
+            "the enclosing class inherits from Near, so its save ranks first"
+        );
+        assert!(found.candidates[0].why.contains("inherits"));
+        assert_eq!(
+            found.candidates.last().unwrap().owner,
+            "Far",
+            "arity rules Far out, so it sinks rather than disappearing"
+        );
+    }
+
+    #[test]
+    fn a_known_receiver_with_no_such_method_says_so_differently() {
+        let source =
+            "class Box\nend\nclass W\n  def go\n    b = Box.new\n    b.missing\n  end\nend\n";
+        let found = answer(source, "missing");
+        assert_eq!(found.status, Status::Residue);
+        assert_eq!(
+            found.receiver_type.as_deref(),
+            Some("Box"),
+            "the type was settled; it is the method that is absent"
+        );
+        assert!(found.reason.unwrap().contains("method_missing"));
+    }
+
+    #[test]
+    fn an_assignment_cycle_stops_instead_of_spinning() {
+        let source = "class W\n  def go\n    x = y\n    y = x\n    x.anything\n  end\nend\n";
+        assert_eq!(answer(source, "anything").status, Status::Residue);
+    }
+}

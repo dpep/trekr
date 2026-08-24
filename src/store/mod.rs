@@ -288,6 +288,39 @@ impl Store {
         rows.collect()
     }
 
+    /// Every method a checkout defines, in a stable order.
+    ///
+    /// Deferred in session 2 because nothing read it; the method ladder is the
+    /// consumer that earns it.
+    pub(crate) fn methods(&self, root: &str) -> Result<Vec<MethodRow>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT d.name, d.nesting, d.singleton, d.visibility, d.params, d.via,
+                    d.target, d.sig_returns, f.path, d.line, d.col
+               FROM def d
+               JOIN file f ON f.blob_id = d.blob_id
+               JOIN checkout c ON c.id = f.checkout_id
+              WHERE c.root = ?1 AND d.kind = 'method'
+              ORDER BY f.path, d.line, d.col",
+        )?;
+        let rows = stmt.query_map(params![root], |r| {
+            let params: String = r.get(4)?;
+            Ok(MethodRow {
+                name: r.get(0)?,
+                nesting: split_nesting(&r.get::<_, String>(1)?),
+                singleton: r.get::<_, i64>(2)? != 0,
+                visibility: r.get(3)?,
+                params: decode_params(&params),
+                via: r.get(5)?,
+                target: r.get(6)?,
+                sig_returns: r.get(7)?,
+                path: r.get(8)?,
+                line: r.get(9)?,
+                col: r.get(10)?,
+            })
+        })?;
+        rows.collect()
+    }
+
     /// Every ancestry edge in a checkout, in source order — which is the order
     /// Ruby applies them in, and therefore the order linearization reverses.
     pub(crate) fn ancestry(&self, root: &str) -> Result<Vec<EdgeRow>> {
@@ -353,6 +386,21 @@ pub(crate) struct DeclRow {
     pub(crate) kind: String,
     pub(crate) nesting: Vec<String>,
     pub(crate) target: Option<String>,
+    pub(crate) path: String,
+    pub(crate) line: u32,
+    pub(crate) col: u32,
+}
+
+#[derive(Debug)]
+pub(crate) struct MethodRow {
+    pub(crate) name: String,
+    pub(crate) nesting: Vec<String>,
+    pub(crate) singleton: bool,
+    pub(crate) visibility: String,
+    pub(crate) params: Vec<Param>,
+    pub(crate) via: Option<String>,
+    pub(crate) target: Option<String>,
+    pub(crate) sig_returns: Option<String>,
     pub(crate) path: String,
     pub(crate) line: u32,
     pub(crate) col: u32,
@@ -489,8 +537,9 @@ fn insert_facts(tx: &rusqlite::Transaction<'_>, oid: &Oid, facts: &Facts) -> Res
     }
 
     let mut call = tx.prepare_cached(
-        "INSERT INTO call_site (blob_id, name, recv, recv_text, nesting, argc, block, line, col)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        "INSERT INTO call_site
+             (blob_id, name, recv, recv_text, nesting, singleton, argc, block, line, col)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
     )?;
     for c in &facts.calls {
         call.execute(params![
@@ -499,6 +548,7 @@ fn insert_facts(tx: &rusqlite::Transaction<'_>, oid: &Oid, facts: &Facts) -> Res
             c.recv.as_str(),
             c.recv_text,
             join_nesting(&c.nesting),
+            c.singleton as i64,
             c.argc,
             c.block as i64,
             c.pos.line,

@@ -13,7 +13,8 @@
 //!
 //! Semantics follow Shopify's Rubydex (MIT) `docs/ruby-behaviors.md`.
 
-use crate::store::{DeclRow, EdgeRow, Store};
+use crate::core::Param;
+use crate::store::{DeclRow, EdgeRow, MethodRow, Store};
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -64,14 +65,59 @@ struct Entry {
     /// First one wins: Ruby raises on a conflicting reopen, so a disagreement
     /// in the index is bad input rather than a case to model.
     superclass: Option<Target>,
+    /// `extend M` — M's *instance* methods become this scope's singleton
+    /// methods. A different chain from `include`, which is why it is a
+    /// different field rather than another mixin kind.
+    extends: Vec<Target>,
     /// `Bar = Foo` — the right-hand side as written. `Bar` is a constant in its
     /// own right and keeps its own site; but anywhere a *namespace* is needed
     /// the alias is followed through.
     alias_of: Option<Target>,
 }
 
+/// A method definition with its owner resolved.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct MethodDef {
+    pub(crate) name: String,
+    pub(crate) owner: String,
+    pub(crate) singleton: bool,
+    pub(crate) visibility: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) via: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) sig_returns: Option<String>,
+    /// Required positional arity and whether the method takes more than that.
+    pub(crate) arity: (u32, bool),
+    pub(crate) site: Site,
+}
+
+impl MethodDef {
+    /// Could this method be called with `argc` positional arguments? `None`
+    /// argc means a splat hid the count, which cannot rule anything out.
+    pub(crate) fn accepts(&self, argc: Option<u32>) -> bool {
+        let Some(argc) = argc else { return true };
+        let (required, variadic) = self.arity;
+        argc >= required && (variadic || argc == required)
+    }
+
+    /// A bare `private :foo` asserts visibility about a method that may live in
+    /// an ancestor. It is a `def` row (DEC-004) but not a definition, so it
+    /// must not answer "where is this defined".
+    fn is_definition(&self) -> bool {
+        !matches!(
+            self.via.as_deref(),
+            Some("private") | Some("protected") | Some("public")
+        )
+    }
+}
+
 pub(crate) struct Tree {
     names: HashMap<String, Entry>,
+    methods: Vec<MethodDef>,
+    /// (owner, singleton, name) → definitions. A reopened class gives several.
+    by_owner: HashMap<(String, bool, String), Vec<usize>>,
+    /// name → every definition anywhere, for ranked residue.
+    by_name: HashMap<String, Vec<usize>>,
     /// Linearization is memoized per name. Only the top-level call is cached;
     /// the recursion under it is cheap, and caching mid-flight would mean
     /// caching a chain computed against a partial `seen` set — not the same
@@ -150,15 +196,17 @@ fn qualify(scope: &str, name: &str) -> String {
 impl Tree {
     /// Assemble a checkout's namespace from its blob facts.
     pub(crate) fn build(store: &Store, root: &str) -> rusqlite::Result<Tree> {
-        Ok(Tree::assemble(
-            store.declarations(root)?,
-            store.ancestry(root)?,
-        ))
+        let mut tree = Tree::assemble(store.declarations(root)?, store.ancestry(root)?);
+        tree.add_methods(store.methods(root)?);
+        Ok(tree)
     }
 
     fn assemble(decls: Vec<DeclRow>, edges: Vec<EdgeRow>) -> Tree {
         let mut tree = Tree {
             names: HashMap::new(),
+            methods: Vec::new(),
+            by_owner: HashMap::new(),
+            by_name: HashMap::new(),
             ancestors: RefCell::new(HashMap::new()),
         };
 
@@ -213,8 +261,7 @@ impl Tree {
                 "superclass" => {
                     entry.superclass.get_or_insert(target);
                 }
-                // `extend` belongs to the singleton chain, which this layer
-                // does not build yet. The fact stays in the store.
+                "extend" => entry.extends.push(target),
                 _ => continue,
             };
         }
@@ -580,41 +627,64 @@ fn split_path(written: &str) -> (&str, Vec<&str>) {
     (head, segments)
 }
 
+/// Ruby source in, assembled namespace out — through the real extractor, so
+/// tests written against this are conformance tests for the pair, not for the
+/// tree alone.
 #[cfg(test)]
-mod tests {
-    use super::*;
+pub(crate) fn for_test(sources: &[(&str, &str)]) -> Tree {
     use crate::core::Kind;
-
-    /// Ruby source in, assembled namespace out — through the real extractor, so
-    /// these are conformance tests for the pair, not for the tree alone.
-    fn tree(sources: &[(&str, &str)]) -> Tree {
-        let mut decls = Vec::new();
-        let mut edges = Vec::new();
-        for (path, source) in sources {
-            let facts = crate::extract::extract(source.as_bytes());
-            assert_eq!(facts.parse_errors, 0, "fixture must be valid Ruby: {path}");
-            for d in facts.defs {
-                if matches!(d.kind, Kind::Class | Kind::Module | Kind::Constant) {
-                    decls.push(DeclRow {
-                        name: d.name,
-                        kind: d.kind.as_str().to_string(),
-                        nesting: d.nesting,
-                        target: d.target,
-                        path: path.to_string(),
-                        line: d.pos.line,
-                        col: d.pos.col,
-                    });
-                }
-            }
-            for a in facts.ancestry {
-                edges.push(EdgeRow {
-                    owner: a.owner,
-                    relation: a.relation.as_str().to_string(),
-                    target: a.target,
+    let mut decls = Vec::new();
+    let mut edges = Vec::new();
+    let mut methods = Vec::new();
+    for (path, source) in sources {
+        let facts = crate::extract::extract(source.as_bytes());
+        assert_eq!(facts.parse_errors, 0, "fixture must be valid Ruby: {path}");
+        for d in facts.defs {
+            if d.kind == Kind::Method {
+                methods.push(MethodRow {
+                    name: d.name,
+                    nesting: d.nesting,
+                    singleton: d.singleton,
+                    visibility: d.visibility.as_str().to_string(),
+                    params: d.params,
+                    via: d.via,
+                    target: d.target,
+                    sig_returns: d.sig_returns,
+                    path: path.to_string(),
+                    line: d.pos.line,
+                    col: d.pos.col,
+                });
+            } else {
+                decls.push(DeclRow {
+                    name: d.name,
+                    kind: d.kind.as_str().to_string(),
+                    nesting: d.nesting,
+                    target: d.target,
+                    path: path.to_string(),
+                    line: d.pos.line,
+                    col: d.pos.col,
                 });
             }
         }
-        Tree::assemble(decls, edges)
+        for a in facts.ancestry {
+            edges.push(EdgeRow {
+                owner: a.owner,
+                relation: a.relation.as_str().to_string(),
+                target: a.target,
+            });
+        }
+    }
+    let mut tree = Tree::assemble(decls, edges);
+    tree.add_methods(methods);
+    tree
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tree(sources: &[(&str, &str)]) -> Tree {
+        super::for_test(sources)
     }
 
     fn one(source: &str) -> Tree {
@@ -956,5 +1026,298 @@ mod tests {
         assert_eq!(r.status, Status::Resolved);
         assert_eq!(r.confidence, 1.0);
         assert_eq!(r.scopes_tried, 0, "found at the first rung");
+    }
+}
+
+impl Tree {
+    fn add_methods(&mut self, rows: Vec<MethodRow>) {
+        for row in rows {
+            let scopes = self.scopes(&row.nesting);
+            // `def Foo.x` names its owner outright; everything else belongs to
+            // the scope it is written in.
+            let owner = match &row.target {
+                Some(target) if row.singleton => self
+                    .resolve_lexical(target, &scopes)
+                    .map(|fqn| self.namespace_of(&fqn))
+                    .unwrap_or_else(|| target.clone()),
+                _ => scopes.first().cloned().unwrap_or_default(),
+            };
+            let index = self.methods.len();
+            let def = MethodDef {
+                arity: arity_of(&row.params),
+                name: row.name.clone(),
+                owner: owner.clone(),
+                singleton: row.singleton,
+                visibility: row.visibility,
+                via: row.via,
+                sig_returns: row.sig_returns,
+                site: Site {
+                    path: row.path,
+                    line: row.line,
+                    col: row.col,
+                    kind: "method".into(),
+                },
+            };
+            self.by_owner
+                .entry((owner, row.singleton, row.name.clone()))
+                .or_default()
+                .push(index);
+            self.by_name.entry(row.name).or_default().push(index);
+            self.methods.push(def);
+        }
+    }
+
+    /// The chain of `(owner, singleton)` pairs Ruby searches for a method.
+    ///
+    /// For an instance method that is just the ancestor chain. For a singleton
+    /// method it is a **different** walk: up the *superclass* chain only —
+    /// included modules contribute no class methods — inserting at each level
+    /// the level's own singleton methods and then whatever it `extend`s.
+    pub(crate) fn lookup_chain(&self, fqn: &str, singleton: bool) -> Vec<(String, bool)> {
+        if !singleton {
+            return self
+                .ancestors(fqn)
+                .chain
+                .iter()
+                .map(|owner| (owner.clone(), false))
+                .collect();
+        }
+        let mut chain = Vec::new();
+        let mut seen = HashSet::new();
+        for class in self.superclass_chain(fqn) {
+            if seen.insert((class.clone(), true)) {
+                chain.push((class.clone(), true));
+            }
+            let extends = self
+                .names
+                .get(&class)
+                .map(|entry| entry.extends.clone())
+                .unwrap_or_default();
+            for target in extends.iter().rev() {
+                // `extend self` is the module-function idiom: the module
+                // extends itself, so its own instance methods become singleton
+                // ones. The target names no constant, so the owner is it.
+                let module = if target.name == "self" {
+                    Some(class.clone())
+                } else {
+                    self.resolve_lexical(&target.name, &target.nesting)
+                        .map(|fqn| self.namespace_of(&fqn))
+                };
+                let Some(module) = module else { continue };
+                for ancestor in &self.ancestors(&module).chain {
+                    if seen.insert((ancestor.clone(), false)) {
+                        chain.push((ancestor.clone(), false));
+                    }
+                }
+            }
+        }
+        chain
+    }
+
+    /// Only the superclass links — no mixins. Class methods are inherited down
+    /// this chain and nowhere else.
+    fn superclass_chain(&self, fqn: &str) -> Vec<String> {
+        let mut chain = Vec::new();
+        let mut seen = HashSet::new();
+        let mut current = fqn.to_string();
+        while seen.insert(current.clone()) {
+            chain.push(current.clone());
+            let Some(superclass) = self.names.get(&current).and_then(|e| e.superclass.as_ref())
+            else {
+                break;
+            };
+            let Some(next) = self.resolve_lexical(&superclass.name, &superclass.nesting) else {
+                break;
+            };
+            current = self.namespace_of(&next);
+        }
+        chain
+    }
+
+    /// The method a receiver of this type would run: the first owner in the
+    /// chain that defines the name. Ruby's own rule, so within the indexed set
+    /// this is exact rather than a guess.
+    pub(crate) fn lookup(&self, fqn: &str, singleton: bool, name: &str) -> Option<&MethodDef> {
+        for (owner, owner_singleton) in self.lookup_chain(fqn, singleton) {
+            let key = (owner, owner_singleton, name.to_string());
+            if let Some(found) = self.by_owner.get(&key).and_then(|hits| {
+                hits.iter()
+                    .rev()
+                    .find(|i| self.methods[**i].is_definition())
+            }) {
+                return Some(&self.methods[*found]);
+            }
+        }
+        None
+    }
+
+    /// Every method with this name, anywhere. The candidate pool for residue.
+    pub(crate) fn named(&self, name: &str) -> Vec<&MethodDef> {
+        self.by_name
+            .get(name)
+            .map(|hits| {
+                hits.iter()
+                    .map(|i| &self.methods[*i])
+                    .filter(|m| m.is_definition())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// The fully-qualified name of the scope a fact was written in.
+    pub(crate) fn scope_fqn(&self, written_nesting: &[String]) -> Option<String> {
+        self.scopes(written_nesting).into_iter().next()
+    }
+
+    pub(crate) fn is_known(&self, fqn: &str) -> bool {
+        self.names.contains_key(fqn)
+    }
+}
+
+/// Required positional arity, and whether more are accepted.
+fn arity_of(params: &[Param]) -> (u32, bool) {
+    use crate::core::ParamKind::*;
+    let required = params
+        .iter()
+        .filter(|p| matches!(p.kind, Req | Post))
+        .count() as u32;
+    let variadic = params
+        .iter()
+        .any(|p| matches!(p.kind, Opt | Rest | Keyrest | Block));
+    (required, variadic)
+}
+
+#[cfg(test)]
+mod singleton_tests {
+    use super::*;
+
+    fn one(source: &str) -> Tree {
+        for_test(&[("a.rb", source)])
+    }
+
+    /// Where a method lookup lands, as `Owner` — or nothing.
+    fn find(tree: &Tree, fqn: &str, singleton: bool, name: &str) -> Option<String> {
+        tree.lookup(fqn, singleton, name).map(|m| m.owner.clone())
+    }
+
+    #[test]
+    fn a_singleton_method_is_found_however_it_was_written() {
+        let tree = one(
+            "class W\n  def self.built\n  end\n  class << self\n    def made\n    end\n  end\n  \
+             def instance\n  end\nend\n",
+        );
+        assert_eq!(find(&tree, "W", true, "built").as_deref(), Some("W"));
+        assert_eq!(find(&tree, "W", true, "made").as_deref(), Some("W"));
+        assert_eq!(
+            find(&tree, "W", true, "instance"),
+            None,
+            "an instance method is not on the class"
+        );
+        assert_eq!(find(&tree, "W", false, "instance").as_deref(), Some("W"));
+    }
+
+    #[test]
+    fn class_methods_are_inherited_down_the_superclass_chain() {
+        let tree = one("class Base\n  def self.build\n  end\nend\nclass W < Base\nend\n");
+        assert_eq!(find(&tree, "W", true, "build").as_deref(), Some("Base"));
+    }
+
+    #[test]
+    fn including_a_module_gives_no_class_methods_but_extending_does() {
+        let tree = one("module M\n  def helper\n  end\nend\n\
+             class Included\n  include M\nend\n\
+             class Extended\n  extend M\nend\n");
+        assert_eq!(
+            find(&tree, "Included", true, "helper"),
+            None,
+            "include contributes instance methods only"
+        );
+        assert_eq!(
+            find(&tree, "Included", false, "helper").as_deref(),
+            Some("M")
+        );
+        assert_eq!(
+            find(&tree, "Extended", true, "helper").as_deref(),
+            Some("M")
+        );
+        assert_eq!(
+            find(&tree, "Extended", false, "helper"),
+            None,
+            "extend contributes singleton methods only"
+        );
+    }
+
+    #[test]
+    fn extend_self_makes_a_modules_own_methods_callable_on_it() {
+        let tree = one("module M\n  extend self\n  def helper\n  end\nend\n");
+        assert_eq!(find(&tree, "M", true, "helper").as_deref(), Some("M"));
+    }
+
+    #[test]
+    fn module_function_reaches_both_ways() {
+        let tree = one("module M\n  module_function\n  def normalize\n  end\nend\n");
+        assert_eq!(find(&tree, "M", true, "normalize").as_deref(), Some("M"));
+        assert_eq!(find(&tree, "M", false, "normalize").as_deref(), Some("M"));
+    }
+
+    #[test]
+    fn an_extended_modules_own_includes_come_along() {
+        let tree = one(
+            "module Deep\n  def deep\n  end\nend\nmodule M\n  include Deep\nend\n\
+             class W\n  extend M\nend\n",
+        );
+        assert_eq!(find(&tree, "W", true, "deep").as_deref(), Some("Deep"));
+    }
+
+    #[test]
+    fn a_prepended_module_wins_over_the_class_itself() {
+        let tree =
+            one("module P\n  def go\n  end\nend\nclass W\n  prepend P\n  def go\n  end\nend\n");
+        assert_eq!(
+            find(&tree, "W", false, "go").as_deref(),
+            Some("P"),
+            "prepend puts P ahead of W in the chain, so P#go runs"
+        );
+    }
+
+    #[test]
+    fn a_bare_visibility_call_does_not_answer_where_a_method_is_defined() {
+        // `private :inherited` is a def row (DEC-004) but asserts visibility
+        // about a method defined elsewhere; it must not be the answer.
+        let tree =
+            one("class Base\n  def shared\n  end\nend\nclass W < Base\n  private :shared\nend\n");
+        assert_eq!(find(&tree, "W", false, "shared").as_deref(), Some("Base"));
+    }
+
+    #[test]
+    fn an_alias_and_an_attr_are_definitions_that_answer() {
+        let tree = one(
+            "class W\n  attr_reader :size\n  def full\n  end\n  alias_method :whole, :full\nend\n",
+        );
+        assert_eq!(find(&tree, "W", false, "size").as_deref(), Some("W"));
+        assert_eq!(find(&tree, "W", false, "whole").as_deref(), Some("W"));
+    }
+
+    #[test]
+    fn def_on_a_named_constant_belongs_to_that_constant() {
+        let tree = one("class Other\nend\nclass W\n  def Other.helper\n  end\nend\n");
+        assert_eq!(
+            find(&tree, "Other", true, "helper").as_deref(),
+            Some("Other")
+        );
+        assert_eq!(find(&tree, "W", true, "helper"), None);
+    }
+
+    #[test]
+    fn arity_admits_what_a_method_can_actually_take() {
+        let tree = one("class W\n  def exact(a, b)\n  end\n  def loose(a, *rest)\n  end\nend\n");
+        let exact = tree.lookup("W", false, "exact").unwrap();
+        assert!(exact.accepts(Some(2)) && !exact.accepts(Some(1)));
+        let loose = tree.lookup("W", false, "loose").unwrap();
+        assert!(loose.accepts(Some(1)) && loose.accepts(Some(5)));
+        assert!(
+            exact.accepts(None),
+            "a splat at the call site rules nothing out"
+        );
     }
 }

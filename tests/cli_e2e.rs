@@ -236,19 +236,26 @@ fn refs_disclose_the_receiver_rather_than_guessing_at_it() {
 /// A repo whose namespace has something to resolve *through*.
 fn nested_repo(dir: &Path) {
     git(dir, &["init", "-q"]);
-    fs::write(
-        dir.join("app.rb"),
-        // Line 1  module Shop
-        // Line 2    class Base
-        // Line 3      SIZE = 1
-        // Line 4    end
-        // Line 5    class Widget < Base
-        // Line 6      def go
-        // Line 7        SIZE
-        // Line 8        helper
-        "module Shop\n  class Base\n    SIZE = 1\n  end\n  class Widget < Base\n             def go\n      SIZE\n      helper\n    end\n  end\nend\n",
-    )
-    .unwrap();
+    // Written a line at a time: a `\` continuation inside one string literal
+    // is what `cargo fmt` reflows, and a silently renumbered fixture makes
+    // every position in these tests wrong at once.
+    let source = concat!(
+        "module Shop\n",           //  1
+        "  class Base\n",          //  2
+        "    SIZE = 1\n",          //  3
+        "    def helper\n",        //  4
+        "    end\n",               //  5
+        "  end\n",                 //  6
+        "  class Widget < Base\n", //  7
+        "    def go\n",            //  8
+        "      SIZE\n",            //  9
+        "      helper\n",          // 10
+        "      thing.save\n",      // 11
+        "    end\n",               // 12
+        "  end\n",                 // 13
+        "end\n",                   // 14
+    );
+    fs::write(dir.join("app.rb"), source).unwrap();
     git(dir, &["add", "-A"]);
     git(
         dir,
@@ -270,15 +277,15 @@ fn def_resolves_a_constant_through_the_ancestor_chain() {
     nested_repo(&dir);
     trekr(&db, &dir, &["--index"]);
 
-    // `SIZE` on line 7 is not in Widget, but it is in Widget's superclass.
-    let answer = json(&trekr(&db, &dir, &["--def", "app.rb:7:7", "--json"]));
+    // `SIZE` on line 9 is not in Widget, but it is in Widget's superclass.
+    let answer = json(&trekr(&db, &dir, &["--def", "app.rb:9:7", "--json"]));
     assert_eq!(answer["status"], "resolved");
     assert_eq!(answer["fqn"], "Shop::Base::SIZE");
     assert_eq!(answer["resolved_via"], "ancestor");
     assert_eq!(answer["confidence"], 1.0);
     assert_eq!(answer["sites"][0]["line"], 3);
     assert_eq!(
-        trekr(&db, &dir, &["--def", "app.rb:7:7"]).status.code(),
+        trekr(&db, &dir, &["--def", "app.rb:9:7"]).status.code(),
         Some(0)
     );
 
@@ -291,7 +298,7 @@ fn def_on_a_declaration_answers_with_the_declaration_itself() {
     nested_repo(&dir);
     trekr(&db, &dir, &["--index"]);
 
-    let answer = json(&trekr(&db, &dir, &["--def", "app.rb:5:9", "--json"]));
+    let answer = json(&trekr(&db, &dir, &["--def", "app.rb:7:9", "--json"]));
     assert_eq!(answer["under"], "definition");
     assert_eq!(answer["name"], "Widget");
     assert_eq!(answer["resolved_via"], "definition");
@@ -300,22 +307,42 @@ fn def_on_a_declaration_answers_with_the_declaration_itself() {
 }
 
 #[test]
-fn def_on_a_method_call_is_residue_that_says_what_it_knows() {
+fn def_resolves_an_implicit_call_through_the_ancestor_chain() {
     let (dir, db) = scratch("defcall");
     nested_repo(&dir);
     trekr(&db, &dir, &["--index"]);
 
-    let answer = json(&trekr(&db, &dir, &["--def", "app.rb:8:7", "--json"]));
+    // `helper` on line 10 has no receiver, so Widget is the receiver, and
+    // Widget inherits helper from Base.
+    let answer = json(&trekr(&db, &dir, &["--def", "app.rb:10:7", "--json"]));
     assert_eq!(answer["under"], "call");
-    assert_eq!(answer["name"], "helper");
+    assert_eq!(answer["status"], "resolved");
+    assert_eq!(answer["resolved_via"], "self");
+    assert_eq!(answer["receiver_type"], "Shop::Widget");
+    assert_eq!(answer["owner"], "Shop::Base");
+    assert_eq!(answer["sites"][0]["line"], 4);
+    assert_eq!(answer["confidence"], 1.0);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn def_on_an_unknown_receiver_is_residue_that_still_offers_candidates() {
+    let (dir, db) = scratch("defresidue");
+    nested_repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+
+    // `thing.save` on line 11: `thing` is a call, so the receiver is unknown.
+    let answer = json(&trekr(&db, &dir, &["--def", "app.rb:11:13", "--json"]));
+    assert_eq!(answer["under"], "call");
+    assert_eq!(answer["name"], "save");
     assert_eq!(answer["status"], "residue");
     assert_eq!(
-        answer["receiver"], "implicit",
-        "the shape the ladder will start from travels with the honest 'no'"
+        answer["receiver"], "other",
+        "the shape the ladder stalled on travels with the honest 'no'"
     );
-    assert!(answer["reason"].as_str().unwrap().contains("--refs"));
     assert_eq!(
-        trekr(&db, &dir, &["--def", "app.rb:8:7"]).status.code(),
+        trekr(&db, &dir, &["--def", "app.rb:11:13"]).status.code(),
         Some(1),
         "residue is a definitive answer, not an error"
     );
@@ -332,7 +359,7 @@ fn def_reads_the_working_tree_rather_than_the_index() {
     // Push everything down a line; the answer must move with it.
     let source = fs::read_to_string(dir.join("app.rb")).unwrap();
     fs::write(dir.join("app.rb"), format!("# added\n{source}")).unwrap();
-    let answer = json(&trekr(&db, &dir, &["--def", "app.rb:8:7", "--json"]));
+    let answer = json(&trekr(&db, &dir, &["--def", "app.rb:10:7", "--json"]));
     assert_eq!(
         answer["fqn"], "Shop::Base::SIZE",
         "the file is reparsed, so an unindexed edit does not shift the answer"

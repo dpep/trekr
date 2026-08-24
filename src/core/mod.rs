@@ -26,6 +26,11 @@ pub(crate) struct Facts {
     pub(crate) ancestry: Vec<Ancestry>,
     pub(crate) const_refs: Vec<ConstRef>,
     pub(crate) calls: Vec<Call>,
+    /// Local and instance variable assignments. Extracted but **not stored**:
+    /// what a local holds is a question about one file, and `--def` already
+    /// reparses that file. Keeping it out of the schema keeps 2 M rows out of
+    /// the database for a fact that never crosses a file boundary.
+    pub(crate) assigns: Vec<Assign>,
     /// Prism reported syntax errors; the facts above are what survived.
     pub(crate) parse_errors: usize,
     pub(crate) lines: usize,
@@ -219,6 +224,37 @@ pub(crate) struct ConstRef {
     pub(crate) pos: Pos,
 }
 
+/// `x = <something>` — the something, in the shapes worth inferring a type
+/// from. rwr measured which ones pay (D61): `X.new` and the identity methods
+/// carry real signal; `then` and `presence` do not and are excluded.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ValueShape {
+    /// `X.new`
+    New(String),
+    /// `X` — a bare constant, so the variable holds the class itself.
+    Const(String),
+    /// `y`, or `y.freeze` / `.dup` / `.clone` / `.itself` / `.tap` — whatever
+    /// `y` is.
+    Same(String),
+    /// `helper` — an implicit-self call, whose `sig` may name the type.
+    SelfCall(String),
+    /// `X.build` — a call on a constant, whose `sig` may name the type.
+    ConstCall {
+        recv: String,
+        name: String,
+    },
+    Other,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Assign {
+    /// `x` for a local, `@x` for an instance variable.
+    pub(crate) target: String,
+    pub(crate) value: ValueShape,
+    pub(crate) nesting: Vec<String>,
+    pub(crate) pos: Pos,
+}
+
 /// A method call site. The receiver **shape** is the fact Rubydex does not
 /// carry (PLAN §8) and the reason this engine exists: 53–66% of call sites are
 /// implicit self and need no inference at all, and the rest sort into a ladder.
@@ -230,6 +266,10 @@ pub(crate) struct Call {
     /// constant path, the local's name, the ivar's name. `None` otherwise.
     pub(crate) recv_text: Option<String>,
     pub(crate) nesting: Vec<String>,
+    /// Written inside a singleton method (`def self.x`, or `class << self`).
+    /// An implicit receiver means the class itself here and an instance of it
+    /// otherwise — the same source text, two different lookups.
+    pub(crate) singleton: bool,
     /// Positional argument count, or `None` when a splat makes it unknowable.
     pub(crate) argc: Option<u32>,
     pub(crate) block: bool,

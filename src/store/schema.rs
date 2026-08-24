@@ -6,7 +6,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 2;
+pub(crate) const VERSION: i64 = 3;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -72,6 +72,7 @@ CREATE TABLE call_site (
   recv      TEXT    NOT NULL,             -- implicit | self | const | local | ivar | other
   recv_text TEXT,
   nesting   TEXT    NOT NULL,
+  singleton INTEGER NOT NULL,             -- written inside `def self.x`
   argc      INTEGER,                      -- NULL when a splat hides the count
   block     INTEGER NOT NULL,
   line      INTEGER NOT NULL,

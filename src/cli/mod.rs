@@ -353,20 +353,25 @@ fn cmd_def(out: Output, spec: &str) -> anyhow::Result<ExitCode> {
             }
             value
         }
-        // Narrowing this needs the receiver ladder. Saying so — and handing
-        // over the shape the ladder will start from — beats the "first ten
-        // methods with that name" that Ruby LSP falls back to.
-        position::Under::Call(call) => serde_json::json!({
-            "query": query,
-            "under": "call",
-            "name": call.name,
-            "status": "residue",
-            "confidence": 0.0,
-            "receiver": call.recv.as_str(),
-            "receiver_text": call.recv_text,
-            "reason": "method resolution is not implemented yet; \
-                       try --refs for every mention of this name",
-        }),
+        position::Under::Call(call) => {
+            let (root, _, tree) = tree_here()?;
+            let relative = std::fs::canonicalize(&spec.path)
+                .ok()
+                .and_then(|abs| abs.strip_prefix(&root).ok().map(Path::to_path_buf))
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| spec.path.clone());
+            let facts = crate::extract::extract(&source);
+            let answer = crate::resolve::method_at(&tree, &facts, &call, &relative);
+            let mut value = serde_json::to_value(&answer)?;
+            let object = value.as_object_mut().expect("answer is an object");
+            object.insert("query".into(), query.clone().into());
+            object.insert("under".into(), "call".into());
+            object.insert("name".into(), call.name.clone().into());
+            if let Some(text) = &call.recv_text {
+                object.insert("receiver_text".into(), text.clone().into());
+            }
+            value
+        }
     };
 
     let resolved = answer["status"] == "resolved";

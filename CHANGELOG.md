@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Method resolution at `--def` (`resolve/`): the receiver ladder in
+  measured-yield order — implicit/explicit `self`, constant receivers, locals
+  and instance variables typed from their assignments, then inline Sorbet
+  `sig` returns. An undetermined receiver returns ordered candidates with the
+  receiver shape as the reason, never a bare list.
+- Singleton chains in the tree layer: `def self.x`, `class << self`, and
+  `extend` all feed one lookup that walks the *superclass* chain (included
+  modules contribute no class methods) inserting each level's singleton
+  methods and extended modules.
+- Method tables, keyed by (owner, singleton, name), with arity.
+- `call_site` gains a `singleton` column: the same source line means a
+  different lookup inside `def self.x` than inside `def x`. **Existing
+  databases reindex once** (DEC-009).
+
 - Tree layer (`tree/`): a checkout's constant namespace and ancestor
   linearization, assembled from blob facts. Ruby's own lookup ladder — lexical
   scopes, then the innermost scope's ancestors, then the top level — with

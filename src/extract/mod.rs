@@ -476,6 +476,23 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         }
     }
 
+    fn visit_local_variable_write_node(&mut self, node: &ruby_prism::LocalVariableWriteNode<'pr>) {
+        if let Ok(name) = String::from_utf8(node.name().as_slice().to_vec()) {
+            self.record_assign(name, &node.value(), node.location().start_offset());
+        }
+        self.visit(&node.value());
+    }
+
+    fn visit_instance_variable_write_node(
+        &mut self,
+        node: &ruby_prism::InstanceVariableWriteNode<'pr>,
+    ) {
+        if let Ok(name) = String::from_utf8(node.name().as_slice().to_vec()) {
+            self.record_assign(name, &node.value(), node.location().start_offset());
+        }
+        self.visit(&node.value());
+    }
+
     fn visit_alias_method_node(&mut self, node: &ruby_prism::AliasMethodNode<'pr>) {
         let new = node.new_name();
         let old = node.old_name();
@@ -723,6 +740,16 @@ impl<'pr> Extractor<'_> {
         true
     }
 
+    fn record_assign(&mut self, target: String, value: &Node<'pr>, offset: usize) {
+        let pos = self.pos(offset);
+        self.facts.assigns.push(Assign {
+            target,
+            value: value_shape(value),
+            nesting: self.nesting.clone(),
+            pos,
+        });
+    }
+
     /// A call site, with the receiver shape that the resolution ladder climbs.
     fn record_call(&mut self, call: &ruby_prism::CallNode<'pr>) {
         let Some(name) = method_name(call) else {
@@ -751,15 +778,53 @@ impl<'pr> Extractor<'_> {
             argc = argc.map(|n| n + 1);
         }
         let pos = self.pos(message.start_offset());
+        let singleton = self.in_singleton();
         self.facts.calls.push(Call {
             name,
             recv,
             recv_text,
             nesting: self.nesting.clone(),
+            singleton,
             argc,
             block: call.block().is_some(),
             pos,
         });
+    }
+}
+
+/// Methods that hand back their receiver unchanged, so the type survives them.
+/// From rwr's D61 measurement; `then` and `presence` are deliberately absent
+/// because they do not preserve the type.
+const IDENTITY: [&str; 5] = ["freeze", "dup", "clone", "itself", "tap"];
+
+fn value_shape(node: &Node<'_>) -> ValueShape {
+    if let Some(name) = const_name(node) {
+        // `x = Foo` — the variable holds the class, not an instance of it.
+        return ValueShape::Const(name);
+    }
+    if let Some(local) = node.as_local_variable_read_node() {
+        return String::from_utf8(local.name().as_slice().to_vec())
+            .map_or(ValueShape::Other, ValueShape::Same);
+    }
+    let Some(call) = node.as_call_node() else {
+        return ValueShape::Other;
+    };
+    let Some(name) = method_name(&call) else {
+        return ValueShape::Other;
+    };
+    match call.receiver() {
+        None => ValueShape::SelfCall(name),
+        Some(receiver) => {
+            if IDENTITY.contains(&name.as_str()) {
+                // Whatever the receiver was, this still is.
+                return value_shape(&receiver);
+            }
+            match const_name(&receiver) {
+                Some(recv) if name == "new" => ValueShape::New(recv),
+                Some(recv) => ValueShape::ConstCall { recv, name },
+                None => ValueShape::Other,
+            }
+        }
     }
 }
 
