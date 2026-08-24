@@ -16,7 +16,7 @@ no-op and query timings are medians of five, which is the precision those
 numbers are reported to.
 """
 
-import json, os, shutil, subprocess, sys, time
+import collections, json, os, random, shutil, sqlite3, subprocess, sys, time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(ROOT, "target/release/trekr")
@@ -24,6 +24,30 @@ DB = "/tmp/trekr-bench.db"
 # Names spanning three orders of magnitude of match count. `new` is the one
 # that took 90 s before the store learned to keep statistics.
 QUERIES = ["find_each", "save", "each", "new"]
+SAMPLE = 120
+
+# Ruby core and common stdlib. Not indexed (PLAN Phase 3), so a residue naming
+# one of these is a known gap rather than a resolution bug — and the difference
+# is the only thing that makes the unresolved rate worth reporting.
+CORE = {
+    "Abbrev", "ARGV", "ArgumentError", "Array", "BasicObject", "Base64", "Benchmark",
+    "BigDecimal", "Coverage", "ENV", "English", "Enumerator", "Fcntl", "Find", "IRB",
+    "MonitorMixin", "OptionParser", "Prism", "RbConfig", "Readline", "Ripper",
+    "RUBY_ENGINE", "RUBY_PLATFORM", "RUBY_VERSION", "StringScanner", "TSort", "Warning",
+    "Comparable", "Complex", "CSV", "Data", "Date", "DateTime", "Delegator",
+    "Digest", "Dir", "Encoding", "Enumerable", "ERB", "Errno", "Etc", "Exception",
+    "Fiber", "File", "FileUtils", "Float", "Forwardable", "FrozenError", "GC",
+    "Hash", "Integer", "IndexError", "IO", "IOError", "JSON", "Kernel", "KeyError",
+    "LoadError", "Logger", "Marshal", "MatchData", "Math", "Method", "Minitest",
+    "Monitor", "Mutex", "Net", "NameError", "NoMethodError", "NotImplementedError",
+    "Numeric", "Object", "ObjectSpace", "Open3", "OpenSSL", "Pathname", "PP",
+    "Proc", "Process", "Psych", "Queue", "Rack", "Ractor", "Random", "Range",
+    "RangeError", "Rational", "Regexp", "RubyVM", "RuntimeError", "SecureRandom",
+    "Set", "Shellwords", "Signal", "SimpleDelegator", "Singleton", "Socket",
+    "StandardError", "String", "StringIO", "Struct", "Symbol", "SystemExit",
+    "Tempfile", "Thread", "Time", "Timeout", "TypeError", "URI", "WeakRef",
+    "YAML", "Zlib", "ZeroDivisionError",
+}
 
 
 # Deliberately not tempfile.gettempdir(): on macOS that is a per-user directory
@@ -55,6 +79,14 @@ def as_git_checkout(repo):
                  "commit", "-qm", "corpus"]):
         subprocess.run(cmd, cwd=staged, capture_output=True)
     return staged
+
+
+def checkout_root(repo):
+    """The path the store keys on — git's canonical one, not the one we typed."""
+    out = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], cwd=repo, capture_output=True, text=True
+    )
+    return out.stdout.strip() or repo
 
 
 def trekr(args, cwd=None):
@@ -135,6 +167,8 @@ def main(corpora):
         print(f"  {name:<12} {whole - baseline:6.0f} ms "
               f"({whole:.0f} ms total, {baseline:.0f} ms of it process + query)")
 
+    resolution_rate(indexed)
+
     # A worktree that shares every blob should cost a scan and no parsing.
     clone = "/tmp/trekr-bench-worktree"
     shutil.rmtree(clone, ignore_errors=True)
@@ -146,6 +180,51 @@ def main(corpora):
         print(f"  {(time.perf_counter() - start) * 1000:.0f} ms, "
               f"{out['files']:,} files, parsed {out['parsed']}")
         shutil.rmtree(clone, ignore_errors=True)
+
+
+def resolution_rate(corpora):
+    """What share of real constant references does the ladder actually resolve?
+
+    Samples stored references and asks `--def` at each position, which is the
+    same path a caller takes. Residue is split by whether the name belongs to
+    core or a gem, because that is the difference between a known gap and a bug.
+    """
+    print(f"\n=== constant resolution ({SAMPLE} sampled references per corpus)")
+    db = sqlite3.connect(DB)
+    random.seed(7)
+    for repo in corpora:
+        rows = db.execute(
+            """SELECT f.path, r.line, r.col, r.name FROM const_ref r
+                 JOIN file f ON f.blob_id = r.blob_id
+                 JOIN checkout c ON c.id = f.checkout_id
+                WHERE c.root = ? AND f.path NOT LIKE '%test%' AND f.path NOT LIKE '%spec%'""",
+            (checkout_root(repo),),
+        ).fetchall()
+        if len(rows) < SAMPLE:
+            continue
+        tally = collections.Counter()
+        unresolved = []
+        for path, line, col, name in random.sample(rows, SAMPLE):
+            out = trekr(["--def", f"{path}:{line}:{col}", "--json"], repo).stdout
+            answer = json.loads(out) if out.strip() else {}
+            if answer.get("under") != "constant":
+                tally["not a constant"] += 1
+            elif answer.get("status") == "resolved":
+                tally["resolved: " + answer.get("resolved_via", "?")] += 1
+            else:
+                head = name.split("::")[0].lstrip(":")
+                known = head in CORE
+                tally["residue: core/stdlib" if known else "residue: gem or unknown"] += 1
+                if not known:
+                    unresolved.append(name)
+        resolved = sum(v for k, v in tally.items() if k.startswith("resolved"))
+        print(f"\n  {os.path.basename(repo.rstrip('/'))}: "
+              f"{100 * resolved / SAMPLE:.0f}% resolved")
+        for key, count in sorted(tally.items()):
+            print(f"    {key:<26} {100 * count / SAMPLE:5.1f}%  ({count})")
+        if unresolved:
+            top = ", ".join(n for n, _ in collections.Counter(unresolved).most_common(4))
+            print(f"    unresolved names: {top}")
 
 
 if __name__ == "__main__":

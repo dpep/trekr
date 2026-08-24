@@ -189,8 +189,8 @@ receiver shape, which is where layer 3 will start.
 
 2026-08-24, Apple M2 (8 cores), release build, warm page cache. Reproduce with
 `make bench`. Cold time is a single run — a second one is by definition not
-cold; the no-op and query timings are medians of five, which is the precision
-they are quoted to.
+cold; everything else is a median of five. Run-to-run variance is about 20 %, so
+these are two significant figures at best and are quoted that way.
 
 | corpus | files | cold | no-op reindex | defs | const refs | call sites | DB |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -240,12 +240,12 @@ what a full rebuild from SQL costs:
 
 | corpus | rebuild | total for `--ancestors` |
 |---|---:|---:|
-| rails | 41 ms | 49 ms |
-| discourse | 58 ms | 66 ms |
-| CRuby | 36 ms | 44 ms |
+| rails | 43 ms | 53 ms |
+| discourse | 73 ms | 81 ms |
+| CRuby | 39 ms | 48 ms |
 
 PLAN §4 said keep the tree cheap to rebuild rather than clever to patch, and
-gated that on a measurement. At ~50 ms for 11k files there is nothing to
+gated that on a measurement. At well under 100 ms for 11k files there is nothing to
 invalidate incrementally — memoizing per namespace on contributing blob OIDs
 would be paying interest on a debt we do not have (DEC-007). Linearization *is*
 memoized within a single build, because a file's every constant reference asks
@@ -255,6 +255,21 @@ Sanity on real code: `--ancestors ActiveRecord::Base` in rails linearizes 40+
 concerns with **nothing unresolved**; `--ancestors Topic` in discourse gets its
 concerns in order and honestly reports `ActiveRecord::Base` unresolved, because
 gems are not indexed yet.
+
+**How much of real code resolves.** 120 constant references sampled per corpus
+(excluding tests), each asked through `--def` exactly as a caller would:
+
+| corpus | resolved | via lexical / ancestor / path / root | residue: core | residue: gem |
+|---|---:|---|---:|---:|
+| rails | **82 %** | 26 / 1 / 24 / 31 | 14 % | 4 % |
+| discourse | **78 %** | 12 / 0 / 19 / 48 | 12 % | 10 % |
+| CRuby | **73 %** | 17 / 0 / 13 / 43 | 10 % | 17 % |
+
+The important part is not the rate but its composition: **every unresolved name
+traces to something not indexed** — `ENV`, `ArgumentError`, `Nokogiri`,
+`ActiveRecord::Base`, CRuby's internal `Primitive` — and none to a wrong turn on
+the ladder. Gem and core indexing is PLAN Phase 3; when it lands, this number
+moves without the resolver changing. Reproduce with `make bench`.
 
 **The query planner needs statistics, and this is not optional.** Without them
 SQLite plans `--refs` as a nested scan of the checkout's files: `--refs new` on
@@ -268,10 +283,10 @@ entirely.
 
 | `--refs NAME` on rails | rows | time |
 |---|---:|---:|
-| `find_each` | 26 | 8.8 ms |
-| `save` | 625 | 11 ms |
-| `each` | 1,994 | 26 ms |
-| `new` | 13,684 | 70 ms |
+| `find_each` | 26 | 9 ms |
+| `save` | 625 | 13 ms |
+| `each` | 1,994 | 34 ms |
+| `new` | 13,684 | 89 ms |
 
 **Where the bytes go.** 236 MB for the three corpora, ~10 KB per blob. Measured
 with `dbstat`:
