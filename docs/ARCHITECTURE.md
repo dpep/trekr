@@ -3,8 +3,10 @@
 The design contract. [PLAN.md](PLAN.md) says *why*; this says *what is built*.
 Change them in the same commit as the code, per [CLAUDE.md](../CLAUDE.md).
 
-Status: **Phase 1 (blob layer) built. Layer 2 resolves constants.** Method
-resolution and ranking (layer 3) are not started.
+Status: **Blob layer built. Layer 2 resolves constants and linearizes
+ancestors. Layer 3 resolves methods.** Gem and core indexing (PLAN Phase 3) is
+not started, and it is the single biggest thing between the current numbers and
+good ones.
 
 ## The one idea
 
@@ -19,9 +21,9 @@ boundary below is stated as a prohibition rather than a preference.
 ## Layers
 
 ```text
-┌─ 3. resolve + rank ────────────────── not started ─┐
-│    receiver ladder for METHODS, ranking, --explain │
-├─ 2. tree layer ───────────── constants BUILT ──────┤
+┌─ 3. resolve + rank ──────────────────────── BUILT ─┐
+│    resolve/  receiver ladder, ranked residue       │
+├─ 2. tree layer ──────────────────────────── BUILT ─┤
 │    tree/     per checkout: constant namespace,     │
 │              ancestor linearization. Method tables │
 │              and singleton chains not yet.         │
@@ -111,6 +113,34 @@ Two things the blob layer cannot know, resolved here:
   where go-to-definition on `Bar` belongs — but anywhere a *namespace* is
   wanted (`Bar::Baz`, `class Foo < Bar`) the alias is followed through.
 
+### `resolve/` — which method does this call site run?
+
+The ladder, tried in order, stopping at the first rung that names a type:
+
+| rung | how the type is established | confidence |
+|---|---|---|
+| `self` | the enclosing scope **is** the receiver — a language rule, no inference | 1.0 |
+| `const` | `Foo.bar` — resolve `Foo`, look up a *class* method | 1.0 |
+| `local:new` | `x = Foo.new` | agreeing / total |
+| `local:const` | `x = Foo` — holds the class, so `x.bar` is a class method | agreeing / total |
+| `sig` | an inline Sorbet `sig` on the method the value came from | agreeing / total |
+
+Once a type is settled the method is found by Ruby's own lookup, so a hit is
+exact rather than ranked (DEC-011). Below the ladder is **residue**: the
+receiver shape as the reason, plus candidates ordered by named tiers a reader
+can check — owner in the enclosing class's ancestors, then shares a namespace,
+then same file, then arity fits, then arity does not. No invented weights.
+
+Two things a naive implementation gets wrong here:
+
+- **A bare call in a class body dispatches on the class.** `validates :name`,
+  `prepend Foo`, and `class_attribute :x` are class-method calls even though a
+  `def` written in the same place is not. "Is a `def` here a singleton method"
+  and "what is `self` for a call here" are different questions; the extractor
+  records the second separately.
+- **`Foo.bar` walks the superclass chain, not the MRO.** Included modules
+  contribute no class methods; `extend`ed ones do, along with *their* includes.
+
 ### `store/` — SQLite, WAL, no cleverness
 
 Schema in [`src/store/schema.rs`](../src/store/schema.rs); it is the authority
@@ -194,9 +224,13 @@ these are two significant figures at best and are quoted that way.
 
 | corpus | files | cold | no-op reindex | defs | const refs | call sites | DB |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| rails | 3,307 | 1.5 s | **61 ms** | 50,353 | 91,178 | 308,453 | 47 MB |
-| discourse | 11,287 | 3.2 s | **121 ms** | 59,194 | 206,215 | 1,227,403 | 117 MB |
-| CRuby | 7,931 | 2.4 s | **98 ms** | 59,224 | 174,711 | 676,971 | 73 MB |
+| rails | 3,307 | 1.6 s | **64 ms** | 50,353 | 91,178 | 308,453 | 47 MB |
+| discourse | 11,287 | 3.5 s | **116 ms** | 59,194 | 206,215 | 1,227,403 | 118 MB |
+| CRuby | 7,931 | 3.9 s | **108 ms** | 59,224 | 174,711 | 676,971 | 73 MB |
+
+Cold time is the noisiest figure here — one run, and CRuby has swung between
+2.3 s and 3.9 s across runs on page-cache state alone. Treat it as one
+significant figure.
 
 - **A no-op reindex parses nothing** — the property the whole design exists for.
   About 40 ms of rails' 61 ms is the three `git` calls (`ls-files -s` 7 ms,
@@ -240,9 +274,15 @@ what a full rebuild from SQL costs:
 
 | corpus | rebuild | total for `--ancestors` |
 |---|---:|---:|
-| rails | 43 ms | 53 ms |
-| discourse | 73 ms | 81 ms |
-| CRuby | 39 ms | 48 ms |
+| rails | 120 ms | 129 ms |
+| discourse | 144 ms | 153 ms |
+| CRuby | 117 ms | 125 ms |
+
+These roughly tripled when the tree gained method tables (43 / 73 / 39 ms
+before): placing 50–60k methods costs more than placing 15k constants. Still
+comfortably inside DEC-007's terms, so the rebuild stays whole — but it is the
+number to watch, and the first move if it crosses ~200 ms is caching one built
+tree per process, not patching one in place.
 
 PLAN §4 said keep the tree cheap to rebuild rather than clever to patch, and
 gated that on a measurement. At well under 100 ms for 11k files there is nothing to

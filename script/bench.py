@@ -168,6 +168,7 @@ def main(corpora):
               f"({whole:.0f} ms total, {baseline:.0f} ms of it process + query)")
 
     resolution_rate(indexed)
+    call_resolution(indexed)
 
     # A worktree that shares every blob should cost a scan and no parsing.
     clone = "/tmp/trekr-bench-worktree"
@@ -180,6 +181,70 @@ def main(corpora):
         print(f"  {(time.perf_counter() - start) * 1000:.0f} ms, "
               f"{out['files']:,} files, parsed {out['parsed']}")
         shutil.rmtree(clone, ignore_errors=True)
+
+
+def call_resolution(corpora):
+    """What share of real call sites does the receiver ladder resolve?
+
+    Session 1 measured the receiver *shapes* and predicted that implicit +
+    self + const — 56% of call sites — need no inference at all. This is the
+    check: does the ladder actually deliver that, or does something else eat
+    it? Either answer is a finding.
+    """
+    print(f"\n=== method resolution ({SAMPLE} sampled call sites per corpus)")
+    db = sqlite3.connect(DB)
+    random.seed(11)
+    for repo in corpora:
+        rows = db.execute(
+            """SELECT f.path, s.line, s.col, s.recv FROM call_site s
+                 JOIN file f ON f.blob_id = s.blob_id
+                 JOIN checkout c ON c.id = f.checkout_id
+                WHERE c.root = ? AND f.path NOT LIKE '%test%' AND f.path NOT LIKE '%spec%'""",
+            (checkout_root(repo),),
+        ).fetchall()
+        if len(rows) < SAMPLE:
+            continue
+        by_rung = collections.Counter()
+        by_shape = collections.Counter()
+        # Implicit receivers split by what encloses them. Inside a class the
+        # enclosing scope IS the receiver; inside a module it is not — whatever
+        # includes the module is — so the two have different ceilings, and
+        # averaging them hides the finding.
+        scope_total = collections.Counter()
+        scope_resolved = collections.Counter()
+        no_inference = 0
+        for path, line, col, shape in random.sample(rows, SAMPLE):
+            out = trekr(["--def", f"{path}:{line}:{col}", "--json"], repo).stdout
+            answer = json.loads(out) if out.strip() else {}
+            if answer.get("under") != "call":
+                by_rung["not a call at that position"] += 1
+                continue
+            resolved = answer.get("status") == "resolved"
+            if resolved:
+                rung = answer.get("resolved_via", "?")
+                by_rung["resolved: " + rung] += 1
+                if rung in ("self", "const"):
+                    no_inference += 1
+            else:
+                by_rung["residue"] += 1
+                by_shape[answer.get("receiver", "?")] += 1
+            if answer.get("receiver") in ("implicit", "self"):
+                where = answer.get("receiver_kind") or "no scope (top level)"
+                scope_total[where] += 1
+                scope_resolved[where] += resolved
+        resolved = sum(v for k, v in by_rung.items() if k.startswith("resolved"))
+        print(f"\n  {os.path.basename(repo.rstrip('/'))}: "
+              f"{100 * resolved / SAMPLE:.0f}% resolved "
+              f"({100 * no_inference / SAMPLE:.0f}% with no inference at all)")
+        for key, count in sorted(by_rung.items()):
+            print(f"    {key:<26} {100 * count / SAMPLE:5.1f}%  ({count})")
+        if by_shape:
+            shapes = ", ".join(f"{k} {v}" for k, v in by_shape.most_common())
+            print(f"    residue by receiver shape: {shapes}")
+        for where, count in scope_total.most_common():
+            print(f"    self inside a {where:<22} "
+                  f"{100 * scope_resolved[where] / count:3.0f}% resolved  "
+                  f"({scope_resolved[where]}/{count})")
 
 
 def resolution_rate(corpora):

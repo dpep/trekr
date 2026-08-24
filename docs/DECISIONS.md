@@ -159,3 +159,58 @@ the reason, not nothing.
 
 **Reverses if** gem indexing (PLAN Phase 3) lands, at which point a partial
 chain becomes rare enough that stopping is the more accurate choice.
+
+## DEC-011 — Method confidence is a count of agreeing evidence
+
+**Decided.** A rung that is a *language rule* — implicit or explicit `self`, a
+constant receiver — reports `confidence: 1.0`. A rung that *infers* a type from
+assignments reports `agreeing / total`: two assignments to one local that name
+different classes give `0.5`, and `agreement: "1/2"` travels with it.
+
+**Why.** DEC-008's discipline extends: a grade must trace to a count or be 1/0.
+The measured yields available (rwr D61/D62: 64 % of sigs name a usable class,
+implicit self is 53–66 % of call sites) are **coverage** numbers — how often a
+rung applies — not **accuracy** numbers. Using coverage as confidence would be a
+category error dressed as rigour. What *is* countable is how much of the
+evidence agreed, so that is what the number reports.
+
+The assignment scan is file-wide rather than flow-sensitive on purpose: an
+assignment in an unrelated method still votes, which over-counts disagreement
+and pushes confidence **down**. For a number a caller may act on, erring low is
+the safe direction.
+
+**Reverses if** the TracePoint gold set (PLAN §5) is built. Then each rung has a
+measured accuracy and confidence can be calibrated rather than counted — which
+is the only honest way to make these numbers comparable across rungs.
+
+## DEC-012 — Assignments are extracted but never stored
+
+**Decided.** `Facts::assigns` is produced by the extractor and written to no
+table. The local and instance-variable rungs read it from the reparse `--def`
+already does.
+
+**Why.** What a local holds is a question about one file, and the answer is
+wanted only at the moment someone asks about a position in that file. Storing it
+would add roughly as many rows as `call_site` — already 72 % of the database —
+for a fact that never crosses a file boundary. The layer split stays clean: the
+blob layer stores what other files need, and this is not that.
+
+**Reverses if** cross-file ivar typing is wanted (`@foo` assigned in a concern,
+used in the model). That is a real gap, and it is the point at which these stop
+being a within-file question.
+
+## DEC-013 — The cache version covers the extractor, not just the schema
+
+**Decided.** `schema::VERSION` is bumped for any change to *what the extractor
+emits*, not only for changes to table definitions.
+
+**Why.** Facts are cached by blob OID on the premise that they are a pure
+function of the bytes. True — but when the *function* changes, identical bytes
+must still be re-read. This bit within one session: fixing class-body call
+dispatch changed no table, so every already-indexed blob stayed "known" and the
+fix shipped dead until the version moved. A stale cache that looks fresh is
+worse than a slow one.
+
+**Reverses if** the extractor is ever versioned separately from the schema —
+which would be worth doing if reindexing became expensive, since an extractor
+change need only invalidate the fact tables and not the checkout map.
