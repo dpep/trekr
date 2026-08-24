@@ -1,12 +1,19 @@
 //! The on-disk schema. Kept in sync with `docs/ARCHITECTURE.md` in the same
 //! commit — that document is the contract, this file is its implementation.
 
-/// Bump on any schema change. There are no migrations, and that is deliberate:
+/// Bump on any change to the schema **or to what the extractor emits**.
+///
+/// The second half is easy to miss and was: facts are cached by blob OID on the
+/// premise that they are a pure function of the bytes — but when the *function*
+/// changes, identical bytes must still be re-read. An extractor fix otherwise
+/// ships silently dead, because every blob it would affect is already "known".
+///
+/// There are no migrations, and that is deliberate:
 /// every row below `blob` is derived from bytes this machine can read again, so
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 3;
+pub(crate) const VERSION: i64 = 4;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.

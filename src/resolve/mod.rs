@@ -52,6 +52,12 @@ pub(crate) struct MethodAnswer {
     pub(crate) receiver: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) receiver_type: Option<String>,
+    /// Whether that type is a `class` or a `module`. It matters more than it
+    /// looks: for an implicit receiver inside a **module**, the enclosing scope
+    /// is not the real receiver — whatever includes the module is — so a miss
+    /// there is expected rather than a failure of the lookup.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) receiver_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) owner: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -59,6 +65,12 @@ pub(crate) struct MethodAnswer {
     /// Assignments that agreed / were considered, when a rung inferred a type.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) agreement: Option<String>,
+    /// Ancestors of the receiver's type that we could not resolve. A "not
+    /// found" is only as trustworthy as this list is short: a method defined in
+    /// an unindexed gem ancestor looks exactly like a method that does not
+    /// exist.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) unresolved_ancestors: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) candidates: Vec<Candidate>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -82,10 +94,12 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
                     confidence: receiver.agreeing as f64 / receiver.total as f64,
                     resolved_via: Some(receiver.via.to_string()),
                     receiver: shape,
+                    receiver_kind: tree.kind_of(&receiver.fqn).map(str::to_string),
                     receiver_type: Some(receiver.fqn.clone()),
                     owner: Some(found.owner.clone()),
                     sites: vec![found.site.clone()],
                     agreement: agreement(&receiver),
+                    unresolved_ancestors: Vec::new(),
                     candidates: Vec::new(),
                     reason: None,
                 },
@@ -236,6 +250,15 @@ fn residue(
         .as_ref()
         .map(|fqn| tree.ancestors(fqn).chain.clone())
         .unwrap_or_default();
+    // Whichever type we did settle on — the receiver's, else the enclosing
+    // scope's — say what we could not see of its ancestry.
+    let truncated = receiver
+        .as_ref()
+        .map(|r| r.fqn.clone())
+        .or_else(|| here.clone())
+        .map(|fqn| tree.ancestors(&fqn).unresolved.clone())
+        .unwrap_or_default();
+
     let mut ranked: Vec<(u8, Candidate)> = tree
         .named(&call.name)
         .into_iter()
@@ -289,10 +312,15 @@ fn residue(
         confidence: 0.0,
         resolved_via: None,
         receiver: call.recv.as_str(),
+        receiver_kind: receiver
+            .as_ref()
+            .and_then(|r| tree.kind_of(&r.fqn))
+            .map(str::to_string),
         receiver_type: receiver.map(|r| r.fqn),
         owner: None,
         sites: Vec::new(),
         agreement: None,
+        unresolved_ancestors: truncated,
         candidates,
         reason: Some(reason),
     }
@@ -352,6 +380,29 @@ mod tests {
             found.sites[0].line, 2,
             "inside `def self.go`, `made` is the class method on line 2"
         );
+    }
+
+    #[test]
+    fn a_bare_call_in_a_class_body_dispatches_on_the_class() {
+        // `self` in a class body is the class, so `setup` runs the singleton
+        // method — even though a `def` written in the same place would not be
+        // one. Conflating those two questions is what made every class-level
+        // DSL call (`validates`, `prepend`, `class_attribute`) unresolvable.
+        let source = "class W\n  def self.setup\n  end\n  setup\n  def setup\n  end\nend\n";
+        let found = answer(source, "setup");
+        assert_eq!(found.status, Status::Resolved);
+        assert_eq!(
+            found.sites[0].line, 2,
+            "the class method on line 2, not the instance method on line 5"
+        );
+    }
+
+    #[test]
+    fn a_top_level_call_has_no_class_to_dispatch_on() {
+        // `self` at the top level is `main`, an ordinary Object instance —
+        // which is not indexed, so this is residue rather than a wrong answer.
+        let source = "def helper\nend\nhelper\n";
+        assert_eq!(answer(source, "helper").status, Status::Residue);
     }
 
     #[test]

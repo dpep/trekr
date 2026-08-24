@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Fixed: a bare call in a class body was looked up as an instance method.
+  `self` in a class body is the class, so `validates :name` and `prepend Foo`
+  dispatch on it. "Is a `def` here a singleton method" and "what is `self` for
+  a call here" are different questions and were sharing one flag.
+- `--def` on a call now reports `receiver_kind` and `unresolved_ancestors`.
+  A miss inside a **module** is expected rather than a failure — the module is
+  not the real receiver, whatever includes it is — and a miss below an
+  unindexed gem ancestor is a weaker "no" than one below a complete chain.
+- The cache version now covers changes to **what the extractor emits**, not
+  just the schema (DEC-013). Facts are keyed by blob OID, so an extractor fix
+  otherwise ships dead against an already-indexed repo. **Existing databases
+  reindex once.**
+
 - Method resolution at `--def` (`resolve/`): the receiver ladder in
   measured-yield order — implicit/explicit `self`, constant receivers, locals
   and instance variables typed from their assignments, then inline Sorbet

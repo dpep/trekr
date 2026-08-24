@@ -1169,6 +1169,14 @@ impl Tree {
         self.scopes(written_nesting).into_iter().next()
     }
 
+    /// `class`, `module`, or `constant` — for a name the checkout declares.
+    pub(crate) fn kind_of(&self, fqn: &str) -> Option<&str> {
+        self.names
+            .get(fqn)
+            .map(|entry| entry.kind.as_str())
+            .filter(|kind| !kind.is_empty())
+    }
+
     pub(crate) fn is_known(&self, fqn: &str) -> bool {
         self.names.contains_key(fqn)
     }

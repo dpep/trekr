@@ -19,6 +19,20 @@ use line_index::LineIndex;
 use ruby_prism::{Node, Visit};
 
 /// A lexical scope in progress.
+/// What kind of body a frame opened. It decides two different things that are
+/// easy to conflate: whether a `def` inside it is a singleton method, and what
+/// `self` is for a *call* inside it.
+#[derive(Clone, Copy, PartialEq)]
+enum Opens {
+    /// A `class` or `module` body. `self` is the class.
+    Scope,
+    /// A `class << self` body. `self` is the class, and defs are singletons.
+    Singleton,
+    /// A `def` body. `self` is the class for `def self.x`, an instance
+    /// otherwise.
+    Method { singleton: bool },
+}
+
 struct Frame {
     /// Did this frame push a name onto the nesting stack? `class << self` does
     /// not — it renames nothing, it only flips what `def` means.
@@ -26,19 +40,28 @@ struct Frame {
     visibility: Visibility,
     /// Inside `class << self`, or `class << Foo`.
     singleton: bool,
+    /// Is `self` the class here rather than an instance of it? True in a class
+    /// or module body — which is why `validates :name` and `prepend Foo` are
+    /// class-method calls — and inside `def self.x`, and false inside `def x`
+    /// or at the top level, where `self` is `main`.
+    self_is_class: bool,
     /// `module_function` seen with no arguments: every later `def` in this body
     /// becomes both a private instance method and a public singleton one.
     module_function: bool,
 }
 
 impl Frame {
-    fn new(pushed: bool, singleton: bool) -> Frame {
+    fn new(pushed: bool, opens: Opens) -> Frame {
         Frame {
             pushed,
             // A class or module body starts public; only the file scope is
             // private (Ruby's rule for top-level `def`).
             visibility: Visibility::Public,
-            singleton,
+            singleton: opens == Opens::Singleton,
+            self_is_class: match opens {
+                Opens::Scope | Opens::Singleton => true,
+                Opens::Method { singleton } => singleton,
+            },
             module_function: false,
         }
     }
@@ -72,6 +95,8 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             pushed: false,
             visibility: Visibility::Private,
             singleton: false,
+            // At the top level `self` is `main`, an instance of Object.
+            self_is_class: false,
             module_function: false,
         }],
         pending_sig: None,
@@ -103,12 +128,17 @@ impl<'a> Extractor<'a> {
         self.frames.last().is_some_and(|f| f.singleton)
     }
 
-    fn enter(&mut self, name: Option<String>, singleton: bool) {
+    fn enter(&mut self, name: Option<String>, opens: Opens) {
         let pushed = name.is_some();
         if let Some(name) = name {
             self.nesting.insert(0, name);
         }
-        self.frames.push(Frame::new(pushed, singleton));
+        self.frames.push(Frame::new(pushed, opens));
+    }
+
+    /// What `self` is for a call written here.
+    fn self_is_class(&self) -> bool {
+        self.frames.last().is_some_and(|f| f.self_is_class)
     }
 
     fn leave(&mut self) {
@@ -323,7 +353,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         // Compact `class Foo::Bar` opens ONE lexical scope, not two: Ruby's
         // `Module.nesting` is `[Foo::Bar]`, so constants inside cannot see
         // `Foo`'s. Pushing the written path whole is what preserves that.
-        self.enter(Some(name), false);
+        self.enter(Some(name), Opens::Scope);
         if let Some(body) = node.body() {
             self.visit(&body);
         }
@@ -344,7 +374,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         );
         self.push_def(def);
 
-        self.enter(Some(name), false);
+        self.enter(Some(name), Opens::Scope);
         if let Some(body) = node.body() {
             self.visit(&body);
         }
@@ -360,7 +390,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         if attached.is_some() {
             self.visit(&expr);
         }
-        self.enter(attached, true);
+        self.enter(attached, Opens::Singleton);
         if let Some(body) = node.body() {
             self.visit(&body);
         }
@@ -411,7 +441,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
 
         // Descend for calls and constants in the body — but not through a
         // receiver we already recorded.
-        self.enter(None, singleton);
+        self.enter(None, Opens::Method { singleton });
         if let Some(params) = node.parameters() {
             self.visit_parameters_node(&params);
         }
@@ -778,7 +808,10 @@ impl<'pr> Extractor<'_> {
             argc = argc.map(|n| n + 1);
         }
         let pos = self.pos(message.start_offset());
-        let singleton = self.in_singleton();
+        // Not `in_singleton()`: that answers "is a `def` here a singleton
+        // method", which is a different question. A bare call in a class body
+        // dispatches on the class even though a `def` there does not.
+        let singleton = self.self_is_class();
         self.facts.calls.push(Call {
             name,
             recv,
