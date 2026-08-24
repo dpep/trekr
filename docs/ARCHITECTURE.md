@@ -134,25 +134,29 @@ of a guess. Narrowing it is layer 3's job.
 
 ## Measurements
 
-2026-08-24, Apple M2 (8 cores), release build, warm page cache. Wall time is
-the median of repeated runs; counts are exact.
+2026-08-24, Apple M2 (8 cores), release build, warm page cache. Reproduce with
+`make bench`. Cold time is a single run — a second one is by definition not
+cold; the no-op and query timings are medians of five, which is the precision
+they are quoted to.
 
 | corpus | files | cold | no-op reindex | defs | const refs | call sites | DB |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| rails | 3,307 | 1.1 s | **63 ms** | 50,353 | 91,178 | 308,453 | 44 MB |
-| discourse | 11,287 | 3.2 s | **124 ms** | 59,194 | 206,215 | 1,227,403 | 111 MB |
-| CRuby | 7,931 | 4.9 s | **104 ms** | 59,224 | 174,711 | 676,971 | 69 MB |
+| rails | 3,307 | 1.5 s | **61 ms** | 50,353 | 91,178 | 308,453 | 47 MB |
+| discourse | 11,287 | 3.2 s | **121 ms** | 59,194 | 206,215 | 1,227,403 | 117 MB |
+| CRuby | 7,931 | 2.4 s | **98 ms** | 59,224 | 174,711 | 676,971 | 73 MB |
 
 - **A no-op reindex parses nothing** — the property the whole design exists for.
-  About 40 ms of rails' 63 ms is the three `git` calls (`ls-files -s` 7 ms,
+  About 40 ms of rails' 61 ms is the three `git` calls (`ls-files -s` 7 ms,
   `diff-files` 9 ms, `ls-files -o` 24 ms); the rest is rewriting the file map.
   Rubydex pays 177 ms on rails and 845 ms on GitLab for the same no-op (PLAN
   §8), *and* pays it again on every process boot.
-- **A second worktree costs 152 ms and zero parses.** A `--shared` clone of
-  rails indexed in 152 ms with `parsed: 0` — the facts were already on disk.
-- **One edited file costs 75 ms**, of which ~63 ms is the scan floor above.
+- **A second worktree costs ~0.2 s and zero parses.** A `--shared` clone of
+  rails indexes with `parsed: 0` — the facts were already on disk.
+- **One edited file costs ~75 ms**, of which ~61 ms is the scan floor above.
 - Cold time is not the headline and is not uniformly better than Rubydex's
-  (rails 1.1 s vs their 1.35 s index+resolve; discourse 3.2 s vs their 2.4 s).
+  (rails 1.5 s vs their 1.35 s index+resolve; discourse 3.2 s vs their 2.4 s).
+  About 0.3 s of ours is the `ANALYZE` that keeps queries fast — a cost paid at
+  write time so it is not paid at read time.
   The difference is that ours happens once per machine and theirs happens once
   per process, and ours ends with the facts on disk rather than in RAM. It is
   also not yet a like-for-like comparison: they resolve, and this layer does not.
@@ -183,19 +187,20 @@ rails took **90 seconds** for 13,684 rows. With `ANALYZE` run, the planner
 reverses the join — files drive, a bloom filter rejects — and the same query
 takes **66 ms**. `PRAGMA optimize` on close is what keeps it that way; it
 re-analyzes only tables that have grown enough to matter, so a no-op reindex is
-still 67 ms. Anyone adding a query over these tables should check
+still 61 ms. Anyone adding a query over these tables should check
 `EXPLAIN QUERY PLAN` on a *populated* database — a fixture-sized one hides this
 entirely.
 
 | `--refs NAME` on rails | rows | time |
 |---|---:|---:|
-| `find_each` | 26 | 8.6 ms |
+| `find_each` | 26 | 8.8 ms |
 | `save` | 625 | 11 ms |
-| `each` | 1,994 | 25 ms |
-| `new` | 13,684 | 66 ms |
+| `each` | 1,994 | 26 ms |
+| `new` | 13,684 | 70 ms |
 
 **Where the bytes go.** ~10 KB per blob, dominated by `call_site` (2.2 M rows
-of 22.4 M total). Extrapolating linearly to a 100k-file repo gives ~1 GB. Not
+across the three corpora). Extrapolating linearly to a 100k-file repo gives
+~1 GB. Not
 optimized, deliberately: the encoding is boring on purpose and there is no
 measurement yet saying it needs to be otherwise.
 

@@ -15,8 +15,8 @@ that name."
 
 Facts are keyed by git blob OID, so every worktree of a repo shares one index, a
 branch switch reparses only what is genuinely new, and a reindex with no edits
-parses nothing at all. Measured on rails: 1.1 s cold, **63 ms** to reindex with
-nothing changed, **152 ms and zero parses** for a second worktree. Rubydex —
+parses nothing at all. Measured on rails: 1.5 s cold, **61 ms** to reindex with
+nothing changed, **~0.2 s and zero parses** for a second worktree. Rubydex —
 Shopify's Rust indexer, and the closest thing to a competitor — pays 177 ms for
 that same no-op, and pays it again on every process boot because it never writes
 anything down.
@@ -40,10 +40,11 @@ agent. Exit codes mean something: `0` matched, `1` a definitive nothing, `2` the
 request could not be served.
 
 ```console
-$ trekr --refs find_each
-activerecord/lib/active_record/relation/batches.rb:85:9    definition  method
-activerecord/lib/active_record/relation/batches.rb:161:7   call        implicit
-activerecord/lib/active_record/querying.rb:22:5            call        const ActiveRecord::Relation
+$ trekr --refs find_each   # in rails — 4 of 26 mentions, one per receiver shape
+activerecord/lib/active_record/relation/batches.rb:85:9  definition  method
+activerecord/test/cases/batches_test.rb:20:12  call        const Post
+activerecord/test/cases/batches_test.rb:562:33  call        local incorrectly_sorted_orders
+activerecord/lib/active_record/destroy_association_async_job.rb:28:82  call        other
 ```
 
 `--refs` is **name-level**: two unrelated `Config` classes both answer, and so

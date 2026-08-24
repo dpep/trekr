@@ -11,10 +11,10 @@
 - Fixed: `--refs` on a common name took 90 s. The store now runs
   `PRAGMA optimize` on close, without which SQLite plans the join as a nested
   scan.
-- Measured: rails (3.3k files) indexes cold in 1.1 s and reindexes in 63 ms
-  with nothing parsed; discourse (11.3k) in 3.2 s / 124 ms; CRuby (7.9k) in
-  4.9 s / 104 ms. A second worktree costs 152 ms and zero parses. Numbers and
-  their caveats in `docs/ARCHITECTURE.md`.
+- Measured: rails (3.3k files) indexes cold in 1.5 s and reindexes in 61 ms
+  with nothing parsed; discourse (11.3k) in 3.2 s / 121 ms; CRuby (7.9k) in
+  2.4 s / 98 ms. A second worktree costs ~0.2 s and zero parses. Reproduce with
+  `make bench`; caveats in `docs/ARCHITECTURE.md`.
 - Scaffolded the crate: single binary `trekr`, modules mirroring PLAN §4's
   layers, `script/check.sh` as the commit gate.
 - Blob-layer extraction (`extract/`): Prism reads one blob's bytes into
