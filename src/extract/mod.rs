@@ -648,6 +648,7 @@ impl<'pr> Extractor<'_> {
                 self.handle_attr(call, &name, &args)
             }
             "include" | "prepend" | "extend" => self.handle_mixin(call, &name, &args),
+            "concerning" => self.handle_concerning(call, &args),
             "alias_method" => self.handle_alias_method(call, &args),
             "enum" => self.handle_enum(call, &args),
             // Any macro the expansion table knows. The probe argument only
@@ -758,6 +759,55 @@ impl<'pr> Extractor<'_> {
             self.record_call(call);
         }
         any
+    }
+
+    /// `concerning :Name do … end` — Rails' inline concern.
+    ///
+    /// Two statements written as one: a `module Name` nested in this scope that
+    /// extends `ActiveSupport::Concern`, and an `include Name` right after it.
+    /// Both halves are facts, so both are emitted — without the module the
+    /// methods inside land on the class itself with the wrong owner, and without
+    /// the edge the class never reaches them.
+    ///
+    /// `included do … end` inside the block is left as the ordinary call it is:
+    /// its body runs against the including class, which is a tree question, not
+    /// a blob one.
+    fn handle_concerning(&mut self, call: &ruby_prism::CallNode<'pr>, args: &[Node<'pr>]) -> bool {
+        let Some(name) = args.first().and_then(literal_name) else {
+            return false;
+        };
+        // A concern names a constant. Anything else is somebody else's method
+        // that happens to share the name.
+        if !name.starts_with(|c: char| c.is_ascii_uppercase()) {
+            return false;
+        }
+        let Some(block) = call.block().and_then(|b| b.as_block_node()) else {
+            return false;
+        };
+
+        let start = args[0].location().start_offset();
+        let mut def = self.def(
+            name.clone(),
+            Kind::Module,
+            start,
+            call.location().end_offset(),
+        );
+        def.via = Some("concerning".to_string());
+        self.push_def(def);
+        self.facts.ancestry.push(Ancestry {
+            owner: self.nesting.clone(),
+            relation: Relation::Include,
+            target: name.clone(),
+            pos: self.pos(start),
+        });
+        self.record_call(call);
+
+        self.enter(Some(name), Opens::Scope);
+        if let Some(body) = block.body() {
+            self.visit(&body);
+        }
+        self.leave();
+        true
     }
 
     /// `self.table_name = "legacy_posts"` — a model pointing at a table that is
@@ -1591,5 +1641,54 @@ mod tests {
     fn unparseable_ruby_reports_the_errors_instead_of_pretending() {
         let facts = extract(b"class K\n  def broken(\nend\n");
         assert!(facts.parse_errors > 0, "a truncated def is a syntax error");
+    }
+}
+
+#[cfg(test)]
+mod concerning_tests {
+    use super::*;
+
+    /// `concerning` is a module definition and an include written as one
+    /// expression, so both halves have to come out.
+    #[test]
+    fn concerning_defines_a_nested_module_and_includes_it() {
+        let facts = extract(
+            b"class Widget\n\
+              \x20 concerning :Tracking do\n\
+              \x20   def track\n\
+              \x20   end\n\
+              \x20 end\n\
+              end\n",
+        );
+        let module = facts
+            .defs
+            .iter()
+            .find(|d| d.kind == Kind::Module)
+            .expect("the concern is a module");
+        assert_eq!(module.name, "Tracking");
+        assert_eq!(module.nesting, ["Widget"]);
+        assert_eq!(module.via.as_deref(), Some("concerning"));
+
+        let method = facts
+            .defs
+            .iter()
+            .find(|d| d.kind == Kind::Method)
+            .expect("the block's methods belong to the concern");
+        // Nesting is innermost-first.
+        assert_eq!(method.nesting, ["Tracking", "Widget"]);
+
+        let edge = facts.ancestry.first().expect("and the class includes it");
+        assert_eq!(edge.relation, Relation::Include);
+        assert_eq!(edge.target, "Tracking");
+        assert_eq!(edge.owner, ["Widget"]);
+    }
+
+    /// Somebody else's `concerning` is not Rails'. A non-constant argument is
+    /// the cheap tell, and guessing wrong would invent a module.
+    #[test]
+    fn a_concerning_that_names_no_constant_is_left_alone() {
+        let facts = extract(b"class Widget\n  concerning :tracking do\n  end\nend\n");
+        assert!(facts.defs.iter().all(|d| d.name != "tracking"));
+        assert!(facts.ancestry.is_empty());
     }
 }
