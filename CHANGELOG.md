@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `--symbols FILE` parses the file instead of querying the index. It was the
+  one query verb that did not — `--def` and `--refs` both reparse so an
+  unindexed edit still answers — so an outline could be stale, and on a repo
+  nobody had indexed it printed `no symbols … (indexed? try --index)`. Now any
+  readable Ruby file outlines, in a repo or not, matching the LSP surface
+  (DEC-024). Exit 1 is reserved for a file that really defines nothing.
+
 - `concerning :Name do … end` is a module definition and an `include`, so it
   now emits both: the block's methods own themselves as `Enclosing::Name`
   rather than landing on the class, and the class reaches them. Measured yield

@@ -431,22 +431,23 @@ fn cmd_status(out: Output) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// Outline one file, by reading it.
+///
+/// Parsed rather than looked up: `--def` and `--refs` both reparse so that an
+/// unindexed edit still answers correctly, and an outline that went stale — or
+/// answered nothing at all until someone ran `--index` — was the odd one out.
+/// Parsing also means any readable Ruby file outlines, in a repo or not, which
+/// is the same rule the LSP surface follows (DEC-024).
 fn cmd_symbols(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
-    let absolute = std::fs::canonicalize(path)?;
-    let root = scan::repo_root(&absolute)?;
-    let relative = absolute
-        .strip_prefix(&root)
-        .unwrap_or(&absolute)
-        .to_string_lossy()
-        .into_owned();
-    let store = open_store()?;
-    let symbols = store.symbols(&root.to_string_lossy(), &relative)?;
+    let source = std::fs::read(path)?;
+    let facts = extract::extract(&source);
+    let symbols: Vec<crate::store::Symbol> = facts.defs.iter().map(Into::into).collect();
 
     if emit_rows(out, &symbols)? {
         return Ok(exit_on(!symbols.is_empty()));
     }
     if symbols.is_empty() {
-        println!("no symbols for {relative} (indexed? try `trekr --index`)");
+        println!("no definitions in {}", path.display());
         return Ok(ExitCode::from(1));
     }
     for s in &symbols {

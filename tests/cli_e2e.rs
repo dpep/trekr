@@ -767,8 +767,15 @@ fn nothing_to_report_is_an_exit_code_not_an_error() {
 
     // Never indexed: a definitive "no", distinct from a failure to serve.
     assert_eq!(trekr(&db, &dir, &["--status"]).status.code(), Some(1));
+    // An outline is parsed, not looked up, so it answers before any index
+    // exists. Exit 1 is reserved for a file that really defines nothing.
     assert_eq!(
         trekr(&db, &dir, &["--symbols", "widget.rb"]).status.code(),
+        Some(0)
+    );
+    fs::write(dir.join("blank.rb"), "# just a comment\n").unwrap();
+    assert_eq!(
+        trekr(&db, &dir, &["--symbols", "blank.rb"]).status.code(),
         Some(1)
     );
 

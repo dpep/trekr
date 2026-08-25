@@ -226,42 +226,6 @@ impl Store {
         })
     }
 
-    /// Every definition in one checkout's file, in the order they are written.
-    pub(crate) fn symbols(&self, root: &str, path: &str) -> Result<Vec<Symbol>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT d.name, d.kind, d.nesting, d.singleton, d.visibility, d.params,
-                    d.via, d.target, d.sig_returns, d.line, d.col, d.end_line
-               FROM def d
-               JOIN file f ON f.blob_id = d.blob_id
-               JOIN checkout c ON c.id = f.checkout_id
-              WHERE c.root = ?1 AND f.path = ?2
-              ORDER BY d.line, d.col",
-        )?;
-        let rows = stmt.query_map(params![root, path], |r| {
-            let params: String = r.get(5)?;
-            Ok(Symbol {
-                name: r.get(0)?,
-                kind: r.get(1)?,
-                nesting: split_nesting(&r.get::<_, String>(2)?),
-                singleton: r.get::<_, i64>(3)? != 0,
-                visibility: r.get(4)?,
-                params: decode_params(&params)
-                    .into_iter()
-                    .map(|p| format!("{}:{}", p.kind.as_str(), p.name))
-                    .collect(),
-                via: r.get(6)?,
-                target: r.get(7)?,
-                sig_returns: r.get(8)?,
-                line: r.get(9)?,
-                col: r.get(10)?,
-                end_line: r.get(11)?,
-                path: String::new(),
-                root: root.to_string(),
-            })
-        })?;
-        rows.collect()
-    }
-
     /// Every mention of a name in one checkout: definitions, constant
     /// references, and call sites, in source order.
     ///
@@ -588,6 +552,35 @@ pub(crate) struct Ref {
     pub(crate) owner: Option<String>,
 }
 
+/// A freshly parsed definition, in the shape the store returns.
+///
+/// `path`/`root` stay empty: a caller holding the `Def` already knows the file
+/// it read, which is exactly the case the stored rows fill those in for.
+impl From<&Def> for Symbol {
+    fn from(def: &Def) -> Symbol {
+        Symbol {
+            path: String::new(),
+            root: String::new(),
+            name: def.name.clone(),
+            kind: def.kind.as_str().to_string(),
+            nesting: def.nesting.clone(),
+            singleton: def.singleton,
+            visibility: def.visibility.as_str().to_string(),
+            params: def
+                .params
+                .iter()
+                .map(|p| format!("{}:{}", p.kind.as_str(), p.name))
+                .collect(),
+            via: def.via.clone(),
+            target: def.target.clone(),
+            sig_returns: def.sig_returns.clone(),
+            line: def.pos.line,
+            col: def.pos.col,
+            end_line: def.end_line,
+        }
+    }
+}
+
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct Symbol {
     /// Empty for `--symbols`, which already knows the file it asked about.
@@ -827,21 +820,22 @@ mod tests {
         assert!(store.refs("/a", "absent").unwrap().is_empty());
     }
 
+    /// An outline is now parsed rather than queried, so source order is the
+    /// extractor's guarantee to keep, not SQL's `ORDER BY`.
     #[test]
-    fn symbols_come_back_in_line_order() {
-        let mut store = Store::open_in_memory().unwrap();
-        indexed(
-            &mut store,
-            "/a",
-            "w.rb",
-            "class Widget\n  def b\n  end\n  def a\n  end\nend\n",
+    fn an_outline_follows_the_source_and_carries_what_the_rows_did() {
+        let facts =
+            crate::extract::extract(b"class Widget\n  def b\n  end\n  attr_reader :a\nend\n");
+        let symbols: Vec<Symbol> = facts.defs.iter().map(Into::into).collect();
+        let names: Vec<&str> = symbols.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, ["Widget", "b", "a"]);
+
+        let generated = symbols.last().expect("attr_reader's method");
+        assert_eq!(generated.via.as_deref(), Some("attr_reader"));
+        assert_eq!(generated.nesting, ["Widget"]);
+        assert!(
+            generated.path.is_empty(),
+            "a parsed row leaves the path to the caller that read the file"
         );
-        let names: Vec<_> = store
-            .symbols("/a", "w.rb")
-            .unwrap()
-            .into_iter()
-            .map(|s| s.name)
-            .collect();
-        assert_eq!(names, ["Widget", "b", "a"], "an outline follows the source");
     }
 }
