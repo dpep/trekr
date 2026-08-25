@@ -80,6 +80,15 @@ often and is always right, and they are not the same tool.
 * **The warm median is one definition request per position across hundreds of
   distinct files**, each preceded by a `didOpen`. It is not the same figure as
   DEC-007's 0.2 ms, which repeated one position.
+* **There is no ruby-lsp 0.27 row on discourse, deliberately.** Discourse pins
+  `ruby-lsp` in its own Gemfile, so a composed bundle there runs 0.26.9 whatever
+  is installed alongside. Forcing the beta needs ruby-lsp's `--beta`, which
+  re-resolves the project's **entire** 300-gem bundle with pre-releases allowed
+  and installs the result into a shared gem home. That was started, watched, and
+  **stopped**: mutating a corpus's bundle to flatter a benchmark row is not a
+  trade worth making, and the beta already has a clean row on a corpus that pins
+  nothing. When 0.27 ships stable and a project can pin it honestly, the row
+  fills itself in.
 
 ## The series
 
