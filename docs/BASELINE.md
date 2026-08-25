@@ -1325,3 +1325,68 @@ and that a controlled re-measurement of it — pre-change binary, this store, th
 trace — is a job for session 27 if the number matters. The discourse column is
 the better instrument regardless: 398 sites of one small app's bundle against
 2,989 of a real one's.
+
+
+## The declined receivers, re-measured after the fixes (session 27)
+
+Session 26's classification was of the store *before* its own two extractor
+rules landed, and 28 % of that table was the mechanism it then removed. Re-run
+on the post-fix store, same corpus, same pin, whole 9,056 app sites:
+
+**Declined sites fell 5,029 → 3,566, down 29.1 %**, which is the shape the
+`class_methods` measurement predicted from the other direction.
+
+| the receiver expression | pre-fix | post-fix | share now |
+| ----------------------- | ------- | -------- | --------- |
+| implicit — no receiver written | 3,431 | 1,973 | 55.3 % |
+| bare name — a local, a parameter or a call on self | 539 | 538 | 15.1 % |
+| chained call | 364 | **364** | 10.2 % |
+| constant | 334 | 330 | 9.3 % |
+| instance variable | 110 | 110 | 3.1 % |
+| everything else | 251 | 251 | 7.0 % |
+
+**Every row except the first is unchanged in absolute terms.** The fix removed
+one mechanism and touched nothing else, which is the check that it did what it
+claimed. Chained receivers are *the same 364 sites* and now 10.2 % of a smaller
+problem — DEC-020's bill did not grow, the denominator shrank.
+
+Where the truth lives inverted: **app 52.5 % → 33.0 %, gem 47.0 % → 66.3 %.**
+What is left is mostly other people's code.
+
+### The mechanisms that remain
+
+Grouped by the owner Ruby dispatched to, over all 3,566:
+
+| mechanism | sites | share | truth at #1 | reach |
+| --------- | ----- | ----- | ----------- | ----- |
+| `params do` — a block `class_eval`'d into an anonymous `ContractBase` subclass | 879 | 24.6 % | ~97 % | **out of reach** — the receiver is a class created at runtime |
+| core / ActiveSupport core-ext on an untyped receiver (`present?`, `presence`, `blank?`) | 678 | 19.0 % | high | needs receiver typing, not extraction |
+| **computed-name `define_method`** — `before_action` family, `define_model_callbacks`, Sidekiq | 368 | 10.3 % | **12 %** | **the candidate** |
+| Rails-generated attribute and association readers | 320 | 9.0 % | — | answered with the declaration by design (session 15) |
+| `SiteSetting.foo` | 296 | 8.3 % | 0 % | out of reach — `define_method` over a YAML settings list |
+| everything else | 1,025 | 28.8 % | — | the long tail |
+
+Five mechanisms are **71.3 %** of what remains.
+
+`Service::Base::StepsHelpers`, which was 28.3 % of the pre-fix declines and the
+largest single entry, does not appear in the post-fix top fifteen at all.
+
+### The lead for session 28, with its post-fix number
+
+**Computed-name `define_method`: 368 sites, 10.3 % of declines.** Actionpack
+writes `[:before, :around, :after].each { |c| define_method("#{c}_action") … }`
+and ActiveRecord's `define_model_callbacks` is the same shape — the name is
+computed, but from a **literal array**, which a parser can read.
+
+What makes it the candidate rather than another 10 % slice is the third column:
+**the truth is offered for only 32 % of them and ranks first for 12 %.** Every
+other large slice is one the ranker already nails, where the engine's list is
+useful even though it declines. This one is the slice where trekr hands over
+*nothing* — it is the bulk of the `residue-nothing-known` bucket, the only
+bucket with no consolation prize. Extraction would create answers rather than
+promote them, which is also why it cannot be measured by the promotion ceiling
+that governs the other slices.
+
+Session 23 built literal-name `define_method` extraction and shelved it for
+moving nothing; the names here are computed, which is precisely the gap that
+measurement left open.
