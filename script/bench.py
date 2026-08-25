@@ -199,7 +199,8 @@ def call_resolution(corpora):
             """SELECT f.path, s.line, s.col, s.recv FROM call_site s
                  JOIN file f ON f.blob_id = s.blob_id
                  JOIN checkout c ON c.id = f.checkout_id
-                WHERE c.root = ? AND f.path NOT LIKE '%test%' AND f.path NOT LIKE '%spec%'""",
+                WHERE c.root = ? AND f.path NOT LIKE '%test%' AND f.path NOT LIKE '%spec%'
+                ORDER BY f.path, line, col""",
             (checkout_root(repo),),
         ).fetchall()
         if len(rows) < SAMPLE:
@@ -262,7 +263,8 @@ def resolution_rate(corpora):
             """SELECT f.path, r.line, r.col, r.name FROM const_ref r
                  JOIN file f ON f.blob_id = r.blob_id
                  JOIN checkout c ON c.id = f.checkout_id
-                WHERE c.root = ? AND f.path NOT LIKE '%test%' AND f.path NOT LIKE '%spec%'""",
+                WHERE c.root = ? AND f.path NOT LIKE '%test%' AND f.path NOT LIKE '%spec%'
+                ORDER BY f.path, line, col""",
             (checkout_root(repo),),
         ).fetchall()
         if len(rows) < SAMPLE:

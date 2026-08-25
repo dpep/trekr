@@ -178,6 +178,112 @@ fn a_second_worktree_of_the_same_content_costs_no_parsing() {
     let _ = fs::remove_dir_all(&clone);
 }
 
+/// Run trekr with extra environment on top of the isolated database.
+fn trekr_env(db: &Path, cwd: &Path, args: &[&str], vars: &[(&str, &str)]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_trekr"));
+    command.args(args).current_dir(cwd).env("TREKR_DB", db);
+    for (key, value) in vars {
+        command.env(key, value);
+    }
+    command.output().expect("run trekr")
+}
+
+#[test]
+fn profile_reports_on_stderr_so_stdout_stays_the_answer() {
+    let (dir, db) = scratch("profile");
+    repo(&dir);
+
+    let out = trekr(&db, &dir, &["--index", "--profile", "--json"]);
+    // stdout must still parse as the answer alone.
+    let answer = json(&out);
+    assert_eq!(answer["indexed"]["files"], 1);
+
+    let timings: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stderr).trim())
+            .expect("the profile is JSON when --json is on");
+    let phases: Vec<&str> = timings["phases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        phases,
+        ["scan", "known-diff", "parse", "store-write"],
+        "field names stay stable — a caller graphs these"
+    );
+    assert_eq!(timings["parsed"], 1);
+    assert_eq!(timings["skipped"], 0);
+    assert!(timings["jobs"].as_u64().unwrap() >= 1);
+
+    // A second run parses nothing, and the profile says so.
+    let again = trekr(&db, &dir, &["--index", "--profile", "--json"]);
+    let timings: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&again.stderr).trim()).unwrap();
+    assert_eq!(timings["parsed"], 0);
+    assert_eq!(timings["skipped"], 1);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn without_the_flag_no_profile_is_printed() {
+    let (dir, db) = scratch("noprofile");
+    repo(&dir);
+    let out = trekr(&db, &dir, &["--index", "--json"]);
+    assert!(
+        String::from_utf8_lossy(&out.stderr).trim().is_empty(),
+        "profiling must cost nothing you did not ask for"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn jobs_comes_from_the_flag_then_the_environment_then_the_machine() {
+    let (dir, db) = scratch("jobs");
+    repo(&dir);
+
+    let jobs = |out: &Output| -> u64 {
+        serde_json::from_str::<serde_json::Value>(String::from_utf8_lossy(&out.stderr).trim())
+            .unwrap()["jobs"]
+            .as_u64()
+            .unwrap()
+    };
+
+    let flagged = trekr(
+        &db,
+        &dir,
+        &["--index", "--profile", "--json", "--jobs", "3"],
+    );
+    assert_eq!(jobs(&flagged), 3);
+
+    let from_env = trekr_env(
+        &db,
+        &dir,
+        &["--index", "--profile", "--json"],
+        &[("TREKR_JOBS", "2")],
+    );
+    assert_eq!(jobs(&from_env), 2);
+
+    let both = trekr_env(
+        &db,
+        &dir,
+        &["--index", "--profile", "--json", "--jobs", "5"],
+        &[("TREKR_JOBS", "2")],
+    );
+    assert_eq!(jobs(&both), 5, "the flag wins over the environment");
+
+    let auto = trekr_env(
+        &db,
+        &dir,
+        &["--index", "--profile", "--json"],
+        &[("TREKR_JOBS", "0")],
+    );
+    assert!(jobs(&auto) >= 1, "0 means pick for me, never zero workers");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn every_command_speaks_ndjson_as_well_as_json() {
     let (dir, db) = scratch("ndjson");

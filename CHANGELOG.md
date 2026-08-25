@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- `--jobs N` (and `TREKR_JOBS`; the flag wins) sets the parse worker count.
+  `0`, the default, picks the machine's **physical** core count rather than
+  rayon's default of logical cores.
+- `--index --profile` reports where the time went — per-phase wall time, blobs
+  parsed vs already known, bytes read, parse throughput, and the slowest files.
+  Human-readable on stderr, and structured on stderr when `--json` is on, so
+  `trekr --index --json --profile | jq` still sees only the answer.
+- Calls written inside a module now resolve through the class that mixes the
+  module in. `ActiveRecord::Transactions#destroyed?` finds `Persistence`
+  because `Base` includes both; confidence is the share of mixing-in classes
+  that agree, disclosed as `"1/3 includers"`.
+
 - Fixed: a bare call in a class body was looked up as an instance method.
   `self` in a class body is the class, so `validates :name` and `prepend Foo`
   dispatch on it. "Is a `def` here a singleton method" and "what is `self` for

@@ -6,6 +6,7 @@
 //! layer will add.
 
 mod position;
+mod profile;
 
 use crate::core::Oid;
 use crate::store::Store;
@@ -61,6 +62,15 @@ struct Cli {
     #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = ".")]
     drop: Option<PathBuf>,
 
+    /// Worker threads for parsing. 0 (the default) picks the machine's
+    /// **physical** core count; `TREKR_JOBS` sets it too, and the flag wins.
+    #[arg(long, value_name = "N", env = "TREKR_JOBS", default_value_t = 0)]
+    jobs: usize,
+
+    /// Report where the index time went, on stderr. Structured when `--json`.
+    #[arg(long)]
+    profile: bool,
+
     /// Emit results as JSON — a pretty object, or an array for row sets.
     #[arg(short = 'j', long)]
     json: bool,
@@ -88,7 +98,7 @@ pub fn run() -> ExitCode {
     };
 
     let result = if let Some(path) = &cli.index {
-        cmd_index(out, path)
+        cmd_index(out, path, cli.jobs, cli.profile)
     } else if let Some(path) = &cli.symbols {
         cmd_symbols(out, path)
     } else if let Some(name) = &cli.refs {
@@ -155,14 +165,36 @@ fn emit_rows<T: serde::Serialize>(out: Output, rows: &[T]) -> anyhow::Result<boo
     Ok(true)
 }
 
-fn cmd_index(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
+/// Worker threads for the parse phase.
+///
+/// **Physical** cores, not logical. Parsing is compute-bound and gains little
+/// from hyperthreads; the measurement behind this is in DECISIONS.
+fn worker_count(requested: usize) -> usize {
+    if requested > 0 {
+        return requested;
+    }
+    num_cpus::get_physical().max(1)
+}
+
+fn cmd_index(
+    out: Output,
+    path: &Path,
+    jobs: usize,
+    want_profile: bool,
+) -> anyhow::Result<ExitCode> {
+    let mut profile = want_profile.then(profile::Profile::default);
+    let jobs = worker_count(jobs);
+    if let Some(profile) = profile.as_mut() {
+        profile.jobs = jobs;
+    }
+
     let root = scan::repo_root(path)?;
     let root_str = root.to_string_lossy().into_owned();
-    let files = scan::scan(&root)?;
+    let files = profile::timed(&mut profile, "scan", || scan::scan(&root))?;
 
     let mut store = open_store()?;
     let wanted: HashSet<Oid> = files.values().cloned().collect();
-    let known = store.known(&wanted)?;
+    let known = profile::timed(&mut profile, "known-diff", || store.known(&wanted))?;
 
     // One path per unknown blob: identical content under two names is one
     // parse, and which name it was read from cannot matter.
@@ -172,16 +204,52 @@ fn cmd_index(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
             to_parse.entry(oid).or_insert_with(|| root.join(rel));
         }
     }
+    if let Some(profile) = profile.as_mut() {
+        profile.blobs = wanted.len();
+        profile.parsed = to_parse.len();
+        profile.skipped = wanted.len() - to_parse.len();
+    }
 
-    let facts: Vec<_> = to_parse
-        .into_par_iter()
-        .filter_map(|(oid, path)| {
-            let bytes = std::fs::read(&path).ok()?;
-            Some((oid.clone(), extract::extract(&bytes)))
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
+    let parsed: Vec<(Oid, extract::Parsed)> = profile::timed(&mut profile, "parse", || {
+        pool.install(|| {
+            to_parse
+                .into_par_iter()
+                .filter_map(|(oid, path)| {
+                    let started = std::time::Instant::now();
+                    let bytes = std::fs::read(&path).ok()?;
+                    let facts = extract::extract(&bytes);
+                    Some((
+                        oid.clone(),
+                        extract::Parsed {
+                            facts,
+                            bytes: bytes.len() as u64,
+                            elapsed: started.elapsed(),
+                            path: path.to_string_lossy().into_owned(),
+                        },
+                    ))
+                })
+                .collect()
         })
-        .collect();
+    });
 
-    let counts = store.write(&root_str, &files, facts)?;
+    if let Some(profile) = profile.as_mut() {
+        profile.bytes = parsed.iter().map(|(_, p)| p.bytes).sum();
+        let slow = parsed
+            .iter()
+            .map(|(_, p)| profile::SlowFile {
+                path: p.path.clone(),
+                ms: p.elapsed.as_secs_f64() * 1000.0,
+                bytes: p.bytes,
+            })
+            .collect();
+        profile.merge_files(slow);
+    }
+
+    let facts: Vec<_> = parsed.into_iter().map(|(oid, p)| (oid, p.facts)).collect();
+    let counts = profile::timed(&mut profile, "store-write", || {
+        store.write(&root_str, &files, facts)
+    })?;
     match out {
         Output::Text => println!(
             "indexed {} — {} files, {} blobs, {} parsed ({} defs, {} refs, {} calls)",
@@ -197,6 +265,14 @@ fn cmd_index(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
             out,
             &serde_json::json!({ "repo": root_str, "indexed": counts }),
         )?,
+    }
+    if let Some(profile) = profile {
+        match out {
+            Output::Text => profile.report_text(),
+            // Structured, but still on stderr, so `--json | jq` sees only the
+            // answer on stdout.
+            _ => profile.report_json(),
+        }
     }
     Ok(ExitCode::SUCCESS)
 }

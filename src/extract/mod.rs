@@ -883,6 +883,17 @@ fn receiver_shape(node: &Node<'_>) -> (RecvShape, Option<String>) {
     (RecvShape::Other, None)
 }
 
+/// One blob's facts plus what it cost to produce them.
+///
+/// The cost fields exist for `--index --profile`; they are dropped on the way
+/// into the store, which knows nothing about how long anything took.
+pub(crate) struct Parsed {
+    pub(crate) facts: Facts,
+    pub(crate) bytes: u64,
+    pub(crate) elapsed: std::time::Duration,
+    pub(crate) path: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
