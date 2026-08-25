@@ -253,6 +253,8 @@ impl Store {
                 recv: r.get(5)?,
                 recv_text: r.get(6)?,
                 nesting: split_nesting(&r.get::<_, String>(7)?),
+                tier: None,
+                owner: None,
             })
         })?;
         rows.collect()
@@ -342,6 +344,25 @@ impl Store {
                 target: r.get(2)?,
             })
         })?;
+        rows.collect()
+    }
+
+    /// Files in a checkout that call a method of this name.
+    ///
+    /// The tiering reparses each of these rather than reading the stored call
+    /// rows, so an edit since the last index is still tiered correctly — and
+    /// the ladder needs the file's assignments anyway, which are not stored
+    /// (DEC-012). The index's job here is to say which files are worth opening.
+    pub(crate) fn files_calling(&self, root: &str, name: &str) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT f.path
+               FROM call_site s
+               JOIN file f ON f.blob_id = s.blob_id
+               JOIN checkout c ON c.id = f.checkout_id
+              WHERE c.root = ?1 AND s.name = ?2
+              ORDER BY f.path",
+        )?;
+        let rows = stmt.query_map(params![root, name], |r| r.get(0))?;
         rows.collect()
     }
 
@@ -444,6 +465,13 @@ pub(crate) struct Ref {
     pub(crate) recv_text: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) nesting: Vec<String>,
+    /// Filled in for call rows once the ladder has run: `confirmed` when the
+    /// receiver's type resolves, `possible` when it does not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tier: Option<String>,
+    /// Where Ruby's lookup from that receiver lands.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) owner: Option<String>,
 }
 
 #[derive(Debug, serde::Serialize)]

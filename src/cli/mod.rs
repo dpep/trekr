@@ -449,29 +449,157 @@ fn cmd_symbols(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_refs(out: Output, name: &str) -> anyhow::Result<ExitCode> {
-    let root = scan::repo_root(Path::new("."))?;
-    let store = open_store()?;
-    let refs = store.refs(&root.to_string_lossy(), name)?;
-
-    if emit_rows(out, &refs)? {
-        return Ok(exit_on(!refs.is_empty()));
+/// Every call site named `name`, tiered against the query.
+///
+/// Files are reparsed rather than read from the stored call rows: the ladder
+/// needs the file's assignments, which are deliberately not stored (DEC-012),
+/// and reparsing means an edit since the last index is still tiered correctly.
+fn gather_refs(
+    tree: &Tree,
+    store: &Store,
+    root: &Path,
+    root_str: &str,
+    query: &crate::resolve::refs::Query,
+    target: Option<&str>,
+) -> anyhow::Result<(
+    Vec<crate::resolve::refs::Reference>,
+    crate::resolve::refs::Counts,
+)> {
+    use crate::resolve::refs;
+    let mut found = Vec::new();
+    let mut counts = refs::Counts::default();
+    for path in store.files_calling(root_str, &query.name)? {
+        let Ok(bytes) = std::fs::read(root.join(&path)) else {
+            continue;
+        };
+        let facts = extract::extract(&bytes);
+        for call in facts.calls.iter().filter(|c| c.name == query.name) {
+            let reference = refs::tier_call(tree, &facts, call, &path, query, target);
+            counts.record(reference.tier);
+            // Excluded sites are counted, not listed: the count is the product,
+            // and the list would be the grep we are trying to beat.
+            if reference.tier != refs::Tier::Excluded {
+                found.push(reference);
+            }
+        }
     }
-    if refs.is_empty() {
-        println!("no mention of {name} (indexed? try `trekr --index`)");
+    found.sort_by_key(refs::order);
+    Ok((found, counts))
+}
+
+fn cmd_refs(out: Output, text: &str) -> anyhow::Result<ExitCode> {
+    use crate::resolve::refs;
+    let query = refs::Query::parse(text);
+    let root = scan::repo_root(Path::new("."))?;
+    let root_str = root.to_string_lossy().into_owned();
+    let store = open_store()?;
+
+    // A bare name narrows nothing, so it keeps the whole-mention view —
+    // definitions and constant references included, which a method-shaped
+    // query has no use for.
+    if query.owner.is_none() {
+        return cmd_refs_by_name(out, &root, &root_str, &store, &query);
+    }
+
+    let tree = Tree::build(&store, &root_str)?;
+    let (owner, definition) = refs::definition_of(&tree, &query);
+    let (found, counts) = gather_refs(&tree, &store, &root, &root_str, &query, owner.as_deref())?;
+
+    let answer = serde_json::json!({
+        "query": text,
+        "owner": owner,
+        "method": query.name,
+        "singleton": query.singleton,
+        "definition": definition,
+        "counts": counts,
+        "references": found,
+    });
+    if out != Output::Text {
+        emit_json(out, &answer)?;
+        return Ok(exit_on(!found.is_empty()));
+    }
+
+    if owner.is_none() {
+        println!(
+            "no indexed constant named {}",
+            query.owner.as_deref().unwrap_or("?")
+        );
         return Ok(ExitCode::from(1));
     }
-    for r in &refs {
+    for site in &definition {
+        println!("{}:{}:{}  definition", site.path, site.line, site.col);
+    }
+    for reference in &found {
+        println!(
+            "{}:{}:{}  {:<10} {}",
+            reference.path,
+            reference.line,
+            reference.col,
+            format!("{:?}", reference.tier).to_lowercase(),
+            reference.why,
+        );
+    }
+    // The number a grep cannot produce, said out loud.
+    if counts.excluded > 0 {
+        println!(
+            "\n{} confirmed, {} possible, {} same-name call sites excluded by receiver",
+            counts.confirmed, counts.possible, counts.excluded
+        );
+    }
+    Ok(exit_on(!found.is_empty()))
+}
+
+/// The whole-mention view for a bare name, with each call site's resolved owner
+/// filled in where the ladder can reach it.
+fn cmd_refs_by_name(
+    out: Output,
+    root: &Path,
+    root_str: &str,
+    store: &Store,
+    query: &crate::resolve::refs::Query,
+) -> anyhow::Result<ExitCode> {
+    let mut rows = store.refs(root_str, &query.name)?;
+    let has_calls = rows.iter().any(|row| row.role == "call");
+    if has_calls {
+        let tree = Tree::build(store, root_str)?;
+        let (found, _) = gather_refs(&tree, store, root, root_str, query, None)?;
+        // Match by position: one call site, one tiering.
+        for row in rows.iter_mut().filter(|row| row.role == "call") {
+            if let Some(reference) = found
+                .iter()
+                .find(|r| r.path == row.path && r.line == row.line && r.col == row.col)
+            {
+                row.tier = Some(format!("{:?}", reference.tier).to_lowercase());
+                row.owner.clone_from(&reference.owner);
+            }
+        }
+    }
+
+    if emit_rows(out, &rows)? {
+        return Ok(exit_on(!rows.is_empty()));
+    }
+    if rows.is_empty() {
+        println!(
+            "no mention of {} (indexed? try `trekr --index`)",
+            query.name
+        );
+        return Ok(ExitCode::from(1));
+    }
+    for row in &rows {
         // The receiver shape is the disclosure: `implicit` is already resolved
         // to the enclosing class, `other` is residue. Nothing is dropped and
         // nothing is silently promoted.
-        let detail = match (&r.kind, &r.recv, &r.recv_text) {
-            (Some(kind), _, _) => kind.clone(),
-            (_, Some(recv), Some(text)) => format!("{recv} {text}"),
-            (_, Some(recv), None) => recv.clone(),
+        let detail = match (&row.owner, &row.kind, &row.recv, &row.recv_text) {
+            (Some(owner), _, _, _) => owner.clone(),
+            (_, Some(kind), _, _) => kind.clone(),
+            (_, _, Some(recv), Some(text)) => format!("{recv} {text}"),
+            (_, _, Some(recv), None) => recv.clone(),
             _ => String::new(),
         };
-        println!("{}:{}:{}  {:<11} {}", r.path, r.line, r.col, r.role, detail);
+        println!(
+            "{}:{}:{}  {:<11} {}",
+            row.path, row.line, row.col, row.role, detail
+        );
     }
     Ok(ExitCode::SUCCESS)
 }

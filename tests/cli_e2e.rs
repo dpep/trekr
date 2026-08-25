@@ -569,6 +569,174 @@ fn ancestors_linearize_in_rubys_order() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Two classes with the same method name, and call sites of each kind.
+fn collision_repo(dir: &Path) {
+    git(dir, &["init", "-q"]);
+    let source = concat!(
+        "class Widget\n",           //  1
+        "  def save\n",             //  2
+        "  end\n",                  //  3
+        "end\n",                    //  4
+        "class Gadget\n",           //  5
+        "  def save\n",             //  6
+        "  end\n",                  //  7
+        "end\n",                    //  8
+        "class Report\n",           //  9
+        "  def save(path, mode)\n", // 10
+        "  end\n",                  // 11
+        "end\n",                    // 12
+        "class Job\n",              // 13
+        "  def run\n",              // 14
+        "    w = Widget.new\n",     // 15
+        "    w.save\n",             // 16  confirmed
+        "    g = Gadget.new\n",     // 17
+        "    g.save\n",             // 18  excluded — resolves to Gadget
+        "    thing.save\n",         // 19  possible — untyped
+        "    other.save(1, 2)\n",   // 20  excluded — arity
+        "  end\n",                  // 21
+        "end\n",                    // 22
+    );
+    fs::write(dir.join("app.rb"), source).unwrap();
+    git(dir, &["add", "-A"]);
+    git(
+        dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+}
+
+#[test]
+fn refs_narrowed_by_receiver_separates_confirmed_from_possible() {
+    let (dir, db) = scratch("refsnarrow");
+    collision_repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+
+    let answer = json(&trekr(&db, &dir, &["--refs", "Widget#save", "--json"]));
+    assert_eq!(answer["owner"], "Widget");
+    assert_eq!(answer["definition"][0]["line"], 2);
+
+    let rows = answer["references"].as_array().unwrap();
+    let tiers: Vec<(u64, &str)> = rows
+        .iter()
+        .map(|r| (r["line"].as_u64().unwrap(), r["tier"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        tiers,
+        [(16, "confirmed"), (19, "possible")],
+        "the typed Gadget call and the wrong-arity call are gone from the list"
+    );
+    assert_eq!(rows[0]["receiver_type"], "Widget");
+    assert_eq!(rows[0]["owner"], "Widget");
+
+    // The count is the product: it is what a grep cannot produce.
+    assert_eq!(answer["counts"]["confirmed"], 1);
+    assert_eq!(answer["counts"]["possible"], 1);
+    assert_eq!(
+        answer["counts"]["excluded"], 2,
+        "one ruled out by receiver, one by arity"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn refs_for_a_class_method_are_a_different_question() {
+    let (dir, db) = scratch("refssingleton");
+    git(&dir, &["init", "-q"]);
+    fs::write(
+        dir.join("app.rb"),
+        concat!(
+            "class Widget\n",        // 1
+            "  def self.save\n",     // 2
+            "  end\n",               // 3
+            "  def save\n",          // 4
+            "  end\n",               // 5
+            "end\n",                 // 6
+            "class Job\n",           // 7
+            "  def run\n",           // 8
+            "    Widget.save\n",     // 9  the class method
+            "    Widget.new.save\n", // 10 the instance method
+            "  end\n",               // 11
+            "end\n",                 // 12
+        ),
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    trekr(&db, &dir, &["--index"]);
+
+    let class_method = json(&trekr(&db, &dir, &["--refs", "Widget.save", "--json"]));
+    assert_eq!(class_method["definition"][0]["line"], 2);
+    assert_eq!(class_method["counts"]["confirmed"], 1);
+    let rows = class_method["references"].as_array().unwrap();
+    assert_eq!(rows[0]["line"], 9);
+
+    let instance_method = json(&trekr(&db, &dir, &["--refs", "Widget#save", "--json"]));
+    assert_eq!(instance_method["definition"][0]["line"], 4);
+    assert_eq!(
+        instance_method["counts"]["excluded"], 1,
+        "the class-method call is excluded from the instance method's references"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_bare_name_still_reports_every_mention_and_now_says_what_each_resolves_to() {
+    let (dir, db) = scratch("refsbare");
+    collision_repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+
+    let rows = json(&trekr(&db, &dir, &["--refs", "save", "--json"]));
+    let rows = rows.as_array().unwrap();
+    assert!(
+        rows.iter().any(|r| r["role"] == "definition"),
+        "a bare name narrows nothing, so definitions stay in the answer"
+    );
+    let confirmed: Vec<&str> = rows
+        .iter()
+        .filter(|r| r["tier"] == "confirmed")
+        .map(|r| r["owner"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        confirmed,
+        ["Widget", "Gadget"],
+        "each typed call site says which owner it reaches"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn refs_on_an_unknown_owner_is_a_definitive_no() {
+    let (dir, db) = scratch("refsunknown");
+    collision_repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+    assert_eq!(
+        trekr(&db, &dir, &["--refs", "Nope#save"]).status.code(),
+        Some(1)
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn nothing_to_report_is_an_exit_code_not_an_error() {
     let (dir, db) = scratch("empty");

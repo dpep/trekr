@@ -13,20 +13,22 @@
 //! Everything below that is residue, and residue is not nothing: it comes back
 //! as ordered candidates with the receiver shape as the reason.
 
+pub(crate) mod refs;
+
 use crate::core::{Assign, Call, Facts, RecvShape, ValueShape};
 use crate::tree::{Site, Status, Tree};
 use serde::Serialize;
 
 /// How the receiver's type was established, and how strongly.
-struct Receiver {
-    fqn: String,
+pub(super) struct Receiver {
+    pub(super) fqn: String,
     /// A class-method lookup rather than an instance-method one.
-    singleton: bool,
-    via: &'static str,
+    pub(super) singleton: bool,
+    pub(super) via: &'static str,
     /// Assignments that agreed on this type, out of those considered. For the
     /// rungs that are a language rule rather than an inference, both are 1.
-    agreeing: usize,
-    total: usize,
+    pub(super) agreeing: usize,
+    pub(super) total: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -221,7 +223,7 @@ fn agreement(receiver: &Receiver) -> Option<String> {
 }
 
 /// Climb the ladder until a rung names a type.
-fn receiver_of(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
+pub(super) fn receiver_of(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
     match call.recv {
         // The enclosing scope is the receiver by language rule. No inference
         // happens, which is why this rung is both the largest and the cheapest.
