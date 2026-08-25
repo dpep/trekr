@@ -7,18 +7,78 @@
 
 use ruby_prism::Node;
 
+/// The classes a `sig { params(...) }` gives the method's parameters.
+///
+/// The returns half of a signature has always been read; the params half is
+/// worth at least as much and was not. Measured on graph_weaver: half of all
+/// untyped local receivers are method *parameters*, which have no assignment to
+/// chase and are invisible to every rung that looks for one.
+pub(super) fn params(node: &Node<'_>) -> Vec<(String, String)> {
+    let Some(chain) = sig_chain(node) else {
+        return Vec::new();
+    };
+    let mut current = chain;
+    loop {
+        let Some(call) = current.as_call_node() else {
+            return Vec::new();
+        };
+        if call.name().as_slice() == b"params" {
+            return keyword_types(&call);
+        }
+        let Some(receiver) = call.receiver() else {
+            return Vec::new();
+        };
+        current = receiver;
+    }
+}
+
+/// `params(source: String, options: T::Hash[...])` — the pairs that name a
+/// class. A parameter typed `T.untyped` contributes nothing and is dropped
+/// rather than recorded as unknown.
+fn keyword_types(call: &ruby_prism::CallNode<'_>) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    let Some(arguments) = call.arguments() else {
+        return out;
+    };
+    for argument in arguments.arguments().iter() {
+        let Some(hash) = argument.as_keyword_hash_node() else {
+            continue;
+        };
+        for element in hash.elements().iter() {
+            let Some(assoc) = element.as_assoc_node() else {
+                continue;
+            };
+            let Some(key) = assoc.key().as_symbol_node() else {
+                continue;
+            };
+            let Ok(name) = String::from_utf8(key.unescaped().to_vec()) else {
+                continue;
+            };
+            if let Some(class) = type_name(&assoc.value()) {
+                out.push((name, class));
+            }
+        }
+    }
+    out
+}
+
+/// The block body of a `sig { ... }`, if this node is one.
+fn sig_chain<'pr>(node: &Node<'pr>) -> Option<Node<'pr>> {
+    let call = node.as_call_node()?;
+    if call.name().as_slice() != b"sig" {
+        return None;
+    }
+    let body = call.block()?.as_block_node()?.body()?;
+    body.as_statements_node()?.body().iter().next()
+}
+
 /// The class a `sig { ... }` says its method returns, if it names one.
 ///
 /// Handles `sig { returns(X) }`, `sig { params(..).returns(X) }`, and
 /// `sig(:final) { void }` — the whole family is one chain of calls, so walking
 /// receivers inward covers it without enumerating the forms.
 pub(super) fn returns(node: &Node<'_>) -> Option<String> {
-    let call = node.as_call_node()?;
-    if call.name().as_slice() != b"sig" {
-        return None;
-    }
-    let body = call.block()?.as_block_node()?.body()?;
-    let mut current = body.as_statements_node()?.body().iter().next()?;
+    let mut current = sig_chain(node)?;
     loop {
         let call = current.as_call_node()?;
         if call.name().as_slice() == b"returns"

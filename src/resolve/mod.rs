@@ -220,9 +220,49 @@ fn receiver_of(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
                 total: 1,
             })
         }
-        RecvShape::Local | RecvShape::Ivar => from_assignments(tree, facts, call),
+        // An assignment first, because it is the more specific evidence; a
+        // parameter's declared type is the fallback when there is none.
+        RecvShape::Local | RecvShape::Ivar => {
+            from_assignments(tree, facts, call).or_else(|| from_sig_params(tree, facts, call))
+        }
         RecvShape::Other => None,
     }
+}
+
+/// A method parameter's type, from the `params(...)` half of its `sig`.
+///
+/// Measured on graph_weaver: half of all untyped local receivers are
+/// parameters. They have no assignment to chase, so every rung that looks for
+/// one misses them — and a signature has already said what they are.
+fn from_sig_params(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
+    let target = call.recv_text.as_ref()?;
+    let enclosing = enclosing_method(facts, call.pos.line)?;
+    let class = enclosing
+        .sig_params
+        .iter()
+        .find(|(name, _)| name == target)
+        .map(|(_, class)| class)?;
+    Some(Receiver {
+        fqn: tree.resolve(class, &call.nesting).fqn?,
+        singleton: false,
+        via: "sig:param",
+        agreeing: 1,
+        total: 1,
+    })
+}
+
+/// The innermost method definition containing a line.
+///
+/// Cheap because `--def` has already reparsed the file: the enclosing method of
+/// a call is always in it, which is why parameter types never needed storing.
+fn enclosing_method(facts: &Facts, line: u32) -> Option<&crate::core::Def> {
+    facts
+        .defs
+        .iter()
+        .filter(|def| {
+            def.kind == crate::core::Kind::Method && def.pos.line <= line && line <= def.end_line
+        })
+        .min_by_key(|def| def.end_line - def.pos.line)
 }
 
 /// What a local or instance variable holds, judged from every assignment to it
@@ -245,7 +285,7 @@ fn from_assignments(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver>
 
     let mut votes: Vec<(String, bool, &'static str)> = Vec::new();
     for assign in &relevant {
-        if let Some(vote) = type_of(tree, facts, &assign.value, &assign.nesting, 0) {
+        if let Some(vote) = type_of(tree, facts, &assign.value, &assign.nesting, 0, 0) {
             votes.push(vote);
         }
     }
@@ -267,6 +307,7 @@ fn type_of(
     value: &ValueShape,
     nesting: &[String],
     depth: usize,
+    steps: usize,
 ) -> Option<(String, bool, &'static str)> {
     // `x = y; y = x` is legal Ruby and would otherwise spin.
     if depth > 4 {
@@ -278,7 +319,28 @@ fn type_of(
         ValueShape::Const(name) => Some((tree.resolve(name, nesting).fqn?, true, "local:const")),
         ValueShape::Same(other) => {
             let next = facts.assigns.iter().find(|a| &a.target == other)?;
-            type_of(tree, facts, &next.value, &next.nesting, depth + 1)
+            type_of(tree, facts, &next.value, &next.nesting, depth + 1, steps)
+        }
+        // Core knows what an Array is now, so `out = []` types `out`.
+        ValueShape::Literal(class) => Some((tree.resolve(class, &[]).fqn?, false, "literal")),
+        // One step, and only one: type the receiver from its own assignment,
+        // then read the `sig` of the method called on it. Chaining further is
+        // what rwr measured drowning.
+        ValueShape::LocalCall { recv, name } => {
+            if steps > 0 {
+                return None;
+            }
+            let assign = facts.assigns.iter().find(|a| &a.target == recv)?;
+            let (owner, singleton, _) = type_of(
+                tree,
+                facts,
+                &assign.value,
+                &assign.nesting,
+                depth + 1,
+                steps + 1,
+            )?;
+            let returns = tree.lookup(&owner, singleton, name)?.sig_returns.clone()?;
+            Some((tree.resolve(&returns, nesting).fqn?, false, "sig:step"))
         }
         // A `sig` names a usable class for 64 % of signatures against 3.9 %
         // from syntax alone (PLAN §2) — the highest-yield rung on the ladder.
@@ -562,6 +624,64 @@ mod tests {
         let found = answer(source, "open");
         assert_eq!(found.owner.as_deref(), Some("Box"));
         assert_eq!(found.resolved_via.as_deref(), Some("sig"));
+    }
+
+    #[test]
+    fn a_sig_types_a_method_parameter_that_has_no_assignment() {
+        // Half of all untyped local receivers are parameters. They have no
+        // assignment to chase, and the signature has already said what they
+        // are.
+        let source = "class Box\n  def open\n  end\nend\n\
+                      class W\n  sig { params(box: Box).returns(Integer) }\n  \
+                      def go(box)\n    box.open\n  end\nend\n";
+        let found = answer(source, "open");
+        assert_eq!(found.status, Status::Resolved);
+        assert_eq!(found.owner.as_deref(), Some("Box"));
+        assert_eq!(found.resolved_via.as_deref(), Some("sig:param"));
+    }
+
+    #[test]
+    fn an_assignment_outranks_a_parameter_of_the_same_name() {
+        let source = "class Box\n  def open\n  end\nend\n\
+                      class Other\n  def open\n  end\nend\n\
+                      class W\n  sig { params(box: Other).returns(Integer) }\n  \
+                      def go(box)\n    box = Box.new\n    box.open\n  end\nend\n";
+        let found = answer(source, "open");
+        assert_eq!(
+            found.owner.as_deref(),
+            Some("Box"),
+            "the assignment is the more specific evidence"
+        );
+    }
+
+    #[test]
+    fn a_literal_is_typed_now_that_core_knows_what_it_is() {
+        let source = "class W\n  def go\n    out = []\n    out.push 1\n  end\nend\n";
+        let found = answer(source, "push");
+        assert_eq!(found.owner.as_deref(), Some("Array"));
+        assert_eq!(found.resolved_via.as_deref(), Some("literal"));
+    }
+
+    #[test]
+    fn a_call_on_a_typed_local_is_followed_exactly_one_step() {
+        let source = "class Leaf\n  def touch\n  end\nend\n\
+                      class Box\n  sig { returns(Leaf) }\n  def leaf\n  end\nend\n\
+                      class W\n  def go\n    b = Box.new\n    l = b.leaf\n    \
+                      l.touch\n  end\nend\n";
+        let found = answer(source, "touch");
+        assert_eq!(found.owner.as_deref(), Some("Leaf"));
+        assert_eq!(found.resolved_via.as_deref(), Some("sig:step"));
+    }
+
+    #[test]
+    fn a_second_step_is_refused_rather_than_chased() {
+        // rwr measured 70% of returns ending in another call; chaining drowns.
+        let source = "class Deep\n  def touch\n  end\nend\n\
+                      class Leaf\n  sig { returns(Deep) }\n  def deep\n  end\nend\n\
+                      class Box\n  sig { returns(Leaf) }\n  def leaf\n  end\nend\n\
+                      class W\n  def go\n    b = Box.new\n    l = b.leaf\n    \
+                      d = l.deep\n    d.touch\n  end\nend\n";
+        assert_eq!(answer(source, "touch").status, Status::Residue);
     }
 
     #[test]

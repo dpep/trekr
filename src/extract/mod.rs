@@ -74,6 +74,8 @@ struct Extractor<'a> {
     frames: Vec<Frame>,
     /// Return type from a Sorbet `sig` in the immediately preceding statement.
     pending_sig: Option<String>,
+    /// Parameter types from that same `sig`.
+    pending_sig_params: Vec<(String, String)>,
     facts: Facts,
 }
 
@@ -100,6 +102,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             module_function: false,
         }],
         pending_sig: None,
+        pending_sig_params: Vec::new(),
     };
     ex.visit(&parsed.node());
     ex.facts
@@ -165,6 +168,7 @@ impl<'a> Extractor<'a> {
             via: None,
             target: None,
             sig_returns: None,
+            sig_params: Vec::new(),
             pos: self.pos(start),
             end_line: self.pos(end).line,
         }
@@ -306,10 +310,13 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
     fn visit_statements_node(&mut self, node: &ruby_prism::StatementsNode<'pr>) {
         let body: Vec<Node<'pr>> = node.body().iter().collect();
         for (i, stmt) in body.iter().enumerate() {
-            self.pending_sig = i.checked_sub(1).and_then(|p| sig::returns(&body[p]));
+            let previous = i.checked_sub(1).map(|p| &body[p]);
+            self.pending_sig = previous.and_then(sig::returns);
+            self.pending_sig_params = previous.map(sig::params).unwrap_or_default();
             self.visit(stmt);
         }
         self.pending_sig = None;
+        self.pending_sig_params.clear();
     }
 
     fn visit_class_node(&mut self, node: &ruby_prism::ClassNode<'pr>) {
@@ -412,6 +419,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         def.singleton = singleton;
         def.params = params_of(node.parameters());
         def.sig_returns = self.pending_sig.take();
+        def.sig_params = std::mem::take(&mut self.pending_sig_params);
         // Visibility modifiers never reach `def self.x` — it is public whatever
         // the enclosing `private` says.
         def.visibility = if singleton {
@@ -830,7 +838,27 @@ impl<'pr> Extractor<'_> {
 /// because they do not preserve the type.
 const IDENTITY: [&str; 5] = ["freeze", "dup", "clone", "itself", "tap"];
 
+/// The class a literal produces. Worth typing now that core is indexed: an
+/// accumulator written `out = []` is an Array, and `Array#<<` is findable.
+fn literal_class(node: &Node<'_>) -> Option<&'static str> {
+    Some(match node {
+        _ if node.as_array_node().is_some() => "Array",
+        _ if node.as_hash_node().is_some() => "Hash",
+        _ if node.as_string_node().is_some() => "String",
+        _ if node.as_interpolated_string_node().is_some() => "String",
+        _ if node.as_symbol_node().is_some() => "Symbol",
+        _ if node.as_integer_node().is_some() => "Integer",
+        _ if node.as_float_node().is_some() => "Float",
+        _ if node.as_regular_expression_node().is_some() => "Regexp",
+        _ if node.as_range_node().is_some() => "Range",
+        _ => return None,
+    })
+}
+
 fn value_shape(node: &Node<'_>) -> ValueShape {
+    if let Some(class) = literal_class(node) {
+        return ValueShape::Literal(class);
+    }
     if let Some(name) = const_name(node) {
         // `x = Foo` — the variable holds the class, not an instance of it.
         return ValueShape::Const(name);
@@ -852,9 +880,20 @@ fn value_shape(node: &Node<'_>) -> ValueShape {
                 // Whatever the receiver was, this still is.
                 return value_shape(&receiver);
             }
-            match const_name(&receiver) {
-                Some(recv) if name == "new" => ValueShape::New(recv),
-                Some(recv) => ValueShape::ConstCall { recv, name },
+            if let Some(recv) = const_name(&receiver) {
+                return if name == "new" {
+                    ValueShape::New(recv)
+                } else {
+                    ValueShape::ConstCall { recv, name }
+                };
+            }
+            // `y.build`, and `y&.build` — safe navigation parses as an
+            // ordinary call and types the same way.
+            match receiver.as_local_variable_read_node() {
+                Some(local) => match String::from_utf8(local.name().as_slice().to_vec()) {
+                    Ok(recv) => ValueShape::LocalCall { recv, name },
+                    Err(_) => ValueShape::Other,
+                },
                 None => ValueShape::Other,
             }
         }

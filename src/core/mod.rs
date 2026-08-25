@@ -112,6 +112,12 @@ pub(crate) struct Def {
     /// Return type named by an inline Sorbet `sig`. 64% of sigs name a usable
     /// class vs 3.9% from syntax alone (PLAN §2) — cheap and high-yield.
     pub(crate) sig_returns: Option<String>,
+    /// Parameter name → class, from the `params(...)` half of a `sig`.
+    ///
+    /// Not stored: a parameter can only be a receiver inside the method that
+    /// declares it, and `--def` reparses that file anyway. Keeping it out of
+    /// the schema is the same call as `Facts::assigns` (DEC-012).
+    pub(crate) sig_params: Vec<(String, String)>,
     pub(crate) pos: Pos,
     pub(crate) end_line: u32,
 }
@@ -243,6 +249,15 @@ pub(crate) enum ValueShape {
         recv: String,
         name: String,
     },
+    /// `y.build` — a call on another local. One step from a typed `y` and no
+    /// further: rwr's D61 found 70 % of returns end in another call, so the
+    /// recursive version drowns while the single sig-backed step pays.
+    LocalCall {
+        recv: String,
+        name: String,
+    },
+    /// `[]`, `{}`, `"x"`, `1` — a literal, whose class core now knows.
+    Literal(&'static str),
     Other,
 }
 
