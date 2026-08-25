@@ -136,7 +136,15 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
                         sites,
                         agreement: agreement(&receiver),
                         unresolved_ancestors: Vec::new(),
-                        candidates: Vec::new(),
+                        // An ambiguous answer is the one case where competitors
+                        // are known to exist — that is what made it ambiguous —
+                        // so listing them is not hedging, it is the disclosure.
+                        // A resolved answer has none to list.
+                        candidates: if receiver.ambiguous {
+                            competitors(tree, &call.name, &found.owner)
+                        } else {
+                            Vec::new()
+                        },
                         reason: None,
                     }
                 }
@@ -523,6 +531,36 @@ fn receiver_names_a_class(text: &str) -> Option<String> {
 
 fn last_segment(fqn: &str) -> &str {
     fqn.rsplit("::").next().unwrap_or(fqn)
+}
+
+/// The other definitions the winner beat, for an answer that only just won.
+///
+/// Ordered by the same rule the residue ranker uses for its last tier — this
+/// checkout's own code before a dependency's — so the list reads consistently
+/// whichever surface produced it.
+fn competitors(tree: &Tree, name: &str, winner: &str) -> Vec<Candidate> {
+    let mut ranked: Vec<(bool, Candidate)> = tree
+        .named(name)
+        .into_iter()
+        .filter(|method| method.owner != winner)
+        .map(|method| {
+            (
+                !tree.in_checkout(&method.site.path),
+                Candidate {
+                    owner: method.owner.clone(),
+                    singleton: method.singleton,
+                    why: "defines the same name; the receiver's name chose between them",
+                    site: method.site.clone(),
+                },
+            )
+        })
+        .collect();
+    ranked.sort_by_key(|(from_gem, _)| *from_gem);
+    ranked
+        .into_iter()
+        .take(MAX_CANDIDATES)
+        .map(|(_, candidate)| candidate)
+        .collect()
 }
 
 /// An honest no, with the candidates ordered by evidence a reader can check.
@@ -1251,6 +1289,23 @@ mod receiver_name_ranking_tests {
             "a naming habit is weak evidence: {}",
             answer.confidence
         );
+    }
+
+    /// An ambiguous answer knows its competitors exist — that is what made it
+    /// ambiguous — so it has to show them. Only residue used to carry a list.
+    #[test]
+    fn an_ambiguous_answer_lists_what_it_beat() {
+        let answer = super::tests::answer(
+            "class Alpha\n  def ship\n  end\nend\n\
+             class Widget\n  def ship\n  end\nend\n\
+             class Zeta\n  def ship\n  end\nend\n\
+             class Job\n  def run\n    @widget.ship\n  end\nend\n",
+            "ship",
+        );
+        assert_eq!(answer.status, Status::Ambiguous);
+        let owners: Vec<&str> = answer.candidates.iter().map(|c| c.owner.as_str()).collect();
+        assert_eq!(owners, ["Alpha", "Zeta"], "the winner is not its own rival");
+        assert!(answer.candidates[0].why.contains("same name"));
     }
 
     /// With nothing else defining the name, the receiver's name is the whole

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- An `ambiguous` answer now lists the definitions it beat. Competitors are what
+  made it ambiguous, so showing them is the disclosure, not a hedge — and only
+  residue used to carry a candidate list. `--explain` renders them with the
+  reason; this checkout's own code ranks before a dependency's.
+
 - `--profile` now reports where a **query's** time went, not just an index's:
   the tree build's phases, on stderr. `TREKR_PROFILE=1` does the same for a
   process that cannot pass the flag. This is what showed that methods are 76 %
