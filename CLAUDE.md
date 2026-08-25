@@ -58,6 +58,10 @@ Rust, single crate until there's a concrete reason to split. `cargo` is keg-only
   with an isolated DB env var and a temp repo.
 - Bench corpora (large, real): `~/code/lib/ruby/rails`, `~/code/lib/ruby/discourse`,
   `~/code/lib/ruby/mastodon`. Ranking/scale checks belong there, not in unit tests.
+- Accuracy is `script/gold.py` against the TracePoint gold set
+  ([BASELINE.md](docs/BASELINE.md)); the competition is `script/compete.py`
+  against the same sites over LSP ([COMPETITIVE.md](docs/COMPETITIVE.md)), which
+  is an append-only series — add a dated row, never edit one.
 
 ## Landing changes
 
