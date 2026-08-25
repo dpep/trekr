@@ -10,6 +10,12 @@
   app that has it. The answer carries `context` naming the checkout that
   answered, and `--explain` prints it; a gem no indexed app resolves keeps the
   one-gem tree and says so by naming itself.
+- A tree reads its gem roots from the store instead of re-locating them on
+  disk. Locating gems means a lockfile and ~200 stats against `GEM_HOME` and
+  friends, and doing it per query made the tree depend on the environment the
+  query ran in — a query with a different `GEM_HOME` than the index silently
+  lost every gem. Gem roots are also canonicalized at index time now, like
+  every other checkout root.
 - **Existing databases reindex once**: the schema gained the gem-ownership map.
 
 - `owner` now names where Ruby's lookup actually landed. A method reached

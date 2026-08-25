@@ -258,11 +258,14 @@ impl Tree {
         // checkout may reopen a gem — which is what Rails actually does. The
         // ordering is carried by `checkout.id`, which rises with insert order,
         // so one query per fact kind serves all of them.
-        let mut roots: Vec<String> = crate::gems::for_checkout(std::path::Path::new(root))
-            .into_iter()
-            .filter_map(|gem| gem.root)
-            .map(|path| path.to_string_lossy().into_owned())
-            .collect();
+        //
+        // Read from the store rather than re-located from disk. Locating gems
+        // means a lockfile and ~200 stats against `GEM_HOME` and friends, and
+        // doing it at *query* time made the tree depend on the environment the
+        // query happened to run in: a query with a different `GEM_HOME` than
+        // the index silently lost every gem. The index already worked this out
+        // and wrote it down (DEC-029).
+        let mut roots = store.gems_used(root)?;
         roots.push(root.to_string());
 
         let mut phases = Phases::default();

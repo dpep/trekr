@@ -920,6 +920,9 @@ before any future ranking work.
 
 ## DEC-029 — A gem position should resolve against a checkout that owns the gem
 
+**Built in session 22.** Recorded below as first written; the settled design and
+its measurement follow at the end of this entry.
+
 **Decided in principle, not yet built.** When `--def` or the LSP is asked about
 a position inside gem source, the checkout it resolves against is currently
 *that gem's own directory* — which has no `Gemfile.lock`, and so a tree of one
@@ -948,3 +951,37 @@ every gem number published since session 12 was this artifact.
 apps resolving the same gem version with different bundles — in which case the
 honest answer may be to resolve against the *union* of checkouts that resolve
 it, or to require the caller to say which app it is asking from.
+
+### DEC-029 settled (session 22)
+
+**Ownership pick: most recently indexed app.** Several apps can resolve one gem
+version, so the pick must be deterministic. Of the candidates — widest bundle,
+first registrant, most recent — only the last *follows the work*: reindexing the
+app you are in makes it the context, so a wrong pick self-heals through the
+action a person was going to take anyway. Widest bundle is stabler and wrong
+more often; first registrant is stablest and wrongest.
+
+**Disclosure.** The answer carries `context`, naming the checkout whose
+namespace answered, and `--explain` prints it. An answer that depends on which
+app supplied the ancestors has to say which app, or the next person cannot tell
+a good answer from a lucky one.
+
+**Fallback.** A gem no indexed app resolves keeps the one-gem-plus-core tree and
+names *itself* as the context. The degradation is the same as before; what is
+new is that it is visible.
+
+**Cache and invalidation.** The map is a `gem_use` table, rewritten wholesale
+per checkout on every index — like the file map — so a gem dropped from a
+`Gemfile.lock` stops being claimed. Rows die with their checkout by foreign key,
+so `--drop` takes the ownership with it. There is no separate cache to go stale.
+
+**Measured.** Gem-floor correct 38.2 % → 48.8 %, found-the-definition 64.0 % →
+84.5 %, confidently wrong 3.8 % → 3.0 %. The artifact accounted for ~70 % of the
+gem residue. Details and the correction note in `docs/BASELINE.md`.
+
+**Residual staleness, stated.** The pick is a snapshot of "most recently
+indexed", so it can name an app whose bundle has since changed on disk without
+being reindexed. That is the ordinary staleness the whole store has — the
+surface key catches content drift within a checkout, not a lockfile edit nobody
+indexed — and the `context` field is what makes it diagnosable rather than
+mysterious.

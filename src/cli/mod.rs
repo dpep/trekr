@@ -318,6 +318,11 @@ fn index_gems(
             continue;
         };
         report.found += 1;
+        // Canonical, like every other checkout root the store keys on: a query
+        // canonicalizes the path it is given, and a gem located through a
+        // symlinked GEM_HOME would otherwise be stored under a name no query
+        // ever asks for (DEC-024).
+        let gem_root = std::fs::canonicalize(&gem_root).unwrap_or(gem_root);
         let root_str = gem_root.to_string_lossy().into_owned();
         used.push(root_str.clone());
         if store.has_checkout(&root_str)? {

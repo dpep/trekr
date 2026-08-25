@@ -540,6 +540,18 @@ impl Store {
         tx.commit()
     }
 
+    /// The gem roots this checkout's bundle resolves, in a stable order.
+    pub(crate) fn gems_used(&self, root: &str) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT g.gem_root FROM gem_use g
+               JOIN checkout c ON c.id = g.checkout_id
+              WHERE c.root = ?1
+              ORDER BY g.gem_root",
+        )?;
+        let rows = stmt.query_map(params![root], |r| r.get(0))?;
+        rows.collect()
+    }
+
     /// The app to answer a question about this gem's source from.
     ///
     /// **Most recently indexed wins.** Several apps can resolve one gem

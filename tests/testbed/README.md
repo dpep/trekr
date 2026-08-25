@@ -54,3 +54,12 @@ nothing.
   fix removed. A case that passes both ways is worse than no case; that has
   bitten this project twice.
 - **Keep the source tiny and generic** — `Widget`, `Job`, `Alpha`. Public repo.
+
+## What does not belong here
+
+A case stages exactly **one** checkout, so behaviour that needs two — an app and
+a gem it resolves (DEC-029) — cannot be pinned honestly. Writing a
+single-checkout approximation would pin the shape rather than the thing that
+broke, which is the failure mode the rule above exists to prevent. Such
+behaviour is covered where it can be honest: an assertion in `tests/cli_e2e.rs`
+or `tests/lsp_e2e.rs`, which can build as many repos as they need.

@@ -1002,3 +1002,86 @@ fn explain_renders_the_disclosure_the_json_already_carries() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// A gem on its own is a tree of one gem plus core, so a method it gets from a
+/// sibling gem is unreachable by construction (DEC-029). The fix answers from
+/// an app that resolves the gem — which needs two checkouts, and so lives here
+/// rather than in the testbed.
+#[test]
+fn a_gem_position_answers_from_an_app_that_resolves_it() {
+    let (app, db) = scratch("gemctx-app");
+    let (gems, _) = scratch("gemctx-gems");
+
+    // Two gems: one defines a method, the other calls it. Laid out the way
+    // bundler does, because that is how they are located.
+    // `$GEM_HOME/gems/<name>-<version>/lib` is the layout gems are located by.
+    let helper = gems.join("gems/helper-1.0.0/lib");
+    let user = gems.join("gems/user-1.0.0/lib");
+    fs::create_dir_all(&helper).unwrap();
+    fs::create_dir_all(&user).unwrap();
+    fs::write(
+        helper.join("helper.rb"),
+        "class Module\n  def helper_macro(name)\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        user.join("user.rb"),
+        "class Consumer\n  helper_macro :thing\nend\n",
+    )
+    .unwrap();
+
+    // An app whose lockfile resolves both.
+    git(&app, &["init", "-q"]);
+    fs::write(app.join("app.rb"), "class Widget\nend\n").unwrap();
+    fs::write(
+        app.join("Gemfile.lock"),
+        "GEM\n  remote: https://rubygems.org/\n  specs:\n    helper (1.0.0)\n    user (1.0.0)\n\
+         \nPLATFORMS\n  ruby\n\nDEPENDENCIES\n  helper\n  user\n",
+    )
+    .unwrap();
+    git(&app, &["add", "-A"]);
+    git(
+        &app,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+
+    let out = trekr_env(
+        &db,
+        &app,
+        &["--index"],
+        &[("GEM_HOME", gems.to_str().unwrap())],
+    );
+    assert!(out.status.success(), "indexed the app and its gems");
+
+    // The call lives in the `user` gem; the definition lives in `helper`.
+    let spec = format!("{}:2:3", user.join("user.rb").display());
+    let answer = json(&trekr(&db, &app, &["--def", &spec, "--json"]));
+    assert_eq!(
+        answer["status"], "resolved",
+        "the sibling gem's method is reachable: {answer}"
+    );
+    assert!(
+        answer["sites"][0]["path"]
+            .as_str()
+            .unwrap()
+            .contains("helper-1.0.0"),
+        "and it points at the gem that defines it: {answer}"
+    );
+    // An answer that depends on which app supplied the ancestors says which.
+    assert_eq!(
+        answer["context"].as_str(),
+        app.canonicalize().unwrap().to_str(),
+        "the answering context is disclosed"
+    );
+
+    let _ = fs::remove_dir_all(&app);
+    let _ = fs::remove_dir_all(&gems);
+}
