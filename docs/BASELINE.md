@@ -1296,3 +1296,32 @@ Two consecutive runs on the untouched store agree to the decimal, as the
 session-24 rule requires. The gold set is a fresh trace of the same exerciser —
 9,146 app sites, the same count as session 25 — so the 42.3 % that column
 carried is directly comparable to the 42.0 % this session started from.
+
+### The widget_shop gem floor, re-measured — and why it is not a comparison
+
+The pinned gem floor was 48.8 % correct / 84.5 % found / 3.0 % confidently wrong
+(session 24, context `widget_shop-nosorbet`). Re-traced and re-scored on this
+session's store, 398 gem sites, same seed, same pin, two consecutive runs
+byte-identical:
+
+**46.2 % correct / 85.9 % found / 3.5 % confidently wrong (+ 0.5 %
+ambiguous-wrong).** App column 54.1 % correct on 61 sites, against 54.8 %.
+
+**That 2.6-point fall is not attributable to this session's changes, and saying
+otherwise would break the session-23 rule.** Nothing was held fixed between the
+two figures: the gold set is a fresh trace, the store was rebuilt twice by
+schema bumps, and the checkout population went 785 → 634 as the rebuild dropped
+gems no current corpus resolves.
+
+What *is* controlled says the changes did nothing here. Discourse's gem column
+was measured on one fixed gold set across all three arms and reads **51.5 %
+correct at every step** — baseline, after the mixin rule, after `class_methods`.
+Neither extractor change moved a single gem site. Both are about class-body
+macro calls and `ClassMethods` modules, which is app-code grammar.
+
+So the honest statement is that **the widget_shop-pinned floor now reads
+46.2 / 85.9 / 3.5 on a store nobody can compare to the one that produced 48.8**,
+and that a controlled re-measurement of it — pre-change binary, this store, this
+trace — is a job for session 27 if the number matters. The discourse column is
+the better instrument regardless: 398 sites of one small app's bundle against
+2,989 of a real one's.
