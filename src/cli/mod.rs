@@ -650,10 +650,30 @@ fn cmd_refs_by_name(
 /// incremental machinery, and the measurement in docs/ARCHITECTURE.md is why it
 /// stays chosen.
 fn tree_for(path: &Path) -> anyhow::Result<(PathBuf, Store, Tree)> {
-    let root = scan::repo_root(path)?;
     let store = open_store()?;
+    let root = checkout_for(&store, path)?;
     let tree = Tree::build(&store, &root.to_string_lossy())?;
     Ok((root, store, tree))
+}
+
+/// The checkout a path belongs to: its git repository, or failing that the
+/// indexed root that contains it.
+///
+/// The second case is a gem. Gems are indexed per directory and are not git
+/// repositories (DEC-001 governs what may be *indexed*, not what may be asked
+/// about), so without this a question about a position in gem source — the
+/// position an agent reaches one step after following a definition — could
+/// not be answered at all.
+fn checkout_for(store: &Store, path: &Path) -> anyhow::Result<PathBuf> {
+    if let Ok(root) = scan::repo_root(path) {
+        return Ok(root);
+    }
+    let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    match store.checkout_containing(&absolute.to_string_lossy())? {
+        Some(root) => Ok(PathBuf::from(root)),
+        // Neither: report git's own complaint, which names the real problem.
+        None => scan::repo_root(path),
+    }
 }
 
 /// The checkout we are standing in — for the queries that ask about a name

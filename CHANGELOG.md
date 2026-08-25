@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- A position inside **gem source** now answers. Gems are indexed but are not git
+  repositories, so `repo_root` could not place a file in one and `--def` (and
+  the LSP surface) refused with "not a git repository" — one step after
+  following a definition into a gem, which is where an agent routinely is. The
+  checkout is now the file's git repo *or*, failing that, the longest indexed
+  root containing it.
+- An older trekr meeting a **newer** database now refuses instead of dropping
+  it. A version mismatch reindexes (DEC-009), which is right in one direction
+  only; in the other, a stale install silently destroyed a newer index and then
+  looked like it had never been run.
+
 - Fixed: a `--serve` session went on answering from a tree assembled **before**
   an edit that had been reindexed underneath it. The rebuild key was (schema
   version, file count), and editing a file moves neither — only adding or

@@ -96,6 +96,19 @@ impl Store {
              PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32768;",
         )?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
+        // An *older* binary must not drop a newer database. Two trekrs on one
+        // machine — one installed, one freshly built — would otherwise take
+        // turns wiping each other's index, and each would look like it had
+        // simply never been run.
+        if version > schema::VERSION {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISMATCH),
+                Some(format!(
+                    "database is schema v{version} but this trekr speaks v{};                      upgrade trekr, or point $TREKR_DB elsewhere",
+                    schema::VERSION
+                )),
+            ));
+        }
         if version != schema::VERSION {
             // No migration, by design: see schema::VERSION. Reindexing costs
             // seconds and cannot leave the store half-converted.
@@ -460,6 +473,27 @@ impl Store {
                 |r| r.get(0),
             )
             .or(Ok(0))
+    }
+
+    /// The indexed checkout that contains this path, longest root first.
+    ///
+    /// A gem is a checkout but not a git repository, so `repo_root` cannot
+    /// place a file inside one — and following a definition into gem code and
+    /// then asking about a position there is exactly what an agent does next.
+    /// The store already knows where every indexed root begins, so it answers.
+    pub(crate) fn checkout_containing(&self, path: &str) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT root FROM checkout WHERE ?1 LIKE root || '/%'
+                  ORDER BY LENGTH(root) DESC LIMIT 1",
+                params![path],
+                |r| r.get(0),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })
     }
 
     /// Has this root been indexed before?

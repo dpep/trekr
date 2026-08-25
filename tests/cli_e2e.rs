@@ -856,3 +856,38 @@ fn a_position_resolves_against_its_own_repo_not_the_current_directory() {
     let _ = fs::remove_dir_all(&dir);
     let _ = fs::remove_dir_all(&other);
 }
+
+/// Two trekrs on one machine must not take turns wiping each other's index.
+///
+/// A version mismatch drops and reindexes (DEC-009), which is right when the
+/// binary is *newer* than the database. The other direction — an older binary
+/// meeting a newer database — is a stale install about to destroy work, and it
+/// looked exactly like "trekr has never been run here".
+#[test]
+fn an_older_binary_refuses_a_newer_database_rather_than_dropping_it() {
+    let (dir, db) = scratch("newerdb");
+    repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+
+    // Forge a database from the future.
+    let out = Command::new("sqlite3")
+        .arg(&db)
+        .arg("PRAGMA user_version = 9999;")
+        .output()
+        .expect("sqlite3 available");
+    assert!(out.status.success());
+
+    let refused = trekr(&db, &dir, &["--status"]);
+    assert_eq!(
+        refused.status.code(),
+        Some(2),
+        "a request that cannot be served, not an empty answer"
+    );
+    let message = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        message.contains("upgrade trekr"),
+        "and it says what to do: {message}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}

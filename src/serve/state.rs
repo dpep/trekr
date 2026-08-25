@@ -119,9 +119,18 @@ impl Session {
         let root = match self.enclosing.get(&directory) {
             Some(cached) => cached.clone(),
             None => {
-                let found = crate::scan::repo_root(&absolute)
-                    .ok()
-                    .map(|root| std::fs::canonicalize(&root).unwrap_or(root));
+                let found = match crate::scan::repo_root(&absolute) {
+                    Ok(root) => Some(std::fs::canonicalize(&root).unwrap_or(root)),
+                    // A gem is an indexed checkout but not a git repository,
+                    // and following a definition into gem source and asking
+                    // again is the next thing an agent does.
+                    Err(_) => self
+                        .store
+                        .checkout_containing(&absolute.to_string_lossy())
+                        .ok()
+                        .flatten()
+                        .map(PathBuf::from),
+                };
                 self.enclosing.insert(directory, found.clone());
                 found
             }
