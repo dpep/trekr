@@ -23,7 +23,7 @@ no-op and query timings are medians of five, which is the precision those
 numbers are reported to.
 """
 
-import collections, json, os, random, shutil, sqlite3, subprocess, sys, time
+import collections, hashlib, json, os, shutil, sqlite3, subprocess, sys, time
 
 # Line-buffered even when redirected: a run takes minutes, and a progress
 # report you cannot watch is not one.
@@ -197,6 +197,20 @@ def main(corpora):
         shutil.rmtree(clone, ignore_errors=True)
 
 
+def stable_sample(rows, count):
+    """The same `count` rows before and after a change to what gets indexed.
+
+    `random.sample` draws by position, so a population that grows or shrinks by
+    even one row re-draws the whole sample — and every before/after delta is
+    then a comparison of two different populations. Ordering by a hash of each
+    row's identity keeps the sample stable for the rows that still exist, which
+    is what makes a delta mean anything.
+    """
+    ordered = sorted(rows, key=lambda r: hashlib.md5(
+        f"{r[0]}:{r[1]}:{r[2]}".encode()).hexdigest())
+    return ordered[:count]
+
+
 def call_resolution(corpora):
     """What share of real call sites does the receiver ladder resolve?
 
@@ -207,7 +221,6 @@ def call_resolution(corpora):
     """
     print(f"\n=== method resolution ({SAMPLE} sampled call sites per corpus)")
     db = sqlite3.connect(DB)
-    random.seed(11)
     for repo in corpora:
         rows = db.execute(
             """SELECT f.path, s.line, s.col, s.recv FROM call_site s
@@ -232,7 +245,7 @@ def call_resolution(corpora):
         chain_resolved = collections.Counter()
         typing = collections.Counter()
         no_inference = 0
-        for path, line, col, shape in random.sample(rows, SAMPLE):
+        for path, line, col, shape in stable_sample(rows, SAMPLE):
             out = trekr(["--def", f"{path}:{line}:{col}", "--json"], repo).stdout
             answer = json.loads(out) if out.strip() else {}
             if answer.get("under") != "call":
@@ -302,7 +315,6 @@ def resolution_rate(corpora):
     """
     print(f"\n=== constant resolution ({SAMPLE} sampled references per corpus)")
     db = sqlite3.connect(DB)
-    random.seed(7)
     for repo in corpora:
         rows = db.execute(
             """SELECT f.path, r.line, r.col, r.name FROM const_ref r
@@ -317,7 +329,7 @@ def resolution_rate(corpora):
             continue
         tally = collections.Counter()
         unresolved = []
-        for path, line, col, name in random.sample(rows, SAMPLE):
+        for path, line, col, name in stable_sample(rows, SAMPLE):
             out = trekr(["--def", f"{path}:{line}:{col}", "--json"], repo).stdout
             answer = json.loads(out) if out.strip() else {}
             if answer.get("under") != "constant":
