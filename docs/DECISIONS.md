@@ -458,3 +458,31 @@ of it is inference.
 **Reverses if** DSL-defined methods get modelled (`delegate`, `define_method`,
 `scope`, the Rails family — PLAN Phase 3). Then `no_such_method` becomes nearly
 as strong as `different_owner`, and the split stops earning its keep.
+
+## DEC-022 — Schema attributes attach by convention, at extraction
+
+**Decided.** `create_table "posts"` in `db/schema.rb` emits attribute methods
+under `Post`, applying Rails' table-to-model convention in the **extractor**.
+Generated names are getter, setter, and predicate; the reader is typed from the
+column's SQL type.
+
+**Why.** `posts` → `Post` is a pure function of the table name, so it is a blob
+fact and belongs where blob facts are made. The point is not that `post.body`
+exists but that it is a `String`: a column type names a class, which turns every
+attribute into a typed receiver — the cheapest type source in a Rails app, and
+ruby-lsp-rails' capability without a running app.
+
+**The cutoff.** Getter, setter, predicate. The dirty-tracking family
+(`_changed?`, `_was`, `_before_last_save`, `_will_change!`, …) is a dozen names
+per column for a small fraction of the calls; `boolean` columns get no type
+because `true` and `false` are different classes and neither is a useful
+receiver.
+
+**Known gap, stated plainly**: a model overriding `self.table_name` is not
+matched. The override is in a different blob from the schema, so honouring it
+means either a schema-column fact table or a tree-time join — neither of which
+earns itself for the small share of models that do it.
+
+**Reverses if** `self.table_name` turns out to be common in the target repo, or
+if schema facts are wanted for anything besides attribute methods. Then the
+column list becomes a stored fact and the convention match moves to the tree.

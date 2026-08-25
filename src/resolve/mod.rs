@@ -791,6 +791,74 @@ mod tests {
     }
 
     #[test]
+    fn schema_columns_become_typed_attributes_on_the_model() {
+        // ruby-lsp-rails' capability with no running app. The point is not
+        // that `post.body` exists but that it is a String.
+        let schema = "create_table \"posts\" do |t|\n  t.string \"title\"\n  \
+                      t.text \"body\"\n  t.integer \"views\"\n  t.timestamps\nend\n";
+        // Through a local: `p.body.upcase` is a chained receiver, which
+        // DEC-020 deliberately does not attack.
+        let user = "class Post\nend\n\
+                    class Job\n  def go\n    p = Post.new\n    b = p.body\n    \
+                    b.upcase\n  end\nend\n";
+        let tree = crate::tree::for_test(&[("db/schema.rb", schema), ("app.rb", user)]);
+        let facts = crate::extract::extract(user.as_bytes());
+        let call = facts
+            .calls
+            .iter()
+            .find(|c| c.name == "upcase")
+            .unwrap()
+            .clone();
+        let found = method_at(&tree, &facts, &call, "app.rb");
+        assert_eq!(
+            found.owner.as_deref(),
+            Some("String"),
+            "the column's SQL type makes the attribute a typed receiver"
+        );
+        assert!(tree.lookup("Post", false, "title=").is_some());
+        assert!(tree.lookup("Post", false, "views?").is_some());
+        assert!(
+            tree.lookup("Post", false, "created_at").is_some(),
+            "t.timestamps is two columns spelled as one call"
+        );
+        assert!(
+            tree.lookup("Post", false, "body_changed?").is_none(),
+            "the dirty-tracking family is deliberately out"
+        );
+    }
+
+    #[test]
+    fn an_enum_defines_a_predicate_a_bang_and_a_scope_per_member() {
+        for source in [
+            // Rails 6 spelling and Rails 7 spelling.
+            "class Post\n  enum status: { draft: 0, live: 1 }\nend\n",
+            "class Post\n  enum :status, { draft: 0, live: 1 }\nend\n",
+        ] {
+            let tree = crate::tree::for_test(&[("a.rb", source)]);
+            assert!(tree.lookup("Post", false, "draft?").is_some(), "{source}");
+            assert!(tree.lookup("Post", false, "live!").is_some(), "{source}");
+            assert!(
+                tree.lookup("Post", true, "draft").is_some(),
+                "the scope is a class method: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_enum_with_a_prefix_refuses_rather_than_guess_names() {
+        let tree = crate::tree::for_test(&[(
+            "a.rb",
+            "class Post\n  enum status: { draft: 0 }, _prefix: true\nend\n",
+        )]);
+        let _ = tree.lookup("Post", false, "draft?");
+        let tree = crate::tree::for_test(&[(
+            "a.rb",
+            "class Post\n  enum status: { draft: 0 }, prefix: true\nend\n",
+        )]);
+        assert!(tree.lookup("Post", false, "draft?").is_none());
+    }
+
+    #[test]
     fn a_scope_is_callable_on_the_class() {
         let source = "class Widget\n  scope :active, -> { where(1) }\nend\n\
                       class Job\n  def go\n    Widget.active\n  end\nend\n";

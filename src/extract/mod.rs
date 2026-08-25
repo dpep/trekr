@@ -544,6 +544,9 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
     }
 
     fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+        // A side effect, not a consumption: `create_table` is still an ordinary
+        // call, it just also tells us what columns a model has.
+        self.handle_create_table(node);
         if self.handle_macro(node) {
             return;
         }
@@ -626,6 +629,7 @@ impl<'pr> Extractor<'_> {
             }
             "include" | "prepend" | "extend" => self.handle_mixin(call, &name, &args),
             "alias_method" => self.handle_alias_method(call, &args),
+            "enum" => self.handle_enum(call, &args),
             // Any macro the expansion table knows. The probe argument only
             // asks "is this a macro we model" — the real names come below.
             _ if !macros::generated(&name, "probe").is_empty() => {
@@ -734,6 +738,181 @@ impl<'pr> Extractor<'_> {
             self.record_call(call);
         }
         any
+    }
+
+    /// `enum status: { draft: 0, … }` — a predicate, a bang setter, and a scope
+    /// per member.
+    ///
+    /// Both spellings: Rails 6's `enum status: {…}` puts the attribute in the
+    /// options hash, Rails 7's `enum :status, {…}` makes it the first argument.
+    /// Members come from a literal hash's keys or a literal array's elements;
+    /// anything computed produces nothing.
+    fn handle_enum(&mut self, call: &ruby_prism::CallNode<'pr>, args: &[Node<'pr>]) -> bool {
+        let mut members: Vec<String> = Vec::new();
+        let mut collect = |node: &Node<'pr>| {
+            if let Some(hash) = node.as_hash_node() {
+                for element in hash.elements().iter() {
+                    if let Some(assoc) = element.as_assoc_node()
+                        && let Some(name) = literal_name(&assoc.key())
+                    {
+                        members.push(name);
+                    }
+                }
+            } else if let Some(array) = node.as_array_node() {
+                members.extend(array.elements().iter().filter_map(|e| literal_name(&e)));
+            }
+        };
+
+        for (index, arg) in args.iter().enumerate() {
+            // Rails 6 spelling: the attribute name is a key in the trailing
+            // hash and its value holds the members.
+            if let Some(hash) = arg.as_keyword_hash_node() {
+                for element in hash.elements().iter() {
+                    let Some(assoc) = element.as_assoc_node() else {
+                        continue;
+                    };
+                    // `prefix:`/`suffix:` rename every generated method, so
+                    // refuse rather than produce wrong names.
+                    let key = literal_name(&assoc.key()).unwrap_or_default();
+                    if key == "prefix" || key == "suffix" {
+                        return false;
+                    }
+                    if !matches!(key.as_str(), "default" | "validate" | "instance_methods") {
+                        collect(&assoc.value());
+                    }
+                }
+            } else if index > 0 {
+                // Rails 7 spelling: members are a positional argument.
+                collect(arg);
+            }
+        }
+        if members.is_empty() {
+            return false;
+        }
+
+        let loc = call.location();
+        let (start, end) = (loc.start_offset(), loc.end_offset());
+        let in_singleton = self.in_singleton();
+        for member in members {
+            for (name, singleton) in [
+                (format!("{member}?"), false),
+                (format!("{member}!"), false),
+                (member.clone(), true),
+            ] {
+                let mut def = self.def(name, Kind::Method, start, end);
+                def.via = Some("enum".into());
+                def.singleton = singleton || in_singleton;
+                self.push_def(def);
+            }
+        }
+        true
+    }
+
+    /// `db/schema.rb`'s `create_table "posts" do |t| … end` — the attribute
+    /// methods Rails generates for every column.
+    ///
+    /// This is ruby-lsp-rails' capability without a running app, and the point
+    /// is not that `post.body` exists but that it has a **type**: a column's
+    /// SQL type names a class, which makes every attribute a typed receiver.
+    ///
+    /// The table attaches to a model by Rails' `posts` → `Post` convention,
+    /// applied here rather than in the tree because it is a pure function of
+    /// the table name. A model that overrides `self.table_name` is a known gap
+    /// (DEC-022): the override lives in a different blob.
+    fn handle_create_table(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        if method_name(call).as_deref() != Some("create_table") {
+            return;
+        }
+        let args = arg_nodes(call);
+        let Some(table) = args.first().and_then(literal_name) else {
+            return;
+        };
+        let Some(block) = call.block().and_then(|b| b.as_block_node()) else {
+            return;
+        };
+        // The block parameter is what column declarations are called on.
+        let builder = block
+            .parameters()
+            .and_then(|p| p.as_block_parameters_node())
+            .and_then(|p| p.parameters())
+            .and_then(|p| p.requireds().iter().next())
+            .and_then(|p| p.as_required_parameter_node())
+            .and_then(|p| String::from_utf8(p.name().as_slice().to_vec()).ok());
+        let Some(builder) = builder else { return };
+        let Some(body) = block.body().and_then(|b| b.as_statements_node()) else {
+            return;
+        };
+
+        let owner = macros::table_to_class(&table);
+        let mut columns: Vec<(String, Option<&'static str>)> = Vec::new();
+        for statement in body.body().iter() {
+            let Some(inner) = statement.as_call_node() else {
+                continue;
+            };
+            // Only calls on the block parameter declare columns.
+            let on_builder = inner
+                .receiver()
+                .and_then(|r| r.as_local_variable_read_node())
+                .and_then(|l| String::from_utf8(l.name().as_slice().to_vec()).ok())
+                .is_some_and(|name| name == builder);
+            if !on_builder {
+                continue;
+            }
+            let Some(kind) = method_name(&inner) else {
+                continue;
+            };
+            match kind.as_str() {
+                // `t.timestamps` is two datetime columns spelled as one call.
+                "timestamps" => {
+                    columns.push(("created_at".into(), macros::column_class("datetime")));
+                    columns.push(("updated_at".into(), macros::column_class("datetime")));
+                }
+                // `t.references :author` is a foreign key plus the association.
+                "references" | "belongs_to" => {
+                    for arg in arg_nodes(&inner) {
+                        if let Some(name) = literal_name(&arg) {
+                            columns.push((format!("{name}_id"), macros::column_class("integer")));
+                            columns.push((name, None));
+                        }
+                    }
+                }
+                _ if macros::is_column_type(&kind) => {
+                    let class = macros::column_class(&kind);
+                    for arg in arg_nodes(&inner) {
+                        if let Some(name) = literal_name(&arg) {
+                            columns.push((name, class));
+                        }
+                    }
+                }
+                _ => continue,
+            }
+        }
+
+        let loc = call.location();
+        let (start, end) = (loc.start_offset(), loc.end_offset());
+        for (column, class) in columns {
+            // Getter, setter, predicate. The dirty-tracking family
+            // (`_changed?`, `_was`, `_before_last_save`, …) is deliberately out:
+            // it is a dozen names per column for a fraction of the calls.
+            for (name, writer) in [
+                (column.clone(), false),
+                (format!("{column}="), true),
+                (format!("{column}?"), false),
+            ] {
+                let mut def = self.def(name.clone(), Kind::Method, start, end);
+                def.nesting = vec![owner.clone()];
+                def.via = Some("schema".into());
+                if writer {
+                    def.params = vec![Param {
+                        kind: ParamKind::Req,
+                        name: "value".into(),
+                    }];
+                } else if name == column {
+                    def.sig_returns = class.map(str::to_string);
+                }
+                self.push_def(def);
+            }
+        }
     }
 
     /// A Rails class macro that defines methods — `delegate`, the association
