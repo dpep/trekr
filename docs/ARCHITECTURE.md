@@ -3,10 +3,9 @@
 The design contract. [PLAN.md](PLAN.md) says *why*; this says *what is built*.
 Change them in the same commit as the code, per [CLAUDE.md](../CLAUDE.md).
 
-Status: **Blob layer built. Layer 2 resolves constants and linearizes
-ancestors. Layer 3 resolves methods.** Gem and core indexing (PLAN Phase 3) is
-not started, and it is the single biggest thing between the current numbers and
-good ones.
+Status: **All three layers built.** Ruby core and the checkout's gems are
+indexed. Not started: Rails DSL modeling, Tapioca `sorbet/rbi/` ingestion, the
+LSP front, and `--refs` narrowed by receiver.
 
 ## The one idea
 
@@ -140,6 +139,33 @@ Two things a naive implementation gets wrong here:
   records the second separately.
 - **`Foo.bar` walks the superclass chain, not the MRO.** Included modules
   contribute no class methods; `extend`ed ones do, along with *their* includes.
+
+### `gems/` and core — making the index contain the answers
+
+Two of the three reasons a lookup failed were "the thing is not in the index".
+Both are now addressable without a Ruby toolchain.
+
+**Core** is [`src/tree/core.rb`](../src/tree/core.rb): ~1000 lines of ordinary
+Ruby with empty bodies, read at tree-build time by the same `extract()` a
+checkout goes through (DEC-015). The ancestry is what earns it — every class
+gets its implicit `< Object`, and a singleton chain continues into
+`Class → Module → Object`, which is what makes `puts`, `raise`, `Foo.new`, and
+a class body's `prepend` resolve at all.
+
+**Gems** come from reading, never from running (DEC-016): `Gemfile.lock`
+parsed directly, sources found by convention across `vendor/bundle`,
+`$GEM_HOME`, `$GEM_PATH`, rbenv, rvm, asdf, Homebrew and system paths. Each gem
+is its own checkout rooted at its unpacked directory — which already encodes
+`name-version` — so two projects resolving the same version share one index and
+the second pays nothing (DEC-017). Only `lib/` is walked.
+
+A gem the lockfile names and disk does not have is **reported**, in the text
+output and as `gems.missing` in `--json`. It is a hole in every answer that
+would have come from it, and a silent hole is indistinguishable from a method
+that does not exist.
+
+The layering is core → gems → checkout, so a gem may reopen core and the
+checkout may reopen a gem, which is what Rails actually does.
 
 ### `store/` — SQLite, WAL, no cleverness
 
