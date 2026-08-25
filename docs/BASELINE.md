@@ -488,3 +488,35 @@ was, on that axis, entirely this bug.
 The lesson generalizes past this scorer: a harness that maps *every* failure to
 one benign bucket will hide the severe ones behind the ordinary ones, and it
 will do so most convincingly when the benign bucket is plausible.
+
+
+### The Rails-generated bucket is not a gap (session 15)
+
+Session 14 reported that bucket as "44 % nothing at all" and made it the
+largest block of unanswered app-code sites. That was a **scorer artifact**. The
+scorer decided whether an answer pointed "into the app" by comparing against
+the common prefix of the traced source files — which is `app/`. A generated
+attribute is answered with `db/schema.rb` (DEC-022), which shares no directory
+with `app/`, so every one of those was filed as residue.
+
+Scored against the *checkout* root, the bucket is fully covered:
+
+| generator family | sites | trekr's answer |
+| ---------------- | ----- | -------------- |
+| schema attribute (`price_cents`, `quantity`, `name`, `reference`) | 8 | the schema column, all offered |
+| association reader (`supplier`, `orders`, `widget`) | 6 | the `belongs_to` / `has_many` line |
+| enum predicate (`active?`, `draft?`, `retired?`) | 3 | the `enum` line |
+| the `enum` macro call itself | 1 | resolved |
+
+**22.2 % resolved outright, 77.8 % offered as a candidate, 0 % nothing.**
+
+So the recommendation is the opposite of "model the next two generator
+families" — all three families are already modelled and already produce the
+right declaration. What is missing is **promotion**: those answers sit among
+candidates instead of resolving, because the receiver is an ivar filled from an
+untyped constructor parameter (`@order = order`), and no rung types it.
+
+That makes receiver typing, not generator coverage, the lever for the largest
+remaining block — and it is the same signal already shipped for *ranking* in
+session 14 (`@widget` names `Widget`), which would have to be corroborated
+before it could promote.

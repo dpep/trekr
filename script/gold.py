@@ -89,6 +89,18 @@ def in_app(path, app_root):
     return bool(path) and path.startswith(app_root) and "/gems/" not in path
 
 
+def checkout_root(files):
+    """Walk up from the traced files until a git checkout is found."""
+    if not files:
+        return "/dev/null"
+    here = os.path.commonpath(files)
+    while here != "/":
+        if os.path.isdir(os.path.join(here, ".git")) or os.path.isfile(os.path.join(here, ".git")):
+            return here
+        here = os.path.dirname(here)
+    return os.path.commonpath(files)
+
+
 def candidate_rank(site, answer):
     """1-based position of the true definition among the ranked candidates.
 
@@ -127,8 +139,12 @@ def main(path):
         sys.exit("build first: make release")
     gold = [json.loads(line) for line in open(path)]
     gold = [g for g in gold if g.get("def_file", "").endswith(".rb")]
-    app_root = os.environ.get("APP_ROOT") or os.path.commonpath(
-        [g["file"] for g in gold if g["scope"] == "app"] or ["/"]
+    # The *checkout* root, not the common prefix of the traced files: a
+    # generated attribute is answered with `db/schema.rb`, which shares no
+    # directory with `app/`, and scoring it against `app/` filed every one of
+    # them as residue.
+    app_root = os.environ.get("APP_ROOT") or checkout_root(
+        [g["file"] for g in gold if g["scope"] == "app"]
     )
 
     # App sites are the point and there are few, so all of them are scored;
