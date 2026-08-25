@@ -625,3 +625,23 @@ Three things worth acting on:
 
 The sample is too small to set an agenda on its own, but the shape of the cold
 -start problem is now measured from real usage rather than from a bench loop.
+
+
+### The empty `definition` responses (session 17)
+
+`--usage` reported `definition` answering nothing a quarter of the time. Mining
+the log for *which* sites: both empties are the same file,
+`widget_shop/app/models/report.rb`, which **no longer exists** — a scratch file
+made during a spot-check and deleted after. Of eight logged `definition` calls,
+the two empty ones are that file. So the quarter is an artifact of an
+eight-call sample, not a product gap.
+
+The product question behind it was worth asking anyway, and the answer is that
+the surface already does the right thing: **LSP `definition` does not drop
+residue candidates.** Session 11 taught `goToDefinition` to return ranked
+candidate locations when the receiver does not resolve, capped at five, order
+being the disclosure — verified again here against a live residue position.
+Nothing to change.
+
+What the same probe *did* surface is that `@account.local?` had begun answering
+`resolved` at 0.03 confidence, which became DEC-027.
