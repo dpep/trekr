@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Ruby core is now indexed. `puts`, `raise`, `block_given?`, `Foo.new`,
+  a class body's `prepend`, `ArgumentError`, `ENV` and the rest resolve,
+  because every class now carries its implicit `Object → Kernel → BasicObject`
+  tail and singleton lookup continues into `Class → Module`. Core comes from a
+  vendored Ruby stub read by the ordinary extractor (DEC-015), so no RBS gem
+  and no Ruby toolchain.
+- `--ancestors` output now ends in the core tail, which is real. A module
+  still gets none, because a module has no superclass.
+
 - `--jobs N` (and `TREKR_JOBS`; the flag wins) sets the parse worker count.
   `0`, the default, picks the machine's **physical** core count rather than
   rayon's default of logical cores.

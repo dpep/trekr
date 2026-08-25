@@ -460,6 +460,44 @@ mod tests {
     }
 
     #[test]
+    fn kernel_methods_resolve_from_an_ordinary_class() {
+        // The largest single bucket in session 3's diagnosis: `puts` and
+        // `raise` were "defined nowhere in the index" because core was not in
+        // it. They reach an ordinary class through its implicit `< Object`.
+        let source = "class W\n  def go\n    puts 1\n    raise \"x\"\n  end\nend\n";
+        for name in ["puts", "raise"] {
+            let found = answer(source, name);
+            assert_eq!(found.status, Status::Resolved, "{name}");
+            assert_eq!(found.owner.as_deref(), Some("Kernel"), "{name}");
+            assert_eq!(found.sites[0].path, crate::tree::CORE_PATH);
+        }
+    }
+
+    #[test]
+    fn class_body_macros_resolve_to_module() {
+        // The other half of that bucket: `prepend` and friends are Module
+        // methods, reached because a class body dispatches on the class and a
+        // class's singleton chain runs through Class and Module.
+        let source = "module M\nend\nclass W\n  prepend M\nend\n";
+        let found = answer(source, "prepend");
+        assert_eq!(found.owner.as_deref(), Some("Module"));
+    }
+
+    #[test]
+    fn new_on_a_constant_receiver_resolves_to_class() {
+        let source = "class Box\nend\nclass W\n  def go\n    Box.new\n  end\nend\n";
+        let found = answer(source, "new");
+        assert_eq!(found.owner.as_deref(), Some("Class"));
+        assert_eq!(found.resolved_via.as_deref(), Some("const"));
+    }
+
+    #[test]
+    fn a_method_on_a_core_typed_local_resolves() {
+        let source = "class W\n  def go\n    s = String.new\n    s.upcase\n  end\nend\n";
+        assert_eq!(owner(source, "upcase").as_deref(), Some("String"));
+    }
+
+    #[test]
     fn a_top_level_call_has_no_class_to_dispatch_on() {
         // `self` at the top level is `main`, an ordinary Object instance —
         // which is not indexed, so this is residue rather than a wrong answer.

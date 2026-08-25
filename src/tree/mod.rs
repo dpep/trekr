@@ -200,8 +200,16 @@ fn qualify(scope: &str, name: &str) -> String {
 impl Tree {
     /// Assemble a checkout's namespace from its blob facts.
     pub(crate) fn build(store: &Store, root: &str) -> rusqlite::Result<Tree> {
-        let mut tree = Tree::assemble(store.declarations(root)?, store.ancestry(root)?);
-        tree.add_methods(store.methods(root)?);
+        // Core goes in first, so that a checkout reopening `class Object` adds
+        // to it rather than being shadowed by it, and so that every class ends
+        // up with an Object/Kernel/BasicObject tail.
+        let (mut decls, mut edges, mut methods) = core_rows();
+        decls.extend(store.declarations(root)?);
+        edges.extend(store.ancestry(root)?);
+        methods.extend(store.methods(root)?);
+
+        let mut tree = Tree::assemble(decls, edges);
+        tree.add_methods(methods);
         Ok(tree)
     }
 
@@ -408,10 +416,14 @@ impl Tree {
 
         // The parent chain is needed before includes, because includes dedup
         // against it.
-        let parent: Vec<String> = entry
-            .and_then(|e| e.superclass.as_ref())
-            .map(|target| self.chain_of(target, out, stack))
-            .unwrap_or_default();
+        let parent: Vec<String> = match entry.and_then(|e| e.superclass.as_ref()) {
+            Some(target) => self.chain_of(target, out, stack),
+            // Every class without an explicit superclass inherits Object, and
+            // that tail is most of what core indexing buys: it is how `puts`
+            // and `raise` become findable from an ordinary class body.
+            None if self.inherits_object(fqn, entry) => self.linearize(OBJECT, out, stack),
+            None => Vec::new(),
+        };
 
         let mut prepends: Vec<String> = Vec::new();
         let mut includes: Vec<String> = Vec::new();
@@ -448,6 +460,17 @@ impl Tree {
         chain.extend(includes);
         chain.extend(parent);
         chain
+    }
+
+    /// Does this name get Ruby's implicit `< Object`?
+    ///
+    /// Only classes — a module has no superclass at all — and not the two
+    /// roots, whose own chain the core stub states outright.
+    fn inherits_object(&self, fqn: &str, entry: Option<&Entry>) -> bool {
+        entry.is_some_and(|e| e.kind == "class")
+            && fqn != OBJECT
+            && fqn != "BasicObject"
+            && self.names.contains_key(OBJECT)
     }
 
     /// One mixin or superclass target: its own whole chain, or nothing plus a
@@ -635,49 +658,21 @@ fn split_path(written: &str) -> (&str, Vec<&str>) {
 /// Ruby source in, assembled namespace out — through the real extractor, so
 /// tests written against this are conformance tests for the pair, not for the
 /// tree alone.
+/// Ruby source in, assembled namespace out — through the real extractor and
+/// with the real core stub, so tests written against this exercise the same
+/// path `Tree::build` takes.
 #[cfg(test)]
 pub(crate) fn for_test(sources: &[(&str, &str)]) -> Tree {
-    use crate::core::Kind;
-    let mut decls = Vec::new();
-    let mut edges = Vec::new();
-    let mut methods = Vec::new();
+    let (mut decls, mut edges, mut methods) = core_rows();
     for (path, source) in sources {
-        let facts = crate::extract::extract(source.as_bytes());
-        assert_eq!(facts.parse_errors, 0, "fixture must be valid Ruby: {path}");
-        for d in facts.defs {
-            if d.kind == Kind::Method {
-                methods.push(MethodRow {
-                    name: d.name,
-                    nesting: d.nesting,
-                    singleton: d.singleton,
-                    visibility: d.visibility.as_str().to_string(),
-                    params: d.params,
-                    via: d.via,
-                    target: d.target,
-                    sig_returns: d.sig_returns,
-                    path: path.to_string(),
-                    line: d.pos.line,
-                    col: d.pos.col,
-                });
-            } else {
-                decls.push(DeclRow {
-                    name: d.name,
-                    kind: d.kind.as_str().to_string(),
-                    nesting: d.nesting,
-                    target: d.target,
-                    path: path.to_string(),
-                    line: d.pos.line,
-                    col: d.pos.col,
-                });
-            }
-        }
-        for a in facts.ancestry {
-            edges.push(EdgeRow {
-                owner: a.owner,
-                relation: a.relation.as_str().to_string(),
-                target: a.target,
-            });
-        }
+        let (d, e, m) = rows_from(path, source);
+        assert!(
+            !d.is_empty() || !m.is_empty() || !e.is_empty() || source.trim().is_empty(),
+            "fixture produced no facts: {path}"
+        );
+        decls.extend(d);
+        edges.extend(e);
+        methods.extend(m);
     }
     let mut tree = Tree::assemble(decls, edges);
     tree.add_methods(methods);
@@ -696,11 +691,88 @@ mod tests {
         tree(&[("a.rb", source)])
     }
 
+    /// An ancestor chain with core's tail removed.
+    ///
+    /// Every class now ends `Object, Kernel, BasicObject`, which is correct and
+    /// uninteresting to a test about linearization order. Dropping it keeps
+    /// these assertions about the thing they are testing.
+    fn chain(tree: &Tree, fqn: &str) -> Vec<String> {
+        tree.ancestors(fqn)
+            .chain
+            .iter()
+            .filter(|name| {
+                tree.sites(name)
+                    .first()
+                    .is_none_or(|site| site.path != CORE_PATH)
+            })
+            .cloned()
+            .collect()
+    }
+
     /// What `name` resolves to when written inside `nesting` (innermost first,
     /// as the blob layer records it).
     fn at(tree: &Tree, name: &str, nesting: &[&str]) -> Option<String> {
         let nesting: Vec<String> = nesting.iter().map(|s| s.to_string()).collect();
         tree.resolve(name, &nesting).fqn
+    }
+
+    #[test]
+    fn every_plain_class_ends_in_objects_tail() {
+        let tree = one("class W\nend\n");
+        assert_eq!(
+            tree.ancestors("W").chain,
+            ["W", "Object", "Kernel", "BasicObject"],
+            "the implicit `< Object` is what makes Kernel reachable"
+        );
+        assert!(
+            tree.ancestors("BasicObject").chain.len() == 1,
+            "the root inherits nothing"
+        );
+    }
+
+    #[test]
+    fn a_module_gets_no_object_tail_because_it_has_no_superclass() {
+        let tree = one("module M\nend\n");
+        assert_eq!(tree.ancestors("M").chain, ["M"]);
+    }
+
+    #[test]
+    fn core_constants_resolve_and_carry_their_real_hierarchy() {
+        let tree = one("class W\nend\n");
+        for name in ["ENV", "ArgumentError", "Hash", "Comparable"] {
+            assert!(
+                tree.resolve(name, &[]).fqn.is_some(),
+                "{name} should be a known core constant"
+            );
+        }
+        assert_eq!(
+            tree.ancestors("KeyError").chain,
+            [
+                "KeyError",
+                "IndexError",
+                "StandardError",
+                "Exception",
+                "Object",
+                "Kernel",
+                "BasicObject"
+            ],
+            "the exception hierarchy is real, not flat"
+        );
+    }
+
+    #[test]
+    fn a_checkout_reopening_a_core_class_adds_to_it() {
+        // ActiveSupport does exactly this to Object; core must not shadow it.
+        let tree = one("class Object\n  def blank?\n  end\nend\n");
+        assert_eq!(
+            tree.lookup("Object", false, "blank?")
+                .map(|m| m.owner.clone()),
+            Some("Object".to_string())
+        );
+        assert!(
+            tree.lookup("Object", false, "frozen?").is_some(),
+            "and core's own methods survive the reopen"
+        );
     }
 
     #[test]
@@ -773,13 +845,13 @@ mod tests {
     fn linearizes_prepends_then_self_then_includes_then_superclass() {
         let tree = one("module P\nend\nmodule I\nend\nclass Base\nend\n\
              class C < Base\n  include I\n  prepend P\nend\n");
-        assert_eq!(tree.ancestors("C").chain, ["P", "C", "I", "Base"]);
+        assert_eq!(chain(&tree, "C"), ["P", "C", "I", "Base"]);
     }
 
     #[test]
     fn the_last_mixin_applied_is_the_nearest() {
         let tree = one("module A\nend\nmodule B\nend\nclass C\n  include A\n  include B\nend\n");
-        assert_eq!(tree.ancestors("C").chain, ["C", "B", "A"]);
+        assert_eq!(chain(&tree, "C"), ["C", "B", "A"]);
     }
 
     #[test]
@@ -787,7 +859,7 @@ mod tests {
         // `include A, B` calls append_features(B) then append_features(A), so
         // A ends up nearer — the reverse of the two-statement form above.
         let tree = one("module A\nend\nmodule B\nend\nclass C\n  include A, B\nend\n");
-        assert_eq!(tree.ancestors("C").chain, ["C", "A", "B"]);
+        assert_eq!(chain(&tree, "C"), ["C", "A", "B"]);
     }
 
     #[test]
@@ -795,7 +867,7 @@ mod tests {
         let tree = one("module M\nend\nclass Base\n  include M\nend\n\
              class C < Base\n  include M\nend\n");
         assert_eq!(
-            tree.ancestors("C").chain,
+            chain(&tree, "C"),
             ["C", "Base", "M"],
             "M keeps its deeper position rather than being pulled forward"
         );
@@ -809,7 +881,7 @@ mod tests {
     #[test]
     fn a_multi_argument_prepend_also_applies_right_to_left() {
         let tree = one("module A\nend\nmodule B\nend\nclass Foo\n  prepend A, B\nend\n");
-        assert_eq!(tree.ancestors("Foo").chain, ["A", "B", "Foo"]);
+        assert_eq!(chain(&tree, "Foo"), ["A", "B", "Foo"]);
     }
 
     #[test]
@@ -818,7 +890,7 @@ mod tests {
             "module A\nend\nmodule B\n  include A\nend\nmodule C\n  include A\nend\n\
              module Foo\n  include B\n  include C\nend\n",
         );
-        assert_eq!(tree.ancestors("Foo").chain, ["Foo", "C", "B", "A"]);
+        assert_eq!(chain(&tree, "Foo"), ["Foo", "C", "B", "A"]);
     }
 
     #[test]
@@ -828,7 +900,7 @@ mod tests {
              module Foo\n  prepend B\n  prepend C\nend\n",
         );
         assert_eq!(
-            tree.ancestors("Foo").chain,
+            chain(&tree, "Foo"),
             ["A", "C", "B", "Foo"],
             "prepends re-order what is already there; includes never do"
         );
@@ -840,13 +912,9 @@ mod tests {
         // everywhere else.
         let tree = one("module A\nend\nclass Foo\n  prepend A\n  include A\nend\n\
              class Bar\n  include A\n  prepend A\nend\n");
+        assert_eq!(chain(&tree, "Foo"), ["A", "Foo"], "the include is a no-op");
         assert_eq!(
-            tree.ancestors("Foo").chain,
-            ["A", "Foo"],
-            "the include is a no-op"
-        );
-        assert_eq!(
-            tree.ancestors("Bar").chain,
+            chain(&tree, "Bar"),
             ["A", "Bar", "A"],
             "the prepend adds a second entry in front"
         );
@@ -857,14 +925,14 @@ mod tests {
         let tree = one("module A\nend\nclass Parent\n  include A\nend\n\
              class Foo < Parent\n  prepend A\nend\n\
              class Bar < Parent\n  include A\nend\n");
-        assert_eq!(tree.ancestors("Foo").chain, ["A", "Foo", "Parent", "A"]);
-        assert_eq!(tree.ancestors("Bar").chain, ["Bar", "Parent", "A"]);
+        assert_eq!(chain(&tree, "Foo"), ["A", "Foo", "Parent", "A"]);
+        assert_eq!(chain(&tree, "Bar"), ["Bar", "Parent", "A"]);
     }
 
     #[test]
     fn a_module_has_no_superclass_segment_at_all() {
         let tree = one("module Foo\nend\nmodule Bar\n  prepend Foo\nend\n");
-        assert_eq!(tree.ancestors("Bar").chain, ["Foo", "Bar"]);
+        assert_eq!(chain(&tree, "Bar"), ["Foo", "Bar"]);
     }
 
     #[test]
@@ -873,7 +941,7 @@ mod tests {
             "module Foo\n  include Foo\nend\n",
             "module Foo\n  prepend Foo\nend\n",
         ] {
-            assert_eq!(one(source).ancestors("Foo").chain, ["Foo"]);
+            assert_eq!(chain(&one(source), "Foo"), ["Foo"]);
         }
     }
 
@@ -898,7 +966,7 @@ mod tests {
     #[test]
     fn a_constant_alias_is_followed_wherever_a_namespace_is_wanted() {
         let tree = one("class Base\nend\nAliasedBase = Base\nclass Foo < AliasedBase\nend\n");
-        assert_eq!(tree.ancestors("Foo").chain, ["Foo", "Base"]);
+        assert_eq!(chain(&tree, "Foo"), ["Foo", "Base"]);
 
         // …but the alias keeps its own definition site, because that is where
         // go-to-definition on `AliasedBase` should land.
@@ -949,13 +1017,13 @@ mod tests {
     fn a_mixin_brings_its_own_ancestors_with_it() {
         let tree =
             one("module Deep\nend\nmodule M\n  include Deep\nend\nclass C\n  include M\nend\n");
-        assert_eq!(tree.ancestors("C").chain, ["C", "M", "Deep"]);
+        assert_eq!(chain(&tree, "C"), ["C", "M", "Deep"]);
     }
 
     #[test]
     fn an_inheritance_cycle_terminates_instead_of_hanging() {
         let tree = one("class A < B\nend\nclass B < A\nend\n");
-        let chain = tree.ancestors("A").chain.clone();
+        let chain = chain(&tree, "A");
         assert!(chain.contains(&"A".to_string()) && chain.contains(&"B".to_string()));
         assert_eq!(chain.len(), 2, "each name appears once: {chain:?}");
     }
@@ -992,7 +1060,7 @@ mod tests {
     #[test]
     fn a_superclass_is_resolved_in_the_scope_that_wrote_it() {
         let tree = one("module A\n  class Base\n  end\n  class C < Base\n  end\nend\n");
-        assert_eq!(tree.ancestors("A::C").chain, ["A::C", "A::Base"]);
+        assert_eq!(chain(&tree, "A::C"), ["A::C", "A::Base"]);
     }
 
     #[test]
@@ -1114,6 +1182,22 @@ impl Tree {
                         chain.push((ancestor.clone(), false));
                     }
                 }
+            }
+        }
+
+        // `Foo.singleton_class.ancestors` does not stop at the superclass
+        // walk: it continues into Class, Module, Object, Kernel, BasicObject as
+        // ordinary instance methods. That tail is how `Foo.new` finds
+        // `Class#new` and a class body's `prepend` finds `Module#prepend`.
+        let tail = match self.kind_of(fqn) {
+            Some("class") => "Class",
+            // A module has no singleton superclass chain of its own.
+            Some("module") => "Module",
+            _ => return chain,
+        };
+        for ancestor in &self.ancestors(tail).chain {
+            if seen.insert((ancestor.clone(), false)) {
+                chain.push((ancestor.clone(), false));
             }
         }
         chain
@@ -1330,6 +1414,23 @@ mod singleton_tests {
     }
 
     #[test]
+    fn a_singleton_chain_continues_into_class_and_module() {
+        // `Foo.singleton_class.ancestors` does not stop at the superclass
+        // walk. Without this tail, `Foo.new` and a class body's `prepend` find
+        // nothing.
+        let tree = one("class W\nend\nmodule M\nend\n");
+        assert_eq!(find(&tree, "W", true, "new").as_deref(), Some("Class"));
+        assert_eq!(find(&tree, "W", true, "prepend").as_deref(), Some("Module"));
+        assert_eq!(find(&tree, "W", true, "puts").as_deref(), Some("Kernel"));
+        assert_eq!(
+            find(&tree, "M", true, "new"),
+            None,
+            "a module is not a Class, so it has no `new`"
+        );
+        assert_eq!(find(&tree, "M", true, "include").as_deref(), Some("Module"));
+    }
+
+    #[test]
     fn a_bare_visibility_call_does_not_answer_where_a_method_is_defined() {
         // `private :inherited` is a def row (DEC-004) but asserts visibility
         // about a method defined elsewhere; it must not be the answer.
@@ -1369,4 +1470,68 @@ mod singleton_tests {
             "a splat at the call site rules nothing out"
         );
     }
+}
+
+/// The path reported for anything defined in the core stub. Deliberately not a
+/// real path: there is no file to open, and saying so is better than handing a
+/// caller a location that does not exist.
+pub(crate) const CORE_PATH: &str = "<core>";
+
+/// The implicit superclass of every class that does not name one.
+const OBJECT: &str = "Object";
+
+/// Ruby's core library as rows, read from `core.rb` through the ordinary
+/// extractor.
+///
+/// Reparsed on every tree build. It is ~1 ms against a ~120 ms build, and a
+/// cache would have to be invalidated by the same rule DEC-013 exists for.
+fn core_rows() -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<MethodRow>) {
+    rows_from(CORE_PATH, include_str!("core.rb"))
+}
+
+/// One Ruby source's facts, in the row shapes the tree assembles from. Shared
+/// by the core stub and by the test harness, so neither can drift from what
+/// the store actually hands over.
+fn rows_from(path: &str, source: &str) -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<MethodRow>) {
+    use crate::core::Kind;
+    let facts = crate::extract::extract(source.as_bytes());
+    debug_assert_eq!(facts.parse_errors, 0, "{path} must be valid Ruby");
+    let mut decls = Vec::new();
+    let mut edges = Vec::new();
+    let mut methods = Vec::new();
+    for d in facts.defs {
+        if d.kind == Kind::Method {
+            methods.push(MethodRow {
+                name: d.name,
+                nesting: d.nesting,
+                singleton: d.singleton,
+                visibility: d.visibility.as_str().to_string(),
+                params: d.params,
+                via: d.via,
+                target: d.target,
+                sig_returns: d.sig_returns,
+                path: path.to_string(),
+                line: d.pos.line,
+                col: d.pos.col,
+            });
+        } else {
+            decls.push(DeclRow {
+                name: d.name,
+                kind: d.kind.as_str().to_string(),
+                nesting: d.nesting,
+                target: d.target,
+                path: path.to_string(),
+                line: d.pos.line,
+                col: d.pos.col,
+            });
+        }
+    }
+    for a in facts.ancestry {
+        edges.push(EdgeRow {
+            owner: a.owner,
+            relation: a.relation.as_str().to_string(),
+            target: a.target,
+        });
+    }
+    (decls, edges, methods)
 }

@@ -502,7 +502,9 @@ fn ancestors_linearize_in_rubys_order() {
     let answer = json(&trekr(&db, &dir, &["--ancestors", "C", "--json"]));
     assert_eq!(
         answer["ancestors"].as_array().unwrap(),
-        &vec!["P", "C", "I", "Base"]
+        &vec!["P", "C", "I", "Base", "Object", "Kernel", "BasicObject"],
+        "the core tail is real: Base inherits Object, which is what makes \
+         Kernel#puts reachable from C"
     );
     assert_eq!(
         trekr(&db, &dir, &["--ancestors", "Nope"]).status.code(),

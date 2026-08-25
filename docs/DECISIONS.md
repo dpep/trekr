@@ -258,3 +258,41 @@ plateau is flat rather than falling.
 physical and say so), or if the store write is made concurrent or substantially
 faster — at which point parse becomes the majority and the worker count starts
 to matter for real.
+
+## DEC-015 — Ruby core is a vendored Ruby stub, not RBS
+
+**Decided.** `src/tree/core.rb` is ~1000 lines of ordinary Ruby with empty
+method bodies, read at tree-build time by the same extractor that reads a
+checkout. Not RBS, not a hand-written Rust table.
+
+**Why.** Three candidates:
+
+- **Vendored core RBS** is the most accurate source, but consuming it needs an
+  RBS parser. `ruby-rbs` is a C-binding crate, and PLAN §2 says consume RBS
+  opportunistically and never require it. A required C dependency for the
+  *baseline* case is the wrong trade.
+- **A Rust table** (Rubydex's `built_in.rs` shape) needs no parser but invents a
+  second way to say what a class is, which then has to be kept in step with the
+  first.
+- **A Ruby stub** needs nothing new. It goes through `extract()` and
+  `Tree::assemble` exactly as a checkout does, so it is covered by every test
+  those already have, and a contributor extends it by writing the method they
+  went looking for. Bodies are empty because only names, arity, and ancestry
+  are load-bearing.
+
+The ancestry matters more than the method lists: the implicit `< Object` on
+every class is what makes `Kernel#puts` reachable at all, and the
+`Class → Module → Object` tail on singleton chains is what makes `Foo.new` and
+a class body's `prepend` resolve.
+
+Cost: reparsed on every tree build, ~1 ms against ~120 ms. A cache would need
+the same invalidation rule DEC-013 exists for, and is not worth it.
+
+**Reverses if** the stub grows past the point where hand-maintenance is
+credible, or a pure-Rust RBS parser appears. The seam is right for either: both
+would produce the same `DeclRow`/`EdgeRow`/`MethodRow` triple.
+
+*Sorbet's `sorbet/rbi/` is a fourth source, and a good one for repos that have
+it — Tapioca enumerates gem and DSL methods as Prism-parseable Ruby. It is not
+built here because it is a per-repo source rather than a baseline, and building
+both at once would leave neither measured.*
