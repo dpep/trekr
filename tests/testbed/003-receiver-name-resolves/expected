@@ -1,0 +1,4 @@
+# Nothing else defines `ship_it`, so the receiver's name is the whole story:
+# resolved, and graded 0.5 because a naming habit is one hypothesis against
+# "something else entirely".
+def app.rb:11:13 status=resolved owner=Widget via=receiver_name confidence=0.5

@@ -1,0 +1,6 @@
+# `class_methods do` is a block DSL, not a nested `module ClassMethods`. Ruby
+# creates Auditable::ClassMethods at runtime and the gold set confirmed the
+# method is reachable; the extractor records the method without emitting the
+# module as a definition of its own. Pinned as-is so a change to it is a
+# decision rather than a surprise.
+symbols app.rb Auditable,audit_log,record

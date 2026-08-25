@@ -1,0 +1,9 @@
+# A macro generates methods *and* is a method call. Consuming it used to
+# swallow the call site, so asking what `belongs_to` is answered nothing — and
+# a Rails class body is mostly macros.
+def app.rb:2:3 name=belongs_to
+def app.rb:3:3 name=attr_reader
+# A singular association brings its whole family, and `prefix: true` renames
+# what the delegation defines — refusing to model the prefix left every
+# prefixed delegation invisible.
+symbols app.rb Widget,supplier,supplier=,build_supplier,create_supplier,create_supplier!,reload_supplier,label,supplier_region

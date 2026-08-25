@@ -1,0 +1,4 @@
+# The claim the whole product rests on: a same-named call site whose receiver
+# goes elsewhere is *excluded*, not listed. grep cannot produce that count.
+refs Widget#save confirmed=1 possible=0 excluded=1
+refs Gadget#save confirmed=1 possible=0 excluded=1

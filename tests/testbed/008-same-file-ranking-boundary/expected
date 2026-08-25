@@ -1,0 +1,5 @@
+# The same-file ranking signal compared a checkout-relative path against an
+# absolute one, so it never fired; the fix that revived it matched `b.rb`
+# against `ab.rb` for want of a path boundary. Alpha is in the calling file and
+# must rank first.
+def ab.rb:7:11 status=residue candidate1=Alpha

@@ -1,0 +1,5 @@
+# Two superclass paths that need each other's ancestors. Resolving a path asks
+# for a name's ancestors, and that name can be one already being linearized —
+# which used to recurse until the process died, and the gold scorer recorded
+# the abort as the innocent "no name at this position".
+def app.rb:9:5 exit=0 status=resolved owner=Job

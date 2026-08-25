@@ -1,0 +1,4 @@
+# An ActiveRecord finder answers with an instance of the class it was called
+# on. A convention, not a declaration — so it reports `finder`, is the last
+# rung tried, and `where`/`all` are deliberately excluded from it.
+def app.rb:8:7 status=resolved owner=Widget via=finder

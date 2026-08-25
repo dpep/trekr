@@ -1,0 +1,5 @@
+# Alpha and Zeta define `ship` too, so the name picked among equals. `status`
+# is what a caller branches on, and `resolved` at low confidence invites the
+# trust the confidence is withholding — so it says ambiguous, and lists what it
+# beat.
+def app.rb:15:13 status=ambiguous owner=Widget via=receiver_name candidates=2 candidate1=Alpha

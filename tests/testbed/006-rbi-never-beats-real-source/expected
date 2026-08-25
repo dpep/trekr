@@ -1,0 +1,5 @@
+# An .rbi is a declaration, never an implementation. A checkout that commits
+# sorbet/rbi/ holds a stub for methods it calls, indexed after the real source,
+# and the method table took the last definition it saw — so go-to-definition
+# landed on a signature instead of the code.
+def lib.rb:8:7 status=resolved owner=Widget site=lib.rb:2

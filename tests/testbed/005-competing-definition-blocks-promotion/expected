@@ -1,0 +1,4 @@
+# The enclosing scope defines `ship` too, so the receiver's name settles
+# nothing and the rung declines. Ranking still applies: a definition in scope
+# outranks a naming habit.
+def app.rb:10:13 status=residue candidate1=Job

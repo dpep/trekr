@@ -47,6 +47,11 @@ Rust, single crate until there's a concrete reason to split. `cargo` is keg-only
 
 ## Testing
 
+- **Corner cases go in `tests/testbed/`** — a directory of Ruby files plus an
+  `expected` file, picked up automatically by one harness. Adding a case is
+  dropping in files, no Rust. See `tests/testbed/README.md`; the rule that
+  matters is that every case is checked against a build with the fix removed,
+  because a case that passes both ways is worse than none.
 - Fixture repos under `tests/fixtures/`, generic names (`Widget`, `HandlerA`) —
   public repo, nothing employer-identifying.
 - Verify through `cargo test`, not hand-run binaries; e2e drives the built binary

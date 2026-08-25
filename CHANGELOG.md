@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `tests/testbed/` — ten accumulated corner cases as drop-in fixtures with one
+  iterating harness, so adding the next costs no Rust: the ancestor cycle that
+  killed the process, a Sorbet stub shadowing real source, resolved-vs-ambiguous
+  receiver-name pairs, the same-file path boundary, macro-as-call, the delegate
+  prefix, finder typing, and the exclusion count `--refs` exists for.
+
 - An `ambiguous` answer now lists the definitions it beat. Competitors are what
   made it ambiguous, so showing them is the disclosure, not a hedge — and only
   residue used to carry a candidate list. `--explain` renders them with the
