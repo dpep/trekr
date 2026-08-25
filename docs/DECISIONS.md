@@ -985,3 +985,36 @@ being reindexed. That is the ordinary staleness the whole store has — the
 surface key catches content drift within a checkout, not a lockfile edit nobody
 indexed — and the `context` field is what makes it diagnosable rather than
 mysterious.
+
+## DEC-030 — `--gc` is dropped from the backlog, not deferred again
+
+**Decided.** No garbage collection, and it comes off the list rather than
+rolling a fifth time. DEC-003 already decided blobs are never collected; this
+records why the follow-up that kept being scheduled should stop being.
+
+**The hypothesis was measurable, and it is false here.** The driver was always
+"edit-churn orphans accumulate" — blobs from edited-away file versions that no
+checkout references any more. On this machine's database:
+
+| | |
+| --- | --- |
+| database | 384 MB |
+| checkouts | 642 |
+| blobs | 37,171 |
+| **blobs referenced by no file** | **0** |
+
+Not "few". None. A dry-run reporting reclaimable bytes by category would print
+zeros, and building it to print zeros is how a backlog rots.
+
+**Why zero.** Two reasons, and only one of them lasts. Pre-1.0 the schema keeps
+moving, and a version bump drops the database wholesale (DEC-009) — this
+project has done that a dozen times, and each one is a total collection. The
+durable reason is that indexing is keyed by blob and the corpora here are
+re-indexed from clean checkouts, so few versions of a file ever exist.
+
+**What would reopen it, stated so nobody has to re-derive it.** A machine where
+the second row above is *not* zero: hundreds of engineers editing between
+indexes, or a long-lived database that outlives several schema versions once
+the schema settles. The check is the one query above, and it costs nothing to
+re-run. Reopen on an observation, not on a hunch — that is what four rollovers
+were trying to tell us.
