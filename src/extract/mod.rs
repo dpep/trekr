@@ -14,7 +14,7 @@
 mod line_index;
 mod macros;
 
-pub(crate) use macros::table_to_class;
+pub(crate) use macros::{camelize, table_to_class};
 mod sig;
 
 use crate::core::*;

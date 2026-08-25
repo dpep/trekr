@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Two named signals now order residue candidates: **the receiver's name**
+  (`@widget.foo` ranks `Widget#foo` first — a convention, so it ranks and never
+  promotes) and **this checkout before its dependencies**. Measured on the
+  no-Sorbet corpus, where the true definition was offered: app-code first-place
+  50 % → 67 % (6 of 9), gem 60 % → 64 % (34 of 53), MRR 0.62 → 0.76 and
+  0.72 → 0.76. `--def` says which signal fired in each candidate's `why`.
+- Fixed: the "same file" ranking signal compared a checkout-relative path
+  against an absolute one and could never fire.
+
 - Real source now wins the **whole ancestor chain** before an `.rbi`
   declaration wins any of it. Tapioca describes methods in owners that do not
   exist at runtime (`Widget::CommonRelationMethods`), and those sit early in

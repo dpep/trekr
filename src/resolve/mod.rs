@@ -423,6 +423,27 @@ fn is_finder(name: &str) -> bool {
     )
 }
 
+/// The class a receiver expression is *named* after, if it looks like one.
+///
+/// `@widget` → `Widget`, `order_item` → `OrderItem`. Sigils are stripped;
+/// anything that is not a plain snake_case identifier answers `None`, because
+/// this is meant to be a strong hint or nothing at all. Never a resolution —
+/// a name is a convention, so it ranks candidates and never promotes one.
+fn receiver_names_a_class(text: &str) -> Option<String> {
+    let bare = text.trim_start_matches(['@', '$']);
+    if bare.is_empty() || !bare.starts_with(|c: char| c.is_ascii_lowercase()) {
+        return None;
+    }
+    if !bare.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    Some(crate::extract::camelize(bare))
+}
+
+fn last_segment(fqn: &str) -> &str {
+    fqn.rsplit("::").next().unwrap_or(fqn)
+}
+
 /// An honest no, with the candidates ordered by evidence a reader can check.
 fn residue(
     tree: &Tree,
@@ -448,11 +469,19 @@ fn residue(
         .map(|fqn| tree.ancestors(&fqn).unresolved.clone())
         .unwrap_or_default();
 
-    let mut ranked: Vec<(u8, Candidate)> = tree
+    // What the receiver is *called*. `@widget` names `Widget` far more often
+    // than not, and when the receiver's type cannot be inferred that name is
+    // the strongest evidence left in the expression.
+    let named_type = call.recv_text.as_deref().and_then(receiver_names_a_class);
+
+    let mut ranked: Vec<(u8, bool, Candidate)> = tree
         .named(&call.name)
         .into_iter()
         .map(|method| {
             let fits = method.accepts(call.argc);
+            let names_owner = named_type
+                .as_deref()
+                .is_some_and(|named| last_segment(&method.owner) == named);
             // Named tiers, not weights: every one of these is a fact a reader
             // can check, and none of them is a constant somebody invented.
             let (tier, why) = match (fits, &here) {
@@ -460,16 +489,21 @@ fn residue(
                     0,
                     "arity fits, and the enclosing class inherits from its owner",
                 ),
+                (true, _) if names_owner => {
+                    (1, "arity fits, and the receiver is named after its owner")
+                }
                 (true, Some(scope)) if shares_namespace(scope, &method.owner) => (
-                    1,
+                    2,
                     "arity fits, and its owner shares a namespace with the call",
                 ),
-                (true, _) if method.site.path == path => (2, "arity fits, same file"),
-                (true, _) => (3, "arity fits"),
-                (false, _) => (4, "defined elsewhere; arity does not fit"),
+                (true, _) if method.site.path.ends_with(path) => (3, "arity fits, same file"),
+                (true, _) => (4, "arity fits"),
+                (false, _) => (5, "defined elsewhere; arity does not fit"),
             };
             (
                 tier,
+                // Within a tier, this checkout's own code before a dependency's.
+                !tree.in_checkout(&method.site.path),
                 Candidate {
                     owner: method.owner.clone(),
                     singleton: method.singleton,
@@ -479,13 +513,13 @@ fn residue(
             )
         })
         .collect();
-    ranked.sort_by_key(|(tier, _)| *tier);
+    ranked.sort_by_key(|(tier, from_gem, _)| (*tier, *from_gem));
 
     let total = ranked.len();
     let candidates: Vec<Candidate> = ranked
         .into_iter()
         .take(MAX_CANDIDATES)
-        .map(|(_, c)| c)
+        .map(|(_, _, c)| c)
         .collect();
     let reason = if total > candidates.len() {
         format!(
@@ -1088,5 +1122,50 @@ mod finder_rung_tests {
         for method in ["find", "find_by", "first", "create!"] {
             assert!(is_finder(method), "{method} does");
         }
+    }
+}
+
+#[cfg(test)]
+mod receiver_name_ranking_tests {
+    use super::*;
+
+    #[test]
+    fn reads_a_class_name_out_of_a_receiver_expression() {
+        assert_eq!(receiver_names_a_class("@widget").as_deref(), Some("Widget"));
+        assert_eq!(
+            receiver_names_a_class("order_item").as_deref(),
+            Some("OrderItem")
+        );
+        // Anything that is not a plain snake_case identifier is not a hint.
+        // Guessing here would rank a wrong answer first, which is worse than
+        // declining to rank at all.
+        for text in ["Widget", "foo.bar", "widget(1)", "@", "widget[0]"] {
+            assert_eq!(receiver_names_a_class(text), None, "{text}");
+        }
+    }
+
+    /// The signal that motivated this: an untypeable ivar whose *name* says
+    /// what it holds. The right answer has to reach the top of the list.
+    #[test]
+    fn a_receiver_named_after_its_class_ranks_that_class_first() {
+        let answer = super::tests::answer(
+            "class Alpha\n  def ship\n  end\nend\n\
+             class Widget\n  def ship\n  end\nend\n\
+             class Zeta\n  def ship\n  end\nend\n\
+             class Job\n  def run\n    @widget.ship\n  end\nend\n",
+            "ship",
+        );
+        assert_eq!(
+            answer.status,
+            Status::Residue,
+            "a name is never a promotion"
+        );
+        let first = answer.candidates.first().expect("candidates");
+        assert_eq!(first.owner, "Widget");
+        assert!(
+            first.why.contains("named after its owner"),
+            "and says why: {}",
+            first.why
+        );
     }
 }

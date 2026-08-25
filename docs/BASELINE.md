@@ -440,3 +440,34 @@ knowing it works.
 Indexing the worktree: **35 files, 0 blobs parsed, 0.05 s**. Every `.rb` blob
 was already known from the main checkout, because the app code is identical and
 facts are keyed by blob OID. Predicted 0 parsed and under a second.
+
+
+### Ranking the residue (session 14)
+
+A residue answer is only worth having if the right guess is near the top of the
+list a reader scans, so the gold set now measures that directly: the 1-based
+position of the true definition among the ranked candidates, for every site
+where it was offered at all.
+
+Two named signals added — the receiver's *name* (`@widget` ranks `Widget`'s
+methods, a convention that ranks and never promotes) and this checkout's own
+code before a dependency's. Measured on the no-Sorbet corpus, same binary
+otherwise:
+
+| | before | after |
+| --- | --- | --- |
+| app: truth ranked #1 | 50.0 % (4/8) | **66.7 %** (6/9) |
+| app: top-3 | 62.5 % | **77.8 %** |
+| app: MRR | 0.623 | **0.760** |
+| gem: truth ranked #1 | 59.6 % (31/52) | **64.2 %** (34/53) |
+| gem: top-3 | 76.9 % | **81.1 %** |
+| gem: MRR | 0.723 | **0.757** |
+
+The app sample is nine sites, so treat that column as a direction and the gem
+column as the number. Both move the same way, and the gem column is 53 sites.
+
+Ranking also surfaces slightly more truth inside the eight-candidate cap:
+app found-the-definition 61.9 % → 63.5 %, gem 63.8 % → 65.0 %.
+
+Found while adding this: the existing "same file" signal compared a
+checkout-relative path against an absolute one and had never fired.

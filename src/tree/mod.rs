@@ -129,6 +129,10 @@ impl MethodDef {
 }
 
 pub(crate) struct Tree {
+    /// The checkout this tree was built for. Everything outside it came from a
+    /// gem or from core, which is a ranking signal: code in the repo you are
+    /// standing in is likelier to be what you meant than a dependency's.
+    root: String,
     names: HashMap<String, Entry>,
     methods: Vec<MethodDef>,
     /// (owner, singleton, name) → definitions. A reopened class gives several.
@@ -238,12 +242,14 @@ impl Tree {
         methods.extend(store.methods(&roots)?);
 
         let mut tree = Tree::assemble(decls, edges);
+        tree.root = root.to_string();
         tree.add_methods(methods);
         Ok(tree)
     }
 
     fn assemble(decls: Vec<DeclRow>, edges: Vec<EdgeRow>) -> Tree {
         let mut tree = Tree {
+            root: String::new(),
             names: HashMap::new(),
             methods: Vec::new(),
             by_owner: HashMap::new(),
@@ -1419,6 +1425,14 @@ impl Tree {
             }
         }
         None
+    }
+
+    /// Is this site inside the checkout, rather than a gem or core?
+    ///
+    /// Exact rather than a guess at the path shape: site paths are absolute and
+    /// the tree knows the root it was built for.
+    pub(crate) fn in_checkout(&self, site_path: &str) -> bool {
+        !self.root.is_empty() && site_path.starts_with(&self.root)
     }
 
     /// Every method with this name, anywhere. The candidate pool for residue.

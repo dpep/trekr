@@ -27,7 +27,7 @@ the default. `SAMPLE=0` scores everything.
 import collections, json, os, random, re, subprocess, sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-BIN = os.path.join(ROOT, "target/release/trekr")
+BIN = os.environ.get("TREKR_BIN") or os.path.join(ROOT, "target/release/trekr")
 SAMPLE = int(os.environ.get("SAMPLE", "300"))
 SEED = int(os.environ.get("SEED", "12"))
 
@@ -83,6 +83,18 @@ def in_app(path, app_root):
     return bool(path) and path.startswith(app_root) and "/gems/" not in path
 
 
+def candidate_rank(site, answer):
+    """1-based position of the true definition among the ranked candidates.
+
+    The number the ranking features are for: a residue answer is only useful
+    if the right guess is near the top of the list a reader actually scans.
+    """
+    for i, candidate in enumerate(answer.get("candidates") or [], 1):
+        if hits([candidate.get("site", {})], site):
+            return i
+    return None
+
+
 def verdict(site, answer, app_root):
     if answer is None or answer.get("reason") == "no name at this position":
         return "missed"
@@ -120,8 +132,13 @@ def main(path):
         gems = gems[:SAMPLE]
 
     results = []
+    ranks = []
     for i, site in enumerate(app + gems, 1):
-        results.append((site, verdict(site, ask(site), app_root)))
+        answer = ask(site) or {}
+        results.append((site, verdict(site, answer, app_root)))
+        rank = candidate_rank(site, answer)
+        if rank:
+            ranks.append((site["scope"], rank))
         if i % 50 == 0:
             print(f"  … {i}/{len(app) + len(gems)}")
 
@@ -155,6 +172,18 @@ def main(path):
     report("  of which plain methods", [r for r in app_rows if not is_generated(r[0])])
     report("  of which Rails-generated", [r for r in app_rows if is_generated(r[0])])
     report("GEM CODE (the floor)", [(s, v) for s, v in results if s["scope"] != "app"])
+
+    if ranks:
+        print("\nranking quality, where the truth was offered as a candidate:")
+        for label, want in (("app", "app"), ("gem", None)):
+            rows = [r for scope, r in ranks if (scope == "app") == (want == "app")]
+            if not rows:
+                continue
+            first = sum(1 for r in rows if r == 1)
+            top3 = sum(1 for r in rows if r <= 3)
+            mrr = sum(1 / r for r in rows) / len(rows)
+            print(f"  {label:<4} {len(rows):>4} offered   #1 {100 * first / len(rows):>5.1f}%"
+                  f"   top-3 {100 * top3 / len(rows):>5.1f}%   MRR {mrr:.3f}")
 
     misses = [(s, v) for s, v in app_rows if v in ("wrong", "missed", "residue")]
     if misses:

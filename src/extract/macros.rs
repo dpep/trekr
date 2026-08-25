@@ -178,7 +178,7 @@ pub(crate) fn table_to_class(table: &str) -> String {
 
 /// `blog_post` → `BlogPost`. Rails' own inflection, minus the irregulars: an
 /// acronym table would be guessing at a project's `inflections.rb`.
-pub(super) fn camelize(name: &str) -> String {
+pub(crate) fn camelize(name: &str) -> String {
     name.split('_')
         .filter(|part| !part.is_empty())
         .map(|part| {
