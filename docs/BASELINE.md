@@ -817,3 +817,15 @@ more are offered at all.
 It does mean DEC-028's rejected ranking features were measured against a pool
 that was missing most of its competitors, and deserve re-measuring now that the
 pool is real.
+
+**Re-measured in session 23, and the figures move again — upward, and for the
+same good reason.** Directory affinity, rejected at +1.6 points against the old
+pool, delivers **+3.2** against the real one and ships. Gem ranking quality is
+now **#1 52.8 %, top-3 69.3 %, MRR 0.666**, against 49.6 % / 68.5 % / 0.648
+immediately after gem context and 61.5 % / 81.5 % / 0.743 before it.
+
+So the headline ranking numbers have moved twice and neither move is drift:
+they *fell* in session 22 because the denominator grew by a third (far more
+truths are offered at all — residue-hit 25.8 % → 31.8 %), and they *rose* in
+session 23 because a signal that had been measured against the wrong pool got
+measured against the right one. Read them against the pool size, never alone.

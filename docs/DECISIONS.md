@@ -1018,3 +1018,38 @@ indexes, or a long-lived database that outlives several schema versions once
 the schema settles. The check is the one query above, and it costs nothing to
 re-run. Reopen on an observation, not on a hunch — that is what four rollovers
 were trying to tell us.
+
+### DEC-028 revisited (session 23) — one of the two ships, on the same bar
+
+The features were re-measured against the candidate pool as it exists *after*
+gem context (DEC-029), which is a third larger than the pool they were rejected
+against. Same corpus, same seed, same sample, same bar: **≥ 2.0 points on the
+#1 rate or ≥ 0.02 MRR**.
+
+| variant | truth ranked #1 | MRR |
+| ------- | --------------- | --- |
+| baseline | 49.6 % | 0.648 |
+| + chain proximity | 50.4 % | 0.652 |
+| + directory affinity | **52.8 %** | **0.666** |
+| both | 52.8 % | 0.666 |
+
+**Directory affinity ships**: +3.2 points, clearing the bar it missed at +1.6
+against the smaller pool. The feature did not change; the measurement did. That
+is the whole lesson — it was rejected for a real reason, and the reason expired
+when the pool it was measured against stopped being wrong.
+
+**Chain proximity is rejected again**, and now for the second time on
+independent data: +0.8 points, +0.004 MRR, and adding nothing on top of
+affinity. Tier 0 rarely holds more than one candidate, so there is no order for
+it to improve, and a bigger pool did not change that. The code is removed rather
+than kept behind a flag — it measured zero twice.
+
+**Ranking stayed in its lane**: `correct`, `wrong` and `found the definition`
+are byte-identical with the signal on and off (52.2 % / 4.2 % / 84.0 %). Only
+the order within the offered set moved, which is what a ranking feature is
+allowed to do.
+
+`TREKR_RANK_OFF=affinity` switches it off so the next person can re-size it
+without a custom build, and testbed case 013 pins it — with the near definition
+sorting *later* by path, so the case fails when the signal is off. An earlier
+draft of that case put it first and passed either way.

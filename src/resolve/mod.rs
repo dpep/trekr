@@ -512,6 +512,26 @@ fn is_finder(name: &str) -> bool {
     )
 }
 
+/// How many trailing directories two paths share.
+///
+/// The call site's path is checkout-relative and a definition's is absolute, so
+/// the comparison is made from the right: a shared *tail* of directories is
+/// what "nearby in the tree" means when one side does not know where the
+/// checkout begins.
+fn shared_directories(site: &str, call_path: &str) -> usize {
+    let dirs = |path: &str| -> Vec<String> {
+        let mut parts: Vec<String> = path.split('/').map(str::to_string).collect();
+        parts.pop();
+        parts
+    };
+    let (a, b) = (dirs(site), dirs(call_path));
+    a.iter()
+        .rev()
+        .zip(b.iter().rev())
+        .take_while(|(x, y)| x == y)
+        .count()
+}
+
 /// The class a receiver expression is *named* after, if it looks like one.
 ///
 /// `@widget` → `Widget`, `order_item` → `OrderItem`. Sigils are stripped;
@@ -593,7 +613,15 @@ fn residue(
     // the strongest evidence left in the expression.
     let named_type = call.recv_text.as_deref().and_then(receiver_names_a_class);
 
-    let mut ranked: Vec<(u8, bool, Candidate)> = tree
+    // `TREKR_RANK_OFF=affinity` switches the directory signal off, so it can
+    // be re-sized against the gold set without a custom build. A ranking
+    // feature that cannot be A/B'd is a constant somebody invented (DEC-028),
+    // and that lesson cost two features and a session to learn.
+    let use_affinity = !std::env::var("TREKR_RANK_OFF")
+        .unwrap_or_default()
+        .contains("affinity");
+
+    let mut ranked: Vec<(u8, bool, i32, Candidate)> = tree
         .named(&call.name)
         .into_iter()
         .map(|method| {
@@ -621,10 +649,19 @@ fn residue(
                 (true, _) => (4, "arity fits"),
                 (false, _) => (5, "defined elsewhere; arity does not fit"),
             };
+            // A definition in the directory you are calling from is likelier
+            // than one across the tree — the same intuition as "same file",
+            // graded instead of binary. Negated so more shared directories
+            // sorts earlier.
+            let affinity = match use_affinity {
+                true => -(shared_directories(&method.site.path, path) as i32),
+                false => 0,
+            };
             (
                 tier,
                 // Within a tier, this checkout's own code before a dependency's.
                 !tree.in_checkout(&method.site.path),
+                affinity,
                 Candidate {
                     owner: method.owner.clone(),
                     singleton: method.singleton,
@@ -634,13 +671,13 @@ fn residue(
             )
         })
         .collect();
-    ranked.sort_by_key(|(tier, from_gem, _)| (*tier, *from_gem));
+    ranked.sort_by_key(|(tier, from_gem, affinity, _)| (*tier, *from_gem, *affinity));
 
     let total = ranked.len();
     let candidates: Vec<Candidate> = ranked
         .into_iter()
         .take(MAX_CANDIDATES)
-        .map(|(_, _, c)| c)
+        .map(|(_, _, _, c)| c)
         .collect();
     let reason = if total > candidates.len() {
         format!(

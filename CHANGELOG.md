@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Residue candidates are ordered by **directory affinity**: a definition that
+  shares directories with the call site ranks above one across the tree — the
+  "same file" signal, graded instead of binary. Measured against the candidate
+  pool as it exists after gem context: truth ranked first **49.6 % → 52.8 %**,
+  MRR 0.648 → 0.666. `correct` and `confidently wrong` are unchanged, which is
+  what a ranking feature is allowed to do. `TREKR_RANK_OFF=affinity` switches it
+  off for re-measurement.
+
 - The namespace fixpoint revisits only the declarations whose placement can
   still change. A declaration written with plain names is placed by string
   arithmetic alone, so round one settles it forever; only a **compact path**

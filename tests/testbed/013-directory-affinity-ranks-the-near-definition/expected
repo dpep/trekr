@@ -1,0 +1,11 @@
+# Two classes define `perform`; the receiver is untypeable, so both are
+# candidates and only the order can help. `Near` shares a directory with the
+# call site, `Far` does not — and `app/far.rb` sorts *before* `lib/services/`,
+# so without the signal the far one is offered first. That opposition is the
+# point: an earlier version of this case put the near definition first by path
+# and passed with the feature switched off.
+#
+# Rejected in session 20 at +1.6 points and shipped in session 23 at +3.2 — the
+# same feature, measured against a candidate pool that had been missing most of
+# its competitors until gem context landed (DEC-028, DEC-029).
+def lib/services/caller.rb:3:11 status=residue candidates=2 candidate1=Near
