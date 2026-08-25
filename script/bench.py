@@ -128,6 +128,10 @@ def main(corpora):
         except FileNotFoundError:
             pass
 
+    # Reproducibility: every number below came from this database and these
+    # staged corpora. Printing them means a reviewer can re-run a single query
+    # by copy-paste instead of reading this file.
+    print(f"TREKR_DB={DB}   staging={STAGING}")
     indexed = []
     for repo in corpora:
         name = os.path.basename(repo.rstrip("/"))
