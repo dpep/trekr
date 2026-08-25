@@ -5,10 +5,12 @@ references**. Built for legacy Rails monorepos with many worktrees, where the
 incumbents cost gigabytes per workspace and answer "the first ten methods with
 that name."
 
-> **Early.** The blob layer is built, tested, and measured, and **constants
-> resolve**. Method resolution and ranking are not started. See
+> **Early, and working.** All three layers are built: blob facts, a per-checkout
+> namespace, and receiver resolution. Ruby core and the checkout's gems are
+> indexed. Not started: Rails DSL modelling and the LSP front. See
 > [docs/PLAN.md](docs/PLAN.md) for where it goes and
-> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for what exists.
+> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for what exists and what it
+> measures.
 
 ## The idea
 
@@ -33,6 +35,7 @@ cargo build --release
 trekr --index                    # index the checkout you are standing in
 trekr --status                   # what is indexed, and what the checkouts share
 trekr --symbols lib/thing.rb     # outline a file before reading it
+trekr --refs 'Widget#save'       # references narrowed by receiver
 trekr --refs Widget              # every mention of a name in this checkout
 trekr --def lib/thing.rb:12:5    # what is this name, and where is it defined
 trekr --ancestors Widget         # the linearized ancestor chain
