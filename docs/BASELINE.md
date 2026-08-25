@@ -891,3 +891,48 @@ input.
   the 75 sites with no `def` and no shape we recognise. A name that exists only
   at runtime is out of static reach, and inventing one is worse than the gap.
 * **Monkey-patched core** — `require` really is Zeitwerk's `Kernel#require`.
+
+
+## The owner-absent bucket, characterized (session 24)
+
+"Receiver typed, chain complete, and the true owner is not in the chain" — the
+largest remaining resolver bucket. Measured with the context pinned, whole gold
+set: **269 sites.**
+
+| what owns the method Ruby ran | sites | share |
+| ----------------------------- | ----- | ----- |
+| an ordinary module or class | 176 | 65.4 % |
+| Ruby's `Kernel` | 35 | 13.0 % |
+| the receiver's singleton class | 32 | 11.9 % |
+| a concern's `ClassMethods` | 25 | 9.3 % |
+| Ruby's `Object` | 1 | 0.4 % |
+
+Top owners: `Kernel` (35), `ActiveRecord::QueryMethods` (23),
+`ActiveRecord::Reflection::ThroughReflection` (11),
+`Singleton::SingletonClassMethods` (9), `#<Class:ActiveRecord::Base>` (9).
+
+**No slice here is both large and cheap**, which is the finding. The bucket is
+not one mechanism, it is a long tail of them:
+
+* **`Kernel` (35)** is almost entirely `require` — really Zeitwerk's or
+  Bootsnap's replacement of `Kernel#require`. Monkey-patched core, already a
+  stated limit.
+* **`Concurrent::Map#delete`, `Set`, `Singleton`** and friends are *stdlib and
+  concurrent-ruby internals* reached through instance variables typed to a
+  framework class. The owner exists; the chain we build for the receiver does
+  not include it, because the receiver's real class is decided at runtime.
+* **`ActiveRecord::QueryMethods` (23)** and `CollectionProxy` are the relation
+  chain — `Model.where(...).order(...)`, where each link's class is produced by
+  a method call. DEC-020 declined to attack chained receivers on measured
+  grounds, and this is that decision's bill arriving.
+* **The singleton-class group (32)** and **`ClassMethods` (25)** are the same
+  shape from two directions: a method installed on a class's singleton by an
+  `included` hook or an `extend` that runs at load time.
+
+The honest reading is that this bucket is what is left *after* the mechanical
+wins, and it is dominated by things whose owner is only knowable by running the
+program. Building for it would mean attacking chained receivers (declined,
+DEC-020) or modelling `included` hooks' runtime effects — neither cheap, and
+neither with a large enough slice to justify itself on these numbers.
+
+**Stated as a limit**, not carried as a TODO.
