@@ -324,6 +324,94 @@ fn references_narrow_to_the_method_asked_about_not_the_name() {
 }
 
 #[test]
+fn definition_on_an_unresolved_receiver_offers_ranked_guesses() {
+    let (dir, db) = scratch("guesses");
+    git(&dir, &["init", "-q"]);
+    // `thing.save` — a call receiver, so untyped. Two classes define `save`;
+    // Job inherits from Near, so Near's should rank first.
+    let source = concat!(
+        "class Near\n",       // 1
+        "  def save\n",       // 2
+        "  end\n",            // 3
+        "end\n",              // 4
+        "class Far\n",        // 5
+        "  def save\n",       // 6
+        "  end\n",            // 7
+        "end\n",              // 8
+        "class Job < Near\n", // 9
+        "  def run\n",        // 10
+        "    thing.save\n",   // 11
+        "  end\n",            // 12
+        "end\n",              // 13
+    );
+    fs::write(dir.join("app.rb"), source).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    Command::new(env!("CARGO_BIN_EXE_trekr"))
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+
+    let answer = session.request(
+        "textDocument/definition",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": 10, "character": 10},
+        }),
+    );
+    let lines: Vec<u64> = answer["result"]
+        .as_array()
+        .expect("guesses, not null")
+        .iter()
+        .map(|l| l["range"]["start"]["line"].as_u64().unwrap() + 1)
+        .collect();
+    assert_eq!(
+        lines,
+        vec![2, 6],
+        "both candidates, with the enclosing class's ancestor first — order is \
+         the disclosure"
+    );
+
+    // And hover at the same position must say it was never resolved, so an
+    // agent can tell a guess from an answer.
+    let hover = session.request(
+        "textDocument/hover",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": 10, "character": 10},
+        }),
+    );
+    let text = hover["result"]["contents"]["value"].as_str().unwrap();
+    assert!(text.contains("Residue"), "hover says it guessed: {text}");
+    assert!(text.contains("confidence: 0.00"), "and how much: {text}");
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn hover_discloses_the_rung_and_the_confidence() {
     let (dir, db) = scratch("hover");
     let source = repo(&dir);

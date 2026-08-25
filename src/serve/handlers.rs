@@ -19,6 +19,14 @@ use lsp_types::{
     MarkupContent, MarkupKind, ReferenceParams, SymbolKind, WorkspaceSymbolParams,
 };
 
+/// How many ranked guesses `goToDefinition` offers when the receiver did not
+/// resolve.
+///
+/// Five, because an editor shows a picker and a human scans it — Ruby LSP's
+/// fallback is the first ten methods with the name, which is where "ranked"
+/// stops meaning anything. `hover` at the same position says these are guesses.
+const MAX_GUESSES: usize = 5;
+
 /// A location in the workspace, from our `path:line:col`.
 fn location(workspace: &Workspace, path: &str, line: u32, col: u32) -> Option<Location> {
     // A site in the core stub or a gem has no file in this workspace.
@@ -87,11 +95,28 @@ fn resolve_at(
             .into_iter()
             .map(|site| (site.path, site.line, site.col))
             .collect(),
-        Under::Call(call) => crate::resolve::method_at(tree, &facts, &call, &path)
-            .sites
-            .into_iter()
-            .map(|site| (site.path, site.line, site.col))
-            .collect(),
+        Under::Call(call) => {
+            let answer = crate::resolve::method_at(tree, &facts, &call, &path);
+            if !answer.sites.is_empty() {
+                answer
+                    .sites
+                    .into_iter()
+                    .map(|site| (site.path, site.line, site.col))
+                    .collect()
+            } else {
+                // Residue is not "nothing known". The CLI has always returned
+                // ranked candidates here; returning null instead was the LSP
+                // surface throwing away an answer the engine already had.
+                // Order is the disclosure, as it is for references, and `hover`
+                // at the same position says the receiver was never resolved.
+                answer
+                    .candidates
+                    .into_iter()
+                    .take(MAX_GUESSES)
+                    .map(|candidate| (candidate.site.path, candidate.site.line, candidate.site.col))
+                    .collect()
+            }
+        }
     })
 }
 
