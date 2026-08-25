@@ -1192,3 +1192,67 @@ rung.
 
 Site by site against the previous arm: **0 sites newly missed except those two,
 0 verdicts changed for another reason.**
+
+
+## `workspaceSymbol`: the read-side finding was a measurement artifact (session 26)
+
+Session 24 profiled this and concluded that **rare** symbols are slow and common
+ones fast — "the intuition is inverted", because proving there is no 94th match
+means reading all half a million names. The write-side cost of the remedy it
+named was this session's second task. Measuring it first meant re-measuring the
+motivation, and the motivation does not survive.
+
+Four queries, each run **first in a fresh process** against the same store
+(509,151 definitions, 634 checkouts, statistics current):
+
+| query, run first | matches | wall |
+| ---------------- | ------- | ---- |
+| `%each%` | 200 (capped) | **0.78 s** |
+| `%Widget%` | 93 | 0.10 s |
+| `%zzznope%` | 0 | 0.10 s |
+| `%Account%` | 200 (capped) | 0.12 s |
+
+**Whichever query runs first pays ~0.7–1.1 s; every query after it costs ~0.10 s,
+rare or common, hit or miss.** Session 24's table put `%Widget%` in the first
+slot and read its cold-cache second as selectivity. The plan is unchanged — it
+still drives from `checkout`, and a leading-wildcard `LIKE` is still a scan — but
+the scan costs 0.10 s warm, not 1.15 s.
+
+That also re-reads the `--usage` figure that started it: `workspaceSymbol` at
+1.26 s is a **session's first request**, which is the same cold start every
+operation pays and which `--usage` now reports separately.
+
+### The denormalisation, priced anyway
+
+Prototyped on a copy of the store rather than shipped: one `def_search` row per
+(definition, file) with the checkout root and path carried on it, and a name
+index.
+
+| | |
+| --- | --- |
+| rows | 601,623, against 509,151 `def` rows — **1.18×** |
+| … on the 785-checkout store this session started with | 696,562 — **1.37×** |
+| database | 392 MB → 478 MB, **+22 %** |
+| population | 1.31 s for 601k rows (**458k rows/s**), + 0.26 s to index the name |
+| marginal cost of one discourse index (~77k definitions) | **~0.17 s on a 2.9 s index, +6 %** |
+| warm query | 0.10 s → **0.036–0.045 s**, a 2.6× on a scan that stays a scan |
+
+**Two things make this a bad trade, and the second is structural.**
+
+The win is ~60 ms on a warm query, bought with a fifth more rows and a fifth
+more disk. Against session 24's premise — 1.15 s — it was a different
+proposition.
+
+And the phrasing "denormalise `checkout.root` onto `def`" cannot be implemented
+as written. `def` is keyed by blob, a blob is shared by every checkout that
+contains those bytes, and ARCHITECTURE's layer-1 rule says nothing below `blob`
+may mention a path or a checkout — *"N worktrees of one repo cost one index"*.
+Carrying a root means one row per (definition, checkout), which is precisely the
+sharing being given up: the blow-up factor measured **1.18× on a 634-checkout
+store and 1.37× on the 785-checkout one**, growing with exactly the sharing the
+design exists to exploit.
+
+**Recommendation to session 27: do not build it.** If substring search ever does
+need to be fast, the honest instrument is an FTS5 or trigram index over the
+**168,718 distinct names** — a third of the rows, and no second place where a
+path lives.

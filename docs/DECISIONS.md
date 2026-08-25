@@ -1093,3 +1093,89 @@ question an agent can legitimately ask.
 **Rule for future gem numbers.** Two consecutive full runs on an untouched store
 must agree to the decimal, and the context must be stated. A gem figure quoted
 without its context is one draw.
+
+## DEC-031 — A lexical record of a deferred effect is worse than no record
+
+**Decided.** The extractor emits an ancestry edge only for a mixin written
+**directly in a class or module body**. `include`/`extend`/`prepend` inside a
+`def` is recorded as the ordinary call it is and nothing more. Conversely,
+`class_methods do … end` now opens the concern's `ClassMethods`, because that
+block's effect is *not* deferred: `ActiveSupport::Concern` creates the module at
+load time either way.
+
+**Why they are one decision.** Both are the same question — *when does this line
+take effect, and against what?* — answered in opposite directions, and getting
+either wrong costs more than the missing fact would.
+
+A mixin inside a method runs when the method runs, against whatever `self` is
+then. Rails writes `include ActiveModel::Validations` inside
+`has_secure_password`, in a `ClassMethods` body; recorded lexically, that one
+line put the module's instance methods into the class-level lookup chain of
+**every ActiveRecord model**, where `alias_method :validate, :valid?` beat the
+real `ClassMethods#validate`. An invented edge is worse than a missing one
+because it *wins*: a missing edge yields a ranked residue, an invented one
+yields a confident wrong answer. Seven of discourse's eight confidently-wrong
+app sites were that shape.
+
+`class_methods do` is the mirror image. Session 13 recorded its methods without
+the module and pinned the behaviour as deliberate. What that cost was not
+visible until the declined receivers were classified: discourse's
+`Service::Base` writes `class_methods do include StepsHelpers end`, so the
+entire DSL surface of 224 service objects — `step`, `model`, `policy`, `params`
+— sat on the concern as instance methods, unreachable from a class body.
+**396 of 1,401 declined app sites, 28.3 %, one shape.**
+
+**Measured**, discourse app code, 498 sites, context pinned:
+
+| | baseline | + mixin rule | + `class_methods` |
+| --- | --- | --- | --- |
+| correct | 42.0 % | 43.4 % | **59.2 %** |
+| found the definition | 82.5 % | 84.9 % | 84.5 % |
+| confidently wrong | 1.6 % | **0.2 %** | 0.6 % |
+| residue, truth offered | 40.6 % | 41.6 % | **25.3 %** |
+
+Both arms predicted before running and both inside their ranges. Each arm was
+also checked site by site against the one before, because a schema bump forces a
+store rebuild between arms and a corpus total cannot tell a fix from a store
+difference (session 23).
+
+**The cost, stated.** Confidently wrong rose 0.2 → 0.6 % on two sites, both a
+call inside `StepsHelpers` where the `includer` rung now chooses among five
+includers instead of one and promotes at confidence 0.2. That is DEC-027's rule
+— a convention-based pick among competitors is `ambiguous`, not `resolved` —
+never having been applied to that rung. Recorded rather than fixed here.
+
+**Reverses if** a corpus appears where a method-body mixin is the only thing
+naming a real ancestor and its absence costs more than the invented edges did —
+the shape to watch is a plugin system that installs modules from a loop. The
+`class_methods` half reverses only if a non-Concern `class_methods do` is found
+in the wild, which the no-arguments-and-a-block guard already declines.
+
+## DEC-032 — `workspaceSymbol` is not denormalised; the number that justified it was cold
+
+**Decided.** No `def_search` table, no checkout root carried below the file map.
+`workspaceSymbol` keeps the three-table join and the leading-wildcard `LIKE`.
+
+**Why, measured.** Session 24 recorded that a rare symbol costs 1.15 s while a
+capped common one costs 0.10 s, and named a schema change as the honest remedy.
+Re-measured with each query run **first in a fresh process**, the ordering is
+what mattered: `%each%` — the common one — costs **0.78 s** in the first slot,
+and every query after it costs ~0.10 s whether it matches 200 rows, 93, or none.
+Session 24 put `%Widget%` first and read a cold cache as selectivity.
+
+Prototyped on a copy of the store anyway, because the write-side cost was the
+question asked: 601,623 rows against 509,151 (**1.18×**, and 1.37× on a store
+with more checkouts sharing blobs), **+22 %** database, ~0.17 s added to a 2.9 s
+discourse index, and a warm query of 0.036–0.045 s against 0.10 s. **A 60 ms win,
+not a 1.1 s one.**
+
+It is also not implementable as phrased. `def` is keyed by blob; ARCHITECTURE's
+layer-1 rule forbids a path or checkout below `blob` precisely so that N
+worktrees of one repo cost one index. Carrying a root means one row per
+(definition, checkout) — the blow-up factor above *is* the sharing being given
+up, and it grows with the case the design exists for.
+
+**Reverses if** substring search becomes a hot path with a warm-cache budget it
+misses. The instrument then is FTS5 or a trigram index over the **168,718
+distinct names** — a third of the rows and no second home for a path — not a
+denormalised copy of every definition.
