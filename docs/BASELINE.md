@@ -836,3 +836,55 @@ they *fell* in session 22 because the denominator grew by a third (far more
 truths are offered at all — residue-hit 25.8 % → 31.8 %), and they *rose* in
 session 23 because a signal that had been measured against the wrong pool got
 measured against the right one. Read them against the pool size, never alone.
+
+
+## The residue that survives the artifact fix (session 23)
+
+`script/absent.py` re-run against gem-context trees, whole gold set:
+
+| bucket | session 21 | session 23 |
+| ------ | ---------- | ---------- |
+| **truth never named** | **1,104 of 2,987 (37.0 %)** | **445 (14.9 %)** |
+| not-reached | 960 | 301 |
+|  · receiver typed, chain complete, owner absent | 318 | 130 |
+|  · receiver never typed, `implicit` | 264 | **7** |
+|  · receiver typed, chain truncated | 79 | **0** |
+|  · never typed — `other` / `local` / `?` / `ivar` / `const` | 249 | 137 |
+|  · extracted, but at another line | 27 | 27 |
+| not-extracted | 110 | **110** |
+| unindexed-source (Ruby stdlib) | 33 | 33 |
+| core-stub | 1 | 1 |
+
+Truncated ancestor chains went to **zero** and never-typed implicit receivers
+from 264 to 7 — both were gems missing the rest of their bundle. `not-extracted`
+is unchanged at 110 *in absolute terms*, exactly as it must be: gem context
+changes what a tree contains, not what the extractor reads. It is now 24.7 % of
+a much smaller problem.
+
+### `define_method` extraction: built, measured, not shipped
+
+The 27 `define_method` sites looked like the tractable slice. Extracting them —
+literal names only, with the block visited as a method body rather than a class
+body — was built and measured, and **moved the gem sample not at all**: 48.8 %
+correct with and without. Twenty-seven sites is under 1 % of 2,987, below what a
+400-site sample can see.
+
+Worth recording *how* that conclusion was nearly missed. The first measurement
+appeared to show a 3.4-point **regression**, and the change was reverted on it.
+Re-measuring the reverted build gave the same lower number — so the drop was
+never the extractor at all. It was the ownership pick moving between reindexes
+(above). A confounder that arrived on the same afternoon as the change, and
+looked exactly like the change.
+
+The rule that follows: a corpus-level A/B is only valid across builds if the
+*store* is held fixed too. Rebuilding the index between arms silently changes an
+input.
+
+### Stated limits
+
+* **Ruby's stdlib** (33 sites) — `set.rb`, `rubygems.rb`. In no indexed
+  checkout, and indexing it is a setup question, not an engine one.
+* **Methods with no knowable name** — `define_method(name)` over a variable, and
+  the 75 sites with no `def` and no shape we recognise. A name that exists only
+  at runtime is out of static reach, and inventing one is worse than the gap.
+* **Monkey-patched core** — `require` really is Zeitwerk's `Kernel#require`.
