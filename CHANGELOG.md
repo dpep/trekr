@@ -8,6 +8,12 @@
   on the bench corpora is near zero — three occurrences across rails,
   discourse and mastodon, two of them inside Rails' own test for the feature —
   so this is correctness for apps that write the idiom, not a win here.
+- `delegate … prefix:` now defines the prefixed name — `prefix: true` takes the
+  `to:` target (`supplier_region`), a symbol is used as written. It used to
+  refuse the whole delegation rather than guess; the rename is a rule Rails
+  follows exactly, so there was nothing to guess. A *computed* prefix is still
+  refused. 24 of the 301 delegations in rails, discourse and mastodon carry a
+  prefix, and none of them was modelled before.
 - **Existing databases reindex once** (DEC-013): the extractor changed.
 
 - Fixed: `--serve` answered **nothing at all** for a file outside the client's

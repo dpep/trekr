@@ -243,10 +243,6 @@ fn path_prefixes(path: &ruby_prism::ConstantPathNode<'_>, out: &mut Vec<(String,
 }
 
 /// Is a keyword present in a macro's trailing options hash?
-fn has_keyword(args: &[Node<'_>], key: &str) -> bool {
-    keyword_value(args, key).is_some()
-}
-
 /// The literal class name a keyword names — `class_name: "Widget"`, `to: :all`.
 /// `None` when absent or computed, which is how a caller refuses to guess.
 fn keyword_literal(args: &[Node<'_>], key: &str) -> Option<String> {
@@ -1029,14 +1025,24 @@ impl<'pr> Extractor<'_> {
         macro_name: &str,
         args: &[Node<'pr>],
     ) -> bool {
-        // `delegate` without `to:` is not a delegation, and a `prefix:` rewrites
-        // every generated name. Both refuse rather than guess: a wrong method
-        // name is worse than an unmodelled one.
-        if macro_name == "delegate"
-            && (keyword_literal(args, "to").is_none() || has_keyword(args, "prefix"))
-        {
+        // `delegate` without `to:` is not a delegation: refuse rather than
+        // guess, because a wrong method name is worse than an unmodelled one.
+        let delegate_to = keyword_literal(args, "to");
+        if macro_name == "delegate" && delegate_to.is_none() {
             return false;
         }
+        // `prefix:` renames every generated method, by a rule rather than a
+        // guess: `true` takes the `to:` target, a symbol is used as written.
+        // Refusing here left every prefixed delegation unmodelled.
+        let prefix = match (macro_name, keyword_value(args, "prefix")) {
+            ("delegate", Some(value)) => match literal_name(&value) {
+                Some(name) => Some(name),
+                None if value.as_true_node().is_some() => delegate_to,
+                // A computed prefix is a name we cannot know.
+                None => return false,
+            },
+            _ => None,
+        };
         let class_name = keyword_literal(args, "class_name");
 
         let loc = call.location();
@@ -1069,7 +1075,11 @@ impl<'pr> Extractor<'_> {
                 .or_else(|| macros::associated_class(macro_name, &literal));
 
             for made in macros::generated(macro_name, &literal) {
-                let mut def = self.def(made.name.clone(), Kind::Method, start, end);
+                let name = match &prefix {
+                    Some(prefix) => format!("{prefix}_{}", made.name),
+                    None => made.name.clone(),
+                };
+                let mut def = self.def(name, Kind::Method, start, end);
                 def.pos = pos;
                 def.via = Some(macro_name.to_string());
                 def.visibility = visibility;
@@ -1645,7 +1655,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod concerning_tests {
+mod rails_dsl_tests {
     use super::*;
 
     /// `concerning` is a module definition and an include written as one
@@ -1681,6 +1691,34 @@ mod concerning_tests {
         assert_eq!(edge.relation, Relation::Include);
         assert_eq!(edge.target, "Tracking");
         assert_eq!(edge.owner, ["Widget"]);
+    }
+
+    /// `prefix:` renames what a delegation defines, by a rule Rails follows
+    /// exactly. Refusing to model it left every prefixed delegation invisible.
+    #[test]
+    fn a_prefixed_delegation_defines_the_prefixed_name() {
+        let names = |src: &[u8]| {
+            extract(src)
+                .defs
+                .into_iter()
+                .filter(|d| d.via.as_deref() == Some("delegate"))
+                .map(|d| d.name)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            names(b"class W\n  delegate :region, to: :supplier, prefix: true\nend\n"),
+            ["supplier_region"],
+            "`prefix: true` takes the delegation target"
+        );
+        assert_eq!(
+            names(b"class W\n  delegate :region, :code, to: :supplier, prefix: :home\nend\n"),
+            ["home_region", "home_code"],
+            "a symbol prefix is used as written, for every name"
+        );
+        assert!(
+            names(b"class W\n  delegate :region, to: :supplier, prefix: PREFIX\nend\n").is_empty(),
+            "a computed prefix is still a refusal — the name cannot be known"
+        );
     }
 
     /// Somebody else's `concerning` is not Rails'. A non-constant argument is
