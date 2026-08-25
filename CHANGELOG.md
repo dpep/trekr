@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- `goToDefinition` returns ranked candidates when the receiver does not
+  resolve, up to five, ordered by proximity — the answer the CLI always gave
+  and the LSP surface was discarding. `hover` at the same position reports
+  `Residue` and `confidence: 0.00`, so a guess is legible as one.
+- Core definitions now have a location: `core.rb` is written beside the
+  database, so `require` and `Array#each` land on a readable stub instead of
+  answering nothing.
+- A model overriding `self.table_name` gets that table's columns.
+- Measured: goToDefinition coverage on the baseline's 45 positions went
+  **19/45 → 44/45**, against ruby-lsp's 33/45. Details and the hand-adjudicated
+  losses in `docs/BASELINE.md`.
+
 - `trekr --serve`: LSP over stdio. goToDefinition, findReferences (confirmed
   ordered before possible), documentSymbol, workspaceSymbol, hover,
   goToImplementation, call hierarchy, and Prism syntax diagnostics. The editor

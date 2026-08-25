@@ -180,3 +180,63 @@ that this repo deliberately does not depend on. What is committed is this file
 and the conditions above. Re-running means: install ruby-lsp into a scratch
 `GEM_HOME`, drive both with the same LSP client, and use content-keyed sampling
 (`script/bench.py`'s `stable_sample`) so the query set is the same one.
+
+---
+
+## Postscript, 2026-08-25 — after ranked residue and core locations
+
+The ruby-lsp column above stands: same binary, same install, unchanged
+conditions. Only trekr changed, in the two ways this document said to change it.
+
+**goToDefinition coverage, same 45 stable-keyed positions:**
+
+| | before | after | ruby-lsp |
+|---|---:|---:|---:|
+| answered | 19/45 | **44/45** | 33/45 |
+
+The 25 new answers are not new resolutions. They are the ranked candidates the
+CLI always produced and the LSP surface was discarding, plus core definitions
+that now have a file to point at. `hover` at those positions says
+`status: Residue, confidence: 0.00`, which is the whole difference between this
+and guessing.
+
+**Where the two now disagree — 20 positions, split by whether trekr was
+confident:**
+
+| trekr's own status | count | who was right |
+|---|---:|---|
+| `resolved` | 4 | trekr 3, near-tie 1 |
+| `residue` (a ranked guess) | 16 | roughly even |
+
+The four confident disagreements are the three hand-adjudicated above — where
+ruby-lsp sent `stamped.updated_at` to an unrelated class, `Rails.application` to
+a test helper, and `as.call` to `Method#call` — plus `migrations.all?`, where
+trekr answers `Enumerable#all?` and ruby-lsp the more precise `Array#all?`.
+Call that one theirs.
+
+Of nine guessed disagreements adjudicated by hand: trekr's top candidate was
+right on `require`, `Module#undef_method` and `RouteSet#draw`; ruby-lsp was right
+on `@response.body`, `time.time_zone`, `sorted_groups.each` and
+`database.service`; both were wrong on `@store.read`. **Four honest losses in
+nine** — positions where our top guess is wrong and theirs is right. On a
+sample that small the only safe claim is "roughly even", which is what the
+prediction said (half to two-thirds) and is close enough to call it held.
+
+**The predictions, scored:**
+
+1. *"Answered lands at 34–40, at or above ruby-lsp's 33."* **Beaten** — 44.
+   Under-predicted because core locations closed a bucket I had counted as
+   separate.
+2. *"Top-candidate correctness on newly-answered positions worse than our
+   resolved answers, roughly half to two-thirds right."* **Held** — about half,
+   against 3/4 on the confident ones.
+3. *"Core locations add a handful."* **Held.**
+4. *"`concerning`/`table_name` move nothing measurable on rails."* **Held** —
+   no movement in this table; `table_name` was done for correctness.
+
+**What this changes about the DEC-020 price tag.** It does not overturn the
+decision — trekr still does not *resolve* a chained receiver, and the 16 guesses
+are labelled as guesses. What it removes is the part of the price that was
+self-inflicted: 1 in 3 positions returning **null** when a ranked answer was
+already computed. The remaining cost is that our guess is right about half the
+time on those positions, and we say so.
