@@ -762,27 +762,32 @@ same seed, same sample:
 
 | | before | after |
 | --- | --- | --- |
-| gem correct | 38.2 % | **48.8 %** |
-| gem found the definition | 64.0 % | **84.5 %** |
-| gem confidently wrong | 3.8 % | **3.0 %** |
-| gem residue, nothing known | 16.0 % | **2.2 %** |
-| gem residue, truth absent | 12.5 % | **6.5 %** |
+| gem correct | 38.2 % | **52.2 %** |
+| gem found the definition | 64.0 % | **84.0 %** |
+| gem confidently wrong | 3.8 % | 4.2 % |
+| gem residue, nothing known | 16.0 % | **1.2 %** |
+| gem residue, truth absent | 12.5 % | **8.0 %** |
 | app code (unchanged) | 54.8 % correct | 54.8 % correct |
 
 **Predicted correct 54 % (accept 50–58) and found 77 % (accept 73–81).** Correct
-came in at 48.8 %, just *under* the accepted range; found came in at 84.5 %,
-*over* it. So the fix converted more residue into offered-and-found answers than
-predicted, and fewer of those into outright resolutions. Confidently wrong fell
-rather than rose, which was the guard: more context did not buy confidence in
-answers that should still be declined.
+landed inside the range at 52.2 %; found came in *above* it at 84.0 %. So the fix
+converted more residue into offered-and-found answers than predicted. Confidently
+wrong rose 0.4 points and stayed under the 5 % guard — more context did not buy
+confidence in answers that should still be declined.
+
+Measured in two steps, because the first was not the whole fix: answering from
+the owning app alone gave 48.8 % / 84.5 %, and reading the tree's gem roots from
+the store rather than re-locating them per query gave the 52.2 % above. The
+second half mattered because a query whose `GEM_HOME` differed from the index's
+lost every gem — the same silent degradation one level down.
 
 ### How much of ten sessions' gem figures was artifact
 
 Gem residue was 28.5 % (16.0 nothing-known + 12.5 truth-absent) and is now
-8.7 %. **The artifact accounted for 19.8 of those 28.5 points — about 70 % of
-what was being reported as a coverage gap.** Every gem figure published from
-session 12 onward understated found-the-definition by roughly 20 points and
-correct by roughly 10.
+9.2 %. **The artifact accounted for 19.3 of those 28.5 points — about two thirds
+of what was being reported as a coverage gap.** Every gem figure published from
+session 12 onward understated found-the-definition by roughly **20 points** and
+correct by roughly **14**.
 
 The app-code numbers are unaffected and always were: widget_shop already owned
 its own bundle, so app sites had the whole tree all along. That is why the app
@@ -792,10 +797,11 @@ the half that was not.
 
 ### A ranking number that got worse for a good reason
 
-Gem ranking quality fell — truth at #1 from 61.5 % to 49.7 %, MRR 0.743 to
-0.663. It is not a regression. The candidate pool grew: residue-hit went from
-25.8 % to 35.8 % of sites, so the *denominator* is 143 where it was 103. In
-absolute terms more truths rank first than before (≈71 against ≈63).
+Gem ranking quality fell — truth at #1 from 61.5 % to 49.6 %, MRR 0.743 to
+0.648. It is not a regression. The candidate pool grew: residue-hit went from
+25.8 % to 31.8 % of sites, so the *denominator* is 127 where it was 103. In
+absolute terms more truths rank first than before (≈63 against ≈63) while far
+more are offered at all.
 
 It does mean DEC-028's rejected ranking features were measured against a pool
 that was missing most of its competitors, and deserve re-measuring now that the
