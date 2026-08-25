@@ -89,6 +89,23 @@ struct Extractor<'a> {
     facts: Facts,
 }
 
+/// Prism's syntax errors, with positions.
+///
+/// Free: the parse already happened. Syntax **only** — everything else this
+/// engine knows is a ranked answer with a confidence, and publishing those as
+/// diagnostics would turn disclosure into noise in an editor's gutter.
+pub(crate) fn syntax_errors(src: &[u8]) -> Vec<(u32, u32, String)> {
+    let parsed = ruby_prism::parse(src);
+    let lines = line_index::LineIndex::new(src);
+    parsed
+        .errors()
+        .map(|error| {
+            let at = lines.pos(error.location().start_offset());
+            (at.line, at.col, error.message().to_string())
+        })
+        .collect()
+}
+
 /// Read every fact a blob's bytes declare.
 pub(crate) fn extract(src: &[u8]) -> Facts {
     let parsed = ruby_prism::parse(src);

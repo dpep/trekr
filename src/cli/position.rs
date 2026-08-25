@@ -58,8 +58,12 @@ fn tail(name: &str) -> usize {
 
 /// The innermost fact at a position, preferring the most specific reading.
 pub(crate) fn at(source: &[u8], line: u32, col: u32) -> Option<Under> {
-    let facts = crate::extract::extract(source);
+    at_facts(&crate::extract::extract(source), line, col)
+}
 
+/// The same, against facts already parsed — which a resident front has, and a
+/// one-shot CLI invocation does not.
+pub(crate) fn at_facts(facts: &crate::core::Facts, line: u32, col: u32) -> Option<Under> {
     // A definition's own name wins over anything else at the same spot: on
     // `class Widget` the cursor is on the declaration, not on a reference.
     if let Some(def) = facts

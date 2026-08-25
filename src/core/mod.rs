@@ -20,7 +20,7 @@ impl std::fmt::Display for Oid {
 }
 
 /// Everything one blob declares, references, and calls.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Facts {
     pub(crate) defs: Vec<Def>,
     pub(crate) ancestry: Vec<Ancestry>,

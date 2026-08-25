@@ -5,7 +5,7 @@
 //! reserved, and the default action stays free for the query verbs the resolve
 //! layer will add.
 
-mod position;
+pub(crate) mod position;
 mod profile;
 
 use crate::core::Oid;
@@ -80,6 +80,11 @@ struct Cli {
     #[arg(long)]
     no_gems: bool,
 
+    /// Speak LSP over stdio. The editor owns the process: no auto-spawn, no
+    /// lockfile, and it stops when stdin closes.
+    #[arg(long, conflicts_with_all = ["index", "status", "symbols", "refs", "def", "ancestors", "drop"])]
+    serve: bool,
+
     /// Report where the index time went, on stderr. Structured when `--json`.
     #[arg(long)]
     profile: bool,
@@ -110,7 +115,9 @@ pub fn run() -> ExitCode {
         Output::Text
     };
 
-    let result = if let Some(path) = &cli.index {
+    let result = if cli.serve {
+        crate::serve::run().map(|()| ExitCode::SUCCESS)
+    } else if let Some(path) = &cli.index {
         cmd_index(out, path, cli.jobs, cli.profile, !cli.no_gems)
     } else if let Some(path) = &cli.symbols {
         cmd_symbols(out, path)

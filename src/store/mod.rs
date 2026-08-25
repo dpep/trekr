@@ -34,6 +34,21 @@ pub(crate) struct Indexed {
     pub(crate) calls: usize,
 }
 
+/// The database every command uses: `$TREKR_DB`, else
+/// `~/.local/share/trekr/trekr.db`.
+pub(crate) fn open_default() -> anyhow::Result<Store> {
+    let path = match std::env::var("TREKR_DB") {
+        Ok(path) => std::path::PathBuf::from(path),
+        Err(_) => {
+            std::path::PathBuf::from(std::env::var("HOME")?).join(".local/share/trekr/trekr.db")
+        }
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    Ok(Store::open(&path)?)
+}
+
 impl Store {
     pub(crate) fn open(path: &Path) -> Result<Store> {
         Store::init(Connection::open(path)?)
@@ -211,6 +226,7 @@ impl Store {
                 line: r.get(9)?,
                 col: r.get(10)?,
                 end_line: r.get(11)?,
+                path: String::new(),
             })
         })?;
         rows.collect()
@@ -366,6 +382,65 @@ impl Store {
         rows.collect()
     }
 
+    /// Definitions whose name contains `query`, for `workspaceSymbol`.
+    ///
+    /// Substring, case-insensitive, capped. rq's scorer would rank these
+    /// better; this is the LSP contract's shape, and a client that wants
+    /// ranking can ask rq (PLAN §3).
+    pub(crate) fn symbols_named(&self, root: &str, query: &str, limit: i64) -> Result<Vec<Symbol>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT d.name, d.kind, d.nesting, d.singleton, d.visibility, d.params,
+                    d.via, d.target, d.sig_returns, d.line, d.col, d.end_line, f.path
+               FROM def d
+               JOIN file f ON f.blob_id = d.blob_id
+               JOIN checkout c ON c.id = f.checkout_id
+              WHERE c.root = ?1 AND d.name LIKE ?2 ESCAPE '\\'
+              ORDER BY LENGTH(d.name), d.name
+              LIMIT ?3",
+        )?;
+        let pattern = format!("%{}%", query.replace('%', "\\%").replace('_', "\\_"));
+        let rows = stmt.query_map(params![root, pattern, limit], |r| {
+            let encoded: String = r.get(5)?;
+            Ok(Symbol {
+                name: r.get(0)?,
+                kind: r.get(1)?,
+                nesting: split_nesting(&r.get::<_, String>(2)?),
+                singleton: r.get::<_, i64>(3)? != 0,
+                visibility: r.get(4)?,
+                params: decode_params(&encoded)
+                    .into_iter()
+                    .map(|p| format!("{}:{}", p.kind.as_str(), p.name))
+                    .collect(),
+                via: r.get(6)?,
+                target: r.get(7)?,
+                sig_returns: r.get(8)?,
+                line: r.get(9)?,
+                col: r.get(10)?,
+                end_line: r.get(11)?,
+                path: r.get(12)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// The store's schema version, which DEC-013 makes cover the extractor too.
+    /// Half of a resident front's staleness check.
+    pub(crate) fn schema_version(&self) -> Result<i64> {
+        self.conn
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+    }
+
+    /// How many files a checkout maps. The other half: it moves exactly when
+    /// the indexed set does.
+    pub(crate) fn file_count(&self, root: &str) -> Result<i64> {
+        self.conn.query_row(
+            "SELECT COUNT(*) FROM file f JOIN checkout c ON c.id = f.checkout_id
+              WHERE c.root = ?1",
+            params![root],
+            |r| r.get(0),
+        )
+    }
+
     /// Has this root been indexed before?
     ///
     /// For a gem this is the whole incremental story: a gem's bytes never
@@ -476,6 +551,9 @@ pub(crate) struct Ref {
 
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct Symbol {
+    /// Empty for `--symbols`, which already knows the file it asked about.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub(crate) path: String,
     pub(crate) name: String,
     pub(crate) kind: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
