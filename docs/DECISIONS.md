@@ -917,3 +917,34 @@ invalidates three sessions of "sitting yield for ranking features".
 ranked low — the cheap test is the one run here: raise the cap and see whether
 the bucket moves. It costs one gold run and it should be the first thing done
 before any future ranking work.
+
+## DEC-029 — A gem position should resolve against a checkout that owns the gem
+
+**Decided in principle, not yet built.** When `--def` or the LSP is asked about
+a position inside gem source, the checkout it resolves against is currently
+*that gem's own directory* — which has no `Gemfile.lock`, and so a tree of one
+gem plus Ruby core. Every method the gem gets from another gem is unreachable,
+by construction rather than by any gap in extraction or lookup.
+
+**Evidence.** `delegate` in actionpack's `metal.rb` answers residue with "the
+receiver's type is known but nothing in its ancestors defines this name". Its
+owner is `Module#delegate`, defined in activesupport. From the rails checkout
+the same name resolves and finds 143 confirmed call sites; from the actionpack
+gem directory it cannot.
+
+**Why it is not built here.** The design question is *which* checkout owns a
+gem: a machine may have several apps resolving the same version, and the answer
+has to be picked, cached, and kept honest when it is wrong. That is a session's
+work, not an afternoon's, and this session was asked to classify before
+building.
+
+**The measured ceiling.** 2,924 of the gold set's 2,987 sites are inside gem
+files, and 37 % of them currently fail to name the true definition. An unknown
+but large share of that is this. Re-measuring the gem floor after the fix is
+the first thing session 22 should do, because it also tells us how much of
+every gem number published since session 12 was this artifact.
+
+**Reverses if** the pick turns out to be genuinely ambiguous in practice — two
+apps resolving the same gem version with different bundles — in which case the
+honest answer may be to resolve against the *union* of checkouts that resolve
+it, or to require the caller to say which app it is asking from.

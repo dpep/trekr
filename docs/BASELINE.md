@@ -689,3 +689,64 @@ declarations that *failed* to place. That should make rounds two and three
 nearly free and take discourse's assemble from 143 ms toward ~50 ms. It is a
 change to the loop's bookkeeping, not to what it computes, which makes it
 cheap to verify — the assembled namespace must be identical.
+
+
+## Classifying the absent truth (session 21)
+
+DEC-028 established that the residue cannot be reached by ranking. This asks
+what the missing methods *are*. `script/absent.py` runs every gold site,
+keeps the ones where trekr never names the true definition, and sorts them.
+
+**1,104 of 2,987 gold sites**, by bucket:
+
+| bucket | share | meaning |
+| ------ | ----- | ------- |
+| not-reached | 87.0 % | the definition is parseable from its file, and trekr did not answer with it |
+| not-extracted | 10.0 % | the file is indexed and nothing trekr extracts sits at that line |
+| unindexed-source | 3.0 % | Ruby's own stdlib, in no indexed checkout |
+| core-stub | 0.1 % | answered from the vendored core stub |
+
+`not-extracted` splits into 75 with no `def` and no shape we recognise, 27
+`define_method`, and 8 delegation macros. `unindexed-source` is **entirely**
+Ruby's stdlib — `set.rb`, `rubygems.rb` — which is a stated limit, not a TODO.
+
+### The classifier had the same flaw it was built to find
+
+`not-reached` was defined as "`--symbols` on the definition's file finds it".
+But `--symbols` parses a file directly, independent of any tree — so the bucket
+**conflates two different things**: a definition that is in this query's tree
+and was not reached, and a definition whose *file belongs to a checkout this
+query's tree does not contain*. Exactly the conflation this project has spent
+three sessions hunting elsewhere, in a script written to hunt it.
+
+Chasing one example settled which it mostly is.
+
+### A query inside a gem sees only that gem
+
+`delegate` at `actionpack-8.1.3.1/lib/action_controller/metal.rb:176` is
+residue: *"the receiver's type is known but nothing in its ancestors defines
+this name"*. The truth is `Module#delegate`, in **activesupport**.
+
+* From the **rails checkout**, `--refs Module#delegate` finds the definition and
+  **143 confirmed call sites**.
+* The gold site is inside the *actionpack gem directory*, and that is the
+  checkout the query resolves against (DEC-024, extended in session 15 so gem
+  positions could be answered at all). A gem has no `Gemfile.lock`, so its tree
+  is **that one gem plus core**. activesupport is not in it, and cannot be.
+
+**So cross-gem resolution fails by construction**, and 2,924 of the 2,987 gold
+sites are inside gem files.
+
+### What this means for every gem number since session 12
+
+The "gem floor" has been measuring trekr **configured as one gem at a time** —
+a configuration no user is ever in. An agent working in an app that asks about
+a gem file is asking from a checkout that resolves the whole bundle. The gem
+floor is therefore a **lower** bound with an unknown amount of slack, and its
+residue figures should not be read as coverage gaps until the context question
+is settled.
+
+The app sample cannot substitute yet: at 63 sites it is too small, and a third
+of it is the Rails-generated bucket, which answers with the declaration rather
+than the generator by design (session 15) and so registers as "absent" against
+runtime truth however well it behaves.
