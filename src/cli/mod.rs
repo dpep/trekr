@@ -12,6 +12,7 @@ use crate::core::Oid;
 use crate::store::Store;
 use crate::tree::{Status, Tree};
 use crate::{extract, scan};
+use anyhow::Context;
 use clap::Parser;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
@@ -39,6 +40,11 @@ struct Cli {
     /// Report what is indexed, per checkout, with the shared blob totals.
     #[arg(long, conflicts_with_all = ["index", "symbols", "drop"])]
     status: bool,
+
+    /// Summarize what `--serve` has been asked, from its own log: which
+    /// operations, how often the answer was empty, and what they cost.
+    #[arg(long, conflicts_with_all = ["index", "symbols", "drop", "refs", "def"])]
+    usage: bool,
 
     /// Outline one file's definitions, in the order they are written.
     #[arg(long, value_name = "FILE", conflicts_with_all = ["index", "drop"])]
@@ -132,10 +138,12 @@ pub fn run() -> ExitCode {
         cmd_drop(out, path)
     } else if cli.status {
         cmd_status(out)
+    } else if cli.usage {
+        cmd_usage(out)
     } else {
         eprintln!(
             "trekr: nothing to do (try --index, --status, --symbols FILE, \
-             --refs NAME, --def FILE:LINE:COL)"
+             --refs NAME, --def FILE:LINE:COL, --usage)"
         );
         return ExitCode::from(1);
     };
@@ -853,4 +861,141 @@ fn exit_on(happened: bool) -> ExitCode {
     } else {
         ExitCode::from(1)
     }
+}
+
+/// What the resident front has actually been asked, from its own log.
+///
+/// The log was written in session 11 to debug a defect; this is the other half
+/// of why it exists — which of the nine operations agents really call, how
+/// often the answer is empty, and what it costs. A summary command rather than
+/// a one-off script, so the answer regenerates itself as usage accumulates.
+fn cmd_usage(out: Output) -> anyhow::Result<ExitCode> {
+    let Some(path) = crate::serve::log::Log::where_to_look() else {
+        anyhow::bail!("logging is off ($TREKR_LOG), so there is nothing to summarize");
+    };
+    let text =
+        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
+
+    let mut sessions = 0usize;
+    let mut first = String::new();
+    let mut last = String::new();
+    let mut per_op: HashMap<String, OpUsage> = HashMap::new();
+    for line in text.lines() {
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        if let Some(ts) = event.get("ts").and_then(|t| t.as_str()) {
+            if first.is_empty() {
+                first = ts.to_string();
+            }
+            last = ts.to_string();
+        }
+        match event.get("event").and_then(|e| e.as_str()) {
+            Some("start") => sessions += 1,
+            Some("request") => {
+                let Some(op) = event.get("op").and_then(|o| o.as_str()) else {
+                    continue;
+                };
+                let usage = per_op.entry(op.to_string()).or_default();
+                usage.calls += 1;
+                match event.get("answered").and_then(serde_json::Value::as_u64) {
+                    Some(0) => usage.empty += 1,
+                    Some(_) => usage.answered += 1,
+                    None => {}
+                }
+                if event.get("status").and_then(|s| s.as_str()) == Some("error") {
+                    usage.errors += 1;
+                }
+                if let Some(ms) = event.get("ms").and_then(serde_json::Value::as_f64) {
+                    usage.timings.push(ms);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut rows: Vec<UsageRow> = per_op
+        .into_iter()
+        .map(|(op, usage)| usage.finish(op))
+        .collect();
+    // Most-used first: the ranking is the point of the report.
+    rows.sort_by(|a, b| b.calls.cmp(&a.calls).then_with(|| a.op.cmp(&b.op)));
+    let total: usize = rows.iter().map(|r| r.calls).sum();
+
+    if emit_rows(out, &rows)? {
+        return Ok(exit_on(total > 0));
+    }
+    if rows.is_empty() {
+        println!("no requests logged yet in {}", path.display());
+        return Ok(ExitCode::from(1));
+    }
+    println!(
+        "{total} requests over {sessions} session(s), {} — {}\n",
+        &first[..first.len().min(10)],
+        &last[..last.len().min(10)]
+    );
+    println!(
+        "{:<34}{:>7}{:>9}{:>9}{:>9}",
+        "operation", "calls", "answered", "median", "p90"
+    );
+    for row in &rows {
+        println!(
+            "{:<34}{:>7}{:>7.0}%{:>9.1}{:>9.1}",
+            row.op,
+            row.calls,
+            100.0 * row.answered as f64 / row.calls.max(1) as f64,
+            row.median_ms,
+            row.p90_ms,
+        );
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+#[derive(Default)]
+struct OpUsage {
+    calls: usize,
+    answered: usize,
+    empty: usize,
+    errors: usize,
+    timings: Vec<f64>,
+}
+
+impl OpUsage {
+    fn finish(mut self, op: String) -> UsageRow {
+        self.timings
+            .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        UsageRow {
+            op,
+            calls: self.calls,
+            answered: self.answered,
+            empty: self.empty,
+            errors: self.errors,
+            // Rounded to the precision a handful of samples actually carries.
+            median_ms: round1(percentile(&self.timings, 0.5)),
+            p90_ms: round1(percentile(&self.timings, 0.9)),
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct UsageRow {
+    op: String,
+    calls: usize,
+    answered: usize,
+    empty: usize,
+    errors: usize,
+    median_ms: f64,
+    p90_ms: f64,
+}
+
+fn percentile(sorted: &[f64], q: f64) -> f64 {
+    if sorted.is_empty() {
+        return 0.0;
+    }
+    let index = ((sorted.len() - 1) as f64 * q).round() as usize;
+    sorted[index]
+}
+
+fn round1(ms: f64) -> f64 {
+    (ms * 10.0).round() / 10.0
 }

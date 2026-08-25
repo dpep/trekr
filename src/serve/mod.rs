@@ -11,7 +11,7 @@
 
 mod convert;
 mod handlers;
-mod log;
+pub(crate) mod log;
 mod state;
 
 use log::Log;

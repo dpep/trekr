@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `trekr --usage` summarizes what `--serve` has been asked, from its own log:
+  calls per operation, how often the answer was empty, and median/p90 latency.
+  Honors `--json`/`--ndjson` like every other command. The log was written to
+  debug a defect; this is the other half of why it exists.
+
 - A receiver named after its class is now **typed** by that name, not merely
   ranked by it: `@widget.supplier_region` resolves to `Widget`'s delegate when
   nothing else typed the receiver. Reported as `resolved_via: receiver_name`,

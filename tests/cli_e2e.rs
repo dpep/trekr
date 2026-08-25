@@ -891,3 +891,57 @@ fn an_older_binary_refuses_a_newer_database_rather_than_dropping_it() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// `--usage` turns the serve log into the dogfood signal it was written for:
+/// which operations agents call, and how often the answer was empty.
+#[test]
+fn usage_summarizes_the_serve_log_and_says_nothing_when_it_is_empty() {
+    let (dir, db) = scratch("usage");
+    fs::create_dir_all(&dir).unwrap();
+    let log = dir.join("serve.log");
+    fs::write(&log, "").unwrap();
+
+    // Nothing logged is a definitive "no", not a failure.
+    let empty = trekr_env(
+        &db,
+        &dir,
+        &["--usage"],
+        &[("TREKR_LOG", log.to_str().unwrap())],
+    );
+    assert_eq!(empty.status.code(), Some(1));
+
+    fs::write(
+        &log,
+        concat!(
+            r#"{"ts":"2026-01-01T00:00:00.000Z","event":"start"}"#,
+            "\n",
+            r#"{"ts":"2026-01-01T00:00:01.000Z","event":"request","op":"textDocument/definition","ms":4.0,"answered":2,"status":"ok"}"#,
+            "\n",
+            r#"{"ts":"2026-01-01T00:00:02.000Z","event":"request","op":"textDocument/definition","ms":2.0,"answered":0,"status":"ok"}"#,
+            "\n",
+            r#"{"ts":"2026-01-01T00:00:03.000Z","event":"request","op":"textDocument/hover","ms":1.0,"answered":1,"status":"ok"}"#,
+            "\n",
+            // A line the log did not write cleanly must not stop the report.
+            "{not json\n",
+        ),
+    )
+    .unwrap();
+
+    let out = trekr_env(
+        &db,
+        &dir,
+        &["--usage", "--json"],
+        &[("TREKR_LOG", log.to_str().unwrap())],
+    );
+    assert_eq!(out.status.code(), Some(0));
+    let rows = json(&out);
+    let rows = rows.as_array().expect("a row per operation");
+    // Most-used first: the ranking is the point of the report.
+    assert_eq!(rows[0]["op"], "textDocument/definition");
+    assert_eq!(rows[0]["calls"], 2);
+    assert_eq!(rows[0]["answered"], 1);
+    assert_eq!(rows[0]["empty"], 1, "an empty answer is counted as one");
+    assert_eq!(rows[1]["op"], "textDocument/hover");
+
+    let _ = fs::remove_dir_all(&dir);
+}

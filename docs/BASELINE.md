@@ -595,3 +595,33 @@ removed almost the entire population — `@widget = widget` from a constructor
 parameter is exactly that shape, and it is the case the rung exists for. The
 guard was also redundant: the rung is only reached because assignment typing
 already failed.
+
+
+### What the resident front is actually asked (session 16)
+
+`trekr --usage`, over the log accumulated since session 11 — 22 requests across
+3 sessions. **A thin sample, and that is itself the first finding**: real LSP
+usage so far is a handful of spot-checks per session, not a stream.
+
+| operation | calls | answered | median | p90 |
+| --- | --- | --- | --- | --- |
+| `definition` | 8 | 75 % | 414.7 ms | 781.3 ms |
+| `hover` | 4 | 100 % | 1.4 ms | 13.0 ms |
+| `prepareCallHierarchy` | 3 | 100 % | 0.3 ms | 0.4 ms |
+| `incomingCalls` | 2 | 50 % | 385.1 ms | 385.1 ms |
+| `references`, `workspaceSymbol`, `documentSymbol`, `outgoingCalls`, `implementation` | 1 each | — | — | — |
+
+Three things worth acting on:
+
+* **`definition` is the product** — 36 % of all calls, more than the next two
+  together. Everything else is a rounding error by comparison.
+* **Its median is 415 ms, not the 0.2 ms the amortization measurements
+  promised.** Those measurements were right about a *warm* session; real usage
+  restarts the server between spot-checks, so nearly every `definition` call is
+  somebody's first and pays the cold tree build. The resident front only
+  amortizes for a client that stays resident.
+* **`implementation` has answered nothing, ever** (1 call, 0 answered), and
+  `definition` came back empty a quarter of the time.
+
+The sample is too small to set an agenda on its own, but the shape of the cold
+-start problem is now measured from real usage rather than from a bench loop.
