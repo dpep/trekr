@@ -1,0 +1,12 @@
+# `include Extra` inside `ClassMethods#install` is not ClassMethods' ancestor —
+# it runs when the method runs, against whatever `self` is then. Recorded
+# lexically it *invents* an edge, and the invented one wins: `Installer` is
+# included last so its ClassMethods is searched first, carrying `Extra`'s
+# instance `build` ahead of the real `Builder::ClassMethods#build`.
+#
+# This is Rails' `has_secure_password` shape, which writes
+# `include ActiveModel::Validations` inside a `ClassMethods` body — and so put
+# that module's `alias_method :validate, :valid?` into the class-level chain of
+# every ActiveRecord model, where it beat `ClassMethods#validate` on six of
+# discourse's eight confidently-wrong app sites.
+def app.rb:29:3 status=resolved owner=Builder::ClassMethods site=app.rb:10

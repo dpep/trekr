@@ -49,6 +49,10 @@ struct Frame {
     /// class-method calls — and inside `def self.x`, and false inside `def x`
     /// or at the top level, where `self` is `main`.
     self_is_class: bool,
+    /// Inside a `def`, of either kind. Distinct from `self_is_class`, which a
+    /// `def self.x` shares with a class body: what a mixin call means turns on
+    /// *when* it runs, not on what `self` is.
+    in_method: bool,
     /// `module_function` seen with no arguments: every later `def` in this body
     /// becomes both a private instance method and a public singleton one.
     module_function: bool,
@@ -66,6 +70,7 @@ impl Frame {
                 Opens::Scope | Opens::Singleton => true,
                 Opens::Method { singleton } => singleton,
             },
+            in_method: matches!(opens, Opens::Method { .. }),
             module_function: false,
         }
     }
@@ -128,6 +133,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             singleton: false,
             // At the top level `self` is `main`, an instance of Object.
             self_is_class: false,
+            in_method: false,
             module_function: false,
         }],
         pending_sig: None,
@@ -172,6 +178,10 @@ impl<'a> Extractor<'a> {
     /// What `self` is for a call written here.
     fn self_is_class(&self) -> bool {
         self.frames.last().is_some_and(|f| f.self_is_class)
+    }
+
+    fn in_method_body(&self) -> bool {
+        self.frames.last().is_some_and(|f| f.in_method)
     }
 
     fn leave(&mut self) {
@@ -724,6 +734,18 @@ impl<'pr> Extractor<'_> {
             return false;
         };
         if args.is_empty() {
+            return false;
+        }
+        // A mixin written inside a `def` is not this scope's ancestor. It runs
+        // when the method runs, against whatever `self` is then — which is why
+        // `has_secure_password` can write `include ActiveModel::Validations`
+        // inside a `ClassMethods` body and mean the *model*, not the module.
+        // Recording it lexically does not merely miss an edge, it invents one:
+        // that single line put ActiveModel::Validations' instance methods into
+        // the class-level chain of every ActiveRecord model, where
+        // `alias_method :validate, :valid?` then beat the real
+        // `ClassMethods#validate`. It stays an ordinary call site.
+        if self.in_method_body() {
             return false;
         }
         let mut any = false;
@@ -1719,6 +1741,27 @@ mod rails_dsl_tests {
             names(b"class W\n  delegate :region, to: :supplier, prefix: PREFIX\nend\n").is_empty(),
             "a computed prefix is still a refusal — the name cannot be known"
         );
+    }
+
+    /// An invented edge is worse than a missing one: this shape is Rails'
+    /// `has_secure_password`, and recording it lexically put a module's
+    /// instance methods into every ActiveRecord model's class-level chain.
+    #[test]
+    fn a_mixin_inside_a_method_is_not_this_scopes_ancestor() {
+        let facts = extract(b"module M\n  def install\n    include Extra\n  end\nend\n");
+        assert!(facts.ancestry.is_empty());
+        // Still a call — `include` really is `Module#include`.
+        assert!(facts.calls.iter().any(|c| c.name == "include"));
+    }
+
+    /// The rule is about *when* the line runs, not about what `self` is, so a
+    /// class body keeps its edge while `def self.x` loses one.
+    #[test]
+    fn a_mixin_in_a_class_body_is_still_an_ancestor() {
+        let body = extract(b"class W\n  include Extra\nend\n");
+        assert_eq!(body.ancestry.len(), 1);
+        let deferred = extract(b"class W\n  def self.widen\n    include Extra\n  end\nend\n");
+        assert!(deferred.ancestry.is_empty());
     }
 
     /// Somebody else's `concerning` is not Rails'. A non-constant argument is

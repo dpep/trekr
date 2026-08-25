@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **A mixin written inside a `def` is no longer an ancestry edge of the scope
+  that lexically contains it.** It runs when the method runs, against whatever
+  `self` is then, so recording it lexically does not merely miss an edge — it
+  invents one. Rails writes `include ActiveModel::Validations` inside
+  `has_secure_password`, in a `ClassMethods` body, which put that module's
+  `alias_method :validate, :valid?` into the class-level lookup chain of every
+  ActiveRecord model: a class-body `validate :thing` resolved, confidently, to
+  the instance alias instead of `ClassMethods#validate`. It stays an ordinary
+  call site, because `include` really is `Module#include`.
+
+- **Existing databases reindex once**: the extractor's output changed.
+
 - `--index` gathers full statistics (`ANALYZE`) after a run that actually read
   something. `PRAGMA optimize` on close only re-analyses a table whose size has
   moved since the last analysis, which never fired across hundreds of checkouts

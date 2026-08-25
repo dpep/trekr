@@ -61,7 +61,7 @@ The fact set:
 | fact | carries |
 |---|---|
 | **definition** | name, kind (class/module/method/constant), lexical nesting, singleton, visibility, parameters, `via`, `target`, Sorbet `sig` return |
-| **ancestry edge** | nesting, relation (superclass/include/prepend/extend), target as written |
+| **ancestry edge** | nesting, relation (superclass/include/prepend/extend), target as written — **only when written in a class or module body**, never inside a `def`, where the mixin runs against whatever `self` is at call time |
 | **constant reference** | name as written, the nesting that will resolve it |
 | **call site** | name, **receiver shape**, receiver text, arity, block |
 
