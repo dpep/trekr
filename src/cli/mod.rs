@@ -86,6 +86,7 @@ struct Cli {
     serve: bool,
 
     /// Report where the index time went, on stderr. Structured when `--json`.
+    /// With `--serve`, logs the wire-level params of every request too.
     #[arg(long)]
     profile: bool,
 
@@ -116,7 +117,7 @@ pub fn run() -> ExitCode {
     };
 
     let result = if cli.serve {
-        crate::serve::run().map(|()| ExitCode::SUCCESS)
+        crate::serve::run(cli.profile).map(|()| ExitCode::SUCCESS)
     } else if let Some(path) = &cli.index {
         cmd_index(out, path, cli.jobs, cli.profile, !cli.no_gems)
     } else if let Some(path) = &cli.symbols {

@@ -77,6 +77,9 @@ impl Session {
             .arg("--serve")
             .current_dir(dir)
             .env("TREKR_DB", db)
+            // Its own log, or every test in this file appends to one shared
+            // file beside the temp dir and they read each other's lines.
+            .env("TREKR_LOG", log_path(db))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -168,6 +171,19 @@ impl Session {
 
 fn uri_of(dir: &Path, name: &str) -> String {
     format!("file://{}/{}", dir.display(), name)
+}
+
+fn log_path(db: &Path) -> PathBuf {
+    db.with_extension("log")
+}
+
+/// Every line the server logged, as parsed ndjson.
+fn log_lines(db: &Path) -> Vec<serde_json::Value> {
+    fs::read_to_string(log_path(db))
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("each line is one JSON object"))
+        .collect()
 }
 
 #[test]
@@ -546,6 +562,63 @@ fn a_syntax_error_is_published_as_a_diagnostic_and_cleared_when_fixed() {
     );
 
     session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// The log has to record an *empty* answer as plainly as a full one — the
+/// defect it was written for was nine operations all returning nothing, with
+/// no way to tell whether the requests even arrived.
+#[test]
+fn the_log_records_each_request_and_how_much_came_back() {
+    let (dir, db) = scratch("log");
+    repo(&dir);
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1,
+            "text": "class Fresh\n  def added\n  end\nend\n"
+        }}),
+    );
+    session.request(
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    // A file this workspace has no business answering for.
+    session.request(
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": "file:///nowhere/absent.rb"}}),
+    );
+    session.stop();
+
+    let lines = log_lines(&db);
+    let initialize = lines
+        .iter()
+        .find(|l| l["event"] == "initialize")
+        .expect("the client's root is recorded");
+    assert_eq!(
+        initialize["root"].as_str(),
+        dir.canonicalize().unwrap().to_str()
+    );
+
+    let requests: Vec<&serde_json::Value> = lines
+        .iter()
+        .filter(|l| l["event"] == "request" && l["op"] == "textDocument/documentSymbol")
+        .collect();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["status"], "ok");
+    assert_eq!(requests[0]["answered"], 2, "Fresh and added");
+    assert_eq!(
+        requests[1]["answered"], 0,
+        "an empty answer is logged as one"
+    );
+    assert!(requests[0]["ms"].is_number(), "and how long it took");
+    assert!(
+        lines.iter().all(|l| l["event"] != "request_params"),
+        "wire-level params stay behind --profile"
+    );
+
     let _ = fs::remove_dir_all(&dir);
 }
 

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `trekr --serve` logs what it did, as ndjson: the client's `initialize` root,
+  one line per request with the file, line, duration and **how much came back**,
+  and the notifications. Default `~/.local/share/trekr/serve.log` (beside the
+  database, so `$TREKR_DB` moves it too); `TREKR_LOG` takes a path, `-` for
+  stderr or `off`, and `--serve --profile` (or `TREKR_LOG_LEVEL=debug`) adds the
+  wire-level params. Never stdout — that is the LSP wire.
+
 - `goToDefinition` returns ranked candidates when the receiver does not
   resolve, up to five, ordered by proximity — the answer the CLI always gave
   and the LSP surface was discarding. `hover` at the same position reports
