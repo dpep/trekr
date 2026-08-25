@@ -240,3 +240,52 @@ are labelled as guesses. What it removes is the part of the price that was
 self-inflicted: 1 in 3 positions returning **null** when a ranked answer was
 already computed. The remaining cost is that our guess is right about half the
 time on those positions, and we say so.
+
+
+## Runtime truth: the TracePoint gold set (session 12)
+
+Every accuracy number above this line came from a hand audit of a sample. This
+one does not. `script/trace_gold.rb` runs inside a bootable Rails app under a
+`TracePoint`, recording for each call site which method Ruby *actually*
+dispatched to and where that method is defined; `script/gold.py` asks
+`trekr --def` the same question and scores it.
+
+First run, on `widget_shop` (Rails 8.1, full bundle): **859 gold call sites**,
+250 scored.
+
+| verdict | share | meaning |
+| ------- | ----- | ------- |
+| correct | 17.6 % | resolved, and to the file and line Ruby used |
+| residue-hit | 8.0 % | declined to resolve, but offered the truth as a candidate |
+| residue | 39.6 % | declined, and did not offer it |
+| **wrong** | **13.2 %** | resolved, confidently, somewhere else |
+| missed | 21.6 % | found no name at that position |
+
+Found the true definition, resolved or offered: **25.6 %**.
+
+**Read this with its caveat, which is large.** 247 of the 250 sites are inside
+*gem* code — Rails' own internals — because widget_shop's app code is 40 lines
+of pure declaration with no method bodies to call from. Rails internals are the
+hardest Ruby there is: module builders, `included do` blocks, abstract methods
+overridden per adapter, and `Kernel#require` replaced by Zeitwerk. This is a
+floor, not the number for app code, and it is not comparable to the 42 % `--def`
+figure measured on rails constants.
+
+The confident misses cluster into three shapes, and they are more informative
+than the headline:
+
+* **abstract/override pairs** — `write_query?` and `build_statement_pool` are
+  declared on the abstract adapter and dispatched to the SQLite3 one, because
+  `self` was a SQLite3 adapter. Static resolution finds the declaration; Ruby
+  ran the override.
+* **`included`** — resolved to the concern's own `included do` rather than
+  `ActiveSupport::Concern#included`.
+* **monkey-patched core** — `require` really goes to Zeitwerk's `Kernel`
+  override.
+
+Only the third is beyond reach. The first two are ranking and lookup questions
+with known shapes.
+
+**Next**: this needs an app with real method bodies. The harness takes
+`TREKR_EXERCISE` and any bootable app, so that is a matter of pointing it
+somewhere better, not of writing more harness.

@@ -105,6 +105,10 @@ trace.enable
 if EXERCISE
   load EXERCISE
 else
+  # Zeitwerk loads lazily, so without this the app has no models yet and the
+  # trace watches an empty program.
+  Rails.application.eager_load!
+
   # A default exercise: touch each model the app defines. Deliberately
   # read-mostly and wrapped, so a model that cannot be built does not end the
   # run — a partial gold set is still a gold set.
