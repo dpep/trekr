@@ -81,12 +81,21 @@ trace = TracePoint.new(:call) do |tp|
   next unless seen.add?(key)
 
   # Where Ruby says the method really lives.
-  definition =
-    begin
-      tp.self.method(tp.method_id).source_location
-    rescue StandardError
-      [tp.path, tp.lineno]
-    end
+  #
+  # `tp.path` and `tp.lineno` are, for a `:call` event, the location of the
+  # method *being entered* — no lookup, no observer effect. Both alternatives
+  # were tried and both were wrong:
+  #
+  #   * `tp.self.method(id)` re-resolves from the object, so a **prepended**
+  #     module wins and the answer is a different file than the one running.
+  #     It is also not free of consequence: an object that collects attributes
+  #     through `method_missing` records an attribute called `method`, which
+  #     measured discourse into an `unknown attribute 'method' for User`.
+  #   * `tp.defined_class.instance_method(id)` re-resolves from the class, with
+  #     the same prepend problem — 201 disagreements in a 200-event sample.
+  #
+  # Asking the event what it is already holding avoids resolving anything.
+  definition = [tp.path, tp.lineno]
   next unless definition
 
   column = column_of(caller_path, location.lineno, tp.method_id.to_s)

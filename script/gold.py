@@ -34,6 +34,10 @@ SAMPLE = int(os.environ.get("SAMPLE", "300"))
 # as you work, and that moved a published gem figure by three points between
 # runs (session 23). A measurement pins it; the product does not (DEC-029).
 CONTEXT = os.environ.get("CONTEXT")
+# App sites are the point, so they were all scored when a corpus had 63 of
+# them. A real app has thousands, and each site costs a process, so they are
+# sampled too — with the same seed, so the sample is a fixed one.
+APP_SAMPLE = int(os.environ.get("APP_SAMPLE", "0"))
 SEED = int(os.environ.get("SEED", "12"))
 
 try:
@@ -190,6 +194,9 @@ def main(path):
     # the gem floor is sampled, because each site costs a tree rebuild.
     app = [g for g in gold if g["scope"] == "app"]
     gems = [g for g in gold if g["scope"] != "app"]
+    if APP_SAMPLE and len(app) > APP_SAMPLE:
+        random.Random(SEED).shuffle(app)
+        app = app[:APP_SAMPLE]
     if SAMPLE and len(gems) > SAMPLE:
         random.Random(SEED).shuffle(gems)
         gems = gems[:SAMPLE]

@@ -975,3 +975,67 @@ something. `PRAGMA optimize` on close only re-analyses a table whose size moved
 since the *last analysis*, which never fired across 633 checkouts accumulated a
 few at a time — the statistics were 13 rows old. That is DEC-006's own argument
 applied to a database that had outgrown it.
+
+
+## A real-app corpus: discourse (session 25)
+
+widget_shop was written *for* this evaluation — 137 lines of shapes the receiver
+ladder has a rung for. That is a fair test of the rungs and an unfair test of
+the engine. Discourse is 1,247 app files and 224 service objects, written by
+strangers for their own reasons, with no Sorbet: **9,146 app-scope gold sites**
+against widget_shop's 63.
+
+Both columns pinned to their own app as context from run one (session 24), both
+traced with the same harness, 499 app sites sampled from discourse at seed 12.
+
+| | widget_shop (built for this) | **discourse (real)** |
+| --- | --- | --- |
+| app sites available | 63 | **9,146** |
+| correct | 54.8 % | **42.3 %** |
+| found the definition | 64.5 % | **82.8 %** |
+| confidently wrong | 4.8 % | **1.6 %** |
+| residue, truth offered | 9.7 % | **40.5 %** |
+| ranking: truth at #1 | 66.7 % | **87.1 %** (MRR 0.907) |
+| gem floor, correct / found | 45.6 % / 86.0 % | 52.8 % / 88.0 % |
+
+**Predicted correct 44 % (accept 38–50) — landed at 42.3 %, inside.** Predicted
+found 70 % (accept 63–77) — beaten at 82.8 %. Predicted confidently wrong 7 %
+(accept 4–10) — **wrong, and wrong in the safe direction**: 1.6 %, a third of
+widget_shop's rate.
+
+The directional call held: **correct falls and found rises** going from built-
+for-the-test code to organic code. What that says is that a real app gives the
+engine *more to work with* and *less to be sure about*. Residue where the truth
+is offered goes 9.7 % → 40.5 %: discourse's call sites are chained receivers,
+concern-installed methods and service objects whose types are decided at
+runtime, so the ladder declines to commit — and then the ranker puts the right
+answer first **87 %** of the time.
+
+That combination is the product working as designed. A confident answer is right
+98.4 % of the time on real code, and when it declines it still hands over a list
+whose first entry is usually correct. widget_shop's higher `correct` was the
+easier question, not the better engine.
+
+### Two measurement rules this cost to learn
+
+**A gold corpus is only valid against a complete index of the app it was traced
+in.** The first discourse run scored **18.0 % correct / 47.3 % found / 19.8 %
+right-owner-wrong-site**. Nothing was wrong with trekr: `--index` had never seen
+**152 of discourse's 300 gems**, so half the running code was absent from the
+tree. Reindexing moved it to 42.3 % / 82.8 % / 0 %. A `right-owner-wrong-site`
+rate in double figures is the signature — the owner resolves, the line cannot.
+
+**A tracer must not touch the objects it traces.** `tp.self.method(id)` looks
+like a read and is not: an object that collects attributes through
+`method_missing` — Fabrication's schematics, and any builder DSL like them —
+records an attribute called `method`. It measured discourse into an
+`unknown attribute 'method' for User` before it measured anything else.
+Replacing it with `tp.defined_class.instance_method(id)` removed the mutation
+and introduced a subtler error: both re-resolve, so a **prepended** module wins
+and the recorded location is a file that is not running — 201 disagreements in a
+200-event sample. The harness now uses `tp.path` and `tp.lineno`, which for a
+`:call` event *are* the method being entered. Asking the event what it already
+holds resolves nothing and disturbs nothing.
+
+widget_shop's app column is byte-identical before and after that change, which
+is what makes the two columns comparable.
