@@ -256,6 +256,7 @@ impl Store {
                 col: r.get(10)?,
                 end_line: r.get(11)?,
                 path: String::new(),
+                root: root.to_string(),
             })
         })?;
         rows.collect()
@@ -416,14 +417,22 @@ impl Store {
     /// Substring, case-insensitive, capped. rq's scorer would rank these
     /// better; this is the LSP contract's shape, and a client that wants
     /// ranking can ask rq (PLAN §3).
-    pub(crate) fn symbols_named(&self, root: &str, query: &str, limit: i64) -> Result<Vec<Symbol>> {
+    ///
+    /// `root` of `None` searches every checkout — for a client whose workspace
+    /// is not one of them, where the alternative is answering nothing.
+    pub(crate) fn symbols_named(
+        &self,
+        root: Option<&str>,
+        query: &str,
+        limit: i64,
+    ) -> Result<Vec<Symbol>> {
         let mut stmt = self.conn.prepare(
             "SELECT d.name, d.kind, d.nesting, d.singleton, d.visibility, d.params,
-                    d.via, d.target, d.sig_returns, d.line, d.col, d.end_line, f.path
+                    d.via, d.target, d.sig_returns, d.line, d.col, d.end_line, f.path, c.root
                FROM def d
                JOIN file f ON f.blob_id = d.blob_id
                JOIN checkout c ON c.id = f.checkout_id
-              WHERE c.root = ?1 AND d.name LIKE ?2 ESCAPE '\\'
+              WHERE (?1 IS NULL OR c.root = ?1) AND d.name LIKE ?2 ESCAPE '\\'
               ORDER BY LENGTH(d.name), d.name
               LIMIT ?3",
         )?;
@@ -447,6 +456,7 @@ impl Store {
                 col: r.get(10)?,
                 end_line: r.get(11)?,
                 path: r.get(12)?,
+                root: r.get(13)?,
             })
         })?;
         rows.collect()
@@ -583,6 +593,11 @@ pub(crate) struct Symbol {
     /// Empty for `--symbols`, which already knows the file it asked about.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub(crate) path: String,
+    /// The checkout `path` is relative to. An internal join key — a
+    /// cross-checkout answer needs it to turn `path` back into a real file —
+    /// not a fact any command reports.
+    #[serde(skip)]
+    pub(crate) root: String,
     pub(crate) name: String,
     pub(crate) kind: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]

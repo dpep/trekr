@@ -22,7 +22,7 @@ use lsp_types::{
     HoverProviderCapability, OneOf, ServerCapabilities, TextDocumentSyncCapability,
     TextDocumentSyncKind,
 };
-use state::Workspace;
+use state::Session;
 use std::path::PathBuf;
 
 /// What this server tells a client it can do. Nothing here is aspirational —
@@ -94,7 +94,7 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<()> {
     log.detail("initialize_params", || params.clone());
 
     let store = crate::store::open_default()?;
-    let mut workspace = Workspace::open(root, store);
+    let mut session = Session::open(root, store);
 
     for message in &connection.receiver {
         match message {
@@ -103,12 +103,12 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<()> {
                     log.event("shutdown", serde_json::json!({}));
                     break;
                 }
-                let response = dispatch(&mut workspace, request, log);
+                let response = dispatch(&mut session, request, log);
                 connection.sender.send(Message::Response(response))?;
             }
             Message::Notification(notification) => {
                 let method = notification.method.clone();
-                let published = notify(&mut workspace, notification);
+                let published = notify(&mut session, notification);
                 log.event(
                     "notification",
                     serde_json::json!({
@@ -145,14 +145,14 @@ fn workspace_root(params: &serde_json::Value) -> PathBuf {
     std::fs::canonicalize(&root).unwrap_or(root)
 }
 
-fn dispatch(workspace: &mut Workspace, request: Request, log: &Log) -> Response {
+fn dispatch(session: &mut Session, request: Request, log: &Log) -> Response {
     let id = request.id.clone();
     let method = request.method.clone();
     let asked = asked_about(&request.params);
     log.detail("request_params", || request.params.clone());
 
     let started = std::time::Instant::now();
-    let result = route(workspace, request);
+    let result = route(session, request);
     let elapsed = started.elapsed();
 
     let (status, answered) = match &result {
@@ -192,29 +192,29 @@ fn dispatch(workspace: &mut Workspace, request: Request, log: &Log) -> Response 
     }
 }
 
-fn route(workspace: &mut Workspace, request: Request) -> anyhow::Result<serde_json::Value> {
+fn route(session: &mut Session, request: Request) -> anyhow::Result<serde_json::Value> {
     use lsp_types::request as req;
     match request.method.as_str() {
-        req::GotoDefinition::METHOD => run_handler(request, |p| handlers::definition(workspace, p)),
-        req::References::METHOD => run_handler(request, |p| handlers::references(workspace, p)),
+        req::GotoDefinition::METHOD => run_handler(request, |p| handlers::definition(session, p)),
+        req::References::METHOD => run_handler(request, |p| handlers::references(session, p)),
         req::DocumentSymbolRequest::METHOD => {
-            run_handler(request, |p| handlers::document_symbol(workspace, p))
+            run_handler(request, |p| handlers::document_symbol(session, p))
         }
         req::WorkspaceSymbolRequest::METHOD => {
-            run_handler(request, |p| handlers::workspace_symbol(workspace, p))
+            run_handler(request, |p| handlers::workspace_symbol(session, p))
         }
-        req::HoverRequest::METHOD => run_handler(request, |p| handlers::hover(workspace, p)),
+        req::HoverRequest::METHOD => run_handler(request, |p| handlers::hover(session, p)),
         req::GotoImplementation::METHOD => {
-            run_handler(request, |p| handlers::implementation(workspace, p))
+            run_handler(request, |p| handlers::implementation(session, p))
         }
         req::CallHierarchyPrepare::METHOD => {
-            run_handler(request, |p| handlers::prepare_call_hierarchy(workspace, p))
+            run_handler(request, |p| handlers::prepare_call_hierarchy(session, p))
         }
         req::CallHierarchyIncomingCalls::METHOD => {
-            run_handler(request, |p| handlers::incoming_calls(workspace, p))
+            run_handler(request, |p| handlers::incoming_calls(session, p))
         }
         req::CallHierarchyOutgoingCalls::METHOD => {
-            run_handler(request, |p| handlers::outgoing_calls(workspace, p))
+            run_handler(request, |p| handlers::outgoing_calls(session, p))
         }
         // Anything else: null rather than an error, so a client probing for a
         // capability it did not read gets a civil answer.
@@ -271,36 +271,44 @@ where
 
 /// Document lifecycle. Returns syntax diagnostics to publish, when there are
 /// any to say something about.
-fn notify(workspace: &mut Workspace, notification: Notification) -> Option<Message> {
+///
+/// Documents are keyed by their canonical absolute path, not by a
+/// workspace-relative one: a session answers for several checkouts at once, and
+/// two of them can each have an `app.rb`.
+fn notify(session: &mut Session, notification: Notification) -> Option<Message> {
     use lsp_types::notification as note;
     match notification.method.as_str() {
         note::DidOpenTextDocument::METHOD => {
             let params: lsp_types::DidOpenTextDocumentParams =
                 serde_json::from_value(notification.params).ok()?;
-            let path = convert::uri_to_path(params.text_document.uri.as_str())?;
-            let relative = workspace.relative(&path)?;
-            workspace.did_open(relative.clone(), params.text_document.text);
-            handlers::diagnostics(workspace, &relative, params.text_document.uri)
+            let path = document_path(params.text_document.uri.as_str())?;
+            session.did_open(path.clone(), params.text_document.text);
+            handlers::diagnostics(session, &path, params.text_document.uri)
         }
         note::DidChangeTextDocument::METHOD => {
             let params: lsp_types::DidChangeTextDocumentParams =
                 serde_json::from_value(notification.params).ok()?;
-            let path = convert::uri_to_path(params.text_document.uri.as_str())?;
-            let relative = workspace.relative(&path)?;
+            let path = document_path(params.text_document.uri.as_str())?;
             // FULL sync, so the last change carries the whole document.
             let text = params.content_changes.into_iter().next_back()?.text;
-            workspace.did_change(relative.clone(), text);
-            handlers::diagnostics(workspace, &relative, params.text_document.uri)
+            session.did_open(path.clone(), text);
+            handlers::diagnostics(session, &path, params.text_document.uri)
         }
         note::DidCloseTextDocument::METHOD => {
             let params: lsp_types::DidCloseTextDocumentParams =
                 serde_json::from_value(notification.params).ok()?;
-            let path = convert::uri_to_path(params.text_document.uri.as_str())?;
-            workspace.did_close(&workspace.relative(&path)?);
+            session.did_close(&document_path(params.text_document.uri.as_str())?);
             None
         }
         _ => None,
     }
+}
+
+/// A document URI as the one path this session will key it by. Canonical, so
+/// `/var` and `/private/var` are the same document.
+fn document_path(uri: &str) -> Option<PathBuf> {
+    let path = convert::uri_to_path(uri)?;
+    Some(std::fs::canonicalize(&path).unwrap_or(path))
 }
 
 /// Kept so the unused-import lint does not fire on the error types the

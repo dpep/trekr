@@ -652,3 +652,166 @@ fn document_symbol_outlines_the_open_buffer_not_the_index() {
     session.stop();
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// A commit-and-index helper for a second repo the client never roots at.
+fn ruby_repo(dir: &Path, db: &Path, source: &str) {
+    git(dir, &["init", "-q"]);
+    fs::write(dir.join("app.rb"), source).unwrap();
+    git(dir, &["add", "-A"]);
+    git(
+        dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    Command::new(env!("CARGO_BIN_EXE_trekr"))
+        .args(["--index"])
+        .current_dir(dir)
+        .env("TREKR_DB", db)
+        .output()
+        .unwrap();
+}
+
+/// The client's root is not the unit; the file's own checkout is.
+///
+/// Claude Code roots the server at the session's directory, which is routinely
+/// another repo — or, as it was when this was found, a Rust one. Every
+/// operation returned empty because the file could not be made relative to that
+/// root. An agent asks about files across repos constantly, so the file's
+/// enclosing checkout is what has to answer (DEC-024).
+#[test]
+fn a_file_outside_the_clients_root_is_still_answered() {
+    let (root, db) = scratch("elsewhere-root");
+    // The client's workspace: a repo with no Ruby in it at all.
+    git(&root, &["init", "-q"]);
+    fs::write(root.join("README.md"), "not ruby\n").unwrap();
+
+    let (other, _) = scratch("elsewhere-code");
+    ruby_repo(
+        &other,
+        &db,
+        concat!(
+            "class Widget\n",       // 1
+            "  def save\n",         // 2
+            "  end\n",              // 3
+            "end\n",                // 4
+            "class Job\n",          // 5
+            "  def run\n",          // 6
+            "    w = Widget.new\n", // 7
+            "    w.save\n",         // 8
+            "  end\n",              // 9
+            "end\n",                // 10
+        ),
+    );
+
+    let mut session = Session::start(&db, &root);
+    session.initialize(&root);
+    let uri = uri_of(&other, "app.rb");
+
+    // No didOpen: an agent points at a path it has never "opened".
+    let symbols = session.request(
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri}}),
+    );
+    let names: Vec<&str> = symbols["result"]
+        .as_array()
+        .expect("an outline, not null")
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["Widget", "save", "Job", "run"]);
+
+    let answer = session.request(
+        "textDocument/definition",
+        serde_json::json!({
+            "textDocument": {"uri": uri},
+            "position": {"line": 7, "character": 6},
+        }),
+    );
+    let locations = answer["result"].as_array().expect("a location, not null");
+    assert_eq!(locations[0]["range"]["start"]["line"], 1, "Widget#save");
+    assert!(
+        locations[0]["uri"].as_str().unwrap().ends_with("/app.rb"),
+        "and it points into the other repo: {}",
+        locations[0]["uri"]
+    );
+
+    let hover = session.request(
+        "textDocument/hover",
+        serde_json::json!({
+            "textDocument": {"uri": uri},
+            "position": {"line": 7, "character": 6},
+        }),
+    );
+    let text = hover["result"]["contents"]["value"]
+        .as_str()
+        .expect("markdown, not null");
+    assert!(text.contains("Widget"), "the receiver still types: {text}");
+
+    session.stop();
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&other);
+}
+
+/// Outlining a file needs its bytes and nothing else — no index, and not even
+/// a repository. Requiring one was why `documentSymbol` answered nothing, and
+/// that operation needs no resolution at all.
+#[test]
+fn an_outline_needs_no_index_and_no_repository() {
+    let (root, db) = scratch("outline-root");
+    git(&root, &["init", "-q"]);
+    let loose = std::env::temp_dir().join(format!("trekr-lsp-{}-loose", std::process::id()));
+    let _ = fs::remove_dir_all(&loose);
+    fs::create_dir_all(&loose).unwrap();
+    fs::write(loose.join("app.rb"), "module Loose\n  def go\n  end\nend\n").unwrap();
+
+    let mut session = Session::start(&db, &root);
+    session.initialize(&root);
+    let answer = session.request(
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri_of(&loose, "app.rb")}}),
+    );
+    let names: Vec<&str> = answer["result"]
+        .as_array()
+        .expect("an outline, not null")
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["Loose", "go"]);
+
+    session.stop();
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&loose);
+}
+
+/// `workspaceSymbol` is the one operation with no file to key on. A client
+/// whose root this engine has never indexed used to get nothing; widening to
+/// every checkout is the only answer that is of any use to an agent.
+#[test]
+fn workspace_symbol_widens_when_the_clients_root_is_not_a_checkout() {
+    let (root, db) = scratch("wsym-root");
+    git(&root, &["init", "-q"]);
+    let (other, _) = scratch("wsym-code");
+    ruby_repo(&other, &db, "class Sprocket\nend\n");
+
+    let mut session = Session::start(&db, &root);
+    session.initialize(&root);
+    let answer = session.request("workspace/symbol", serde_json::json!({"query": "Sprocket"}));
+    let names: Vec<&str> = answer["result"]
+        .as_array()
+        .expect("symbols, not null")
+        .iter()
+        .map(|s| s["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(names, ["Sprocket"]);
+
+    session.stop();
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(&other);
+}

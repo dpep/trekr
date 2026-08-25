@@ -10,6 +10,12 @@
 //!
 //! A `--refs` query pays both — 360–400 ms, of which the tree is over half —
 //! which is the whole economic case for this module.
+//!
+//! The unit is a **checkout**, not the client's workspace. An agent asks about
+//! a file wherever that file lives, and the client's root is routinely another
+//! repo — or, for Claude Code, whichever directory the session happened to
+//! start in. So the session holds a tree per checkout and finds the one a file
+//! belongs to (DEC-024).
 
 use crate::core::Facts;
 use crate::store::Store;
@@ -17,20 +23,41 @@ use crate::tree::Tree;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// One workspace's cached state.
-pub(crate) struct Workspace {
+/// One LSP conversation: the store, a tree per checkout it has been asked
+/// about, and the documents the editor has open.
+pub(crate) struct Session {
+    /// The client's own root, from `initialize`. Only a workspace-wide
+    /// question consults it; a question about a file consults that file's
+    /// checkout instead.
     pub(crate) root: PathBuf,
     store: Store,
-    /// Rebuilt when the checkout's blob set moves. `None` until first asked, so
-    /// a client that only opens a file never pays for it.
+    checkouts: HashMap<PathBuf, Checkout>,
+    /// Which repository a directory belongs to. `repo_root` forks `git`, so a
+    /// miss is expensive and a keystroke must not pay it twice. A directory
+    /// outside any repository caches as `None`, so we do not re-ask.
+    enclosing: HashMap<PathBuf, Option<PathBuf>>,
+    /// Open documents by canonical absolute path — two checkouts can each have
+    /// an `app.rb`, so a relative key is not a key.
+    open: HashMap<PathBuf, Document>,
+}
+
+/// One checkout's assembled namespace, and what it was assembled from.
+#[derive(Default)]
+struct Checkout {
+    /// `None` until first asked, so a client that only opens a file never pays
+    /// for it.
     tree: Option<Tree>,
-    /// What the tree was built against — the store's schema version and the
-    /// checkout's file count. Cheap to re-read, and both change exactly when
-    /// the facts do.
+    /// The store's schema version and the checkout's file count. Cheap to
+    /// re-read, and both change exactly when the facts do.
     built_from: Option<Stamp>,
-    /// Open documents, by URI path. The editor's copy, which may be newer than
-    /// disk, so it wins.
-    open: HashMap<String, Document>,
+}
+
+/// A file, placed in the checkout that owns it.
+pub(crate) struct Located {
+    pub(crate) root: PathBuf,
+    /// The path as the index knows it: relative to `root`.
+    pub(crate) relative: String,
+    pub(crate) absolute: PathBuf,
 }
 
 /// A file the editor has open, and its parse.
@@ -56,20 +83,20 @@ impl Document {
     }
 }
 
-/// A cheap fingerprint of what the tree was assembled from.
+/// A cheap fingerprint of what a tree was assembled from.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Stamp {
     version: i64,
     files: i64,
 }
 
-impl Workspace {
-    pub(crate) fn open(root: PathBuf, store: Store) -> Workspace {
-        Workspace {
+impl Session {
+    pub(crate) fn open(root: PathBuf, store: Store) -> Session {
+        Session {
             root,
             store,
-            tree: None,
-            built_from: None,
+            checkouts: HashMap::new(),
+            enclosing: HashMap::new(),
             open: HashMap::new(),
         }
     }
@@ -78,56 +105,68 @@ impl Workspace {
         &self.store
     }
 
-    /// The assembled namespace, rebuilt only when the index beneath it moved.
-    ///
-    /// DEC-007 chose whole rebuilds over incremental patching and DEC-013 made
-    /// the store version cover the extractor; between them, "has anything
-    /// changed" is two integers.
-    pub(crate) fn tree(&mut self) -> anyhow::Result<&Tree> {
-        let root = self.root.to_string_lossy().into_owned();
-        let stamp = Stamp {
-            version: self.store.schema_version()?,
-            files: self.store.file_count(&root)?,
-        };
-        if self.built_from != Some(stamp) {
-            self.tree = Some(Tree::build(&self.store, &root)?);
-            self.built_from = Some(stamp);
-        }
-        Ok(self.tree.as_ref().expect("just built"))
-    }
-
-    pub(crate) fn did_open(&mut self, path: String, text: String) {
-        self.open.insert(path, Document::new(text));
-    }
-
-    pub(crate) fn did_change(&mut self, path: String, text: String) {
-        self.open.insert(path, Document::new(text));
-    }
-
-    pub(crate) fn did_close(&mut self, path: &str) {
-        self.open.remove(path);
-    }
-
-    /// The editor's copy if it has one, else what is on disk. The editor's copy
-    /// is the one the user is looking at.
-    pub(crate) fn document(&mut self, path: &str) -> Option<&mut Document> {
-        if !self.open.contains_key(path) {
-            let text = std::fs::read_to_string(self.root.join(path)).ok()?;
-            self.open.insert(path.to_string(), Document::new(text));
-        }
-        self.open.get_mut(path)
-    }
-
-    /// A workspace-relative path for a file URI.
+    /// The checkout a file belongs to, and its path within it.
     ///
     /// Both sides are canonicalized before comparing: the store keys checkouts
     /// on git's real path, and an editor sends the one the user typed — which
     /// on macOS differ by `/var` being a symlink to `/private/var`. Comparing
     /// them textually silently matches nothing.
-    pub(crate) fn relative(&self, path: &Path) -> Option<String> {
-        let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        real.strip_prefix(&self.root)
-            .ok()
-            .map(|p| p.to_string_lossy().into_owned())
+    pub(crate) fn locate(&mut self, path: &Path) -> Option<Located> {
+        let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+        let directory = absolute.parent()?.to_path_buf();
+        let root = match self.enclosing.get(&directory) {
+            Some(cached) => cached.clone(),
+            None => {
+                let found = crate::scan::repo_root(&absolute)
+                    .ok()
+                    .map(|root| std::fs::canonicalize(&root).unwrap_or(root));
+                self.enclosing.insert(directory, found.clone());
+                found
+            }
+        }?;
+        let relative = absolute.strip_prefix(&root).ok()?.to_string_lossy();
+        Some(Located {
+            relative: relative.into_owned(),
+            absolute,
+            root,
+        })
+    }
+
+    /// A checkout's assembled namespace, rebuilt only when the index beneath it
+    /// moved.
+    ///
+    /// DEC-007 chose whole rebuilds over incremental patching and DEC-013 made
+    /// the store version cover the extractor; between them, "has anything
+    /// changed" is two integers.
+    pub(crate) fn tree(&mut self, root: &Path) -> anyhow::Result<&Tree> {
+        let key = root.to_string_lossy().into_owned();
+        let stamp = Stamp {
+            version: self.store.schema_version()?,
+            files: self.store.file_count(&key)?,
+        };
+        let checkout = self.checkouts.entry(root.to_path_buf()).or_default();
+        if checkout.built_from != Some(stamp) {
+            checkout.tree = Some(Tree::build(&self.store, &key)?);
+            checkout.built_from = Some(stamp);
+        }
+        Ok(checkout.tree.as_ref().expect("just built"))
+    }
+
+    pub(crate) fn did_open(&mut self, path: PathBuf, text: String) {
+        self.open.insert(path, Document::new(text));
+    }
+
+    pub(crate) fn did_close(&mut self, path: &Path) {
+        self.open.remove(path);
+    }
+
+    /// The editor's copy if it has one, else what is on disk. The editor's copy
+    /// is the one the user is looking at.
+    pub(crate) fn document(&mut self, path: &Path) -> Option<&mut Document> {
+        if !self.open.contains_key(path) {
+            let text = std::fs::read_to_string(path).ok()?;
+            self.open.insert(path.to_path_buf(), Document::new(text));
+        }
+        self.open.get_mut(path)
     }
 }

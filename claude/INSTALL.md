@@ -78,6 +78,12 @@ completes the handshake — it simply answers nothing until you run `trekr --ind
 The first *query* on a large repo pays the tree build (~210 ms on rails, ~310 ms
 on discourse); every one after it is warm.
 
+**The workspace root does not limit what it answers.** Claude Code roots the
+server at the session's directory, which is routinely a different repo — or one
+in a different language. trekr answers for any `.rb` path you name, against the
+checkout that file lives in (DEC-024). Only `workspaceSymbol` uses the root, and
+it widens to every indexed checkout when the root is not one.
+
 ## What it answers
 
 goToDefinition, findReferences, documentSymbol, workspaceSymbol, hover,
@@ -96,3 +102,13 @@ possible ones — the order of the list is the tier.
 
 The CLI answers all of the same questions with the tiers explicit; see
 `claude/trekr-skill.md`.
+
+## When it answers nothing
+
+`~/.local/share/trekr/serve.log` — one ndjson line per request, with the file,
+the line, the duration and how much came back. An `"answered": 0` in well under
+a millisecond means the request was refused before any work, not that the
+engine looked and found nothing.
+
+`TREKR_LOG` takes a path, `-` for stderr, or `off`. `TREKR_LOG_LEVEL=debug` (or
+running `trekr --serve --profile` by hand) adds the wire-level params.

@@ -5,9 +5,15 @@
 //! knows, the answer carries it anyway: `hover` says which rung resolved a
 //! receiver and how confident that makes it, and `references` orders confirmed
 //! before possible so the list itself is the disclosure.
+//!
+//! Two kinds of question, and they need different things. Outlining a file or
+//! reporting its syntax errors needs only the file's own bytes, so it is
+//! answered for **any** readable path. Resolving a name needs the checkout the
+//! file belongs to, which the session finds per file rather than assuming the
+//! client's root (DEC-024).
 
 use super::convert::{self, path_to_uri, point, to_pos};
-use super::state::Workspace;
+use super::state::{Located, Session};
 use crate::cli::position::{self, Under};
 use crate::resolve::refs;
 use lsp_types::Uri as Url;
@@ -18,6 +24,7 @@ use lsp_types::{
     GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams, Location,
     MarkupContent, MarkupKind, ReferenceParams, SymbolKind, WorkspaceSymbolParams,
 };
+use std::path::Path;
 
 /// How many ranked guesses `goToDefinition` offers when the receiver did not
 /// resolve.
@@ -27,8 +34,9 @@ use lsp_types::{
 /// stops meaning anything. `hover` at the same position says these are guesses.
 const MAX_GUESSES: usize = 5;
 
-/// A location in the workspace, from our `path:line:col`.
-fn location(workspace: &Workspace, path: &str, line: u32, col: u32) -> Option<Location> {
+/// A location from our `path:line:col`, resolved against the checkout the path
+/// came out of.
+fn location(root: &Path, path: &str, line: u32, col: u32) -> Option<Location> {
     let absolute = if path == crate::tree::CORE_PATH {
         // Core is compiled into the binary; it is written out beside the
         // database so that `require` and `Array#each` land on a readable
@@ -36,11 +44,11 @@ fn location(workspace: &Workspace, path: &str, line: u32, col: u32) -> Option<Lo
         crate::store::core_stub_path().ok()?
     } else if path.starts_with('<') {
         return None;
-    } else if std::path::Path::new(path).is_absolute() {
+    } else if Path::new(path).is_absolute() {
         // A gem site is already an absolute path.
         std::path::PathBuf::from(path)
     } else {
-        workspace.root.join(path)
+        root.join(path)
     };
     let uri: Url = path_to_uri(&absolute).parse().ok()?;
     Some(Location {
@@ -49,43 +57,50 @@ fn location(workspace: &Workspace, path: &str, line: u32, col: u32) -> Option<Lo
     })
 }
 
-/// The path and position a text-document request is about.
+/// The file a request names, wherever it lives. No checkout required — enough
+/// for the questions that are answered from the file's own bytes.
+fn file_of(uri: &Url) -> Option<std::path::PathBuf> {
+    let path = convert::uri_to_path(uri.as_str())?;
+    Some(std::fs::canonicalize(&path).unwrap_or(path))
+}
+
+/// The checkout and position a resolving request is about.
 fn target(
-    workspace: &mut Workspace,
+    session: &mut Session,
     uri: &Url,
     position: lsp_types::Position,
-) -> Option<(String, crate::core::Pos)> {
+) -> Option<(Located, crate::core::Pos)> {
     let path = convert::uri_to_path(uri.as_str())?;
-    let relative = workspace.relative(&path)?;
-    let text = workspace.document(&relative)?.text.clone();
-    Some((relative, to_pos(&text, position)))
+    let located = session.locate(&path)?;
+    let text = session.document(&located.absolute)?.text.clone();
+    Some((located, to_pos(&text, position)))
 }
 
 pub(crate) fn definition(
-    workspace: &mut Workspace,
+    session: &mut Session,
     params: GotoDefinitionParams,
 ) -> anyhow::Result<Option<GotoDefinitionResponse>> {
     let uri = params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;
-    let Some((path, pos)) = target(workspace, &uri, position) else {
+    let Some((located, pos)) = target(session, &uri, position) else {
         return Ok(None);
     };
-    let sites = resolve_at(workspace, &path, pos)?;
+    let sites = resolve_at(session, &located, pos)?;
     let locations: Vec<Location> = sites
         .into_iter()
-        .filter_map(|(p, line, col)| location(workspace, &p, line, col))
+        .filter_map(|(p, line, col)| location(&located.root, &p, line, col))
         .collect();
     Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)))
 }
 
 /// Where the name at a position is defined — the CLI's `--def`, as sites.
 fn resolve_at(
-    workspace: &mut Workspace,
-    path: &str,
+    session: &mut Session,
+    located: &Located,
     pos: crate::core::Pos,
 ) -> anyhow::Result<Vec<(String, u32, u32)>> {
-    let facts = workspace
-        .document(path)
+    let facts = session
+        .document(&located.absolute)
         .map(|document| document.facts().clone());
     let Some(facts) = facts else {
         return Ok(Vec::new());
@@ -93,8 +108,8 @@ fn resolve_at(
     let Some(under) = position::at_facts(&facts, pos.line, pos.col) else {
         return Ok(Vec::new());
     };
-    let path = path.to_string();
-    let tree = workspace.tree()?;
+    let path = located.relative.clone();
+    let tree = session.tree(&located.root)?;
     Ok(match under {
         Under::Definition(def) => vec![(path, def.pos.line, def.pos.col)],
         Under::Constant(reference) => tree
@@ -129,31 +144,32 @@ fn resolve_at(
 }
 
 pub(crate) fn references(
-    workspace: &mut Workspace,
+    session: &mut Session,
     params: ReferenceParams,
 ) -> anyhow::Result<Option<Vec<Location>>> {
     let uri = params.text_document_position.text_document.uri;
     let position = params.text_document_position.position;
-    let Some((path, pos)) = target(workspace, &uri, position) else {
+    let Some((located, pos)) = target(session, &uri, position) else {
         return Ok(None);
     };
-    let facts = workspace
-        .document(&path)
+    let facts = session
+        .document(&located.absolute)
         .map(|document| document.facts().clone());
     let Some(facts) = facts else { return Ok(None) };
     let Some(under) = position::at_facts(&facts, pos.line, pos.col) else {
         return Ok(None);
     };
 
-    let root = workspace.root.clone();
+    let root = located.root.clone();
     let root_str = root.to_string_lossy().into_owned();
+    let path = located.relative.clone();
     let name = match &under {
         Under::Definition(def) => def.name.clone(),
         Under::Call(call) => call.name.clone(),
         Under::Constant(reference) => reference.name.clone(),
     };
-    let paths = workspace.store().files_calling(&root_str, &name)?;
-    let tree = workspace.tree()?;
+    let paths = session.store().files_calling(&root_str, &name)?;
+    let tree = session.tree(&root)?;
 
     // Which method is being asked about, not just which name. Standing on a
     // definition, the owner is the scope that declares it; standing on a call,
@@ -207,23 +223,22 @@ pub(crate) fn references(
 
     let locations: Vec<Location> = found
         .into_iter()
-        .filter_map(|r| location(workspace, &r.path, r.line, r.col))
+        .filter_map(|r| location(&root, &r.path, r.line, r.col))
         .collect();
     Ok(Some(locations))
 }
 
+/// An outline needs the file's bytes and nothing else — no index, no checkout,
+/// no `--index` ever having been run.
 pub(crate) fn document_symbol(
-    workspace: &mut Workspace,
+    session: &mut Session,
     params: DocumentSymbolParams,
 ) -> anyhow::Result<Option<DocumentSymbolResponse>> {
-    let Some(path) = convert::uri_to_path(params.text_document.uri.as_str()) else {
+    let Some(path) = file_of(&params.text_document.uri) else {
         return Ok(None);
     };
-    let Some(relative) = workspace.relative(&path) else {
-        return Ok(None);
-    };
-    let facts = workspace
-        .document(&relative)
+    let facts = session
+        .document(&path)
         .map(|document| document.facts().clone());
     let Some(facts) = facts else { return Ok(None) };
 
@@ -256,11 +271,18 @@ fn symbol_kind(kind: crate::core::Kind) -> SymbolKind {
 }
 
 pub(crate) fn workspace_symbol(
-    workspace: &mut Workspace,
+    session: &mut Session,
     params: WorkspaceSymbolParams,
 ) -> anyhow::Result<Option<Vec<lsp_types::SymbolInformation>>> {
-    let root = workspace.root.to_string_lossy().into_owned();
-    let rows = workspace.store().symbols_named(&root, &params.query, 200)?;
+    let root = session.root.to_string_lossy().into_owned();
+    // A client's root is often not a checkout this engine has ever indexed —
+    // Claude Code's is whatever directory the session started in. Answering
+    // nothing there is technically defensible and practically useless, so an
+    // unindexed root widens the search to every checkout instead.
+    let scope = session.store().has_checkout(&root)?.then_some(root);
+    let rows = session
+        .store()
+        .symbols_named(scope.as_deref(), &params.query, 200)?;
     #[allow(deprecated)]
     let symbols = rows
         .into_iter()
@@ -275,7 +297,7 @@ pub(crate) fn workspace_symbol(
                 },
                 tags: None,
                 deprecated: None,
-                location: location(workspace, &row.path, row.line, row.col)?,
+                location: location(Path::new(&row.root), &row.path, row.line, row.col)?,
                 container_name: row.nesting.first().cloned(),
             })
         })
@@ -285,23 +307,21 @@ pub(crate) fn workspace_symbol(
 
 /// Hover is where the disclosure lives: LSP has no confidence field, so the
 /// answer says it in words.
-pub(crate) fn hover(
-    workspace: &mut Workspace,
-    params: HoverParams,
-) -> anyhow::Result<Option<Hover>> {
+pub(crate) fn hover(session: &mut Session, params: HoverParams) -> anyhow::Result<Option<Hover>> {
     let uri = params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;
-    let Some((path, pos)) = target(workspace, &uri, position) else {
+    let Some((located, pos)) = target(session, &uri, position) else {
         return Ok(None);
     };
-    let facts = workspace
-        .document(&path)
+    let facts = session
+        .document(&located.absolute)
         .map(|document| document.facts().clone());
     let Some(facts) = facts else { return Ok(None) };
     let Some(under) = position::at_facts(&facts, pos.line, pos.col) else {
         return Ok(None);
     };
-    let tree = workspace.tree()?;
+    let path = located.relative.clone();
+    let tree = session.tree(&located.root)?;
 
     let text = match under {
         Under::Definition(def) => {
@@ -366,16 +386,16 @@ pub(crate) fn hover(
 
 /// Descendants of the class or module at the cursor.
 pub(crate) fn implementation(
-    workspace: &mut Workspace,
+    session: &mut Session,
     params: lsp_types::request::GotoImplementationParams,
 ) -> anyhow::Result<Option<GotoDefinitionResponse>> {
     let uri = params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;
-    let Some((path, pos)) = target(workspace, &uri, position) else {
+    let Some((located, pos)) = target(session, &uri, position) else {
         return Ok(None);
     };
-    let facts = workspace
-        .document(&path)
+    let facts = session
+        .document(&located.absolute)
         .map(|document| document.facts().clone());
     let Some(facts) = facts else { return Ok(None) };
     let Some(under) = position::at_facts(&facts, pos.line, pos.col) else {
@@ -386,7 +406,7 @@ pub(crate) fn implementation(
         Under::Constant(reference) => reference.name,
         Under::Call(_) => return Ok(None),
     };
-    let tree = workspace.tree()?;
+    let tree = session.tree(&located.root)?;
     let Some(fqn) = tree.resolve(&name, &[]).fqn else {
         return Ok(None);
     };
@@ -398,13 +418,13 @@ pub(crate) fn implementation(
         .collect();
     let locations: Vec<Location> = sites
         .into_iter()
-        .filter_map(|(p, line, col)| location(workspace, &p, line, col))
+        .filter_map(|(p, line, col)| location(&located.root, &p, line, col))
         .collect();
     Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)))
 }
 
 pub(crate) fn prepare_call_hierarchy(
-    workspace: &mut Workspace,
+    session: &mut Session,
     params: CallHierarchyPrepareParams,
 ) -> anyhow::Result<Option<Vec<CallHierarchyItem>>> {
     let uri = params
@@ -413,13 +433,16 @@ pub(crate) fn prepare_call_hierarchy(
         .uri
         .clone();
     let position = params.text_document_position_params.position;
-    let Some((path, pos)) = target(workspace, &uri, position) else {
+    let Some(path) = file_of(&uri) else {
         return Ok(None);
     };
-    let facts = workspace
+    let Some((text, facts)) = session
         .document(&path)
-        .map(|document| document.facts().clone());
-    let Some(facts) = facts else { return Ok(None) };
+        .map(|document| (document.text.clone(), document.facts().clone()))
+    else {
+        return Ok(None);
+    };
+    let pos = to_pos(&text, position);
     let Some(under) = position::at_facts(&facts, pos.line, pos.col) else {
         return Ok(None);
     };
@@ -444,19 +467,27 @@ pub(crate) fn prepare_call_hierarchy(
 /// Incoming calls are the confirmed tier of a references query — the whole
 /// point of having tiers.
 pub(crate) fn incoming_calls(
-    workspace: &mut Workspace,
+    session: &mut Session,
     params: CallHierarchyIncomingCallsParams,
 ) -> anyhow::Result<Option<Vec<CallHierarchyIncomingCall>>> {
     let name = params.item.name.clone();
-    let root = workspace.root.clone();
+    let Some(path) = convert::uri_to_path(params.item.uri.as_str()) else {
+        return Ok(None);
+    };
+    // The item names a file, and that file's checkout is the one to search —
+    // the client's workspace is not necessarily either.
+    let Some(located) = session.locate(&path) else {
+        return Ok(None);
+    };
+    let root = located.root.clone();
     let root_str = root.to_string_lossy().into_owned();
     let query = refs::Query {
         owner: None,
         singleton: false,
         name: name.clone(),
     };
-    let paths = workspace.store().files_calling(&root_str, &name)?;
-    let tree = workspace.tree()?;
+    let paths = session.store().files_calling(&root_str, &name)?;
+    let tree = session.tree(&root)?;
 
     let mut confirmed: Vec<refs::Reference> = Vec::new();
     for candidate in paths {
@@ -476,7 +507,7 @@ pub(crate) fn incoming_calls(
     let calls = confirmed
         .into_iter()
         .filter_map(|reference| {
-            let at = location(workspace, &reference.path, reference.line, reference.col)?;
+            let at = location(&root, &reference.path, reference.line, reference.col)?;
             Some(CallHierarchyIncomingCall {
                 from: CallHierarchyItem {
                     name: reference.owner.clone().unwrap_or_else(|| name.clone()),
@@ -497,18 +528,15 @@ pub(crate) fn incoming_calls(
 
 /// Outgoing calls are the call-site facts inside the method's own body.
 pub(crate) fn outgoing_calls(
-    workspace: &mut Workspace,
+    session: &mut Session,
     params: CallHierarchyOutgoingCallsParams,
 ) -> anyhow::Result<Option<Vec<CallHierarchyOutgoingCall>>> {
     let uri = params.item.uri.clone();
-    let Some(path) = convert::uri_to_path(uri.as_str()) else {
+    let Some(path) = file_of(&uri) else {
         return Ok(None);
     };
-    let Some(relative) = workspace.relative(&path) else {
-        return Ok(None);
-    };
-    let facts = workspace
-        .document(&relative)
+    let facts = session
+        .document(&path)
         .map(|document| document.facts().clone());
     let Some(facts) = facts else { return Ok(None) };
 
@@ -530,21 +558,23 @@ pub(crate) fn outgoing_calls(
         .calls
         .iter()
         .filter(|call| call.pos.line > start && call.pos.line <= end)
-        .filter_map(|call| {
-            let at = location(workspace, &relative, call.pos.line, call.pos.col)?;
-            Some(CallHierarchyOutgoingCall {
+        .map(|call| {
+            // Every outgoing call is in the file the item names, so the item's
+            // own URI is the location.
+            let range = point(None, call.pos.line, call.pos.col);
+            CallHierarchyOutgoingCall {
                 to: CallHierarchyItem {
                     name: call.name.clone(),
                     kind: SymbolKind::METHOD,
                     tags: None,
                     detail: Some(format!("receiver: {}", call.recv.as_str())),
-                    uri: at.uri.clone(),
-                    range: at.range,
-                    selection_range: at.range,
+                    uri: uri.clone(),
+                    range,
+                    selection_range: range,
                     data: None,
                 },
-                from_ranges: vec![at.range],
-            })
+                from_ranges: vec![range],
+            }
         })
         .collect();
     Ok(Some(calls))
@@ -556,11 +586,11 @@ pub(crate) fn outgoing_calls(
 /// confidence, and publishing those as diagnostics would turn disclosure into
 /// noise in the editor's gutter.
 pub(crate) fn diagnostics(
-    workspace: &mut Workspace,
-    path: &str,
+    session: &mut Session,
+    path: &Path,
     uri: Url,
 ) -> Option<lsp_server::Message> {
-    let errors = workspace.document(path)?.parse_errors();
+    let errors = session.document(path)?.parse_errors();
     let diagnostics: Vec<Diagnostic> = errors
         .into_iter()
         .map(|(line, col, message)| Diagnostic {

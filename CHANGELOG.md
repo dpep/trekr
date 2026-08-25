@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Fixed: `--serve` answered **nothing at all** for a file outside the client's
+  workspace root — which is every file, when the client is Claude Code and its
+  root is whatever directory the session started in. The session now holds a
+  tree per checkout and finds the one a file belongs to (DEC-024). Outlining a
+  file and reporting its syntax errors need no checkout at all now, and work on
+  a loose `.rb` that is in no repository.
+- `workspaceSymbol` searches every indexed checkout when the client's root is
+  not one of them, rather than answering nothing.
+
 - Fixed: `--def FILE:LINE:COL` resolved against the **current directory's**
   checkout rather than the file's own. Asking about another repo's file — which
   is what an agent does constantly — silently answered `residue`, because the

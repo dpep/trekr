@@ -509,3 +509,43 @@ which is why the two surfaces differ.
 
 **Reverses if** real core sources or RBS become indexable, at which point the
 stub stops being the best available answer.
+
+## DEC-024 — The unit is the file's checkout, not the caller's directory
+
+**Decided.** A question about a *position* is answered against the repository
+that contains that file. `--def FILE:LINE:COL` runs `repo_root` on the file, not
+on `.`; `--serve` holds a tree per checkout and finds the one each request's URI
+belongs to. The client's workspace root survives only as the scope for
+`workspaceSymbol`, and even there it widens to every checkout when it is not one
+itself.
+
+**Why.** Both P0 defects from the first live LSP session were this, wearing two
+hats. `--def` on a rails file, run from a Rust repo's directory, built rails'
+question against rq's namespace and answered `residue` with `"no indexed
+constant by that name"` — a reason that reads like a finding about rails rather
+than what it was, an artifact of `cd`. And `--serve`, rooted by Claude Code at
+the session's cwd, could not make any rails path relative to that root, so all
+nine operations returned empty; `documentSymbol`, which needs no index at all,
+returned empty too, which is what made the serve layer rather than resolution
+the suspect.
+
+The premise was that a caller stands inside the code it asks about. Editors do.
+Agents do not: they hold absolute paths and query across repositories from
+wherever the session happens to be. The file's own repository is the only thing
+in the request that identifies a checkout, so it has to be the key.
+
+Two consequences worth stating. Finding a checkout forks `git rev-parse`, so the
+serve session memoizes it per directory — including the negative answer, so a
+file in no repository is not re-asked. And a question needing only a file's bytes
+(`documentSymbol`, diagnostics, `callHierarchy/prepare`) no longer requires a
+checkout at all; requiring one was pure coupling.
+
+**Measured.** With the client rooted at rq (a Rust repo) and the file in rails:
+`documentSymbol` 0 → 122 symbols, `definition` on `Batches` 0 → 2 sites,
+`hover` null → `Resolved · confidence 1.0 · via Lexical`. Before the fix the
+serve log showed all three answering in 0.03–0.05 ms, far too fast to have
+looked at anything.
+
+**Reverses if** a single session ever needs to answer for two checkouts that
+disagree about the same absolute path — which git worktrees do not do, since
+each has its own root.
