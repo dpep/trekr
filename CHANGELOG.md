@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `--index` gathers full statistics (`ANALYZE`) after a run that actually read
+  something. `PRAGMA optimize` on close only re-analyses a table whose size has
+  moved since the last analysis, which never fired across hundreds of checkouts
+  accumulated a few at a time — so the planner was working from statistics
+  thirteen rows old. Reported as an `analyze` phase under `--profile`.
+
 - **Fixed: retirement detected a replaced binary and then never left.** Breaking
   out of the request loop is not enough — `IoThreads::join` waits for the reader
   thread, which is parked in a blocking read on stdin, and an editor holds stdin

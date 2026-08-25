@@ -392,6 +392,16 @@ fn cmd_index(
         GemReport::default()
     };
 
+    // Only when something was actually read: statistics cost seconds, and a
+    // reindex that parsed nothing has not changed the shape the planner cares
+    // about.
+    if counts.parsed > 0 || gems.indexed > 0 {
+        profile::timed(&mut profile, "analyze", || {
+            store.analyze();
+            Ok::<(), anyhow::Error>(())
+        })?;
+    }
+
     match out {
         Output::Text => println!(
             "indexed {} — {} files, {} blobs, {} parsed ({} defs, {} refs, {} calls)",

@@ -625,6 +625,25 @@ impl Store {
     }
 }
 
+impl Store {
+    /// Gather statistics in full, after an index has changed the shape of the
+    /// database.
+    ///
+    /// `PRAGMA optimize` on close is the cheap version and it is not always
+    /// enough: it re-analyses a table whose size has moved *since the last
+    /// analysis*, which never fired across 633 checkouts accumulated a few at a
+    /// time. The stale plan drove `workspaceSymbol` from the `checkout` table
+    /// — every checkout, then every file — instead of the name index, and cost
+    /// **1.28 s against 0.33 s**.
+    ///
+    /// Best effort, and only worth it when something was actually written: it
+    /// is ~3 s on a 384 MB database, which is fine once per index and not fine
+    /// on a no-op reindex.
+    pub(crate) fn analyze(&self) {
+        let _ = self.conn.execute_batch("ANALYZE;");
+    }
+}
+
 impl Drop for Store {
     /// `PRAGMA optimize` runs `ANALYZE` on tables whose size has moved enough
     /// to matter, and does nothing otherwise. Without statistics SQLite plans

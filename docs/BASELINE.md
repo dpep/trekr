@@ -936,3 +936,42 @@ DEC-020) or modelling `included` hooks' runtime effects — neither cheap, and
 neither with a large enough slice to justify itself on these numbers.
 
 **Stated as a limit**, not carried as a TODO.
+
+
+## `workspaceSymbol` at 1.26 s — profiled, not fixed (session 24)
+
+`--usage` put this at 1.26 s, the slowest operation an agent has. Profiled at
+the SQL, against 508,991 definitions across 633 checkouts:
+
+| query | matches | time |
+| ----- | ------- | ---- |
+| `%Widget%` | 93 | **1.15 s** |
+| `%Account%` | 200 (capped) | 0.13 s |
+| `%each%` | 200 (capped) | 0.11 s |
+| `%new%` | 200 (capped) | 0.10 s |
+
+**The intuition is inverted.** A query that *hits the limit* is fast, because
+SQLite stops as soon as it has 200 rows. A query for a **rare** symbol is slow,
+because proving there is no 94th match means reading all half-million names.
+Rare symbols are precisely what an agent searches for when orienting, so the
+p90 that matters is the slow one.
+
+The cause is a leading-wildcard `LIKE`, which no B-tree index can serve, and a
+plan that drives the join from `checkout` — every checkout, then every file,
+then its definitions — rather than from the name. Stale statistics were part of
+it and are now gathered after any index that read something (below), but they do
+**not** fix this: the plan still starts at `checkout`, and the scan is the floor
+regardless.
+
+**This is a design question, not a bounded fix, and it is recorded rather than
+attempted.** The honest options are a schema change — denormalising the
+checkout root onto `def` so the name index can drive the join, or an FTS5 /
+trigram index that can actually serve a substring search — and DEC-006 rules out
+reaching for a planner override instead. Neither is an afternoon, and
+`workspaceSymbol` is one call in thirty-five.
+
+What did ship is the hygiene: `ANALYZE` now runs after an index that parsed
+something. `PRAGMA optimize` on close only re-analyses a table whose size moved
+since the *last analysis*, which never fired across 633 checkouts accumulated a
+few at a time — the statistics were 13 rows old. That is DEC-006's own argument
+applied to a database that had outgrown it.
