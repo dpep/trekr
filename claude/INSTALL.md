@@ -84,6 +84,29 @@ in a different language. trekr answers for any `.rb` path you name, against the
 checkout that file lives in (DEC-024). Only `workspaceSymbol` uses the root, and
 it widens to every indexed checkout when the root is not one.
 
+## 4. Teach Claude to reach for it
+
+The LSP server answers when Claude asks; these two steps make Claude ask.
+
+```sh
+mkdir -p ~/.claude/skills/trekr
+cp claude/trekr-skill.md ~/.claude/skills/trekr/SKILL.md
+```
+
+Then add a line to the search-tools section of your global `~/.claude/CLAUDE.md`
+so trekr wins the reach-for-grep reflex — alongside whatever `rq`/`rg` guidance
+lives there:
+
+```md
+- **`trekr` — Ruby: what does this position mean, and who really calls this
+  method.** `--def FILE:LINE:COL` says what a call actually runs; `--refs
+  'Owner#method'` tiers callers confirmed/possible/excluded by receiver, which
+  grep cannot. Ruby only; cross-language "where is this name defined" stays rq/rg.
+```
+
+The skill teaches the CLI's flags; the CLAUDE.md line changes which tool gets
+picked. Both matter — a skill that's installed but never chosen answers nothing.
+
 ## What it answers
 
 goToDefinition, findReferences, documentSymbol, workspaceSymbol, hover,
