@@ -119,10 +119,22 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | rung | how the type is established | confidence |
 |---|---|---|
 | `self` | the enclosing scope **is** the receiver — a language rule, no inference | 1.0 |
+| `includer` | a call inside a module, resolved through the classes that mix it in | agreeing / includers |
 | `const` | `Foo.bar` — resolve `Foo`, look up a *class* method | 1.0 |
 | `local:new` | `x = Foo.new` | agreeing / total |
 | `local:const` | `x = Foo` — holds the class, so `x.bar` is a class method | agreeing / total |
+| `literal` | `out = []` — core knows what an Array is | agreeing / total |
 | `sig` | an inline Sorbet `sig` on the method the value came from | agreeing / total |
+| `sig:param` | the parameter's declared class, from `params(...)` | 1.0 |
+| `sig:step` | one call on an already-typed local, via that method's `sig` | agreeing / total |
+| `rbi_dsl` | resolved, then redirected from a Tapioca `.rbi` to the model | |
+
+`sig:param` exists because half of graph_weaver's untyped local receivers turned
+out to be method *parameters* — they have no assignment to chase, so every rung
+that looks for one is structurally blind to them, and a signature had already
+said what they are. `sig:step` is deliberately **one** step: rwr's D61 measured
+70 % of returns ending in another call, so the recursive version drowns while
+the single sig-backed hop pays. A test asserts the second hop is refused.
 
 Once a type is settled the method is found by Ruby's own lookup, so a hit is
 exact rather than ranked (DEC-011). Below the ladder is **residue**: the
@@ -523,7 +535,10 @@ Roughly 1.5 M row inserts through one SQLite connection at ~575k/s. Parse
 speeds up 5× from one worker to four and then plateaus, because it was never
 the majority. Anything that wants to make indexing faster should start here —
 batched or multi-row inserts, or relaxing durability for the bulk load — and
-not with the worker count (DEC-014).
+not with the worker count (DEC-014). The shape differs from rq's, which is why
+the same "more workers" advice reproduces there and flattens here: rq overlaps
+its single writer with the parse so workers keep feeding it, where trekr
+collects every fact and writes at the end.
 
 **The query planner needs statistics, and this is not optional.** Without them
 SQLite plans `--refs` as a nested scan of the checkout's files: `--refs new` on

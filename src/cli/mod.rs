@@ -572,6 +572,15 @@ fn cmd_def(out: Output, spec: &str) -> anyhow::Result<ExitCode> {
                 .as_str()
                 .unwrap_or(answer["name"].as_str().unwrap_or_default()),
         ),
+        // Resolved with nowhere to point is a real answer, not a failure: a
+        // namespace Rails' autoloader invents from a directory exists and no
+        // line of code declares it.
+        None if resolved => format!(
+            "{}  (namespace with no declaration)",
+            answer["fqn"]
+                .as_str()
+                .unwrap_or(answer["name"].as_str().unwrap_or("?")),
+        ),
         None => format!(
             "{}  {}",
             answer["name"].as_str().unwrap_or("?"),

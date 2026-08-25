@@ -257,6 +257,7 @@ impl Tree {
             let fqn = tree.place_decl(decl);
             tree.declare(fqn, decl);
         }
+        tree.imply_namespaces();
 
         for edge in edges {
             let owner = tree.scopes(&edge.owner);
@@ -348,6 +349,36 @@ impl Tree {
         // constantly because the prefix belongs to a gem. Top level is the
         // honest guess.
         qualify(prefix, last)
+    }
+
+    /// Create the namespaces that declarations imply but nothing declares.
+    ///
+    /// Rails' autoloader invents a module from a directory: mastodon writes
+    /// `class ActivityPub::TagManager` in `app/lib/activitypub/tag_manager.rb`
+    /// and never writes `module ActivityPub` anywhere. Plain Ruby would raise;
+    /// under Zeitwerk the constant exists, so an index that omits it cannot
+    /// resolve a reference to it — which is most of what mastodon's residue
+    /// turned out to be.
+    ///
+    /// These entries carry **no sites**, which is the truth: the name exists
+    /// and no line of code declares it.
+    fn imply_namespaces(&mut self) {
+        let mut implied: Vec<String> = Vec::new();
+        for fqn in self.names.keys() {
+            let mut prefix = fqn.as_str();
+            while let Some((parent, _)) = prefix.rsplit_once("::") {
+                if !self.names.contains_key(parent) {
+                    implied.push(parent.to_string());
+                }
+                prefix = parent;
+            }
+        }
+        for fqn in implied {
+            let entry = self.names.entry(fqn).or_default();
+            if entry.kind.is_empty() {
+                entry.kind = "module".to_string();
+            }
+        }
     }
 
     /// Everything about a name except where it is written. Idempotent, so the
@@ -965,6 +996,27 @@ mod tests {
             !tree.names.contains_key("Foo::Bar"),
             "the prefix resolved to the top-level Bar, so Foo gained nothing"
         );
+    }
+
+    #[test]
+    fn a_namespace_rails_invents_from_a_directory_still_resolves() {
+        // mastodon writes `class ActivityPub::TagManager` and never writes
+        // `module ActivityPub`. Zeitwerk creates it; an index that omits it
+        // cannot resolve a bare reference to it.
+        let tree = one("class ActivityPub::TagManager\nend\n");
+        let found = tree.resolve("ActivityPub", &[]);
+        assert_eq!(found.fqn.as_deref(), Some("ActivityPub"));
+        assert!(
+            found.sites.is_empty(),
+            "the name exists and no line of code declares it — say so"
+        );
+        assert!(tree.names.contains_key("ActivityPub::TagManager"));
+    }
+
+    #[test]
+    fn an_implied_namespace_does_not_overwrite_a_real_one() {
+        let tree = one("module Real\nend\nclass Real::Thing\nend\n");
+        assert_eq!(tree.sites("Real").len(), 1, "the declaration still wins");
     }
 
     #[test]
