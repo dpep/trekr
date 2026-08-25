@@ -380,3 +380,60 @@ The general lesson for the gold set: a Sorbet-equipped app measures a *more
 favourable* engine than most Rails apps, because signatures do work the
 receiver ladder would otherwise have to. A second corpus without RBIs would
 measure the common case.
+
+
+## Sigs on vs sigs off — a controlled experiment (session 14)
+
+`widget_shop-nosorbet` is a git worktree of widget_shop with the whole
+`sorbet/` tree removed and the app code byte-for-byte identical. Same
+exerciser, same harness, same binary, same sample seed. 63 app call sites in
+each; 400 gem sites sampled.
+
+| verdict | sigs ON | sigs OFF |
+| ------- | ------- | -------- |
+| app correct | 42.9 % | **49.2 %** |
+| app found the definition | 57.1 % | **61.9 %** |
+| app confidently wrong | 7.9 % | **4.8 %** |
+| app no name at that position | 4.8 % | **0.0 %** |
+| plain app methods correct | 60.0 % | **68.9 %** |
+| plain app methods found | 80.0 % | **86.7 %** |
+| gem floor correct | 36.0 % | 38.2 % |
+
+**Removing Sorbet makes trekr better on every measure.** Predicted the
+direction (better, not worse) and roughly the size: predicted 45 % correct and
+5 % wrong, got 49.2 % and 4.8 %.
+
+That is worth stating plainly, because the naive expectation is the opposite —
+delete type information, lose accuracy. What actually happens is that Tapioca's
+committed RBIs introduce a **shadow namespace** that competes with real code:
+
+* `find` and `find_by` are `wrong` with sigs on, resolving to
+  `Widget::CommonRelationMethods` — an owner that exists only in
+  `sorbet/rbi/dsl/widget.rbi`. Runtime truth says
+  `ActiveRecord::Core::ClassMethods`. With the RBI gone they resolve correctly.
+* `after_save` and two `self.class`-chained `id` calls find no name with sigs
+  on and resolve without them.
+
+DEC-019's rule (session 13) prefers real source over a stub **at the same
+owner**. It does not help when the RBI invents an owner that does not exist at
+runtime and that owner sits earlier in the lookup chain.
+
+**Both columns matter.** The target monorepo is roughly 30 % Sorbet-covered, so
+neither column is "the" number: sigs-off is the common case, sigs-on is the
+case where a signature is available *and* where the shadow namespace does
+damage. Reporting one alone would mislead in whichever direction was chosen.
+
+### The finder rung, measured end to end at last
+
+Session 13 shipped `w = Widget.find(id)` → `w` is a `Widget` and could not
+measure it, because widget_shop's RBIs already typed those locals `via=sig`.
+Sigs off, the rung carries them: `find` and `find_by` move from **wrong to
+correct**, and the app `missed` count goes to zero. This is the rung's first
+end-to-end evidence, and it is the difference between crediting a feature and
+knowing it works.
+
+### Worktree blob sharing, on a real second checkout
+
+Indexing the worktree: **35 files, 0 blobs parsed, 0.05 s**. Every `.rb` blob
+was already known from the main checkout, because the app code is identical and
+facts are keyed by blob OID. Predicted 0 parsed and under a second.
