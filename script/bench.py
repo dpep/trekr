@@ -6,10 +6,17 @@
 Uses a throwaway database, so it never touches the real index.
 
 Every corpus must be a git checkout (DEC-001). Some useful ones are not:
-`discourse` and `mastodon` are commonly kept as source drops with no `.git`,
-so those are staged into a scratch repo first. That staging is here rather
-than in a README step because a number nobody can re-run is halfway to not
-having happened.
+`discourse` and `mastodon` are kept as source drops with no `.git`, so those
+are staged into a scratch repo first. That staging is here rather than in a
+README step because a number nobody can re-run is halfway to not having
+happened.
+
+**Conditions the numbers carry.** `discourse` and `mastodon` are gitless *and
+partially bundled* — roughly 101 of discourse's 353 locked gems and 75 of
+mastodon's 344 are present in the local gemdir, the rest are named and absent.
+That is why method-call residue is reported split by whether the ancestor chain
+the lookup walked was complete: blending a corpus whose dependencies are half
+missing into one rate is the flattering-denominator trap.
 
 Cold time is measured once — the second run is by definition not cold. The
 no-op and query timings are medians of five, which is the precision those
@@ -207,6 +214,7 @@ def call_resolution(corpora):
                  JOIN file f ON f.blob_id = s.blob_id
                  JOIN checkout c ON c.id = f.checkout_id
                 WHERE c.root = ? AND f.path NOT LIKE '%test%' AND f.path NOT LIKE '%spec%'
+                  AND f.path NOT LIKE 'sorbet/%'
                 ORDER BY f.path, line, col""",
             (checkout_root(repo),),
         ).fetchall()
@@ -220,6 +228,9 @@ def call_resolution(corpora):
         # averaging them hides the finding.
         scope_total = collections.Counter()
         scope_resolved = collections.Counter()
+        chain = collections.Counter()
+        chain_resolved = collections.Counter()
+        typing = collections.Counter()
         no_inference = 0
         for path, line, col, shape in random.sample(rows, SAMPLE):
             out = trekr(["--def", f"{path}:{line}:{col}", "--json"], repo).stdout
@@ -236,6 +247,22 @@ def call_resolution(corpora):
             else:
                 by_rung["residue"] += 1
                 by_shape[answer.get("receiver", "?")] += 1
+
+            # Could the lookup even have found the answer? An unresolved
+            # ancestor means something the chain needed is not indexed — a gem
+            # that is named and absent. Splitting on it is the only way to tell
+            # "the ladder failed" from "the index was incomplete".
+            complete = not answer.get("unresolved_ancestors")
+            chain["complete" if complete else "truncated"] += 1
+            if resolved:
+                chain_resolved["complete" if complete else "truncated"] += 1
+
+            # And for a local or ivar receiver, say WHY it was typed or not.
+            if answer.get("receiver") in ("local", "ivar"):
+                if resolved:
+                    typing["typed: " + answer.get("resolved_via", "?")] += 1
+                else:
+                    typing["untyped"] += 1
             if answer.get("receiver") in ("implicit", "self"):
                 where = answer.get("receiver_kind") or "no scope (top level)"
                 scope_total[where] += 1
@@ -253,6 +280,17 @@ def call_resolution(corpora):
             print(f"    self inside a {where:<22} "
                   f"{100 * scope_resolved[where] / count:3.0f}% resolved  "
                   f"({scope_resolved[where]}/{count})")
+        for state in ("complete", "truncated"):
+            count = chain[state]
+            if count:
+                print(f"    ancestor chain {state:<22} "
+                      f"{100 * chain_resolved[state] / count:3.0f}% resolved  "
+                      f"({chain_resolved[state]}/{count})")
+        if typing:
+            total = sum(typing.values())
+            print(f"    local/ivar receivers ({total}):")
+            for why, count in typing.most_common():
+                print(f"      {why:<24}{count}")
 
 
 def resolution_rate(corpora):
@@ -271,6 +309,7 @@ def resolution_rate(corpora):
                  JOIN file f ON f.blob_id = r.blob_id
                  JOIN checkout c ON c.id = f.checkout_id
                 WHERE c.root = ? AND f.path NOT LIKE '%test%' AND f.path NOT LIKE '%spec%'
+                  AND f.path NOT LIKE 'sorbet/%'
                 ORDER BY f.path, line, col""",
             (checkout_root(repo),),
         ).fetchall()

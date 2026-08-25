@@ -1,8 +1,9 @@
 # cargo is keg-only on this machine (see CLAUDE.md).
 export PATH := /opt/homebrew/opt/rustup/bin:$(PATH)
 
-# discourse has no .git locally; script/bench.py stages it (DEC-001).
-CORPORA ?= ~/code/lib/ruby/rails ~/code/lib/ruby/discourse ~/code/lib/ruby/ruby
+# discourse and mastodon are gitless source drops and only partially bundled;
+# script/bench.py stages them and reports the conditions (DEC-001).
+CORPORA ?= ~/code/lib/ruby/rails ~/code/lib/ruby/discourse ~/code/lib/ruby/mastodon ~/code/lib/ruby/ruby ~/code/lib/ruby/graph_weaver
 
 .PHONY: check build release bench dogfood
 
