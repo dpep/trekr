@@ -1247,6 +1247,21 @@ impl Tree {
                     }
                 }
             }
+
+            // ActiveSupport::Concern extends a module's nested `ClassMethods`
+            // into whatever includes it. That is a *tree* fact — the module and
+            // the class that includes it are different blobs — and it is how
+            // most Rails class methods come to exist.
+            for module_name in self.ancestors(&class).chain.clone() {
+                let Some(class_methods) = self.concern_class_methods(&module_name) else {
+                    continue;
+                };
+                for ancestor in &self.ancestors(&class_methods).chain {
+                    if seen.insert((ancestor.clone(), false)) {
+                        chain.push((ancestor.clone(), false));
+                    }
+                }
+            }
         }
 
         // `Foo.singleton_class.ancestors` does not stop at the superclass
@@ -1265,6 +1280,27 @@ impl Tree {
             }
         }
         chain
+    }
+
+    /// A concern's nested `ClassMethods`, if this module is one.
+    ///
+    /// `ActiveSupport::Concern` extends `M::ClassMethods` into every class that
+    /// includes `M` — no `extend` is ever written, so nothing in the blob layer
+    /// records it. Gated on the module actually extending a Concern so that a
+    /// plain module happening to contain a `ClassMethods` is not treated as
+    /// one; the check is on the name as *written*, because a checkout without
+    /// ActiveSupport indexed still writes `extend ActiveSupport::Concern`.
+    fn concern_class_methods(&self, module_name: &str) -> Option<String> {
+        let entry = self.names.get(module_name)?;
+        if entry.kind != "module" {
+            return None;
+        }
+        let is_concern = entry
+            .extends
+            .iter()
+            .any(|target| target.name.ends_with("Concern"));
+        let nested = qualify(module_name, "ClassMethods");
+        (is_concern && self.names.contains_key(&nested)).then_some(nested)
     }
 
     /// Only the superclass links — no mixins. Class methods are inherited down
@@ -1464,6 +1500,39 @@ mod singleton_tests {
              class W\n  extend M\nend\n",
         );
         assert_eq!(find(&tree, "W", true, "deep").as_deref(), Some("Deep"));
+    }
+
+    #[test]
+    fn a_concerns_class_methods_reach_the_class_that_includes_it() {
+        // ActiveSupport::Concern extends M::ClassMethods into every includer,
+        // and no `extend` is ever written — so nothing in the blob layer
+        // records it. It is how most Rails class methods come to exist.
+        let tree = one("module Concern\nend\n\
+             module Trackable\n  extend Concern\n  \
+             module ClassMethods\n    def track_all\n    end\n  end\n  \
+             def track\n  end\nend\n\
+             class Widget\n  include Trackable\nend\n");
+        assert_eq!(
+            find(&tree, "Widget", true, "track_all").as_deref(),
+            Some("Trackable::ClassMethods"),
+            "a class method, though nothing extends it"
+        );
+        assert_eq!(
+            find(&tree, "Widget", false, "track").as_deref(),
+            Some("Trackable"),
+            "and the ordinary instance methods still arrive by include"
+        );
+    }
+
+    #[test]
+    fn a_plain_module_with_a_class_methods_is_not_treated_as_a_concern() {
+        // The gate is on actually extending a Concern, so a module that merely
+        // happens to nest a `ClassMethods` does not leak it.
+        let tree = one(
+            "module Plain\n  module ClassMethods\n    def surprise\n    end\n  end\nend\n\
+             class Widget\n  include Plain\nend\n",
+        );
+        assert_eq!(find(&tree, "Widget", true, "surprise"), None);
     }
 
     #[test]
