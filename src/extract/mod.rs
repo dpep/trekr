@@ -563,10 +563,17 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         // just also say something about the model.
         self.handle_create_table(node);
         self.handle_table_name(node);
-        if self.handle_macro(node) {
+        let consumed = self.handle_macro(node);
+        // A macro is *also* an ordinary method call — `belongs_to` really is
+        // `ActiveRecord::Associations::ClassMethods#belongs_to`. Consuming one
+        // to generate the methods it implies used to swallow the call site
+        // with it, so asking what a macro is answered "no name here": the
+        // single largest miss on real Rails app code, where the class body is
+        // most of the surface.
+        self.record_call(node);
+        if consumed {
             return;
         }
-        self.record_call(node);
 
         if let Some(receiver) = node.receiver() {
             self.visit(&receiver);
@@ -643,7 +650,7 @@ impl<'pr> Extractor<'_> {
             "attr_reader" | "attr_writer" | "attr_accessor" | "attr" => {
                 self.handle_attr(call, &name, &args)
             }
-            "include" | "prepend" | "extend" => self.handle_mixin(call, &name, &args),
+            "include" | "prepend" | "extend" => self.handle_mixin(&name, &args),
             "concerning" => self.handle_concerning(call, &args),
             "alias_method" => self.handle_alias_method(call, &args),
             "enum" => self.handle_enum(call, &args),
@@ -712,12 +719,7 @@ impl<'pr> Extractor<'_> {
         true
     }
 
-    fn handle_mixin(
-        &mut self,
-        call: &ruby_prism::CallNode<'pr>,
-        macro_name: &str,
-        args: &[Node<'pr>],
-    ) -> bool {
+    fn handle_mixin(&mut self, macro_name: &str, args: &[Node<'pr>]) -> bool {
         let Some(relation) = Relation::parse(macro_name) else {
             return false;
         };
@@ -752,7 +754,6 @@ impl<'pr> Extractor<'_> {
             for arg in args {
                 self.visit(arg);
             }
-            self.record_call(call);
         }
         any
     }
@@ -796,7 +797,6 @@ impl<'pr> Extractor<'_> {
             target: name.clone(),
             pos: self.pos(start),
         });
-        self.record_call(call);
 
         self.enter(Some(name), Opens::Scope);
         if let Some(body) = block.body() {
@@ -1728,5 +1728,50 @@ mod rails_dsl_tests {
         let facts = extract(b"class Widget\n  concerning :tracking do\n  end\nend\n");
         assert!(facts.defs.iter().all(|d| d.name != "tracking"));
         assert!(facts.ancestry.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod macro_call_tests {
+    use super::*;
+
+    /// A macro generates methods *and* is a method call. Consuming it used to
+    /// swallow the call site, so `--def` on `belongs_to` answered nothing —
+    /// and a Rails class body is mostly macros.
+    #[test]
+    fn a_consumed_macro_is_still_recorded_as_a_call() {
+        let facts = extract(
+            b"class Widget < ApplicationRecord\n\
+              \x20 belongs_to :supplier\n\
+              \x20 attr_reader :name\n\
+              \x20 delegate :region, to: :supplier\n\
+              \x20 private\n\
+              end\n",
+        );
+        let called: Vec<&str> = facts.calls.iter().map(|c| c.name.as_str()).collect();
+        for macro_name in ["belongs_to", "attr_reader", "delegate", "private"] {
+            assert!(
+                called.contains(&macro_name),
+                "{macro_name} is a call too: {called:?}"
+            );
+        }
+        // And still generates what it implies — the point of consuming it.
+        let defined: Vec<&str> = facts.defs.iter().map(|d| d.name.as_str()).collect();
+        assert!(defined.contains(&"supplier") && defined.contains(&"name"));
+    }
+
+    /// The handlers that already recorded their own call must not now record
+    /// it twice — a doubled call site would double every `--refs` count.
+    #[test]
+    fn a_mixin_or_concern_is_recorded_exactly_once() {
+        let facts =
+            extract(b"class Widget\n  include Trackable\n  concerning :Audit do\n  end\nend\n");
+        for name in ["include", "concerning"] {
+            assert_eq!(
+                facts.calls.iter().filter(|c| c.name == name).count(),
+                1,
+                "{name} recorded once"
+            );
+        }
     }
 }

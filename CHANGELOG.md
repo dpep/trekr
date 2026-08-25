@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A Rails macro is now recorded as a **call site** as well as a generator of
+  the methods it implies. `belongs_to`, `has_many`, `scope`, `delegate`,
+  `after_save`, `attr_reader`, `private` — asking what any of them is used to
+  answer "no name at this position", because consuming the macro swallowed the
+  call with it. Measured on widget_shop's app code, that was the single largest
+  miss: 12 of 63 call sites, in a Rails class body that is mostly macros.
+- **Existing databases reindex once** (DEC-013): the extractor emits more.
+
 - Fixed: a definition resolving into a **different checkout** — a gem, almost
   always — was handed back rooted on the repo being asked about, naming files
   that do not exist. `@account.local?` in mastodon offered
