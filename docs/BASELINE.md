@@ -289,3 +289,51 @@ with known shapes.
 **Next**: this needs an app with real method bodies. The harness takes
 `TREKR_EXERCISE` and any bootable app, so that is a matter of pointing it
 somewhere better, not of writing more harness.
+
+
+## The gold set on app code (session 13)
+
+Session 12's numbers were measured through two harness bugs — the tracer
+dropped every call within one file, and every call with an explicit receiver —
+so they described a filtered slice and are **superseded**. Same corpus, fixed
+harness: 1,067 sites became 3,073.
+
+widget_shop now carries ~137 lines of app code written independently of the
+resolver (`app/services/`, `app/jobs/`, `app/models/concerns/`). All 63
+app-scope sites scored, plus 2,922 gem sites.
+
+| verdict | app code | plain app methods | gem code |
+| ------- | -------- | ----------------- | -------- |
+| correct | 19.0 % | 26.7 % | **38.3 %** |
+| offered as candidate | 14.3 % | 20.0 % | 23.6 % |
+| **found the definition** | **33.3 %** | **46.7 %** | **61.9 %** |
+| confidently wrong | 17.5 % | 24.4 % | 6.1 % |
+| no name at that position | 19.0 % | 26.7 % | 6.7 % |
+
+**Predicted 45 % correct on app code; got 19 %.** The per-bucket predictions
+were wrong in an instructive direction, and the headline result is the
+inversion: **gem code scores twice as well as app code**. Rails' own internals
+are ordinary Ruby — explicit receivers, plain method calls — while a Rails
+*app*'s surface is macros, and macros are where this engine is weakest.
+
+Two structural causes, both visible in the per-site list rather than the
+totals:
+
+* **Class-body macros are not call sites at all.** `belongs_to`, `has_many`,
+  `scope`, `delegate`, `has_one`, `after_save` — 12 of 63 app sites answer
+  "no name at this position", because the extractor *consumes* a macro to
+  generate the methods it implies and never records the macro call itself.
+  Asking what `belongs_to` is gets nothing.
+* **Rails-generated methods are a different question, and are scored as
+  one.** For `price_cents` or `supplier`, runtime truth points at
+  `attribute_methods.rb` / `association.rb`, where the `define_method` ran.
+  trekr points at `belongs_to :supplier` or the schema column — which is the
+  answer a person wants. 18 of 63 app sites are this shape; blending them into
+  one rate would have flattered or condemned the engine depending on which
+  side was called correct, so they are reported apart: **22 % answered with
+  the declaration, 33 % offered it, 44 % nothing**.
+
+The remaining plain-method misses are `included` and `class_methods`
+(resolved to the concern's own block rather than `ActiveSupport::Concern`) and
+class-method calls that should land in a gem's `ClassMethods` module —
+`find`, `find_by`, and the enum scope `retired`.
