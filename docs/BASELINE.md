@@ -773,32 +773,39 @@ same seed, same sample:
 
 | | before | after |
 | --- | --- | --- |
-| gem correct | 38.2 % | **52.2 %** |
-| gem found the definition | 64.0 % | **84.0 %** |
-| gem confidently wrong | 3.8 % | 4.2 % |
+| gem correct | 38.2 % | **48.8 %** |
+| gem found the definition | 64.0 % | **84.5 %** |
+| gem confidently wrong | 3.8 % | **3.0 %** |
 | gem residue, nothing known | 16.0 % | **1.2 %** |
 | gem residue, truth absent | 12.5 % | **8.0 %** |
 | app code (unchanged) | 54.8 % correct | 54.8 % correct |
 
 **Predicted correct 54 % (accept 50–58) and found 77 % (accept 73–81).** Correct
-landed inside the range at 52.2 %; found came in *above* it at 84.0 %. So the fix
+landed just *below* the range at 48.8 %; found came in well *above* it at
+84.5 %. So the fix
 converted more residue into offered-and-found answers than predicted. Confidently
 wrong rose 0.4 points and stayed under the 5 % guard — more context did not buy
 confidence in answers that should still be declined.
 
-Measured in two steps, because the first was not the whole fix: answering from
-the owning app alone gave 48.8 % / 84.5 %, and reading the tree's gem roots from
-the store rather than re-locating them per query gave the 52.2 % above. The
-second half mattered because a query whose `GEM_HOME` differed from the index's
-lost every gem — the same silent degradation one level down.
+**Corrected in session 23.** This table first read 52.2 % / 84.0 %, from a
+single run. Re-measured twice on rebuilt indexes it reads **48.8 % / 84.5 %**,
+and that is the figure to quote. The 52.2 % was not wrong at the time — it was
+one draw of a measurement that moves with **which app owns each shared gem**,
+and that ownership shifts with reindex order and with what each lockfile
+resolves (DEC-029). Roughly three points of spread, on this corpus.
+
+The lesson is not about the number. It is that the gem floor is now conditioned
+on a *choice trekr makes*, so any future comparison has to hold that choice
+fixed — the way the corpus, seed and sample are already held fixed. Reporting a
+gem figure without saying which store produced it is reporting one draw.
 
 ### How much of ten sessions' gem figures was artifact
 
-Gem residue was 28.5 % (16.0 nothing-known + 12.5 truth-absent) and is now
-9.2 %. **The artifact accounted for 19.3 of those 28.5 points — about two thirds
-of what was being reported as a coverage gap.** Every gem figure published from
-session 12 onward understated found-the-definition by roughly **20 points** and
-correct by roughly **14**.
+Measured over the whole gold set rather than the 400-site sample: sites where
+trekr never names the true definition fell from **1,104 of 2,987 (37.0 %) to 445
+(14.9 %)** — a 60 % reduction. Every gem figure published from session 12 onward
+understated found-the-definition by roughly **20 points** and correct by roughly
+**11**.
 
 The app-code numbers are unaffected and always were: widget_shop already owned
 its own bundle, so app sites had the whole tree all along. That is why the app
