@@ -638,16 +638,27 @@ fn cmd_refs_by_name(
     Ok(ExitCode::SUCCESS)
 }
 
-/// The checkout we are standing in, and its assembled namespace.
+/// The checkout containing `path`, and its assembled namespace.
+///
+/// The unit is the **file's own** repository, not the process's directory. A
+/// question about a position is a question about that file, and an agent asks
+/// it from wherever it happens to be standing — which is routinely another
+/// repo, or another language's repo entirely.
 ///
 /// The tree is rebuilt from SQL every invocation. PLAN §4 chose that over
 /// incremental machinery, and the measurement in docs/ARCHITECTURE.md is why it
 /// stays chosen.
-fn tree_here() -> anyhow::Result<(PathBuf, Store, Tree)> {
-    let root = scan::repo_root(Path::new("."))?;
+fn tree_for(path: &Path) -> anyhow::Result<(PathBuf, Store, Tree)> {
+    let root = scan::repo_root(path)?;
     let store = open_store()?;
     let tree = Tree::build(&store, &root.to_string_lossy())?;
     Ok((root, store, tree))
+}
+
+/// The checkout we are standing in — for the queries that ask about a name
+/// rather than a position, where "here" is the only checkout meant.
+fn tree_here() -> anyhow::Result<(PathBuf, Store, Tree)> {
+    tree_for(Path::new("."))
 }
 
 fn cmd_def(out: Output, spec: &str) -> anyhow::Result<ExitCode> {
@@ -685,7 +696,7 @@ fn cmd_def(out: Output, spec: &str) -> anyhow::Result<ExitCode> {
             }],
         }),
         position::Under::Constant(reference) => {
-            let (_, _, tree) = tree_here()?;
+            let (_, _, tree) = tree_for(Path::new(&spec.path))?;
             let resolution = tree.resolve(&reference.name, &reference.nesting);
             let mut value = serde_json::to_value(&resolution)?;
             let object = value.as_object_mut().expect("resolution is an object");
@@ -703,7 +714,7 @@ fn cmd_def(out: Output, spec: &str) -> anyhow::Result<ExitCode> {
             value
         }
         position::Under::Call(call) => {
-            let (root, _, tree) = tree_here()?;
+            let (root, _, tree) = tree_for(Path::new(&spec.path))?;
             let relative = std::fs::canonicalize(&spec.path)
                 .ok()
                 .and_then(|abs| abs.strip_prefix(&root).ok().map(Path::to_path_buf))

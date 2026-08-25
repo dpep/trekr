@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Fixed: `--def FILE:LINE:COL` resolved against the **current directory's**
+  checkout rather than the file's own. Asking about another repo's file — which
+  is what an agent does constantly — silently answered `residue`, because the
+  tree it consulted had never heard of that file. The unit is now the file's
+  enclosing repository, whatever directory the process is standing in.
+
 - `trekr --serve` logs what it did, as ndjson: the client's `initialize` root,
   one line per request with the file, line, duration and **how much came back**,
   and the notifications. Default `~/.local/share/trekr/serve.log` (beside the

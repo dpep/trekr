@@ -799,3 +799,53 @@ fn a_request_that_cannot_be_served_is_distinct_from_an_empty_answer() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// The unit is the file's own checkout, not the process's directory.
+///
+/// An agent asks about a position from wherever it is standing, which is
+/// routinely a different repo — and the answer used to depend on that, silently
+/// and wrongly: the tree was built for the cwd, so a query about another repo's
+/// file resolved against a namespace that had never heard of it.
+#[test]
+fn a_position_resolves_against_its_own_repo_not_the_current_directory() {
+    let (dir, db) = scratch("elsewhere");
+    repo(&dir);
+    // A second repo, indexed and never visited.
+    let (other, _) = scratch("elsewhere-other");
+    git(&other, &["init", "-q"]);
+    fs::write(
+        other.join("app.rb"),
+        "module Widgets\n  class Gauge\n  end\n  Gauge\nend\n",
+    )
+    .unwrap();
+    git(&other, &["add", "-A"]);
+    git(
+        &other,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    trekr(&db, &other, &["--index"]);
+
+    let target = format!("{}:4:3", other.join("app.rb").display());
+    let from_elsewhere = json(&trekr(&db, &dir, &["--def", &target, "--json"]));
+    assert_eq!(
+        from_elsewhere["status"], "resolved",
+        "standing in another repo entirely: {from_elsewhere}"
+    );
+    assert_eq!(from_elsewhere["fqn"], "Widgets::Gauge");
+
+    // And the same answer from inside, which is what used to be the only way
+    // to get one.
+    let from_inside = json(&trekr(&db, &other, &["--def", &target, "--json"]));
+    assert_eq!(from_inside["fqn"], from_elsewhere["fqn"]);
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&other);
+}

@@ -101,7 +101,11 @@ pub(crate) fn repo_root(path: &Path) -> Result<PathBuf> {
     let dir = if path.is_dir() {
         path
     } else {
-        path.parent().unwrap_or(Path::new("."))
+        // A bare filename's parent is the empty path, which is not a directory
+        // git can run in.
+        path.parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."))
     };
     let out = git(dir, &["rev-parse", "--show-toplevel"])?;
     let path = String::from_utf8(out)?.trim().to_string();
