@@ -486,3 +486,26 @@ earns itself for the small share of models that do it.
 **Reverses if** `self.table_name` turns out to be common in the target repo, or
 if schema facts are wanted for anything besides attribute methods. Then the
 column list becomes a stored fact and the convention match moves to the tree.
+
+## DEC-023 — Core is written out beside the database so it has a location
+
+**Decided.** `core.rb` is compiled into the binary *and* written to the
+database's directory on first use. LSP locations for a core definition point at
+that file; the CLI keeps printing `<core>`.
+
+**Why.** The baseline found this: `require`, `Array#each` and `Module#undef_method`
+resolved correctly and then answered **nothing**, because the stub had no file
+to point at. ruby-lsp sends you to an RBS declaration — not source, but a
+readable signature — and that is plainly better than silence.
+
+Writing the file out is the cheapest honest fix. It is rewritten only when it
+differs, so an editor watching it is not churned on every index; and the file's
+own header says what it is, so nobody mistakes it for Ruby's real source.
+
+The CLI keeps the `<core>` marker because there it is *information*: a JSON
+consumer wants to know the answer is core rather than the project's code, and a
+path to a generated stub would obscure that. An editor cannot open a marker,
+which is why the two surfaces differ.
+
+**Reverses if** real core sources or RBS become indexable, at which point the
+stub stops being the best available answer.

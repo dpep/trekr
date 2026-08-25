@@ -29,11 +29,19 @@ const MAX_GUESSES: usize = 5;
 
 /// A location in the workspace, from our `path:line:col`.
 fn location(workspace: &Workspace, path: &str, line: u32, col: u32) -> Option<Location> {
-    // A site in the core stub or a gem has no file in this workspace.
-    if path.starts_with('<') {
+    let absolute = if path == crate::tree::CORE_PATH {
+        // Core is compiled into the binary; it is written out beside the
+        // database so that `require` and `Array#each` land on a readable
+        // signature instead of answering nothing.
+        crate::store::core_stub_path().ok()?
+    } else if path.starts_with('<') {
         return None;
-    }
-    let absolute = workspace.root.join(path);
+    } else if std::path::Path::new(path).is_absolute() {
+        // A gem site is already an absolute path.
+        std::path::PathBuf::from(path)
+    } else {
+        workspace.root.join(path)
+    };
     let uri: Url = path_to_uri(&absolute).parse().ok()?;
     Some(Location {
         uri,

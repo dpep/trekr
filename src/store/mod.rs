@@ -34,15 +34,44 @@ pub(crate) struct Indexed {
     pub(crate) calls: usize,
 }
 
-/// The database every command uses: `$TREKR_DB`, else
-/// `~/.local/share/trekr/trekr.db`.
-pub(crate) fn open_default() -> anyhow::Result<Store> {
-    let path = match std::env::var("TREKR_DB") {
+/// Where the database lives: `$TREKR_DB`, else `~/.local/share/trekr/trekr.db`.
+pub(crate) fn default_path() -> anyhow::Result<std::path::PathBuf> {
+    Ok(match std::env::var("TREKR_DB") {
         Ok(path) => std::path::PathBuf::from(path),
         Err(_) => {
             std::path::PathBuf::from(std::env::var("HOME")?).join(".local/share/trekr/trekr.db")
         }
-    };
+    })
+}
+
+/// Ruby core, written out beside the database as a real readable file.
+///
+/// The stub is compiled into the binary, so a definition in it had no location
+/// to point at and every `require` or `Array#each` answered nothing — worse
+/// than ruby-lsp, which at least sends you to an RBS declaration. Writing it
+/// once means "go to definition" lands on a signature a person can read, and
+/// the file says in its header what it is.
+pub(crate) fn core_stub_path() -> anyhow::Result<std::path::PathBuf> {
+    let path = default_path()?
+        .parent()
+        .unwrap_or(std::path::Path::new("."))
+        .join("core.rb");
+    let wanted = include_str!("../tree/core.rb");
+    // Rewrite only when it differs, so an editor watching the file is not
+    // churned on every index.
+    let current = std::fs::read_to_string(&path).ok();
+    if current.as_deref() != Some(wanted) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, wanted)?;
+    }
+    Ok(path)
+}
+
+/// The database every command uses.
+pub(crate) fn open_default() -> anyhow::Result<Store> {
+    let path = default_path()?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }

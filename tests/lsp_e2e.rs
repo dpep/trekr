@@ -412,6 +412,62 @@ fn definition_on_an_unresolved_receiver_offers_ranked_guesses() {
 }
 
 #[test]
+fn a_core_method_lands_on_a_readable_stub_rather_than_nothing() {
+    let (dir, db) = scratch("core");
+    git(&dir, &["init", "-q"]);
+    let source = "class W\n  def go\n    puts 1\n  end\nend\n";
+    fs::write(dir.join("app.rb"), source).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    Command::new(env!("CARGO_BIN_EXE_trekr"))
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+    // `puts` resolves to Kernel, which used to answer nothing because the stub
+    // was compiled in and had no file.
+    let answer = session.request(
+        "textDocument/definition",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": 2, "character": 4},
+        }),
+    );
+    let locations = answer["result"].as_array().expect("a location, not null");
+    let uri = locations[0]["uri"].as_str().unwrap();
+    assert!(uri.ends_with("core.rb"), "lands in the core stub: {uri}");
+    let path = uri.strip_prefix("file://").unwrap();
+    assert!(
+        fs::read_to_string(path).unwrap().contains("def puts"),
+        "and the file is really there and really readable"
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn hover_discloses_the_rung_and_the_confidence() {
     let (dir, db) = scratch("hover");
     let source = repo(&dir);
