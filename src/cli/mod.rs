@@ -988,6 +988,11 @@ fn cmd_usage(out: Output) -> anyhow::Result<ExitCode> {
 
     let mut sessions = 0usize;
     let mut retirements = 0usize;
+    // The first request of a session pays for a cold page cache and a tree
+    // build; every one after it does not. Blending them makes the headline a
+    // measure of the disk, which no amount of work on trekr will improve —
+    // measured at 450 ms first and 0.58 ms warm in the same session.
+    let mut session_had_request = false;
     let mut first = String::new();
     let mut last = String::new();
     let mut per_op: HashMap<String, OpUsage> = HashMap::new();
@@ -1002,7 +1007,10 @@ fn cmd_usage(out: Output) -> anyhow::Result<ExitCode> {
             last = ts.to_string();
         }
         match event.get("event").and_then(|e| e.as_str()) {
-            Some("start") => sessions += 1,
+            Some("start") => {
+                sessions += 1;
+                session_had_request = false;
+            }
             Some("retire") => retirements += 1,
             Some("request") => {
                 let Some(op) = event.get("op").and_then(|o| o.as_str()) else {
@@ -1010,6 +1018,8 @@ fn cmd_usage(out: Output) -> anyhow::Result<ExitCode> {
                 };
                 let usage = per_op.entry(op.to_string()).or_default();
                 usage.calls += 1;
+                let first_of_session = !session_had_request;
+                session_had_request = true;
                 match event.get("answered").and_then(serde_json::Value::as_u64) {
                     Some(0) => usage.empty += 1,
                     Some(_) => usage.answered += 1,
@@ -1019,7 +1029,11 @@ fn cmd_usage(out: Output) -> anyhow::Result<ExitCode> {
                     usage.errors += 1;
                 }
                 if let Some(ms) = event.get("ms").and_then(serde_json::Value::as_f64) {
-                    usage.timings.push(ms);
+                    if first_of_session {
+                        usage.cold.push(ms);
+                    } else {
+                        usage.timings.push(ms);
+                    }
                 }
             }
             _ => {}
@@ -1051,17 +1065,21 @@ fn cmd_usage(out: Output) -> anyhow::Result<ExitCode> {
         &last[..last.len().min(10)]
     );
     println!(
-        "{:<34}{:>7}{:>9}{:>9}{:>9}",
-        "operation", "calls", "answered", "median", "p90"
+        "{:<32}{:>6}{:>9}{:>9}{:>8}{:>10}",
+        "operation", "calls", "answered", "median", "p90", "cold 1st"
     );
     for row in &rows {
         println!(
-            "{:<34}{:>7}{:>7.0}%{:>9.1}{:>9.1}",
+            "{:<32}{:>6}{:>8.0}%{:>9.1}{:>8.1}{:>10}",
             row.op,
             row.calls,
             100.0 * row.answered as f64 / row.calls.max(1) as f64,
             row.median_ms,
             row.p90_ms,
+            match row.cold_first_calls {
+                0 => "—".to_string(),
+                n => format!("{:.0} (n={n})", row.cold_first_ms),
+            },
         );
     }
     Ok(ExitCode::SUCCESS)
@@ -1074,11 +1092,15 @@ struct OpUsage {
     empty: usize,
     errors: usize,
     timings: Vec<f64>,
+    /// Requests that opened a session, and so paid for the cold cache.
+    cold: Vec<f64>,
 }
 
 impl OpUsage {
     fn finish(mut self, op: String) -> UsageRow {
         self.timings
+            .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        self.cold
             .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         UsageRow {
             op,
@@ -1089,6 +1111,8 @@ impl OpUsage {
             // Rounded to the precision a handful of samples actually carries.
             median_ms: round1(percentile(&self.timings, 0.5)),
             p90_ms: round1(percentile(&self.timings, 0.9)),
+            cold_first_ms: round1(percentile(&self.cold, 0.5)),
+            cold_first_calls: self.cold.len(),
         }
     }
 }
@@ -1102,6 +1126,10 @@ struct UsageRow {
     errors: usize,
     median_ms: f64,
     p90_ms: f64,
+    /// Median of the requests that opened a session — the cold-cache cost,
+    /// reported apart because it measures the disk rather than the engine.
+    cold_first_ms: f64,
+    cold_first_calls: usize,
 }
 
 fn percentile(sorted: &[f64], q: f64) -> f64 {

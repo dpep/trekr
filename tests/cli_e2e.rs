@@ -942,6 +942,12 @@ fn usage_summarizes_the_serve_log_and_says_nothing_when_it_is_empty() {
     assert_eq!(rows[0]["answered"], 1);
     assert_eq!(rows[0]["empty"], 1, "an empty answer is counted as one");
     assert_eq!(rows[1]["op"], "textDocument/hover");
+    // The first request of a session pays for a cold page cache and a tree
+    // build. Blending it into the median made the headline a measure of the
+    // disk: 415 ms became 88 ms on the real log once they were separated.
+    assert_eq!(rows[0]["cold_first_calls"], 1, "the session opener");
+    assert_eq!(rows[0]["cold_first_ms"], 4.0);
+    assert_eq!(rows[0]["median_ms"], 2.0, "and the median excludes it");
 
     let _ = fs::remove_dir_all(&dir);
 }

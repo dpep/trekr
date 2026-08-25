@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `--usage` reports the **first request of a session apart from the rest**. That
+  request pays for a cold page cache and a tree build; blending it into the
+  median made the headline a measure of the disk rather than of trekr. On the
+  real log it moves `definition` from a reported **415 ms median to 88 ms**,
+  with the five session-openers shown separately at 451 ms.
+
 - Residue candidates are ordered by **directory affinity**: a definition that
   shares directories with the call site ranks above one across the tree — the
   "same file" signal, graded instead of binary. Measured against the candidate
