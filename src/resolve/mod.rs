@@ -209,14 +209,26 @@ fn via_includers(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<Method
         }
     }
     let winner = found.first()?;
-    let agreeing = found
+    let same_place = |method: &crate::tree::MethodDef| {
+        method.site.line == winner.site.line && method.site.path == winner.site.path
+    };
+    let agreeing = found.iter().filter(|m| same_place(m)).count();
+    // DEC-027: a pick among competitors is `ambiguous`, not `resolved`. The
+    // includers disagreeing about where the name is defined *is* a competitor,
+    // and this rung reported `resolved` at confidence 0.2 regardless — the one
+    // regression the `class_methods` change produced, because widening a
+    // module's includer set is exactly what it does.
+    let beaten: Vec<&crate::tree::MethodDef> = found
         .iter()
-        .filter(|method| {
-            method.site.line == winner.site.line && method.site.path == winner.site.path
-        })
-        .count();
+        .filter(|m| !same_place(m))
+        .take(MAX_CANDIDATES)
+        .collect();
     Some(MethodAnswer {
-        status: Status::Resolved,
+        status: if beaten.is_empty() {
+            Status::Resolved
+        } else {
+            Status::Ambiguous
+        },
         confidence: share(agreeing, includers.len()),
         resolved_via: Some("includer".to_string()),
         receiver: call.recv.as_str(),
@@ -228,7 +240,17 @@ fn via_includers(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<Method
         // `resolved_via` is what says which.
         agreement: Some(format!("{agreeing}/{} includers", includers.len())),
         unresolved_ancestors: Vec::new(),
-        candidates: Vec::new(),
+        // What the pick beat — the definitions the other includers offered, not
+        // every method in the tree that shares the name.
+        candidates: beaten
+            .into_iter()
+            .map(|method| Candidate {
+                owner: method.owner.clone(),
+                singleton: method.singleton,
+                why: "another class mixing this module in defines the same name",
+                site: method.site.clone(),
+            })
+            .collect(),
         reason: None,
     })
 }

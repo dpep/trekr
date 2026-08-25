@@ -22,6 +22,14 @@
   `correct` on real app code goes **43.4 % → 59.2 %** and residue-with-the-truth
   -offered **41.6 % → 25.3 %**.
 
+- **An `includer`-rung answer that picked among competitors is `ambiguous`.**
+  A call written inside a module is answered by asking the classes that mix it
+  in; when two of them define the name in different places, the rung still
+  reported `resolved` — DEC-027's rule applied to the receiver-name rung and
+  never to this one. It now says `ambiguous` and lists the definitions it beat.
+  Measured: discourse app confidently wrong **0.6 % → 0.2 %**, gem floor
+  **4.0 % → 3.3 %**, with `correct` and `found` byte-identical on both.
+
 - **Existing databases reindex once**: the extractor's output changed.
 
 - `--index` gathers full statistics (`ANALYZE`) after a run that actually read

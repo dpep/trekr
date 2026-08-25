@@ -1,0 +1,9 @@
+# A call inside a module is answered by asking the classes that mix it in. When
+# two of them define the name in different places, the rung was still reporting
+# `resolved` — DEC-027's rule ("a pick among competitors is ambiguous") applied
+# to the receiver-name rung and never to this one.
+#
+# It surfaced when `class_methods do` widened discourse's includer sets: two
+# sites resolved at confidence 0.2 out of five includers and were confidently
+# wrong. The answer still points somewhere, and now it says what it beat.
+def app.rb:3:5 status=ambiguous candidates=1 candidate1=Beta

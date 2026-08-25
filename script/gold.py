@@ -12,6 +12,9 @@ hundred real call sites, which method Ruby resolved to and where it is defined
 **Verdicts.**
   correct     trekr resolved, and its site is the file and line Ruby used.
   wrong       trekr resolved, and pointed somewhere else. The costly one.
+  ambiguous-wrong
+              trekr answered `ambiguous`, listed the definitions it beat, and
+              picked the wrong one. Not a confident error (DEC-027).
   residue-hit trekr declined to resolve but offered the truth as a candidate.
   residue     trekr declined and did not offer it.
   missed      trekr found no name at that position at all.
@@ -162,6 +165,13 @@ def verdict(site, answer, app_root):
         # a different method: one is a location bug, the other a resolution bug.
         if answer.get("owner") and answer["owner"] == site.get("owner"):
             return "right-owner-wrong-site"
+        # The product's claim is about *confident* answers, and `ambiguous`
+        # exists precisely to withhold that confidence (DEC-027). An answer
+        # that named its competitors and pointed at the wrong one is a
+        # different failure from one that stood behind a single site, so it
+        # gets its own verdict rather than inflating the headline.
+        if answer.get("status") == "ambiguous":
+            return "ambiguous-wrong"
         return "wrong"
 
     candidates = [c.get("site", {}) for c in answer.get("candidates") or []]
@@ -221,6 +231,7 @@ def main(path):
         "residue-truth-absent",
         "residue-nothing-known",
         "wrong",
+        "ambiguous-wrong",
         "no-name",
         "not-indexed",
         "crashed",
@@ -273,6 +284,7 @@ def main(path):
         if v
         in (
             "wrong",
+            "ambiguous-wrong",
             "right-owner-wrong-site",
             "no-name",
             "residue-truth-absent",
