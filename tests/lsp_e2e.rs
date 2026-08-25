@@ -3,6 +3,7 @@
 //! Same isolation as the CLI suite — a temp git repo and its own database — so
 //! this runs in CI without touching anything real.
 
+use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
@@ -11,11 +12,11 @@ fn scratch(label: &str) -> (PathBuf, PathBuf) {
     let base = std::env::temp_dir();
     let dir = base.join(format!("trekr-lsp-{}-{label}", std::process::id()));
     let db = base.join(format!("trekr-lsp-{}-{label}.db", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
     for suffix in ["", "-wal", "-shm"] {
-        let _ = std::fs::remove_file(format!("{}{suffix}", db.display()));
+        let _ = fs::remove_file(format!("{}{suffix}", db.display()));
     }
-    std::fs::create_dir_all(&dir).unwrap();
+    fs::create_dir_all(&dir).unwrap();
     (dir, db)
 }
 
@@ -43,7 +44,7 @@ fn repo(dir: &Path) -> String {
         "end\n",                // 10
     );
     git(dir, &["init", "-q"]);
-    std::fs::write(dir.join("app.rb"), source).unwrap();
+    fs::write(dir.join("app.rb"), source).unwrap();
     git(dir, &["add", "-A"]);
     git(
         dir,
@@ -199,7 +200,7 @@ fn the_server_announces_only_what_it_answers() {
         assert!(caps[absent].is_null(), "{absent} must not be announced");
     }
     session.stop();
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -240,7 +241,86 @@ fn go_to_definition_answers_from_the_resolved_receiver() {
     );
 
     session.stop();
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn references_narrow_to_the_method_asked_about_not_the_name() {
+    let (dir, db) = scratch("refs");
+    git(&dir, &["init", "-q"]);
+    // Two classes with a `save`, and one call site of each.
+    let source = concat!(
+        "class Widget\n",       // 1
+        "  def save\n",         // 2
+        "  end\n",              // 3
+        "end\n",                // 4
+        "class Gadget\n",       // 5
+        "  def save\n",         // 6
+        "  end\n",              // 7
+        "end\n",                // 8
+        "class Job\n",          // 9
+        "  def run\n",          // 10
+        "    w = Widget.new\n", // 11
+        "    w.save\n",         // 12
+        "    g = Gadget.new\n", // 13
+        "    g.save\n",         // 14
+        "  end\n",              // 15
+        "end\n",                // 16
+    );
+    fs::write(dir.join("app.rb"), source).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    Command::new(env!("CARGO_BIN_EXE_trekr"))
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+
+    // Standing on `Gadget#save` (line 6) must not return Widget's call site.
+    let answer = session.request(
+        "textDocument/references",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": 5, "character": 6},
+            "context": {"includeDeclaration": false},
+        }),
+    );
+    let lines: Vec<u64> = answer["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| l["range"]["start"]["line"].as_u64().unwrap() + 1)
+        .collect();
+    assert_eq!(
+        lines,
+        vec![14],
+        "only Gadget's call site — Widget's resolves elsewhere and is excluded, \
+         where a bare-name answer would have returned both"
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -282,7 +362,7 @@ fn hover_discloses_the_rung_and_the_confidence() {
     );
 
     session.stop();
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -322,7 +402,7 @@ fn a_syntax_error_is_published_as_a_diagnostic_and_cleared_when_fixed() {
     );
 
     session.stop();
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
 }
 
 #[test]
@@ -353,5 +433,5 @@ fn document_symbol_outlines_the_open_buffer_not_the_index() {
     assert_eq!(names, ["Fresh", "added"]);
 
     session.stop();
-    let _ = std::fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&dir);
 }

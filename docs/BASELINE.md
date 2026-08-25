@@ -127,11 +127,11 @@ Two caveats, both against trekr:
   that difference will be sites trekr excluded. Excluded sites are the product,
   but they are also where a recall bug would hide, and this comparison does not
   adjudicate them.
-- **The LSP `references` path does not narrow by owner.** It takes the name from
-  the position and runs the bare-name query, so `Querying#where` and any other
-  `#where` share one answer. The CLI's `--refs 'Owner#method'` does narrow; the
-  server should resolve the position to its owner first and does not yet. That is
-  a real gap and the numbers above are the un-narrowed ones.
+- **The LSP `references` numbers above are un-narrowed.** At the time of this
+  run the server took only the *name* from the position, so `Querying#where` and
+  every other `#where` shared one answer. Fixed immediately after (the server
+  now resolves the position to its owner, as the CLI always did), so re-running
+  will give different — smaller and more accurate — counts for trekr.
 
 ## Verdict, and what it says to do next
 
@@ -160,8 +160,9 @@ Predictions on record before measuring, scored honestly:
 
 What this says to improve, in order:
 
-1. **Owner-narrow the LSP references path.** The CLI already does it; the server
-   throwing that away is the largest correctness gap this exercise found.
+1. ~~Owner-narrow the LSP references path.~~ **Done** — it was the largest
+   correctness gap this exercise found, and it was a five-line fix once the
+   measurement pointed at it.
 2. **Return a location for core methods.** `require` and `Array#each` resolve
    and then answer nothing because the core stub is not a real file.
 3. **The chained-receiver decision (DEC-020) now has a price tag**: 15 of the 45

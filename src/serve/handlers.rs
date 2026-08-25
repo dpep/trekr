@@ -112,29 +112,41 @@ pub(crate) fn references(
         return Ok(None);
     };
 
-    // What is being asked about: a method's owner and name.
-    let query = match &under {
-        Under::Definition(def) => refs::Query {
-            owner: None,
-            singleton: def.singleton,
-            name: def.name.clone(),
-        },
-        Under::Call(call) => refs::Query {
-            owner: None,
-            singleton: false,
-            name: call.name.clone(),
-        },
-        Under::Constant(reference) => refs::Query {
-            owner: None,
-            singleton: false,
-            name: reference.name.clone(),
-        },
-    };
-
     let root = workspace.root.clone();
     let root_str = root.to_string_lossy().into_owned();
-    let paths = workspace.store().files_calling(&root_str, &query.name)?;
+    let name = match &under {
+        Under::Definition(def) => def.name.clone(),
+        Under::Call(call) => call.name.clone(),
+        Under::Constant(reference) => reference.name.clone(),
+    };
+    let paths = workspace.store().files_calling(&root_str, &name)?;
     let tree = workspace.tree()?;
+
+    // Which method is being asked about, not just which name. Standing on a
+    // definition, the owner is the scope that declares it; standing on a call,
+    // it is wherever that call resolves. Without this the answer merges every
+    // same-named method in the repo — which is the grep this exists to beat.
+    let query = match &under {
+        Under::Definition(def) => refs::Query {
+            owner: tree.scope_fqn(&def.nesting),
+            singleton: def.singleton,
+            name,
+        },
+        Under::Call(call) => {
+            let answer = crate::resolve::method_at(tree, &facts, call, &path);
+            refs::Query {
+                owner: answer.owner,
+                singleton: call.singleton,
+                name,
+            }
+        }
+        Under::Constant(_) => refs::Query {
+            owner: None,
+            singleton: false,
+            name,
+        },
+    };
+    let target = query.owner.clone();
 
     let mut found: Vec<refs::Reference> = Vec::new();
     for candidate in paths {
@@ -143,7 +155,14 @@ pub(crate) fn references(
         };
         let file_facts = crate::extract::extract(&bytes);
         for call in file_facts.calls.iter().filter(|c| c.name == query.name) {
-            let reference = refs::tier_call(tree, &file_facts, call, &candidate, &query, None);
+            let reference = refs::tier_call(
+                tree,
+                &file_facts,
+                call,
+                &candidate,
+                &query,
+                target.as_deref(),
+            );
             if reference.tier != refs::Tier::Excluded {
                 found.push(reference);
             }
