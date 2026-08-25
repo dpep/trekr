@@ -1,0 +1,11 @@
+# Actionpack writes `before_action` as `define_method "#{callback}_action"`
+# inside `[:before, :after, :around].each`. Nothing that reads only the `def`
+# keyword can see it, which is why `before_action` in a controller was 250 of
+# discourse's declined app sites and — unusually — had **no candidate at all**.
+#
+# The second half is the guard. `NAMES.each` iterates a constant, whose value is
+# a different blob's fact, so `after_hook` stays unknown. A name half-guessed is
+# worse than a name not offered: the lookup would find it and stop.
+def app.rb:20:3 status=resolved owner=Callbacks::ClassMethods site=app.rb:6
+def app.rb:21:3 status=residue candidates=0
+symbols app.rb Callbacks,ClassMethods,before_step,after_step,Widget

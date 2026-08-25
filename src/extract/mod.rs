@@ -93,6 +93,9 @@ struct Extractor<'a> {
     /// literal argument. The names *are* literal, one indirection away, and
     /// that indirection is a pure function of the same bytes.
     symbol_arrays: HashMap<String, Vec<String>>,
+    /// Block parameters currently bound to a known list of literals by an
+    /// enclosing `[…].each do |v|`. A stack, because these nest.
+    loop_values: Vec<(String, Vec<String>)>,
     facts: Facts,
 }
 
@@ -139,6 +142,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         pending_sig: None,
         pending_sig_params: Vec::new(),
         symbol_arrays: HashMap::new(),
+        loop_values: Vec::new(),
     };
     ex.visit(&parsed.node());
     ex.facts
@@ -573,6 +577,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         // just also say something about the model.
         self.handle_create_table(node);
         self.handle_table_name(node);
+        self.handle_define_method(node);
         let consumed = self.handle_macro(node);
         // A macro is *also* an ordinary method call — `belongs_to` really is
         // `ActiveRecord::Associations::ClassMethods#belongs_to`. Consuming one
@@ -592,7 +597,16 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             self.visit_arguments_node(&args);
         }
         if let Some(block) = node.block() {
+            // `[:before, :after].each do |callback| … end` binds `callback` to
+            // three known strings for the length of the block, which is what
+            // lets a `define_method "#{callback}_action"` inside it be read.
+            let bound = literal_each(node).inspect(|binding| {
+                self.loop_values.push(binding.clone());
+            });
             self.visit(&block);
+            if bound.is_some() {
+                self.loop_values.pop();
+            }
         }
     }
 
@@ -779,6 +793,115 @@ impl<'pr> Extractor<'_> {
             }
         }
         any
+    }
+
+    /// `define_method "#{callback}_action"` inside a literal `each` — a method
+    /// whose name is computed, but computed from something the source states.
+    ///
+    /// Actionpack writes `before_action`, `after_action`, `around_action` and
+    /// their `prepend_`/`skip_` variants this way, and ActiveRecord's
+    /// `define_model_callbacks` is the same shape. Nothing that reads only the
+    /// `def` keyword can see them, so `before_action` in a controller was the
+    /// largest block of the one bucket where trekr offers *nothing*: 250 of
+    /// discourse's 3,566 declined app sites, none of them with a candidate.
+    ///
+    /// A **side effect, not a consumption**: `define_method` is a real call
+    /// site too, and its block is a method body full of ordinary code.
+    fn handle_define_method(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        let Some(name) = method_name(call) else {
+            return;
+        };
+        let singleton = match name.as_str() {
+            "define_method" => self.in_singleton(),
+            "define_singleton_method" => true,
+            _ => return,
+        };
+        // Same rule as a mixin (DEC-031): inside a `def` this runs later,
+        // against whatever `self` is then, and recording it here would invent a
+        // method on the wrong owner.
+        if !on_self(call) || self.in_method_body() {
+            return;
+        }
+        let args = arg_nodes(call);
+        let Some(first) = args.first() else { return };
+        let Some(names) = self.interpolated_names(first) else {
+            return;
+        };
+        // The block *is* the method body, so its parameters are the method's.
+        let params = call
+            .block()
+            .and_then(|b| b.as_block_node())
+            .and_then(|b| b.parameters())
+            .and_then(|p| p.as_block_parameters_node())
+            .map(|p| params_of(p.parameters()))
+            .unwrap_or_default();
+
+        let start = call.location().start_offset();
+        let end = call.location().end_offset();
+        for generated in names {
+            let mut def = self.def(generated, Kind::Method, start, end);
+            def.singleton = singleton;
+            def.params = params.clone();
+            // The honest location is where the definition is written, which is
+            // this call — the same answer a macro gives (DEC-022, session 15).
+            def.via = Some(name.clone());
+            self.push_def(def);
+        }
+    }
+
+    /// Every name an interpolated string can spell, given what the enclosing
+    /// loop bound. `None` unless the whole name is knowable.
+    ///
+    /// One interpolation, and it must be a bare read of a bound block
+    /// parameter. `"#{a}_#{b}"`, `"#{thing.name}"` and `"#{CONST}"` all return
+    /// nothing: a name half-guessed is worse than a name not offered, because
+    /// the lookup would find it and stop.
+    fn interpolated_names(&self, node: &Node<'pr>) -> Option<Vec<String>> {
+        let parts: Vec<Node<'pr>> = match node {
+            _ if node.as_interpolated_string_node().is_some() => {
+                node.as_interpolated_string_node()?.parts().iter().collect()
+            }
+            _ if node.as_interpolated_symbol_node().is_some() => {
+                node.as_interpolated_symbol_node()?.parts().iter().collect()
+            }
+            _ => return None,
+        };
+        let mut before = String::new();
+        let mut after = String::new();
+        let mut values: Option<&Vec<String>> = None;
+        for part in &parts {
+            if let Some(text) = part.as_string_node() {
+                let text = String::from_utf8(text.unescaped().to_vec()).ok()?;
+                if values.is_none() {
+                    &mut before
+                } else {
+                    &mut after
+                }
+                .push_str(&text);
+                continue;
+            }
+            let embedded = part.as_embedded_statements_node()?;
+            let mut statements: Vec<Node<'pr>> = embedded.statements()?.body().iter().collect();
+            if statements.len() != 1 || values.is_some() {
+                return None;
+            }
+            let read = statements.pop()?.as_local_variable_read_node()?;
+            let read = String::from_utf8(read.name().as_slice().to_vec()).ok()?;
+            values = self
+                .loop_values
+                .iter()
+                .rev()
+                .find(|(bound, _)| *bound == read)
+                .map(|(_, values)| values);
+            values?;
+        }
+        let values = values?;
+        Some(
+            values
+                .iter()
+                .map(|value| format!("{before}{value}{after}"))
+                .collect(),
+        )
     }
 
     /// `class_methods do … end` — ActiveSupport::Concern's `module ClassMethods`.
@@ -1352,6 +1475,47 @@ fn literal_class(node: &Node<'_>) -> Option<&'static str> {
 /// The symbols in a literal array, seeing through `.freeze` — which is how a
 /// constant array is idiomatically written, and so how Rails writes the one
 /// that matters.
+/// `[:a, :b, :c]` with **every** element a literal.
+///
+/// Stricter than `literal_symbol_array`, which drops what it cannot read: here
+/// a single unreadable element means the list is not known, and half a list
+/// would generate half a set of definitions while looking like a whole one.
+fn every_element_literal(node: &Node<'_>) -> Option<Vec<String>> {
+    let array = node.as_array_node()?;
+    let elements: Vec<Node<'_>> = array.elements().iter().collect();
+    let names: Vec<String> = elements.iter().filter_map(literal_name).collect();
+    (!names.is_empty() && names.len() == elements.len()).then_some(names)
+}
+
+/// `[:before, :after, :around].each do |callback| … end` — the one iteration
+/// shape whose body can be read as if it were written out.
+///
+/// Deliberately narrow: a literal array, `each`, and exactly one required block
+/// parameter. A constant array (`CALLBACKS.each`) is not here because its value
+/// is a different blob's fact, and `map`/`each_with_index` are not here because
+/// nothing needs them yet.
+fn literal_each(call: &ruby_prism::CallNode<'_>) -> Option<(String, Vec<String>)> {
+    if method_name(call)? != "each" {
+        return None;
+    }
+    let values = every_element_literal(&call.receiver()?)?;
+    let block = call.block()?.as_block_node()?;
+    let params = block
+        .parameters()?
+        .as_block_parameters_node()?
+        .parameters()?;
+    let required: Vec<_> = params.requireds().iter().collect();
+    let optionals = params.optionals().iter().count();
+    if required.len() != 1 || params.rest().is_some() || optionals != 0 {
+        return None;
+    }
+    let name = required
+        .first()?
+        .as_required_parameter_node()
+        .and_then(|p| String::from_utf8(p.name().as_slice().to_vec()).ok())?;
+    Some((name, values))
+}
+
 fn literal_symbol_array(node: &Node<'_>) -> Option<Vec<String>> {
     if let Some(array) = node.as_array_node() {
         let symbols: Vec<String> = array
@@ -1786,6 +1950,73 @@ mod rails_dsl_tests {
             names(b"class W\n  delegate :region, to: :supplier, prefix: PREFIX\nend\n").is_empty(),
             "a computed prefix is still a refusal — the name cannot be known"
         );
+    }
+
+    /// Actionpack's shape, and the reason `before_action` in a controller had
+    /// no candidate at all: nothing that reads only `def` can see these.
+    #[test]
+    fn a_computed_name_over_a_literal_array_is_read_as_definitions() {
+        let facts = extract(
+            b"module M\n  [:before, :after, :around].each do |callback|\n    \
+              define_method \"#{callback}_action\" do |*names, &blk|\n    end\n\n    \
+              define_method \"skip_#{callback}_action\" do |*names|\n    end\n  end\nend\n",
+        );
+        let mut names: Vec<&str> = facts
+            .defs
+            .iter()
+            .filter(|d| d.via.as_deref() == Some("define_method"))
+            .map(|d| d.name.as_str())
+            .collect();
+        names.sort_unstable();
+        assert_eq!(
+            names,
+            [
+                "after_action",
+                "around_action",
+                "before_action",
+                "skip_after_action",
+                "skip_around_action",
+                "skip_before_action",
+            ]
+        );
+        let one = facts
+            .defs
+            .iter()
+            .find(|d| d.name == "before_action")
+            .unwrap();
+        assert_eq!(one.nesting, ["M"]);
+        // The block is the method body, so its parameters are the method's.
+        assert_eq!(one.params.first().map(|p| p.kind), Some(ParamKind::Rest));
+    }
+
+    /// A name half-guessed is worse than a name not offered: the lookup finds
+    /// it and stops.
+    #[test]
+    fn a_name_that_is_not_fully_knowable_generates_nothing() {
+        for source in [
+            // the list is a constant, whose value is another blob's fact
+            &b"module M\n  NAMES.each do |n|\n    define_method(\"#{n}_x\") {}\n  end\nend\n"[..],
+            // an element we cannot read makes the whole list unknown
+            &b"module M\n  [:a, other].each do |n|\n    define_method(\"#{n}_x\") {}\n  end\nend\n"[..],
+            // two interpolations
+            &b"module M\n  [:a].each do |n|\n    define_method(\"#{n}_#{n}\") {}\n  end\nend\n"[..],
+            // not a bare read of the bound parameter
+            &b"module M\n  [:a].each do |n|\n    define_method(\"#{n.to_s}\") {}\n  end\nend\n"[..],
+            // no enclosing loop binds it
+            &b"module M\n  define_method(\"#{whatever}_x\") {}\nend\n"[..],
+            // deferred: runs against whatever `self` is when the method runs
+            &b"module M\n  def setup\n    [:a].each { |n| define_method(\"#{n}_x\") {} }\n  end\nend\n"[..],
+        ] {
+            let facts = extract(source);
+            assert!(
+                facts
+                    .defs
+                    .iter()
+                    .all(|d| d.via.as_deref() != Some("define_method")),
+                "generated a name from {}",
+                String::from_utf8_lossy(source)
+            );
+        }
     }
 
     /// The block form of `module ClassMethods`, which Concern creates either

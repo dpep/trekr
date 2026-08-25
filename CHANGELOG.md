@@ -30,6 +30,17 @@
   Measured: discourse app confidently wrong **0.6 % → 0.2 %**, gem floor
   **4.0 % → 3.3 %**, with `correct` and `found` byte-identical on both.
 
+- **A method whose name is computed from a literal array is extracted.**
+  `[:before, :after, :around].each { |c| define_method "#{c}_action" … }` is how
+  actionpack writes `before_action`, and how ActiveRecord writes its model
+  callbacks — nothing that reads only the `def` keyword can see them. Scoped
+  tightly: a literal array, `each`, one block parameter, and a name whose only
+  interpolation is a bare read of that parameter. A constant array, a second
+  interpolation, or `#{n.to_s}` all generate nothing, because a name
+  half-guessed is worse than a name not offered — the lookup would find it and
+  stop. The definition's location is the `define_method` call, which is where
+  the method is written.
+
 - **Existing databases reindex once**: the extractor's output changed.
 
 - `--index` gathers full statistics (`ANALYZE`) after a run that actually read
