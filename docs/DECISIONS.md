@@ -144,6 +144,34 @@ still the wrong answer to it; persisting or lazily assembling one is the
 question worth opening, and only if the cold second matters more than the
 staleness class it would reintroduce.
 
+**Update (what decides a rebuild).** The decision — rebuild whole, never patch
+— stands. What was wrong was the *trigger*. A resident session keyed its tree on
+(schema version, file count), and **editing a file moves neither**, so a session
+went on answering from a tree assembled before the edit. Adding a file happened
+to work, which is why nothing caught it.
+
+The trigger is now content-derived. Each blob carries a `surface`: a digest of
+exactly the facts the tree layer reads — its definitions and its ancestry edges,
+positions included — and nothing else. A checkout folds every file's path
+together with its blob's surface into one `surface_key` at index time, so the
+staleness check stays a single-row read rather than an aggregate over the map.
+It moves whenever any answer would, and it does not move when only method
+*bodies* changed.
+
+**Measured, and this is the number the edit-churn design rests on.** Over the
+last 500 commits of rails, discourse and CRuby — 5,158 modified Ruby blobs —
+**71 % leave the definition structure identical**, and **46 % additionally leave
+every definition on its original line**. Per corpus: rails 65 %, discourse 70 %,
+CRuby 79 %. Reproduce with `script/bench.py`'s neighbour, `script/churn.py`.
+
+Positions are in the digest deliberately, and that is what costs the difference
+between those two numbers. The tree carries each definition's site, so a
+definition that merely moved still changes an answer. Including positions buys
+correctness by construction for 46 % of edits; excluding them and patching the
+moved sites afterwards would buy 71 %, at the price of a patch that has to be
+right. The 25 points are available whenever someone wants to write that patch,
+and the mechanism to key it is already here.
+
 ## DEC-008 — Constant confidence is 1 or 0, and the doubt is reported separately
 
 **Decided.** A resolved constant carries `confidence: 1.0`, a residue `0.0`.
@@ -574,3 +602,39 @@ looked at anything.
 **Reverses if** a single session ever needs to answer for two checkouts that
 disagree about the same absolute path — which git worktrees do not do, since
 each has its own root.
+
+## DEC-025 — The assembled tree is not persisted
+
+**Decided.** The tree stays an in-memory artifact, rebuilt from the store by
+whichever process needs it and cached for that process's lifetime (DEC-007). It
+is not serialized to disk, and worktrees at the same commit do not share an
+assembled tree — only the blob facts underneath it, which they always have.
+
+**Why, measured.** The case for persisting is the rebuild cost, so that is what
+was measured. A whole-checkout tree build is **0.32 s on rails** and **0.73–0.84 s
+on discourse** (five runs each, isolated with `--ancestors`, which builds the
+tree and then does almost nothing). Of rails' 0.32 s, reading the rows is about
+a quarter — 74 ms to touch every column of the checkout's 65,227 definition rows
+— and the rest is assembly: allocation, the namespace map, linearization.
+
+Persisting would replace all of it with a deserialize of a few tens of megabytes.
+Optimistically that is 2–4×. Set against:
+
+* the resident front already amortizes the same cost to **0.2 ms** — a 1600×
+  win, available today, and the surface it is reached through is the one this
+  product tells agents to use;
+* a serialized tree is a second on-disk format with its own version, its own
+  corruption mode, and its own staleness surface — where the store today is a
+  cache of a pure function that can always be dropped and rebuilt (DEC-009);
+* the CLI is the only caller that pays per invocation, and the answer for a
+  caller that minds is `--serve`.
+
+A 2–4× on the surface we are steering people away from, bought with a new
+persistent format, is not a trade worth making yet.
+
+**Reverses if** the resident front stops being the primary surface, or a
+checkout appears where the rebuild is slow enough that even one payment per
+session is intolerable — the shape to watch is a repo whose build passes a few
+seconds, not a few hundred milliseconds. The key to persist against already
+exists: `checkout.surface_key` names exactly the tree that would be stored, so
+the work would be serialization and nothing else.
