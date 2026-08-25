@@ -327,7 +327,10 @@ impl Tree {
         // the key set first, iterating until nothing new appears — each round
         // only adds, so it terminates. Sites are attached in the second pass,
         // which is why an early misplacement leaves no residue behind.
+        let mut rounds = 0;
+        let t0 = std::time::Instant::now();
         loop {
+            rounds += 1;
             let before = tree.names.len();
             for decl in &decls {
                 let fqn = tree.place_decl(decl);
@@ -339,6 +342,15 @@ impl Tree {
             if tree.names.len() == before {
                 break;
             }
+        }
+        let t1 = std::time::Instant::now();
+        if std::env::var("TREKR_PROFILE").is_ok() {
+            eprintln!(
+                "  assemble: {rounds} fixpoint rounds over {} decls in {:.0}ms, {} names",
+                decls.len(),
+                (t1 - t0).as_secs_f64() * 1000.0,
+                tree.names.len()
+            );
         }
         for decl in &decls {
             let fqn = tree.place_decl(decl);

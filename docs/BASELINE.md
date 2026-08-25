@@ -666,3 +666,26 @@ directory affinity moved one site of 65. Both turned down (DEC-028).
 and 10.8 % truth-absent, and both are coverage. Understanding *why* the truth
 is absent — unindexed source, an owner the extractor did not model, a
 runtime-built method — is the question with 27 % of the gem sample behind it.
+
+
+### The namespace fixpoint, profiled (session 20)
+
+`assemble` is the largest remaining item in a tree build now that methods load
+on demand. Profile only, no redesign:
+
+| corpus | declarations | fixpoint rounds | fixpoint time | of total assemble |
+| ------ | ------------ | --------------- | ------------- | ----------------- |
+| rails | 19,697 | 3 | 22 ms | of 34 ms |
+| discourse | 69,305 | 3 | 97 ms | of 143 ms |
+
+**It scans every declaration three times.** Round one places almost everything;
+rounds two and three exist to catch the stragglers — `class A::B` where `A` was
+itself written compactly and had not been placed yet — and to observe that
+nothing new appeared. So roughly two thirds of the fixpoint is re-scanning
+declarations that were settled on the first pass.
+
+The shape of the fix, for whoever takes it: after round one, re-scan only the
+declarations that *failed* to place. That should make rounds two and three
+nearly free and take discourse's assemble from 143 ms toward ~50 ms. It is a
+change to the loop's bookkeeping, not to what it computes, which makes it
+cheap to verify — the assembled namespace must be identical.
