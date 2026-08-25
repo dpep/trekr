@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **`status` gains `ambiguous`**, the third value the docs always promised. A
+  `receiver_name` answer says `resolved` only when the name is the whole story;
+  when other classes define the same method it says `ambiguous` (DEC-027).
+  `@account.local?` was `resolved` at 0.03 confidence and is now `ambiguous`;
+  `@widget.supplier_region` stays `resolved · 0.5`. Exit codes treat
+  `ambiguous` as a match.
+- Confidence is rounded where it is built, to the precision two counts carry —
+  `0.03`, not `0.03225806451612903`.
+
 - `goToImplementation` on a **method** now answers with its overrides. It only
   ever understood class and module names, so standing on an abstract method
   returned nothing. Asked the way Ruby answers it — for every type carrying the

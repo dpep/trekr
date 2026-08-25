@@ -741,3 +741,36 @@ four findings. Helpers with honest tests catch all four; a newtype catches one.
 **Reverses if** a fifth bug of this class appears, or a kind confusion appears
 that a boundary check would not have caught — either says the helpers are not
 carrying enough and the type system should.
+
+## DEC-027 — A convention-based answer with competitors is `ambiguous`, not `resolved`
+
+**Decided.** `Status` gains the third value PLAN §1 and CLAUDE.md always
+promised. A `receiver_name` promotion reports **`resolved`** when the name is
+the whole story — nothing else defines the method — and **`ambiguous`** when
+other definitions could equally have been the answer. No threshold: the test is
+simply whether a competitor exists.
+
+**Why.** Session 16's rung promoted `@account.local?` to `resolved` with
+confidence **0.03**, because thirty-one other classes define `local?`. That is
+the failure this project's first principles name outright — nothing silently
+promoted — arriving through a feature built to *stop* under-reporting. `status`
+is the field a caller branches on; confidence is the field it often ignores. A
+`resolved` carrying 0.03 invites exactly the trust the confidence is trying to
+withhold.
+
+The split falls where the evidence does. `@widget.supplier_region` stays
+`resolved · 0.5`: `supplier_region` is defined once, so the name settles it.
+`@account.local?` becomes `ambiguous · 0.03`: the name picked among equals.
+
+Exit codes treat `ambiguous` as a match (0), because it *is* an answer — the
+disclosure is in the status and the confidence, not in whether the command
+failed.
+
+**Also fixed here:** confidence was serialized at full float precision —
+`0.03225806451612903` for one thirty-first. It is now rounded where it is
+built, to the two figures two counts can support.
+
+**Reverses if** callers turn out to treat `ambiguous` as a failure and stop
+reading the candidates, which would make the honesty cost more than it buys —
+the shape to watch is an agent that branches on `status == "resolved"` and
+discards everything else.

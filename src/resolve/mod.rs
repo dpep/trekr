@@ -29,6 +29,10 @@ pub(super) struct Receiver {
     /// rungs that are a language rule rather than an inference, both are 1.
     pub(super) agreeing: usize,
     pub(super) total: usize,
+    /// The rung picked a winner that other definitions could equally have
+    /// been. Only a convention-based rung sets this; a language rule cannot be
+    /// ambiguous about what the receiver is.
+    pub(super) ambiguous: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -114,8 +118,12 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
                         vec![found.site.clone()]
                     };
                     MethodAnswer {
-                        status: Status::Resolved,
-                        confidence: receiver.agreeing as f64 / receiver.total as f64,
+                        status: if receiver.ambiguous {
+                            Status::Ambiguous
+                        } else {
+                            Status::Resolved
+                        },
+                        confidence: share(receiver.agreeing, receiver.total),
                         resolved_via: Some(if generated {
                             "rbi_dsl".to_string()
                         } else {
@@ -201,7 +209,7 @@ fn via_includers(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<Method
         .count();
     Some(MethodAnswer {
         status: Status::Resolved,
-        confidence: agreeing as f64 / includers.len() as f64,
+        confidence: share(agreeing, includers.len()),
         resolved_via: Some("includer".to_string()),
         receiver: call.recv.as_str(),
         receiver_kind: Some("module".to_string()),
@@ -235,6 +243,7 @@ pub(super) fn receiver_of(tree: &Tree, facts: &Facts, call: &Call) -> Option<Rec
                 via: "self",
                 agreeing: 1,
                 total: 1,
+                ambiguous: false,
             })
         }
         RecvShape::Const => {
@@ -247,6 +256,7 @@ pub(super) fn receiver_of(tree: &Tree, facts: &Facts, call: &Call) -> Option<Rec
                 via: "const",
                 agreeing: 1,
                 total: 1,
+                ambiguous: false,
             })
         }
         // An assignment first, because it is the more specific evidence; a
@@ -307,6 +317,10 @@ fn from_receiver_name(tree: &Tree, call: &Call) -> Option<Receiver> {
         // The name is one hypothesis; "something else entirely" is always the
         // other; every other class defining this name is one more.
         total: 2 + others,
+        // A unique name match is the whole story. Competitors mean the name
+        // picked among equals, which is what `ambiguous` is for — no
+        // threshold, just whether anything else could have been the answer.
+        ambiguous: others > 0,
     })
 }
 
@@ -329,6 +343,7 @@ fn from_sig_params(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> 
         via: "sig:param",
         agreeing: 1,
         total: 1,
+        ambiguous: false,
     })
 }
 
@@ -378,6 +393,7 @@ fn from_assignments(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver>
         via,
         agreeing,
         total: relevant.len(),
+        ambiguous: false,
     })
 }
 
@@ -448,6 +464,19 @@ fn type_of(
         }
         ValueShape::Other => None,
     }
+}
+
+/// A count over a count, rounded to the precision two counts actually carry.
+///
+/// `1/31` is 0.032, not 0.03225806451612903: printing the tail claims evidence
+/// that is not there, and it claims it hardest in JSON, where a reader cannot
+/// see that the human output was more careful.
+fn share(agreeing: usize, total: usize) -> f64 {
+    if total == 0 {
+        return 0.0;
+    }
+    let raw = agreeing as f64 / total as f64;
+    (raw * 100.0).round() / 100.0
 }
 
 /// The ActiveRecord class methods that answer with one instance of the class.
@@ -1209,7 +1238,9 @@ mod receiver_name_ranking_tests {
              class Job\n  def run\n    @widget.ship\n  end\nend\n",
             "ship",
         );
-        assert_eq!(answer.status, Status::Resolved);
+        // Alpha and Zeta define `ship` too, so the name picked among equals:
+        // an answer with competitors, which is what `ambiguous` is for.
+        assert_eq!(answer.status, Status::Ambiguous);
         assert_eq!(answer.owner.as_deref(), Some("Widget"));
         assert_eq!(answer.resolved_via.as_deref(), Some("receiver_name"));
         // Graded by the ambiguity it resolved — one hypothesis against
@@ -1218,6 +1249,24 @@ mod receiver_name_ranking_tests {
         assert!(
             answer.confidence < 0.3,
             "a naming habit is weak evidence: {}",
+            answer.confidence
+        );
+    }
+
+    /// With nothing else defining the name, the receiver's name is the whole
+    /// story and the answer is not ambiguous at all.
+    #[test]
+    fn a_unique_name_match_resolves_rather_than_hedging() {
+        let answer = super::tests::answer(
+            "class Widget\n  def ship_it\n  end\nend\n\
+             class Job\n  def run\n    @widget.ship_it\n  end\nend\n",
+            "ship_it",
+        );
+        assert_eq!(answer.status, Status::Resolved);
+        assert_eq!(answer.resolved_via.as_deref(), Some("receiver_name"));
+        assert!(
+            (answer.confidence - 0.5).abs() < 1e-9,
+            "{}",
             answer.confidence
         );
     }

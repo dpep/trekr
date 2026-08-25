@@ -763,7 +763,9 @@ fn cmd_def(out: Output, spec: &str) -> anyhow::Result<ExitCode> {
         }
     };
 
-    let resolved = answer["status"] == "resolved";
+    // Ambiguous is an answer with competitors, not a failure to answer: exit 0
+    // like any other match, and let the status and confidence say the rest.
+    let resolved = answer["status"] == "resolved" || answer["status"] == "ambiguous";
     let text = match answer["sites"].as_array().and_then(|s| s.first()) {
         Some(site) => format!(
             "{}:{}:{}  {}",

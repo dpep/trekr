@@ -185,6 +185,15 @@ pub(crate) enum Via {
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Status {
     Resolved,
+    /// One answer, and real competitors for it. Reached when a rung resting on
+    /// a convention rather than on something the code states picked a winner
+    /// that other definitions could equally have been — `@account.local?` names
+    /// `Account`, and thirty other classes define `local?` too.
+    ///
+    /// The distinction is not cosmetic: `status` is what a caller branches on,
+    /// and a `resolved` carrying 0.03 confidence invites exactly the trust the
+    /// confidence is trying to withhold.
+    Ambiguous,
     /// Nothing in the index carries this name. It may belong to a gem, or be
     /// built at runtime, or be a typo — the index cannot tell those apart, and
     /// says so rather than guessing.
