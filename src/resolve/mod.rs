@@ -89,20 +89,47 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
     match receiver_of(tree, facts, call) {
         Some(receiver) => {
             match tree.lookup(&receiver.fqn, receiver.singleton, &call.name) {
-                Some(found) => MethodAnswer {
-                    status: Status::Resolved,
-                    confidence: receiver.agreeing as f64 / receiver.total as f64,
-                    resolved_via: Some(receiver.via.to_string()),
-                    receiver: shape,
-                    receiver_kind: tree.kind_of(&receiver.fqn).map(str::to_string),
-                    receiver_type: Some(receiver.fqn.clone()),
-                    owner: Some(found.owner.clone()),
-                    sites: vec![found.site.clone()],
-                    agreement: agreement(&receiver),
-                    unresolved_ancestors: Vec::new(),
-                    candidates: Vec::new(),
-                    reason: None,
-                },
+                Some(found) => {
+                    // A method Tapioca generated has no source of its own. Send
+                    // the caller to the class that generates it rather than to
+                    // the .rbi, which is where Sorbet would have left them.
+                    let generated = found.site.path.starts_with(crate::tree::DSL_RBI);
+                    let sites = if generated {
+                        let real: Vec<Site> = tree
+                            .sites(&found.owner)
+                            .iter()
+                            .filter(|site| !site.path.starts_with(crate::tree::DSL_RBI))
+                            .cloned()
+                            .collect();
+                        // If the class itself only exists in the RBI there is
+                        // nowhere better to point, so keep what we have.
+                        if real.is_empty() {
+                            vec![found.site.clone()]
+                        } else {
+                            real
+                        }
+                    } else {
+                        vec![found.site.clone()]
+                    };
+                    MethodAnswer {
+                        status: Status::Resolved,
+                        confidence: receiver.agreeing as f64 / receiver.total as f64,
+                        resolved_via: Some(if generated {
+                            "rbi_dsl".to_string()
+                        } else {
+                            receiver.via.to_string()
+                        }),
+                        receiver: shape,
+                        receiver_kind: tree.kind_of(&receiver.fqn).map(str::to_string),
+                        receiver_type: Some(receiver.fqn.clone()),
+                        owner: Some(found.owner.clone()),
+                        sites,
+                        agreement: agreement(&receiver),
+                        unresolved_ancestors: Vec::new(),
+                        candidates: Vec::new(),
+                        reason: None,
+                    }
+                }
                 // A call written inside a module has no receiver of its own:
                 // whatever includes the module is the receiver. When the index
                 // knows which class that is, the call is determinate after all.
@@ -651,6 +678,40 @@ mod tests {
             found.owner.as_deref(),
             Some("Box"),
             "the assignment is the more specific evidence"
+        );
+    }
+
+    #[test]
+    fn a_tapioca_generated_method_answers_with_the_model_not_the_rbi() {
+        // Sorbet's own go-to-definition lands in the generated file. Landing at
+        // the model is the point of doing this at all.
+        let tree = crate::tree::for_test(&[
+            ("app/models/widget.rb", "class Widget < Base\nend\n"),
+            (
+                "sorbet/rbi/dsl/widget.rbi",
+                "class Widget\n  sig { returns(String) }\n  def name; end\nend\n",
+            ),
+            (
+                "app/jobs/job.rb",
+                "class Job\n  def go\n    w = Widget.new\n    w.name\n  end\nend\n",
+            ),
+        ]);
+        let source = "class Job\n  def go\n    w = Widget.new\n    w.name\n  end\nend\n";
+        let facts = crate::extract::extract(source.as_bytes());
+        let call = facts
+            .calls
+            .iter()
+            .find(|c| c.name == "name")
+            .unwrap()
+            .clone();
+        let found = method_at(&tree, &facts, &call, "app/jobs/job.rb");
+
+        assert_eq!(found.status, Status::Resolved);
+        assert_eq!(found.owner.as_deref(), Some("Widget"));
+        assert_eq!(found.resolved_via.as_deref(), Some("rbi_dsl"));
+        assert_eq!(
+            found.sites[0].path, "app/models/widget.rb",
+            "the model declares it, even though only the .rbi describes it"
         );
     }
 

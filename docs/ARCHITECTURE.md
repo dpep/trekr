@@ -167,6 +167,15 @@ that does not exist.
 The layering is core → gems → checkout, so a gem may reopen core and the
 checkout may reopen a gem, which is what Rails actually does.
 
+**A resident front would hold the tree, and nothing here prevents that.**
+`Tree::build(store, root)` is already the whole seam: it takes a store and a
+checkout root and returns a value with no borrowed state and no background
+work. A resident process (PLAN Phase 4) holds one, answers from it, and rebuilds
+when the checkout's blob set moves — which the store can already tell it,
+because that is what `--index` computes. Nothing is built for this yet, and
+deliberately: staleness detection written before there is a process to need it
+would be a guess at its shape.
+
 ### `store/` — SQLite, WAL, no cleverness
 
 Schema in [`src/store/schema.rs`](../src/store/schema.rs); it is the authority

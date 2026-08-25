@@ -1489,6 +1489,12 @@ mod singleton_tests {
 /// caller a location that does not exist.
 pub(crate) const CORE_PATH: &str = "<core>";
 
+/// Tapioca writes one `.rbi` per model describing the methods Rails generates
+/// at runtime — AR attributes, associations, enums. They are real methods with
+/// no source, and Sorbet's own go-to-definition lands you in the generated
+/// file. Landing at the model instead is the point.
+pub(crate) const DSL_RBI: &str = "sorbet/rbi/dsl/";
+
 /// The implicit superclass of every class that does not name one.
 const OBJECT: &str = "Object";
 

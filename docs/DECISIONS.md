@@ -350,3 +350,50 @@ walk for that shape rather than indexing everything. Also worth revisiting if
 DB size becomes the binding constraint: a gem arguably needs `def` and
 `ancestry` rows but not its 1.2 M call sites, since nobody asks "who calls this"
 *inside* a dependency.
+
+## DEC-018 — RBI needed no ingestion path; it needed measuring
+
+**Decided.** `sorbet/rbi/**` is indexed by the ordinary checkout scan, because
+`.rbi` was already in the Ruby extension list. No separate ingestion.
+
+**Why.** An RBI *is* Ruby — `sig { ... }` plus bodiless `def`s — so the
+extractor and the sig reader already handle it. Measured on graph_weaver:
+27 219 defs and 3 620 sig returns come from `sorbet/rbi/gems/` with no code
+written for it.
+
+What the measurement then said is the useful part. Those sigs describe **gem**
+methods, and graph_weaver's own `lib/` has 570 defs with **36** sigs. The
+prediction on record — that a Sorbet repo's sig density would move its method
+resolution far more than rails' — was wrong, and wrong in a specific way: rwr's
+64 % is *of the signatures that exist, how many name a usable class*. It is a
+property of signatures, not coverage of call sites. A repo can be full of RBIs
+and still have almost no typed call sites of its own, because the RBIs describe
+what it depends on rather than what it is.
+
+RBI pays where code calls a gem method and keeps the result. It does not pay
+where code calls its own untyped methods, which is most of what code does.
+
+**Reverses if** a repo with dense first-party sigs is measured (Shopify-scale
+Sorbet adoption) — the mechanism is built and tested, and only the corpus is
+missing.
+
+## DEC-019 — A Tapioca-generated method answers with the model
+
+**Decided.** When a resolved method's only definition is under
+`sorbet/rbi/dsl/`, the answer's sites are the *owner class's* real declarations
+and `resolved_via` is `rbi_dsl`.
+
+**Why.** Those methods are generated at runtime by Rails and have no source.
+Sorbet's own go-to-definition lands in the generated file, which is the wrong
+place to send someone reading code — beating that is the reason to consume RBIs
+at all. If the class exists *only* in the RBI there is nowhere better to point,
+so the generated site is kept rather than dropped.
+
+**Unmeasured, and said plainly**: no corpus available here has a
+`sorbet/rbi/dsl/` directory (graph_weaver and sorbet-uuid have `gems/` only).
+The behaviour is unit-tested against a synthetic fixture and has never been run
+against real Tapioca output.
+
+**Reverses if** the redirect proves misleading in practice — e.g. a model whose
+generated methods a reader genuinely wants to inspect. The fix then is to
+report both locations rather than to pick differently.
