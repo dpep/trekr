@@ -13,7 +13,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 6;
+pub(crate) const VERSION: i64 = 7;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.

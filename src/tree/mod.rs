@@ -1168,12 +1168,17 @@ mod tests {
 
 impl Tree {
     fn add_methods(&mut self, rows: Vec<MethodRow>) {
+        let mut overrides: Vec<(String, String)> = Vec::new();
         for row in rows {
             let scopes = self.scopes(&row.nesting);
             // `def Foo.x` names its owner outright; everything else belongs to
             // the scope it is written in.
+            // `target` means different things depending on how the def arose:
+            // an explicit receiver for `def Foo.x`, the aliased name for an
+            // alias, the table for a `table_name` override. Only the first is
+            // an owner, and only a literal `def` produces one.
             let owner = match &row.target {
-                Some(target) if row.singleton => self
+                Some(target) if row.singleton && row.via.is_none() => self
                     .resolve_lexical(target, &scopes)
                     .map(|fqn| self.namespace_of(&fqn))
                     .unwrap_or_else(|| target.clone()),
@@ -1196,11 +1201,41 @@ impl Tree {
                 },
             };
             self.by_owner
-                .entry((owner, row.singleton, row.name.clone()))
+                .entry((owner.clone(), row.singleton, row.name.clone()))
                 .or_default()
                 .push(index);
             self.by_name.entry(row.name).or_default().push(index);
             self.methods.push(def);
+
+            // A model overriding `self.table_name` wants the columns of a table
+            // whose conventional class it is not. Collected here, applied below.
+            if let (Some("table_name"), Some(table)) =
+                (self.methods[index].via.as_deref(), row.target.as_deref())
+            {
+                let carrier = crate::extract::table_to_class(table);
+                if carrier != owner {
+                    overrides.push((owner, carrier));
+                }
+            }
+        }
+
+        // The carrier owns the schema's methods but is never *declared*, so it
+        // cannot be an ancestor — an include edge to it would not resolve. The
+        // columns belong to the model that uses the table, so they are re-keyed
+        // onto it and nothing phantom enters the constant namespace.
+        for (owner, carrier) in overrides {
+            let moved: Vec<(String, bool, Vec<usize>)> = self
+                .by_owner
+                .iter()
+                .filter(|((who, _, _), _)| who == &carrier)
+                .map(|((_, singleton, name), i)| (name.clone(), *singleton, i.clone()))
+                .collect();
+            for (name, singleton, indexes) in moved {
+                self.by_owner
+                    .entry((owner.clone(), singleton, name))
+                    .or_default()
+                    .extend(indexes);
+            }
         }
     }
 

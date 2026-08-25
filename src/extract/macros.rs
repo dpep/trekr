@@ -169,7 +169,7 @@ pub(super) fn is_column_type(name: &str) -> bool {
 
 /// `posts` → `Post`. Rails' table-to-model convention, which is how a schema
 /// attaches to a class without anything linking them.
-pub(super) fn table_to_class(table: &str) -> String {
+pub(crate) fn table_to_class(table: &str) -> String {
     // A namespaced table is `admin_users` for `Admin::User` only when an
     // `Admin` module exists, which the extractor cannot know. The flat reading
     // is the common one and the one that is right without cross-file evidence.

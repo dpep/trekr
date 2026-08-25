@@ -13,6 +13,8 @@
 
 mod line_index;
 mod macros;
+
+pub(crate) use macros::table_to_class;
 mod sig;
 
 use crate::core::*;
@@ -561,9 +563,10 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
     }
 
     fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
-        // A side effect, not a consumption: `create_table` is still an ordinary
-        // call, it just also tells us what columns a model has.
+        // Side effects, not consumptions: these are still ordinary calls, they
+        // just also say something about the model.
         self.handle_create_table(node);
+        self.handle_table_name(node);
         if self.handle_macro(node) {
             return;
         }
@@ -755,6 +758,36 @@ impl<'pr> Extractor<'_> {
             self.record_call(call);
         }
         any
+    }
+
+    /// `self.table_name = "legacy_posts"` — a model pointing at a table that is
+    /// not the one its name implies.
+    ///
+    /// Recorded as the method Rails really does define, with the table in
+    /// `target`. The *join* to that table's columns is a tree question: the
+    /// schema is a different blob, and only an assembled namespace can put them
+    /// together (the same shape as a concern's `ClassMethods`).
+    fn handle_table_name(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        if method_name(call).as_deref() != Some("table_name=") {
+            return;
+        }
+        if !call.receiver().is_some_and(|r| r.as_self_node().is_some()) {
+            return;
+        }
+        let Some(table) = arg_nodes(call).first().and_then(literal_name) else {
+            return;
+        };
+        let loc = call.location();
+        let mut def = self.def(
+            "table_name".to_string(),
+            Kind::Method,
+            loc.start_offset(),
+            loc.end_offset(),
+        );
+        def.singleton = true;
+        def.via = Some("table_name".into());
+        def.target = Some(table);
+        self.push_def(def);
     }
 
     /// `enum status: { draft: 0, … }` — a predicate, a bang setter, and a scope

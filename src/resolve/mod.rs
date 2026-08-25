@@ -828,6 +828,21 @@ mod tests {
     }
 
     #[test]
+    fn a_model_overriding_its_table_name_still_gets_that_tables_columns() {
+        // The schema declares `legacy_posts`; the model is called Post. Nothing
+        // links them except a literal in the class body, and the two live in
+        // different blobs — so the join is a tree question.
+        let schema = "create_table \"legacy_posts\" do |t|\n  t.string \"headline\"\nend\n";
+        let model = "class Post\n  self.table_name = \"legacy_posts\"\nend\n";
+        let tree = crate::tree::for_test(&[("db/schema.rb", schema), ("post.rb", model)]);
+        assert!(
+            tree.lookup("Post", false, "headline").is_some(),
+            "the column reaches the model that actually uses the table"
+        );
+        assert!(tree.lookup("Post", false, "headline=").is_some());
+    }
+
+    #[test]
     fn an_enum_defines_a_predicate_a_bang_and_a_scope_per_member() {
         for source in [
             // Rails 6 spelling and Rails 7 spelling.
