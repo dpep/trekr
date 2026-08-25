@@ -265,16 +265,17 @@ impl Store {
     /// This and [`Store::ancestry`] are the tree layer's whole input. Note what
     /// is *not* here: no resolution, no ordering by significance. The blob
     /// layer hands over facts and stops.
-    pub(crate) fn declarations(&self, root: &str) -> Result<Vec<DeclRow>> {
-        let mut stmt = self.conn.prepare(
+    pub(crate) fn declarations(&self, roots: &[String]) -> Result<Vec<DeclRow>> {
+        let mut stmt = self.conn.prepare(&format!(
             "SELECT d.name, d.kind, d.nesting, d.target, f.path, d.line, d.col
                FROM def d
                JOIN file f ON f.blob_id = d.blob_id
                JOIN checkout c ON c.id = f.checkout_id
-              WHERE c.root = ?1 AND d.kind IN ('class','module','constant')
-              ORDER BY f.path, d.line, d.col",
-        )?;
-        let rows = stmt.query_map(params![root], |r| {
+              WHERE c.root IN ({}) AND d.kind IN ('class','module','constant')
+              ORDER BY c.id, f.path, d.line, d.col",
+            placeholders(roots.len())
+        ))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(roots), |r| {
             Ok(DeclRow {
                 name: r.get(0)?,
                 kind: r.get(1)?,
@@ -292,17 +293,18 @@ impl Store {
     ///
     /// Deferred in session 2 because nothing read it; the method ladder is the
     /// consumer that earns it.
-    pub(crate) fn methods(&self, root: &str) -> Result<Vec<MethodRow>> {
-        let mut stmt = self.conn.prepare(
+    pub(crate) fn methods(&self, roots: &[String]) -> Result<Vec<MethodRow>> {
+        let mut stmt = self.conn.prepare(&format!(
             "SELECT d.name, d.nesting, d.singleton, d.visibility, d.params, d.via,
                     d.target, d.sig_returns, f.path, d.line, d.col
                FROM def d
                JOIN file f ON f.blob_id = d.blob_id
                JOIN checkout c ON c.id = f.checkout_id
-              WHERE c.root = ?1 AND d.kind = 'method'
-              ORDER BY f.path, d.line, d.col",
-        )?;
-        let rows = stmt.query_map(params![root], |r| {
+              WHERE c.root IN ({}) AND d.kind = 'method'
+              ORDER BY c.id, f.path, d.line, d.col",
+            placeholders(roots.len())
+        ))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(roots), |r| {
             let params: String = r.get(4)?;
             Ok(MethodRow {
                 name: r.get(0)?,
@@ -323,16 +325,17 @@ impl Store {
 
     /// Every ancestry edge in a checkout, in source order — which is the order
     /// Ruby applies them in, and therefore the order linearization reverses.
-    pub(crate) fn ancestry(&self, root: &str) -> Result<Vec<EdgeRow>> {
-        let mut stmt = self.conn.prepare(
+    pub(crate) fn ancestry(&self, roots: &[String]) -> Result<Vec<EdgeRow>> {
+        let mut stmt = self.conn.prepare(&format!(
             "SELECT a.owner, a.relation, a.target
                FROM ancestry a
                JOIN file f ON f.blob_id = a.blob_id
                JOIN checkout c ON c.id = f.checkout_id
-              WHERE c.root = ?1
-              ORDER BY f.path, a.line, a.col",
-        )?;
-        let rows = stmt.query_map(params![root], |r| {
+              WHERE c.root IN ({})
+              ORDER BY c.id, f.path, a.line, a.col",
+            placeholders(roots.len())
+        ))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(roots), |r| {
             Ok(EdgeRow {
                 owner: split_nesting(&r.get::<_, String>(0)?),
                 relation: r.get(1)?,
@@ -462,6 +465,17 @@ pub(crate) struct Symbol {
     pub(crate) line: u32,
     pub(crate) col: u32,
     pub(crate) end_line: u32,
+}
+
+/// `?,?,?` for an `IN` clause. Zero roots would be a syntax error, so it
+/// degenerates to a literal that matches nothing.
+fn placeholders(count: usize) -> String {
+    if count == 0 {
+        return "NULL".to_string();
+    }
+    std::iter::repeat_n("?", count)
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 /// Parameters round-trip through one column as `kind:name` pairs joined by

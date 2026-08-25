@@ -205,21 +205,20 @@ impl Tree {
         // up with an Object/Kernel/BasicObject tail.
         let (mut decls, mut edges, mut methods) = core_rows();
 
-        // Gems sit between core and the checkout: they may reopen core, and the
-        // checkout may reopen them. A gem whose facts are not in the store yet
-        // contributes nothing and costs one empty query — `--index` is what
-        // puts them there.
-        for gem in crate::gems::for_checkout(std::path::Path::new(root)) {
-            let Some(gem_root) = gem.root else { continue };
-            let gem_root = gem_root.to_string_lossy();
-            decls.extend(store.declarations(&gem_root)?);
-            edges.extend(store.ancestry(&gem_root)?);
-            methods.extend(store.methods(&gem_root)?);
-        }
+        // Gems sit before the checkout so a gem may reopen core and the
+        // checkout may reopen a gem — which is what Rails actually does. The
+        // ordering is carried by `checkout.id`, which rises with insert order,
+        // so one query per fact kind serves all of them.
+        let mut roots: Vec<String> = crate::gems::for_checkout(std::path::Path::new(root))
+            .into_iter()
+            .filter_map(|gem| gem.root)
+            .map(|path| path.to_string_lossy().into_owned())
+            .collect();
+        roots.push(root.to_string());
 
-        decls.extend(store.declarations(root)?);
-        edges.extend(store.ancestry(root)?);
-        methods.extend(store.methods(root)?);
+        decls.extend(store.declarations(&roots)?);
+        edges.extend(store.ancestry(&roots)?);
+        methods.extend(store.methods(&roots)?);
 
         let mut tree = Tree::assemble(decls, edges);
         tree.add_methods(methods);
