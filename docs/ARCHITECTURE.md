@@ -625,6 +625,15 @@ diagnosed session 3's gap:
 | a module | 30 % | **78 %** |
 | nothing (top level) | 0 % | 0 % |
 
+**Rails DSL modelling moved it again**, though a caveat first: the runs below
+use a different sample seed from the table above, so at n=120 a swing under ~5
+points is noise. rails went 39 % → 42 % (inside that band, so treat it as
+unmoved); discourse went 24 % → **32 %**, which is outside it. The `includer`
+rung tripled on rails (0.8 % → 2.5 %) as concerns' `ClassMethods` became
+reachable. The prediction was "+2–5 points on AR-heavy corpora, not more";
+discourse beat it and rails did not move, which is the right shape — an app
+uses the DSLs, a framework defines them.
+
 **Core delivered; gems did not, and that is the finding.** The prediction was
 that the gem-truncated and not-in-index method buckets would mostly reclassify.
 Core did exactly that — `puts`, `raise`, `Foo.new`, `prepend` all resolve now,

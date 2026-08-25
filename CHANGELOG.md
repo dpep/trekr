@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Rails class macros now define methods in the index: `delegate` (including
+  `delegate(*CONST, to: :x)` where the constant is a literal symbol array in
+  the same file), the association family, `scope`, `class_attribute`,
+  `mattr`/`cattr` accessors, `attribute`, `store_accessor`, `alias_attribute`.
+  A singular association's reader carries a **type**, so `belongs_to :user`
+  makes `user` a typed receiver.
+- A concern's nested `ClassMethods` now reaches the class that includes it —
+  `ActiveSupport::Concern` extends it with no `extend` ever written, so it is a
+  tree fact by construction.
+- Measured: on the same twelve heavy-collision names, `--refs` confirmed rose
+  **32 % → 47 %** and the weak `no_such_method` exclusion reason fell from 82 %
+  of exclusions to 42 %. `--def` on rails rose 39 % → 42 %.
+- **Existing databases reindex once** (DEC-013): the extractor changed.
+
 - `--refs 'Owner#method'` narrows references by receiver: **confirmed** (the
   receiver's type resolves and Ruby's lookup lands here), **possible** (untyped
   receiver, ranked by proximity, never dropped), and **excluded** — not listed
