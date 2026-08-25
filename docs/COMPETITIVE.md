@@ -94,7 +94,8 @@ often and is always right, and they are not the same tool.
 
 | engine | version | date | corpus | sites | answered | correct@1 | found | wrong@1 | setup | cold | warm median | RSS |
 | --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| trekr | 0.1.0 (session 27) | 2026-08-25 | discourse | 500 | **93.4 %** | **79.4 %** | **82.0 %** | **14.0 %** | 0.01 s | 0.3 ms | 0.56 ms | **227 MB** |
+| trekr | 0.1.0 (session 27) | 2026-08-25 | discourse | 500 | 93.4 % | 79.4 % | 82.0 % | 14.0 % | 0.01 s | 0.3 ms | 0.56 ms | 227 MB |
+| trekr | **0.1.0 (session 28)** | 2026-08-25 | discourse | 500 | **96.6 %** | **82.6 %** | **85.2 %** | **14.0 %** | 0.01 s | 0.2 ms | 0.57 ms | **225 MB** |
 | ruby-lsp | 0.26.9 | 2026-08-25 | discourse | 500 | 65.0 % | 34.4 % | 34.8 % | 30.6 % | 1.4 s + 28.7 s index | 1.1 ms | 0.70 ms | 935 MB |
 | trekr | 0.1.0 (session 27) | 2026-08-25 | widget_shop-nosorbet | 63 | **98.4 %** | **58.7 %** | **61.9 %** | 39.7 % | 0.01 s | 0.2 ms | 0.51 ms | **97 MB** |
 | ruby-lsp | 0.26.11 | 2026-08-25 | widget_shop-nosorbet | 63 | 77.8 % | 20.6 % | 22.2 % | 57.1 % | 26.9 s + 15.5 s index | 0.5 ms | 0.21 ms | 414 MB |
@@ -106,6 +107,15 @@ often and is always right, and they are not the same tool.
 All rows: app-scope gold sites, seed 12, Apple M2, quiet machine, warm OS page
 cache. trekr's index was already on disk (that is the product); the competitors'
 setup and indexing are reported because they are not.
+
+**The second trekr row is here because `answered` moved.** Computed-name
+extraction (BASELINE, session 28) turned 16 of the 500 positions from *no
+location at all* into a resolved one, so it is visible on the wire and not only
+in the status breakdown: answered 93.4 % → **96.6 %**, correct@1 79.4 % →
+**82.6 %**, `wrong@1` **unchanged at 14.0 %** — the new answers are all correct
+ones, which is what a coverage fix should look like. Against ruby-lsp 0.26.9's
+65.0 % / 34.4 %, the gap on real app code is now 1.5× on answering and **2.4× on
+being right**.
 
 ### What the first series says
 
