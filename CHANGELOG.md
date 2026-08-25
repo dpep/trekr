@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Fixed: a definition resolving into a **different checkout** — a gem, almost
+  always — was handed back rooted on the repo being asked about, naming files
+  that do not exist. `@account.local?` in mastodon offered
+  `mastodon/lib/prism/string_query.rb`; the real definition is in the prism
+  gem, and mastodon has no `lib/prism`. A tree spans a repo and every gem it
+  resolves, so a site's path is now absolute from the store outward rather than
+  relative to a checkout the caller has to guess.
+
 - A position inside **gem source** now answers. Gems are indexed but are not git
   repositories, so `repo_root` could not place a file in one and `--def` (and
   the LSP surface) refused with "not a git repository" — one step after

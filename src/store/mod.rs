@@ -303,9 +303,14 @@ impl Store {
     /// This and [`Store::ancestry`] are the tree layer's whole input. Note what
     /// is *not* here: no resolution, no ordering by significance. The blob
     /// layer hands over facts and stops.
+    /// Paths come back **absolute**. A tree spans several checkouts — the
+    /// repo and every gem it resolves — so a checkout-relative path stops
+    /// meaning anything the moment it leaves this query, and a caller that
+    /// joined one onto the repo it happened to be asking about fabricated
+    /// files that do not exist.
     pub(crate) fn declarations(&self, roots: &[String]) -> Result<Vec<DeclRow>> {
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT d.name, d.kind, d.nesting, d.target, f.path, d.line, d.col
+            "SELECT d.name, d.kind, d.nesting, d.target, c.root || '/' || f.path, d.line, d.col
                FROM def d
                JOIN file f ON f.blob_id = d.blob_id
                JOIN checkout c ON c.id = f.checkout_id
@@ -334,7 +339,7 @@ impl Store {
     pub(crate) fn methods(&self, roots: &[String]) -> Result<Vec<MethodRow>> {
         let mut stmt = self.conn.prepare(&format!(
             "SELECT d.name, d.nesting, d.singleton, d.visibility, d.params, d.via,
-                    d.target, d.sig_returns, f.path, d.line, d.col
+                    d.target, d.sig_returns, c.root || '/' || f.path, d.line, d.col
                FROM def d
                JOIN file f ON f.blob_id = d.blob_id
                JOIN checkout c ON c.id = f.checkout_id
@@ -888,6 +893,38 @@ mod tests {
             "a name-level answer discloses the receiver rather than guessing"
         );
         assert!(store.refs("/a", "absent").unwrap().is_empty());
+    }
+
+    /// A tree spans a repo *and* every gem it resolves, so a site's path has
+    /// to say which checkout it came from. It did not, and both fronts joined
+    /// a gem's relative path onto the repo being asked about — naming files
+    /// that do not exist, which an agent then tried to read.
+    #[test]
+    fn a_site_from_another_checkout_keeps_its_own_root() {
+        let mut store = Store::open_in_memory().unwrap();
+        indexed(&mut store, "/app", "lib/job.rb", "class Job\nend\n");
+        indexed(&mut store, "/gem", "lib/helper.rb", "class Helper\nend\n");
+
+        let roots = vec!["/gem".to_string(), "/app".to_string()];
+        let paths: Vec<String> = store
+            .declarations(&roots)
+            .unwrap()
+            .into_iter()
+            .map(|d| d.path)
+            .collect();
+        assert!(
+            paths.contains(&"/gem/lib/helper.rb".to_string())
+                && paths.contains(&"/app/lib/job.rb".to_string()),
+            "each site is absolute and rooted where it really lives: {paths:?}"
+        );
+        assert!(
+            store
+                .methods(&roots)
+                .unwrap()
+                .iter()
+                .all(|m| m.path.starts_with('/')),
+            "and method sites too, which is what a call resolves to"
+        );
     }
 
     /// An outline is now parsed rather than queried, so source order is the

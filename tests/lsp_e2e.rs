@@ -741,6 +741,17 @@ fn a_file_outside_the_clients_root_is_still_answered() {
         "and it points into the other repo: {}",
         locations[0]["uri"]
     );
+    // Every URI an agent is handed must name a file it can actually open. A
+    // site carrying a checkout-relative path once got joined onto whichever
+    // repo was being asked about, which fabricated plausible paths to nothing.
+    for location in locations {
+        let uri = location["uri"].as_str().expect("a uri");
+        let path = uri.strip_prefix("file://").expect("a file uri");
+        assert!(
+            Path::new(path).exists(),
+            "returned a path to nothing: {uri}"
+        );
+    }
 
     let hover = session.request(
         "textDocument/hover",
