@@ -252,13 +252,19 @@ impl Tree {
             .collect();
         roots.push(root.to_string());
 
-        decls.extend(store.declarations(&roots)?);
-        edges.extend(store.ancestry(&roots)?);
-        methods.extend(store.methods(&roots)?);
+        let mut phases = Phases::default();
+        decls.extend(phases.time("declarations", || store.declarations(&roots))?);
+        edges.extend(phases.time("ancestry", || store.ancestry(&roots))?);
+        methods.extend(phases.time("methods", || store.methods(&roots))?);
+        phases.decls = decls.len();
+        phases.methods = methods.len();
 
         let mut tree = Tree::assemble(decls, edges);
+        phases.mark("assemble");
         tree.root = root.to_string();
         tree.add_methods(methods);
+        phases.mark("index-methods");
+        phases.report();
         Ok(tree)
     }
 
@@ -1738,6 +1744,70 @@ pub(crate) const CORE_PATH: &str = "<core>";
 /// no source, and Sorbet's own go-to-definition lands you in the generated
 /// file. Landing at the model instead is the point.
 pub(crate) const DSL_RBI: &str = "sorbet/rbi/dsl/";
+
+/// Where a tree build spent its time, when anyone asked.
+///
+/// `--profile` has reported the *index* since session 3; a query's own cost was
+/// invisible, and the cold start is now the thing being worked on. Enabled by
+/// `TREKR_PROFILE=1` or the `--profile` flag, and silent otherwise so the
+/// timing itself costs nothing to leave in.
+#[derive(Default)]
+struct Phases {
+    marks: Vec<(&'static str, std::time::Duration)>,
+    last: Option<std::time::Instant>,
+    decls: usize,
+    methods: usize,
+}
+
+impl Phases {
+    fn on() -> bool {
+        std::env::var("TREKR_PROFILE").is_ok_and(|v| v != "0")
+    }
+
+    fn time<T, E>(
+        &mut self,
+        label: &'static str,
+        work: impl FnOnce() -> Result<T, E>,
+    ) -> Result<T, E> {
+        if !Self::on() {
+            return work();
+        }
+        let start = std::time::Instant::now();
+        let out = work();
+        self.marks.push((label, start.elapsed()));
+        self.last = Some(std::time::Instant::now());
+        out
+    }
+
+    fn mark(&mut self, label: &'static str) {
+        if !Self::on() {
+            return;
+        }
+        let now = std::time::Instant::now();
+        let since = self.last.map(|t| now - t).unwrap_or_default();
+        self.marks.push((label, since));
+        self.last = Some(now);
+    }
+
+    fn report(&self) {
+        if !Self::on() || self.marks.is_empty() {
+            return;
+        }
+        let total: std::time::Duration = self.marks.iter().map(|(_, d)| *d).sum();
+        let phases: Vec<String> = self
+            .marks
+            .iter()
+            .map(|(label, d)| format!("{label} {:.0}ms", d.as_secs_f64() * 1000.0))
+            .collect();
+        eprintln!(
+            "tree: {} | total {:.0}ms ({} declarations, {} methods)",
+            phases.join(" · "),
+            total.as_secs_f64() * 1000.0,
+            self.decls,
+            self.methods
+        );
+    }
+}
 
 /// The implicit superclass of every class that does not name one.
 const OBJECT: &str = "Object";

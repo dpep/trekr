@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `--profile` now reports where a **query's** time went, not just an index's:
+  the tree build's phases, on stderr. `TREKR_PROFILE=1` does the same for a
+  process that cannot pass the flag. This is what showed that methods are 76 %
+  of a rails tree build.
+
 - `--def --explain` renders the disclosure `--json` has always carried: the
   rung that resolved the receiver, the confidence and what graded it, the
   ancestors that could not be seen, and the ranked candidates behind a residue

@@ -91,8 +91,9 @@ struct Cli {
     #[arg(long, conflicts_with_all = ["index", "status", "symbols", "refs", "def", "ancestors", "drop"])]
     serve: bool,
 
-    /// Report where the index time went, on stderr. Structured when `--json`.
-    /// With `--serve`, logs the wire-level params of every request too.
+    /// Report where the time went, on stderr. For `--index`, the phases of the
+    /// index; for a query, the phases of the tree build behind it. With
+    /// `--serve`, logs the wire-level params of every request too.
     #[arg(long)]
     profile: bool,
 
@@ -121,6 +122,12 @@ enum Output {
 
 pub fn run() -> ExitCode {
     let cli = Cli::parse();
+    if cli.profile {
+        // The tree layer reads this rather than taking a parameter: it is
+        // built from half a dozen call sites and the flag is a whole-process
+        // decision.
+        unsafe { std::env::set_var("TREKR_PROFILE", "1") };
+    }
     let out = if cli.ndjson {
         Output::Ndjson
     } else if cli.json {

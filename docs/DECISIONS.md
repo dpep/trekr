@@ -774,3 +774,55 @@ built, to the two figures two counts can support.
 reading the candidates, which would make the honesty cost more than it buys —
 the shape to watch is an agent that branches on `status == "resolved"` and
 discards everything else.
+
+### DEC-025 revisit (session 18) — **turned down again, on a measurement that names the real fix**
+
+Authorized to reverse this after `--usage` showed the dominant operation's
+observed median at 415 ms. Measured first, and the measurement moved the target
+rather than the decision.
+
+`--profile` now reports the tree build's phases. Warm, median of repeats:
+
+| phase | rails | discourse |
+| ----- | ----- | --------- |
+| declarations (SQL) | 31 ms | 97 ms |
+| ancestry (SQL) | 7 ms | 20 ms |
+| **methods (SQL)** | **98 ms** | **218 ms** |
+| assemble (namespace fixpoint) | 37 ms | 147 ms |
+| **index-methods** | **137 ms** | **161 ms** |
+| **total** | **310 ms** | **643 ms** |
+
+Predicted the split as SQL 110 / assemble 110 / add-methods 80. The namespace
+fixpoint is **three times cheaper** than predicted (37 ms) and the method work
+much dearer: **methods are 235 ms of rails' 310 ms — 76 %** — 84,052 of them,
+fetched and then materialized into `MethodDef`s and a `(owner, singleton, name)`
+index.
+
+**Why persistence still loses.** A persisted tree must still materialize those
+84k methods and their index on load; that is `index-methods`, the larger half.
+Persistence can only remove the SQL — 137 ms of 310 ms on rails, a **2.2×**
+ceiling against the **2.5×** set in advance as the bar. It buys less than the
+threshold while adding a second on-disk format, its own version, and a
+concurrent-reindex race. Turned down again, and now for a *quantified* reason
+rather than a comparative one.
+
+**What the measurement names instead: load methods by name, on demand.**
+Nothing needs 84k methods. A constant query needs none. A call query needs the
+handful reachable from one receiver's chain, and residue needs one name's
+candidates. Demand-loading by name addresses **both** expensive phases at once —
+the 98 ms fetch and the 137 ms index — where persistence addresses only the
+cheaper one. Ceiling: ~235 ms of rails' 310 ms, ~380 ms of discourse's 643 ms.
+
+It is not free: `lookup` and `named` currently hand out `&MethodDef` borrowed
+from the tree, which interior mutability cannot do, so they would return owned
+values and every caller in `resolve/`, `refs/` and `serve/handlers` changes with
+them. That is a session's work, specified and measured, not a guess.
+
+**One cheap thing tried and reverted:** deferring only the `by_name` index (it
+serves residue candidates alone) bought **3 ms of 137 ms**. The cost is
+materializing the methods, not indexing their names. Keeping the `RefCell` for
+1 % was not worth the complexity, so it went back.
+
+**Reverses if** demand-loading lands and the remaining cold start still matters
+— at which point what is left to persist is the *namespace*, which is small,
+and the honest comparison can be made again.
