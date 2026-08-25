@@ -233,7 +233,7 @@ fn possible(
 
     // Arity is the one thing a syntactic check can rule out outright, and it is
     // already stored.
-    if let Some(definition) = definition
+    if let Some(definition) = &definition
         && !definition.accepts(call.argc)
     {
         return Reference {
@@ -256,7 +256,7 @@ fn possible(
             0,
             "untyped receiver, but the enclosing class inherits from the owner",
         ),
-        _ if definition.is_some_and(|d| d.site.path == path) => {
+        _ if definition.as_ref().is_some_and(|d| d.site.path == path) => {
             (1, "untyped receiver, same file as the definition")
         }
         (Some(scope), Some(target)) if shares_namespace(scope, target) => (

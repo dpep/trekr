@@ -826,3 +826,53 @@ materializing the methods, not indexing their names. Keeping the `RefCell` for
 **Reverses if** demand-loading lands and the remaining cold start still matters
 — at which point what is left to persist is the *namespace*, which is small,
 and the honest comparison can be made again.
+
+### DEC-025 — demand-loading landed (session 19)
+
+The design the last revisit named, built and measured. Warm-cache medians of
+repeated runs; the checkout's methods are no longer fetched or indexed at build
+time, only Ruby core's (752 rows, from the vendored stub, which no per-name
+query could reach) and the `table_name` definitions.
+
+| | before | after |
+| --- | --- | --- |
+| rails tree build | 310 ms | **73 ms** |
+| discourse tree build | 643 ms | **259 ms** |
+| methods materialized per build | 84,052 | **752** |
+| rails `--def` wall clock | 0.31 s | **0.09 s** |
+| discourse `--def` wall clock | 0.67 s | **0.30 s** |
+| rails `--refs` wall clock | ~0.40 s | **0.13 s** |
+| rails LSP first query | 508 ms | **85 ms** |
+| discourse LSP first query | 975 ms | **272 ms** |
+
+**Predictions, all four inside their range**: floor 75 ms / 264 ms (actual 73 /
+259), rails `--def` ~95 ms (actual 90), discourse ~285 ms (actual 300), `--refs`
+~150 ms (actual 130).
+
+`--refs` gains the most proportionally, as predicted: it is dominated by *one*
+name — the query's own — so it went from loading 84k methods to loading one
+name's worth.
+
+**Accuracy is unchanged.** The gold set on the no-Sorbet corpus is identical
+before and after: app 54.8 % correct / 4.8 % wrong, gem 40 % / 3.6 %. A
+performance change that moved an accuracy number would mean it had changed
+semantics, and it did not.
+
+**One caveat on how to read these.** A *cold OS page cache* costs a further
+370 ms on rails and 620 ms on discourse — the first query in the first process
+after the database has not been touched. That is disk, not trekr, and it is why
+the LSP probe reads 460 ms on its first run and 85 ms on its second. The
+numbers above are the warm ones, which is what a session that asks more than
+one question sees.
+
+**What is left, and what persistence would now cover.** The floor is
+declarations SQL plus the namespace fixpoint: 31 + 7 + 33 ms on rails, 96 + 20 +
+141 ms on discourse. Discourse's 141 ms `assemble` over 69k declarations is now
+the largest single item, and it is a *shape* problem (a fixpoint over all
+declarations), not a laziness one — the namespace cannot be demand-loaded the
+way methods can, because `A::B` cannot be settled without knowing what `A` is.
+
+So the reverses-if trail ends where the last revisit said it would: **if cold
+start still matters, what remains to persist is the namespace** — 19,697 rows
+for rails against the 84,052 methods that are now gone. That is a much smaller
+thing to serialize, and a much better trade than the one turned down twice.

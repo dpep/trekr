@@ -134,11 +134,24 @@ pub(crate) struct Tree {
     /// standing in is likelier to be what you meant than a dependency's.
     root: String,
     names: HashMap<String, Entry>,
-    methods: Vec<MethodDef>,
+    /// Where methods come from when the tree does not already have them.
+    /// `None` for a tree built from rows in hand (fixtures), which is fully
+    /// eager and never loads anything.
+    loader: Option<Loader>,
+    /// Method names already fetched. Demand-loading is per *name*, because
+    /// that is what every caller keys on: a lookup, a residue candidate list
+    /// and an override search all ask about one name (DEC-025).
+    loaded: RefCell<HashSet<String>>,
+    methods: RefCell<Vec<MethodDef>>,
     /// (owner, singleton, name) → definitions. A reopened class gives several.
-    by_owner: HashMap<(String, bool, String), Vec<usize>>,
+    by_owner: RefCell<HashMap<(String, bool, String), Vec<usize>>>,
     /// name → every definition anywhere, for ranked residue.
-    by_name: HashMap<String, Vec<usize>>,
+    by_name: RefCell<HashMap<String, Vec<usize>>>,
+    /// A model that overrides `self.table_name` wants the columns of a table
+    /// whose conventional class it is not, so that carrier's methods are keyed
+    /// onto the model as well. Built once at build time from the `table_name`
+    /// definitions alone, because a per-name load cannot see the whole table.
+    carriers: HashMap<String, Vec<String>>,
     /// Classes that have each module in their ancestor chain. Built lazily,
     /// because the common path never asks: it costs a pass over every name and
     /// only a call inside a module needs it.
@@ -255,15 +268,41 @@ impl Tree {
         let mut phases = Phases::default();
         decls.extend(phases.time("declarations", || store.declarations(&roots))?);
         edges.extend(phases.time("ancestry", || store.ancestry(&roots))?);
-        methods.extend(phases.time("methods", || store.methods(&roots))?);
         phases.decls = decls.len();
-        phases.methods = methods.len();
 
         let mut tree = Tree::assemble(decls, edges);
         phases.mark("assemble");
         tree.root = root.to_string();
-        tree.add_methods(methods);
-        phases.mark("index-methods");
+
+        // The checkout's methods are *not* loaded here. Nothing needs all of
+        // them, and fetching and indexing rails' 84,052 was 76 % of this build
+        // (DEC-025). Two things still have to happen up front:
+        match store.reopen()? {
+            Some(own) => {
+                // Which models override `self.table_name`, because a per-name
+                // load cannot see the whole table to work it out later.
+                let table_names =
+                    phases.time("table-names", || store.methods_named(&roots, "table_name"))?;
+                tree.carriers = tree.carriers_from(&table_names);
+                // And Ruby core, which comes from the vendored stub rather
+                // than from SQL — a per-name load would never find it. It goes
+                // in first, so a checkout reopening `class Object` adds to it.
+                phases.methods = methods.len();
+                tree.index_rows(methods);
+                tree.index_rows(table_names);
+                tree.loaded.borrow_mut().insert("table_name".to_string());
+                tree.loader = Some(Loader { store: own, roots });
+                phases.mark("core-and-table-names");
+            }
+            // An in-memory store cannot be reopened, so there is nothing to
+            // load from later: take everything now and stay eager.
+            None => {
+                methods.extend(store.methods(&roots)?);
+                phases.methods = methods.len();
+                tree.add_methods(methods);
+                phases.mark("index-methods");
+            }
+        }
         phases.report();
         Ok(tree)
     }
@@ -273,9 +312,12 @@ impl Tree {
             root: String::new(),
             in_flight: RefCell::new(HashSet::new()),
             names: HashMap::new(),
-            methods: Vec::new(),
-            by_owner: HashMap::new(),
-            by_name: HashMap::new(),
+            methods: RefCell::new(Vec::new()),
+            by_owner: RefCell::new(HashMap::new()),
+            by_name: RefCell::new(HashMap::new()),
+            loader: None,
+            loaded: RefCell::new(HashSet::new()),
+            carriers: HashMap::new(),
             includers: RefCell::new(None),
             ancestors: RefCell::new(HashMap::new()),
         };
@@ -1224,28 +1266,75 @@ mod tests {
 }
 
 impl Tree {
-    fn add_methods(&mut self, rows: Vec<MethodRow>) {
-        let mut overrides: Vec<(String, String)> = Vec::new();
+    /// Which class or module a definition belongs to.
+    ///
+    /// `def Foo.x` names its owner outright; everything else belongs to the
+    /// scope it is written in. `target` means different things depending on how
+    /// the def arose — an explicit receiver, an alias's source, a `table_name`
+    /// override — and only the first is an owner.
+    fn owner_of(&self, row: &MethodRow) -> String {
+        let scopes = self.scopes(&row.nesting);
+        match &row.target {
+            Some(target) if row.singleton && row.via.is_none() => self
+                .resolve_lexical(target, &scopes)
+                .map(|fqn| self.namespace_of(&fqn))
+                .unwrap_or_else(|| target.clone()),
+            _ => scopes.first().cloned().unwrap_or_default(),
+        }
+    }
+
+    /// The carrier→models map, from the `table_name` definitions alone.
+    ///
+    /// A per-name load cannot see the whole method table, so this one relation
+    /// is settled up front. It is cheap: `table_name` is a single name.
+    fn carriers_from(&self, rows: &[MethodRow]) -> HashMap<String, Vec<String>> {
+        let mut carriers: HashMap<String, Vec<String>> = HashMap::new();
         for row in rows {
-            let scopes = self.scopes(&row.nesting);
-            // `def Foo.x` names its owner outright; everything else belongs to
-            // the scope it is written in.
-            // `target` means different things depending on how the def arose:
-            // an explicit receiver for `def Foo.x`, the aliased name for an
-            // alias, the table for a `table_name` override. Only the first is
-            // an owner, and only a literal `def` produces one.
-            let owner = match &row.target {
-                Some(target) if row.singleton && row.via.is_none() => self
-                    .resolve_lexical(target, &scopes)
-                    .map(|fqn| self.namespace_of(&fqn))
-                    .unwrap_or_else(|| target.clone()),
-                _ => scopes.first().cloned().unwrap_or_default(),
+            if row.via.as_deref() != Some("table_name") {
+                continue;
+            }
+            let Some(table) = row.target.as_deref() else {
+                continue;
             };
-            let index = self.methods.len();
-            let def = MethodDef {
+            let owner = self.owner_of(row);
+            let carrier = crate::extract::table_to_class(table);
+            if carrier != owner {
+                carriers.entry(carrier).or_default().push(owner);
+            }
+        }
+        carriers
+    }
+
+    /// Index rows into the method tables. Safe to call repeatedly, once per
+    /// name, which is what demand-loading does.
+    fn index_rows(&self, rows: Vec<MethodRow>) {
+        let mut methods = self.methods.borrow_mut();
+        let mut by_owner = self.by_owner.borrow_mut();
+        let mut by_name = self.by_name.borrow_mut();
+        for row in rows {
+            let owner = self.owner_of(&row);
+            let index = methods.len();
+            by_owner
+                .entry((owner.clone(), row.singleton, row.name.clone()))
+                .or_default()
+                .push(index);
+            // The carrier owns the schema's methods but is never *declared*, so
+            // it cannot be an ancestor — an include edge to it would not
+            // resolve. The columns are keyed onto the model instead, and
+            // nothing phantom enters the constant namespace.
+            if let Some(models) = self.carriers.get(&owner) {
+                for model in models {
+                    by_owner
+                        .entry((model.clone(), row.singleton, row.name.clone()))
+                        .or_default()
+                        .push(index);
+                }
+            }
+            by_name.entry(row.name.clone()).or_default().push(index);
+            methods.push(MethodDef {
                 arity: arity_of(&row.params),
-                name: row.name.clone(),
-                owner: owner.clone(),
+                name: row.name,
+                owner,
                 singleton: row.singleton,
                 visibility: row.visibility,
                 via: row.via,
@@ -1256,44 +1345,29 @@ impl Tree {
                     col: row.col,
                     kind: "method".into(),
                 },
-            };
-            self.by_owner
-                .entry((owner.clone(), row.singleton, row.name.clone()))
-                .or_default()
-                .push(index);
-            self.by_name.entry(row.name).or_default().push(index);
-            self.methods.push(def);
-
-            // A model overriding `self.table_name` wants the columns of a table
-            // whose conventional class it is not. Collected here, applied below.
-            if let (Some("table_name"), Some(table)) =
-                (self.methods[index].via.as_deref(), row.target.as_deref())
-            {
-                let carrier = crate::extract::table_to_class(table);
-                if carrier != owner {
-                    overrides.push((owner, carrier));
-                }
-            }
+            });
         }
+    }
 
-        // The carrier owns the schema's methods but is never *declared*, so it
-        // cannot be an ancestor — an include edge to it would not resolve. The
-        // columns belong to the model that uses the table, so they are re-keyed
-        // onto it and nothing phantom enters the constant namespace.
-        for (owner, carrier) in overrides {
-            let moved: Vec<(String, bool, Vec<usize>)> = self
-                .by_owner
-                .iter()
-                .filter(|((who, _, _), _)| who == &carrier)
-                .map(|((_, singleton, name), i)| (name.clone(), *singleton, i.clone()))
-                .collect();
-            for (name, singleton, indexes) in moved {
-                self.by_owner
-                    .entry((owner.clone(), singleton, name))
-                    .or_default()
-                    .extend(indexes);
-            }
+    /// Every method with this name, fetched once.
+    ///
+    /// A tree with no loader was built from rows in hand and already has
+    /// everything it will ever have.
+    fn ensure(&self, name: &str) {
+        let Some(loader) = &self.loader else { return };
+        if !self.loaded.borrow_mut().insert(name.to_string()) {
+            return;
         }
+        if let Ok(rows) = loader.store.methods_named(&loader.roots, name) {
+            self.index_rows(rows);
+        }
+    }
+
+    /// Load every method at once — for a tree built from rows rather than from
+    /// a store.
+    fn add_methods(&mut self, rows: Vec<MethodRow>) {
+        self.carriers = self.carriers_from(&rows);
+        self.index_rows(rows);
     }
 
     /// The chain of `(owner, singleton)` pairs Ruby searches for a method.
@@ -1418,18 +1492,17 @@ impl Tree {
     /// The method a receiver of this type would run: the first owner in the
     /// chain that defines the name. Ruby's own rule, so within the indexed set
     /// this is exact rather than a guess.
-    pub(crate) fn lookup(&self, fqn: &str, singleton: bool, name: &str) -> Option<&MethodDef> {
+    pub(crate) fn lookup(&self, fqn: &str, singleton: bool, name: &str) -> Option<MethodDef> {
+        self.ensure(name);
         let chain = self.lookup_chain(fqn, singleton);
         // Ruby's ancestor order, but real source wins the whole chain before a
         // declaration wins any of it.
         //
         // A committed `sorbet/rbi/` does not merely duplicate methods — it
         // describes them in owners that **do not exist at runtime**
-        // (`Widget::CommonRelationMethods`, `Widget::GeneratedAttributeMethods`),
-        // and those owners sit early in the chain. Preferring real source only
-        // *within* an owner therefore fixed the site and left the stub winning
-        // the lookup outright: `Widget.find` answered from the RBI when Ruby
-        // dispatches to `ActiveRecord::Core::ClassMethods`.
+        // (`Widget::CommonRelationMethods`), and those owners sit early in the
+        // chain. Preferring real source only *within* an owner therefore fixed
+        // the site and left the stub winning the lookup outright.
         //
         // The cost is a genuine override declared *only* in an `.rbi`, which
         // now loses to a real definition further down the chain. Measured, the
@@ -1446,16 +1519,18 @@ impl Tree {
         chain: &[(String, bool)],
         name: &str,
         real_only: bool,
-    ) -> Option<&MethodDef> {
+    ) -> Option<MethodDef> {
+        let by_owner = self.by_owner.borrow();
+        let methods = self.methods.borrow();
         for (owner, owner_singleton) in chain {
             let key = (owner.clone(), *owner_singleton, name.to_string());
-            if let Some(found) = self.by_owner.get(&key).and_then(|hits| {
+            if let Some(found) = by_owner.get(&key).and_then(|hits| {
                 hits.iter().rev().find(|i| {
-                    let method = &self.methods[**i];
+                    let method = &methods[**i];
                     method.is_definition() && !(real_only && method.site.is_rbi())
                 })
             }) {
-                return Some(&self.methods[*found]);
+                return Some(methods[*found].clone());
             }
         }
         None
@@ -1470,13 +1545,17 @@ impl Tree {
     }
 
     /// Every method with this name, anywhere. The candidate pool for residue.
-    pub(crate) fn named(&self, name: &str) -> Vec<&MethodDef> {
-        self.by_name
+    pub(crate) fn named(&self, name: &str) -> Vec<MethodDef> {
+        self.ensure(name);
+        let by_name = self.by_name.borrow();
+        let methods = self.methods.borrow();
+        by_name
             .get(name)
             .map(|hits| {
                 hits.iter()
-                    .map(|i| &self.methods[*i])
+                    .map(|i| &methods[*i])
                     .filter(|m| m.is_definition())
+                    .cloned()
                     .collect()
             })
             .unwrap_or_default()
@@ -1744,6 +1823,16 @@ pub(crate) const CORE_PATH: &str = "<core>";
 /// no source, and Sorbet's own go-to-definition lands you in the generated
 /// file. Landing at the model instead is the point.
 pub(crate) const DSL_RBI: &str = "sorbet/rbi/dsl/";
+
+/// Where a tree gets methods it has not been asked for yet.
+///
+/// Its own connection, so the tree owns everything it needs rather than
+/// borrowing the caller's store for its lifetime — which a cached tree, held
+/// across queries by a resident session, could not do.
+struct Loader {
+    store: Store,
+    roots: Vec<String>,
+}
 
 /// Where a tree build spent its time, when anyone asked.
 ///

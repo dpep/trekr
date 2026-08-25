@@ -17,6 +17,9 @@ use std::path::Path;
 
 pub(crate) struct Store {
     conn: Connection,
+    /// Where this store lives, so a second connection to it can be opened.
+    /// `None` for an in-memory store, which cannot be reached twice.
+    path: Option<std::path::PathBuf>,
 }
 
 /// What one indexing pass did. Every count is honest about *work*, not about
@@ -80,7 +83,21 @@ pub(crate) fn open_default() -> anyhow::Result<Store> {
 
 impl Store {
     pub(crate) fn open(path: &Path) -> Result<Store> {
-        Store::init(Connection::open(path)?)
+        let mut store = Store::init(Connection::open(path)?)?;
+        store.path = Some(path.to_path_buf());
+        Ok(store)
+    }
+
+    /// A second connection to the same database.
+    ///
+    /// `None` for an in-memory store: there is no path to reach it by, and a
+    /// caller that needs its own handle has to fall back to reading everything
+    /// through the one it already holds.
+    pub(crate) fn reopen(&self) -> Result<Option<Store>> {
+        match &self.path {
+            Some(path) => Store::open(path).map(Some),
+            None => Ok(None),
+        }
     }
 
     #[cfg(test)]
@@ -122,7 +139,7 @@ impl Store {
             conn.execute_batch(schema::SCHEMA)?;
             conn.pragma_update(None, "user_version", schema::VERSION)?;
         }
-        Ok(Store { conn })
+        Ok(Store { conn, path: None })
     }
 
     /// Blob OIDs this machine has already read, of the ones asked about.
@@ -337,17 +354,38 @@ impl Store {
     /// Deferred in session 2 because nothing read it; the method ladder is the
     /// consumer that earns it.
     pub(crate) fn methods(&self, roots: &[String]) -> Result<Vec<MethodRow>> {
+        self.method_rows(roots, None)
+    }
+
+    /// Just the methods with this name, for a tree that loads on demand.
+    ///
+    /// The whole point of the demand-loading design: nothing needs all 84,052
+    /// of rails' methods, and `def(name)` is indexed, so one name is a few rows
+    /// instead of a table scan and 137 ms of indexing.
+    pub(crate) fn methods_named(&self, roots: &[String], name: &str) -> Result<Vec<MethodRow>> {
+        self.method_rows(roots, Some(name))
+    }
+
+    fn method_rows(&self, roots: &[String], name: Option<&str>) -> Result<Vec<MethodRow>> {
+        // Insert order is load-bearing: `lookup` takes the last definition, so
+        // a reopened class must arrive after the class it reopens.
+        let filter = if name.is_some() { "AND d.name = ?" } else { "" };
         let mut stmt = self.conn.prepare(&format!(
             "SELECT d.name, d.nesting, d.singleton, d.visibility, d.params, d.via,
                     d.target, d.sig_returns, c.root || '/' || f.path, d.line, d.col
                FROM def d
                JOIN file f ON f.blob_id = d.blob_id
                JOIN checkout c ON c.id = f.checkout_id
-              WHERE c.root IN ({}) AND d.kind = 'method'
+              WHERE c.root IN ({}) AND d.kind = 'method' {filter}
               ORDER BY c.id, f.path, d.line, d.col",
             placeholders(roots.len())
         ))?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(roots), |r| {
+        let mut values: Vec<&dyn rusqlite::ToSql> =
+            roots.iter().map(|r| r as &dyn rusqlite::ToSql).collect();
+        if let Some(name) = name.as_ref() {
+            values.push(name as &dyn rusqlite::ToSql);
+        }
+        let rows = stmt.query_map(values.as_slice(), |r| {
             let params: String = r.get(4)?;
             Ok(MethodRow {
                 name: r.get(0)?,

@@ -202,7 +202,7 @@ fn via_includers(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<Method
     if includers.is_empty() {
         return None;
     }
-    let mut found: Vec<&crate::tree::MethodDef> = Vec::new();
+    let mut found: Vec<crate::tree::MethodDef> = Vec::new();
     for class in &includers {
         if let Some(method) = tree.lookup(class, call.singleton, &call.name) {
             found.push(method);

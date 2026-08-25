@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Methods are loaded on demand, by name.** A tree no longer fetches and
+  indexes every method in the checkout and its gems — 84,052 of them on rails,
+  which was 76 % of the build. It loads the names a query actually asks about.
+  Measured: rails tree build **310 ms → 73 ms**, discourse **643 → 259**; a
+  rails `--def` **0.31 s → 0.09 s**, `--refs` **~0.40 s → 0.13 s**, and the LSP
+  first query **508 ms → 85 ms** (discourse 975 → 272). Accuracy is unchanged —
+  the gold set is identical before and after.
+
 - `tests/testbed/` — ten accumulated corner cases as drop-in fixtures with one
   iterating harness, so adding the next costs no Rust: the ancestor cycle that
   killed the process, a Sorbet stub shadowing real source, resolved-vs-ambiguous

@@ -1,0 +1,13 @@
+# The schema declares `legacy_posts`; the model is called Post. Nothing links
+# them but a literal in the class body, and they live in different blobs — so
+# the join is a tree question.
+#
+# It is also the one relation demand-loading cannot work out lazily: a per-name
+# load never sees the whole method table, so the carrier→model map is settled
+# up front from the `table_name` definitions alone. This case is here because
+# that is the part of the laziness most likely to rot silently.
+#
+# `owner` is the *carrier* (`LegacyPost`), not the model — only the lookup key
+# is re-mapped onto Post. That is long-standing behaviour and arguably wrong to
+# report, since no such class exists; pinned as-is so changing it is a decision.
+def post.rb:7:7 status=resolved owner=LegacyPost via=local:new site=db/schema.rb:1
