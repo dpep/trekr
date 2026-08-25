@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Three new receiver-typing rungs: `sig:param` (a parameter's declared class,
+  from the `params(...)` half of a signature), `literal` (`out = []` is an
+  Array), and `sig:step` (one call on an already-typed local, and only one).
+- A method whose only definition is a Tapioca `sorbet/rbi/dsl/` file now
+  answers with the **model**, not the `.rbi`, and reports `resolved_via:
+  rbi_dsl`.
+- Constants a declaration implies but nothing declares — `ActivityPub` in
+  `class ActivityPub::TagManager`, which Rails' autoloader creates from the
+  directory — now resolve, carrying no sites because nothing declares them.
+- `make bench` gained mastodon and graph_weaver, excludes `sorbet/` from
+  sampling, and splits method residue by whether the ancestor chain was
+  complete. Measured: **0 of 71 chain-truncated call sites resolve**, which
+  confirms the gem hypothesis without needing an installed bundle.
+
 - Measured, after core and gems: **98 % of rails constant references resolve**
   (82 % before this session), 91 % discourse, 84 % CRuby. Method resolution
   reached 38 % on rails from 27 %, all of it from core — gems added nothing

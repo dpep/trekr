@@ -360,16 +360,136 @@ gems are not indexed yet.
 (excluding tests), each asked through `--def` exactly as a caller would, at
 three stages: checkout only, then with core, then with gems.
 
-| corpus | checkout only | + core | + gems |
-|---|---:|---:|---:|
-| rails | 82 % | 92 % | **98 %** |
-| discourse | 78 % | 87 % | 91 % |
-| CRuby | 73 % | 84 % | 84 % |
+| corpus | checkout only | + core | + gems | now |
+|---|---:|---:|---:|---:|
+| rails | 82 % | 92 % | 98 % | **98 %** |
+| graph_weaver | — | — | — | **98 %** |
+| discourse | 78 % | 87 % | 91 % | 91 % |
+| CRuby | 73 % | 84 % | 84 % | 80 % |
+| mastodon | — | — | — | 72 % |
 
 Rails' remaining residue is a single name (`::Rack::Cache::MetaStore`, an
 optional adapter not installed). CRuby did not move on the last step because it
 has no `Gemfile.lock`, and its residue is CRuby-internal (`Primitive`,
 `TOPLEVEL_BINDING`, `WIN32OLE::ARGV`) — things no gem index would supply.
+
+`mastodon` and `CRuby` are the two low numbers and they are low for different
+reasons. Mastodon has only 75 of its 344 locked gems on disk; its figure also
+**predates** the implied-namespace fix below, which was prompted by exactly this
+measurement and is not yet re-run. CRuby's residue is internal
+(`Primitive`, `TOPLEVEL_BINDING`, `WIN32OLE::ARGV`) — nothing a gem index would
+supply — and it moved 84 → 80 % only because excluding `sorbet/` changed which
+rows the sample draws from.
+
+**Discourse is a weak test of the gem step and should be read as one**: its
+bundle was never installed on this machine, so 238 of its gems — the entire
+Rails stack included — are named by the lockfile and absent from disk. The
+index says so (`gems.missing`), and `ActiveRecord::Base` is still in its
+residue.
+
+The resolver did not change across those three columns. The index did — which
+was the whole prediction, and it held.
+
+**How much of real code's method dispatch resolves.** 120 call sites sampled
+per corpus, each asked through `--def`:
+
+| corpus | resolved | chain **complete** | chain **truncated** |
+|---|---:|---:|---:|
+| graph_weaver | 50 % | 50 % (60/120) | — (none) |
+| rails | 39 % | 40 % (47/118) | 0 % (0/2) |
+| CRuby | 33 % | 35 % (40/115) | 0 % (0/5) |
+| discourse | 24 % | 30 % (29/96) | **0 % (0/24)** |
+| mastodon | 20 % | 30 % (24/80) | **0 % (0/40)** |
+
+**The gem hypothesis is confirmed, and no installed bundle was needed to do it.**
+Split every sample by whether the ancestor chain the lookup walked was complete
+— an unresolved ancestor means something the chain needed is not indexed — and
+the result is unambiguous: **0 of 71 chain-truncated call sites resolved, across
+every corpus.** Not one. Mastodon's blended 20 % is a third truncated samples
+and discourse's 24 % a fifth; their chain-complete rates of 30 % are the honest
+comparison, and the blend is exactly the flattering denominator this split
+exists to avoid.
+
+What that leaves is the real ceiling. On rails, where the index is essentially
+complete (2 truncated samples out of 120), resolution is **40 %**. The residue
+there is receiver shapes the ladder cannot type: `local` 28 % and `other` 16 %
+of all samples. Rung contributions on rails: `self` 31 %, `const` 3 %,
+`local:new` 3 %, `includer` 1 %, `literal` 1 %.
+
+**The prediction on record was refuted.** graph_weaver — a Sorbet repo with
+3 620 indexed sig returns — was predicted to move far more than rails on sig
+strength. It is the best corpus at 50 %, but the sig rungs fired **once in 600
+samples** (`sig:param` 1, `sig:step` 0). Its lead comes from `const` receivers
+(18 % — it is a code generator, full of `Foo.bar`) and from having its gems
+installed. DEC-018 records why: those sigs describe its *dependencies*, and its
+own `lib/` has 570 defs with 36 sigs. rwr's 64 % is a property of signatures,
+not coverage of call sites.
+
+The three rungs added this session — `sig:param`, `literal`, `sig:step` —
+contributed 1–4 points each, dominated by `literal`. Useful, and much smaller
+than the diagnosis suggested; the diagnosis found that half of untyped local
+receivers were method parameters, but most of those parameters have no `sig`
+either.
+
+**The tree layer is rebuilt on every invocation, and that is the design.**
+`--refs` needs no tree; `--ancestors` needs a whole one. The gap between them is
+what a full rebuild from SQL costs:
+
+| corpus | rebuild | total for `--ancestors` |
+|---|---:|---:|
+| rails | 202 ms | 212 ms |
+| discourse | 309 ms | 318 ms |
+| CRuby | 116 ms | 126 ms |
+
+**This has now crossed DEC-007's threshold and the decision needs revisiting.**
+The progression is instructive: 43 ms with constants alone, 120 ms once method
+tables arrived, 202 ms once gems did. CRuby stayed at 116 ms because it has no
+gems, which confirms where the cost is — assembling a bigger namespace, not
+querying it. Batching the per-gem queries from 258 down to 3 moved it 233 → 221
+ms, so the round trips were never the problem.
+
+The indicated move is the one DEC-007 named: cache one built tree **per
+process**. That pays for a resident LSP front (PLAN Phase 4) and does nothing
+for a one-shot CLI invocation, which builds it once regardless. So the CLI's
+honest cost for a resolved answer is now ~200–300 ms, and driving it lower is
+Phase 4's problem, not a reason to make the tree incremental.
+
+PLAN §4 said keep the tree cheap to rebuild rather than clever to patch, and
+gated that on a measurement. At well under 100 ms for 11k files there is nothing to
+invalidate incrementally — memoizing per namespace on contributing blob OIDs
+would be paying interest on a debt we do not have (DEC-007). Linearization *is*
+memoized within a single build, because a file's every constant reference asks
+for the chain of the same enclosing class.
+
+Sanity on real code: `--ancestors ActiveRecord::Base` in rails linearizes 40+
+concerns with **nothing unresolved**; `--ancestors Topic` in discourse gets its
+concerns in order and honestly reports `ActiveRecord::Base` unresolved, because
+gems are not indexed yet.
+
+**How much of real code resolves.** 120 constant references sampled per corpus
+(excluding tests), each asked through `--def` exactly as a caller would, at
+three stages: checkout only, then with core, then with gems.
+
+| corpus | checkout only | + core | + gems | now |
+|---|---:|---:|---:|---:|
+| rails | 82 % | 92 % | 98 % | **98 %** |
+| graph_weaver | — | — | — | **98 %** |
+| discourse | 78 % | 87 % | 91 % | 91 % |
+| CRuby | 73 % | 84 % | 84 % | 80 % |
+| mastodon | — | — | — | 72 % |
+
+Rails' remaining residue is a single name (`::Rack::Cache::MetaStore`, an
+optional adapter not installed). CRuby did not move on the last step because it
+has no `Gemfile.lock`, and its residue is CRuby-internal (`Primitive`,
+`TOPLEVEL_BINDING`, `WIN32OLE::ARGV`) — things no gem index would supply.
+
+`mastodon` and `CRuby` are the two low numbers and they are low for different
+reasons. Mastodon has only 75 of its 344 locked gems on disk; its figure also
+**predates** the implied-namespace fix below, which was prompted by exactly this
+measurement and is not yet re-run. CRuby's residue is internal
+(`Primitive`, `TOPLEVEL_BINDING`, `WIN32OLE::ARGV`) — nothing a gem index would
+supply — and it moved 84 → 80 % only because excluding `sorbet/` changed which
+rows the sample draws from.
 
 **Discourse is a weak test of the gem step and should be read as one**: its
 bundle was never installed on this machine, so 238 of its gems — the entire
@@ -469,6 +589,14 @@ Rails' remaining residue is a single name (`::Rack::Cache::MetaStore`, an
 optional adapter not installed). CRuby did not move on the last step because it
 has no `Gemfile.lock`, and its residue is CRuby-internal (`Primitive`,
 `TOPLEVEL_BINDING`, `WIN32OLE::ARGV`) — things no gem index would supply.
+
+`mastodon` and `CRuby` are the two low numbers and they are low for different
+reasons. Mastodon has only 75 of its 344 locked gems on disk; its figure also
+**predates** the implied-namespace fix below, which was prompted by exactly this
+measurement and is not yet re-run. CRuby's residue is internal
+(`Primitive`, `TOPLEVEL_BINDING`, `WIN32OLE::ARGV`) — nothing a gem index would
+supply — and it moved 84 → 80 % only because excluding `sorbet/` changed which
+rows the sample draws from.
 
 **Discourse is a weak test of the gem step and should be read as one**: its
 bundle was never installed on this machine, so 238 of its gems — the entire
