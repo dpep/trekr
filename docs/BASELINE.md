@@ -1490,3 +1490,50 @@ macro expansion table, whose arguments name the methods it implies. One wrinkle
 for whoever takes it: the call sits inside an `included do` block, so the owner
 the extractor records is the concern, while the methods land on every includer's
 **singleton**.
+
+### The distribution after it, and the next candidate — counted properly this time
+
+`script/declined.py` re-run on the post-change store, whole 9,056 app sites:
+
+| | before | after |
+| --- | ---: | ---: |
+| declined app sites | 3,566 | **3,316** |
+| `residue-nothing-known` | 653 | **403** (−38.3 %) |
+| sites whose truth is `callbacks.rb:231`/`:245` | 250 | **0** |
+
+Every other receiver-expression row is unchanged in absolute terms again —
+`chained call` is still the same 364 sites, now 11.0 % of a smaller problem.
+
+What is left in the bucket with no candidate at all is dominated by one thing:
+
+| truth | sites | share of the 403 |
+| ----- | ----- | ---------------- |
+| `site_setting_extension.rb` (three lines) | 274 | **68 %** |
+| `attribute_methods.rb:273` | 85 | 21 % |
+| everything else | 44 | 11 % |
+
+Both are heredoc `class_eval` or a `define_method` over a YAML settings list:
+Rails writes `def #{name}` **inside a Ruby string**, and discourse's site
+settings do not exist until a YAML file is read. Neither is reachable by reading
+`define_method` calls.
+
+**The session-29 candidate, and its number checked the way session 27's was
+not.** ActiveModel's model callbacks — `after_save`, `before_save`,
+`after_destroy` and kin — are **114 declined sites where the truth is never
+named** (offered 0, ranked first 0; 17 of them offer nothing at all). Session
+28's earlier note said 112 from a looser count; 114 is the figure from grouping
+on the truth's file and line, which is the grouping that survived this session.
+
+They are written `klass.define_singleton_method("after_#{callback}")` inside a
+`def`, which this session's three guards correctly reject. What states the names
+is the **call** — `define_model_callbacks :save, :create, :update, :destroy` —
+which is the macro-expansion shape trekr already models for `belongs_to` and
+`enum`. The wrinkle for whoever takes it: that call sits inside an `included do`
+block, so the extractor's recorded owner is the concern while the methods land
+on every includer's singleton.
+
+Checked while in the extractor, and reported so nobody re-checks it: an
+interpolated `attr_reader` / `alias_method` would reach **none** of this
+population. The remaining extraction-shaped gaps are the two above; the rest of
+the declines are plain `def`s that trekr already extracts and offers, which
+makes them typing and ranking problems rather than coverage ones.
