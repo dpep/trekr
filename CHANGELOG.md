@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Real source now wins the **whole ancestor chain** before an `.rbi`
+  declaration wins any of it. Tapioca describes methods in owners that do not
+  exist at runtime (`Widget::CommonRelationMethods`), and those sit early in
+  the chain, so a stub won the lookup outright even after the same-owner rule.
+  `Widget.find` answered from the RBI where Ruby dispatches to
+  `ActiveRecord::Core::ClassMethods`. Measured on a Sorbet-covered app: correct
+  42.9 % → 46.0 %, confidently wrong 7.9 % → 4.8 %.
+
 - A local assigned from an ActiveRecord finder is now typed: `w = Widget.find(id)`
   makes `w` a `Widget`, so calls on it resolve. Reported as `resolved_via:
   finder`, not `sig` — it is a convention, not a declaration, and it is the last

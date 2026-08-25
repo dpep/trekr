@@ -1379,16 +1379,41 @@ impl Tree {
     /// chain that defines the name. Ruby's own rule, so within the indexed set
     /// this is exact rather than a guess.
     pub(crate) fn lookup(&self, fqn: &str, singleton: bool, name: &str) -> Option<&MethodDef> {
-        for (owner, owner_singleton) in self.lookup_chain(fqn, singleton) {
-            let key = (owner, owner_singleton, name.to_string());
+        let chain = self.lookup_chain(fqn, singleton);
+        // Ruby's ancestor order, but real source wins the whole chain before a
+        // declaration wins any of it.
+        //
+        // A committed `sorbet/rbi/` does not merely duplicate methods — it
+        // describes them in owners that **do not exist at runtime**
+        // (`Widget::CommonRelationMethods`, `Widget::GeneratedAttributeMethods`),
+        // and those owners sit early in the chain. Preferring real source only
+        // *within* an owner therefore fixed the site and left the stub winning
+        // the lookup outright: `Widget.find` answered from the RBI when Ruby
+        // dispatches to `ActiveRecord::Core::ClassMethods`.
+        //
+        // The cost is a genuine override declared *only* in an `.rbi`, which
+        // now loses to a real definition further down the chain. Measured, the
+        // shadow case dominates that one, and residue candidates still
+        // disclose the alternative.
+        self.first_in_chain(&chain, name, true)
+            .or_else(|| self.first_in_chain(&chain, name, false))
+    }
+
+    /// The first definition of `name` along `chain`; `real_only` skips `.rbi`
+    /// declarations entirely.
+    fn first_in_chain(
+        &self,
+        chain: &[(String, bool)],
+        name: &str,
+        real_only: bool,
+    ) -> Option<&MethodDef> {
+        for (owner, owner_singleton) in chain {
+            let key = (owner.clone(), *owner_singleton, name.to_string());
             if let Some(found) = self.by_owner.get(&key).and_then(|hits| {
-                let definition = |i: &&usize| self.methods[**i].is_definition();
-                // Real source before a stub at the same owner; the stub only
-                // when it is all there is.
-                hits.iter()
-                    .rev()
-                    .find(|i| definition(i) && !self.methods[**i].site.is_rbi())
-                    .or_else(|| hits.iter().rev().find(definition))
+                hits.iter().rev().find(|i| {
+                    let method = &self.methods[**i];
+                    method.is_definition() && !(real_only && method.site.is_rbi())
+                })
             }) {
                 return Some(&self.methods[*found]);
             }
@@ -1785,6 +1810,51 @@ mod rbi_preference_tests {
         assert_eq!(
             found.site.path, "/gems/activerecord/lib/persistence.rb",
             "the implementation, not the declaration"
+        );
+    }
+
+    /// Tapioca describes methods in owners that do not exist at runtime, and
+    /// those owners sit *early* in the chain. Preferring real source only
+    /// within one owner left the stub winning the lookup outright.
+    #[test]
+    fn a_stub_owner_does_not_beat_real_source_further_down_the_chain() {
+        let mut tree = Tree::assemble(
+            vec![
+                DeclRow {
+                    name: "Base".into(),
+                    kind: "class".into(),
+                    nesting: Vec::new(),
+                    target: None,
+                    path: "/gems/ar/lib/base.rb".into(),
+                    line: 1,
+                    col: 1,
+                },
+                DeclRow {
+                    name: "Widget".into(),
+                    kind: "class".into(),
+                    nesting: Vec::new(),
+                    target: Some("Base".into()),
+                    path: "/app/widget.rb".into(),
+                    line: 1,
+                    col: 1,
+                },
+            ],
+            vec![EdgeRow {
+                owner: vec!["Widget".into()],
+                relation: "superclass".into(),
+                target: "Base".into(),
+            }],
+        );
+        tree.add_methods(vec![
+            // The real implementation, on the superclass.
+            method("Base", "find", "/gems/ar/lib/core.rb"),
+            // The stub, on the class itself — earlier in the chain.
+            method("Widget", "find", "/app/sorbet/rbi/dsl/widget.rbi"),
+        ]);
+        let found = tree.lookup("Widget", false, "find").expect("found");
+        assert_eq!(
+            found.site.path, "/gems/ar/lib/core.rb",
+            "the implementation, even though the declaration is nearer"
         );
     }
 

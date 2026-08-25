@@ -414,9 +414,12 @@ committed RBIs introduce a **shadow namespace** that competes with real code:
 * `after_save` and two `self.class`-chained `id` calls find no name with sigs
   on and resolve without them.
 
-DEC-019's rule (session 13) prefers real source over a stub **at the same
-owner**. It does not help when the RBI invents an owner that does not exist at
-runtime and that owner sits earlier in the lookup chain.
+DEC-019's rule (session 13) preferred real source over a stub **at the same
+owner**. It did not help when the RBI invents an owner that does not exist at
+runtime and that owner sits earlier in the lookup chain — so the rule was
+extended to span the chain (DEC-019 update). With that in, the sigs-ON column
+becomes **46.0 % correct / 4.8 % wrong / 60.3 % found**, closing half the gap;
+the table above is the state that motivated the change.
 
 **Both columns matter.** The target monorepo is roughly 30 % Sorbet-covered, so
 neither column is "the" number: sigs-off is the common case, sigs-on is the

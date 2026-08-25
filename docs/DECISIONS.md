@@ -479,6 +479,34 @@ sitting beside it.
 confidently wrong 32 % → **8 %**. Of plain (non-Rails-generated) methods:
 correct 27 % → **60 %**, found-the-definition 47 % → **80 %**.
 
+**Update (the stub owns the chain, not just the site).** The sigs-on/sigs-off
+experiment showed the rule above was only half of it. Preferring real source
+*within* an owner fixed which file a method pointed at; it did nothing about
+Tapioca describing methods in owners that **do not exist at runtime** —
+`Widget::CommonRelationMethods`, `Widget::GeneratedAttributeMethods` — which
+sit early in the ancestor chain and so win the lookup outright. `Widget.find`
+answered from the RBI while Ruby dispatches to
+`ActiveRecord::Core::ClassMethods`.
+
+The rule now spans the chain: **real source wins the whole chain before a
+declaration wins any of it.** Ruby's ancestor order is walked twice, the first
+pass skipping `.rbi` declarations entirely, the second admitting them — so a
+stub is still the answer when nothing real defines the name anywhere.
+
+**The cost, stated plainly:** a genuine override declared *only* in an `.rbi`
+now loses to a real definition further down the chain. That is a real
+regression class, accepted because the measurement says the shadow case
+dominates it and because residue candidates still disclose the alternative.
+
+**Measured** on widget_shop with sigs on, 63 app sites: correct 42.9 % →
+**46.0 %**, confidently wrong 7.9 % → **4.8 %**. That closes half the gap to the
+sigs-off column (49.2 %), which is the same app with `sorbet/` deleted.
+
+**Reverses if** a corpus appears where `.rbi`-only overrides are common and
+correct — hand-written `sorbet/rbi/shims/` rather than generated `dsl/` and
+`gems/` would be the shape to watch, since a shim exists precisely to say
+something the source does not.
+
 ## DEC-020 — Chained receivers are not attacked; 40 % typed plus ranked residue is the product
 
 **Decided.** The `other` receiver bucket — chained calls, literals-as-receivers,
