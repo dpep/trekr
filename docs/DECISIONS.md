@@ -119,6 +119,31 @@ either way. What has changed is that a resident front is no longer optional if
 sub-100 ms answers are wanted: that is PLAN Phase 4's job, and it is now on the
 critical path rather than a nicety.
 
+**Update (the resident front, measured).** The named remedy — "caching one built
+tree per process" — is now deployed and does its job, so the decision **stands**
+and the reverses-if is spent rather than triggered. One `--serve` session,
+release build, client rooted at an unrelated repo, `goToDefinition` repeated:
+
+| checkout  | first request | every one after |
+| --------- | ------------- | --------------- |
+| rails     | 508 ms        | 0.21–0.35 ms    |
+| discourse | 975 ms        | 0.49–0.66 ms    |
+
+End-to-end per request, from the serve log, so the tree build is the bulk of the
+first number and nothing but parse-and-resolve is in the rest. A session holds a
+tree per checkout (DEC-024), and returning to rails after discourse's build was
+still 0.23 ms — the memo holds both, it does not thrash. The staleness re-check
+(schema version + file count, two queries per request) is inside those warm
+numbers, so it is not worth avoiding.
+
+What this does **not** fix is the cold first query, now 0.5–1.0 s per checkout,
+and the CLI, which pays a fresh build on every invocation — 0.31 s for a rails
+`--def`, 0.67 s for discourse, end to end. Both are the same unpaid bill:
+nothing persists an assembled tree between processes. Incremental *patching* is
+still the wrong answer to it; persisting or lazily assembling one is the
+question worth opening, and only if the cold second matters more than the
+staleness class it would reintroduce.
+
 ## DEC-008 — Constant confidence is 1 or 0, and the doubt is reported separately
 
 **Decided.** A resolved constant carries `confidence: 1.0`, a residue `0.0`.
