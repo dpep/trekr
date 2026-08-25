@@ -47,11 +47,16 @@ pub(crate) struct SlowFile {
 const SLOWEST: usize = 5;
 
 impl Profile {
+    /// Accumulate into the named phase rather than appending a second one.
+    ///
+    /// Indexing gems runs the same phases once per gem; without this a cold
+    /// run on rails reports 258 entries instead of four.
     pub(crate) fn phase(&mut self, name: &'static str, elapsed: Duration) {
-        self.phases.push(Phase {
-            name,
-            ms: elapsed.as_secs_f64() * 1000.0,
-        });
+        let ms = elapsed.as_secs_f64() * 1000.0;
+        match self.phases.iter_mut().find(|phase| phase.name == name) {
+            Some(phase) => phase.ms += ms,
+            None => self.phases.push(Phase { name, ms }),
+        }
     }
 
     /// Keep only the worst few, so a 100k-file index does not accumulate a
@@ -153,6 +158,15 @@ pub(crate) fn timed<T>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_phase_seen_twice_accumulates_rather_than_repeating() {
+        let mut profile = Profile::default();
+        profile.phase("parse", Duration::from_millis(10));
+        profile.phase("parse", Duration::from_millis(5));
+        assert_eq!(profile.phases.len(), 1);
+        assert_eq!(profile.phases[0].ms, 15.0);
+    }
 
     #[test]
     fn keeps_only_the_slowest_files() {

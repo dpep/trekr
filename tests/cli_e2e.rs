@@ -209,7 +209,7 @@ fn profile_reports_on_stderr_so_stdout_stays_the_answer() {
         .collect();
     assert_eq!(
         phases,
-        ["scan", "known-diff", "parse", "store-write"],
+        ["scan", "known-diff", "parse", "store-write", "gem-scan"],
         "field names stay stable — a caller graphs these"
     );
     assert_eq!(timings["parsed"], 1);

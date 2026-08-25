@@ -263,7 +263,9 @@ fn index_gems(
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
 ) -> anyhow::Result<GemReport> {
-    let located = crate::gems::for_checkout(repo);
+    // Reading the lockfile and stat-ing ~200 conventional paths. Small, but it
+    // happens on every index including a no-op, so it is worth naming.
+    let located = profile::timed(profile, "gem-scan", || crate::gems::for_checkout(repo));
     let mut report = GemReport::default();
     for entry in located {
         let Some(gem_root) = entry.root else {
