@@ -1187,13 +1187,28 @@ fn serve_retires_when_its_binary_is_replaced() {
         "the in-flight request is answered"
     );
 
-    session.stdin.take();
-    let status = session.child.wait().expect("it exits on its own");
+    // Wait **without** closing stdin. Closing it makes any server exit, so a
+    // test that closes first cannot tell retirement from ordinary shutdown —
+    // and this one did not, which is how a retirement that logged its event
+    // and then hung forever passed for two sessions. An editor holds stdin
+    // open, so this is also the real situation.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    let status = loop {
+        match session.child.try_wait().expect("poll the child") {
+            Some(status) => break status,
+            None if std::time::Instant::now() > deadline => {
+                let _ = session.child.kill();
+                panic!("the server never exited: it logged retirement and kept running");
+            }
+            None => std::thread::sleep(std::time::Duration::from_millis(50)),
+        }
+    };
     assert!(status.success(), "and cleanly: {status:?}");
     assert!(
         log_lines(&db).iter().any(|l| l["event"] == "retire"),
         "and says why, so --usage can count restarts"
     );
+    session.stdin.take();
 
     let _ = fs::remove_dir_all(&dir);
 }

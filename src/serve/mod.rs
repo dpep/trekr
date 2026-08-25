@@ -122,6 +122,7 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<()> {
                             "path": built.path.to_string_lossy(),
                         }),
                     );
+                    stop_reading();
                     break;
                 }
             }
@@ -143,6 +144,26 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Stop the reader thread, so a server that has decided to retire can actually
+/// leave.
+///
+/// Breaking out of the loop is not enough. `IoThreads::join` waits for
+/// lsp_server's reader, which is parked in a blocking read on stdin — and an
+/// editor holds stdin open for as long as it is running. The process would sit
+/// there having logged `retire`, still holding the old build: exactly the
+/// symptom retirement was written to remove, now with a log line claiming it
+/// had worked.
+///
+/// Closing the descriptor turns that blocking read into EOF. It is done here,
+/// while the connection is still alive, so the reader can finish its handoff
+/// instead of pushing into a channel whose receiver has gone — which is how
+/// this exited with "sending on a disconnected channel" and status 2.
+fn stop_reading() {
+    // Safe in the sense that matters: nothing else in this process reads stdin,
+    // and we are on our way out.
+    unsafe { libc::close(libc::STDIN_FILENO) };
 }
 
 /// The executable this process is running, and when it was written.

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Fixed: retirement detected a replaced binary and then never left.** Breaking
+  out of the request loop is not enough — `IoThreads::join` waits for the reader
+  thread, which is parked in a blocking read on stdin, and an editor holds stdin
+  open for as long as it is running. The server sat there having logged
+  `retire`, still holding the old build: the exact symptom retirement was
+  written to remove, now with a log line claiming it had worked. It closes the
+  descriptor before leaving, which turns that read into EOF.
+
 - `--def --context CHECKOUT` answers a position as if asked from that checkout.
   Only meaningful inside a **gem**, which is otherwise answered from whichever
   app most recently indexed it — a pick that follows your work, which is right
