@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- `owner` now names where Ruby's lookup actually landed. A method reached
+  through a `self.table_name` override reported the *carrier* class the
+  convention invents (`LegacyPost`) — a name no code declares and no agent can
+  look up. It reports the model. For every other method the two were already
+  the same.
+
 - `--serve` retires itself when its binary is replaced. After each request it
   checks whether the executable on disk is newer than the one it is running;
   if so it finishes the answer, logs a `retire` event and exits cleanly, so the

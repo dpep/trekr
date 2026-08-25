@@ -7,7 +7,7 @@
 # up front from the `table_name` definitions alone. This case is here because
 # that is the part of the laziness most likely to rot silently.
 #
-# `owner` is the *carrier* (`LegacyPost`), not the model — only the lookup key
-# is re-mapped onto Post. That is long-standing behaviour and arguably wrong to
-# report, since no such class exists; pinned as-is so changing it is a decision.
-def post.rb:7:7 status=resolved owner=LegacyPost via=local:new site=db/schema.rb:1
+# `owner` is the model, because that is where Ruby's lookup lands. It used to
+# report the *carrier* (`LegacyPost`) — the class the table-name convention
+# invented, which no code declares and no agent can look up.
+def post.rb:7:7 status=resolved owner=Post via=local:new site=db/schema.rb:1

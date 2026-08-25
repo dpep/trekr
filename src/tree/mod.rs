@@ -1530,7 +1530,16 @@ impl Tree {
                     method.is_definition() && !(real_only && method.site.is_rbi())
                 })
             }) {
-                return Some(methods[*found].clone());
+                let mut method = methods[*found].clone();
+                // Report where the *lookup* landed, which is Ruby's own
+                // `defined_class`. For an ordinary inherited method that is
+                // already the stored owner; it differs only for a method
+                // re-keyed onto a model by a `self.table_name` override, where
+                // the stored owner is the carrier class the convention
+                // invented — a name no code declares and an agent cannot look
+                // up (DEC-022).
+                method.owner = owner.clone();
+                return Some(method);
             }
         }
         None
