@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- A local assigned from an ActiveRecord finder is now typed: `w = Widget.find(id)`
+  makes `w` a `Widget`, so calls on it resolve. Reported as `resolved_via:
+  finder`, not `sig` — it is a convention, not a declaration, and it is the last
+  rung tried. `where`/`all`/`order` are excluded: they answer with a relation.
+  Measured across rails, discourse and mastodon: 4,333 assignments of this shape
+  would newly type **12,005 call sites**, about half the reach of the `.new`
+  rung already shipped.
+
 - An `.rbi` is a declaration, never an implementation: a method with real
   source and a Sorbet stub now answers with the source. An app that commits
   `sorbet/rbi/gems/` holds a stub for every gem method it calls, and those beat

@@ -380,11 +380,47 @@ fn type_of(
         }
         ValueShape::ConstCall { recv, name } => {
             let owner = tree.resolve(recv, nesting).fqn?;
-            let returns = tree.lookup(&owner, true, name)?.sig_returns.clone()?;
-            Some((tree.resolve(&returns, nesting).fqn?, false, "sig"))
+            // A declared return type is better evidence than a convention, so
+            // it is tried first.
+            if let Some(returns) = tree
+                .lookup(&owner, true, name)
+                .and_then(|m| m.sig_returns.clone())
+            {
+                return Some((tree.resolve(&returns, nesting).fqn?, false, "sig"));
+            }
+            // ActiveRecord's finders return an instance of the class they are
+            // called on. This is a convention, not a signature — `find` given
+            // an array returns an array — so it is the last rung tried and it
+            // says `finder`, not `sig`.
+            is_finder(name).then_some((owner, false, "finder"))
         }
         ValueShape::Other => None,
     }
+}
+
+/// The ActiveRecord class methods that answer with one instance of the class.
+///
+/// Deliberately not `where`, `all` or `order`, which answer with a relation,
+/// and not `find_each`, which yields. Measured across rails, discourse and
+/// mastodon: 4,333 assignments of this shape would newly type **12,005 call
+/// sites** — about half the reach of the `.new` rung already shipped, which is
+/// what earned this one.
+fn is_finder(name: &str) -> bool {
+    matches!(
+        name,
+        "find"
+            | "find_by"
+            | "find_by!"
+            | "first"
+            | "first!"
+            | "last"
+            | "last!"
+            | "create"
+            | "create!"
+            | "find_or_create_by"
+            | "find_or_create_by!"
+            | "find_or_initialize_by"
+    )
 }
 
 /// An honest no, with the candidates ordered by evidence a reader can check.
@@ -492,7 +528,7 @@ mod tests {
     use super::*;
 
     /// Resolve the first call to `name` in this source.
-    fn answer(source: &str, name: &str) -> MethodAnswer {
+    pub(super) fn answer(source: &str, name: &str) -> MethodAnswer {
         let tree = crate::tree::for_test(&[("a.rb", source)]);
         let facts = crate::extract::extract(source.as_bytes());
         let call = facts
@@ -1017,5 +1053,40 @@ mod tests {
     fn an_assignment_cycle_stops_instead_of_spinning() {
         let source = "class W\n  def go\n    x = y\n    y = x\n    x.anything\n  end\nend\n";
         assert_eq!(answer(source, "anything").status, Status::Residue);
+    }
+}
+
+#[cfg(test)]
+mod finder_rung_tests {
+    use super::*;
+
+    /// A local assigned from an ActiveRecord finder holds an instance of the
+    /// class the finder was called on, so calls on it resolve.
+    #[test]
+    fn a_finder_types_the_local_it_is_assigned_to() {
+        let answer = super::tests::answer(
+            "class Widget\n  def ship\n  end\nend\n\
+             class Job\n  def run\n    w = Widget.find(1)\n    w.ship\n  end\nend\n",
+            "ship",
+        );
+        assert_eq!(answer.status, Status::Resolved);
+        assert_eq!(answer.owner.as_deref(), Some("Widget"));
+        assert_eq!(
+            answer.resolved_via.as_deref(),
+            Some("finder"),
+            "and it names the rung, because a convention is weaker than a sig"
+        );
+    }
+
+    /// `where` and `all` answer with a relation, not an instance. Typing them
+    /// as the model would be confidently wrong on every chained call.
+    #[test]
+    fn a_relation_returning_class_method_is_not_a_finder() {
+        for method in ["where", "all", "order", "find_each"] {
+            assert!(!is_finder(method), "{method} does not answer with one row");
+        }
+        for method in ["find", "find_by", "first", "create!"] {
+            assert!(is_finder(method), "{method} does");
+        }
     }
 }

@@ -362,3 +362,21 @@ Every app-code miss that remains: `find` / `find_by` / the enum scope
 where runtime truth says `ActiveRecord::Core::ClassMethods` (the AR-finder
 shape); `after_save` and two `id` calls inside `included do` and `self.class`
 chains find no name; `count` and `quantity` stay residue.
+
+
+### Why the finder rung does not show up in these numbers
+
+The AR-finder rung (`w = Widget.find(id)` types `w`) moved the gold set by
+**zero**, and that is not evidence against it. widget_shop is Tapioca-equipped:
+`sorbet/rbi/dsl/widget.rbi` declares that `Widget.find` returns `::Widget`, so
+the `sig` rung already typed every one of these locals — `--def` reports
+`via=sig` on exactly the sites the new rung was built for.
+
+So this corpus cannot measure the rung, and the corpus measurement is the
+evidence that stands: across rails, discourse and mastodon — none of which use
+Sorbet — 4,333 finder assignments would newly type **12,005 call sites**.
+
+The general lesson for the gold set: a Sorbet-equipped app measures a *more
+favourable* engine than most Rails apps, because signatures do work the
+receiver ladder would otherwise have to. A second corpus without RBIs would
+measure the common case.
