@@ -285,6 +285,61 @@ fn jobs_comes_from_the_flag_then_the_environment_then_the_machine() {
 }
 
 #[test]
+fn a_gem_is_indexed_once_and_a_missing_one_is_reported() {
+    let (dir, db) = scratch("gems");
+    repo(&dir);
+
+    // A vendored gem, exactly where bundler would put it, plus one the
+    // lockfile names and disk does not have.
+    let gem = dir.join("vendor/bundle/ruby/3.3.0/gems/widget-0.1.0/lib");
+    fs::create_dir_all(&gem).unwrap();
+    fs::write(
+        gem.join("widget.rb"),
+        "module Widget\n  def helpers\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("Gemfile.lock"),
+        // One line per entry: indentation is the whole grammar here, and a
+        // `\` continuation is exactly what `cargo fmt` reflows.
+        concat!(
+            "GEM\n",
+            "  remote: https://rubygems.org/\n",
+            "  specs:\n",
+            "    widget (0.1.0)\n",
+            "    absent (9.9.9)\n",
+            "\n",
+            "DEPENDENCIES\n",
+            "  widget\n",
+        ),
+    )
+    .unwrap();
+
+    let first = json(&trekr(&db, &dir, &["--index", "--json"]));
+    assert_eq!(first["gems"]["found"], 1);
+    assert_eq!(first["gems"]["indexed"], 1);
+    assert_eq!(
+        first["gems"]["missing"].as_array().unwrap(),
+        &vec!["absent 9.9.9"],
+        "a named-but-unlocated gem is a reported hole, not a silent absence"
+    );
+
+    // A gem's bytes never change, so a second run reads it again for nothing.
+    let again = json(&trekr(&db, &dir, &["--index", "--json"]));
+    assert_eq!(again["gems"]["indexed"], 0);
+    assert_eq!(again["gems"]["already_indexed"], 1);
+
+    // And the gem's code answers queries in the project.
+    let answer = json(&trekr(&db, &dir, &["--ancestors", "Widget", "--json"]));
+    assert_eq!(answer["status"], "resolved");
+
+    let skipped = json(&trekr(&db, &dir, &["--index", "--json", "--no-gems"]));
+    assert_eq!(skipped["gems"]["found"], 0, "--no-gems does not look");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn every_command_speaks_ndjson_as_well_as_json() {
     let (dir, db) = scratch("ndjson");
     repo(&dir);

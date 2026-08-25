@@ -142,9 +142,73 @@ pub(crate) fn scan(root: &Path) -> Result<Files> {
     Ok(files)
 }
 
+/// Every Ruby file under a directory, hashed the way git would.
+///
+/// This is DEC-001's exception, and it earns it: a gem is not a git checkout,
+/// but its bytes never change, so hashing them once per machine is the cheapest
+/// case the blob store has. A project checkout still goes through `scan`,
+/// because git already knows every OID and re-hashing 100k files to learn what
+/// git could have told us is the cost this design exists to avoid.
+pub(crate) fn walk(root: &Path, subdir: &str) -> Files {
+    let mut files = Files::new();
+    let start = root.join(subdir);
+    let mut stack = vec![start];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else {
+                continue;
+            };
+            if kind.is_dir() {
+                // Symlinked directories are how a walk turns into a cycle.
+                if !kind.is_symlink() {
+                    stack.push(path);
+                }
+                continue;
+            }
+            let Some(relative) = path.strip_prefix(root).ok().map(|p| p.to_string_lossy()) else {
+                continue;
+            };
+            if !is_ruby(&relative) {
+                continue;
+            }
+            if let Ok(bytes) = std::fs::read(&path) {
+                files.insert(relative.into_owned(), hash_blob(&bytes));
+            }
+        }
+    }
+    files
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn walks_a_plain_directory_and_skips_what_is_not_ruby() {
+        let temp = std::env::temp_dir().join(format!("trekr-walk-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(temp.join("lib/deep")).unwrap();
+        std::fs::create_dir_all(temp.join("test")).unwrap();
+        std::fs::write(temp.join("lib/a.rb"), "class A; end\n").unwrap();
+        std::fs::write(temp.join("lib/deep/b.rb"), "class B; end\n").unwrap();
+        std::fs::write(temp.join("lib/README.md"), "no\n").unwrap();
+        std::fs::write(temp.join("test/c.rb"), "class C; end\n").unwrap();
+
+        let files = walk(&temp, "lib");
+        let mut paths: Vec<&String> = files.keys().collect();
+        paths.sort();
+        assert_eq!(
+            paths,
+            ["lib/a.rb", "lib/deep/b.rb"],
+            "recursive, Ruby only, and scoped to the subdirectory asked for"
+        );
+        assert_eq!(files["lib/a.rb"], hash_blob(b"class A; end\n"));
+        let _ = std::fs::remove_dir_all(&temp);
+    }
 
     #[test]
     fn hashes_a_blob_the_way_git_does() {

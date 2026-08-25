@@ -342,6 +342,18 @@ impl Store {
         rows.collect()
     }
 
+    /// Has this root been indexed before?
+    ///
+    /// For a gem this is the whole incremental story: a gem's bytes never
+    /// change, so having seen it once is having seen it.
+    pub(crate) fn has_checkout(&self, root: &str) -> Result<bool> {
+        self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM checkout WHERE root = ?1)",
+            params![root],
+            |r| r.get::<_, i64>(0).map(|n| n != 0),
+        )
+    }
+
     /// Forget a checkout's file map. Its blobs stay: another worktree may
     /// share them, and re-reading bytes we have already parsed is the one cost
     /// this design exists to avoid.

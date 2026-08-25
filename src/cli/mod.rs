@@ -67,6 +67,12 @@ struct Cli {
     #[arg(long, value_name = "N", env = "TREKR_JOBS", default_value_t = 0)]
     jobs: usize,
 
+    /// Skip the checkout's gems. They are indexed once per machine and shared
+    /// by every project that resolves the same version, so the cost is paid
+    /// once — but it is paid.
+    #[arg(long)]
+    no_gems: bool,
+
     /// Report where the index time went, on stderr. Structured when `--json`.
     #[arg(long)]
     profile: bool,
@@ -98,7 +104,7 @@ pub fn run() -> ExitCode {
     };
 
     let result = if let Some(path) = &cli.index {
-        cmd_index(out, path, cli.jobs, cli.profile)
+        cmd_index(out, path, cli.jobs, cli.profile, !cli.no_gems)
     } else if let Some(path) = &cli.symbols {
         cmd_symbols(out, path)
     } else if let Some(name) = &cli.refs {
@@ -176,42 +182,36 @@ fn worker_count(requested: usize) -> usize {
     num_cpus::get_physical().max(1)
 }
 
-fn cmd_index(
-    out: Output,
-    path: &Path,
-    jobs: usize,
-    want_profile: bool,
-) -> anyhow::Result<ExitCode> {
-    let mut profile = want_profile.then(profile::Profile::default);
-    let jobs = worker_count(jobs);
-    if let Some(profile) = profile.as_mut() {
-        profile.jobs = jobs;
-    }
-
-    let root = scan::repo_root(path)?;
-    let root_str = root.to_string_lossy().into_owned();
-    let files = profile::timed(&mut profile, "scan", || scan::scan(&root))?;
-
-    let mut store = open_store()?;
+/// Parse whatever is new in `files` and record the map under `root`.
+///
+/// Shared by a checkout and a gem: the two differ only in how their file list
+/// was produced, which is the whole point of `scan` owning that question.
+fn index_files(
+    store: &mut Store,
+    root: &Path,
+    root_str: &str,
+    files: &scan::Files,
+    pool: &rayon::ThreadPool,
+    profile: &mut Option<profile::Profile>,
+) -> anyhow::Result<crate::store::Indexed> {
     let wanted: HashSet<Oid> = files.values().cloned().collect();
-    let known = profile::timed(&mut profile, "known-diff", || store.known(&wanted))?;
+    let known = profile::timed(profile, "known-diff", || store.known(&wanted))?;
 
     // One path per unknown blob: identical content under two names is one
     // parse, and which name it was read from cannot matter.
     let mut to_parse: HashMap<&Oid, PathBuf> = HashMap::new();
-    for (rel, oid) in &files {
+    for (rel, oid) in files {
         if !known.contains(oid) {
             to_parse.entry(oid).or_insert_with(|| root.join(rel));
         }
     }
     if let Some(profile) = profile.as_mut() {
-        profile.blobs = wanted.len();
-        profile.parsed = to_parse.len();
-        profile.skipped = wanted.len() - to_parse.len();
+        profile.blobs += wanted.len();
+        profile.parsed += to_parse.len();
+        profile.skipped += wanted.len() - to_parse.len();
     }
 
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
-    let parsed: Vec<(Oid, extract::Parsed)> = profile::timed(&mut profile, "parse", || {
+    let parsed: Vec<(Oid, extract::Parsed)> = profile::timed(profile, "parse", || {
         pool.install(|| {
             to_parse
                 .into_par_iter()
@@ -234,7 +234,7 @@ fn cmd_index(
     });
 
     if let Some(profile) = profile.as_mut() {
-        profile.bytes = parsed.iter().map(|(_, p)| p.bytes).sum();
+        profile.bytes += parsed.iter().map(|(_, p)| p.bytes).sum::<u64>();
         let slow = parsed
             .iter()
             .map(|(_, p)| profile::SlowFile {
@@ -247,9 +247,93 @@ fn cmd_index(
     }
 
     let facts: Vec<_> = parsed.into_iter().map(|(oid, p)| (oid, p.facts)).collect();
-    let counts = profile::timed(&mut profile, "store-write", || {
-        store.write(&root_str, &files, facts)
-    })?;
+    Ok(profile::timed(profile, "store-write", || {
+        store.write(root_str, files, facts)
+    })?)
+}
+
+/// Index the gems this checkout resolves, skipping any already on this machine.
+///
+/// Returns the gems the lockfile named but disk did not have. A named-but-
+/// unlocated gem is a hole in every answer that would have come from it, so it
+/// is reported rather than silently absent.
+fn index_gems(
+    store: &mut Store,
+    repo: &Path,
+    pool: &rayon::ThreadPool,
+    profile: &mut Option<profile::Profile>,
+) -> anyhow::Result<GemReport> {
+    let located = crate::gems::for_checkout(repo);
+    let mut report = GemReport::default();
+    for entry in located {
+        let Some(gem_root) = entry.root else {
+            if entry.is_hole() {
+                report
+                    .missing
+                    .push(format!("{} {}", entry.gem.name, entry.gem.version));
+            }
+            continue;
+        };
+        report.found += 1;
+        let root_str = gem_root.to_string_lossy().into_owned();
+        if store.has_checkout(&root_str)? {
+            report.already_indexed += 1;
+            continue;
+        }
+        // Only `lib/`: it is where a gem's public code lives, and a gem's
+        // spec/ and test/ trees are large and never navigated to.
+        let files = scan::walk(&gem_root, "lib");
+        if files.is_empty() {
+            continue;
+        }
+        let counts = index_files(store, &gem_root, &root_str, &files, pool, profile)?;
+        report.indexed += 1;
+        report.files += counts.files;
+    }
+    Ok(report)
+}
+
+#[derive(Debug, Default, serde::Serialize)]
+struct GemReport {
+    /// Named by the lockfile and present on disk.
+    found: usize,
+    /// Read for the first time on this machine.
+    indexed: usize,
+    /// Already known — the shared case, and the reason this is cheap.
+    already_indexed: usize,
+    files: usize,
+    /// Named by the lockfile and not found. A visible hole, not an absence.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    missing: Vec<String>,
+}
+
+fn cmd_index(
+    out: Output,
+    path: &Path,
+    jobs: usize,
+    want_profile: bool,
+    with_gems: bool,
+) -> anyhow::Result<ExitCode> {
+    let mut profile = want_profile.then(profile::Profile::default);
+    let jobs = worker_count(jobs);
+    if let Some(profile) = profile.as_mut() {
+        profile.jobs = jobs;
+    }
+
+    let root = scan::repo_root(path)?;
+    let root_str = root.to_string_lossy().into_owned();
+    let files = profile::timed(&mut profile, "scan", || scan::scan(&root))?;
+
+    let mut store = open_store()?;
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
+    let counts = index_files(&mut store, &root, &root_str, &files, &pool, &mut profile)?;
+
+    let gems = if with_gems {
+        index_gems(&mut store, &root, &pool, &mut profile)?
+    } else {
+        GemReport::default()
+    };
+
     match out {
         Output::Text => println!(
             "indexed {} — {} files, {} blobs, {} parsed ({} defs, {} refs, {} calls)",
@@ -263,8 +347,33 @@ fn cmd_index(
         ),
         _ => emit_json(
             out,
-            &serde_json::json!({ "repo": root_str, "indexed": counts }),
+            &serde_json::json!({ "repo": root_str, "indexed": counts, "gems": gems }),
         )?,
+    }
+    if out == Output::Text && (gems.found > 0 || !gems.missing.is_empty()) {
+        println!(
+            "gems — {} resolved, {} newly indexed ({} files), {} already known",
+            gems.found, gems.indexed, gems.files, gems.already_indexed
+        );
+        if !gems.missing.is_empty() {
+            // A hole in the index, said out loud: every answer that would have
+            // come from these gems is a residue with no reason attached. The
+            // full list is in `--json`; a lockfile naming every optional
+            // adapter would otherwise bury the report.
+            const SHOWN: usize = 6;
+            let shown = gems.missing.iter().take(SHOWN).cloned().collect::<Vec<_>>();
+            let more = gems.missing.len().saturating_sub(shown.len());
+            println!(
+                "  {} named by Gemfile.lock but not installed: {}{}",
+                gems.missing.len(),
+                shown.join(", "),
+                if more > 0 {
+                    format!(", and {more} more")
+                } else {
+                    String::new()
+                }
+            );
+        }
     }
     if let Some(profile) = profile {
         match out {

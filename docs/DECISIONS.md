@@ -296,3 +296,46 @@ would produce the same `DeclRow`/`EdgeRow`/`MethodRow` triple.
 it — Tapioca enumerates gem and DSL methods as Prism-parseable Ruby. It is not
 built here because it is a per-repo source rather than a baseline, and building
 both at once would leave neither measured.*
+
+## DEC-016 — Gems are located by reading, never by running Ruby
+
+**Decided.** `Gemfile.lock` is parsed directly; gem sources are found by
+convention (`vendor/bundle/ruby/*/gems`, `$GEM_HOME`, `$GEM_PATH`, rbenv, rvm,
+asdf, Homebrew, system). No `bundle`, no `gem`, no `ruby`.
+
+**Why.** Shelling out to `bundle list --paths` would be more accurate and would
+cost the product its first edge (PLAN §1): it needs the project's Ruby
+installed, its bundle resolved, and its native extensions built. Reading a
+documented text file and stat-ing a conventional directory needs none of that,
+and works on a checkout of a repo you have never run.
+
+**Degrading honestly.** A gem the lockfile names and disk does not have is
+*reported*, not silently absent — it is a hole in every answer that would have
+come from it. Path-sourced gems are excluded from that report because their
+code is inside the checkout and already indexed; counting them would make
+rails' own lockfile look 12 gems broken.
+
+**Reverses if** convention stops predicting layout — a packager that unpacks
+somewhere new. The fix then is another search root, not a subprocess.
+
+## DEC-017 — A gem is keyed by its directory, and only `lib/` is read
+
+**Decided.** Each located gem is indexed as its own checkout, rooted at the
+unpacked directory (which already encodes `name-version`). Only `lib/` is
+walked. A gem already present in the store is skipped outright.
+
+**Why.** The directory key gives cross-project sharing for free: two projects
+resolving `activesupport 7.1.0` name the same path, so the second pays nothing.
+A gem's bytes never change, which makes "have I seen this root" a complete
+incremental test — no OID diff needed. Measured on rails: 86 gems, 1 897 files,
+indexed once; the second run reports 82 already known and reads nothing.
+
+`lib/` because that is where a gem's public code is. `spec/` and `test/` are
+often larger than `lib/` and are never navigated to from a consuming project;
+`ext/` is C.
+
+**Reverses if** a gem that matters puts code outside `lib/` — then widen the
+walk for that shape rather than indexing everything. Also worth revisiting if
+DB size becomes the binding constraint: a gem arguably needs `def` and
+`ancestry` rows but not its 1.2 M call sites, since nobody asks "who calls this"
+*inside* a dependency.

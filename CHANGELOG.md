@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Gems are indexed. `trekr --index` reads `Gemfile.lock`, locates each gem by
+  convention, and indexes its `lib/` once per machine — shared by every project
+  that resolves the same version. No `bundle`, no `gem`, no Ruby (DEC-016).
+  `--no-gems` skips it.
+- A gem the lockfile names but disk does not have is **reported**, in the text
+  output and as `gems.missing` in `--json`. Path-sourced gems are not counted,
+  because their code is inside the checkout already.
+
 - Ruby core is now indexed. `puts`, `raise`, `block_given?`, `Foo.new`,
   a class body's `prepend`, `ArgumentError`, `ENV` and the rest resolve,
   because every class now carries its implicit `Object → Kernel → BasicObject`
