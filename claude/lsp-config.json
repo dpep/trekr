@@ -1,0 +1,18 @@
+{
+  "lspServers": {
+    "trekr": {
+      "command": "trekr",
+      "args": ["--serve"],
+      "extensionToLanguage": {
+        ".rb": "ruby",
+        ".rake": "ruby",
+        ".ru": "ruby",
+        ".gemspec": "ruby",
+        ".rbi": "ruby",
+        ".jbuilder": "ruby"
+      },
+      "startupTimeout": 5000,
+      "diagnostics": true
+    }
+  }
+}
