@@ -1053,3 +1053,43 @@ allowed to do.
 without a custom build, and testbed case 013 pins it — with the near definition
 sorting *later* by path, so the case fails when the signal is off. An earlier
 draft of that case put it first and passed either way.
+
+### DEC-029, measurement vs product (session 24)
+
+**The product pick stays "most recently indexed". The measurement pins its
+context explicitly. They differ on purpose.**
+
+The product wants the pick to *follow the work*: reindex the app you are in and
+it becomes the context, so a wrong pick self-heals through an action you were
+going to take anyway. That is the right behaviour for a person and the wrong
+behaviour for an instrument — it makes the answer depend on when you last
+indexed something unrelated.
+
+Demonstrated rather than argued. Reindexing the five corpora in **reverse
+order**, so a different app owns the shared gems:
+
+| | pinned to the app the corpus was traced from | unpinned |
+| --- | --- | --- |
+| gem correct | **48.8 %** | 52.2 % |
+| gem found | **84.5 %** | 84.0 % |
+| gem confidently wrong | **3.0 %** | 4.2 % |
+
+The pinned column is identical to the run before the reindex, to the decimal,
+and to a second consecutive run. The unpinned column reproduces session 22's
+52.2 % exactly — so that figure was never wrong, it was *a different question*:
+what the gem floor looks like answered from rails rather than from the small app
+the gold set was traced in.
+
+**Canonical gem figures, from here on: 48.8 % correct, 84.5 % found, 3.0 %
+confidently wrong**, pinned to `widget_shop-nosorbet` — the app whose bundle the
+TracePoint run actually executed. Answering those sites from rails scores better
+partly because rails *is* the gems' own source tree, which flatters the number
+for a reason that has nothing to do with the engine.
+
+`--def --context CHECKOUT` is the pin, and it is a real affordance rather than a
+test hook: "answer this gem position as if I were working in that app" is a
+question an agent can legitimately ask.
+
+**Rule for future gem numbers.** Two consecutive full runs on an untouched store
+must agree to the decimal, and the context must be stated. A gem figure quoted
+without its context is one draw.

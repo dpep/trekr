@@ -787,8 +787,11 @@ converted more residue into offered-and-found answers than predicted. Confidentl
 wrong rose 0.4 points and stayed under the 5 % guard — more context did not buy
 confidence in answers that should still be declined.
 
-**Corrected in session 23.** This table first read 52.2 % / 84.0 %, from a
-single run. Re-measured twice on rebuilt indexes it reads **48.8 % / 84.5 %**,
+**Corrected in session 23, and pinned in session 24.** The figures above are
+measured with `--context` pinned to `widget_shop-nosorbet`, the app whose bundle
+the TracePoint run executed, and reproduce to the decimal across a reindex in
+reverse order. This table first read 52.2 % / 84.0 %, from a
+single unpinned run. Re-measured twice on rebuilt indexes it reads **48.8 % / 84.5 %**,
 and that is the figure to quote. The 52.2 % was not wrong at the time — it was
 one draw of a measurement that moves with **which app owns each shared gem**,
 and that ownership shifts with reindex order and with what each lockfile

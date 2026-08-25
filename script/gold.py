@@ -29,6 +29,11 @@ import collections, json, os, random, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.environ.get("TREKR_BIN") or os.path.join(ROOT, "target/release/trekr")
 SAMPLE = int(os.environ.get("SAMPLE", "300"))
+# Which checkout answers a position inside a gem. Unpinned, trekr picks the app
+# that most recently indexed the gem — deterministic given a store, but it moves
+# as you work, and that moved a published gem figure by three points between
+# runs (session 23). A measurement pins it; the product does not (DEC-029).
+CONTEXT = os.environ.get("CONTEXT")
 SEED = int(os.environ.get("SEED", "12"))
 
 try:
@@ -45,7 +50,10 @@ def ask(site):
     here". A crash is a different fact and gets its own one.
     """
     spec = f"{site['file']}:{site['line']}:{site['col']}"
-    done = subprocess.run([BIN, "--def", spec, "--json"], capture_output=True, check=False)
+    argv = [BIN, "--def", spec, "--json"]
+    if CONTEXT:
+        argv += ["--context", CONTEXT]
+    done = subprocess.run(argv, capture_output=True, check=False)
     # A signal killed it. Negative on Unix, and the only genuinely alarming
     # outcome here.
     if done.returncode < 0:

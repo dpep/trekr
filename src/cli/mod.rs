@@ -59,6 +59,14 @@ struct Cli {
     #[arg(long, value_name = "FILE:LINE:COL", conflicts_with_all = ["index", "drop", "symbols", "refs"])]
     def: Option<String>,
 
+    /// Answer as if asked from this checkout, instead of the one the path
+    /// belongs to. Only meaningful for a position inside a **gem**, which is
+    /// otherwise answered from whichever app most recently indexed it — a pick
+    /// that is deterministic but moves as you work (DEC-029). Pin it when a
+    /// measurement has to be reproducible.
+    #[arg(long, value_name = "CHECKOUT", requires = "def")]
+    context: Option<PathBuf>,
+
     /// The linearized ancestor chain of a class or module.
     #[arg(long, value_name = "NAME", conflicts_with_all = ["index", "drop", "symbols", "refs", "def"])]
     ancestors: Option<String>,
@@ -145,7 +153,7 @@ pub fn run() -> ExitCode {
     } else if let Some(name) = &cli.refs {
         cmd_refs(out, name, cli.include_excluded)
     } else if let Some(spec) = &cli.def {
-        cmd_def(out, spec, cli.explain)
+        cmd_def(out, spec, cli.explain, cli.context.as_deref())
     } else if let Some(name) = &cli.ancestors {
         cmd_ancestors(out, name)
     } else if let Some(path) = &cli.drop {
@@ -682,9 +690,12 @@ fn cmd_refs_by_name(
 /// The tree is rebuilt from SQL every invocation. PLAN §4 chose that over
 /// incremental machinery, and the measurement in docs/ARCHITECTURE.md is why it
 /// stays chosen.
-fn tree_for(path: &Path) -> anyhow::Result<(PathBuf, Store, Tree)> {
+fn tree_for(path: &Path, pinned: Option<&Path>) -> anyhow::Result<(PathBuf, Store, Tree)> {
     let store = open_store()?;
-    let root = checkout_for(&store, path)?;
+    let root = match pinned {
+        Some(root) => std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()),
+        None => checkout_for(&store, path)?,
+    };
     let tree = Tree::build(&store, &root.to_string_lossy())?;
     Ok((root, store, tree))
 }
@@ -716,10 +727,15 @@ fn checkout_for(store: &Store, path: &Path) -> anyhow::Result<PathBuf> {
 /// The checkout we are standing in — for the queries that ask about a name
 /// rather than a position, where "here" is the only checkout meant.
 fn tree_here() -> anyhow::Result<(PathBuf, Store, Tree)> {
-    tree_for(Path::new("."))
+    tree_for(Path::new("."), None)
 }
 
-fn cmd_def(out: Output, spec: &str, explain: bool) -> anyhow::Result<ExitCode> {
+fn cmd_def(
+    out: Output,
+    spec: &str,
+    explain: bool,
+    pinned: Option<&Path>,
+) -> anyhow::Result<ExitCode> {
     let spec = position::Spec::parse(spec)
         .ok_or_else(|| anyhow::anyhow!("expected FILE:LINE:COL, got `{spec}`"))?;
     let source = std::fs::read(&spec.path)?;
@@ -758,7 +774,7 @@ fn cmd_def(out: Output, spec: &str, explain: bool) -> anyhow::Result<ExitCode> {
             }],
         }),
         position::Under::Constant(reference) => {
-            let (root, _, tree) = tree_for(Path::new(&spec.path))?;
+            let (root, _, tree) = tree_for(Path::new(&spec.path), pinned)?;
             context = Some(root.to_string_lossy().into_owned());
             let resolution = tree.resolve(&reference.name, &reference.nesting);
             let mut value = serde_json::to_value(&resolution)?;
@@ -777,7 +793,7 @@ fn cmd_def(out: Output, spec: &str, explain: bool) -> anyhow::Result<ExitCode> {
             value
         }
         position::Under::Call(call) => {
-            let (root, _, tree) = tree_for(Path::new(&spec.path))?;
+            let (root, _, tree) = tree_for(Path::new(&spec.path), pinned)?;
             context = Some(root.to_string_lossy().into_owned());
             let relative = std::fs::canonicalize(&spec.path)
                 .ok()

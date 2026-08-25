@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `--def --context CHECKOUT` answers a position as if asked from that checkout.
+  Only meaningful inside a **gem**, which is otherwise answered from whichever
+  app most recently indexed it — a pick that follows your work, which is right
+  for a person and wrong for a measurement (DEC-029).
+
 - `--usage` reports the **first request of a session apart from the rest**. That
   request pays for a cold page cache and a tree build; blending it into the
   median made the headline a measure of the disk rather than of trekr. On the
