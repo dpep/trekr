@@ -890,3 +890,238 @@ fn an_edit_reindexed_underneath_the_session_is_not_served_stale() {
     session.stop();
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// `goToImplementation` answers two different questions and only ever answered
+/// one: on a class it means "who mixes this in", on a **method** it means "who
+/// overrides this". Standing on an abstract method returned nothing.
+#[test]
+fn implementation_on_an_abstract_method_finds_its_overrides() {
+    let (dir, db) = scratch("impl");
+    git(&dir, &["init", "-q"]);
+    let source = concat!(
+        "class Adapter\n",            // 1
+        "  def write_query?\n",       // 2
+        "    raise\n",                // 3
+        "  end\n",                    // 4
+        "end\n",                      // 5
+        "class Sqlite < Adapter\n",   // 6
+        "  def write_query?\n",       // 7
+        "    true\n",                 // 8
+        "  end\n",                    // 9
+        "end\n",                      // 10
+        "class Postgres < Adapter\n", // 11
+        "  def write_query?\n",       // 12
+        "    false\n",                // 13
+        "  end\n",                    // 14
+        "end\n",                      // 15
+        "class Unrelated\n",          // 16
+        "  def write_query?\n",       // 17
+        "  end\n",                    // 18
+        "end\n",                      // 19
+    );
+    fs::write(dir.join("app.rb"), source).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    Command::new(env!("CARGO_BIN_EXE_trekr"))
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+
+    // Standing on the abstract `def write_query?` (line 2, 0-based 1).
+    let answer = session.request(
+        "textDocument/implementation",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": 1, "character": 6},
+        }),
+    );
+    let lines: Vec<u64> = answer["result"]
+        .as_array()
+        .expect("the overrides, not null")
+        .iter()
+        .map(|l| l["range"]["start"]["line"].as_u64().unwrap() + 1)
+        .collect();
+    assert_eq!(
+        lines,
+        vec![7, 12],
+        "both subclasses — not the abstract one it is standing on, and not \
+         Unrelated, which merely shares the name"
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// The shape a subclass search misses: Rails puts the concrete `write_query?`
+/// in a *sibling module* mixed into a class in the same hierarchy, not in a
+/// subclass of the abstract module. The owners are unrelated; the classes are
+/// not, which is why the question has to be asked of the classes.
+#[test]
+fn implementation_finds_an_override_that_lives_in_a_sibling_module() {
+    let (dir, db) = scratch("implmod");
+    git(&dir, &["init", "-q"]);
+    let source = concat!(
+        "module Statements\n",           // 1
+        "  def write_query?\n",          // 2
+        "  end\n",                       // 3
+        "end\n",                         // 4
+        "module Sqlite3Statements\n",    // 5
+        "  def write_query?\n",          // 6
+        "  end\n",                       // 7
+        "end\n",                         // 8
+        "class Abstract\n",              // 9
+        "  include Statements\n",        // 10
+        "end\n",                         // 11
+        "class Sqlite < Abstract\n",     // 12
+        "  include Sqlite3Statements\n", // 13
+        "end\n",                         // 14
+    );
+    fs::write(dir.join("app.rb"), source).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    Command::new(env!("CARGO_BIN_EXE_trekr"))
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+    let answer = session.request(
+        "textDocument/implementation",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": 1, "character": 6},
+        }),
+    );
+    let lines: Vec<u64> = answer["result"]
+        .as_array()
+        .expect("the sibling module's definition, not null")
+        .iter()
+        .map(|l| l["range"]["start"]["line"].as_u64().unwrap() + 1)
+        .collect();
+    assert_eq!(lines, vec![6]);
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A call tree's rows name the *callers*. Labelling them with the callee's
+/// owner made every row identical and told a reader nothing.
+#[test]
+fn incoming_calls_name_the_method_each_call_sits_in() {
+    let (dir, db) = scratch("incoming");
+    git(&dir, &["init", "-q"]);
+    let source = concat!(
+        "class Widget\n",       // 1
+        "  def save\n",         // 2
+        "  end\n",              // 3
+        "end\n",                // 4
+        "class Job\n",          // 5
+        "  def run\n",          // 6
+        "    w = Widget.new\n", // 7
+        "    w.save\n",         // 8
+        "  end\n",              // 9
+        "  def self.sweep\n",   // 10
+        "    w = Widget.new\n", // 11
+        "    w.save\n",         // 12
+        "  end\n",              // 13
+        "end\n",                // 14
+    );
+    fs::write(dir.join("app.rb"), source).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    Command::new(env!("CARGO_BIN_EXE_trekr"))
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+    let prepared = session.request(
+        "textDocument/prepareCallHierarchy",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": 1, "character": 6},
+        }),
+    );
+    let item = prepared["result"][0].clone();
+    let answer = session.request(
+        "callHierarchy/incomingCalls",
+        serde_json::json!({ "item": item }),
+    );
+    let mut names: Vec<&str> = answer["result"]
+        .as_array()
+        .expect("callers, not null")
+        .iter()
+        .map(|c| c["from"]["name"].as_str().unwrap())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        ["Job#run", "Job.sweep"],
+        "each caller named by the method it sits in, singleton marked"
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}

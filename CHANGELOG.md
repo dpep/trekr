@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- `goToImplementation` on a **method** now answers with its overrides. It only
+  ever understood class and module names, so standing on an abstract method
+  returned nothing. Asked the way Ruby answers it — for every type carrying the
+  owner, whose definition actually wins — so it finds an override in a *sibling
+  module* (`SQLite3::DatabaseStatements` beside the abstract one), which a
+  subclass search misses. `write_query?` on Rails' abstract adapter now returns
+  the SQLite3, PostgreSQL and MySQL definitions.
+- `callHierarchy/incomingCalls` names each caller by the method it sits in
+  (`Job#run`, `Job.sweep`) instead of by the callee's owner, which was the same
+  string on every row. It also asks about the method the item names rather than
+  the bare name, which is what the `confirmed` tier needs — without an owner it
+  could not confirm anything.
+
 - `trekr --usage` summarizes what `--serve` has been asked, from its own log:
   calls per operation, how often the answer was empty, and median/p90 latency.
   Honors `--json`/`--ndjson` like every other command. The log was written to

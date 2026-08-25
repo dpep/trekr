@@ -401,26 +401,87 @@ pub(crate) fn implementation(
     let Some(under) = position::at_facts(&facts, pos.line, pos.col) else {
         return Ok(None);
     };
-    let name = match under {
-        Under::Definition(def) => def.name,
-        Under::Constant(reference) => reference.name,
+    // Two different questions share this operation, and only one of them was
+    // answered. On a class or module, "implementations" means the types that
+    // mix it in. On a **method**, it means the overrides — which is what an
+    // abstract method's definition is standing on, and it returned nothing.
+    let tree = session.tree(&located.root)?;
+    let sites: Vec<(String, u32, u32)> = match under {
+        Under::Definition(def) if def.kind == crate::core::Kind::Method => {
+            let owner = tree.scope_fqn(&def.nesting);
+            let Some(owner) = owner else { return Ok(None) };
+            overrides_of(tree, &owner, &def.name, def.singleton, def.pos.line)
+        }
+        Under::Definition(def) => implementers_of(tree, &def.name),
+        Under::Constant(reference) => implementers_of(tree, &reference.name),
         Under::Call(_) => return Ok(None),
     };
-    let tree = session.tree(&located.root)?;
-    let Some(fqn) = tree.resolve(&name, &[]).fqn else {
-        return Ok(None);
-    };
-    let sites: Vec<(String, u32, u32)> = tree
-        .includers_of(&fqn)
-        .iter()
-        .flat_map(|descendant| tree.sites(descendant).to_vec())
-        .map(|site| (site.path, site.line, site.col))
-        .collect();
     let locations: Vec<Location> = sites
         .into_iter()
         .filter_map(|(p, line, col)| location(&located.root, &p, line, col))
         .collect();
     Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)))
+}
+
+/// Every class that mixes in this module or inherits this class.
+fn implementers_of(tree: &crate::tree::Tree, name: &str) -> Vec<(String, u32, u32)> {
+    let Some(fqn) = tree.resolve(name, &[]).fqn else {
+        return Vec::new();
+    };
+    tree.includers_of(&fqn)
+        .iter()
+        .flat_map(|descendant| tree.sites(descendant).to_vec())
+        .map(|site| (site.path, site.line, site.col))
+        .collect()
+}
+
+/// The method a line sits in, as `Owner#method`, for labelling a caller.
+///
+/// The innermost definition containing the line — nested classes and blocks
+/// mean the outermost match is usually the file's class, which is not what the
+/// reader asked about.
+fn enclosing_label(facts: &crate::core::Facts, line: u32) -> Option<String> {
+    let def = facts
+        .defs
+        .iter()
+        .filter(|def| {
+            def.kind == crate::core::Kind::Method && def.pos.line <= line && line <= def.end_line
+        })
+        .min_by_key(|def| def.end_line - def.pos.line)?;
+    let marker = if def.singleton { "." } else { "#" };
+    Some(match def.nesting.first() {
+        Some(owner) => format!("{owner}{marker}{}", def.name),
+        None => def.name.clone(),
+    })
+}
+
+/// Every definition that wins over this one somewhere below it.
+///
+/// Not "same name in a subclass": Rails' concrete adapters put `write_query?`
+/// in a *sibling module* — `SQLite3::DatabaseStatements` beside the abstract
+/// `ConnectionAdapters::DatabaseStatements` — and mix each into a class in the
+/// same hierarchy. The owners are unrelated; the classes are not.
+///
+/// So the question is asked the way Ruby answers it: for every type carrying
+/// the abstract owner, look the method up and see whose definition actually
+/// wins. Anything but this one is an override.
+fn overrides_of(
+    tree: &crate::tree::Tree,
+    owner: &str,
+    name: &str,
+    singleton: bool,
+    line: u32,
+) -> Vec<(String, u32, u32)> {
+    let mut sites: Vec<(String, u32, u32)> = tree
+        .includers_of(owner)
+        .iter()
+        .filter_map(|class| tree.lookup(class, singleton, name))
+        .filter(|found| found.owner != owner && found.site.line != line)
+        .map(|found| (found.site.path.clone(), found.site.line, found.site.col))
+        .collect();
+    sites.sort();
+    sites.dedup();
+    sites
 }
 
 pub(crate) fn prepare_call_hierarchy(
@@ -481,24 +542,53 @@ pub(crate) fn incoming_calls(
     };
     let root = located.root.clone();
     let root_str = root.to_string_lossy().into_owned();
-    let query = refs::Query {
-        owner: None,
-        singleton: false,
-        name: name.clone(),
-    };
+
+    // Which method the item names, not just which name. Asking with no owner
+    // is the bare-name question `--refs` exists to beat, and it cannot reach
+    // the `confirmed` tier this operation reports — so it answered nothing.
+    let line = params.item.range.start.line + 1;
+    let facts = session
+        .document(&located.absolute)
+        .map(|document| document.facts().clone());
+    let owner_def = facts.as_ref().and_then(|facts| {
+        facts
+            .defs
+            .iter()
+            .find(|def| def.kind == crate::core::Kind::Method && def.pos.line == line)
+            .cloned()
+    });
     let paths = session.store().files_calling(&root_str, &name)?;
     let tree = session.tree(&root)?;
+    let query = refs::Query {
+        owner: owner_def
+            .as_ref()
+            .and_then(|def| tree.scope_fqn(&def.nesting)),
+        singleton: owner_def.as_ref().is_some_and(|def| def.singleton),
+        name: name.clone(),
+    };
+    let target = query.owner.clone();
 
-    let mut confirmed: Vec<refs::Reference> = Vec::new();
+    // Each caller is labelled with the method it sits in, which is what a
+    // reader of a call tree is looking for. The reference's own `owner` is the
+    // *callee's* — the same for every row, and so no help at all.
+    let mut confirmed: Vec<(refs::Reference, Option<String>)> = Vec::new();
     for candidate in paths {
         let Ok(bytes) = std::fs::read(root.join(&candidate)) else {
             continue;
         };
         let file_facts = crate::extract::extract(&bytes);
         for call in file_facts.calls.iter().filter(|c| c.name == name) {
-            let reference = refs::tier_call(tree, &file_facts, call, &candidate, &query, None);
+            let reference = refs::tier_call(
+                tree,
+                &file_facts,
+                call,
+                &candidate,
+                &query,
+                target.as_deref(),
+            );
             if reference.tier == refs::Tier::Confirmed {
-                confirmed.push(reference);
+                let caller = enclosing_label(&file_facts, call.pos.line);
+                confirmed.push((reference, caller));
             }
         }
     }
@@ -506,11 +596,11 @@ pub(crate) fn incoming_calls(
     #[allow(deprecated)]
     let calls = confirmed
         .into_iter()
-        .filter_map(|reference| {
+        .filter_map(|(reference, caller)| {
             let at = location(&root, &reference.path, reference.line, reference.col)?;
             Some(CallHierarchyIncomingCall {
                 from: CallHierarchyItem {
-                    name: reference.owner.clone().unwrap_or_else(|| name.clone()),
+                    name: caller.unwrap_or_else(|| name.clone()),
                     kind: SymbolKind::METHOD,
                     tags: None,
                     detail: Some(reference.why.to_string()),
