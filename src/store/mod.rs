@@ -518,6 +518,54 @@ impl Store {
             .or(Ok(0))
     }
 
+    /// Record that this checkout's bundle resolves these gems.
+    ///
+    /// Rewritten wholesale on every index, like the file map, so a gem dropped
+    /// from a Gemfile.lock stops being claimed.
+    pub(crate) fn set_gems_used(&mut self, root: &str, gem_roots: &[String]) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        let id: i64 = tx.query_row(
+            "SELECT id FROM checkout WHERE root = ?1",
+            params![root],
+            |r| r.get(0),
+        )?;
+        tx.execute("DELETE FROM gem_use WHERE checkout_id = ?1", params![id])?;
+        {
+            let mut insert = tx
+                .prepare("INSERT OR IGNORE INTO gem_use (checkout_id, gem_root) VALUES (?1, ?2)")?;
+            for gem in gem_roots {
+                insert.execute(params![id, gem])?;
+            }
+        }
+        tx.commit()
+    }
+
+    /// The app to answer a question about this gem's source from.
+    ///
+    /// **Most recently indexed wins.** Several apps can resolve one gem
+    /// version, so the pick has to be deterministic; of the candidates — widest
+    /// bundle, first registrant, most recent — only the last follows the work.
+    /// Reindexing the app you are in makes it the context, which is the
+    /// behaviour a person expects and the one that self-heals when the pick is
+    /// wrong (DEC-029).
+    pub(crate) fn app_for_gem(&self, gem_root: &str) -> Result<Option<String>> {
+        self.conn
+            .query_row(
+                "SELECT c.root FROM gem_use g
+                   JOIN checkout c ON c.id = g.checkout_id
+                  WHERE g.gem_root = ?1
+                  ORDER BY c.indexed_at DESC, c.root
+                  LIMIT 1",
+                params![gem_root],
+                |r| r.get(0),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })
+    }
+
     /// The indexed checkout that contains this path, longest root first.
     ///
     /// A gem is a checkout but not a git repository, so `repo_root` cannot

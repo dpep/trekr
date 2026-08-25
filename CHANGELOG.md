@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **A position inside a gem is answered from an app that resolves it.** A gem
+  is indexed as a checkout of its own, so on its own it is a tree of one gem
+  plus Ruby core — and every method it gets from a sibling gem was unreachable
+  by construction (DEC-029). `--index` now records which gems a bundle
+  resolves, and a query inside gem source picks the **most recently indexed**
+  app that has it. The answer carries `context` naming the checkout that
+  answered, and `--explain` prints it; a gem no indexed app resolves keeps the
+  one-gem tree and says so by naming itself.
+- **Existing databases reindex once**: the schema gained the gem-ownership map.
+
 - `owner` now names where Ruby's lookup actually landed. A method reached
   through a `self.table_name` override reported the *carrier* class the
   convention invents (`LegacyPost`) — a name no code declares and no agent can

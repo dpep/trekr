@@ -13,7 +13,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 11;
+pub(crate) const VERSION: i64 = 12;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -102,6 +102,17 @@ CREATE TABLE checkout (
   surface_key INTEGER NOT NULL
 );
 
+-- Which app resolves which gem. A gem is indexed as a checkout of its own, and
+-- on its own it is a tree of one gem plus Ruby core — so a method it gets from
+-- a sibling gem is unreachable by construction (DEC-029). This says which
+-- bundles a gem belongs to, so a position inside it can be answered against an
+-- app that actually has the rest of the bundle.
+CREATE TABLE gem_use (
+  checkout_id INTEGER NOT NULL REFERENCES checkout(id) ON DELETE CASCADE,
+  gem_root    TEXT    NOT NULL,           -- the gem's own checkout root
+  PRIMARY KEY (checkout_id, gem_root)
+);
+
 CREATE TABLE file (
   checkout_id INTEGER NOT NULL REFERENCES checkout(id) ON DELETE CASCADE,
   path        TEXT    NOT NULL,           -- relative to the checkout root
@@ -109,6 +120,7 @@ CREATE TABLE file (
   PRIMARY KEY (checkout_id, path)
 ) WITHOUT ROWID;
 
+CREATE INDEX gem_use_gem    ON gem_use(gem_root);
 CREATE INDEX def_name       ON def(name);
 CREATE INDEX def_blob       ON def(blob_id);
 CREATE INDEX ancestry_blob  ON ancestry(blob_id);
@@ -121,7 +133,8 @@ CREATE INDEX file_blob      ON file(blob_id);
 
 /// Every table, newest first, so dropping respects nothing (foreign keys are
 /// off during the drop anyway).
-pub(crate) const TABLES: [&str; 7] = [
+pub(crate) const TABLES: [&str; 8] = [
+    "gem_use",
     "file",
     "checkout",
     "call_site",

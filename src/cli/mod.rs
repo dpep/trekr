@@ -304,6 +304,10 @@ fn index_gems(
     // happens on every index including a no-op, so it is worth naming.
     let located = profile::timed(profile, "gem-scan", || crate::gems::for_checkout(repo));
     let mut report = GemReport::default();
+    // Which gems this bundle resolves, whether or not they needed indexing —
+    // an already-known gem still belongs to this app, and that is what makes a
+    // position inside it answerable from here (DEC-029).
+    let mut used: Vec<String> = Vec::new();
     for entry in located {
         let Some(gem_root) = entry.root else {
             if entry.is_hole() {
@@ -315,6 +319,7 @@ fn index_gems(
         };
         report.found += 1;
         let root_str = gem_root.to_string_lossy().into_owned();
+        used.push(root_str.clone());
         if store.has_checkout(&root_str)? {
             report.already_indexed += 1;
             continue;
@@ -329,6 +334,7 @@ fn index_gems(
         report.indexed += 1;
         report.files += counts.files;
     }
+    store.set_gems_used(&repo.to_string_lossy(), &used)?;
     Ok(report)
 }
 
@@ -692,7 +698,11 @@ fn checkout_for(store: &Store, path: &Path) -> anyhow::Result<PathBuf> {
     }
     let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     match store.checkout_containing(&absolute.to_string_lossy())? {
-        Some(root) => Ok(PathBuf::from(root)),
+        // A gem, and a gem on its own is a tree of one gem plus core — so
+        // answer from an app whose bundle has the rest of it (DEC-029). With
+        // no such app the gem is still its own context, and the answer says so
+        // rather than quietly degrading.
+        Some(gem) => Ok(PathBuf::from(store.app_for_gem(&gem)?.unwrap_or(gem))),
         // Neither: report git's own complaint, which names the real problem.
         None => scan::repo_root(path),
     }
@@ -723,6 +733,10 @@ fn cmd_def(out: Output, spec: &str, explain: bool) -> anyhow::Result<ExitCode> {
     };
 
     let query = format!("{}:{}:{}", spec.path, spec.line, spec.col);
+    // Which checkout's assembled namespace answered. It is only ever a
+    // surprise for a position inside a gem, which is answered from an app that
+    // resolves it — and an answer that depends on which app must say which.
+    let mut context: Option<String> = None;
     let answer = match under {
         // The cursor is on the declaration itself. Ruby has no indirection to
         // follow here, so the honest answer is "you are already there".
@@ -739,7 +753,8 @@ fn cmd_def(out: Output, spec: &str, explain: bool) -> anyhow::Result<ExitCode> {
             }],
         }),
         position::Under::Constant(reference) => {
-            let (_, _, tree) = tree_for(Path::new(&spec.path))?;
+            let (root, _, tree) = tree_for(Path::new(&spec.path))?;
+            context = Some(root.to_string_lossy().into_owned());
             let resolution = tree.resolve(&reference.name, &reference.nesting);
             let mut value = serde_json::to_value(&resolution)?;
             let object = value.as_object_mut().expect("resolution is an object");
@@ -758,6 +773,7 @@ fn cmd_def(out: Output, spec: &str, explain: bool) -> anyhow::Result<ExitCode> {
         }
         position::Under::Call(call) => {
             let (root, _, tree) = tree_for(Path::new(&spec.path))?;
+            context = Some(root.to_string_lossy().into_owned());
             let relative = std::fs::canonicalize(&spec.path)
                 .ok()
                 .and_then(|abs| abs.strip_prefix(&root).ok().map(Path::to_path_buf))
@@ -779,6 +795,10 @@ fn cmd_def(out: Output, spec: &str, explain: bool) -> anyhow::Result<ExitCode> {
 
     // Ambiguous is an answer with competitors, not a failure to answer: exit 0
     // like any other match, and let the status and confidence say the rest.
+    let mut answer = answer;
+    if let (Some(object), Some(context)) = (answer.as_object_mut(), context) {
+        object.insert("context".into(), context.into());
+    }
     let resolved = answer["status"] == "resolved" || answer["status"] == "ambiguous";
     let text = match answer["sites"].as_array().and_then(|s| s.first()) {
         Some(site) => format!(
@@ -828,6 +848,9 @@ fn explanation(answer: &serde_json::Value) -> String {
     out.push(how);
     if let Some(via) = field("resolved_via") {
         out.push(format!("  via         {via}"));
+    }
+    if let Some(context) = field("context") {
+        out.push(format!("  context     {context}"));
     }
     if let Some(receiver) = field("receiver") {
         let typed = field("receiver_type")

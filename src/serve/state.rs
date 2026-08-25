@@ -124,11 +124,16 @@ impl Session {
                     // A gem is an indexed checkout but not a git repository,
                     // and following a definition into gem source and asking
                     // again is the next thing an agent does.
+                    // A gem on its own is a tree of one gem plus core, so a
+                    // position inside it is answered from an app whose bundle
+                    // has the rest (DEC-029). Without such an app the gem is
+                    // still its own context.
                     Err(_) => self
                         .store
                         .checkout_containing(&absolute.to_string_lossy())
                         .ok()
                         .flatten()
+                        .map(|gem| self.store.app_for_gem(&gem).ok().flatten().unwrap_or(gem))
                         .map(PathBuf::from),
                 };
                 self.enclosing.insert(directory, found.clone());
