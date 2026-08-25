@@ -945,3 +945,60 @@ fn usage_summarizes_the_serve_log_and_says_nothing_when_it_is_empty() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// `--explain` renders the disclosure `--json` already carries. CLAUDE.md and
+/// PLAN promised the flag from the start; only the rendering was missing.
+#[test]
+fn explain_renders_the_disclosure_the_json_already_carries() {
+    let (dir, db) = scratch("explain");
+    git(&dir, &["init", "-q"]);
+    // Two classes define `ship`, so the answer is ambiguous with a candidate
+    // list — the case where an explanation is worth reading.
+    fs::write(
+        dir.join("app.rb"),
+        "class Widget\n  def ship\n  end\nend\nclass Other\n  def ship\n  end\nend\n\
+         class Job\n  def run\n    @widget.ship\n  end\n\
+         \x20 def sweep\n    thing.ship\n  end\nend\n",
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    trekr(&db, &dir, &["--index"]);
+
+    let plain = stdout(&trekr(&db, &dir, &["--def", "app.rb:11:13"]));
+    assert!(!plain.contains("status"), "quiet without the flag: {plain}");
+
+    let explained = stdout(&trekr(&db, &dir, &["--def", "app.rb:11:13", "--explain"]));
+    for expected in ["status", "ambiguous", "receiver_name", "agreement"] {
+        assert!(
+            explained.contains(expected),
+            "{expected} missing: {explained}"
+        );
+    }
+
+    // A residue is where the ranked candidates live, and why they ranked is
+    // the part worth reading.
+    let residue = stdout(&trekr(&db, &dir, &["--def", "app.rb:14:11", "--explain"]));
+    assert!(residue.contains("candidates"), "{residue}");
+    assert!(residue.contains("1. "), "numbered by rank: {residue}");
+    // Every line restates a field of the answer, so the two surfaces cannot
+    // drift: whatever --explain claims, --json must also say.
+    let structured = json(&trekr(&db, &dir, &["--def", "app.rb:11:13", "--json"]));
+    assert_eq!(structured["status"], "ambiguous");
+    assert_eq!(structured["resolved_via"], "receiver_name");
+    let residue_json = json(&trekr(&db, &dir, &["--def", "app.rb:14:11", "--json"]));
+    assert!(!residue_json["candidates"].as_array().unwrap().is_empty());
+
+    let _ = fs::remove_dir_all(&dir);
+}

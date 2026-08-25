@@ -96,6 +96,13 @@ struct Cli {
     #[arg(long)]
     profile: bool,
 
+    /// Show why an answer came out the way it did: the rung that resolved the
+    /// receiver, the confidence and what graded it, the ancestors that could
+    /// not be seen, and the ranked candidates behind a residue. The same facts
+    /// `--json` carries, rendered for a person.
+    #[arg(long, requires = "def")]
+    explain: bool,
+
     /// Emit results as JSON — a pretty object, or an array for row sets.
     #[arg(short = 'j', long)]
     json: bool,
@@ -131,7 +138,7 @@ pub fn run() -> ExitCode {
     } else if let Some(name) = &cli.refs {
         cmd_refs(out, name, cli.include_excluded)
     } else if let Some(spec) = &cli.def {
-        cmd_def(out, spec)
+        cmd_def(out, spec, cli.explain)
     } else if let Some(name) = &cli.ancestors {
         cmd_ancestors(out, name)
     } else if let Some(path) = &cli.drop {
@@ -690,7 +697,7 @@ fn tree_here() -> anyhow::Result<(PathBuf, Store, Tree)> {
     tree_for(Path::new("."))
 }
 
-fn cmd_def(out: Output, spec: &str) -> anyhow::Result<ExitCode> {
+fn cmd_def(out: Output, spec: &str, explain: bool) -> anyhow::Result<ExitCode> {
     let spec = position::Spec::parse(spec)
         .ok_or_else(|| anyhow::anyhow!("expected FILE:LINE:COL, got `{spec}`"))?;
     let source = std::fs::read(&spec.path)?;
@@ -791,7 +798,73 @@ fn cmd_def(out: Output, spec: &str) -> anyhow::Result<ExitCode> {
             answer["reason"].as_str().unwrap_or("unresolved"),
         ),
     };
+    let text = if explain && out == Output::Text {
+        format!("{text}\n{}", explanation(&answer))
+    } else {
+        text
+    };
     report(out, answer, resolved, &text)
+}
+
+/// The disclosure `--json` already carries, laid out for a reader.
+///
+/// Every line is a fact the answer states; nothing here is computed a second
+/// time, so the two surfaces cannot drift apart.
+fn explanation(answer: &serde_json::Value) -> String {
+    let mut out = Vec::new();
+    let field = |key: &str| answer[key].as_str().map(str::to_string);
+
+    let mut how = format!("  status      {}", field("status").unwrap_or_default());
+    if let Some(confidence) = answer["confidence"].as_f64() {
+        how.push_str(&format!(" · confidence {confidence}"));
+    }
+    out.push(how);
+    if let Some(via) = field("resolved_via") {
+        out.push(format!("  via         {via}"));
+    }
+    if let Some(receiver) = field("receiver") {
+        let typed = field("receiver_type")
+            .map(|t| format!(" → {t}"))
+            .unwrap_or_default();
+        out.push(format!("  receiver    {receiver}{typed}"));
+    }
+    if let Some(owner) = field("owner") {
+        out.push(format!("  owner       {owner}"));
+    }
+    if let Some(agreement) = field("agreement") {
+        out.push(format!("  agreement   {agreement}"));
+    }
+    if let Some(unseen) = answer["unresolved_ancestors"].as_array()
+        && !unseen.is_empty()
+    {
+        // A "not found" is only as trustworthy as this list is short.
+        let names: Vec<&str> = unseen.iter().filter_map(|a| a.as_str()).collect();
+        out.push(format!(
+            "  unseen      {} ancestors: {}",
+            names.len(),
+            names.join(", ")
+        ));
+    }
+    if let Some(reason) = field("reason") {
+        out.push(format!("  reason      {reason}"));
+    }
+    if let Some(candidates) = answer["candidates"].as_array()
+        && !candidates.is_empty()
+    {
+        out.push(format!("  candidates  {} ranked:", candidates.len()));
+        for (rank, candidate) in candidates.iter().enumerate() {
+            let site = &candidate["site"];
+            out.push(format!(
+                "    {}. {}  {}:{}  — {}",
+                rank + 1,
+                candidate["owner"].as_str().unwrap_or("?"),
+                site["path"].as_str().unwrap_or_default(),
+                site["line"],
+                candidate["why"].as_str().unwrap_or_default(),
+            ));
+        }
+    }
+    out.join("\n")
 }
 
 fn cmd_ancestors(out: Output, name: &str) -> anyhow::Result<ExitCode> {

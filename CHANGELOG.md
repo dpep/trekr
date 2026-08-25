@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- `--def --explain` renders the disclosure `--json` has always carried: the
+  rung that resolved the receiver, the confidence and what graded it, the
+  ancestors that could not be seen, and the ranked candidates behind a residue
+  with the reason each ranked where it did. Promised in PLAN and CLAUDE.md
+  since the start; only the rendering was missing. Every line restates a field
+  of the answer, so the two surfaces cannot drift.
+
 - **`status` gains `ambiguous`**, the third value the docs always promised. A
   `receiver_name` answer says `resolved` only when the name is the whole story;
   when other classes define the same method it says `ambiguous` (DEC-027).
