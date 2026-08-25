@@ -70,12 +70,30 @@ wrong turn on the ladder. Every answer carries `status`, `confidence`, and
 `resolved_via`; a method call comes back as honest residue with its receiver
 shape, because narrowing that needs a ladder that does not exist yet.
 
-`--refs` is **name-level**: two unrelated `Config` classes both answer, and so
-does every `#save` on every receiver. Each row says what sort of mention it is
-and what shape the receiver had, rather than guessing and being quietly wrong.
-Narrowing that is the next layer's job — and the receiver shape is the fact it
-will narrow on. Across 2.2 M call sites in rails, discourse, and CRuby, 56 % need
-no inference at all.
+`--refs` is the one no other Ruby tool has. Ask about a *method*, not a name,
+and every call site is sorted by whether its receiver can actually reach it:
+
+```console
+$ trekr --refs 'ActiveRecord::ConnectionHandling#lease_connection'
+activerecord/lib/active_record/connection_handling.rb:269:9  definition
+actioncable/test/subscription_adapter/postgresql_test.rb:26:26  confirmed  the receiver's type resolves here
+actioncable/test/subscription_adapter/postgresql_test.rb:71:38  confirmed  the receiver's type resolves here
+...
+1024 confirmed, 55 possible, 89 excluded of 1168 same-name call sites
+  excluded: 58 resolve to a different owner, 31 define no such name, 0 wrong arity
+```
+
+**Confirmed** means the receiver's type resolves and Ruby's own lookup from it
+lands here. **Possible** means the receiver is untyped and nothing rules the
+site out — ranked by proximity, never dropped. **Excluded** sites are not
+listed but are counted, because that count is the difference between this and a
+grep; `--include-excluded` lists them with their reason so the claim is
+auditable rather than asserted.
+
+Across twelve heavy-collision method names on rails — 25,297 same-name call
+sites — that comes to **32 % confirmed, 43 % possible, 24 % excluded**. `rg -w`
+returns all 25,297 undifferentiated. `Widget.save` and `Widget#save` are
+different questions and answer differently.
 
 ## Development
 
