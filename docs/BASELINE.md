@@ -520,3 +520,42 @@ That makes receiver typing, not generator coverage, the lever for the largest
 remaining block — and it is the same signal already shipped for *ranking* in
 session 14 (`@widget` names `Widget`), which would have to be corroborated
 before it could promote.
+
+
+## The scorer's verdicts, audited (session 16)
+
+Two published numbers had already been wrong because the harness mapped unlike
+outcomes to one bucket. So before measuring anything else, every verdict the
+scorer can emit was walked and asked: **what distinct realities land here?**
+Four conflations were found and split.
+
+| was | split into | why it matters |
+| --- | ---------- | -------------- |
+| `wrong` | `wrong`, `right-owner-wrong-site`, `column-mismatch` | Resolving to a *different method* and resolving to the right method at the wrong line are different failures. And a gold entry whose column names a different token is a **harness** defect, not an engine error — counting it as one overstates the error rate and hides a fixable gold-set bug. |
+| `residue` | `residue-ranked-out`, `residue-nothing-known` | Knowing nothing is a coverage gap; knowing things and ranking the truth out of the top eight is a ranking gap. They call for opposite work. |
+| `crashed` | `crashed`, `not-indexed` | Exit 2 is trekr's defined "cannot serve", not a crash. Three gem sites looked like a live P0 and were Ruby *stdlib* files in no indexed checkout. |
+| `missed` | renamed `no-name` | It never meant "we missed it"; it means the position holds no name. |
+
+`column-mismatch` is excluded from the denominator and reported beside the
+table, because it is a fact about the gold set rather than about trekr.
+
+### Corrected tables
+
+Same corpus, same seed, same sample as session 14, with the audited scorer and
+the current binary. **Corrections, stated rather than quietly superseded:**
+
+| | session 14 | corrected |
+| --- | --- | --- |
+| app correct | 49.2 % | **50.0 %** (62 scored; 1 excluded as a harness fault) |
+| app found the definition | 61.9 % | **64.5 %** |
+| app confidently wrong | 4.8 % | 4.8 % (unchanged) |
+| gem correct | 38.2 % | 38.2 % (unchanged) |
+| gem confidently wrong | 5.2 % | **3.8 %** — 1.5 pts were right-owner-wrong-site, 1.0 pt was not-indexed |
+| generated bucket "nothing" | 44 % | **0 %** (corrected in session 15; now 17.6 % resolved / 82.4 % offered) |
+
+The gem floor's residue splits **12.5 % ranked-out / 16.0 % nothing-known** —
+so roughly two fifths of what looked like a coverage problem is a ranking
+problem. One caveat kept honest: `residue-ranked-out` means the truth was not
+among the eight candidates returned; it cannot by itself distinguish "in the
+index but ranked past eight" from "not in the index while same-named methods
+are".

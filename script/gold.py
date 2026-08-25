@@ -46,8 +46,15 @@ def ask(site):
     """
     spec = f"{site['file']}:{site['line']}:{site['col']}"
     done = subprocess.run([BIN, "--def", spec, "--json"], capture_output=True, check=False)
-    if done.returncode not in (0, 1):
+    # A signal killed it. Negative on Unix, and the only genuinely alarming
+    # outcome here.
+    if done.returncode < 0:
         return "crashed"
+    # trekr's own "could not serve" — for these sites, a file in no indexed
+    # checkout (Ruby's stdlib). A defined answer, not an error, and counting it
+    # as a crash is how three of them looked like a live P0.
+    if done.returncode == 2:
+        return "not-indexed"
     try:
         return json.loads(done.stdout)
     except json.JSONDecodeError:
@@ -114,24 +121,45 @@ def candidate_rank(site, answer):
 
 
 def verdict(site, answer, app_root):
-    if answer == "crashed":
-        return "crashed"
+    """One call site's outcome, split so that distinct realities do not share a name.
+
+    Two published numbers have already been wrong because this function mapped
+    unlike things to one bucket: a dead process scored `missed`, and an answer
+    in `db/schema.rb` scored `residue`. Each verdict below is a claim that the
+    realities inside it are the same reality.
+    """
+    if answer in ("crashed", "not-indexed"):
+        return answer
     if not answer or answer.get("reason") == "no name at this position":
-        return "missed"
+        return "no-name"
+
+    # Not an engine verdict at all: the harness put the column on a different
+    # token than the one Ruby dispatched, so whatever trekr says is an answer
+    # to a different question. Counting these as engine errors overstates the
+    # error rate and hides a fixable defect in the gold set.
+    if answer.get("name") and answer["name"] != site["method"]:
+        return "column-mismatch"
+
     reported = answer.get("sites") or []
     if answer.get("status") == "resolved" or reported:
         if hits(reported, site):
             return "correct"
-        # A generated method, answered with the declaration that generates it.
         if is_generated(site) and any(in_app(r.get("path"), app_root) for r in reported):
             return "declaration"
+        # Right method, wrong location, is not the same failure as resolving to
+        # a different method: one is a location bug, the other a resolution bug.
+        if answer.get("owner") and answer["owner"] == site.get("owner"):
+            return "right-owner-wrong-site"
         return "wrong"
+
     candidates = [c.get("site", {}) for c in answer.get("candidates") or []]
     if hits(candidates, site):
         return "residue-hit"
     if is_generated(site) and any(in_app(c.get("path"), app_root) for c in candidates):
         return "declaration-offered"
-    return "residue"
+    # Knowing nothing is not the same as knowing things and ranking the truth
+    # out of the list: the first is a coverage gap, the second a ranking one.
+    return "residue-ranked-out" if candidates else "residue-nothing-known"
 
 
 def main(path):
@@ -171,26 +199,37 @@ def main(path):
         "residue-hit",
         "declaration",
         "declaration-offered",
-        "residue",
+        "right-owner-wrong-site",
+        "residue-ranked-out",
+        "residue-nothing-known",
         "wrong",
-        "missed",
+        "no-name",
+        "not-indexed",
         "crashed",
+        "column-mismatch",
     ]
 
     def report(label, rows):
         if not rows:
             return
-        tally = collections.Counter(v for _, v in rows)
-        total = len(rows)
-        print(f"\n{label} — {total} call sites")
+        # A bad gold column is a defect in the harness, not an outcome for the
+        # engine, so it is reported beside the table and kept out of its
+        # denominator rather than counted as an error.
+        harness = sum(1 for _, v in rows if v == "column-mismatch")
+        scored = [r for r in rows if r[1] != "column-mismatch"]
+        tally = collections.Counter(v for _, v in scored)
+        total = len(scored) or 1
+        print(f"\n{label} — {total} scored call sites")
         width = max(len(k) for k in order)
         for key in order:
-            if tally[key]:
+            if key != "column-mismatch" and tally[key]:
                 print(f"  {key:<{width}}  {tally[key]:>4}  {100 * tally[key] / total:>5.1f}%")
         found = tally["correct"] + tally["residue-hit"]
         print(f"  {'found the definition':<{width}}  {found:>4}  {100 * found / total:>5.1f}%")
         print(f"  {'confidently wrong':<{width}}  {tally['wrong']:>4}  "
               f"{100 * tally['wrong'] / total:>5.1f}%")
+        if harness:
+            print(f"  ({harness} excluded: the gold column names a different token)")
 
     app_rows = [(s, v) for s, v in results if s["scope"] == "app"]
     report("APP CODE", app_rows)
@@ -210,7 +249,21 @@ def main(path):
             print(f"  {label:<4} {len(rows):>4} offered   #1 {100 * first / len(rows):>5.1f}%"
                   f"   top-3 {100 * top3 / len(rows):>5.1f}%   MRR {mrr:.3f}")
 
-    misses = [(s, v) for s, v in app_rows if v in ("wrong", "missed", "residue", "crashed")]
+    misses = [
+        (s, v)
+        for s, v in app_rows
+        if v
+        in (
+            "wrong",
+            "right-owner-wrong-site",
+            "no-name",
+            "residue-ranked-out",
+            "residue-nothing-known",
+            "crashed",
+            "not-indexed",
+            "column-mismatch",
+        )
+    ]
     if misses:
         print("\nevery app-code miss, which is the part worth reading:")
         for site, why in sorted(misses, key=lambda r: (r[0]["file"], r[0]["line"])):
