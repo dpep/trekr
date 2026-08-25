@@ -12,6 +12,7 @@
 //! trees; one-way extraction does not.
 
 mod line_index;
+mod macros;
 mod sig;
 
 use crate::core::*;
@@ -210,6 +211,38 @@ fn path_prefixes(path: &ruby_prism::ConstantPathNode<'_>, out: &mut Vec<(String,
         let offset = path.name_loc().start_offset();
         out.push((full, offset));
     }
+}
+
+/// Is a keyword present in a macro's trailing options hash?
+fn has_keyword(args: &[Node<'_>], key: &str) -> bool {
+    keyword_value(args, key).is_some()
+}
+
+/// The literal class name a keyword names — `class_name: "Widget"`, `to: :all`.
+/// `None` when absent or computed, which is how a caller refuses to guess.
+fn keyword_literal(args: &[Node<'_>], key: &str) -> Option<String> {
+    let value = keyword_value(args, key)?;
+    literal_name(&value).or_else(|| const_name(&value))
+}
+
+fn keyword_value<'pr>(args: &[Node<'pr>], key: &str) -> Option<Node<'pr>> {
+    for arg in args {
+        let Some(hash) = arg.as_keyword_hash_node() else {
+            continue;
+        };
+        for element in hash.elements().iter() {
+            let Some(assoc) = element.as_assoc_node() else {
+                continue;
+            };
+            let Some(symbol) = assoc.key().as_symbol_node() else {
+                continue;
+            };
+            if symbol.unescaped() == key.as_bytes() {
+                return Some(assoc.value());
+            }
+        }
+    }
+    None
 }
 
 /// The literal text of a symbol or string argument (`:foo`, `"foo"`).
@@ -580,6 +613,11 @@ impl<'pr> Extractor<'_> {
             }
             "include" | "prepend" | "extend" => self.handle_mixin(call, &name, &args),
             "alias_method" => self.handle_alias_method(call, &args),
+            // Any macro the expansion table knows. The probe argument only
+            // asks "is this a macro we model" — the real names come below.
+            _ if !macros::generated(&name, "probe").is_empty() => {
+                self.handle_dsl(call, &name, &args)
+            }
             "private" | "protected" | "public" | "module_function" => {
                 self.handle_visibility(call, &name, &args)
             }
@@ -681,6 +719,80 @@ impl<'pr> Extractor<'_> {
                 self.visit(arg);
             }
             self.record_call(call);
+        }
+        any
+    }
+
+    /// A Rails class macro that defines methods — `delegate`, the association
+    /// family, `scope`, and the accessor macros.
+    ///
+    /// Consumed as a *definition* rather than a call, the same way `attr_reader`
+    /// already is. Session 6's audit showed why it matters: a method a DSL
+    /// defines is absent from the index without being absent from the program,
+    /// which made "nothing defines this name" the weakest thing this engine
+    /// could say about a reference (DEC-021).
+    fn handle_dsl(
+        &mut self,
+        call: &ruby_prism::CallNode<'pr>,
+        macro_name: &str,
+        args: &[Node<'pr>],
+    ) -> bool {
+        // `delegate` without `to:` is not a delegation, and a `prefix:` rewrites
+        // every generated name. Both refuse rather than guess: a wrong method
+        // name is worse than an unmodelled one.
+        if macro_name == "delegate"
+            && (keyword_literal(args, "to").is_none() || has_keyword(args, "prefix"))
+        {
+            return false;
+        }
+        let class_name = keyword_literal(args, "class_name");
+
+        let loc = call.location();
+        let (start, end) = (loc.start_offset(), loc.end_offset());
+        let visibility = self.visibility();
+        let in_singleton = self.in_singleton();
+        let mut any = false;
+
+        for arg in args {
+            // The trailing options hash is not a method name; nor is a computed
+            // one, which simply produces nothing.
+            let Some(literal) = literal_name(arg) else {
+                continue;
+            };
+            let associated = class_name
+                .clone()
+                .or_else(|| macros::associated_class(macro_name, &literal));
+
+            for made in macros::generated(macro_name, &literal) {
+                let mut def = self.def(made.name.clone(), Kind::Method, start, end);
+                def.pos = self.pos(arg.location().start_offset());
+                def.via = Some(macro_name.to_string());
+                def.visibility = visibility;
+                // `class << self` still governs which side these land on.
+                def.singleton = made.singleton || in_singleton;
+                if made.writer {
+                    def.params = vec![Param {
+                        kind: ParamKind::Req,
+                        name: "value".into(),
+                    }];
+                }
+                // A singular association's reader has a determinate type, which
+                // makes it a receiver source and not merely a method.
+                if !made.writer
+                    && made.name == literal
+                    && let Some(class) = &associated
+                {
+                    def.sig_returns = Some(class.clone());
+                }
+                self.push_def(def);
+                any = true;
+            }
+        }
+        if any {
+            // The arguments are still constants in their own right.
+            for arg in args {
+                self.visit(arg);
+            }
         }
         any
     }

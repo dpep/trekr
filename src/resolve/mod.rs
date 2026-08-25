@@ -718,6 +718,72 @@ mod tests {
     }
 
     #[test]
+    fn a_delegated_method_is_a_method() {
+        // The exact mechanism behind `Topic.where`: ActiveRecord::Querying
+        // says `delegate :where, to: :all` and Base extends it.
+        let source = "module Querying\n  delegate :where, :find_by, to: :all\nend\n\
+                      class Base\n  extend Querying\nend\n\
+                      class Job\n  def go\n    Base.where(1)\n  end\nend\n";
+        let found = answer(source, "where");
+        assert_eq!(found.status, Status::Resolved);
+        assert_eq!(found.owner.as_deref(), Some("Querying"));
+        assert_eq!(found.resolved_via.as_deref(), Some("const"));
+    }
+
+    #[test]
+    fn a_delegate_without_a_target_is_left_as_an_ordinary_call() {
+        // `delegate` with no `to:` is not a delegation, and a `prefix:` renames
+        // everything — both refuse rather than invent a method.
+        for source in [
+            "class W\n  delegate :thing\n  def go\n    thing\n  end\nend\n",
+            "class W\n  delegate :thing, to: :other, prefix: true\n  \
+             def go\n    thing\n  end\nend\n",
+        ] {
+            assert_eq!(
+                answer(source, "thing").status,
+                Status::Residue,
+                "no method was invented: {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_belongs_to_gives_its_reader_a_type() {
+        let source = "class User\n  def name\n  end\nend\n\
+                      class Post\n  belongs_to :user\n  \
+                      def go\n    u = user\n    u.name\n  end\nend\n";
+        let found = answer(source, "name");
+        assert_eq!(
+            found.owner.as_deref(),
+            Some("User"),
+            "the association names the class, so the reader is a typed receiver"
+        );
+        assert_eq!(found.resolved_via.as_deref(), Some("sig"));
+    }
+
+    #[test]
+    fn class_name_overrides_what_the_association_would_be_called() {
+        let source = "class Person\n  def name\n  end\nend\n\
+                      class Post\n  belongs_to :author, class_name: \"Person\"\n  \
+                      def go\n    a = author\n    a.name\n  end\nend\n";
+        assert_eq!(owner(source, "name").as_deref(), Some("Person"));
+    }
+
+    #[test]
+    fn a_scope_is_callable_on_the_class() {
+        let source = "class Widget\n  scope :active, -> { where(1) }\nend\n\
+                      class Job\n  def go\n    Widget.active\n  end\nend\n";
+        assert_eq!(owner(source, "active").as_deref(), Some("Widget"));
+    }
+
+    #[test]
+    fn a_has_many_brings_the_ids_accessor() {
+        let source = "class Post\n  has_many :comments\nend\n\
+                      class Job\n  def go\n    p = Post.new\n    p.comment_ids\n  end\nend\n";
+        assert_eq!(owner(source, "comment_ids").as_deref(), Some("Post"));
+    }
+
+    #[test]
     fn a_literal_is_typed_now_that_core_knows_what_it_is() {
         let source = "class W\n  def go\n    out = []\n    out.push 1\n  end\nend\n";
         let found = answer(source, "push");
