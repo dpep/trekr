@@ -18,6 +18,7 @@ mod sig;
 use crate::core::*;
 use line_index::LineIndex;
 use ruby_prism::{Node, Visit};
+use std::collections::HashMap;
 
 /// A lexical scope in progress.
 /// What kind of body a frame opened. It decides two different things that are
@@ -77,6 +78,14 @@ struct Extractor<'a> {
     pending_sig: Option<String>,
     /// Parameter types from that same `sig`.
     pending_sig_params: Vec<(String, String)>,
+    /// Constants in this blob assigned a literal array of symbols.
+    ///
+    /// Rails' single highest-yield delegation is
+    /// `delegate(*QUERYING_METHODS, to: :all)` — roughly sixty of the most
+    /// called class methods in any Rails app, and not one of them written as a
+    /// literal argument. The names *are* literal, one indirection away, and
+    /// that indirection is a pure function of the same bytes.
+    symbol_arrays: HashMap<String, Vec<String>>,
     facts: Facts,
 }
 
@@ -104,6 +113,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         }],
         pending_sig: None,
         pending_sig_params: Vec::new(),
+        symbol_arrays: HashMap::new(),
     };
     ex.visit(&parsed.node());
     ex.facts
@@ -522,6 +532,9 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         };
         let value = node.value();
         let loc = node.name_loc();
+        if let Some(symbols) = literal_symbol_array(&value) {
+            self.symbol_arrays.insert(name.clone(), symbols);
+        }
         let mut def = self.def(name, Kind::Constant, loc.start_offset(), loc.end_offset());
         // `Bar = Foo` is an alias: the tree layer follows it rather than
         // treating `Bar` as a fresh namespace.
@@ -753,19 +766,32 @@ impl<'pr> Extractor<'_> {
         let in_singleton = self.in_singleton();
         let mut any = false;
 
+        // A splat of a constant this blob assigned a symbol array is still a
+        // list of literal names; anything else computed produces nothing.
+        let mut names: Vec<(String, Pos)> = Vec::new();
         for arg in args {
-            // The trailing options hash is not a method name; nor is a computed
-            // one, which simply produces nothing.
-            let Some(literal) = literal_name(arg) else {
+            let pos = self.pos(arg.location().start_offset());
+            if let Some(literal) = literal_name(arg) {
+                names.push((literal, pos));
                 continue;
-            };
+            }
+            if let Some(splat) = arg.as_splat_node()
+                && let Some(inner) = splat.expression()
+                && let Some(constant) = const_name(&inner)
+                && let Some(listed) = self.symbol_arrays.get(&constant)
+            {
+                names.extend(listed.iter().map(|name| (name.clone(), pos)));
+            }
+        }
+
+        for (literal, pos) in names {
             let associated = class_name
                 .clone()
                 .or_else(|| macros::associated_class(macro_name, &literal));
 
             for made in macros::generated(macro_name, &literal) {
                 let mut def = self.def(made.name.clone(), Kind::Method, start, end);
-                def.pos = self.pos(arg.location().start_offset());
+                def.pos = pos;
                 def.via = Some(macro_name.to_string());
                 def.visibility = visibility;
                 // `class << self` still governs which side these land on.
@@ -965,6 +991,25 @@ fn literal_class(node: &Node<'_>) -> Option<&'static str> {
         _ if node.as_range_node().is_some() => "Range",
         _ => return None,
     })
+}
+
+/// The symbols in a literal array, seeing through `.freeze` — which is how a
+/// constant array is idiomatically written, and so how Rails writes the one
+/// that matters.
+fn literal_symbol_array(node: &Node<'_>) -> Option<Vec<String>> {
+    if let Some(array) = node.as_array_node() {
+        let symbols: Vec<String> = array
+            .elements()
+            .iter()
+            .filter_map(|element| literal_name(&element))
+            .collect();
+        return (!symbols.is_empty()).then_some(symbols);
+    }
+    let call = node.as_call_node()?;
+    if !IDENTITY.contains(&method_name(&call)?.as_str()) {
+        return None;
+    }
+    literal_symbol_array(&call.receiver()?)
 }
 
 fn value_shape(node: &Node<'_>) -> ValueShape {

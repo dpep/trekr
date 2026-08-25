@@ -731,6 +731,27 @@ mod tests {
     }
 
     #[test]
+    fn a_delegate_splatting_a_constant_array_still_names_literal_methods() {
+        // Rails' highest-yield delegation is
+        // `delegate(*QUERYING_METHODS, to: :all)` — ~60 of the most called
+        // class methods in any app, none written as a literal argument.
+        let source = "module Querying\n  METHODS = [:where, :find_by]\n  \
+                      delegate(*METHODS, to: :all)\nend\n\
+                      class Base\n  extend Querying\nend\n\
+                      class Job\n  def go\n    Base.where(1)\n  end\nend\n";
+        let found = answer(source, "where");
+        assert_eq!(found.status, Status::Resolved);
+        assert_eq!(found.owner.as_deref(), Some("Querying"));
+    }
+
+    #[test]
+    fn a_splat_of_something_unknown_still_refuses() {
+        let source = "class W\n  delegate(*computed, to: :other)\n  \
+                      def go\n    thing\n  end\nend\n";
+        assert_eq!(answer(source, "thing").status, Status::Residue);
+    }
+
+    #[test]
     fn a_delegate_without_a_target_is_left_as_an_ordinary_call() {
         // `delegate` with no `to:` is not a delegation, and a `prefix:` renames
         // everything — both refuse rather than invent a method.
