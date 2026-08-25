@@ -108,6 +108,17 @@ work actually is.
 100k-file repo pushes the rebuild past ~200 ms. The first fix then is caching
 one built tree per process, not patching one in place.
 
+**Update (gems).** The rebuild has now crossed that line: 202 ms on rails,
+309 ms on discourse, against 43 ms when this was decided. The progression —
+43 ms constants, 120 ms once method tables arrived, 202 ms once gems did, with
+CRuby unmoved at 116 ms because it has no gems — says the cost is assembling a
+larger namespace, not querying it (batching 258 per-gem queries into 3 moved it
+233 → 221 ms). The decision **stands** for now, because the named remedy is a
+per-process cache and a one-shot CLI invocation builds the tree exactly once
+either way. What has changed is that a resident front is no longer optional if
+sub-100 ms answers are wanted: that is PLAN Phase 4's job, and it is now on the
+critical path rather than a nicety.
+
 ## DEC-008 — Constant confidence is 1 or 0, and the doubt is reported separately
 
 **Decided.** A resolved constant carries `confidence: 1.0`, a residue `0.0`.

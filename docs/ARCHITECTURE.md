@@ -250,9 +250,15 @@ these are two significant figures at best and are quoted that way.
 
 | corpus | files | cold | no-op reindex | defs | const refs | call sites | DB |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| rails | 3,307 | 1.6 s | **64 ms** | 50,353 | 91,178 | 308,453 | 47 MB |
-| discourse | 11,287 | 3.5 s | **116 ms** | 59,194 | 206,215 | 1,227,403 | 118 MB |
-| CRuby | 7,931 | 3.9 s | **108 ms** | 59,224 | 174,711 | 676,971 | 73 MB |
+| rails | 3,307 | 3.1 s | **77 ms** | 50,353 | 91,178 | 308,453 | 65 MB |
+| discourse | 11,287 | 8.6 s | **129 ms** | 59,194 | 206,215 | 1,227,403 | 154 MB |
+| CRuby | 7,931 | 2.3 s | **107 ms** | 56,552 | 171,994 | 666,534 | 72 MB |
+
+Cold time and DB now include the checkout's **gems**, indexed once per machine
+and shared: rails is 86 gems / 1 897 files on top of its own 3 307. CRuby has
+no `Gemfile.lock`, which is why it did not move. A re-index still parses
+nothing; the extra 13 ms of no-op is the gem scan (5 ms) and one
+`has_checkout` per gem.
 
 Cold time is the noisiest figure here — one run, and CRuby has swung between
 2.3 s and 3.9 s across runs on page-cache state alone. Treat it as one
@@ -300,15 +306,22 @@ what a full rebuild from SQL costs:
 
 | corpus | rebuild | total for `--ancestors` |
 |---|---:|---:|
-| rails | 120 ms | 129 ms |
-| discourse | 144 ms | 153 ms |
-| CRuby | 117 ms | 125 ms |
+| rails | 202 ms | 212 ms |
+| discourse | 309 ms | 318 ms |
+| CRuby | 116 ms | 126 ms |
 
-These roughly tripled when the tree gained method tables (43 / 73 / 39 ms
-before): placing 50–60k methods costs more than placing 15k constants. Still
-comfortably inside DEC-007's terms, so the rebuild stays whole — but it is the
-number to watch, and the first move if it crosses ~200 ms is caching one built
-tree per process, not patching one in place.
+**This has now crossed DEC-007's threshold and the decision needs revisiting.**
+The progression is instructive: 43 ms with constants alone, 120 ms once method
+tables arrived, 202 ms once gems did. CRuby stayed at 116 ms because it has no
+gems, which confirms where the cost is — assembling a bigger namespace, not
+querying it. Batching the per-gem queries from 258 down to 3 moved it 233 → 221
+ms, so the round trips were never the problem.
+
+The indicated move is the one DEC-007 named: cache one built tree **per
+process**. That pays for a resident LSP front (PLAN Phase 4) and does nothing
+for a one-shot CLI invocation, which builds it once regardless. So the CLI's
+honest cost for a resolved answer is now ~200–300 ms, and driving it lower is
+Phase 4's problem, not a reason to make the tree incremental.
 
 PLAN §4 said keep the tree cheap to rebuild rather than clever to patch, and
 gated that on a measurement. At well under 100 ms for 11k files there is nothing to
@@ -323,19 +336,127 @@ concerns in order and honestly reports `ActiveRecord::Base` unresolved, because
 gems are not indexed yet.
 
 **How much of real code resolves.** 120 constant references sampled per corpus
-(excluding tests), each asked through `--def` exactly as a caller would:
+(excluding tests), each asked through `--def` exactly as a caller would, at
+three stages: checkout only, then with core, then with gems.
 
-| corpus | resolved | via lexical / ancestor / path / root | residue: core | residue: gem |
-|---|---:|---|---:|---:|
-| rails | **82 %** | 26 / 1 / 24 / 31 | 14 % | 4 % |
-| discourse | **78 %** | 12 / 0 / 19 / 48 | 12 % | 10 % |
-| CRuby | **73 %** | 17 / 0 / 13 / 43 | 10 % | 17 % |
+| corpus | checkout only | + core | + gems |
+|---|---:|---:|---:|
+| rails | 82 % | 92 % | **98 %** |
+| discourse | 78 % | 87 % | 91 % |
+| CRuby | 73 % | 84 % | 84 % |
 
-The important part is not the rate but its composition: **every unresolved name
-traces to something not indexed** — `ENV`, `ArgumentError`, `Nokogiri`,
-`ActiveRecord::Base`, CRuby's internal `Primitive` — and none to a wrong turn on
-the ladder. Gem and core indexing is PLAN Phase 3; when it lands, this number
-moves without the resolver changing. Reproduce with `make bench`.
+Rails' remaining residue is a single name (`::Rack::Cache::MetaStore`, an
+optional adapter not installed). CRuby did not move on the last step because it
+has no `Gemfile.lock`, and its residue is CRuby-internal (`Primitive`,
+`TOPLEVEL_BINDING`, `WIN32OLE::ARGV`) — things no gem index would supply.
+
+**Discourse is a weak test of the gem step and should be read as one**: its
+bundle was never installed on this machine, so 238 of its gems — the entire
+Rails stack included — are named by the lockfile and absent from disk. The
+index says so (`gems.missing`), and `ActiveRecord::Base` is still in its
+residue.
+
+The resolver did not change across those three columns. The index did — which
+was the whole prediction, and it held.
+
+**How much of real code's method dispatch resolves.** 120 call sites sampled
+per corpus, each asked through `--def`:
+
+| corpus | checkout only | + core | + gems |
+|---|---:|---:|---:|
+| rails | 27 % | 38 % | **38 %** |
+| discourse | 16 % | 21 % | 22 % |
+| CRuby | 27 % | 38 % | 38 % |
+
+Rung by rung on rails: `self` 31 %, `const` 3 %, `local:new` 3 %, `includer`
+1 %; residue 62 %. And by what encloses an implicit receiver — the split that
+diagnosed session 3's gap:
+
+| enclosing scope | before | after core + includer rung |
+|---|---:|---:|
+| a class | 67 % | **89 %** |
+| a module | 30 % | **78 %** |
+| nothing (top level) | 0 % | 0 % |
+
+**Core delivered; gems did not, and that is the finding.** The prediction was
+that the gem-truncated and not-in-index method buckets would mostly reclassify.
+Core did exactly that — `puts`, `raise`, `Foo.new`, `prepend` all resolve now,
+and `self`-inside-a-class went from two-thirds to nine-tenths. Gems then added
+nothing measurable, for two separate reasons:
+
+1. **The binding constraint moved.** Rails' method residue is now dominated by
+   receiver *shapes the ladder cannot type*: `local` 29 % and `other` 16 % of
+   all sampled call sites, against `implicit` at 10 %. Those are locals holding
+   the result of a method call whose return type is unknown — rwr measured that
+   only 2.3–4.5 % of definitions have a syntactically resolvable return type.
+   No amount of indexing fixes that; it wants the next rungs on the ladder.
+2. **Discourse could not test the hypothesis** (see above): its gems are not on
+   this machine, so `self`-inside-a-class stayed at 52 % against rails' 89 %,
+   which is the gap gem indexing was supposed to close. Testing it properly
+   needs a corpus whose bundle is actually installed.
+
+The honest read: **for method resolution the index is no longer the limit —
+receiver typing is.** Top-level calls (`self` is `main`) stay at 0 % and always
+will, since `main` is an Object instance with no useful identity.
+
+**The tree layer is rebuilt on every invocation, and that is the design.**
+`--refs` needs no tree; `--ancestors` needs a whole one. The gap between them is
+what a full rebuild from SQL costs:
+
+| corpus | rebuild | total for `--ancestors` |
+|---|---:|---:|
+| rails | 202 ms | 212 ms |
+| discourse | 309 ms | 318 ms |
+| CRuby | 116 ms | 126 ms |
+
+**This has now crossed DEC-007's threshold and the decision needs revisiting.**
+The progression is instructive: 43 ms with constants alone, 120 ms once method
+tables arrived, 202 ms once gems did. CRuby stayed at 116 ms because it has no
+gems, which confirms where the cost is — assembling a bigger namespace, not
+querying it. Batching the per-gem queries from 258 down to 3 moved it 233 → 221
+ms, so the round trips were never the problem.
+
+The indicated move is the one DEC-007 named: cache one built tree **per
+process**. That pays for a resident LSP front (PLAN Phase 4) and does nothing
+for a one-shot CLI invocation, which builds it once regardless. So the CLI's
+honest cost for a resolved answer is now ~200–300 ms, and driving it lower is
+Phase 4's problem, not a reason to make the tree incremental.
+
+PLAN §4 said keep the tree cheap to rebuild rather than clever to patch, and
+gated that on a measurement. At well under 100 ms for 11k files there is nothing to
+invalidate incrementally — memoizing per namespace on contributing blob OIDs
+would be paying interest on a debt we do not have (DEC-007). Linearization *is*
+memoized within a single build, because a file's every constant reference asks
+for the chain of the same enclosing class.
+
+Sanity on real code: `--ancestors ActiveRecord::Base` in rails linearizes 40+
+concerns with **nothing unresolved**; `--ancestors Topic` in discourse gets its
+concerns in order and honestly reports `ActiveRecord::Base` unresolved, because
+gems are not indexed yet.
+
+**How much of real code resolves.** 120 constant references sampled per corpus
+(excluding tests), each asked through `--def` exactly as a caller would, at
+three stages: checkout only, then with core, then with gems.
+
+| corpus | checkout only | + core | + gems |
+|---|---:|---:|---:|
+| rails | 82 % | 92 % | **98 %** |
+| discourse | 78 % | 87 % | 91 % |
+| CRuby | 73 % | 84 % | 84 % |
+
+Rails' remaining residue is a single name (`::Rack::Cache::MetaStore`, an
+optional adapter not installed). CRuby did not move on the last step because it
+has no `Gemfile.lock`, and its residue is CRuby-internal (`Primitive`,
+`TOPLEVEL_BINDING`, `WIN32OLE::ARGV`) — things no gem index would supply.
+
+**Discourse is a weak test of the gem step and should be read as one**: its
+bundle was never installed on this machine, so 238 of its gems — the entire
+Rails stack included — are named by the lockfile and absent from disk. The
+index says so (`gems.missing`), and `ActiveRecord::Base` is still in its
+residue.
+
+The resolver did not change across those three columns. The index did — which
+was the whole prediction, and it held.
 
 **How much of real code's method dispatch resolves.** 120 call sites sampled
 per corpus, each asked through `--def`:
@@ -412,8 +533,12 @@ entirely.
 | `each` | 1,994 | 34 ms |
 | `new` | 13,684 | 89 ms |
 
-**Where the bytes go.** 236 MB for the three corpora, ~10 KB per blob. Measured
-with `dbstat`:
+**Where the bytes go.** 291 MB for the three corpora *and their gems*, up from
+236 MB without them. Gems cost about what the code they contain suggests —
+rails alone went 47 → 65 MB for 86 gems / 1 916 blobs, the same ~9.4 KB per
+blob as a checkout — so the watch-item resolves benignly, and the sharing means
+a second project with the same lockfile adds nothing. The shape below is from
+the pre-gem measurement and has not changed:
 
 | | MB | share |
 |---|---:|---:|

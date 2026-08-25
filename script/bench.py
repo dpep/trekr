@@ -18,6 +18,13 @@ numbers are reported to.
 
 import collections, json, os, random, shutil, sqlite3, subprocess, sys, time
 
+# Line-buffered even when redirected: a run takes minutes, and a progress
+# report you cannot watch is not one.
+try:
+    sys.stdout.reconfigure(line_buffering=True)
+except AttributeError:
+    pass
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.path.join(ROOT, "target/release/trekr")
 DB = "/tmp/trekr-bench.db"

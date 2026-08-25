@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Measured, after core and gems: **98 % of rails constant references resolve**
+  (82 % before this session), 91 % discourse, 84 % CRuby. Method resolution
+  reached 38 % on rails from 27 %, all of it from core — gems added nothing
+  measurable, because the limit has moved from "is it in the index" to "can we
+  type the receiver". Details and caveats in `docs/ARCHITECTURE.md`.
+- Tree rebuild is now 202 ms on rails (was 120 ms), because it assembles the
+  gems too. `--profile` and `make bench` both report it.
+
 - Gems are indexed. `trekr --index` reads `Gemfile.lock`, locates each gem by
   convention, and indexes its `lib/` once per machine — shared by every project
   that resolves the same version. No `bundle`, no `gem`, no Ruby (DEC-016).
