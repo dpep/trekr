@@ -154,7 +154,8 @@ impl Store {
         }
 
         tx.execute(
-            "INSERT OR IGNORE INTO checkout (root, indexed_at) VALUES (?1, unixepoch())",
+            "INSERT OR IGNORE INTO checkout (root, indexed_at, surface_key)
+             VALUES (?1, unixepoch(), 0)",
             params![root],
         )?;
         tx.execute(
@@ -174,24 +175,36 @@ impl Store {
             "DELETE FROM file WHERE checkout_id = ?1",
             params![checkout_id],
         )?;
+        let mut surface_key: i64 = 0;
         {
-            let mut ids: HashMap<&Oid, i64> = HashMap::new();
-            let mut lookup = tx.prepare("SELECT id FROM blob WHERE oid = ?1")?;
+            let mut ids: HashMap<&Oid, (i64, i64)> = HashMap::new();
+            let mut lookup = tx.prepare("SELECT id, surface FROM blob WHERE oid = ?1")?;
             let mut insert =
                 tx.prepare("INSERT INTO file (checkout_id, path, blob_id) VALUES (?1, ?2, ?3)")?;
             for (path, oid) in files {
-                let id = match ids.get(oid) {
-                    Some(id) => *id,
+                let (id, surface) = match ids.get(oid) {
+                    Some(found) => *found,
                     None => {
-                        let id: i64 = lookup.query_row(params![oid.0], |r| r.get(0))?;
-                        ids.insert(oid, id);
-                        id
+                        let found = lookup.query_row(params![oid.0], |r| {
+                            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+                        })?;
+                        ids.insert(oid, found);
+                        found
                     }
                 };
                 insert.execute(params![checkout_id, path, id])?;
+                // Order-independent, so the map's iteration order cannot
+                // change the key; the path is mixed in because a rename moves
+                // where an answer points even when no blob changed.
+                surface_key = surface_key.wrapping_add(path_hash(path) ^ surface);
             }
             counts.blobs = ids.len();
         }
+
+        tx.execute(
+            "UPDATE checkout SET surface_key = ?2 WHERE id = ?1",
+            params![checkout_id, surface_key],
+        )?;
 
         tx.commit()?;
         Ok(counts)
@@ -433,15 +446,20 @@ impl Store {
             .pragma_query_value(None, "user_version", |r| r.get(0))
     }
 
-    /// How many files a checkout maps. The other half: it moves exactly when
-    /// the indexed set does.
-    pub(crate) fn file_count(&self, root: &str) -> Result<i64> {
-        self.conn.query_row(
-            "SELECT COUNT(*) FROM file f JOIN checkout c ON c.id = f.checkout_id
-              WHERE c.root = ?1",
-            params![root],
-            |r| r.get(0),
-        )
+    /// The checkout's whole file map, folded into one number at index time.
+    ///
+    /// The other half of a resident front's staleness check, and the reason it
+    /// is a *content* key: the file **count** does not move when a file is
+    /// edited, so a session keyed on it went on answering from a tree
+    /// assembled before the edit. This moves whenever any answer would.
+    pub(crate) fn surface_key(&self, root: &str) -> Result<i64> {
+        self.conn
+            .query_row(
+                "SELECT surface_key FROM checkout WHERE root = ?1",
+                params![root],
+                |r| r.get(0),
+            )
+            .or(Ok(0))
     }
 
     /// Has this root been indexed before?
@@ -647,10 +665,28 @@ pub(crate) fn decode_params(s: &str) -> Vec<Param> {
         .collect()
 }
 
+/// A path's contribution to a checkout's surface key. FNV-1a again — the same
+/// reasoning as `Facts::surface`, and the two are mixed with XOR so a file's
+/// identity and its contents both have to match.
+fn path_hash(path: &str) -> i64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in path.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    hash as i64
+}
+
 fn insert_facts(tx: &rusqlite::Transaction<'_>, oid: &Oid, facts: &Facts) -> Result<()> {
     tx.execute(
-        "INSERT OR REPLACE INTO blob (oid, lines, parse_errors) VALUES (?1, ?2, ?3)",
-        params![oid.0, facts.lines as i64, facts.parse_errors as i64],
+        "INSERT OR REPLACE INTO blob (oid, lines, parse_errors, surface)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![
+            oid.0,
+            facts.lines as i64,
+            facts.parse_errors as i64,
+            facts.surface() as i64
+        ],
     )?;
     let blob_id = tx.last_insert_rowid();
 

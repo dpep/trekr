@@ -13,7 +13,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 9;
+pub(crate) const VERSION: i64 = 10;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -26,7 +26,11 @@ CREATE TABLE blob (
   id           INTEGER PRIMARY KEY,
   oid          TEXT    NOT NULL UNIQUE,   -- git blob sha1
   lines        INTEGER NOT NULL,
-  parse_errors INTEGER NOT NULL
+  parse_errors INTEGER NOT NULL,
+  -- Digest of just the facts the tree layer reads (defs + ancestry). Two
+  -- blobs sharing it assemble the same tree, which is how an edit's effect
+  -- on the tree is decided without rebuilding it. See `Facts::surface`.
+  surface      INTEGER NOT NULL
 );
 
 -- A name this blob binds. `via` distinguishes a literal definition (NULL) from
@@ -89,9 +93,13 @@ CREATE TABLE call_site (
 -- ── The path→blob map: the only place a path appears ─────────────────────
 
 CREATE TABLE checkout (
-  id         INTEGER PRIMARY KEY,
-  root       TEXT    NOT NULL UNIQUE,     -- absolute worktree path
-  indexed_at INTEGER NOT NULL             -- unix seconds
+  id          INTEGER PRIMARY KEY,
+  root        TEXT    NOT NULL UNIQUE,    -- absolute worktree path
+  indexed_at  INTEGER NOT NULL,           -- unix seconds
+  -- The file map's whole surface, folded into one number at index time: the
+  -- sum over files of hash(path) ^ blob.surface. A resident front checks
+  -- staleness by reading this one row rather than re-aggregating the map.
+  surface_key INTEGER NOT NULL
 );
 
 CREATE TABLE file (

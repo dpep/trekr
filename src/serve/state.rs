@@ -47,8 +47,8 @@ struct Checkout {
     /// `None` until first asked, so a client that only opens a file never pays
     /// for it.
     tree: Option<Tree>,
-    /// The store's schema version and the checkout's file count. Cheap to
-    /// re-read, and both change exactly when the facts do.
+    /// What the tree was assembled from. Cheap to re-read, and it moves
+    /// exactly when the assembled tree would differ.
     built_from: Option<Stamp>,
 }
 
@@ -83,11 +83,13 @@ impl Document {
     }
 }
 
-/// A cheap fingerprint of what a tree was assembled from.
+/// A cheap fingerprint of what a tree was assembled from: the store's schema
+/// version (which DEC-013 makes cover the extractor) and the checkout's
+/// surface key.
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Stamp {
     version: i64,
-    files: i64,
+    surface: i64,
 }
 
 impl Session {
@@ -135,14 +137,15 @@ impl Session {
     /// A checkout's assembled namespace, rebuilt only when the index beneath it
     /// moved.
     ///
-    /// DEC-007 chose whole rebuilds over incremental patching and DEC-013 made
-    /// the store version cover the extractor; between them, "has anything
-    /// changed" is two integers.
+    /// DEC-007 chose whole rebuilds over incremental patching; what decides
+    /// *whether* to rebuild is the checkout's surface key, which folds every
+    /// file's path and tree-relevant facts into one number at index time. The
+    /// file count it replaced could not see an edit at all.
     pub(crate) fn tree(&mut self, root: &Path) -> anyhow::Result<&Tree> {
         let key = root.to_string_lossy().into_owned();
         let stamp = Stamp {
             version: self.store.schema_version()?,
-            files: self.store.file_count(&key)?,
+            surface: self.store.surface_key(&key)?,
         };
         let checkout = self.checkouts.entry(root.to_path_buf()).or_default();
         if checkout.built_from != Some(stamp) {

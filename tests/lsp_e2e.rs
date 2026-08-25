@@ -815,3 +815,67 @@ fn workspace_symbol_widens_when_the_clients_root_is_not_a_checkout() {
     let _ = fs::remove_dir_all(&root);
     let _ = fs::remove_dir_all(&other);
 }
+
+/// A resident session must notice an edit that reindexed underneath it.
+///
+/// The rebuild key was (schema version, file count), and *editing* a file moves
+/// neither — so the session went on answering from a tree assembled before the
+/// edit. Adding a file happened to work, which is what hid this.
+#[test]
+fn an_edit_reindexed_underneath_the_session_is_not_served_stale() {
+    let (dir, db) = scratch("stale");
+    git(&dir, &["init", "-q"]);
+    fs::write(dir.join("app.rb"), "class Widget\nend\n").unwrap();
+    let caller = "class Job\n  def run\n    Gadget\n  end\nend\n";
+    fs::write(dir.join("other.rb"), caller).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    let index = || {
+        Command::new(env!("CARGO_BIN_EXE_trekr"))
+            .args(["--index"])
+            .current_dir(&dir)
+            .env("TREKR_DB", &db)
+            .output()
+            .unwrap();
+    };
+    index();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let ask = |session: &mut Session| {
+        session.request(
+            "textDocument/definition",
+            serde_json::json!({
+                "textDocument": {"uri": uri_of(&dir, "other.rb")},
+                "position": {"line": 2, "character": 4},
+            }),
+        )["result"]
+            .clone()
+    };
+    assert!(ask(&mut session).is_null(), "Gadget does not exist yet");
+
+    // Edit an existing file — the file *count* is unchanged, which is the case
+    // the old key could not see.
+    fs::write(dir.join("app.rb"), "class Widget\nend\nclass Gadget\nend\n").unwrap();
+    index();
+
+    let locations = ask(&mut session);
+    let locations = locations
+        .as_array()
+        .expect("the session must see the reindexed definition");
+    assert_eq!(locations[0]["range"]["start"]["line"], 2, "Gadget, line 3");
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}

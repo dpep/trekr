@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Fixed: a `--serve` session went on answering from a tree assembled **before**
+  an edit that had been reindexed underneath it. The rebuild key was (schema
+  version, file count), and editing a file moves neither — only adding or
+  removing one did, which is what hid it. The key is now the checkout's
+  *surface*: every file's path folded together with a digest of the
+  tree-relevant facts of its blob, computed once at index time and read as one
+  row per request.
+- A blob now carries a `surface` digest — its definitions and ancestry, the
+  only facts the tree layer reads. Measured over 5,158 modified blobs across
+  500 commits of rails, discourse and CRuby, **71 % of edits leave it
+  unchanged**, so most edits need no tree rebuild at all.
+- **Existing databases reindex once**: the schema gained those two columns.
+
 - `--symbols FILE` parses the file instead of querying the index. It was the
   one query verb that did not — `--def` and `--refs` both reparse so an
   unindexed edit still answers — so an outline could be stale, and on a repo
