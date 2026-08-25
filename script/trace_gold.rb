@@ -44,7 +44,10 @@ def column_of(path, line, name)
   # located this way, so the rest are skipped.
   return nil unless name =~ /\A[a-zA-Z_]\w*[?!=]?\z/
 
-  hits = text.enum_for(:scan, /(?<![\w.:@$])#{Regexp.escape(name)}(?![\w?!:])/)
+  # A preceding `.` is the *common* case — `widget.price_cents` — so it must
+  # not be excluded here. What must be is a name that is only part of a longer
+  # identifier, or an ivar/global/symbol that merely shares the spelling.
+  hits = text.enum_for(:scan, /(?<![\w:@$])#{Regexp.escape(name)}(?![\w?!:])/)
              .map { Regexp.last_match.begin(0) }
   return nil unless hits.size == 1
 
@@ -61,11 +64,14 @@ end
 trace = TracePoint.new(:call) do |tp|
   next if sites.size >= MAX
 
-  # The frame that made this call. `caller_locations(0)` inside the handler
-  # starts at the handler itself, so walk to the first frame that is neither
-  # this script nor the method being entered.
-  location = caller_locations(2, 6)&.find { |l| l.path != SELF && l.path != tp.path }
+  # The frame that made this call. Inside the handler the stack reads
+  # [0] this block, [1] the method being entered, [2] the call site — so the
+  # call site is at a fixed offset and does *not* need to be searched for.
+  # Searching for it by "first frame in another file" silently dropped every
+  # call within one file, which is most of what a method body does.
+  location = caller_locations(2, 1)&.first
   next unless location
+  next if location.path == SELF
 
   caller_path = location.absolute_path || location.path
   next if caller_path.nil? || caller_path == SELF
