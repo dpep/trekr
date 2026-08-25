@@ -214,3 +214,47 @@ worse than a slow one.
 **Reverses if** the extractor is ever versioned separately from the schema —
 which would be worth doing if reindexing became expensive, since an extractor
 change need only invalidate the fact tables and not the checkout map.
+
+## DEC-014 — `--jobs` defaults to physical cores, but the writer is the real cost
+
+**Decided.** `--jobs 0` (the default) picks `num_cpus::get_physical()`. Not
+capped.
+
+**Why, and what the measurement actually said.** User feedback reported index
+times improving ~25 % when jobs moved closer to the physical core count. A/B on
+discourse (11.3k files, 1.23 M call sites), best of two cold runs each, Apple M2:
+
+| jobs | wall | scan | parse | store-write | parse MB/s |
+|---:|---:|---:|---:|---:|---:|
+| 1 | 4.03 s | 82 ms | 1267 ms | 2633 ms | 33 |
+| 2 | 3.24 s | 78 ms | 542 ms | 2565 ms | 78 |
+| **4** | **2.92 s** | 74 ms | 280 ms | 2519 ms | 150 |
+| 6 | 3.01 s | 75 ms | 249 ms | 2639 ms | 169 |
+| 8 (auto) | 3.06 s | 86 ms | 271 ms | 2660 ms | 155 |
+| 12 | 3.03 s | 78 ms | 240 ms | 2673 ms | 176 |
+| 16 | 3.20 s | 105 ms | 306 ms | 2748 ms | 137 |
+
+Three things, in order of how much they matter:
+
+1. **The store write is 85 % of the wall time and is flat in `jobs`.** Parse
+   speeds up 5× from 1 to 4 workers and then stops mattering, because it is
+   only ~8 % of the total. rq's theory that a single SQLite writer serializes
+   anyway is not just right, it *dominates* — ~1.5 M row inserts at ~575k/s.
+   **This, not the worker count, is where index time goes.**
+2. **The 25 % is reproducible in shape but not in cause.** 1 → 4 jobs is 27 %
+   here. The logical-vs-physical distinction the feedback attributed it to
+   could **not** be tested on this machine: Apple Silicon reports
+   `hw.ncpu == hw.physicalcpu == 8`, so auto is unchanged by the switch. On an
+   SMT x86 box it would differ, and that remains unmeasured.
+3. **The flat region is wide (4–12) and physical cores lands inside it.** On
+   this machine 4 — the *performance*-core count — is marginally best, but
+   2.92 vs 3.06 s is inside run-to-run noise. The four efficiency cores
+   contribute nothing measurable.
+
+So the default is defensible rather than optimal, and uncapped because the
+plateau is flat rather than falling.
+
+**Reverses if** an SMT machine shows logical cores actually hurting (then cap at
+physical and say so), or if the store write is made concurrent or substantially
+faster — at which point parse becomes the majority and the worker count starts
+to matter for real.

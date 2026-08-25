@@ -361,6 +361,14 @@ that moves constants from 82 % toward the high 90s. The third wants a rung that
 does not exist yet: when a module is included by exactly one class, that class
 *is* the receiver, and the index already knows it.
 
+**Index time is dominated by the store write, not by parsing.** `--profile` on
+discourse: scan 80 ms, parse 270 ms across 8 workers, **store-write 2 660 ms**.
+Roughly 1.5 M row inserts through one SQLite connection at ~575k/s. Parse
+speeds up 5× from one worker to four and then plateaus, because it was never
+the majority. Anything that wants to make indexing faster should start here —
+batched or multi-row inserts, or relaxing durability for the bulk load — and
+not with the worker count (DEC-014).
+
 **The query planner needs statistics, and this is not optional.** Without them
 SQLite plans `--refs` as a nested scan of the checkout's files: `--refs new` on
 rails took **90 seconds** for 13,684 rows. With `ANALYZE` run, the planner
