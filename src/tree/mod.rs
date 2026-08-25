@@ -330,18 +330,44 @@ impl Tree {
         // the key set first, iterating until nothing new appears — each round
         // only adds, so it terminates. Sites are attached in the second pass,
         // which is why an early misplacement leaves no residue behind.
+        // Where a declaration lands is read out of `self.names` in exactly one
+        // case: a **compact path** (`class A::B`), whose prefix goes through
+        // ordinary constant lookup and may only be placeable once something
+        // later declares it. A declaration written with plain names — its own
+        // and every scope it sits in — is placed by string arithmetic alone,
+        // so its answer in round one is its answer forever.
+        //
+        // That is the whole optimisation, and it is deliberately an
+        // over-approximation: "mentions `::` anywhere" is coarser than "could
+        // actually still move", and cheap to convince yourself of. The
+        // assembled namespace is byte-identical on rails, discourse and
+        // widget_shop; a cleverer predicate would buy a few more milliseconds
+        // and cost that confidence.
+        let all: Vec<&DeclRow> = decls.iter().collect();
+        let movable: Vec<&DeclRow> = decls
+            .iter()
+            .filter(|decl| {
+                decl.name.contains("::") || decl.nesting.iter().any(|s| s.contains("::"))
+            })
+            .collect();
+
         let mut rounds = 0;
         let t0 = std::time::Instant::now();
+        let mut first = true;
         loop {
             rounds += 1;
             let before = tree.names.len();
-            for decl in &decls {
+            // Round one settles every declaration; later rounds revisit only
+            // the ones whose placement can still change.
+            let batch: &[&DeclRow] = if first { &all } else { &movable };
+            for decl in batch {
                 let fqn = tree.place_decl(decl);
                 let nesting = tree.scopes(&decl.nesting);
                 // Kind and alias are settled here, not with the sites: placing
                 // `class ALIAS::Bar` has to be able to follow `ALIAS` already.
                 tree.declare_key(fqn, decl, nesting);
             }
+            first = false;
             if tree.names.len() == before {
                 break;
             }
@@ -349,8 +375,9 @@ impl Tree {
         let t1 = std::time::Instant::now();
         if std::env::var("TREKR_PROFILE").is_ok() {
             eprintln!(
-                "  assemble: {rounds} fixpoint rounds over {} decls in {:.0}ms, {} names",
+                "  fixpoint: {rounds} rounds — {} declarations once, {} revisited — {:.0}ms, {} names",
                 decls.len(),
+                movable.len(),
                 (t1 - t0).as_secs_f64() * 1000.0,
                 tree.names.len()
             );

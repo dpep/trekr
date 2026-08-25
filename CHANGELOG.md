@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- The namespace fixpoint revisits only the declarations whose placement can
+  still change. A declaration written with plain names is placed by string
+  arithmetic alone, so round one settles it forever; only a **compact path**
+  (`class A::B`), whose prefix goes through constant lookup, can move. On
+  discourse that is 9,100 of 69,305 declarations, and the fixpoint falls from
+  **97 ms to 46 ms** (rails 22 → 9 ms). The assembled namespace is
+  byte-identical on rails, discourse and widget_shop.
+
 - **A position inside a gem is answered from an app that resolves it.** A gem
   is indexed as a checkout of its own, so on its own it is a tree of one gem
   plus Ruby core — and every method it gets from a sibling gem was unreachable

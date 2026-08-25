@@ -684,11 +684,22 @@ itself written compactly and had not been placed yet — and to observe that
 nothing new appeared. So roughly two thirds of the fixpoint is re-scanning
 declarations that were settled on the first pass.
 
-The shape of the fix, for whoever takes it: after round one, re-scan only the
-declarations that *failed* to place. That should make rounds two and three
-nearly free and take discourse's assemble from 143 ms toward ~50 ms. It is a
-change to the loop's bookkeeping, not to what it computes, which makes it
-cheap to verify — the assembled namespace must be identical.
+**Done in session 22**, though not by the predicate suggested here. "Failed to
+place" is not observable — `place` always returns *something*, and its guess for
+an unknown prefix is a legitimate answer. What is observable is when it can
+*change*: `place` reads `self.names` in exactly one case, a **compact path**
+(`class A::B`) whose prefix goes through constant lookup. A declaration written
+with plain names, in scopes with plain names, is placed by string arithmetic and
+its round-one answer is final.
+
+So the predicate shipped is "mentions `::` anywhere" — a deliberate
+over-approximation, coarser than "could actually still move" and far easier to
+be sure of. On discourse it revisits 9,100 of 69,305 declarations.
+
+**Fixpoint 97 ms → 46 ms** on discourse (predicted ~60), **22 ms → 9 ms** on
+rails; assemble 143 → ~100 ms and 34 → 22 ms. The namespace is byte-identical on
+rails, discourse and widget_shop — checked by dumping every name with its kind,
+alias and sites, before and after.
 
 
 ## Classifying the absent truth (session 21)
