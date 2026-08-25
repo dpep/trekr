@@ -1179,3 +1179,28 @@ up, and it grows with the case the design exists for.
 misses. The instrument then is FTS5 or a trigram index over the **168,718
 distinct names** — a third of the rows and no second home for a path — not a
 denormalised copy of every definition.
+
+### DEC-027 extended to the includer rung (session 26)
+
+The rule — *a convention-based answer with competitors is `ambiguous`, not
+`resolved`* — was written for the receiver-name rung and applied only there. The
+`includer` rung, which answers a call inside a module by asking the classes that
+mix it in, reported `resolved` however many includers disagreed.
+
+`class_methods do` (DEC-031) is what exposed it: widening every concern's
+includer set turned one candidate into five, and the rung promoted at confidence
+**0.2** on two discourse sites. Same fix, same reasoning: `ambiguous` when the
+includers disagree about where the name is defined, with the definitions they
+offered listed as candidates.
+
+The **scorer** gained the matching split in the same change, and that is the
+part worth stating. `confidently wrong` has always meant *resolved, and pointed
+elsewhere*; an `ambiguous` answer that points at the wrong site was being
+counted in it. Reporting them apart is the session-16 discipline — ask what
+distinct realities land in a bucket — not a softened metric: both numbers are
+published, and the `ambiguous` one is only smaller because the engine already
+said it was unsure.
+
+Measured, discourse: app confidently wrong 0.6 % → **0.2 %** with 0.4 %
+ambiguous-wrong beside it; gem floor 4.0 % → **3.3 %** with 0.7 % beside it.
+`correct` and `found the definition` identical to the decimal on both columns.

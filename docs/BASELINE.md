@@ -1256,3 +1256,43 @@ design exists to exploit.
 need to be fast, the honest instrument is an FTS5 or trigram index over the
 **168,718 distinct names** — a third of the rows, and no second place where a
 path lives.
+
+
+### The rung that got more exercise, and DEC-027 applied to it
+
+`class_methods do` widened every concern's includer set, which gave the
+`includer` rung — *"a call inside a module is answered by asking the classes
+that mix it in"* — five candidates where it had one, and it promoted at
+confidence **0.2** while reporting `resolved`. DEC-027 had settled that a pick
+among competitors is `ambiguous`; the rule had only ever been applied to the
+receiver-name rung.
+
+The scorer gained the matching verdict in the same change. `confidently wrong`
+has always meant *resolved, and pointed elsewhere*, and an `ambiguous` answer
+was being counted in it — a different failure, and not the one the product's
+headline claim is about.
+
+| | + `class_methods` | + `ambiguous` on the includer rung |
+| --- | --- | --- |
+| app correct | 59.2 % | 59.2 % |
+| app found | 84.5 % | 84.5 % |
+| app **confidently** wrong | 0.6 % | **0.2 %** |
+| app ambiguous-wrong | — | 0.4 % |
+| gem confidently wrong | 4.0 % | **3.3 %** |
+| gem ambiguous-wrong | — | 0.7 % |
+
+`correct` and `found` are identical to the decimal on both columns, which is the
+check that a disclosure change disclosed and nothing else.
+
+### Canonical, from here on
+
+**discourse app code, 498 scored sites, seed 12, context pinned to discourse:
+59.2 % correct / 84.5 % found / 0.2 % confidently wrong / 0.4 % ambiguous-wrong
+/ 25.3 % residue-with-truth-offered / truth-at-#1 80.2 % (MRR 0.855).** Gem
+floor from the same run, same pin: 51.5 % correct / 86.0 % found / 3.3 %
+confidently wrong.
+
+Two consecutive runs on the untouched store agree to the decimal, as the
+session-24 rule requires. The gold set is a fresh trace of the same exerciser —
+9,146 app sites, the same count as session 25 — so the 42.3 % that column
+carried is directly comparable to the 42.0 % this session started from.
