@@ -352,25 +352,32 @@ Sorbet, so the sig path contributes nothing to their numbers.
 
 **What receiver narrowing is worth.** Twelve method names on rails chosen for
 heavy collision — each defined 5+ times and among the most-called in the repo —
-querying the owner that the most call sites actually resolve to:
+querying the owner that the most call sites actually resolve to, before and
+after Rails DSL modelling:
 
-| | sites | share |
+| | before | after |
 |---|---:|---:|
-| **confirmed** | 8 168 | 32 % |
-| **possible** | 10 933 | 43 % |
-| **excluded** | 6 196 | **24 %** |
-| total same-name call sites | 25 297 | |
+| **confirmed** | 8 168 (32 %) | **11 919 (47 %)** |
+| **possible** | 10 933 (43 %) | 10 740 (42 %) |
+| **excluded** | 6 196 (24 %) | 2 634 (10 %) |
+| — of which positive evidence | 795 | 1 012 |
+| — of which "no such name" | 5 072 (82 %) | **1 104 (42 %)** |
+| — of which arity | 329 | 518 |
 
-Excluded by strength: 795 resolve to a **different owner** (positive evidence),
-5 072 define no such name, 329 wrong arity. `rg -w` would return all 25 297
-undifferentiated, and Ruby LSP would return them by bare name.
+`rg -w` returns all 25 293 undifferentiated, and Ruby LSP returns them by bare
+name.
 
-The spread across names is the interesting part. `ActiveSupport::Testing::Declarative#test`
-is **6 658 of 6 820 confirmed (98 %)** — the `test "…" do` DSL, an implicit
-receiver in classes that include the module.
-`ActiveRecord::ConnectionHandling#lease_connection` is 1 024 of 1 168 (88 %).
-`Arel::SelectManager#where` is 26 confirmed against 1 368 excluded, because
-almost every `where` in rails is on an untyped or dynamically-extended receiver.
+The DSL work moved two things at once. Confirmed rose 15 points because a
+`delegate`d method on a *constant* receiver — `Topic.where` — goes straight from
+"nothing defines this" to "confirmed here". And the weak exclusion reason fell
+by 78 %, which is DEC-021's demoted claim becoming sound: `ActiveRecord::Querying#where`
+alone went from 26 confirmed to **1 197**.
+
+Note for comparability: the harness picks the owner that the most call sites
+resolve to, so the owner it asks about *changed* as resolution improved —
+`Arel::SelectManager#where` became `ActiveRecord::Querying#where`. The twelve
+names are the same; the twelve queries are not, and that is the harness working
+rather than drifting.
 
 **Hand-checked precision**, 22 samples read against their source: 12 of 12
 `confirmed` were genuinely calls to the queried method, and 10 of 10
