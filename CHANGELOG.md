@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- A receiver named after its class is now **typed** by that name, not merely
+  ranked by it: `@widget.supplier_region` resolves to `Widget`'s delegate when
+  nothing else typed the receiver. Reported as `resolved_via: receiver_name`,
+  with confidence graded by the ambiguity it resolved — never the 1.0 of a rung
+  that read the answer out of the code. Three corroborations are required, and
+  a competing definition in the enclosing scope's own chain blocks it.
+  Measured: app-code sites promoted from offered to resolved **61 %**, with
+  **no new confidently-wrong answers on either corpus**.
+
 - **Fixed a crash.** `--def` aborted with a stack overflow on some positions in
   a Sorbet-covered checkout. Resolving a constant *path* asks for a name's
   ancestors, and that name can be one already being linearized — at which point

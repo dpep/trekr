@@ -559,3 +559,39 @@ problem. One caveat kept honest: `residue-ranked-out` means the truth was not
 among the eight candidates returned; it cannot by itself distinguish "in the
 index but ranked past eight" from "not in the index while same-named methods
 are".
+
+
+### Receiver-name promoted from ranking to typing (session 16)
+
+Same corpus, same seed, same sample; the rung is the only change.
+
+| | ranking only | + typing rung |
+| --- | --- | --- |
+| app correct | 50.0 % | **54.8 %** |
+| app generated: resolved | 6.5 % | **24.2 %** |
+| app generated: offered | 21.0 % | 3.2 % |
+| app confidently wrong | 4.8 % | **4.8 %** |
+| gem correct | 38.2 % | **39.0 %** |
+| gem confidently wrong | 3.8 % | **3.8 %** |
+
+**14 of the ~23 app sites where the answer was already sitting in the
+candidate list were promoted to resolved — 61 %.** Predicted 60–75 %, so the
+size was right. Gem promotion was +0.8 points against a predicted "under 5",
+also right: gem code names receivers after their class far less often.
+
+**Zero new confidently-wrong on either corpus**, against a threshold of +2.0
+points set before running, and the three wrong app sites are the same three
+before and after — so nothing that resolved correctly was traded away.
+
+`found the definition` is unchanged at 64.5 %, exactly as predicted: these
+sites already counted as found. The rung does not find new answers, it
+**promotes answers already found** from a list a human must read to one the
+engine will stand behind — which is the difference between a tool that helps
+you look and one that answers.
+
+The one design mistake worth recording: the first version also disqualified on
+"an assignment exists that we could not type", which sounded prudent and
+removed almost the entire population — `@widget = widget` from a constructor
+parameter is exactly that shape, and it is the case the rung exists for. The
+guard was also redundant: the rung is only reached because assignment typing
+already failed.

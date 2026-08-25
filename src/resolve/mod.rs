@@ -251,11 +251,63 @@ pub(super) fn receiver_of(tree: &Tree, facts: &Facts, call: &Call) -> Option<Rec
         }
         // An assignment first, because it is the more specific evidence; a
         // parameter's declared type is the fallback when there is none.
-        RecvShape::Local | RecvShape::Ivar => {
-            from_assignments(tree, facts, call).or_else(|| from_sig_params(tree, facts, call))
-        }
+        RecvShape::Local | RecvShape::Ivar => from_assignments(tree, facts, call)
+            .or_else(|| from_sig_params(tree, facts, call))
+            // Last, because it is the only rung resting on a naming habit
+            // rather than on something the code states.
+            .or_else(|| from_receiver_name(tree, call)),
         RecvShape::Other => None,
     }
+}
+
+/// What the receiver is *called*, when nothing else typed it.
+///
+/// `@widget.supplier_region` — no assignment to chase, no signature, and the
+/// answer sitting in the name. Session 14 shipped this as a ranking signal;
+/// this promotes it to a typing rung, but only with all three corroborations,
+/// because a naming habit is weaker evidence than anything else on the ladder:
+///
+/// 1. the name resolves to a constant the tree actually knows;
+/// 2. that constant defines or inherits the method being called;
+/// 3. **nothing in the enclosing scope's own chain defines it too** — if it
+///    does, there is a competing reading and the name is not decisive.
+///
+/// A visible-but-untypeable assignment is deliberately *not* disqualifying:
+/// this rung is only reached because assignment typing already failed, and
+/// `@widget = widget` — a constructor parameter that shares the name — is the
+/// exact case it exists for. Guarding on it removed the whole population.
+///
+/// Confidence is graded by the ambiguity it had to resolve, never flat: one
+/// hypothesis against "something else", plus one for every other class that
+/// defines the same method. A unique match is 0.5; four competitors is 0.17.
+fn from_receiver_name(tree: &Tree, call: &Call) -> Option<Receiver> {
+    let named = receiver_names_a_class(call.recv_text.as_deref()?)?;
+    let fqn = tree.resolve(&named, &call.nesting).fqn?;
+    // (2) it has to actually answer the call.
+    tree.lookup(&fqn, false, &call.name)?;
+    // (3) a competing reading in the enclosing scope disqualifies the guess.
+    if let Some(scope) = tree.scope_fqn(&call.nesting)
+        && scope != fqn
+        && tree.lookup(&scope, false, &call.name).is_some()
+    {
+        return None;
+    }
+    let others = tree
+        .named(&call.name)
+        .into_iter()
+        .filter(|method| method.owner != fqn)
+        .map(|method| method.owner.clone())
+        .collect::<std::collections::HashSet<_>>()
+        .len();
+    Some(Receiver {
+        fqn,
+        singleton: false,
+        via: "receiver_name",
+        agreeing: 1,
+        // The name is one hypothesis; "something else entirely" is always the
+        // other; every other class defining this name is one more.
+        total: 2 + others,
+    })
 }
 
 /// A method parameter's type, from the `params(...)` half of its `sig`.
@@ -1146,10 +1198,10 @@ mod receiver_name_ranking_tests {
         }
     }
 
-    /// The signal that motivated this: an untypeable ivar whose *name* says
-    /// what it holds. The right answer has to reach the top of the list.
+    /// The signal that motivated this, now a typing rung: an untypeable ivar
+    /// whose *name* says what it holds, with nothing competing.
     #[test]
-    fn a_receiver_named_after_its_class_ranks_that_class_first() {
+    fn a_receiver_named_after_its_class_is_typed_by_that_name() {
         let answer = super::tests::answer(
             "class Alpha\n  def ship\n  end\nend\n\
              class Widget\n  def ship\n  end\nend\n\
@@ -1157,17 +1209,55 @@ mod receiver_name_ranking_tests {
              class Job\n  def run\n    @widget.ship\n  end\nend\n",
             "ship",
         );
+        assert_eq!(answer.status, Status::Resolved);
+        assert_eq!(answer.owner.as_deref(), Some("Widget"));
+        assert_eq!(answer.resolved_via.as_deref(), Some("receiver_name"));
+        // Graded by the ambiguity it resolved — one hypothesis against
+        // "something else", plus Alpha and Zeta. Never the 1.0 of a rung that
+        // read the answer out of the code.
+        assert!(
+            answer.confidence < 0.3,
+            "a naming habit is weak evidence: {}",
+            answer.confidence
+        );
+    }
+
+    /// A competing definition in the enclosing scope's own chain means the
+    /// name is not decisive, so the rung declines and only ranking applies.
+    #[test]
+    fn a_competing_definition_in_scope_blocks_the_promotion() {
+        let answer = super::tests::answer(
+            "class Widget\n  def ship\n  end\nend\n\
+             class Job\n  def ship\n  end\n  def run\n    @widget.ship\n  end\nend\n",
+            "ship",
+        );
         assert_eq!(
             answer.status,
             Status::Residue,
-            "a name is never a promotion"
+            "Job defines ship too, so the name settles nothing"
         );
-        let first = answer.candidates.first().expect("candidates");
-        assert_eq!(first.owner, "Widget");
-        assert!(
-            first.why.contains("named after its owner"),
-            "and says why: {}",
-            first.why
+        // And the enclosing class's own definition outranks the name match,
+        // which is the right order: a definition in scope is stronger evidence
+        // than a naming habit.
+        let owners: Vec<&str> = answer.candidates.iter().map(|c| c.owner.as_str()).collect();
+        assert_eq!(owners.first(), Some(&"Job"));
+        assert!(owners.contains(&"Widget"), "still offered: {owners:?}");
+    }
+
+    /// An assignment the ladder could not type does **not** disqualify: this
+    /// rung is only reached because that typing already failed, and
+    /// `@widget = widget` — a constructor parameter sharing the name — is the
+    /// population it exists to serve. An earlier version guarded on this and
+    /// promoted almost nothing.
+    #[test]
+    fn an_untypeable_assignment_does_not_block_the_promotion() {
+        let answer = super::tests::answer(
+            "class Widget\n  def ship\n  end\nend\n\
+             class Job\n  def initialize(widget)\n    @widget = widget\n  end\n\
+             \x20 def run\n    @widget.ship\n  end\nend\n",
+            "ship",
         );
+        assert_eq!(answer.status, Status::Resolved);
+        assert_eq!(answer.resolved_via.as_deref(), Some("receiver_name"));
     }
 }
