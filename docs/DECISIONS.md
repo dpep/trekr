@@ -397,3 +397,34 @@ against real Tapioca output.
 **Reverses if** the redirect proves misleading in practice — e.g. a model whose
 generated methods a reader genuinely wants to inspect. The fix then is to
 report both locations rather than to pick differently.
+
+## DEC-020 — Chained receivers are not attacked; 40 % typed plus ranked residue is the product
+
+**Decided.** The `other` receiver bucket — chained calls, literals-as-receivers,
+block parameters — gets no dedicated rung. Resolution stays where it is and the
+effort goes into disclosing the residue well.
+
+**Why.** Two independent measurements agree, which is why this is a decision and
+not a deferral:
+
+- rwr's D61 already measured the bucket: chained receivers are 15.8–27.4 % of
+  call sites, but `X.new` is under 4 % of chains, **70 % of method definitions
+  end in another call** (so the type would have to come from a return type that
+  does not exist), and 20–25 % of chains are `expect(...)` — spec DSL, not a
+  navigation target.
+- Session 5's own split says the ceiling is a *type source*, not resolver
+  effort. On rails, where the index is essentially complete (2 truncated
+  samples in 120), resolution is 40 % and the residue is `local` 28 % + `other`
+  16 %. Adding rungs to chase types that were never written cannot move that.
+
+So the honest position: **40 % resolved with named rungs, plus ranked residue
+carrying the receiver shape and the reason, is the product for untyped Ruby.**
+No other tool ships even that — Ruby LSP's fallback for an unknown receiver is
+the first ten methods with that name, and Rubydex does not attribute method
+calls at all.
+
+**Reverses if** a corpus arrives with dense first-party `sig`/RBI coverage —
+the target repo is ~30 % Sorbet, which is the real test, and DEC-018 already
+showed that a repo full of RBIs describing its *dependencies* is not that test.
+Or if a new type source appears (RBS in the wild, a Ruby with inline types).
+The rungs are built and tested; only the corpus is missing.
