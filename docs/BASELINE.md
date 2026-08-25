@@ -1390,3 +1390,103 @@ that governs the other slices.
 Session 23 built literal-name `define_method` extraction and shelved it for
 moving nothing; the names here are computed, which is precisely the gap that
 measurement left open.
+
+
+## Computed method names, extracted (session 28)
+
+### First, a correction to session 27's count
+
+That session sized this slice at **368 sites, 10.3 % of declines**, by grouping
+declined sites on the **owner** Ruby dispatched to. Grouping by owner bundled
+three mechanisms that need three different things. By the truth's *file and
+line*:
+
+| | sites | trekr today |
+| --- | ----- | ----------- |
+| actionpack `callbacks.rb:231` / `:245` — `define_method "#{callback}_action"` | **250** | offered **0**, #1 **0** |
+| activemodel `callbacks.rb:55` / `:88`, sidekiq `job.rb:359` — **plain `def`s** | 118 | offered 118, 44 at #1 |
+
+Only the first is an extraction gap. The other 118 are already offered and
+mostly ranked; they are a typing problem wearing an owner's name. **The honest
+target was 250 sites, 7.0 % of declines** — and, unusually, **38.3 % of the
+653-site `residue-nothing-known` bucket**, the one place where trekr hands over
+nothing at all.
+
+That is what made it worth building over larger slices: everywhere else the
+ranker already puts the truth first and the engine's list is useful even when it
+declines. Here there is no list.
+
+### The measurement
+
+Discourse app code, 498 sites, seed 12, context pinned, two consecutive runs.
+
+| | baseline | predicted | accept | **actual** |
+| --- | --- | --- | --- | --- |
+| `residue-nothing-known` | 6.4 % | 3.2 % | 2.6–4.0 | **3.2 %** |
+| correct | 59.2 % | 62.4 % | 61.0–63.6 | **62.4 %** |
+| found the definition | 84.5 % | 87.7 % | 86.3–88.9 | **87.8 %** |
+| confidently wrong | 0.2 % | ≤ 0.4 % (hard bar) | — | **0.2 %** |
+| ranking: truth at #1 | 80.2 % | ~80 % | 78–83 | **80.2 %** |
+| gem correct / found / wrong | 51.5 / 86.0 / 3.3 % | unchanged | ±2.0 | **51.5 / 86.0 / 3.3 %** |
+
+**Three of them landed on the predicted decimal**, which is what a coverage gap
+with a counted population should do — unlike a ranking feature, the arithmetic
+is knowable in advance: 16 sites in the sample, all currently answering nothing.
+
+Site by site against the previous run: **16 sites fixed, all of them
+`before_action` (10) or `skip_before_action` (6), 0 newly broken, 0 verdicts
+changed for another reason.** The gem column is byte-identical.
+
+`before_action` in a discourse controller now answers
+`abstract_controller/callbacks.rb:231`, owner
+`AbstractController::Callbacks::ClassMethods`, `resolved · confidence 1` — the
+file and line runtime truth reports.
+
+### The blast radius is 297 rows
+
+Across 634 checkouts, definitions went **509,151 → 509,448**. The scope is
+deliberately the narrowest thing that covers the shape: a literal array where
+*every* element is a literal, `each`, exactly one required block parameter, and
+a name whose only interpolation is a bare read of that parameter. `CONST.each`,
+`"#{a}_#{b}"`, `"#{n.to_s}"`, and a `define_method` inside a `def` (DEC-031's
+rule again) all generate nothing.
+
+That last set is the half of testbed 016 that matters. **A name half-guessed is
+worse than a name not offered**, because a lookup finds it and stops — the same
+argument as DEC-031's invented ancestor, one layer down.
+
+### An operational near-miss worth recording
+
+The first reindex after the schema bump reported **`0 parsed`** for every
+corpus. The bump was in the source; the *release binary* had been built before
+it, so `store::init` compared 14 against 14, found no mismatch, kept every blob
+as "already known" — and the measurement would have scored the **old** extractor
+against a store that looked freshly built.
+
+This is DEC-013's exact failure mode ("a stale cache that looks fresh is worse
+than a slow one") arriving from the operations side rather than the code side.
+The tell is free and should be looked for every time: **a reindex that follows a
+schema bump and parses nothing has not happened.**
+
+### What this does not reach, and the lead it leaves
+
+ActiveModel's model callbacks — `after_save`, `after_destroy`, `after_update`,
+112 sites and now the largest remaining block of `residue-nothing-known` — are a
+different mechanism and correctly out of scope here. They are written
+
+```ruby
+def _define_after_model_callback(klass, callback)
+  klass.define_singleton_method("after_#{callback}") do |*args, …|
+```
+
+which three separate guards reject: the receiver is a parameter rather than
+`self`, the call is inside a `def`, and `callback` is a parameter rather than a
+bound literal. Nothing about the defining file states those names.
+
+What *does* state them is the **call site**: activerecord's
+`define_model_callbacks :save, :create, :update, :destroy`. That is the shape
+trekr already models for `belongs_to`, `enum` and the rest — an entry in the
+macro expansion table, whose arguments name the methods it implies. One wrinkle
+for whoever takes it: the call sits inside an `included do` block, so the owner
+the extractor records is the concern, while the methods land on every includer's
+**singleton**.
