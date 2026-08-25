@@ -662,6 +662,7 @@ impl<'pr> Extractor<'_> {
             }
             "include" | "prepend" | "extend" => self.handle_mixin(&name, &args),
             "concerning" => self.handle_concerning(call, &args),
+            "class_methods" => self.handle_class_methods(call, &args),
             "alias_method" => self.handle_alias_method(call, &args),
             "enum" => self.handle_enum(call, &args),
             // Any macro the expansion table knows. The probe argument only
@@ -778,6 +779,50 @@ impl<'pr> Extractor<'_> {
             }
         }
         any
+    }
+
+    /// `class_methods do … end` — ActiveSupport::Concern's `module ClassMethods`.
+    ///
+    /// The block form and the nested-module form are the same declaration:
+    /// Concern creates `M::ClassMethods` either way and extends it into every
+    /// includer. Leaving the block unmodelled put its methods on the concern
+    /// itself, as *instance* methods, where a class-level call cannot reach
+    /// them — and worse, a mixin written inside it (`include StepsHelpers`)
+    /// became an instance-side edge of the concern rather than a class-side one
+    /// of every includer. On discourse that one shape is the largest single
+    /// bucket of declined app sites.
+    ///
+    /// No `include` edge is emitted: Concern *extends* this module, and the
+    /// tree layer already does that for whichever classes include the concern.
+    fn handle_class_methods(
+        &mut self,
+        call: &ruby_prism::CallNode<'pr>,
+        args: &[Node<'pr>],
+    ) -> bool {
+        // `class_methods` takes no arguments and a block. Anything else is
+        // somebody else's method of the same name.
+        if !args.is_empty() || self.nesting.is_empty() || self.in_method_body() {
+            return false;
+        }
+        let Some(block) = call.block().and_then(|b| b.as_block_node()) else {
+            return false;
+        };
+        let name = "ClassMethods".to_string();
+        let mut def = self.def(
+            name.clone(),
+            Kind::Module,
+            call.location().start_offset(),
+            call.location().end_offset(),
+        );
+        def.via = Some("class_methods".to_string());
+        self.push_def(def);
+
+        self.enter(Some(name), Opens::Scope);
+        if let Some(body) = block.body() {
+            self.visit(&body);
+        }
+        self.leave();
+        true
     }
 
     /// `concerning :Name do … end` — Rails' inline concern.
@@ -1741,6 +1786,42 @@ mod rails_dsl_tests {
             names(b"class W\n  delegate :region, to: :supplier, prefix: PREFIX\nend\n").is_empty(),
             "a computed prefix is still a refusal — the name cannot be known"
         );
+    }
+
+    /// The block form of `module ClassMethods`, which Concern creates either
+    /// way — so a mixin inside it is a class-side ancestor of every includer.
+    #[test]
+    fn class_methods_opens_the_concerns_class_methods_module() {
+        let facts = extract(
+            b"module M\n  extend ActiveSupport::Concern\n  class_methods do\n    \
+              include Helpers\n    def build\n    end\n  end\nend\n",
+        );
+        let module = facts
+            .defs
+            .iter()
+            .find(|d| d.name == "ClassMethods")
+            .expect("the block declares the module");
+        assert_eq!(module.kind, Kind::Module);
+        assert_eq!(module.nesting, ["M"]);
+        let built = facts
+            .defs
+            .iter()
+            .find(|d| d.name == "build")
+            .expect("and the method inside it");
+        assert_eq!(built.nesting, ["ClassMethods", "M"]);
+        let edge = facts.ancestry.iter().find(|a| a.target == "Helpers");
+        assert_eq!(
+            edge.expect("the mixin is kept").owner,
+            ["ClassMethods", "M"]
+        );
+    }
+
+    /// Somebody else's `class_methods` is not Concern's. Arguments are the
+    /// cheap tell, and inventing a module on one would be worse than the gap.
+    #[test]
+    fn a_class_methods_that_takes_arguments_is_left_alone() {
+        let facts = extract(b"class W\n  class_methods :a do\n  end\nend\n");
+        assert!(facts.defs.iter().all(|d| d.name != "ClassMethods"));
     }
 
     /// An invented edge is worse than a missing one: this shape is Rails'

@@ -314,6 +314,21 @@ def main(path):
         rows,
         lambda r: f"{r['shape']}, {'typed' if r['typed'] else 'untyped'}",
     )
+    # The split that decides what a rung would be *for*. An implicit receiver
+    # whose method Ruby found on a class is a class-body macro call, and wants
+    # ancestry work; one that dispatched to an instance method is an ordinary
+    # call in a method body, and wants something else entirely.
+    ceiling(
+        "promotion ceiling, receiver expression × what owns the truth:",
+        rows,
+        lambda r: f"{r['expression'][:34]} → {r['owner']}",
+    )
+
+    if os.environ.get("ROWS"):
+        with open(os.environ["ROWS"], "w") as out:
+            for row in rows:
+                out.write(json.dumps(row) + "\n")
+        print(f"\nwrote {len(rows)} classified rows to {os.environ['ROWS']}")
 
     if os.environ.get("EXAMPLES"):
         n = int(os.environ["EXAMPLES"])

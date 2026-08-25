@@ -1,6 +1,14 @@
-# `class_methods do` is a block DSL, not a nested `module ClassMethods`. Ruby
-# creates Auditable::ClassMethods at runtime and the gold set confirmed the
-# method is reachable; the extractor records the method without emitting the
-# module as a definition of its own. Pinned as-is so a change to it is a
-# decision rather than a surprise.
-symbols app.rb Auditable,audit_log,record
+# `class_methods do` is the block form of `module ClassMethods`, and Concern
+# creates the same module either way. Session 13 recorded the methods without
+# the module and pinned that as deliberate; session 26 measured what it costs
+# and reversed it. On discourse, `Service::Base` writes
+# `class_methods do include StepsHelpers end`, and the methods that reaches —
+# `step`, `model`, `policy` — are the largest single bucket of declined app
+# sites in the corpus.
+#
+# The second assertion is the one that pays: a mixin inside the block is a
+# *class-side* ancestor of every includer, not an instance-side one of the
+# concern.
+symbols app.rb Auditable,ClassMethods,audit_log,record,Reporting,report,Widget
+def app.rb:24:3 status=resolved owner=Auditable::ClassMethods site=app.rb:7
+def app.rb:25:3 status=resolved owner=Reporting site=app.rb:17

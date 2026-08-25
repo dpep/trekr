@@ -12,6 +12,16 @@
   the instance alias instead of `ClassMethods#validate`. It stays an ordinary
   call site, because `include` really is `Module#include`.
 
+- **`class_methods do … end` opens the concern's `ClassMethods` module.**
+  `ActiveSupport::Concern` creates `M::ClassMethods` from the block form and the
+  nested-module form alike, and extends it into every includer. Leaving the
+  block unmodelled put its methods on the concern as *instance* methods, where a
+  class-body call cannot reach them — and a mixin written inside it became an
+  instance-side edge of the concern rather than a class-side one of every
+  includer. On discourse that single shape is **28 % of all declined app sites**;
+  `correct` on real app code goes **43.4 % → 59.2 %** and residue-with-the-truth
+  -offered **41.6 % → 25.3 %**.
+
 - **Existing databases reindex once**: the extractor's output changed.
 
 - `--index` gathers full statistics (`ANALYZE`) after a run that actually read

@@ -1039,3 +1039,156 @@ holds resolves nothing and disturbs nothing.
 
 widget_shop's app column is byte-identical before and after that change, which
 is what makes the two columns comparable.
+
+
+## The declined receivers, characterized (session 26)
+
+Discourse's largest bucket is **residue with the truth offered** — 40.5 % of app
+sites, where the ladder declines and the ranker then puts the right answer first
+87 % of the time. `script/absent.py` cannot see this population: it asks why the
+truth is *missing*. `script/declined.py` asks the opposite question — what are
+the receivers we decline on when the answer is already in hand — and prices each
+slice before anything is built.
+
+Whole corpus, **9,056 app sites scored, 5,029 declined**, context pinned to
+discourse, measured against the store as it stood before this session's two
+fixes:
+
+| the receiver expression | sites | share |
+| ----------------------- | ----- | ----- |
+| implicit — no receiver written | 3,431 | 68.2 % |
+| bare name — a local, a parameter or a call on self | 539 | 10.7 % |
+| **chained call** | **364** | **7.2 %** |
+| constant | 334 | 6.6 % |
+| instance variable | 110 | 2.2 % |
+| receiver on a previous line | 89 | 1.8 % |
+| numeric literal | 59 | 1.2 % |
+| everything else (literals, `[]`, `self`, globals) | 103 | 2.0 % |
+
+| what owns the method Ruby ran | sites | share |
+| ----------------------------- | ----- | ----- |
+| an ordinary class or module | 2,844 | 56.6 % |
+| a singleton class | 1,042 | 20.7 % |
+| a concern's `ClassMethods` | 729 | 14.5 % |
+| Ruby's `Object` | 301 | 6.0 % |
+| Ruby's `Kernel` | 112 | 2.2 % |
+
+Truth lives in the app for 52.5 % of them and in a gem for 47.0 %. Only **3 of
+5,029** have a truncated ancestor chain, so this is not a coverage gap wearing a
+lookup gap's clothes.
+
+### DEC-020 is not overturned, and its bill is a third of what was claimed
+
+Session 25 read the 40.5 % as "chained receivers, concern-installed methods and
+service objects". Two of those three are right. **Chained receivers are 7.2 % of
+the declined population, not the bulk of it** — 364 sites out of 5,029, where
+promoting the top candidate would be right 28 % of the time. DEC-020 stands, and
+the price tag it has carried since the ruby-lsp head-to-head ("1 in 3 positions")
+is a figure about a *sample of positions chosen to include them*, not about what
+real app code declines on.
+
+### Promotion is not the rung — the ceiling says so
+
+If a rung promoted the top candidate for the dominant slice, 2,634 sites become
+`correct` and **797 become confidently wrong**: 76.8 % precision, which on this
+corpus would take confidently-wrong from 1.6 % to roughly 10 %. The product's
+whole claim is that a confident answer is right 98 % of the time. So the useful
+question is never "which slice ranks well" but "which slice has a *mechanism* we
+can model", and the ranked list stays the honest answer for the rest.
+
+### The mechanisms, named, from a 2,500-site subsample
+
+The same classification with every row kept (1,401 declined), grouped by the
+owner Ruby actually dispatched to:
+
+| mechanism | declines | share | reach |
+| --------- | -------- | ----- | ----- |
+| `class_methods do … include StepsHelpers` — discourse's service DSL | 396 | 28.3 % | **modelled this session** |
+| `params do … end`, class_eval'd into an anonymous `ContractBase` subclass | 172 | 12.3 % | out of static reach — the receiver is a runtime-created anonymous class |
+| ActiveModel validation macros | 98 | 7.0 % | partly the above, partly fixed by the mixin rule below |
+| `SiteSetting.foo` | 92 | 6.6 % | out of reach — `define_method` over a YAML settings list |
+| `before_action` family | 77 | 5.5 % | out of reach — `define_method` over a computed name |
+| Rails-generated attribute and association readers | 78 | 5.6 % | answered with the declaration by design (session 15) |
+| `Kernel#require` | 40 | 2.9 % | stated limit — Zeitwerk and Bootsnap replace it |
+
+**Half of the declined population is a handful of named mechanisms, and most of
+them are honestly out of static reach.** A name that exists only after a YAML
+file is read, or only inside a block `class_eval`'d into a class created at
+runtime, is not something a parser can be improved into finding. What is left
+after those is the first row, and it was worth building.
+
+
+## Two extractor rules, measured (session 26)
+
+Both arms are discourse app code, 498 scored sites, seed 12, context pinned to
+discourse. The store is rebuilt between arms because a schema bump forces it
+(DEC-009), so each arm is also checked **site by site** against the one before —
+a corpus-level total cannot tell a fix from a store difference (session 23).
+
+| | baseline | + mixin rule | + `class_methods` |
+| --- | --- | --- | --- |
+| correct | 42.0 % | 43.4 % | **59.2 %** |
+| found the definition | 82.5 % | 84.9 % | 84.5 % |
+| confidently wrong | 1.6 % | **0.2 %** | 0.6 % |
+| residue, truth offered | 40.6 % | 41.6 % | **25.3 %** |
+| ranking: truth at #1 | 87.1 % | 87.9 % | 80.2 % (MRR 0.855) |
+| gem correct / found / wrong | 51.5 / 84.6 / 4.0 % | 51.5 / 86.0 / 4.0 % | 51.5 / 86.0 / 4.0 % |
+
+### A mixin inside a method invents an ancestor
+
+`include Extra` written inside a `def` runs when the method runs, against
+whatever `self` is then. Recorded against the lexically enclosing scope it does
+not merely miss an edge — it invents one, and an invented edge wins lookups.
+
+Rails writes `include ActiveModel::Validations` inside `has_secure_password`, in
+a `ClassMethods` body. That single line put the module's instance methods into
+the class-level lookup chain of every ActiveRecord model, so a class-body
+`validate :thing` resolved — confidently — to `alias_method :validate, :valid?`
+instead of `ClassMethods#validate`.
+
+**Predicted correct 43.2 % (accept 42.2–44.4), wrong 0.4 % (accept 0.0–0.8),
+found 83.7 % (accept 82.5–85.0). All three inside range**, with `found` at the
+top of its range: the invented edge was swallowing residue candidates as well as
+producing wrong answers.
+
+Site by site against the baseline run: **12 sites fixed, 0 newly broken, 0
+changed verdict for another reason.** Seven of the eight confidently-wrong app
+sites were this one shape.
+
+### `class_methods do` is the block form of `module ClassMethods`
+
+`ActiveSupport::Concern` creates `M::ClassMethods` from either form and extends
+it into every includer. Session 13 recorded the methods inside the block without
+the module and pinned that as deliberate (testbed 010); the classification above
+is what it costs. Discourse's `Service::Base` writes
+
+```ruby
+class_methods do
+  include StepsHelpers
+  def call(context = {}, &actions) …
+end
+```
+
+so `step`, `model`, `policy`, `params` and `only_if` — the whole surface of 224
+service objects — were instance methods of the concern, where a class-body call
+cannot reach them. **396 of 1,401 declined sites (28.3 %) are that one shape**,
+and the truth ranked first in **100 %** of them, which is what made it worth
+building rather than promoting.
+
+**Predicted correct 52–61 % — landed at 59.2 %, near the top. Predicted found
+84–89 % — 84.5 %, just inside and slightly *down*. Predicted ranking #1 70–85 %
+— 80.2 %, and the fall is the point**: the population that left the residue is
+the one that ranked first every time, so the remaining pool is harder by
+construction. Read it against the denominator, which went 207 offered → 126.
+
+**Confidently wrong 0.2 % → 0.6 %, against a bar of ≤ 0.7 % set before the
+run.** Both new sites are the same shape and worth naming: a call inside
+`StepsHelpers` itself, where the `includer` rung now has five candidate includers
+instead of one and promotes the wrong one at **confidence 0.2**. Widening a
+module's includer set is exactly what this change does, so the rung's weakest
+case got more exercise. That is DEC-027's rule — a convention-based pick among
+competitors is `ambiguous`, not `resolved` — never having been applied to this
+rung.
+
+Site by site against the previous arm: **0 sites newly missed except those two,
+0 verdicts changed for another reason.**
