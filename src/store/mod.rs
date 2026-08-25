@@ -489,7 +489,12 @@ impl Store {
     pub(crate) fn checkout_containing(&self, path: &str) -> Result<Option<String>> {
         self.conn
             .query_row(
-                "SELECT root FROM checkout WHERE ?1 LIKE root || '/%'
+                // Not LIKE: a root is a path, and `_` is a LIKE wildcard, so
+                // `widget_shop` would also match `widgetXshop`. substr is an
+                // exact prefix test, and the `/` keeps `/a/repo` from claiming
+                // a file in `/a/repo2`.
+                "SELECT root FROM checkout
+                  WHERE substr(?1, 1, length(root) + 1) = root || '/'
                   ORDER BY LENGTH(root) DESC LIMIT 1",
                 params![path],
                 |r| r.get(0),
@@ -806,7 +811,7 @@ fn insert_facts(tx: &rusqlite::Transaction<'_>, oid: &Oid, facts: &Facts) -> Res
 mod tests {
     use super::*;
 
-    fn indexed(store: &mut Store, root: &str, path: &str, src: &str) -> Indexed {
+    pub(super) fn indexed(store: &mut Store, root: &str, path: &str, src: &str) -> Indexed {
         let oid = crate::scan::hash_blob(src.as_bytes());
         let files = Files::from([(path.to_string(), oid.clone())]);
         let wanted = HashSet::from([oid.clone()]);
@@ -944,5 +949,33 @@ mod tests {
             generated.path.is_empty(),
             "a parsed row leaves the path to the caller that read the file"
         );
+    }
+}
+
+#[cfg(test)]
+mod checkout_containing_tests {
+    use super::*;
+
+    /// A checkout root is a path, not a pattern, and not a bare prefix.
+    #[test]
+    fn a_root_claims_only_files_genuinely_inside_it() {
+        let mut store = Store::open_in_memory().unwrap();
+        for root in ["/code/widget_shop", "/code/widget_shop-nosorbet"] {
+            super::tests::indexed(&mut store, root, "app.rb", "class A\nend\n");
+        }
+        let of = |p: &str| store.checkout_containing(p).unwrap();
+
+        assert_eq!(
+            of("/code/widget_shop/app/models/widget.rb").as_deref(),
+            Some("/code/widget_shop")
+        );
+        // The longest genuine container wins, not the shortest prefix match.
+        assert_eq!(
+            of("/code/widget_shop-nosorbet/app/models/widget.rb").as_deref(),
+            Some("/code/widget_shop-nosorbet")
+        );
+        // `_` is a LIKE wildcard; a path is not a pattern.
+        assert_eq!(of("/code/widgetXshop/app.rb"), None);
+        assert_eq!(of("/elsewhere/app.rb"), None);
     }
 }

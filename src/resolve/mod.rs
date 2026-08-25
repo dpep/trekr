@@ -496,7 +496,9 @@ fn residue(
                     2,
                     "arity fits, and its owner shares a namespace with the call",
                 ),
-                (true, _) if method.site.path.ends_with(path) => (3, "arity fits, same file"),
+                (true, _) if crate::core::paths::names_file(&method.site.path, path) => {
+                    (3, "arity fits, same file")
+                }
                 (true, _) => (4, "arity fits"),
                 (false, _) => (5, "defined elsewhere; arity does not fit"),
             };

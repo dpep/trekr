@@ -1432,7 +1432,7 @@ impl Tree {
     /// Exact rather than a guess at the path shape: site paths are absolute and
     /// the tree knows the root it was built for.
     pub(crate) fn in_checkout(&self, site_path: &str) -> bool {
-        !self.root.is_empty() && site_path.starts_with(&self.root)
+        crate::core::paths::under(&self.root, site_path)
     }
 
     /// Every method with this name, anywhere. The candidate pool for residue.

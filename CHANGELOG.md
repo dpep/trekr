@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Four path-comparison bugs fixed, all one shape — a prefix or suffix test with
+  no boundary (DEC-026): a checkout claimed files in a sibling whose name
+  extended it (`widget_shop` vs `widget_shop-nosorbet`, both present here); the
+  same-file ranking signal matched `b.rb` against `ab.rb`; `checkout_containing`
+  used SQL `LIKE`, where `_` is a wildcard; and a git-sourced gem claimed a
+  checkout of any gem whose name extended its own. Comparisons now go through
+  audited helpers whose tests use real absolute paths.
+
 - Two named signals now order residue candidates: **the receiver's name**
   (`@widget.foo` ranks `Widget#foo` first — a convention, so it ranks and never
   promotes) and **this checkout before its dependencies**. Measured on the

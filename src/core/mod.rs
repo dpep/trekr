@@ -19,6 +19,75 @@ impl std::fmt::Display for Oid {
     }
 }
 
+/// Path comparisons that do not assume a shape.
+///
+/// Every one of these was hand-rolled at its call site once, and two of them
+/// were silently dead for a session because the shape changed underneath them
+/// (DEC-026). They live here so there is one place to audit, and so their
+/// tests use real absolute paths rather than convenient short ones.
+pub(crate) mod paths {
+    /// Is `path` inside `root`? Boundary-aware: `/a/repo` does not contain
+    /// `/a/repo2/x.rb`, which a bare `starts_with` says it does.
+    pub(crate) fn under(root: &str, path: &str) -> bool {
+        if root.is_empty() {
+            return false;
+        }
+        let root = root.strip_suffix('/').unwrap_or(root);
+        path.len() > root.len()
+            && path.starts_with(root)
+            && path.as_bytes().get(root.len()) == Some(&b'/')
+    }
+
+    /// Does this absolute path name that checkout-relative file? Boundary-aware
+    /// again: `b.rb` is not the file `/x/ab.rb`.
+    pub(crate) fn names_file(absolute: &str, relative: &str) -> bool {
+        if relative.is_empty() {
+            return false;
+        }
+        match absolute.len().checked_sub(relative.len()) {
+            None => false,
+            Some(0) => absolute == relative,
+            Some(cut) => {
+                absolute.ends_with(relative) && absolute.as_bytes().get(cut - 1) == Some(&b'/')
+            }
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn a_sibling_whose_name_extends_the_root_is_not_inside_it() {
+            let root = "/Users/dev/code/widget_shop";
+            assert!(under(
+                root,
+                "/Users/dev/code/widget_shop/app/models/widget.rb"
+            ));
+            assert!(!under(
+                root,
+                "/Users/dev/code/widget_shop-nosorbet/app/models/widget.rb"
+            ));
+            assert!(!under(root, root), "a root does not contain itself");
+            assert!(!under("", "/anything"));
+            assert!(under(
+                "/Users/dev/code/widget_shop/",
+                "/Users/dev/code/widget_shop/a.rb"
+            ));
+        }
+
+        #[test]
+        fn a_file_is_not_named_by_a_suffix_of_another_files_name() {
+            let site = "/Users/dev/code/app/models/widget.rb";
+            assert!(names_file(site, "app/models/widget.rb"));
+            assert!(names_file(site, "widget.rb"));
+            assert!(!names_file(site, "idget.rb"), "not a path boundary");
+            assert!(!names_file(site, ""));
+            assert!(!names_file("widget.rb", "app/models/widget.rb"));
+        }
+    }
+}
+
 /// Everything one blob declares, references, and calls.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct Facts {

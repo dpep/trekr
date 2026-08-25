@@ -217,17 +217,30 @@ pub(crate) fn locate(repo: &Path, gems: Vec<Gem>) -> Vec<Located> {
 }
 
 /// `bundler/gems/<name>-<revision>` — the version is not in the name, so match
-/// on the prefix and take the first.
+/// on the prefix.
+///
+/// The remainder has to be the revision and nothing else: a bare prefix test
+/// makes `rails` claim `rails-html-sanitizer-abc123def456`, and every gem whose
+/// name extends another's is the same trap.
 fn find_git_checkout(root: &Path, name: &str) -> Option<PathBuf> {
-    let prefix = format!("{name}-");
     std::fs::read_dir(root)
         .ok()?
         .flatten()
         .find(|entry| {
-            entry.file_name().to_string_lossy().starts_with(&prefix)
-                && entry.file_type().is_ok_and(|t| t.is_dir())
+            let dir = entry.file_name().to_string_lossy().into_owned();
+            is_checkout_of(&dir, name) && entry.file_type().is_ok_and(|t| t.is_dir())
         })
         .map(|entry| entry.path())
+}
+
+/// Is `dir` bundler's checkout of `name`, rather than of a gem whose name
+/// merely begins the same way?
+fn is_checkout_of(dir: &str, name: &str) -> bool {
+    dir.strip_prefix(name)
+        .and_then(|rest| rest.strip_prefix('-'))
+        .is_some_and(|revision| {
+            !revision.is_empty() && revision.chars().all(|c| c.is_ascii_hexdigit())
+        })
 }
 
 /// The gems a checkout depends on, located on disk.
@@ -387,5 +400,25 @@ BUNDLED WITH
         );
         assert_eq!(located[0].root.as_deref(), Some(gem_dir.as_path()));
         let _ = std::fs::remove_dir_all(&temp);
+    }
+}
+
+#[cfg(test)]
+mod git_checkout_name_tests {
+    use super::is_checkout_of;
+
+    #[test]
+    fn a_gem_does_not_claim_a_checkout_of_a_longer_named_gem() {
+        assert!(is_checkout_of("rails-abc123def456", "rails"));
+        assert!(is_checkout_of(
+            "rails-html-sanitizer-abc123",
+            "rails-html-sanitizer"
+        ));
+        assert!(
+            !is_checkout_of("rails-html-sanitizer-abc123", "rails"),
+            "the remainder must be a revision, not another name segment"
+        );
+        assert!(!is_checkout_of("rails", "rails"), "no revision at all");
+        assert!(!is_checkout_of("railsy-abc123", "rails"));
     }
 }

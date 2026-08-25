@@ -694,3 +694,50 @@ session is intolerable — the shape to watch is a repo whose build passes a few
 seconds, not a few hundred milliseconds. The key to persist against already
 exists: `checkout.surface_key` names exactly the tree that would be stored, so
 the work would be serialization and nothing else.
+
+## DEC-026 — Path comparisons go through audited helpers, not a newtype
+
+**Decided.** Every "is this path inside that one" and "does this path name that
+file" goes through `core::paths::{under, names_file}`, whose tests use real
+absolute paths. Two path *kinds* exist — store-absolute and checkout-relative —
+and they are **not** distinguished by the type system. That was considered and
+deferred; see below.
+
+**Why the sweep happened.** Two selection rules were found silently dead, each
+with a unit test that passed against a synthetic relative path while the real
+one was absolute: DEC-019's `starts_with("sorbet/rbi/dsl/")` guard, and the
+residue ranker's `site.path == path` same-file signal. Neither failed loudly;
+both simply never fired. A test that cannot see the regression it exists to
+catch is worth less than no test.
+
+**What the sweep found.** Every path comparison, prefix test, join, strip and
+canonicalization in `src/`:
+
+| site | verdict |
+| ---- | ------- |
+| `Tree::in_checkout` — `starts_with(root)` | **bug**: `/a/repo` claimed `/a/repo2/x.rb`. This machine has `widget_shop` *and* `widget_shop-nosorbet`, so it was live. |
+| residue ranker, same-file — `ends_with(path)` | **bug**: `b.rb` matched `/x/ab.rb`. (Was `==`, dead, until session 14 made it loose.) |
+| `Store::checkout_containing` — `?1 LIKE root \|\| '/%'` | **bug**: `_` is a LIKE wildcard, so `widget_shop` matched `widgetXshop`. Masked by `ORDER BY LENGTH(root) DESC`. Now an exact `substr` prefix test. |
+| `find_git_checkout` — `starts_with("{name}-")` | **bug**: `rails` claimed `rails-html-sanitizer-<sha>`. The remainder must now be a revision. |
+| `Site::is_rbi` — `ends_with(".rbi")` | sound: an extension test does not care about shape. |
+| `Site::is_dsl_rbi` — `contains(DSL_RBI)` | sound since session 13; `contains` is shape-independent. |
+| `Session::locate` — `Path::strip_prefix` | sound: `Path` compares *components*, so `/a/repo2` is not under `/a/repo`. |
+| `scan::walk` — `Path::strip_prefix` | sound, same reason. |
+| `store::declarations`/`methods` — `c.root \|\| '/' \|\| f.path` | sound: builds absolute paths, never compares them. |
+| `handlers::location` — `is_absolute()` then `root.join` | sound, and both branches are live: tree sites are absolute, `--refs` candidates are checkout-relative. |
+| `/var` vs `/private/var` | sound: both sides canonicalized in `Session::locate` and `workspace_root`, and the store keys on git's own path. Verified on disk that `repo_root` and `checkout.root` agree byte-for-byte. |
+
+Four bugs, all of the same shape: **a prefix or suffix test with no boundary.**
+
+**Why not a newtype.** A `StoreAbsolute(String)` / `CheckoutRelative(String)`
+pair would make the same-file bug unrepresentable, which is the standard this
+project applied to the fabricated-path P1 (paths made absolute at the store so
+the mistake could not be written). It was rejected here because the two kinds
+meet in only a handful of places while the newtype would touch `store`, `tree`,
+`resolve`, `serve` and `cli` — a wide refactor to catch a narrow class, in a
+codebase where the *boundary* mistake, not the kind mistake, accounts for all
+four findings. Helpers with honest tests catch all four; a newtype catches one.
+
+**Reverses if** a fifth bug of this class appears, or a kind confusion appears
+that a boundary check would not have caught — either says the helpers are not
+carrying enough and the type system should.
