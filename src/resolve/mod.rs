@@ -103,6 +103,22 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
                     candidates: Vec::new(),
                     reason: None,
                 },
+                // A call written inside a module has no receiver of its own:
+                // whatever includes the module is the receiver. When the index
+                // knows which class that is, the call is determinate after all.
+                None if tree.kind_of(&receiver.fqn) == Some("module") => {
+                    match via_includers(tree, call, &receiver) {
+                        Some(answer) => answer,
+                        None => residue(
+                            tree,
+                            call,
+                            path,
+                            Some(receiver),
+                            "the call is inside a module, and no class the index \
+                             knows of mixes it in and defines this name",
+                        ),
+                    }
+                }
                 // The type is settled and Ruby would still not find the method
                 // here. That is a different "no" from an unknown receiver, and
                 // usually means a gem, a DSL, or `method_missing`.
@@ -124,6 +140,52 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
             "the receiver's type is not determined by this file",
         ),
     }
+}
+
+/// Resolve a call written inside a module by asking the classes that mix it in.
+///
+/// `ActiveRecord::Transactions#destroyed?` is not defined in `Transactions`; it
+/// is defined in `Persistence`, and the two only meet because
+/// `ActiveRecord::Base` includes both. Lexical resolution cannot see that, but
+/// the ancestor index can.
+///
+/// Confidence is the share of mixing-in classes that agree on one definition —
+/// a count, as ever. One includer that defines the name is certain *within the
+/// index*; three includers of which one defines it is `1/3`, and says so.
+fn via_includers(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<MethodAnswer> {
+    let includers = tree.includers_of(&receiver.fqn);
+    if includers.is_empty() {
+        return None;
+    }
+    let mut found: Vec<&crate::tree::MethodDef> = Vec::new();
+    for class in &includers {
+        if let Some(method) = tree.lookup(class, call.singleton, &call.name) {
+            found.push(method);
+        }
+    }
+    let winner = found.first()?;
+    let agreeing = found
+        .iter()
+        .filter(|method| {
+            method.site.line == winner.site.line && method.site.path == winner.site.path
+        })
+        .count();
+    Some(MethodAnswer {
+        status: Status::Resolved,
+        confidence: agreeing as f64 / includers.len() as f64,
+        resolved_via: Some("includer".to_string()),
+        receiver: call.recv.as_str(),
+        receiver_kind: Some("module".to_string()),
+        receiver_type: Some(receiver.fqn.clone()),
+        owner: Some(winner.owner.clone()),
+        sites: vec![winner.site.clone()],
+        // The fraction counts classes that mix the module in, not assignments —
+        // `resolved_via` is what says which.
+        agreement: Some(format!("{agreeing}/{} includers", includers.len())),
+        unresolved_ancestors: Vec::new(),
+        candidates: Vec::new(),
+        reason: None,
+    })
 }
 
 fn agreement(receiver: &Receiver) -> Option<String> {
@@ -476,6 +538,53 @@ mod tests {
             "two assignments were seen and only one agreed — a count, not a guess"
         );
         assert_eq!(found.agreement.as_deref(), Some("1/2"));
+    }
+
+    #[test]
+    fn a_call_inside_a_module_is_resolved_through_the_class_that_mixes_it_in() {
+        // The Rails concern shape: two modules that know nothing of each other,
+        // meeting only in the class that includes both.
+        let source = "module Persistence\n  def destroyed?\n  end\nend\n\
+                      module Transactions\n  def rollback\n    destroyed?\n  end\nend\n\
+                      class Base\n  include Persistence\n  include Transactions\nend\n";
+        let found = answer(source, "destroyed?");
+        assert_eq!(found.status, Status::Resolved);
+        assert_eq!(found.resolved_via.as_deref(), Some("includer"));
+        assert_eq!(found.owner.as_deref(), Some("Persistence"));
+        assert_eq!(
+            found.confidence, 1.0,
+            "exactly one class mixes it in, so the receiver is determinate"
+        );
+        assert_eq!(found.agreement.as_deref(), Some("1/1 includers"));
+    }
+
+    #[test]
+    fn includers_that_disagree_lower_the_confidence_and_disclose_the_count() {
+        // Two classes mix the module in; only one of them has the method.
+        let source = "module Helper\n  def run\n    missing_here\n  end\nend\n\
+                      class A\n  include Helper\n  def missing_here\n  end\nend\n\
+                      class B\n  include Helper\nend\n";
+        let found = answer(source, "missing_here");
+        assert_eq!(found.status, Status::Resolved);
+        assert_eq!(found.owner.as_deref(), Some("A"));
+        assert_eq!(found.confidence, 0.5);
+        assert_eq!(found.agreement.as_deref(), Some("1/2 includers"));
+    }
+
+    #[test]
+    fn a_module_nobody_mixes_in_says_that_rather_than_guessing() {
+        let source = "module Lonely\n  def run\n    nowhere\n  end\nend\n";
+        let found = answer(source, "nowhere");
+        assert_eq!(found.status, Status::Residue);
+        assert!(found.reason.unwrap().contains("mixes it in"));
+    }
+
+    #[test]
+    fn the_includer_rung_reaches_through_a_module_that_includes_a_module() {
+        let source = "module Deep\n  def deep\n  end\nend\n\
+                      module Middle\n  def run\n    deep\n  end\nend\n\
+                      class C\n  include Deep\n  include Middle\nend\n";
+        assert_eq!(owner(source, "deep").as_deref(), Some("Deep"));
     }
 
     #[test]

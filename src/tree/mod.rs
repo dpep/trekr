@@ -118,6 +118,10 @@ pub(crate) struct Tree {
     by_owner: HashMap<(String, bool, String), Vec<usize>>,
     /// name → every definition anywhere, for ranked residue.
     by_name: HashMap<String, Vec<usize>>,
+    /// Classes that have each module in their ancestor chain. Built lazily,
+    /// because the common path never asks: it costs a pass over every name and
+    /// only a call inside a module needs it.
+    includers: RefCell<Option<HashMap<String, Vec<String>>>>,
     /// Linearization is memoized per name. Only the top-level call is cached;
     /// the recursion under it is cheap, and caching mid-flight would mean
     /// caching a chain computed against a partial `seen` set — not the same
@@ -207,6 +211,7 @@ impl Tree {
             methods: Vec::new(),
             by_owner: HashMap::new(),
             by_name: HashMap::new(),
+            includers: RefCell::new(None),
             ancestors: RefCell::new(HashMap::new()),
         };
 
@@ -1167,6 +1172,42 @@ impl Tree {
     /// The fully-qualified name of the scope a fact was written in.
     pub(crate) fn scope_fqn(&self, written_nesting: &[String]) -> Option<String> {
         self.scopes(written_nesting).into_iter().next()
+    }
+
+    /// The classes that mix in this module, directly or through another module.
+    ///
+    /// A module is never the receiver of a call written inside it — whatever
+    /// includes it is. When the index knows exactly which class that is, the
+    /// call has a determinate receiver after all, and this is how to find it.
+    pub(crate) fn includers_of(&self, module: &str) -> Vec<String> {
+        if self.includers.borrow().is_none() {
+            let mut map: HashMap<String, Vec<String>> = HashMap::new();
+            // Only classes: resolving a module receiver to another module
+            // would just move the problem.
+            let classes: Vec<String> = self
+                .names
+                .iter()
+                .filter(|(_, entry)| entry.kind == "class")
+                .map(|(fqn, _)| fqn.clone())
+                .collect();
+            for class in classes {
+                for ancestor in &self.ancestors(&class).chain {
+                    if ancestor != &class {
+                        map.entry(ancestor.clone()).or_default().push(class.clone());
+                    }
+                }
+            }
+            for names in map.values_mut() {
+                names.sort();
+                names.dedup();
+            }
+            *self.includers.borrow_mut() = Some(map);
+        }
+        self.includers
+            .borrow()
+            .as_ref()
+            .and_then(|map| map.get(module).cloned())
+            .unwrap_or_default()
     }
 
     /// `class`, `module`, or `constant` — for a name the checkout declares.
