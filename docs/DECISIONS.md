@@ -876,3 +876,44 @@ So the reverses-if trail ends where the last revisit said it would: **if cold
 start still matters, what remains to persist is the namespace** — 19,697 rows
 for rails against the 84,052 methods that are now gone. That is a much smaller
 thing to serialize, and a much better trade than the one turned down twice.
+
+## DEC-028 — Two ranking features measured and **not** shipped
+
+**Decided.** Ancestor-chain proximity and call-site/definition directory
+affinity were built, measured against the gold set, and turned down. Neither
+reached the bar set before running: **≥ 2.0 points on the #1 rate or ≥ 0.02
+MRR**, on the gem sample.
+
+| variant | truth ranked #1 | MRR |
+| ------- | --------------- | --- |
+| baseline | 61.5 % | 0.743 |
+| + chain proximity | 61.5 % | 0.743 |
+| + directory affinity | 63.1 % | 0.753 |
+| both | 63.1 % | 0.753 |
+
+**Chain proximity did nothing at all** — not a small gain, zero. Tier 0 ("the
+enclosing class inherits from its owner") rarely holds more than one candidate,
+so there is no order to improve. Predicted +1–2 points; the honest answer is
+that the tier already captured everything the signal had.
+
+**Directory affinity moved one site.** 1.6 points of a 65-site denominator is
+40 → 41. Predicted +3–5 points. Reporting that as an improvement would be
+reporting noise as signal, which is the exact failure the bar exists to prevent.
+
+**The finding that matters is why there was no headroom.** The slice this
+session was aimed at — 10.8 % of gem residue, recorded as `residue-ranked-out`
+— was assumed to be truth that existed but sat past rank 8. It is not. Raising
+the candidate cap from 8 to **500** did not shrink that bucket **by a single
+site**: the true definition is not in the candidate pool at all. No ordering
+can reach what is not there.
+
+So the verdict was misnamed and is now `residue-truth-absent`. It is a second
+kind of *coverage* gap, not a ranking gap: something with that name was found,
+but the thing Ruby actually ran was not. Session 16 flagged that this bucket
+could not distinguish those two cases; this settles it, in the direction that
+invalidates three sessions of "sitting yield for ranking features".
+
+**Reverses if** a corpus appears where the truth *is* in the pool and merely
+ranked low — the cheap test is the one run here: raise the cap and see whether
+the bucket moves. It costs one gold run and it should be the first thing done
+before any future ranking work.

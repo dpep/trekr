@@ -645,3 +645,24 @@ Nothing to change.
 
 What the same probe *did* surface is that `@account.local?` had begun answering
 `resolved` at 0.03 confidence, which became DEC-027.
+
+
+### The ranked-out slice is not a ranking problem (session 20)
+
+Three sessions carried "10.8 % of gem residue is ranked-out — sitting yield for
+ranking features" as a lead. It was wrong, and the test that settles it is one
+line: **raise `MAX_CANDIDATES` from 8 to 500 and re-score.**
+
+The bucket did not shrink by a single site. The true definition is not in the
+candidate pool at all, so no ordering can reach it. The verdict is renamed
+`residue-truth-absent` — a second flavour of coverage gap, where *something*
+with that name was found but not the thing Ruby ran.
+
+Two ranking features were built and measured against it before this was
+understood: chain proximity moved nothing (tier 0 rarely holds two candidates),
+directory affinity moved one site of 65. Both turned down (DEC-028).
+
+**What to do instead**: the two residue buckets are now 16.0 % nothing-known
+and 10.8 % truth-absent, and both are coverage. Understanding *why* the truth
+is absent — unindexed source, an owner the extractor did not model, a
+runtime-built method — is the question with 27 % of the gem sample behind it.

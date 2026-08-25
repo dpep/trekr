@@ -157,9 +157,12 @@ def verdict(site, answer, app_root):
         return "residue-hit"
     if is_generated(site) and any(in_app(c.get("path"), app_root) for c in candidates):
         return "declaration-offered"
-    # Knowing nothing is not the same as knowing things and ranking the truth
-    # out of the list: the first is a coverage gap, the second a ranking one.
-    return "residue-ranked-out" if candidates else "residue-nothing-known"
+    # Two coverage gaps, not a coverage gap and a ranking gap. Session 20
+    # raised the candidate cap to 500 and this bucket did not shrink by a
+    # single site: the truth is not in the pool at all, so no ordering can
+    # reach it. It differs from `nothing-known` only in that *something* with
+    # that name was found.
+    return "residue-truth-absent" if candidates else "residue-nothing-known"
 
 
 def main(path):
@@ -200,7 +203,7 @@ def main(path):
         "declaration",
         "declaration-offered",
         "right-owner-wrong-site",
-        "residue-ranked-out",
+        "residue-truth-absent",
         "residue-nothing-known",
         "wrong",
         "no-name",
@@ -257,7 +260,7 @@ def main(path):
             "wrong",
             "right-owner-wrong-site",
             "no-name",
-            "residue-ranked-out",
+            "residue-truth-absent",
             "residue-nothing-known",
             "crashed",
             "not-indexed",
