@@ -8,6 +8,10 @@
   but counted, because that count is what a grep cannot produce.
   `Owner.method` asks the class-method question instead, and a bare name keeps
   the whole-mention view with each call site now naming the owner it reaches.
+- Measured on rails over twelve heavy-collision method names: of 25,297
+  same-name call sites, **32 % confirmed, 43 % possible, 24 % excluded** —
+  where `rg -w` returns all of them undifferentiated. A refs query costs
+  360–400 ms, of which 210 ms is the tree build.
 - `--refs --include-excluded` lists the ruled-out sites with their reason, so
   the count is auditable rather than asserted. Exclusions are reported by
   reason, because only one of the three is positive evidence (DEC-021).

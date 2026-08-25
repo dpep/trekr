@@ -188,6 +188,35 @@ because that is what `--index` computes. Nothing is built for this yet, and
 deliberately: staleness detection written before there is a process to need it
 would be a guess at its shape.
 
+### `resolve/refs.rs` — references narrowed by receiver
+
+`rg -w save` finds every `save`. Ruby LSP matches method references by bare
+name; Rubydex does not attribute method calls at all. What makes an answer
+useful is knowing which of those sites can reach *this* method, and the ladder
+already knows.
+
+| tier | meaning | listed? |
+|---|---|---|
+| **confirmed** | the receiver's type resolves and Ruby's lookup from it lands on the queried method | yes |
+| **possible** | the receiver is untyped and nothing rules the site out — ranked by proximity | yes |
+| **excluded** | the receiver resolves elsewhere, or the arity does not fit | **counted**, and listable with `--include-excluded` |
+
+`Widget#save` and `Widget.save` are different questions. A bare name narrows
+nothing, so it keeps the whole-mention view with each call site naming the owner
+it reaches.
+
+**The exclusion count is broken down, because its three reasons are not equally
+strong** (DEC-021). Only `different_owner` is positive evidence. `no_such_method`
+is the largest and the weakest: Rails writes `delegate :where, to: :all`, so a
+DSL-defined method is absent from the index without being absent from the
+program. Behaviour is unchanged — those sites are not listed — but the claim is
+split so a caller can see how much of it is inference.
+
+Files are reparsed rather than read from the stored call rows. The ladder needs
+the file's assignments, which are deliberately not stored (DEC-012), and
+reparsing means an edit since the last index is still tiered correctly. The
+index's only job here is to say which files are worth opening.
+
 ### `store/` — SQLite, WAL, no cleverness
 
 Schema in [`src/store/schema.rs`](../src/store/schema.rs); it is the authority
@@ -321,6 +350,41 @@ Sorbet `sig` extraction is exercised at scale on `graph_weaver`: 3,757 of its
 methods get a concrete return class. None of the three corpora above use
 Sorbet, so the sig path contributes nothing to their numbers.
 
+**What receiver narrowing is worth.** Twelve method names on rails chosen for
+heavy collision — each defined 5+ times and among the most-called in the repo —
+querying the owner that the most call sites actually resolve to:
+
+| | sites | share |
+|---|---:|---:|
+| **confirmed** | 8 168 | 32 % |
+| **possible** | 10 933 | 43 % |
+| **excluded** | 6 196 | **24 %** |
+| total same-name call sites | 25 297 | |
+
+Excluded by strength: 795 resolve to a **different owner** (positive evidence),
+5 072 define no such name, 329 wrong arity. `rg -w` would return all 25 297
+undifferentiated, and Ruby LSP would return them by bare name.
+
+The spread across names is the interesting part. `ActiveSupport::Testing::Declarative#test`
+is **6 658 of 6 820 confirmed (98 %)** — the `test "…" do` DSL, an implicit
+receiver in classes that include the module.
+`ActiveRecord::ConnectionHandling#lease_connection` is 1 024 of 1 168 (88 %).
+`Arel::SelectManager#where` is 26 confirmed against 1 368 excluded, because
+almost every `where` in rails is on an untyped or dynamically-extended receiver.
+
+**Hand-checked precision**, 22 samples read against their source: 12 of 12
+`confirmed` were genuinely calls to the queried method, and 10 of 10
+positive-evidence exclusions genuinely went elsewhere (`String#size` ruled out
+of `Array#size`, `Integer#to_s` out of `Kernel#to_s`). A sample that small
+bounds nothing tightly; it is a check that the mechanism is not systematically
+wrong, not a precision figure.
+
+**Cost.** A refs query pays the tree build plus a reparse of every file that
+mentions the name: 360–400 ms on rails against a 210 ms tree build, so the scan
+itself is 150–190 ms even for 6 820 sites. Whole-index queries are therefore
+squarely in the territory where a resident front would pay for itself twice —
+once for the tree, once for the parse cache.
+
 **The tree layer is rebuilt on every invocation, and that is the design.**
 `--refs` needs no tree; `--ancestors` needs a whole one. The gap between them is
 what a full rebuild from SQL costs:
@@ -431,6 +495,41 @@ than the diagnosis suggested; the diagnosis found that half of untyped local
 receivers were method parameters, but most of those parameters have no `sig`
 either.
 
+**What receiver narrowing is worth.** Twelve method names on rails chosen for
+heavy collision — each defined 5+ times and among the most-called in the repo —
+querying the owner that the most call sites actually resolve to:
+
+| | sites | share |
+|---|---:|---:|
+| **confirmed** | 8 168 | 32 % |
+| **possible** | 10 933 | 43 % |
+| **excluded** | 6 196 | **24 %** |
+| total same-name call sites | 25 297 | |
+
+Excluded by strength: 795 resolve to a **different owner** (positive evidence),
+5 072 define no such name, 329 wrong arity. `rg -w` would return all 25 297
+undifferentiated, and Ruby LSP would return them by bare name.
+
+The spread across names is the interesting part. `ActiveSupport::Testing::Declarative#test`
+is **6 658 of 6 820 confirmed (98 %)** — the `test "…" do` DSL, an implicit
+receiver in classes that include the module.
+`ActiveRecord::ConnectionHandling#lease_connection` is 1 024 of 1 168 (88 %).
+`Arel::SelectManager#where` is 26 confirmed against 1 368 excluded, because
+almost every `where` in rails is on an untyped or dynamically-extended receiver.
+
+**Hand-checked precision**, 22 samples read against their source: 12 of 12
+`confirmed` were genuinely calls to the queried method, and 10 of 10
+positive-evidence exclusions genuinely went elsewhere (`String#size` ruled out
+of `Array#size`, `Integer#to_s` out of `Kernel#to_s`). A sample that small
+bounds nothing tightly; it is a check that the mechanism is not systematically
+wrong, not a precision figure.
+
+**Cost.** A refs query pays the tree build plus a reparse of every file that
+mentions the name: 360–400 ms on rails against a 210 ms tree build, so the scan
+itself is 150–190 ms even for 6 820 sites. Whole-index queries are therefore
+squarely in the territory where a resident front would pay for itself twice —
+once for the tree, once for the parse cache.
+
 **The tree layer is rebuilt on every invocation, and that is the design.**
 `--refs` needs no tree; `--ancestors` needs a whole one. The gap between them is
 what a full rebuild from SQL costs:
@@ -539,6 +638,41 @@ nothing measurable, for two separate reasons:
 The honest read: **for method resolution the index is no longer the limit —
 receiver typing is.** Top-level calls (`self` is `main`) stay at 0 % and always
 will, since `main` is an Object instance with no useful identity.
+
+**What receiver narrowing is worth.** Twelve method names on rails chosen for
+heavy collision — each defined 5+ times and among the most-called in the repo —
+querying the owner that the most call sites actually resolve to:
+
+| | sites | share |
+|---|---:|---:|
+| **confirmed** | 8 168 | 32 % |
+| **possible** | 10 933 | 43 % |
+| **excluded** | 6 196 | **24 %** |
+| total same-name call sites | 25 297 | |
+
+Excluded by strength: 795 resolve to a **different owner** (positive evidence),
+5 072 define no such name, 329 wrong arity. `rg -w` would return all 25 297
+undifferentiated, and Ruby LSP would return them by bare name.
+
+The spread across names is the interesting part. `ActiveSupport::Testing::Declarative#test`
+is **6 658 of 6 820 confirmed (98 %)** — the `test "…" do` DSL, an implicit
+receiver in classes that include the module.
+`ActiveRecord::ConnectionHandling#lease_connection` is 1 024 of 1 168 (88 %).
+`Arel::SelectManager#where` is 26 confirmed against 1 368 excluded, because
+almost every `where` in rails is on an untyped or dynamically-extended receiver.
+
+**Hand-checked precision**, 22 samples read against their source: 12 of 12
+`confirmed` were genuinely calls to the queried method, and 10 of 10
+positive-evidence exclusions genuinely went elsewhere (`String#size` ruled out
+of `Array#size`, `Integer#to_s` out of `Kernel#to_s`). A sample that small
+bounds nothing tightly; it is a check that the mechanism is not systematically
+wrong, not a precision figure.
+
+**Cost.** A refs query pays the tree build plus a reparse of every file that
+mentions the name: 360–400 ms on rails against a 210 ms tree build, so the scan
+itself is 150–190 ms even for 6 820 sites. Whole-index queries are therefore
+squarely in the territory where a resident front would pay for itself twice —
+once for the tree, once for the parse cache.
 
 **The tree layer is rebuilt on every invocation, and that is the design.**
 `--refs` needs no tree; `--ancestors` needs a whole one. The gap between them is
