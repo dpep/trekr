@@ -642,6 +642,29 @@ fn refs_narrowed_by_receiver_separates_confirmed_from_possible() {
         answer["counts"]["excluded"], 2,
         "one ruled out by receiver, one by arity"
     );
+    // The three reasons differ in strength, so they are counted apart: only
+    // `different_owner` is positive evidence.
+    assert_eq!(answer["counts"]["excluded_different_owner"], 1);
+    assert_eq!(answer["counts"]["excluded_arity"], 1);
+    assert_eq!(answer["counts"]["excluded_no_such_method"], 0);
+
+    // And the claim is auditable rather than merely asserted.
+    let audited = json(&trekr(
+        &db,
+        &dir,
+        &["--refs", "Widget#save", "--json", "--include-excluded"],
+    ));
+    let rulings: Vec<&str> = audited["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["ruling"].as_str())
+        .collect();
+    assert_eq!(
+        rulings.len(),
+        2,
+        "every exclusion names its reason: {rulings:?}"
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }

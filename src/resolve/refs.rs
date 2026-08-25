@@ -77,6 +77,9 @@ pub(crate) struct Reference {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) owner: Option<String>,
     pub(crate) why: &'static str,
+    /// Which of the three exclusion reasons applied, when one did.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) ruling: Option<Ruling>,
     /// Ranking tier within `possible`; lower is nearer. Not a score — the
     /// `why` string names it, and no weights are invented (DEC-011).
     #[serde(skip)]
@@ -95,22 +98,51 @@ impl Tier {
 }
 
 impl Counts {
-    pub(crate) fn record(&mut self, tier: Tier) {
-        match tier {
+    pub(crate) fn record(&mut self, reference: &Reference) {
+        match reference.tier {
             Tier::Confirmed => self.confirmed += 1,
             Tier::Possible => self.possible += 1,
-            Tier::Excluded => self.excluded += 1,
+            Tier::Excluded => {
+                self.excluded += 1;
+                match reference.ruling {
+                    Some(Ruling::DifferentOwner) => self.excluded_different_owner += 1,
+                    Some(Ruling::NoSuchMethod) => self.excluded_no_such_method += 1,
+                    Some(Ruling::Arity) | None => self.excluded_arity += 1,
+                }
+            }
         }
     }
+}
+
+/// Why a call site was ruled out. The three reasons are **not** equally
+/// strong, and blending them into one number would overclaim the weakest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Ruling {
+    /// The receiver's type resolves and Ruby's lookup lands on a *different*
+    /// method. Positive evidence; this call provably is not the queried one.
+    DifferentOwner,
+    /// The receiver's type resolves and nothing indexed defines this name on
+    /// it. Weaker: Rails writes `delegate :where, to: :all`, and a method
+    /// defined by a DSL is absent from the index without being absent from the
+    /// program. Right when the target is some other class — which is the usual
+    /// case — and wrong if the queried owner is itself dynamic.
+    NoSuchMethod,
+    /// The argument count does not fit the definition we have. Sound against
+    /// *that* definition, which is all a syntactic check can claim.
+    Arity,
 }
 
 #[derive(Debug, Default, Serialize)]
 pub(crate) struct Counts {
     pub(crate) confirmed: usize,
     pub(crate) possible: usize,
-    /// Same-name call sites the receiver ruled out. The number a grep cannot
-    /// produce.
+    /// Same-name call sites the receiver ruled out — the number a grep cannot
+    /// produce. Broken down, because the reasons differ in strength.
     pub(crate) excluded: usize,
+    pub(crate) excluded_different_owner: usize,
+    pub(crate) excluded_no_such_method: usize,
+    pub(crate) excluded_arity: usize,
 }
 
 /// One call site, tiered against the query.
@@ -126,7 +158,7 @@ pub(crate) fn tier_call(
     target: Option<&str>,
 ) -> Reference {
     let shape = call.recv.as_str();
-    let here = |tier, receiver_type, owner, why, proximity| Reference {
+    let here = |tier, receiver_type, owner, why, proximity, ruling| Reference {
         path: path.to_string(),
         line: call.pos.line,
         col: call.pos.col,
@@ -135,6 +167,7 @@ pub(crate) fn tier_call(
         receiver_type,
         owner,
         why,
+        ruling,
         proximity,
     };
 
@@ -153,6 +186,7 @@ pub(crate) fn tier_call(
                     Some(found.owner.clone()),
                     "the receiver's type resolves here",
                     0,
+                    None,
                 )
             } else {
                 here(
@@ -161,6 +195,7 @@ pub(crate) fn tier_call(
                     Some(found.owner.clone()),
                     "the receiver's type resolves to a different owner",
                     0,
+                    Some(Ruling::DifferentOwner),
                 )
             }
         }
@@ -170,8 +205,9 @@ pub(crate) fn tier_call(
             Tier::Excluded,
             Some(receiver.fqn.clone()),
             None,
-            "the receiver's type defines no method of this name",
+            "nothing indexed defines this name on the receiver's type",
             0,
+            Some(Ruling::NoSuchMethod),
         ),
         None => here(
             Tier::Possible,
@@ -179,6 +215,7 @@ pub(crate) fn tier_call(
             None,
             "the receiver's ancestors are not fully indexed",
             1,
+            None,
         ),
     }
 }
@@ -208,6 +245,7 @@ fn possible(
             receiver_type: None,
             owner: None,
             why: "the argument count does not fit this method",
+            ruling: Some(Ruling::Arity),
             proximity: 0,
         };
     }
@@ -236,6 +274,7 @@ fn possible(
         receiver_type: None,
         owner: None,
         why,
+        ruling: None,
         proximity,
     }
 }

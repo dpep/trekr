@@ -428,3 +428,33 @@ the target repo is ~30 % Sorbet, which is the real test, and DEC-018 already
 showed that a repo full of RBIs describing its *dependencies* is not that test.
 Or if a new type source appears (RBS in the wild, a Ruby with inline types).
 The rungs are built and tested; only the corpus is missing.
+
+## DEC-021 — Exclusions are counted by reason, because the reasons are not equally strong
+
+**Decided.** `--refs Owner#method` reports `excluded` broken into
+`different_owner`, `no_such_method`, and `arity`, and `--include-excluded` lists
+every ruled-out site with its reason.
+
+**Why.** Auditing the first real run found the problem. `Arel::SelectManager#where`
+on rails excludes 1 368 call sites, and a sample showed most of them are
+`Topic.where(...)`, `Author.where(...)` — ruled out because **nothing indexed
+defines `where` on `Topic`**. That is right for this query, and the *reasoning*
+is unsound in general: Rails writes `delegate :where, to: :all`, so the method
+is absent from the index without being absent from the program. A method a DSL
+defines looks exactly like a method that does not exist.
+
+Only `different_owner` is positive evidence — the receiver resolves and Ruby's
+lookup lands somewhere else, so this call provably is not the queried one. On
+that same query it is 21 of 1 368. `arity` is sound against the definition we
+have, which is all a syntactic check can claim. `no_such_method` is the
+1 260-strong majority and the weakest.
+
+Blending them into one number would have made the product's headline claim
+mostly rest on its weakest reason without saying so. Keeping the behaviour
+(these sites are not listed) and splitting the count is the honest shape: the
+answer is still far better than a grep, and the caller can see exactly how much
+of it is inference.
+
+**Reverses if** DSL-defined methods get modelled (`delegate`, `define_method`,
+`scope`, the Rails family — PLAN Phase 3). Then `no_such_method` becomes nearly
+as strong as `different_owner`, and the split stops earning its keep.

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- `--refs 'Owner#method'` narrows references by receiver: **confirmed** (the
+  receiver's type resolves and Ruby's lookup lands here), **possible** (untyped
+  receiver, ranked by proximity, never dropped), and **excluded** — not listed
+  but counted, because that count is what a grep cannot produce.
+  `Owner.method` asks the class-method question instead, and a bare name keeps
+  the whole-mention view with each call site now naming the owner it reaches.
+- `--refs --include-excluded` lists the ruled-out sites with their reason, so
+  the count is auditable rather than asserted. Exclusions are reported by
+  reason, because only one of the three is positive evidence (DEC-021).
+
 - Three new receiver-typing rungs: `sig:param` (a parameter's declared class,
   from the `params(...)` half of a signature), `literal` (`out = []` is an
   Array), and `sig:step` (one call on an already-typed local, and only one).

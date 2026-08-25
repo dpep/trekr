@@ -67,6 +67,13 @@ struct Cli {
     #[arg(long, value_name = "N", env = "TREKR_JOBS", default_value_t = 0)]
     jobs: usize,
 
+    /// List the call sites `--refs Owner#method` ruled out, with the reason.
+    ///
+    /// The exclusion count is the product's central claim, so it has to be
+    /// auditable rather than merely asserted.
+    #[arg(long, requires = "refs")]
+    include_excluded: bool,
+
     /// Skip the checkout's gems. They are indexed once per machine and shared
     /// by every project that resolves the same version, so the cost is paid
     /// once — but it is paid.
@@ -108,7 +115,7 @@ pub fn run() -> ExitCode {
     } else if let Some(path) = &cli.symbols {
         cmd_symbols(out, path)
     } else if let Some(name) = &cli.refs {
-        cmd_refs(out, name)
+        cmd_refs(out, name, cli.include_excluded)
     } else if let Some(spec) = &cli.def {
         cmd_def(out, spec)
     } else if let Some(name) = &cli.ancestors {
@@ -461,6 +468,8 @@ fn gather_refs(
     root_str: &str,
     query: &crate::resolve::refs::Query,
     target: Option<&str>,
+    // Keep the excluded sites too, so `--include-excluded` can show them.
+    keep_all: bool,
 ) -> anyhow::Result<(
     Vec<crate::resolve::refs::Reference>,
     crate::resolve::refs::Counts,
@@ -475,10 +484,11 @@ fn gather_refs(
         let facts = extract::extract(&bytes);
         for call in facts.calls.iter().filter(|c| c.name == query.name) {
             let reference = refs::tier_call(tree, &facts, call, &path, query, target);
-            counts.record(reference.tier);
+            counts.record(&reference);
             // Excluded sites are counted, not listed: the count is the product,
-            // and the list would be the grep we are trying to beat.
-            if reference.tier != refs::Tier::Excluded {
+            // and the list would be the grep we are trying to beat. `keep_all`
+            // is how `--include-excluded` makes the claim auditable.
+            if keep_all || reference.tier != refs::Tier::Excluded {
                 found.push(reference);
             }
         }
@@ -487,7 +497,7 @@ fn gather_refs(
     Ok((found, counts))
 }
 
-fn cmd_refs(out: Output, text: &str) -> anyhow::Result<ExitCode> {
+fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<ExitCode> {
     use crate::resolve::refs;
     let query = refs::Query::parse(text);
     let root = scan::repo_root(Path::new("."))?;
@@ -503,7 +513,15 @@ fn cmd_refs(out: Output, text: &str) -> anyhow::Result<ExitCode> {
 
     let tree = Tree::build(&store, &root_str)?;
     let (owner, definition) = refs::definition_of(&tree, &query);
-    let (found, counts) = gather_refs(&tree, &store, &root, &root_str, &query, owner.as_deref())?;
+    let (found, counts) = gather_refs(
+        &tree,
+        &store,
+        &root,
+        &root_str,
+        &query,
+        owner.as_deref(),
+        include_excluded,
+    )?;
 
     let answer = serde_json::json!({
         "query": text,
@@ -542,8 +560,16 @@ fn cmd_refs(out: Output, text: &str) -> anyhow::Result<ExitCode> {
     // The number a grep cannot produce, said out loud.
     if counts.excluded > 0 {
         println!(
-            "\n{} confirmed, {} possible, {} same-name call sites excluded by receiver",
-            counts.confirmed, counts.possible, counts.excluded
+            "\n{} confirmed, {} possible, {} excluded of {} same-name call sites",
+            counts.confirmed,
+            counts.possible,
+            counts.excluded,
+            counts.confirmed + counts.possible + counts.excluded,
+        );
+        // The three reasons are not equally strong, so they are not one number.
+        println!(
+            "  excluded: {} resolve to a different owner, {} define no such name, {} wrong arity",
+            counts.excluded_different_owner, counts.excluded_no_such_method, counts.excluded_arity,
         );
     }
     Ok(exit_on(!found.is_empty()))
@@ -562,7 +588,7 @@ fn cmd_refs_by_name(
     let has_calls = rows.iter().any(|row| row.role == "call");
     if has_calls {
         let tree = Tree::build(store, root_str)?;
-        let (found, _) = gather_refs(&tree, store, root, root_str, query, None)?;
+        let (found, _) = gather_refs(&tree, store, root, root_str, query, None, false)?;
         // Match by position: one call site, one tiering.
         for row in rows.iter_mut().filter(|row| row.role == "call") {
             if let Some(reference) = found
