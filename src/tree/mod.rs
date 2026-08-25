@@ -143,6 +143,12 @@ pub(crate) struct Tree {
     /// because the common path never asks: it costs a pass over every name and
     /// only a call inside a module needs it.
     includers: RefCell<Option<HashMap<String, Vec<String>>>>,
+    /// Names whose linearization is in progress. `descend` asks for a name's
+    /// ancestors while resolving a path, and that path resolution can lead
+    /// back to a name already being linearized — at which point `ancestors`
+    /// starts a *fresh* recursion stack and `linearize`'s own cycle guard,
+    /// which is per-call, cannot see it. This is the guard that spans calls.
+    in_flight: RefCell<HashSet<String>>,
     /// Linearization is memoized per name. Only the top-level call is cached;
     /// the recursion under it is cheap, and caching mid-flight would mean
     /// caching a chain computed against a partial `seen` set — not the same
@@ -250,6 +256,7 @@ impl Tree {
     fn assemble(decls: Vec<DeclRow>, edges: Vec<EdgeRow>) -> Tree {
         let mut tree = Tree {
             root: String::new(),
+            in_flight: RefCell::new(HashSet::new()),
             names: HashMap::new(),
             methods: Vec::new(),
             by_owner: HashMap::new(),
@@ -449,9 +456,21 @@ impl Tree {
         if let Some(cached) = cached {
             return cached;
         }
+        // Re-entered for a name already being linearized: answer empty rather
+        // than recurse, exactly as `linearize` does for a cycle it can see.
+        // The outer call still computes the real chain, so the empty answer is
+        // never what gets cached.
+        // Re-entered for a name already being linearized: answer empty rather
+        // than recurse, exactly as `linearize` does for a cycle it can see.
+        // The outer call still computes the real chain, so the empty answer is
+        // never what gets cached.
+        if !self.in_flight.borrow_mut().insert(fqn.to_string()) {
+            return Rc::new(Ancestry::default());
+        }
         let mut out = Ancestry::default();
         out.chain = self.linearize(fqn, &mut out, &mut Vec::new());
         let chain = Rc::new(out);
+        self.in_flight.borrow_mut().remove(fqn);
         self.ancestors
             .borrow_mut()
             .insert(fqn.to_string(), chain.clone());
@@ -1882,5 +1901,29 @@ mod rbi_preference_tests {
             "/app/sorbet/rbi/gems/thing@1.rbi",
         )]);
         assert!(tree.lookup("Widget", false, "only_declared").is_some());
+    }
+}
+
+#[cfg(test)]
+mod reentrant_linearization_tests {
+    /// Resolving a *path* asks for a name's ancestors, and that name can be one
+    /// already being linearized. `linearize`'s cycle guard is per-call, so the
+    /// re-entry started a fresh stack and recursed until the process died.
+    ///
+    /// The real instance was `File` → `IO` → `IO::EAGAINWaitReadable` → `File`,
+    /// out of Ruby core plus a checkout's committed RBIs. `trekr --def`
+    /// **aborted** on three positions in widget_shop, and the gold scorer had
+    /// been recording those aborts as the far more innocent "no name at this
+    /// position".
+    ///
+    /// Neither path here is directly declared, which is what forces `descend`
+    /// to consult ancestors rather than hit the name outright — an earlier
+    /// version of this test declared them and passed with the guard removed.
+    #[test]
+    fn two_classes_whose_superclass_paths_need_each_other_terminate() {
+        let tree = crate::tree::for_test(&[("a.rb", "class A < B::C\nend\nclass B < A::D\nend\n")]);
+        // Terminating at all is the assertion.
+        assert!(tree.ancestors("A").chain.contains(&"A".to_string()));
+        assert!(tree.ancestors("B").chain.contains(&"B".to_string()));
     }
 }

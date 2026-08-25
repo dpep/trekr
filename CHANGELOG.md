@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **Fixed a crash.** `--def` aborted with a stack overflow on some positions in
+  a Sorbet-covered checkout. Resolving a constant *path* asks for a name's
+  ancestors, and that name can be one already being linearized — at which point
+  `ancestors` began a fresh recursion and the per-call cycle guard could not see
+  it. The real instance was `File` → `IO` → `IO::EAGAINWaitReadable` → `File`,
+  from Ruby core plus committed RBIs. Re-entry now answers empty, as a
+  visible cycle already did.
+
 - Four path-comparison bugs fixed, all one shape — a prefix or suffix test with
   no boundary (DEC-026): a checkout claimed files in a sibling whose name
   extended it (`widget_shop` vs `widget_shop-nosorbet`, both present here); the

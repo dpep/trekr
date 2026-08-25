@@ -38,14 +38,20 @@ except AttributeError:
 
 
 def ask(site):
+    """Ask trekr, distinguishing an empty answer from a dead process.
+
+    `--def` aborted with a stack overflow on three real positions and the
+    scorer recorded it as "missed", the same verdict as an honest "no name
+    here". A crash is a different fact and gets its own one.
+    """
     spec = f"{site['file']}:{site['line']}:{site['col']}"
-    out = subprocess.run(
-        [BIN, "--def", spec, "--json"], capture_output=True, check=False
-    ).stdout
+    done = subprocess.run([BIN, "--def", spec, "--json"], capture_output=True, check=False)
+    if done.returncode not in (0, 1):
+        return "crashed"
     try:
-        return json.loads(out)
+        return json.loads(done.stdout)
     except json.JSONDecodeError:
-        return None
+        return "crashed"
 
 
 def hits(answer_sites, site):
@@ -96,7 +102,9 @@ def candidate_rank(site, answer):
 
 
 def verdict(site, answer, app_root):
-    if answer is None or answer.get("reason") == "no name at this position":
+    if answer == "crashed":
+        return "crashed"
+    if not answer or answer.get("reason") == "no name at this position":
         return "missed"
     reported = answer.get("sites") or []
     if answer.get("status") == "resolved" or reported:
@@ -134,9 +142,9 @@ def main(path):
     results = []
     ranks = []
     for i, site in enumerate(app + gems, 1):
-        answer = ask(site) or {}
+        answer = ask(site)
         results.append((site, verdict(site, answer, app_root)))
-        rank = candidate_rank(site, answer)
+        rank = candidate_rank(site, answer) if isinstance(answer, dict) else None
         if rank:
             ranks.append((site["scope"], rank))
         if i % 50 == 0:
@@ -150,6 +158,7 @@ def main(path):
         "residue",
         "wrong",
         "missed",
+        "crashed",
     ]
 
     def report(label, rows):
@@ -185,7 +194,7 @@ def main(path):
             print(f"  {label:<4} {len(rows):>4} offered   #1 {100 * first / len(rows):>5.1f}%"
                   f"   top-3 {100 * top3 / len(rows):>5.1f}%   MRR {mrr:.3f}")
 
-    misses = [(s, v) for s, v in app_rows if v in ("wrong", "missed", "residue")]
+    misses = [(s, v) for s, v in app_rows if v in ("wrong", "missed", "residue", "crashed")]
     if misses:
         print("\nevery app-code miss, which is the part worth reading:")
         for site, why in sorted(misses, key=lambda r: (r[0]["file"], r[0]["line"])):

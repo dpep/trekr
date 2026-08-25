@@ -471,3 +471,20 @@ app found-the-definition 61.9 % → 63.5 %, gem 63.8 % → 65.0 %.
 
 Found while adding this: the existing "same file" signal compared a
 checkout-relative path against an absolute one and had never fired.
+
+
+### The "missed" verdict was hiding a crash (session 15)
+
+Three of the sigs-on app sites scored `missed` — "no name at this position".
+They were not misses. `trekr --def` was **aborting** on them with a stack
+overflow, and the scorer could not tell a dead process from an empty answer.
+It can now: `crashed` is its own verdict.
+
+With the crash fixed, the sigs-on column becomes **49.2 % correct / 6.3 %
+wrong / 58.7 % found**, and `missed` is zero. That is the same `correct` rate
+as the sigs-off column (49.2 %), so the gap the controlled experiment measured
+was, on that axis, entirely this bug.
+
+The lesson generalizes past this scorer: a harness that maps *every* failure to
+one benign bucket will hide the severe ones behind the ordinary ones, and it
+will do so most convincingly when the benign bucket is plausible.
