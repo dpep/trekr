@@ -10,6 +10,10 @@
   database, so `require` and `Array#each` land on a readable stub instead of
   answering nothing.
 - A model overriding `self.table_name` gets that table's columns.
+- Measured, with discourse's bundle installed: the chain-truncated bucket
+  **disappeared** (24 of 120 samples → 0 of 60), `self` inside a class went
+  52 % → 83 %, and overall resolution 31 % → 43 %. Session 5 could only confirm
+  the gem hypothesis negatively; this confirms it positively.
 - Measured: goToDefinition coverage on the baseline's 45 positions went
   **19/45 → 44/45**, against ruby-lsp's 33/45. Details and the hand-adjudicated
   losses in `docs/BASELINE.md`.

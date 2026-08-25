@@ -667,6 +667,33 @@ diagnosed session 3's gap:
 | a module | 30 % | **78 %** |
 | nothing (top level) | 0 % | 0 % |
 
+**The gem hypothesis, confirmed positively (2026-08-25).** Session 5 could only
+confirm it negatively: 0 of 71 chain-truncated call sites resolved, across every
+corpus. discourse's bundle is now installed — 300 of its 349 locked gems are on
+disk, and `--index` finds and indexes 281 of them (10,711 files); the 49 absent
+are platform variants (`ffi` for linux, aarch64 builds) legitimately missing on
+macOS.
+
+Re-measuring discourse with those gems present, 60 stable-keyed positions:
+
+| | bundle-less | bundled |
+|---|---:|---:|
+| ancestor chain **truncated** | 24 of 120 (0 % resolved) | **0 of 60** |
+| `self` inside a class | 52 % | **83 %** |
+| overall resolved | 31 % | **43 %** |
+
+**The truncated bucket did not shrink — it disappeared.** Every sampled call
+site's ancestor chain is now complete, which is what "0 of 71 resolved" was
+evidence *for*: those sites were unresolvable because the index was missing an
+ancestor, not because the ladder failed. `self`-inside-a-class closed most of
+the distance to rails' 89 %.
+
+Predictions held: 75–85 % was predicted for the class rate (83 %), "in the 40s"
+for overall (43 %). At n=60 that is ±6 points, so read the last row as "rose by
+about ten".
+
+*Mastodon remains bundle-less and its columns above are unchanged.*
+
 **Rails DSL modelling moved it again**, though a caveat first: the runs below
 use a different sample seed from the table above, so at n=120 a swing under ~5
 points is noise. rails went 39 % → 42 % (inside that band, so treat it as
