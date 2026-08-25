@@ -750,3 +750,53 @@ The app sample cannot substitute yet: at 63 sites it is too small, and a third
 of it is the Rails-generated bucket, which answers with the declaration rather
 than the generator by design (session 15) and so registers as "absent" against
 runtime truth however well it behaves.
+
+
+## The gem floor, re-measured with gem context (session 22)
+
+Session 21 found that a query inside a gem resolved against a tree of that one
+gem plus Ruby core, so cross-gem methods were unreachable by construction —
+and that 2,924 of the gold set's 2,987 sites are inside gem files. DEC-029's
+fix answers a gem position from an app that resolves the gem. Same corpus,
+same seed, same sample:
+
+| | before | after |
+| --- | --- | --- |
+| gem correct | 38.2 % | **48.8 %** |
+| gem found the definition | 64.0 % | **84.5 %** |
+| gem confidently wrong | 3.8 % | **3.0 %** |
+| gem residue, nothing known | 16.0 % | **2.2 %** |
+| gem residue, truth absent | 12.5 % | **6.5 %** |
+| app code (unchanged) | 54.8 % correct | 54.8 % correct |
+
+**Predicted correct 54 % (accept 50–58) and found 77 % (accept 73–81).** Correct
+came in at 48.8 %, just *under* the accepted range; found came in at 84.5 %,
+*over* it. So the fix converted more residue into offered-and-found answers than
+predicted, and fewer of those into outright resolutions. Confidently wrong fell
+rather than rose, which was the guard: more context did not buy confidence in
+answers that should still be declined.
+
+### How much of ten sessions' gem figures was artifact
+
+Gem residue was 28.5 % (16.0 nothing-known + 12.5 truth-absent) and is now
+8.7 %. **The artifact accounted for 19.8 of those 28.5 points — about 70 % of
+what was being reported as a coverage gap.** Every gem figure published from
+session 12 onward understated found-the-definition by roughly 20 points and
+correct by roughly 10.
+
+The app-code numbers are unaffected and always were: widget_shop already owned
+its own bundle, so app sites had the whole tree all along. That is why the app
+and gem columns are reported apart, and it is the reason the artifact survived
+ten sessions — the half of the measurement that was sound never disagreed with
+the half that was not.
+
+### A ranking number that got worse for a good reason
+
+Gem ranking quality fell — truth at #1 from 61.5 % to 49.7 %, MRR 0.743 to
+0.663. It is not a regression. The candidate pool grew: residue-hit went from
+25.8 % to 35.8 % of sites, so the *denominator* is 143 where it was 103. In
+absolute terms more truths rank first than before (≈71 against ≈63).
+
+It does mean DEC-028's rejected ranking features were measured against a pool
+that was missing most of its competitors, and deserve re-measuring now that the
+pool is real.
