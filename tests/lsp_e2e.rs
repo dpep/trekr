@@ -1125,3 +1125,75 @@ fn incoming_calls_name_the_method_each_call_sits_in() {
     session.stop();
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// A server whose binary has been replaced must retire itself.
+///
+/// Refreshing the installed binary left the running server answering with the
+/// old build until somebody remembered to kill it — silent staleness, and the
+/// editor owns the lifecycle, so exiting cleanly *is* the fix: the client
+/// spawns the new build on its next request.
+#[test]
+fn serve_retires_when_its_binary_is_replaced() {
+    let (dir, db) = scratch("retire");
+    repo(&dir);
+
+    // Its own copy, so replacing it cannot disturb the other tests.
+    let binary = dir.join("trekr-under-test");
+    fs::copy(env!("CARGO_BIN_EXE_trekr"), &binary).unwrap();
+    let mut child = Command::new(&binary)
+        .arg("--serve")
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .env("TREKR_LOG", log_path(&db))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("start the copied binary");
+    let mut session = Session {
+        stdin: Some(child.stdin.take().unwrap()),
+        stdout: BufReader::new(child.stdout.take().unwrap()),
+        child,
+        next_id: 0,
+    };
+    session.initialize(&dir);
+
+    // Still current: the server answers and stays up.
+    let before = session.request(
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    assert!(before["result"].is_array(), "answers while current");
+
+    // Replace it with a newer file, the way `rm && cp` does. Written rather
+    // than `fs::copy`d: on macOS that preserves the *source's* mtime, so the
+    // replacement would look no newer than what it replaced.
+    std::thread::sleep(std::time::Duration::from_millis(1100));
+    fs::remove_file(&binary).unwrap();
+    fs::write(&binary, fs::read(env!("CARGO_BIN_EXE_trekr")).unwrap()).unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    // It answers this one, then goes.
+    let after = session.request(
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    assert!(
+        after["result"].is_array(),
+        "the in-flight request is answered"
+    );
+
+    session.stdin.take();
+    let status = session.child.wait().expect("it exits on its own");
+    assert!(status.success(), "and cleanly: {status:?}");
+    assert!(
+        log_lines(&db).iter().any(|l| l["event"] == "retire"),
+        "and says why, so --usage can count restarts"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- `--serve` retires itself when its binary is replaced. After each request it
+  checks whether the executable on disk is newer than the one it is running;
+  if so it finishes the answer, logs a `retire` event and exits cleanly, so the
+  editor spawns the new build. A server answering with a stale binary until
+  somebody remembers to kill it is silent staleness, which is the bug class
+  this engine hunts everywhere else. `--usage` counts the retirements.
+- The serve log's `start` event records which binary it is running.
+
 - **Methods are loaded on demand, by name.** A tree no longer fetches and
   indexes every method in the checkout and its gems — 84,052 of them on rails,
   which was 76 % of the build. It loads the names a query actually asks about.

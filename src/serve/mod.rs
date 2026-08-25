@@ -56,6 +56,7 @@ pub(crate) fn run(verbose: bool) -> anyhow::Result<()> {
             "pid": std::process::id(),
             "version": env!("CARGO_PKG_VERSION"),
             "cwd": std::env::current_dir().unwrap_or_default().to_string_lossy(),
+            "binary": std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned()),
         }),
     );
     let (connection, threads) = Connection::stdio();
@@ -74,6 +75,7 @@ pub(crate) fn run(verbose: bool) -> anyhow::Result<()> {
 }
 
 fn serve(connection: Connection, log: &Log) -> anyhow::Result<()> {
+    let binary = Binary::current();
     let params = connection.initialize(serde_json::to_value(capabilities())?)?;
     let root = workspace_root(&params);
     log.event(
@@ -105,6 +107,23 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<()> {
                 }
                 let response = dispatch(&mut session, request, log);
                 connection.sender.send(Message::Response(response))?;
+                // Answer first, then check whether this build is still the
+                // current one. A server that keeps serving after its binary
+                // has been replaced is silent staleness — the bug class this
+                // engine hunts everywhere else — and it cost two manual
+                // `pkill`s a session to notice.
+                if let Some(built) = &binary
+                    && built.superseded()
+                {
+                    log.event(
+                        "retire",
+                        serde_json::json!({
+                            "reason": "the binary on disk is newer than this process",
+                            "path": built.path.to_string_lossy(),
+                        }),
+                    );
+                    break;
+                }
             }
             Message::Notification(notification) => {
                 let method = notification.method.clone();
@@ -124,6 +143,35 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+/// The executable this process is running, and when it was written.
+///
+/// Checked after each request so a replaced binary is noticed within one query
+/// rather than whenever somebody thinks to look. The editor owns the process
+/// lifecycle (PLAN §1), so retiring is the whole mechanism: exit cleanly and
+/// the client spawns the new build on its next request.
+struct Binary {
+    path: PathBuf,
+    modified: std::time::SystemTime,
+}
+
+impl Binary {
+    fn current() -> Option<Binary> {
+        let path = std::env::current_exe().ok()?;
+        let modified = std::fs::metadata(&path).ok()?.modified().ok()?;
+        Some(Binary { path, modified })
+    }
+
+    /// Has the file been replaced since this process started?
+    ///
+    /// A missing or unreadable file is *not* superseded: a binary mid-replace
+    /// would otherwise retire every server on the machine at once.
+    fn superseded(&self) -> bool {
+        std::fs::metadata(&self.path)
+            .and_then(|meta| meta.modified())
+            .is_ok_and(|now| now > self.modified)
+    }
 }
 
 /// The workspace folder, from whichever field the client used.

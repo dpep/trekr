@@ -959,6 +959,7 @@ fn cmd_usage(out: Output) -> anyhow::Result<ExitCode> {
         std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
 
     let mut sessions = 0usize;
+    let mut retirements = 0usize;
     let mut first = String::new();
     let mut last = String::new();
     let mut per_op: HashMap<String, OpUsage> = HashMap::new();
@@ -974,6 +975,7 @@ fn cmd_usage(out: Output) -> anyhow::Result<ExitCode> {
         }
         match event.get("event").and_then(|e| e.as_str()) {
             Some("start") => sessions += 1,
+            Some("retire") => retirements += 1,
             Some("request") => {
                 let Some(op) = event.get("op").and_then(|o| o.as_str()) else {
                     continue;
@@ -1011,8 +1013,12 @@ fn cmd_usage(out: Output) -> anyhow::Result<ExitCode> {
         println!("no requests logged yet in {}", path.display());
         return Ok(ExitCode::from(1));
     }
+    let retired = match retirements {
+        0 => String::new(),
+        n => format!(", {n} retired on a newer binary"),
+    };
     println!(
-        "{total} requests over {sessions} session(s), {} — {}\n",
+        "{total} requests over {sessions} session(s){retired}, {} — {}\n",
         &first[..first.len().min(10)],
         &last[..last.len().min(10)]
     );
