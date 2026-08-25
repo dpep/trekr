@@ -21,8 +21,55 @@ shared by every project that resolves the same one.
 
 ## 3. Register the server
 
-Merge `claude/lsp-config.json` into your Claude Code settings. One server, one
-language, the six Ruby extensions trekr indexes.
+Claude Code takes LSP servers from *plugins*, so trekr ships `claude/.lsp.json`
+already in the shape a plugin root expects — copy it, never reshape it. One
+server, one language, the six Ruby extensions trekr indexes.
+
+Point a local marketplace at a plugin directory holding that file plus a
+manifest:
+
+```sh
+P=~/.claude/marketplaces/local
+mkdir -p $P/.claude-plugin $P/plugins/trekr/.claude-plugin
+cp claude/.lsp.json $P/plugins/trekr/
+```
+
+`$P/.claude-plugin/marketplace.json`:
+
+```json
+{ "name": "dpep-local",
+  "owner": { "name": "you" },
+  "plugins": [ { "name": "trekr", "source": "./plugins/trekr" } ] }
+```
+
+`$P/plugins/trekr/.claude-plugin/plugin.json`:
+
+```json
+{ "name": "trekr", "version": "0.0.1", "description": "Ruby code intelligence" }
+```
+
+Then install it — and note that *installing* is the step, not enabling:
+
+```sh
+claude plugin marketplace add ~/.claude/marketplaces/local
+claude plugin install trekr@dpep-local
+```
+
+Both halves of that are load-bearing, and both fail *silently*. `settings.json`
+has no `lspServers` key at all — its schema passes unknown keys through, so a
+server declared there is accepted and never read. And `enabledPlugins` only
+toggles a plugin that is already installed; setting it by hand registers
+nothing. Either way the marketplace resolves, `claude plugin list` stays empty
+of trekr, and `.rb` files keep answering "No LSP server available for file
+type: .rb".
+
+**`.lsp.json` keys servers at the top level, with no `lspServers` wrapper** —
+unlike `.mcp.json`, which accepts either. A wrapped file parses as one server
+named `lspServers` that has no `command`, and the whole file is dropped with
+"LSP config validation failed for .lsp.json in plugin trekr".
+
+`claude plugin details trekr@dpep-local` confirms it: **LSP servers (1) trekr**.
+Servers are read once at session start; a new session picks up the install.
 
 **`startupTimeout` is safe at the 5 s default.** `--serve` answers `initialize`
 before touching the store: the tree is assembled lazily on the first query that
