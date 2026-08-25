@@ -392,6 +392,27 @@ itself is 150–190 ms even for 6 820 sites. Whole-index queries are therefore
 squarely in the territory where a resident front would pay for itself twice —
 once for the tree, once for the parse cache.
 
+**What the resident front is worth.** `trekr --serve` against rails, driving
+the built binary over stdio:
+
+| operation | first call | warm median |
+|---|---:|---:|
+| `textDocument/definition` | 463 ms | **0–1 ms** |
+| `textDocument/documentSymbol` | 1 ms | **0 ms** |
+| `textDocument/hover` | 1 ms | **0 ms** |
+| `textDocument/references` (`each`) | 257 ms | **25 ms** |
+
+The first call pays the 210 ms tree build; every one after it pays nothing. A
+references query drops from ~245 ms on the CLI (34 ms of scan behind a 210 ms
+rebuild) to 25 ms — the scan alone, which is exactly what the economics
+predicted. Go-to-definition goes from a fifth of a second to under a
+millisecond, because a resolved position needs only the cached tree and the
+cached parse of the open buffer.
+
+This is the whole argument for the front, and it is now measured rather than
+projected. The engine stays daemon-free either way: everything here the CLI
+also answers, from the same store, without a process running.
+
 **The tree layer is rebuilt on every invocation, and that is the design.**
 `--refs` needs no tree; `--ancestors` needs a whole one. The gap between them is
 what a full rebuild from SQL costs:
@@ -536,6 +557,27 @@ mentions the name: 360–400 ms on rails against a 210 ms tree build, so the sca
 itself is 150–190 ms even for 6 820 sites. Whole-index queries are therefore
 squarely in the territory where a resident front would pay for itself twice —
 once for the tree, once for the parse cache.
+
+**What the resident front is worth.** `trekr --serve` against rails, driving
+the built binary over stdio:
+
+| operation | first call | warm median |
+|---|---:|---:|
+| `textDocument/definition` | 463 ms | **0–1 ms** |
+| `textDocument/documentSymbol` | 1 ms | **0 ms** |
+| `textDocument/hover` | 1 ms | **0 ms** |
+| `textDocument/references` (`each`) | 257 ms | **25 ms** |
+
+The first call pays the 210 ms tree build; every one after it pays nothing. A
+references query drops from ~245 ms on the CLI (34 ms of scan behind a 210 ms
+rebuild) to 25 ms — the scan alone, which is exactly what the economics
+predicted. Go-to-definition goes from a fifth of a second to under a
+millisecond, because a resolved position needs only the cached tree and the
+cached parse of the open buffer.
+
+This is the whole argument for the front, and it is now measured rather than
+projected. The engine stays daemon-free either way: everything here the CLI
+also answers, from the same store, without a process running.
 
 **The tree layer is rebuilt on every invocation, and that is the design.**
 `--refs` needs no tree; `--ancestors` needs a whole one. The gap between them is
@@ -689,6 +731,27 @@ mentions the name: 360–400 ms on rails against a 210 ms tree build, so the sca
 itself is 150–190 ms even for 6 820 sites. Whole-index queries are therefore
 squarely in the territory where a resident front would pay for itself twice —
 once for the tree, once for the parse cache.
+
+**What the resident front is worth.** `trekr --serve` against rails, driving
+the built binary over stdio:
+
+| operation | first call | warm median |
+|---|---:|---:|
+| `textDocument/definition` | 463 ms | **0–1 ms** |
+| `textDocument/documentSymbol` | 1 ms | **0 ms** |
+| `textDocument/hover` | 1 ms | **0 ms** |
+| `textDocument/references` (`each`) | 257 ms | **25 ms** |
+
+The first call pays the 210 ms tree build; every one after it pays nothing. A
+references query drops from ~245 ms on the CLI (34 ms of scan behind a 210 ms
+rebuild) to 25 ms — the scan alone, which is exactly what the economics
+predicted. Go-to-definition goes from a fifth of a second to under a
+millisecond, because a resolved position needs only the cached tree and the
+cached parse of the open buffer.
+
+This is the whole argument for the front, and it is now measured rather than
+projected. The engine stays daemon-free either way: everything here the CLI
+also answers, from the same store, without a process running.
 
 **The tree layer is rebuilt on every invocation, and that is the design.**
 `--refs` needs no tree; `--ancestors` needs a whole one. The gap between them is

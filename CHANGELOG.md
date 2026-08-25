@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- `trekr --serve`: LSP over stdio. goToDefinition, findReferences (confirmed
+  ordered before possible), documentSymbol, workspaceSymbol, hover,
+  goToImplementation, call hierarchy, and Prism syntax diagnostics. The editor
+  owns the process — no auto-spawn, no lockfile. Completion, rename,
+  formatting and semantic tokens are deliberately not announced.
+- Warm latency on rails: goToDefinition **0–1 ms** (463 ms first call, which
+  builds the tree), documentSymbol and hover **0 ms**, references **25 ms**
+  against ~245 ms for the same query on the CLI.
+
 - Rails class macros now define methods in the index: `delegate` (including
   `delegate(*CONST, to: :x)` where the constant is a literal symbol array in
   the same file), the association family, `scope`, `class_attribute`,
