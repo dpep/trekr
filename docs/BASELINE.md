@@ -337,3 +337,28 @@ The remaining plain-method misses are `included` and `class_methods`
 (resolved to the concern's own block rather than `ActiveSupport::Concern`) and
 class-method calls that should land in a gem's `ClassMethods` module —
 `find`, `find_by`, and the enum scope `retired`.
+
+
+### After the two app-code fixes (same 63 sites)
+
+Recording macros as call sites, then preferring real source over `.rbi` stubs:
+
+| verdict | before | after |
+| ------- | ------ | ----- |
+| correct | 19.0 % | **42.9 %** |
+| found the definition | 33.3 % | **57.1 %** |
+| confidently wrong | 17.5 % | **7.9 %** |
+| no name at that position | 19.0 % | **4.8 %** |
+
+Plain app methods alone: correct 26.7 % → **60.0 %**, found **80.0 %**, wrong
+**11.1 %**. The gem floor is unchanged at 36 % / 61 % — neither fix touches it,
+which is the check that they did what they claimed and nothing else.
+
+The predicted 45 % turned out close to the truth (42.9 %); what the prediction
+missed was that two defects were masking it, not that the ladder was weak.
+
+Every app-code miss that remains: `find` / `find_by` / the enum scope
+`retired` resolve to `Widget::CommonRelationMethods` from Tapioca's DSL file
+where runtime truth says `ActiveRecord::Core::ClassMethods` (the AR-finder
+shape); `after_save` and two `id` calls inside `included do` and `self.class`
+chains find no name; `count` and `quantity` stay residue.

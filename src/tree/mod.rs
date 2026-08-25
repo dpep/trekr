@@ -29,6 +29,23 @@ pub(crate) struct Site {
     pub(crate) kind: String,
 }
 
+impl Site {
+    /// An `.rbi` is a *declaration* — Sorbet's description of a method, never
+    /// its implementation. A checkout that commits `sorbet/rbi/gems/` holds a
+    /// stub for every gem method it uses, and those stubs are indexed after
+    /// the gems themselves, so without this they win every lookup and send
+    /// the caller to a signature instead of the code.
+    pub(crate) fn is_rbi(&self) -> bool {
+        self.path.ends_with(".rbi")
+    }
+
+    /// One of Tapioca's per-model DSL files (DEC-019). Matched anywhere in the
+    /// path, because site paths are absolute.
+    pub(crate) fn is_dsl_rbi(&self) -> bool {
+        self.path.contains(DSL_RBI)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum MixinKind {
     Prepend,
@@ -1365,9 +1382,13 @@ impl Tree {
         for (owner, owner_singleton) in self.lookup_chain(fqn, singleton) {
             let key = (owner, owner_singleton, name.to_string());
             if let Some(found) = self.by_owner.get(&key).and_then(|hits| {
+                let definition = |i: &&usize| self.methods[**i].is_definition();
+                // Real source before a stub at the same owner; the stub only
+                // when it is all there is.
                 hits.iter()
                     .rev()
-                    .find(|i| self.methods[**i].is_definition())
+                    .find(|i| definition(i) && !self.methods[**i].site.is_rbi())
+                    .or_else(|| hits.iter().rev().find(definition))
             }) {
                 return Some(&self.methods[*found]);
             }
@@ -1708,4 +1729,74 @@ fn rows_from(path: &str, source: &str) -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<Metho
         });
     }
     (decls, edges, methods)
+}
+
+#[cfg(test)]
+mod rbi_preference_tests {
+    use super::*;
+
+    fn method(owner: &str, name: &str, path: &str) -> crate::store::MethodRow {
+        crate::store::MethodRow {
+            name: name.into(),
+            nesting: vec![owner.into()],
+            singleton: false,
+            visibility: "public".into(),
+            params: Vec::new(),
+            via: None,
+            target: None,
+            sig_returns: None,
+            path: path.into(),
+            line: 1,
+            col: 1,
+        }
+    }
+
+    /// A checkout that commits `sorbet/rbi/gems/` holds a stub for every gem
+    /// method it calls, indexed after the gem itself. Without a preference the
+    /// stub wins and go-to-definition lands on a signature.
+    ///
+    /// Paths here are **absolute**, as real ones are: an earlier version of
+    /// this rule matched with `starts_with("sorbet/rbi/…")` and was silently
+    /// dead against every real path in the store.
+    #[test]
+    fn real_source_beats_an_rbi_stub_for_the_same_method() {
+        let mut tree = Tree::assemble(
+            vec![DeclRow {
+                name: "Widget".into(),
+                kind: "class".into(),
+                nesting: Vec::new(),
+                target: None,
+                path: "/app/widget.rb".into(),
+                line: 1,
+                col: 1,
+            }],
+            Vec::new(),
+        );
+        tree.add_methods(vec![
+            method("Widget", "save", "/gems/activerecord/lib/persistence.rb"),
+            // Indexed later, as the app's own files are.
+            method(
+                "Widget",
+                "save",
+                "/app/sorbet/rbi/gems/activerecord@8.1.rbi",
+            ),
+        ]);
+        let found = tree.lookup("Widget", false, "save").expect("found");
+        assert_eq!(
+            found.site.path, "/gems/activerecord/lib/persistence.rb",
+            "the implementation, not the declaration"
+        );
+    }
+
+    /// When the stub is all there is, it is still the best answer available.
+    #[test]
+    fn an_rbi_stub_is_kept_when_nothing_else_defines_the_method() {
+        let mut tree = Tree::assemble(Vec::new(), Vec::new());
+        tree.add_methods(vec![method(
+            "Widget",
+            "only_declared",
+            "/app/sorbet/rbi/gems/thing@1.rbi",
+        )]);
+        assert!(tree.lookup("Widget", false, "only_declared").is_some());
+    }
 }

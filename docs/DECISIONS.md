@@ -451,6 +451,34 @@ against real Tapioca output.
 generated methods a reader genuinely wants to inspect. The fix then is to
 report both locations rather than to pick differently.
 
+**Update (measured on a real app, and the rule generalized).** Session 12
+banked the question "does `sorbet/rbi/` ingestion ever actually fire, or does
+the DSL extractor always answer first?" It fires, and it was firing far too
+eagerly.
+
+widget_shop commits `sorbet/rbi/gems/` — a stub for every gem method the app
+calls. Those stubs are indexed as part of the checkout, *after* the gems
+themselves, and the method table took the last definition it saw. So **18 of
+36 resolved app-code answers pointed at a Sorbet signature instead of the
+code**: `belongs_to` resolved to `activerecord@8.1.3.1.rbi:2730` rather than
+`associations.rb:1824`, with the owner exactly right both times.
+
+Worse, the guard that was supposed to prevent this had been dead since session
+12. It tested `path.starts_with("sorbet/rbi/dsl/")`, and site paths became
+absolute when they were rooted to their own checkout — so it stopped matching
+anything real, while its unit test went on passing against a synthetic
+relative path. A rule with a test that cannot see the regression it exists to
+catch is worth less than no rule.
+
+The rule is now general and stated once: **an `.rbi` is a declaration, never an
+implementation.** At a given owner, a real definition wins; the stub is used
+only when it is all there is. This subsumes DEC-019's original case rather than
+sitting beside it.
+
+**Measured, app code, 63 sites against runtime truth:** correct 19 % → **43 %**,
+confidently wrong 32 % → **8 %**. Of plain (non-Rails-generated) methods:
+correct 27 % → **60 %**, found-the-definition 47 % → **80 %**.
+
 ## DEC-020 — Chained receivers are not attacked; 40 % typed plus ranked residue is the product
 
 **Decided.** The `other` receiver bucket — chained calls, literals-as-receivers,

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- An `.rbi` is a declaration, never an implementation: a method with real
+  source and a Sorbet stub now answers with the source. An app that commits
+  `sorbet/rbi/gems/` holds a stub for every gem method it calls, and those beat
+  the gem itself — `belongs_to` landed on `activerecord@8.1.3.1.rbi` instead of
+  `associations.rb`. Measured on app code: correct 19 % → 43 %, confidently
+  wrong 32 % → 8 %.
+
 - A Rails macro is now recorded as a **call site** as well as a generator of
   the methods it implies. `belongs_to`, `has_many`, `scope`, `delegate`,
   `after_save`, `attr_reader`, `private` — asking what any of them is used to

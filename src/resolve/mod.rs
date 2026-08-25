@@ -95,12 +95,12 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
                     // A method Tapioca generated has no source of its own. Send
                     // the caller to the class that generates it rather than to
                     // the .rbi, which is where Sorbet would have left them.
-                    let generated = found.site.path.starts_with(crate::tree::DSL_RBI);
+                    let generated = found.site.is_dsl_rbi();
                     let sites = if generated {
                         let real: Vec<Site> = tree
                             .sites(&found.owner)
                             .iter()
-                            .filter(|site| !site.path.starts_with(crate::tree::DSL_RBI))
+                            .filter(|site| !site.is_dsl_rbi())
                             .cloned()
                             .collect();
                         // If the class itself only exists in the RBI there is
