@@ -161,6 +161,24 @@ not go looking for a body there. Residue candidates carry their own `kind` too.
 `--symbols` is about the *symbol* — class, module, method, constant. Different
 questions, different nesting levels.)
 
+## Deletion candidates
+
+```sh
+trekr --dead app/models app/services --json
+```
+
+Every method defined in scope, checked against references from the **whole**
+index. Tiers: `unreferenced` (nothing found), `convention-only` (reached only by
+a symbol handed to a macro — usually a sign it *is* used), `single-caller` (one
+reference: the inlining candidate).
+
+**It never says "dead", and you should not either.** Measured against a year of
+discourse's history, `unreferenced` candidates were deleted 19.8 % of the time
+against a 19.0 % base rate — no lift. Treat a candidate as *"nothing was found,
+here is what was checked"*, weigh the `confidence` field (a file using `send`
+lowers it), and remember trekr does not read ERB templates, so a method called
+only from a view looks unreferenced.
+
 ## Two more
 
 ```sh
