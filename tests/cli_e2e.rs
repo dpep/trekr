@@ -1209,3 +1209,58 @@ fn an_unindexed_checkout_is_a_setup_problem_not_a_residue() {
     let out = trekr(&db, &dir, &["--def", "widget.rb:7:5"]);
     assert_eq!(out.status.code(), Some(0), "an indexed checkout answers");
 }
+
+/// A hand-typed column is a guess, so `--def` snaps to the nearest name on the
+/// line — and says that it did.
+#[test]
+fn a_rough_column_snaps_to_the_nearest_name_and_discloses_it() {
+    let (dir, db) = scratch("snap");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+
+    // `    helper` — the name starts at column 5.
+    let exact = trekr(&db, &dir, &["--def", "widget.rb:7:5", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&exact.stdout).unwrap();
+    assert_eq!(value["name"], "helper");
+    assert!(
+        value.get("snapped_to").is_none(),
+        "an exact hit must not claim to have snapped: {value}"
+    );
+
+    // One column into the leading whitespace.
+    let near = trekr(&db, &dir, &["--def", "widget.rb:7:3", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&near.stdout).unwrap();
+    assert_eq!(value["name"], "helper");
+    assert_eq!(value["snapped_to"]["name"], "helper");
+    assert_eq!(value["snapped_to"]["col"], 5);
+    assert_eq!(near.status.code(), Some(0));
+
+    // The human surface says it in words; `--json` carries it structurally, so
+    // the note is text-only rather than duplicated onto every consumer.
+    let text = trekr(&db, &dir, &["--def", "widget.rb:7:3"]);
+    let told = String::from_utf8_lossy(&text.stderr);
+    assert!(
+        told.contains("answering for"),
+        "the snap must be told: {told}"
+    );
+    assert!(told.contains("column 5"), "and say where: {told}");
+
+    // No column at all — the fully hand-typed case.
+    let bare = trekr(&db, &dir, &["--def", "widget.rb:7", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&bare.stdout).unwrap();
+    assert_eq!(value["name"], "helper");
+    assert_eq!(value["snapped_to"]["col"], 5);
+
+    // A line with several names discloses the ones it did not pick, so the
+    // next query can be exact.
+    let many = trekr(&db, &dir, &["--def", "widget.rb:1", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&many.stdout).unwrap();
+    let alternatives = value["snapped_to"]["alternatives"]
+        .as_array()
+        .expect("alternatives listed");
+    assert!(
+        !alternatives.is_empty(),
+        "`class Widget < Base` has more than one name: {value}"
+    );
+    assert!(alternatives.iter().all(|a| a["col"].is_number()));
+}

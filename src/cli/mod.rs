@@ -815,7 +815,9 @@ fn cmd_def(
     let spec = position::Spec::parse(spec)
         .ok_or_else(|| anyhow::anyhow!("expected FILE:LINE:COL, got `{spec}`"))?;
     let source = std::fs::read(&spec.path)?;
-    let Some(under) = position::at(&source, spec.line, spec.col) else {
+    let facts = crate::extract::extract(&source);
+    let snapped = position::at_or_snap(&facts, spec.line, spec.col);
+    let Some((under, snapped)) = snapped else {
         return report(
             out,
             serde_json::json!({
@@ -901,6 +903,34 @@ fn cmd_def(
     let mut answer = answer;
     if let (Some(object), Some(context)) = (answer.as_object_mut(), context) {
         object.insert("context".into(), context.into());
+    }
+    // An answer about a name the caller did not type has to say so.
+    if let (Some(object), Some(snapped)) = (answer.as_object_mut(), &snapped) {
+        object.insert(
+            "snapped_to".into(),
+            serde_json::json!({
+                "name": snapped.name,
+                "col": snapped.col,
+                "alternatives": snapped
+                    .alternatives
+                    .iter()
+                    .map(|(name, col)| serde_json::json!({ "name": name, "col": col }))
+                    .collect::<Vec<_>>(),
+            }),
+        );
+    }
+    if let (Output::Text, Some(snapped)) = (out, &snapped) {
+        let others = match snapped.alternatives.len() {
+            0 => String::new(),
+            n => format!(
+                " ({n} other name{} on that line)",
+                if n == 1 { "" } else { "s" }
+            ),
+        };
+        eprintln!(
+            "trekr: answering for `{}` at column {}{others}",
+            snapped.name, snapped.col
+        );
     }
     let resolved = answer["status"] == "resolved" || answer["status"] == "ambiguous";
     let text = match answer["sites"].as_array().and_then(|s| s.first()) {
