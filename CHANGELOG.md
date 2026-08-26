@@ -1,11 +1,47 @@
 # Changelog
 
-## Unreleased
+## 0.1.0 — 2026-08-25
 
-- **`--completions <shell>`** prints a shell completion script (bash, zsh, fish,
-  elvish, powershell) on stdout. Generated from the parser, so it cannot drift
-  from the flags, and it needs no checkout — the one command that answers
-  outside a repository.
+First public release.
+
+trekr answers two questions about Ruby that grep cannot: **which method does
+this call site actually run**, and **which call sites can actually reach this
+method**.
+
+- **`--def FILE:LINE:COL`** resolves a position by walking Ruby's own
+  constant-lookup ladder — enclosing lexical scopes, the innermost scope's
+  ancestors, then the top level. 82 % of rails constant references resolve
+  (78 % on discourse), and every answer carries `status`, `confidence`,
+  `resolved_via`, and whether the location is the code or the macro that
+  declared it.
+- **`--refs 'Owner#method'`** tiers call sites by whether the receiver can
+  actually reach the method: **confirmed** (the receiver's type resolves and
+  lookup lands here), **possible** (untyped receiver, nothing rules it out,
+  ranked and never dropped), **excluded** (counted, not listed, auditable with
+  `--include-excluded`). Across twelve heavy-collision names on rails —
+  25,297 same-name call sites — 32 % confirmed, 43 % possible, 24 % excluded.
+- **`--ancestors`**, **`--symbols`**, **`--status`**, **`--index`**, `--drop`,
+  `--usage`, and `--explain`, all with `--json`/`--ndjson` and meaningful exit
+  codes, because the intended caller is an agent.
+- **`--serve`** speaks LSP over stdio: goToDefinition, findReferences,
+  documentSymbol, workspaceSymbol, hover, goToImplementation, call hierarchy,
+  and Prism syntax diagnostics.
+- **`--completions <shell>`** prints a shell completion script, generated from
+  the parser so it cannot drift from the flags.
+
+Facts are keyed by git blob OID, so every worktree of a repo shares one index
+and a reindex with nothing changed parses nothing: 1.5 s cold on rails, 61 ms
+for a no-op reindex, ~0.2 s and zero parses for a second worktree. Ruby core
+and the checkout's gems are indexed; gems are shared across every project
+resolving the same `(name, version)`. No Ruby toolchain, no `bundle install`,
+no bootable app.
+
+## Pre-release development
+
+What follows is the development log from before the first release — written as
+deltas against the working tree of the day, not against any published version.
+Kept because the reasoning is worth having; skip it if you want the shipped
+behavior, which is above.
 
 - **`define_model_callbacks` is modelled**, so `before_save`, `after_destroy`
   and the rest of ActiveRecord's model callbacks resolve. The macro sits in an

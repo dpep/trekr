@@ -1,5 +1,6 @@
-# cargo is keg-only on this machine (see CLAUDE.md).
-export PATH := /opt/homebrew/opt/rustup/bin:$(PATH)
+# Homebrew's rustup is keg-only, so cargo may not be on PATH. Appending rather
+# than prepending leaves an existing toolchain in charge.
+export PATH := $(PATH):/opt/homebrew/opt/rustup/bin
 
 # discourse and mastodon are gitless source drops and only partially bundled;
 # script/bench.py stages them and reports the conditions (DEC-001).

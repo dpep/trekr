@@ -2,12 +2,14 @@
 
 Deliberately outside the skill, so the skill stays a copy of one file.
 
-## 1. Build and put it on `PATH`
+## 1. Install the binary
 
 ```sh
-cargo build --release
-ln -sf "$PWD/target/release/trekr" /usr/local/bin/trekr
+brew install dpep/tools/trekr
 ```
+
+No Homebrew: `cargo install trekr`. Either way it lands on `PATH`; the brew
+route also wires up shell completions.
 
 ## 2. Index once per machine
 
@@ -19,43 +21,27 @@ Facts are keyed by git blob OID, so every worktree of a repo shares this and a
 second checkout costs a scan. Gems are indexed once per `(name, version)` and
 shared by every project that resolves the same one.
 
-## 3. Register the server
+## 3. Install the plugin
+
+The skill and the LSP server ship together as one plugin:
+
+```sh
+claude plugin marketplace add dpep/myclaude
+claude plugin install trekr@myclaude
+```
+
+That is both halves at once — the skill that teaches Claude the CLI, and the
+`.lsp.json` that registers `trekr --serve`. Restart Claude Code afterward;
+servers are read once at session start.
+
+### If you are assembling this by hand
 
 Claude Code takes LSP servers from *plugins*, so trekr ships `claude/.lsp.json`
-already in the shape a plugin root expects — copy it, never reshape it. One
-server, one language, the six Ruby extensions trekr indexes.
+already in the shape a plugin root expects — copy it to the plugin root, never
+reshape it. One server, one language, the six Ruby extensions trekr indexes.
 
-Point a local marketplace at a plugin directory holding that file plus a
-manifest:
-
-```sh
-P=~/.claude/marketplaces/local
-mkdir -p $P/.claude-plugin $P/plugins/trekr/.claude-plugin
-cp claude/.lsp.json $P/plugins/trekr/
-```
-
-`$P/.claude-plugin/marketplace.json`:
-
-```json
-{ "name": "dpep-local",
-  "owner": { "name": "you" },
-  "plugins": [ { "name": "trekr", "source": "./plugins/trekr" } ] }
-```
-
-`$P/plugins/trekr/.claude-plugin/plugin.json`:
-
-```json
-{ "name": "trekr", "version": "0.0.1", "description": "Ruby code intelligence" }
-```
-
-Then install it — and note that *installing* is the step, not enabling:
-
-```sh
-claude plugin marketplace add ~/.claude/marketplaces/local
-claude plugin install trekr@dpep-local
-```
-
-Both halves of that are load-bearing, and both fail *silently*. `settings.json`
+Note that *installing* is the step, not enabling. Both halves of that are
+load-bearing, and both fail *silently*. `settings.json`
 has no `lspServers` key at all — its schema passes unknown keys through, so a
 server declared there is accepted and never read. And `enabledPlugins` only
 toggles a plugin that is already installed; setting it by hand registers
@@ -68,7 +54,7 @@ unlike `.mcp.json`, which accepts either. A wrapped file parses as one server
 named `lspServers` that has no `command`, and the whole file is dropped with
 "LSP config validation failed for .lsp.json in plugin trekr".
 
-`claude plugin details trekr@dpep-local` confirms it: **LSP servers (1) trekr**.
+`claude plugin details trekr@myclaude` confirms it: **LSP servers (1) trekr**.
 Servers are read once at session start; a new session picks up the install.
 
 **`startupTimeout` is safe at the 5 s default.** `--serve` answers `initialize`
@@ -86,14 +72,10 @@ it widens to every indexed checkout when the root is not one.
 
 ## 4. Teach Claude to reach for it
 
-The LSP server answers when Claude asks; these two steps make Claude ask.
+The LSP server answers when Claude asks; the skill makes Claude ask. Installing
+the plugin in step 3 already placed it — this section is what remains.
 
-```sh
-mkdir -p ~/.claude/skills/trekr
-cp claude/trekr-skill.md ~/.claude/skills/trekr/SKILL.md
-```
-
-Then add a line to the search-tools section of your global `~/.claude/CLAUDE.md`
+Add a line to the search-tools section of your global `~/.claude/CLAUDE.md`
 so trekr wins the reach-for-grep reflex — alongside whatever `rq`/`rg` guidance
 lives there:
 

@@ -5,12 +5,30 @@ references**. Built for legacy Rails monorepos with many worktrees, where the
 incumbents cost gigabytes per workspace and answer "the first ten methods with
 that name."
 
-> **Early, and working.** All three layers are built: blob facts, a per-checkout
-> namespace, and receiver resolution. Ruby core and the checkout's gems are
-> indexed. Not started: Rails DSL modelling and the LSP front. See
-> [docs/PLAN.md](docs/PLAN.md) for where it goes and
+> **Early, and working.** The three engine layers are built — blob facts, a
+> per-checkout namespace, receiver resolution — plus an LSP front and enough
+> Rails DSL modelling to follow `belongs_to`, `enum`, `delegate`, and Tapioca's
+> generated RBIs. Ruby core and the checkout's gems are indexed. See
 > [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for what exists and what it
-> measures.
+> measures, and [docs/PLAN.md](docs/PLAN.md) for where it goes.
+
+## Install
+
+```sh
+brew install dpep/tools/trekr
+```
+
+No Homebrew:
+
+```sh
+cargo install trekr
+```
+
+No Ruby toolchain, no `bundle install`, no bootable app — not to install it, and
+not to run it. Prism parses; SQLite remembers.
+
+Homebrew wires up tab completion on install; `trekr --completions bash` (or
+`zsh`, `fish`, …) prints the script for anyone who needs it elsewhere.
 
 ## The idea
 
@@ -20,18 +38,12 @@ Facts are keyed by git blob OID, so every worktree of a repo shares one index, a
 branch switch reparses only what is genuinely new, and a reindex with no edits
 parses nothing at all. Measured on rails: 1.5 s cold, **61 ms** to reindex with
 nothing changed, **~0.2 s and zero parses** for a second worktree. Rubydex —
-Shopify's Rust indexer, and the closest peer — pays 177 ms for
-that same no-op, and pays it again on every process boot because it never writes
-anything down.
-
-No Ruby toolchain, no `bundle install`, no bootable app. Prism parses; SQLite
-remembers.
+Shopify's Rust indexer, and the closest peer — pays 177 ms for that same no-op,
+and pays it again on every process boot because it never writes anything down.
 
 ## Try it
 
 ```sh
-cargo build --release
-
 trekr --index                    # index the checkout you are standing in
 trekr --status                   # what is indexed, and what the checkouts share
 trekr --symbols lib/thing.rb     # outline a file before reading it
@@ -73,8 +85,10 @@ wrong turn on the ladder. Every answer carries `status`, `confidence`, and
 `resolved_via`; a method call comes back as honest residue with its receiver
 shape, because narrowing that needs a ladder that does not exist yet.
 
-`--refs` is the one no other Ruby tool has. Ask about a *method*, not a name,
-and every call site is sorted by whether its receiver can actually reach it:
+## References to a *method*, not a name
+
+This is the one no other Ruby tool has. Ask about a *method*, and every call
+site is sorted by whether its receiver can actually reach it:
 
 ```console
 $ trekr --refs 'ActiveRecord::ConnectionHandling#lease_connection'
@@ -98,13 +112,27 @@ sites — that comes to **32 % confirmed, 43 % possible, 24 % excluded**. `rg -w
 returns all 25,297 undifferentiated. `Widget.save` and `Widget#save` are
 different questions and answer differently.
 
+## In Claude Code
+
+`trekr --serve` speaks LSP: goToDefinition, findReferences, documentSymbol,
+workspaceSymbol, hover, goToImplementation, call hierarchy, and Prism syntax
+diagnostics. Deliberately not completion, rename, or formatting — an agent does
+not use them, and announcing them would invite an editor to route work here that
+this engine has no business doing.
+
+[claude/INSTALL.md](claude/INSTALL.md) wires up the skill and the server.
+
 ## Development
 
 ```sh
 make check     # the commit gate: fmt, clippy, tests
 make bench     # reproduce every number in docs/ARCHITECTURE.md
-make dogfood REPO=~/code/lib/ruby/rails Q=find_each
+make dogfood REPO=/path/to/rails Q=find_each
 ```
+
+`make bench` and `make dogfood` read corpora from `CORPORA`/`REPO`, which
+default to this author's checkout layout — point them at your own clones of
+rails, discourse, mastodon, and CRuby.
 
 `make dogfood` is not optional ceremony: running `--refs` on real Rails is what
 found both defects in the last commit, and neither was reachable from a
@@ -119,6 +147,13 @@ an alternative.
 Ruby semantics are lifted, with attribution, from
 [Shopify's Rubydex](https://github.com/Shopify/rubydex) (MIT) — its
 `docs/ruby-behaviors.md` is the conformance spec this extractor is written
-against. trekr does not depend on the crate; the reasons are in PLAN §8.
+against, and a block of resolution cases in `src/tree/mod.rs` is ported from its
+test suite. trekr does not depend on the crate; the reasons are in PLAN §8.
 Parsing is [Prism](https://github.com/ruby/prism). Store and CLI conventions
-come from [rq](https://github.com/dpepper/rq), Prism patterns from `rwr`.
+come from [rq](https://github.com/dpep/rq), Prism patterns from
+[rwr](https://github.com/dpep/rwr).
+
+## License
+
+MIT — see [LICENSE.txt](LICENSE.txt). Third-party notices, including Rubydex's,
+are in [NOTICE.md](NOTICE.md).

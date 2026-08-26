@@ -199,17 +199,24 @@ only through ruby-lsp 0.27.0.beta5, which is built on it.
 
 ## Reproducing
 
+**The discourse rows are the reproducible ones.** widget_shop is a small Rails
+app written for this evaluation — generic by construction (`Widget`, `Order`,
+`Supplier`) and deliberately Sorbet-annotated so there is *something* for Sorbet
+to score against. It is not published, so the widget_shop rows below can be
+re-derived only against a comparable app of your own. Everything the discourse
+rows measure runs from a public clone.
+
 ```sh
 # one-time: an isolated gem home per engine, so no corpus bundle is touched
 GEM_HOME=~/.local/share/trekr-compare/gems      gem install ruby-lsp sorbet sorbet-runtime
 GEM_HOME=~/.local/share/trekr-compare/gems-beta gem install --prerelease ruby-lsp:0.27.0.beta5
 
 script/compare.py --engine trekr --engine ruby-lsp \
-  --root ~/code/lib/ruby/discourse --sample 500 --out /tmp/compare.ndjson
+  --root /path/to/discourse --sample 500 --out /tmp/compare.ndjson
 
 script/compare.py --engine trekr --engine sorbet --engine sorbet-typed \
   --gold /tmp/trekr-gold-widget.ndjson \
-  --root ~/code/lib/ruby/widget_shop --rewrite-root ~/code/lib/ruby/widget_shop \
+  --root /path/to/widget_shop --rewrite-root /path/to/widget_shop \
   --sample 0 --corpus widget_shop
 ```
 

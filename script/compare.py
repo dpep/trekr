@@ -30,12 +30,19 @@ it can answer and hiding that in the first-query number would flatter it as
 badly as counting it as latency would condemn it.
 """
 
-import argparse, collections, json, os, random, re, select, statistics, subprocess, sys, time
+import argparse, collections, json, os, random, re, select, shutil, statistics, subprocess, sys, time
 from urllib.parse import quote, unquote, urlparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GEMS = os.path.expanduser("~/.local/share/trekr-compare")
-RUBY = os.path.expanduser("~/.rvm/rubies/ruby-3.4.9/bin")
+
+# The engines under comparison are Ruby programs, so a Ruby has to be on PATH.
+# TREKR_RUBY_BIN names one explicitly; otherwise take whichever the shell would.
+if os.environ.get("TREKR_RUBY_BIN"):
+    RUBY = os.path.expanduser(os.environ["TREKR_RUBY_BIN"])
+else:
+    _ruby = shutil.which("ruby")
+    RUBY = os.path.dirname(_ruby) if _ruby else ""
 
 try:
     sys.stdout.reconfigure(line_buffering=True)

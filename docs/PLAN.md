@@ -96,7 +96,11 @@ That is the whole surface an agent-first server needs.
   `tower-lsp` is dead; `async-lsp` if tower middleware is wanted. `salsa` usable (ty is
   built on it) but churning; not needed if the tree layer is cheap to rebuild.
 
-### What rwr already measured (docs/internal/decisions.md D61, D62)
+### What rwr already measured
+
+D61 and D62 in
+[rwr's decision log](https://github.com/dpep/rwr/blob/main/docs/internal/decisions.md),
+which the citations below refer to by number:
 
 Across rails, discourse, mastodon:
 
