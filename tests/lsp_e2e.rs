@@ -1140,16 +1140,31 @@ fn serve_retires_when_its_binary_is_replaced() {
     // Its own copy, so replacing it cannot disturb the other tests.
     let binary = dir.join("trekr-under-test");
     fs::copy(env!("CARGO_BIN_EXE_trekr"), &binary).unwrap();
-    let mut child = Command::new(&binary)
-        .arg("--serve")
-        .current_dir(&dir)
-        .env("TREKR_DB", &db)
-        .env("TREKR_LOG", log_path(&db))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("start the copied binary");
+    let spawn = || {
+        Command::new(&binary)
+            .arg("--serve")
+            .current_dir(&dir)
+            .env("TREKR_DB", &db)
+            .env("TREKR_LOG", log_path(&db))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+    };
+    // Retry ETXTBSY. On Linux, exec refuses a file any process still holds
+    // open for writing — and a sibling test spawning at the wrong moment forks
+    // while this copy's write descriptor is open, inheriting it. Nothing here
+    // can close another thread's fd, but the window is microseconds and the
+    // inheriting child is short-lived.
+    let mut child = loop {
+        match spawn() {
+            Ok(child) => break child,
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+            Err(e) => panic!("start the copied binary: {e:?}"),
+        }
+    };
     let mut session = Session {
         stdin: Some(child.stdin.take().unwrap()),
         stdout: BufReader::new(child.stdout.take().unwrap()),
