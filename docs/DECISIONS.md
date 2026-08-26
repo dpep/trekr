@@ -533,7 +533,7 @@ the first ten methods with that name, and Rubydex does not attribute method
 calls at all.
 
 **Reverses if** a corpus arrives with dense first-party `sig`/RBI coverage —
-the target repo is ~30 % Sorbet, which is the real test, and DEC-018 already
+a partially-typed monorepo is the real test, and DEC-018 already
 showed that a repo full of RBIs describing its *dependencies* is not that test.
 Or if a new type source appears (RBS in the wild, a Ruby with inline types).
 The rungs are built and tested; only the corpus is missing.
@@ -592,7 +592,7 @@ matched. The override is in a different blob from the schema, so honouring it
 means either a schema-column fact table or a tree-time join — neither of which
 earns itself for the small share of models that do it.
 
-**Reverses if** `self.table_name` turns out to be common in the target repo, or
+**Reverses if** `self.table_name` turns out to be common in real corpora, or
 if schema facts are wanted for anything besides attribute methods. Then the
 column list becomes a stored fact and the convention match moves to the tree.
 

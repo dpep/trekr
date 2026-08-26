@@ -421,7 +421,8 @@ extended to span the chain (DEC-019 update). With that in, the sigs-ON column
 becomes **46.0 % correct / 4.8 % wrong / 60.3 % found**, closing half the gap;
 the table above is the state that motivated the change.
 
-**Both columns matter.** The target monorepo is roughly 30 % Sorbet-covered, so
+**Both columns matter.** On a partially-typed monorepo — the design point, say
+~30 % Sorbet-covered —
 neither column is "the" number: sigs-off is the common case, sigs-on is the
 case where a signature is available *and* where the shadow namespace does
 damage. Reporting one alone would mislead in whichever direction was chosen.

@@ -9,7 +9,7 @@ inline; **[I]** marks inference.
 
 **Possible: yes. Worth it: yes, but only on three axes — and one of them has a clock on it.**
 
-The problem you describe (huge legacy Rails, many worktrees, metaprogramming, some
+The problem this targets (huge legacy Rails, many worktrees, metaprogramming, partial
 Sorbet, agents as the main consumer) is exactly the set of open issues on the incumbent's
 roadmap. Shopify rewrote Ruby LSP's indexer in Rust as
 [Rubydex](https://github.com/Shopify/rubydex) (ruby-lsp 0.27 beta, Aug 2026;
@@ -205,8 +205,7 @@ and path are open questions (§7).
 The go/no-go is a number, not a feeling (measure-first).
 
 - **Corpus.** Public proxies with test suites: discourse (11k Ruby files), mastodon, and
-  GitLab (~40k, the largest OSS Rails monorepo). Plus the real target if it can be
-  benchmarked locally (§7 Q1).
+  GitLab (~40k, the largest OSS Rails monorepo).
 - **Gold set for free.** Run the corpus test suite once under `TracePoint(:call)` with
   `caller_locations` and record (call site → resolved method definition). Tens of
   thousands of labelled pairs, no hand labelling, and it captures metaprogrammed
@@ -217,8 +216,8 @@ The go/no-go is a number, not a feeling (measure-first).
 - **Baselines.** ruby-lsp 0.26.x and 0.27 (Rubydex), Sorbet where the repo is typed,
   `rq` and `rg` as the floor.
 - **Gate.** Proceed past Phase 1 only if the ladder beats Ruby LSP top-1 on the gold
-  set by a margin that survives noise, or Ruby LSP is unusable on the target (memory /
-  time) and ours is not. Either is a go; neither is a stop.
+  set by a margin that survives noise, or Ruby LSP is unusable at the design scale
+  (memory / time) and ours is not. Either is a go; neither is a stop.
 
 ## 6. Phases
 
@@ -226,15 +225,15 @@ Each ends in something runnable; earlier phases don't assume later ones.
 
 **Phase 0 — Spikes and the gate (1–2 weeks)**
 - Harness: corpus checkout, TracePoint labeller, baseline runner for ruby-lsp 0.26/0.27.
-  **The harness must not assume a corpus is a git checkout.** `~/code/lib/ruby/discourse`
-  and `~/code/lib/ruby/mastodon` are source drops with no `.git`, and trekr requires one
-  (DECISIONS DEC-001). `script/bench.py` stages such a corpus into a scratch repo; the
-  baseline runner needs the same courtesy or its numbers will not be comparable.
+  **The harness must not assume a corpus is a git checkout.** A corpus is as often a
+  source drop with no `.git` as it is a clone, and trekr requires one (DECISIONS DEC-001).
+  `script/bench.py` stages such a corpus into a scratch repo; the baseline runner needs
+  the same courtesy or its numbers will not be comparable.
 - Spike A: can the `rubydex` crate (MIT, crates.io) be driven from Rust without a Ruby
   runtime, and does its model admit persistence? If yes, it may replace half of Phase 1.
 - Spike B: blob-OID indexing on the largest corpus — parse throughput, DB size, cost of
   `git ls-files -s` diff, cost of a second worktree.
-- Decide: new repo name/path, rubydex-as-library or not, copy-vs-extract from rwr.
+- Decide: rubydex-as-library or not, copy-vs-extract from rwr.
 
 **Phase 1 — Blob layer + CLI (2–3 weeks)**
 - Prism extraction of the fact set above; SQLite store keyed by OID; rq identity model
@@ -260,11 +259,11 @@ Each ends in something runnable; earlier phases don't assume later ones.
 - `lsp-server` over stdio mapping the nine operations; Prism syntax diagnostics;
   `lspServers` plugin entry; skill for the CLI path; `startupTimeout` respected by
   answering from the persisted index before the tree layer is warm.
-- Exit: Claude Code's `LSP` tool answers on the target repo; goToDefinition on a
+- Exit: Claude Code's `LSP` tool answers on a large corpus; goToDefinition on a
   `has_many` accessor lands in the model.
 
 **Phase 5 — Scale hardening (ongoing)**
-- The 100k-file target: watch `.git` for ops, overlay dirty buffers, memory ceiling,
+- The 100k-file design point: watch `.git` for ops, overlay dirty buffers, memory ceiling,
   contention with a concurrent indexer, multi-session worktrees.
 - Learned ranking only if rq's 2026-10-01 kill-criterion says the signal is real.
 
@@ -274,10 +273,11 @@ middle phases weeks rather than months.
 
 ## 7. Open questions
 
-1. **The target repo.** File and gem counts, Ruby/Rails versions, share of `typed: true`
-   files, whether `sorbet/rbi/dsl/` exists (Tapioca), and whether it can be benchmarked
-   locally or only via public proxies. This sets Phase 0's corpus and decides whether
-   Tapioca ingestion is a Phase 3 shortcut or moot.
+1. **What a deployment corpus looks like.** Tapioca ingestion is a Phase 3 shortcut on a
+   repo that runs it and moot on one that does not, so how much of the design pays off
+   depends on the share of `typed: true` files and whether `sorbet/rbi/dsl/` exists.
+   Public proxies set Phase 0's corpus either way; the open question is how well they
+   stand in for a repo an order of magnitude larger.
 2. **Consumer priority.** The plan builds CLI-first (rq-style, works everywhere agents
    run) and adds the LSP front in Phase 4 because Claude Code's `LSP` tool and post-edit
    diagnostics need it. Reverse the order if the LSP tool is the primary surface.
@@ -290,10 +290,11 @@ middle phases weeks rather than months.
    gems constantly; indexing them is also most of Ruby LSP's 2.2 GB. Content-addressing
    makes them cheap after the first time; the question is whether they gate the first
    usable version.
-6. **Runtime for measurement only** — confirm booting the app offline to label the gold
-   set is acceptable, and that nothing in the serving path may depend on a runtime.
-7. **Name and location** (`~/code/lib/rust/<name>`), and whether to extract rwr's Prism
-   pieces into a shared crate now or copy first (recommended: copy, extract at the
+6. **Runtime for measurement only.** Labelling the gold set means booting a corpus app
+   under TracePoint, which is a hard constraint on which corpora can be labelled at all.
+   The serving path stays runtime-free regardless — that is not negotiable — but the
+   measurement path's dependency on one bounds what can be measured.
+7. **Shared Prism crate**, or copy from rwr first (recommended: copy, extract at the
    second consumer).
 8. **Relationship to rq going forward.** Does rq's Ruby plugin eventually consume this
    engine's facts, or stay tree-sitter and independent? Affects whether the blob store
@@ -344,7 +345,7 @@ Two things the table hides:
 - Indexing runs on all cores but wall ≈ user time: the serial main-thread merge is the
   bottleneck, so more cores won't help the cold path much.
 
-Linear extrapolation to the target (10M lines ≈ 3.1× GitLab, ~100k files): **~35 s cold,
+Linear extrapolation to the design point (10M lines ≈ 3.1× GitLab, ~100k files): **~35 s cold,
 ~2.2 GB resident per process, ~5 s per edit of a central model, ~10M reference rows** —
 per worktree, per tool, rebuilt at every boot. Shopify's own persistence prototype
 ([PR #1009](https://github.com/Shopify/rubydex/pull/1009), rkyv snapshot) came in at a
@@ -399,14 +400,16 @@ these. Worktrees: no issue. Ranking/confidence: no issue. Sorbet: no issue.
   ordinary repos. The 10M-line/many-worktree case stays outside their model regardless.
 - **Capped downside**: Phase 0 is 1–2 weeks and its main artifact — the TracePoint gold
   set + baseline harness — is independently useful (it can benchmark *any* Ruby nav tool,
-  including ruby-lsp 0.27 against 0.26 on the target repo). If the gate fails, that's the
+  including ruby-lsp 0.27 against 0.26 on any corpus). If the gate fails, that's the
   total spend.
 
-### What it buys over existing tools, on the actual target
+### What it buys over existing tools, at the design point
 
-(10M lines, ~30 % Sorbet, many worktrees, agents as primary consumers)
+A 10M-line Rails monorepo with partial Sorbet typing (say ~30 %), many worktrees, and
+agents as the primary consumers. That scale is the aspiration this is built toward, not
+a repo in hand — the numbers below are extrapolations from §8, marked as such.
 
-| Incumbent | On the target repo | Ours |
+| Incumbent | At that scale | Ours |
 |---|---|---|
 | ruby-lsp 0.27 / Rubydex | ~35 s cold + ~2.2 GB **per worktree, per tool, per boot** (extrapolated §8); ~5 s per central-file edit; method refs unresolved; needs project Ruby + `bundle install` | index once per machine (blob-addressed), then ms-scale; refs receiver-narrowed with confidence; static binary, no bundle |
 | Sorbet LSP | covers the typed 30 %; class edits → slow path; one workspace; refs need typed receivers; metaprog answers land in `.rbi` files | whole repo incl. `typed: false`; consumes the same sigs/RBIs but answers *at the model*; per-worktree cheap |
@@ -419,8 +422,8 @@ follows costs a file-read-and-retry loop. At monorepo agent volume that is a dai
 compounding tax — and precise references on *untyped* Ruby (impact analysis, safe rename,
 "who calls this") exist in **no** current tool.
 
-**Recommendation: yes, gated.** Run Phase 0 against the real repo (or GitLab as proxy):
-if ruby-lsp 0.27 is unusable there (memory/boot × worktrees) or our ladder beats its
+**Recommendation: yes, gated.** Run Phase 0 against GitLab as the largest available
+proxy: if ruby-lsp 0.27 is unusable there (memory/boot × worktrees) or our ladder beats its
 top-1 on the gold set, proceed; otherwise stop having spent two weeks and keep the
 harness. The two failure modes this guards against: building on momentum (rq's own
 ROADMAP discipline), and discovering post-hoc that "good enough" already existed.
