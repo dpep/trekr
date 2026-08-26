@@ -1540,6 +1540,67 @@ the declines are plain `def`s that trekr already extracts and offers, which
 makes them typing and ranking problems rather than coverage ones.
 
 
+## Why the chain misses a known owner (session 34)
+
+Session 33 called this the largest thing left — "1,612 sites where the receiver
+is resolved and the truth's owner is not in its chain" — and made it the lead.
+**That number was wrong, and wrong in a way worth naming**: it was inferred from
+the receiver's *expression shape* (implicit or `self`), never by asking whether
+the owner was actually in the chain. Asked properly — build the receiver's
+chain, look for the owner in it — the population is **492 sites, 15 % of the
+3,202 declines**, not 50 %.
+
+Same error as session 31's "`present?` ranks first ~99 %" (measured: 51.9 %):
+a bucket labelled by proxy and then quoted as if measured.
+
+`script/chainmiss.py` asks it directly. The first cut decides the rest — *is the
+owner in the index at all?* — because a missing owner is coverage and a present
+one with no path is ancestry.
+
+| why the chain misses it | sites | share | offers nothing |
+| --- | ---: | ---: | ---: |
+| owner **is** in the chain; the method is not on it (singleton) | 323 | 65.7 % | 288 |
+| owner known, no edge to it (plain) | 134 | 27.2 % | 54 |
+| owner known, no edge to it (class-methods) | 24 | 4.9 % | 0 |
+| owner absent from the index (plain) | 7 | 1.4 % | 0 |
+| everything else | 4 | 0.8 % | 2 |
+
+**The dominant bucket is not an ancestry gap at all.** In 323 sites the owner is
+reachable and the *method* was never extracted from it. By what generated the
+method:
+
+| | sites | |
+| --- | ---: | --- |
+| `site_setting_extension.rb` | 291 | `define_method` over a YAML settings list — **stated limit** |
+| `enum.rb:233` | 16 | the enum mapping accessor — **fixed this session** |
+| `discourse_plugin_registry.rb` | 11 | an app's own registry DSL |
+| `global_setting.rb` | 4 | as above |
+
+The 134-site "no edge" bucket is **entirely `X::GeneratedAttributeMethods`** —
+Rails' per-model attribute module, built at runtime by `class_eval` over a
+heredoc. trekr models those from `db/schema.rb` instead (DEC-022), so a miss
+here means the column is not in the schema file, not that an edge is missing.
+The 24 class-method sites are all `ActiveModel::Validations::ClassMethods`
+reached from a service contract — the `params do` anonymous-class limit recorded
+in session 28.
+
+### What was built, and what is stated
+
+**Nothing here is both large and cheap**, which is the finding. The only
+tractable slice was 16 sites, and it was worth taking because it completed a
+macro we already own rather than adding a mechanism: `enum` generated the
+members' predicates and never the attribute's mapping accessor.
+
+**Checking a bucket by hand is what found it.** The classifier's own label —
+"owner is in the chain, the method is not on it" — is an *extraction* gap
+wearing an ancestry gap's clothes, and reading three sites turned a 323-site
+"ancestry" bucket into 291 sites of a known limit plus one fixable macro.
+
+The classifier also had a bug of exactly the kind it exists to catch: its
+singleton regex captured `ActiveRecord::Base>` with the closing bracket, so
+every such owner looked *absent from the index*. That bucket was an artifact of
+the instrument until the sample was read.
+
 ## The typing ceiling, re-keyed (session 33)
 
 Session 31 proposed re-keying the declined population on *what would have to be
