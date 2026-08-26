@@ -1366,6 +1366,42 @@ source win the whole chain before a stub wins any of it, so a stub answers only
 when it is all there is, which is also what makes an `rbi` answer worth
 reacting to: *the implementation is not indexed.*
 
+### DEC-022 revisited (session 35) — the gap is a schema *format*, not a convention
+
+Session 34 left 134 sites where trekr should have answered from `db/schema.rb`
+and did not, and guessed at DEC-022's own named gaps: plugin-added columns, or a
+`self.table_name` override. Hand-checked, it is neither.
+
+**Discourse has no `db/schema.rb`.** It sets
+`config.active_record.schema_format = :sql` and keeps `db/structure.sql`, where
+`users.name` and `users.staged` are declared exactly as expected. DEC-022 reads
+one file and that app does not have it — so every attribute method in the app is
+unmodelled, for a reason that has nothing to do with conventions.
+
+That format is not exotic: any Rails app using database features the Ruby DSL
+cannot express keeps `structure.sql`, which is most Postgres apps of size.
+
+**Sized, over the whole declined population** (270 sites whose owner is a
+`GeneratedAttributeMethods` module):
+
+| | sites | what a reader would do |
+| --- | ---: | --- |
+| plain attribute, receiver typed | **91** | resolve outright |
+| plain attribute, receiver untyped | 129 | offer a candidate; ranking, not resolution |
+| dirty-tracking (`_changed?`, `will_save_change_to_…`) | 50 | **nothing** — DEC-022 excludes these on purpose |
+
+**Not taken this session, and the reason is honest**: 91 resolutions is the
+largest tractable slice three sessions of classification have turned up, but it
+needs a *new input format* — SQL, not Ruby — which the blob layer has no path
+for. `extract()` takes bytes with no path, so content-sniffing would be the
+fragile way in; the clean way is a reader beside the gem pass, keyed on
+`db/structure.sql`. That is a session's work, not an afternoon's, and it is
+specified here so the next one does not re-derive it.
+
+**Reverses if** the cost estimate is wrong once someone opens the file: the
+grammar in `structure.sql` that matters is `CREATE TABLE [public.]<name> (…)`
+with one column per line, which is far simpler than the Ruby DSL already parsed.
+
 ## DEC-035 — Freshness is a probe and a budget, not a daemon
 
 **Decided (design; `not_indexed` shipped, the rest specified).** A query never
