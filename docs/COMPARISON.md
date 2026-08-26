@@ -131,6 +131,23 @@ ones, which is what a coverage fix should look like. Against ruby-lsp 0.26.9's
 65.0 % / 34.4 %, the gap on real app code is now 1.5× on answering and **2.4× on
 being right**.
 
+**Sessions 30–33 added no row, deliberately.** Re-measured at 0.1.3 on the same
+500 sites: answered **96.8 %** (unchanged), correct@1 82.6 % → **82.4 %**,
+wrong@1 14.2 % → **14.4 %** — every column within one site of the session-28
+row, which is noise on this sample.
+
+That is not a quiet period; it is the instrument's blind spot, and it is the
+same one the fairness note above describes. Those sessions shipped `kind`
+disclosure, `.rbi` answers reclassified as declarations, and
+`define_model_callbacks` — whose answers are *declarations*, which `correct@1`
+scores as `wrong@1` because no peer emits such a field. The gold scorer, which
+can read trekr's own word, put the same work at `declaration` 1.4 % → 2.0 % and
+`residue` down by the matching amount (BASELINE, session 30).
+
+So the series is measuring coverage and location, and is structurally unable to
+see a change that makes an answer *more honest about what it is*. Worth
+remembering before reading a flat row as a flat quarter.
+
 ### What the first series says
 
 **On real app code, trekr answers 1.4× as often, is right 2.3× as often, and is
