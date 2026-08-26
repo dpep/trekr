@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **The skill checks for the binary before it tries to use it.** First report
+  from a second machine: the plugin was installed, `/trekr` was run, and the
+  skill neither noticed `trekr` was missing nor helped install it — while the
+  plugin's LSP server, which is `trekr --serve`, failed silently for the same
+  reason. The skill now opens with the install (`brew install
+  dpep/tools/trekr`, or `cargo install trekr` without Homebrew — verified
+  against crates.io), says the LSP comes up at the next session start, points at
+  the per-repo `trekr --index`, and separates "no results" from "broken" with
+  `trekr --status`.
+
+  Skill only; the binary is unchanged, so there is no crate or formula release
+  in this. It ships by bumping the **plugin** version in the myclaude
+  marketplace, because `claude plugin update` compares versions and not content
+  — which is exactly why the gap reached a second machine at all.
+
 - **A Sorbet stub answers `kind: declaration`, with `defined_via: rbi`.** An
   `.rbi` `def` is bodiless by construction — an ordinary definition by every
   syntactic test, and a description of a method that runs somewhere else.

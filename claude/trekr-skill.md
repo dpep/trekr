@@ -13,7 +13,29 @@ sure it is rather than guessing.
 
 Ruby only. For "where is `Foo` defined" across languages, use `rq`.
 
-## Index first, once per machine
+## Before the first question on a new machine
+
+**Is `trekr` on PATH?** If not, nothing here works and the failure is quiet —
+the plugin's LSP server is `trekr --serve`, so goToDefinition goes silent too.
+Install it, then retry:
+
+```sh
+brew install dpep/tools/trekr      # macOS/Homebrew
+```
+
+No Homebrew? From crates.io (needs the Rust toolchain):
+
+```sh
+cargo install trekr
+```
+
+Update with `brew upgrade dpep/tools/trekr`, or re-run `cargo install trekr`.
+Source + issues: <https://github.com/dpep/trekr>. The LSP server comes up at the
+**next session start** after the binary exists — installing fixes both surfaces,
+one of them on a delay.
+
+**Then index the repo you are asking about.** This is per-repo, not per-machine,
+and there is no automatic first run:
 
 ```sh
 trekr --index          # the checkout you are in, plus its gems
@@ -21,6 +43,9 @@ trekr --index          # the checkout you are in, plus its gems
 
 A reindex with nothing changed parses nothing (~60 ms on a 3k-file repo), and a
 second worktree of the same repo costs nothing — facts are keyed by git blob.
+
+**No results is not the same as broken.** `trekr --status` lists what is
+indexed; an unindexed repo answers nothing and says so with exit code 2.
 
 ## References to a *method*, not a name
 
