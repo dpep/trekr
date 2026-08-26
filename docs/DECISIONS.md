@@ -1342,3 +1342,26 @@ One thing the corpus could not show and the testbed did: routing into
 declares one. A concern that only writes `included do define_model_callbacks`
 does not, so the module is now emitted when we route into it. No corpus change;
 case 018 fails without it.
+
+### DEC-034 revisited (session 31) — the third case arrived and did not need a third value
+
+The entry rejected a boolean partly because "there may well be a third case (a
+`.rbi` declaration is arguably neither)". That case arrived, and the answer is
+that an `.rbi` stub is a **declaration** by the discriminator already stated: a
+bodiless `def` is not a body, wherever it sits.
+
+`defined_via: rbi` carries the detail the way a macro's name does, so callers
+written against session 30 keep working and the branch stays binary. A distinct
+`stub` value was weighed and rejected: it would have split the branch on a
+question — *was the method caused here or merely described here* — that changes
+nothing a caller does, since the action for both is "do not look for a body
+here".
+
+The reverses-if narrows rather than closes: a third value is warranted only if a
+caller is found that must act differently on a description than on a generator.
+
+**Measured**, on the one corpus that commits `sorbet/rbi/`: **0 of 63 app sites,
+9 of 400 gem sites**. Rare by design rather than by luck — DEC-019 makes real
+source win the whole chain before a stub wins any of it, so a stub answers only
+when it is all there is, which is also what makes an `rbi` answer worth
+reacting to: *the implementation is not indexed.*
