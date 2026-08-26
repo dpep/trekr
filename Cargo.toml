@@ -2,6 +2,11 @@
 name = "trekr"
 version = "0.1.0"
 edition = "2024"
+description = "Ruby code intelligence: position→meaning, definition→references."
+license = "MIT"
+repository = "https://github.com/dpep/trekr"
+keywords = ["ruby", "code-intelligence", "lsp", "prism", "rails"]
+categories = ["development-tools", "command-line-utilities"]
 
 [dev-dependencies]
 serde_json = "1"
