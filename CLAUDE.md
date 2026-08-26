@@ -79,6 +79,14 @@ Solo repo: no PRs, commit directly to `main`, small logically-connected commits,
 behavior or structure but not both. `CHANGELOG.md` gets its entry in the commit
 that earns it, under `## Unreleased`.
 
+**A scripted edit must fail loudly when its anchor is gone.** Session 32 shipped
+five user-facing commits with no changelog, because three `str.replace` calls
+targeted `## Unreleased` after a release had renamed that heading — and a
+`replace` that matches nothing is a silent success. Same shape as a test that
+asserts against a file the fixture does not create: it passes, and it proves
+nothing. Assert the anchor before replacing, and when appending to a section
+that may not exist, create it.
+
 **Pre-1.0, prefer the clean break over the compatibility shim.** Rename, remove
 and reshape toward the surface the tool should have; do not carry aliases or
 deprecation paths. The changelog says what a user must *do*, and that is the
