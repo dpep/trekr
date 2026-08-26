@@ -45,6 +45,11 @@ struct Cli {
     #[arg(value_name = "INPUT")]
     input: Option<String>,
 
+    /// Find definitions in these files or directories that nothing appears to
+    /// use — candidates for deletion or inlining, graded, never asserted.
+    #[arg(long, value_name = "PATH", num_args = 1..)]
+    dead: Vec<PathBuf>,
+
     /// Index the checkout containing this path (default: the current directory).
     #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = ".")]
     index: Option<PathBuf>,
@@ -178,6 +183,8 @@ pub fn run() -> ExitCode {
         cmd_refs(out, name, cli.include_excluded)
     } else if let Some(spec) = &cli.def {
         cmd_def(out, spec, cli.explain, cli.context.as_deref())
+    } else if !cli.dead.is_empty() {
+        cmd_dead(out, &cli.dead)
     } else if let Some(name) = &cli.ancestors {
         cmd_ancestors(out, name)
     } else if let Some(path) = &cli.drop {
@@ -998,6 +1005,177 @@ fn cmd_bare(
          Owner#method, Owner.method, or a Constant."
     );
     Ok(ExitCode::from(2))
+}
+
+/// Definitions in scope that nothing appears to use (DEC-038).
+///
+/// Two passes, because the cheap one settles most of it. A name with hundreds
+/// of call sites is not a candidate and must not cost a receiver-narrowed
+/// search to establish that; the few that survive get the expensive question
+/// asked properly.
+///
+/// Scope is the argument, evidence is the **whole index** — a method used once
+/// from outside the scope is not a candidate, and a scope-local search would
+/// say it is.
+fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
+    use crate::resolve::refs;
+
+    let root = scan::repo_root(
+        paths
+            .first()
+            .map(PathBuf::as_path)
+            .unwrap_or(Path::new(".")),
+    )?;
+    let root_str = root.to_string_lossy().into_owned();
+    let store = open_store()?;
+    if !store.has_checkout(&root_str)? {
+        return not_indexed(out, &root);
+    }
+
+    let files = ruby_files(paths);
+    let mut defined: Vec<(String, crate::core::Def, String)> = Vec::new();
+    for file in &files {
+        let Ok(source) = std::fs::read(file) else {
+            continue;
+        };
+        let facts = extract::extract(&source);
+        // A dynamic-dispatch marker anywhere in the file lowers confidence for
+        // everything in it: these are the shapes that make "no references" a
+        // weaker statement, and they are file-wide by nature.
+        let risky = dynamic_markers(&source);
+        let shown = file.to_string_lossy().into_owned();
+        for def in facts.defs {
+            if def.kind != crate::core::Kind::Method {
+                continue;
+            }
+            // A schema column is not dead because nothing calls it; that is a
+            // fact about the database. Same for anything a macro declared —
+            // deleting the method means editing the macro, which is a different
+            // question than this one.
+            if def.via.is_some() {
+                continue;
+            }
+            defined.push((shown.clone(), def, risky.clone()));
+        }
+    }
+
+    let names: Vec<String> = defined.iter().map(|(_, d, _)| d.name.clone()).collect();
+    let mentions = store.mention_counts(&names)?;
+
+    // The expensive pass, only for names the cheap one could not clear.
+    let tree = Tree::build(&store, &root_str)?;
+    let mut rows: Vec<serde_json::Value> = Vec::new();
+    for (file, def, risky) in &defined {
+        let (written, _) = mentions.get(&def.name).copied().unwrap_or((0, 0));
+        if written > 8 {
+            continue; // plainly used; not worth a narrowed search
+        }
+        let owner = def.nesting.first().cloned().unwrap_or_default();
+        let query = refs::Query {
+            owner: Some(owner.clone()),
+            singleton: def.singleton,
+            name: def.name.clone(),
+        };
+        let (found, counts) =
+            gather_refs(&tree, &store, &root, &root_str, &query, Some(&owner), false)
+                .unwrap_or_default();
+        // A symbol reference is tiered `possible`, so it is *inside*
+        // `counts.possible` — subtract it to ask what is written as a call.
+        // Without this, `convention-only` can never fire and a method reached
+        // only by `after_create :thing` reads as an ordinary single caller.
+        let by_symbol = found
+            .iter()
+            .filter(|reference| reference.receiver == "symbol")
+            .count();
+        let written_live = (counts.confirmed + counts.possible).saturating_sub(by_symbol);
+        let tier = match (written_live, by_symbol) {
+            (0, 0) => "unreferenced",
+            (0, _) => "convention-only",
+            (1, _) => "single-caller",
+            _ => continue,
+        };
+        rows.push(serde_json::json!({
+            "name": def.name,
+            "owner": owner,
+            "file": file,
+            "line": def.pos.line,
+            "tier": tier,
+            "confirmed": counts.confirmed,
+            "possible": counts.possible,
+            "symbol_refs": by_symbol,
+            "mentions_by_name": written,
+            "confidence": if risky.is_empty() { "clear" } else { "lower" },
+            "caveat": risky,
+        }));
+    }
+
+    let found = !rows.is_empty();
+    if out != Output::Text {
+        emit_json(
+            out,
+            &serde_json::json!({ "scope": files.len(), "candidates": rows }),
+        )?;
+        return Ok(exit_on(found));
+    }
+    for row in &rows {
+        println!(
+            "{:<16} {}:{}  {}{}",
+            row["tier"].as_str().unwrap_or_default(),
+            paths::pretty(row["file"].as_str().unwrap_or_default()),
+            row["line"],
+            row["name"].as_str().unwrap_or_default(),
+            match row["caveat"].as_str().unwrap_or_default() {
+                "" => String::new(),
+                why => format!("   (lower confidence: {why})"),
+            }
+        );
+    }
+    if !found {
+        println!("no candidates in {} file(s)", files.len());
+    }
+    Ok(exit_on(found))
+}
+
+/// Ruby files under these paths, following directories one level of recursion.
+fn ruby_files(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for path in paths {
+        if path.is_file() {
+            found.push(path.clone());
+            continue;
+        }
+        let Ok(walk) = std::fs::read_dir(path) else {
+            continue;
+        };
+        for entry in walk.flatten() {
+            let child = entry.path();
+            if child.is_dir() {
+                found.extend(ruby_files(&[child]));
+            } else if child.extension().is_some_and(|e| e == "rb") {
+                found.push(child);
+            }
+        }
+    }
+    found
+}
+
+/// Shapes that make "no references found" a weaker statement, named so the
+/// answer can say which one it saw rather than hedging in general.
+fn dynamic_markers(source: &[u8]) -> String {
+    let text = String::from_utf8_lossy(source);
+    let mut seen: Vec<&str> = Vec::new();
+    for marker in [
+        "send(",
+        "public_send(",
+        "method_missing",
+        "define_method",
+        "const_get",
+    ] {
+        if text.contains(marker) {
+            seen.push(marker.trim_end_matches('('));
+        }
+    }
+    seen.join(", ")
 }
 
 /// A checkout nobody has indexed, when a query needs one.

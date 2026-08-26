@@ -1104,8 +1104,7 @@ impl<'pr> Extractor<'_> {
                         // Rails 6 puts the attribute in this key.
                         if attribute.is_none() {
                             attribute = Some(key.clone());
-                            attribute_pos =
-                                Some(self.pos(assoc.key().location().start_offset()));
+                            attribute_pos = Some(self.pos(assoc.key().location().start_offset()));
                         }
                         collect(&assoc.value());
                     }

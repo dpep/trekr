@@ -486,6 +486,43 @@ impl Store {
     ///
     /// `root` of `None` searches every checkout — for a client whose workspace
     /// is not one of them, where the alternative is answering nothing.
+    /// How often each of these names appears as a call site anywhere, split by
+    /// whether it was written as a call or handed to a macro as a symbol.
+    ///
+    /// The cheap half of the dead-code filter (DEC-038). A name with hundreds
+    /// of call sites is not a candidate and must never cost a receiver-narrowed
+    /// pass to find that out; a name with none or a few is worth the expensive
+    /// question. Counting by name is deliberately *generous* — it counts every
+    /// same-named call in the index — because over-counting costs a missed
+    /// candidate and under-counting costs a false "nothing uses this".
+    pub(crate) fn mention_counts(&self, names: &[String]) -> Result<HashMap<String, (i64, i64)>> {
+        let mut found = HashMap::new();
+        // Chunked: SQLite's parameter limit is smaller than a big file's
+        // method count.
+        for chunk in names.chunks(400) {
+            let holes = vec!["?"; chunk.len()].join(",");
+            let sql = format!(
+                "SELECT name,
+                        SUM(CASE WHEN recv = 'symbol' THEN 0 ELSE 1 END),
+                        SUM(CASE WHEN recv = 'symbol' THEN 1 ELSE 0 END)
+                   FROM call_site WHERE name IN ({holes}) GROUP BY name"
+            );
+            let mut stmt = self.conn.prepare(&sql)?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(chunk), |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, i64>(1)?,
+                    r.get::<_, i64>(2)?,
+                ))
+            })?;
+            for row in rows {
+                let (name, written, symbol) = row?;
+                found.insert(name, (written, symbol));
+            }
+        }
+        Ok(found)
+    }
+
     pub(crate) fn symbols_named(
         &self,
         root: Option<&str>,

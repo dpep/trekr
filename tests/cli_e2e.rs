@@ -1463,3 +1463,86 @@ fn the_bare_grammar_dispatches_on_shape() {
         "the refusal spells the shapes: {text}"
     );
 }
+
+/// `--dead` tiers candidates by what evidence was found, and never says "dead".
+#[test]
+fn dead_candidates_are_tiered_by_the_evidence_found() {
+    let (dir, db) = scratch("dead");
+    repo(&dir);
+    fs::write(
+        dir.join("thing.rb"),
+        "class Thing\n  validate :check_it\n\n  def check_it\n  end\n\n  \
+         def used_once\n  end\n\n  def never_used\n  end\n\n  \
+         def run\n    used_once\n  end\nend\n",
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "add",
+        ],
+    );
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+
+    let out = trekr(&db, &dir, &["--dead", "thing.rb", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let by_name: std::collections::HashMap<&str, &serde_json::Value> = value["candidates"]
+        .as_array()
+        .expect("candidates")
+        .iter()
+        .map(|c| (c["name"].as_str().unwrap(), c))
+        .collect();
+
+    assert_eq!(by_name["never_used"]["tier"], "unreferenced");
+    // Reached only by `validate :check_it` — its own tier, because it is both
+    // the likeliest real candidate and the likeliest false positive.
+    assert_eq!(by_name["check_it"]["tier"], "convention-only");
+    assert_eq!(by_name["used_once"]["tier"], "single-caller");
+    // The caller itself is used by nothing here, so it is reported too — but
+    // never as anything stronger than a candidate.
+    for candidate in value["candidates"].as_array().unwrap() {
+        assert!(candidate.get("dead").is_none(), "nothing is asserted dead");
+        assert!(candidate["confidence"].is_string(), "confidence is graded");
+    }
+
+    // A file whose dispatch is dynamic lowers confidence, and says which shape.
+    fs::write(
+        dir.join("dyn.rb"),
+        "class Dyn\n  def hidden\n  end\n\n  def go(n)\n    send(n)\n  end\nend\n",
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "dyn",
+        ],
+    );
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    let out = trekr(&db, &dir, &["--dead", "dyn.rb", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let hidden = value["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "hidden")
+        .expect("hidden is a candidate");
+    assert_eq!(hidden["confidence"], "lower");
+    assert!(
+        hidden["caveat"].as_str().unwrap().contains("send"),
+        "{hidden}"
+    );
+}

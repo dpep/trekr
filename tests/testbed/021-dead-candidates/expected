@@ -1,0 +1,12 @@
+# The three tiers, on one file. `check_it` is reached only by `validate
+# :check_it`, `used_once` has exactly one written caller, and `never_used` has
+# nothing — and `run` is not reported, because it is called from the class body
+# of no one but is itself the caller.
+#
+# The distinction that took a bug to find: a symbol reference is tiered
+# `possible`, so it sits *inside* the possible count. Subtracting it is what
+# makes `convention-only` reachable at all — without that, a method reached
+# only by a macro reads as an ordinary single caller.
+symbols app.rb Widget,check_it,used_once,never_used,run
+refs Widget#check_it confirmed=0 possible=1 excluded=0
+refs Widget#never_used confirmed=0 possible=0 excluded=0

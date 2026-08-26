@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **`trekr --dead <path>…` finds candidates for deletion or inlining.** Scope is
+  the argument — files or directories — and the evidence is the **whole index**,
+  because a method used once from outside the scope is not a candidate.
+
+  Three tiers, each carrying what was found: **`unreferenced`** (no reference of
+  any kind, anywhere), **`convention-only`** (reached solely by a symbol handed
+  to a macro), and **`single-caller`** (exactly one written reference — the
+  inlining candidate). Nothing is ever reported as `dead`, and confidence is
+  **graded per candidate**: a file using `send`, `public_send`,
+  `method_missing`, `define_method` or `const_get` lowers it and names which one
+  it saw. Macro- and schema-generated definitions are not reported at all — an
+  unreferenced column is a fact about the database.
+
+  `--json` is first-class, per-symbol with reasons attached, so a deletion
+  workflow can consume it as an evidence layer rather than a verdict.
+
+
 - **A symbol handed to a macro counts as a reference.** `after_create :ensure_thing`
   invokes `ensure_thing`, and nothing in the file writes it as a call — so every
   callback-, validation- and route-registered method looked unused. `--refs` now
