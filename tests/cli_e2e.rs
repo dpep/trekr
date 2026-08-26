@@ -1116,3 +1116,53 @@ fn a_gem_position_answers_from_an_app_that_resolves_it() {
     let _ = fs::remove_dir_all(&app);
     let _ = fs::remove_dir_all(&gems);
 }
+
+/// Human output never prints an absolute `$HOME` path; `--json` always does.
+///
+/// One assertion over every text surface at once, because the rule is only
+/// worth having if the *next* output surface cannot forget it. `HOME` is
+/// pointed at the scratch directory so the fixture genuinely lives under it —
+/// without that, every path here is under `/tmp` and the test passes by
+/// accident.
+#[test]
+fn human_output_shortens_home_and_json_keeps_it_absolute() {
+    let (dir, db) = scratch("tilde");
+    repo(&dir);
+    // Canonical, because git reports `/private/var/...` where `temp_dir()`
+    // says `/var/...` on macOS — the same symlink DEC-026 audited.
+    let real = dir.canonicalize().unwrap();
+    let home = real.parent().unwrap().to_string_lossy().to_string();
+    let vars = [("HOME", home.as_str())];
+    let absolute = real.to_string_lossy().to_string();
+
+    let indexed = trekr_env(&db, &dir, &["--index"], &vars);
+    let text = String::from_utf8_lossy(&indexed.stdout);
+    assert!(text.contains('~'), "index text should shorten HOME: {text}");
+    assert!(
+        !text.contains(&absolute),
+        "index text should not print an absolute HOME path: {text}"
+    );
+
+    for args in [
+        vec!["--status"],
+        vec!["--def", "app.rb:8:7"],
+        vec!["--refs", "Widget#save"],
+    ] {
+        let out = trekr_env(&db, &dir, &args, &vars);
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            !text.contains(&absolute),
+            "{args:?} text printed an absolute HOME path: {text}"
+        );
+    }
+
+    // The machine surface is the other half of the rule: a consumer that has
+    // to expand `~` is one that will forget to.
+    let json = trekr_env(&db, &dir, &["--status", "--json"], &vars);
+    let text = String::from_utf8_lossy(&json.stdout);
+    assert!(
+        text.contains(&absolute),
+        "--json must keep absolute paths: {text}"
+    );
+    assert!(!text.contains('~'), "--json must not shorten: {text}");
+}

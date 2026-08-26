@@ -9,6 +9,7 @@ pub(crate) mod position;
 mod profile;
 
 use crate::core::Oid;
+use crate::core::paths;
 use crate::store::Store;
 use crate::tree::{Status, Tree};
 use crate::{extract, scan};
@@ -418,7 +419,7 @@ fn cmd_index(
     match out {
         Output::Text => println!(
             "indexed {} — {} files, {} blobs, {} parsed ({} defs, {} refs, {} calls)",
-            root_str,
+            paths::pretty(&root_str),
             counts.files,
             counts.blobs,
             counts.parsed,
@@ -486,7 +487,12 @@ fn cmd_status(out: Output) -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::from(1));
     }
     for c in &checkouts {
-        println!("{:>7} files  {:>7} blobs  {}", c.files, c.blobs, c.repo);
+        println!(
+            "{:>7} files  {:>7} blobs  {}",
+            c.files,
+            c.blobs,
+            paths::pretty(&c.repo)
+        );
     }
     println!(
         "\nshared: {} blobs, {} defs, {} const refs, {} calls",
@@ -511,7 +517,10 @@ fn cmd_symbols(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
         return Ok(exit_on(!symbols.is_empty()));
     }
     if symbols.is_empty() {
-        println!("no definitions in {}", path.display());
+        println!(
+            "no definitions in {}",
+            paths::pretty(&path.to_string_lossy())
+        );
         return Ok(ExitCode::from(1));
     }
     for s in &symbols {
@@ -618,12 +627,17 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
         return Ok(ExitCode::from(1));
     }
     for site in &definition {
-        println!("{}:{}:{}  definition", site.path, site.line, site.col);
+        println!(
+            "{}:{}:{}  definition",
+            paths::pretty(&site.path),
+            site.line,
+            site.col
+        );
     }
     for reference in &found {
         println!(
             "{}:{}:{}  {:<10} {}",
-            reference.path,
+            paths::pretty(&reference.path),
             reference.line,
             reference.col,
             format!("{:?}", reference.tier).to_lowercase(),
@@ -697,7 +711,11 @@ fn cmd_refs_by_name(
         };
         println!(
             "{}:{}:{}  {:<11} {}",
-            row.path, row.line, row.col, row.role, detail
+            paths::pretty(&row.path),
+            row.line,
+            row.col,
+            row.role,
+            detail
         );
     }
     Ok(ExitCode::SUCCESS)
@@ -847,7 +865,7 @@ fn cmd_def(
     let text = match answer["sites"].as_array().and_then(|s| s.first()) {
         Some(site) => format!(
             "{}:{}:{}  {}",
-            site["path"].as_str().unwrap_or_default(),
+            paths::pretty(site["path"].as_str().unwrap_or_default()),
             site["line"],
             site["col"],
             answer["fqn"]
@@ -894,7 +912,7 @@ fn explanation(answer: &serde_json::Value) -> String {
         out.push(format!("  via         {via}"));
     }
     if let Some(context) = field("context") {
-        out.push(format!("  context     {context}"));
+        out.push(format!("  context     {}", paths::pretty(&context)));
     }
     if let Some(receiver) = field("receiver") {
         let typed = field("receiver_type")
@@ -941,7 +959,7 @@ fn explanation(answer: &serde_json::Value) -> String {
                 "    {}. {}  {}:{}  — {}",
                 rank + 1,
                 candidate["owner"].as_str().unwrap_or("?"),
-                site["path"].as_str().unwrap_or_default(),
+                paths::pretty(site["path"].as_str().unwrap_or_default()),
                 site["line"],
                 candidate["why"].as_str().unwrap_or_default(),
             ));
@@ -1002,8 +1020,10 @@ fn cmd_drop(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
     let dropped = open_store()?.drop_checkout(&root_str)?;
 
     match out {
-        Output::Text if dropped == 0 => println!("{root_str} was not indexed"),
-        Output::Text => println!("dropped {root_str}"),
+        Output::Text if dropped == 0 => {
+            println!("{} was not indexed", paths::pretty(&root_str))
+        }
+        Output::Text => println!("dropped {}", paths::pretty(&root_str)),
         _ => emit_json(
             out,
             &serde_json::json!({ "repo": root_str, "dropped": dropped > 0 }),
@@ -1100,7 +1120,10 @@ fn cmd_usage(out: Output) -> anyhow::Result<ExitCode> {
         return Ok(exit_on(total > 0));
     }
     if rows.is_empty() {
-        println!("no requests logged yet in {}", path.display());
+        println!(
+            "no requests logged yet in {}",
+            paths::pretty(&path.to_string_lossy())
+        );
         return Ok(ExitCode::from(1));
     }
     let retired = match retirements {

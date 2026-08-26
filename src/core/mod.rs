@@ -38,6 +38,34 @@ pub(crate) mod paths {
             && path.as_bytes().get(root.len()) == Some(&b'/')
     }
 
+    /// A path as a person should read it: `$HOME` shown as `~`.
+    ///
+    /// **Display only.** `--json` and `--ndjson` keep absolute paths, because a
+    /// machine consumer that has to expand `~` is one that will forget to, and
+    /// LSP `Location` URIs are absolute `file://` by protocol. Every
+    /// human-facing print site goes through here so the next output surface
+    /// cannot quietly forget — `tests/cli_e2e.rs` pins that with one assertion
+    /// over all of them.
+    pub(crate) fn pretty(path: &str) -> String {
+        let Some(home) = std::env::var_os("HOME") else {
+            return path.to_string();
+        };
+        let home = home.to_string_lossy();
+        let home = home.strip_suffix('/').unwrap_or(&home);
+        if home.is_empty() {
+            return path.to_string();
+        }
+        if path == home {
+            return "~".to_string();
+        }
+        // Boundary-aware, like everything else here: `/Users/dan` must not
+        // claim `/Users/danger/x`.
+        match under(home, path) {
+            true => format!("~{}", &path[home.len()..]),
+            false => path.to_string(),
+        }
+    }
+
     /// Does this absolute path name that checkout-relative file? Boundary-aware
     /// again: `b.rb` is not the file `/x/ab.rb`.
     pub(crate) fn names_file(absolute: &str, relative: &str) -> bool {
@@ -56,6 +84,28 @@ pub(crate) mod paths {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        /// Boundary-aware like its neighbours: a home of `/Users/dan` must not
+        /// claim `/Users/danger/x`, which a bare `strip_prefix` would.
+        #[test]
+        fn pretty_shortens_home_and_nothing_else() {
+            // SAFETY: single-threaded test, restored before it returns.
+            let before = std::env::var_os("HOME");
+            unsafe { std::env::set_var("HOME", "/Users/dan") };
+
+            assert_eq!(pretty("/Users/dan/code/app.rb"), "~/code/app.rb");
+            assert_eq!(pretty("/Users/dan"), "~");
+            assert_eq!(pretty("/Users/danger/x.rb"), "/Users/danger/x.rb");
+            assert_eq!(pretty("/opt/homebrew/bin/trekr"), "/opt/homebrew/bin/trekr");
+            // A trailing slash on HOME is a real shape and must not double up.
+            unsafe { std::env::set_var("HOME", "/Users/dan/") };
+            assert_eq!(pretty("/Users/dan/code/app.rb"), "~/code/app.rb");
+
+            match before {
+                Some(value) => unsafe { std::env::set_var("HOME", value) },
+                None => unsafe { std::env::remove_var("HOME") },
+            }
+        }
 
         #[test]
         fn a_sibling_whose_name_extends_the_root_is_not_inside_it() {
