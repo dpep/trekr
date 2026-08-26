@@ -13,7 +13,8 @@ use crate::store::Store;
 use crate::tree::{Status, Tree};
 use crate::{extract, scan};
 use anyhow::Context;
-use clap::Parser;
+use clap::{CommandFactory, Parser};
+use clap_complete::Shell;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -119,6 +120,10 @@ struct Cli {
     /// Emit newline-delimited JSON, one compact object per line.
     #[arg(short = 'J', long, conflicts_with = "json")]
     ndjson: bool,
+
+    /// Print a shell completion script (bash, zsh, fish, elvish, powershell).
+    #[arg(long, value_name = "SHELL")]
+    completions: Option<Shell>,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -130,6 +135,14 @@ enum Output {
 
 pub fn run() -> ExitCode {
     let cli = Cli::parse();
+
+    // Before any store or git work: generating a completion script must not
+    // need a checkout, and every other command refuses a non-repo with exit 2.
+    if let Some(shell) = cli.completions {
+        clap_complete::generate(shell, &mut Cli::command(), "trekr", &mut std::io::stdout());
+        return ExitCode::SUCCESS;
+    }
+
     if cli.profile {
         // The tree layer reads this rather than taking a parameter: it is
         // built from half a dozen call sites and the flag is a whole-process

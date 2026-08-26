@@ -814,6 +814,24 @@ fn a_request_that_cannot_be_served_is_distinct_from_an_empty_answer() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Completions are generated from the parser, so they must not need a checkout
+/// — and the directory below deliberately is not one, because every other
+/// command refuses that with exit 2.
+#[test]
+fn a_completion_script_is_generated_without_a_repository() {
+    let (dir, db) = scratch("completions");
+    let out = trekr(&db, &dir, &["--completions", "bash"]);
+
+    assert_eq!(out.status.code(), Some(0), "generating a script succeeded");
+    assert!(
+        stdout(&out).contains("complete -F _trekr"),
+        "the script registers the completion function: {}",
+        stdout(&out)
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// The unit is the file's own checkout, not the process's directory.
 ///
 /// An agent asks about a position from wherever it is standing, which is

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`--completions <shell>`** prints a shell completion script (bash, zsh, fish,
+  elvish, powershell) on stdout. Generated from the parser, so it cannot drift
+  from the flags, and it needs no checkout — the one command that answers
+  outside a repository.
+
 - **`define_model_callbacks` is modelled**, so `before_save`, `after_destroy`
   and the rest of ActiveRecord's model callbacks resolve. The macro sits in an
   `included do` block, which is `class_eval`'d into the includer, so its
