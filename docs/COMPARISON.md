@@ -84,6 +84,13 @@ often and is always right, and they are not the same tool.
   schema column, which is what a reader wants (BASELINE, session 15). On
   widget_shop that is 24 of 63 sites, and every one of them scores `wrong@1`
   here. Sorbet pays the same tax for pointing at an RBI declaration.
+* **`correct@1` cannot see a declaration, and that costs trekr here.** Since
+  session 30 an answer says whether it points at the code or at the macro that
+  declared it, and the gold scorer reads that (BASELINE, DEC-034). This
+  comparison cannot: no peer emits such a field, so scoring on it would compare
+  trekr against itself. Every declaration answer therefore counts as `wrong@1`
+  in the table below, including the ones a reader would rather have. It is the
+  same tax Sorbet pays for pointing at an RBI.
 * **The warm median is one definition request per position across hundreds of
   distinct files**, each preceded by a `didOpen`. It is not the same figure as
   DEC-007's 0.2 ms, which repeated one position.
