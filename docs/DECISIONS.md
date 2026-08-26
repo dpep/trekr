@@ -1402,6 +1402,69 @@ specified here so the next one does not re-derive it.
 grammar in `structure.sql` that matters is `CREATE TABLE [public.]<name> (…)`
 with one column per line, which is far simpler than the Ruby DSL already parsed.
 
+## DEC-038 — Dead-code candidates are tiered by what was checked, never asserted
+
+**Decided.** `trekr --dead <path>…` reports **candidates for deletion or
+inlining**, graded, each carrying what was looked for and what was found. The
+word "dead" never appears in an answer, and nothing is ever `dead: true`.
+
+**Why the vocabulary matters more than the algorithm.** The tool cannot know
+that a method is unreachable — `send`, a name built at runtime, and a call from
+an ERB template that this engine does not index are all invisible, and they are
+stated limits rather than bugs. What it *can* say precisely is: *I looked for
+these five kinds of evidence, across the whole index, and found none.* That is
+useful, and it is true. "Dead" would not be.
+
+### The scope is the argument; the evidence is the whole index
+
+`--dead app/models/user.rb app/services/` takes files or directories. Every
+definition **in scope** is classified by evidence gathered **everywhere** — all
+634 checkouts, gems included — because a method used by one caller outside the
+scope is not a candidate, and a scope-local search would say it is.
+
+### The tiers
+
+| tier | means |
+| --- | --- |
+| `unreferenced` | no confirmed, no possible, no symbol reference, anywhere |
+| `convention-only` | reached **only** by a symbol handed to a macro |
+| `single-caller` | exactly one confirmed or possible reference — Daniel's inlining candidate |
+| `referenced` | not reported |
+
+**`convention-only` is its own tier rather than folded into referenced**, because
+it is the shape most likely to be a genuine deletion candidate *and* the shape
+most likely to be a false positive — `after_create :thing` is real use, while a
+same-named symbol somewhere in a gem is coincidence. Splitting it lets a caller
+decide; blending it would hide the decision.
+
+### Confidence is graded per candidate, never flat
+
+The house rule (DEC-008, DEC-011): a score traces to what backs it. A candidate
+in a file that also contains `send`, `public_send`, `method_missing`, or an
+interpolated constant carries **lower** confidence, and says which of those it
+saw. A schema-generated attribute is not reported at all — an unreferenced
+column is a fact about the database, not about dead code.
+
+### Validation, before anyone deletes anything
+
+**Git history as ground truth**, per DEC-037: run against an old discourse
+commit and score candidates against what humans actually deleted since.
+Precision at the moment the tool would have spoken, needing no test suite and no
+judgement call. Predicted precision on `unreferenced` is **60–75 %**; the bar to
+call it more than disclosure is **≥ 70 %**.
+
+### Shaped for a consumer, not a reader
+
+Daniel's `reaper` workflow buckets references by kind, rates deletion cost, and
+stages revertible commits. This is the **evidence layer** such a workflow
+consumes: per-symbol, machine-readable, reasons attached, `--json` first-class.
+It deliberately stops short of recommending a deletion, because the cost of
+being wrong is borne by whoever runs the delete, and they need the reasons to
+weigh it.
+
+**Reverses if** the history check comes in under the bar, in which case this
+ships as disclosure only and the tiers stay advisory.
+
 ## DEC-035 — Freshness is a probe and a budget, not a daemon
 
 **Decided (design; `not_indexed` shipped, the rest specified).** A query never
