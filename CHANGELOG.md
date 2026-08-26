@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.2 — 2026-08-25
 
 - **An unindexed repo now answers `not_indexed`, not residue.** A query into a
   checkout the store has never seen names the repo root, gives the `trekr
