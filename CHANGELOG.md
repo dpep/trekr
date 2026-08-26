@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.1 — 2026-08-25
 
 - **`--serve` is now `--lsp`, with no alias.** The flag says what it does. **You
   must edit any hand-written editor or MCP config** that spawns `trekr --serve`;
