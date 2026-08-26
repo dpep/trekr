@@ -44,8 +44,15 @@ trekr --index          # the checkout you are in, plus its gems
 A reindex with nothing changed parses nothing (~60 ms on a 3k-file repo), and a
 second worktree of the same repo costs nothing — facts are keyed by git blob.
 
-**No results is not the same as broken.** `trekr --status` lists what is
-indexed; an unindexed repo answers nothing and says so with exit code 2.
+**No results is not the same as broken**, and trekr distinguishes them for you:
+
+| you get | it means |
+| --- | --- |
+| `status: not_indexed`, **exit 2** | nobody has indexed this repo. The answer names the root and the command. Run it; do not go looking for the definition. |
+| `status: residue`, exit 1 | trekr looked. The receiver is genuinely undetermined — ranked `candidates` say what it might be. |
+| exit 1, "no mention of …" | indexed, and the name really is not there. |
+
+`trekr --status` lists what is indexed.
 
 ## References to a *method*, not a name
 
