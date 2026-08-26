@@ -1495,6 +1495,30 @@ repo's phase split:
 Claim 1 is the one worth reading first: it is falsifiable on its own and does
 not depend on how the earlier 6 s was distributed.
 
+### Built, session 33
+
+The probe and the query-biased refresh are in on `--def`. One stat of
+`.git/index` decides; on a hit the queried file alone is re-read and re-parsed
+(only when the blob is new), both checkout keys are updated incrementally, and
+the answer carries `index: {stale, refreshed, hint}`.
+
+**The bound is structural rather than a time budget**, which is the one place
+this departs from rq. rq spends a slice of milliseconds and streams as many
+files as fit; trekr refreshes *exactly one* — the file the question is about.
+At 6-second-scan scale a time budget mostly buys a partially-refreshed index
+whose coverage nobody can describe, whereas "the file you asked about is
+current, everything else is disclosed as lagging" is a sentence an agent can act
+on. The streaming remainder is still available if a corpus ever shows it paying.
+
+Sampling order matters and is easy to get backwards: the fingerprint is taken
+**before** the scan. Afterwards, it would cover edits the index never saw and
+the next query would call them fresh. Taken first, the worst case is a probe
+that reports stale when it is not — one wasted re-read, never a wrong answer.
+
+Only `--index` moves the recorded fingerprint. A refreshed query deliberately
+leaves it, so the next query still says `stale: true`: one file being current
+is not the checkout being current, and the disclosure should keep saying so.
+
 ### Shipped now
 
 `not_indexed`, because it is the half that needs no policy: `--def`, `--refs`
