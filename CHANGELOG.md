@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- **An unindexed repo now answers `not_indexed`, not residue.** A query into a
+  checkout the store has never seen names the repo root, gives the `trekr
+  --index` command, and exits 2 — instead of `status: residue` with "no indexed
+  constant", which read as a finding about the code when it was a setup step.
+  **Anything scripted against residue-as-missing-index must read the new
+  status.**
+
+- **`--def` snaps to the nearest name on the line, and says so.** An off-by-one
+  column answers for the nearest identifier with `snapped_to: {name, col,
+  alternatives}` in JSON and a stderr note in text; `--def FILE:LINE` (no
+  column) now works. Exact positions answer exactly as before, and the LSP
+  server keeps exact-position semantics — editors send real columns.
+
+- **Human output shows `$HOME` as `~`.** Every text surface — results,
+  `--explain`, `--status`, `--usage`, errors. `--json`/`--ndjson` keep absolute
+  paths, and LSP URIs are untouched.
+
 ## 0.1.1 — 2026-08-25
 
 - **`--serve` is now `--lsp`, with no alias.** The flag says what it does. **You
