@@ -110,7 +110,7 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-/// One `textDocument/hover`, over a real `--serve` session against the staged
+/// One `textDocument/hover`, over a real `--lsp` session against the staged
 /// checkout. Returns the markdown the editor would show.
 fn hover_text(db: &Path, dir: &Path, target: &str) -> String {
     use std::io::{BufRead, BufReader, Write};
@@ -125,14 +125,14 @@ fn hover_text(db: &Path, dir: &Path, target: &str) -> String {
     let text = fs::read_to_string(&path).unwrap_or_default();
 
     let mut child = Command::new(env!("CARGO_BIN_EXE_trekr"))
-        .arg("--serve")
+        .arg("--lsp")
         .current_dir(dir)
         .env("TREKR_DB", db)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .expect("serve");
+        .expect("lsp");
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap());
 

@@ -44,7 +44,7 @@ symbols app.rb   Widget,save,Job,run
 `refs QUERY` asserts the `counts` object. `symbols FILE` asserts the outline,
 in source order, comma-separated.
 
-`hover FILE:LINE:COL <text>` drives a real `--serve` session and asserts the
+`hover FILE:LINE:COL <text>` drives a real `--lsp` session and asserts the
 markdown an editor would show contains `<text>`. It exists because some of what
 an answer carries reaches an editor **only** through hover: `textDocument/
 definition` is a bare list of locations and cannot say what kind of location it

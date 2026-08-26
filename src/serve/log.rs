@@ -10,7 +10,7 @@
 //!   against which checkouts, and how often the answer is empty. That is the
 //!   feedback loop that picks what to build next.
 //!
-//! Never stdout: that is the LSP wire. Default is `serve.log` beside the
+//! Never stdout: that is the LSP wire. Default is `lsp.log` beside the
 //! database, one compact object per line, at a level cheap enough to leave on.
 //! `TREKR_LOG=-` sends it to stderr instead, `TREKR_LOG=off` silences it, and
 //! `TREKR_LOG_LEVEL=debug` adds the wire-level params.
@@ -41,7 +41,7 @@ enum Sink {
 
 impl Log {
     /// `$TREKR_LOG`: a path, `-` for stderr, `off` to silence. Default is
-    /// `serve.log` beside the database.
+    /// `lsp.log` beside the database.
     ///
     /// A log that cannot be opened is not an error worth refusing to serve
     /// over — it degrades to silence.
@@ -118,7 +118,7 @@ fn env_is(name: &str, value: &str) -> bool {
 
 fn default_path() -> Option<std::path::PathBuf> {
     let db = crate::store::default_path().ok()?;
-    Some(db.parent()?.join("serve.log"))
+    Some(db.parent()?.join("lsp.log"))
 }
 
 fn open_file(path: &std::path::Path) -> Option<std::fs::File> {

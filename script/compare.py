@@ -64,7 +64,7 @@ def gem_env(home):
 ENGINES = {
     "trekr": {
         "version": lambda: run_version([os.path.join(ROOT, "target/release/trekr"), "--version"]),
-        "argv": [os.path.join(ROOT, "target/release/trekr"), "--serve"],
+        "argv": [os.path.join(ROOT, "target/release/trekr"), "--lsp"],
         "env": lambda: dict(os.environ),
         "setup_is_slow": False,
     },

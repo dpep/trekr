@@ -1,4 +1,4 @@
-//! `trekr --serve` — the nine operations an agent actually uses, over stdio.
+//! `trekr --lsp` — the nine operations an agent actually uses, over stdio.
 //!
 //! A thin resident front over the on-disk index, not an owner of it (PLAN §4).
 //! The editor owns the process: no auto-spawn, no lockfile, no lifecycle beyond

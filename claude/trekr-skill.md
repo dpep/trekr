@@ -16,7 +16,7 @@ Ruby only. For "where is `Foo` defined" across languages, use `rq`.
 ## Before the first question on a new machine
 
 **Is `trekr` on PATH?** If not, nothing here works and the failure is quiet —
-the plugin's LSP server is `trekr --serve`, so goToDefinition goes silent too.
+the plugin's LSP server is `trekr --lsp`, so goToDefinition goes silent too.
 Install it, then retry:
 
 ```sh

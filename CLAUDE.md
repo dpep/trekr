@@ -67,5 +67,16 @@ Rust, single crate until there's a concrete reason to split. `cargo` is keg-only
 
 Solo repo: no PRs, commit directly to `main`, small logically-connected commits,
 behavior or structure but not both. `CHANGELOG.md` gets its entry in the commit
-that earns it, under `## Unreleased`. Not released anywhere yet — no version
-ceremony until there's a user.
+that earns it, under `## Unreleased`.
+
+**Pre-1.0, prefer the clean break over the compatibility shim.** Rename, remove
+and reshape toward the surface the tool should have; do not carry aliases or
+deprecation paths. The changelog says what a user must *do*, and that is the
+whole migration. `--serve` became `--lsp` this way. This stops at 1.0.
+
+Released now — crates.io, `brew install dpep/tools/trekr`, and the `trekr`
+plugin in the myclaude marketplace — so a change that alters the built binary
+earns a version bump (patch or minor; see `/semver`). Releases go through the
+`release` script and are supervisor-driven: keep `## Unreleased` accurate and
+leave the cutting to them. CI runs on **ubuntu**, so macOS-only correctness is
+not correctness.

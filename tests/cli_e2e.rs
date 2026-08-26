@@ -920,10 +920,10 @@ fn an_older_binary_refuses_a_newer_database_rather_than_dropping_it() {
 /// `--usage` turns the serve log into the dogfood signal it was written for:
 /// which operations agents call, and how often the answer was empty.
 #[test]
-fn usage_summarizes_the_serve_log_and_says_nothing_when_it_is_empty() {
+fn usage_summarizes_the_lsp_log_and_says_nothing_when_it_is_empty() {
     let (dir, db) = scratch("usage");
     fs::create_dir_all(&dir).unwrap();
-    let log = dir.join("serve.log");
+    let log = dir.join("lsp.log");
     fs::write(&log, "").unwrap();
 
     // Nothing logged is a definitive "no", not a failure.

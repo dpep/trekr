@@ -1,7 +1,9 @@
 {
   "trekr": {
     "command": "trekr",
-    "args": ["--serve"],
+    "args": [
+      "--lsp"
+    ],
     "extensionToLanguage": {
       ".rb": "ruby",
       ".rake": "ruby",

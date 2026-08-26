@@ -74,7 +74,7 @@ struct Session {
 impl Session {
     fn start(db: &Path, dir: &Path) -> Session {
         let mut child = Command::new(env!("CARGO_BIN_EXE_trekr"))
-            .arg("--serve")
+            .arg("--lsp")
             .current_dir(dir)
             .env("TREKR_DB", db)
             // Its own log, or every test in this file appends to one shared
@@ -84,7 +84,7 @@ impl Session {
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
-            .expect("start trekr --serve");
+            .expect("start trekr --lsp");
         let stdin = child.stdin.take().unwrap();
         let stdout = BufReader::new(child.stdout.take().unwrap());
         Session {
@@ -1142,7 +1142,7 @@ fn serve_retires_when_its_binary_is_replaced() {
     fs::copy(env!("CARGO_BIN_EXE_trekr"), &binary).unwrap();
     let spawn = || {
         Command::new(&binary)
-            .arg("--serve")
+            .arg("--lsp")
             .current_dir(&dir)
             .env("TREKR_DB", &db)
             .env("TREKR_LOG", log_path(&db))

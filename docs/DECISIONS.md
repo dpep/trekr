@@ -623,7 +623,7 @@ stub stops being the best available answer.
 
 **Decided.** A question about a *position* is answered against the repository
 that contains that file. `--def FILE:LINE:COL` runs `repo_root` on the file, not
-on `.`; `--serve` holds a tree per checkout and finds the one each request's URI
+on `.`; `--lsp` holds a tree per checkout and finds the one each request's URI
 belongs to. The client's workspace root survives only as the scope for
 `workspaceSymbol`, and even there it widens to every checkout when it is not one
 itself.
@@ -683,7 +683,7 @@ Optimistically that is 2–4×. Set against:
   corruption mode, and its own staleness surface — where the store today is a
   cache of a pure function that can always be dropped and rebuilt (DEC-009);
 * the CLI is the only caller that pays per invocation, and the answer for a
-  caller that minds is `--serve`.
+  caller that minds is `--lsp`.
 
 A 2–4× on the surface we are steering people away from, bought with a new
 persistent format, is not a trade worth making yet.

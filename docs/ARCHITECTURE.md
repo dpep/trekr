@@ -392,7 +392,7 @@ itself is 150–190 ms even for 6 820 sites. Whole-index queries are therefore
 squarely in the territory where a resident front would pay for itself twice —
 once for the tree, once for the parse cache.
 
-**What the resident front is worth.** `trekr --serve` against rails, driving
+**What the resident front is worth.** `trekr --lsp` against rails, driving
 the built binary over stdio:
 
 | operation | first call | warm median |
@@ -558,7 +558,7 @@ itself is 150–190 ms even for 6 820 sites. Whole-index queries are therefore
 squarely in the territory where a resident front would pay for itself twice —
 once for the tree, once for the parse cache.
 
-**What the resident front is worth.** `trekr --serve` against rails, driving
+**What the resident front is worth.** `trekr --lsp` against rails, driving
 the built binary over stdio:
 
 | operation | first call | warm median |
@@ -759,7 +759,7 @@ itself is 150–190 ms even for 6 820 sites. Whole-index queries are therefore
 squarely in the territory where a resident front would pay for itself twice —
 once for the tree, once for the parse cache.
 
-**What the resident front is worth.** `trekr --serve` against rails, driving
+**What the resident front is worth.** `trekr --lsp` against rails, driving
 the built binary over stdio:
 
 | operation | first call | warm median |

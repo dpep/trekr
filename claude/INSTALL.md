@@ -31,7 +31,7 @@ claude plugin install trekr@myclaude
 ```
 
 That is both halves at once — the skill that teaches Claude the CLI, and the
-`.lsp.json` that registers `trekr --serve`. Restart Claude Code afterward;
+`.lsp.json` that registers `trekr --lsp`. Restart Claude Code afterward;
 servers are read once at session start.
 
 ### If you are assembling this by hand
@@ -57,7 +57,7 @@ named `lspServers` that has no `command`, and the whole file is dropped with
 `claude plugin details trekr@myclaude` confirms it: **LSP servers (1) trekr**.
 Servers are read once at session start; a new session picks up the install.
 
-**`startupTimeout` is safe at the 5 s default.** `--serve` answers `initialize`
+**`startupTimeout` is safe at the 5 s default.** `--lsp` answers `initialize`
 before touching the store: the tree is assembled lazily on the first query that
 needs it, not during the handshake. A repo that has never been indexed still
 completes the handshake — it simply answers nothing until you run `trekr --index`.
@@ -120,10 +120,10 @@ The CLI answers all of the same questions with the tiers explicit; see
 
 ## When it answers nothing
 
-`~/.local/share/trekr/serve.log` — one ndjson line per request, with the file,
+`~/.local/share/trekr/lsp.log` — one ndjson line per request, with the file,
 the line, the duration and how much came back. An `"answered": 0` in well under
 a millisecond means the request was refused before any work, not that the
 engine looked and found nothing.
 
 `TREKR_LOG` takes a path, `-` for stderr, or `off`. `TREKR_LOG_LEVEL=debug` (or
-running `trekr --serve --profile` by hand) adds the wire-level params.
+running `trekr --lsp --profile` by hand) adds the wire-level params.

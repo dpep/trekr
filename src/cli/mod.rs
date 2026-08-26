@@ -42,7 +42,7 @@ struct Cli {
     #[arg(long, conflicts_with_all = ["index", "symbols", "drop"])]
     status: bool,
 
-    /// Summarize what `--serve` has been asked, from its own log: which
+    /// Summarize what `--lsp` has been asked, from its own log: which
     /// operations, how often the answer was empty, and what they cost.
     #[arg(long, conflicts_with_all = ["index", "symbols", "drop", "refs", "def"])]
     usage: bool,
@@ -98,11 +98,11 @@ struct Cli {
     /// Speak LSP over stdio. The editor owns the process: no auto-spawn, no
     /// lockfile, and it stops when stdin closes.
     #[arg(long, conflicts_with_all = ["index", "status", "symbols", "refs", "def", "ancestors", "drop"])]
-    serve: bool,
+    lsp: bool,
 
     /// Report where the time went, on stderr. For `--index`, the phases of the
     /// index; for a query, the phases of the tree build behind it. With
-    /// `--serve`, logs the wire-level params of every request too.
+    /// `--lsp`, logs the wire-level params of every request too.
     #[arg(long)]
     profile: bool,
 
@@ -157,7 +157,7 @@ pub fn run() -> ExitCode {
         Output::Text
     };
 
-    let result = if cli.serve {
+    let result = if cli.lsp {
         crate::serve::run(cli.profile).map(|()| ExitCode::SUCCESS)
     } else if let Some(path) = &cli.index {
         cmd_index(out, path, cli.jobs, cli.profile, !cli.no_gems)

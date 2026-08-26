@@ -114,7 +114,7 @@ different questions and answer differently.
 
 ## In Claude Code
 
-`trekr --serve` speaks LSP: goToDefinition, findReferences, documentSymbol,
+`trekr --lsp` speaks LSP: goToDefinition, findReferences, documentSymbol,
 workspaceSymbol, hover, goToImplementation, call hierarchy, and Prism syntax
 diagnostics. Deliberately not completion, rename, or formatting — an agent does
 not use them, and announcing them would invite an editor to route work here that

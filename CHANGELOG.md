@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **`--serve` is now `--lsp`, with no alias.** The flag says what it does. **You
+  must edit any hand-written editor or MCP config** that spawns `trekr --serve`;
+  plugin users get it with the plugin update. Pre-1.0 this project takes the
+  clean break over a compatibility shim, and the changelog line is the whole
+  migration.
+
+  The request log moves with it: `~/.local/share/trekr/serve.log` →
+  `lsp.log`, which `--usage` reads. To keep your history, `mv` it — nothing else
+  refers to the old name.
+
 - **The skill checks for the binary before it tries to use it.** First report
   from a second machine: the plugin was installed, `/trekr` was run, and the
   skill neither noticed `trekr` was missing nor helped install it — while the
