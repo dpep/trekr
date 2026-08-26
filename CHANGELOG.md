@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.4 — 2026-08-26
 
 - **`trekr <input>` takes one argument and dispatches on its shape.**
 
