@@ -1275,3 +1275,70 @@ refusal — *"database is schema v16 but this trekr speaks v15"* — not a silen
 drop. That is right, and it means reverting an extractor change requires
 dropping the database by hand. The database is a cache (DEC-009), so that costs
 one reindex and nothing else.
+
+## DEC-034 — An answer says which kind of location it is
+
+**Decided.** `MethodAnswer` carries `kind: definition | declaration`, and
+`defined_via` names the macro when it is a declaration. Residue candidates carry
+their own `kind`. On the LSP side it lives in **hover**.
+
+**The field shape, since it is public API.** Three candidates were weighed:
+
+* `defined_via` alone, with "is it a declaration" implied by the field's
+  presence. Rejected: the thing a caller branches on should not be inferred
+  from an absence.
+* `declaration: true|false`. Rejected: a boolean cannot grow a third case, and
+  there may well be one (a `.rbi` declaration is arguably neither).
+* **`kind` plus `defined_via`.** Chosen. `kind` is the branch and the most
+  guessable name; `defined_via` is the detail, because "declaration" alone tells
+  a reader what the answer is *not* without telling them what it is.
+
+`kind` sits beside `sites[].kind`, which is class/module/method/constant. That
+was the one real objection and it is tolerated rather than dodged: they are
+different questions at different nesting levels — one about a *location's*
+nature, one about a *symbol's* — and every place that documents one documents
+the other. A longer unambiguous name (`definition_kind`) was the alternative,
+and guessability won.
+
+**The discriminator is "is the body at this location", not "was a macro
+involved"** — which the data insisted on. `module_function` clones a real `def`
+and points at its line; `define_method`'s block *is* the body, and session 28
+measured those as `correct` against runtime truth. Both are definitions. A macro
+that generates methods elsewhere, an alias whose body is another method's, and a
+bare `private :foo` that asserts only visibility are declarations.
+
+**Why it is worth API surface.** Session 15 invented a `declaration` verdict in
+the *scorer* because trekr's macro answers were neither right nor wrong in the
+usual sense, and it identified them with an allowlist of three Rails files plus
+a guard that the answer be inside the app. Both were proxies for a question only
+the engine could answer. The scorer now reads trekr's own word, corroborated by
+a gold-side check that the truth is not a written `def`; `GENERATED_OWNER`,
+`GENERATOR_FILE`, `in_app` and `checkout_root` are gone. Swapping them moved one
+site on each column — both from `residue-truth-absent` to `declaration-offered`,
+declarations the allowlist could not see, one of them in a gem where `in_app`
+had structurally forbidden the verdict.
+
+**Reverses if** a caller is found branching on `kind` in a way that wants a
+third value, which would mean the definition/declaration line is drawn in the
+wrong place. The shape to watch is `.rbi`: today a Sorbet stub answers
+`definition` because its `via` is empty, and it is a declaration in every sense
+except the one this field measures.
+
+### DEC-033 reversed on disclosure (session 30)
+
+`define_model_callbacks` is modelled and shipped. Nothing about the extraction
+changed — it is the code session 29 wrote, re-applied as this entry recorded it.
+What changed is that the answers now say `kind: declaration · define_model_callbacks`,
+so the same 114 sites that scored **112 wrong** score **112 declaration, 0
+confidently wrong**.
+
+The measurement that turned it down was correct at the time and correct now: it
+was measuring a real defect, in the *disclosure* rather than in the extraction.
+Recording the rejection with its numbers is what made the reversal a re-run
+rather than a rediscovery.
+
+One thing the corpus could not show and the testbed did: routing into
+`ClassMethods` requires that module to exist, and `ActiveRecord::Callbacks`
+declares one. A concern that only writes `included do define_model_callbacks`
+does not, so the module is now emitted when we route into it. No corpus change;
+case 018 fails without it.
