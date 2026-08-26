@@ -71,10 +71,14 @@ undetermined, not that the tool failed.
 ```
 
 * **`definition`** — the body is there. A `def`, or a `define_method` block.
-* **`declaration`** — the name was made there and runs elsewhere: a macro
-  (`belongs_to`, `has_many`, `enum`, `scope`, `delegate`, `schema` for a column,
-  `define_model_callbacks`), an alias, or a bare `private :foo`. `defined_via`
-  names which.
+* **`declaration`** — the name was made or described there and runs elsewhere:
+  a macro (`belongs_to`, `has_many`, `enum`, `scope`, `delegate`, `schema` for a
+  column, `define_model_callbacks`), an alias, a bare `private :foo`, or a
+  Sorbet stub (`defined_via: rbi`). `defined_via` names which.
+
+  `rbi` is worth its own reaction: real source always wins over a stub, so a
+  stub answer means **the implementation is not indexed** — usually a gem that
+  has not been indexed yet.
 
 Read it before deciding what to open. A declaration is usually the line a person
 wants — `belongs_to :supplier` explains `widget.supplier` better than the

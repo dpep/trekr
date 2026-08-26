@@ -109,6 +109,31 @@ pub(crate) struct MethodDef {
 }
 
 impl MethodDef {
+    /// Is the body at this location (DEC-034)?
+    ///
+    /// A Sorbet stub is a bodiless `def` — an ordinary definition by every
+    /// syntactic test, and a description of a method that runs somewhere else.
+    /// `Site::is_rbi` has said exactly that since DEC-019, and `kind` shipped
+    /// in session 30 without asking it.
+    pub(crate) fn kind(&self) -> Kind {
+        if self.site.is_rbi() {
+            return Kind::Declaration;
+        }
+        Kind::of(self.via.as_deref())
+    }
+
+    /// What declared it, when it is a declaration. A macro's name if one made
+    /// it — an `.rbi` can hold an `attr_reader` too — and otherwise `rbi`.
+    pub(crate) fn declared_via(&self) -> Option<String> {
+        match self.kind() {
+            Kind::Definition => None,
+            Kind::Declaration => self
+                .via
+                .clone()
+                .or_else(|| self.site.is_rbi().then(|| "rbi".to_string())),
+        }
+    }
+
     /// Could this method be called with `argc` positional arguments? `None`
     /// argc means a splat hid the count, which cannot rule anything out.
     pub(crate) fn accepts(&self, argc: Option<u32>) -> bool {
@@ -218,6 +243,9 @@ pub(crate) enum Kind {
 
 impl Kind {
     /// The test is "is the body at this location", not "was a macro involved".
+    ///
+    /// Takes only `via`, so it cannot see an `.rbi`, whose defs are ordinary
+    /// bodiless ones. Prefer `MethodDef::kind`, which knows where the site is.
     pub(crate) fn of(via: Option<&str>) -> Kind {
         match via {
             None

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **A Sorbet stub answers `kind: declaration`, with `defined_via: rbi`.** An
+  `.rbi` `def` is bodiless by construction — an ordinary definition by every
+  syntactic test, and a description of a method that runs somewhere else.
+  `Site::is_rbi` has said exactly that since DEC-019 ("an `.rbi` is a
+  declaration, never an implementation"); `kind` shipped without asking it.
+
+  Rare by design rather than by luck: DEC-019 makes real source win the whole
+  ancestor chain before a stub wins any of it, so a stub only answers when it
+  is all there is. Measured on widget_shop, the one corpus that commits
+  `sorbet/rbi/`: **0 of 63 app sites and 9 of 400 gem sites** — nine answers
+  that used to claim the body was there. No canonical figure moves; discourse
+  is byte-identical.
+
 ## 0.1.0 — 2026-08-25
 
 First public release.

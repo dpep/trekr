@@ -146,8 +146,8 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
                         receiver_kind: tree.kind_of(&receiver.fqn).map(str::to_string),
                         receiver_type: Some(receiver.fqn.clone()),
                         owner: Some(found.owner.clone()),
-                        kind: Some(Kind::of(found.via.as_deref())),
-                        defined_via: declared_by(&found),
+                        kind: Some(found.kind()),
+                        defined_via: found.declared_via(),
                         sites,
                         agreement: agreement(&receiver),
                         unresolved_ancestors: Vec::new(),
@@ -250,8 +250,8 @@ fn via_includers(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<Method
         receiver_kind: Some("module".to_string()),
         receiver_type: Some(receiver.fqn.clone()),
         owner: Some(winner.owner.clone()),
-        kind: Some(Kind::of(winner.via.as_deref())),
-        defined_via: declared_by(winner),
+        kind: Some(winner.kind()),
+        defined_via: winner.declared_via(),
         sites: vec![winner.site.clone()],
         // The fraction counts classes that mix the module in, not assignments —
         // `resolved_via` is what says which.
@@ -265,7 +265,7 @@ fn via_includers(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<Method
                 owner: method.owner.clone(),
                 singleton: method.singleton,
                 why: "another class mixing this module in defines the same name",
-                kind: Kind::of(method.via.as_deref()),
+                kind: method.kind(),
                 site: method.site.clone(),
             })
             .collect(),
@@ -610,7 +610,7 @@ fn competitors(tree: &Tree, name: &str, winner: &str) -> Vec<Candidate> {
                     owner: method.owner.clone(),
                     singleton: method.singleton,
                     why: "defines the same name; the receiver's name chose between them",
-                    kind: Kind::of(method.via.as_deref()),
+                    kind: method.kind(),
                     site: method.site.clone(),
                 },
             )
@@ -622,13 +622,6 @@ fn competitors(tree: &Tree, name: &str, winner: &str) -> Vec<Candidate> {
         .take(MAX_CANDIDATES)
         .map(|(_, candidate)| candidate)
         .collect()
-}
-
-/// The macro a declaration came from, for an answer that has one.
-fn declared_by(method: &crate::tree::MethodDef) -> Option<String> {
-    (Kind::of(method.via.as_deref()) == Kind::Declaration)
-        .then(|| method.via.clone())
-        .flatten()
 }
 
 /// An honest no, with the candidates ordered by evidence a reader can check.
@@ -714,7 +707,7 @@ fn residue(
                     owner: method.owner.clone(),
                     singleton: method.singleton,
                     why,
-                    kind: Kind::of(method.via.as_deref()),
+                    kind: method.kind(),
                     site: method.site.clone(),
                 },
             )

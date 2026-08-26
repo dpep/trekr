@@ -1,0 +1,12 @@
+# A Sorbet stub is a bodiless `def` — an ordinary definition by every syntactic
+# test, and a description of a method that runs somewhere else. `Site::is_rbi`
+# has said so since DEC-019 ("an `.rbi` is a declaration, never an
+# implementation"), and `kind` shipped in session 30 without asking it.
+#
+# `size` exists only in the stub, so the stub is the answer — and it now says
+# what it is. `weigh` has real source, which wins the whole chain (DEC-019), so
+# it stays a definition: the pair is what keeps this case from passing for the
+# wrong reason.
+def app.rb:4:7 status=resolved owner=Widget kind=declaration defined_via=rbi site=widget.rbi:2
+def app.rb:5:7 status=resolved owner=Widget kind=definition site=app.rb:10
+hover app.rb:4:7 kind: `Declaration` · `rbi`
