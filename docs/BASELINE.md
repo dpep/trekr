@@ -1537,3 +1537,51 @@ interpolated `attr_reader` / `alias_method` would reach **none** of this
 population. The remaining extraction-shaped gaps are the two above; the rest of
 the declines are plain `def`s that trekr already extracts and offers, which
 makes them typing and ranking problems rather than coverage ones.
+
+
+## The state of the residue (session 29)
+
+Read this instead of the session history if you are picking the project up.
+
+On discourse's 9,056 app-scope gold sites, trekr **resolves 62.4 % to the exact
+line Ruby ran**, names the definition one way or another **87.8 %** of the time,
+and is **confidently wrong 0.2 %** — one site in five hundred. It declines on
+3,316 sites, and for two thirds of those it still hands over a ranked list whose
+first entry is right 80 % of the time.
+
+What is left divides into four, and only the first is engineering:
+
+**1. Typing and ranking on ordinary methods — the majority.** The definition is
+extracted, indexed, and offered; trekr will not commit because the receiver's
+type is not settled. Chained relations (`Model.where(…).order(…)`), ivars filled
+from untyped constructor parameters, block parameters. These are the ladder's
+limit, not the extractor's. DEC-020 declined to attack chained receivers on
+measured grounds and the re-measures since have not overturned it — they are
+**364 sites, 11 % of declines**, and promoting their top candidate would be
+right 29 % of the time.
+
+**2. Names that do not exist until something runs — a stated limit.**
+Discourse's `SiteSetting.foo` (274 sites, 68 % of the bucket where trekr offers
+nothing) comes from a `define_method` over a YAML file. Rails' attribute methods
+(85 sites) come from `def #{name}` inside a heredoc `class_eval`. Neither is
+reachable by reading source, and inventing the names would be worse than the
+gap.
+
+**3. Answers where "what runs" and "what a reader wants" differ.** Rails
+generates a method; runtime truth points at the `define_method` that made it,
+and trekr points at the `belongs_to`, the `enum` or the schema column — which is
+the answer a person wants. Reported in its own bucket since session 15 rather
+than blended. **DEC-033 is where this bucket stopped being free**: the same
+shape in a *gem* would have converted 112 declines into 112 confidently wrong
+answers, because nothing in the response says "this is a declaration, not the
+line that ran". Teaching the answer to say so is the open idea.
+
+**4. Monkey-patched core.** `require` really is Zeitwerk's. Stated limit since
+session 12.
+
+**The extraction-gap arc is essentially finished.** Sessions 26–28 closed the
+three mechanisms worth closing — an invented ancestor, `class_methods do`, and
+computed names over a literal array — and moved `correct` on real app code from
+42.0 % to 62.4 % with `confidently wrong` *falling* from 1.6 % to 0.2 %. Session
+29 looked for a fourth and found that it costs more than it buys. What remains
+is receiver typing, disclosure, and two limits that are honest to state.

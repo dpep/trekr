@@ -1204,3 +1204,74 @@ said it was unsure.
 Measured, discourse: app confidently wrong 0.6 % → **0.2 %** with 0.4 %
 ambiguous-wrong beside it; gem floor 4.0 % → **3.3 %** with 0.7 % beside it.
 `correct` and `found the definition` identical to the decimal on both columns.
+
+## DEC-033 — `define_model_callbacks` is built, measured, and **not** shipped
+
+**Decided.** ActiveRecord's model callbacks — `after_save`, `before_create`,
+`after_destroy` and kin — stay unmodelled. The macro entry, the `only:` filter
+and the `included do` routing were written, measured against runtime truth, and
+reverted.
+
+**Why it looked right.** 114 declined app sites on discourse, the truth **never
+named** on any of them (offered 0, ranked first 0; 17 offering nothing at all),
+and a mechanism trekr already models for `belongs_to` and `enum`: a macro whose
+literal arguments name the methods it creates. `define_model_callbacks :save,
+:create, :update, :destroy` at activerecord/callbacks.rb:416 states every one of
+them.
+
+The design worked. `included do` is `class_eval`'d into the includer, so a
+class-level macro written there defines methods on **every includer's
+singleton** — the same destination Concern gives `ClassMethods`, and
+`ActiveRecord::Callbacks` has a real `ClassMethods`, so routing them there is a
+restatement rather than an invention. `after_update` in a discourse model went
+from nothing to `resolved · confidence 1`.
+
+**Why it is not shipped.** The definition's honest location is the macro call,
+in **activerecord**/callbacks.rb:416. Ruby runs
+**activemodel**/callbacks.rb:144, inside `_define_after_model_callback`. A
+different file, so every one of those answers points somewhere Ruby did not go.
+
+Measured over **all 114 sites**, not a sample:
+
+| | before | after |
+| --- | ---: | ---: |
+| confidently wrong | 0 | **112** |
+| residue (declined, truth not named) | 114 | 2 |
+
+On the pinned 498-site sample the four predictions recorded before the code was
+written all landed exactly: `residue-nothing-known` 3.2 % → **3.0 %**, `correct`
+**62.4 %** unchanged, `found` **87.8 %** unchanged, **confidently wrong 0.2 % →
+0.8 %** against a bar of **≤ 0.4 %** set in advance.
+
+**So the trade is 112 declines converted into 112 confident answers that do not
+point at the running code**, to recover one site of `residue-nothing-known`.
+That is the exact trade this product exists not to make: PLAN §1's whole
+argument is that a wrong go-to-definition costs an agent a file read and a retry
+with nothing in the answer to warn it.
+
+**The scorer was not changed to make this pass**, and the temptation is worth
+recording because it was real. `is_generated()` already excuses exactly this
+shape for `belongs_to` — runtime truth at the generator, trekr at the macro —
+and its `GENERATOR_FILE` list is an enumeration rather than a principle. But its
+`declaration` verdict also requires trekr's answer to be **inside the app**, a
+guard added in session 15 to fix a scorer artifact, and relaxing it for a gem
+answer would let genuine gem-side errors through. Widening a bucket so that a
+change scores well is the failure this project has already corrected twice from
+the other direction.
+
+**Reverses if the engine learns to say which kind of answer it is giving.** The
+gap is not in the extraction, it is in the disclosure: a `def` row already
+carries `via = 'define_model_callbacks'`, and the answer does not surface it, so
+a caller cannot tell a macro *declaration* from the line that runs. If `--def`
+reported that — a `declaration` flag, or `resolved_via` carrying the macro —
+then this answer is a feature rather than an error, the scorer can read trekr's
+own disclosure instead of a hardcoded regex, and the app-side generated bucket
+stops needing one too. **Do that first, then re-measure this.** It is the
+largest remaining idea in this arc and it is a product change, not an extraction
+one.
+
+**Also learned, and worth a line.** A store newer than the binary is a hard
+refusal — *"database is schema v16 but this trekr speaks v15"* — not a silent
+drop. That is right, and it means reverting an extractor change requires
+dropping the database by hand. The database is a cache (DEC-009), so that costs
+one reindex and nothing else.
