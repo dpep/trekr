@@ -45,6 +45,16 @@ Rust, single crate until there's a concrete reason to split. `cargo` is keg-only
 `/opt/homebrew/opt/rustup/bin/cargo` (or add to PATH). Gate before commit:
 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`.
 
+**Never hand-copy a dev build over `/opt/homebrew/bin/trekr`.** It is Homebrew's
+symlink into the Cellar; replacing it with a real file breaks `brew link` at the
+next release, which someone else then has to repair. Verify against
+`target/release/trekr` directly — every measurement script here already takes a
+`TREKR_BIN`. If a dev build genuinely has to be the one on `PATH`:
+
+```sh
+brew unlink trekr   # …verify…   then:   brew link trekr
+```
+
 ## Testing
 
 - **Corner cases go in `tests/testbed/`** — a directory of Ruby files plus an
