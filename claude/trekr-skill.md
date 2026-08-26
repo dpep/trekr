@@ -92,6 +92,19 @@ The column is forgiving: if it holds no name, trekr answers for the nearest one
 **on that line** and says so in `snapped_to` (with the other names and their
 columns, so a follow-up can be exact). An exact hit never snaps.
 
+**`--def` keeps itself fresh.** It checks git in O(1) and re-reads the file you
+asked about if the checkout moved, so a definition that shifted lines is found
+at its new line without reindexing. When the answer carries `index`, read it:
+
+```json
+"index": { "stale": true, "refreshed": "app/models/user.rb", "hint": "trekr --index ~/code/app" }
+```
+
+The file you asked about is current; **other files may lag**, and `hint` is the
+cure. No `index` field means the checkout has not moved since it was indexed.
+One limit worth knowing: an edit git has not noticed — no `add`, `status` or
+`diff` since — is invisible to the check, so run `--index` after bulk edits.
+
 Every answer carries `status` (`resolved` | `ambiguous` | `residue`),
 `confidence`, and `resolved_via` — the rung that resolved the receiver (`self`,
 `const`, `local:new`, `literal`, `sig`, `sig:param`, `sig:step`, `includer`,
