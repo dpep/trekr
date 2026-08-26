@@ -96,6 +96,8 @@ struct Extractor<'a> {
     /// Block parameters currently bound to a known list of literals by an
     /// enclosing `[…].each do |v|`. A stack, because these nest.
     loop_values: Vec<(String, Vec<String>)>,
+    /// How many `included do` blocks we are inside.
+    included_depth: usize,
     facts: Facts,
 }
 
@@ -143,6 +145,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         pending_sig_params: Vec::new(),
         symbol_arrays: HashMap::new(),
         loop_values: Vec::new(),
+        included_depth: 0,
     };
     ex.visit(&parsed.node());
     ex.facts
@@ -186,6 +189,23 @@ impl<'a> Extractor<'a> {
 
     fn in_method_body(&self) -> bool {
         self.frames.last().is_some_and(|f| f.in_method)
+    }
+
+    /// Inside `included do … end` of a module that extends `ActiveSupport::Concern`.
+    ///
+    /// The block is `class_eval`'d into whatever includes the module, so a
+    /// class-level macro written here defines methods on **every includer's
+    /// singleton** — the same destination Concern gives `ClassMethods`, which
+    /// is why routing them there is a restatement rather than an invention.
+    /// Gated on the concern because a bare `included do` in some other DSL
+    /// makes no such promise.
+    fn in_concerns_included_block(&self) -> bool {
+        self.included_depth > 0
+            && self.facts.ancestry.iter().any(|edge| {
+                edge.relation == Relation::Extend
+                    && edge.owner == self.nesting
+                    && edge.target.ends_with("Concern")
+            })
     }
 
     fn leave(&mut self) {
@@ -603,7 +623,12 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             let bound = literal_each(node).inspect(|binding| {
                 self.loop_values.push(binding.clone());
             });
+            let included = method_name(node).as_deref() == Some("included")
+                && on_self(node)
+                && !self.in_method_body();
+            self.included_depth += usize::from(included);
             self.visit(&block);
+            self.included_depth -= usize::from(included);
             if bound.is_some() {
                 self.loop_values.pop();
             }
@@ -1234,12 +1259,25 @@ impl<'pr> Extractor<'_> {
             _ => None,
         };
         let class_name = keyword_literal(args, "class_name");
+        // `define_model_callbacks :initialize, only: :after` makes only the
+        // `after_` half. A computed `only:` narrows to nothing rather than
+        // being ignored, because ignoring it would invent the other two.
+        let only: Option<Vec<String>> = keyword_value(args, "only").map(|value| {
+            every_element_literal(&value)
+                .or_else(|| literal_name(&value).map(|n| vec![n]))
+                .unwrap_or_default()
+        });
 
         let loc = call.location();
         let (start, end) = (loc.start_offset(), loc.end_offset());
         let visibility = self.visibility();
         let in_singleton = self.in_singleton();
         let mut any = false;
+        // Whether anything was routed into a `ClassMethods` that may not be
+        // written anywhere. `ActiveRecord::Callbacks` happens to declare one;
+        // a concern that only ever writes `included do define_model_callbacks`
+        // does not, and the module has to exist for the tree to carry it.
+        let mut routed = false;
 
         // A splat of a constant this blob assigned a symbol array is still a
         // list of literal names; anything else computed produces nothing.
@@ -1265,6 +1303,13 @@ impl<'pr> Extractor<'_> {
                 .or_else(|| macros::associated_class(macro_name, &literal));
 
             for made in macros::generated(macro_name, &literal) {
+                if let Some(only) = &only
+                    && !only
+                        .iter()
+                        .any(|kind| made.name.starts_with(&format!("{kind}_")))
+                {
+                    continue;
+                }
                 let name = match &prefix {
                     Some(prefix) => format!("{prefix}_{}", made.name),
                     None => made.name.clone(),
@@ -1275,6 +1320,14 @@ impl<'pr> Extractor<'_> {
                 def.visibility = visibility;
                 // `class << self` still governs which side these land on.
                 def.singleton = made.singleton || in_singleton;
+                // A class-level macro inside `included do` runs against the
+                // *includer*, not the concern — so its methods belong where
+                // Concern already puts an includer's class methods.
+                if def.singleton && self.in_concerns_included_block() {
+                    def.nesting.insert(0, "ClassMethods".to_string());
+                    def.singleton = false;
+                    routed = true;
+                }
                 if made.writer {
                     def.params = vec![Param {
                         kind: ParamKind::Req,
@@ -1292,6 +1345,12 @@ impl<'pr> Extractor<'_> {
                 self.push_def(def);
                 any = true;
             }
+        }
+        if routed {
+            let mut module = self.def("ClassMethods".to_string(), Kind::Module, start, end);
+            module.via = Some("included".to_string());
+            module.nesting = self.nesting.clone();
+            self.push_def(module);
         }
         if any {
             // The arguments are still constants in their own right.

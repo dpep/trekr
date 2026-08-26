@@ -1,0 +1,18 @@
+# `define_model_callbacks :save` is where `before_save` and `after_save` come
+# from. ActiveModel writes them with `define_singleton_method` inside a `def`,
+# so nothing in the *defining* file states the names — the macro call does.
+#
+# It sits in `included do`, which is class_eval'd into the includer, so the
+# methods land on every includer's singleton. That is where Concern already
+# puts `ClassMethods`, which is why routing them there is a restatement rather
+# than an invention.
+#
+# `only: :after` is honoured: `before_touch` stays unknown. And the answer says
+# `declaration`, which is the whole reason this ships now — DEC-033 built the
+# same extraction in session 29 and turned it down, because 112 honest
+# declaration answers had to be scored as errors when nothing in the response
+# could say what kind of location it was handing back.
+def app.rb:13:3 status=resolved owner=Trackable::ClassMethods kind=declaration defined_via=define_model_callbacks site=app.rb:5
+def app.rb:14:3 status=resolved owner=Trackable::ClassMethods kind=declaration site=app.rb:6
+def app.rb:15:3 status=residue
+hover app.rb:13:3 kind: `Declaration` · `define_model_callbacks`

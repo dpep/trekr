@@ -55,12 +55,35 @@ whole-mention view.
 trekr --def app/models/post.rb:42:11 --json
 ```
 
-Every answer carries `status` (`resolved` | `residue`), `confidence`, and
-`resolved_via` — the rung that resolved the receiver (`self`, `const`,
-`local:new`, `literal`, `sig`, `sig:param`, `sig:step`, `includer`, `rbi_dsl`).
-A residue answer carries ranked `candidates` with a named reason each. **Trust
-the disclosure**: `residue` means the receiver is genuinely undetermined, not
-that the tool failed.
+Every answer carries `status` (`resolved` | `ambiguous` | `residue`),
+`confidence`, and `resolved_via` — the rung that resolved the receiver (`self`,
+`const`, `local:new`, `literal`, `sig`, `sig:param`, `sig:step`, `includer`,
+`rbi_dsl`). A residue answer carries ranked `candidates` with a named reason
+each. **Trust the disclosure**: `residue` means the receiver is genuinely
+undetermined, not that the tool failed.
+
+### `kind` — is that location the code, or the line that declared it
+
+```json
+{ "status": "resolved", "owner": "Widget", "kind": "declaration",
+  "defined_via": "belongs_to",
+  "sites": [{"path": "app/models/widget.rb", "line": 7}] }
+```
+
+* **`definition`** — the body is there. A `def`, or a `define_method` block.
+* **`declaration`** — the name was made there and runs elsewhere: a macro
+  (`belongs_to`, `has_many`, `enum`, `scope`, `delegate`, `schema` for a column,
+  `define_model_callbacks`), an alias, or a bare `private :foo`. `defined_via`
+  names which.
+
+Read it before deciding what to open. A declaration is usually the line a person
+wants — `belongs_to :supplier` explains `widget.supplier` better than the
+`define_method` inside Rails does — but it is **not** the code that runs, so do
+not go looking for a body there. Residue candidates carry their own `kind` too.
+
+(`kind` on the answer is about the *location*. `kind` inside `sites[]` and
+`--symbols` is about the *symbol* — class, module, method, constant. Different
+questions, different nesting levels.)
 
 ## Two more
 

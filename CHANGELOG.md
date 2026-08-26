@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **`define_model_callbacks` is modelled**, so `before_save`, `after_destroy`
+  and the rest of ActiveRecord's model callbacks resolve. The macro sits in an
+  `included do` block, which is `class_eval`'d into the includer, so its
+  class-level methods are routed to the concern's `ClassMethods` — where
+  Concern already puts an includer's class methods — and the module is emitted
+  when the concern does not declare one itself. `only:` is honoured; a computed
+  `only:` generates nothing rather than inventing the other two.
+
+  Built and turned down in session 29 because the answers had to be scored as
+  errors; they are now disclosed as declarations and score as such. 114
+  discourse app sites, **112 answered, 0 confidently wrong**.
+
 - **An answer says which kind of location it handed back.** `--def --json` and
   `--explain` carry `kind: definition | declaration`, and `defined_via` names
   the macro when it is a declaration (`belongs_to`, `enum`, `schema`,

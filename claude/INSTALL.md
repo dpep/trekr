@@ -119,9 +119,19 @@ engine has no business doing.
 ## Reading the answers
 
 `hover` is where the disclosure lives. LSP has no confidence field, so the
-hover text names the rung that resolved the receiver, the type it found, and
-how confident that makes it. `findReferences` returns confirmed sites before
-possible ones — the order of the list is the tier.
+hover text names the rung that resolved the receiver, the type it found, how
+confident that makes it, and **what kind of location it is sending you to** —
+`Definition` when the body is there, `Declaration` when a macro, an alias or a
+visibility line made the name and the body runs elsewhere (with the macro
+named).
+
+That last one has nowhere else to go: `textDocument/definition` is a bare list
+of locations, so an editor that only follows the jump cannot tell a
+`belongs_to :supplier` line from the method it generates. Hover, or the CLI's
+`kind` field, is the only place to read it.
+
+`findReferences` returns confirmed sites before possible ones — the order of the
+list is the tier.
 
 The CLI answers all of the same questions with the tiers explicit; see
 `claude/trekr-skill.md`.

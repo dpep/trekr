@@ -91,6 +91,17 @@ pub(super) fn generated(macro_name: &str, arg: &str) -> Vec<Generated> {
         // A scope is a class method.
         "scope" => vec![Generated::class_method(arg)],
 
+        // `define_model_callbacks :save` is where `before_save`, `around_save`
+        // and `after_save` come from. ActiveModel writes them with
+        // `klass.define_singleton_method("before_#{callback}")` inside a `def`,
+        // so nothing in the *defining* file states the names — the call does.
+        // `only:` narrows the set and is applied by the caller.
+        "define_model_callbacks" => vec![
+            Generated::class_method(format!("before_{arg}")),
+            Generated::class_method(format!("around_{arg}")),
+            Generated::class_method(format!("after_{arg}")),
+        ],
+
         // Readable and writable from both sides, plus the predicate.
         "class_attribute" => vec![
             Generated::reader(arg),
