@@ -115,6 +115,41 @@ pub(crate) fn repo_root(path: &Path) -> Result<PathBuf> {
     Ok(PathBuf::from(path))
 }
 
+/// A cheap fingerprint of git's own view of the checkout (DEC-035).
+///
+/// `.git/index` is rewritten by `add`, `checkout`, `merge`, `rebase`, and by
+/// the `status`/`diff` that any editor or prompt runs constantly — so its mtime
+/// and size move whenever git has noticed anything. Reading two numbers off one
+/// stat is **O(1) in repo size**, which is the property that matters: the full
+/// scan is 145 ms on discourse and 6 s on a 10M-line monorepo, and neither can
+/// sit on a query path.
+///
+/// **What it cannot see**, stated here so nobody rediscovers it: a tracked file
+/// edited with nothing having refreshed git's index, and a brand-new untracked
+/// file. Both are caught by an explicit `--index`. This is a *probe*, not a
+/// proof — it answers "might anything have changed", and a false negative is
+/// the reason `--index` still exists.
+pub(crate) fn git_fingerprint(root: &Path) -> Option<i64> {
+    // A worktree's `.git` is a file pointing at the real gitdir.
+    let dot_git = root.join(".git");
+    let index = match std::fs::read_to_string(&dot_git) {
+        Ok(text) => {
+            let dir = text.strip_prefix("gitdir:")?.trim();
+            PathBuf::from(dir).join("index")
+        }
+        Err(_) => dot_git.join("index"),
+    };
+    let meta = std::fs::metadata(index).ok()?;
+    let modified = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?;
+    // Nanoseconds and size together: a same-second rewrite of the same length
+    // is possible, and the nanoseconds are what separate them.
+    Some((modified.as_nanos() as i64).wrapping_mul(31) ^ (meta.len() as i64))
+}
+
 /// Every Ruby file in the working tree, keyed by the blob its *current* bytes
 /// hash to — not what HEAD says. Uncommitted edits are first-class.
 pub(crate) fn scan(root: &Path) -> Result<Files> {

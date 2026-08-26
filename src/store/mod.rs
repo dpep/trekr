@@ -11,7 +11,7 @@ mod schema;
 
 use crate::core::*;
 use crate::scan::Files;
-use rusqlite::{Connection, Result, params};
+use rusqlite::{Connection, OptionalExtension, Result, params};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -168,6 +168,7 @@ impl Store {
         root: &str,
         files: &Files,
         facts: Vec<(Oid, Facts)>,
+        git_state: i64,
     ) -> Result<Indexed> {
         let tx = self.conn.transaction()?;
         let mut counts = Indexed {
@@ -184,8 +185,8 @@ impl Store {
         }
 
         tx.execute(
-            "INSERT OR IGNORE INTO checkout (root, indexed_at, surface_key, map_key)
-             VALUES (?1, unixepoch(), 0, 0)",
+            "INSERT OR IGNORE INTO checkout (root, indexed_at, surface_key, map_key, git_state)
+             VALUES (?1, unixepoch(), 0, 0, 0)",
             params![root],
         )?;
         tx.execute(
@@ -218,6 +219,14 @@ impl Store {
         // not a match — an empty checkout must still be written once.
         if stored.0 == map_key && stored.1 {
             counts.blobs = files.values().collect::<HashSet<&Oid>>().len();
+            // Still record git's view. The map did not move, but git's index
+            // may have — a commit touching no Ruby file, for instance — and
+            // leaving the old fingerprint would make every later query probe
+            // stale forever.
+            tx.execute(
+                "UPDATE checkout SET git_state = ?2 WHERE id = ?1",
+                params![checkout_id, git_state],
+            )?;
             tx.commit()?;
             return Ok(counts);
         }
@@ -256,8 +265,8 @@ impl Store {
         }
 
         tx.execute(
-            "UPDATE checkout SET surface_key = ?2, map_key = ?3 WHERE id = ?1",
-            params![checkout_id, surface_key, map_key],
+            "UPDATE checkout SET surface_key = ?2, map_key = ?3, git_state = ?4 WHERE id = ?1",
+            params![checkout_id, surface_key, map_key, git_state],
         )?;
 
         tx.commit()?;
@@ -632,6 +641,109 @@ impl Store {
     ///
     /// For a gem this is the whole incremental story: a gem's bytes never
     /// change, so having seen it once is having seen it.
+    /// Bring one file's facts up to date, and nothing else (DEC-035).
+    ///
+    /// The query-biased half of the refresh policy: when the probe says the
+    /// checkout may have moved, the file being asked about is re-read and
+    /// re-parsed, and the rest of the index is left alone and disclosed as
+    /// possibly stale. Bounded by construction — one file, whatever the repo —
+    /// which is what lets it sit on a query path that a 6-second scan cannot.
+    ///
+    /// Returns whether anything actually changed. Both keys are updated
+    /// incrementally: they are order-independent folds of one XOR term per
+    /// file, so removing the old term and adding the new one is exact rather
+    /// than an approximation of a full re-fold.
+    pub(crate) fn refresh_file(
+        &mut self,
+        root: &str,
+        relative: &str,
+        oid: &Oid,
+        facts: Option<&Facts>,
+    ) -> Result<bool> {
+        let tx = self.conn.transaction()?;
+        let Some((checkout_id, surface_key, map_key)) = tx
+            .query_row(
+                "SELECT id, surface_key, map_key FROM checkout WHERE root = ?1",
+                params![root],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, i64>(1)?,
+                        r.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .optional()?
+        else {
+            return Ok(false);
+        };
+
+        let old: Option<(i64, String, i64)> = tx
+            .query_row(
+                "SELECT b.id, b.oid, b.surface FROM file f JOIN blob b ON b.id = f.blob_id
+                  WHERE f.checkout_id = ?1 AND f.path = ?2",
+                params![checkout_id, relative],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()?;
+        if old.as_ref().is_some_and(|(_, known, _)| known == &oid.0) {
+            return Ok(false);
+        }
+
+        // `insert_facts` writes the blob row too, so a never-before-seen blob
+        // becomes known here exactly as it would during a full index.
+        if let Some(facts) = facts {
+            insert_facts(&tx, oid, facts)?;
+        }
+        let Some((blob_id, surface)) = tx
+            .query_row(
+                "SELECT id, surface FROM blob WHERE oid = ?1",
+                params![oid.0],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+            )
+            .optional()?
+        else {
+            // Nothing to point at: the caller had no facts and this blob has
+            // never been seen. Leave the map as it was rather than break it.
+            return Ok(false);
+        };
+
+        tx.execute(
+            "INSERT OR REPLACE INTO file (checkout_id, path, blob_id) VALUES (?1, ?2, ?3)",
+            params![checkout_id, relative, blob_id],
+        )?;
+
+        let hashed = path_hash(relative);
+        let (mut surface_key, mut map_key) = (surface_key, map_key);
+        if let Some((_, known, old_surface)) = &old {
+            surface_key = surface_key.wrapping_sub(hashed ^ old_surface);
+            map_key = map_key.wrapping_sub(hashed ^ path_hash(known));
+        }
+        surface_key = surface_key.wrapping_add(hashed ^ surface);
+        map_key = map_key.wrapping_add(hashed ^ path_hash(&oid.0));
+        tx.execute(
+            "UPDATE checkout SET surface_key = ?2, map_key = ?3 WHERE id = ?1",
+            params![checkout_id, surface_key, map_key],
+        )?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// git's view of this checkout when it was last indexed (DEC-035).
+    ///
+    /// `None` when the checkout is unknown, which the caller must not confuse
+    /// with `Some(0)` — a gem, or a checkout indexed before this column
+    /// existed, both of which are legitimately unprobeable.
+    pub(crate) fn git_state(&self, root: &str) -> Result<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT git_state FROM checkout WHERE root = ?1",
+                params![root],
+                |r| r.get(0),
+            )
+            .optional()
+    }
+
     pub(crate) fn has_checkout(&self, root: &str) -> Result<bool> {
         self.conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM checkout WHERE root = ?1)",
@@ -962,7 +1074,7 @@ mod tests {
         } else {
             vec![(oid, crate::extract::extract(src.as_bytes()))]
         };
-        store.write(root, &files, facts).unwrap()
+        store.write(root, &files, facts, 0).unwrap()
     }
 
     #[test]

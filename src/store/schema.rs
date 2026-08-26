@@ -13,7 +13,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 18;
+pub(crate) const VERSION: i64 = 19;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -106,7 +106,12 @@ CREATE TABLE checkout (
   -- no-op index at scale. Distinct from `surface_key`, which is deliberately
   -- blind to a body-only edit: that edit moves a blob and must still be
   -- written, so the two keys answer different questions.
-  map_key     INTEGER NOT NULL
+  map_key     INTEGER NOT NULL,
+  -- git's own view of the checkout when it was last indexed: one stat of
+  -- `.git/index`, folded (DEC-035). A query compares this in O(1) to decide
+  -- whether the checkout *might* have moved, because the full scan cannot sit
+  -- on a query path at target scale.
+  git_state   INTEGER NOT NULL
 );
 
 -- Which app resolves which gem. A gem is indexed as a checkout of its own, and

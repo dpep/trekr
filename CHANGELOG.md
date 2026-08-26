@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+- **A query keeps itself honest about freshness.** `--def` probes git in O(1) —
+  one stat of `.git/index` — and when the checkout has moved it **re-reads the
+  file you asked about** before answering, so a definition that shifted lines is
+  found at its new line without any explicit reindex. The answer carries
+  `index: {stale, refreshed, hint}`, and the text surface says it in a line.
+
+  **Bounded on purpose**: one file, whatever the repo size. A full scan is
+  145 ms on discourse and ~6 s on a 10M-line monorepo, and neither can sit on a
+  query path — so the rest of the index is left alone and *disclosed* as
+  possibly lagging rather than silently trusted. `trekr --index` remains the
+  only thing that declares a whole checkout fresh.
+
+  **What the probe cannot see**, stated rather than left to be discovered: an
+  edit that nothing has told git about does not move `.git/index`. Both limits
+  are pinned by tests.
+
+  **Existing databases reindex once** — the schema gained a column.
+
+
 - **A no-op `--index` no longer rewrites the file map.** Every index deleted and
   re-inserted one row per file whether or not anything had changed — O(files) of
   pure cost on a repeat run. The checkout now stores a `map_key` folded over

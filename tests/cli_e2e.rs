@@ -1308,3 +1308,101 @@ fn a_body_only_edit_is_still_written_even_though_the_surface_is_unchanged() {
         "a true no-op parses nothing: {text}"
     );
 }
+
+/// DEC-035: a query probes git in O(1), refreshes the file it was asked about,
+/// and discloses that the rest of the index may lag.
+#[test]
+fn a_query_refreshes_the_file_it_asks_about_and_says_the_rest_may_lag() {
+    let (dir, db) = scratch("freshness");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+
+    // Fresh: nothing to disclose.
+    let clean = trekr(&db, &dir, &["--def", "widget.rb:7:5", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&clean.stdout).unwrap();
+    assert!(
+        value.get("index").is_none(),
+        "a fresh checkout says nothing: {value}"
+    );
+
+    // Push `helper` down two lines, and commit so git's index moves with it.
+    let file = dir.join("widget.rb");
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        text.replace("class Widget < Base", "class Widget < Base\n  # a\n  # b"),
+    )
+    .unwrap();
+    // A second file that nobody will ask about, to prove the refresh is bounded.
+    fs::write(
+        dir.join("other.rb"),
+        "class Other\n  def only_here\n  end\nend\n",
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "edit",
+        ],
+    );
+
+    let out = trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(
+        value["index"]["stale"], true,
+        "staleness disclosed: {value}"
+    );
+    assert_eq!(value["index"]["refreshed"], "widget.rb");
+    assert_eq!(
+        value["sites"][0]["line"], 14,
+        "the answer must use the moved definition: {value}"
+    );
+
+    // Bounded: the file nobody asked about is still absent from the index.
+    let other = trekr(&db, &dir, &["--refs", "Other#only_here", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&other.stdout).unwrap();
+    assert!(
+        value["definition"].as_array().is_none_or(|d| d.is_empty()),
+        "a query must refresh one file, not the repo: {value}"
+    );
+}
+
+/// The probe's blind spot, pinned rather than discovered later (DEC-035).
+///
+/// An edit that nothing has told git about does not move `.git/index`, so the
+/// probe cannot see it and the answer is stale. That is the stated cost of an
+/// O(1) check, and `--index` is the cure.
+#[test]
+fn an_edit_git_has_not_noticed_is_not_seen_by_the_probe() {
+    let (dir, db) = scratch("blind-spot");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+
+    let file = dir.join("widget.rb");
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        text.replace("class Widget < Base", "class Widget < Base\n  # a\n  # b"),
+    )
+    .unwrap();
+
+    let out = trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert!(
+        value.get("index").is_none(),
+        "the probe cannot see this, and must not claim it did: {value}"
+    );
+
+    // And an explicit index is the cure, as the DEC says.
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    let out = trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["sites"][0]["line"], 14, "after --index: {value}");
+}
