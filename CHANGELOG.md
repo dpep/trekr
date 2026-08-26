@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.5 — 2026-08-26
 
 - **`trekr --dead <path>…` finds candidates for deletion or inlining.** Scope is
   the argument — files or directories — and the evidence is the **whole index**,
