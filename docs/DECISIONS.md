@@ -1466,6 +1466,35 @@ The one thing it does not give is a cold 3-minute index happening on its own.
 That stays explicit, and `not_indexed` is how it asks: the root, the command,
 exit 2.
 
+### The no-op write, removed — and a prediction to check at scale
+
+The file map was rewritten wholesale on every index (`DELETE` + one `INSERT` per
+file), so a repeat run paid O(files) to write back what was already there. A
+`map_key` over (path, blob oid) now gates it.
+
+| no-op, steady state | before | after |
+| --- | ---: | ---: |
+| rails — store-write | 78 ms | **0 ms** |
+| discourse — store-write | 42 ms | **1 ms** |
+| discourse — total | 185 ms | **145 ms** |
+
+**The prediction, for the next `--index --profile` on the 10M-line monorepo.**
+Two claims, and the first is the sharp one because it assumes nothing about that
+repo's phase split:
+
+1. **`store-write` reads ≤ 10 ms on a no-op**, whatever the file count. The
+   phase is now O(1): one keyed read and a comparison. If it reads in hundreds
+   of milliseconds, the fold is being defeated by something — most likely paths
+   that differ run to run — and that is the thing to look at.
+2. **Total no-op falls from 6 s to roughly 4.6 s**, if that repo's phases are
+   proportioned like discourse's (where store-write was 23 % of the total). The
+   honest range is **4.6–5.9 s**: the less of its 6 s was store-write, the less
+   this moves. What remains is scan, and ~94 % of *that* is git's untracked-file
+   discovery, which no key can skip.
+
+Claim 1 is the one worth reading first: it is falsifiable on its own and does
+not depend on how the earlier 6 s was distributed.
+
 ### Shipped now
 
 `not_indexed`, because it is the half that needs no policy: `--def`, `--refs`
