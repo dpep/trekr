@@ -1064,6 +1064,9 @@ impl<'pr> Extractor<'_> {
         // mapping: `enum :segment` gives `Model.segments`. Distinct from the
         // members, which give the predicates and scopes below.
         let mut attribute: Option<String> = args.first().and_then(literal_name);
+        let mut attribute_pos: Option<Pos> = attribute
+            .is_some()
+            .then(|| self.pos(args[0].location().start_offset()));
         // A `prefix:`/`suffix:` option renames the member methods out of reach.
         let mut renamed = false;
         let mut collect = |node: &Node<'pr>| {
@@ -1099,7 +1102,11 @@ impl<'pr> Extractor<'_> {
                     }
                     if !matches!(key.as_str(), "default" | "validate" | "instance_methods") {
                         // Rails 6 puts the attribute in this key.
-                        attribute.get_or_insert(key.clone());
+                        if attribute.is_none() {
+                            attribute = Some(key.clone());
+                            attribute_pos =
+                                Some(self.pos(assoc.key().location().start_offset()));
+                        }
                         collect(&assoc.value());
                     }
                 }
@@ -1122,6 +1129,13 @@ impl<'pr> Extractor<'_> {
             let mut def = self.def(macros::pluralize(&attribute), Kind::Method, start, end);
             def.via = Some("enum".into());
             def.singleton = true;
+            // At the *attribute*, like every other macro-generated definition.
+            // Left at the call's own offset it sits exactly where `enum` does,
+            // and a position lookup — which prefers definitions — answers
+            // `subjects` to someone asking what `enum` is.
+            if let Some(pos) = attribute_pos {
+                def.pos = pos;
+            }
             self.push_def(def);
         }
         for member in members {
@@ -1526,6 +1540,47 @@ impl<'pr> Extractor<'_> {
             block: call.block().is_some(),
             pos,
         });
+        self.record_symbol_arguments(call);
+    }
+
+    /// `after_create :ensure_thing` invokes `ensure_thing`, and nothing in the
+    /// file writes it as a call (DEC-037).
+    ///
+    /// Recorded for a symbol in **argument position of any call**, not for a
+    /// curated list of macros. An app's own DSL is unknowable — discourse's
+    /// `step`/`policy`/`model` is a thousand sites and no Rails list would
+    /// contain it — and the errors here are asymmetric: a spurious reference
+    /// costs a missed dead-code candidate, a missed one costs a false "nothing
+    /// uses this". Err toward recording, and tier it as `possible` so the
+    /// weakness is disclosed rather than hidden.
+    fn record_symbol_arguments(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        for arg in arg_nodes(call) {
+            // Only a bare symbol. A hash's *keys* are options, not methods, and
+            // its values are visited on their own as ordinary arguments.
+            let Some(symbol) = arg.as_symbol_node() else {
+                continue;
+            };
+            let Some(name) = String::from_utf8(symbol.unescaped().to_vec()).ok() else {
+                continue;
+            };
+            if !name.starts_with(|c: char| c.is_ascii_lowercase() || c == '_') {
+                continue;
+            }
+            let Some(loc) = symbol.value_loc() else {
+                continue;
+            };
+            self.facts.calls.push(Call {
+                name,
+                recv: RecvShape::Symbol,
+                recv_text: None,
+                nesting: self.nesting.clone(),
+                singleton: false,
+                // Unknowable: whatever invokes it decides the arity.
+                argc: None,
+                block: false,
+                pos: self.pos(loc.start_offset()),
+            });
+        }
     }
 }
 

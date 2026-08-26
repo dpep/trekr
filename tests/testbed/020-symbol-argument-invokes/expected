@@ -1,0 +1,12 @@
+# `after_create :ensure_thing` invokes `ensure_thing`, and nothing in the file
+# writes it as a call. Without this fact every callback-, validation- and
+# route-registered method in a Rails app looks unused — the convention-invoked
+# false positive that DEC-037 named as the prerequisite for dead-code work.
+#
+# It is `possible`, never `confirmed`: a symbol names the method and says
+# nothing about the receiver. The last assertion is the control — a method
+# nobody mentions must still have no references, or the fact is recording noise
+# rather than evidence.
+refs Widget#ensure_thing confirmed=0 possible=1 excluded=0
+refs Widget#check confirmed=0 possible=1 excluded=0
+refs Widget#never_mentioned confirmed=0 possible=0 excluded=0

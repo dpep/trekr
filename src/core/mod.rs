@@ -487,6 +487,12 @@ pub(crate) enum RecvShape {
     Ivar,
     /// Anything else — a chain, a literal, a block param, `super`.
     Other,
+    /// Not written as a call at all: a symbol handed to one, as
+    /// `after_create :ensure_thing` or `attributes :name`. The method is
+    /// invoked by name at runtime and the receiver is unknowable here, so this
+    /// can only ever be a *possible* reference — but leaving it unrecorded is
+    /// what makes a callback-registered method look unused (DEC-037).
+    Symbol,
 }
 
 impl RecvShape {
@@ -498,6 +504,7 @@ impl RecvShape {
             RecvShape::Local => "local",
             RecvShape::Ivar => "ivar",
             RecvShape::Other => "other",
+            RecvShape::Symbol => "symbol",
         }
     }
 }

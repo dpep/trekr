@@ -250,6 +250,24 @@ fn possible(
         };
     }
 
+    // A symbol handed to a macro invokes by name and says nothing about the
+    // receiver, so it is never confirmable — but it *is* a reference, and the
+    // reason has to say which kind so a caller can weigh it.
+    if call.recv == crate::core::RecvShape::Symbol {
+        return Reference {
+            path: path.to_string(),
+            line: call.pos.line,
+            col: call.pos.col,
+            tier: Tier::Possible,
+            receiver: shape,
+            receiver_type: None,
+            owner: None,
+            why: "named by a symbol handed to a macro — invoked by name, receiver unknown",
+            ruling: None,
+            proximity: 4,
+        };
+    }
+
     let scope = tree.scope_fqn(&call.nesting);
     let (proximity, why) = match (&scope, target) {
         (Some(scope), Some(target)) if tree.ancestors(scope).chain.iter().any(|a| a == target) => (

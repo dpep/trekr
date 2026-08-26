@@ -314,7 +314,9 @@ pub(super) fn receiver_of(tree: &Tree, facts: &Facts, call: &Call) -> Option<Rec
             // Last, because it is the only rung resting on a naming habit
             // rather than on something the code states.
             .or_else(|| from_receiver_name(tree, call)),
-        RecvShape::Other => None,
+        // A symbol names the method, never the receiver, so there is nothing
+        // here to type — the same answer as `Other`, for a different reason.
+        RecvShape::Other | RecvShape::Symbol => None,
     }
 }
 
@@ -769,11 +771,15 @@ mod tests {
     pub(super) fn answer(source: &str, name: &str) -> MethodAnswer {
         let tree = crate::tree::for_test(&[("a.rb", source)]);
         let facts = crate::extract::extract(source.as_bytes());
+        // Not merely "the first call with this name": a symbol argument is a
+        // call site too now (`delegate :where, to: :all` records `where`), and
+        // it precedes the written call in source order. These tests are about
+        // resolving a *receiver*, which a symbol never has, so skip them.
         let call = facts
             .calls
             .iter()
-            .find(|c| c.name == name)
-            .unwrap_or_else(|| panic!("no call to {name}"))
+            .find(|c| c.name == name && c.recv != RecvShape::Symbol)
+            .unwrap_or_else(|| panic!("no written call to {name}"))
             .clone();
         method_at(&tree, &facts, &call, "a.rb")
     }

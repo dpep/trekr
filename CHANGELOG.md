@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+- **A symbol handed to a macro counts as a reference.** `after_create :ensure_thing`
+  invokes `ensure_thing`, and nothing in the file writes it as a call — so every
+  callback-, validation- and route-registered method looked unused. `--refs` now
+  finds those sites, tiered **possible** with their own reason (`named by a
+  symbol handed to a macro — invoked by name, receiver unknown`), never
+  confirmed: a symbol names the method and says nothing about the receiver.
+
+  Recorded for a symbol in argument position of **any** call rather than a
+  curated macro list, because an app's own DSL is unknowable — discourse's
+  `step`/`policy`/`model` alone is a thousand sites. Measured on discourse:
+  method names with no reference of any kind fall **9,054 → 7,105 (−21.5 %)**.
+
+- **Fixed: `--def` on an `enum` line answered the accessor, not `enum`.** The
+  mapping accessor added in 0.1.4 sat at the macro call's own offset, and a
+  position lookup prefers definitions — so asking what `enum` is answered
+  `subjects`. It is positioned at its attribute now, like every other
+  macro-generated definition.
+
+  **Existing databases reindex once** — the extractor's output changed.
+
+
 ## 0.1.4 — 2026-08-26
 
 - **`trekr <input>` takes one argument and dispatches on its shape.**
