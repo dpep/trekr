@@ -136,6 +136,20 @@ fn hover_text(db: &Path, dir: &Path, target: &str) -> String {
     let mut stdin = child.stdin.take().unwrap();
     let mut stdout = BufReader::new(child.stdout.take().unwrap());
 
+    // A pipe read has no timeout, and a server that never answers would hang
+    // CI rather than fail it — which is exactly how the retirement bug reached
+    // main, passing on macOS and parking forever on Linux. Bound the wait so
+    // the worst case is a red test.
+    let watchdog = child.id();
+    std::thread::spawn(move || {
+        std::thread::sleep(std::time::Duration::from_secs(30));
+        // Harmless if it already exited: the id is reaped by `wait` below.
+        let _ = Command::new("kill")
+            .arg("-9")
+            .arg(watchdog.to_string())
+            .status();
+    });
+
     let mut send = |value: serde_json::Value| {
         let body = serde_json::to_vec(&value).unwrap();
         let _ = stdin.write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
