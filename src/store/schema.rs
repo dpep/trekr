@@ -13,7 +13,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 17;
+pub(crate) const VERSION: i64 = 18;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -99,7 +99,14 @@ CREATE TABLE checkout (
   -- The file map's whole surface, folded into one number at index time: the
   -- sum over files of hash(path) ^ blob.surface. A resident front checks
   -- staleness by reading this one row rather than re-aggregating the map.
-  surface_key INTEGER NOT NULL
+  surface_key INTEGER NOT NULL,
+  -- The file map itself, folded the same way: the sum over files of
+  -- hash(path) ^ hash(blob oid). Identical key means an identical map, so the
+  -- rewrite below can be skipped outright — which is the whole cost of a
+  -- no-op index at scale. Distinct from `surface_key`, which is deliberately
+  -- blind to a body-only edit: that edit moves a blob and must still be
+  -- written, so the two keys answer different questions.
+  map_key     INTEGER NOT NULL
 );
 
 -- Which app resolves which gem. A gem is indexed as a checkout of its own, and

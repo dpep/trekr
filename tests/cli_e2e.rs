@@ -1264,3 +1264,47 @@ fn a_rough_column_snaps_to_the_nearest_name_and_discloses_it() {
     );
     assert!(alternatives.iter().all(|a| a["col"].is_number()));
 }
+
+/// The no-op skip must not swallow an edit that leaves the tree surface alone.
+///
+/// `surface_key` is deliberately blind to a body-only change — that is what
+/// makes it a good staleness key for the tree layer (DEC-007). The file map is
+/// not: the blob moved, its call sites moved with it, and `--refs` would point
+/// at stale lines. So the skip is gated on `map_key`, which folds the blob oid,
+/// and this pins the difference between the two.
+#[test]
+fn a_body_only_edit_is_still_written_even_though_the_surface_is_unchanged() {
+    let (dir, db) = scratch("map-key");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+
+    // Same definitions, same lines, different body — `helper` gains a call.
+    let file = dir.join("widget.rb");
+    let before = fs::read_to_string(&file).unwrap();
+    let after = before.replace("  def helper\n  end", "  def helper\n    resize\n  end");
+    assert_ne!(before, after, "the fixture must actually change");
+    fs::write(&file, &after).unwrap();
+
+    let out = trekr(&db, &dir, &["--index"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        text.contains("1 parsed"),
+        "an edited blob must be re-parsed, not skipped: {text}"
+    );
+
+    // And the new call site is actually queryable, which is the point.
+    let refs = trekr(&db, &dir, &["--refs", "Widget#resize", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&refs.stdout).unwrap();
+    assert!(
+        value["counts"]["confirmed"].as_u64().unwrap_or(0) >= 1,
+        "the edit's new call should be found: {value}"
+    );
+
+    // Indexing again with nothing changed goes back to writing nothing.
+    let again = trekr(&db, &dir, &["--index"]);
+    let text = String::from_utf8_lossy(&again.stdout);
+    assert!(
+        text.contains("0 parsed"),
+        "a true no-op parses nothing: {text}"
+    );
+}

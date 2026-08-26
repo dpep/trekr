@@ -184,8 +184,8 @@ impl Store {
         }
 
         tx.execute(
-            "INSERT OR IGNORE INTO checkout (root, indexed_at, surface_key)
-             VALUES (?1, unixepoch(), 0)",
+            "INSERT OR IGNORE INTO checkout (root, indexed_at, surface_key, map_key)
+             VALUES (?1, unixepoch(), 0, 0)",
             params![root],
         )?;
         tx.execute(
@@ -197,6 +197,30 @@ impl Store {
             params![root],
             |r| r.get(0),
         )?;
+
+        // What the map *would* be, folded before any of it is written. When it
+        // matches what is stored the map is identical and the rewrite below is
+        // pure cost — which on a no-op index is the only cost left, and the one
+        // that grows with the repo.
+        let map_key = files.iter().fold(0i64, |key, (path, oid)| {
+            key.wrapping_add(path_hash(path) ^ path_hash(&oid.0))
+        });
+        // `EXISTS` rather than `COUNT`: the question is whether the map was
+        // ever written, and counting it would put an O(files) scan back into
+        // the path this whole change exists to make O(1).
+        let stored: (i64, bool) = tx.query_row(
+            "SELECT map_key, EXISTS(SELECT 1 FROM file WHERE checkout_id = ?1)
+               FROM checkout WHERE id = ?1",
+            params![checkout_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        // A stored key of 0 against a map with no rows is the initial state,
+        // not a match — an empty checkout must still be written once.
+        if stored.0 == map_key && stored.1 {
+            counts.blobs = files.values().collect::<HashSet<&Oid>>().len();
+            tx.commit()?;
+            return Ok(counts);
+        }
 
         // The map is rewritten wholesale. It is one row per file, and a
         // delta would have to be right about deletes and renames to save a
@@ -232,8 +256,8 @@ impl Store {
         }
 
         tx.execute(
-            "UPDATE checkout SET surface_key = ?2 WHERE id = ?1",
-            params![checkout_id, surface_key],
+            "UPDATE checkout SET surface_key = ?2, map_key = ?3 WHERE id = ?1",
+            params![checkout_id, surface_key, map_key],
         )?;
 
         tx.commit()?;

@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **A no-op `--index` no longer rewrites the file map.** Every index deleted and
+  re-inserted one row per file whether or not anything had changed — O(files) of
+  pure cost on a repeat run. The checkout now stores a `map_key` folded over
+  (path, blob oid); an identical key means an identical map and the rewrite is
+  skipped.
+
+  Measured on discourse (11,301 files), steady state: the `store-write` phase
+  falls from **42 ms to 1 ms**, and a no-op index from **185 ms to 145 ms**. On
+  rails, store-write 78 ms → 0 ms. What is left of a no-op is the scan, ~94 % of
+  which is git's untracked-file discovery.
+
+  **Existing databases reindex once** — the schema gained a column.
+
 ## 0.1.2 — 2026-08-25
 
 - **An unindexed repo now answers `not_indexed`, not residue.** A query into a
