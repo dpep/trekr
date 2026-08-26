@@ -95,32 +95,36 @@ def hits(answer_sites, site):
 # `belongs_to :supplier`, `enum :status`, the schema column. Those are
 # different answers to different questions, and the macro is the one a person
 # wants, so these are scored as their own bucket rather than blended in.
-GENERATED_OWNER = re.compile(r"Generated(Attribute|Association)Methods|Enum::EnumMethods")
-GENERATOR_FILE = re.compile(r"/activerecord-[^/]+/lib/active_record/"
-                            r"(attribute_methods\.rb|enum\.rb|associations/builder/association\.rb)$")
+# The line Ruby ran is the only thing this needs to look at. What replaced an
+# allowlist of three Rails files: that enumeration was never a principle, it
+# missed `define_method` and `delegate` generators entirely, and it is what made
+# session 29's model callbacks unscoreable.
+PLAIN_DEF = re.compile(r"^\s*def\s+[A-Za-z_\[]")
 
 
-def is_generated(site):
-    return bool(
-        GENERATED_OWNER.search(site.get("owner", ""))
-        or GENERATOR_FILE.search(site.get("def_file", ""))
-    )
+def truth_is_generated(site, cache={}):
+    """Is the line Ruby ran a `def`, or something that *made* a method?
 
+    A fact about the gold entry alone — it never looks at trekr's answer, which
+    is what keeps it from excusing a wrong one.
 
-def in_app(path, app_root):
-    return bool(path) and path.startswith(app_root) and "/gems/" not in path
-
-
-def checkout_root(files):
-    """Walk up from the traced files until a git checkout is found."""
-    if not files:
-        return "/dev/null"
-    here = os.path.commonpath(files)
-    while here != "/":
-        if os.path.isdir(os.path.join(here, ".git")) or os.path.isfile(os.path.join(here, ".git")):
-            return here
-        here = os.path.dirname(here)
-    return os.path.commonpath(files)
+    A `def` inside a `class_eval` heredoc is *generated*, and it does not always
+    announce itself at the front: Rails writes `def build_#{name}(*args)`, whose
+    first characters are an ordinary method name. Testing the keyword alone
+    called two of those written definitions and turned two declaration answers
+    into errors — which is what the one run beside the old test was for.
+    """
+    path, line = site.get("def_file", ""), int(site.get("def_line", 0))
+    if path not in cache:
+        try:
+            cache[path] = open(path, encoding="utf-8", errors="replace").read().split("\n")
+        except OSError:
+            cache[path] = []
+    lines = cache[path]
+    text = lines[line - 1] if 0 < line <= len(lines) else ""
+    if not PLAIN_DEF.match(text):
+        return True
+    return "#{" in text
 
 
 def candidate_rank(site, answer):
@@ -135,7 +139,7 @@ def candidate_rank(site, answer):
     return None
 
 
-def verdict(site, answer, app_root):
+def verdict(site, answer):
     """One call site's outcome, split so that distinct realities do not share a name.
 
     Two published numbers have already been wrong because this function mapped
@@ -159,7 +163,10 @@ def verdict(site, answer, app_root):
     if answer.get("status") == "resolved" or reported:
         if hits(reported, site):
             return "correct"
-        if is_generated(site) and any(in_app(r.get("path"), app_root) for r in reported):
+        # trekr's own disclosure, corroborated on the gold side. Both halves
+        # are needed: the label alone would excuse every wrong macro answer,
+        # and the gold check alone cannot tell a declaration from a miss.
+        if answer.get("kind") == "declaration" and truth_is_generated(site):
             return "declaration"
         # Right method, wrong location, is not the same failure as resolving to
         # a different method: one is a location bug, the other a resolution bug.
@@ -177,7 +184,8 @@ def verdict(site, answer, app_root):
     candidates = [c.get("site", {}) for c in answer.get("candidates") or []]
     if hits(candidates, site):
         return "residue-hit"
-    if is_generated(site) and any(in_app(c.get("path"), app_root) for c in candidates):
+    offered_kinds = [c.get("kind") for c in answer.get("candidates") or []]
+    if "declaration" in offered_kinds and truth_is_generated(site):
         return "declaration-offered"
     # Two coverage gaps, not a coverage gap and a ranking gap. Session 20
     # raised the candidate cap to 500 and this bucket did not shrink by a
@@ -192,14 +200,9 @@ def main(path):
         sys.exit("build first: make release")
     gold = [json.loads(line) for line in open(path)]
     gold = [g for g in gold if g.get("def_file", "").endswith(".rb")]
-    # The *checkout* root, not the common prefix of the traced files: a
-    # generated attribute is answered with `db/schema.rb`, which shares no
-    # directory with `app/`, and scoring it against `app/` filed every one of
-    # them as residue.
-    app_root = os.environ.get("APP_ROOT") or checkout_root(
-        [g["file"] for g in gold if g["scope"] == "app"]
-    )
-
+    # Session 15 needed a checkout root here, to tell an in-app answer from a
+    # gem one — a proxy for "is this a declaration" that trekr now answers
+    # itself. Nothing needs the root any more, and `checkout_root` goes with it.
     # App sites are the point and there are few, so all of them are scored;
     # the gem floor is sampled, because each site costs a tree rebuild.
     app = [g for g in gold if g["scope"] == "app"]
@@ -215,7 +218,7 @@ def main(path):
     ranks = []
     for i, site in enumerate(app + gems, 1):
         answer = ask(site)
-        results.append((site, verdict(site, answer, app_root)))
+        results.append((site, verdict(site, answer)))
         rank = candidate_rank(site, answer) if isinstance(answer, dict) else None
         if rank:
             ranks.append((site["scope"], rank))
@@ -262,8 +265,12 @@ def main(path):
 
     app_rows = [(s, v) for s, v in results if s["scope"] == "app"]
     report("APP CODE", app_rows)
-    report("  of which plain methods", [r for r in app_rows if not is_generated(r[0])])
-    report("  of which Rails-generated", [r for r in app_rows if is_generated(r[0])])
+    report("  of which the truth is a written `def`",
+           [r for r in app_rows if not truth_is_generated(r[0])])
+    # Broader than the old "Rails-generated" split, and more accurate: it now
+    # catches `define_method`, `delegate`, and an app's own generators too.
+    report("  of which the truth is generated",
+           [r for r in app_rows if truth_is_generated(r[0])])
     report("GEM CODE (the floor)", [(s, v) for s, v in results if s["scope"] != "app"])
 
     if ranks:
