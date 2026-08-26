@@ -1624,3 +1624,95 @@ is designed and deferred. Two notes for whoever builds it:
 * **Flags stay the explicit form.** The grammar is sugar over them, so every
   shape it dispatches to must remain reachable by flag; scripts should never be
   made to depend on shape inference.
+
+## DEC-037 — Dead-code candidates: the design, and the fact that is missing first
+
+**Design only. Nothing built, and one prerequisite named that must come first.**
+
+Rubydex ships a dead-code endpoint and its weakness is convention-invoked false
+positives — a method reached by a name the source never spells as a call.
+trekr has the pieces that weakness needs (receiver-tiered references with
+reasons, gem context, macro modelling, and a disclosure vocabulary), and one
+piece it does not have, which turns out to be the whole problem.
+
+### The measurement that sizes it
+
+Discourse defines **29,325 distinct method names**. **9,054 of them (31 %) never
+appear as a call-site name anywhere in the index** — across all 634 checkouts,
+gems included. That is the candidate pool *before* any receiver reasoning, and
+nobody believes a third of discourse is dead. The gap between 31 % and the truth
+is exactly the false-positive surface, so the design is about that gap.
+
+### The missing fact: a symbol argument is an invocation
+
+```ruby
+after_create :ensure_in_trust_level_group      # line 185
+def ensure_in_trust_level_group                # line 2076
+```
+
+`ensure_in_trust_level_group` has **zero call sites**. trekr records
+`after_create` as a call and expands what the macro *defines*, and it does not
+record that the macro's symbol argument *invokes a method by name*. Every Rails
+callback, validation, `delegate`, and route target is in this shape.
+
+**This is the prerequisite.** A dead-code answer built before it would be
+reporting a defect in our fact model as a finding about the user's code — the
+exact failure DEC-021 caught for `--refs` exclusions, one layer up. The fact is
+cheap and useful on its own: it improves `--refs` for every callback-registered
+method whether or not dead code is ever built.
+
+The shape: a new reference kind, `symbol_ref`, emitted when a symbol argument
+sits in a macro known to take a method name. The list is the same table
+`macros::generated` already curates, read in the other direction — which is why
+this is an extension of something owned rather than a new mechanism.
+
+### What the tiers would mean, and what they would not
+
+Given that fact, a candidate is a definition with **zero confirmed, zero
+possible, and zero symbol references**. Read strictly:
+
+* **`confirmed` = 0** is strong. The receiver resolved and lookup landed
+  elsewhere, so those call sites provably are not this method.
+* **`possible` = 0** is the load-bearing one and the weakest. It means no
+  same-named call site survived, and DEC-021 already established that
+  `no_such_method` is the weakest exclusion reason. A candidate resting mostly
+  on that is a candidate to disclose, not to assert.
+* **The stated limits are all false-positive sources**: `send`/`public_send`,
+  a name built at runtime (`"#{setting}_validator".camelize`), and — the one
+  that would bite hardest — **anything called only from a view template**, which
+  trekr does not index at all. ERB is not Ruby to this engine.
+
+So the output is **tiered candidates with the reason each survived**, never a
+`dead: true`. Something like `unreferenced` (nothing at all),
+`convention-only` (reached solely by symbol), and `dynamic-risk` (the file or
+class shows `send`, `method_missing`, or interpolated dispatch nearby).
+
+### How it would be validated, before anyone deletes anything
+
+Two independent checks, and the first is the good one:
+
+1. **Git history as ground truth.** Methods that humans later deleted are known
+   dead; methods still present years later are known live. Run the analyzer
+   against an old commit of discourse and score its candidates against what the
+   next N months of history actually removed. This needs no test suite, no
+   deletion, and no judgement call — and it measures *precision at the time the
+   tool would have spoken*.
+2. **Delete-and-run-tests on discourse**, as a spot check on a sample. Slower,
+   noisier (its suite is large and needs the full environment), and only
+   confirms what the tests cover — which is precisely the code most likely to
+   have references the analyzer already saw.
+
+**Predicted precision, recorded before building.** On candidates that survive
+all three counts *and* the symbol-reference fact: **60–75 %** against the
+git-history check, with the residue dominated by view-template callers and
+`send`. Without the symbol fact I would predict **under 30 %**, which is the
+number that says build the prerequisite first.
+
+**Bar for shipping**: ≥ 70 % precision on the history check for the strictest
+tier, and every candidate carrying its reason. Below that it ships as
+`--candidates` disclosure and never with the word "dead" attached.
+
+**Reverses if** the history check turns out to be confounded — a method deleted
+because its whole feature was removed is not evidence the analyzer would have
+been right about it in isolation. The mitigation is to score only deletions that
+left the surrounding file alive.
