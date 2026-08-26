@@ -1585,3 +1585,72 @@ computed names over a literal array — and moved `correct` on real app code fro
 42.0 % to 62.4 % with `confidently wrong` *falling* from 1.6 % to 0.2 %. Session
 29 looked for a fourth and found that it costs more than it buys. What remains
 is receiver typing, disclosure, and two limits that are honest to state.
+
+
+## Disclosure, and what it unlocked (session 30)
+
+**Canonical, discourse app code, 498 scored sites, seed 12, context pinned, two
+consecutive runs identical:**
+
+| | session 28 | **session 30** |
+| --- | ---: | ---: |
+| correct | 62.4 % | **62.4 %** |
+| found the definition | 87.8 % | **87.8 %** |
+| confidently wrong | 0.2 % | **0.2 %** |
+| ambiguous-wrong | 0.4 % | 0.4 % |
+| declaration | 1.4 % | **2.0 %** |
+| declaration-offered | 2.6 % | **2.8 %** |
+| residue-truth-absent | 4.2 % | **3.6 %** |
+| residue-nothing-known | 3.2 % | **3.0 %** |
+| gem correct / found / wrong | 51.5 / 86.0 / 3.3 % | **51.8 / 86.0 / 3.3 %** |
+
+Nothing moved that measures whether trekr is *right*. What moved is how much of
+what it says is legible: 3 more sites answered as declarations, 3 fewer as
+residue.
+
+**The number worth pulling out**: on the 100 sample sites whose truth is a
+**generated** method — a `define_method`, a heredoc `class_eval`, a macro —
+`confidently wrong` is **0.0 %**. Every answer there is correct, a disclosed
+declaration, or an honest residue. That whole class of site used to be where the
+engine's answers and the scorer's categories disagreed most.
+
+### What the disclosure is
+
+The store has always recorded *what made* a method — a `def` row's `via` names
+the macro — and the answer never said. So a caller could not tell `belongs_to
+:supplier`, the line a reader wants, from the line Ruby runs. `--def` and
+`--explain` now carry `kind: definition | declaration` with `defined_via`
+naming the macro; hover carries it on the LSP side, which is the only place it
+fits, because `textDocument/definition` is a bare list of locations.
+
+The discriminator is **"is the body at this location"** rather than "was a macro
+involved" (DEC-034), because `module_function` and `define_method` both point at
+real bodies.
+
+### The scorer stopped guessing, and the guess had been wrong twice
+
+Session 15's `declaration` verdict identified these answers with an allowlist of
+three Rails files plus a requirement that the answer be inside the app. The
+verdict now reads trekr's own word, corroborated by a check that the truth's
+line is not a written `def` — a fact about the gold entry that never looks at
+the answer, which is what keeps it from excusing a wrong one.
+
+**The single agreement run before deleting the old test found a bug in the new
+one.** Testing for the `def` keyword called `def build_#{name}(*args)` a written
+definition — Rails writes its constructors that way inside a `class_eval`
+heredoc, with the interpolation in the middle of the name rather than the front
+— and two honest declaration answers scored as errors until the test also looked
+for `#{`. Overlapping the old and new instruments for exactly one run is what
+caught it.
+
+With that fixed, the swap moved **one site on each column**, both from
+`residue-truth-absent` to `declaration-offered`. The gem column gained its first
+`declaration-offered` ever: `in_app` had made a gem-side declaration
+unrepresentable, which is precisely what DEC-033 ran into.
+
+### And it unlocked the feature that was turned down
+
+`define_model_callbacks` — 114 sites, built and reverted in session 29 —
+now ships: **112 declaration, 2 residue, 0 confidently wrong**, against 112
+`wrong` before. The extraction is unchanged. Only the answer's ability to
+describe itself is new.
