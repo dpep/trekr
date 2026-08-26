@@ -29,6 +29,11 @@ method**.
 - **`--completions <shell>`** prints a shell completion script, generated from
   the parser so it cannot drift from the flags.
 
+A server whose binary has been replaced retires by exiting rather than by
+closing its own stdin. Closing the descriptor turns the reader's blocking read
+into EOF on macOS but not on Linux, where the process would log its retirement
+and then hang holding the stale build.
+
 Facts are keyed by git blob OID, so every worktree of a repo shares one index
 and a reindex with nothing changed parses nothing: 1.5 s cold on rails, 61 ms
 for a no-op reindex, ~0.2 s and zero parses for a second worktree. Ruby core

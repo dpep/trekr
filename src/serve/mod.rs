@@ -69,12 +69,29 @@ pub(crate) fn run(verbose: bool) -> anyhow::Result<()> {
         "stop",
         serde_json::json!({ "error": result.as_ref().err().map(|e| e.to_string()) }),
     );
-    result?;
+    let outcome = result?;
+    if outcome == Outcome::Retired {
+        // Leave without joining. `join` waits on the reader first, and that
+        // thread is parked in a blocking read on stdin which an editor holds
+        // open — closing the descriptor turns the read into EOF on macOS but
+        // NOT on Linux, where close(2) does not disturb a read already in
+        // flight. Joining there hangs forever, having just logged that this
+        // build retired: precisely the silent staleness retirement exists to
+        // prevent. A retiring process has nothing left to unwind, so exit.
+        std::process::exit(0);
+    }
     threads.join()?;
     Ok(())
 }
 
-fn serve(connection: Connection, log: &Log) -> anyhow::Result<()> {
+/// Why the serve loop ended — retirement has to skip the thread join below.
+#[derive(PartialEq)]
+enum Outcome {
+    ShutDown,
+    Retired,
+}
+
+fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
     let binary = Binary::current();
     let params = connection.initialize(serde_json::to_value(capabilities())?)?;
     let root = workspace_root(&params);
@@ -103,7 +120,7 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<()> {
             Message::Request(request) => {
                 if connection.handle_shutdown(&request)? {
                     log.event("shutdown", serde_json::json!({}));
-                    break;
+                    return Ok(Outcome::ShutDown);
                 }
                 let response = dispatch(&mut session, request, log);
                 connection.sender.send(Message::Response(response))?;
@@ -122,8 +139,10 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<()> {
                             "path": built.path.to_string_lossy(),
                         }),
                     );
-                    stop_reading();
-                    break;
+                    // The response above went out over a rendezvous channel,
+                    // so the writer already has it and flushes before it can
+                    // do anything else.
+                    return Ok(Outcome::Retired);
                 }
             }
             Message::Notification(notification) => {
@@ -143,27 +162,8 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<()> {
             Message::Response(_) => {}
         }
     }
-    Ok(())
-}
-
-/// Stop the reader thread, so a server that has decided to retire can actually
-/// leave.
-///
-/// Breaking out of the loop is not enough. `IoThreads::join` waits for
-/// lsp_server's reader, which is parked in a blocking read on stdin — and an
-/// editor holds stdin open for as long as it is running. The process would sit
-/// there having logged `retire`, still holding the old build: exactly the
-/// symptom retirement was written to remove, now with a log line claiming it
-/// had worked.
-///
-/// Closing the descriptor turns that blocking read into EOF. It is done here,
-/// while the connection is still alive, so the reader can finish its handoff
-/// instead of pushing into a channel whose receiver has gone — which is how
-/// this exited with "sending on a disconnected channel" and status 2.
-fn stop_reading() {
-    // Safe in the sense that matters: nothing else in this process reads stdin,
-    // and we are on our way out.
-    unsafe { libc::close(libc::STDIN_FILENO) };
+    // The channel closed: the client went away without a shutdown request.
+    Ok(Outcome::ShutDown)
 }
 
 /// The executable this process is running, and when it was written.
