@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **An answer says which kind of location it handed back.** `--def --json` and
+  `--explain` carry `kind: definition | declaration`, and `defined_via` names
+  the macro when it is a declaration (`belongs_to`, `enum`, `schema`,
+  `delegate`, an alias, a bare `private :foo`). The store has always known this
+  — a `def` row's `via` records what made it — and the answer never said, so a
+  caller could not tell `belongs_to :supplier`, the line a reader wants, from
+  the line Ruby runs.
+
+  The test is **"is the body at this location"**, not "was a macro involved": a
+  literal `def` is a definition, and so are `define_method`'s block, which *is*
+  the body, and `module_function`'s copy, which points at the `def` it copied.
+  Residue candidates carry their own `kind` too.
+
+  On the LSP side it lives in **hover**: `textDocument/definition` is a bare
+  list of locations and has nowhere to put it.
+
 - **A mixin written inside a `def` is no longer an ancestry edge of the scope
   that lexically contains it.** It runs when the method runs, against whatever
   `self` is then, so recording it lexically does not merely miss an edge — it

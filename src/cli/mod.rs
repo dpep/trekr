@@ -892,6 +892,15 @@ fn explanation(answer: &serde_json::Value) -> String {
     if let Some(owner) = field("owner") {
         out.push(format!("  owner       {owner}"));
     }
+    // Whether the location is the code or the line that declared the name.
+    // Printed with the macro, because "declaration" alone tells a reader what
+    // the answer is *not* without telling them what it is.
+    if let Some(kind) = field("kind") {
+        let by = field("defined_via")
+            .map(|via| format!(" · {via}"))
+            .unwrap_or_default();
+        out.push(format!("  kind        {kind}{by}"));
+    }
     if let Some(agreement) = field("agreement") {
         out.push(format!("  agreement   {agreement}"));
     }

@@ -16,7 +16,7 @@
 pub(crate) mod refs;
 
 use crate::core::{Assign, Call, Facts, RecvShape, ValueShape};
-use crate::tree::{Site, Status, Tree};
+use crate::tree::{Kind, Site, Status, Tree};
 use serde::Serialize;
 
 /// How the receiver's type was established, and how strongly.
@@ -41,6 +41,8 @@ pub(crate) struct Candidate {
     pub(crate) singleton: bool,
     /// Why this candidate is ranked where it is — a named tier, not a weight.
     pub(crate) why: &'static str,
+    /// Whether `site` is the body or the macro line that made the name.
+    pub(crate) kind: Kind,
     pub(crate) site: Site,
 }
 
@@ -66,6 +68,17 @@ pub(crate) struct MethodAnswer {
     pub(crate) receiver_kind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) owner: Option<String>,
+    /// Whether `sites` is the code that runs or the line that declared the
+    /// name. Absent when there are no sites to describe. Not to be confused
+    /// with `sites[].kind`, which is class/module/method/constant — this one
+    /// is about the *location's* nature, that one about the symbol's.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) kind: Option<Kind>,
+    /// The macro that declared it: `belongs_to`, `enum`, `schema`, `delegate`.
+    /// Present only for a declaration, and the reason a caller can act on one
+    /// rather than merely being warned about it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) defined_via: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) sites: Vec<Site>,
     /// Assignments that agreed / were considered, when a rung inferred a type.
@@ -133,6 +146,8 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
                         receiver_kind: tree.kind_of(&receiver.fqn).map(str::to_string),
                         receiver_type: Some(receiver.fqn.clone()),
                         owner: Some(found.owner.clone()),
+                        kind: Some(Kind::of(found.via.as_deref())),
+                        defined_via: declared_by(&found),
                         sites,
                         agreement: agreement(&receiver),
                         unresolved_ancestors: Vec::new(),
@@ -235,6 +250,8 @@ fn via_includers(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<Method
         receiver_kind: Some("module".to_string()),
         receiver_type: Some(receiver.fqn.clone()),
         owner: Some(winner.owner.clone()),
+        kind: Some(Kind::of(winner.via.as_deref())),
+        defined_via: declared_by(winner),
         sites: vec![winner.site.clone()],
         // The fraction counts classes that mix the module in, not assignments —
         // `resolved_via` is what says which.
@@ -248,6 +265,7 @@ fn via_includers(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<Method
                 owner: method.owner.clone(),
                 singleton: method.singleton,
                 why: "another class mixing this module in defines the same name",
+                kind: Kind::of(method.via.as_deref()),
                 site: method.site.clone(),
             })
             .collect(),
@@ -592,6 +610,7 @@ fn competitors(tree: &Tree, name: &str, winner: &str) -> Vec<Candidate> {
                     owner: method.owner.clone(),
                     singleton: method.singleton,
                     why: "defines the same name; the receiver's name chose between them",
+                    kind: Kind::of(method.via.as_deref()),
                     site: method.site.clone(),
                 },
             )
@@ -603,6 +622,13 @@ fn competitors(tree: &Tree, name: &str, winner: &str) -> Vec<Candidate> {
         .take(MAX_CANDIDATES)
         .map(|(_, candidate)| candidate)
         .collect()
+}
+
+/// The macro a declaration came from, for an answer that has one.
+fn declared_by(method: &crate::tree::MethodDef) -> Option<String> {
+    (Kind::of(method.via.as_deref()) == Kind::Declaration)
+        .then(|| method.via.clone())
+        .flatten()
 }
 
 /// An honest no, with the candidates ordered by evidence a reader can check.
@@ -688,6 +714,7 @@ fn residue(
                     owner: method.owner.clone(),
                     singleton: method.singleton,
                     why,
+                    kind: Kind::of(method.via.as_deref()),
                     site: method.site.clone(),
                 },
             )
@@ -714,6 +741,10 @@ fn residue(
         status: Status::Residue,
         confidence: 0.0,
         resolved_via: None,
+        // A residue points at nothing, so there is no location to describe.
+        // The candidates carry their own.
+        kind: None,
+        defined_via: None,
         receiver: call.recv.as_str(),
         receiver_kind: receiver
             .as_ref()

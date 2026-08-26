@@ -16,7 +16,14 @@
 //! def app.rb:12:11 status=residue candidates=2
 //! refs Widget#save confirmed=2 possible=0
 //! symbols app.rb   Widget,save,Job,run
+//! hover app.rb:12:11 kind: `Declaration`
 //! ```
+//!
+//! `hover` drives the **LSP** rather than the CLI, because some of what an
+//! answer carries reaches an editor only through hover — `textDocument/
+//! definition` is a bare list of locations and cannot say what kind of location
+//! it handed back. A case that stages a server-visible shape should pin the
+//! wire, not only the command line.
 //!
 //! Keys for `def` are fields of `--def --json`: `status`, `owner`, `via`
 //! (`resolved_via`), `name`, `confidence`, `candidates` (a count), `site`
@@ -103,6 +110,91 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
+/// One `textDocument/hover`, over a real `--serve` session against the staged
+/// checkout. Returns the markdown the editor would show.
+fn hover_text(db: &Path, dir: &Path, target: &str) -> String {
+    use std::io::{BufRead, BufReader, Write};
+    let (file, line, col) = {
+        let mut bits = target.rsplitn(3, ':');
+        let col: u32 = bits.next().unwrap_or("1").parse().unwrap_or(1);
+        let line: u32 = bits.next().unwrap_or("1").parse().unwrap_or(1);
+        (bits.next().unwrap_or_default().to_string(), line, col)
+    };
+    let path = dir.join(&file);
+    let uri = format!("file://{}", path.display());
+    let text = fs::read_to_string(&path).unwrap_or_default();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_trekr"))
+        .arg("--serve")
+        .current_dir(dir)
+        .env("TREKR_DB", db)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("serve");
+    let mut stdin = child.stdin.take().unwrap();
+    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+
+    let mut send = |value: serde_json::Value| {
+        let body = serde_json::to_vec(&value).unwrap();
+        let _ = stdin.write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
+        let _ = stdin.write_all(&body);
+        let _ = stdin.flush();
+    };
+    send(
+        serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize",
+        "params":{"rootUri": format!("file://{}", dir.display()), "capabilities":{}}}),
+    );
+    send(serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+    send(
+        serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+        "textDocument":{"uri":uri,"languageId":"ruby","version":1,"text":text}}}),
+    );
+    send(
+        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{
+        "textDocument":{"uri":uri},
+        "position":{"line": line - 1, "character": col - 1}}}),
+    );
+
+    let mut found = String::new();
+    for _ in 0..16 {
+        let mut length = 0usize;
+        loop {
+            let mut header = String::new();
+            if stdout.read_line(&mut header).unwrap_or(0) == 0 {
+                break;
+            }
+            let header = header.trim().to_string();
+            if header.is_empty() {
+                break;
+            }
+            if let Some(rest) = header.strip_prefix("Content-Length: ") {
+                length = rest.parse().unwrap_or(0);
+            }
+        }
+        if length == 0 {
+            break;
+        }
+        let mut body = vec![0u8; length];
+        if std::io::Read::read_exact(&mut stdout, &mut body).is_err() {
+            break;
+        }
+        let message: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        if message["id"] == serde_json::json!(2) {
+            found = message["result"]["contents"]["value"]
+                .as_str()
+                .unwrap_or_default()
+                .to_string();
+            break;
+        }
+    }
+    drop(stdin);
+    let _ = child.kill();
+    let _ = child.wait();
+    found
+}
+
 fn trekr(db: &Path, dir: &Path, args: &[&str]) -> (serde_json::Value, i32) {
     let out = Command::new(env!("CARGO_BIN_EXE_trekr"))
         .args(args)
@@ -140,6 +232,11 @@ fn check_def(
                 .unwrap_or("<none>")
                 .to_string(),
             "name" => answer["name"].as_str().unwrap_or("<none>").to_string(),
+            "kind" => answer["kind"].as_str().unwrap_or("<none>").to_string(),
+            "defined_via" => answer["defined_via"]
+                .as_str()
+                .unwrap_or("<none>")
+                .to_string(),
             "confidence" => answer["confidence"]
                 .as_f64()
                 .map(|c| format!("{c}"))
@@ -229,6 +326,19 @@ fn every_testbed_case_answers_as_recorded() {
                 "def" => {
                     let (answer, code) = trekr(&db, &dir, &["--def", target, "--json"]);
                     check_def(&label, line, &answer, code, &mut failures);
+                }
+                "hover" => {
+                    let want = rest
+                        .split_once(char::is_whitespace)
+                        .map(|(_, w)| w.trim())
+                        .unwrap_or_default();
+                    let got = hover_text(&db, &dir, target);
+                    if !got.contains(want) {
+                        failures.push(format!(
+                            "{label}: {line}\n      hover said `{}`",
+                            got.replace('\n', " ")
+                        ));
+                    }
                 }
                 "refs" => {
                     let (answer, _) = trekr(&db, &dir, &["--refs", target, "--json"]);

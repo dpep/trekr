@@ -369,6 +369,15 @@ pub(crate) fn hover(session: &mut Session, params: HoverParams) -> anyhow::Resul
             if let Some(owner) = answer.owner {
                 out.push_str(&format!("\n\ndefined in `{owner}`"));
             }
+            // The `definition` response is a bare list of locations, so hover
+            // is the only LSP surface that can carry this.
+            if let Some(kind) = answer.kind {
+                let by = answer
+                    .defined_via
+                    .map(|via| format!(" · `{via}`"))
+                    .unwrap_or_default();
+                out.push_str(&format!("\n\nkind: `{kind:?}`{by}"));
+            }
             if let Some(reason) = answer.reason {
                 out.push_str(&format!("\n\n{reason}"));
             }

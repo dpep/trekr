@@ -1,0 +1,14 @@
+# An answer now says which *kind* of location it handed back. `size` is made by
+# `attr_reader`, so the line we point at is the declaration and the body runs
+# elsewhere; `resize` is a `def`, so the body is right there. Both resolve, both
+# point somewhere useful, and until session 30 nothing in the response told them
+# apart — which is what DEC-033 cost: 112 honest declaration answers had to be
+# scored as errors.
+#
+# The hover lines are half the point. `textDocument/definition` is a bare list
+# of locations and cannot carry this, so hover is the only LSP surface where an
+# agent can read it.
+def app.rb:11:7 status=resolved owner=Widget kind=declaration defined_via=attr_reader site=app.rb:2
+def app.rb:12:7 status=resolved owner=Widget kind=definition site=app.rb:4
+hover app.rb:11:7 kind: `Declaration` · `attr_reader`
+hover app.rb:12:7 kind: `Definition`

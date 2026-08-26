@@ -194,6 +194,41 @@ pub(crate) enum Via {
     Path,
 }
 
+/// Is the body of the method where we are pointing, or did something else make
+/// it there?
+///
+/// The store has always known this — a `def` row's `via` names the macro that
+/// created it — and the answer has never said so, which is why a caller could
+/// not tell `belongs_to :supplier` (the line a reader wants) from the line Ruby
+/// actually runs. DEC-033 is what that cost: 112 honest declaration answers had
+/// to be scored as errors because nothing in the response distinguished them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Kind {
+    /// The body is here. A literal `def`; `define_method`'s block, which *is*
+    /// the body; and `module_function`'s copy, which points at the `def` it
+    /// copied.
+    Definition,
+    /// The name was brought into being here and runs elsewhere. A macro that
+    /// generates methods (`belongs_to`, `enum`, a schema column), an alias
+    /// whose body belongs to another method, or a bare `private :foo` that
+    /// asserts only visibility (DEC-004).
+    Declaration,
+}
+
+impl Kind {
+    /// The test is "is the body at this location", not "was a macro involved".
+    pub(crate) fn of(via: Option<&str>) -> Kind {
+        match via {
+            None
+            | Some("module_function")
+            | Some("define_method")
+            | Some("define_singleton_method") => Kind::Definition,
+            Some(_) => Kind::Declaration,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Status {

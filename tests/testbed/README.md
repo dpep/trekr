@@ -36,11 +36,19 @@ symbols app.rb   Widget,save,Job,run
 | `confidence` | exact, as printed |
 | `candidates` | how many were offered |
 | `candidate1` | the top candidate's owner — the ranking assertion |
+| `kind` | `definition` or `declaration` — is the body at that location |
+| `defined_via` | the macro that declared it, for a declaration |
 | `site` | `path:line`, matched on the path's tail |
 | `exit` | the process exit code, for cases about not dying |
 
 `refs QUERY` asserts the `counts` object. `symbols FILE` asserts the outline,
 in source order, comma-separated.
+
+`hover FILE:LINE:COL <text>` drives a real `--serve` session and asserts the
+markdown an editor would show contains `<text>`. It exists because some of what
+an answer carries reaches an editor **only** through hover: `textDocument/
+definition` is a bare list of locations and cannot say what kind of location it
+handed back. Where a case stages a server-visible shape, pin the wire too.
 
 An unknown key fails loudly: a typo in an expectation is a test that proves
 nothing.
