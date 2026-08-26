@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.3 — 2026-08-25
 
 - **A query keeps itself honest about freshness.** `--def` probes git in O(1) —
   one stat of `.git/index` — and when the checkout has moved it **re-reads the
