@@ -1477,3 +1477,61 @@ to watch is an editor-driven workflow where files change constantly and nothing
 touches `.git/index`. The answer then is a filesystem watcher in the LSP front,
 which is a resident process that already exists and may legitimately watch,
 rather than a daemon for the CLI.
+
+## DEC-036 — The CLI forgives a hand-typed position; the LSP does not
+
+**Decided.** `--def` snaps to the nearest name on the line when the exact
+column holds none, and discloses the snap. `FILE:LINE` is a valid spec. The
+serve front keeps exact-position semantics.
+
+**Why the two surfaces differ.** They have different callers. An editor sends
+the column the cursor is actually on, and a server that quietly answered about a
+*different* name would fight what the protocol promises — hover and
+goToDefinition are expected to describe the thing under the cursor, and an
+editor has no way to show "actually, I answered about the token to your right".
+A person typing `--def app/models/user.rb:42:11` into a terminal is
+estimating, and was being told "no name at this position" for being one
+character out.
+
+**The rules, and what each is protecting.**
+
+* **Snap only when the exact position holds nothing**, so an exact hit can never
+  be reinterpreted.
+* **Bounded to the line.** Snapping across lines answers a different question
+  than the one asked, and a column is evidence about *where on the line*, not
+  about which line.
+* **Nearest by column, leftmost on a tie.** With column 0 (`FILE:LINE`) that
+  reduces to "the first name on the line".
+* **Always disclosed** — `snapped_to: {name, col, alternatives}` in JSON, one
+  stderr line in text. The alternatives carry their columns so the next query
+  can be exact. This is the house rule: nothing silently promoted, and an answer
+  about a name the caller did not type is exactly that.
+
+**The ranking is free, and that is the part worth noticing.** "Which name did
+they mean" needed no heuristic, because the fact model only records *interesting*
+names: `w = Widget.new` has `Widget` and `new` in it and no `w`, so nearest-first
+lands on the constant without anyone having to rank locals below constants.
+
+**Rejected: making `FILE:LINE` list names and exit non-zero.** It is honest and
+it is a dead end — an agent gets a refusal it must parse and re-issue. Answering
+the first name and disclosing the rest gives the same information and an answer.
+
+**Reverses if** a snap is measured picking the wrong name often enough to
+mislead — the tell is `snapped_to` appearing in answers whose top result is then
+ignored. The fix would be ranking by kind rather than distance, which the fact
+model already supports.
+
+### Item recorded, not built: the bare-argument grammar
+
+`trekr <input>` dispatching on shape — `FILE:LINE:COL` → `--def`,
+`Owner#method` → a symbol card, a bare constant → definition plus ancestors —
+is designed and deferred. Two notes for whoever builds it:
+
+* **The boundary with rq is the point.** "Where is this name defined", across
+  languages, stays rq. trekr's bare-name answer is the Ruby-rich card —
+  definition site, `kind`, reference tier counts — not a second rq. The skill
+  should say so at the same time the grammar ships, or agents will reach for the
+  wrong tool and conclude one of them is broken.
+* **Flags stay the explicit form.** The grammar is sugar over them, so every
+  shape it dispatches to must remain reachable by flag; scripts should never be
+  made to depend on shape inference.

@@ -85,7 +85,12 @@ whole-mention view.
 
 ```sh
 trekr --def app/models/post.rb:42:11 --json
+trekr --def app/models/post.rb:42          # column optional when typing by hand
 ```
+
+The column is forgiving: if it holds no name, trekr answers for the nearest one
+**on that line** and says so in `snapped_to` (with the other names and their
+columns, so a follow-up can be exact). An exact hit never snaps.
 
 Every answer carries `status` (`resolved` | `ambiguous` | `residue`),
 `confidence`, and `resolved_via` — the rung that resolved the receiver (`self`,
