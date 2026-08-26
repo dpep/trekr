@@ -205,6 +205,29 @@ pub(crate) fn camelize(name: &str) -> String {
 /// `widgets` → `widget`, for the `_ids` readers. Deliberately crude: the only
 /// consumer is a method name, and a wrong guess costs one unfound name rather
 /// than a wrong answer.
+/// The inverse of `singularize`, for the one place Rails needs it: `enum
+/// :segment` defines a class method `segments` holding the mapping.
+///
+/// Same rules, run backwards, and the same standard of proof — a name we
+/// cannot spell confidently is not offered at all (session 28), so this
+/// deliberately handles only the shapes `singularize` already claims.
+pub(super) fn pluralize(name: &str) -> String {
+    if let Some(stem) = name.strip_suffix('y')
+        && !name.ends_with("ay")
+        && !name.ends_with("ey")
+        && !name.ends_with("oy")
+        && !name.ends_with("uy")
+    {
+        return format!("{stem}ies");
+    }
+    for suffix in ["s", "x", "z", "ch", "sh"] {
+        if name.ends_with(suffix) {
+            return format!("{name}es");
+        }
+    }
+    format!("{name}s")
+}
+
 fn singularize(name: &str) -> String {
     if let Some(stem) = name.strip_suffix("ies") {
         return format!("{stem}y");
@@ -287,6 +310,23 @@ mod tests {
     #[test]
     fn a_macro_we_do_not_model_generates_nothing() {
         assert!(generated("validates", "name").is_empty());
+    }
+
+    #[test]
+    fn pluralizes_the_shapes_singularize_claims() {
+        for (singular, plural) in [
+            ("segment", "segments"),
+            ("status", "statuses"),
+            ("category", "categories"),
+            ("box", "boxes"),
+            ("branch", "branches"),
+            ("wish", "wishes"),
+            // A vowel before `y` is not the `ies` case.
+            ("day", "days"),
+            ("key", "keys"),
+        ] {
+            assert_eq!(pluralize(singular), plural, "pluralize({singular})");
+        }
     }
 
     #[test]

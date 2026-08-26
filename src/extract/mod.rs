@@ -1060,6 +1060,12 @@ impl<'pr> Extractor<'_> {
     /// anything computed produces nothing.
     fn handle_enum(&mut self, call: &ruby_prism::CallNode<'pr>, args: &[Node<'pr>]) -> bool {
         let mut members: Vec<String> = Vec::new();
+        // The attribute itself, which names a *class* method holding the
+        // mapping: `enum :segment` gives `Model.segments`. Distinct from the
+        // members, which give the predicates and scopes below.
+        let mut attribute: Option<String> = args.first().and_then(literal_name);
+        // A `prefix:`/`suffix:` option renames the member methods out of reach.
+        let mut renamed = false;
         let mut collect = |node: &Node<'pr>| {
             if let Some(hash) = node.as_hash_node() {
                 for element in hash.elements().iter() {
@@ -1082,13 +1088,18 @@ impl<'pr> Extractor<'_> {
                     let Some(assoc) = element.as_assoc_node() else {
                         continue;
                     };
-                    // `prefix:`/`suffix:` rename every generated method, so
-                    // refuse rather than produce wrong names.
+                    // `prefix:`/`suffix:` rename every *member* method, so
+                    // those are refused rather than spelled wrongly. The
+                    // attribute's own plural accessor is not renamed by either,
+                    // so it survives — refusing it too was over-broad.
                     let key = literal_name(&assoc.key()).unwrap_or_default();
                     if key == "prefix" || key == "suffix" {
-                        return false;
+                        renamed = true;
+                        continue;
                     }
                     if !matches!(key.as_str(), "default" | "validate" | "instance_methods") {
+                        // Rails 6 puts the attribute in this key.
+                        attribute.get_or_insert(key.clone());
                         collect(&assoc.value());
                     }
                 }
@@ -1097,13 +1108,22 @@ impl<'pr> Extractor<'_> {
                 collect(arg);
             }
         }
-        if members.is_empty() {
+        if members.is_empty() && attribute.is_none() {
             return false;
+        }
+        if renamed {
+            members.clear();
         }
 
         let loc = call.location();
         let (start, end) = (loc.start_offset(), loc.end_offset());
         let in_singleton = self.in_singleton();
+        if let Some(attribute) = attribute {
+            let mut def = self.def(macros::pluralize(&attribute), Kind::Method, start, end);
+            def.via = Some("enum".into());
+            def.singleton = true;
+            self.push_def(def);
+        }
         for member in members {
             for (name, singleton) in [
                 (format!("{member}?"), false),
@@ -2104,6 +2124,32 @@ mod rails_dsl_tests {
             edge.expect("the mixin is kept").owner,
             ["ClassMethods", "M"]
         );
+    }
+
+    /// `enum :segment, …` defines `Model.segments` — the mapping — as well as
+    /// the members' predicates. Only the members are renamed by `suffix:`, so
+    /// the plural survives an option that refuses everything else.
+    #[test]
+    fn an_enum_defines_the_attributes_plural_class_method() {
+        let facts = extract(b"class W\n  enum :segment, { primary: 0, secondary: 1 }\nend\n");
+        let made: Vec<&str> = facts
+            .defs
+            .iter()
+            .filter(|d| d.via.as_deref() == Some("enum"))
+            .map(|d| d.name.as_str())
+            .collect();
+        assert!(made.contains(&"segments"), "the mapping accessor: {made:?}");
+        assert!(made.contains(&"primary?"), "and the members: {made:?}");
+
+        // `suffix:` renames the members out of reach; the plural is untouched.
+        let renamed = extract(b"class W\n  enum :segment, { primary: 0 }, suffix: true\nend\n");
+        let made: Vec<&str> = renamed
+            .defs
+            .iter()
+            .filter(|d| d.via.as_deref() == Some("enum"))
+            .map(|d| d.name.as_str())
+            .collect();
+        assert_eq!(made, ["segments"], "no guessed member names: {made:?}");
     }
 
     /// Somebody else's `class_methods` is not Concern's. Arguments are the

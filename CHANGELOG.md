@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **`enum :status` now defines `Model.statuses`.** The macro model generated the
+  members' predicates and scopes but never the attribute's own class method
+  holding the mapping — so `SidebarUrl.segments` resolved to nothing.
+
+  It also survives `prefix:`/`suffix:`, which previously refused the whole
+  `enum`. Those options rename the *member* methods, and spelling those wrongly
+  is worse than not offering them (so they are still refused); the mapping
+  accessor is not renamed by either, and refusing it too was over-broad.
+
+  **Existing databases reindex once** — the extractor's output changed.
+
+
 ## 0.1.3 — 2026-08-25
 
 - **A query keeps itself honest about freshness.** `--def` probes git in O(1) —
