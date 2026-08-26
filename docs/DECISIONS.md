@@ -1462,8 +1462,26 @@ It deliberately stops short of recommending a deletion, because the cost of
 being wrong is borne by whoever runs the delete, and they need the reasons to
 weigh it.
 
-**Reverses if** the history check comes in under the bar, in which case this
-ships as disclosure only and the tiers stay advisory.
+### Measured, session 36 — the bar was failed, and the tool ships anyway as disclosure
+
+Predicted 60–75 % precision on `unreferenced`; measured **19.8 %** against a
+**19.0 % base rate** for any method in the same scope. A lift of **1.04×**,
+which is no signal. The reverses-if above is therefore in force: `--dead` ships,
+makes no precision claim, and its tiers are advisory.
+
+The prediction was wrong toward overclaiming, which is the direction that costs
+trust, and it would have read as a weak-but-real result had the base-rate
+control not been run. It cost one command. **Any future precision claim in this
+project needs its control measured in the same breath.**
+
+`convention-only` came out strong in the opposite direction — 3.3 % deleted,
+0.17× the base rate, so those methods survive nearly six times more often than
+average. It is finding genuinely-used code that looks dead, which validates the
+symbol-reference prerequisite on its own terms.
+
+**What would move `unreferenced`**: the references it cannot see. ERB templates
+and the spec suite hold them, and until those are indexed, "no references found"
+in a Rails app says as much about trekr's inputs as about the user's code.
 
 ## DEC-035 — Freshness is a probe and a budget, not a daemon
 

@@ -18,6 +18,14 @@
   `--json` is first-class, per-symbol with reasons attached, so a deletion
   workflow can consume it as an evidence layer rather than a verdict.
 
+  **Validated against 12 months of discourse's git history, and it makes no
+  precision claim**: `unreferenced` candidates were deleted by humans 19.8 % of
+  the time against a **19.0 % base rate for any method in the same scope** — no
+  measurable lift. Read the tiers as *what was looked for and not found*, which
+  is what they say. `convention-only` is the strong one, inversely: those
+  methods are deleted 3.3 % of the time, surviving six times more often than
+  average, because they are genuinely used by a macro.
+
 
 - **A symbol handed to a macro counts as a reference.** `after_create :ensure_thing`
   invokes `ensure_thing`, and nothing in the file writes it as a call — so every
