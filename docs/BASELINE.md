@@ -15,7 +15,7 @@ Reproduce with `script/baseline.py` (see the bottom of this file).
 | ruby-lsp | **0.26.11**, isolated `GEM_HOME`, Ruby 3.4.9 |
 | ruby-lsp indexer | the **old in-process indexer**, not Rubydex |
 
-**On the version.** PLAN §8's whole competitive read is against ruby-lsp 0.27,
+**On the version.** PLAN §8's whole read on the other engines is against ruby-lsp 0.27,
 the Rubydex-backed rewrite. As of today that is **not published to RubyGems** —
 `gem install ruby-lsp --version '>= 0.27.0'` finds nothing, and no `rubydex` gem
 is installed alongside 0.26.11. So this measures the *shipping* incumbent, not

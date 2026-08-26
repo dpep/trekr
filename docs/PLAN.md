@@ -41,7 +41,7 @@ So the durable edges are the ones structurally hard for them, not the ones on th
 **The clock:** persistence and DSL modeling are Rubydex's stated next steps. Twelve to
 eighteen months from now edge #2 may be partly closed; #1 and #3 stay.
 
-What *not* to compete on: type checking, completion, formatting, editor rename, semantic
+What *not* to build: type checking, completion, formatting, editor rename, semantic
 tokens. Claude Code's `LSP` tool exposes exactly nine operations — goToDefinition,
 findReferences, hover, documentSymbol, workspaceSymbol, goToImplementation,
 prepareCallHierarchy, incomingCalls, outgoingCalls — plus diagnostics pushed after edits.
@@ -281,7 +281,7 @@ middle phases weeks rather than months.
 2. **Consumer priority.** The plan builds CLI-first (rq-style, works everywhere agents
    run) and adds the LSP front in Phase 4 because Claude Code's `LSP` tool and post-edit
    diagnostics need it. Reverse the order if the LSP tool is the primary surface.
-3. ~~**Rubydex: compete or build on it?**~~ **Answered by the spike (§8): lift, don't
+3. ~~**Rubydex: match it or build on it?**~~ **Answered by the spike (§8): lift, don't
    depend, don't wait.**
 4. **Residue policy.** Ranked candidates with `confidence < 1` (recommended for agents)
    versus rwr's strict refuse-and-report. Both can coexist behind a flag; which is the
@@ -394,7 +394,7 @@ these. Worktrees: no issue. Ranking/confidence: no issue. Sorbet: no issue.
 - **Maintenance**: a semantic engine tracks Ruby grammar (delegated — Prism is Shopify's
   parser and CRuby's default), Rails DSL drift, and Sorbet/RBS formats. Bounded but real,
   and it lands on one person.
-- **Competitive**: Shopify has a funded team on Rubydex; the honest risk is not that they
+- **Peer projects**: Shopify has a funded team on Rubydex; the honest risk is not that they
   ship our tool but that "good enough" per-workspace persistence shrinks the pain gap for
   ordinary repos. The 10M-line/many-worktree case stays outside their model regardless.
 - **Capped downside**: Phase 0 is 1–2 weeks and its main artifact — the TracePoint gold

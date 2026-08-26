@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Score every engine that answers goToDefinition against the same runtime truth.
 
-    script/compete.py --engine trekr --gold /tmp/trekr-gold-discourse.ndjson
-    script/compete.py --all --gold /tmp/trekr-gold-discourse.ndjson
+    script/compare.py --engine trekr --gold /tmp/trekr-gold-discourse.ndjson
+    script/compare.py --all --gold /tmp/trekr-gold-discourse.ndjson
 
 Session 9's head-to-head hand-picked 45 positions and adjudicated the
 disagreements by eye. It answered "who is better today" and could not answer
@@ -11,7 +11,7 @@ drives each engine over the **LSP protocol** — the surface an agent actually
 uses — against the **TracePoint gold set**, so the scoring is the same
 instrument for everyone and a future session re-runs it with one command.
 
-**What is comparable, and what is not.** Competitors return locations with no
+**What is comparable, and what is not.** The other engines return locations with no
 status and no confidence: an answer they are sure of and a guess look identical.
 So the scored columns are the ones every engine can produce —
 
@@ -34,7 +34,7 @@ import argparse, collections, json, os, random, re, select, statistics, subproce
 from urllib.parse import quote, unquote, urlparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-GEMS = os.path.expanduser("~/.local/share/trekr-compete")
+GEMS = os.path.expanduser("~/.local/share/trekr-compare")
 RUBY = os.path.expanduser("~/.rvm/rubies/ruby-3.4.9/bin")
 
 try:

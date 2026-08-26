@@ -20,7 +20,7 @@ Facts are keyed by git blob OID, so every worktree of a repo shares one index, a
 branch switch reparses only what is genuinely new, and a reindex with no edits
 parses nothing at all. Measured on rails: 1.5 s cold, **61 ms** to reindex with
 nothing changed, **~0.2 s and zero parses** for a second worktree. Rubydex —
-Shopify's Rust indexer, and the closest thing to a competitor — pays 177 ms for
+Shopify's Rust indexer, and the closest peer — pays 177 ms for
 that same no-op, and pays it again on every process boot because it never writes
 anything down.
 

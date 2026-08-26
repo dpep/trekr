@@ -1,6 +1,6 @@
-# The competitive series
+# The comparison series
 
-**Are we closing or stalling?** Session 9's head-to-head could not answer that.
+**Are we closing the gap on the other engines, or stalling?** Session 9's head-to-head could not answer that.
 It hand-picked 45 positions and adjudicated the disagreements by eye, which
 answered "who is better today" and could never be run again the same way.
 
@@ -11,16 +11,23 @@ set**, so the instrument is the same for everyone and the next run is comparable
 to this one.
 
 ```sh
-script/compete.py --engine trekr --engine ruby-lsp \
-  --root ~/code/lib/ruby/discourse --sample 500 --out /tmp/compete.ndjson
+script/compare.py --engine trekr --engine ruby-lsp \
+  --root ~/code/lib/ruby/discourse --sample 500 --out /tmp/compare.ndjson
 ```
 
 Re-run it when ruby-lsp 0.27 ships, when Rubydex grows a call graph, or when
 trekr changes something that should move a column.
 
+**Each re-run also diffs Rubydex's conformance corpus against ours.** Their
+`ruby-behaviors` spec and their indexer/resolution tests keep growing, and every
+case they add that we have not lifted is a free regression test for behaviour
+somebody else has already thought about (MIT, with attribution — CLAUDE.md's
+lifting rules). Diff their test corpus against `tests/` and `docs/ruby-behaviors.md`
+as part of the run, and record what was taken.
+
 ## What is scored, and what had to be given up to score it
 
-Competitors return locations with no status and no confidence: an answer they
+The other engines return locations with no status and no confidence: an answer they
 are sure of and a guess look identical on the wire. So the columns are the ones
 every engine can produce.
 
@@ -105,7 +112,7 @@ often and is always right, and they are not the same tool.
 | sorbet `--typed=true` | 0.6.13439 | 2026-08-25 | widget_shop | 63 | 58.7 % | 19.0 % | 19.0 % | 39.7 % | 0.5 s + 12.2 s index | 0.3 ms | 0.23 ms | 138 MB |
 
 All rows: app-scope gold sites, seed 12, Apple M2, quiet machine, warm OS page
-cache. trekr's index was already on disk (that is the product); the competitors'
+cache. trekr's index was already on disk (that is the product); the peers'
 setup and indexing are reported because they are not.
 
 **The second trekr row is here because `answered` moved.** Computed-name
@@ -170,7 +177,7 @@ and the four it lost, is in [BASELINE.md](BASELINE.md).
 ## Rubydex, as a library: not scorable, and here is why
 
 The `rubydex` gem now ships (0.4.0, prebuilt `arm64-darwin`), which it did not
-when PLAN §8 read the competition. It was examined for a cheap definition API
+when PLAN §8 last read the field. It was examined for a cheap definition API
 and does not have one:
 
 * Its ruby-lsp addon is a **linter and formatter**, and it refuses to load
@@ -187,13 +194,13 @@ only through ruby-lsp 0.27.0.beta5, which is built on it.
 
 ```sh
 # one-time: an isolated gem home per engine, so no corpus bundle is touched
-GEM_HOME=~/.local/share/trekr-compete/gems      gem install ruby-lsp sorbet sorbet-runtime
-GEM_HOME=~/.local/share/trekr-compete/gems-beta gem install --prerelease ruby-lsp:0.27.0.beta5
+GEM_HOME=~/.local/share/trekr-compare/gems      gem install ruby-lsp sorbet sorbet-runtime
+GEM_HOME=~/.local/share/trekr-compare/gems-beta gem install --prerelease ruby-lsp:0.27.0.beta5
 
-script/compete.py --engine trekr --engine ruby-lsp \
-  --root ~/code/lib/ruby/discourse --sample 500 --out /tmp/compete.ndjson
+script/compare.py --engine trekr --engine ruby-lsp \
+  --root ~/code/lib/ruby/discourse --sample 500 --out /tmp/compare.ndjson
 
-script/compete.py --engine trekr --engine sorbet --engine sorbet-typed \
+script/compare.py --engine trekr --engine sorbet --engine sorbet-typed \
   --gold /tmp/trekr-gold-widget.ndjson \
   --root ~/code/lib/ruby/widget_shop --rewrite-root ~/code/lib/ruby/widget_shop \
   --sample 0 --corpus widget_shop

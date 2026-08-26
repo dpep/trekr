@@ -3,7 +3,7 @@
 `trekr` is a **Ruby code-intelligence engine** — position→meaning and
 definition→references for massive legacy Rails monorepos, agent-first. Read
 [docs/PLAN.md](docs/PLAN.md) before anything else: it carries the research, the
-competitive read (Ruby LSP / Rubydex / Sorbet), the architecture, the measurement
+read on the other engines (Ruby LSP / Rubydex / Sorbet), the architecture, the measurement
 gate, and the phased roadmap. Keep it — and the docs that grow out of it — in sync
 with the code in the same commit, rq/rwr style.
 
@@ -59,8 +59,8 @@ Rust, single crate until there's a concrete reason to split. `cargo` is keg-only
 - Bench corpora (large, real): `~/code/lib/ruby/rails`, `~/code/lib/ruby/discourse`,
   `~/code/lib/ruby/mastodon`. Ranking/scale checks belong there, not in unit tests.
 - Accuracy is `script/gold.py` against the TracePoint gold set
-  ([BASELINE.md](docs/BASELINE.md)); the competition is `script/compete.py`
-  against the same sites over LSP ([COMPETITIVE.md](docs/COMPETITIVE.md)), which
+  ([BASELINE.md](docs/BASELINE.md)); the other engines are scored by `script/compare.py`
+  against the same sites over LSP ([COMPARISON.md](docs/COMPARISON.md)), which
   is an append-only series — add a dated row, never edit one.
 
 ## Landing changes
