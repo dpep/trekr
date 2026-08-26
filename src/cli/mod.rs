@@ -585,6 +585,9 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
     let root = scan::repo_root(Path::new("."))?;
     let root_str = root.to_string_lossy().into_owned();
     let store = open_store()?;
+    if !store.has_checkout(&root_str)? {
+        return not_indexed(out, &root);
+    }
 
     // A bare name narrows nothing, so it keeps the whole-mention view —
     // definitions and constant references included, which a method-shaped
@@ -741,6 +744,38 @@ fn tree_for(path: &Path, pinned: Option<&Path>) -> anyhow::Result<(PathBuf, Stor
     Ok((root, store, tree))
 }
 
+/// A checkout nobody has indexed, when a query needs one.
+///
+/// Worth its own answer because the alternative is a lie by omission: an empty
+/// tree resolves nothing, so the query came back `residue` — "no indexed
+/// constant by that name" — which reads as *we looked and Ruby does not have
+/// it* when the truth is *nobody has looked yet*. One is a finding about the
+/// code, the other is a setup step, and they call for opposite reactions.
+fn not_indexed(out: Output, root: &Path) -> anyhow::Result<ExitCode> {
+    let root = root.to_string_lossy().to_string();
+    let hint = format!("trekr --index {}", paths::pretty(&root));
+    match out {
+        Output::Text => {
+            eprintln!(
+                "trekr: {} is not indexed — run: {hint}",
+                paths::pretty(&root)
+            )
+        }
+        _ => emit_json(
+            out,
+            &serde_json::json!({
+                "status": "not_indexed",
+                "repo": root,
+                "reason": "this checkout has never been indexed, so there is nothing to answer from",
+                "hint": hint,
+            }),
+        )?,
+    }
+    // Exit 2, not 1: `1` is this tool's "a definitive nothing" and would tell a
+    // script the question was answered. It was not asked.
+    Ok(ExitCode::from(2))
+}
+
 /// The checkout a path belongs to: its git repository, or failing that the
 /// indexed root that contains it.
 ///
@@ -815,7 +850,10 @@ fn cmd_def(
             }],
         }),
         position::Under::Constant(reference) => {
-            let (root, _, tree) = tree_for(Path::new(&spec.path), pinned)?;
+            let (root, store, tree) = tree_for(Path::new(&spec.path), pinned)?;
+            if !store.has_checkout(&root.to_string_lossy())? {
+                return not_indexed(out, &root);
+            }
             context = Some(root.to_string_lossy().into_owned());
             let resolution = tree.resolve(&reference.name, &reference.nesting);
             let mut value = serde_json::to_value(&resolution)?;
@@ -834,7 +872,10 @@ fn cmd_def(
             value
         }
         position::Under::Call(call) => {
-            let (root, _, tree) = tree_for(Path::new(&spec.path), pinned)?;
+            let (root, store, tree) = tree_for(Path::new(&spec.path), pinned)?;
+            if !store.has_checkout(&root.to_string_lossy())? {
+                return not_indexed(out, &root);
+            }
             context = Some(root.to_string_lossy().into_owned());
             let relative = std::fs::canonicalize(&spec.path)
                 .ok()
@@ -969,7 +1010,10 @@ fn explanation(answer: &serde_json::Value) -> String {
 }
 
 fn cmd_ancestors(out: Output, name: &str) -> anyhow::Result<ExitCode> {
-    let (_, _, tree) = tree_here()?;
+    let (root, store, tree) = tree_here()?;
+    if !store.has_checkout(&root.to_string_lossy())? {
+        return not_indexed(out, &root);
+    }
     let resolution = tree.resolve(name, &[]);
     let Some(fqn) = resolution.fqn.clone() else {
         return report(

@@ -1145,11 +1145,14 @@ fn human_output_shortens_home_and_json_keeps_it_absolute() {
 
     for args in [
         vec!["--status"],
-        vec!["--def", "app.rb:8:7"],
-        vec!["--refs", "Widget#save"],
+        vec!["--def", "widget.rb:7:5"],
+        vec!["--refs", "Widget#helper"],
     ] {
         let out = trekr_env(&db, &dir, &args, &vars);
         let text = String::from_utf8_lossy(&out.stdout);
+        // Non-empty, so the absence of an absolute path is a real result and
+        // not an error path printing nothing.
+        assert!(!text.trim().is_empty(), "{args:?} printed nothing");
         assert!(
             !text.contains(&absolute),
             "{args:?} text printed an absolute HOME path: {text}"
@@ -1165,4 +1168,44 @@ fn human_output_shortens_home_and_json_keeps_it_absolute() {
         "--json must keep absolute paths: {text}"
     );
     assert!(!text.contains('~'), "--json must not shorten: {text}");
+}
+
+/// A checkout nobody indexed says so, instead of answering `residue`.
+///
+/// The old answer — "no indexed constant by that name" — reads as a finding
+/// about the code when it is a fact about the setup, and the two call for
+/// opposite reactions. Exit 2, because exit 1 is this tool's "a definitive
+/// nothing" and would tell a script the question had been answered.
+#[test]
+fn an_unindexed_checkout_is_a_setup_problem_not_a_residue() {
+    let (dir, db) = scratch("not-indexed");
+    repo(&dir);
+
+    for args in [
+        vec!["--def", "widget.rb:7:5"],
+        vec!["--refs", "Widget#helper"],
+    ] {
+        let out = trekr(&db, &dir, &args);
+        assert_eq!(out.status.code(), Some(2), "{args:?} should not be exit 1");
+        let text = String::from_utf8_lossy(&out.stderr);
+        assert!(text.contains("not indexed"), "{args:?}: {text}");
+        assert!(
+            text.contains("--index"),
+            "{args:?} should say what to run: {text}"
+        );
+    }
+
+    let json = trekr(&db, &dir, &["--def", "widget.rb:7:5", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("json on stdout");
+    assert_eq!(value["status"], "not_indexed");
+    assert!(
+        value["repo"]
+            .as_str()
+            .is_some_and(|r| r.ends_with("not-indexed"))
+    );
+
+    // And it stops being a setup problem the moment it is indexed.
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    let out = trekr(&db, &dir, &["--def", "widget.rb:7:5"]);
+    assert_eq!(out.status.code(), Some(0), "an indexed checkout answers");
 }
