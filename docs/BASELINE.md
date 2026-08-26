@@ -1540,6 +1540,66 @@ the declines are plain `def`s that trekr already extracts and offers, which
 makes them typing and ranking problems rather than coverage ones.
 
 
+## Dead-code candidates, validated against git history (session 36)
+
+DEC-037 predicted **60–75 %** precision for the `unreferenced` tier and set the
+bar at 70 %. Measured, and the number that matters is not the one predicted.
+
+**Method.** A discourse worktree at a commit **12 months old** (2025-08-26),
+indexed on its own, `--dead app/models app/services` → **1,297 candidates**.
+Ground truth: is a method of that name still defined anywhere in today's
+checkout? Then the control nobody would have thought to run without it — the
+same question asked of **400 randomly sampled methods from the same scope**,
+candidate or not.
+
+| tier | candidates | deleted since | vs base rate |
+| --- | ---: | ---: | ---: |
+| `unreferenced` | 248 | 19.8 % | **1.04×** |
+| `convention-only` | 368 | 3.3 % | **0.17×** |
+| `single-caller` | 681 | 25.3 % | 1.33× |
+| **base rate (random methods)** | 400 | **19.0 %** | 1.00× |
+
+### `unreferenced` has no measurable lift, and that is the finding
+
+19.8 % against a 19.0 % base rate. Flagging a method `unreferenced` in this
+corpus tells you **almost nothing** about whether a human will delete it. The
+predicted 60–75 % was wrong by a wide margin, and it was wrong in the direction
+that matters — toward overclaiming.
+
+Two reasons, and the second is a limit rather than a bug. Discourse's models and
+services are called from ERB templates, serializers and specs that a Ruby-only
+engine does not index. And humans delete code when a *feature* is removed, not
+when a method becomes unreachable — so 12-month deletion is a weak proxy for
+deadness in the first place, and a genuinely dead method that nobody got around
+to deleting scores here as a false positive.
+
+**What the control changes.** Without it, 19.8 % reads as a poor but real
+signal. With it, it reads as no signal at all. The base-rate run cost one
+command and it is the difference between shipping a claim and shipping a
+disclosure.
+
+### `convention-only` is strong, in the direction nobody was looking
+
+**3.3 % deleted against a 19.0 % base — those methods survive nearly six times
+more often than average.** The tier is not finding dead code; it is finding
+*genuinely used* code that looks dead to a naive search, which is exactly what
+the symbol-reference fact was built to do. It validates the prerequisite
+independently of whether the dead-code feature ever earns its keep.
+
+### What this means for what shipped
+
+Per DEC-038's reverses-if, `--dead` ships as **disclosure only**. The tiers stay
+advisory, the output keeps saying what was looked for rather than what is dead,
+and no precision claim is made anywhere. `single-caller` at 1.33× is the tier
+with the best case, and it is the one Daniel asked for by name — an inlining
+candidate is a judgement a human makes, and one caller is a fact rather than a
+prediction.
+
+**What would make `unreferenced` worth trusting**: indexing the call sites it
+cannot see. ERB templates and the spec suite are where the missing references
+are, and until those are read, "no references found" in a Rails app is a
+statement about trekr's inputs at least as much as about the user's code.
+
 ## Why the chain misses a known owner (session 34)
 
 Session 33 called this the largest thing left — "1,612 sites where the receiver
