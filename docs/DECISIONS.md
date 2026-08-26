@@ -1365,3 +1365,115 @@ caller is found that must act differently on a description than on a generator.
 source win the whole chain before a stub wins any of it, so a stub answers only
 when it is all there is, which is also what makes an `rbi` answer worth
 reacting to: *the implementation is not indexed.*
+
+## DEC-035 — Freshness is a probe and a budget, not a daemon
+
+**Decided (design; `not_indexed` shipped, the rest specified).** A query never
+blocks on an index and never spawns one. Three layers:
+
+1. **An O(1) probe** decides whether the checkout *might* have moved.
+2. **A bounded, query-biased refresh** inside the query when it has, prioritising
+   the file being asked about.
+3. **Disclosure** — `not_indexed`, and `coverage: warming` — instead of waiting.
+
+### What the measurements forced
+
+Daniel's 10M-line monorepo indexes cold in **3 minutes** and re-indexes with
+nothing changed in **6 seconds**. Our corpora, no-op, steady state:
+
+| | files | total | scan | known-diff | store-write |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| rails | 3,307 | 294 ms | 117 ms | 77 ms | 78 ms |
+| discourse | 11,301 | **185 ms** | 135 ms | 5 ms | 42 ms |
+| the monorepo | ~30× discourse | **6 s** | most of it | — | trailing |
+
+**Extrapolating discourse's 185 ms by file count predicts ~5.5 s at 30×, and
+the observed number is 6 s.** The no-op cost is very nearly linear in worktree
+size, which is the calibration worth keeping: for this shape of work, linear
+extrapolation from discourse is trustworthy to about 10 %.
+
+**So folding a scan into the query path is off the table at target scale**, and
+that is the whole reason the probe exists. 185 ms is already too slow to pay per
+query; 6 s is not a policy, it is an outage.
+
+**Where the scan time actually goes**, measured on discourse (24,447 tracked
+files):
+
+| git call | time |
+| --- | ---: |
+| `ls-files -s -z` (tracked + OIDs) | **10–30 ms** |
+| `diff-files --name-only -z` | 20 ms |
+| **`ls-files -o --exclude-standard -z`** (untracked) | **300 ms** |
+
+Untracked-file discovery is ~90 % of it, and on a no-op it by construction finds
+nothing. It cannot be made cheap — it is a full worktree walk that has to honour
+`.gitignore` — so it belongs in an explicit `--index`, not in a query.
+
+**This is *not* rq's D5 disease**, which was checked before assuming: trekr's
+scan is three `git` invocations total (`scan/mod.rs:121–129`), not a glob per
+extension. The 6 s is git walking a very large worktree, not trekr asking git
+the same question repeatedly.
+
+### The probe
+
+`stat(.git/index)` — mtime and size — against what the store recorded, plus
+`HEAD`. Measured on discourse: **~0 ms for the stat** on a 2.3 MB index, ~5 ms
+for `rev-parse` (a subprocess, and the floor is the fork). Both are O(1) in
+repo size, which is the property that matters.
+
+**What the probe cannot see, stated rather than discovered later:** a tracked
+file edited in the working tree with nothing having refreshed the git index, and
+a brand-new untracked file. Git touches `.git/index` on many ordinary operations
+(`status`, `diff`, `add`, `checkout`), so the gap is narrower in practice than in
+theory — but it is real, and the answer is disclosure plus an explicit
+`--index`, never a claim of freshness we cannot back.
+
+### Lifted from rq, and what was left
+
+rq solved this first (`~/code/lib/rust/rq/src/index/mod.rs`):
+
+* **Taken — budgeted, query-biased refresh** (`index_budgeted`, `index/mod.rs:113`):
+  files relevant to the current query are refreshed first and ignore the budget;
+  the rest stream within a time slice; coverage is marked `complete` vs
+  `warming`. It is the shape that makes freshness free at the point of use, and
+  trekr's disclosure vocabulary already has room for `warming`.
+* **Taken — the idea that the budget should track observed cost**
+  (`cli/mod.rs:2883`). At 6 s scans a fixed budget is meaningless.
+* **Adapted — mtime.** rq trusts mtime alone. trekr can afford better:
+  **mtime as filter, blob hash as truth**. A moved mtime with identical bytes
+  costs one hash, not a parse — and trekr is content-addressed, so an unchanged
+  hash means the facts are already there.
+* **Rejected — mtime in the fact layer.** rq's unit is a file; trekr's is a blob
+  in a store shared across checkouts. Per-file mtime is *checkout-side
+  bookkeeping* and must live with the file map, never below `blob`, or the
+  sharing that makes N worktrees cost one index is lost (ARCHITECTURE layer 1).
+
+### Why no background process
+
+The obvious design — kick an index and return — was rejected, and it is worth
+saying why, because it is the first thing anyone proposes.
+
+trekr is **daemon-free by first principle** (CLAUDE.md; PLAN §202: *state on
+disk, any process can answer*), and there is today **no detached work anywhere
+in `src/`**. A background indexer would introduce: a second writer racing
+SQLite's single write lock, orphaned processes outliving the CLI that spawned
+them, and the question of who owns an index that nobody asked for. The
+budget-and-probe design gets the same user-visible property — freshness without
+waiting — with none of that, because the work happens *inside* a query that was
+going to run anyway.
+
+The one thing it does not give is a cold 3-minute index happening on its own.
+That stays explicit, and `not_indexed` is how it asks: the root, the command,
+exit 2.
+
+### Shipped now
+
+`not_indexed`, because it is the half that needs no policy: `--def`, `--refs`
+and `--ancestors` on an unindexed checkout say so and exit 2, instead of
+answering `residue` and reading as a finding about the code.
+
+**Reverses if** the probe's blind spot turns out to bite in practice — the shape
+to watch is an editor-driven workflow where files change constantly and nothing
+touches `.git/index`. The answer then is a filesystem watcher in the LSP front,
+which is a resident process that already exists and may legitimately watch,
+rather than a daemon for the CLI.
