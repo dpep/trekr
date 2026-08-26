@@ -13,6 +13,28 @@ sure it is rather than guessing.
 
 Ruby only. For "where is `Foo` defined" across languages, use `rq`.
 
+## One argument, dispatched on shape
+
+```sh
+trekr 'Widget#save'              # method: where it is, and who can reach it
+trekr Widget                     # constant: where it is, and what it inherits
+trekr app/models/user.rb:42:11   # position: what is at it
+trekr app/models/user.rb:42      # same, column optional
+```
+
+Every shape takes `--json`. The flags below are the explicit forms of the same
+things and are not going away — prefer them in scripts, where relying on shape
+inference is a way to get surprised.
+
+**The boundary with `rq`, because it is easy to get wrong.** `rq Widget` answers
+"where is this name defined", across Ruby, Rust, Go, Python, TypeScript — that
+is the right tool for finding a definition by name. `trekr Widget` answers the
+*Ruby* question about it: which file declares it, what it inherits, and for a
+method how many call sites can actually reach it, tiered. Reach for rq to
+**find** a name; reach for trekr to understand what a Ruby name **is** and who
+uses it. They are not substitutes, and neither is broken when it declines to do
+the other's job.
+
 ## Before the first question on a new machine
 
 **Is `trekr` on PATH?** If not, nothing here works and the failure is quiet —

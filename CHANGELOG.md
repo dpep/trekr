@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- **`trekr <input>` takes one argument and dispatches on its shape.**
+
+  ```sh
+  trekr 'Widget#save'              # where it is, and who can reach it
+  trekr Widget                     # where it is, and what it inherits
+  trekr app/models/user.rb:42:11   # what is at that position
+  trekr app/models/user.rb:42      # same, column optional
+  ```
+
+  A method or constant gets a **card**, which is why this is not an alias for a
+  flag: two commands' worth of answer in one. A method card carries the
+  definition, its `kind`, and the confirmed/possible/excluded tier counts; a
+  constant card carries the declaration sites and what it inherits. `--json`
+  on every shape.
+
+  **The flags are unchanged and remain the explicit form** — scripts should use
+  them rather than depend on shape inference. A shape trekr cannot name is
+  refused with the shapes spelled out, never guessed at.
+
+
 - **`enum :status` now defines `Model.statuses`.** The macro model generated the
   members' predicates and scopes but never the attribute's own class method
   holding the mapping — so `SidebarUrl.segments` resolved to nothing.

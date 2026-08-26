@@ -1406,3 +1406,60 @@ fn an_edit_git_has_not_noticed_is_not_seen_by_the_probe() {
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(value["sites"][0]["line"], 14, "after --index: {value}");
 }
+
+/// `trekr <input>` dispatches on shape (DEC-036), and every shape speaks JSON.
+#[test]
+fn the_bare_grammar_dispatches_on_shape() {
+    let (dir, db) = scratch("grammar");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+
+    // A method: definition plus the tier counts, which is the whole reason the
+    // grammar is not just an alias for a flag.
+    let out = trekr(&db, &dir, &["Widget#helper", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["owner"], "Widget");
+    assert_eq!(value["method"], "helper");
+    assert_eq!(value["kind"], "definition");
+    assert!(
+        value["counts"]["confirmed"].as_u64().unwrap_or(0) >= 1,
+        "{value}"
+    );
+    assert!(
+        !value["definition"].as_array().unwrap().is_empty(),
+        "{value}"
+    );
+
+    // A constant: definition plus what it inherits.
+    let out = trekr(&db, &dir, &["Widget", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["fqn"], "Widget");
+    assert!(
+        value["ancestors"].as_array().is_some_and(|a| !a.is_empty()),
+        "{value}"
+    );
+
+    // A position, with and without a column — both reach `--def`.
+    for spec in ["widget.rb:7:5", "widget.rb:7"] {
+        let out = trekr(&db, &dir, &[spec, "--json"]);
+        let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(value["name"], "helper", "{spec}: {value}");
+    }
+
+    // The flags stay the explicit form — a script never has to rely on shape.
+    let bare = trekr(&db, &dir, &["widget.rb:7:5", "--json"]);
+    let flag = trekr(&db, &dir, &["--def", "widget.rb:7:5", "--json"]);
+    assert_eq!(
+        bare.stdout, flag.stdout,
+        "bare and --def must agree exactly"
+    );
+
+    // A shape it cannot name is refused, not guessed at.
+    let out = trekr(&db, &dir, &["not a thing"]);
+    assert_eq!(out.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        text.contains("Expected"),
+        "the refusal spells the shapes: {text}"
+    );
+}

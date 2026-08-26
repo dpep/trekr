@@ -35,6 +35,16 @@ use std::process::ExitCode;
         2  the request could not be served (not a repo, unreadable file)"
 )]
 struct Cli {
+    /// What to look up, dispatched on its shape: `FILE:LINE:COL` and
+    /// `FILE:LINE` ask what is at a position, `Owner#method` or `Owner.method`
+    /// asks about a method, and a bare `Constant` asks about a class or module.
+    ///
+    /// Sugar over the flags, never a replacement: every shape it reaches is
+    /// still addressable explicitly, so a script never has to depend on
+    /// inference (DEC-036).
+    #[arg(value_name = "INPUT")]
+    input: Option<String>,
+
     /// Index the checkout containing this path (default: the current directory).
     #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = ".")]
     index: Option<PathBuf>,
@@ -176,10 +186,12 @@ pub fn run() -> ExitCode {
         cmd_status(out)
     } else if cli.usage {
         cmd_usage(out)
+    } else if let Some(input) = &cli.input {
+        cmd_bare(out, input, cli.explain, cli.context.as_deref())
     } else {
         eprintln!(
-            "trekr: nothing to do (try --index, --status, --symbols FILE, \
-             --refs NAME, --def FILE:LINE:COL, --usage)"
+            "trekr: nothing to do (try `trekr Widget#save`, `trekr app.rb:42`, \
+             or --index, --status, --usage)"
         );
         return ExitCode::from(1);
     };
@@ -593,6 +605,142 @@ fn gather_refs(
     Ok((found, counts))
 }
 
+/// What a name *is*, in one answer: where it is defined, what kind of location
+/// that is, and how many call sites can actually reach it.
+///
+/// The reason the bare grammar earns its keep rather than aliasing a flag. Asked
+/// about `Widget#save` a person wants the definition **and** whether anything
+/// calls it; asked about `Widget` they want the definition **and** what it
+/// inherits. Two commands' worth of answer, which is what makes this worth a
+/// shape rather than a synonym.
+fn cmd_card(out: Output, text: &str) -> anyhow::Result<ExitCode> {
+    use crate::resolve::refs;
+    let query = refs::Query::parse(text);
+    let root = scan::repo_root(Path::new("."))?;
+    let root_str = root.to_string_lossy().into_owned();
+    let store = open_store()?;
+    if !store.has_checkout(&root_str)? {
+        return not_indexed(out, &root);
+    }
+    let tree = Tree::build(&store, &root_str)?;
+
+    // A constant: what it is, and what it inherits.
+    if query.owner.is_none() {
+        let resolution = tree.resolve(&query.name, &[]);
+        let Some(fqn) = resolution.fqn.clone() else {
+            return report(
+                out,
+                serde_json::json!({
+                    "query": text,
+                    "status": "residue",
+                    "confidence": 0.0,
+                    "scopes_tried": resolution.scopes_tried,
+                }),
+                false,
+                &format!("no indexed constant named {}", query.name),
+            );
+        };
+        let chain = tree.ancestors(&fqn);
+        let sites = tree.sites(&fqn).to_vec();
+        let text_out = card_text(&fqn, &sites, &chain.chain, None);
+        return report(
+            out,
+            serde_json::json!({
+                "query": text,
+                "status": "resolved",
+                "fqn": fqn,
+                "kind": tree.kind_of(&fqn),
+                "definition": sites,
+                "ancestors": chain.chain,
+                "unresolved_ancestors": chain.unresolved,
+            }),
+            true,
+            &text_out,
+        );
+    }
+
+    // A method: where it is, and who can reach it.
+    let (owner, definition) = refs::definition_of(&tree, &query);
+    let Some(owner) = owner else {
+        return report(
+            out,
+            serde_json::json!({ "query": text, "status": "residue", "confidence": 0.0 }),
+            false,
+            &format!(
+                "no indexed constant named {}",
+                query.owner.unwrap_or_default()
+            ),
+        );
+    };
+    let (_, counts) = gather_refs(&tree, &store, &root, &root_str, &query, Some(&owner), false)?;
+    let kind = tree
+        .lookup(&owner, query.singleton, &query.name)
+        .map(|method| method.kind());
+    let shown = match query.singleton {
+        true => format!("{owner}.{}", query.name),
+        false => format!("{owner}#{}", query.name),
+    };
+    let text_out = card_text(&shown, &definition, &[], Some(&counts));
+    report(
+        out,
+        serde_json::json!({
+            "query": text,
+            "status": "resolved",
+            "owner": owner,
+            "method": query.name,
+            "singleton": query.singleton,
+            "kind": kind,
+            "definition": definition,
+            "counts": counts,
+        }),
+        !definition.is_empty(),
+        &text_out,
+    )
+}
+
+/// The card as a person reads it: the definition, then the one line of context
+/// that shape earned — reference tiers for a method, the chain for a constant.
+fn card_text(
+    name: &str,
+    sites: &[crate::tree::Site],
+    ancestors: &[String],
+    counts: Option<&crate::resolve::refs::Counts>,
+) -> String {
+    let mut out = vec![name.to_string()];
+    for site in sites {
+        out.push(format!(
+            "  {}:{}:{}",
+            paths::pretty(&site.path),
+            site.line,
+            site.col
+        ));
+    }
+    if let Some(counts) = counts {
+        out.push(format!(
+            "  {} confirmed · {} possible · {} excluded",
+            counts.confirmed, counts.possible, counts.excluded
+        ));
+    }
+    // The chain contains the thing itself, and not always first: a prepended
+    // module precedes it. Filter by name rather than trusting the position.
+    let rest: Vec<&str> = ancestors
+        .iter()
+        .map(String::as_str)
+        .filter(|entry| *entry != name)
+        .collect();
+    if !rest.is_empty() {
+        let shown: Vec<&str> = rest.iter().take(5).copied().collect();
+        let more = rest.len().saturating_sub(5);
+        let tail = if more > 0 {
+            format!(" (+{more} more)")
+        } else {
+            String::new()
+        };
+        out.push(format!("  < {}{tail}", shown.join(", ")));
+    }
+    out.join("\n")
+}
+
 fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<ExitCode> {
     use crate::resolve::refs;
     let query = refs::Query::parse(text);
@@ -812,6 +960,44 @@ fn refresh_for_query(store: &mut Store, root: &Path, file: &Path) -> Option<serd
         "refreshed": changed.then(|| relative.clone()),
         "hint": format!("trekr --index {}", paths::pretty(&root_str)),
     }))
+}
+
+/// `trekr <input>` — one argument, dispatched on its shape (DEC-036).
+///
+/// The shapes are disjoint by construction rather than by preference order: a
+/// position has digits after a colon, a method has `#` or `.`, and a constant
+/// begins with a capital. Anything else is refused with the shapes spelled out,
+/// because guessing at a fourth meaning is how a grammar starts lying.
+///
+/// **Not an `rq` clone.** "Where is this name defined", across languages, is
+/// rq's question. A bare constant here answers the *Ruby* question — what it
+/// is, what it inherits, how many call sites can reach it — and the skill says
+/// so, so an agent does not reach for the wrong tool and conclude one of them
+/// is broken.
+fn cmd_bare(
+    out: Output,
+    input: &str,
+    explain: bool,
+    context: Option<&Path>,
+) -> anyhow::Result<ExitCode> {
+    // A position: the last field is a line number, so `Spec::parse` accepts it.
+    // Checked first because a Windows-ish path could contain anything else.
+    if position::Spec::parse(input).is_some() {
+        return cmd_def(out, input, explain, context);
+    }
+    // A method: `Owner#method` or `Owner.method`, which `--refs` already parses
+    // and which is the one shape with a genuinely richer answer than a flag.
+    if input.contains('#') || (input.contains('.') && !input.contains('/')) {
+        return cmd_card(out, input);
+    }
+    if input.starts_with(|c: char| c.is_ascii_uppercase()) {
+        return cmd_card(out, input);
+    }
+    eprintln!(
+        "trekr: cannot tell what `{input}` is. Expected FILE:LINE[:COL], \
+         Owner#method, Owner.method, or a Constant."
+    );
+    Ok(ExitCode::from(2))
 }
 
 /// A checkout nobody has indexed, when a query needs one.
