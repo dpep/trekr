@@ -1540,6 +1540,56 @@ the declines are plain `def`s that trekr already extracts and offers, which
 makes them typing and ranking problems rather than coverage ones.
 
 
+## The typing ceiling, re-keyed (session 33)
+
+Session 31 proposed re-keying the declined population on *what would have to be
+known* to type the receiver, rather than on what the receiver looks like. Done,
+over the 3,202 declined discourse app sites that remain once the extraction work
+of sessions 28–32 is set aside. Promotion precision is what the slice would
+score if its top candidate were promoted outright.
+
+| what would have to be known | sites | share | precision |
+| --- | ---: | ---: | ---: |
+| **nothing — the receiver is known, the owner is not in its chain** | 1,612 | **50.3 %** | 75.6 % |
+| a parameter type, or a return type for a self-call | 538 | 16.8 % | 30.1 % |
+| a return type for the previous link (chained) | 502 | 15.7 % | 26.1 % |
+| nothing — a constant receiver is already typed | 330 | 10.3 % | 3.9 % |
+| an ivar's type, assigned in another method | 113 | 3.5 % | 5.3 % |
+| a literal receiver is typed; the owner is elsewhere | 59 | 1.8 % | 33.9 % |
+| other | 48 | 1.5 % | 16.7 % |
+
+**The headline corrects the premise.** *Half the declined population needs no
+typing at all.* In 1,612 sites the receiver is already known and the method
+simply is not in its ancestor chain — a coverage question, not an inference one.
+Add the 330 constant receivers and **60 % of what looks like a typing frontier
+is not one**. Genuine typing gaps — parameters, return types, cross-method
+ivars — are **36 %** of the declines, and the two big ones sit at 26–30 %
+promotion precision, which is nowhere near shippable.
+
+### The `present?` caution, now with a number — and it is worse than I said
+
+Session 31 flagged that promoting core-extension receivers would run into
+DEC-027, since `present?` is defined on `Object`, `NilClass`, `String` and
+`Array` at once. It also guessed the truth ranked first "~99 %" of the time for
+the `Object`-owned subset, and used that to call the slice tempting.
+
+Measured over the whole family — 680 sites, the receiver being core or an
+ActiveSupport core extension — **the truth ranks first 51.9 % of the time**. The
+owners really are spread: `Object` 301, `Kernel` 112, `NilClass` 94, `Numeric`
+70, `String` 54, `Array` 22. Promoting them would be wrong about half the time,
+not occasionally.
+
+So the caution stands and hardens: this slice cannot be promoted to `resolved`,
+and by DEC-027 it could only ever be `ambiguous` — which the gold scorer already
+counts alongside residue, so it would move disclosure and not `correct`. The
+largest names in it are `Fabricator` (280, a spec DSL defined at top level),
+`present?` (132), and `require` (112, the monkey-patched-core limit stated since
+session 12).
+
+**Read this before proposing a typing rung.** The frontier is real but smaller
+than its reputation, and the part with the best ranking is the part the language
+forbids us to commit to.
+
 ## The state of the residue (session 29)
 
 Read this instead of the session history if you are picking the project up.
