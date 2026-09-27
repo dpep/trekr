@@ -77,16 +77,19 @@ impl Members {
     pub(crate) fn of(tree: &Tree) -> Members {
         let mut methods: HashMap<(String, bool), Vec<Member>> = HashMap::new();
         let mut counts: HashMap<String, usize> = HashMap::new();
-        for (owner, singleton, method) in tree.method_table() {
+        tree.each_method(|owner, singleton, method| {
             *counts.entry(method.name.clone()).or_default() += 1;
             let member = Member {
                 private: method.visibility == "private",
                 rbi: method.site.is_rbi(),
-                via: method.via,
-                name: method.name,
+                via: method.via.clone(),
+                name: method.name.clone(),
             };
-            methods.entry((owner, singleton)).or_default().push(member);
-        }
+            methods
+                .entry((owner.to_string(), singleton))
+                .or_default()
+                .push(member);
+        });
         let mut children: HashMap<String, Vec<(String, String)>> = HashMap::new();
         for (fqn, kind) in tree.declared() {
             let (scope, name) = match fqn.rsplit_once("::") {

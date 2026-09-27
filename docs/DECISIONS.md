@@ -2086,3 +2086,52 @@ above. Not done: recorded as the lever.
 else, often enough that the 0.6 s moving onto that request is the common case.
 Then the listing should start at `initialize` rather than after the tree.
 
+## DEC-045 — Completion's listing streams method rows; the tree stays demand-loaded
+
+**Decided.** `Members::of` walks every method through `Tree::each_method`,
+which visits the names the tree already holds and streams the rest from the
+store one row at a time — owner resolved, listed, dropped — instead of loading
+all of them into the tree first (`method_table`, removed). The worker that
+lists (DEC-044) now hands back only the listing and drops its tree on its own
+thread; the session keeps its own tree. `Tree` is back to `Rc<Ancestry>`: it
+is no longer sent anywhere.
+
+**Why, measured.** DEC-044 recorded the listing as the bulk of an LSP
+session's memory and named this lever, with a warning: `references` would then
+pay per-name method loads, which it had measured at up to +200 ms on the first
+call. `trekr --lsp` on discourse, scripted client, alternating runs:
+
+| | before | after |
+| --- | ---: | ---: |
+| RSS, discourse tree + members | 451–453 MB | **294–295 MB** |
+| live heap at that point (`heap`) | 289 MB | **117 MB** |
+| RSS, whole session (+ rails, 300 docs) | 629–640 MB | **359 MB** |
+| ask at once: first `completion` | 581–591 ms | **370–383 ms** |
+| idle, then ask: first `references` | 134–143 ms | 143–149 ms |
+| 40 fresh `references`, total | 9.4 s | 8.5 s |
+
+The feared regression is ~10 ms, not 200. The first `references` on
+`Topic#category` loads 12 names (~30 ms of SQL) — the per-name cost was never
+the 200 ms. What DEC-044 measured was the other variant it tried, keeping the
+session's tree while the listed one carried every method. Tried here as well:
+handing the worker's tree back, as DEC-044 does, made the first `references`
+161–242 ms against 140–145 ms for keeping the session's, and noisier —
+consistent with dropping a 120 MB tree on the request thread. So the session
+keeps its tree.
+
+**Made checkable first.** Each owner's members came out in hash-map order, so
+a list cut at 300 items held a different 300 names in each process: two
+sessions of the same binary disagreed on 477 of 944 LSP answers. They are now
+sorted by name (stable, so a name's definitions keep lookup order). With that,
+the differential is exact: 944 LSP requests (completion, hover, definition,
+references) and 1,455 CLI queries byte-identical before and after this change.
+
+**What is left.** Most of the RSS above the tree after listing is the
+worker's freed tree, which the allocator keeps for reuse: the live heap with
+the tree and the listing is 117 MB against 294 MB of RSS. Rails' listing on
+top costs 6 MB where it cost 105.
+
+**Reverses if** a request is found that walks many method names on a fresh
+tree — the shape would be a first `references` or `incomingCalls` that reads
+hundreds of names. Then preload the names a scan will ask for in one query,
+rather than bring back the whole table.

@@ -52,7 +52,7 @@ pub(crate) struct Session {
 struct Listing {
     root: PathBuf,
     stamp: Stamp,
-    done: mpsc::Receiver<anyhow::Result<(Tree, Members)>>,
+    done: mpsc::Receiver<anyhow::Result<Members>>,
 }
 
 /// One checkout's assembled namespace, and what it was assembled from.
@@ -259,11 +259,11 @@ impl Session {
     /// Start listing a checkout's members on another thread, so the idle
     /// moment that prepares completion does not hold up the next request.
     ///
-    /// Listing loads every method in the checkout — half a second on
-    /// discourse — which on the serve loop's thread was half a second that any
-    /// request arriving meanwhile waited. The worker assembles its own tree
-    /// from its own connection, lists it, and hands both back: the tree it
-    /// sends has every method loaded, so it replaces the session's.
+    /// Listing reads every method in the checkout — a third of a second on
+    /// discourse — which on the serve loop's thread was time that any request
+    /// arriving meanwhile waited. The worker assembles its own tree from its
+    /// own connection to list from, and hands back only the listing: its tree
+    /// is dropped there, off the thread that answers requests.
     pub(crate) fn list_members(&mut self, root: &Path) -> anyhow::Result<()> {
         self.tree(root)?;
         let checkout = &self.checkouts[root];
@@ -282,11 +282,8 @@ impl Session {
         let key = root.to_string_lossy().into_owned();
         let (send, done) = mpsc::channel();
         std::thread::spawn(move || {
-            let built = Tree::build(&store, &key).map(|tree| {
-                let members = Members::of(&tree);
-                (tree, members)
-            });
-            let _ = send.send(built.map_err(Into::into));
+            let listed = Tree::build(&store, &key).map(|tree| Members::of(&tree));
+            let _ = send.send(listed.map_err(Into::into));
         });
         self.listing = Some(Listing {
             root: root.to_path_buf(),
@@ -313,11 +310,9 @@ impl Session {
             }
         };
         let listing = self.listing.take().expect("checked above");
-        if let (Some(Ok((tree, members))), Some(checkout)) =
-            (result, self.checkouts.get_mut(&listing.root))
+        if let (Some(Ok(members)), Some(checkout)) = (result, self.checkouts.get_mut(&listing.root))
             && checkout.built_from == Some(listing.stamp)
         {
-            checkout.tree = Some(tree);
             checkout.members = Some(members);
         }
     }

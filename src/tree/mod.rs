@@ -18,7 +18,7 @@ use crate::store::{DeclRow, EdgeRow, MethodRow, Store};
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::sync::Arc;
+use std::rc::Rc;
 
 /// A name's declaration site — the answer to "where is this?".
 #[derive(Clone, Debug, Serialize)]
@@ -191,7 +191,7 @@ pub(crate) struct Tree {
     /// the recursion under it is cheap, and caching mid-flight would mean
     /// caching a chain computed against a partial `seen` set — not the same
     /// answer.
-    ancestors: RefCell<HashMap<String, Arc<Ancestry>>>,
+    ancestors: RefCell<HashMap<String, Rc<Ancestry>>>,
 }
 
 /// A linearized ancestor chain, and how much of it we could actually build.
@@ -620,7 +620,7 @@ impl Tree {
     ///
     /// Memoized, because a file's every constant reference asks for the chain
     /// of the same enclosing class.
-    pub(crate) fn ancestors(&self, fqn: &str) -> Arc<Ancestry> {
+    pub(crate) fn ancestors(&self, fqn: &str) -> Rc<Ancestry> {
         let cached = self.ancestors.borrow().get(fqn).cloned();
         if let Some(cached) = cached {
             return cached;
@@ -634,11 +634,11 @@ impl Tree {
         // The outer call still computes the real chain, so the empty answer is
         // never what gets cached.
         if !self.in_flight.borrow_mut().insert(fqn.to_string()) {
-            return Arc::new(Ancestry::default());
+            return Rc::new(Ancestry::default());
         }
         let mut out = Ancestry::default();
         out.chain = self.linearize(fqn, &mut out, &mut Vec::new());
-        let chain = Arc::new(out);
+        let chain = Rc::new(out);
         self.in_flight.borrow_mut().remove(fqn);
         self.ancestors
             .borrow_mut()
@@ -943,6 +943,71 @@ mod tests {
 
     fn one(source: &str) -> Tree {
         tree(&[("a.rb", source)])
+    }
+
+    /// Streaming the methods a demand-loaded tree has not fetched lists
+    /// exactly what an eager tree holds: a name already loaded is not listed
+    /// twice, a `private :x` assertion is not a definition, and a carrier's
+    /// columns are listed under the model that took its table.
+    #[test]
+    fn listing_every_method_streams_what_an_eager_tree_holds() {
+        let sources = [
+            (
+                "widget.rb",
+                "class Widget\n  self.table_name = \"gadgets\"\n  def save; end\n  private :save\n  def to_s; end\nend\n",
+            ),
+            (
+                "gadget.rb",
+                "class Gadget\n  def color; end\n  def save(x); end\nend\n",
+            ),
+        ];
+        let dir = std::env::temp_dir().join(format!("trekr-each-method-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = Store::open(&dir.join("t.db")).unwrap();
+        let mut files = crate::scan::Files::new();
+        let mut facts = Vec::new();
+        for (path, source) in sources {
+            let oid = crate::scan::hash_blob(source.as_bytes());
+            files.insert(path.to_string(), oid.clone());
+            facts.push((oid, crate::extract::extract(source.as_bytes())));
+        }
+        store.write("/repo", &files, facts, 0).unwrap();
+
+        let listed = |tree: &Tree| {
+            let mut all = Vec::new();
+            tree.each_method(|owner, singleton, m| {
+                let file = m.site.path.rsplit('/').next().unwrap().to_string();
+                all.push((
+                    owner.to_string(),
+                    singleton,
+                    m.name.clone(),
+                    file,
+                    m.site.line,
+                ));
+            });
+            all.sort();
+            all
+        };
+        let lazy = Tree::build(&store, "/repo").unwrap();
+        lazy.named("color");
+        let eager = tree(&sources);
+        let got = listed(&lazy);
+        assert_eq!(got, listed(&eager));
+        let color = (
+            "Widget".to_string(),
+            false,
+            "color".to_string(),
+            "gadget.rb".to_string(),
+            2,
+        );
+        assert!(
+            got.contains(&color),
+            "the carrier's column, keyed onto the model"
+        );
+        // Widget's own, Gadget's, and Gadget's again under Widget; `private :save` is none.
+        assert_eq!(got.iter().filter(|m| m.2 == "save").count(), 3);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// An ancestor chain with core's tail removed.
@@ -1424,10 +1489,11 @@ impl Tree {
         let mut by_owner = self.by_owner.borrow_mut();
         let mut by_name = self.by_name.borrow_mut();
         for row in rows {
-            let owner = self.owner_of(&row);
+            let method = self.method_def(row);
+            let owner = method.owner.clone();
             let index = methods.len();
             by_owner
-                .entry((owner.clone(), row.singleton, row.name.clone()))
+                .entry((owner.clone(), method.singleton, method.name.clone()))
                 .or_default()
                 .push(index);
             // The carrier owns the schema's methods but is never *declared*, so
@@ -1437,27 +1503,32 @@ impl Tree {
             if let Some(models) = self.carriers.get(&owner) {
                 for model in models {
                     by_owner
-                        .entry((model.clone(), row.singleton, row.name.clone()))
+                        .entry((model.clone(), method.singleton, method.name.clone()))
                         .or_default()
                         .push(index);
                 }
             }
-            by_name.entry(row.name.clone()).or_default().push(index);
-            methods.push(MethodDef {
-                arity: arity_of(&row.params),
-                name: row.name,
-                owner,
-                singleton: row.singleton,
-                visibility: row.visibility,
-                via: row.via,
-                sig_returns: row.sig_returns,
-                site: Site {
-                    path: row.path,
-                    line: row.line,
-                    col: row.col,
-                    kind: "method".into(),
-                },
-            });
+            by_name.entry(method.name.clone()).or_default().push(index);
+            methods.push(method);
+        }
+    }
+
+    /// A row as the tree holds it: with its owner resolved.
+    fn method_def(&self, row: MethodRow) -> MethodDef {
+        MethodDef {
+            arity: arity_of(&row.params),
+            owner: self.owner_of(&row),
+            name: row.name,
+            singleton: row.singleton,
+            visibility: row.visibility,
+            via: row.via,
+            sig_returns: row.sig_returns,
+            site: Site {
+                path: row.path,
+                line: row.line,
+                col: row.col,
+                kind: "method".into(),
+            },
         }
     }
 
@@ -1745,38 +1816,42 @@ impl Tree {
             .collect()
     }
 
-    /// The whole method table: every `(owner, singleton)` a definition is
-    /// keyed under — including a model a `table_name` carrier's columns were
-    /// re-keyed onto — and the definition.
+    /// Every method definition in the tree's checkouts, under each
+    /// `(owner, singleton)` it is keyed by — including a model a `table_name`
+    /// carrier's columns were re-keyed onto.
     ///
-    /// Loads every method in the tree's checkouts, which demand-loading exists
-    /// to avoid on the lookup path (DEC-025). Completion has to list, not look
-    /// up, and pays it once per tree; after this, `ensure` finds every name
-    /// already loaded and never reloads one, so nothing is indexed twice.
-    pub(crate) fn method_table(&self) -> Vec<(String, bool, MethodDef)> {
-        if let Some(loader) = &self.loader {
-            let loaded = self.loaded.borrow().clone();
-            if let Ok(rows) = loader.store.methods(&loader.roots) {
-                let fresh: Vec<MethodRow> = rows
-                    .into_iter()
-                    .filter(|row| !loaded.contains(&row.name))
-                    .collect();
-                let names: HashSet<String> = fresh.iter().map(|row| row.name.clone()).collect();
-                self.index_rows(fresh);
-                self.loaded.borrow_mut().extend(names);
+    /// Completion has to list, not look up, and this is its one pass over
+    /// every method. Names not yet loaded are streamed from the store and
+    /// **not** kept: loading them all into the tree was most of an LSP
+    /// session's memory, and only the listing ever needs them all at once.
+    pub(crate) fn each_method(&self, mut visit: impl FnMut(&str, bool, &MethodDef)) {
+        {
+            let by_owner = self.by_owner.borrow();
+            let methods = self.methods.borrow();
+            for ((owner, singleton, _), hits) in by_owner.iter() {
+                for method in hits.iter().map(|i| &methods[*i]) {
+                    if method.is_definition() {
+                        visit(owner, *singleton, method);
+                    }
+                }
             }
         }
-        let by_owner = self.by_owner.borrow();
-        let methods = self.methods.borrow();
-        by_owner
-            .iter()
-            .flat_map(|((owner, singleton, _), hits)| {
-                hits.iter()
-                    .map(|i| &methods[*i])
-                    .filter(|method| method.is_definition())
-                    .map(|method| (owner.clone(), *singleton, method.clone()))
-            })
-            .collect()
+        let Some(loader) = &self.loader else { return };
+        let loaded = self.loaded.borrow();
+        let _ = loader.store.each_method(&loader.roots, |row| {
+            // A loaded name was visited above, from the table.
+            if loaded.contains(&row.name) {
+                return;
+            }
+            let method = self.method_def(row);
+            if !method.is_definition() {
+                return;
+            }
+            visit(&method.owner, method.singleton, &method);
+            for model in self.carriers.get(&method.owner).into_iter().flatten() {
+                visit(model, method.singleton, &method);
+            }
+        });
     }
 }
 

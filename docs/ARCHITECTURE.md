@@ -327,10 +327,10 @@ saved is not yet visible from *other* files; saving moves the index
 **Threads.** Requests are answered on one thread; the tree is not shared. Two
 things leave it: a file scan's reading and parsing fans out on rayon and
 returns facts, with tiering kept on the main thread; and completion's member
-listing is built by a worker on its own connection, which hands back its
-fully-loaded tree and the listing to replace the session's (DEC-044). The tree
-is `Send` for that hand-off and nothing else. Background indexing is a child
-process, not a thread (DEC-039).
+listing is built by a worker on its own connection and tree, which hands back
+only the listing (DEC-044). The listing streams every method row past the
+tree rather than loading them into it (DEC-045), so the session's tree stays
+demand-loaded. Background indexing is a child process, not a thread (DEC-039).
 
 ## Measurements
 

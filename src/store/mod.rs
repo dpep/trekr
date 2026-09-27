@@ -434,7 +434,24 @@ impl Store {
         self.method_rows(roots, Some(name))
     }
 
+    /// Every method, in `methods`' order, handed over one row at a time
+    /// rather than collected — for a caller that keeps only part of each.
+    pub(crate) fn each_method(&self, roots: &[String], visit: impl FnMut(MethodRow)) -> Result<()> {
+        self.visit_method_rows(roots, None, visit)
+    }
+
     fn method_rows(&self, roots: &[String], name: Option<&str>) -> Result<Vec<MethodRow>> {
+        let mut rows = Vec::new();
+        self.visit_method_rows(roots, name, |row| rows.push(row))?;
+        Ok(rows)
+    }
+
+    fn visit_method_rows(
+        &self,
+        roots: &[String],
+        name: Option<&str>,
+        mut visit: impl FnMut(MethodRow),
+    ) -> Result<()> {
         // Insert order is load-bearing: `lookup` takes the last definition, so
         // a reopened class must arrive after the class it reopens.
         let filter = if name.is_some() { "AND d.name = ?" } else { "" };
@@ -453,9 +470,10 @@ impl Store {
         if let Some(name) = name.as_ref() {
             values.push(name as &dyn rusqlite::ToSql);
         }
-        let rows = stmt.query_map(values.as_slice(), |r| {
+        let mut rows = stmt.query(values.as_slice())?;
+        while let Some(r) = rows.next()? {
             let params: String = r.get(4)?;
-            Ok(MethodRow {
+            visit(MethodRow {
                 name: r.get(0)?,
                 nesting: split_nesting(&r.get::<_, String>(1)?),
                 singleton: r.get::<_, i64>(2)? != 0,
@@ -467,9 +485,9 @@ impl Store {
                 path: r.get(8)?,
                 line: r.get(9)?,
                 col: r.get(10)?,
-            })
-        })?;
-        rows.collect()
+            });
+        }
+        Ok(())
     }
 
     /// Every ancestry edge in a checkout, in source order — which is the order

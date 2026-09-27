@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`--lsp` uses about 40 % less memory once completion is ready.** Listing
+  a checkout's members for completion no longer loads every method into the
+  session's tree: discourse and rails in one session went from 630 MB to
+  360 MB, and a completion asked for before the listing was ready waits
+  0.37 s instead of 0.59 s.
 - **`--lsp` completion gives the same list for the same position.** A list
   cut at its 300-item cap kept whichever members a hash map yielded first,
   which changed from one server process to the next; it now keeps the names
