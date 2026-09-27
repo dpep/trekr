@@ -13,7 +13,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 32;
+pub(crate) const VERSION: i64 = 33;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -30,7 +30,13 @@ CREATE TABLE blob (
   -- Digest of just the facts the tree layer reads (defs + ancestry). Two
   -- blobs sharing it assemble the same tree, which is how an edit's effect
   -- on the tree is decided without rebuilding it. See `Facts::surface`.
-  surface      INTEGER NOT NULL
+  surface      INTEGER NOT NULL,
+  -- The schema version that wrote the row. No reader needs it; it is here so
+  -- a writer from before it fails to insert. A 0.2 LSP left running across an
+  -- upgrade never rechecks the version, and a blob row is never rewritten, so
+  -- its old-format facts would otherwise outlive every reindex. NOT NULL with
+  -- no default is what makes the old INSERT fail.
+  written_by   INTEGER NOT NULL
 );
 
 -- A name this blob binds. `via` distinguishes a literal definition (NULL) from

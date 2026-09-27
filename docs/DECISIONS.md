@@ -4078,6 +4078,18 @@ rebuilds the store writes old-format facts into it, because 0.2.1 has no
 check. That applies only to builds before this one; restarting the editor
 clears it.
 
+**Amended after 0.3.0: it could be fixed, and restarting did not clear it.**
+A blob row is keyed by content and never rewritten, so the old facts outlived
+the editor, every reindex and `--drop`; only a rebuild removed them. The
+schema now gives `blob` a column the old writers do not name, `written_by`,
+`NOT NULL` with no default. 0.2's `INSERT OR REPLACE` and 0.3's
+`ON CONFLICT DO NOTHING` both abort on it rather than skip, so the old
+writer's savepoint fails and writes nothing. Reproduced with a 0.2.1 LSP
+saving a file after a new `--index` had rebuilt the store: the edited blob's
+0.2.1 facts were kept by 0.3.0 and are re-read by this build. Any later
+schema change keeps the protection only if it changes the shape the same way;
+`check_schema` covers writers from 0.3.0 on.
+
 **Reverses if** migrations ever become real, rather than drop-and-rebuild:
 the immediate transaction then has to span a migration that may take much
 longer than the busy timeout, and waiting openers need progress instead of a

@@ -384,7 +384,7 @@ Schema in [`src/store/schema.rs`](../src/store/schema.rs); it is the authority
 and this table is its summary.
 
 ```text
-blob(id, oid UNIQUE, lines, parse_errors)
+blob(id, oid UNIQUE, lines, parse_errors, surface, written_by)
   def(blob_id, name, kind, nesting, singleton, visibility, params,
       via, target, target_line, target_col, sig_returns, line, col, end_line)
   ancestry(blob_id, nesting, relation, target, line, col)

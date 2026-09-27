@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Upgrading drops and rebuilds the index** (store v33): run `trekr --index`
+  once per checkout, and restart any editor still running a trekr from
+  before 0.3.0. Such an editor used to keep writing into the new store after
+  an upgrade, and a file it saved kept its old facts through every reindex
+  and `--drop`; it now fails to write instead.
+
 ### Changed
 
 - **JSON fields are named the same in every command** (DEC-080). Update a

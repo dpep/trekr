@@ -1479,13 +1479,14 @@ fn insert_facts(tx: &Connection, oid: &Oid, facts: &Facts) -> Result<()> {
     // already there is the answer; replacing it would give the blob a new id
     // under every file that points at the old one.
     let inserted = tx.execute(
-        "INSERT INTO blob (oid, lines, parse_errors, surface)
-         VALUES (?1, ?2, ?3, ?4) ON CONFLICT (oid) DO NOTHING",
+        "INSERT INTO blob (oid, lines, parse_errors, surface, written_by)
+         VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (oid) DO NOTHING",
         params![
             oid.0,
             facts.lines as i64,
             facts.parse_errors as i64,
-            facts.surface() as i64
+            facts.surface() as i64,
+            schema::VERSION
         ],
     )?;
     if inserted == 0 {
@@ -2119,6 +2120,19 @@ mod lock_tests {
         assert!(!store.has_blob(&oid).unwrap(), "nothing written");
         drop(store);
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn an_older_writers_blob_insert_fails() {
+        let store = Store::open_in_memory().unwrap();
+        // 0.2's statement, then 0.3's: neither rechecks the schema.
+        for insert in [
+            "INSERT OR REPLACE INTO blob (oid, lines, parse_errors, surface) VALUES ('a', 1, 0, 0)",
+            "INSERT INTO blob (oid, lines, parse_errors, surface) VALUES ('b', 1, 0, 0) \
+             ON CONFLICT (oid) DO NOTHING",
+        ] {
+            assert!(store.conn.execute(insert, []).is_err(), "{insert}");
+        }
     }
 
     #[test]
