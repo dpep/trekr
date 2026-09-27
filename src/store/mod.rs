@@ -426,7 +426,7 @@ impl Store {
         // Insert order is load-bearing: `lookup` takes the last definition, so
         // a reopened class must arrive after the class it reopens.
         let filter = if name.is_some() { "AND d.name = ?" } else { "" };
-        let mut stmt = self.conn.prepare(&format!(
+        let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT d.name, d.nesting, d.singleton, d.visibility, d.params, d.via,
                     d.target, d.sig_returns, c.root || '/' || f.path, d.line, d.col
                FROM def d
@@ -489,7 +489,7 @@ impl Store {
     /// the ladder needs the file's assignments anyway, which are not stored
     /// (DEC-012). The index's job here is to say which files are worth opening.
     pub(crate) fn files_calling(&self, root: &str, name: &str) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare(
+        let mut stmt = self.conn.prepare_cached(
             "SELECT DISTINCT f.path
                FROM call_site s
                JOIN file f ON f.blob_id = s.blob_id
