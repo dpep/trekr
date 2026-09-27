@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A class method's return type is not overruled by an instance method's.**
+  `self.class.build.spin` resolved to `Gadget#spin` because an unrelated
+  instance method `Kit#build` returns a Gadget, even though the class method
+  `Builder.build` returns a Widget. A disagreement like that now leaves the
+  call unresolved.
+
 - **A qualified Sorbet return type keeps its namespace.**
   `sig { returns(Stripe::Customer) }` was read as `Customer`, so inside
   `module Billing` it typed the result as `Billing::Customer`, and `--dead`

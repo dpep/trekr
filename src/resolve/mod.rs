@@ -619,29 +619,39 @@ fn by_return_types(tree: &Tree, previous: &Call) -> Option<Receiver> {
     if crate::core::IDENTITY.contains(&previous.name.as_str()) {
         return None;
     }
-    let mut owners: Vec<String> = Vec::new();
-    let mut votes: Vec<Option<String>> = Vec::new();
+    let returned = |method: &crate::tree::MethodDef| {
+        method
+            .returns_for(previous.argc, previous.block)
+            .and_then(|returns| tree.returned_class(method, returns))
+    };
     // An untyped receiver is taken to be an instance, since a class mostly
-    // arrives as a constant and is typed: `Dir.[]` says nothing of `h[:a]`.
-    let instance_methods = tree
+    // arrives as a constant and is typed: `Dir.[]` alone says nothing of
+    // `h[:a]`. But `self.class.build` and `factory.build` are classes that
+    // arrived another way, so a class method declaring something else
+    // objects to the instance methods' answer, though it never makes one.
+    let (singletons, instances): (Vec<_>, Vec<_>) = tree
         .named(&previous.name)
         .into_iter()
-        .filter(|m| !m.singleton);
-    for method in instance_methods {
-        let owner = method.owner.clone();
-        if owners.contains(&owner) {
+        .partition(|m| m.singleton);
+    let mut owners: Vec<String> = Vec::new();
+    let mut votes: Vec<Option<String>> = Vec::new();
+    for method in instances {
+        if owners.contains(&method.owner) {
             continue;
         }
-        owners.push(owner);
-        votes.push(
-            method
-                .returns_for(previous.argc, previous.block)
-                .and_then(|returns| tree.returned_class(&method, returns)),
-        );
+        owners.push(method.owner.clone());
+        votes.push(returned(&method));
     }
     let mut declared = votes.iter().flatten();
     let fqn = declared.next()?.clone();
     if declared.any(|other| *other != fqn) {
+        return None;
+    }
+    if singletons
+        .iter()
+        .filter_map(returned)
+        .any(|other| other != fqn)
+    {
         return None;
     }
     let agreeing = votes.iter().flatten().count();

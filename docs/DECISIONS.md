@@ -4016,6 +4016,13 @@ is `ambiguous`, which confirms as decided above.
   qualified constant: the head through the nesting, the rest by descent.
   `T::Array` and its kin stay `Array`, since `T` is Sorbet's namespace, not a
   scope. An extractor change, so store v33.
+- *Only instance methods voted, so a class receiver took an instance's
+  answer.* `self.class.build.spin` was typed by `Kit#build` as a Gadget at
+  1.0 when `Builder.build` returns a Widget; `model.class.build` and a
+  parameter `factory.build` the same. A class method still never makes the
+  answer (`Dir.[]` alone must not type `h[:a]`), but one declaring another
+  class objects to it and leaves the call untyped. Nothing is added to the
+  vote count, so confidence elsewhere is unmoved.
 
 ## DEC-078 — Core is served one file per owner, and its stubs read as signatures
 

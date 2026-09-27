@@ -1,0 +1,7 @@
+# With no receiver type, only instance methods voted on what `build` returns,
+# so Kit#build typed `self.class.build` as a Gadget at full confidence. The
+# receiver is a class there, and Builder.build says Widget: a split vote.
+def app.rb:16:22 status=residue
+def app.rb:28:17 status=residue
+def app.rb:29:23 status=residue
+refs Gadget#spin confirmed=0 possible=3 excluded=0
