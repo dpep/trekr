@@ -72,7 +72,8 @@ second worktree of the same repo costs nothing — facts are keyed by git blob.
 | --- | --- |
 | `status: not_indexed`, **exit 2** | nobody has indexed this repo. The answer names the root and the command. Run it; do not go looking for the definition. |
 | `status: residue`, exit 1 | trekr looked. The receiver is genuinely undetermined — ranked `candidates` say what it might be. |
-| `status: no_such_method`, exit 1 | `'Owner#name'`: the owner resolved and nothing in its ancestors defines the name — `reason` says so. A chain with an unindexed ancestor is `residue` instead, naming it. |
+| `status: residue`, `reason: "no name at this position"` | `--def` on a line with no name on it (blank, a comment, only punctuation). Expected; pick another line. |
+| `status: no_such_method`, exit 1 | `'Owner#name'`: the owner resolved and nothing in its ancestors defines the name — `reason` says so, and nothing is listed. `--refs` adds a `hint` (`trekr --refs name`) for every call site of the name, unnarrowed. A chain with an unindexed ancestor is `residue` instead, naming it; an owner trekr cannot find at all is `residue` with the same `hint`. |
 | exit 1, "no mention of …" | indexed, and the name really is not there. |
 | exit 64–74, `{"error", "kind", "code"}` | the call failed: `usage` (fix the command), `not_found`/`not_a_repo` (fix the path), `git`, `database`/`io`, `internal`. Not an answer about the code. |
 
@@ -83,19 +84,24 @@ second worktree of the same repo costs nothing — facts are keyed by git blob.
 This is the reason to reach for trekr:
 
 ```sh
-trekr --refs 'ActiveRecord::Querying#where' --json
+trekr --refs 'ActiveRecord::ConnectionHandling#lease_connection' --json
 ```
 
 ```json
-{ "status": "resolved", "owner": "ActiveRecord::Querying", "method": "where",
-  "definition": [{"path": "activerecord/lib/active_record/querying.rb", "line": 24}],
-  "counts": {"confirmed": 1197, "possible": 69, "excluded": 541,
-             "excluded_different_owner": 47, "excluded_no_such_method": 63,
-             "excluded_arity": 431},
-  "references": [{"path": "...", "line": 20, "tier": "confirmed",
-                  "receiver": "const", "receiver_type": "Topic",
+{ "status": "resolved", "owner": "ActiveRecord::ConnectionHandling", "method": "lease_connection",
+  "definition": [{"path": "/…/rails/activerecord/lib/active_record/connection_handling.rb", "line": 269}],
+  "counts": {"confirmed": 1024, "possible": 84, "excluded": 87,
+             "excluded_different_owner": 56, "excluded_no_such_method": 31,
+             "excluded_arity": 0},
+  "references": [{"path": "actioncable/test/subscription_adapter/postgresql_test.rb",
+                  "line": 26, "col": 26, "tier": "confirmed",
+                  "receiver": "const", "receiver_type": "ActiveRecord::Base",
+                  "owner": "ActiveRecord::ConnectionHandling",
                   "why": "the receiver's type resolves here"}] }
 ```
+
+`definition` paths are absolute (the method may live in a gem); `references`
+paths are relative to the checkout.
 
 * **confirmed** — the receiver's type resolves and Ruby's lookup lands here.
 * **possible** — untyped receiver, nothing rules it out. Ranked, never dropped.
@@ -118,11 +124,24 @@ trekr --def app/models/post.rb:42          # column optional when typing by hand
 ```
 
 The column is forgiving: if it holds no name, trekr answers for the nearest one
-**on that line** and says so in `snapped_to` (with the other names and their
-columns, so a follow-up can be exact). An exact hit never snaps, and neither
-does a variable: on a local or parameter the answer is `under: variable` with
-the writes its value can come from (`variable: local | parameter`), and on an
-`@ivar` the writes in that file — the LSP searches the class's other files.
+**on that line** and adds `snapped_to` — the name it picked, its column, and the
+line's other names as `alternatives`, so a follow-up can be exact. No
+`snapped_to` means the column hit the name. A line with no name at all is
+`residue` with `reason: "no name at this position"`.
+
+**On a variable, `--def` answers the variable**, not the nearest call:
+`under: variable`, `resolved_via: flow`, and `sites` are the writes its value
+can come from (`kind: assigned`).
+
+| `variable` | where the writes come from |
+| --- | --- |
+| `local`, `parameter` | flow through the method: both branches of an `if`, a loop's later write, the parameter itself |
+| `ivar`, `cvar` | the writes to that `@x` or `@@x` in this file only, and `reason` says so. The LSP also searches the class's other files and its ancestors. |
+
+```sh
+trekr --def activerecord/lib/active_record/relation/batches.rb:94:34
+# activerecord/lib/active_record/relation/batches.rb:93:11  local `cursor`
+```
 
 **`--def` keeps itself fresh.** It checks git in O(1) and re-reads the file you
 asked about if the checkout moved, so a definition that shifted lines is found
@@ -132,23 +151,45 @@ at its new line without reindexing. When the answer carries `index`, read it:
 "index": { "stale": true, "refreshed": "app/models/user.rb", "hint": "trekr --index ~/code/app" }
 ```
 
-The file you asked about is current; **other files may lag**, and `hint` is the
-cure. The one exception is `"busy": "<file>"`: another trekr was writing the
-index, so the answer came from that file's indexed version rather than wait —
-ask again once the index finishes. No `index` field means the checkout has not moved since it was indexed.
-One limit worth knowing: an edit git has not noticed — no `add`, `status` or
-`diff` since — is invisible to the check, so run `--index` after bulk edits.
+* **`index.stale`** — the checkout moved since it was indexed. The file you
+  asked about was re-read (`refreshed` names it when it had changed); **other
+  files may lag**, and `hint` is the cure.
+* **`index.busy`** — another trekr was writing the index, so the file you
+  asked about was answered from its indexed version rather than wait. Ask
+  again once that index finishes.
 
-Every answer carries `status` (`resolved` | `ambiguous` — a pick with known
-competitors, listed as `candidates` | `residue`),
-`confidence`, and `resolved_via` — the rung that resolved the receiver (`self`,
-`const`, `local:new`, `literal`, `sig`, `sig:param`, `sig:step`, `includer`,
-`rbi_dsl`, `super`). On `super` it answers the method `super` runs: the next
-definition after the method's owner in the ancestors (prepends, the class,
-includes, the superclass chain), per includer when the method is in a module.
-A `super` whose owner the source does not name — in a block, or `def obj.x` —
-is `residue`, never a guess. A residue answer carries ranked `candidates` with a named reason
-each. **Trust the disclosure**: `residue` means the receiver is genuinely
+No `index` field means the checkout has not moved since it was indexed. One
+limit: an edit git has not noticed — no `add`, `status` or `diff` since — is
+invisible to the check, so run `--index` after bulk edits.
+
+A `--def` answer carries `status`, `confidence`, and (when something typed
+the receiver) `resolved_via`. They answer different questions, so read them
+separately:
+
+* **`status`** — is a competitor *known*? `resolved`: no. `ambiguous`: yes —
+  the pick is first, the others are `candidates`; exit 0 either way.
+  `residue`: the receiver is undetermined, and ranked `candidates` each carry a
+  reason.
+* **`confidence`** — the share of the evidence that agrees. A local whose
+  read three writes can reach — two `Foo.new`, one from an untyped call — is
+  `resolved` at 0.67: nothing contradicts `Foo`, but not everything says it.
+  No confidence is low enough to turn `resolved` into `ambiguous`.
+* **`resolved_via`** — the rung that typed the receiver: `self`, `const`,
+  `local:new`, `literal`, `sig`, `sig:param`, `sig:step`, `includer`,
+  `rbi_dsl`, `super`, and `flow` for a variable.
+
+**`super` is followed.** `--def` on a `super` answers the method it runs: the
+next definition after the method's owner in the ancestors (prepends, the
+class, includes, the superclass chain), per includer when the method is in a
+module. A `super` whose owner the source does not name — in a block, or
+`def obj.x` — is `residue`, never a guess.
+
+```sh
+trekr --def activerecord/lib/active_record/associations/has_many_through_association.rb:10:9
+# ~/…/activerecord/lib/active_record/associations/association.rb:41:11  initialize
+```
+
+**Trust the disclosure**: `residue` means the receiver is genuinely
 undetermined, not that the tool failed.
 
 ### `kind` — is that location the code, or the line that declared it
@@ -194,8 +235,9 @@ only by `super` from the overrides in `super_from`: live exactly when they are),
 **It never says "dead", and you should not either.** Measured against a year of
 discourse's history, `unreferenced` candidates were deleted 19.8 % of the time
 against a 19.0 % base rate — no lift. Treat a candidate as *"nothing was found,
-here is what was checked"*, weigh the `confidence` field (a file using `send`
-lowers it), and remember trekr does not read ERB templates, so a method called
+here is what was checked"*, weigh `confidence` (`clear`, or `lower` when the
+file uses `send`, `method_missing` and the like — `caveat` names them), and
+remember trekr does not read ERB templates, so a method called
 only from a view looks unreferenced.
 
 ## Two more
@@ -205,13 +247,36 @@ trekr --symbols app/models/post.rb --json   # outline before reading
 trekr --ancestors Post --json               # linearized chain, unresolved named
 ```
 
+**A name declared with two different superclasses is two classes** (DEC-072)
+— common in a monorepo, where a test fake `Post = Struct.new(…)` sits beside
+`class Post < ActiveRecord::Base`. Ruby would refuse to load both, so trekr
+keeps them apart: `--ancestors Post` answers `status: ambiguous` with one entry
+per variant under `variants` (`ancestors`, `definition`, `unresolved`), and
+the top-level chain is just `[Post]`. Other queries pick the variant nearest
+the file asking; when none is nearest, `--def` is `ambiguous` and `--refs`
+tiers the site `possible`.
+
 ## Reading the output
 
 * `--json` everywhere; `--ndjson` for streaming.
-* Exit `0` matched, `1` a definitive nothing, `2` not indexed yet (run the
-  `hint`). An error exits 64–74 by remedy — `64` usage, `66` a missing path
-  or no checkout, `69` git, `70` a bug, `74` the store or a file — and under
-  `--json` is one `{"error", "kind", "code"}` object on stdout. Branch on the
-  number; never read `64` as "nothing found".
+* Branch on the exit code; never read an error as "nothing found":
+
+  | exit | means | do |
+  | --- | --- | --- |
+  | `0` | an answer (`resolved` or `ambiguous`, something listed) | read it |
+  | `1` | a definitive nothing: `residue`, `no_such_method`, no mention | read `reason`/`candidates` |
+  | `2` | `status: not_indexed` | run the `hint`, ask again |
+  | `64` | `usage`: the command line is wrong | fix the command; a retry won't help |
+  | `66` | `not_found`, `not_a_repo`: a path is missing or in no checkout | fix the path |
+  | `69` | `git`: git could not be run | |
+  | `70` | `internal`: a trekr bug | |
+  | `74` | `database`, `io`: the index or a file could not be read or written | check the disk or `$TREKR_DB` |
+
+  Under `--json`/`--ndjson` an error is one object on stdout, and the message
+  is on stderr either way:
+
+  ```json
+  { "error": "trekr: cannot read app/gone.rb: No such file or directory (os error 2)", "kind": "not_found", "code": 66 }
+  ```
 * `gems.missing` in `--index` output names gems the lockfile wants and disk
   lacks — a hole in every answer that would have come from them.
