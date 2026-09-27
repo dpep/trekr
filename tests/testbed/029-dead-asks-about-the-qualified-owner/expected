@@ -1,0 +1,4 @@
+# `--dead` asked about a method's owner as written — `Helpers` — rather than
+# the class it is, `Alpha::Helpers`, so a call that resolved to the real owner
+# was ruled out and a used method read as unreferenced.
+dead app.rb Alpha::Helpers#shout=single-caller User#go=unreferenced

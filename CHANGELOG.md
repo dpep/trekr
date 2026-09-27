@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **`--dead` asks about the owner a method really has.** A method in `module
+  Alpha; module Helpers` was checked against `Helpers`, the name as written,
+  so every call that resolved to `Alpha::Helpers` was ruled out and a used
+  method could read `unreferenced`. `owner` in `--dead`'s output is now the
+  qualified name.
+
 - **Forwardable's `def_delegator` and `def_delegators` define methods**, as
   ActiveSupport's `delegate` does: `def_delegator :@engine, :stop, :halt`
   defines `halt`, a declaration with `defined_via: def_delegator`. The

@@ -1474,7 +1474,12 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
         if written > PLAINLY_USED {
             continue; // not worth a narrowed search
         }
-        let owner = def.nesting.first().cloned().unwrap_or_default();
+        // The class it is, not the name as written: `Helpers` inside `module
+        // Alpha` is `Alpha::Helpers`, and that is what a resolved call names.
+        let owner = tree
+            .scope_fqn(&def.nesting)
+            .or_else(|| def.nesting.first().cloned())
+            .unwrap_or_default();
         let query = refs::Query {
             owner: Some(owner.clone()),
             singleton: def.singleton,
