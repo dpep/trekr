@@ -50,6 +50,14 @@
   For a receiver typed by a call's return (`resolved_via: chain`,
   `chain:name`), `--explain` says that, not `receiver other → String`.
 
+- **The "index format changed" note stops once anything is indexed.** After
+  an upgrade it was attached to every not-indexed checkout for good,
+  including ones never indexed and ones dropped since.
+
+- **`--drop <gem dir>` drops that gem**, and `--index <gem dir>` says how to
+  pick up an edit to a gem (`--drop` it, then index the app), where both
+  failed with git's `rev-parse` error.
+
 ### Added
 
 - **`--dead` says why**: every row has a `reason` (text prints it after the

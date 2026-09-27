@@ -1749,6 +1749,20 @@ fn a_gem_position_answers_from_an_app_that_resolves_it() {
         "the answering context is disclosed"
     );
 
+    // A gem is no git checkout: indexing it says how to refresh it instead,
+    // and dropping it by its directory works.
+    let gem = gems.join("gems/helper-1.0.0");
+    let gem_dir = gem.to_str().unwrap();
+    let out = trekr(&db, &app, &["--index", gem_dir]);
+    assert_eq!(out.status.code(), Some(66));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("is a gem") && stderr.contains("--drop"),
+        "{stderr}"
+    );
+    let dropped = json(&trekr(&db, &app, &["--drop", gem_dir, "--json"]));
+    assert_eq!(dropped["dropped"], true, "{dropped}");
+
     let _ = fs::remove_dir_all(&app);
     let _ = fs::remove_dir_all(&gems);
 }
@@ -2598,7 +2612,16 @@ fn a_checkout_missing_after_an_upgrade_says_so() {
     assert_eq!(answer["status"], "not_indexed");
     let reason = answer["reason"].as_str().unwrap();
     assert!(reason.contains("v1"), "{reason}");
+
+    // Once anything is indexed again, "not indexed" is about the checkout.
+    let (other, _) = scratch("upgraded-other");
+    repo(&other);
+    assert!(trekr(&db, &other, &["--index"]).status.success());
+    let answer = json(&trekr(&db, &dir, &["--refs", "Widget#resize", "--json"]));
+    let reason = answer["reason"].as_str().unwrap();
+    assert!(!reason.contains("format changed"), "{reason}");
     let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&other);
 }
 
 #[test]

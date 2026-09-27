@@ -476,6 +476,17 @@ fn named_checkout(path: &Path) -> anyhow::Result<PathBuf> {
     scan::repo_root(path)
 }
 
+/// The indexed gem a path outside any git checkout belongs to, if any: gems
+/// are indexed per directory from an app's bundle, not as repositories.
+fn gem_holding(store: &Store, path: &Path) -> Option<String> {
+    let absolute = std::fs::canonicalize(path).ok()?;
+    // The trailing `/` lets the gem's own root match, not only files in it.
+    store
+        .checkout_containing(&format!("{}/", absolute.to_string_lossy()))
+        .ok()
+        .flatten()
+}
+
 /// The database: `$TREKR_DB`, else `~/.local/share/trekr/trekr.db`.
 fn open_store() -> anyhow::Result<Store> {
     let open = || -> anyhow::Result<Store> {
@@ -828,7 +839,22 @@ fn cmd_index(
         profile.jobs = jobs;
     }
 
-    let root = named_checkout(path)?;
+    let root = match named_checkout(path) {
+        Err(e) if Failure::of(&e) == Failure::NotARepo => {
+            let store = open_store()?;
+            let Some(gem) = gem_holding(&store, path) else {
+                return Err(e);
+            };
+            let app = store.app_for_gem(&gem)?;
+            let app = app.as_deref().map_or("<the app>".into(), paths::pretty);
+            return Err(Failure::NotARepo.error(format!(
+                "{} is a gem, indexed from an app's bundle rather than as a checkout; \
+                 to pick up an edit to it: trekr --drop {0} && trekr --index {app}",
+                paths::pretty(&gem)
+            )));
+        }
+        root => root?,
+    };
     let root_str = root.to_string_lossy().into_owned();
     // Sampled *before* the scan, deliberately. A fingerprint taken afterwards
     // would cover edits this index never saw and the next query would call them
@@ -1984,11 +2010,17 @@ fn not_indexed(out: Output, root: &Path, store: &Store) -> anyhow::Result<ExitCo
     let hint = format!("trekr --index {}", paths::pretty(&root));
     // A store rebuilt for a new schema looks exactly like one never used, and
     // "never indexed" to someone who indexed yesterday reads as a bug.
-    let upgraded = store.upgraded_from()?;
+    // Only until the first index after it: from then on "not indexed" is
+    // about this checkout, not the upgrade, and a checkout nobody ever
+    // indexed would be told an index of it was dropped.
+    let upgraded = match store.roots()?.is_empty() {
+        true => store.upgraded_from()?,
+        false => None,
+    };
     let reason = match upgraded {
         Some(from) => format!(
-            "trekr's index format changed (store v{from} to v{}), which dropped the old index; \
-             this checkout has not been indexed since",
+            "trekr's index format changed (store v{from} to v{}), which dropped any \
+             earlier index; nothing has been indexed since",
             crate::store::VERSION
         ),
         None => "this checkout has never been indexed, so there is nothing to answer from".into(),
@@ -2557,9 +2589,17 @@ fn report(
 }
 
 fn cmd_drop(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
-    let root = named_checkout(path)?;
-    let root_str = root.to_string_lossy().into_owned();
     let store = open_store()?;
+    // A gem is no git checkout, and is dropped by the directory it was
+    // indexed under; the next index of an app that uses it reads it again.
+    let root = match named_checkout(path) {
+        Err(e) if Failure::of(&e) == Failure::NotARepo => match gem_holding(&store, path) {
+            Some(gem) => PathBuf::from(gem),
+            None => return Err(e),
+        },
+        root => root?,
+    };
+    let root_str = root.to_string_lossy().into_owned();
     let dropped = store.drop_checkout(&root_str)?;
     crate::tree::forget_snapshots(&store, &root_str);
 
