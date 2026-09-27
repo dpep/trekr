@@ -16,6 +16,7 @@ fn scratch(label: &str) -> (PathBuf, PathBuf) {
     for suffix in ["", "-wal", "-shm"] {
         let _ = fs::remove_file(format!("{}{suffix}", db.display()));
     }
+    let _ = fs::remove_dir_all(db.with_extension("trees"));
     fs::create_dir_all(&dir).unwrap();
     (dir, db)
 }
@@ -1257,6 +1258,76 @@ fn workspace_symbol_widens_when_the_clients_root_is_not_a_checkout() {
     session.stop();
     let _ = fs::remove_dir_all(&root);
     let _ = fs::remove_dir_all(&other);
+}
+
+/// A bundle moving to another gem version changes no Ruby file in the
+/// checkout — only its lockfile — so a session keyed on the checkout's own
+/// files went on answering from the old version's tree.
+#[test]
+fn a_bundle_moving_to_another_gem_version_is_not_served_stale() {
+    let (dir, db) = scratch("gem-moved");
+    git(&dir, &["init", "-q"]);
+    for (version, class) in [("1.0.0", "Old"), ("2.0.0", "New")] {
+        let lib = dir.join(format!("vendor/bundle/ruby/3.3.0/gems/shelf-{version}/lib"));
+        fs::create_dir_all(&lib).unwrap();
+        fs::write(
+            lib.join("shelf.rb"),
+            format!("module Shelf\n  class {class}\n  end\nend\n"),
+        )
+        .unwrap();
+    }
+    fs::write(dir.join(".gitignore"), "vendor/\n").unwrap();
+    let lock = |version: &str| {
+        fs::write(
+            dir.join("Gemfile.lock"),
+            format!("GEM\n  remote: https://rubygems.org/\n  specs:\n    shelf ({version})\n\nDEPENDENCIES\n  shelf\n"),
+        )
+        .unwrap();
+    };
+    lock("1.0.0");
+    fs::write(
+        dir.join("app.rb"),
+        "class Job\n  def run\n    Shelf::New\n  end\nend\n",
+    )
+    .unwrap();
+    commit_all(&dir);
+    let index = || {
+        trekr()
+            .args(["--index"])
+            .current_dir(&dir)
+            .env("TREKR_DB", &db)
+            .output()
+            .unwrap();
+    };
+    index();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let ask = |session: &mut Session| {
+        session.request(
+            "textDocument/definition",
+            serde_json::json!({
+                "textDocument": {"uri": uri_of(&dir, "app.rb")},
+                "position": {"line": 2, "character": 12},
+            }),
+        )["result"]
+            .clone()
+    };
+    assert!(ask(&mut session).is_null(), "1.0.0 has no Shelf::New");
+
+    lock("2.0.0");
+    index();
+    let found = ask(&mut session);
+    let found = found
+        .as_array()
+        .expect("the session must see the new version");
+    assert!(
+        found[0]["uri"].as_str().unwrap().contains("shelf-2.0.0"),
+        "{found:?}"
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
 }
 
 /// A resident session must notice an edit that reindexed underneath it.

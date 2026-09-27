@@ -774,6 +774,7 @@ impl Store {
     /// is a *content* key: the file **count** does not move when a file is
     /// edited, so a session keyed on it went on answering from a tree
     /// assembled before the edit. This moves whenever any answer would.
+    #[cfg(test)]
     pub(crate) fn surface_key(&self, root: &str) -> Result<i64> {
         self.conn
             .query_row(

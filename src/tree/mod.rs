@@ -450,8 +450,7 @@ impl Tree {
         // query happened to run in: a query with a different `GEM_HOME` than
         // the index silently lost every gem. The index already worked this out
         // and wrote it down (DEC-029).
-        let mut roots = store.gems_used(root)?;
-        roots.push(root.to_string());
+        let roots = roots(store, root)?;
 
         let mut phases = Phases::default();
         // The namespace is read from the checkout's snapshot when one answers
@@ -513,6 +512,13 @@ impl Tree {
         }
         phases.report();
         Ok(tree)
+    }
+
+    /// What this checkout's tree is a function of, as a key that moves
+    /// exactly when a rebuild would give a different namespace — its own
+    /// files, and every gem its bundle names (DEC-065).
+    pub(crate) fn key(store: &Store, root: &str) -> anyhow::Result<[u8; 20]> {
+        files::key(store, &roots(store, root)?)
     }
 
     /// Core's declarations and edges plus the store's, assembled.
@@ -2323,6 +2329,14 @@ impl Phases {
             self.snapshot,
         );
     }
+}
+
+/// The checkouts a tree is built from, in the order it layers them: the
+/// bundle's gems, then the checkout itself.
+fn roots(store: &Store, root: &str) -> rusqlite::Result<Vec<String>> {
+    let mut roots = store.gems_used(root)?;
+    roots.push(root.to_string());
+    Ok(roots)
 }
 
 /// A namespace laid out flat, held on the heap.

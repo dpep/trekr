@@ -205,9 +205,7 @@ pub(crate) fn sweep(store: &Store, gone: &[&str], dry_run: bool) -> anyhow::Resu
         if gone.contains(&root.as_str()) {
             continue;
         }
-        let mut roots = store.gems_used(&root)?;
-        roots.push(root.clone());
-        live.insert(name(&root, &key(store, &roots)?));
+        live.insert(name(&root, &key(store, &super::roots(store, &root)?)?));
     }
     for entry in entries.flatten() {
         let file = entry.file_name();

@@ -162,14 +162,13 @@ impl Document {
     }
 }
 
-/// A cheap fingerprint of what a tree was assembled from: the store's schema
-/// version (which DEC-013 makes cover the extractor) and the checkout's
-/// surface key.
+/// A cheap fingerprint of what a tree was assembled from — the key its
+/// snapshot is filed under: the store's schema version (which DEC-013 makes
+/// cover the extractor), and the surface key of the checkout *and of every gem
+/// its bundle names*. The checkout's alone missed a bundle moving to another
+/// gem version, which changes no Ruby file in the checkout (DEC-065).
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct Stamp {
-    version: i64,
-    surface: i64,
-}
+struct Stamp([u8; 20]);
 
 impl Session {
     pub(crate) fn open(root: PathBuf, store: Store) -> Session {
@@ -252,15 +251,13 @@ impl Session {
     /// moved.
     ///
     /// DEC-007 chose whole rebuilds over incremental patching; what decides
-    /// *whether* to rebuild is the checkout's surface key, which folds every
-    /// file's path and tree-relevant facts into one number at index time. The
-    /// file count it replaced could not see an edit at all.
+    /// *whether* to rebuild is the tree's key, which folds every root's
+    /// surface key — each file's path and tree-relevant facts, as one number
+    /// per checkout at index time — into the name its snapshot is filed
+    /// under. The file count it replaced could not see an edit at all.
     pub(crate) fn tree(&mut self, root: &Path) -> anyhow::Result<&Tree> {
         let key = root.to_string_lossy().into_owned();
-        let stamp = Stamp {
-            version: self.store.schema_version()?,
-            surface: self.store.surface_key(&key)?,
-        };
+        let stamp = Stamp(Tree::key(&self.store, &key)?);
         let checkout = self.checkouts.entry(root.to_path_buf()).or_default();
         if checkout.built_from != Some(stamp) {
             // Partial is normal: answer from core and gems alone, and ask for
