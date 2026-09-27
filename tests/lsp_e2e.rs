@@ -828,7 +828,9 @@ fn hover_shows_the_signature_as_written_and_the_doc_summary() {
         text,
         format!(
             "```ruby\nWidget#plain\n```\n\nDefined in [`app.rb:18`](file://{}/app.rb#L18)",
-            std::fs::canonicalize(&dir).unwrap().display()
+            // As the client spelled its workspace: on macOS the temp dir is
+            // behind the `/var` symlink.
+            dir.display()
         )
     );
 
@@ -2727,12 +2729,27 @@ fn a_save_after_another_trekr_rebuilt_the_store_is_refused_and_logged() {
         "textDocument/didSave",
         serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
     );
-    // Any request: the log is written between messages.
-    session.request(
-        "textDocument/documentSymbol",
-        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
-    );
+    // Any request: the log is written between messages. The person at the
+    // editor is told once, on screen, not only in the log.
+    let mut shown = Vec::new();
+    for id in [100, 101] {
+        session.send(serde_json::json!({
+            "jsonrpc": "2.0", "id": id, "method": "textDocument/documentSymbol",
+            "params": {"textDocument": {"uri": uri_of(&dir, "app.rb")}},
+        }));
+        loop {
+            let message = session.read();
+            if message["method"] == "window/showMessage" {
+                shown.push(message["params"]["message"].as_str().unwrap().to_string());
+            }
+            if message["id"] == id {
+                break;
+            }
+        }
+    }
     session.stop();
+    assert_eq!(shown.len(), 1, "once: {shown:?}");
+    assert!(shown[0].contains("rebuilt the index"), "{shown:?}");
 
     assert_eq!(blobs(), before, "nothing written into the rebuilt store");
     let refused = log_lines(&db)
@@ -3107,6 +3124,30 @@ fn completion_after_a_chain_lists_what_the_chain_returns() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Ruby core is written out as files a definition can land in. When that
+/// fails, every landing in core answers nothing, and the log says why.
+#[test]
+fn a_core_directory_that_cannot_be_written_is_logged() {
+    let (dir, _) = scratch("core-unwritable");
+    // A store of its own: the core directory is beside it, and a file in its
+    // place is what makes the write fail.
+    let home = dir.with_extension("store");
+    let _ = fs::remove_dir_all(&home);
+    fs::create_dir_all(&home).unwrap();
+    fs::write(home.join("core"), "not a directory").unwrap();
+    let db = home.join("t.db");
+    ruby_repo(&dir, &db, "class Widget\nend\n");
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.stop();
+    let failed = log_lines(&db)
+        .into_iter()
+        .find(|line| line["event"] == "core_files_failed");
+    assert!(failed.is_some(), "{:?}", log_lines(&db));
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&home);
+}
+
 /// A workspace opened through a symlink is answered in the client's spelling.
 /// The store is canonical; sending canonical paths back made the editor open
 /// the same file a second time under its other name.
@@ -3142,6 +3183,18 @@ fn locations_come_back_in_the_spelling_the_client_used() {
         uri_of(&link, "app.rb"),
         "the link, not what it points at"
     );
+    // Hover's "Defined in" is a link inside markdown, and follows suit.
+    let hover = session.request(
+        "textDocument/hover",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&link, "app.rb")},
+            "position": {"line": 5, "character": 3},
+        }),
+    );
+    let text = hover["result"]["contents"]["value"]
+        .as_str()
+        .expect("a hover");
+    assert!(text.contains(&uri_of(&link, "app.rb")), "{text}");
 
     session.stop();
     let _ = fs::remove_file(&link);

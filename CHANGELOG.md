@@ -67,6 +67,15 @@
   It was the width of the name asked about, so `map` landing on `def collect`
   lit `col`, and a `delegate :each` lit `:eac`.
 
+- **Hover's "Defined in" link follows a workspace opened through a
+  symlink**, as definition locations already did; it opened the file a second
+  time under its real path.
+
+- **The editor says so when another trekr rebuilds the index under it**: one
+  message on screen, where every request failed with an internal error and
+  only `lsp.log` knew why. A core file that cannot be written out is logged
+  (`core_files_failed`) at session start instead of silently landing nowhere.
+
 ### Added
 
 - **`--dead` says why**: every row has a `reason` (text prints it after the

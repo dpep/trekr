@@ -247,6 +247,14 @@ fn serve(
     let client = Client::from(&params);
     let spelling = Spelling::of(&params, &root);
     let store = crate::store::open_default()?;
+    // Written now rather than at the first landing in core, where a failure
+    // could only answer nothing: this is the one place that can say why.
+    if let Err(error) = crate::store::core_dir() {
+        log.event(
+            "core_files_failed",
+            serde_json::json!({ "error": format!("{error:#}") }),
+        );
+    }
     let mut session = Session::open(root.clone(), store);
     session.definition_links = client.definition_links;
     session.reference_limit = client.reference_limit;
@@ -271,12 +279,17 @@ fn serve(
     }
     let mut warm = Warm::Cold;
 
+    let mut moved_said = false;
     loop {
         session.collect_members(None);
         indexer.retry(&mut session);
         for message in indexer.poll(log) {
             // A finished index moves the tree; warm it again when quiet.
             warm = Warm::Cold;
+            writer.send(message)?;
+        }
+        if !moved_said && let Some(message) = store_moved(&session, log) {
+            moved_said = true;
             writer.send(message)?;
         }
         // The one safe moment to become another program: nothing read and
@@ -585,6 +598,34 @@ fn swap(launched: &mut reload::Launched, stamp: reload::Stamp, now: Current, log
     failed(launched, error.to_string(), busy)
 }
 
+/// Said once: another trekr rebuilt the store under this server for another
+/// schema. Every answer from then on is empty or an error, and a log line was
+/// the only sign; the person at the editor is the one who can fix it. One
+/// PRAGMA on an open connection, so it is checked every turn of the loop.
+fn store_moved(session: &Session, log: &Log) -> Option<Message> {
+    let theirs = session.store().schema_version().ok()?;
+    if theirs == crate::store::VERSION {
+        return None;
+    }
+    log.event(
+        "store_moved",
+        serde_json::json!({ "store": theirs, "server": crate::store::VERSION }),
+    );
+    let message = format!(
+        "trekr: another trekr rebuilt the index in another format (store v{theirs}, this \
+         server v{}), so answers stop here. Use one trekr version for editor and command \
+         line, then restart the language server.",
+        crate::store::VERSION
+    );
+    Some(
+        Notification::new(
+            "window/showMessage".to_string(),
+            serde_json::json!({ "type": 1, "message": message }),
+        )
+        .into(),
+    )
+}
+
 /// The workspace folder, from whichever field the client used.
 fn workspace_root(params: &serde_json::Value) -> PathBuf {
     let spelled = client_root(params);
@@ -629,14 +670,16 @@ impl Spelling {
         })
     }
 
-    /// Rewrite every URI under the canonical root, anywhere in an answer.
+    /// Rewrite every URI under the canonical root, anywhere in an answer —
+    /// inside text too, since hover's "Defined in" is a markdown link.
     fn apply(&self, value: &mut serde_json::Value) {
         match value {
             serde_json::Value::String(text) => {
-                if let Some(rest) = text.strip_prefix(&self.canonical)
-                    && (rest.is_empty() || rest.starts_with('/'))
-                {
-                    *text = format!("{}{rest}", self.client);
+                let under = format!("{}/", self.canonical);
+                if *text == self.canonical {
+                    text.clone_from(&self.client);
+                } else if text.contains(&under) {
+                    *text = text.replace(&under, &format!("{}/", self.client));
                 }
             }
             serde_json::Value::Array(items) => items.iter_mut().for_each(|v| self.apply(v)),
