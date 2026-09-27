@@ -26,6 +26,9 @@
   files held (+50–80 MB on those runs).
 - **`--refs Owner#method` is 10–30 % faster on a large app**: the files calling
   the name are parsed in parallel. discourse `Topic#title` 0.56 s → 0.39 s.
+- **Every resolved query builds its namespace about 20 % faster**, which is
+  most of a CLI `--def`, `--ancestors` or `--refs` and the first answer of an
+  `--lsp` session: discourse's tree 215 → 167 ms, rails' 57 → 46 ms.
 - **`--lsp` speaks the protocol's error vocabulary, and honours cancellation.**
   An unsupported method answers `MethodNotFound` (it answered `null`, which a
   client reads as "nothing here") and a malformed request `InvalidParams` (it

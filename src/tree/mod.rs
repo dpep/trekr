@@ -406,13 +406,14 @@ impl Tree {
         // assembled namespace is byte-identical on rails, discourse and
         // widget_shop; a cleverer predicate would buy a few more milliseconds
         // and cost that confidence.
-        let all: Vec<&DeclRow> = decls.iter().collect();
-        let movable: Vec<&DeclRow> = decls
+        let movable: Vec<bool> = decls
             .iter()
-            .filter(|decl| {
-                decl.name.contains("::") || decl.nesting.iter().any(|s| s.contains("::"))
-            })
+            .map(|decl| decl.name.contains("::") || decl.nesting.iter().any(|s| s.contains("::")))
             .collect();
+        // Round one's answer for every declaration. Final for the ones that
+        // cannot move, so the pass that attaches sites reuses it rather than
+        // placing all of them a second time.
+        let mut placed: Vec<String> = Vec::with_capacity(decls.len());
 
         let mut rounds = 0;
         let t0 = std::time::Instant::now();
@@ -422,10 +423,12 @@ impl Tree {
             let before = tree.names.len();
             // Round one settles every declaration; later rounds revisit only
             // the ones whose placement can still change.
-            let batch: &[&DeclRow] = if first { &all } else { &movable };
-            for decl in batch {
-                let fqn = tree.place_decl(decl);
+            for (decl, _) in decls.iter().zip(&movable).filter(|(_, m)| first || **m) {
                 let nesting = tree.scopes(&decl.nesting);
+                let fqn = tree.place(&decl.name, &nesting);
+                if first {
+                    placed.push(fqn.clone());
+                }
                 // Kind and alias are settled here, not with the sites: placing
                 // `class ALIAS::Bar` has to be able to follow `ALIAS` already.
                 tree.declare_key(fqn, decl, nesting);
@@ -440,13 +443,17 @@ impl Tree {
             eprintln!(
                 "  fixpoint: {rounds} rounds — {} declarations once, {} revisited — {:.0}ms, {} names",
                 decls.len(),
-                movable.len(),
+                movable.iter().filter(|m| **m).count(),
                 (t1 - t0).as_secs_f64() * 1000.0,
                 tree.names.len()
             );
         }
-        for decl in &decls {
-            let fqn = tree.place_decl(decl);
+        for ((decl, movable), placed) in decls.iter().zip(movable).zip(placed) {
+            let fqn = if movable {
+                tree.place_decl(decl)
+            } else {
+                placed
+            };
             tree.declare(fqn, decl);
         }
         tree.imply_namespaces();
