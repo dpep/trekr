@@ -10,6 +10,7 @@
 //! those are among them (PLAN §1).
 
 mod convert;
+mod fresh;
 mod handlers;
 mod inbox;
 pub(crate) mod log;
@@ -26,6 +27,7 @@ use lsp_types::{
 };
 use state::Session;
 use std::path::PathBuf;
+use std::time::Duration;
 
 /// What this server tells a client it can do. Nothing here is aspirational —
 /// every one is answered below.
@@ -33,8 +35,19 @@ fn capabilities() -> ServerCapabilities {
     ServerCapabilities {
         // Full text on every change: Ruby files are small and a full reparse is
         // microseconds, so incremental sync would be complexity bought with
-        // nothing.
-        text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+        // nothing. Saves are asked for because a save is when the index moves.
+        text_document_sync: Some(TextDocumentSyncCapability::Options(
+            lsp_types::TextDocumentSyncOptions {
+                open_close: Some(true),
+                change: Some(TextDocumentSyncKind::FULL),
+                save: Some(lsp_types::TextDocumentSyncSaveOptions::SaveOptions(
+                    lsp_types::SaveOptions {
+                        include_text: Some(false),
+                    },
+                )),
+                ..Default::default()
+            },
+        )),
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
@@ -114,12 +127,46 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
     );
     log.detail("initialize_params", || params.clone());
 
+    let client = Client::from(&params);
     let store = crate::store::open_default()?;
-    let mut session = Session::open(root, store);
+    let mut session = Session::open(root.clone(), store);
     let inbox = Inbox::new(&connection);
+    let mut indexer = fresh::Indexer::new(client.progress, client.index);
+
+    if client.watch {
+        // Changes the editor does not make — a checkout, a pull, a formatter —
+        // only reach us if the client watches for them on our behalf.
+        connection.sender.send(watch_request())?;
+    }
+    // A Ruby project nobody has indexed: start now, so the first question
+    // finds more than core and gems. Anywhere else waits to be asked about.
+    if root.join("Gemfile").is_file() && !session.indexed(&root) {
+        indexer.want(root.clone(), false);
+    }
+    let mut warm = false;
 
     loop {
-        let message = match inbox.next(None) {
+        for message in indexer.poll(log) {
+            // A finished index moves the tree; warm it again when quiet.
+            warm = false;
+            connection.sender.send(message)?;
+        }
+        if !warm && inbox.is_quiet() {
+            // Nothing to answer: build the root's tree now rather than on the
+            // first question, which would otherwise pay for it.
+            warm = true;
+            if session.indexed(&root) {
+                let started = std::time::Instant::now();
+                let built = session.tree(&root).is_ok();
+                log.event(
+                    "warm",
+                    serde_json::json!({ "ok": built, "ms": started.elapsed().as_millis() as u64 }),
+                );
+            }
+        }
+        // While an index runs, wake periodically to notice it finish.
+        let timeout = indexer.busy().then_some(Duration::from_millis(250));
+        let message = match inbox.next(timeout) {
             Next::Message(message) => message,
             Next::Idle => continue,
             Next::Closed => break,
@@ -179,7 +226,7 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
                     return Ok(Outcome::ShutDown);
                 }
                 let method = notification.method.clone();
-                let published = notify(&mut session, notification);
+                let published = notify(&mut session, &mut indexer, notification);
                 log.event(
                     "notification",
                     serde_json::json!({
@@ -192,6 +239,9 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
                 }
             }
             Message::Response(_) => {}
+        }
+        for root in session.take_unindexed() {
+            indexer.want(root, false);
         }
     }
     // The channel closed: the client went away without a shutdown request.
@@ -476,9 +526,26 @@ where
 /// Documents are keyed by their canonical absolute path, not by a
 /// workspace-relative one: a session answers for several checkouts at once, and
 /// two of them can each have an `app.rb`.
-fn notify(session: &mut Session, notification: Notification) -> Option<Message> {
+fn notify(
+    session: &mut Session,
+    indexer: &mut fresh::Indexer,
+    notification: Notification,
+) -> Option<Message> {
     use lsp_types::notification as note;
     match notification.method.as_str() {
+        note::DidSaveTextDocument::METHOD => {
+            let params: lsp_types::DidSaveTextDocumentParams =
+                serde_json::from_value(notification.params).ok()?;
+            let path = document_path(params.text_document.uri.as_str())?;
+            fresh::refresh(session, &path);
+            None
+        }
+        note::DidChangeWatchedFiles::METHOD => {
+            let params: lsp_types::DidChangeWatchedFilesParams =
+                serde_json::from_value(notification.params).ok()?;
+            watched(session, indexer, params.changes);
+            None
+        }
         note::DidOpenTextDocument::METHOD => {
             let params: lsp_types::DidOpenTextDocumentParams =
                 serde_json::from_value(notification.params).ok()?;
@@ -524,6 +591,95 @@ fn notify(session: &mut Session, notification: Notification) -> Option<Message> 
         }
         _ => None,
     }
+}
+
+/// Files changed underneath the editor. A few are refreshed in place; many at
+/// once, or any deletion, is an operation on the checkout and gets a full
+/// index — `refresh_file` can add and replace a file but not remove one.
+fn watched(
+    session: &mut Session,
+    indexer: &mut fresh::Indexer,
+    changes: Vec<lsp_types::FileEvent>,
+) {
+    let paths: Vec<(PathBuf, lsp_types::FileChangeType)> = changes
+        .into_iter()
+        .filter_map(|change| Some((document_path(change.uri.as_str())?, change.typ)))
+        .filter(|(path, _)| crate::scan::is_ruby(&path.to_string_lossy()))
+        .collect();
+    let bulk = paths.len() > fresh::BULK
+        || paths
+            .iter()
+            .any(|(_, kind)| *kind == lsp_types::FileChangeType::DELETED);
+    if bulk {
+        let mut roots: Vec<PathBuf> = paths
+            .iter()
+            .filter_map(|(path, _)| {
+                // A deleted file cannot be canonicalized or placed by git;
+                // its directory usually still can.
+                let probe = if path.exists() {
+                    path.clone()
+                } else {
+                    path.parent()?.join(".")
+                };
+                session.locate(&probe).map(|located| located.root)
+            })
+            .collect();
+        roots.sort();
+        roots.dedup();
+        for root in roots {
+            if session.indexed(&root) {
+                indexer.want(root, true);
+            }
+        }
+        return;
+    }
+    for (path, _) in paths {
+        fresh::refresh(session, &path);
+    }
+}
+
+/// What the client said it can do, and what it asked of us.
+struct Client {
+    /// `window.workDoneProgress`: it will show `$/progress`.
+    progress: bool,
+    /// `workspace.didChangeWatchedFiles.dynamicRegistration`: it will watch
+    /// files for us if asked.
+    watch: bool,
+    /// `initializationOptions.index`: whether to index checkouts in the
+    /// background. On unless turned off.
+    index: bool,
+}
+
+impl Client {
+    fn from(params: &serde_json::Value) -> Client {
+        let flag = |pointer: &str| params.pointer(pointer).and_then(serde_json::Value::as_bool);
+        Client {
+            progress: flag("/capabilities/window/workDoneProgress").unwrap_or(false),
+            watch: flag("/capabilities/workspace/didChangeWatchedFiles/dynamicRegistration")
+                .unwrap_or(false),
+            index: flag("/initializationOptions/index").unwrap_or(true),
+        }
+    }
+}
+
+/// Ask the client to report changes to Ruby files. A branch switch arrives as
+/// a burst of these, which is what tips a batch into a full index.
+fn watch_request() -> Message {
+    Message::Request(Request::new(
+        RequestId::from("trekr-watch".to_string()),
+        "client/registerCapability".into(),
+        serde_json::json!({
+            "registrations": [{
+                "id": "trekr-watch",
+                "method": "workspace/didChangeWatchedFiles",
+                "registerOptions": {
+                    "watchers": [
+                        { "globPattern": "**/*.{rb,rake,ru,gemspec,rbi,jbuilder}" },
+                    ],
+                },
+            }],
+        }),
+    ))
 }
 
 /// A document URI as the one path this session will key it by. Canonical, so

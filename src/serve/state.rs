@@ -39,6 +39,9 @@ pub(crate) struct Session {
     /// Open documents by canonical absolute path — two checkouts can each have
     /// an `app.rb`, so a relative key is not a key.
     open: HashMap<PathBuf, Document>,
+    /// Checkouts asked about that the store has never indexed. Drained by the
+    /// serve loop into a background index; a question never waits for one.
+    unindexed: Vec<PathBuf>,
 }
 
 /// One checkout's assembled namespace, and what it was assembled from.
@@ -133,11 +136,28 @@ impl Session {
             checkouts: HashMap::new(),
             enclosing: HashMap::new(),
             open: HashMap::new(),
+            unindexed: Vec::new(),
         }
     }
 
     pub(crate) fn store(&self) -> &Store {
         &self.store
+    }
+
+    pub(crate) fn store_mut(&mut self) -> &mut Store {
+        &mut self.store
+    }
+
+    /// Checkouts found unindexed since the last call.
+    pub(crate) fn take_unindexed(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.unindexed)
+    }
+
+    /// Is this checkout in the store at all?
+    pub(crate) fn indexed(&self, root: &Path) -> bool {
+        self.store
+            .has_checkout(&root.to_string_lossy())
+            .unwrap_or(false)
     }
 
     /// The checkout a file belongs to, and its path within it.
@@ -196,6 +216,11 @@ impl Session {
         };
         let checkout = self.checkouts.entry(root.to_path_buf()).or_default();
         if checkout.built_from != Some(stamp) {
+            // Partial is normal: answer from core and gems alone, and ask for
+            // the index rather than wait for it.
+            if !self.store.has_checkout(&key)? && !self.unindexed.iter().any(|r| r == root) {
+                self.unindexed.push(root.to_path_buf());
+            }
             checkout.tree = Some(Tree::build(&self.store, &key)?);
             checkout.built_from = Some(stamp);
         }

@@ -31,6 +31,17 @@
   definition. **`documentSymbol` is nested** — methods inside their class,
   each spanning its body — so VS Code's outline, breadcrumbs and sticky scroll
   work; singleton methods are shown as `self.name`.
+- **`--lsp` keeps the index current while you edit** (DEC-039). A save
+  refreshes that file in the index, so a method added in one file is found
+  from another without running `trekr --index`. Changed files reported by the
+  editor's watcher are refreshed the same way; a burst of them, or a deletion,
+  triggers a background `trekr --index`. **An unindexed checkout is indexed in
+  the background** — the workspace root when it has a `Gemfile`, or any
+  checkout a question lands in — with `$/progress` shown by clients that
+  support it; until it finishes, `hover` says answers are partial. Turn
+  background indexing off with the initialization option `{"index": false}`.
+  The root's tree is built while the server is idle, so the first question no
+  longer pays for it.
 
 ## 0.1.5 — 2026-08-26
 

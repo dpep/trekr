@@ -692,6 +692,16 @@ pub(crate) fn hover(session: &mut Session, params: HoverParams) -> anyhow::Resul
             out
         }
     };
+    // Said where the answer is read: an unindexed checkout answers from core
+    // and gems alone, and a residue there is a gap in the index, not a
+    // finding about the code.
+    let text = if session.indexed(&located.root) {
+        text
+    } else {
+        format!(
+            "{text}\n\n_This checkout is not indexed yet, so answers come from core and gems alone. trekr indexes it in the background; `trekr --index` does it now._"
+        )
+    };
     Ok(Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,

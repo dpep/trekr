@@ -48,6 +48,12 @@ impl<'a> Inbox<'a> {
         }
     }
 
+    /// Nothing buffered and nothing waiting — the moment for background work.
+    pub(crate) fn is_quiet(&self) -> bool {
+        self.drain();
+        self.pending.borrow().is_empty()
+    }
+
     /// The next message, waiting at most `timeout` when one is given.
     pub(crate) fn next(&self, timeout: Option<Duration>) -> Next {
         self.drain();

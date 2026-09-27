@@ -145,13 +145,21 @@ impl Session {
     }
 
     fn initialize(&mut self, dir: &Path) -> serde_json::Value {
+        self.initialize_with(dir, serde_json::json!({}))
+    }
+
+    fn initialize_with(
+        &mut self,
+        dir: &Path,
+        capabilities: serde_json::Value,
+    ) -> serde_json::Value {
         let uri = format!("file://{}", dir.display());
         let result = self.request(
             "initialize",
             serde_json::json!({
                 "processId": null,
                 "rootUri": uri,
-                "capabilities": {},
+                "capabilities": capabilities,
             }),
         );
         self.notify("initialized", serde_json::json!({}));
@@ -1597,6 +1605,191 @@ fn a_reference_after_a_multibyte_character_lands_on_the_name() {
     // `é = 1; w.` is 9 UTF-16 units and 10 bytes.
     assert_eq!(range["start"]["character"], 9);
     assert_eq!(range["end"]["character"], 13, "and spans the name");
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Ask for the definition at a position until it answers, or give up. A
+/// background index finishes when it finishes; the test waits for the
+/// *answer*, not for a sleep that is long enough on this machine.
+fn definition_eventually(
+    session: &mut Session,
+    uri: &str,
+    line: u32,
+    character: u32,
+) -> serde_json::Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let answer = session.request(
+            "textDocument/definition",
+            serde_json::json!({
+                "textDocument": {"uri": uri},
+                "position": {"line": line, "character": character},
+            }),
+        );
+        if !answer["result"].is_null() || std::time::Instant::now() > deadline {
+            return answer["result"].clone();
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
+fn commit_all(dir: &Path) {
+    git(dir, &["add", "-A"]);
+    git(
+        dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "change",
+        ],
+    );
+}
+
+/// A save moves the index. A method added and saved in one file is found from
+/// another straight away — the tree is assembled from the index, so without
+/// this the new method did not exist until someone ran `--index`.
+#[test]
+fn a_saved_file_is_reindexed_so_other_files_see_its_new_methods() {
+    let (dir, db) = scratch("save");
+    ruby_repo(&dir, &db, "class Widget\n  def save\n  end\nend\n");
+    fs::write(dir.join("job.rb"), "w = Widget.new\nw.polish\n").unwrap();
+    commit_all(&dir);
+    Command::new(env!("CARGO_BIN_EXE_trekr"))
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let job = uri_of(&dir, "job.rb");
+    let before = session.request(
+        "textDocument/definition",
+        serde_json::json!({"textDocument": {"uri": job}, "position": {"line": 1, "character": 3}}),
+    );
+    assert!(before["result"].is_null(), "no `polish` anywhere yet");
+
+    fs::write(
+        dir.join("app.rb"),
+        "class Widget\n  def save\n  end\n  def polish\n  end\nend\n",
+    )
+    .unwrap();
+    session.notify(
+        "textDocument/didSave",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    let after = session.request(
+        "textDocument/definition",
+        serde_json::json!({"textDocument": {"uri": job}, "position": {"line": 1, "character": 3}}),
+    );
+    assert_eq!(
+        after["result"][0]["range"]["start"]["line"], 3,
+        "Widget#polish, found through the index the save refreshed"
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A Ruby project nobody indexed is indexed in the background, with progress
+/// for a client that can show it, and answers start arriving without anyone
+/// running `trekr --index`.
+#[test]
+fn an_unindexed_project_is_indexed_in_the_background_with_progress() {
+    let (dir, db) = scratch("cold");
+    git(&dir, &["init", "-q"]);
+    fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
+    fs::write(
+        dir.join("app.rb"),
+        "class Widget\n  def save\n  end\nend\nw = Widget.new\nw.save\n",
+    )
+    .unwrap();
+    commit_all(&dir);
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize_with(
+        &dir,
+        serde_json::json!({"window": {"workDoneProgress": true}}),
+    );
+
+    // The server asks to create a progress token, then begins and ends it.
+    let mut seen = Vec::new();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !seen.contains(&"end".to_string()) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "progress never ended: {seen:?}"
+        );
+        let message = session.read();
+        if message["method"] == "window/workDoneProgress/create" {
+            seen.push("create".into());
+        } else if message["method"] == "$/progress" {
+            seen.push(
+                message["params"]["value"]["kind"]
+                    .as_str()
+                    .unwrap()
+                    .to_string(),
+            );
+        }
+    }
+    assert_eq!(seen, ["create", "begin", "end"]);
+
+    let answer = definition_eventually(&mut session, &uri_of(&dir, "app.rb"), 5, 3);
+    assert_eq!(
+        answer[0]["range"]["start"]["line"], 1,
+        "Widget#save, from the new index"
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A deleted file leaves the index. A deletion is reported by the client's
+/// watcher and handed to a full index, since refreshing one file can add or
+/// replace it but not remove it.
+#[test]
+fn a_deleted_file_reported_by_the_watcher_leaves_the_index() {
+    let (dir, db) = scratch("deleted");
+    ruby_repo(&dir, &db, "class Widget\n  def save\n  end\nend\n");
+    fs::write(dir.join("gadget.rb"), "class Gadget\nend\n").unwrap();
+    commit_all(&dir);
+    Command::new(env!("CARGO_BIN_EXE_trekr"))
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let found = |session: &mut Session| {
+        session.request("workspace/symbol", serde_json::json!({"query": "Gadget"}))["result"]
+            .as_array()
+            .map_or(0, Vec::len)
+    };
+    assert_eq!(found(&mut session), 1);
+
+    fs::remove_file(dir.join("gadget.rb")).unwrap();
+    git(&dir, &["add", "-A"]);
+    session.notify(
+        "workspace/didChangeWatchedFiles",
+        serde_json::json!({"changes": [{"uri": uri_of(&dir, "gadget.rb"), "type": 3}]}),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while found(&mut session) != 0 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "Gadget was never forgotten"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
     session.stop();
     let _ = fs::remove_dir_all(&dir);
 }

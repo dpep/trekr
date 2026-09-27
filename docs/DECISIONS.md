@@ -1797,3 +1797,49 @@ tier, and every candidate carrying its reason. Below that it ships as
 because its whole feature was removed is not evidence the analyzer would have
 been right about it in isolation. The mitigation is to score only deletions that
 left the surrounding file alive.
+
+## DEC-039 — The LSP front indexes in a child process, and refreshes on save
+
+**Decided.** `trekr --lsp` keeps the index current itself, three ways, and
+never waits for any of them:
+
+1. **didSave** refreshes the saved file in place — `Store::refresh_file`, the
+   same bounded one-file refresh DEC-035 gave the CLI, minus the probe (a save
+   *is* the signal).
+2. **didChangeWatchedFiles** (registered dynamically when the client offers it)
+   refreshes up to 32 changed Ruby files the same way. More than that, or any
+   deletion, is an operation on the checkout — a branch switch, a pull — and
+   gets a full index, because `refresh_file` can add or replace a file's facts
+   but cannot remove them.
+3. **An unindexed checkout** — the workspace root when it has a `Gemfile`, or
+   any checkout a question lands in — gets a background `trekr --index` child,
+   reported as `$/progress` when the client can show it. Answers meanwhile
+   come from core and gems, and `hover` says the checkout is not indexed.
+
+**Why a child process, when DEC-035 rejected background work for the CLI.**
+DEC-035's objection was to *detached* work with no owner: a second writer, an
+orphan, an index nobody asked for. Here the owner is the editor session that
+asked a question about the checkout, the work is an ordinary `--index` run
+that exits when done, and it writes through SQLite's locking exactly as a CLI
+invocation would. DEC-035 itself named the LSP front as the process that "may
+legitimately watch". What stays true: no daemon, no lockfile, no state the
+server owns — the child's result lives in the store, and the server's tree is
+rebuilt from it on the next question because the checkout's surface key moved.
+
+**Rejected: indexing in-process on a thread.** It would need the index
+pipeline (`cli/`) exposed as a library API and a second store connection held
+by the server, for no user-visible gain over a child — and a child that is
+killed with the editor still leaves the store consistent, since `--index`
+writes in one transaction.
+
+**Rejected: killing the child on shutdown.** A cold index of the design-point
+monorepo is minutes; a short editor or agent session killing it each time
+would never finish one. The child runs to completion and exits.
+
+**Also decided: the root's tree is built when the server is idle** — after
+`initialize`, and after each background index — instead of on the first
+question. The first question after spawn was paying the 300–470 ms build.
+
+**Reverses if** concurrent writers are measured contending — a child index and
+a burst of saves both writing — enough to stall saves visibly. The answer would
+be queueing saves behind a running index rather than dropping the child.
