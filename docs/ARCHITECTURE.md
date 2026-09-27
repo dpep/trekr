@@ -149,7 +149,12 @@ in it; they stay demand-loaded from SQL.
   temporary file a dead writer left — `--gc` removes (`snapshots` in its
   `--json`).
 
-A snapshot is built by whichever query first finds none for the current key.
+A snapshot is built by the index the LSP starts in the background, when it
+starts one, and otherwise by whichever query first finds none for the current
+key. Building it in every `--index` was measured and turned down: the cost is
+the same wherever it lands, and a foreground index may never be followed by a
+query (DEC-065). The LSP stamps each tree with the same key, so a bundle moving
+to another gem version rebuilds it as a checkout edit does.
 
 ### `resolve/` — which method does this call site run?
 
@@ -232,7 +237,7 @@ checkout may reopen a gem, which is what Rails actually does.
 **The resident front holds the tree.** `Tree::build(store, root)` is the whole
 seam: it takes a store and a checkout root and returns a value with no borrowed
 state and no background work. `--lsp` holds one per checkout, answers from it,
-and rebuilds when the checkout's surface key moves — see [LSP front](#lsp-front).
+and rebuilds when the surface key of the checkout or of any gem it uses moves — see [LSP front](#lsp-front).
 Both it and every CLI query map the same snapshot file, so the namespace is in
 memory once per machine rather than once per process.
 
@@ -389,7 +394,7 @@ the new binary in place (DEC-050).
 | `mod.rs` | the loop: initialize, dispatch, shutdown/exit, error codes, idle warm-up, answers rewritten into the client's path spelling |
 | `wire.rs` | stdio framing: stdin read on the loop's own thread from the raw descriptor (no hidden read-ahead), stdout written by a thread |
 | `inbox.rs` | reading the wire ahead, so `$/cancelRequest` is seen before the request it withdraws is reached, and mid-scan |
-| `state.rs` | per-checkout trees (rebuilt when the surface key moves) and completion listings; documents — the editor's copy, or a disk read revalidated by mtime+length |
+| `state.rs` | per-checkout trees, mapped from their snapshots and reloaded when the tree key — checkout and gems — moves; completion listings; documents — the editor's copy, or a disk read revalidated by mtime+length |
 | `handlers.rs` | the nine agent operations, syntax diagnostics, `require` strings as links |
 | `gather.rs` | how much of a references answer is kept, in what order, and what is said about the rest (DEC-056) |
 | `require.rs` | which file a `require` string names: finding them in a file, the static load path, Ruby's search rules (DEC-053) |
@@ -612,7 +617,8 @@ The log records `reload`, `resume`, `reload_failed` and `retire`.
 
 ## Measurements
 
-2026-09-27, Apple M2 (8 cores), release build at 4b035da, warm page cache, on
+2026-09-27, Apple M2 (8 cores), release build at 4b035da (the tree snapshot's
+rows: the `snapshot` branch on 51052fe), warm page cache, on
 a machine shared with other work (load 3–4). Reproduce with `make bench`. Cold
 time is a single run — a second one is by definition not cold; everything else
 is a median of five. Run-to-run variance is about 20 %, so these are two
@@ -644,14 +650,34 @@ the size of the monorepo DEC-035 measured. Single runs, the machine shared.
 | no-op `--index` | 0.10 s | 0.78 s | 4.8 s |
 | — with git's untracked cache primed and fsmonitor on | | | 0.42 s |
 | one-file `--index` | 0.15 s | 0.92 s | 9.4 s |
-| `--def` | 0.33 s | 1.1 s | 2.9 s |
-| `--def`, private memory peak | 0.10 GB | 0.45 GB | 1.06 GB |
-| LSP first answer (tree build) | 0.23 s | 4.0 s | 2.7 s |
-| LSP live heap, tree + completion listing | 95 MB | 485 MB | 1.23 GB |
+| `--def` | 0.02 s | 0.03 s | 0.05 s |
+| `--def`, private memory peak | 7 MB | 13 MB | 34 MB |
+| `--refs Topic#title` | 0.24 s | 1.8 s | 5.1 s |
+| LSP first answer | 0.03 s | 0.03 s | 0.07–0.8 s |
+| LSP live heap, completion listing (the tree is mapped) | 37 MB | 160 MB | 490 MB |
+| tree snapshot on disk | 7.4 MB | 44 MB | 120 MB |
 
-What grows with the repo and is paid per question is the tree: every CLI query
-builds all of it (3.5 s at 30×, 2.1 s of that decoding declaration rows), and
-an LSP session holds it and the completion listing in private memory. The
+**What the tree snapshot changed** (DEC-060, DEC-065): the same queries, the
+binary before it against the one with it, each on its own store, interleaved,
+medians of five (1×, 10×) or three (30×) on a machine at load 7–20. Every
+output identical.
+
+| | 1× before → after | 10× | 30× |
+|---|---:|---:|---:|
+| `--def` | 0.22 → 0.02 s | 1.01 → 0.03 s | 3.0 → 0.05 s |
+| `--def`, private memory peak | 99 → 7 MB | 467 → 13 MB | 1126 → 34 MB |
+| `--ancestors` | 0.21 → 0.01 s | 1.05 → 0.02 s | 3.5 → 0.04 s |
+| `--refs Topic#title` | 0.45 → 0.24 s | 2.9 → 1.8 s | 7.5 → 5.1 s |
+| LSP first answer | 0.20 → 0.03 s | 1.0 → 0.03 s | 2.9 → 0.07–0.8 s |
+| LSP live heap, one server | 82 → 37 MB | 406 → 160 MB | 1011 → 490 MB |
+| three servers, live heap together | 245 → 111 MB | 1220 → 482 MB | 3150 → 1595 MB |
+| three servers, footprint together | 475 → 170–245 MB | 1590 → 640 MB | 5450 → 2430 MB |
+
+A query now pays for the tree only after the index under it moved, and then
+once: on a miss the build is the old assembly (1 s at 10×; 10–12 s at 30×
+straight after an index, when the declaration rows are no longer cached, and
+3.5 s warm) plus ~0.4 s to encode and 0.07 s to write. What an LSP session
+still holds privately is completion's member listing — the next lever. The
 30× one-file reindex was mostly git walking a worktree whose caches had not
 been primed; with them, a no-op is dominated by trekr reading `git ls-files`
 into the file map.

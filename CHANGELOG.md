@@ -2,13 +2,20 @@
 
 ## Unreleased
 
-- **Queries stop rebuilding the namespace.** The assembled tree is written
-  once per checkout beside the database (`trekr.trees/`, next to `trekr.db`)
-  and mapped read-only by every CLI query and LSP session after that. On a
-  336k-file repo `--ancestors` goes from ~3.5 s and 1.1 GB of memory to
-  ~0.05 s and 30 MB; the first query after an index pays the build plus a
-  ~120 MB write. The directory is a cache: deleting it costs one rebuild per
+- **Queries stop rebuilding the namespace, and LSP sessions share it.** The
+  assembled tree is written once per checkout beside the database
+  (`trekr.trees/`, next to `trekr.db`) and mapped read-only by every CLI query
+  and LSP session after that. On a 336k-file repo `--def` goes from ~3 s and
+  1.1 GB of memory to ~0.05 s and 34 MB, an LSP session's first answer from
+  ~2.9 s to under a second, and three editor sessions hold 2.4 GB instead of
+  5.4 GB; on discourse, `--def` 0.22 → 0.02 s. The first query after an
+  `--index` you run pays the build once, plus a write the size of the tree
+  (120 MB at that scale); the index the LSP starts in the background builds it
+  itself. The directory is a cache: deleting it costs one rebuild per
   checkout.
+- **An editor session notices a bundle moving to another gem version.** It
+  kept answering from the old version's classes until a file in the checkout
+  itself changed; now any reindexed gem it uses reloads the tree.
 - **`--gc` also removes tree snapshots no checkout's index names any more** —
   one left by a checkout that was collected, or whose index moved with no
   query since. `--json` reports them as `snapshots: {files, bytes}`, and they

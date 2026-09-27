@@ -2920,9 +2920,18 @@ four on the 30× synthetic monorepo, medians; output identical:
 Found by the unbounded-growth audit: every per-query structure that grows with
 the repo was checked for work that grows faster than it.
 
-## DEC-060 — The tree becomes a flat, interned, mmap'd snapshot — measured, not built
+## DEC-060 — The tree becomes a flat, interned, mmap'd snapshot
 
-**Recommended, for its own lane.** At monorepo scale the cost every question
+**Built** (DEC-065), as the shape below describes: a zero-copy layout mapped
+by every query and session, methods still demand-loaded. The estimates held —
+120 MB at 30× against 117 estimated; loading it, checksum included, 14 ms. At
+30×, interleaved against the binary before it, outputs identical: `--def`
+3.0 → 0.05 s and 1.1 GB → 34 MB private peak; an LSP's first answer
+2.9 → 0.07–0.8 s; live heap per server 1011 → 490 MB, the rest being
+completion's listing; three servers' footprint together 5.4 → 2.4 GB. The
+full table is in ARCHITECTURE's Measurements.
+
+**Recommended, for its own lane** (as written before it was built). At monorepo scale the cost every question
 pays is the tree: each CLI query assembles the whole namespace from SQL, and
 each LSP session holds it privately. Measured on the 30× synthetic monorepo
 (discourse replicated with every blob and constant distinct):
@@ -3281,6 +3290,40 @@ moved key (new file, old one retired), racing builders (one file), and a
 second *process* that rewrites the very file a reader has mapped and then
 unlinks it while the reader keeps answering — which fails if a snapshot is
 ever written in place.
+
+**When it is built: the LSP's background index, else the first query.**
+Measured at 10× and 30×, one edited definition per round, four interleaved
+rounds, building in `--index` against building in the first query after it:
+
+| | `--index` | first query | together |
+|---|---:|---:|---:|
+| 10×, lazy | 1.0–1.4 s | 1.0–1.3 s | ~2.2 s |
+| 10×, in `--index` | 2.0–3.4 s | 0.02 s | ~2.4 s |
+| 30×, lazy | 5.1–5.4 s | 10.4–12.7 s | ~16 s |
+| 30×, in `--index` | 15.6–16.4 s | 0.05 s | ~16 s |
+
+The cost is the same wherever it lands, so it lands where nobody waits: the
+index the LSP spawns (already at low priority, DEC-062) builds it, taking the
+assembly off the session's request thread, and an index a person or agent runs
+stays as fast as it was — it may never be followed by a query, and a CLI query
+refreshes the file it asks about, moving the key anyway. `--usage` counts the
+operations that paid (`tree-built`), which is the evidence to revisit this
+with. The 30× build after an index is 10–12 s, not the 3.5 s measured warm: the
+index has pushed the declaration rows out of the page cache.
+
+**The miss, profiled.** Past assembly, a 30× miss spent 0.56 s encoding,
+0.22–0.66 s freeing the assembled map, and only 60–100 ms writing and syncing
+120 MB. Interning through Fx rather than SipHash and writing sections straight
+into the output took encoding to 0.37 s (best of four, interleaved); the map is
+freed on its own thread. Same bytes.
+
+**The LSP's stamp is the snapshot key.** A session stamped its tree with the
+checkout's own surface key, so a bundle moving to another gem version — which
+changes `Gemfile.lock` and no Ruby file in the checkout — kept the old
+version's tree until the checkout's own files changed. The key already covers
+every gem's surface key; computing it per request is three small queries and
+a hash of the roots. An e2e case switches a lockfile between two vendored
+versions and fails on the old stamp.
 
 **Reverses if** the store moves to a network filesystem, where a mapping's
 guarantees are weaker (as for DEC-051).
