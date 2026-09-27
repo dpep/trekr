@@ -15,6 +15,22 @@
   Closing a file clears its syntax diagnostics, published diagnostics carry the
   document version, and a ranged `didChange` is applied in place rather than
   taken for the whole document.
+- **`references` in `--lsp` answers for classes, modules and constants.** It
+  searched only method call sites, so asking on `Widget` returned nothing;
+  it now returns every written constant that Ruby's lookup resolves to the
+  same name (`Widget`, `::Widget`, `Shop::Widget` from outside `Shop`), and
+  none that resolve elsewhere. `includeDeclaration` is honoured — the
+  definition comes first — unsaved edits in open files are counted, and
+  ranges span the name in correct UTF-16 columns. Large answers are about 2×
+  faster: files are parsed in parallel, and positions are converted with a
+  per-file line index instead of a scan from the top of the file per hit.
+- **Call hierarchy walks.** `incomingCalls` returns one item per calling
+  method with each call as a range, and that item can be expanded again (it
+  was the call site, which answered nothing); `prepareCallHierarchy` on a call
+  prepares the method it calls, and `outgoingCalls` points each callee at its
+  definition. **`documentSymbol` is nested** — methods inside their class,
+  each spanning its body — so VS Code's outline, breadcrumbs and sticky scroll
+  work; singleton methods are shown as `self.name`.
 
 ## 0.1.5 — 2026-08-26
 

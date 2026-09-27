@@ -256,6 +256,15 @@ impl Session {
             .filter(|d| matches!(d.origin, Origin::Editor { .. }))
             .map(|d| d.text.as_str())
     }
+
+    /// Every file the editor has open under `root`, with its text.
+    pub(crate) fn editor_documents_under(&self, root: &Path) -> Vec<(PathBuf, String)> {
+        self.open
+            .iter()
+            .filter(|(path, d)| matches!(d.origin, Origin::Editor { .. }) && path.starts_with(root))
+            .map(|(path, d)| (path.clone(), d.text.clone()))
+            .collect()
+    }
 }
 
 fn disk_stamp(path: &Path) -> Option<(std::time::SystemTime, u64)> {

@@ -12,7 +12,7 @@
 //! file belongs to, which the session finds per file rather than assuming the
 //! client's root (DEC-024).
 
-use super::convert::{self, path_to_uri, point, to_pos};
+use super::convert::{self, LineIndex, path_to_uri, point, to_pos};
 use super::state::{Located, Session};
 use crate::cli::position::{self, Under};
 use crate::resolve::refs;
@@ -24,6 +24,7 @@ use lsp_types::{
     GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams, Location,
     MarkupContent, MarkupKind, ReferenceParams, SymbolKind, WorkspaceSymbolParams,
 };
+use std::collections::HashMap;
 use std::path::Path;
 
 /// How many ranked guesses `goToDefinition` offers when the receiver did not
@@ -35,26 +36,71 @@ use std::path::Path;
 const MAX_GUESSES: usize = 5;
 
 /// A location from our `path:line:col`, resolved against the checkout the path
-/// came out of.
-fn location(root: &Path, path: &str, line: u32, col: u32) -> Option<Location> {
-    let absolute = if path == crate::tree::CORE_PATH {
-        // Core is compiled into the binary; it is written out beside the
-        // database so that `require` and `Array#each` land on a readable
-        // signature instead of answering nothing.
-        crate::store::core_stub_path().ok()?
-    } else if path.starts_with('<') {
-        return None;
-    } else if Path::new(path).is_absolute() {
-        // A gem site is already an absolute path.
-        std::path::PathBuf::from(path)
-    } else {
-        root.join(path)
+/// came out of, spanning `len` bytes of the name there.
+///
+/// `text` is the file's contents when the caller already has them. Without
+/// them the file is read, because a column is bytes and LSP counts UTF-16 — a
+/// line with an `é` before the name is off by one otherwise.
+fn location(
+    root: &Path,
+    path: &str,
+    line: u32,
+    col: u32,
+    len: usize,
+    text: Option<&str>,
+) -> Option<Location> {
+    let absolute = absolute_site(root, path)?;
+    let read;
+    let text = match text {
+        Some(text) => Some(text),
+        None => {
+            read = std::fs::read_to_string(&absolute).ok();
+            read.as_deref()
+        }
     };
     let uri: Url = path_to_uri(&absolute).parse().ok()?;
     Some(Location {
         uri,
-        range: point(None, line, col),
+        range: convert::span(text, line, col, len),
     })
+}
+
+/// A location without reading the file, for answers too numerous to read
+/// every file behind: columns are taken as ASCII.
+fn unread_location(root: &Path, path: &str, line: u32, col: u32, len: usize) -> Option<Location> {
+    let absolute = absolute_site(root, path)?;
+    Some(Location {
+        uri: path_to_uri(&absolute).parse().ok()?,
+        range: convert::span(None, line, col, len),
+    })
+}
+
+/// The URI of a site path.
+fn file_uri(root: &Path, path: &str) -> Option<Url> {
+    path_to_uri(&absolute_site(root, path)?).parse().ok()
+}
+
+/// Where a site path lives on disk.
+fn absolute_site(root: &Path, path: &str) -> Option<std::path::PathBuf> {
+    if path == crate::tree::CORE_PATH {
+        // Core is compiled into the binary; it is written out beside the
+        // database so that `require` and `Array#each` land on a readable
+        // signature instead of answering nothing.
+        crate::store::core_stub_path().ok()
+    } else if path.starts_with('<') {
+        None
+    } else if Path::new(path).is_absolute() {
+        // A gem site is already an absolute path.
+        Some(std::path::PathBuf::from(path))
+    } else {
+        Some(root.join(path))
+    }
+}
+
+/// The last segment of a constant path — what is written at a reference's
+/// recorded position.
+fn last_segment(name: &str) -> &str {
+    name.rsplit("::").next().unwrap_or(name)
 }
 
 /// The file a request names, wherever it lives. No checkout required — enough
@@ -85,12 +131,23 @@ pub(crate) fn definition(
     let Some((located, pos)) = target(session, &uri, position) else {
         return Ok(None);
     };
+    let name_len = name_at(session, &located, pos).map_or(0, |n| last_segment(&n).len());
     let sites = resolve_at(session, &located, pos)?;
     let locations: Vec<Location> = sites
         .into_iter()
-        .filter_map(|(p, line, col)| location(&located.root, &p, line, col))
+        .filter_map(|(p, line, col)| location(&located.root, &p, line, col, name_len, None))
         .collect();
     Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)))
+}
+
+/// The name under a position, as written.
+fn name_at(session: &mut Session, located: &Located, pos: crate::core::Pos) -> Option<String> {
+    let facts = session.document(&located.absolute)?.facts().clone();
+    Some(match position::at_facts(&facts, pos.line, pos.col)? {
+        Under::Definition(def) => def.name,
+        Under::Call(call) => call.name,
+        Under::Constant(reference) => reference.name,
+    })
 }
 
 /// Where the name at a position is defined — the CLI's `--def`, as sites.
@@ -150,6 +207,7 @@ pub(crate) fn references(
 ) -> anyhow::Result<Option<Vec<Location>>> {
     let uri = params.text_document_position.text_document.uri;
     let position = params.text_document_position.position;
+    let declarations = params.context.include_declaration;
     let Some((located, pos)) = target(session, &uri, position) else {
         return Ok(None);
     };
@@ -161,75 +219,272 @@ pub(crate) fn references(
         return Ok(None);
     };
 
+    // A class, module or constant is a different question from a method: its
+    // references are constant references, resolved by Ruby's lookup rather
+    // than by a receiver.
+    let constant = match &under {
+        Under::Definition(def) if def.kind != crate::core::Kind::Method => {
+            Some((def.name.clone(), def.nesting.clone()))
+        }
+        Under::Constant(reference) => Some((reference.name.clone(), reference.nesting.clone())),
+        _ => None,
+    };
+    if let Some((name, nesting)) = constant {
+        return constant_references(session, &located, &name, &nesting, declarations).map(Some);
+    }
+
     let root = located.root.clone();
     let root_str = root.to_string_lossy().into_owned();
     let path = located.relative.clone();
-    let name = match &under {
-        Under::Definition(def) => def.name.clone(),
-        Under::Call(call) => call.name.clone(),
-        Under::Constant(reference) => reference.name.clone(),
+    let (name, own_site) = match &under {
+        Under::Definition(def) => (def.name.clone(), Some(def.pos)),
+        Under::Call(call) => (call.name.clone(), None),
+        Under::Constant(_) => unreachable!("answered above"),
     };
     let paths = session.store().files_calling(&root_str, &name)?;
+    let overlay = overlay(session, &root);
     let tree = session.tree(&root)?;
 
     // Which method is being asked about, not just which name. Standing on a
     // definition, the owner is the scope that declares it; standing on a call,
     // it is wherever that call resolves. Without this the answer merges every
     // same-named method in the repo — which is the grep this exists to beat.
-    let query = match &under {
-        Under::Definition(def) => refs::Query {
-            owner: tree.scope_fqn(&def.nesting),
-            singleton: def.singleton,
-            name,
-        },
+    let (query, defined_at) = match &under {
+        Under::Definition(def) => (
+            refs::Query {
+                owner: tree.scope_fqn(&def.nesting),
+                singleton: def.singleton,
+                name: name.clone(),
+            },
+            Vec::new(),
+        ),
         Under::Call(call) => {
             let answer = crate::resolve::method_at(tree, &facts, call, &path);
-            refs::Query {
-                owner: answer.owner,
-                singleton: call.singleton,
-                name,
-            }
+            (
+                refs::Query {
+                    owner: answer.owner,
+                    singleton: call.singleton,
+                    name: name.clone(),
+                },
+                answer.sites,
+            )
         }
-        Under::Constant(_) => refs::Query {
-            owner: None,
-            singleton: false,
-            name,
-        },
+        Under::Constant(_) => unreachable!("answered above"),
     };
     let target = query.owner.clone();
 
-    let mut found: Vec<refs::Reference> = Vec::new();
-    for (n, candidate) in paths.into_iter().enumerate() {
-        if n % 64 == 63 && cancel() {
-            return Err(super::Cancelled.into());
-        }
-        let Ok(bytes) = std::fs::read(root.join(&candidate)) else {
-            continue;
+    let mut found: Vec<(refs::Reference, Location)> = Vec::new();
+    scan_files(&overlay, &root, paths, &name, cancel, |file| {
+        let Some(uri) = file_uri(&root, &file.path) else {
+            return;
         };
-        let file_facts = crate::extract::extract(&bytes);
-        for call in file_facts.calls.iter().filter(|c| c.name == query.name) {
+        let lines = LineIndex::new(&file.text);
+        for call in file.facts.calls.iter().filter(|c| c.name == query.name) {
             let reference = refs::tier_call(
                 tree,
-                &file_facts,
+                &file.facts,
                 call,
-                &candidate,
+                &file.path,
                 &query,
                 target.as_deref(),
             );
-            if reference.tier != refs::Tier::Excluded {
-                found.push(reference);
+            if reference.tier == refs::Tier::Excluded {
+                continue;
             }
+            let range = lines.span(reference.line, reference.col, name.len());
+            found.push((
+                reference,
+                Location {
+                    uri: uri.clone(),
+                    range,
+                },
+            ));
         }
-    }
+    })?;
     // Confirmed before possible: LSP has no tier field, so the order of the
     // list is the disclosure.
-    found.sort_by_key(refs::order);
+    found.sort_by_key(|(reference, _)| refs::order(reference));
 
-    let locations: Vec<Location> = found
-        .into_iter()
-        .filter_map(|r| location(&root, &r.path, r.line, r.col))
-        .collect();
+    let mut locations: Vec<Location> = Vec::new();
+    if declarations {
+        match own_site {
+            Some(pos) => locations.extend(location(
+                &root,
+                &path,
+                pos.line,
+                pos.col,
+                name.len(),
+                overlay.get(&path).map(String::as_str),
+            )),
+            None => locations.extend(defined_at.iter().filter_map(|site| {
+                location(&root, &site.path, site.line, site.col, name.len(), None)
+            })),
+        }
+    }
+    locations.extend(found.into_iter().map(|(_, at)| at));
     Ok(Some(locations))
+}
+
+/// References to a class, module or constant: every written constant that
+/// Ruby's lookup resolves to the same fully-qualified name.
+///
+/// The index records a reference under every name it could be written as —
+/// `Base`, `ActiveRecord::Base` — so each suffix of the target is asked for,
+/// and each row resolved in the nesting it was written in. Same-named
+/// constants elsewhere resolve elsewhere and drop out, which is the point.
+fn constant_references(
+    session: &mut Session,
+    located: &Located,
+    name: &str,
+    nesting: &[String],
+    declarations: bool,
+) -> anyhow::Result<Vec<Location>> {
+    let root = located.root.clone();
+    let root_str = root.to_string_lossy().into_owned();
+    let overlay = overlay(session, &root);
+    let Some(fqn) = session.tree(&root)?.resolve(name, nesting).fqn else {
+        return Ok(Vec::new());
+    };
+
+    let segments: Vec<&str> = fqn.split("::").collect();
+    let mut rows = Vec::new();
+    for start in 0..segments.len() {
+        let suffix = segments[start..].join("::");
+        let mut spellings = vec![suffix.clone()];
+        if start == 0 {
+            spellings.push(format!("::{suffix}"));
+        }
+        for written in spellings {
+            let found = session.store().refs(&root_str, &written)?;
+            rows.extend(found.into_iter().map(|row| (written.clone(), row)));
+        }
+    }
+    let tree = session.tree(&root)?;
+    let tail = last_segment(&fqn);
+
+    // (path, line, col) — the index's view, except for files the editor has
+    // open, which are read from the buffer so an unsaved edit counts.
+    let mut sites: Vec<(String, u32, u32)> = rows
+        .into_iter()
+        .filter(|(_, row)| row.role == "constant" && !overlay.contains_key(&row.path))
+        .filter(|(written, row)| tree.resolve(written, &row.nesting).fqn.as_deref() == Some(&fqn))
+        .map(|(_, row)| (row.path, row.line, row.col))
+        .collect();
+    for (path, text) in &overlay {
+        let facts = crate::extract::extract(text.as_bytes());
+        sites.extend(
+            facts
+                .const_refs
+                .iter()
+                .filter(|r| last_segment(&r.name) == tail)
+                .filter(|r| tree.resolve(&r.name, &r.nesting).fqn.as_deref() == Some(&fqn))
+                .map(|r| (path.clone(), r.pos.line, r.pos.col)),
+        );
+    }
+    sites.sort();
+    sites.dedup();
+
+    let mut locations = Vec::new();
+    if declarations {
+        locations.extend(
+            tree.sites(&fqn).iter().filter_map(|site| {
+                location(&root, &site.path, site.line, site.col, tail.len(), None)
+            }),
+        );
+    }
+    // One read per file, not per reference: the column conversion needs the
+    // line, and a popular constant has hundreds of references in one file.
+    for group in sites.chunk_by(|a, b| a.0 == b.0) {
+        let path = &group[0].0;
+        let Some(uri) = file_uri(&root, path) else {
+            continue;
+        };
+        let text = match overlay.get(path) {
+            Some(text) => text.clone(),
+            None => std::fs::read_to_string(root.join(path)).unwrap_or_default(),
+        };
+        let lines = LineIndex::new(&text);
+        locations.extend(group.iter().map(|(_, line, col)| Location {
+            uri: uri.clone(),
+            range: lines.span(*line, *col, tail.len()),
+        }));
+    }
+    Ok(locations)
+}
+
+/// The editor's unsaved buffers in a checkout, keyed by checkout-relative
+/// path — what a question that reads many files consults before disk.
+fn overlay(session: &Session, root: &Path) -> HashMap<String, String> {
+    session
+        .editor_documents_under(root)
+        .into_iter()
+        .filter_map(|(path, text)| {
+            let relative = path.strip_prefix(root).ok()?.to_string_lossy().into_owned();
+            Some((relative, text))
+        })
+        .collect()
+}
+
+/// One file read for a question that spans the checkout.
+struct Scanned {
+    path: String,
+    text: String,
+    facts: crate::core::Facts,
+}
+
+/// How many files to parse between cancellation checks. Large enough that the
+/// parallel parse has something to chew on, small enough that a withdrawn
+/// request stops within a few tens of milliseconds.
+const SCAN_CHUNK: usize = 128;
+
+/// Read and parse the files a question needs — the editor's copy where it has
+/// one — in parallel, handing each to `visit` in order.
+///
+/// The parse is the expensive part and it is a pure function of the bytes, so
+/// it fans out; `visit` runs on this thread, because the tree it consults is
+/// not shareable across threads. An open buffer that mentions `needle` is
+/// scanned even when the index does not list its file: the index is as of the
+/// last save, and the buffer is what the user is looking at.
+fn scan_files(
+    overlay: &HashMap<String, String>,
+    root: &Path,
+    mut candidates: Vec<String>,
+    needle: &str,
+    cancel: &dyn Fn() -> bool,
+    mut visit: impl FnMut(Scanned),
+) -> anyhow::Result<()> {
+    use rayon::prelude::*;
+    let listed: std::collections::HashSet<String> = candidates.iter().cloned().collect();
+    candidates.extend(
+        overlay
+            .iter()
+            .filter(|(path, text)| !listed.contains(*path) && text.contains(needle))
+            .map(|(path, _)| path.clone()),
+    );
+    for chunk in candidates.chunks(SCAN_CHUNK) {
+        if cancel() {
+            return Err(super::Cancelled.into());
+        }
+        let scanned: Vec<Scanned> = chunk
+            .par_iter()
+            .filter_map(|path| {
+                let text = match overlay.get(path) {
+                    Some(text) => text.clone(),
+                    None => {
+                        String::from_utf8_lossy(&std::fs::read(root.join(path)).ok()?).into_owned()
+                    }
+                };
+                let facts = crate::extract::extract(text.as_bytes());
+                Some(Scanned {
+                    path: path.clone(),
+                    text,
+                    facts,
+                })
+            })
+            .collect();
+        scanned.into_iter().for_each(&mut visit);
+    }
+    Ok(())
 }
 
 /// An outline needs the file's bytes and nothing else — no index, no checkout,
@@ -246,22 +501,68 @@ pub(crate) fn document_symbol(
         .map(|document| document.facts().clone());
     let Some(facts) = facts else { return Ok(None) };
 
-    #[allow(deprecated)]
-    let symbols: Vec<DocumentSymbol> = facts
-        .defs
-        .iter()
-        .map(|def| DocumentSymbol {
-            name: def.name.clone(),
+    let text = session
+        .document(&path)
+        .map(|document| document.text.clone())
+        .unwrap_or_default();
+    Ok(Some(DocumentSymbolResponse::Nested(outline(
+        &facts.defs,
+        &text,
+    ))))
+}
+
+/// Definitions nested by containment — methods inside their class, a class
+/// inside its module — each spanning its whole body and selecting its name.
+///
+/// Flat, zero-width symbols made the outline a list and broke breadcrumbs and
+/// sticky scroll, which read the range to know what the cursor is inside.
+fn outline(defs: &[crate::core::Def], text: &str) -> Vec<DocumentSymbol> {
+    // Source order, outermost first on a shared line, so a parent is always
+    // seen before its children.
+    let mut order: Vec<&crate::core::Def> = defs.iter().collect();
+    order.sort_by_key(|def| (def.pos.line, std::cmp::Reverse(def.end_line), def.pos.col));
+
+    // Each entry: the symbol being built and the last line it covers.
+    let mut stack: Vec<(DocumentSymbol, u32)> = Vec::new();
+    let mut roots: Vec<DocumentSymbol> = Vec::new();
+    let close = |stack: &mut Vec<(DocumentSymbol, u32)>, roots: &mut Vec<DocumentSymbol>| {
+        let (done, _) = stack.pop().expect("only called on a non-empty stack");
+        match stack.last_mut() {
+            Some((parent, _)) => parent.children.get_or_insert_with(Vec::new).push(done),
+            None => roots.push(done),
+        }
+    };
+    for def in order {
+        while stack.last().is_some_and(|(_, last)| def.pos.line > *last) {
+            close(&mut stack, &mut roots);
+        }
+        let name = if def.singleton && def.kind == crate::core::Kind::Method {
+            format!("self.{}", def.name)
+        } else {
+            def.name.clone()
+        };
+        #[allow(deprecated)]
+        let symbol = DocumentSymbol {
+            name,
             detail: def.via.clone(),
             kind: symbol_kind(def.kind),
             tags: None,
             deprecated: None,
-            range: point(None, def.pos.line, def.pos.col),
-            selection_range: point(None, def.pos.line, def.pos.col),
+            range: convert::block(Some(text), def.pos.line, def.end_line),
+            selection_range: convert::span(
+                Some(text),
+                def.pos.line,
+                def.pos.col,
+                last_segment(&def.name).len(),
+            ),
             children: None,
-        })
-        .collect();
-    Ok(Some(DocumentSymbolResponse::Nested(symbols)))
+        };
+        stack.push((symbol, def.end_line.max(def.pos.line)));
+    }
+    while !stack.is_empty() {
+        close(&mut stack, &mut roots);
+    }
+    roots
 }
 
 fn symbol_kind(kind: crate::core::Kind) -> SymbolKind {
@@ -291,6 +592,7 @@ pub(crate) fn workspace_symbol(
     let symbols = rows
         .into_iter()
         .filter_map(|row| {
+            let len = last_segment(&row.name).len();
             Some(lsp_types::SymbolInformation {
                 name: row.name,
                 kind: match row.kind.as_str() {
@@ -301,7 +603,9 @@ pub(crate) fn workspace_symbol(
                 },
                 tags: None,
                 deprecated: None,
-                location: location(Path::new(&row.root), &row.path, row.line, row.col)?,
+                // Not read to convert columns: this fires per keystroke in a
+                // symbol picker, and a picker's jump lands on the line either way.
+                location: unread_location(Path::new(&row.root), &row.path, row.line, row.col, len)?,
                 container_name: row.nesting.first().cloned(),
             })
         })
@@ -431,7 +735,7 @@ pub(crate) fn implementation(
     };
     let locations: Vec<Location> = sites
         .into_iter()
-        .filter_map(|(p, line, col)| location(&located.root, &p, line, col))
+        .filter_map(|(p, line, col)| location(&located.root, &p, line, col, 0, None))
         .collect();
     Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)))
 }
@@ -448,24 +752,27 @@ fn implementers_of(tree: &crate::tree::Tree, name: &str) -> Vec<(String, u32, u3
         .collect()
 }
 
-/// The method a line sits in, as `Owner#method`, for labelling a caller.
+/// The innermost method definition containing a line.
 ///
-/// The innermost definition containing the line — nested classes and blocks
-/// mean the outermost match is usually the file's class, which is not what the
-/// reader asked about.
-fn enclosing_label(facts: &crate::core::Facts, line: u32) -> Option<String> {
-    let def = facts
+/// Innermost, because nested classes and blocks mean the outermost match is
+/// usually the file's class, which is not what the reader asked about.
+fn enclosing_def(facts: &crate::core::Facts, line: u32) -> Option<&crate::core::Def> {
+    facts
         .defs
         .iter()
         .filter(|def| {
             def.kind == crate::core::Kind::Method && def.pos.line <= line && line <= def.end_line
         })
-        .min_by_key(|def| def.end_line - def.pos.line)?;
+        .min_by_key(|def| def.end_line - def.pos.line)
+}
+
+/// `Owner#method`, or `Owner.method` for a singleton — how a reader names it.
+fn label(def: &crate::core::Def) -> String {
     let marker = if def.singleton { "." } else { "#" };
-    Some(match def.nesting.first() {
+    match def.nesting.first() {
         Some(owner) => format!("{owner}{marker}{}", def.name),
         None => def.name.clone(),
-    })
+    }
 }
 
 /// Every definition that wins over this one somewhere below it.
@@ -520,32 +827,120 @@ pub(crate) fn prepare_call_hierarchy(
     let Some(under) = position::at_facts(&facts, pos.line, pos.col) else {
         return Ok(None);
     };
-    let (name, line, col) = match under {
-        Under::Definition(def) => (def.name, def.pos.line, def.pos.col),
-        Under::Call(call) => (call.name, call.pos.line, call.pos.col),
-        Under::Constant(_) => return Ok(None),
+    let item = match under {
+        Under::Definition(def) if def.kind == crate::core::Kind::Method => {
+            def_item(uri, &text, &def)
+        }
+        // On a call, the item is the method it calls — that is what the
+        // hierarchy is *of*. Expanding the call site itself would find no
+        // definition there and answer nothing.
+        Under::Call(call) => match callee_item(session, &path, &facts, &call) {
+            Some(item) => item,
+            None => call_item(uri, &text, &call),
+        },
+        _ => return Ok(None),
     };
-    #[allow(deprecated)]
-    Ok(Some(vec![CallHierarchyItem {
-        name,
+    Ok(Some(vec![item]))
+}
+
+/// A call-hierarchy item for a method definition: named the way a reader
+/// names it (`Owner#method`), spanning the whole body, selecting the name.
+#[allow(deprecated)]
+fn def_item(uri: Url, text: &str, def: &crate::core::Def) -> CallHierarchyItem {
+    CallHierarchyItem {
+        name: label(def),
         kind: SymbolKind::METHOD,
         tags: None,
-        detail: None,
+        detail: def.via.clone(),
         uri,
-        range: point(None, line, col),
-        selection_range: point(None, line, col),
+        range: convert::block(Some(text), def.pos.line, def.end_line),
+        selection_range: convert::span(Some(text), def.pos.line, def.pos.col, def.name.len()),
         data: None,
-    }]))
+    }
+}
+
+/// An item for a call whose target could not be found: the call itself.
+#[allow(deprecated)]
+fn call_item(uri: Url, text: &str, call: &crate::core::Call) -> CallHierarchyItem {
+    let range = convert::span(Some(text), call.pos.line, call.pos.col, call.name.len());
+    CallHierarchyItem {
+        name: call.name.clone(),
+        kind: SymbolKind::METHOD,
+        tags: None,
+        detail: Some(format!("receiver: {}", call.recv.as_str())),
+        uri,
+        range,
+        selection_range: range,
+        data: None,
+    }
+}
+
+/// The definition a call resolves to, as an item — or `None` when the call
+/// does not resolve, or its file is not in an indexed checkout.
+fn callee_item(
+    session: &mut Session,
+    path: &Path,
+    facts: &crate::core::Facts,
+    call: &crate::core::Call,
+) -> Option<CallHierarchyItem> {
+    let located = session.locate(path)?;
+    let tree = session.tree(&located.root).ok()?;
+    let answer = crate::resolve::method_at(tree, facts, call, &located.relative);
+    let site = answer.sites.first()?;
+    let absolute = absolute_site(&located.root, &site.path)?;
+    let text = std::fs::read_to_string(&absolute).ok()?;
+    let uri: Url = path_to_uri(&absolute).parse().ok()?;
+    let target = crate::extract::extract(text.as_bytes());
+    Some(
+        match target
+            .defs
+            .iter()
+            .find(|def| def.pos.line == site.line && def.name == call.name)
+        {
+            Some(def) => def_item(uri, &text, def),
+            // A macro-made method (`attr_reader`, `delegate`) has a site but no
+            // body: point at the line that made it.
+            None => {
+                let range = convert::span(Some(&text), site.line, site.col, call.name.len());
+                #[allow(deprecated)]
+                CallHierarchyItem {
+                    name: answer
+                        .owner
+                        .map(|owner| format!("{owner}#{}", call.name))
+                        .unwrap_or_else(|| call.name.clone()),
+                    kind: SymbolKind::METHOD,
+                    tags: None,
+                    detail: answer.defined_via,
+                    uri,
+                    range,
+                    selection_range: range,
+                    data: None,
+                }
+            }
+        },
+    )
+}
+
+/// The method an item names. Items carry the reader's label — `Job#run`,
+/// `Job.sweep` — and the lookup wants the bare name after the marker.
+fn item_method(name: &str) -> &str {
+    name.rsplit_once('#')
+        .or_else(|| name.rsplit_once('.'))
+        .map_or(name, |(_, method)| method)
 }
 
 /// Incoming calls are the confirmed tier of a references query — the whole
 /// point of having tiers.
+///
+/// Each caller is an item for the *method the call sits in*, with every call
+/// from it as a range — so the client can expand it again and walk up the
+/// tree, which it could not when the item was the call site itself.
 pub(crate) fn incoming_calls(
     session: &mut Session,
     params: CallHierarchyIncomingCallsParams,
     cancel: &dyn Fn() -> bool,
 ) -> anyhow::Result<Option<Vec<CallHierarchyIncomingCall>>> {
-    let name = params.item.name.clone();
+    let name = item_method(&params.item.name).to_string();
     let Some(path) = convert::uri_to_path(params.item.uri.as_str()) else {
         return Ok(None);
     };
@@ -560,7 +955,7 @@ pub(crate) fn incoming_calls(
     // Which method the item names, not just which name. Asking with no owner
     // is the bare-name question `--refs` exists to beat, and it cannot reach
     // the `confirmed` tier this operation reports — so it answered nothing.
-    let line = params.item.range.start.line + 1;
+    let line = params.item.selection_range.start.line + 1;
     let facts = session
         .document(&located.absolute)
         .map(|document| document.facts().clone());
@@ -568,10 +963,13 @@ pub(crate) fn incoming_calls(
         facts
             .defs
             .iter()
-            .find(|def| def.kind == crate::core::Kind::Method && def.pos.line == line)
+            .find(|def| {
+                def.kind == crate::core::Kind::Method && def.pos.line == line && def.name == name
+            })
             .cloned()
     });
     let paths = session.store().files_calling(&root_str, &name)?;
+    let overlay = overlay(session, &root);
     let tree = session.tree(&root)?;
     let query = refs::Query {
         owner: owner_def
@@ -582,43 +980,44 @@ pub(crate) fn incoming_calls(
     };
     let target = query.owner.clone();
 
-    // Each caller is labelled with the method it sits in, which is what a
-    // reader of a call tree is looking for. The reference's own `owner` is the
-    // *callee's* — the same for every row, and so no help at all.
-    let mut confirmed: Vec<(refs::Reference, Option<String>)> = Vec::new();
-    for (n, candidate) in paths.into_iter().enumerate() {
-        if n % 64 == 63 && cancel() {
-            return Err(super::Cancelled.into());
-        }
-        let Ok(bytes) = std::fs::read(root.join(&candidate)) else {
-            continue;
+    // Keyed by (file, the caller's def line), in first-seen order.
+    let mut callers: Vec<CallHierarchyIncomingCall> = Vec::new();
+    let mut index: HashMap<(String, u32), usize> = HashMap::new();
+    scan_files(&overlay, &root, paths, &name, cancel, |file| {
+        let Some(uri) = file_uri(&root, &file.path) else {
+            return;
         };
-        let file_facts = crate::extract::extract(&bytes);
-        for call in file_facts.calls.iter().filter(|c| c.name == name) {
+        let lines = LineIndex::new(&file.text);
+        for call in file.facts.calls.iter().filter(|c| c.name == name) {
             let reference = refs::tier_call(
                 tree,
-                &file_facts,
+                &file.facts,
                 call,
-                &candidate,
+                &file.path,
                 &query,
                 target.as_deref(),
             );
-            if reference.tier == refs::Tier::Confirmed {
-                let caller = enclosing_label(&file_facts, call.pos.line);
-                confirmed.push((reference, caller));
+            if reference.tier != refs::Tier::Confirmed {
+                continue;
             }
-        }
-    }
-
-    #[allow(deprecated)]
-    let calls = confirmed
-        .into_iter()
-        .filter_map(|(reference, caller)| {
-            let at = location(&root, &reference.path, reference.line, reference.col)?;
-            Some(CallHierarchyIncomingCall {
-                from: CallHierarchyItem {
-                    name: caller.unwrap_or_else(|| name.clone()),
-                    kind: SymbolKind::METHOD,
+            let at = Location {
+                uri: uri.clone(),
+                range: lines.span(call.pos.line, call.pos.col, name.len()),
+            };
+            let caller = enclosing_def(&file.facts, call.pos.line);
+            let key = (file.path.clone(), caller.map_or(0, |def| def.pos.line));
+            if let Some(&i) = index.get(&key) {
+                callers[i].from_ranges.push(at.range);
+                continue;
+            }
+            #[allow(deprecated)]
+            let from = match caller {
+                Some(def) => def_item(at.uri.clone(), &file.text, def),
+                // A call at the top level of a file: there is no method to
+                // walk up to, so the item is the call itself.
+                None => CallHierarchyItem {
+                    name: file.path.clone(),
+                    kind: SymbolKind::FILE,
                     tags: None,
                     detail: Some(reference.why.to_string()),
                     uri: at.uri.clone(),
@@ -626,11 +1025,15 @@ pub(crate) fn incoming_calls(
                     selection_range: at.range,
                     data: None,
                 },
+            };
+            index.insert(key, callers.len());
+            callers.push(CallHierarchyIncomingCall {
+                from,
                 from_ranges: vec![at.range],
-            })
-        })
-        .collect();
-    Ok(Some(calls))
+            });
+        }
+    })?;
+    Ok(Some(callers))
 }
 
 /// Outgoing calls are the call-site facts inside the method's own body.
@@ -642,14 +1045,16 @@ pub(crate) fn outgoing_calls(
     let Some(path) = file_of(&uri) else {
         return Ok(None);
     };
-    let facts = session
+    let Some((text, facts)) = session
         .document(&path)
-        .map(|document| document.facts().clone());
-    let Some(facts) = facts else { return Ok(None) };
+        .map(|document| (document.text.clone(), document.facts().clone()))
+    else {
+        return Ok(None);
+    };
 
     // The method whose body we are listing: the innermost def containing the
-    // item's line.
-    let line = params.item.range.start.line + 1;
+    // item's name.
+    let line = params.item.selection_range.start.line + 1;
     let Some(enclosing) = facts
         .defs
         .iter()
@@ -660,30 +1065,36 @@ pub(crate) fn outgoing_calls(
     };
     let (start, end) = (enclosing.pos.line, enclosing.end_line);
 
-    #[allow(deprecated)]
-    let calls = facts
+    // Each callee once, with every call to it as a range. A callee that
+    // resolves is an item at its definition, so the client can keep walking
+    // down; one that does not is the call itself.
+    let mut calls: Vec<CallHierarchyOutgoingCall> = Vec::new();
+    let mut index: HashMap<(String, u32, String), usize> = HashMap::new();
+    for call in facts
         .calls
         .iter()
-        .filter(|call| call.pos.line > start && call.pos.line <= end)
-        .map(|call| {
-            // Every outgoing call is in the file the item names, so the item's
-            // own URI is the location.
-            let range = point(None, call.pos.line, call.pos.col);
-            CallHierarchyOutgoingCall {
-                to: CallHierarchyItem {
-                    name: call.name.clone(),
-                    kind: SymbolKind::METHOD,
-                    tags: None,
-                    detail: Some(format!("receiver: {}", call.recv.as_str())),
-                    uri: uri.clone(),
-                    range,
-                    selection_range: range,
-                    data: None,
-                },
-                from_ranges: vec![range],
+        .filter(|call| call.pos.line >= start && call.pos.line <= end)
+        .filter(|call| call.recv != crate::core::RecvShape::Symbol)
+    {
+        let at = convert::span(Some(&text), call.pos.line, call.pos.col, call.name.len());
+        let to = callee_item(session, &path, &facts, call)
+            .unwrap_or_else(|| call_item(uri.clone(), &text, call));
+        let key = (
+            to.uri.to_string(),
+            to.selection_range.start.line,
+            to.name.clone(),
+        );
+        match index.get(&key) {
+            Some(&i) => calls[i].from_ranges.push(at),
+            None => {
+                index.insert(key, calls.len());
+                calls.push(CallHierarchyOutgoingCall {
+                    to,
+                    from_ranges: vec![at],
+                });
             }
-        })
-        .collect();
+        }
+    }
     Ok(Some(calls))
 }
 

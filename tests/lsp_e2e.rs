@@ -169,6 +169,18 @@ impl Session {
     }
 }
 
+/// An outline's names, depth-first — the order a reader scans it in.
+fn outline_names(symbols: &serde_json::Value) -> Vec<String> {
+    let mut names = Vec::new();
+    for symbol in symbols.as_array().expect("an outline, not null") {
+        names.push(symbol["name"].as_str().unwrap().to_string());
+        if !symbol["children"].is_null() {
+            names.extend(outline_names(&symbol["children"]));
+        }
+    }
+    names
+}
+
 fn uri_of(dir: &Path, name: &str) -> String {
     format!("file://{}/{}", dir.display(), name)
 }
@@ -608,7 +620,10 @@ fn the_log_records_each_request_and_how_much_came_back() {
         .collect();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0]["status"], "ok");
-    assert_eq!(requests[0]["answered"], 2, "Fresh and added");
+    assert_eq!(
+        requests[0]["answered"], 1,
+        "Fresh, with added nested inside"
+    );
     assert_eq!(
         requests[1]["answered"], 0,
         "an empty answer is logged as one"
@@ -641,13 +656,16 @@ fn document_symbol_outlines_the_open_buffer_not_the_index() {
         "textDocument/documentSymbol",
         serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
     );
-    let names: Vec<&str> = answer["result"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|s| s["name"].as_str().unwrap())
-        .collect();
-    assert_eq!(names, ["Fresh", "added"]);
+    let class = &answer["result"][0];
+    assert_eq!(class["name"], "Fresh");
+    assert_eq!(
+        class["children"][0]["name"], "added",
+        "the method is nested inside its class"
+    );
+    assert_eq!(
+        class["range"]["end"]["line"], 3,
+        "and the class spans its whole body"
+    );
 
     session.stop();
     let _ = fs::remove_dir_all(&dir);
@@ -719,13 +737,10 @@ fn a_file_outside_the_clients_root_is_still_answered() {
         "textDocument/documentSymbol",
         serde_json::json!({"textDocument": {"uri": uri}}),
     );
-    let names: Vec<&str> = symbols["result"]
-        .as_array()
-        .expect("an outline, not null")
-        .iter()
-        .map(|s| s["name"].as_str().unwrap())
-        .collect();
-    assert_eq!(names, ["Widget", "save", "Job", "run"]);
+    assert_eq!(
+        outline_names(&symbols["result"]),
+        ["Widget", "save", "Job", "run"]
+    );
 
     let answer = session.request(
         "textDocument/definition",
@@ -788,13 +803,7 @@ fn an_outline_needs_no_index_and_no_repository() {
         "textDocument/documentSymbol",
         serde_json::json!({"textDocument": {"uri": uri_of(&loose, "app.rb")}}),
     );
-    let names: Vec<&str> = answer["result"]
-        .as_array()
-        .expect("an outline, not null")
-        .iter()
-        .map(|s| s["name"].as_str().unwrap())
-        .collect();
-    assert_eq!(names, ["Loose", "go"]);
+    assert_eq!(outline_names(&answer["result"]), ["Loose", "go"]);
 
     session.stop();
     let _ = fs::remove_dir_all(&root);
@@ -1122,6 +1131,39 @@ fn incoming_calls_name_the_method_each_call_sits_in() {
         "each caller named by the method it sits in, singleton marked"
     );
 
+    // And a caller can be expanded in turn: nothing calls `Job#run`, but the
+    // question has to be answerable, which it was not when the item was the
+    // call site rather than the method.
+    let run = answer["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["from"]["name"] == "Job#run")
+        .unwrap()["from"]
+        .clone();
+    assert_eq!(
+        run["selectionRange"]["start"]["line"], 5,
+        "the def, not the call"
+    );
+    let deeper = session.request(
+        "callHierarchy/incomingCalls",
+        serde_json::json!({ "item": run }),
+    );
+    assert!(deeper["result"].is_array(), "answered, not an error");
+
+    // Outgoing from Job#run reaches Widget#save's definition, not the call.
+    let outgoing = session.request(
+        "callHierarchy/outgoingCalls",
+        serde_json::json!({ "item": run }),
+    );
+    let save = outgoing["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["to"]["name"] == "Widget#save")
+        .expect("the resolved callee, named by its owner");
+    assert_eq!(save["to"]["selectionRange"]["start"]["line"], 1);
+
     session.stop();
     let _ = fs::remove_dir_all(&dir);
 }
@@ -1414,5 +1456,147 @@ fn exit_without_shutdown_still_stops_the_server() {
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
     session.stdin.take();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Index `source` as `app.rb` in a fresh repo, and open a session on it with
+/// the file open in the editor.
+fn indexed_session(label: &str, source: &str) -> (PathBuf, PathBuf, Session) {
+    let (dir, db) = scratch(label);
+    ruby_repo(&dir, &db, source);
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+    (dir, db, session)
+}
+
+fn reference_lines(
+    session: &mut Session,
+    dir: &Path,
+    line: u32,
+    character: u32,
+    declarations: bool,
+) -> Vec<u64> {
+    let answer = session.request(
+        "textDocument/references",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(dir, "app.rb")},
+            "position": {"line": line, "character": character},
+            "context": {"includeDeclaration": declarations},
+        }),
+    );
+    answer["result"]
+        .as_array()
+        .expect("an array of locations")
+        .iter()
+        .map(|l| l["range"]["start"]["line"].as_u64().unwrap() + 1)
+        .collect()
+}
+
+/// References to a class are the constants that resolve to it — not every
+/// constant with the same last name. Asking on a class returned nothing at
+/// all, because only method call sites were ever searched.
+#[test]
+fn references_to_a_class_are_the_constants_that_resolve_to_it() {
+    let source = concat!(
+        "class Widget\n",         // 1
+        "end\n",                  // 2
+        "module Shop\n",          // 3
+        "  class Widget\n",       // 4
+        "  end\n",                // 5
+        "  def self.make\n",      // 6
+        "    Widget.new\n",       // 7 — Shop::Widget, not ::Widget
+        "  end\n",                // 8
+        "end\n",                  // 9
+        "a = Widget.new\n",       // 10
+        "b = ::Widget.new\n",     // 11
+        "c = Shop::Widget.new\n", // 12
+    );
+    let (dir, _db, mut session) = indexed_session("constrefs", source);
+
+    // On the top-level class's own name.
+    assert_eq!(reference_lines(&mut session, &dir, 0, 6, false), [10, 11]);
+    // With the declaration, which comes first.
+    assert_eq!(reference_lines(&mut session, &dir, 0, 6, true), [1, 10, 11]);
+    // And from a reference to the nested one.
+    assert_eq!(reference_lines(&mut session, &dir, 11, 11, false), [7, 12]);
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn include_declaration_puts_the_definition_first() {
+    let source = concat!(
+        "class Widget\n",   // 1
+        "  def save\n",     // 2
+        "  end\n",          // 3
+        "end\n",            // 4
+        "w = Widget.new\n", // 5
+        "w.save\n",         // 6
+    );
+    let (dir, _db, mut session) = indexed_session("decl", source);
+    assert_eq!(reference_lines(&mut session, &dir, 5, 2, true), [2, 6]);
+    assert_eq!(reference_lines(&mut session, &dir, 5, 2, false), [6]);
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// An unsaved call site counts. The index is as of the last save; the buffer
+/// is what the user is looking at, and references are read from it.
+#[test]
+fn references_count_a_call_that_exists_only_in_an_unsaved_buffer() {
+    let source = concat!(
+        "class Widget\n", // 1
+        "  def save\n",   // 2
+        "  end\n",        // 3
+        "end\n",          // 4
+    );
+    let (dir, _db, mut session) = indexed_session("overlay", source);
+    session.read();
+    let edited = format!("{source}w = Widget.new\nw.save\n");
+    session.notify(
+        "textDocument/didChange",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb"), "version": 2},
+            "contentChanges": [{"text": edited}],
+        }),
+    );
+    assert_eq!(reference_lines(&mut session, &dir, 1, 6, false), [6]);
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Columns are UTF-16 on the wire and bytes inside. A reference after a
+/// multibyte character has to land on the name, not one short of it.
+#[test]
+fn a_reference_after_a_multibyte_character_lands_on_the_name() {
+    let source = concat!(
+        "class Widget\n",   // 1
+        "  def save\n",     // 2
+        "  end\n",          // 3
+        "end\n",            // 4
+        "w = Widget.new\n", // 5
+        "é = 1; w.save\n",  // 6
+    );
+    let (dir, _db, mut session) = indexed_session("utf16", source);
+    let answer = session.request(
+        "textDocument/references",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": 1, "character": 6},
+            "context": {"includeDeclaration": false},
+        }),
+    );
+    let range = &answer["result"][0]["range"];
+    // `é = 1; w.` is 9 UTF-16 units and 10 bytes.
+    assert_eq!(range["start"]["character"], 9);
+    assert_eq!(range["end"]["character"], 13, "and spans the name");
+    session.stop();
     let _ = fs::remove_dir_all(&dir);
 }

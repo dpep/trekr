@@ -119,6 +119,88 @@ pub(crate) fn apply_edit(text: &mut String, range: Range, replacement: &str) {
     text.replace_range(start..end, replacement);
 }
 
+/// A file's line starts, built once so that converting many positions in one
+/// file costs a line each rather than a scan from the top each.
+///
+/// A file with thousands of references was converting each by walking
+/// `lines()` from the start — quadratic, and the whole cost of a large
+/// `references` answer.
+pub(crate) struct LineIndex<'a> {
+    text: &'a str,
+    starts: Vec<usize>,
+}
+
+impl<'a> LineIndex<'a> {
+    pub(crate) fn new(text: &'a str) -> LineIndex<'a> {
+        let mut starts = vec![0];
+        starts.extend(text.match_indices('\n').map(|(i, _)| i + 1));
+        LineIndex { text, starts }
+    }
+
+    /// Our 1-based line and byte column → an LSP position.
+    pub(crate) fn position(&self, line: u32, col: u32) -> Position {
+        let Some(&start) = self.starts.get(line.saturating_sub(1) as usize) else {
+            return to_position(None, line, col);
+        };
+        let end = self.text[start..]
+            .find('\n')
+            .map_or(self.text.len(), |n| start + n);
+        let byte = (start + col.saturating_sub(1) as usize).min(end);
+        // Snap back to a character boundary: a column inside a multibyte
+        // character is the character it is inside.
+        let byte = (start..=byte)
+            .rev()
+            .find(|&b| self.text.is_char_boundary(b))
+            .unwrap_or(start);
+        Position {
+            line: line.saturating_sub(1),
+            character: self.text[start..byte]
+                .chars()
+                .map(|ch| ch.len_utf16() as u32)
+                .sum(),
+        }
+    }
+
+    /// `len` bytes of a name at our 1-based line and byte column.
+    pub(crate) fn span(&self, line: u32, col: u32, len: usize) -> Range {
+        Range {
+            start: self.position(line, col),
+            end: self.position(line, col + len as u32),
+        }
+    }
+}
+
+/// The range a name occupies: `len` bytes from our 1-based line and byte
+/// column. Both ends are converted, so a name after a multibyte character is
+/// highlighted where it is rather than shifted.
+pub(crate) fn span(text: Option<&str>, line: u32, col: u32, len: usize) -> Range {
+    Range {
+        start: to_position(text, line, col),
+        end: to_position(text, line, col + len as u32),
+    }
+}
+
+/// Whole lines `first..=last` — a definition's extent, from its first line to
+/// the end of its last, which is what an outline or a call-hierarchy item
+/// spans.
+pub(crate) fn block(text: Option<&str>, first: u32, last: u32) -> Range {
+    let last = last.max(first);
+    let end = match text.and_then(|t| t.lines().nth(last.saturating_sub(1) as usize)) {
+        Some(source) => source.chars().map(|ch| ch.len_utf16() as u32).sum(),
+        None => 0,
+    };
+    Range {
+        start: Position {
+            line: first.saturating_sub(1),
+            character: 0,
+        },
+        end: Position {
+            line: last.saturating_sub(1),
+            character: end,
+        },
+    }
+}
+
 /// A zero-width range at a position — what a "go here" answer needs.
 pub(crate) fn point(text: Option<&str>, line: u32, col: u32) -> Range {
     let position = to_position(text, line, col);
