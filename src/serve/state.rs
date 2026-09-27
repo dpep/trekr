@@ -53,6 +53,8 @@ pub(crate) struct Session {
     /// The client takes `LocationLink`s from `definition`, which is what lets
     /// a whole `require` string be the thing clicked.
     pub(crate) definition_links: bool,
+    /// How many references an answer keeps (`initializationOptions.referenceLimit`).
+    pub(crate) reference_limit: usize,
 }
 
 /// Members in the making, and the tree state they are being listed from.
@@ -170,6 +172,7 @@ impl Session {
             listing: None,
             load_paths: HashMap::new(),
             definition_links: false,
+            reference_limit: super::gather::DEFAULT_LIMIT,
         }
     }
 
@@ -259,6 +262,14 @@ impl Session {
             checkout.members = None;
         }
         Ok(checkout.tree.as_ref().expect("just built"))
+    }
+
+    /// The tree and the store together, for a scan that reads the index as
+    /// it goes while consulting the tree.
+    pub(crate) fn tree_and_store(&mut self, root: &Path) -> anyhow::Result<(&Tree, &Store)> {
+        self.tree(root)?;
+        let tree = self.checkouts[root].tree.as_ref().expect("just built");
+        Ok((tree, &self.store))
     }
 
     /// A checkout's load path, as `require` searches it — built once and

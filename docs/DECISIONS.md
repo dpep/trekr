@@ -2751,3 +2751,71 @@ rounds: **503 → 419 ms** median.
 ls-files -s` 0.1 s, and ~0.3 s of trekr reading their output into the file
 map. The last is O(files) and the next thing to look at; the untracked cache
 and fsmonitor are the user's git config, and the changelog says so.
+
+## DEC-056 — LSP references are bounded, evidence first, and say when they cut
+
+**Decided.** `textDocument/references` keeps at most `referenceLimit`
+references (an `initializationOptions` integer, default 1000). Confirmed
+callers are kept ahead of possible ones. When anything was left out, one
+`window/showMessage` says how much is shown, of how much, and names the
+`trekr --refs` query that lists the rest. A client that sends a
+`partialResultToken` gets `$/progress` batches. How much is read depends on
+the question (the table in ARCHITECTURE's LSP section):
+
+- **Owner known, not streamed:** read every file that calls the name and keep
+  the best `limit`, in bounded memory. It stops early only once `limit`
+  confirmed callers are in hand, since nothing later outranks them.
+- **Receiver never resolved (a bare `to`, `call`, `save`):** read files page
+  by page from the index and stop at `limit`. Here "confirmed" means a typed
+  receiver that finds *some* method of that name, so a full scan to promote
+  those says nothing about the method asked after.
+- **Streamed:** read nearest the definition first and stop at `limit`, since a
+  stream cannot take back what it sent. Each batch is ordered by evidence; the
+  stream as a whole is not, and the message says "nearest the definition
+  first" rather than "confirmed callers first".
+
+**Why 1000.** Tiering 300 methods sampled from discourse's `app/`
+(`--refs Owner#name`): the largest confirmed tier was 123, the 99th
+percentile 42. The confirmed tier is what a cut must never lose, and 1000
+leaves eight times the largest seen. The limit cut 14 of the 300 answers, all
+dominated by possible sites; the largest was 32,686 possible and 0 confirmed.
+At 500 it would cut 21, at 200 it would cut 28.
+
+**Measured**, LSP over stdio, synthetic monorepos of 1×, 10× and 30× discourse
+with distinct content. Before is one run; after is the median of three warm
+runs:
+
+| | 1× | 10× | 30× |
+|---|---:|---:|---:|
+| bare `to`, before | 1.1 s, 81,505 locations | 16 s, 815,050, peak RSS 6.4 GB | 65 s, 2,445,150, peak RSS 7.5 GB |
+| bare `to`, after | 21 ms, 1,000 | 26 ms | 34 ms, RSS flat at 1.2 GB |
+| `Topic#reload`, before | 0.35 s, 5,450 | 3.5 s, 54,302 | 19 s, 162,862 |
+| `Topic#reload`, after (reads every file) | 0.31 s, 1,000 | 2.9 s | 9.8 s |
+| streamed, first batch: bare `to` / `Topic#slug` / `Topic#reload` | 19 / 20 / 39 ms | 27 / 39 / 98 ms | 38 / 160 / 450 ms |
+
+The streamed first batch for a method with a known owner is dominated by
+`files_calling`, which lists every file before nearest-first can sort them.
+
+**The page query's plan is pinned.** A bare name first ran through the same
+paged listing unpinned, and it took 0.6 s at 10× and 2.6–9 s at 30× to read
+128 files, against 8 ms for the same query in the `sqlite3` shell. The
+bundled SQLite had different ideas: with `sqlite_stat4` saying `to` is
+everywhere, it walked every file of the checkout and sorted their calls.
+`INDEXED BY call_site_name` plus `CROSS JOIN` fix the order, and a unit test
+reproduces the skew and checks the plan. `files_calling` has the same
+exposure. Inside the server it took 34–56 s for `to` at 30×, against 3 s in
+the shell; it is left as is here.
+
+**Rejected.**
+- *A time budget for the unstreamed full scan.* It bounds `Topic#reload` at
+  30× but makes the answer depend on machine load. The full scan is
+  cancellable, and its result does not depend on timing.
+- *Confirmed tier only for a bare name.* That tier is not about the method
+  asked after (above), and it would still need the full scan to find.
+- *Streaming the constant path.* It is answered from the index without a
+  reparse, so it is capped and answered whole.
+
+**Known gap.** Neither VS Code (`vscode-languageclient` 9) nor Claude Code's
+LSP tool sends a `partialResultToken` for references, so streaming serves no
+client in use today. Claude Code shows no `window/showMessage` either, so an
+agent gets exactly `referenceLimit` locations with no sign they were cut.

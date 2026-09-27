@@ -7,6 +7,19 @@
   336k-file monorepo. **In a repo that size, turn on git's fsmonitor**
   (`git config core.fsmonitor true`): the scan's `git status` goes from over
   a second to under 0.1 s.
+- **Find References is bounded, and says when it cut.** In `--lsp`, an
+  answer keeps at most 1000 references — set `referenceLimit` in
+  `initializationOptions` to change it — with confirmed callers (receiver
+  resolved) kept ahead of possible ones. When anything was left out the
+  editor shows one message, such as "showing 1,000 of 5,450 references to
+  reload, confirmed callers first. For all of them: `trekr --refs
+  'Topic#reload'`". A name whose receiver never resolved (`to`, `call`) stops
+  reading files once it has the limit, rather than scanning the whole
+  checkout. A client that sends a `partialResultToken` gets the references
+  streamed as `$/progress` batches, the definition first. Before, a common
+  name returned every call site: 81,505 for `to` on discourse, and 2.4
+  million after 65 s on a monorepo thirty times its size. That answer now
+  takes 34 ms.
 - **Go to Definition on a `require` string opens the file.** In `--lsp`,
   a `require`, `require_relative`, `load` or `autoload` string resolves to the
   file it loads: relative to the requiring file, or along the load path —

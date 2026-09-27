@@ -2785,3 +2785,293 @@ fn hover_on_a_require_names_the_file_and_its_gem() {
     session.stop();
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// A checkout of many files, indexed, and a session on it whose client set
+/// `referenceLimit`. `files` maps a relative path to its source.
+fn many_file_session(label: &str, files: &[(String, String)], limit: u64) -> (PathBuf, Session) {
+    let (dir, db) = scratch(label);
+    git(&dir, &["init", "-q"]);
+    for (path, source) in files {
+        let path = dir.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, source).unwrap();
+    }
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+    let mut session = Session::start(&db, &dir);
+    session.request(
+        "initialize",
+        serde_json::json!({
+            "processId": null,
+            "rootUri": format!("file://{}", dir.display()),
+            "capabilities": {},
+            "initializationOptions": { "index": false, "referenceLimit": limit },
+        }),
+    );
+    session.notify("initialized", serde_json::json!({}));
+    (dir, session)
+}
+
+/// Send a request and read up to its answer, keeping the notifications that
+/// came before it — partial results and messages arrive that way.
+fn request_with_notes(
+    session: &mut Session,
+    method: &str,
+    params: serde_json::Value,
+) -> (serde_json::Value, Vec<serde_json::Value>) {
+    session.next_id += 1;
+    let id = session.next_id;
+    session.send(serde_json::json!({
+        "jsonrpc": "2.0", "id": id, "method": method, "params": params
+    }));
+    let mut notes = Vec::new();
+    loop {
+        let message = session.read();
+        if message.get("id").and_then(|v| v.as_i64()) == Some(id) {
+            return (message, notes);
+        }
+        notes.push(message);
+    }
+}
+
+fn shown_messages(notes: &[serde_json::Value]) -> Vec<String> {
+    notes
+        .iter()
+        .filter(|n| n["method"] == "window/showMessage")
+        .map(|n| n["params"]["message"].as_str().unwrap().to_string())
+        .collect()
+}
+
+fn batches(notes: &[serde_json::Value], token: &str) -> Vec<Vec<(String, u64)>> {
+    notes
+        .iter()
+        .filter(|n| n["method"] == "$/progress" && n["params"]["token"] == token)
+        .map(|n| places(&n["params"]["value"]))
+        .collect()
+}
+
+/// (file name, 1-based line) for each location.
+fn places(locations: &serde_json::Value) -> Vec<(String, u64)> {
+    locations
+        .as_array()
+        .expect("locations")
+        .iter()
+        .map(|l| {
+            let uri = l["uri"].as_str().unwrap();
+            let file = uri.rsplit('/').next().unwrap().to_string();
+            (file, l["range"]["start"]["line"].as_u64().unwrap() + 1)
+        })
+        .collect()
+}
+
+/// A widget, one call whose receiver resolves to it, and one that could be
+/// anything — in a file that sorts first, so path order alone would lead with
+/// the weaker evidence.
+fn evidence_files() -> Vec<(String, String)> {
+    vec![
+        (
+            "app/widget.rb".into(),
+            "class Widget\n  def save\n  end\nend\n".into(),
+        ),
+        (
+            "app/a_guess.rb".into(),
+            "def guess(thing)\n  thing.save\nend\n".into(),
+        ),
+        (
+            "app/z_sure.rb".into(),
+            "def sure\n  w = Widget.new\n  w.save\nend\n".into(),
+        ),
+    ]
+}
+
+fn on_save(dir: &Path, declarations: bool) -> serde_json::Value {
+    serde_json::json!({
+        "textDocument": {"uri": uri_of(dir, "app/widget.rb")},
+        "position": {"line": 1, "character": 6},
+        "context": {"includeDeclaration": declarations},
+    })
+}
+
+/// The cut keeps the confirmed caller over the possible one, and says so.
+#[test]
+fn a_capped_answer_keeps_the_confirmed_caller_and_says_what_it_left_out() {
+    let (dir, mut session) = many_file_session("refs-cap", &evidence_files(), 1);
+    let (answer, notes) = request_with_notes(
+        &mut session,
+        "textDocument/references",
+        on_save(&dir, false),
+    );
+    assert_eq!(places(&answer["result"]), [("z_sure.rb".to_string(), 3)]);
+    let said = shown_messages(&notes);
+    assert_eq!(said.len(), 1, "{notes:?}");
+    assert!(
+        said[0].contains("1 of 2 references to `save`"),
+        "{}",
+        said[0]
+    );
+    assert!(
+        said[0].contains("trekr --refs 'Widget#save'"),
+        "{}",
+        said[0]
+    );
+
+    // Uncut, both are listed, confirmed first, and nothing is said.
+    session.stop();
+    let (dir, mut session) = many_file_session("refs-uncut", &evidence_files(), 10);
+    let (answer, notes) =
+        request_with_notes(&mut session, "textDocument/references", on_save(&dir, true));
+    assert_eq!(
+        places(&answer["result"]),
+        [
+            ("widget.rb".to_string(), 2),
+            ("z_sure.rb".to_string(), 3),
+            ("a_guess.rb".to_string(), 2),
+        ]
+    );
+    assert!(shown_messages(&notes).is_empty(), "{notes:?}");
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// With a `partialResultToken` the locations arrive as `$/progress`, the
+/// definition first, and the response carries none of them.
+#[test]
+fn references_stream_as_partial_results_when_the_client_asks() {
+    let (dir, mut session) = many_file_session("refs-stream", &evidence_files(), 10);
+    let mut params = on_save(&dir, true);
+    params["partialResultToken"] = "refs-1".into();
+    let (answer, notes) = request_with_notes(&mut session, "textDocument/references", params);
+    assert_eq!(answer["result"], serde_json::json!([]), "{answer}");
+    let streamed = batches(&notes, "refs-1");
+    assert_eq!(
+        streamed[0],
+        [("widget.rb".to_string(), 2)],
+        "the definition leads"
+    );
+    assert_eq!(
+        streamed[1..].concat(),
+        [("z_sure.rb".to_string(), 3), ("a_guess.rb".to_string(), 2)],
+        "each batch is ordered by evidence: {streamed:?}"
+    );
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Many files, each with a call nothing narrows.
+fn crowd(files: usize, calls_per_file: usize) -> Vec<(String, String)> {
+    let mut crowd = vec![(
+        "app/widget.rb".to_string(),
+        "class Widget\n  def save\n  end\nend\n".to_string(),
+    )];
+    let body: String = (0..calls_per_file)
+        .map(|i| format!("  thing.save if thing.ready?({i})\n"))
+        .collect();
+    for n in 0..files {
+        crowd.push((
+            format!("lib/crowd/c{n:04}.rb"),
+            format!("def call{n}(thing)\n{body}end\n"),
+        ));
+    }
+    crowd
+}
+
+/// A stream stops reading at the limit, and says how far it got.
+#[test]
+fn a_streamed_answer_stops_at_the_limit_and_says_how_far_it_read() {
+    let (dir, mut session) = many_file_session("refs-stream-cap", &crowd(300, 1), 5);
+    let mut params = on_save(&dir, false);
+    params["partialResultToken"] = "cap".into();
+    let (answer, notes) = request_with_notes(&mut session, "textDocument/references", params);
+    assert_eq!(answer["result"], serde_json::json!([]));
+    assert_eq!(batches(&notes, "cap").concat().len(), 5);
+    let said = shown_messages(&notes);
+    assert_eq!(said.len(), 1, "{notes:?}");
+    assert!(
+        said[0].contains("5 references to `save`, from 128 of the 300 files"),
+        "{}",
+        said[0]
+    );
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Cancelled mid-stream, the scan stops: no further batch, and the answer is
+/// `RequestCancelled`, not a result.
+#[test]
+fn a_cancelled_stream_stops_sending() {
+    let files = 128 * 6;
+    let (dir, mut session) = many_file_session("refs-cancel", &crowd(files, 50), 10_000_000);
+    let mut params = on_save(&dir, false);
+    params["partialResultToken"] = "cancel".into();
+    session.next_id += 1;
+    let id = session.next_id;
+    session.send(serde_json::json!({
+        "jsonrpc": "2.0", "id": id, "method": "textDocument/references", "params": params
+    }));
+    // Withdraw it as soon as the first batch shows the scan is under way.
+    let mut batches = 0;
+    let answer = loop {
+        let message = session.read();
+        if message.get("id").and_then(|v| v.as_i64()) == Some(id) {
+            break message;
+        }
+        if message["method"] == "$/progress" {
+            batches += 1;
+            if batches == 1 {
+                session.notify("$/cancelRequest", serde_json::json!({ "id": id }));
+            }
+        }
+    };
+    assert_eq!(answer["error"]["code"], -32800, "{answer}");
+    assert!(
+        batches < files / 128,
+        "{batches} batches: the scan ran on after the cancel"
+    );
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A call whose receiver never resolved asks about every method of that name,
+/// so it reads only as many files as the limit takes, and says it stopped.
+#[test]
+fn a_bare_name_reads_only_as_far_as_the_limit() {
+    let (dir, mut session) = many_file_session("refs-bare", &crowd(300, 1), 5);
+    let (answer, notes) = request_with_notes(
+        &mut session,
+        "textDocument/references",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "lib/crowd/c0000.rb")},
+            "position": {"line": 1, "character": 9},
+            "context": {"includeDeclaration": false},
+        }),
+    );
+    assert_eq!(places(&answer["result"]).len(), 5, "{answer}");
+    let said = shown_messages(&notes);
+    assert_eq!(said.len(), 1, "{notes:?}");
+    assert!(
+        said[0].contains("5 references to `save`, from the first 128 files")
+            && said[0].contains("receiver's type is unknown")
+            && said[0].contains("trekr --refs 'save'"),
+        "{}",
+        said[0]
+    );
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}

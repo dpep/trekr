@@ -315,6 +315,7 @@ the new binary in place (DEC-050).
 | `inbox.rs` | reading the wire ahead, so `$/cancelRequest` is seen before the request it withdraws is reached, and mid-scan |
 | `state.rs` | per-checkout trees (rebuilt when the surface key moves) and completion listings; documents — the editor's copy, or a disk read revalidated by mtime+length |
 | `handlers.rs` | the nine agent operations, syntax diagnostics, `require` strings as links |
+| `gather.rs` | how much of a references answer is kept, in what order, and what is said about the rest (DEC-056) |
 | `require.rs` | which file a `require` string names: finding them in a file, the static load path, Ruby's search rules (DEC-053) |
 | `doc.rs` | a definition's doc comment and its signature as written, read from its file when asked (DEC-052) |
 | `complete.rs` | completion (DEC-040), and the chosen item's doc on resolve (DEC-052) |
@@ -330,9 +331,49 @@ the new binary in place (DEC-050).
   to a guess; `hover` at the same position says, in words, that it is one.
 - `references` orders confirmed before possible and drops excluded — the order
   is the disclosure. On a class or constant it resolves every written constant
-  and keeps those that land on the same FQN.
+  and keeps those that land on the same FQN. It is bounded; see below.
 - `incomingCalls` reports only the confirmed tier; its items are the calling
   methods, so the hierarchy can be walked.
+
+**References are bounded, and say so** (DEC-056). A common name in a
+monorepo has hundreds of thousands of call sites; nobody reads them in an
+editor, and an agent's context cannot hold them. An answer keeps at most
+`initializationOptions.referenceLimit` references (default 1000), and when
+that leaves anything out the server sends one `window/showMessage` —
+"showing 1,000 of 5,450 references to reload, confirmed callers first. For
+all of them: `trekr --refs 'Topic#reload'`" — and logs a `references` event
+with what was shown, found and read. What is kept depends on how it is asked:
+
+| request | files read | kept |
+|---|---|---|
+| a method whose owner is known | all that call the name, unless `limit` confirmed callers are in hand first | the best `limit` by evidence: confirmed, then possible by proximity |
+| a name whose receiver never resolved | page by page from the index, until `limit` are found | those, ordered by evidence |
+| a method whose owner is known, with a `partialResultToken` | nearest the definition first, until `limit` are found | streamed as `$/progress` batches, one per chunk of files read — the definition first, each batch ordered by evidence; the response is `[]` |
+
+The bare name stops early because its "confirmed" means a typed receiver that
+finds *some* method of that name, so a full scan to promote those would buy
+nothing about the method asked after. Its files come from
+`Store::files_calling_page` rather than `files_calling`: listing every file
+that calls `to` means reading every call of it (2.5 million rows at thirty
+times discourse) before the first file is opened, and the answer needs a few
+thousand. The page query's plan is pinned, because with `sqlite_stat4` saying
+the name is everywhere the bundled SQLite otherwise walks every file of the
+checkout and sorts their calls — 0.7 s a page at ten times discourse.
+
+A stream stops early because it cannot take back what it sent. Its files are
+read nearest the definition first (its own file, its directory, outward), so
+the prefix comes from the code most likely to be about the method. Neither
+early stop is ranked across the whole checkout, and the message says so:
+"nearest the definition first", never "confirmed callers first".
+
+A streamed scan checks for `$/cancelRequest` before each batch as well as
+before each chunk, so a withdrawn request sends nothing further.
+
+Neither VS Code's language client (`vscode-languageclient` 9) nor Claude
+Code's LSP tool sends a `partialResultToken` for references, so the unstreamed
+path is the one editors take today. Claude Code shows no `window/showMessage`
+either: an agent sees a list of exactly `referenceLimit` locations and no
+note that it was cut.
 
 **Hover is for a person reading code** (DEC-052), so it shows what the
 definition is and leaves out how it was found:

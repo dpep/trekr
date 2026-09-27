@@ -16,6 +16,7 @@ mod complete;
 mod convert;
 mod doc;
 mod fresh;
+mod gather;
 mod handlers;
 mod inbox;
 pub(crate) mod log;
@@ -221,6 +222,7 @@ fn serve(
     let store = crate::store::open_default()?;
     let mut session = Session::open(root.clone(), store);
     session.definition_links = client.definition_links;
+    session.reference_limit = client.reference_limit;
     for buffer in buffers {
         session.did_open(buffer.path, buffer.text, buffer.version);
     }
@@ -324,7 +326,12 @@ fn serve(
                     cancelled(id.clone())
                 } else {
                     let cancel = || inbox.is_cancelled(&id);
-                    let mut response = dispatch(&mut session, request, log, &cancel);
+                    let out = Outbound {
+                        writer,
+                        spelling: spelling.as_ref(),
+                        log,
+                    };
+                    let mut response = dispatch(&mut session, request, &out, &cancel);
                     if let (Some(spelling), Some(result)) = (&spelling, response.result.as_mut()) {
                         spelling.apply(result);
                     }
@@ -580,16 +587,17 @@ impl Spelling {
 fn dispatch(
     session: &mut Session,
     request: Request,
-    log: &Log,
+    out: &Outbound,
     cancel: &dyn Fn() -> bool,
 ) -> Response {
+    let log = out.log;
     let id = request.id.clone();
     let method = request.method.clone();
     let asked = asked_about(&request.params);
     log.detail("request_params", || request.params.clone());
 
     let started = std::time::Instant::now();
-    let result = route(session, request, cancel);
+    let result = route(session, request, out, cancel);
     let elapsed = started.elapsed();
 
     let (status, answered, code) = match &result {
@@ -646,6 +654,25 @@ fn error_code(error: &anyhow::Error) -> lsp_server::ErrorCode {
     }
 }
 
+/// What a handler may say before its answer: partial results, a message for
+/// the user, a log line. Paths in it go out in the client's spelling, as the
+/// answer's do.
+pub(crate) struct Outbound<'a> {
+    writer: &'a wire::Writer,
+    spelling: Option<&'a Spelling>,
+    pub(crate) log: &'a Log,
+}
+
+impl Outbound<'_> {
+    pub(crate) fn notify(&self, method: &str, mut params: serde_json::Value) -> anyhow::Result<()> {
+        if let Some(spelling) = self.spelling {
+            spelling.apply(&mut params);
+        }
+        self.writer
+            .send(Notification::new(method.to_string(), params).into())
+    }
+}
+
 /// The client withdrew the request while it was being worked on.
 #[derive(Debug)]
 pub(crate) struct Cancelled;
@@ -680,13 +707,14 @@ impl std::error::Error for Unsupported {}
 fn route(
     session: &mut Session,
     request: Request,
+    out: &Outbound,
     cancel: &dyn Fn() -> bool,
 ) -> anyhow::Result<serde_json::Value> {
     use lsp_types::request as req;
     match request.method.as_str() {
         req::GotoDefinition::METHOD => run_handler(request, |p| handlers::definition(session, p)),
         req::References::METHOD => {
-            run_handler(request, |p| handlers::references(session, p, cancel))
+            run_handler(request, |p| handlers::references(session, p, out, cancel))
         }
         req::DocumentSymbolRequest::METHOD => {
             run_handler(request, |p| handlers::document_symbol(session, p))
@@ -895,6 +923,9 @@ struct Client {
     index: bool,
     /// `textDocument.definition.linkSupport`: it takes `LocationLink`s.
     definition_links: bool,
+    /// `initializationOptions.referenceLimit`: how many references an answer
+    /// keeps. A positive integer; anything else keeps the default.
+    reference_limit: usize,
 }
 
 impl Client {
@@ -907,6 +938,11 @@ impl Client {
             index: flag("/initializationOptions/index").unwrap_or(true),
             definition_links: flag("/capabilities/textDocument/definition/linkSupport")
                 .unwrap_or(false),
+            reference_limit: params
+                .pointer("/initializationOptions/referenceLimit")
+                .and_then(serde_json::Value::as_u64)
+                .filter(|&n| n > 0)
+                .map_or(gather::DEFAULT_LIMIT, |n| n as usize),
         }
     }
 }

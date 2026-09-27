@@ -14,6 +14,7 @@
 
 use super::convert::{self, LineIndex, path_to_uri, point, to_pos};
 use super::doc::{self, Doc};
+use super::gather;
 use super::require::{self, Found, Origin};
 use super::state::{Located, Session};
 use crate::cli::position::{self, Under};
@@ -28,7 +29,8 @@ use lsp_types::{
     Hover, HoverContents, HoverParams, Location, MarkupContent, MarkupKind, ReferenceParams,
     SymbolKind, WorkspaceSymbolParams,
 };
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::ops::ControlFlow;
 use std::path::Path;
 
 /// How many ranked guesses `goToDefinition` offers when the receiver did not
@@ -404,11 +406,21 @@ fn resolve_at(
     })
 }
 
+/// Call sites of the method at a position, confirmed before possible, at most
+/// `reference_limit` of them — and a word to the user when that cut anything.
+///
+/// With a `partialResultToken` the answer streams as `$/progress` batches, one
+/// per chunk of files read, nearest the definition first; each batch is
+/// ordered by evidence, and the response itself is empty, as the protocol
+/// requires. Without one, the answer is the best `limit` of the whole scan
+/// (DEC-056).
 pub(crate) fn references(
     session: &mut Session,
     params: ReferenceParams,
+    out: &super::Outbound,
     cancel: &dyn Fn() -> bool,
 ) -> anyhow::Result<Option<Vec<Location>>> {
+    let token = params.partial_result_params.partial_result_token;
     let uri = params.text_document_position.text_document.uri;
     let position = params.text_document_position.position;
     let declarations = params.context.include_declaration;
@@ -434,7 +446,8 @@ pub(crate) fn references(
         _ => None,
     };
     if let Some((name, nesting)) = constant {
-        return constant_references(session, &located, &name, &nesting, declarations).map(Some);
+        return constant_references(session, &located, &name, &nesting, declarations, out)
+            .map(Some);
     }
 
     let root = located.root.clone();
@@ -445,9 +458,9 @@ pub(crate) fn references(
         Under::Call(call) => (call.name.clone(), None),
         Under::Constant(_) => unreachable!("answered above"),
     };
-    let paths = session.store().files_calling(&root_str, &name)?;
     let overlay = overlay(session, &root);
-    let tree = session.tree(&root)?;
+    let limit = session.reference_limit;
+    let (tree, store) = session.tree_and_store(&root)?;
 
     // Which method is being asked about, not just which name. Standing on a
     // definition, the owner is the scope that declares it; standing on a call,
@@ -476,43 +489,12 @@ pub(crate) fn references(
         Under::Constant(_) => unreachable!("answered above"),
     };
     let target = query.owner.clone();
+    let bare = target.is_none();
 
-    let mut found: Vec<(refs::Reference, Location)> = Vec::new();
-    scan_files(&overlay, &root, paths, &name, cancel, |file| {
-        let Some(uri) = file_uri(&root, &file.path) else {
-            return;
-        };
-        let lines = LineIndex::new(&file.text);
-        for call in file.facts.calls.iter().filter(|c| c.name == query.name) {
-            let reference = refs::tier_call(
-                tree,
-                &file.facts,
-                call,
-                &file.path,
-                &query,
-                target.as_deref(),
-            );
-            if reference.tier == refs::Tier::Excluded {
-                continue;
-            }
-            let range = lines.span(reference.line, reference.col, name.len());
-            found.push((
-                reference,
-                Location {
-                    uri: uri.clone(),
-                    range,
-                },
-            ));
-        }
-    })?;
-    // Confirmed before possible: LSP has no tier field, so the order of the
-    // list is the disclosure.
-    found.sort_by_key(|(reference, _)| refs::order(reference));
-
-    let mut locations: Vec<Location> = Vec::new();
+    let mut declared: Vec<Location> = Vec::new();
     if declarations {
         match own_site {
-            Some(pos) => locations.extend(location(
+            Some(pos) => declared.extend(location(
                 &root,
                 &path,
                 pos.line,
@@ -520,13 +502,146 @@ pub(crate) fn references(
                 name.len(),
                 overlay.get(&path).map(String::as_str),
             )),
-            None => locations.extend(defined_at.iter().filter_map(|site| {
+            None => declared.extend(defined_at.iter().filter_map(|site| {
                 location(&root, &site.path, site.line, site.col, name.len(), None)
             })),
         }
     }
-    locations.extend(found.into_iter().map(|(_, at)| at));
-    Ok(Some(locations))
+    let send = |locations: Vec<Location>| -> anyhow::Result<()> {
+        match &token {
+            Some(token) if !locations.is_empty() => out.notify(
+                "$/progress",
+                serde_json::json!({ "token": token, "value": locations }),
+            ),
+            _ => Ok(()),
+        }
+    };
+    if token.is_some() {
+        // The definition is known before any file is read: it is the first
+        // thing a streaming client can show.
+        send(std::mem::take(&mut declared))?;
+    }
+
+    let source = if bare {
+        // Nothing to be near, and the first `limit` will do: read the index
+        // only as far as they take.
+        Source::Paged {
+            store,
+            root: &root_str,
+            name: &name,
+            after: 0,
+            done: false,
+            pending: Default::default(),
+        }
+    } else {
+        // Nearest the definition first, so what a stream shows first is the
+        // code most likely to be about this method.
+        let anchor = match &own_site {
+            Some(_) => path.as_str(),
+            None => defined_at
+                .iter()
+                .map(|site| site.path.as_str())
+                .find(|p| !Path::new(p).is_absolute())
+                .unwrap_or(path.as_str()),
+        };
+        let mut paths = store.files_calling(&root_str, &name)?;
+        gather::nearest_first(&mut paths, anchor);
+        Source::Listed(paths.into_iter())
+    };
+    let policy = if token.is_some() || bare {
+        gather::Policy::First
+    } else {
+        gather::Policy::Best
+    };
+    let mut gathered = gather::Gather::new(limit, policy);
+    let reach = scan_files(&overlay, &root, source, &name, cancel, |files| {
+        for file in files {
+            let Some(uri) = file_uri(&root, &file.path) else {
+                continue;
+            };
+            let lines = LineIndex::new(&file.text);
+            for call in file.facts.calls.iter().filter(|c| c.name == query.name) {
+                let reference = refs::tier_call(
+                    tree,
+                    &file.facts,
+                    call,
+                    &file.path,
+                    &query,
+                    target.as_deref(),
+                );
+                if reference.tier == refs::Tier::Excluded {
+                    continue;
+                }
+                let range = lines.span(reference.line, reference.col, name.len());
+                let (tier, proximity, path, line) = refs::order(&reference);
+                gathered.offer(
+                    (tier, proximity, path, line, reference.col),
+                    Location {
+                        uri: uri.clone(),
+                        range,
+                    },
+                );
+            }
+        }
+        if token.is_some() {
+            // A withdrawn request sends nothing more, not one more batch.
+            if cancel() {
+                return Err(super::Cancelled.into());
+            }
+            send(gathered.batch())?;
+        }
+        Ok(if gathered.settled() {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        })
+    })?;
+
+    let written = match &query.owner {
+        Some(owner) => format!("{owner}{}{name}", if query.singleton { "." } else { "#" }),
+        None => name.clone(),
+    };
+    let found = gathered.found;
+    let shown = gathered.kept();
+    let cut = gather::Cut {
+        name: &name,
+        query: &written,
+        shown,
+        found,
+        read: reach.read,
+        files: reach.files,
+        stopped: reach.stopped,
+        of: if bare {
+            gather::Of::BareName
+        } else {
+            gather::Of::Method
+        },
+    };
+    out.log.event(
+        "references",
+        serde_json::json!({
+            "query": written,
+            "streamed": token.is_some(),
+            "shown": shown,
+            "found": found,
+            "files_read": reach.read,
+            "files": reach.files,
+            "cut": cut.is_cut(),
+        }),
+    );
+    if cut.is_cut() {
+        out.notify(
+            "window/showMessage",
+            serde_json::json!({ "type": 3, "message": cut.message() }),
+        )?;
+    }
+    if token.is_some() {
+        // Everything went out as partial results; the protocol has the final
+        // response carry none of them.
+        return Ok(Some(Vec::new()));
+    }
+    declared.extend(gathered.finish());
+    Ok(Some(declared))
 }
 
 /// References to a class, module or constant: every written constant that
@@ -542,7 +657,9 @@ fn constant_references(
     name: &str,
     nesting: &[String],
     declarations: bool,
+    out: &super::Outbound,
 ) -> anyhow::Result<Vec<Location>> {
+    let limit = session.reference_limit;
     let root = located.root.clone();
     let root_str = root.to_string_lossy().into_owned();
     let overlay = overlay(session, &root);
@@ -587,6 +704,23 @@ fn constant_references(
     }
     sites.sort();
     sites.dedup();
+    let cut = gather::Cut {
+        name: tail,
+        query: tail,
+        shown: sites.len().min(limit),
+        found: sites.len(),
+        read: 0,
+        files: None,
+        stopped: false,
+        of: gather::Of::Constant,
+    };
+    if cut.is_cut() {
+        out.notify(
+            "window/showMessage",
+            serde_json::json!({ "type": 3, "message": cut.message() }),
+        )?;
+    }
+    sites.truncate(limit);
 
     let mut locations = Vec::new();
     if declarations {
@@ -641,31 +775,134 @@ struct Scanned {
 /// request stops within a few tens of milliseconds.
 const SCAN_CHUNK: usize = 128;
 
+/// Where a scan's files come from.
+enum Source<'a> {
+    /// All of them, listed up front, for a scan that reads every one.
+    Listed(std::vec::IntoIter<String>),
+    /// Page by page from the index, only as far as the scan gets — listing
+    /// every file that calls a common name costs more than the answer does.
+    Paged {
+        store: &'a crate::store::Store,
+        root: &'a str,
+        name: &'a str,
+        after: i64,
+        done: bool,
+        /// Read from the index and not yet handed out.
+        pending: std::collections::VecDeque<String>,
+    },
+}
+
+/// Call rows per page of a paged listing — a few chunks of files' worth.
+const PAGE_ROWS: i64 = 4096;
+
+impl Source<'_> {
+    /// Up to `n` paths not yet in `seen`; empty when there are no more.
+    fn next(&mut self, seen: &mut HashSet<String>, n: usize) -> anyhow::Result<Vec<String>> {
+        let mut paths = Vec::new();
+        match self {
+            Source::Listed(listed) => {
+                for path in listed.by_ref() {
+                    if seen.insert(path.clone()) {
+                        paths.push(path);
+                        if paths.len() == n {
+                            break;
+                        }
+                    }
+                }
+            }
+            Source::Paged {
+                store,
+                root,
+                name,
+                after,
+                done,
+                pending,
+            } => {
+                while paths.len() < n {
+                    if let Some(path) = pending.pop_front() {
+                        paths.push(path);
+                        continue;
+                    }
+                    if *done {
+                        break;
+                    }
+                    // A page ends mid-file as often as not; the rest of that
+                    // file's rows are already `seen` when the next page brings
+                    // them.
+                    let (last, page) = store.files_calling_page(root, name, *after, PAGE_ROWS)?;
+                    *done = page.is_empty();
+                    *after = last;
+                    pending.extend(page.into_iter().filter(|path| seen.insert(path.clone())));
+                }
+            }
+        }
+        Ok(paths)
+    }
+
+    /// How many files there are with those already `seen`, when that is
+    /// known without reading them.
+    fn total(&self, seen: &HashSet<String>) -> Option<usize> {
+        match self {
+            Source::Listed(listed) => {
+                let unseen = listed.as_slice().iter().filter(|p| !seen.contains(*p));
+                Some(seen.len() + unseen.count())
+            }
+            Source::Paged { .. } => None,
+        }
+    }
+}
+
+/// How far a scan got.
+struct Reach {
+    /// Files read.
+    read: usize,
+    /// Files there were to read, when the source knew.
+    files: Option<usize>,
+    /// Stopped with files still unread.
+    stopped: bool,
+}
+
 /// Read and parse the files a question needs — the editor's copy where it has
-/// one — in parallel, handing each to `visit` in order.
+/// one — in parallel, handing each chunk to `visit` in order until it says
+/// stop.
 ///
 /// The parse is the expensive part and it is a pure function of the bytes, so
 /// it fans out; `visit` runs on this thread, because the tree it consults is
 /// not shareable across threads. An open buffer that mentions `needle` is
-/// scanned even when the index does not list its file: the index is as of the
-/// last save, and the buffer is what the user is looking at.
+/// read first, even when the index does not list its file: the index is as of
+/// the last save, and the buffer is what the user is looking at.
 fn scan_files(
     overlay: &HashMap<String, String>,
     root: &Path,
-    mut candidates: Vec<String>,
+    mut source: Source,
     needle: &str,
     cancel: &dyn Fn() -> bool,
-    mut visit: impl FnMut(Scanned),
-) -> anyhow::Result<()> {
+    mut visit: impl FnMut(Vec<Scanned>) -> anyhow::Result<ControlFlow<()>>,
+) -> anyhow::Result<Reach> {
     use rayon::prelude::*;
-    let listed: std::collections::HashSet<String> = candidates.iter().cloned().collect();
-    candidates.extend(
-        overlay
-            .iter()
-            .filter(|(path, text)| !listed.contains(*path) && text.contains(needle))
-            .map(|(path, _)| path.clone()),
-    );
-    for chunk in candidates.chunks(SCAN_CHUNK) {
+    let mut seen = HashSet::new();
+    let mut open: Vec<String> = overlay
+        .iter()
+        .filter(|(_, text)| text.contains(needle))
+        .map(|(path, _)| path.clone())
+        .collect();
+    open.sort();
+    seen.extend(open.iter().cloned());
+    // Only needed if the scan stops short; a finished one read them all.
+    let files = source.total(&seen);
+    let mut read = 0;
+    let mut chunk = open;
+    loop {
+        if chunk.len() < SCAN_CHUNK {
+            chunk.extend(source.next(&mut seen, SCAN_CHUNK - chunk.len())?);
+        }
+        if chunk.is_empty() {
+            return Ok(Reach {
+                read,
+                files: Some(read),
+                stopped: false,
+            });
+        }
         if cancel() {
             return Err(super::Cancelled.into());
         }
@@ -686,9 +923,17 @@ fn scan_files(
                 })
             })
             .collect();
-        scanned.into_iter().for_each(&mut visit);
+        read += chunk.len();
+        chunk = Vec::new();
+        if visit(scanned)?.is_break() {
+            let stopped = !source.next(&mut seen, 1)?.is_empty();
+            return Ok(Reach {
+                read,
+                files: if stopped { files } else { Some(read) },
+                stopped,
+            });
+        }
     }
-    Ok(())
 }
 
 /// An outline needs the file's bytes and nothing else — no index, no checkout,
@@ -1561,56 +1806,66 @@ pub(crate) fn incoming_calls(
     // Keyed by (file, the caller's def line), in first-seen order.
     let mut callers: Vec<CallHierarchyIncomingCall> = Vec::new();
     let mut index: HashMap<(String, u32), usize> = HashMap::new();
-    scan_files(&overlay, &root, paths, &name, cancel, |file| {
-        let Some(uri) = file_uri(&root, &file.path) else {
-            return;
-        };
-        let lines = LineIndex::new(&file.text);
-        for call in file.facts.calls.iter().filter(|c| c.name == name) {
-            let reference = refs::tier_call(
-                tree,
-                &file.facts,
-                call,
-                &file.path,
-                &query,
-                target.as_deref(),
-            );
-            if reference.tier != refs::Tier::Confirmed {
-                continue;
+    scan_files(
+        &overlay,
+        &root,
+        Source::Listed(paths.into_iter()),
+        &name,
+        cancel,
+        |files| {
+            for file in files {
+                let Some(uri) = file_uri(&root, &file.path) else {
+                    continue;
+                };
+                let lines = LineIndex::new(&file.text);
+                for call in file.facts.calls.iter().filter(|c| c.name == name) {
+                    let reference = refs::tier_call(
+                        tree,
+                        &file.facts,
+                        call,
+                        &file.path,
+                        &query,
+                        target.as_deref(),
+                    );
+                    if reference.tier != refs::Tier::Confirmed {
+                        continue;
+                    }
+                    let at = Location {
+                        uri: uri.clone(),
+                        range: lines.span(call.pos.line, call.pos.col, name.len()),
+                    };
+                    let caller = enclosing_def(&file.facts, call.pos.line);
+                    let key = (file.path.clone(), caller.map_or(0, |def| def.pos.line));
+                    if let Some(&i) = index.get(&key) {
+                        callers[i].from_ranges.push(at.range);
+                        continue;
+                    }
+                    #[allow(deprecated)]
+                    let from = match caller {
+                        Some(def) => def_item(at.uri.clone(), &file.text, def),
+                        // A call at the top level of a file: there is no method to
+                        // walk up to, so the item is the call itself.
+                        None => CallHierarchyItem {
+                            name: file.path.clone(),
+                            kind: SymbolKind::FILE,
+                            tags: None,
+                            detail: Some(reference.why.to_string()),
+                            uri: at.uri.clone(),
+                            range: at.range,
+                            selection_range: at.range,
+                            data: None,
+                        },
+                    };
+                    index.insert(key, callers.len());
+                    callers.push(CallHierarchyIncomingCall {
+                        from,
+                        from_ranges: vec![at.range],
+                    });
+                }
             }
-            let at = Location {
-                uri: uri.clone(),
-                range: lines.span(call.pos.line, call.pos.col, name.len()),
-            };
-            let caller = enclosing_def(&file.facts, call.pos.line);
-            let key = (file.path.clone(), caller.map_or(0, |def| def.pos.line));
-            if let Some(&i) = index.get(&key) {
-                callers[i].from_ranges.push(at.range);
-                continue;
-            }
-            #[allow(deprecated)]
-            let from = match caller {
-                Some(def) => def_item(at.uri.clone(), &file.text, def),
-                // A call at the top level of a file: there is no method to
-                // walk up to, so the item is the call itself.
-                None => CallHierarchyItem {
-                    name: file.path.clone(),
-                    kind: SymbolKind::FILE,
-                    tags: None,
-                    detail: Some(reference.why.to_string()),
-                    uri: at.uri.clone(),
-                    range: at.range,
-                    selection_range: at.range,
-                    data: None,
-                },
-            };
-            index.insert(key, callers.len());
-            callers.push(CallHierarchyIncomingCall {
-                from,
-                from_ranges: vec![at.range],
-            });
-        }
-    })?;
+            Ok(ControlFlow::Continue(()))
+        },
+    )?;
     Ok(Some(callers))
 }
 
