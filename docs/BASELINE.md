@@ -2151,7 +2151,7 @@ widget_shop was written for this evaluation; these were not. `script/gold_gem.sh
 copies a gem, runs its own RSpec suite under the TracePoint tracer
 (`script/exercise_rspec.rb`), indexes the copy into a store of its own, and
 scores it with `script/gold.py` (`make gold-gem GEM=…`). Every suite passes
-offline. Scored with `APP_SAMPLE=600 SAMPLE=300 SEED=12`, build 3f6940e.
+offline. Scored with `APP_SAMPLE=600 SAMPLE=300 SEED=12`, build ff6f12a.
 
 "App" is the gem's own checkout, so it includes its specs; the split by call
 site is the part to read, because a spec's calls are mostly RSpec's DSL.
