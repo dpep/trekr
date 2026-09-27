@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A no-op `--index` in a very large repo is faster**: it no longer loads
+  every known blob to find it has nothing to parse — 0.50 → 0.42 s on a
+  336k-file monorepo. **In a repo that size, turn on git's fsmonitor**
+  (`git config core.fsmonitor true`): the scan's `git status` goes from over
+  a second to under 0.1 s.
 - **Go to Definition on a `require` string opens the file.** In `--lsp`,
   a `require`, `require_relative`, `load` or `autoload` string resolves to the
   file it loads: relative to the requiring file, or along the load path —

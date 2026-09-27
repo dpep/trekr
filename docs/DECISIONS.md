@@ -2731,3 +2731,23 @@ takes the pages back in one go. Discourse, eleven interleaved rounds, medians:
 384 → 361 ms. Output identical.
 
 **Not applied to the LSP**, whose trees live for the session.
+
+## DEC-055 — A no-op index does not load the known blobs
+
+**Decided.** Before computing what to parse, `index_files` asks
+`Store::map_unchanged` — the same map-key comparison `write` already made to
+skip a rewrite (DEC-035) — and loads the set of known blob OIDs (DEC-046) only
+when the map moved. The set stays loaded, once, for the gems after it.
+
+**Why, measured.** On discourse the set is ~4 ms and this changes nothing
+visible. It grows with every blob on the machine: on the 30× synthetic
+monorepo (336k files, 335k blobs) it was 62–735 ms of a no-op. No-op
+`--index` there, git's untracked cache and fsmonitor on, six interleaved
+rounds: **503 → 419 ms** median.
+
+**What the rest of that no-op is**, since it is now most of the answer to
+"how long does nothing take at scale": `git status` 0.09 s (with fsmonitor;
+1.2 s with only the untracked cache, 2.7 s with neither primed), `git
+ls-files -s` 0.1 s, and ~0.3 s of trekr reading their output into the file
+map. The last is O(files) and the next thing to look at; the untracked cache
+and fsmonitor are the user's git config, and the changelog says so.

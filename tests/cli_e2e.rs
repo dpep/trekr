@@ -270,6 +270,16 @@ fn profile_reports_on_stderr_so_stdout_stays_the_answer() {
         serde_json::from_str(String::from_utf8_lossy(&again.stderr).trim()).unwrap();
     assert_eq!(timings["parsed"], 0);
     assert_eq!(timings["skipped"], 1);
+    let phases: Vec<&str> = timings["phases"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|p| p["name"].as_str().unwrap())
+        .collect();
+    assert!(
+        !phases.contains(&"known-diff"),
+        "an unchanged map never loads the known blobs: {phases:?}"
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }

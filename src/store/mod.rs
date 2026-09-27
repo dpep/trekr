@@ -216,9 +216,7 @@ impl Store {
         // matches what is stored the map is identical and the rewrite below is
         // pure cost — which on a no-op index is the only cost left, and the one
         // that grows with the repo.
-        let map_key = files.iter().fold(0i64, |key, (path, oid)| {
-            key.wrapping_add(path_hash(path) ^ path_hash(&oid.0))
-        });
+        let map_key = map_key(files);
         // `EXISTS` rather than `COUNT`: the question is whether the map was
         // ever written, and counting it would put an O(files) scan back into
         // the path this whole change exists to make O(1).
@@ -305,6 +303,22 @@ impl Store {
 
         tx.commit()?;
         Ok(counts)
+    }
+
+    /// Is this exactly the map already stored for `root`? The same test
+    /// `write` makes before skipping the rewrite, asked before anything is
+    /// read — a no-op index then never loads the known blobs at all.
+    pub(crate) fn map_unchanged(&self, root: &str, files: &Files) -> Result<bool> {
+        let stored: Option<(i64, bool)> = self
+            .conn
+            .query_row(
+                "SELECT map_key, EXISTS(SELECT 1 FROM file WHERE checkout_id = checkout.id)
+                   FROM checkout WHERE root = ?1",
+                params![root],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()?;
+        Ok(stored.is_some_and(|(key, written)| written && key == map_key(files)))
     }
 
     /// Run `work` as one transaction, so every `write` inside it commits once.
@@ -1123,6 +1137,14 @@ pub(crate) fn decode_params(s: &str) -> Vec<Param> {
 /// A path's contribution to a checkout's surface key. FNV-1a again — the same
 /// reasoning as `Facts::surface`, and the two are mixed with XOR so a file's
 /// identity and its contents both have to match.
+/// The file map folded into one number: order-independent, and moved by any
+/// path or blob changing.
+fn map_key(files: &Files) -> i64 {
+    files.iter().fold(0i64, |key, (path, oid)| {
+        key.wrapping_add(path_hash(path) ^ path_hash(&oid.0))
+    })
+}
+
 fn path_hash(path: &str) -> i64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for byte in path.as_bytes() {

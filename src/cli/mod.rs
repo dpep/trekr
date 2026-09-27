@@ -292,18 +292,26 @@ fn index_files(
     root: &Path,
     files: &scan::Files,
     git_state: i64,
-    known: &mut HashSet<Oid>,
+    known: &mut Option<HashSet<Oid>>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
 ) -> anyhow::Result<crate::store::Indexed> {
     let wanted: HashSet<&Oid> = files.values().collect();
 
     // One path per unknown blob: identical content under two names is one
-    // parse, and which name it was read from cannot matter.
+    // parse, and which name it was read from cannot matter. A map identical
+    // to the stored one has nothing unknown, so the known set — every blob on
+    // the machine — is loaded only when there may be.
     let mut to_parse: HashMap<&Oid, PathBuf> = HashMap::new();
-    for (rel, oid) in files {
-        if !known.contains(oid) {
-            to_parse.entry(oid).or_insert_with(|| root.join(rel));
+    if !store.map_unchanged(&root.to_string_lossy(), files)? {
+        if known.is_none() {
+            *known = Some(profile::timed(profile, "known-diff", || store.blob_oids())?);
+        }
+        let known = known.as_ref().expect("just loaded");
+        for (rel, oid) in files {
+            if !known.contains(oid) {
+                to_parse.entry(oid).or_insert_with(|| root.join(rel));
+            }
         }
     }
     if let Some(profile) = profile.as_mut() {
@@ -370,7 +378,9 @@ fn index_files(
         profile.merge_files(slow);
     }
     // Written now, so a later gem holding the same bytes does not parse them.
-    known.extend(fresh);
+    if let Some(known) = known.as_mut() {
+        known.extend(fresh);
+    }
     Ok(counts)
 }
 
@@ -382,7 +392,7 @@ fn index_files(
 fn index_gems(
     store: &mut Store,
     repo: &Path,
-    known: &mut HashSet<Oid>,
+    known: &mut Option<HashSet<Oid>>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
 ) -> anyhow::Result<GemReport> {
@@ -467,7 +477,7 @@ fn cmd_index(
 
     let mut store = open_store()?;
     let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
-    let mut known = profile::timed(&mut profile, "known-diff", || store.blob_oids())?;
+    let mut known = None;
     let counts = index_files(
         &mut store,
         &root,
