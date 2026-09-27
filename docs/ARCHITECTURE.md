@@ -583,9 +583,9 @@ interleaved) and rails' from 2.7 s to 1.6 s. Same rows, byte for byte.
 SQLite plans `--refs` as a nested scan of the checkout's files: `--refs new` on
 rails took **90 seconds** for 13,684 rows. With `ANALYZE` run, the planner
 reverses the join — files drive, a bloom filter rejects — and the same query
-takes **66 ms**. `PRAGMA optimize` on close is what keeps it that way; it
-re-analyzes only tables that have grown enough to matter, so a no-op reindex is
-still 61 ms. Anyone adding a query over these tables should check
+takes **66 ms**. `--index` regathers them once the store has grown a tenth
+past the last analysis (DEC-042), and `PRAGMA optimize` on close covers the
+rest, so neither a no-op nor a one-file reindex pays for a full `ANALYZE`. Anyone adding a query over these tables should check
 `EXPLAIN QUERY PLAN` on a *populated* database — a fixture-sized one hides this
 entirely.
 

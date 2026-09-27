@@ -1952,3 +1952,37 @@ same order as the 3 s the checkout's own single write already held it.
 a first index of a very large bundle being interrupted routinely. Then commit
 in groups sized by rows written, not per gem.
 
+## DEC-042 — Statistics are regathered when the store outgrows them, not after every write
+
+**Decided.** `--index` runs `ANALYZE` only when `blob` or `checkout` has grown
+more than a tenth past the row count `sqlite_stat1` recorded at the last
+analysis. The check is two `MAX(id)` reads and two `sqlite_stat1` rows.
+
+**Why, measured.** Session 24 made `ANALYZE` run after any index that parsed
+something, because `PRAGMA optimize` alone let statistics go 13 rows stale
+across 633 checkouts (DEC-006's argument, applied). That fixed the accumulation
+and put a full `ANALYZE` — every index of every table read end to end — behind
+a one-file edit. Re-indexing a discourse checkout after appending one line to
+one file, 313 MB store, eight interleaved rounds, medians:
+
+| | wall | of which `analyze` |
+| --- | ---: | ---: |
+| analyze after any parse | 643 ms | 383 ms |
+| **analyze when outgrown** | **258 ms** | 0 ms |
+
+A single earlier run on a busier machine read 1.9 s of `analyze` in a 2.3 s
+reindex, and the doc comment it replaces quoted ~3 s on a 384 MB store: the
+cost scales with the store, not with the edit, which is the problem.
+
+**Why a tenth, and why cumulative.** Statistics steer the planner by orders of
+magnitude — DEC-006's bad plan was 90 s against 45 ms, from statistics that
+were *absent*, not 10 % off. And the comparison is against the count at the last
+analysis, not the last index, so the session-24 trap — many small increments,
+each under a threshold — still adds up to a regather. `checkout` is counted as
+well as `blob` because that trap was checkouts accumulating, and a new worktree
+adds a checkout without adding a blob.
+
+**Reverses if** a plan is found that goes wrong inside a tenth of growth. Then
+the threshold is the wrong instrument, and the query should be pinned (DEC-006's
+own reverses-if).
+

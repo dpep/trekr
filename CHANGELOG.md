@@ -8,6 +8,10 @@
   identical. An index interrupted while writing gems now keeps none of them,
   rather than the ones it had finished — the checkout's own files are still
   committed first.
+- **Re-indexing after an edit no longer pays for a full `ANALYZE`.** Statistics
+  are regathered once the store has grown a tenth past the ones it has, instead
+  of after every index that parsed anything. Re-indexing discourse after
+  editing one file went from 0.64 s to 0.26 s.
 - **`--lsp` speaks the protocol's error vocabulary, and honours cancellation.**
   An unsupported method answers `MethodNotFound` (it answered `null`, which a
   client reads as "nothing here") and a malformed request `InvalidParams` (it

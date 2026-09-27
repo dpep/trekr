@@ -439,12 +439,11 @@ fn cmd_index(
         GemReport::default()
     };
 
-    // Only when something was actually read: statistics cost seconds, and a
-    // reindex that parsed nothing has not changed the shape the planner cares
-    // about.
+    // Only when something was actually read, and then only once the store has
+    // outgrown its statistics: a full ANALYZE costs seconds whatever changed.
     if counts.parsed > 0 || gems.indexed > 0 {
         profile::timed(&mut profile, "analyze", || {
-            store.analyze();
+            store.analyze_if_outgrown();
             Ok::<(), anyhow::Error>(())
         })?;
     }

@@ -832,11 +832,48 @@ impl Store {
     /// — every checkout, then every file — instead of the name index, and cost
     /// **1.28 s against 0.33 s**.
     ///
-    /// Best effort, and only worth it when something was actually written: it
-    /// is ~3 s on a 384 MB database, which is fine once per index and not fine
-    /// on a no-op reindex.
-    pub(crate) fn analyze(&self) {
+    /// Best effort, and only when the database has outgrown its statistics.
+    /// A full `ANALYZE` reads every index whatever changed, so it cost the same
+    /// after a one-file edit as after a cold index — 1.9 s of a 2.3 s reindex.
+    /// Statistics steer the planner by orders of magnitude, so they are
+    /// regathered once `blob` or `checkout` has grown a tenth past the count
+    /// they were taken at (DEC-042). Measured against the last analysis rather
+    /// than the last index, so many small indexes still add up to one.
+    pub(crate) fn analyze_if_outgrown(&self) -> bool {
+        if !self.outgrown_statistics().unwrap_or(true) {
+            return false;
+        }
         let _ = self.conn.execute_batch("ANALYZE;");
+        true
+    }
+
+    fn outgrown_statistics(&self) -> Result<bool> {
+        for table in ["blob", "checkout"] {
+            // The first field of a `sqlite_stat1` row is the table's row count
+            // when it was analysed. No row, or no table yet, means never.
+            let analyzed: Option<String> = self
+                .conn
+                .query_row(
+                    "SELECT stat FROM sqlite_stat1 WHERE tbl = ?1 LIMIT 1",
+                    params![table],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let Some(rows) = analyzed.and_then(|stat| stat.split(' ').next()?.parse::<i64>().ok())
+            else {
+                return Ok(true);
+            };
+            // `MAX(id)` rather than `COUNT(*)`: O(1), and ids only grow.
+            let now: i64 = self.conn.query_row(
+                &format!("SELECT COALESCE(MAX(id), 0) FROM {table}"),
+                [],
+                |r| r.get(0),
+            )?;
+            if now * 10 > rows * 11 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 }
 
@@ -1163,6 +1200,31 @@ mod tests {
             0,
             "the same bytes are never parsed twice — that is the whole design"
         );
+    }
+
+    #[test]
+    fn statistics_are_regathered_only_once_the_store_outgrows_them() {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut blobs = 0;
+        let mut add = |store: &mut Store, n: usize| {
+            for _ in 0..n {
+                blobs += 1;
+                indexed(store, "/a", "w.rb", &format!("class W{blobs}\nend\n"));
+            }
+        };
+        add(&mut store, 10);
+        assert!(store.analyze_if_outgrown(), "never analysed");
+        add(&mut store, 1);
+        assert!(
+            !store.analyze_if_outgrown(),
+            "a tenth more is within bounds"
+        );
+        add(&mut store, 1);
+        assert!(
+            store.analyze_if_outgrown(),
+            "past a tenth, measured from the last analysis"
+        );
+        assert!(!store.analyze_if_outgrown());
     }
 
     #[test]
