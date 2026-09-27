@@ -2707,3 +2707,27 @@ took 5–8 ms.
 **Reverses if** several-match answers turn out common and noisy in use — then
 reconstructing bundler's order earns its keep and the first match can be the
 answer.
+
+## DEC-054 — A CLI query does not free its tree
+
+**Decided.** Every CLI command that builds a tree holds it as
+`ManuallyDrop<Tree>` (`OneShotTree`, built by `build_tree`), so the process
+exits without freeing the namespace string by string. The store the command
+opened is still closed normally, so `PRAGMA optimize` still runs; what is not
+closed is the tree's own read-only loader connection.
+
+**Why, measured.** Freeing the tree was timed directly (`drop(tree)` around
+`--ancestors`), since wall time on the scaled corpora was too noisy to use:
+
+| | tree build | its drop |
+| --- | ---: | ---: |
+| discourse | 170 ms | 16 ms |
+| synthetic monorepo, 10× discourse | 0.8 s | 76 ms |
+| synthetic monorepo, 30× discourse | 2.7 s | 216 ms |
+
+It grows with the tree, ~8 % on top of building it, and buys nothing: the OS
+takes the pages back in one go. Discourse, eleven interleaved rounds, medians:
+`--ancestors` 210 → 197 ms, `--def` 227 → 197 ms, `--refs Topic#title`
+384 → 361 ms. Output identical.
+
+**Not applied to the LSP**, whose trees live for the session.

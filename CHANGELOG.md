@@ -16,6 +16,9 @@
   are underlined as links (`textDocument/documentLink`). The VS Code
   extension's `trekr.features` gains `documentLink`; if you have set that
   list yourself, add it there to get the links.
+- **CLI queries skip freeing the namespace on exit**: 13–30 ms off `--def`,
+  `--refs` and `--ancestors` on discourse, and ~0.2 s at thirty times its
+  size.
 - **Hover shows what a definition is, not how trekr found it.** The hover
   now shows the signature as written (`def Widget#resize(width, height =
   nil)`, `class Foo < Bar`, `LIMIT = 10`). Below it comes the first paragraph

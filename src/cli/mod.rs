@@ -705,7 +705,7 @@ fn cmd_card(out: Output, text: &str) -> anyhow::Result<ExitCode> {
     if !store.has_checkout(&root_str)? {
         return not_indexed(out, &root);
     }
-    let tree = Tree::build(&store, &root_str)?;
+    let tree = build_tree(&store, &root_str)?;
 
     // A constant: what it is, and what it inherits.
     if query.owner.is_none() {
@@ -850,7 +850,7 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
         return cmd_refs_by_name(out, &root, &root_str, &store, &query);
     }
 
-    let tree = Tree::build(&store, &root_str)?;
+    let tree = build_tree(&store, &root_str)?;
     let (owner, definition) = refs::definition_of(&tree, &query);
     let (found, counts) = gather_refs(
         &tree,
@@ -932,7 +932,7 @@ fn cmd_refs_by_name(
     let mut rows = store.refs(root_str, &query.name)?;
     let has_calls = rows.iter().any(|row| row.role == "call");
     if has_calls {
-        let tree = Tree::build(store, root_str)?;
+        let tree = build_tree(store, root_str)?;
         let (found, _) = gather_refs(&tree, store, root, root_str, query, None, false, None)?;
         // Match by position: one call site, one tiering.
         for row in rows.iter_mut().filter(|row| row.role == "call") {
@@ -994,6 +994,17 @@ fn cmd_refs_by_name(
 /// Split out because a refresh has to happen *between* those two steps: the
 /// tree is assembled from the store, so refreshing after building it would
 /// answer from facts one edit out of date.
+/// A tree a command builds, uses, and exits holding.
+///
+/// Never freed: the process is about to end, and freeing a checkout's
+/// namespace string by string costs time that grows with the repo — the OS
+/// takes the pages back in one go.
+type OneShotTree = std::mem::ManuallyDrop<Tree>;
+
+fn build_tree(store: &Store, root: &str) -> rusqlite::Result<OneShotTree> {
+    Tree::build(store, root).map(std::mem::ManuallyDrop::new)
+}
+
 fn checkout_for_query(path: &Path, pinned: Option<&Path>) -> anyhow::Result<(PathBuf, Store)> {
     let store = open_store()?;
     let root = match pinned {
@@ -1003,13 +1014,13 @@ fn checkout_for_query(path: &Path, pinned: Option<&Path>) -> anyhow::Result<(Pat
     Ok((root, store))
 }
 
-fn tree_for(path: &Path, pinned: Option<&Path>) -> anyhow::Result<(PathBuf, Store, Tree)> {
+fn tree_for(path: &Path, pinned: Option<&Path>) -> anyhow::Result<(PathBuf, Store, OneShotTree)> {
     let store = open_store()?;
     let root = match pinned {
         Some(root) => std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()),
         None => checkout_for(&store, path)?,
     };
-    let tree = Tree::build(&store, &root.to_string_lossy())?;
+    let tree = build_tree(&store, &root.to_string_lossy())?;
     Ok((root, store, tree))
 }
 
@@ -1148,7 +1159,7 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
     let written_calls = store.written_calls(&names, PLAINLY_USED + 1)?;
 
     // The expensive pass, only for names the cheap one could not clear.
-    let tree = Tree::build(&store, &root_str)?;
+    let tree = build_tree(&store, &root_str)?;
     let mut parsed = Parsed::new();
     let mut rows: Vec<serde_json::Value> = Vec::new();
     for (file, def, risky) in &defined {
@@ -1330,7 +1341,7 @@ fn checkout_for(store: &Store, path: &Path) -> anyhow::Result<PathBuf> {
 
 /// The checkout we are standing in — for the queries that ask about a name
 /// rather than a position, where "here" is the only checkout meant.
-fn tree_here() -> anyhow::Result<(PathBuf, Store, Tree)> {
+fn tree_here() -> anyhow::Result<(PathBuf, Store, OneShotTree)> {
     tree_for(Path::new("."), None)
 }
 
@@ -1387,7 +1398,7 @@ fn cmd_def(
             }
             // Refresh before the tree is built, so the tree sees the new facts.
             freshness = refresh_for_query(&mut store, &root, Path::new(&spec.path));
-            let tree = Tree::build(&store, &root.to_string_lossy())?;
+            let tree = build_tree(&store, &root.to_string_lossy())?;
             context = Some(root.to_string_lossy().into_owned());
             let resolution = tree.resolve(&reference.name, &reference.nesting);
             let mut value = serde_json::to_value(&resolution)?;
@@ -1412,7 +1423,7 @@ fn cmd_def(
             }
             // Refresh before the tree is built, so the tree sees the new facts.
             freshness = refresh_for_query(&mut store, &root, Path::new(&spec.path));
-            let tree = Tree::build(&store, &root.to_string_lossy())?;
+            let tree = build_tree(&store, &root.to_string_lossy())?;
             context = Some(root.to_string_lossy().into_owned());
             let relative = std::fs::canonicalize(&spec.path)
                 .ok()
