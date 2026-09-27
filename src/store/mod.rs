@@ -108,10 +108,15 @@ impl Store {
 
     fn init(conn: Connection) -> Result<Store> {
         // WAL lets a reader answer while an indexer writes; busy_timeout makes
-        // a second writer wait rather than fail.
+        // a second writer wait rather than fail. mmap reads pages from the
+        // shared page cache instead of copying each into this connection's own
+        // cache — the difference is most of an LSP server's private memory
+        // (DEC-051). An I/O error under a mapping is a SIGBUS rather than an
+        // error return, the risk rq's D8 took too.
         conn.execute_batch(
             "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; \
-             PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32768;",
+             PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32768; \
+             PRAGMA mmap_size=1073741824;",
         )?;
         let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
         // An *older* binary must not drop a newer database. Two trekrs on one

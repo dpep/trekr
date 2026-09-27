@@ -2427,3 +2427,71 @@ e2e test deletes the database under a running server to stand in for this.
 server's executable, or treats an unchanged pid with new behaviour as an error.
 It would also reverse if a stdio transport appears whose descriptors do not
 survive exec.
+
+## DEC-051 — SQLite reads through `mmap` (1 GiB)
+
+**Decided.** Every connection sets `PRAGMA mmap_size=1073741824`. The store is
+read from the shared page cache in place instead of being copied page by page
+into each connection's own cache.
+
+**Why, measured.** An earlier pass tried it on the tree build alone, saw ~5 %
+(206 → 196 ms), and turned it down over the SIGBUS risk without writing it
+down. rq adopted the same pragma (its D8) and accepted that risk, so the two
+tools disagreed with no recorded reason. Re-measured here on the paths where
+mapped reads are likelier to pay, discourse and rails in a 363 MB store.
+
+CLI, warm page cache, nine interleaved rounds, medians, same binary with the
+pragma on or off:
+
+| | off | on |
+| --- | ---: | ---: |
+| `--ancestors Topic` (tree build) | 320 ms | 308 ms |
+| `--refs Topic#title` | 560 ms | 542 ms |
+| `--refs save` (rails) | 329 ms | 322 ms |
+| `--refs ActiveRecord::Persistence#save` | 328 ms | 320 ms |
+| `--dead app/services` | 1000 ms | 963 ms |
+| `--def` a call in `topic.rb` | 330 ms | 317 ms |
+
+A consistent 2–4 %, output identical. Cold — each run on an APFS clone of the
+database (`cp -c`), a new file whose pages are not cached, since `purge` needs
+root — it is mixed: tree build and `--def` flat, discourse `--refs` −4 %,
+rails `--refs` **+8 %** (926 → 1001 ms), `--dead` +1 %.
+
+**The memory is the reason.** `trekr --lsp` on discourse after a warm-up,
+definition, ten `references` and six completions, live heap from `heap -s`:
+
+| | live heap per server |
+| --- | ---: |
+| off | 168 MB |
+| 256 MiB cap (rq's) | 108 MB |
+| **1 GiB** | **90 MB** |
+
+Each connection kept up to 32 MB of pages it had read, and a session holds
+two per checkout (its own and its tree's loader), plus the listing worker's
+while it runs.
+Mapped, those pages are the kernel's page cache, shared by every process on
+the store — which is what makes this worth more with several servers open on
+one machine. The cap is set to cover a store this size; SQLite clamps it at
+its own compile-time maximum (2 GiB), and a larger store maps its first part.
+
+**How to read memory here.** RSS is the wrong number twice over: it counts
+pages the allocator has freed and handed back with `MADV_FREE` (496 of a
+session's 673 MB), and with mmap on it counts the shared, clean file pages
+(RSS rises 660 → 850 MB while private memory falls). `footprint`'s
+`phys_footprint` excludes both, but it swings by ±240 MB between runs of one
+build with how much freed memory the allocator has not yet returned (171 vs
+410 MB, same build). The live heap is the stable measure, and the one quoted.
+
+**The risk, and why it is taken.** An I/O error under a mapping arrives as
+SIGBUS rather than `SQLITE_IOERR`. The store is a local cache of a pure
+function (DEC-013); on a local disk that error is a failing disk, where the
+process was not going to give a useful answer anyway. The case that
+shrinks a mapped file is `--gc --vacuum` (DEC-049), and it was tried
+directly: two LSP servers reading discourse through the mapping answered 140
+requests while another process collected and vacuumed the store from 307 to
+284 MB — no errors, no crash, every answer unchanged. SQLite coordinates the
+truncation through its own locking, as it does for ordinary reads.
+
+**Reverses if** the store is put on a network filesystem, or the cold rails
+`--refs` regression is found to generalise — the thing to watch is a first
+query after a reboot.

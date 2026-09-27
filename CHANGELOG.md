@@ -21,6 +21,11 @@
   month-old store: 69 of 684 checkouts, 6 % of facts, 446 → 399 MB with
   `--vacuum`. **The store is rebuilt once on upgrade** (schema change): the
   first `--index` of each project is a cold one.
+- **`--lsp` holds about half the private memory per server, and queries are
+  2–4 % faster.** The store is read through `mmap`, so pages come from the
+  shared page cache rather than being copied into each connection: an LSP
+  session on discourse keeps 90 MB live instead of 168 MB. RSS reads *higher*
+  now, because it counts the shared mapped pages.
 - **Re-indexing after an edit is ~20 % faster in a large checkout.** Only the
   file-map rows that changed are written, instead of the whole map: discourse
   after a one-file edit 188 → 154 ms.
