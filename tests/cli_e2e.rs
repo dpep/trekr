@@ -1527,6 +1527,64 @@ fn a_query_refreshes_the_file_it_asks_about_and_says_the_rest_may_lag() {
     );
 }
 
+/// A running `--index` holds the write lock for seconds. A read command
+/// answers from what is committed and exits without waiting on it, and `--def`
+/// says when the file it asked about could not be refreshed (DEC-065).
+#[test]
+fn read_commands_answer_and_exit_while_another_process_writes() {
+    let (dir, db) = scratch("held-lock");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+
+    // Move `helper` down two lines, and let git see it, so `--def` refreshes.
+    let file = dir.join("widget.rb");
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        text.replace("class Widget < Base", "class Widget < Base\n  # a\n  # b"),
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+
+    // The store and the usage counter, each held the way a writer holds it.
+    let hold = |path: &Path| {
+        let conn = rusqlite::Connection::open(path).unwrap();
+        conn.execute_batch("BEGIN IMMEDIATE").unwrap();
+        conn
+    };
+    let store = hold(&db);
+    let usage = hold(&db.with_extension("usage.db"));
+
+    let timed = |args: &[&str]| {
+        let started = std::time::Instant::now();
+        let out = trekr(&db, &dir, args);
+        let elapsed = started.elapsed();
+        assert!(out.status.success(), "{args:?}: {out:?}");
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "{args:?} waited on the lock: {elapsed:?}"
+        );
+        out
+    };
+    timed(&["--status", "--json"]);
+    timed(&["--ancestors", "Widget", "--json"]);
+    timed(&["--refs", "Widget#helper", "--json"]);
+    let value = json(&timed(&["--def", "widget.rb:9:5", "--json"]));
+    assert_eq!(value["index"]["busy"], "widget.rb", "{value}");
+    assert!(value["index"]["refreshed"].is_null(), "{value}");
+    assert_eq!(
+        value["sites"][0]["line"], 12,
+        "answered from the committed index: {value}"
+    );
+
+    drop((store, usage));
+    let value = json(&trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]));
+    assert_eq!(value["index"]["refreshed"], "widget.rb", "{value}");
+    assert!(value["index"].get("busy").is_none(), "{value}");
+    assert_eq!(value["sites"][0]["line"], 14, "{value}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// The probe's blind spot, pinned rather than discovered later (DEC-035).
 ///
 /// An edit that nothing has told git about does not move `.git/index`, so the

@@ -304,6 +304,15 @@ Two encodings share a column apiece rather than earning a table:
 `argc` is NULL when a splat makes the count unknowable — an honest absence
 rather than a sentinel.
 
+**Writers wait; queries never do** (DEC-066). WAL lets a query read while an
+index writes, and the 5 s `busy_timeout` makes a second *writer* wait its turn.
+A query path writes only best-effort — the `optimize` on close, a one-file
+refresh — and neither waits on the lock: the close drops its timeout to zero,
+and a refresh's transaction reads first, so SQLite refuses its upgrade to a
+write at once. The answer comes from what is committed; `--def` names the file
+it could not refresh (`index.busy`), and the LSP retries a save's refresh until
+it lands.
+
 ## CLI
 
 Operations are flags, not subcommands (rq's convention), so no word is reserved
@@ -587,7 +596,11 @@ lookup, diagnostics, completion) and every file scan (`references`,
 `incomingCalls`) — open buffers overlay disk. **What does not:** the tree,
 which is assembled from the index as of the last save. A method added but not
 saved is not yet visible from *other* files; saving moves the index
-(`Store::refresh_file`) and the tree follows.
+(`Store::refresh_file`) and the tree follows. A save that meets another
+process writing the index — a background `--index` child — is not dropped:
+it is retried every 250 ms until it lands, answers meanwhile coming from what
+is committed (DEC-066). The child scanned before the save, so its own write
+would not carry the edit.
 
 **Threads.** Requests are answered on one thread; the tree is not shared. Two
 things leave it: a file scan's reading and parsing fans out on rayon and
@@ -976,7 +989,7 @@ rails took **90 seconds** for 13,684 rows. With `ANALYZE` run, the planner
 reverses the join — files drive, a bloom filter rejects — and the same query
 takes **66 ms**. `--index` regathers them once the store has grown a tenth
 past the last analysis (DEC-042), and `PRAGMA optimize` on close covers the
-rest, so neither a no-op nor a one-file reindex pays for a full `ANALYZE`. Anyone adding a query over these tables should check
+rest when no other process is writing (DEC-066), so neither a no-op nor a one-file reindex pays for a full `ANALYZE`. Anyone adding a query over these tables should check
 `EXPLAIN QUERY PLAN` on a *populated* database — a fixture-sized one hides this
 entirely.
 

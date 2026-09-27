@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Commands no longer stall while an index runs.** `--refs`, `--ancestors`,
+  `--status` and the rest printed their answer and then sat up to 5 s before
+  exiting, and `--def` waited before answering, whenever another trekr was
+  writing the index (an editor's background index, a `--index` in another
+  terminal). They now exit as soon as they answer. A `--def` whose file changed
+  but could not be refreshed says so: `index.busy` names the file, answered
+  from its indexed version. In the editor, a file saved during a background
+  index is now refreshed once the index finishes, where before the save was
+  silently dropped until the next one.
+
 - **Queries stop rebuilding the namespace, and LSP sessions share it.** The
   assembled tree is written once per checkout beside the database
   (`trekr.trees/`, next to `trekr.db`) and mapped read-only by every CLI query

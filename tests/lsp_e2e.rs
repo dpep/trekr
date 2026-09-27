@@ -2438,6 +2438,57 @@ fn a_saved_file_is_reindexed_so_other_files_see_its_new_methods() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A save that meets another process writing the index is not lost: the
+/// server answers meanwhile from what is committed, and the refresh lands once
+/// the lock is free (DEC-065). A background index scanned before the save, so
+/// its own write would not carry the edit.
+#[test]
+fn a_save_during_someone_elses_write_lands_once_the_lock_is_free() {
+    let (dir, db) = scratch("save-busy");
+    ruby_repo(&dir, &db, "class Widget\n  def save\n  end\nend\n");
+    fs::write(dir.join("job.rb"), "w = Widget.new\nw.polish\n").unwrap();
+    commit_all(&dir);
+    trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let job = uri_of(&dir, "job.rb");
+
+    let writer = rusqlite::Connection::open(&db).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    fs::write(
+        dir.join("app.rb"),
+        "class Widget\n  def save\n  end\n  def polish\n  end\nend\n",
+    )
+    .unwrap();
+    session.notify(
+        "textDocument/didSave",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    let started = std::time::Instant::now();
+    let during = session.request(
+        "textDocument/definition",
+        serde_json::json!({"textDocument": {"uri": job}, "position": {"line": 1, "character": 3}}),
+    );
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "the save must not hold up the next answer"
+    );
+    assert!(during["result"].is_null(), "not refreshed yet: {during}");
+
+    drop(writer);
+    let after = definition_eventually(&mut session, &job, 1, 3);
+    assert_eq!(after[0]["range"]["start"]["line"], 3, "{after}");
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A Ruby project nobody indexed is indexed in the background, with progress
 /// for a client that can show it, and answers start arriving without anyone
 /// running `trekr --index`.

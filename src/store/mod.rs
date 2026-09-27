@@ -918,8 +918,12 @@ impl Store {
     /// possibly stale. Bounded by construction — one file, whatever the repo —
     /// which is what lets it sit on a query path that a 6-second scan cannot.
     ///
-    /// Returns whether anything actually changed. Both keys are updated
-    /// incrementally: they are order-independent folds of one XOR term per
+    /// Returns whether anything actually changed, or an error that
+    /// [`is_busy`] recognizes when another process holds the write lock. It
+    /// never waits for that lock: the transaction reads before it writes, and
+    /// SQLite refuses a read transaction's upgrade at once rather than calling
+    /// the busy handler. A caller answers from the committed index instead.
+    /// Both keys are updated incrementally: they are order-independent folds of one XOR term per
     /// file, so removing the old term and adding the new one is exact rather
     /// than an approximation of a full re-fold.
     pub(crate) fn refresh_file(
@@ -1092,9 +1096,23 @@ impl Drop for Store {
     /// `refs` as a nested scan of the checkout's files — 90 s for a name as
     /// common as `new`, against 45 ms with them. Best effort: a failure here
     /// must not fail a command that already produced its answer.
+    ///
+    /// Never waits (DEC-066). Once a connection has planned with statistics
+    /// for two tables, `optimize` takes the write lock even when it then has
+    /// nothing to analyze, so under the 5 s timeout every read command sat
+    /// out a running index at exit. `--index` keeps statistics current itself
+    /// (DEC-042); this is the backstop, and skipping it while another process
+    /// writes costs nothing that process's own analysis does not cover.
     fn drop(&mut self) {
+        let _ = self.conn.busy_timeout(std::time::Duration::ZERO);
         let _ = self.conn.execute_batch("PRAGMA optimize;");
     }
+}
+
+/// Another process holds the write lock — or committed under a read this
+/// connection meant to upgrade, which is the same answer: not now.
+pub(crate) fn is_busy(error: &rusqlite::Error) -> bool {
+    matches!(error, rusqlite::Error::SqliteFailure(e, _) if e.code == rusqlite::ErrorCode::DatabaseBusy)
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1816,5 +1834,68 @@ mod checkout_containing_tests {
         // `_` is a LIKE wildcard; a path is not a pattern.
         assert_eq!(of("/code/widgetXshop/app.rb"), None);
         assert_eq!(of("/elsewhere/app.rb"), None);
+    }
+}
+
+/// A query path meets another process writing: it answers without waiting.
+#[cfg(test)]
+mod lock_tests {
+    use super::*;
+
+    /// A store on disk with one indexed file, and a second connection holding
+    /// the write lock the way a running `--index` does.
+    fn locked(label: &str) -> (Store, Connection, std::path::PathBuf) {
+        let path =
+            std::env::temp_dir().join(format!("trekr-lock-{label}-{}.db", std::process::id()));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        let mut store = Store::open(&path).unwrap();
+        super::tests::indexed(&mut store, "/app", "a.rb", "class A\nend\n");
+        let writer = Connection::open(&path).unwrap();
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        (store, writer, path)
+    }
+
+    #[test]
+    fn a_refresh_meeting_a_writer_says_busy_at_once_and_changes_nothing() {
+        let (mut store, writer, path) = locked("refresh");
+        let src = b"class A\n  def moved\n  end\nend\n";
+        let oid = crate::scan::hash_blob(src);
+        let facts = crate::extract::extract(src);
+
+        let started = std::time::Instant::now();
+        let error = store
+            .refresh_file("/app", "a.rb", &oid, Some(&facts))
+            .expect_err("the lock is held");
+        assert!(is_busy(&error), "{error}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(1),
+            "must not sit out the busy timeout"
+        );
+        assert!(!store.has_blob(&oid).unwrap(), "nothing half-written");
+
+        writer.execute_batch("ROLLBACK").unwrap();
+        assert!(
+            store
+                .refresh_file("/app", "a.rb", &oid, Some(&facts))
+                .unwrap()
+        );
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn closing_a_store_does_not_wait_for_a_writer() {
+        let (store, writer, path) = locked("close");
+        // What a query does: plan with statistics over more than one table,
+        // which is what makes `optimize` reach for the write lock.
+        store.status().unwrap();
+        store.has_checkout("/app").unwrap();
+        let started = std::time::Instant::now();
+        drop(store);
+        assert!(started.elapsed() < std::time::Duration::from_secs(1));
+        drop(writer);
+        let _ = std::fs::remove_file(&path);
     }
 }

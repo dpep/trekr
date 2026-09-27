@@ -128,7 +128,9 @@ at its new line without reindexing. When the answer carries `index`, read it:
 ```
 
 The file you asked about is current; **other files may lag**, and `hint` is the
-cure. No `index` field means the checkout has not moved since it was indexed.
+cure. The one exception is `"busy": "<file>"`: another trekr was writing the
+index, so the answer came from that file's indexed version rather than wait —
+ask again once the index finishes. No `index` field means the checkout has not moved since it was indexed.
 One limit worth knowing: an edit git has not noticed — no `add`, `status` or
 `diff` since — is invisible to the check, so run `--index` after bulk edits.
 

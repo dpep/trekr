@@ -25,30 +25,37 @@ use std::process::{Child, Command, Stdio};
 /// rebase — and is handed to a full index rather than refreshed one by one.
 pub(crate) const BULK: usize = 32;
 
-/// Bring one saved file's facts up to date. Returns whether the index moved.
+/// How often a refresh that met a busy index is tried again.
+const RETRY: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Bring one saved file's facts up to date. `false` when another process
+/// holds the write lock and the refresh has to be tried again.
 ///
 /// Unconditional, unlike the CLI's probe-gated refresh: a save is the editor
 /// telling us the file changed, so there is nothing to probe for.
-pub(crate) fn refresh(session: &mut Session, path: &Path) -> bool {
+fn refresh(session: &mut Session, path: &Path) -> bool {
     let Some(located) = session.locate(path) else {
-        return false;
+        return true;
     };
     let root = located.root.to_string_lossy().into_owned();
     if !session.store().has_checkout(&root).unwrap_or(false) {
-        return false;
+        return true;
     }
     let Ok(bytes) = std::fs::read(&located.absolute) else {
-        return false;
+        return true;
     };
     let oid = crate::scan::hash_blob(&bytes);
     let known = session.store().has_blob(&oid).unwrap_or(false);
     // Parse only a blob the store has never seen; the common save-after-undo
     // is bytes it already has, which costs one hash.
     let facts = (!known).then(|| crate::extract::extract(&bytes));
-    session
+    match session
         .store_mut()
         .refresh_file(&root, &located.relative, &oid, facts.as_ref())
-        .unwrap_or(false)
+    {
+        Err(error) => !crate::store::is_busy(&error),
+        Ok(_) => true,
+    }
 }
 
 /// Background `trekr --index` runs, one at a time.
@@ -63,6 +70,11 @@ pub(crate) struct Indexer {
     progress: bool,
     /// Whether to index at all — a client can turn it off.
     enabled: bool,
+    /// Saved files whose refresh met another process writing the index. An
+    /// index child scanned before the save, so its write will not carry the
+    /// edit either: these are retried until they land (DEC-066).
+    deferred: Vec<PathBuf>,
+    retried: std::time::Instant,
     jobs: u32,
 }
 
@@ -81,6 +93,8 @@ impl Indexer {
             done: HashSet::new(),
             progress,
             enabled,
+            deferred: Vec::new(),
+            retried: std::time::Instant::now(),
             jobs: 0,
         }
     }
@@ -102,8 +116,29 @@ impl Indexer {
         self.queue.push_back(root);
     }
 
+    /// Work still in flight: an index running or queued, or a refresh that
+    /// has yet to land.
     pub(crate) fn busy(&self) -> bool {
-        self.running.is_some() || !self.queue.is_empty()
+        self.running.is_some() || !self.queue.is_empty() || !self.deferred.is_empty()
+    }
+
+    /// Refresh one saved file now, or keep it for [`Indexer::retry`] if the
+    /// index is being written. Never waits on the lock.
+    pub(crate) fn refresh(&mut self, session: &mut Session, path: &Path) {
+        if !refresh(session, path) && !self.deferred.iter().any(|p| p == path) {
+            self.deferred.push(path.to_path_buf());
+        }
+    }
+
+    /// Try the deferred refreshes again, at the pace the loop wakes for an
+    /// index rather than before every request: each attempt re-reads, hashes
+    /// and may parse the file. What lands is the file's latest bytes.
+    pub(crate) fn retry(&mut self, session: &mut Session) {
+        if self.deferred.is_empty() || self.retried.elapsed() < RETRY {
+            return;
+        }
+        self.retried = std::time::Instant::now();
+        self.deferred.retain(|path| !refresh(session, path));
     }
 
     /// Reap a finished run and start the next. Returns the messages to send —

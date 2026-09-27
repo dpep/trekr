@@ -273,6 +273,7 @@ fn serve(
 
     loop {
         session.collect_members(None);
+        indexer.retry(&mut session);
         for message in indexer.poll(log) {
             // A finished index moves the tree; warm it again when quiet.
             warm = Warm::Cold;
@@ -913,7 +914,7 @@ fn notify(
             let params: lsp_types::DidSaveTextDocumentParams =
                 serde_json::from_value(notification.params).ok()?;
             let path = document_path(params.text_document.uri.as_str())?;
-            fresh::refresh(session, &path);
+            indexer.refresh(session, &path);
             None
         }
         note::DidChangeWatchedFiles::METHOD => {
@@ -1010,7 +1011,7 @@ fn watched(
         return;
     }
     for (path, _) in paths {
-        fresh::refresh(session, &path);
+        indexer.refresh(session, &path);
     }
 }
 

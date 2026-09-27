@@ -3067,8 +3067,9 @@ answer from the in-memory tree and barely contend, and the CLI's time is
 not CPU or disk at all — it is SQLite's 5 s `busy_timeout`, waiting on the
 index's write lock: with a write lock held by hand, every CLI command took
 5.4–5.9 s, `--def` before answering (`refresh_for_query`) and `--ancestors`
-after it (its answer at 0.19 s; the store's drop runs `PRAGMA optimize`). Kept anyway: it is the cheap, conventional courtesy for work nobody
-is waiting on, and its cost is bounded by the non-starvable tier.
+after it (its answer at 0.19 s; the store's drop runs `PRAGMA optimize`).
+DEC-066 found both waits were the `optimize`, and removed them. Kept
+anyway: it is the cheap, conventional courtesy for work nobody is waiting on, and its cost is bounded by the non-starvable tier.
 
 **Reverses if** a foreground regression is measured that traces to the lower
 tier, or a quiet-machine measurement shows the index slowdown is larger than
@@ -3327,3 +3328,82 @@ versions and fails on the old stamp.
 
 **Reverses if** the store moves to a network filesystem, where a mapping's
 guarantees are weaker (as for DEC-051).
+
+## DEC-066 — A query never waits on another process's write lock
+
+**Decided.** Nothing on a query path waits for SQLite's write lock. The
+close-time `PRAGMA optimize` runs with `busy_timeout` 0 and is skipped on
+`SQLITE_BUSY`. A one-file refresh that meets a writer is not retried in place:
+`--def` answers from the committed index and says so in `index.busy` (the file
+it could not refresh), and the LSP keeps the saved path and retries every
+250 ms until the refresh lands. Writers (`--index`, `--gc`, `--drop`) keep the
+5 s timeout; waiting their turn is their job.
+
+**Where the wait actually was.** DEC-062 blamed `refresh_for_query` for
+`--def`'s wait. It was never the refresh. Its transaction reads before it
+writes, and SQLite refuses a read transaction's upgrade at once instead of
+calling the busy handler, so the refresh failed in microseconds. The whole
+wait was `PRAGMA optimize` in `Store::drop`, and `--def` paid it *before*
+answering only because its store drops at the end of a `match` arm, ahead of
+the print. `optimize` takes the write lock as soon as two tables planned with
+statistics are candidates (`nCheck == 2` in SQLite's pragma code), before it
+has decided whether to analyze anything. So every read command waited out the
+index to do nothing.
+
+**How often `optimize` does anything.** A build with `optimize` in debug mode
+(`0xffff`, which reports the `ANALYZE`s it would run) found none after
+`--def`, `--refs`, `--ancestors`, bare, `--status`, `--gc --dry-run`, or a
+no-op `--index` on a rails store. It re-analyzes a table only when the table
+is 10× larger or smaller than its statistics say. `--index` already regathers
+them at a tenth of growth (DEC-042), so the only case left is a 10× shrink by
+`--gc`, and the next uncontended close still catches it. Skipping it under a
+writer costs nothing: that writer is an index, and it analyzes for itself.
+
+**The refresh was losing edits, silently.** The failed refresh was read as
+"unchanged". `--def` then printed "the checkout moved; other files may lag",
+which claims the file asked about is current when the answer came from its
+old facts. The LSP dropped the save outright. A background index scans before
+it writes, so the edit stayed missing until the next save. In four runs of
+five saves each, under a held lock or during a background index, 1 of 20
+saves landed before and 0 of 20 at once after. At the end of each run the
+lock was released and the last save checked: before, it was missing in 3 of
+4 runs; after, it had landed in all 4.
+
+**Measured.** Release builds, rails store (3.3k app files + 74 gems), M-series,
+8 cores, load average 7–17 from other work. Wall to exit, median of 3:
+
+| with the store's write lock held | before | after |
+|---|---:|---:|
+| `--def` (answer printed at) | 5.47 s (5.46) | 0.092 s |
+| `--def`, file edited | 5.43 s | 0.095 s, `index.busy` |
+| `--refs` | 5.29 s (0.063) | 0.104 s |
+| `--ancestors` | 5.36 s (0.092) | 0.095 s |
+| `--status` | 5.20 s (0.015) | 0.010 s |
+
+During a real cold discourse index (`TREKR_BACKGROUND=1`, queried 1.5 s in,
+two rounds): before, 1.5–3.6 s, and `--status` 5.26 s once. The waits were
+bounded by whenever the index happened to release the lock. After:
+0.011–0.109 s. Quiet, no lock: 0.01–0.10 s either way, within noise. LSP
+definition, hover and references took the same before and after, held lock
+or background index (0.4–0.9 ms, 0.4–0.9 ms, 118–175 ms medians). The server
+never waited, it lost the edit, and that is what changed. With nothing
+locked, outputs are byte-identical to the previous build on 535 rails
+queries (177 `--def`, 143 `--refs`, 107 `--ancestors`, 107 bare, `--status`),
+stdout, stderr and exit code.
+
+**The usage counter** (DEC-063) keeps its own 200 ms timeout. With
+`trekr.usage.db` held, every command exits about 0.23 s late, before and
+after. That timeout is the cap for a pathological holder: a real concurrent
+writer holds the lock for one upsert.
+
+**Rejected: `BEGIN IMMEDIATE` for the refresh.** It would take the lock even
+when the file is unchanged, the common case, and turn a read into a write
+that can be refused. The deferred transaction already fails fast.
+**Rejected: a short wait (50–200 ms) before giving up.** An index holds the
+lock for seconds (the app's write, then the whole bundle's gems in one
+transaction, DEC-041), so a short wait almost never wins. It would only add
+latency to the answers that were going to be stale anyway.
+
+**Reverses if** SQLite starts invoking the busy handler on a read
+transaction's upgrade. The lock tests in `store::lock_tests` pin that. Or if
+statistics are found stale on a read path that `--index` does not cover.

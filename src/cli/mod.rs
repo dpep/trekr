@@ -1192,15 +1192,22 @@ fn refresh_for_query(store: &mut Store, root: &Path, file: &Path) -> Option<serd
     // branch switch is bytes the store has seen before, which cost one hash.
     let known = store.has_blob(&oid).unwrap_or(false);
     let facts = (!known).then(|| crate::extract::extract(&bytes));
-    let changed = store
-        .refresh_file(&root_str, &relative, &oid, facts.as_ref())
-        .unwrap_or(false);
+    // Busy means another process is writing the index. The answer comes from
+    // what it has committed, and says this file may lag (DEC-066).
+    let (changed, busy) = match store.refresh_file(&root_str, &relative, &oid, facts.as_ref()) {
+        Ok(changed) => (changed, false),
+        Err(error) => (false, crate::store::is_busy(&error)),
+    };
 
-    Some(serde_json::json!({
+    let mut freshness = serde_json::json!({
         "stale": true,
         "refreshed": changed.then(|| relative.clone()),
         "hint": format!("trekr --index {}", paths::pretty(&root_str)),
-    }))
+    });
+    if busy {
+        freshness["busy"] = relative.into();
+    }
+    Some(freshness)
 }
 
 /// `trekr <input>` — one argument, dispatched on its shape (DEC-036).
@@ -1621,9 +1628,15 @@ fn cmd_def(
         crate::usage::flag("snapped");
     }
     if let (Output::Text, Some(freshness)) = (out, &freshness) {
-        match freshness["refreshed"].as_str() {
-            Some(file) => eprintln!("trekr: {file} changed since the index — re-read it"),
-            None => eprintln!("trekr: the checkout moved since the index; other files may lag"),
+        match (freshness["refreshed"].as_str(), freshness["busy"].as_str()) {
+            (Some(file), _) => eprintln!("trekr: {file} changed since the index — re-read it"),
+            (None, Some(file)) => eprintln!(
+                "trekr: {file} changed since the index, which another trekr is writing — \
+                 answered from its indexed version"
+            ),
+            (None, None) => {
+                eprintln!("trekr: the checkout moved since the index; other files may lag")
+            }
         }
     }
     if let (Output::Text, Some(snapped)) = (out, &snapped) {
