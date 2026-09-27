@@ -37,6 +37,7 @@ symbols app.rb   Widget,save,Job,run
 | `candidates` | how many were offered |
 | `candidate1` | the top candidate's owner — the ranking assertion |
 | `kind` | `definition` or `declaration` — is the body at that location |
+| `variable` | `local`, `parameter`, `ivar` or `cvar`, for a variable |
 | `defined_via` | the macro that declared it, for a declaration |
 | `site` | `path:line`, matched on the path's tail |
 | `exit` | the process exit code, for cases about not dying |

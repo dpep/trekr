@@ -252,6 +252,7 @@ fn check_def(
                 .to_string(),
             "name" => answer["name"].as_str().unwrap_or("<none>").to_string(),
             "kind" => answer["kind"].as_str().unwrap_or("<none>").to_string(),
+            "variable" => answer["variable"].as_str().unwrap_or("<none>").to_string(),
             "defined_via" => answer["defined_via"]
                 .as_str()
                 .unwrap_or("<none>")

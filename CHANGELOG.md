@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **`--def` on a variable answers the variable.** `x = 5; puts x` asked at the
+  second `x` answered `puts`, the nearest call on the line. A local or
+  parameter now answers with the writes its value can come from, an `@ivar` or
+  `@@cvar` with its writes in that file — `under: variable`, `variable: local
+  | parameter | ivar | cvar`, `resolved_via: flow`. A local that shadows a
+  method is the local; `name()` is still the method.
+
 - **`t.references :author` in a schema declares only `author_id`.** It also
   declared an `author` reader, which Rails does not make there; when the
   schema was read after the model, `post.author` pointed at the schema line

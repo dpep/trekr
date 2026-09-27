@@ -160,6 +160,10 @@ def verdict(site, answer):
     # error rate and hides a fixable defect in the gold set.
     if answer.get("name") and answer["name"] != site["method"]:
         return "column-mismatch"
+    # `scope = super`: the traced name is on the line once, as the local the
+    # call's value is written to. A variable is never what Ruby dispatched.
+    if answer.get("under") == "variable":
+        return "column-mismatch"
 
     reported = answer.get("sites") or []
     if answer.get("status") == "resolved" or reported:

@@ -119,7 +119,10 @@ trekr --def app/models/post.rb:42          # column optional when typing by hand
 
 The column is forgiving: if it holds no name, trekr answers for the nearest one
 **on that line** and says so in `snapped_to` (with the other names and their
-columns, so a follow-up can be exact). An exact hit never snaps.
+columns, so a follow-up can be exact). An exact hit never snaps, and neither
+does a variable: on a local or parameter the answer is `under: variable` with
+the writes its value can come from (`variable: local | parameter`), and on an
+`@ivar` the writes in that file — the LSP searches the class's other files.
 
 **`--def` keeps itself fresh.** It checks git in O(1) and re-reads the file you
 asked about if the checkout moved, so a definition that shifted lines is found

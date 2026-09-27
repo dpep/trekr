@@ -152,6 +152,79 @@ pub(crate) fn at_or_snap(
     ))
 }
 
+/// A variable under the cursor, answered from the file alone, the way the LSP
+/// answers one (DEC-064): a local or parameter by the writes its read can see,
+/// an instance or class variable by the writes to it in this file.
+pub(crate) fn variable_at(
+    source: &[u8],
+    path: &str,
+    line: u32,
+    col: u32,
+) -> Option<serde_json::Value> {
+    use crate::serve::vars::{self, Binding, Sigil};
+    let start = source
+        .split_inclusive(|b| *b == b'\n')
+        .take(line.checked_sub(1)? as usize)
+        .map(<[u8]>::len)
+        .sum::<usize>();
+    let offset = start + (col as usize).checked_sub(1)?;
+    let found = vars::analyze(source);
+    let under = found.at(offset)?;
+    let writes: Vec<&vars::Occurrence> = match under.sigil {
+        Sigil::Local => found.local_definitions(under),
+        Sigil::Instance | Sigil::Class => found
+            .same(under)
+            .into_iter()
+            .filter(|o| o.is_write())
+            .collect(),
+    };
+    let variable = match under.sigil {
+        Sigil::Local
+            if !writes.is_empty()
+                && writes
+                    .iter()
+                    .all(|w| matches!(w.write, Some(Binding::Param | Binding::BlockParam))) =>
+        {
+            "parameter"
+        }
+        Sigil::Local => "local",
+        Sigil::Instance => "ivar",
+        Sigil::Class => "cvar",
+    };
+    let lines = crate::extract::LineIndex::new(source);
+    let sites: Vec<serde_json::Value> = writes
+        .iter()
+        .map(|w| {
+            let at = lines.pos(w.span.start);
+            serde_json::json!({
+                "path": path, "line": at.line, "col": at.col,
+                "kind": w.write.map_or("assigned", Binding::describe),
+            })
+        })
+        .collect();
+    let mut answer = serde_json::json!({
+        "query": format!("{path}:{line}:{col}"),
+        "under": "variable",
+        "variable": variable,
+        "name": under.name,
+        "status": if sites.is_empty() { "residue" } else { "resolved" },
+        "confidence": if sites.is_empty() { 0.0 } else { 1.0 },
+        "resolved_via": "flow",
+        "sites": sites,
+    });
+    let reason = match (under.sigil, writes.is_empty()) {
+        (Sigil::Local, true) => Some("no write to this local reaches here"),
+        (Sigil::Local, false) => None,
+        // The class's other files are the LSP's to read; say where we looked.
+        (_, true) => Some("not set in this file; its class's other files were not searched"),
+        (_, false) => Some("writes in this file; its class's other files were not searched"),
+    };
+    if let (Some(reason), Some(object)) = (reason, answer.as_object_mut()) {
+        object.insert("reason".into(), reason.into());
+    }
+    Some(answer)
+}
+
 /// The identifier the cursor is on, if it is on one. 1-based byte columns.
 pub(crate) fn word_at(source: &[u8], line: u32, col: u32) -> Option<String> {
     let text = source

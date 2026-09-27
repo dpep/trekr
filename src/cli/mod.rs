@@ -1673,6 +1673,31 @@ fn cmd_def(
             "super  its method's owner is decided at runtime",
         );
     }
+    // A variable is not a call, and snapping from one answered for whatever
+    // name was nearest on the line.
+    if spec.col > 0
+        && position::at_facts(&facts, spec.line, spec.col).is_none()
+        && let Some(answer) = position::variable_at(&source, &spec.path, spec.line, spec.col)
+    {
+        crate::usage::flag("variable");
+        let resolved = answer["status"] == "resolved";
+        let text = match answer["sites"].get(0) {
+            Some(site) => format!(
+                "{}:{}:{}  {} `{}`",
+                paths::pretty(site["path"].as_str().unwrap_or_default()),
+                site["line"],
+                site["col"],
+                answer["variable"].as_str().unwrap_or_default(),
+                answer["name"].as_str().unwrap_or_default(),
+            ),
+            None => format!(
+                "{}  {}",
+                answer["name"].as_str().unwrap_or_default(),
+                answer["reason"].as_str().unwrap_or_default(),
+            ),
+        };
+        return report(out, answer, resolved, &text);
+    }
     let snapped = position::at_or_snap(&facts, spec.line, spec.col);
     let Some((under, snapped)) = snapped else {
         return report(

@@ -1,0 +1,9 @@
+# `--def` on a local read snapped to another name on the line — `puts x`
+# answered `puts` — because a variable is not a call. It is answered from the
+# file's flow now, as the LSP answers it (DEC-064), and a local that shadows a
+# method (`name` after `name = …`) is the local, while `name()` is the method.
+def app.rb:8:10 status=resolved name=x variable=local site=app.rb:7
+def app.rb:10:10 status=resolved name=name variable=local site=app.rb:9
+def app.rb:11:10 status=resolved name=name owner=Greeter via=self
+def app.rb:12:10 status=resolved name=count variable=parameter site=app.rb:6
+def app.rb:14:5 status=resolved name=@seen variable=ivar site=app.rb:13

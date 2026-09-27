@@ -380,7 +380,11 @@ of a guess. Narrowing it is layer 3's job.
 | 2 | the request could not be served (not a repo, unreadable file) |
 
 `--def` reparses the one file with Prism rather than reading stored spans, so
-it answers correctly on a file edited since the last index.
+it answers correctly on a file edited since the last index. A variable under
+the cursor is answered from that file's flow (`serve/vars.rs`, DEC-064) before
+anything snaps: a local or parameter with the writes its read can see, an
+ivar or cvar with its writes in the file — the class's other files are the
+LSP's to read, and the answer says they were not searched.
 
 Every answer carries `status` (`resolved` | `residue`) and `confidence`. For
 constants that confidence is 1 or 0, and **that is not a hedge**: the ladder
