@@ -149,8 +149,16 @@ pub(super) fn generated(macro_name: &str, arg: &str) -> Vec<Generated> {
 /// `belongs_to :user` gives `user` a determinate type, which makes it a
 /// *receiver* source and not merely a method. `has_many` does not: its reader
 /// returns a relation, not the associated class.
-pub(super) fn associated_class(macro_name: &str, arg: &str) -> Option<String> {
-    matches!(macro_name, "has_one" | "belongs_to").then(|| camelize(arg))
+///
+/// Only a singular association: `has_many :clients, class_name: "Client"`
+/// reads a collection, and naming its element does not make it one.
+pub(super) fn associated_class(
+    macro_name: &str,
+    arg: &str,
+    class_name: Option<&str>,
+) -> Option<String> {
+    matches!(macro_name, "has_one" | "belongs_to")
+        .then(|| class_name.map_or_else(|| camelize(arg), str::to_string))
 }
 
 /// The class a `db/schema.rb` column type produces.
@@ -297,13 +305,22 @@ mod tests {
     #[test]
     fn only_a_singular_association_names_a_class() {
         assert_eq!(
-            associated_class("belongs_to", "blog_post").as_deref(),
+            associated_class("belongs_to", "blog_post", None).as_deref(),
             Some("BlogPost")
         );
         assert_eq!(
-            associated_class("has_many", "widgets"),
+            associated_class("belongs_to", "author", Some("Person")).as_deref(),
+            Some("Person")
+        );
+        assert_eq!(
+            associated_class("has_many", "widgets", None),
             None,
             "a collection reader returns a relation, not the associated class"
+        );
+        assert_eq!(
+            associated_class("has_many", "clients_of_firm", Some("Client")),
+            None,
+            "nor does naming its element's class"
         );
     }
 

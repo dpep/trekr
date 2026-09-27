@@ -1511,9 +1511,7 @@ impl<'pr> Extractor<'_> {
         }
 
         for (literal, pos) in names {
-            let associated = class_name
-                .clone()
-                .or_else(|| macros::associated_class(macro_name, &literal));
+            let associated = macros::associated_class(macro_name, &literal, class_name.as_deref());
 
             for made in macros::generated(macro_name, &literal) {
                 if let Some(only) = &only

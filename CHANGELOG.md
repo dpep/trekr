@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Upgrading drops and rebuilds the index** (store v30): run `trekr --index`
+- **Upgrading drops and rebuilds the index** (store v31): run `trekr --index`
   once per checkout.
 
 - **A delegated method takes any arguments.** ActiveSupport's `delegate`
@@ -46,6 +46,10 @@
   `file` is now `path`. Scripts that read an absolute path should join `root`
   and `path`. Text output writes paths in the asked-about checkout relative,
   definitions included (they were `~/…`).
+
+- **`has_many` with `class_name:` no longer types its reader as that class.**
+  A collection reader returns a relation, and `firm.clients_of_firm` was
+  treated as one Client.
 
 ## 0.2.1 — 2026-09-27
 
