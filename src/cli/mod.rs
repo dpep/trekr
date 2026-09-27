@@ -1449,9 +1449,10 @@ fn cmd_bare(
 /// search to establish that; the few that survive get the expensive question
 /// asked properly.
 ///
-/// Scope is the argument, evidence is the **whole index** — a method used once
-/// from outside the scope is not a candidate, and a scope-local search would
-/// say it is.
+/// Scope is the argument, evidence is the **whole checkout** — a method used
+/// once from outside the scope is not a candidate, and a scope-local search
+/// would say it is. Not the whole store: what else is indexed must not change
+/// the answer (DEC-074).
 fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
     use crate::resolve::refs;
 
@@ -1497,7 +1498,7 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
     let names: Vec<String> = defined.iter().map(|(_, d, _)| d.name.clone()).collect();
     // More written calls than this and a name is plainly used.
     const PLAINLY_USED: i64 = 8;
-    let written_calls = store.written_calls(&names, PLAINLY_USED + 1)?;
+    let written_calls = store.written_calls(&root_str, &names, PLAINLY_USED + 1)?;
 
     // The expensive pass, only for names the cheap one could not clear.
     let tree = build_tree(&store, &root_str)?;

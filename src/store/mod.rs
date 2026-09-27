@@ -690,27 +690,40 @@ impl Store {
         Ok((last, paths))
     }
 
-    /// How often each of these names is written as a call anywhere, counting
-    /// up to `cap` — a name handed to a macro as a symbol is not counted.
+    /// How often each of these names is written as a call in the checkout at
+    /// `root`, counting up to `cap` — a name handed to a macro as a symbol is
+    /// not counted.
     ///
     /// The cheap half of the dead-code filter (DEC-038). A name with hundreds
     /// of call sites is not a candidate and must never cost a receiver-narrowed
     /// pass to find that out; a name with none or a few is worth the expensive
-    /// question. Counting by name is deliberately *generous* — it counts every
-    /// same-named call in the index — because over-counting costs a missed
-    /// candidate and under-counting costs a false "nothing uses this".
+    /// question. Counting by name is deliberately *generous* — every same-named
+    /// call, whatever its receiver — so it only ever skips that pass.
+    ///
+    /// The checkout only, because the expensive pass reads only the checkout:
+    /// counting the whole store let another repository's calls decide (DEC-074).
     ///
     /// Capped because the only question is "more than a few?": counting every
     /// call of a name like `id` to answer it was a third of a `--dead` run.
-    pub(crate) fn written_calls(&self, names: &[String], cap: i64) -> Result<HashMap<String, i64>> {
+    pub(crate) fn written_calls(
+        &self,
+        root: &str,
+        names: &[String],
+        cap: i64,
+    ) -> Result<HashMap<String, i64>> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT COUNT(*) FROM
-               (SELECT 1 FROM call_site WHERE name = ?1 AND recv <> 'symbol' LIMIT ?2)",
+               (SELECT 1 FROM call_site s INDEXED BY call_site_name
+                  CROSS JOIN file f
+                 WHERE s.name = ?1 AND s.recv <> 'symbol'
+                   AND f.blob_id = s.blob_id
+                   AND f.checkout_id = (SELECT id FROM checkout WHERE root = ?2)
+                 LIMIT ?3)",
         )?;
         let mut found = HashMap::new();
         for name in names {
             if !found.contains_key(name) {
-                let count: i64 = stmt.query_row(params![name, cap], |r| r.get(0))?;
+                let count: i64 = stmt.query_row(params![name, root, cap], |r| r.get(0))?;
                 found.insert(name.clone(), count);
             }
         }
@@ -1571,14 +1584,23 @@ mod tests {
         let src = "class W\n  before_save :go\n  def a\n    go\n    go\n    go\n  end\nend\n";
         indexed(&mut store, "/a", "w.rb", src);
         let names = ["go", "go", "absent"].map(String::from);
-        let counts = store.written_calls(&names, 2).unwrap();
+        let counts = store.written_calls("/a", &names, 2).unwrap();
         assert_eq!(counts["go"], 2, "three written calls, capped");
         assert_eq!(counts["absent"], 0);
         assert_eq!(
-            store.written_calls(&names, 10).unwrap()["go"],
+            store.written_calls("/a", &names, 10).unwrap()["go"],
             3,
             "the symbol is not a call"
         );
+    }
+
+    #[test]
+    fn written_calls_count_only_the_checkout_asking() {
+        let mut store = Store::open_in_memory().unwrap();
+        indexed(&mut store, "/a", "a.rb", "x.go\n");
+        indexed(&mut store, "/other", "b.rb", &"y.go\n".repeat(5));
+        let names = ["go".to_string()];
+        assert_eq!(store.written_calls("/a", &names, 10).unwrap()["go"], 1);
     }
 
     #[test]

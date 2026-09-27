@@ -11,6 +11,12 @@
   `ActiveRecord::Querying#where`'s 523 exclusions were these, among them
   `Topic.where(…).where(…)`; they are `possible` now.
 
+- **`--dead` gives the same answer whatever else is indexed.** Its pre-filter
+  counted a name's calls in every indexed repository, so another checkout's
+  calls could hide a candidate (rails' `super-only` went from 72 to 33 when
+  discourse was also indexed). It counts only the checkout now, and
+  `mentions_by_name` is that checkout's count.
+
 ## 0.2.1 — 2026-09-27
 
 - **Upgrading drops and rebuilds the index** (store v29): run `trekr --index`

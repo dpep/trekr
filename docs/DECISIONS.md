@@ -1428,6 +1428,10 @@ definition **in scope** is classified by evidence gathered **everywhere** — al
 634 checkouts, gems included — because a method used by one caller outside the
 scope is not a candidate, and a scope-local search would say it is.
 
+*Amended by DEC-074:* the evidence is the whole **checkout**, not the whole
+index. Only the name-count pre-filter ever read other checkouts, and it made
+the answer depend on what else was indexed.
+
 ### The tiers
 
 | tier | means |
@@ -3732,3 +3736,35 @@ answers are.
 
 A chain with an unindexed ancestor stays `residue` and still lists its sites,
 because the method may be defined there.
+
+## DEC-074 — `--dead` weighs the checkout's evidence, not the store's
+
+**Decided.** Every count `--dead` uses comes from the checkout that holds the
+scope. `Store::written_calls`, the cheap pre-filter that clears a name written
+as a call more than eight times, counts only that checkout's files.
+
+**Before**, the pre-filter counted a name's calls in every blob in the store,
+while the receiver-narrowed pass that decides a tier (`files_calling`) read only
+the checkout. So the only thing the rest of the store could do was hide a
+candidate, by name, whatever those calls' receivers were. The answer depended on
+what else had been indexed. On rails, `--dead activerecord/lib activemodel/lib
+actionpack/lib` gave 0.2.1 2,425 candidates on a store holding rails and its
+gems, and 2,175 on one that also held two discourse checkouts. 72 `super-only`
+became 33. The year-old discourse run moved by 34 in the same way. With this
+change both stores give byte-identical output.
+
+**Why the checkout, and not the checkout plus its gems.** Code in the checkout
+reaches a gem's methods, but a gem reaches the checkout's methods only through
+a hook it calls by convention: `perform`, `call`, a callback named by a symbol.
+The name count was never evidence for those. A gem's `job.perform` is an
+untyped call, and it only counted because another repo happened to write the
+same name. The tier that exists for a method reached by convention is
+`convention-only`, and the stated limits (templates, `send`) still apply. The
+other direction, `--dead` inside a gem, asks which *apps* call it, and the answer
+would be whichever apps are indexed. The checkout is the one scope whose answer
+means the same thing on every machine.
+
+*Reverses if:* a checkout's framework hooks need evidence from the framework.
+That would be a named rule for the hook (a job's `perform`), not a store-wide
+name count.
+

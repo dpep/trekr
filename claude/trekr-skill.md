@@ -226,8 +226,8 @@ questions, different nesting levels.)
 trekr --dead app/models app/services --json
 ```
 
-Every method defined in scope, checked against references from the **whole**
-index. Tiers: `unreferenced` (nothing found), `convention-only` (reached only by
+Every method defined in scope, checked against references from the **whole
+checkout** (not other indexed repos, so the answer does not depend on them). Tiers: `unreferenced` (nothing found), `convention-only` (reached only by
 a symbol handed to a macro — usually a sign it *is* used), `super-only` (reached
 only by `super` from the overrides in `super_from`: live exactly when they are),
 `single-caller` (one reference: the inlining candidate).
