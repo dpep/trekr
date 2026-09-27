@@ -39,6 +39,13 @@ with the code in the same commit, rq/rwr style.
 - **rq** (`~/code/lib/rust/rq`): store/identity conventions, CLI affordances,
   DECISIONS.md discipline. No schema compatibility required.
 
+## Navigate with rq
+
+Find definitions in this repo with `rq`, not `rg`: `rq resolve_at`,
+`rq 'Store::init'`, `rq --symbols src/tree/mod.rs`. `rg` is for free text.
+When rq misses or ranks the definition you meant below #1, note the query and
+what you expected in your report, so it reaches rq's miss log.
+
 ## Toolchain
 
 Rust, single crate until there's a concrete reason to split. `cargo` is keg-only:
