@@ -66,14 +66,21 @@ export async function run() {
   assert.ok(labels.includes("build"), `completion: ${labels.slice(0, 10)}`);
   assert.ok(!labels.includes("save"), "an instance method is not offered on the class");
 
-  // Hover says how the receiver was resolved.
-  const hovers = await vscode.commands.executeCommand<vscode.Hover[]>(
-    "vscode.executeHoverProvider",
-    doc.uri,
-    at(doc, "w.save", 3),
-  );
-  const text = hovers.flatMap((h) => h.contents.map((c) => (typeof c === "string" ? c : c.value))).join("\n");
-  assert.match(text, /confidence/);
+  // Hover: a resolved answer is the signature and where it lives, with no
+  // caveat; a guess says so in words, never as a number (DEC-052).
+  const hover = async (needle: string, offset: number) => {
+    const hovers = await vscode.commands.executeCommand<vscode.Hover[]>("vscode.executeHoverProvider", doc.uri, at(doc, needle, offset));
+    return hovers.flatMap((h) => h.contents.map((c) => (typeof c === "string" ? c : c.value))).join("\n");
+  };
+  const resolved = await hover("w.save", 3);
+  assert.match(resolved, /```ruby\n.*save/, resolved);
+  assert.match(resolved, /Defined in .*lib\/widget\.rb:6/, resolved);
+  assert.doesNotMatch(resolved, /confidence|status|resolved_via/i, resolved);
+
+  const guess = await hover("w.zap", 3);
+  assert.match(guess, /`Widget` has no `zap`.*may come from a gem, a DSL, or `method_missing`/, guess);
+  assert.doesNotMatch(guess, /\d/, `a guess is words, not a number: ${guess}`);
+  assert.doesNotMatch(guess, /Defined in|```/, "a guess shows no signature or location");
 
   // The outline is nested: `run` inside `Job`.
   const symbols = await vscode.commands.executeCommand<vscode.DocumentSymbol[]>(

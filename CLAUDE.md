@@ -43,7 +43,17 @@ with the code in the same commit, rq/rwr style.
 
 Rust, single crate until there's a concrete reason to split. `cargo` is keg-only:
 `/opt/homebrew/opt/rustup/bin/cargo` (or add to PATH). Gate before commit:
-`cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test`.
+`script/check.sh` — `cargo fmt --check`, `cargo clippy --all-targets -- -D
+warnings`, `cargo test`, then the VS Code extension's unit tests (`npm test` in
+`editors/vscode`, installing its deps on first run).
+
+**Before a release, and after touching `src/serve/` or `editors/vscode/`:**
+`script/check.sh --e2e` (or `TREKR_CHECK_E2E=1`, or `make vscode-test`), which
+adds the extension's e2e suite in a real VS Code against the debug build. It
+downloads VS Code once, so it is not in the commit gate — and that is how its
+hover assertion sat red on `main` through a release. `release` runs
+`script/check.sh` as its gate, so `export TREKR_CHECK_E2E=1` in the local
+`.release.conf` makes every release run it.
 
 **Never hand-copy a dev build over `/opt/homebrew/bin/trekr`.** It is Homebrew's
 symlink into the Cellar; replacing it with a real file breaks `brew link` at the

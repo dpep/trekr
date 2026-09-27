@@ -6,11 +6,18 @@ export PATH := $(PATH):/opt/homebrew/opt/rustup/bin
 # script/bench.py stages them and reports the conditions (DEC-001).
 CORPORA ?= ~/code/lib/ruby/rails ~/code/lib/ruby/discourse ~/code/lib/ruby/mastodon ~/code/lib/ruby/ruby ~/code/lib/ruby/graph_weaver
 
-.PHONY: check build release bench dogfood
+.PHONY: check build release bench dogfood vscode-test
 
-## the commit gate: fmt, clippy, tests
+## the commit gate: fmt, clippy, tests, the VS Code extension's unit tests
 check:
 	@script/check.sh
+
+## the VS Code extension's unit tests, then its e2e suite in a real VS Code
+## against the debug build. `script/check.sh --e2e` runs both after the gate.
+vscode-test: build
+	@test -d editors/vscode/node_modules || npm --prefix editors/vscode ci --no-audit --no-fund
+	@npm --prefix editors/vscode test
+	@npm --prefix editors/vscode run test:e2e
 
 build:
 	@cargo build
