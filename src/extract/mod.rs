@@ -659,7 +659,19 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                 && on_self(node)
                 && !self.in_method_body();
             self.included_depth += usize::from(included);
-            self.visit(&block);
+            // A `define_method` block is the method's body: `self` there is
+            // an instance, and a `super` looks up the name it defines.
+            match self.defined_method(node) {
+                Some(method) => {
+                    let singleton = method_name(node).as_deref() == Some("define_singleton_method")
+                        || self.in_singleton();
+                    self.enter(None, Opens::Method { singleton });
+                    self.frame().method = method;
+                    self.visit(&block);
+                    self.leave();
+                }
+                None => self.visit(&block),
+            }
             self.included_depth -= usize::from(included);
             if bound.is_some() {
                 self.loop_values.pop();
@@ -944,8 +956,20 @@ impl<'pr> Extractor<'_> {
         }
         let args = arg_nodes(call);
         let Some(first) = args.first() else { return };
-        let Some(names) = self.interpolated_names(first) else {
+        let Some(names) = literal_name(first)
+            .map(|name| vec![name])
+            .or_else(|| self.interpolated_names(first))
+        else {
             return;
+        };
+        // `define_method(:x, instance_method(:y))`: the body is that method's,
+        // not this line, so the definition is a declaration of it.
+        let body_elsewhere = match (call.block(), args.get(1)) {
+            (None, Some(body)) => {
+                let at = body.location();
+                Some(self.text(at.start_offset(), at.end_offset()))
+            }
+            _ => None,
         };
         // The block *is* the method body, so its parameters are the method's.
         let params = call
@@ -965,8 +989,30 @@ impl<'pr> Extractor<'_> {
             // The honest location is where the definition is written, which is
             // this call — the same answer a macro gives (DEC-022, session 15).
             def.via = Some(name.clone());
+            def.target = body_elsewhere.clone();
             self.push_def(def);
         }
+    }
+
+    /// The name a `define_method` block defines, when it defines exactly one —
+    /// what a `super` inside it looks up. `None` for anything else, including
+    /// a looped name that spells several.
+    fn defined_method(&self, call: &ruby_prism::CallNode<'pr>) -> Option<Option<String>> {
+        if !matches!(
+            method_name(call)?.as_str(),
+            "define_method" | "define_singleton_method"
+        ) {
+            return None;
+        }
+        if !on_self(call) || self.in_method_body() {
+            return None;
+        }
+        let first = arg_nodes(call).into_iter().next()?;
+        Some(literal_name(&first).or_else(|| {
+            self.interpolated_names(&first)
+                .filter(|names| names.len() == 1)
+                .and_then(|mut names| names.pop())
+        }))
     }
 
     /// Every name an interpolated string can spell, given what the enclosing

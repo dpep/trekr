@@ -71,6 +71,11 @@ super` — is the fact
 Rubydex does not carry and the reason this engine is not a wrapper around it.
 53–66% of Ruby call sites are implicit self and need no inference at all.
 
+`define_method` with a literal name — or an interpolated one a literal loop
+spells out — defines it; the block is read as that method's body, where `self`
+is an instance and `super` looks up the defined name. Handed a method object
+instead of a block, it is a declaration.
+
 `Point = Struct.new(:x, :y)`, `Data.define`, `Class.new(Base)` and
 `Module.new` assigned to a constant declare a class or module — the parent as
 its superclass, Struct's members as readers and writers, Data's as readers —

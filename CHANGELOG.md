@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **`define_method(:name) { … }` defines `name`.** Only the looped,
+  interpolated form was read, so a plain literal name was missing, and `--def`
+  on a call to it said the method came from "a gem, a DSL, or method_missing".
+  The block is read as the method's body, so a bare call inside it dispatches
+  on the instance. `define_method(:x, instance_method(:y))` is a declaration.
+  That reason now says only what was checked: nothing indexed in the
+  receiver's ancestors defines the name. Store v25.
+
 - **`X = Class.new(Base) do … end` is a class.** So are `Struct.new(…)`,
   `Data.define(…)` and `Module.new` assigned to a constant: `--ancestors X`
   names the parent (`Base`, `Struct`, `Data`), the methods in the block belong

@@ -1,0 +1,10 @@
+# `define_method(:spin) { … }` with a literal name defined nothing: only the
+# looped, interpolated form was read, so a plain one answered "nothing in its
+# ancestors defines this name" and blamed a gem, a DSL or method_missing. The
+# block is the method's body, so a bare call in it dispatches on the instance.
+def app.rb:15:5 status=resolved name=spin owner=Gizmo kind=definition site=app.rb:2
+def app.rb:16:5 status=resolved name=turn owner=Gizmo kind=definition site=app.rb:4
+def app.rb:5:5 status=resolved name=wobble owner=Gizmo via=self
+# A method object handed over: the body is the method's, not this line.
+def app.rb:17:5 status=resolved name=twirl owner=Gizmo kind=declaration defined_via=define_method
+refs Gizmo#spin confirmed=1

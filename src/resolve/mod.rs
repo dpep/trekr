@@ -183,15 +183,15 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
                     }
                 }
                 // The type is settled and Ruby would still not find the method
-                // here. That is a different "no" from an unknown receiver, and
-                // usually means a gem, a DSL, or `method_missing`.
+                // in what is indexed. Say what was checked, never why: the
+                // cause is exactly what was not seen.
                 None => residue(
                     tree,
                     call,
                     path,
                     Some(receiver),
-                    "the receiver's type is known but nothing in its ancestors \
-                     defines this name — a gem, a DSL, or method_missing",
+                    "the receiver's type is known, and nothing indexed in its \
+                     ancestors defines this name",
                 ),
             }
         }
@@ -1432,7 +1432,10 @@ mod tests {
             Some("Box"),
             "the type was settled; it is the method that is absent"
         );
-        assert!(found.reason.unwrap().contains("method_missing"));
+        let reason = found.reason.unwrap();
+        assert!(reason.contains("nothing indexed in its ancestors"));
+        // It checked the index, not the cause.
+        assert!(!reason.contains("method_missing") && !reason.contains("gem"));
     }
 
     #[test]

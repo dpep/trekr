@@ -3558,3 +3558,20 @@ that working Ruby rarely writes, since a constant that resolves only through
 **Not modelled**: the same call unassigned (`klass = Class.new do`), whose
 owner no constant names, and `class Foo < Struct.new(:a)`, whose members live
 on an anonymous class between the two.
+
+## DEC-070 — `define_method` with a literal name is extracted, and a residue reason states only what was checked
+
+**Decided.** `define_method(:x) { … }` and `define_method("x") { … }` in a class
+body define `x`, as the looped interpolated form already did; the block is
+visited as that method's body (a bare call in it dispatches on the instance,
+not the class, and a `super` in it looks up `x`); and handed a method object
+rather than a block it is a declaration, with open arity.
+
+Session 23 built the literal form and did not ship it because it moved no gold
+site (BASELINE, "built, measured, not shipped"). That was a measurement of
+reach, not of harm, and the cost of leaving it out was a confident wrong
+*reason*: `--def` on `spin` said the method came from "a gem, a DSL, or
+method_missing" when it was defined four lines up. The reason for a settled
+type with no method now says what was checked — "nothing indexed in its
+ancestors defines this name" — and names no cause, because the cause is
+exactly what was not seen.

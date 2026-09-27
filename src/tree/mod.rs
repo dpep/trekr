@@ -228,6 +228,10 @@ pub(crate) struct MethodDef {
     /// Required positional arity and whether the method takes more than that.
     pub(crate) arity: (u32, bool),
     pub(crate) site: Site,
+    /// Made here from a body written elsewhere — `define_method(:x,
+    /// instance_method(:y))` — so this site is a declaration.
+    #[serde(skip)]
+    pub(crate) body_elsewhere: bool,
 }
 
 impl MethodDef {
@@ -238,7 +242,7 @@ impl MethodDef {
     /// `Site::is_rbi` has said exactly that since DEC-019, and `kind` shipped
     /// in session 30 without asking it.
     pub(crate) fn kind(&self) -> Kind {
-        if self.site.is_rbi() {
+        if self.site.is_rbi() || self.body_elsewhere {
             return Kind::Declaration;
         }
         Kind::of(self.via.as_deref())
@@ -1709,8 +1713,19 @@ impl Tree {
 
     /// A row as the tree holds it: with its owner resolved.
     fn method_def(&self, row: MethodRow) -> MethodDef {
+        let body_elsewhere = row.target.is_some()
+            && matches!(
+                row.via.as_deref(),
+                Some("define_method") | Some("define_singleton_method")
+            );
         MethodDef {
-            arity: arity_of(&row.params),
+            // A body written elsewhere takes whatever that body takes.
+            arity: if body_elsewhere {
+                (0, true)
+            } else {
+                arity_of(&row.params)
+            },
+            body_elsewhere,
             owner: self.owner_of(&row),
             name: row.name,
             singleton: row.singleton,
