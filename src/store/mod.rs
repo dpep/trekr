@@ -501,6 +501,33 @@ impl Store {
         rows.collect()
     }
 
+    /// How often each of these names is written as a call anywhere, counting
+    /// up to `cap` — a name handed to a macro as a symbol is not counted.
+    ///
+    /// The cheap half of the dead-code filter (DEC-038). A name with hundreds
+    /// of call sites is not a candidate and must never cost a receiver-narrowed
+    /// pass to find that out; a name with none or a few is worth the expensive
+    /// question. Counting by name is deliberately *generous* — it counts every
+    /// same-named call in the index — because over-counting costs a missed
+    /// candidate and under-counting costs a false "nothing uses this".
+    ///
+    /// Capped because the only question is "more than a few?": counting every
+    /// call of a name like `id` to answer it was a third of a `--dead` run.
+    pub(crate) fn written_calls(&self, names: &[String], cap: i64) -> Result<HashMap<String, i64>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT COUNT(*) FROM
+               (SELECT 1 FROM call_site WHERE name = ?1 AND recv <> 'symbol' LIMIT ?2)",
+        )?;
+        let mut found = HashMap::new();
+        for name in names {
+            if !found.contains_key(name) {
+                let count: i64 = stmt.query_row(params![name, cap], |r| r.get(0))?;
+                found.insert(name.clone(), count);
+            }
+        }
+        Ok(found)
+    }
+
     /// Definitions whose name contains `query`, for `workspaceSymbol`.
     ///
     /// Substring, case-insensitive, capped. rq's scorer would rank these
@@ -509,43 +536,6 @@ impl Store {
     ///
     /// `root` of `None` searches every checkout — for a client whose workspace
     /// is not one of them, where the alternative is answering nothing.
-    /// How often each of these names appears as a call site anywhere, split by
-    /// whether it was written as a call or handed to a macro as a symbol.
-    ///
-    /// The cheap half of the dead-code filter (DEC-038). A name with hundreds
-    /// of call sites is not a candidate and must never cost a receiver-narrowed
-    /// pass to find that out; a name with none or a few is worth the expensive
-    /// question. Counting by name is deliberately *generous* — it counts every
-    /// same-named call in the index — because over-counting costs a missed
-    /// candidate and under-counting costs a false "nothing uses this".
-    pub(crate) fn mention_counts(&self, names: &[String]) -> Result<HashMap<String, (i64, i64)>> {
-        let mut found = HashMap::new();
-        // Chunked: SQLite's parameter limit is smaller than a big file's
-        // method count.
-        for chunk in names.chunks(400) {
-            let holes = vec!["?"; chunk.len()].join(",");
-            let sql = format!(
-                "SELECT name,
-                        SUM(CASE WHEN recv = 'symbol' THEN 0 ELSE 1 END),
-                        SUM(CASE WHEN recv = 'symbol' THEN 1 ELSE 0 END)
-                   FROM call_site WHERE name IN ({holes}) GROUP BY name"
-            );
-            let mut stmt = self.conn.prepare(&sql)?;
-            let rows = stmt.query_map(rusqlite::params_from_iter(chunk), |r| {
-                Ok((
-                    r.get::<_, String>(0)?,
-                    r.get::<_, i64>(1)?,
-                    r.get::<_, i64>(2)?,
-                ))
-            })?;
-            for row in rows {
-                let (name, written, symbol) = row?;
-                found.insert(name, (written, symbol));
-            }
-        }
-        Ok(found)
-    }
-
     pub(crate) fn symbols_named(
         &self,
         root: Option<&str>,
@@ -1225,6 +1215,22 @@ mod tests {
             "past a tenth, measured from the last analysis"
         );
         assert!(!store.analyze_if_outgrown());
+    }
+
+    #[test]
+    fn written_calls_skip_symbols_and_stop_at_the_cap() {
+        let mut store = Store::open_in_memory().unwrap();
+        let src = "class W\n  before_save :go\n  def a\n    go\n    go\n    go\n  end\nend\n";
+        indexed(&mut store, "/a", "w.rb", src);
+        let names = ["go", "go", "absent"].map(String::from);
+        let counts = store.written_calls(&names, 2).unwrap();
+        assert_eq!(counts["go"], 2, "three written calls, capped");
+        assert_eq!(counts["absent"], 0);
+        assert_eq!(
+            store.written_calls(&names, 10).unwrap()["go"],
+            3,
+            "the symbol is not a call"
+        );
     }
 
     #[test]

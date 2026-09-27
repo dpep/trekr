@@ -575,6 +575,11 @@ fn cmd_symbols(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
 /// Files are reparsed rather than read from the stored call rows: the ladder
 /// needs the file's assignments, which are deliberately not stored (DEC-012),
 /// and reparsing means an edit since the last index is still tiered correctly.
+///
+/// `parsed`, when given, holds each file's facts across calls: `--dead` asks
+/// about every method in scope, and the files calling them are mostly the
+/// same files. A single query passes `None` and holds one file at a time.
+#[allow(clippy::too_many_arguments)]
 fn gather_refs(
     tree: &Tree,
     store: &Store,
@@ -584,6 +589,7 @@ fn gather_refs(
     target: Option<&str>,
     // Keep the excluded sites too, so `--include-excluded` can show them.
     keep_all: bool,
+    mut parsed: Option<&mut Parsed>,
 ) -> anyhow::Result<(
     Vec<crate::resolve::refs::Reference>,
     crate::resolve::refs::Counts,
@@ -592,12 +598,24 @@ fn gather_refs(
     let mut found = Vec::new();
     let mut counts = refs::Counts::default();
     for path in store.files_calling(root_str, &query.name)? {
-        let Ok(bytes) = std::fs::read(root.join(&path)) else {
+        let read = || {
+            std::fs::read(root.join(&path))
+                .ok()
+                .map(|bytes| extract::extract(&bytes))
+        };
+        let owned;
+        let facts = match parsed.as_deref_mut() {
+            Some(parsed) => parsed.entry(path.clone()).or_insert_with(read).as_ref(),
+            None => {
+                owned = read();
+                owned.as_ref()
+            }
+        };
+        let Some(facts) = facts else {
             continue;
         };
-        let facts = extract::extract(&bytes);
         for call in facts.calls.iter().filter(|c| c.name == query.name) {
-            let reference = refs::tier_call(tree, &facts, call, &path, query, target);
+            let reference = refs::tier_call(tree, facts, call, &path, query, target);
             counts.record(&reference);
             // Excluded sites are counted, not listed: the count is the product,
             // and the list would be the grep we are trying to beat. `keep_all`
@@ -610,6 +628,9 @@ fn gather_refs(
     found.sort_by_key(refs::order);
     Ok((found, counts))
 }
+
+/// A file's facts by checkout-relative path, `None` when it could not be read.
+type Parsed = HashMap<String, Option<crate::core::Facts>>;
 
 /// What a name *is*, in one answer: where it is defined, what kind of location
 /// that is, and how many call sites can actually reach it.
@@ -678,7 +699,16 @@ fn cmd_card(out: Output, text: &str) -> anyhow::Result<ExitCode> {
             ),
         );
     };
-    let (_, counts) = gather_refs(&tree, &store, &root, &root_str, &query, Some(&owner), false)?;
+    let (_, counts) = gather_refs(
+        &tree,
+        &store,
+        &root,
+        &root_str,
+        &query,
+        Some(&owner),
+        false,
+        None,
+    )?;
     let kind = tree
         .lookup(&owner, query.singleton, &query.name)
         .map(|method| method.kind());
@@ -774,6 +804,7 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
         &query,
         owner.as_deref(),
         include_excluded,
+        None,
     )?;
 
     let answer = serde_json::json!({
@@ -846,7 +877,7 @@ fn cmd_refs_by_name(
     let has_calls = rows.iter().any(|row| row.role == "call");
     if has_calls {
         let tree = Tree::build(store, root_str)?;
-        let (found, _) = gather_refs(&tree, store, root, root_str, query, None, false)?;
+        let (found, _) = gather_refs(&tree, store, root, root_str, query, None, false, None)?;
         // Match by position: one call site, one tiering.
         for row in rows.iter_mut().filter(|row| row.role == "call") {
             if let Some(reference) = found
@@ -1059,15 +1090,18 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
     }
 
     let names: Vec<String> = defined.iter().map(|(_, d, _)| d.name.clone()).collect();
-    let mentions = store.mention_counts(&names)?;
+    // More written calls than this and a name is plainly used.
+    const PLAINLY_USED: i64 = 8;
+    let written_calls = store.written_calls(&names, PLAINLY_USED + 1)?;
 
     // The expensive pass, only for names the cheap one could not clear.
     let tree = Tree::build(&store, &root_str)?;
+    let mut parsed = Parsed::new();
     let mut rows: Vec<serde_json::Value> = Vec::new();
     for (file, def, risky) in &defined {
-        let (written, _) = mentions.get(&def.name).copied().unwrap_or((0, 0));
-        if written > 8 {
-            continue; // plainly used; not worth a narrowed search
+        let written = written_calls.get(&def.name).copied().unwrap_or(0);
+        if written > PLAINLY_USED {
+            continue; // not worth a narrowed search
         }
         let owner = def.nesting.first().cloned().unwrap_or_default();
         let query = refs::Query {
@@ -1075,9 +1109,17 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
             singleton: def.singleton,
             name: def.name.clone(),
         };
-        let (found, counts) =
-            gather_refs(&tree, &store, &root, &root_str, &query, Some(&owner), false)
-                .unwrap_or_default();
+        let (found, counts) = gather_refs(
+            &tree,
+            &store,
+            &root,
+            &root_str,
+            &query,
+            Some(&owner),
+            false,
+            Some(&mut parsed),
+        )
+        .unwrap_or_default();
         // A symbol reference is tiered `possible`, so it is *inside*
         // `counts.possible` — subtract it to ask what is written as a call.
         // Without this, `convention-only` can never fire and a method reached
