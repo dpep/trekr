@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **`--refs NAME` on a very common name is up to 2× faster in a large repo.**
+  Each call site's tiering was matched to its row by scanning all of them;
+  `--refs each` on a 336k-file repo 17.9 → 9.9 s.
 - **`--refs Owner#method` on a very common name no longer takes the slow plan.**
   The query that lists the files calling a name is pinned to the name's
   index, as the LSP's already is: `--refs Array#to` on a 336k-file repo

@@ -953,12 +953,15 @@ fn cmd_refs_by_name(
     if has_calls {
         let tree = build_tree(store, root_str)?;
         let (found, _) = gather_refs(&tree, store, root, root_str, query, None, false, None)?;
-        // Match by position: one call site, one tiering.
+        // Match by position: one call site, one tiering. Keyed, because a
+        // common name has as many sites as rows and a scan per row was
+        // quadratic in them. First one wins, as the scan's `find` did.
+        let mut at: HashMap<(&str, u32, u32), &crate::resolve::refs::Reference> = HashMap::new();
+        for r in &found {
+            at.entry((r.path.as_str(), r.line, r.col)).or_insert(r);
+        }
         for row in rows.iter_mut().filter(|row| row.role == "call") {
-            if let Some(reference) = found
-                .iter()
-                .find(|r| r.path == row.path && r.line == row.line && r.col == row.col)
-            {
+            if let Some(reference) = at.get(&(row.path.as_str(), row.line, row.col)) {
                 row.tier = Some(format!("{:?}", reference.tier).to_lowercase());
                 row.owner.clone_from(&reference.owner);
             }

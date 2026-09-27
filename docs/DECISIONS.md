@@ -2898,3 +2898,24 @@ for 2 MB more index. But the SQL is a sliver of a references query, which
 parses every file the list names (81k calls of `to` on discourse), and it
 would cost a schema version, so every user a cold re-index. Worth folding into
 the next schema change that happens for its own reasons.
+
+## DEC-059 — A bare-name `--refs` matches its tierings by position, not by scan
+
+**Decided.** `cmd_refs_by_name` tiers every call of the name and then attaches
+each tiering to its row. It found each row's tiering with a linear scan of all
+of them — quadratic in the name's call sites. It now builds a map keyed by
+(path, line, col) once; the first tiering for a position still wins.
+
+**Why, measured.** Harmless on a rare name, and the cost of a common one grows
+with the square of the repo. `--refs NAME`, five interleaved rounds on rails,
+four on the 30× synthetic monorepo, medians; output identical:
+
+| | rows | before | after |
+| --- | ---: | ---: | ---: |
+| rails `save` | 716 | 188 ms | 188 ms |
+| rails `new` | 13,736 | 672 ms | 595 ms |
+| 30× `save` | 17,130 | 5.2 s | 5.1 s |
+| 30× `each` | 129,690 | 17.9 s | 9.9 s |
+
+Found by the unbounded-growth audit: every per-query structure that grows with
+the repo was checked for work that grows faster than it.
