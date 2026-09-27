@@ -321,6 +321,13 @@ pub(crate) struct Def {
     /// blob. Ruby binds an alias to the method as it is *then*, so a later
     /// `def` of the same name does not move it.
     pub(crate) target_pos: Option<Pos>,
+    /// Per call shape, when several `sig`s — or one naming `NilClass` for
+    /// its block — say the return depends on it: `map` returns an Enumerator
+    /// without a block and an Array with one (DEC-077). `sig_returns` is then
+    /// `None`, since no one class holds for every call.
+    ///
+    /// Not stored: only core writes these, and core is never in the store.
+    pub(crate) sig_overloads: Vec<Overload>,
     /// Parameter name → class, from the `params(...)` half of a `sig`.
     ///
     /// Not stored: a parameter can only be a receiver inside the method that
@@ -330,6 +337,45 @@ pub(crate) struct Def {
     pub(crate) pos: Pos,
     pub(crate) end_line: u32,
 }
+
+/// One `sig` among several, as the calls it describes (DEC-077).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct Overload {
+    /// How many positional arguments the call passes; `None` for any number.
+    pub(crate) argc: Option<u32>,
+    /// Whether the call passes a block; `None` for either.
+    pub(crate) block: Option<bool>,
+    pub(crate) returns: Option<String>,
+}
+
+impl Overload {
+    pub(crate) fn covers(&self, argc: Option<u32>, block: bool) -> bool {
+        self.argc.is_none_or(|n| argc == Some(n)) && self.block.is_none_or(|b| b == block)
+    }
+}
+
+/// The class a call to a method returns, from its `sig`s: the one every
+/// overload covering the call agrees on.
+pub(crate) fn returns_for<'a>(
+    sig_returns: Option<&'a str>,
+    overloads: &'a [Overload],
+    argc: Option<u32>,
+    block: bool,
+) -> Option<&'a str> {
+    if overloads.is_empty() {
+        return sig_returns;
+    }
+    let mut covering = overloads.iter().filter(|o| o.covers(argc, block));
+    let first = covering.next()?.returns.as_deref()?;
+    covering
+        .all(|o| o.returns.as_deref() == Some(first))
+        .then_some(first)
+}
+
+/// Methods that hand back their receiver unchanged, so the type survives them,
+/// in an assignment or a chain. From rwr's D61 measurement; `then` and
+/// `presence` are deliberately absent because they do not preserve the type.
+pub(crate) const IDENTITY: [&str; 5] = ["freeze", "dup", "clone", "itself", "tap"];
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub(crate) struct Param {
@@ -497,10 +543,24 @@ pub(crate) struct Call {
     /// Where a local receiver is read — the key to which writes it sees.
     #[serde(skip)]
     pub(crate) recv_pos: Option<Pos>,
+    /// A receiver that is a value rather than a name: another call, whose
+    /// return types this one, or a literal.
+    #[serde(skip)]
+    pub(crate) recv_value: Option<RecvValue>,
     /// Positional argument count, or `None` when a splat makes it unknowable.
     pub(crate) argc: Option<u32>,
     pub(crate) block: bool,
     pub(crate) pos: Pos,
+}
+
+/// What an `Other` receiver is, when that is worth knowing.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum RecvValue {
+    /// `x.gsub(a, b).downcase` — the call at this position (`gsub`), found
+    /// again among the file's calls.
+    Call(Pos),
+    /// `"x".downcase`, `[].push` — a literal of this core class.
+    Literal(&'static str),
 }
 
 /// The receiver ladder's rungs, in the order they are worth trying.

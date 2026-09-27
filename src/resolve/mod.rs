@@ -15,7 +15,7 @@
 
 pub(crate) mod refs;
 
-use crate::core::{Assign, Call, Facts, Pos, RecvShape, ValueShape};
+use crate::core::{Assign, Call, Facts, Pos, RecvShape, RecvValue, ValueShape};
 use crate::tree::{Kind, Site, Status, Tree};
 use serde::Serialize;
 
@@ -447,7 +447,7 @@ pub(crate) fn receiver_type(
 /// Climb the ladder until a rung names a type — and when that type is a name
 /// two programs declare differently, the one this file belongs to (DEC-072).
 pub(super) fn receiver_of(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiver> {
-    let mut receiver = typed(tree, facts, call)?;
+    let mut receiver = typed(tree, facts, call, path)?;
     receiver.fqn = tree.variant_at(&receiver.fqn, path);
     for (rival, _) in &mut receiver.rivals {
         *rival = tree.variant_at(rival, path);
@@ -456,7 +456,19 @@ pub(super) fn receiver_of(tree: &Tree, facts: &Facts, call: &Call, path: &str) -
 }
 
 /// The ladder itself.
-fn typed(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
+///
+/// `path` is the call's file: a constant written in a class declared twice
+/// is looked up through the declaration nearest it (DEC-072).
+fn typed(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiver> {
+    typed_at(tree, facts, call, path, 0)
+}
+
+/// How many calls back a chain is followed. Each step needs a declared
+/// return type to continue, so the bound is a guard, not a tuning knob.
+const MAX_CHAIN: usize = 4;
+
+/// The ladder, `depth` calls into a chain.
+fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -> Option<Receiver> {
     match call.recv {
         // The enclosing scope is the receiver by language rule. No inference
         // happens, which is why this rung is both the largest and the cheapest.
@@ -474,7 +486,7 @@ fn typed(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
         }
         RecvShape::Const => {
             let name = call.recv_text.as_ref()?;
-            let fqn = tree.resolve(name, &call.nesting).fqn?;
+            let fqn = tree.resolve_at(name, &call.nesting, path).fqn?;
             Some(Receiver {
                 fqn,
                 // `Foo.bar` runs a class method.
@@ -489,15 +501,134 @@ fn typed(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
         // An assignment first, because it is the more specific evidence; a
         // parameter's declared type is the fallback when there is none.
         RecvShape::Local | RecvShape::Ivar => from_assignments(tree, facts, call)
-            .or_else(|| from_sig_params(tree, facts, call))
+            .or_else(|| from_sig_params(tree, facts, call, path))
             // Last, because it is the only rung resting on a naming habit
             // rather than on something the code states.
-            .or_else(|| from_receiver_name(tree, call)),
+            .or_else(|| from_receiver_name(tree, call, path)),
+        RecvShape::Other => chained(tree, facts, call, path, depth),
         // A symbol names the method, never the receiver, so there is nothing
-        // here to type — the same answer as `Other`, for a different reason.
-        // `super` is typed by its own rule, `super_landings`.
-        RecvShape::Other | RecvShape::Symbol | RecvShape::Super => None,
+        // here to type. `super` is typed by its own rule, `super_landings`.
+        RecvShape::Symbol | RecvShape::Super => None,
     }
+}
+
+/// A receiver that is a value: a literal is its class, and a call returns
+/// what its `sig` says — `x.gsub(a, b).downcase` is a String (DEC-077).
+fn chained(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -> Option<Receiver> {
+    match call.recv_value.as_ref()? {
+        RecvValue::Literal(class) => Some(Receiver {
+            fqn: tree.resolve(class, &[]).fqn?,
+            singleton: false,
+            via: "literal",
+            agreeing: 1,
+            total: 1,
+            ambiguous: false,
+            rivals: Vec::new(),
+        }),
+        RecvValue::Call(at) => {
+            if depth >= MAX_CHAIN {
+                return None;
+            }
+            let previous = facts
+                .calls
+                .iter()
+                .find(|c| c.pos == *at && c.recv != RecvShape::Symbol)?;
+            returned_by(tree, facts, previous, path, depth + 1, call)
+        }
+    }
+}
+
+/// What a call returns, as a receiver for the next one in its chain.
+///
+/// When the call's own receiver has a type, its method is found and its
+/// `sig` read, and the evidence for the receiver carries over. When it has
+/// none, every definition of the name is asked instead.
+fn returned_by(
+    tree: &Tree,
+    facts: &Facts,
+    previous: &Call,
+    path: &str,
+    depth: usize,
+    next: &Call,
+) -> Option<Receiver> {
+    let Some(receiver) = typed_at(tree, facts, previous, path, depth) else {
+        // A guess among competitors has to answer the call it was made for,
+        // as a name has to for `receiver_name`: one that does not is evidence
+        // a competitor was the receiver.
+        return by_return_types(tree, previous)
+            .filter(|guess| tree.lookup(&guess.fqn, false, &next.name).is_some());
+    };
+    if crate::core::IDENTITY.contains(&previous.name.as_str()) {
+        return Some(Receiver {
+            via: "chain",
+            ..receiver
+        });
+    }
+    // `Foo.new.bar`, as `x = Foo.new` types `x`.
+    if previous.name == "new" && receiver.singleton {
+        return Some(Receiver {
+            singleton: false,
+            via: "chain",
+            ..receiver
+        });
+    }
+    let method = tree.lookup(&receiver.fqn, receiver.singleton, &previous.name)?;
+    let returns = method.returns_for(previous.argc, previous.block)?;
+    Some(Receiver {
+        fqn: tree
+            .resolve(returns, std::slice::from_ref(&method.owner))
+            .fqn?,
+        singleton: false,
+        via: "chain",
+        rivals: Vec::new(),
+        ..receiver
+    })
+}
+
+/// A call whose receiver has no type returns what every definition of its
+/// name that says so agrees on.
+///
+/// `something.gsub(/x/, "")` could be any `gsub`, and the index holds only
+/// String's, which returns a String. A definition that declares no return
+/// type is a competitor: it counts against the answer and makes it
+/// `ambiguous`. Two that declare different ones leave the call untyped.
+fn by_return_types(tree: &Tree, previous: &Call) -> Option<Receiver> {
+    // Returns its receiver, which is exactly what is unknown here.
+    if crate::core::IDENTITY.contains(&previous.name.as_str()) {
+        return None;
+    }
+    let mut owners: Vec<(String, bool)> = Vec::new();
+    let mut votes: Vec<Option<String>> = Vec::new();
+    for method in tree.named(&previous.name) {
+        let owner = (method.owner.clone(), method.singleton);
+        if owners.contains(&owner) {
+            continue;
+        }
+        owners.push(owner);
+        votes.push(
+            method
+                .returns_for(previous.argc, previous.block)
+                .and_then(|returns| {
+                    tree.resolve(returns, std::slice::from_ref(&method.owner))
+                        .fqn
+                }),
+        );
+    }
+    let mut declared = votes.iter().flatten();
+    let fqn = declared.next()?.clone();
+    if declared.any(|other| *other != fqn) {
+        return None;
+    }
+    let agreeing = votes.iter().flatten().count();
+    Some(Receiver {
+        fqn,
+        singleton: false,
+        via: "chain:name",
+        agreeing,
+        total: votes.len(),
+        ambiguous: agreeing < votes.len(),
+        rivals: Vec::new(),
+    })
 }
 
 /// What the receiver is *called*, when nothing else typed it.
@@ -520,9 +651,9 @@ fn typed(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
 /// Confidence is graded by the ambiguity it had to resolve, never flat: one
 /// hypothesis against "something else", plus one for every other class that
 /// defines the same method. A unique match is 0.5; four competitors is 0.17.
-fn from_receiver_name(tree: &Tree, call: &Call) -> Option<Receiver> {
+fn from_receiver_name(tree: &Tree, call: &Call, path: &str) -> Option<Receiver> {
     let named = receiver_names_a_class(call.recv_text.as_deref()?)?;
-    let fqn = tree.resolve(&named, &call.nesting).fqn?;
+    let fqn = tree.resolve_at(&named, &call.nesting, path).fqn?;
     // (2) it has to actually answer the call.
     tree.lookup(&fqn, false, &call.name)?;
     // (3) a competing reading in the enclosing scope disqualifies the guess.
@@ -560,7 +691,7 @@ fn from_receiver_name(tree: &Tree, call: &Call) -> Option<Receiver> {
 /// Measured on graph_weaver: half of all untyped local receivers are
 /// parameters. They have no assignment to chase, so every rung that looks for
 /// one misses them — and a signature has already said what they are.
-fn from_sig_params(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
+fn from_sig_params(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiver> {
     let target = call.recv_text.as_ref()?;
     let enclosing = enclosing_method(facts, call.pos.line)?;
     let class = enclosing
@@ -569,7 +700,7 @@ fn from_sig_params(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> 
         .find(|(name, _)| name == target)
         .map(|(_, class)| class)?;
     Some(Receiver {
-        fqn: tree.resolve(class, &call.nesting).fqn?,
+        fqn: tree.resolve_at(class, &call.nesting, path).fqn?,
         singleton: false,
         via: "sig:param",
         agreeing: 1,
@@ -1265,6 +1396,77 @@ mod tests {
         let source = "class Box\n  def open\n  end\nend\n\
                       class W\n  def go\n    b = Box.new.freeze\n    b.open\n  end\nend\n";
         assert_eq!(owner(source, "open").as_deref(), Some("Box"));
+    }
+
+    /// Classes whose methods say what they return, for the chain tests.
+    const TYPED: &str = "class Doc\n  sig { returns(Title) }\n  def title\n  end\nend\n\
+                         class Title\n  def shout\n  end\nend\n";
+
+    #[test]
+    fn a_literal_receiver_is_its_class() {
+        let found = answer(
+            "class W\n  def go\n    \"x\".upcase\n  end\nend\n",
+            "upcase",
+        );
+        assert_eq!(found.owner.as_deref(), Some("String"));
+        assert_eq!(found.resolved_via.as_deref(), Some("literal"));
+    }
+
+    #[test]
+    fn a_chain_is_typed_from_the_previous_calls_return_type() {
+        let source = format!("{TYPED}class W\n  def go\n    Doc.new.title.shout\n  end\nend\n");
+        let found = answer(&source, "shout");
+        assert_eq!(found.status, Status::Resolved);
+        assert_eq!(found.owner.as_deref(), Some("Title"));
+        assert_eq!(found.resolved_via.as_deref(), Some("chain"));
+    }
+
+    #[test]
+    fn an_untyped_receiver_takes_the_return_type_every_definition_agrees_on() {
+        let source = format!("{TYPED}class W\n  def go(x)\n    x.title.shout\n  end\nend\n");
+        let found = answer(&source, "shout");
+        assert_eq!(found.status, Status::Resolved);
+        assert_eq!(found.owner.as_deref(), Some("Title"));
+        assert_eq!(found.resolved_via.as_deref(), Some("chain:name"));
+    }
+
+    #[test]
+    fn a_definition_that_declares_nothing_is_a_competitor() {
+        let source = format!(
+            "{TYPED}class Book\n  def title\n  end\nend\n\
+             class W\n  def go(x)\n    x.title.shout\n  end\nend\n"
+        );
+        let found = answer(&source, "shout");
+        assert_eq!(found.status, Status::Ambiguous);
+        assert_eq!(found.owner.as_deref(), Some("Title"));
+        assert_eq!(found.confidence, 0.5);
+    }
+
+    #[test]
+    fn definitions_that_declare_different_types_leave_the_chain_untyped() {
+        let source = format!(
+            "{TYPED}class Book\n  sig {{ returns(Doc) }}\n  def title\n  end\nend\n\
+             class W\n  def go(x)\n    x.title.shout\n  end\nend\n"
+        );
+        assert_eq!(answer(&source, "shout").status, Status::Residue);
+    }
+
+    #[test]
+    fn a_block_decides_which_overload_a_chain_takes() {
+        let source = "class Shelf\n  \
+            sig { params(block: NilClass).returns(Enumerator) }\n  \
+            sig { params(block: T.proc.void).returns(Array) }\n  \
+            def each_book(&block)\n  end\nend\n\
+            class W\n  def go(s)\n    s.each_book.next\n    s.each_book { }.last\n  end\nend\n";
+        assert_eq!(owner(source, "next").as_deref(), Some("Enumerator"));
+        assert_eq!(owner(source, "last").as_deref(), Some("Array"));
+    }
+
+    #[test]
+    fn a_method_with_no_declared_return_ends_the_chain() {
+        let source = "class Box\n  def contents\n  end\nend\n\
+                      class W\n  def go\n    Box.new.contents.upcase\n  end\nend\n";
+        assert_eq!(answer(source, "upcase").status, Status::Residue);
     }
 
     #[test]

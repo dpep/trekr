@@ -1,0 +1,9 @@
+# A receiver that is itself a call used to be untyped: `shout` was residue with
+# Title and Poster as equal candidates. The previous call's `sig` types it.
+def app.rb:24:19 status=resolved owner=Title via=chain
+# With no receiver type, every `title` is asked. Doc's says Title and Book's
+# says nothing, so Book is a competitor — the pick is `ambiguous`, at 1/2.
+def app.rb:25:13 status=ambiguous owner=Title via=chain:name confidence=0.5
+# A pick among competitors confirms, but never excludes: Book#title could
+# return a Poster. The chain through Doc.new is certain, and does exclude.
+refs Poster#shout confirmed=0 possible=1 excluded=1

@@ -90,8 +90,9 @@ struct Extractor<'a> {
     lines: LineIndex,
     nesting: Vec<String>,
     frames: Vec<Frame>,
-    /// Return type from a Sorbet `sig` in the immediately preceding statement.
-    pending_sig: Option<String>,
+    /// The Sorbet `sig`s immediately preceding the statement — several are
+    /// overloads (DEC-077).
+    pending_sigs: Vec<sig::Shape>,
     /// Parameter types from that same `sig`.
     pending_sig_params: Vec<(String, String)>,
     /// Constants in this blob assigned a literal array of symbols.
@@ -153,7 +154,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             method: None,
             blocks: 0,
         }],
-        pending_sig: None,
+        pending_sigs: Vec::new(),
         pending_sig_params: Vec::new(),
         symbol_arrays: HashMap::new(),
         loop_values: Vec::new(),
@@ -245,6 +246,7 @@ impl<'a> Extractor<'a> {
             target: None,
             sig_returns: None,
             target_pos: None,
+            sig_overloads: Vec::new(),
             sig_params: Vec::new(),
             pos: self.pos(start),
             end_line: self.pos(end).line,
@@ -416,11 +418,18 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         let body: Vec<Node<'pr>> = node.body().iter().collect();
         for (i, stmt) in body.iter().enumerate() {
             let previous = i.checked_sub(1).map(|p| &body[p]);
-            self.pending_sig = previous.and_then(sig::returns);
+            self.pending_sigs = body[..i]
+                .iter()
+                .rev()
+                .map_while(sig::shape)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect();
             self.pending_sig_params = previous.map(sig::params).unwrap_or_default();
             self.visit(stmt);
         }
-        self.pending_sig = None;
+        self.pending_sigs.clear();
         self.pending_sig_params.clear();
     }
 
@@ -531,7 +540,10 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         let mut def = self.def(name.clone(), Kind::Method, name_start, loc.end_offset());
         def.singleton = singleton;
         def.params = params_of(node.parameters());
-        def.sig_returns = self.pending_sig.take();
+        let (returns, overloads) =
+            sig::resolve(&std::mem::take(&mut self.pending_sigs), &def.params);
+        def.sig_returns = returns;
+        def.sig_overloads = overloads;
         def.sig_params = std::mem::take(&mut self.pending_sig_params);
         // Visibility modifiers never reach `def self.x` — it is public whatever
         // the enclosing `private` says.
@@ -878,7 +890,7 @@ impl<'pr> Extractor<'_> {
             _ => false,
         };
         let reader = macro_name != "attr_writer";
-        let sig = self.pending_sig.take();
+        let sig = sig::resolve(&std::mem::take(&mut self.pending_sigs), &[]).0;
         let visibility = self.visibility();
         let singleton = self.in_singleton();
         let loc = call.location();
@@ -1765,6 +1777,10 @@ impl<'pr> Extractor<'_> {
                     .map(|r| self.pos(r.location().start_offset()))
             })
             .flatten();
+        let recv_value = match (recv, call.receiver()) {
+            (RecvShape::Other, Some(r)) => self.recv_value(&r),
+            _ => None,
+        };
         let argc = argc_of(&arg_nodes(call));
         let pos = self.pos(message.start_offset());
         // Not `in_singleton()`: that answers "is a `def` here a singleton
@@ -1778,11 +1794,36 @@ impl<'pr> Extractor<'_> {
             nesting: self.nesting.clone(),
             singleton,
             recv_pos,
+            recv_value,
             argc,
             block: call.block().is_some(),
             pos,
         });
         self.record_symbol_arguments(call);
+    }
+
+    /// A receiver worth typing that is not a name: the call before this one in
+    /// a chain, found again by its position, or a literal.
+    fn recv_value(&self, node: &Node<'pr>) -> Option<RecvValue> {
+        if let Some(class) = literal_class(node) {
+            return Some(RecvValue::Literal(class));
+        }
+        // `(a + b).abs` — one expression in parentheses is that expression.
+        if let Some(parens) = node.as_parentheses_node() {
+            let statements = parens.body()?.as_statements_node()?;
+            let mut body = statements.body().iter();
+            let only = body.next()?;
+            return body
+                .next()
+                .is_none()
+                .then(|| self.recv_value(&only))
+                .flatten();
+        }
+        let call = node.as_call_node()?;
+        method_name(&call)?;
+        Some(RecvValue::Call(
+            self.pos(call.message_loc()?.start_offset()),
+        ))
     }
 
     /// `super`, as a call of the enclosing method's name. Outside a method
@@ -1799,6 +1840,7 @@ impl<'pr> Extractor<'_> {
             nesting: self.nesting.clone(),
             singleton: self.self_is_class(),
             recv_pos: None,
+            recv_value: None,
             argc,
             block,
             pos,
@@ -1947,6 +1989,7 @@ impl<'pr> Extractor<'_> {
                 nesting: self.nesting.clone(),
                 singleton: false,
                 recv_pos: None,
+                recv_value: None,
                 // Unknowable: whatever invokes it decides the arity.
                 argc: None,
                 block: false,
@@ -1971,11 +2014,6 @@ fn argc_of(args: &[Node<'_>]) -> Option<u32> {
     }
     Some(argc)
 }
-
-/// Methods that hand back their receiver unchanged, so the type survives them.
-/// From rwr's D61 measurement; `then` and `presence` are deliberately absent
-/// because they do not preserve the type.
-const IDENTITY: [&str; 5] = ["freeze", "dup", "clone", "itself", "tap"];
 
 /// The class a literal produces. Worth typing now that core is indexed: an
 /// accumulator written `out = []` is an Array, and `Array#<<` is findable.
@@ -2048,7 +2086,7 @@ fn literal_symbol_array(node: &Node<'_>) -> Option<Vec<String>> {
         return (!symbols.is_empty()).then_some(symbols);
     }
     let call = node.as_call_node()?;
-    if !IDENTITY.contains(&method_name(&call)?.as_str()) {
+    if !crate::core::IDENTITY.contains(&method_name(&call)?.as_str()) {
         return None;
     }
     literal_symbol_array(&call.receiver()?)
@@ -2075,7 +2113,7 @@ fn value_shape(node: &Node<'_>) -> ValueShape {
     match call.receiver() {
         None => ValueShape::SelfCall(name),
         Some(receiver) => {
-            if IDENTITY.contains(&name.as_str()) {
+            if crate::core::IDENTITY.contains(&name.as_str()) {
                 // Whatever the receiver was, this still is.
                 return value_shape(&receiver);
             }

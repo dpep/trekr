@@ -229,6 +229,8 @@ pub(crate) struct MethodDef {
     pub(crate) via: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) sig_returns: Option<String>,
+    #[serde(skip)]
+    pub(crate) sig_overloads: Vec<crate::core::Overload>,
     /// Required positional arity and whether the method takes more than that.
     pub(crate) arity: (u32, bool),
     pub(crate) site: Site,
@@ -242,6 +244,17 @@ pub(crate) struct MethodDef {
 }
 
 impl MethodDef {
+    /// The class a call with this many arguments, and a block or not,
+    /// returns — when its `sig`s say so (DEC-077).
+    pub(crate) fn returns_for(&self, argc: Option<u32>, block: bool) -> Option<&str> {
+        crate::core::returns_for(
+            self.sig_returns.as_deref(),
+            &self.sig_overloads,
+            argc,
+            block,
+        )
+    }
+
     /// Is the body at this location (DEC-034)?
     ///
     /// A Sorbet stub is a bodiless `def` — an ordinary definition by every
@@ -1898,6 +1911,7 @@ impl Tree {
             visibility: row.visibility,
             via: row.via,
             sig_returns: row.sig_returns,
+            sig_overloads: row.sig_overloads,
             site: Site {
                 path: row.path,
                 line: bound.map_or(row.line, |at| at.line),
@@ -2659,6 +2673,7 @@ fn rows_from(path: &str, source: &str) -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<Metho
                 via: d.via,
                 target: d.target,
                 sig_returns: d.sig_returns,
+                sig_overloads: d.sig_overloads,
                 path: path.to_string(),
                 line: d.pos.line,
                 col: d.pos.col,
@@ -2701,6 +2716,7 @@ mod rbi_preference_tests {
             via: None,
             target: None,
             sig_returns: None,
+            sig_overloads: Vec::new(),
             path: path.into(),
             line: 1,
             col: 1,

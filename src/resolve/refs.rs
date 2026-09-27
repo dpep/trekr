@@ -195,10 +195,25 @@ fn tier(
         return possible(tree, call, path, query, target, shape);
     };
 
-    match tree.lookup(&receiver.fqn, receiver.singleton, &call.name) {
+    let found = tree.lookup(&receiver.fqn, receiver.singleton, &call.name);
+    let matches = found.as_ref().is_some_and(|found| {
+        target.is_none_or(|target| found.owner == target && found.singleton == query.singleton)
+    });
+    // A type guessed from what a name's definitions return can confirm a
+    // site, but ruling one out on it would rule out what the definitions that
+    // declare nothing might have returned.
+    if receiver.via == "chain:name" && receiver.ambiguous && !matches {
+        return here(
+            Tier::Possible,
+            Some(receiver.fqn.clone()),
+            found.map(|found| found.owner),
+            "the receiver's type is a guess from what the previous call can return",
+            1,
+            None,
+        );
+    }
+    match found {
         Some(found) => {
-            let matches = target
-                .is_none_or(|target| found.owner == target && found.singleton == query.singleton);
             if matches {
                 here(
                     Tier::Confirmed,

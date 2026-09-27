@@ -601,6 +601,7 @@ impl Store {
                 via: r.get(5)?,
                 target: r.get(6)?,
                 sig_returns: r.get(7)?,
+                sig_overloads: Vec::new(),
                 path: r.get(8)?,
                 line: r.get(9)?,
                 col: r.get(10)?,
@@ -1197,6 +1198,8 @@ pub(crate) struct MethodRow {
     pub(crate) via: Option<String>,
     pub(crate) target: Option<String>,
     pub(crate) sig_returns: Option<String>,
+    /// Never read from SQL: only core has them (`Def::sig_overloads`).
+    pub(crate) sig_overloads: Vec<crate::core::Overload>,
     pub(crate) path: String,
     pub(crate) line: u32,
     pub(crate) col: u32,
