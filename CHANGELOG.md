@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **`--lsp` switches to a new trekr in place.** After `brew upgrade`, a
+  reinstall or a `cargo build`, a running server hands its session to the new
+  binary within a couple of seconds, on the same connection. Open files and
+  unsaved edits carry over, and the editor restarts nothing. Before, the server
+  exited and relied on the editor to restart it. If the new binary cannot run,
+  the old server keeps serving and logs `reload_failed`. A new binary too old to
+  resume a session still exits, so the editor restarts it. This takes effect
+  from the *next* upgrade: servers already running an earlier version exit as
+  before. The LSP log records each `reload` and `resume`.
 - **`trekr --gc` reclaims old gem versions and deleted worktrees.** A gem
   version no indexed project's bundle names any more, and a checkout whose
   directory is gone, used to be kept forever. `--gc` removes those an index has

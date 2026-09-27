@@ -3,8 +3,10 @@
 //!
 //! A thin resident front over the on-disk index, not an owner of it (PLAN §4).
 //! The editor owns the process: no auto-spawn, no lockfile, no lifecycle beyond
-//! "stdin closed, so stop". Everything it answers, the CLI can answer too; what
-//! it adds is not paying 210 ms to rebuild the tree on every keystroke.
+//! "stdin closed, so stop" — and, when the binary is replaced, becoming the new
+//! one in place (`reload.rs`, DEC-050). Everything it answers, the CLI can
+//! answer too; what it adds is not paying 210 ms to rebuild the tree on every
+//! keystroke.
 //!
 //! Completion is here because the surface became an editor as well as an
 //! agent's tool (DEC-040, reversing PLAN §1 for completion alone). Still
@@ -16,6 +18,7 @@ mod fresh;
 mod handlers;
 mod inbox;
 pub(crate) mod log;
+mod reload;
 mod state;
 mod wire;
 
@@ -66,31 +69,61 @@ fn capabilities() -> ServerCapabilities {
     }
 }
 
+/// How often an otherwise idle server looks at its binary. A stat is ~4 µs,
+/// so this is set by how stale an idle session may go, not by cost.
+const RECHECK: Duration = Duration::from_secs(2);
+
 pub(crate) fn run(verbose: bool) -> anyhow::Result<()> {
-    let log = Log::open(verbose);
-    // Said on stderr, once, because a log nobody can find is not observability.
-    if let Some(path) = Log::where_to_look() {
-        eprintln!("trekr: logging to {}", path.display());
+    if reload::answer_probe() {
+        return Ok(());
     }
-    log.event(
-        "start",
-        serde_json::json!({
-            "pid": std::process::id(),
-            "version": env!("CARGO_PKG_VERSION"),
-            "cwd": std::env::current_dir().unwrap_or_default().to_string_lossy(),
-            "binary": std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned()),
-        }),
-    );
-    let inbox = Inbox::new(wire::Reader::stdin(Vec::new())?);
+    // First, so an upgrade that lands while starting up is still a change.
+    let launched = reload::Launched::now();
+    let log = Log::open(verbose);
+    let mut resumed = match reload::resuming() {
+        None => None,
+        Some(Ok(handoff)) => Some(handoff),
+        Some(Err(error)) => {
+            // The client will not send `initialize` again, so there is no
+            // session to start either. Leaving is what is left: a client that
+            // restarts a server that exits — VS Code's does — starts afresh.
+            log.event(
+                "resume",
+                serde_json::json!({ "ok": false, "error": error.to_string() }),
+            );
+            return Err(error.context("resuming a hot-reloaded session"));
+        }
+    };
+    if resumed.is_none() {
+        // Said on stderr, once, because a log nobody can find is not
+        // observability.
+        if let Some(path) = Log::where_to_look() {
+            eprintln!("trekr: logging to {}", path.display());
+        }
+        log.event(
+            "start",
+            serde_json::json!({
+                "pid": std::process::id(),
+                "version": env!("CARGO_PKG_VERSION"),
+                "cwd": std::env::current_dir().unwrap_or_default().to_string_lossy(),
+                "binary": std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned()),
+            }),
+        );
+    }
+    let unread = resumed
+        .as_mut()
+        .map(|handoff| std::mem::take(&mut handoff.unread))
+        .unwrap_or_default();
+    let inbox = Inbox::new(wire::Reader::stdin(unread)?);
     let writer = wire::Writer::stdout();
-    let result = serve(&inbox, &writer, &log);
+    let result = serve(&inbox, &writer, &log, launched, resumed);
     log.event(
         "stop",
         serde_json::json!({ "error": result.as_ref().err().map(|e| e.to_string()) }),
     );
     // Nothing reads stdin on another thread, so there is no reader to join —
     // and none to leave parked in a read an editor holds open, which is what
-    // once made retirement hang on Linux.
+    // once made retiring hang on Linux.
     writer.finish();
     result
 }
@@ -134,12 +167,28 @@ fn initialize(inbox: &Inbox, writer: &wire::Writer) -> anyhow::Result<serde_json
     }
 }
 
-fn serve(inbox: &Inbox, writer: &wire::Writer, log: &Log) -> anyhow::Result<()> {
-    let binary = Binary::current();
-    let params = initialize(inbox, writer)?;
+fn serve(
+    inbox: &Inbox,
+    writer: &wire::Writer,
+    log: &Log,
+    mut launched: Option<reload::Launched>,
+    resumed: Option<reload::Handoff>,
+) -> anyhow::Result<()> {
+    let resuming = resumed.is_some();
+    // A resumed session skips the handshake: the client did it with the
+    // process this one replaced, and will not do it again.
+    let (params, mut registered, buffers, from) = match resumed {
+        Some(handoff) => (
+            handoff.params,
+            handoff.registered,
+            handoff.documents,
+            Some(handoff.from),
+        ),
+        None => (initialize(inbox, writer)?, Vec::new(), Vec::new(), None),
+    };
     let root = workspace_root(&params);
     log.event(
-        "initialize",
+        if resuming { "resume" } else { "initialize" },
         serde_json::json!({
             // The defect this log was written for: a client whose root is not
             // the repo the queried file lives in. Recording both is what makes
@@ -151,6 +200,9 @@ fn serve(inbox: &Inbox, writer: &wire::Writer, log: &Log) -> anyhow::Result<()> 
                 .get("workspaceFolders")
                 .and_then(|f| f.as_array())
                 .map(|f| f.len()),
+            "from": from,
+            "version": resuming.then_some(env!("CARGO_PKG_VERSION")),
+            "documents": resuming.then_some(buffers.len()),
         }),
     );
     log.detail("initialize_params", || params.clone());
@@ -159,15 +211,22 @@ fn serve(inbox: &Inbox, writer: &wire::Writer, log: &Log) -> anyhow::Result<()> 
     let spelling = Spelling::of(&params, &root);
     let store = crate::store::open_default()?;
     let mut session = Session::open(root.clone(), store);
+    for buffer in buffers {
+        session.did_open(buffer.path, buffer.text, buffer.version);
+    }
     let mut indexer = fresh::Indexer::new(client.progress, client.index);
 
-    if client.watch {
+    if client.watch && !registered.iter().any(|id| id == WATCH) {
         // Changes the editor does not make — a checkout, a pull, a formatter —
         // only reach us if the client watches for them on our behalf.
         writer.send(watch_request())?;
+        registered.push(WATCH.to_string());
     }
     // A Ruby project nobody has indexed: start now, so the first question
     // finds more than core and gems. Anywhere else waits to be asked about.
+    // A resumed build whose store VERSION moved lands here too: opening the
+    // store dropped the index (DEC-009), and answers are partial until this
+    // background run refills it.
     if root.join("Gemfile").is_file() && !session.indexed(&root) {
         indexer.want(root.clone(), false);
     }
@@ -179,6 +238,25 @@ fn serve(inbox: &Inbox, writer: &wire::Writer, log: &Log) -> anyhow::Result<()> 
             // A finished index moves the tree; warm it again when quiet.
             warm = Warm::Cold;
             writer.send(message)?;
+        }
+        // The one safe moment to become another program: nothing read and
+        // unanswered, and no index child whose progress the successor could
+        // not end.
+        if let Some(watch) = &mut launched
+            && !indexer.busy()
+            && inbox.is_quiet()
+            && let Some(stamp) = watch.changed()
+        {
+            let current = Current {
+                params: &params,
+                registered: &registered,
+                session: &session,
+                inbox,
+                writer,
+            };
+            if swap(watch, stamp, current, log) == Swap::Retire {
+                return Ok(());
+            }
         }
         // Nothing to answer: build what the first questions would otherwise
         // pay for — the root's tree, then completion's member listing — one
@@ -206,8 +284,10 @@ fn serve(inbox: &Inbox, writer: &wire::Writer, log: &Log) -> anyhow::Result<()> 
         // arrived; while an index runs, wake periodically to notice it finish.
         let timeout = if warm < Warm::Done {
             Some(Duration::ZERO)
+        } else if indexer.busy() {
+            Some(Duration::from_millis(250))
         } else {
-            indexer.busy().then_some(Duration::from_millis(250))
+            launched.is_some().then_some(RECHECK)
         };
         let message = match inbox.next(timeout) {
             Next::Message(message) => message,
@@ -242,25 +322,6 @@ fn serve(inbox: &Inbox, writer: &wire::Writer, log: &Log) -> anyhow::Result<()> 
                 };
                 inbox.settle(&id);
                 writer.send(Message::Response(response))?;
-                // Answer first, then check whether this build is still the
-                // current one. A server that keeps serving after its binary
-                // has been replaced is silent staleness — the bug class this
-                // engine hunts everywhere else — and it cost two manual
-                // `pkill`s a session to notice.
-                if let Some(built) = &binary
-                    && built.superseded()
-                {
-                    log.event(
-                        "retire",
-                        serde_json::json!({
-                            "reason": "the binary on disk is newer than this process",
-                            "path": built.path.to_string_lossy(),
-                        }),
-                    );
-                    // `run` finishes the writer, so the response above is
-                    // written before the process goes.
-                    return Ok(());
-                }
             }
             Message::Notification(notification) => {
                 if notification.method == lsp_types::notification::Exit::METHOD {
@@ -357,33 +418,92 @@ fn cancelled(id: RequestId) -> Response {
     )
 }
 
-/// The executable this process is running, and when it was written.
-///
-/// Checked after each request so a replaced binary is noticed within one query
-/// rather than whenever somebody thinks to look. The editor owns the process
-/// lifecycle (PLAN §1), so retiring is the whole mechanism: exit cleanly and
-/// the client spawns the new build on its next request.
-struct Binary {
-    path: PathBuf,
-    modified: std::time::SystemTime,
+/// What a successor needs from the running session.
+struct Current<'a> {
+    params: &'a serde_json::Value,
+    registered: &'a [String],
+    session: &'a Session,
+    inbox: &'a Inbox,
+    writer: &'a wire::Writer,
 }
 
-impl Binary {
-    fn current() -> Option<Binary> {
-        let path = std::env::current_exe().ok()?;
-        let modified = std::fs::metadata(&path).ok()?.modified().ok()?;
-        Some(Binary { path, modified })
-    }
+#[derive(PartialEq)]
+enum Swap {
+    /// Keep serving on this build.
+    Stay,
+    /// Exit, so the client starts the new build afresh.
+    Retire,
+}
 
-    /// Has the file been replaced since this process started?
-    ///
-    /// A missing or unreadable file is *not* superseded: a binary mid-replace
-    /// would otherwise retire every server on the machine at once.
-    fn superseded(&self) -> bool {
-        std::fs::metadata(&self.path)
-            .and_then(|meta| meta.modified())
-            .is_ok_and(|now| now > self.modified)
-    }
+/// The binary at the launch path changed: become it, carrying the session.
+///
+/// A server that keeps serving after its binary is replaced is silent
+/// staleness — the bug class this engine hunts everywhere else. Retiring (exit
+/// and let the client restart) fixed that at a cost: the warmed tree and
+/// listing, a restart counted against the client's crash budget, and — in a
+/// client that does not restart servers — the server itself. Exec keeps the
+/// pid and the pipes, so the client sees nothing.
+///
+/// Returns only when that could not happen.
+fn swap(launched: &mut reload::Launched, stamp: reload::Stamp, now: Current, log: &Log) -> Swap {
+    let path = launched.path().to_string_lossy().into_owned();
+    let failed = |launched: &mut reload::Launched, error: String, retry: bool| {
+        log.event(
+            "reload_failed",
+            serde_json::json!({ "path": path, "error": error, "retry": retry }),
+        );
+        // A refusal that would recur is not retried at every quiet moment;
+        // the next change to the file is tried afresh.
+        if !retry {
+            launched.settle(stamp);
+        }
+        Swap::Stay
+    };
+    let started = std::time::Instant::now();
+    let version = match reload::probe(launched.path()) {
+        reload::Candidate::Resumable { version } => version,
+        reload::Candidate::Unresumable { reason } => {
+            // Serving a stale build is worse than a restart.
+            log.event(
+                "retire",
+                serde_json::json!({ "reason": reason, "path": path }),
+            );
+            return Swap::Retire;
+        }
+        reload::Candidate::Broken { reason, transient } => {
+            return failed(launched, reason, transient);
+        }
+    };
+    let handoff = reload::Handoff::new(
+        now.params.clone(),
+        now.registered.to_vec(),
+        now.session.editor_buffers(),
+        now.inbox.unread(),
+    );
+    let file = match reload::write_handoff(&handoff) {
+        Ok(file) => file,
+        Err(error) => return failed(launched, error.to_string(), false),
+    };
+    log.event(
+        "reload",
+        serde_json::json!({
+            "from": env!("CARGO_PKG_VERSION"),
+            "to": version,
+            "path": path,
+            "documents": handoff.documents.len(),
+            "unread": handoff.unread.len(),
+            // Asking the new build, and writing the handoff: what the swap
+            // costs before the exec.
+            "ms": started.elapsed().as_millis() as u64,
+        }),
+    );
+    // Everything answered so far goes out under this build.
+    now.writer.flush();
+    let error = reload::exec(launched.path(), &file);
+    // Still here: the exec failed, and this build keeps the session.
+    let _ = std::fs::remove_file(&file);
+    let busy = error.kind() == std::io::ErrorKind::ExecutableFileBusy;
+    failed(launched, error.to_string(), busy)
 }
 
 /// The workspace folder, from whichever field the client used.
@@ -771,15 +891,19 @@ impl Client {
     }
 }
 
+/// The id of the file-watch registration — carried across a reload, because
+/// the client still holds it.
+const WATCH: &str = "trekr-watch";
+
 /// Ask the client to report changes to Ruby files. A branch switch arrives as
 /// a burst of these, which is what tips a batch into a full index.
 fn watch_request() -> Message {
     Message::Request(Request::new(
-        RequestId::from("trekr-watch".to_string()),
+        RequestId::from(WATCH.to_string()),
         "client/registerCapability".into(),
         serde_json::json!({
             "registrations": [{
-                "id": "trekr-watch",
+                "id": WATCH,
                 "method": "workspace/didChangeWatchedFiles",
                 "registerOptions": {
                     "watchers": [

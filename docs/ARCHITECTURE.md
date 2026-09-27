@@ -305,7 +305,8 @@ receiver shape, which is where layer 3 will start.
 
 `trekr --lsp` (`src/serve/`) is a resident front over the same store: the CLI's
 answers in LSP's clothing, plus what only a resident process can do cheaply.
-The editor owns its lifetime; it retires itself when its binary is replaced.
+The editor owns its lifetime. When its binary is replaced, the server becomes
+the new binary in place (DEC-050).
 
 | module | owns |
 |---|---|
@@ -317,6 +318,7 @@ The editor owns its lifetime; it retires itself when its binary is replaced.
 | `complete.rs` | completion (DEC-040) |
 | `fresh.rs` | refresh-on-save and the background `--index` child (DEC-039) |
 | `convert.rs` | UTF-16 ↔ byte columns, spans, a per-file line index |
+| `reload.rs` | hot reload: the launch-path stamp, probing the new build, the handoff file, the exec |
 | `log.rs` | the ndjson log `--usage` reads |
 
 **Mapping ranked answers onto LSP**, which has no confidence field:
@@ -345,6 +347,18 @@ listing is built by a worker on its own connection and tree, which hands back
 only the listing (DEC-044). The listing streams every method row past the
 tree rather than loading them into it (DEC-045), so the session's tree stays
 demand-loaded. Background indexing is a child process, not a thread (DEC-039).
+
+**Hot reload** (DEC-050). The loop stats the file it was launched as (argv[0],
+through symlinks) at every quiet moment, and every 2 s when idle. When that
+file changes, the loop waits for a moment with nothing unanswered and no index
+child running. It then probes the new build (`TREKR_LSP_PROBE`) and writes a
+`0600` handoff. The handoff holds the `initialize` params, the client's
+registrations, the editor's buffers, and any partly read message. The loop
+flushes its output and `exec`s the new build with `TREKR_LSP_RESUME` pointing
+at the handoff. The pid and pipes survive, so the new build resumes without a
+handshake. If the new build does not run, the old one keeps serving. If it
+runs but cannot resume, the server retires (exits) so the client restarts it.
+The log records `reload`, `resume`, `reload_failed` and `retire`.
 
 ## Measurements
 

@@ -372,6 +372,21 @@ impl Session {
             .map(|d| d.text.as_str())
     }
 
+    /// The editor's copies, for a successor process to restore.
+    pub(crate) fn editor_buffers(&self) -> Vec<super::reload::Buffer> {
+        self.open
+            .iter()
+            .filter_map(|(path, d)| match d.origin {
+                Origin::Editor { version } => Some(super::reload::Buffer {
+                    path: path.clone(),
+                    version,
+                    text: d.text.clone(),
+                }),
+                Origin::Disk { .. } => None,
+            })
+            .collect()
+    }
+
     /// Every file the editor has open under `root`, with its text.
     pub(crate) fn editor_documents_under(&self, root: &Path) -> Vec<(PathBuf, String)> {
         self.open

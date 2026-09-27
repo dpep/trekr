@@ -34,6 +34,10 @@ by every worktree of the repo and kept current as you save.
 | `trekr.features` | all | Which features are active. Remove one to leave it to another extension. |
 | `trekr.index` | `true` | Index an unindexed checkout in the background. |
 
+Upgrading trekr (`brew upgrade trekr`) needs no restart. The running server
+switches to the new binary within a couple of seconds and keeps your open
+files and unsaved edits.
+
 Commands: **trekr: Restart Language Server**, **trekr: Show Output**. The
 server's own log is `lsp.log` beside trekr's database (`trekr --usage`
 summarises it).

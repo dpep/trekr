@@ -4,13 +4,14 @@
 //! buffered `Stdin`, and parks each parsed message in a rendezvous `send`. At
 //! any instant that thread may hold bytes it has taken off the pipe and not yet
 //! delivered — which is invisible, and fine, until the process wants to `exec`
-//! a successor on the same pipes: exec destroys them, and the client's next
-//! message is gone. So input is read here, from the raw descriptor, by the
+//! a successor on the same pipes (`reload.rs`, DEC-050): exec destroys them,
+//! and the client's next message is gone. So input is read here, from the raw descriptor, by the
 //! thread that also decides when to exec. Every byte taken off the pipe is in
-//! the reader's buffer or already parsed, and nothing is read in between.
+//! [`Reader::unread`] or already parsed, and nothing is read in between.
 //!
 //! Output keeps a writer thread, so a client slow to read cannot stall the
-//! loop.
+//! loop; [`Writer::flush`] is the barrier that says everything sent is on the
+//! wire.
 
 use lsp_server::Message;
 use std::fs::File;
@@ -92,6 +93,12 @@ impl Reader {
     pub(crate) fn is_closed(&self) -> bool {
         self.closed
     }
+
+    /// Bytes read and not yet a whole message — what a successor must be
+    /// handed, or they are lost.
+    pub(crate) fn unread(&self) -> &[u8] {
+        &self.buffer
+    }
 }
 
 /// How long the frame at the start of `buffer` is, headers and all: `None`
@@ -135,21 +142,34 @@ fn readable(input: &File, timeout: Option<Duration>) -> bool {
 
 /// Messages to stdout, from a thread of their own.
 pub(crate) struct Writer {
-    sender: mpsc::Sender<Message>,
+    sender: mpsc::Sender<Out>,
     thread: std::thread::JoinHandle<()>,
+}
+
+enum Out {
+    Message(Message),
+    /// Answered once everything queued before it has been written.
+    Flush(mpsc::Sender<()>),
 }
 
 impl Writer {
     pub(crate) fn stdout() -> Writer {
-        let (sender, receiver) = mpsc::channel::<Message>();
+        let (sender, receiver) = mpsc::channel::<Out>();
         let thread = std::thread::spawn(move || {
             let stdout = io::stdout();
             let mut stdout = stdout.lock();
-            for message in receiver {
-                // `write` flushes each message. A failed write is the client
-                // gone; the next `send` reports it.
-                if message.write(&mut stdout).is_err() {
-                    return;
+            for out in receiver {
+                match out {
+                    // `write` flushes each message. A failed write is the
+                    // client gone; the next `send` reports it.
+                    Out::Message(message) => {
+                        if message.write(&mut stdout).is_err() {
+                            return;
+                        }
+                    }
+                    Out::Flush(done) => {
+                        let _ = done.send(());
+                    }
                 }
             }
         });
@@ -158,8 +178,16 @@ impl Writer {
 
     pub(crate) fn send(&self, message: Message) -> anyhow::Result<()> {
         self.sender
-            .send(message)
+            .send(Out::Message(message))
             .map_err(|_| anyhow::anyhow!("the client stopped reading"))
+    }
+
+    /// Wait until everything sent so far is on the wire.
+    pub(crate) fn flush(&self) {
+        let (done, wait) = mpsc::channel();
+        if self.sender.send(Out::Flush(done)).is_ok() {
+            let _ = wait.recv();
+        }
     }
 
     /// Write what is queued, then stop.
@@ -193,14 +221,16 @@ mod tests {
         let mut reader = reader_over(head, Vec::new());
         assert!(reader.fill(Some(Duration::ZERO)));
         assert!(reader.message().is_none());
+        assert_eq!(reader.unread(), head, "held, not dropped");
 
         // A successor handed those bytes finishes the message from the pipe.
-        let mut successor = reader_over(tail, head.to_vec());
+        let mut successor = reader_over(tail, reader.unread().to_vec());
         successor.fill(Some(Duration::ZERO));
         let Some(Message::Notification(n)) = successor.message() else {
             panic!("the message completes across the handoff");
         };
         assert_eq!(n.method, "initialized");
+        assert!(successor.unread().is_empty());
     }
 
     #[test]

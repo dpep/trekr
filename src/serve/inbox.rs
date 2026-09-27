@@ -53,6 +53,11 @@ impl Inbox {
         }
     }
 
+    /// Bytes read and not yet a whole message.
+    pub(crate) fn unread(&self) -> Vec<u8> {
+        self.reader.borrow().unread().to_vec()
+    }
+
     /// Nothing buffered and nothing waiting — the moment for background work.
     pub(crate) fn is_quiet(&self) -> bool {
         self.drain();

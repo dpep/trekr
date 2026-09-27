@@ -1197,26 +1197,15 @@ fn incoming_calls_name_the_method_each_call_sits_in() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// A server whose binary has been replaced must retire itself.
-///
-/// Refreshing the installed binary left the running server answering with the
-/// old build until somebody remembered to kill it — silent staleness, and the
-/// editor owns the lifecycle, so exiting cleanly *is* the fix: the client
-/// spawns the new build on its next request.
-#[test]
-fn serve_retires_when_its_binary_is_replaced() {
-    let (dir, db) = scratch("retire");
-    repo(&dir);
-
-    // Its own copy, so replacing it cannot disturb the other tests.
-    let binary = dir.join("trekr-under-test");
-    fs::copy(env!("CARGO_BIN_EXE_trekr"), &binary).unwrap();
+/// Start a server from `binary` — the test's own copy, at a path the test can
+/// then replace, which is the whole subject of the hot-reload tests.
+fn start_from(binary: &Path, db: &Path, dir: &Path) -> Session {
     let spawn = || {
         isolated(binary.to_str().unwrap())
             .arg("--lsp")
-            .current_dir(&dir)
-            .env("TREKR_DB", &db)
-            .env("TREKR_LOG", log_path(&db))
+            .current_dir(dir)
+            .env("TREKR_DB", db)
+            .env("TREKR_LOG", log_path(db))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -1236,67 +1225,310 @@ fn serve_retires_when_its_binary_is_replaced() {
             Err(e) => panic!("start the copied binary: {e:?}"),
         }
     };
-    let mut session = Session {
+    Session {
         stdin: Some(child.stdin.take().unwrap()),
         stdout: BufReader::new(child.stdout.take().unwrap()),
         child,
         next_id: 0,
-    };
-    session.initialize(&dir);
-
-    // Still current: the server answers and stays up.
-    let before = session.request(
-        "textDocument/documentSymbol",
-        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
-    );
-    assert!(before["result"].is_array(), "answers while current");
-
-    // Replace it with a newer file, the way `rm && cp` does. Written rather
-    // than `fs::copy`d: on macOS that preserves the *source's* mtime, so the
-    // replacement would look no newer than what it replaced.
-    std::thread::sleep(std::time::Duration::from_millis(1100));
-    fs::remove_file(&binary).unwrap();
-    fs::write(&binary, fs::read(env!("CARGO_BIN_EXE_trekr")).unwrap()).unwrap();
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
     }
+}
 
-    // It answers this one, then goes.
-    let after = session.request(
+/// Put `bytes` at `path` as a new file — a new inode, the way an installer
+/// renames one into place.
+fn install(path: &Path, bytes: &[u8], mode: u32) {
+    use std::os::unix::fs::PermissionsExt;
+    let staged = path.with_extension("staged");
+    fs::write(&staged, bytes).unwrap();
+    fs::set_permissions(&staged, fs::Permissions::from_mode(mode)).unwrap();
+    fs::rename(&staged, path).unwrap();
+}
+
+fn the_binary() -> Vec<u8> {
+    fs::read(env!("CARGO_BIN_EXE_trekr")).unwrap()
+}
+
+/// The first logged `event`, waiting for it to appear. An idle server looks at
+/// its binary every couple of seconds, so this is what "trigger the check" is.
+fn logged(db: &Path, event: &str) -> serde_json::Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        if let Some(line) = log_lines(db).into_iter().find(|l| l["event"] == event) {
+            return line;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no {event} event: {:?}",
+            log_lines(db)
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// On disk: a `Widget#save`. In the editor, unsaved: a second method, and a
+/// call to `save` — what a reload must not lose.
+const SAVED: &str = "class Widget\n  def save\n  end\nend\n";
+const UNSAVED: &str = concat!(
+    "class Widget\n",       // 1
+    "  def save\n",         // 2
+    "  end\n",              // 3
+    "  def unsaved_edit\n", // 4
+    "  end\n",              // 5
+    "end\n",                // 6
+    "w = Widget.new\n",     // 7
+    "w.save\n",             // 8
+);
+
+/// A session with `app.rb` open and edited but not saved, served from a copy
+/// of the binary at `binary`.
+fn edited_session(label: &str, binary: &Path) -> (PathBuf, PathBuf, Session) {
+    let (dir, db) = scratch(label);
+    ruby_repo(&dir, &db, SAVED);
+    let mut session = start_from(binary, &db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": SAVED
+        }}),
+    );
+    session.notify(
+        "textDocument/didChange",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb"), "version": 2},
+            "contentChanges": [{"text": UNSAVED}],
+        }),
+    );
+    assert_the_unsaved_buffer_is_honored(&mut session, &dir);
+    (dir, db, session)
+}
+
+/// Both answers come from the editor's copy: the outline has the unsaved
+/// method, and the only call to `save` exists nowhere but the buffer.
+fn assert_the_unsaved_buffer_is_honored(session: &mut Session, dir: &Path) {
+    let outline = session.request(
         "textDocument/documentSymbol",
-        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+        serde_json::json!({"textDocument": {"uri": uri_of(dir, "app.rb")}}),
     );
     assert!(
-        after["result"].is_array(),
-        "the in-flight request is answered"
+        outline_names(&outline["result"]).contains(&"unsaved_edit".to_string()),
+        "{outline}"
+    );
+    assert_eq!(reference_lines(session, dir, 1, 6, false), [8]);
+}
+
+fn bin_dir(dir: &Path) -> PathBuf {
+    // Outside the repo, so a new file in it is not a change to the checkout.
+    let bin = dir.with_extension("bin");
+    let _ = fs::remove_dir_all(&bin);
+    fs::create_dir_all(&bin).unwrap();
+    bin
+}
+
+/// Replacing the binary under a running server — `cargo build`, a reinstall —
+/// hands the session to the new build in place. Same process, same pipes: the
+/// editor keeps its connection, and the new build knows the unsaved buffer
+/// without being told again.
+#[test]
+fn a_replaced_binary_takes_over_the_session_in_place() {
+    let (_, scratch_db) = scratch("reload-bin");
+    let bin = bin_dir(&scratch_db);
+    let binary = bin.join("trekr");
+    install(&binary, &the_binary(), 0o755);
+    let (dir, db, mut session) = edited_session("reload", &binary);
+    let pid = session.child.id();
+
+    install(&binary, &the_binary(), 0o755);
+    // Nothing is asked: an idle server notices on its own.
+    let reload = logged(&db, "reload");
+    assert_eq!(reload["documents"], 1, "the edited buffer went with it");
+    let resume = logged(&db, "resume");
+    assert_eq!(resume["documents"], 1);
+
+    assert_the_unsaved_buffer_is_honored(&mut session, &dir);
+    // Edits keep flowing into the resumed session.
+    session.notify(
+        "textDocument/didChange",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb"), "version": 3},
+            "contentChanges": [{"text": format!("{UNSAVED}w.save\n")}],
+        }),
+    );
+    assert_eq!(reference_lines(&mut session, &dir, 1, 6, false), [8, 9]);
+    assert_eq!(session.child.id(), pid);
+    assert!(
+        session.child.try_wait().unwrap().is_none(),
+        "one process throughout"
+    );
+    assert_eq!(
+        log_lines(&db)
+            .iter()
+            .filter(|l| l["event"] == "start")
+            .count(),
+        1,
+        "a resume is not a new session"
     );
 
-    // Wait **without** closing stdin. Closing it makes any server exit, so a
-    // test that closes first cannot tell retirement from ordinary shutdown —
-    // and this one did not, which is how a retirement that logged its event
-    // and then hung forever passed for two sessions. An editor holds stdin
-    // open, so this is also the real situation.
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&bin);
+}
+
+/// `brew upgrade` does not touch the running file: it installs into a new
+/// Cellar directory and re-points the symlink the editor launched. The link is
+/// what is watched, so the relink is the upgrade.
+#[test]
+fn a_relinked_symlink_is_an_upgrade_too() {
+    let (_, scratch_db) = scratch("relink-bin");
+    let bin = bin_dir(&scratch_db);
+    for version in ["v1", "v2"] {
+        fs::create_dir_all(bin.join(version)).unwrap();
+        install(&bin.join(version).join("trekr"), &the_binary(), 0o755);
+    }
+    let link = bin.join("trekr");
+    std::os::unix::fs::symlink(bin.join("v1/trekr"), &link).unwrap();
+    let (dir, db, mut session) = edited_session("relink", &link);
+
+    fs::remove_file(&link).unwrap();
+    std::os::unix::fs::symlink(bin.join("v2/trekr"), &link).unwrap();
+    // Asked straight away, so the question may arrive mid-swap: either build
+    // answers it, and neither loses it.
+    assert_the_unsaved_buffer_is_honored(&mut session, &dir);
+    logged(&db, "resume");
+    assert_the_unsaved_buffer_is_honored(&mut session, &dir);
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&bin);
+}
+
+/// A replacement that cannot run is not exec'd into — that would take the
+/// connection down with it. The old build keeps serving, and a later fix to
+/// the same file is picked up.
+#[test]
+fn a_binary_that_cannot_run_is_not_reloaded_into() {
+    let (_, scratch_db) = scratch("broken-bin");
+    let bin = bin_dir(&scratch_db);
+    let binary = bin.join("trekr");
+    install(&binary, &the_binary(), 0o755);
+    let (dir, db, mut session) = edited_session("broken", &binary);
+
+    install(&binary, &the_binary(), 0o644);
+    let failed = logged(&db, "reload_failed");
+    assert_eq!(failed["retry"], false);
+    assert_the_unsaved_buffer_is_honored(&mut session, &dir);
+    assert!(!log_lines(&db).iter().any(|l| l["event"] == "resume"));
+
+    // `chmod +x` changes nothing but the mode, and that is enough.
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+    logged(&db, "resume");
+    assert_the_unsaved_buffer_is_honored(&mut session, &dir);
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&bin);
+}
+
+/// A new build that cannot read this one's handoff — one from before hot
+/// reload, or a different handoff format — cannot be resumed into. The server
+/// falls back to retiring: it answers what it has, then exits, so a client
+/// that restarts servers (VS Code's does) starts the new build afresh.
+#[test]
+fn a_build_that_cannot_resume_the_session_is_retired_to() {
+    let (_, scratch_db) = scratch("retire-bin");
+    let bin = bin_dir(&scratch_db);
+    let binary = bin.join("trekr");
+    install(&binary, &the_binary(), 0o755);
+    let (dir, db, mut session) = edited_session("retire", &binary);
+
+    // Runs, and knows its version, but serves the probe as a session.
+    install(
+        &binary,
+        b"#!/bin/sh\n[ \"$1\" = --version ] && echo 'trekr 0.0.1' && exit 0\nexit 1\n",
+        0o755,
+    );
+    // Wait **without** closing stdin: closing it makes any server exit, so a
+    // test that closes first cannot tell retiring from ordinary shutdown. An
+    // editor holds stdin open, so this is also the real situation.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
     let status = loop {
         match session.child.try_wait().expect("poll the child") {
             Some(status) => break status,
             None if std::time::Instant::now() > deadline => {
                 let _ = session.child.kill();
-                panic!("the server never exited: it logged retirement and kept running");
+                panic!("the server never retired");
             }
             None => std::thread::sleep(std::time::Duration::from_millis(50)),
         }
     };
     assert!(status.success(), "and cleanly: {status:?}");
+    let retire = logged(&db, "retire");
     assert!(
-        log_lines(&db).iter().any(|l| l["event"] == "retire"),
-        "and says why, so --usage can count restarts"
+        retire["reason"].as_str().unwrap().contains("predates"),
+        "{retire}"
     );
     session.stdin.take();
 
     let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&bin);
+}
+
+/// A new build with a new store VERSION drops the index on open (DEC-009).
+/// The resumed session then has no index behind it — and must behave exactly
+/// like a cold start: answer what it can, index in the background with
+/// progress, and answer fully once that lands. Deleting the database stands in
+/// for the version bump; both leave the new build an empty store.
+#[test]
+fn a_resumed_build_with_an_empty_store_indexes_in_the_background() {
+    let (_, scratch_db) = scratch("rebuild-bin");
+    let bin = bin_dir(&scratch_db);
+    let binary = bin.join("trekr");
+    install(&binary, &the_binary(), 0o755);
+    let (dir, db) = scratch("rebuild");
+    fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
+    ruby_repo(
+        &dir,
+        &db,
+        "class Widget\n  def save\n  end\nend\nw = Widget.new\nw.save\n",
+    );
+    let mut session = start_from(&binary, &db, &dir);
+    session.initialize_with(
+        &dir,
+        serde_json::json!({"window": {"workDoneProgress": true}}),
+    );
+    let uri = uri_of(&dir, "app.rb");
+    assert_eq!(
+        definition_eventually(&mut session, &uri, 5, 3)[0]["range"]["start"]["line"],
+        1
+    );
+
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = fs::remove_file(format!("{}{suffix}", db.display()));
+    }
+    install(&binary, &the_binary(), 0o755);
+    logged(&db, "resume");
+
+    // The resumed build indexes the checkout it was handed, and says so.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no progress from the new build"
+        );
+        let message = session.read();
+        if message["method"] == "$/progress" && message["params"]["value"]["kind"] == "end" {
+            break;
+        }
+    }
+    let answer = definition_eventually(&mut session, &uri, 5, 3);
+    assert_eq!(
+        answer[0]["range"]["start"]["line"], 1,
+        "Widget#save, from the new index"
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&bin);
 }
 
 /// A client that asks for something this server does not do has to be told

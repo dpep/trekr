@@ -2326,3 +2326,104 @@ lockfile back, and requires the next index to re-read it and answer into it.
 case — or if a store is observed where the collectable share is large enough
 (say a quarter) that waiting for someone to run `--gc` is the problem; then a
 bounded sweep during `--index`, off the LSP path, is the next step.
+
+## DEC-050 — A replaced binary takes over the LSP session in place
+
+**Decided.** `trekr --lsp` watches the file it was launched as. When that
+changes, the server waits for a moment with nothing read and unanswered and no
+background index running. It asks the new binary whether it can resume, writes
+a handoff file, flushes its output, and `exec`s the new binary with the same
+argv plus `TREKR_LSP_RESUME=<handoff>`. The pid and the stdio pipes survive
+exec, so the client's connection carries on. The new process reads and deletes
+the handoff, skips the `initialize` handshake the client will not repeat, and
+keeps serving. This replaces retiring (exit, and let the client restart),
+which stays only as a fallback.
+
+**What crosses** (handoff format 1, JSON, `0600`, `create_new` in the temp
+dir):
+
+- `initialize`'s params, verbatim. Root, client capabilities,
+  `initializationOptions` and the client's path spelling all derive from them.
+- The registration ids the client holds (`trekr-watch`). Registering again
+  would duplicate it.
+- The editor's buffers: path, version and full text, since unsaved text is on
+  no disk.
+- Bytes read off stdin that are not yet a whole message.
+
+**What does not.** Trees, completion listings and the disk-read cache are
+rebuilt by the idle warm-up. Progress tokens cannot be open, because the swap
+waits for the `--index` child to finish: the successor does not know the child
+and could never send its `end`. Diagnostics are not republished; the client
+keeps the ones it has until the next edit.
+
+**Why the wire had to move.** lsp-server reads stdin on a thread, through
+std's buffered `Stdin`, and parks each parsed message in a rendezvous `send`.
+Bytes taken off the pipe could sit where the loop cannot see them, and exec
+would destroy them. `serve/wire.rs` reads the raw descriptor with `poll` on the
+loop's own thread, so every byte read is in a buffer the handoff can carry.
+Output keeps a writer thread with a flush barrier. A side effect: with no
+reader thread there is nothing to join, so leaving no longer needs
+`process::exit` to dodge the Linux read that `close` does not wake.
+
+**Detect: the launch path, stamped by inode** (contour's `launch_path` /
+`stamp_of`). This is argv[0], resolved on `PATH` when bare, which is how an
+editor launches `trekr`. It is stat'd through symlinks for (dev, inode, size,
+mtime, mode). `current_exe()` would miss `brew upgrade` on Linux, where it
+resolves through the relinked symlink to the old Cellar file. The inode catches
+a rename-over even when an APFS clone keeps the old mtime. The mode means a
+`chmod +x` on a refused file counts as a change. The stamp is checked at every
+quiet moment, and every 2 s when idle. A stat through brew's symlink costs
+~4 µs (100k stats, measured), against ~0.6 ms for a warm request, so checking
+often costs nothing worth rate-limiting.
+
+**Probe before exec.** If exec succeeds into a binary that then dies, the
+connection dies with it, and nothing can bring it back. So the candidate is run
+first as `--lsp` with `TREKR_LSP_PROBE=1`, stdin closed and logging off. It
+answers `{"handoff": N, "version": …}`. That gives three outcomes:
+
+| candidate | action | logged |
+| --- | --- | --- |
+| reads format `N` = ours | exec | `reload`, then `resume` from the new process |
+| runs but cannot resume: a different `N`, or no answer while `--version` succeeds (a build from before this) | retire: exit 0 so the client starts the new build | `retire` |
+| does not run: not executable, missing, exits with an error, or no answer in 5 s | keep serving; this stamp is not probed again, and the next change to the file is | `reload_failed` |
+
+`ETXTBSY`, a file still open for writing, means an install is in progress, so
+it is retried rather than settled. An exec that fails after a good probe (the
+file replaced again in between) deletes the handoff and keeps serving.
+
+Probe cost on the release build: 20–40 ms warm. The first run of a freshly
+written binary takes 0.66 s, because macOS validates the signature on first
+exec. It is paid once per upgrade, at a quiet moment; a request arriving
+during it waits.
+
+**Who restarts a retired server.** vscode-languageclient's default error
+handler restarts a server whose connection closes, up to five times in three
+minutes (read in 8.1.0). A client without that is no worse off than it was
+before this decision: the user restarts the server from the editor. If a
+resumed process cannot read its handoff despite the probe, it exits non-zero
+for the same reason. The client will not send `initialize` again, so there is
+no session left to start.
+
+**Store VERSION.** A new binary with a new schema VERSION drops the index when
+it opens the store (DEC-009; `--gc` moved 21 → 22). The resumed server is then
+a cold start that still has its session. A root with a Gemfile is indexed in
+the background with progress, and answers are partial until that finishes. The
+e2e test deletes the database under a running server to stand in for this.
+
+**Not chosen.**
+
+- **Retiring only** (the design before this). It fixed staleness at a cost:
+  the warmed tree and listing (0.2–0.5 s on a large app), a restart counted
+  against the client's crash budget, and the whole server in any client that
+  does not restart one.
+- **A proxy parent that owns the pipes and respawns a child** (contour's
+  DEC-025 idea). That is an extra process in every session to handle an event
+  that happens once per upgrade. Exec gets the same continuity with no extra
+  process.
+- **Carrying queued messages.** Not needed, because the swap waits for a quiet
+  inbox. Only a partial frame can be pending, and it crosses as bytes.
+
+**Reverses if** a client is found that notices the swap: one that tracks the
+server's executable, or treats an unchanged pid with new behaviour as an error.
+It would also reverse if a stdio transport appears whose descriptors do not
+survive exec.
