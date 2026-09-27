@@ -889,6 +889,104 @@ fn hover_on_a_guess_says_so_in_plain_words() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Following a definition into a gem lands in a file outside the checkout,
+/// and navigation has to keep working from there. The server placed the file
+/// in the app that answers for it, then failed to find it under the app's
+/// root, and answered nothing at all.
+#[test]
+fn navigation_keeps_working_inside_a_gem_file() {
+    let (dir, db) = scratch("inside-gem");
+    let gem_home = PathBuf::from(format!("{}-gems", dir.display()));
+    let _ = fs::remove_dir_all(&gem_home);
+    let lib = gem_home.join("gems/shelf-1.0.0/lib");
+    fs::create_dir_all(&lib).unwrap();
+    let gem_source = concat!(
+        "module Shelf\n", // 0
+        "  class Box\n",  // 1
+        "    def fill\n", // 2
+        "    end\n",      // 3
+        "\n",             // 4
+        "    def pack\n", // 5
+        "      fill\n",   // 6
+        "    end\n",      // 7
+        "  end\n",        // 8
+        "end\n",          // 9
+    );
+    let gem_file = lib.join("shelf.rb");
+    fs::write(&gem_file, gem_source).unwrap();
+    git(&dir, &["init", "-q"]);
+    fs::write(
+        dir.join("Gemfile.lock"),
+        "GEM\n  remote: https://rubygems.org/\n  specs:\n    shelf (1.0.0)\n\nDEPENDENCIES\n  shelf\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("app.rb"),
+        "class Job\n  def run\n    Shelf::Box.new.fill\n  end\nend\n",
+    )
+    .unwrap();
+    commit_all(&dir);
+    let indexed = trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .env("GEM_HOME", &gem_home)
+        .output()
+        .unwrap();
+    assert!(indexed.status.success());
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let uri = format!("file://{}", gem_file.display());
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri, "languageId": "ruby", "version": 1, "text": gem_source
+        }}),
+    );
+    let at = |line: u32, character: u32| {
+        serde_json::json!({
+            "textDocument": {"uri": uri},
+            "position": {"line": line, "character": character},
+            "context": {"includeDeclaration": false},
+        })
+    };
+
+    let definition = session.request("textDocument/definition", at(6, 6));
+    let locations = definition["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a definition from inside the gem: {definition}"));
+    assert_eq!(locations.len(), 1, "{definition}");
+    assert!(
+        locations[0]["uri"].as_str().unwrap().ends_with("/shelf.rb"),
+        "{definition}"
+    );
+    assert_eq!(locations[0]["range"]["start"]["line"], 2, "{definition}");
+
+    let hover = session.request("textDocument/hover", at(6, 6));
+    let text = hover["result"]["contents"]["value"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(text.contains("fill"), "{hover}");
+
+    // The app's callers of the gem's method, the checkout being the evidence.
+    let references = session.request("textDocument/references", at(2, 8));
+    let found = references["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("references from inside the gem: {references}"));
+    assert!(
+        found.iter().any(|location| {
+            location["uri"].as_str().unwrap().ends_with("/app.rb")
+                && location["range"]["start"]["line"] == 2
+        }),
+        "{references}"
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&gem_home);
+}
+
 /// Gems' own docs are much of the value: hovering a gem method shows what the
 /// gem wrote, and says which gem.
 #[test]

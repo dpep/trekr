@@ -127,7 +127,7 @@ fn target(
     position: lsp_types::Position,
 ) -> Option<(Located, crate::core::Pos)> {
     let path = convert::uri_to_path(uri.as_str())?;
-    let located = session.locate(&path)?;
+    let located = session.locate_query(&path)?;
     let text = session.document(&located.absolute)?.text.clone();
     Some((located, to_pos(&text, position)))
 }
@@ -183,7 +183,7 @@ fn required_at(
         .find(|r| r.span.contains(&offset))?
         .clone();
     let range = LineIndex::new(&document.text).range(require.span.clone());
-    let root = session.locate(&file).map(|located| located.root);
+    let root = session.locate_query(&file).map(|located| located.root);
     let cx = require::Context {
         file: &file,
         root: root.as_deref(),
@@ -326,7 +326,7 @@ pub(crate) fn document_link(
     }
     let text = document.text.clone();
     let lines = LineIndex::new(&text);
-    let root = session.locate(&file).map(|located| located.root);
+    let root = session.locate_query(&file).map(|located| located.root);
     let cx = require::Context {
         file: &file,
         root: root.as_deref(),
@@ -1751,7 +1751,7 @@ fn callee_item(
     facts: &crate::core::Facts,
     call: &crate::core::Call,
 ) -> Option<CallHierarchyItem> {
-    let located = session.locate(path)?;
+    let located = session.locate_query(path)?;
     let tree = session.tree(&located.root).ok()?;
     let answer = crate::resolve::method_at(tree, facts, call, &located.relative);
     let site = answer.sites.first()?;
@@ -1814,7 +1814,7 @@ pub(crate) fn incoming_calls(
     };
     // The item names a file, and that file's checkout is the one to search —
     // the client's workspace is not necessarily either.
-    let Some(located) = session.locate(&path) else {
+    let Some(located) = session.locate_query(&path) else {
         return Ok(None);
     };
     let root = located.root.clone();

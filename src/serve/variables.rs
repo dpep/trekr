@@ -263,7 +263,7 @@ fn class_files(
     if owner.nesting.is_empty() {
         return None;
     }
-    let located = session.locate(file)?;
+    let located = session.locate_query(file)?;
     let tree = session.tree(&located.root).ok()?;
     let fqn = tree.scope_fqn(&owner.nesting)?;
     tree.kind_of(&fqn)?;

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Navigation works inside a gem's file in the editor.** After following a
+  definition into a gem outside the checkout, definition, hover, references
+  and completion answered nothing there, while `trekr --def` on the same
+  position answered. The server now answers from the app whose bundle holds
+  the gem, as the CLI does.
+
 - **`--dead` with scopes in two checkouts weighs each against its own.**
   `trekr --dead lib ../worktree/lib` used the first path's checkout as the
   evidence for both, so the answer depended on argument order. A path that

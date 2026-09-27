@@ -136,7 +136,7 @@ pub(crate) fn completion(
     let Some((start, prefix, context)) = context(&text, offset) else {
         return Ok(Some(empty(false)));
     };
-    let Some(located) = session.locate(&path) else {
+    let Some(located) = session.locate_query(&path) else {
         return Ok(Some(empty(false)));
     };
 

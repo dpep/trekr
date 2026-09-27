@@ -82,7 +82,8 @@ struct Checkout {
 /// A file, placed in the checkout that owns it.
 pub(crate) struct Located {
     pub(crate) root: PathBuf,
-    /// The path as the index knows it: relative to `root`.
+    /// The path as the index knows it: relative to `root`, or absolute for a
+    /// gem's file answered from an app (`locate_query`).
     pub(crate) relative: String,
     pub(crate) absolute: PathBuf,
 }
@@ -206,13 +207,42 @@ impl Session {
             .unwrap_or(false)
     }
 
-    /// The checkout a file belongs to, and its path within it.
+    /// The checkout a file belongs to, and its path within it. `None` for a
+    /// file outside it — a gem's, which is answered from an app but is not
+    /// that app's to write (see `locate_query`).
     ///
     /// Both sides are canonicalized before comparing: the store keys checkouts
     /// on git's real path, and an editor sends the one the user typed — which
     /// on macOS differ by `/var` being a symlink to `/private/var`. Comparing
     /// them textually silently matches nothing.
     pub(crate) fn locate(&mut self, path: &Path) -> Option<Located> {
+        let (root, absolute) = self.answering(path)?;
+        let relative = absolute.strip_prefix(&root).ok()?.to_string_lossy();
+        Some(Located {
+            relative: relative.into_owned(),
+            absolute,
+            root,
+        })
+    }
+
+    /// Where a question about a file is answered: `locate`, and for a gem's
+    /// file the app whose bundle holds it, with the path absolute — as the
+    /// tree names a gem's sites.
+    pub(crate) fn locate_query(&mut self, path: &Path) -> Option<Located> {
+        let (root, absolute) = self.answering(path)?;
+        let relative = match absolute.strip_prefix(&root) {
+            Ok(inside) => inside.to_string_lossy().into_owned(),
+            Err(_) => absolute.to_string_lossy().into_owned(),
+        };
+        Some(Located {
+            relative,
+            absolute,
+            root,
+        })
+    }
+
+    /// The checkout that answers for a file, and the file's canonical path.
+    fn answering(&mut self, path: &Path) -> Option<(PathBuf, PathBuf)> {
         let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
         let directory = absolute.parent()?.to_path_buf();
         let root = match self.enclosing.get(&directory) {
@@ -239,12 +269,7 @@ impl Session {
                 found
             }
         }?;
-        let relative = absolute.strip_prefix(&root).ok()?.to_string_lossy();
-        Some(Located {
-            relative: relative.into_owned(),
-            absolute,
-            root,
-        })
+        Some((root, absolute))
     }
 
     /// A checkout's assembled namespace, rebuilt only when the index beneath it
