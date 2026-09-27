@@ -253,7 +253,10 @@ to surprise you:
   *in that file* — not only the writes that reach the read, and not the
   class's other files.
 - A `super` that lands in Ruby core is only as right as trekr's core stubs
-  ([src/tree/core.rb](src/tree/core.rb)) are complete.
+  ([src/tree/core.rb](src/tree/core.rb)) are complete, and a chain typed
+  through a core method (`x.gsub(a, b).downcase`) takes Ruby 3.4's documented
+  return type, even where a subclass such as ActiveSupport's `SafeBuffer`
+  returns its own.
 - ERB templates are not read, and `refine` is not modeled.
 
 ## Development

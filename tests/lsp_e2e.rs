@@ -585,12 +585,105 @@ fn a_core_method_lands_on_a_readable_stub_rather_than_nothing() {
     );
     let locations = answer["result"].as_array().expect("a location, not null");
     let uri = locations[0]["uri"].as_str().unwrap();
-    assert!(uri.ends_with("core.rb"), "lands in the core stub: {uri}");
-    let path = uri.strip_prefix("file://").unwrap();
+    // A file named for the owner, so a peek list says whose method it is.
     assert!(
-        fs::read_to_string(path).unwrap().contains("def puts"),
-        "and the file is really there and really readable"
+        uri.ends_with("/core/Kernel.rb"),
+        "lands in Kernel's stub: {uri}"
     );
+    let path = uri.strip_prefix("file://").unwrap();
+    let line = locations[0]["range"]["start"]["line"].as_u64().unwrap() as usize;
+    let text = fs::read_to_string(path).expect("the file is really there");
+    assert_eq!(
+        text.lines().nth(line).map(str::trim),
+        Some("def puts(*objects)"),
+        "the line a peek shows is the signature, with no `; end`"
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// The editor's peek list shows a file name and the target's first line, so a
+/// core candidate has to say whose it is and read as a signature. And a chain
+/// the core stub types resolves instead of offering every owner of the name.
+#[test]
+fn core_targets_read_as_their_owners_signatures() {
+    let (dir, db) = scratch("core-peek");
+    git(&dir, &["init", "-q"]);
+    let source =
+        "class W\n  def go(x)\n    x.downcase\n    x.gsub(/a/, \"\").downcase\n  end\nend\n";
+    fs::write(dir.join("app.rb"), source).unwrap();
+    commit_all(&dir);
+    trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+    // What a peek list shows for each location: the file's name and its line.
+    let mut peek = |line: u32, character: u32| -> Vec<(String, String)> {
+        let answer = session.request(
+            "textDocument/definition",
+            serde_json::json!({
+                "textDocument": {"uri": uri_of(&dir, "app.rb")},
+                "position": {"line": line, "character": character},
+            }),
+        );
+        answer["result"]
+            .as_array()
+            .expect("locations")
+            .iter()
+            .map(|location| {
+                let path = location["uri"]
+                    .as_str()
+                    .unwrap()
+                    .strip_prefix("file://")
+                    .unwrap();
+                let at = location["range"]["start"]["line"].as_u64().unwrap() as usize;
+                let text = fs::read_to_string(path).unwrap();
+                let name = Path::new(path)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .to_string();
+                (name, text.lines().nth(at).unwrap().trim().to_string())
+            })
+            .collect()
+    };
+
+    // `x` is untyped, so every owner of `downcase` is offered — each by name.
+    let untyped = peek(2, 7);
+    assert!(
+        untyped.contains(&(
+            "String.rb".to_string(),
+            "def downcase(*options)".to_string()
+        )),
+        "{untyped:?}"
+    );
+    assert!(
+        untyped.iter().any(|(file, _)| file == "Symbol.rb"),
+        "{untyped:?}"
+    );
+
+    // `gsub` returns a String whatever `x` is, so there is one answer.
+    assert_eq!(
+        peek(3, 23),
+        [(
+            "String.rb".to_string(),
+            "def downcase(*options)".to_string()
+        )]
+    );
+    let hover = hover_at(&mut session, &dir, 4, 23);
+    assert!(hover.contains("def String#downcase(*options)"), "{hover}");
 
     session.stop();
     let _ = fs::remove_dir_all(&dir);

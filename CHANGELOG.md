@@ -51,6 +51,23 @@
   A collection reader returns a relation, and `firm.clients_of_firm` was
   treated as one Client.
 
+- **A chain is typed from what the previous call returns.** Ruby core's stub
+  now carries Ruby 3.4's return types, so `something.gsub(/x/, "").downcase`
+  goes to `String#downcase` instead of offering Symbol's beside it, and
+  `"x".upcase`, `1.minute` and `[…].flatten.to_set` resolve. When the previous
+  call's receiver is untyped, every definition of its name is asked; the answer
+  is `ambiguous` when some declare no return type. `resolved_via` is `chain` or
+  `chain:name`. On rails, `--refs String#strip` confirms 109 sites, up from 3.
+  A `sig` naming its block `NilClass` or several `sig`s on one method are read
+  as overloads.
+
+- **Core definitions read as their owner's signatures.** A core site's path is
+  `<core>/String.rb` rather than `<core>` (`root` stays `null`), written
+  beside the database as `core/String.rb`, and each stub's first line is the
+  signature with Ruby's parameter names — an editor's peek list reads
+  `String.rb  def downcase(*options)`. The `core.rb` earlier builds wrote
+  there is removed.
+
 ## 0.2.1 — 2026-09-27
 
 - **Upgrading drops and rebuilds the index** (store v29): run `trekr --index`

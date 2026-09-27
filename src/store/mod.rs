@@ -48,29 +48,24 @@ pub(crate) fn default_path() -> anyhow::Result<std::path::PathBuf> {
     })
 }
 
-/// Ruby core, written out beside the database as a real readable file.
+/// Ruby core, written out beside the database as real readable files — one
+/// per owner, `core/String.rb` — and the directory they are in.
 ///
 /// The stub is compiled into the binary, so a definition in it had no location
 /// to point at and every `require` or `Array#each` answered nothing — worse
 /// than ruby-lsp, which at least sends you to an RBS declaration. Writing it
-/// once means "go to definition" lands on a signature a person can read, and
-/// the file says in its header what it is.
-pub(crate) fn core_stub_path() -> anyhow::Result<std::path::PathBuf> {
-    let path = default_path()?
+/// out means "go to definition" lands on a signature a person can read, in a
+/// file whose name says whose it is.
+pub(crate) fn core_dir() -> anyhow::Result<std::path::PathBuf> {
+    let beside = default_path()?
         .parent()
         .unwrap_or(std::path::Path::new("."))
-        .join("core.rb");
-    let wanted = include_str!("../tree/core.rb");
-    // Rewrite only when it differs, so an editor watching the file is not
-    // churned on every index.
-    let current = std::fs::read_to_string(&path).ok();
-    if current.as_deref() != Some(wanted) {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&path, wanted)?;
-    }
-    Ok(path)
+        .to_path_buf();
+    let dir = beside.join("core");
+    crate::tree::materialize_core(&dir)?;
+    // The single file earlier builds wrote, which nothing points into now.
+    let _ = std::fs::remove_file(beside.join("core.rb"));
+    Ok(dir)
 }
 
 /// The database every command uses.

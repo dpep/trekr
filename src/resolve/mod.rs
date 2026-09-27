@@ -1328,7 +1328,7 @@ mod tests {
             let found = answer(source, name);
             assert_eq!(found.status, Status::Resolved, "{name}");
             assert_eq!(found.owner.as_deref(), Some("Kernel"), "{name}");
-            assert_eq!(found.sites[0].path, crate::tree::CORE_PATH);
+            assert_eq!(found.sites[0].path, "<core>/Kernel.rb");
         }
     }
 

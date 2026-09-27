@@ -2086,3 +2086,61 @@ The candidates no longer depend on what else is indexed (1,201 against 1,167
 for 0.2.1), and precision per tier is unchanged: `unreferenced` 13 of 199
 (6.5 %).
 
+## Chains typed from core's return types (2026-09-27)
+
+DEC-077 and DEC-078, against main at cfba0f1. Each build ran on a store it
+indexed itself (widget_shop, rails, discourse).
+
+### Gold set
+
+widget_shop, 3,243 sites, context pinned, every site scored:
+
+| | cfba0f1 | now |
+| --- | ---: | ---: |
+| gem floor, correct | 1,618 | **1,630** |
+| gem floor, confidently wrong | 92 | **92** |
+| gem floor, right-owner-wrong-site | 12 | 16 |
+| gem floor, ambiguous-wrong | 9 | 10 |
+| gem floor, residue with the truth offered | 686 | 676 |
+| `super` sites correct / confidently wrong | 118 / 0 | 118 / 0 |
+| app code | 33 correct, 1 wrong | 34 correct, 1 wrong |
+
+Twenty verdicts moved. Thirteen residues became correct: nine through
+`chain:name` (ActiveSupport's `x.to_s.singularize`, `pluralize`, `camelize`,
+`humanize`, `demodulize`, `presence`, `foreign_key`, at 0.18 to 0.5), four
+through `chain` or `literal`. Four became right-owner-wrong-site: `Set` and
+`Hash` methods landing on core's stub (which stands in for stdlib `set.rb`) or
+on another gem's reopening of `Hash`. One residue became ambiguous-wrong
+(`o.source.empty?` at 0.06), and two app declarations offered became
+declarations.
+
+### CLI differential
+
+The same 520 positions. **11 answers changed: 7 fixed, 3 neutral, 1
+confidently wrong.**
+
+| answer | now | read |
+| --- | --- | --- |
+| `("0".."9").to_a` | `Range#to_a` | fixed, literal |
+| `1.minute` | ActiveSupport's `Numeric#minute` | fixed, literal |
+| `50.times` | `Integer#times` | fixed, literal |
+| `[…].flatten.to_set` | `Enumerable#to_set` | fixed, chain |
+| `changed.map(&:inspect).join` | `Array#join`, ambiguous 0.09 | fixed |
+| `info[:compatible].map { … }` | `Enumerable#map`, ambiguous 0.01 | fixed |
+| `reply.extract_quoted_post_numbers` (a `let`) | `Post#…`, ambiguous 0.14 | fixed |
+| `end.load(&block)` | residue; `Marshal.load` no longer fits a call with no arguments | neutral |
+| `post.user.trust_level = 3` | residue, now naming `User` as the receiver | neutral |
+| `step[:end_time].nil?` | `Kernel#nil?`, ambiguous 0.00 | neutral |
+| `{ … }.to_json` | json's `GeneratorMethods#to_json` | wrong: ActiveSupport prepends its encoder from a loop |
+
+### References
+
+rails, `--refs`, confirmed / possible / excluded:
+
+| | cfba0f1 | now |
+| --- | ---: | ---: |
+| `String#strip` | 3 / 213 / 0 | 109 / 107 / 0 |
+| `String#downcase` | 1 / 116 / 2 | 25 / 92 / 2 |
+| `String#gsub` | 10 / 149 / 0 | 57 / 102 / 0 |
+| `ActiveRecord::Querying#where` | 1,216 / 531 / 97 | unchanged |
+| `ActiveRecord::ConnectionHandling#lease_connection` | 1,024 / 84 / 87 | unchanged |

@@ -25,3 +25,9 @@ class Job
     x.title.shout
   end
 end
+
+class Label
+  def go(x)
+    x.gsub(/a/, "").downcase
+  end
+end

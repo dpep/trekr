@@ -63,6 +63,7 @@ fn code() -> &'static [u8] {
             include_str!("variants.rs"),
             include_str!("snapshot.rs"),
             include_str!("core.rb"),
+            include_str!("corelib.rs"),
             include_str!("../store/mod.rs"),
         ] {
             hash.update((source.len() as u64).to_le_bytes());

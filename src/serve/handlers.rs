@@ -89,11 +89,14 @@ fn file_uri(root: &Path, path: &str) -> Option<Url> {
 
 /// Where a site path lives on disk.
 pub(super) fn absolute_site(root: &Path, path: &str) -> Option<std::path::PathBuf> {
-    if path == crate::tree::CORE_PATH {
+    if let Some(file) = path
+        .strip_prefix(crate::tree::CORE_PATH)
+        .and_then(|rest| rest.strip_prefix('/'))
+    {
         // Core is compiled into the binary; it is written out beside the
         // database so that `require` and `Array#each` land on a readable
         // signature instead of answering nothing.
-        crate::store::core_stub_path().ok()
+        crate::store::core_dir().ok().map(|dir| dir.join(file))
     } else if path.starts_with('<') {
         None
     } else if Path::new(path).is_absolute() {
@@ -1529,7 +1532,7 @@ pub(super) fn defined_in(
         Some("rbi") => "Declared by a Sorbet stub in".to_string(),
         Some(via) => format!("Declared by `{via}` in"),
     };
-    if path == crate::tree::CORE_PATH {
+    if crate::tree::is_core(path) {
         return format!("{verb} Ruby core");
     }
     let Some(absolute) = absolute_site(root, path) else {

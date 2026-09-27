@@ -7,3 +7,6 @@ def app.rb:25:13 status=ambiguous owner=Title via=chain:name confidence=0.5
 # A pick among competitors confirms, but never excludes: Book#title could
 # return a Poster. The chain through Doc.new is certain, and does exclude.
 refs Poster#shout confirmed=0 possible=1 excluded=1
+# Core's `sig`s type the headline case: whatever `x` is, `gsub` with a
+# replacement returns a String, so Symbol#downcase is not a candidate.
+def app.rb:31:22 status=resolved owner=String via=chain:name

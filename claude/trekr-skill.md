@@ -179,7 +179,15 @@ separately:
   No confidence is low enough to turn `resolved` into `ambiguous`.
 * **`resolved_via`** — the rung that typed the receiver: `self`, `const`,
   `local:new`, `literal`, `sig`, `sig:param`, `sig:step`, `includer`,
-  `rbi_dsl`, `super`, and `flow` for a variable.
+  `rbi_dsl`, `super`, and `flow` for a variable. `chain` means the receiver
+  is a call whose method's return type is declared (`x.strip.downcase` with
+  `x` typed); `chain:name` that its receiver was untyped, so every definition
+  of that name was asked — `ambiguous` when some declare no return type.
+  Ruby core carries Ruby 3.4's return types, so `x.gsub(a, b).downcase` is
+  `String#downcase`.
+
+A core site's `path` is `<core>/String.rb` with `root: null`: the owner's
+stub, written beside the database as `core/String.rb` when an editor opens it.
 
 **`super` is followed.** `--def` on a `super` answers the method it runs: the
 next definition after the method's owner in the ancestors (prepends, the

@@ -3844,3 +3844,100 @@ is unchanged: its locations are `file://` URIs by protocol.
 *Reverses if:* a consumer needs absolute paths without joining. Then it gets
 a flag, not a second shape.
 
+## DEC-077 — A receiver that is a call is typed by the call's declared return
+
+**Decided.** The `other` receiver bucket gets a rung after all: a receiver that
+is a literal is its class, and one that is a call is typed by what that call
+returns. The previous call's own receiver climbs the ladder; its method's `sig`
+names the class (`chain`), an identity method passes the receiver's type
+through, and `Foo.new` is a Foo. With no receiver type, every definition of the
+name is asked (`chain:name`): if all that declare a return agree, that is the
+type, those that declare none make the answer `ambiguous` at declaring /
+definitions, and declarations that disagree leave it untyped. Several `sig`s on
+one method are overloads, told apart by the positional parameters each names
+and whether it types the block `T.proc…` or `NilClass`.
+
+**Why this reverses DEC-020.** DEC-020 declined chains because the type would
+have to come from return types that did not exist, and said it reverses if a
+new type source appears. Ruby core's return types are that source: RBS
+documents them, `script/core_sigs.rb` writes them into the core stub, and core
+methods are exactly where untyped Ruby's chains end — `x.to_s.strip`,
+`name.gsub(a, b).downcase`, `list.map { … }.join`. Measured against main
+(cfba0f1), each build on a store it indexed itself:
+
+| | main | this |
+| --- | ---: | ---: |
+| gold, gem floor correct | 1,618 | **1,630** |
+| gold, confidently wrong | 92 | **92** |
+| gold, app code correct | 33 | 34 |
+| rails `--refs String#strip`, confirmed | 3 | 109 |
+| rails `--refs String#gsub`, confirmed | 10 | 57 |
+| rails `--refs ActiveRecord::Querying#where` | 1,216 / 531 / 97 | unchanged |
+
+Twenty gold verdicts moved and none became confidently wrong: 13 residues to
+correct (ActiveSupport's `x.to_s.singularize` and friends at 0.18, the rest
+resolved), four to right-owner-wrong-site (a `Set` or `Hash` method landing on
+core's stub or another gem's reopening rather than the file the trace saw), one
+residue to ambiguous-wrong, and two app declarations offered to declarations.
+The CLI differential (520 positions) changed 11 answers: 7 fixed, 3 neutral, 1
+named below.
+
+**The named cost.** A literal receiver resolves through the tree as a typed
+local always has, so `{ … }.to_json` in discourse now resolves to the json
+gem's `GeneratorMethods#to_json`. At runtime ActiveSupport prepends its encoder
+to Hash from a loop the extractor cannot read, so that answer is confidently
+wrong in a Rails app, as `h = {}; h.to_json` already was. It is one of 520.
+
+**What was turned down on the way.**
+
+- *`self` as the owner class.* RBS writes `-> self` for `each { }` and friends;
+  mapping it to the owner makes a Struct subclass's `each { }.to_h` look up
+  Struct's. The identity rule already carries the receiver's own type.
+- *Abstract returns.* `Numeric#+` "returns a Numeric", and an Integer then
+  finds `to_s` in the wrong class; a class core subclasses gets no `sig`
+  (Enumerator excepted — only `lazy` makes its subclass). Nor `Class`:
+  `record.class.find` is not `Class#find`.
+- *Excluding on a `chain:name` guess.* The first cut let an `ambiguous`
+  receiver exclude a reference, which would hide `def strip` in the checkout
+  behind every `x.to_s.strip`. A guess now confirms or leaves a site
+  `possible`, and must answer the call it types, as `receiver_name` must.
+  Extending that to every `ambiguous` rung cost six correct `where`
+  exclusions on rails (`relation.where`, typed by name), so it is scoped.
+- *A floor on agreement.* `step[:end_time].nil?` resolves `ambiguous` at 0.00
+  because one of ~150 `[]` definitions declares Array. A threshold would be a
+  tuning knob with no measurement behind it; the confidence already says it.
+
+Fixed on the way, because a chain exposed it: `has_many :x, class_name: "Y"`
+typed its reader as a Y, which made `firm.clients_of_firm.where` an instance
+method lookup on Client and excluded four `where` references.
+
+*Reverses if:* a corpus shows `chain:name` picks wrong more often than its
+confidence says. In the gold set its eleven picks have the right owner ten
+times.
+
+## DEC-078 — Core is served one file per owner, and its stubs read as signatures
+
+**Decided.** `core.rb` stays the one source, and is served as one file per
+top-level class or module (`<core>/String.rb`, written beside the database as
+`core/String.rb`). Each `def` is multi-line, its parameters named from the
+method's rdoc call-seq with RBS's arity, so the first line is the signature.
+
+**Why.** VS Code's peek list shows a location's file name and its line. Every
+core candidate pointed into one `core.rb` and read `def downcase(*args); end`
+beside `def downcase; end`, with nothing saying whose each was. Now it reads
+`String.rb  def downcase(*options)` and `Symbol.rb  def downcase(*options)`,
+and go-to-definition opens a file whose name is the owner. Hover already named
+the owner and is unchanged. `--def --json` reports the per-owner path, with `root: null` as core has
+had since DEC-076, so a script sees the same owner an editor does.
+
+**How it stays one source.** Splitting happens in the tree layer at build time
+(`tree/corelib.rs`): a block takes the comment above it, top-level code goes to
+`Object.rb`, and a class may be declared only once. Each file is extracted as
+served, so sites carry that file's own lines and nothing maps between
+numberings. The files are written only when a location must be opened, and
+only when they differ.
+
+*Turned down:* generating per-owner source files in the repository (a hundred
+`include_str!`s, and two places to edit), and a virtual URI scheme (the editor
+would need the extension to serve it, and an agent reading `--json` could not
+open it).

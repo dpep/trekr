@@ -1,256 +1,781 @@
 # Ruby's core library, as far as navigation cares.
 #
-# Not a runtime, not a type signature — just enough real Ruby that our own
-# extractor can read it and the tree can answer "where does `puts` come from".
-# It is deliberately ordinary source rather than RBS: no new parser, no new
-# dependency, no second idea of what a method is, and any contributor can
-# extend it by writing the method they were looking for (DEC-015).
+# Not a runtime — just enough real Ruby that our own extractor can read it and
+# the tree can answer "where does `puts` come from". It is deliberately
+# ordinary source rather than RBS: no new parser, no new dependency, no second
+# idea of what a method is, and any contributor can extend it by writing the
+# method they were looking for (DEC-015).
 #
 # Bodies are empty on purpose. Ancestry is the load-bearing part — it is what
 # gives every class an Object/Kernel/BasicObject tail — and the method lists
 # cover what real code actually calls, not what exists. `initialize` is the
 # exception: it is declared wherever Ruby defines its own, because `super` in
 # an `initialize` lands on it, and a missing one sends it on to BasicObject.
+#
+# Parameters and `sig`s come from Ruby 3.4's RBS, through
+# `script/core_sigs.rb`: add a `def`, rerun it. A `sig` is a return type a
+# call chain is typed from (`x.gsub(a, b).downcase` is a String); several are
+# overloads, told apart by the call's argument count and block (DEC-077).
+#
+# Each top-level class or module is served as its own file (`String.rb`), so a
+# definition lands somewhere a person can read; code outside one goes to
+# `Object.rb`. A class is declared once here — reopening one would split it.
 
 class BasicObject
-  def initialize; end
-  def ==(other); end
-  def !; end
-  def !=(other); end
-  def equal?(other); end
-  def __send__(name, *args, &block); end
-  def __id__; end
-  def instance_eval(*args, &block); end
-  def instance_exec(*args, &block); end
-  def method_missing(name, *args, &block); end
-  def singleton_method_added(name); end
+  def initialize
+  end
+
+  def ==(other)
+  end
+
+  def !
+  end
+
+  def !=(other)
+  end
+
+  def equal?(other)
+  end
+
+  def __send__(name, *args, **options, &block)
+  end
+
+  sig { returns(Integer) }
+  def __id__
+  end
+
+  def instance_eval(code = nil, filename = nil, lineno = nil, &block)
+  end
+
+  def instance_exec(*args, **options, &block)
+  end
+
+  def method_missing(name, *args, &block)
+  end
+
+  def singleton_method_added(symbol)
+  end
 end
 
 module Kernel
-  def puts(*args); end
-  def print(*args); end
-  def p(*args); end
-  def pp(*args); end
-  def raise(*args); end
-  def fail(*args); end
-  def require(name); end
-  def require_relative(name); end
-  def load(name, wrap = false); end
-  def loop(&block); end
-  def block_given?; end
-  def format(fmt, *args); end
-  def sprintf(fmt, *args); end
-  def printf(*args); end
-  def rand(max = nil); end
-  def srand(number = nil); end
-  def sleep(duration = nil); end
-  def catch(tag = nil, &block); end
-  def throw(tag, value = nil); end
-  def lambda(&block); end
-  def proc(&block); end
-  def gets(*args); end
-  def exit(status = true); end
-  def exit!(status = false); end
-  def abort(message = nil); end
-  def at_exit(&block); end
-  def caller(*args); end
-  def caller_locations(*args); end
-  def binding; end
-  def freeze; end
-  def frozen?; end
-  def dup; end
-  def clone(freeze: nil); end
-  def itself; end
-  def tap(&block); end
-  def then(&block); end
-  def yield_self(&block); end
-  def object_id; end
-  def hash; end
-  def inspect; end
-  def to_s; end
-  def to_enum(*args, &block); end
-  def enum_for(*args, &block); end
-  def instance_variable_get(name); end
-  def instance_variable_set(name, value); end
-  def instance_variable_defined?(name); end
-  def instance_variables; end
-  def instance_of?(klass); end
-  def is_a?(klass); end
-  def kind_of?(klass); end
-  def nil?; end
-  def respond_to?(name, include_all = false); end
-  def send(name, *args, &block); end
-  def public_send(name, *args, &block); end
-  def method(name); end
-  def methods; end
-  def public_methods(all = true); end
-  def private_methods(all = true); end
-  def singleton_class; end
-  def define_singleton_method(name, *args, &block); end
-  def extend(*modules); end
-  def display(port = nil); end
-  def warn(*messages); end
-  def system(*args); end
-  def spawn(*args); end
-  def open(*args, &block); end
-  def eql?(other); end
-  def instance_variable_names; end
-  def Integer(value, base = nil); end
-  def Float(value); end
-  def String(value); end
-  def Array(value); end
-  def Hash(value); end
-  def Rational(*args); end
-  def Complex(*args); end
+  def puts(*objects)
+  end
+
+  def print(*objects)
+  end
+
+  def p(object = nil, *objects)
+  end
+
+  def pp(*objs)
+  end
+
+  def raise(exception = nil, message = nil, backtrace = nil, cause: nil, **options)
+  end
+
+  def fail(exception = nil, message = nil, backtrace = nil, cause: nil, **options)
+  end
+
+  def require(path)
+  end
+
+  def require_relative(string)
+  end
+
+  def load(filename, wrap = false)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def loop(&block)
+  end
+
+  def block_given?
+  end
+
+  sig { returns(String) }
+  def format(format, *args)
+  end
+
+  sig { returns(String) }
+  def sprintf(format, *args)
+  end
+
+  def printf(io = nil, format_string = nil, *objects)
+  end
+
+  def rand(max = 0)
+  end
+
+  sig { returns(Integer) }
+  def srand(number = nil)
+  end
+
+  def sleep(secs = nil)
+  end
+
+  def catch(tag = nil, &block)
+  end
+
+  def throw(tag, obj = nil)
+  end
+
+  sig { params(block: T.proc.void).returns(Proc) }
+  def lambda(&block)
+  end
+
+  sig { params(block: T.proc.void).returns(Proc) }
+  def proc(&block)
+  end
+
+  def gets(sep = nil, arg1 = nil)
+  end
+
+  def exit(status = true)
+  end
+
+  def exit!(status = false)
+  end
+
+  def abort(msg = nil)
+  end
+
+  sig { params(block: T.proc.void).returns(Proc) }
+  def at_exit(&block)
+  end
+
+  def caller(start = 1, length = nil)
+  end
+
+  def caller_locations(start = 1, length = nil)
+  end
+
+  sig { returns(Binding) }
+  def binding
+  end
+
+  def freeze
+  end
+
+  def frozen?
+  end
+
+  def dup
+  end
+
+  def clone(freeze: nil)
+  end
+
+  def itself
+  end
+
+  def tap(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def then(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def yield_self(&block)
+  end
+
+  sig { returns(Integer) }
+  def object_id
+  end
+
+  sig { returns(Integer) }
+  def hash
+  end
+
+  sig { returns(String) }
+  def inspect
+  end
+
+  sig { returns(String) }
+  def to_s
+  end
+
+  sig { returns(Enumerator) }
+  def to_enum(method = nil, *args, **options, &block)
+  end
+
+  sig { returns(Enumerator) }
+  def enum_for(method = nil, *args, **options, &block)
+  end
+
+  def instance_variable_get(symbol)
+  end
+
+  def instance_variable_set(symbol, obj)
+  end
+
+  def instance_variable_defined?(symbol)
+  end
+
+  sig { returns(Array) }
+  def instance_variables
+  end
+
+  def instance_of?(module_or_class)
+  end
+
+  def is_a?(module_or_class)
+  end
+
+  def kind_of?(module_or_class)
+  end
+
+  def nil?
+  end
+
+  def respond_to?(symbol, include_all = false)
+  end
+
+  def send(name, *args, **options, &block)
+  end
+
+  def public_send(name, *args, **options, &block)
+  end
+
+  sig { returns(Method) }
+  def method(sym)
+  end
+
+  sig { returns(Array) }
+  def methods(regular = true)
+  end
+
+  sig { returns(Array) }
+  def public_methods(all = true)
+  end
+
+  sig { returns(Array) }
+  def private_methods(all = true)
+  end
+
+  def singleton_class
+  end
+
+  sig { returns(Symbol) }
+  def define_singleton_method(symbol, method = nil, &block)
+  end
+
+  def extend(mod, *modules)
+  end
+
+  def display(port = $>)
+  end
+
+  def warn(*msgs, uplevel: nil, category: nil)
+  end
+
+  def system(env, command = nil, *args, unsetenv_others: nil, pgroup: nil, umask: nil, in: nil, out: nil, err: nil, close_others: nil, chdir: nil, exception: nil)
+  end
+
+  sig { returns(Integer) }
+  def spawn(env, command = nil, *args, unsetenv_others: nil, pgroup: nil, umask: nil, in: nil, out: nil, err: nil, close_others: nil, chdir: nil)
+  end
+
+  def open(path, mode = 'r', perm = 0666, **opts, &block)
+  end
+
+  def eql?(other)
+  end
+
+  def instance_variable_names
+  end
+
+  def Integer(object, base = 0, exception: true)
+  end
+
+  def Float(arg, exception: true)
+  end
+
+  sig { returns(String) }
+  def String(object)
+  end
+
+  def Array(object)
+  end
+
+  sig { returns(Hash) }
+  def Hash(object)
+  end
+
+  def Rational(x, y = nil, exception: true)
+  end
+
+  def Complex(real, imag = 0, exception: true)
+  end
 end
 
 class Object < BasicObject
   include Kernel
 
-  def class; end
-  def <=>(other); end
-  def ===(other); end
-  def =~(other); end
-  def !~(other); end
+  def class
+  end
+
+  def <=>(other)
+  end
+
+  def ===(other)
+  end
+
+  def =~(other)
+  end
+
+  def !~(other)
+  end
 end
 
 class Module < Object
-  def initialize; end
-  def include(*modules); end
-  def prepend(*modules); end
-  def extend_object(object); end
-  def included(base); end
-  def extended(base); end
-  def prepended(base); end
-  def attr_reader(*names); end
-  def attr_writer(*names); end
-  def attr_accessor(*names); end
-  def attr(*names); end
-  def define_method(name, *args, &block); end
-  def alias_method(new_name, old_name); end
-  def remove_method(*names); end
-  def undef_method(*names); end
-  def private(*names); end
-  def public(*names); end
-  def protected(*names); end
-  def module_function(*names); end
-  def private_constant(*names); end
-  def public_constant(*names); end
-  def private_class_method(*names); end
-  def public_class_method(*names); end
-  def const_get(name, inherit = true); end
-  def const_set(name, value); end
-  def const_defined?(name, inherit = true); end
-  def const_missing(name); end
-  def constants(inherit = true); end
-  def name; end
-  def ancestors; end
-  def included_modules; end
-  def include?(mod); end
-  def instance_methods(include_super = true); end
-  def instance_method(name); end
-  def public_instance_methods(include_super = true); end
-  def private_instance_methods(include_super = true); end
-  def method_defined?(name, inherit = true); end
-  def private_method_defined?(name, inherit = true); end
-  def instance_variable_get(name); end
-  def module_eval(*args, &block); end
-  def class_eval(*args, &block); end
-  def module_exec(*args, &block); end
-  def class_exec(*args, &block); end
-  def define_singleton_method(name, *args, &block); end
-  def <(other); end
-  def <=(other); end
-  def >(other); end
-  def >=(other); end
+  def initialize
+  end
+
+  def include(*modules)
+  end
+
+  def prepend(*modules)
+  end
+
+  def extend_object(obj)
+  end
+
+  def included(othermod)
+  end
+
+  def extended(othermod)
+  end
+
+  def prepended(othermod)
+  end
+
+  sig { returns(Array) }
+  def attr_reader(*names)
+  end
+
+  sig { returns(Array) }
+  def attr_writer(*names)
+  end
+
+  sig { returns(Array) }
+  def attr_accessor(*names)
+  end
+
+  sig { returns(Array) }
+  def attr(*names)
+  end
+
+  sig { returns(Symbol) }
+  def define_method(symbol, method = nil, &block)
+  end
+
+  sig { returns(Symbol) }
+  def alias_method(new_name, old_name)
+  end
+
+  def remove_method(symbol = nil, *names)
+  end
+
+  def undef_method(symbol = nil, *names)
+  end
+
+  def private(method_name = nil, arg2 = nil, *names)
+  end
+
+  def public(method_name = nil, arg2 = nil, *names)
+  end
+
+  def protected(method_name = nil, arg2 = nil, *names)
+  end
+
+  def module_function(method_name = nil, arg2 = nil, *names)
+  end
+
+  def private_constant(*names)
+  end
+
+  def public_constant(*names)
+  end
+
+  def private_class_method(array = nil, *names)
+  end
+
+  def public_class_method(array = nil, *names)
+  end
+
+  def const_get(sym, inherit = true)
+  end
+
+  def const_set(sym, obj)
+  end
+
+  def const_defined?(sym, inherit = true)
+  end
+
+  def const_missing(sym)
+  end
+
+  sig { returns(Array) }
+  def constants(inherit = true)
+  end
+
+  def name
+  end
+
+  sig { returns(Array) }
+  def ancestors
+  end
+
+  sig { returns(Array) }
+  def included_modules
+  end
+
+  def include?(mod)
+  end
+
+  sig { returns(Array) }
+  def instance_methods(include_super = true)
+  end
+
+  sig { returns(UnboundMethod) }
+  def instance_method(symbol)
+  end
+
+  sig { returns(Array) }
+  def public_instance_methods(include_super = true)
+  end
+
+  sig { returns(Array) }
+  def private_instance_methods(include_super = true)
+  end
+
+  def method_defined?(symbol, inherit = true)
+  end
+
+  def private_method_defined?(symbol, inherit = true)
+  end
+
+  def instance_variable_get(symbol)
+  end
+
+  def module_eval(arg0 = nil, filename = nil, lineno = nil, &block)
+  end
+
+  def class_eval(*args, &block)
+  end
+
+  def module_exec(*args, **options, &block)
+  end
+
+  def class_exec(*args, **options, &block)
+  end
+
+  sig { returns(Symbol) }
+  def define_singleton_method(symbol, method = nil, &block)
+  end
+
+  def <(other)
+  end
+
+  def <=(other)
+  end
+
+  def >(other)
+  end
+
+  def >=(other)
+  end
 end
 
 class Class < Module
-  def initialize(*args); end
-  def inherited(subclass); end
-  def new(*args, &block); end
-  def allocate; end
-  def superclass; end
+  def initialize(*args)
+  end
+
+  def inherited(subclass)
+  end
+
+  def new(*args, &block)
+  end
+
+  def allocate
+  end
+
+  def superclass
+  end
 end
 
 module Comparable
-  def <(other); end
-  def <=(other); end
-  def >(other); end
-  def >=(other); end
-  def ==(other); end
-  def between?(low, high); end
-  def clamp(*args); end
+  def <(other)
+  end
+
+  def <=(other)
+  end
+
+  def >(other)
+  end
+
+  def >=(other)
+  end
+
+  def ==(other)
+  end
+
+  def between?(min, max)
+  end
+
+  def clamp(min, max = nil)
+  end
 end
 
 module Enumerable
   # Abstract in core, but every includer defines it and navigation asks about
   # it constantly, so it is worth naming.
-  def each(&block); end
-  def each_entry(&block); end
-  def map(&block); end
-  def collect(&block); end
-  def flat_map(&block); end
-  def collect_concat(&block); end
-  def select(&block); end
-  def filter(&block); end
-  def filter_map(&block); end
-  def reject(&block); end
-  def find(&block); end
-  def detect(&block); end
-  def find_all(&block); end
-  def find_index(*args, &block); end
-  def reduce(*args, &block); end
-  def inject(*args, &block); end
-  def each_with_index(*args, &block); end
-  def each_with_object(memo, &block); end
-  def each_slice(n, &block); end
-  def each_cons(n, &block); end
-  def sort(&block); end
-  def sort_by(&block); end
-  def min(*args, &block); end
-  def max(*args, &block); end
-  def min_by(*args, &block); end
-  def max_by(*args, &block); end
-  def minmax(&block); end
-  def sum(init = 0, &block); end
-  def count(*args, &block); end
-  def group_by(&block); end
-  def partition(&block); end
-  def chunk_while(&block); end
-  def slice_when(&block); end
-  def tally; end
-  def uniq(&block); end
-  def zip(*others, &block); end
-  def take(n); end
-  def take_while(&block); end
-  def drop(n); end
-  def drop_while(&block); end
-  def first(*args); end
-  def include?(value); end
-  def member?(value); end
-  def to_a(*args); end
-  def entries(*args); end
-  def to_h(&block); end
-  def to_set(*args); end
-  def lazy; end
-  def any?(*args, &block); end
-  def all?(*args, &block); end
-  def none?(*args, &block); end
-  def one?(*args, &block); end
-  def each_entry(&block); end
-  def reverse_each(&block); end
-  def cycle(n = nil, &block); end
-  def with_index(offset = 0, &block); end
+  def each(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each_entry(*args, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Array) }
+  def map(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Array) }
+  def collect(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Array) }
+  def flat_map(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Array) }
+  def collect_concat(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Array) }
+  def select(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Array) }
+  def filter(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Array) }
+  def filter_map(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Array) }
+  def reject(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def find(if_none_proc = nil, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def detect(ifnone = nil, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Array) }
+  def find_all(&block)
+  end
+
+  def find_index(object = nil, &block)
+  end
+
+  def reduce(init = nil, method = nil, &block)
+  end
+
+  def inject(initial_value = nil, symbol = nil, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each_with_index(*args, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each_with_object(object, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each_slice(n, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each_cons(n, &block)
+  end
+
+  sig { returns(Array) }
+  def sort(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Array) }
+  def sort_by(&block)
+  end
+
+  sig { params(n: T.untyped).returns(Array) }
+  def min(n = nil, &block)
+  end
+
+  sig { params(n: T.untyped).returns(Array) }
+  def max(n = nil, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(n: T.untyped, block: T.proc.void).returns(Array) }
+  def min_by(n = nil, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(n: T.untyped, block: T.proc.void).returns(Array) }
+  def max_by(n = nil, &block)
+  end
+
+  def minmax(&block)
+  end
+
+  def sum(initial_value = 0, &block)
+  end
+
+  sig { returns(Integer) }
+  def count(object = nil, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Hash) }
+  def group_by(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def partition(&block)
+  end
+
+  sig { params(block: T.proc.void).returns(Enumerator) }
+  def chunk_while(&block)
+  end
+
+  sig { params(block: T.proc.void).returns(Enumerator) }
+  def slice_when(&block)
+  end
+
+  sig { returns(Hash) }
+  def tally(hash = {})
+  end
+
+  sig { returns(Array) }
+  def uniq(&block)
+  end
+
+  sig { params(block: NilClass).returns(Array) }
+  def zip(*other_enums, &block)
+  end
+
+  sig { returns(Array) }
+  def take(n)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Array) }
+  def take_while(&block)
+  end
+
+  sig { returns(Array) }
+  def drop(n)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Array) }
+  def drop_while(&block)
+  end
+
+  sig { params(n: T.untyped).returns(Array) }
+  def first(n = nil)
+  end
+
+  def include?(value)
+  end
+
+  def member?(value)
+  end
+
+  sig { returns(Array) }
+  def to_a(*args)
+  end
+
+  sig { returns(Array) }
+  def entries
+  end
+
+  sig { returns(Hash) }
+  def to_h(*args, &block)
+  end
+
+  sig { returns(Set) }
+  def to_set(klass = Set, *args, &block)
+  end
+
+  def lazy
+  end
+
+  def any?(pattern = nil, &block)
+  end
+
+  def all?(pattern = nil, &block)
+  end
+
+  def none?(pattern = nil, &block)
+  end
+
+  def one?(pattern = nil, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each_entry(*args, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def reverse_each(*args, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(NilClass) }
+  def cycle(n = nil, &block)
+  end
+
+  def with_index(offset = 0, &block)
+  end
 end
 
 class NilClass < Object
-  def to_a; end
-  def to_s; end
-  def to_h; end
-  def nil?; end
-  def &(other); end
-  def |(other); end
+  def to_a
+  end
+
+  def to_s
+  end
+
+  def to_h
+  end
+
+  def nil?
+  end
+
+  def &(other)
+  end
+
+  def |(other)
+  end
 end
 
 class TrueClass < Object; end
@@ -258,484 +783,1425 @@ class FalseClass < Object; end
 
 class Symbol < Object
   include Comparable
-  def to_proc; end
-  def to_sym; end
-  def to_s; end
-  def name; end
-  def length; end
-  def upcase; end
-  def downcase; end
-  def start_with?(*prefixes); end
-  def end_with?(*suffixes); end
-  def [](*args); end
+
+  sig { returns(Proc) }
+  def to_proc
+  end
+
+  def to_sym
+  end
+
+  sig { returns(String) }
+  def to_s
+  end
+
+  sig { returns(String) }
+  def name
+  end
+
+  sig { returns(Integer) }
+  def length
+  end
+
+  sig { returns(Symbol) }
+  def upcase(*options)
+  end
+
+  sig { returns(Symbol) }
+  def downcase(*options)
+  end
+
+  def start_with?(*string_or_regexp)
+  end
+
+  def end_with?(*strings)
+  end
+
+  def [](*args)
+  end
 end
 
 class Numeric < Object
   include Comparable
-  def +(other); end
-  def -(other); end
-  def *(other); end
-  def /(other); end
-  def %(other); end
-  def **(other); end
-  def abs; end
-  def round(*args); end
-  def floor(*args); end
-  def ceil(*args); end
-  def to_i; end
-  def to_int; end
-  def to_f; end
-  def to_r; end
-  def zero?; end
-  def positive?; end
-  def negative?; end
-  def nonzero?; end
-  def coerce(other); end
-  def divmod(other); end
-  def clamp(*args); end
-  def step(*args, &block); end
+
+  def +(other)
+  end
+
+  def -(other)
+  end
+
+  def *(other)
+  end
+
+  def /(other)
+  end
+
+  def %(other)
+  end
+
+  def **(other)
+  end
+
+  def abs
+  end
+
+  def round(digits = 0)
+  end
+
+  def floor(ndigits = 0)
+  end
+
+  def ceil(ndigits = 0)
+  end
+
+  def to_i
+  end
+
+  sig { returns(Integer) }
+  def to_int
+  end
+
+  def to_f
+  end
+
+  def to_r
+  end
+
+  def zero?
+  end
+
+  def positive?
+  end
+
+  def negative?
+  end
+
+  def nonzero?
+  end
+
+  def coerce(other)
+  end
+
+  def divmod(other)
+  end
+
+  def clamp(min, max = nil)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def step(to = nil, by = 1, &block)
+  end
 end
 
 class Integer < Numeric
-  def times(&block); end
-  def upto(limit, &block); end
-  def downto(limit, &block); end
-  def succ; end
-  def next; end
-  def pred; end
-  def even?; end
-  def odd?; end
-  def gcd(other); end
-  def lcm(other); end
-  def digits(base = 10); end
-  def chr; end
-  def ord; end
-  def to_s(base = 10); end
-  def fdiv(other); end
-  def pow(*args); end
-  def bit_length; end
+  sig { params(block: NilClass).returns(Enumerator) }
+  def times(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Integer) }
+  def upto(limit, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Integer) }
+  def downto(limit, &block)
+  end
+
+  sig { returns(Integer) }
+  def succ
+  end
+
+  sig { returns(Integer) }
+  def next
+  end
+
+  sig { returns(Integer) }
+  def pred
+  end
+
+  def even?
+  end
+
+  def odd?
+  end
+
+  sig { returns(Integer) }
+  def gcd(other_int)
+  end
+
+  sig { returns(Integer) }
+  def lcm(other_int)
+  end
+
+  sig { returns(Array) }
+  def digits(base = 10)
+  end
+
+  sig { returns(String) }
+  def chr(encoding = nil)
+  end
+
+  sig { returns(Integer) }
+  def ord
+  end
+
+  sig { returns(String) }
+  def to_s(base = 10)
+  end
+
+  sig { returns(Float) }
+  def fdiv(numeric)
+  end
+
+  sig { params(integer: T.untyped, integer2: T.untyped).returns(Integer) }
+  def pow(integer, integer2 = nil)
+  end
+
+  sig { returns(Integer) }
+  def bit_length
+  end
 end
 
 class Float < Numeric
-  def nan?; end
-  def infinite?; end
-  def finite?; end
-  def truncate(*args); end
+  def nan?
+  end
+
+  def infinite?
+  end
+
+  def finite?
+  end
+
+  def truncate(ndigits = 0)
+  end
 end
 
 class Rational < Numeric; end
 class Complex < Numeric; end
 
 class String < Object
-  def initialize(*args); end
+  def initialize(*args)
+  end
   include Comparable
 
-  def +(other); end
-  def *(count); end
-  def %(args); end
-  def <<(other); end
-  def =~(other); end
-  def [](*args); end
-  def []=(*args); end
-  def length; end
-  def size; end
-  def bytesize; end
-  def empty?; end
-  def to_s; end
-  def to_str; end
-  def to_sym; end
-  def to_i(base = 10); end
-  def to_f; end
-  def to_r; end
-  def to_c; end
-  def upcase(*args); end
-  def downcase(*args); end
-  def capitalize(*args); end
-  def swapcase(*args); end
-  def strip; end
-  def lstrip; end
-  def rstrip; end
-  def chomp(*args); end
-  def chop; end
-  def chars; end
-  def bytes; end
-  def lines(*args); end
-  def each_char(&block); end
-  def each_line(*args, &block); end
-  def split(*args, &block); end
-  def join(*args); end
-  def sub(*args, &block); end
-  def gsub(*args, &block); end
-  def sub!(*args, &block); end
-  def gsub!(*args, &block); end
-  def tr(from, to); end
-  def delete(*args); end
-  def squeeze(*args); end
-  def replace(other); end
-  def insert(index, other); end
-  def concat(*others); end
-  def prepend(*others); end
-  def start_with?(*prefixes); end
-  def end_with?(*suffixes); end
-  def include?(other); end
-  def index(*args); end
-  def rindex(*args); end
-  def match(*args, &block); end
-  def match?(*args); end
-  def scan(pattern, &block); end
-  def slice(*args); end
-  def slice!(*args); end
-  def center(width, pad = " "); end
-  def ljust(width, pad = " "); end
-  def rjust(width, pad = " "); end
-  def reverse; end
-  def freeze; end
-  def frozen?; end
-  def dup; end
-  def hash; end
-  def inspect; end
-  def unpack(format); end
-  def unpack1(format); end
-  def encode(*args); end
-  def force_encoding(encoding); end
-  def encoding; end
-  def valid_encoding?; end
-  def unicode_normalize(*args); end
-  def succ; end
-  def next; end
-  def ord; end
-  def count(*args); end
-  def format(*args); end
+  sig { returns(String) }
+  def +(other)
+  end
+
+  sig { returns(String) }
+  def *(count)
+  end
+
+  sig { returns(String) }
+  def %(args)
+  end
+
+  def <<(other)
+  end
+
+  def =~(other)
+  end
+
+  def [](*args)
+  end
+
+  def []=(*args)
+  end
+
+  sig { returns(Integer) }
+  def length
+  end
+
+  sig { returns(Integer) }
+  def size
+  end
+
+  sig { returns(Integer) }
+  def bytesize
+  end
+
+  def empty?
+  end
+
+  sig { returns(String) }
+  def to_s
+  end
+
+  sig { returns(String) }
+  def to_str
+  end
+
+  sig { returns(Symbol) }
+  def to_sym
+  end
+
+  sig { returns(Integer) }
+  def to_i(base = 10)
+  end
+
+  sig { returns(Float) }
+  def to_f
+  end
+
+  sig { returns(Rational) }
+  def to_r
+  end
+
+  sig { returns(Complex) }
+  def to_c
+  end
+
+  sig { returns(String) }
+  def upcase(*options)
+  end
+
+  sig { returns(String) }
+  def downcase(*options)
+  end
+
+  sig { returns(String) }
+  def capitalize(*options)
+  end
+
+  sig { returns(String) }
+  def swapcase(*options)
+  end
+
+  sig { returns(String) }
+  def strip
+  end
+
+  sig { returns(String) }
+  def lstrip
+  end
+
+  sig { returns(String) }
+  def rstrip
+  end
+
+  sig { returns(String) }
+  def chomp(line_sep = $/)
+  end
+
+  sig { returns(String) }
+  def chop
+  end
+
+  sig { params(block: NilClass).returns(Array) }
+  def chars(&block)
+  end
+
+  sig { params(block: NilClass).returns(Array) }
+  def bytes(&block)
+  end
+
+  sig { params(block: NilClass).returns(Array) }
+  def lines(separator = nil, chomp: nil, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each_char(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each_line(line_sep = $/, chomp: false, &block)
+  end
+
+  sig { params(block: NilClass).returns(Array) }
+  def split(field_sep = $;, limit = 0, &block)
+  end
+
+  def join(*args)
+  end
+
+  sig { returns(String) }
+  def sub(pattern, replacement = nil, &block)
+  end
+
+  sig { params(pattern: T.untyped, replacement: T.untyped, block: NilClass).returns(String) }
+  sig { params(pattern: T.untyped, block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(String) }
+  def gsub(pattern, replacement = nil, &block)
+  end
+
+  def sub!(pattern, replacement = nil, &block)
+  end
+
+  sig { params(pattern: T.untyped, block: NilClass).returns(Enumerator) }
+  def gsub!(pattern, replacement = nil, &block)
+  end
+
+  sig { returns(String) }
+  def tr(selector, replacements)
+  end
+
+  sig { returns(String) }
+  def delete(*selectors)
+  end
+
+  sig { returns(String) }
+  def squeeze(*selectors)
+  end
+
+  def replace(other_string)
+  end
+
+  def insert(index, other_string)
+  end
+
+  def concat(*objects)
+  end
+
+  def prepend(*other_strings)
+  end
+
+  def start_with?(*string_or_regexp)
+  end
+
+  def end_with?(*strings)
+  end
+
+  def include?(other_string)
+  end
+
+  def index(substring, offset = 0)
+  end
+
+  def rindex(substring, offset = self.length)
+  end
+
+  def match(pattern, offset = 0, &block)
+  end
+
+  def match?(pattern, offset = 0)
+  end
+
+  sig { params(block: NilClass).returns(Array) }
+  def scan(string_or_regexp, &block)
+  end
+
+  def slice(start, length = nil)
+  end
+
+  def slice!(start, length = nil)
+  end
+
+  sig { returns(String) }
+  def center(size, pad_string = ' ')
+  end
+
+  sig { returns(String) }
+  def ljust(size, pad_string = ' ')
+  end
+
+  sig { returns(String) }
+  def rjust(size, pad_string = ' ')
+  end
+
+  sig { returns(String) }
+  def reverse
+  end
+
+  def freeze
+  end
+
+  def frozen?
+  end
+
+  def dup
+  end
+
+  sig { returns(Integer) }
+  def hash
+  end
+
+  sig { returns(String) }
+  def inspect
+  end
+
+  sig { params(block: NilClass).returns(Array) }
+  def unpack(template, offset: 0, &block)
+  end
+
+  def unpack1(template, offset: 0)
+  end
+
+  def encode(dst_encoding = nil, src_encoding = nil, **enc_opts)
+  end
+
+  def force_encoding(encoding)
+  end
+
+  sig { returns(Encoding) }
+  def encoding
+  end
+
+  def valid_encoding?
+  end
+
+  def unicode_normalize(form = :nfc)
+  end
+
+  sig { returns(String) }
+  def succ
+  end
+
+  sig { returns(String) }
+  def next
+  end
+
+  sig { returns(Integer) }
+  def ord
+  end
+
+  sig { returns(Integer) }
+  def count(*selectors)
+  end
+
+  sig { returns(String) }
+  def format(format, *args)
+  end
 end
 
 class Array < Object
-  def initialize(*args); end
+  def initialize(*args)
+  end
   include Enumerable
 
-  def [](*args); end
-  def []=(*args); end
-  def <<(value); end
-  def +(other); end
-  def -(other); end
-  def *(other); end
-  def &(other); end
-  def |(other); end
-  def length; end
-  def size; end
-  def empty?; end
-  def push(*values); end
-  def append(*values); end
-  def pop(*args); end
-  def shift(*args); end
-  def unshift(*values); end
-  def prepend(*values); end
-  def insert(index, *values); end
-  def delete(value, &block); end
-  def delete_at(index); end
-  def delete_if(&block); end
-  def clear; end
-  def concat(*others); end
-  def compact; end
-  def compact!; end
-  def flatten(depth = nil); end
-  def flatten!(depth = nil); end
-  def uniq(&block); end
-  def uniq!(&block); end
-  def reverse; end
-  def reverse!; end
-  def rotate(count = 1); end
-  def sort!(&block); end
-  def sort_by!(&block); end
-  def select!(&block); end
-  def reject!(&block); end
-  def map!(&block); end
-  def collect!(&block); end
-  def each(&block); end
-  def each_index(&block); end
-  def first(*args); end
-  def last(*args); end
-  def sample(*args); end
-  def shuffle(*args); end
-  def slice(*args); end
-  def slice!(*args); end
-  def fill(*args, &block); end
-  def dig(*keys); end
-  def values_at(*indexes); end
-  def assoc(key); end
-  def rassoc(value); end
-  def index(*args, &block); end
-  def rindex(*args, &block); end
-  def join(separator = nil); end
-  def pack(format); end
-  def product(*others, &block); end
-  def combination(n, &block); end
-  def permutation(*args, &block); end
-  def transpose; end
-  def to_a; end
-  def to_ary; end
-  def to_h(&block); end
-  def freeze; end
-  def frozen?; end
-  def hash; end
-  def replace(other); end
-  def bsearch(&block); end
+  def [](*args)
+  end
+
+  def []=(*args)
+  end
+
+  def <<(value)
+  end
+
+  sig { returns(Array) }
+  def +(other)
+  end
+
+  sig { returns(Array) }
+  def -(other)
+  end
+
+  def *(other)
+  end
+
+  sig { returns(Array) }
+  def &(other)
+  end
+
+  sig { returns(Array) }
+  def |(other)
+  end
+
+  sig { returns(Integer) }
+  def length
+  end
+
+  sig { returns(Integer) }
+  def size
+  end
+
+  def empty?
+  end
+
+  def push(*objects)
+  end
+
+  def append(*objects)
+  end
+
+  sig { params(count: T.untyped).returns(Array) }
+  def pop(count = nil)
+  end
+
+  sig { params(count: T.untyped).returns(Array) }
+  def shift(count = nil)
+  end
+
+  def unshift(*objects)
+  end
+
+  def prepend(*objects)
+  end
+
+  def insert(index, *objects)
+  end
+
+  def delete(object, &block)
+  end
+
+  def delete_at(index)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def delete_if(&block)
+  end
+
+  def clear
+  end
+
+  def concat(*other_arrays)
+  end
+
+  sig { returns(Array) }
+  def compact
+  end
+
+  def compact!
+  end
+
+  sig { returns(Array) }
+  def flatten(depth = nil)
+  end
+
+  def flatten!(depth = nil)
+  end
+
+  sig { returns(Array) }
+  def uniq(&block)
+  end
+
+  def uniq!(&block)
+  end
+
+  sig { returns(Array) }
+  def reverse
+  end
+
+  sig { returns(Array) }
+  def reverse!
+  end
+
+  sig { returns(Array) }
+  def rotate(count = 1)
+  end
+
+  def sort!(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Array) }
+  def sort_by!(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def select!(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def reject!(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def map!(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def collect!(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each_index(&block)
+  end
+
+  sig { params(count: T.untyped).returns(Array) }
+  def first(count = nil)
+  end
+
+  sig { params(count: T.untyped).returns(Array) }
+  def last(count = nil)
+  end
+
+  sig { params(count: T.untyped).returns(Array) }
+  def sample(count = nil, random: Random)
+  end
+
+  sig { returns(Array) }
+  def shuffle(random: Random)
+  end
+
+  def slice(start, length = nil)
+  end
+
+  def slice!(start, length = nil)
+  end
+
+  def fill(object = nil, start = nil, count = nil, &block)
+  end
+
+  def dig(index, *identifiers)
+  end
+
+  sig { returns(Array) }
+  def values_at(*specifiers)
+  end
+
+  def assoc(object)
+  end
+
+  def rassoc(value)
+  end
+
+  def index(object = nil, &block)
+  end
+
+  def rindex(object = nil, &block)
+  end
+
+  sig { returns(String) }
+  def join(separator = nil)
+  end
+
+  sig { returns(String) }
+  def pack(template, buffer: nil)
+  end
+
+  sig { returns(Array) }
+  def product(*other_arrays, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def combination(count, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Array) }
+  def permutation(count = self.size, &block)
+  end
+
+  sig { returns(Array) }
+  def transpose
+  end
+
+  sig { returns(Array) }
+  def to_a
+  end
+
+  def to_ary
+  end
+
+  sig { returns(Hash) }
+  def to_h(&block)
+  end
+
+  def freeze
+  end
+
+  def frozen?
+  end
+
+  sig { returns(Integer) }
+  def hash
+  end
+
+  def replace(other)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def bsearch(&block)
+  end
 end
 
 class Hash < Object
-  def initialize(ifnone = nil, capacity: 0, &block); end
+  def initialize(ifnone = nil, capacity: 0, &block)
+  end
   include Enumerable
 
-  def [](key); end
-  def []=(key, value); end
-  def fetch(*args, &block); end
-  def store(key, value); end
-  def dig(*keys); end
-  def delete(key, &block); end
-  def delete_if(&block); end
-  def keys; end
-  def values; end
-  def values_at(*keys); end
-  def fetch_values(*keys, &block); end
-  def key?(key); end
-  def has_key?(key); end
-  def include?(key); end
-  def member?(key); end
-  def value?(value); end
-  def has_value?(value); end
-  def key(value); end
-  def length; end
-  def size; end
-  def empty?; end
-  def each(&block); end
-  def each_pair(&block); end
-  def each_key(&block); end
-  def each_value(&block); end
-  def merge(*others, &block); end
-  def merge!(*others, &block); end
-  def update(*others, &block); end
-  def transform_keys(*args, &block); end
-  def transform_values(&block); end
-  def transform_keys!(*args, &block); end
-  def transform_values!(&block); end
-  def select!(&block); end
-  def reject!(&block); end
-  def keep_if(&block); end
-  def filter_map(&block); end
-  def slice(*keys); end
-  def except(*keys); end
-  def compact; end
-  def compact!; end
-  def invert; end
-  def to_h(&block); end
-  def to_a; end
-  def default; end
-  def default=(value); end
-  def default_proc; end
-  def clear; end
-  def freeze; end
-  def frozen?; end
-  def replace(other); end
-  def any?(*args, &block); end
-  def sum(init = 0, &block); end
-  def group_by(&block); end
+  def [](key)
+  end
+
+  def []=(key, value)
+  end
+
+  def fetch(key, default_value = nil, &block)
+  end
+
+  def store(key, value)
+  end
+
+  def dig(key, *identifiers)
+  end
+
+  def delete(key, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def delete_if(&block)
+  end
+
+  sig { returns(Array) }
+  def keys
+  end
+
+  sig { returns(Array) }
+  def values
+  end
+
+  sig { returns(Array) }
+  def values_at(*keys)
+  end
+
+  sig { returns(Array) }
+  def fetch_values(*keys, &block)
+  end
+
+  def key?(key)
+  end
+
+  def has_key?(key)
+  end
+
+  def include?(key)
+  end
+
+  def member?(key)
+  end
+
+  def value?(value)
+  end
+
+  def has_value?(value)
+  end
+
+  def key(value)
+  end
+
+  sig { returns(Integer) }
+  def length
+  end
+
+  sig { returns(Integer) }
+  def size
+  end
+
+  def empty?
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each_pair(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Hash) }
+  def each_key(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each_value(&block)
+  end
+
+  sig { returns(Hash) }
+  def merge(*other_hashes, &block)
+  end
+
+  def merge!(*others, &block)
+  end
+
+  def update(*others, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Hash) }
+  def transform_keys(hash2 = nil, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Hash) }
+  def transform_values(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def transform_keys!(hash2 = nil, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def transform_values!(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def select!(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def reject!(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def keep_if(&block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Array) }
+  def filter_map(&block)
+  end
+
+  sig { returns(Hash) }
+  def slice(*keys)
+  end
+
+  sig { returns(Hash) }
+  def except(*keys)
+  end
+
+  sig { returns(Hash) }
+  def compact
+  end
+
+  def compact!
+  end
+
+  sig { returns(Hash) }
+  def invert
+  end
+
+  sig { returns(Hash) }
+  def to_h(&block)
+  end
+
+  sig { returns(Array) }
+  def to_a
+  end
+
+  def default(key = nil)
+  end
+
+  def default=(value)
+  end
+
+  def default_proc
+  end
+
+  def clear
+  end
+
+  def freeze
+  end
+
+  def frozen?
+  end
+
+  def replace(other)
+  end
+
+  def any?(object = nil, &block)
+  end
+
+  def sum(initial_value = 0, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Hash) }
+  def group_by(&block)
+  end
 end
 
 class Range < Object
-  def initialize(*args); end
+  def initialize(*args)
+  end
   include Enumerable
-  def begin; end
-  def end; end
-  def first(*args); end
-  def last(*args); end
-  def min(*args, &block); end
-  def max(*args, &block); end
-  def size; end
-  def count(*args, &block); end
-  def step(n = 1, &block); end
-  def cover?(value); end
-  def include?(value); end
-  def each(&block); end
-  def to_a; end
-  def exclude_end?; end
+
+  def begin
+  end
+
+  def end
+  end
+
+  sig { params(n: T.untyped).returns(Array) }
+  def first(n = nil)
+  end
+
+  sig { params(n: T.untyped).returns(Array) }
+  def last(n = nil)
+  end
+
+  sig { params(n: T.untyped).returns(Array) }
+  def min(n = nil, &block)
+  end
+
+  sig { params(n: T.untyped).returns(Array) }
+  def max(n = nil, &block)
+  end
+
+  def size
+  end
+
+  sig { returns(Integer) }
+  def count(object = nil, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def step(s = 1, &block)
+  end
+
+  def cover?(object)
+  end
+
+  def include?(obj)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each(&block)
+  end
+
+  sig { returns(Array) }
+  def to_a(*args)
+  end
+
+  def exclude_end?
+  end
 end
 
 class Struct < Object
-  def initialize(*args); end
+  def initialize(*args)
+  end
   include Enumerable
-  def self.new(*args, &block); end
-  def members; end
-  def to_a; end
-  def to_h(&block); end
-  def [](key); end
-  def []=(key, value); end
-  def each(&block); end
-  def dig(*keys); end
-  def deconstruct; end
-  def deconstruct_keys(keys); end
+
+  def self.new(*args, &block)
+  end
+
+  sig { returns(Array) }
+  def members
+  end
+
+  sig { returns(Array) }
+  def to_a
+  end
+
+  sig { returns(Hash) }
+  def to_h(&block)
+  end
+
+  def [](key)
+  end
+
+  def []=(key, value)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each(&block)
+  end
+
+  def dig(name, *identifiers)
+  end
+
+  sig { returns(Array) }
+  def deconstruct
+  end
+
+  sig { returns(Hash) }
+  def deconstruct_keys(array_of_names)
+  end
 end
 
 class Data < Object
-  def initialize(*args); end
-  def self.define(*names, &block); end
-  def with(**kwargs); end
-  def to_h(&block); end
-  def members; end
-  def deconstruct; end
-  def deconstruct_keys(keys); end
+  def initialize(*args)
+  end
+
+  def self.define(*symbols, &block)
+  end
+
+  def with(**kwargs)
+  end
+
+  sig { returns(Hash) }
+  def to_h(&block)
+  end
+
+  sig { returns(Array) }
+  def members
+  end
+
+  sig { returns(Array) }
+  def deconstruct
+  end
+
+  sig { returns(Hash) }
+  def deconstruct_keys(array_of_names_or_nil = nil)
+  end
 end
 
 class Set < Object
-  def initialize(enum = nil, &block); end
+  def initialize(enum = nil, &block)
+  end
   include Enumerable
-  def add(value); end
-  def <<(value); end
-  def add?(value); end
-  def delete(value); end
-  def include?(value); end
-  def member?(value); end
-  def size; end
-  def length; end
-  def empty?; end
-  def each(&block); end
-  def to_a; end
-  def merge(*others); end
-  def subset?(other); end
-  def superset?(other); end
-  def |(other); end
-  def &(other); end
-  def -(other); end
+
+  def add(o)
+  end
+
+  def <<(value)
+  end
+
+  def add?(o)
+  end
+
+  def delete(o)
+  end
+
+  def include?(o)
+  end
+
+  def member?(value)
+  end
+
+  sig { returns(Integer) }
+  def size
+  end
+
+  sig { returns(Integer) }
+  def length
+  end
+
+  def empty?
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each(&block)
+  end
+
+  sig { returns(Array) }
+  def to_a
+  end
+
+  def merge(*others)
+  end
+
+  def subset?(set)
+  end
+
+  def superset?(set)
+  end
+
+  def |(other)
+  end
+
+  def &(other)
+  end
+
+  def -(other)
+  end
+
+  def freeze
+  end
 end
 
 class Enumerator < Object
-  def initialize(*args); end
+  def initialize(*args)
+  end
   include Enumerable
-  def next; end
-  def peek; end
-  def rewind; end
-  def size; end
-  def with_index(offset = 0, &block); end
-  def with_object(memo, &block); end
-  def each(&block); end
+
+  def next
+  end
+
+  def peek
+  end
+
+  def rewind
+  end
+
+  def size
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def with_index(offset = 0, &block)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def with_object(obj, &block)
+  end
+
+  def each(*appending_args, &block)
+  end
+
+  class Lazy < Enumerator; end
+  class Yielder < Object
+    def <<(value)
+    end
+
+    def yield(*args)
+    end
+  end
 end
 
 class Proc < Object
-  def call(*args, &block); end
-  def ===(*args); end
-  def [](*args); end
-  def yield(*args); end
-  def arity; end
-  def lambda?; end
-  def curry(arity = nil); end
-  def to_proc; end
-  def parameters; end
+  def call(*args, &block)
+  end
+
+  def ===(*args)
+  end
+
+  def [](*args)
+  end
+
+  def yield(*args)
+  end
+
+  sig { returns(Integer) }
+  def arity
+  end
+
+  def lambda?
+  end
+
+  sig { returns(Proc) }
+  def curry(arity = nil)
+  end
+
+  def to_proc
+  end
+
+  def parameters(lambda: nil)
+  end
 end
 
 class Method < Object
-  def call(*args, &block); end
-  def to_proc; end
-  def arity; end
-  def name; end
-  def owner; end
-  def receiver; end
-  def parameters; end
-  def source_location; end
-  def unbind; end
+  def call(*args, &block)
+  end
+
+  sig { returns(Proc) }
+  def to_proc
+  end
+
+  sig { returns(Integer) }
+  def arity
+  end
+
+  sig { returns(Symbol) }
+  def name
+  end
+
+  def owner
+  end
+
+  def receiver
+  end
+
+  def parameters
+  end
+
+  def source_location
+  end
+
+  sig { returns(UnboundMethod) }
+  def unbind
+  end
 end
 
 class UnboundMethod < Object
-  def bind(receiver); end
-  def name; end
-  def owner; end
-  def arity; end
-  def source_location; end
+  sig { returns(Method) }
+  def bind(obj)
+  end
+
+  sig { returns(Symbol) }
+  def name
+  end
+
+  def owner
+  end
+
+  sig { returns(Integer) }
+  def arity
+  end
+
+  def source_location
+  end
 end
 
 class Binding < Object
-  def local_variable_get(name); end
-  def local_variable_set(name, value); end
-  def local_variables; end
-  def receiver; end
-  def eval(*args); end
+  def local_variable_get(symbol)
+  end
+
+  def local_variable_set(symbol, obj)
+  end
+
+  sig { returns(Array) }
+  def local_variables
+  end
+
+  def receiver
+  end
+
+  def eval(src, filename = nil, lineno = nil)
+  end
 end
 
 class Regexp < Object
-  def initialize(*args); end
-  def match(*args, &block); end
-  def match?(*args); end
-  def =~(other); end
-  def ===(other); end
-  def source; end
-  def options; end
-  def names; end
-  def self.escape(string); end
-  def self.union(*patterns); end
-  def self.last_match(*args); end
+  def initialize(*args)
+  end
+
+  def match(string, offset = 0, &block)
+  end
+
+  def match?(string, offset = 0)
+  end
+
+  def =~(other)
+  end
+
+  def ===(other)
+  end
+
+  sig { returns(String) }
+  def source
+  end
+
+  sig { returns(Integer) }
+  def options
+  end
+
+  sig { returns(Array) }
+  def names
+  end
+
+  sig { returns(String) }
+  def self.escape(string)
+  end
+
+  sig { returns(Regexp) }
+  def self.union(array_of_patterns = nil, *patterns)
+  end
+
+  def self.last_match(n = nil)
+  end
 end
 
 class MatchData < Object
-  def [](*args); end
-  def captures; end
-  def named_captures; end
-  def names; end
-  def pre_match; end
-  def post_match; end
-  def to_a; end
-  def begin(n); end
-  def end(n); end
+  def [](*args)
+  end
+
+  sig { returns(Array) }
+  def captures
+  end
+
+  sig { returns(Hash) }
+  def named_captures(symbolize_names: false)
+  end
+
+  sig { returns(Array) }
+  def names
+  end
+
+  sig { returns(String) }
+  def pre_match
+  end
+
+  sig { returns(String) }
+  def post_match
+  end
+
+  sig { returns(Array) }
+  def to_a
+  end
+
+  def begin(n)
+  end
+
+  def end(n)
+  end
 end
 
 class Exception < Object
-  def initialize(*args); end
-  def message; end
-  def to_s; end
-  def full_message(*args); end
-  def backtrace; end
-  def backtrace_locations; end
-  def cause; end
-  def exception(*args); end
-  def self.exception(*args); end
+  def initialize(*args)
+  end
+
+  sig { returns(String) }
+  def message
+  end
+
+  sig { returns(String) }
+  def to_s
+  end
+
+  sig { returns(String) }
+  def full_message(highlight: true, order: :top)
+  end
+
+  def backtrace
+  end
+
+  def backtrace_locations
+  end
+
+  def cause
+  end
+
+  def exception(message = nil)
+  end
+
+  def self.exception(message = nil)
+  end
 end
 
 class ScriptError < Exception; end
 class LoadError < ScriptError; end
 class NotImplementedError < ScriptError; end
 class SyntaxError < ScriptError
-  def initialize(*args); end
+  def initialize(*args)
+  end
 end
 class NoMemoryError < Exception; end
 class SecurityError < Exception; end
 class SystemExit < Exception
-  def initialize(*args); end
+  def initialize(*args)
+  end
 end
 class SignalException < Exception
-  def initialize(*args); end
+  def initialize(*args)
+  end
 end
 class Interrupt < SignalException
-  def initialize(*args); end
+  def initialize(*args)
+  end
 end
 class SystemStackError < Exception; end
 
 class StandardError < Exception; end
 class RuntimeError < StandardError; end
 class FrozenError < RuntimeError
-  def initialize(*args); end
+  def initialize(*args)
+  end
 end
 class ArgumentError < StandardError; end
 class TypeError < StandardError; end
 class NameError < StandardError
-  def initialize(*args); end
-  def name; end
-  def receiver; end
+  def initialize(*args)
+  end
+
+  def name
+  end
+
+  def receiver
+  end
 end
 class NoMethodError < NameError
-  def initialize(*args); end
-  def args; end
+  def initialize(*args)
+  end
+
+  sig { returns(Array) }
+  def args
+  end
 end
 class IndexError < StandardError; end
 class KeyError < IndexError
-  def initialize(*args); end
-  def key; end
-  def receiver; end
+  def initialize(*args)
+  end
+
+  def key
+  end
+
+  def receiver
+  end
 end
 class StopIteration < IndexError; end
 class RangeError < StandardError; end
@@ -750,10 +2216,12 @@ class FiberError < StandardError; end
 class EncodingError < StandardError; end
 class NoMatchingPatternError < StandardError; end
 class NoMatchingPatternKeyError < NoMatchingPatternError
-  def initialize(*args); end
+  def initialize(*args)
+  end
 end
 class UncaughtThrowError < ArgumentError
-  def initialize(*args); end
+  def initialize(*args)
+  end
 end
 class ClosedQueueError < StopIteration; end
 
@@ -769,261 +2237,698 @@ module Errno
 end
 
 class IO < Object
-  def initialize(*args); end
+  def initialize(*args)
+  end
   include Enumerable
-  def read(*args); end
-  def write(*args); end
-  def puts(*args); end
-  def print(*args); end
-  def printf(*args); end
-  def gets(*args); end
-  def each_line(*args, &block); end
-  def readlines(*args); end
-  def readline(*args); end
-  def close; end
-  def closed?; end
-  def flush; end
-  def sync; end
-  def sync=(value); end
-  def fileno; end
-  def eof?; end
-  def rewind; end
-  def seek(amount, whence = nil); end
-  def pos; end
+
+  def read(maxlen = nil, out_string = nil)
+  end
+
+  sig { returns(Integer) }
+  def write(*objects)
+  end
+
+  def puts(*objects)
+  end
+
+  def print(*objects)
+  end
+
+  def printf(format_string, *objects)
+  end
+
+  def gets(sep = nil, limit = nil, chomp: false)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def each_line(sep = nil, limit = nil, chomp: nil, &block)
+  end
+
+  sig { returns(Array) }
+  def readlines(sep = nil, limit = nil, chomp: false)
+  end
+
+  sig { returns(String) }
+  def readline(sep = nil, limit = nil, chomp: false)
+  end
+
+  def close
+  end
+
+  def closed?
+  end
+
+  def flush
+  end
+
+  def sync
+  end
+
+  def sync=(boolean)
+  end
+
+  sig { returns(Integer) }
+  def fileno
+  end
+
+  def eof?
+  end
+
+  sig { returns(Integer) }
+  def rewind
+  end
+
+  sig { returns(Integer) }
+  def seek(offset, whence = IO::SEEK_SET)
+  end
+
+  sig { returns(Integer) }
+  def pos
+  end
 end
 
 class File < IO
-  def initialize(*args); end
-  def self.read(*args); end
-  def self.write(*args); end
-  def self.open(*args, &block); end
-  def self.exist?(path); end
-  def self.exists?(path); end
-  def self.file?(path); end
-  def self.directory?(path); end
-  def self.readable?(path); end
-  def self.writable?(path); end
-  def self.executable?(path); end
-  def self.size(path); end
-  def self.size?(path); end
-  def self.zero?(path); end
-  def self.delete(*paths); end
-  def self.unlink(*paths); end
-  def self.rename(from, to); end
-  def self.join(*parts); end
-  def self.expand_path(path, base = nil); end
-  def self.absolute_path(path, base = nil); end
-  def self.basename(path, suffix = nil); end
-  def self.dirname(path, level = 1); end
-  def self.extname(path); end
-  def self.split(path); end
-  def self.readlines(*args); end
-  def self.foreach(*args, &block); end
-  def self.binread(*args); end
-  def self.binwrite(*args); end
-  def self.mtime(path); end
-  def self.ctime(path); end
-  def self.atime(path); end
-  def self.stat(path); end
-  def self.symlink?(path); end
-  def self.realpath(path, base = nil); end
-  def path; end
+  def initialize(*args)
+  end
+
+  sig { returns(String) }
+  def self.read(path, length = nil, offset = 0, **opts)
+  end
+
+  sig { returns(Integer) }
+  def self.write(path, data, offset = 0, **opts)
+  end
+
+  def self.open(path, mode = 'r', perm = 0666, **opts, &block)
+  end
+
+  def self.exist?(file_name)
+  end
+
+  def self.exists?(path)
+  end
+
+  def self.file?(file)
+  end
+
+  def self.directory?(path)
+  end
+
+  def self.readable?(file_name)
+  end
+
+  def self.writable?(file_name)
+  end
+
+  def self.executable?(file_name)
+  end
+
+  sig { returns(Integer) }
+  def self.size(file_name)
+  end
+
+  def self.size?(file_name)
+  end
+
+  def self.zero?(file_name)
+  end
+
+  sig { returns(Integer) }
+  def self.delete(*paths)
+  end
+
+  sig { returns(Integer) }
+  def self.unlink(*paths)
+  end
+
+  def self.rename(old_name, new_name)
+  end
+
+  sig { returns(String) }
+  def self.join(*parts)
+  end
+
+  sig { returns(String) }
+  def self.expand_path(file_name, dir_string = nil)
+  end
+
+  sig { returns(String) }
+  def self.absolute_path(file_name, dir_string = nil)
+  end
+
+  sig { returns(String) }
+  def self.basename(file_name, suffix = nil)
+  end
+
+  sig { returns(String) }
+  def self.dirname(file_name, level = 1)
+  end
+
+  sig { returns(String) }
+  def self.extname(path)
+  end
+
+  def self.split(file_name)
+  end
+
+  sig { returns(Array) }
+  def self.readlines(path, sep = nil, limit = nil, **opts)
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def self.foreach(path, sep = nil, limit = nil, **opts, &block)
+  end
+
+  sig { returns(String) }
+  def self.binread(path, length = nil, offset = 0)
+  end
+
+  sig { returns(Integer) }
+  def self.binwrite(path, string, offset = 0)
+  end
+
+  sig { returns(Time) }
+  def self.mtime(file_name)
+  end
+
+  sig { returns(Time) }
+  def self.ctime(file_name)
+  end
+
+  sig { returns(Time) }
+  def self.atime(file_name)
+  end
+
+  def self.stat(filepath)
+  end
+
+  def self.symlink?(filepath)
+  end
+
+  sig { returns(String) }
+  def self.realpath(pathname, dir_string = nil)
+  end
+
+  sig { returns(String) }
+  def path
+  end
 end
 
 class Dir < Object
-  def initialize(name, encoding: nil); end
+  def initialize(name, encoding: nil)
+  end
   include Enumerable
-  def self.glob(*args, &block); end
-  def self.[](*args); end
-  def self.entries(*args); end
-  def self.children(*args); end
-  def self.each_child(*args, &block); end
-  def self.mkdir(path, mode = nil); end
-  def self.rmdir(path); end
-  def self.exist?(path); end
-  def self.pwd; end
-  def self.chdir(path = nil, &block); end
-  def self.home(user = nil); end
-  def self.tmpdir; end
+
+  sig { params(block: NilClass).returns(Array) }
+  def self.glob(*patterns, flags: 0, base: nil, sort: true, &block)
+  end
+
+  sig { returns(Array) }
+  def self.[](*args)
+  end
+
+  sig { returns(Array) }
+  def self.entries(dirname, encoding: 'UTF-8')
+  end
+
+  sig { returns(Array) }
+  def self.children(dirpath, encoding: 'UTF-8')
+  end
+
+  sig { params(block: NilClass).returns(Enumerator) }
+  def self.each_child(dirpath, encoding: 'UTF-8', &block)
+  end
+
+  def self.mkdir(dirpath, permissions = 0775)
+  end
+
+  def self.rmdir(dirpath)
+  end
+
+  def self.exist?(dirpath)
+  end
+
+  sig { returns(String) }
+  def self.pwd
+  end
+
+  def self.chdir(new_dirpath = nil, &block)
+  end
+
+  sig { returns(String) }
+  def self.home(user_name = nil)
+  end
+
+  def self.tmpdir
+  end
 end
 
 class Time < Object
-  def initialize(*args); end
+  def initialize(*args)
+  end
   include Comparable
-  def self.now(*args); end
-  def self.at(*args); end
-  def self.parse(*args); end
-  def self.new(*args); end
-  def year; end
-  def month; end
-  def day; end
-  def hour; end
-  def min; end
-  def sec; end
-  def usec; end
-  def nsec; end
-  def wday; end
-  def yday; end
-  def zone; end
-  def to_i; end
-  def to_f; end
-  def to_r; end
-  def to_s; end
-  def utc; end
-  def utc?; end
-  def localtime(*args); end
-  def getlocal(*args); end
-  def strftime(format); end
-  def +(other); end
-  def -(other); end
+
+  sig { returns(Time) }
+  def self.now(in: nil)
+  end
+
+  sig { returns(Time) }
+  def self.at(*args)
+  end
+
+  def self.parse(*args)
+  end
+
+  sig { returns(Time) }
+  def self.new(*args)
+  end
+
+  sig { returns(Integer) }
+  def year
+  end
+
+  sig { returns(Integer) }
+  def month
+  end
+
+  sig { returns(Integer) }
+  def day
+  end
+
+  sig { returns(Integer) }
+  def hour
+  end
+
+  sig { returns(Integer) }
+  def min
+  end
+
+  sig { returns(Integer) }
+  def sec
+  end
+
+  sig { returns(Integer) }
+  def usec
+  end
+
+  sig { returns(Integer) }
+  def nsec
+  end
+
+  sig { returns(Integer) }
+  def wday
+  end
+
+  sig { returns(Integer) }
+  def yday
+  end
+
+  def zone
+  end
+
+  sig { returns(Integer) }
+  def to_i
+  end
+
+  sig { returns(Float) }
+  def to_f
+  end
+
+  sig { returns(Rational) }
+  def to_r
+  end
+
+  sig { returns(String) }
+  def to_s
+  end
+
+  sig { returns(Time) }
+  def utc
+  end
+
+  def utc?
+  end
+
+  sig { returns(Time) }
+  def localtime(zone = nil)
+  end
+
+  sig { returns(Time) }
+  def getlocal(zone = nil)
+  end
+
+  sig { returns(String) }
+  def strftime(format_string)
+  end
+
+  sig { returns(Time) }
+  def +(other)
+  end
+
+  def -(other)
+  end
 end
 
 class Random < Object
-  def self.rand(max = nil); end
-  def self.new_seed; end
-  def self.srand(number = nil); end
-  def rand(max = nil); end
-  def seed; end
-  def bytes(count); end
+  def self.rand(max = nil)
+  end
+
+  sig { returns(Integer) }
+  def self.new_seed
+  end
+
+  sig { returns(Integer) }
+  def self.srand(number = nil)
+  end
+
+  def rand(max = nil)
+  end
+
+  sig { returns(Integer) }
+  def seed
+  end
+
+  sig { returns(String) }
+  def bytes(size)
+  end
 end
 
 class Thread < Object
-  def initialize(*args); end
-  def self.new(*args, &block); end
-  def self.current; end
-  def self.main; end
-  def self.list; end
-  def join(limit = nil); end
-  def value; end
-  def alive?; end
-  def kill; end
-  def [](key); end
-  def []=(key, value); end
-  def name; end
-  def name=(value); end
+  def initialize(*args)
+  end
+
+  sig { params(block: T.proc.void).returns(Thread) }
+  def self.new(*args, &block)
+  end
+
+  sig { returns(Thread) }
+  def self.current
+  end
+
+  sig { returns(Thread) }
+  def self.main
+  end
+
+  def self.list
+  end
+
+  sig { returns(Thread) }
+  def join(limit = nil, *args)
+  end
+
+  def value
+  end
+
+  def alive?
+  end
+
+  def kill
+  end
+
+  def [](key)
+  end
+
+  def []=(key, value)
+  end
+
+  sig { returns(String) }
+  def name
+  end
+
+  def name=(name)
+  end
 end
 
 class Mutex < Object
-  def initialize; end
-  def lock; end
-  def unlock; end
-  def locked?; end
-  def synchronize(&block); end
-  def try_lock; end
+  def initialize
+  end
+
+  def lock
+  end
+
+  def unlock
+  end
+
+  def locked?
+  end
+
+  def synchronize(&block)
+  end
+
+  def try_lock
+  end
 end
 
 class Queue < Object
-  def initialize(*args); end
-  def push(value); end
-  def <<(value); end
-  def pop(non_block = false); end
-  def size; end
-  def length; end
-  def empty?; end
-  def close; end
-  def closed?; end
+  def initialize(*args)
+  end
+
+  def push(value)
+  end
+
+  def <<(value)
+  end
+
+  def pop(non_block = false)
+  end
+
+  def size
+  end
+
+  def length
+  end
+
+  def empty?
+  end
+
+  def close
+  end
+
+  def closed?
+  end
 end
 
 class SizedQueue < Queue
-  def initialize(max); end
+  def initialize(max)
+  end
 end
 class ConditionVariable < Object
-  def initialize; end
-  def wait(mutex, timeout = nil); end
-  def signal; end
-  def broadcast; end
+  def initialize
+  end
+
+  def wait(mutex, timeout = nil)
+  end
+
+  def signal
+  end
+
+  def broadcast
+  end
 end
 
 class Fiber < Object
-  def initialize(*args); end
-  def self.yield(*args); end
-  def self.new(&block); end
-  def resume(*args); end
-  def alive?; end
+  def initialize(*args)
+  end
+
+  def self.yield(*args)
+  end
+
+  sig { params(block: T.proc.void).returns(Fiber) }
+  def self.new(&block)
+  end
+
+  def resume(*args)
+  end
+
+  def alive?
+  end
 end
 
 class Ractor < Object; end
 
 module Math
-  def self.sqrt(value); end
-  def self.cbrt(value); end
-  def self.log(*args); end
-  def self.log2(value); end
-  def self.log10(value); end
-  def self.exp(value); end
-  def self.sin(value); end
-  def self.cos(value); end
-  def self.tan(value); end
-  def self.atan(value); end
-  def self.atan2(y, x); end
-  def self.hypot(x, y); end
-  def self.pow(x, y); end
+  sig { returns(Float) }
+  def self.sqrt(x)
+  end
+
+  sig { returns(Float) }
+  def self.cbrt(x)
+  end
+
+  sig { returns(Float) }
+  def self.log(x, base = Math::E)
+  end
+
+  sig { returns(Float) }
+  def self.log2(x)
+  end
+
+  sig { returns(Float) }
+  def self.log10(x)
+  end
+
+  sig { returns(Float) }
+  def self.exp(x)
+  end
+
+  sig { returns(Float) }
+  def self.sin(x)
+  end
+
+  sig { returns(Float) }
+  def self.cos(x)
+  end
+
+  sig { returns(Float) }
+  def self.tan(x)
+  end
+
+  sig { returns(Float) }
+  def self.atan(x)
+  end
+
+  sig { returns(Float) }
+  def self.atan2(y, x)
+  end
+
+  sig { returns(Float) }
+  def self.hypot(a, b)
+  end
+
+  def self.pow(x, y)
+  end
 end
 
 module ObjectSpace
-  def self.each_object(*args, &block); end
-  def self.garbage_collect(*args); end
-  def self.define_finalizer(object, proc = nil); end
-  def self.count_objects(*args); end
+  sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(block: T.proc.void).returns(Integer) }
+  def self.each_object(mod = nil, &block)
+  end
+
+  def self.garbage_collect(full_mark: true, immediate_mark: true, immediate_sweep: true)
+  end
+
+  def self.define_finalizer(obj, aProc = nil, &block)
+  end
+
+  sig { returns(Hash) }
+  def self.count_objects(result_hash = nil)
+  end
 end
 
 module GC
-  def self.start(*args); end
-  def self.stat(*args); end
-  def self.disable; end
-  def self.enable; end
-  def self.compact; end
+  def self.start(full_mark: true, immediate_mark: true, immediate_sweep: true)
+  end
+
+  def self.stat(hash = nil)
+  end
+
+  def self.disable
+  end
+
+  def self.enable
+  end
+
+  def self.compact
+  end
 end
 
 module Marshal
-  def self.dump(*args); end
-  def self.load(*args); end
+  sig { params(obj: T.untyped).returns(String) }
+  def self.dump(obj, port = nil, limit = nil)
+  end
+
+  def self.load(source, proc = nil, freeze: false)
+  end
 end
 
 module Process
-  def self.pid; end
-  def self.ppid; end
-  def self.exit(status = true); end
-  def self.exit!(status = false); end
-  def self.fork(&block); end
-  def self.wait(*args); end
-  def self.spawn(*args); end
-  def self.kill(signal, *pids); end
-  def self.clock_gettime(clock, unit = nil); end
+  sig { returns(Integer) }
+  def self.pid
+  end
+
+  sig { returns(Integer) }
+  def self.ppid
+  end
+
+  def self.exit(status = true)
+  end
+
+  def self.exit!(status = false)
+  end
+
+  sig { params(block: T.proc.void).returns(Integer) }
+  def self.fork(&block)
+  end
+
+  sig { returns(Integer) }
+  def self.wait(pid = -1, flags = 0)
+  end
+
+  sig { returns(Integer) }
+  def self.spawn(env, command = nil, *args, unsetenv_others: nil, pgroup: nil, umask: nil, in: nil, out: nil, err: nil, close_others: nil, chdir: nil)
+  end
+
+  sig { returns(Integer) }
+  def self.kill(signal, *ids)
+  end
+
+  sig { params(clock_id: T.untyped).returns(Float) }
+  def self.clock_gettime(clock_id, unit = :float_second)
+  end
 end
 
 module Signal
-  def self.trap(signal, command = nil, &block); end
-  def self.list; end
+  def self.trap(signal, command = nil, &block)
+  end
+
+  sig { returns(Hash) }
+  def self.list
+  end
 end
 
 module Warning
-  def self.warn(message, category: nil); end
+  def self.warn(msg, category: nil)
+  end
 end
 
 class Encoding < Object
-  def self.default_external; end
-  def self.default_internal; end
-  def name; end
-end
+  sig { returns(Encoding) }
+  def self.default_external
+  end
 
-class Enumerator
-  class Lazy < Enumerator; end
-  class Yielder < Object
-    def <<(value); end
-    def yield(*args); end
+  def self.default_internal
+  end
+
+  sig { returns(String) }
+  def name
   end
 end
 
 module FileUtils
-  def self.mkdir_p(*args); end
-  def self.rm_rf(*args); end
-  def self.rm_f(*args); end
-  def self.cp(*args); end
-  def self.cp_r(*args); end
-  def self.mv(*args); end
-  def self.touch(*args); end
-  def self.ln_s(*args); end
+  def self.mkdir_p(*args)
+  end
+
+  def self.rm_rf(*args)
+  end
+
+  def self.rm_f(*args)
+  end
+
+  def self.cp(*args)
+  end
+
+  def self.cp_r(*args)
+  end
+
+  def self.mv(*args)
+  end
+
+  def self.touch(*args)
+  end
+
+  def self.ln_s(*args)
+  end
 end
 
 ENV = nil

@@ -193,10 +193,12 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | `const` | `Foo.bar` — resolve `Foo`, look up a *class* method | 1.0 |
 | `local:new` | `x = Foo.new` | agreeing / total |
 | `local:const` | `x = Foo` — holds the class, so `x.bar` is a class method | agreeing / total |
-| `literal` | `out = []` — core knows what an Array is | agreeing / total |
+| `literal` | `out = []`, or `"x".upcase` — core knows what a String is | agreeing / total |
 | `sig` | an inline Sorbet `sig` on the method the value came from | agreeing / total |
 | `sig:param` | the parameter's declared class, from `params(...)` | 1.0 |
 | `sig:step` | one call on an already-typed local, via that method's `sig` | agreeing / total |
+| `chain` | `a.b.c` — `b`'s receiver typed, `b` found, its `sig` read | the receiver's |
+| `chain:name` | `x.gsub(a, b).downcase` with `x` untyped — every `gsub` that declares a return agrees | declaring / definitions |
 | `rbi_dsl` | resolved, then redirected from a Tapioca `.rbi` to the model | |
 
 `sig:param` exists because half of graph_weaver's untyped local receivers turned
@@ -224,6 +226,35 @@ lexical scope records one: not `def obj.x`, not a `def` inside a block
 Core declares `initialize` on every class Ruby defines one for, since that is
 where `super` from an `initialize` most often lands.
 
+**A receiver that is a call is typed by what that call returns** (DEC-077).
+The previous call's own receiver climbs the ladder; when it lands, that
+method's `sig` names the class, and the evidence carries over unchanged. An
+identity method (`dup`, `tap`, …) passes its receiver's type through, and
+`Foo.new` is a Foo. When the previous receiver has no type, every definition
+of the name is asked: if all those that declare a return agree, that is the
+type, and those that declare none are competitors, so the answer is
+`ambiguous` at declaring / definitions. Declarations that disagree leave the
+call untyped. Core's `String#gsub` is the only `gsub` most apps have, so
+`something.gsub(/x/, "").downcase` is `String#downcase` rather than a peek
+list with Symbol's beside it. A chain is followed at most four calls back,
+and every step needs a declared return to continue.
+
+**Several `sig`s are overloads.** Ruby's return often depends on the call:
+`map` returns an Enumerator without a block, `gsub(pattern)` does too, and
+`split` returns the string itself when given one. A `sig` naming positional
+parameters describes calls passing exactly that many (none named: any number),
+and one typing the block `T.proc…` or `NilClass` describes calls with or
+without one. A call's return is what every overload covering it agrees on
+(`MethodDef::returns_for`); `sig_returns` is kept only when one class holds for
+every call, so a rung that cannot see the call's shape never reads an
+overload. Overloads are not stored: only core writes them.
+
+**A guess from a name's return types never excludes a reference.** `--refs`
+confirms a site whose `chain:name` receiver reaches the method, and lists one
+whose `ambiguous` guess does not as `possible`: a definition that declares
+nothing could have returned anything. A `chain:name` guess must also answer the
+call it types, as a `receiver_name` guess must.
+
 `sig:step` is deliberately **one** step: rwr's D61 measured
 70 % of returns ending in another call, so the recursive version drowns while
 the single sig-backed hop pays. A test asserts the second hop is refused.
@@ -249,12 +280,30 @@ Two things a naive implementation gets wrong here:
 Two of the three reasons a lookup failed were "the thing is not in the index".
 Both are now addressable without a Ruby toolchain.
 
-**Core** is [`src/tree/core.rb`](../src/tree/core.rb): ~1000 lines of ordinary
+**Core** is [`src/tree/core.rb`](../src/tree/core.rb): ~3000 lines of ordinary
 Ruby with empty bodies, read at tree-build time by the same `extract()` a
 checkout goes through (DEC-015). The ancestry is what earns it — every class
 gets its implicit `< Object`, and a singleton chain continues into
 `Class → Module → Object`, which is what makes `puts`, `raise`, `Foo.new`, and
 a class body's `prepend` resolve at all.
+
+Its parameters and return types come from Ruby 3.4's RBS through
+[`script/core_sigs.rb`](../script/core_sigs.rb), which rewrites the stub in
+place: parameter names from the method's rdoc call-seq (`downcase(*options)`),
+arity from RBS, and a Sorbet `sig` wherever the return is one class for the
+call's shape (DEC-077). A union, `bool`, an optional, an element type
+(`first` → `Elem`), `self`, and a class core subclasses (`Numeric#+` would make
+an Integer look up `to_s` in Numeric) get none. 358 of 785 methods carry one.
+
+**Served one file per owner** (DEC-078). `src/tree/corelib.rs` cuts `core.rb`
+at its top-level `class`/`module` blocks and each is extracted as its own
+file, so a core site is `<core>/String.rb` at a line of that file. When a
+location has to be opened, the files are written beside the database —
+`core/String.rb` next to `trekr.db`, rewritten only when they differ — and an
+editor's peek list reads `String.rb  def downcase(*options)` rather than two
+identical `core.rb  def downcase(*args); end`. Each `def` is multi-line so its first line
+is the signature. Code outside a block (the top-level constants) goes to
+`Object.rb`; a class is declared once, since one file cannot hold two blocks.
 
 **Gems** come from reading, never from running (DEC-016): `Gemfile.lock`
 parsed directly, sources found by convention across `vendor/bundle`,
@@ -1126,6 +1175,9 @@ Deliberate, and cheap to close when they earn it:
   them (DEC-064).
 - Multi-write constant targets (`A, B = 1, 2`) define nothing.
 - `refine` is not modeled.
+- A chain through a core method is typed from Ruby 3.4's RBS. A subclass that
+  overrides the method with another return type (ActiveSupport's `SafeBuffer`
+  is a String) is read as the core class.
 - A `super` that lands in core is as right as `src/tree/core.rb` is complete:
   a core class that defines the name without the stub declaring it sends the
   lookup further up the chain.

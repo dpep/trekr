@@ -17,6 +17,7 @@
 //!
 //! Semantics follow Shopify's Rubydex (MIT) `docs/ruby-behaviors.md`.
 
+mod corelib;
 mod files;
 mod snapshot;
 mod variants;
@@ -1347,7 +1348,7 @@ mod tests {
             .filter(|name| {
                 tree.sites(name)
                     .first()
-                    .is_none_or(|site| site.path != CORE_PATH)
+                    .is_none_or(|site| !is_core(&site.path))
             })
             .cloned()
             .collect()
@@ -2530,10 +2531,9 @@ mod singleton_tests {
     }
 }
 
-/// The path reported for anything defined in the core stub. Deliberately not a
-/// real path: there is no file to open, and saying so is better than handing a
-/// caller a location that does not exist.
-pub(crate) const CORE_PATH: &str = "<core>";
+pub(crate) use corelib::{
+    CORE_PATH, files as core_files, is_core, materialize as materialize_core,
+};
 
 /// Tapioca writes one `.rbi` per model describing the methods Rails generates
 /// at runtime — AR attributes, associations, enums. They are real methods with
@@ -2643,13 +2643,20 @@ fn freeze(names: &HashMap<String, Entry>) -> anyhow::Result<snapshot::Snapshot> 
 /// The implicit superclass of every class that does not name one.
 const OBJECT: &str = "Object";
 
-/// Ruby's core library as rows, read from `core.rb` through the ordinary
-/// extractor.
+/// Ruby's core library as rows, read from its per-owner files through the
+/// ordinary extractor.
 ///
 /// Reparsed on every tree build. It is ~1 ms against a ~120 ms build, and a
 /// cache would have to be invalidated by the same rule DEC-013 exists for.
 fn core_rows() -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<MethodRow>) {
-    rows_from(CORE_PATH, include_str!("core.rb"))
+    let (mut decls, mut edges, mut methods) = (Vec::new(), Vec::new(), Vec::new());
+    for file in core_files() {
+        let (d, e, m) = rows_from(&file.site_path(), &file.text);
+        decls.extend(d);
+        edges.extend(e);
+        methods.extend(m);
+    }
+    (decls, edges, methods)
 }
 
 /// One Ruby source's facts, in the row shapes the tree assembles from. Shared
