@@ -346,7 +346,7 @@ impl Session {
         let (send, done) = mpsc::channel();
         std::thread::spawn(move || {
             let listed = Tree::build(&store, &key).map(|tree| Members::of(&tree));
-            let _ = send.send(listed.map_err(Into::into));
+            let _ = send.send(listed);
         });
         self.listing = Some(Listing {
             root: root.to_path_buf(),

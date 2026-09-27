@@ -113,6 +113,17 @@ Two things the blob layer cannot know, resolved here:
   where go-to-definition on `Bar` belongs — but anywhere a *namespace* is
   wanted (`Bar::Baz`, `class Foo < Bar`) the alias is followed through.
 
+**Flat once assembled** (DEC-060). Assembly writes a map, because placing a
+declaration reads the namespace still being written. The finished namespace is
+laid out as one flat byte layout ([`tree/snapshot.rs`](../src/tree/snapshot.rs))
+and every query reads it in place: strings interned once, names sorted by FQN,
+sites, mixins and extends as `u32` ranges into flat arrays, a target as an
+interned name plus an interned nesting list, and an open-addressed FQN index.
+Nothing points at anything, so the same bytes can be a file. Names are written
+sorted and strings interned in first-met order, so one namespace always encodes
+to the same bytes. Whatever assembly memoized against the half-built namespace
+is dropped with it.
+
 ### `resolve/` — which method does this call site run?
 
 The ladder, tried in order, stopping at the first rung that names a type:

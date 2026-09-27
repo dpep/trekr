@@ -13,6 +13,8 @@
 //!
 //! Semantics follow Shopify's Rubydex (MIT) `docs/ruby-behaviors.md`.
 
+mod snapshot;
+
 use crate::core::Param;
 use crate::store::{DeclRow, EdgeRow, MethodRow, Store};
 use serde::Serialize;
@@ -92,6 +94,119 @@ struct Entry {
     alias_of: Option<Target>,
 }
 
+/// A mixin, superclass or alias target as a query reads it, from either
+/// representation of the namespace.
+#[derive(Clone, Debug)]
+struct Written<'a> {
+    name: &'a str,
+    nesting: Vec<&'a str>,
+}
+
+impl Target {
+    fn written(&self) -> Written<'_> {
+        Written {
+            name: &self.name,
+            nesting: self.nesting.iter().map(String::as_str).collect(),
+        }
+    }
+}
+
+/// The constant namespace: a map while it is being assembled, and a flat
+/// snapshot once it is done (DEC-060).
+///
+/// Assembly has to read the namespace it is still writing — placing
+/// `class A::B` looks `A` up — so the lookups below serve both. Everything
+/// outside `assemble` only ever sees a frozen one.
+enum Names {
+    Building(HashMap<String, Entry>),
+    Frozen(snapshot::Snapshot),
+}
+
+#[derive(Clone, Copy)]
+enum EntryRef<'a> {
+    Building(&'a Entry),
+    Frozen(snapshot::NameRef<'a>),
+}
+
+impl Names {
+    fn get(&self, fqn: &str) -> Option<EntryRef<'_>> {
+        match self {
+            Names::Building(map) => map.get(fqn).map(EntryRef::Building),
+            Names::Frozen(snap) => snap.find(fqn).map(EntryRef::Frozen),
+        }
+    }
+
+    fn contains(&self, fqn: &str) -> bool {
+        self.get(fqn).is_some()
+    }
+
+    fn for_each<'a>(&'a self, mut visit: impl FnMut(&'a str, EntryRef<'a>)) {
+        match self {
+            Names::Building(map) => map
+                .iter()
+                .for_each(|(fqn, entry)| visit(fqn, EntryRef::Building(entry))),
+            Names::Frozen(snap) => snap
+                .names()
+                .for_each(|name| visit(name.fqn(), EntryRef::Frozen(name))),
+        }
+    }
+
+    fn building(&mut self) -> &mut HashMap<String, Entry> {
+        match self {
+            Names::Building(map) => map,
+            Names::Frozen(_) => unreachable!("only assembly writes the namespace"),
+        }
+    }
+}
+
+impl<'a> EntryRef<'a> {
+    fn kind(self) -> &'a str {
+        match self {
+            EntryRef::Building(e) => &e.kind,
+            EntryRef::Frozen(n) => n.kind(),
+        }
+    }
+
+    fn sites(self) -> Vec<Site> {
+        match self {
+            EntryRef::Building(e) => e.sites.clone(),
+            EntryRef::Frozen(n) => n.sites(),
+        }
+    }
+
+    fn mixins(self) -> Vec<(MixinKind, Written<'a>)> {
+        match self {
+            EntryRef::Building(e) => e
+                .mixins
+                .iter()
+                .map(|m| (m.kind, m.target.written()))
+                .collect(),
+            EntryRef::Frozen(n) => n.mixins(),
+        }
+    }
+
+    fn extends(self) -> Vec<Written<'a>> {
+        match self {
+            EntryRef::Building(e) => e.extends.iter().map(Target::written).collect(),
+            EntryRef::Frozen(n) => n.extends(),
+        }
+    }
+
+    fn superclass(self) -> Option<Written<'a>> {
+        match self {
+            EntryRef::Building(e) => e.superclass.as_ref().map(Target::written),
+            EntryRef::Frozen(n) => n.superclass(),
+        }
+    }
+
+    fn alias_of(self) -> Option<Written<'a>> {
+        match self {
+            EntryRef::Building(e) => e.alias_of.as_ref().map(Target::written),
+            EntryRef::Frozen(n) => n.alias_of(),
+        }
+    }
+}
+
 /// A method definition with its owner resolved.
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct MethodDef {
@@ -158,7 +273,7 @@ pub(crate) struct Tree {
     /// gem or from core, which is a ranking signal: code in the repo you are
     /// standing in is likelier to be what you meant than a dependency's.
     root: String,
-    names: HashMap<String, Entry>,
+    names: Names,
     /// Where methods come from when the tree does not already have them.
     /// `None` for a tree built from rows in hand (fixtures), which is fully
     /// eager and never loads anything.
@@ -311,7 +426,7 @@ fn qualify(scope: &str, name: &str) -> String {
 
 impl Tree {
     /// Assemble a checkout's namespace from its blob facts.
-    pub(crate) fn build(store: &Store, root: &str) -> rusqlite::Result<Tree> {
+    pub(crate) fn build(store: &Store, root: &str) -> anyhow::Result<Tree> {
         // Core goes in first, so that a checkout reopening `class Object` adds
         // to it rather than being shadowed by it, and so that every class ends
         // up with an Object/Kernel/BasicObject tail.
@@ -336,9 +451,11 @@ impl Tree {
         edges.extend(phases.time("ancestry", || store.ancestry(&roots))?);
         phases.decls = decls.len();
 
-        let mut tree = Tree::assemble(decls, edges);
+        let names = Tree::assemble(decls, edges);
         phases.mark("assemble");
-        tree.root = root.to_string();
+        let mut tree = Tree::over(freeze(&names)?, root.to_string());
+        drop(names);
+        phases.mark("snapshot");
 
         // The checkout's methods are *not* loaded here. Nothing needs all of
         // them, and fetching and indexing rails' 84,052 was 76 % of this build
@@ -373,11 +490,26 @@ impl Tree {
         Ok(tree)
     }
 
-    fn assemble(decls: Vec<DeclRow>, edges: Vec<EdgeRow>) -> Tree {
-        let mut tree = Tree {
-            root: String::new(),
+    /// A tree from rows in hand, with nothing to load later.
+    #[cfg(test)]
+    fn from_rows(decls: Vec<DeclRow>, edges: Vec<EdgeRow>) -> Tree {
+        let names = Tree::assemble(decls, edges);
+        Tree::over(
+            freeze(&names).expect("a test namespace fits"),
+            String::new(),
+        )
+    }
+
+    /// A tree answering from this namespace, with nothing memoized yet.
+    fn over(snapshot: snapshot::Snapshot, root: String) -> Tree {
+        Tree::with_names(Names::Frozen(snapshot), root)
+    }
+
+    fn with_names(names: Names, root: String) -> Tree {
+        Tree {
+            root,
             in_flight: RefCell::new(HashSet::new()),
-            names: HashMap::new(),
+            names,
             methods: RefCell::new(Vec::new()),
             by_owner: RefCell::new(HashMap::new()),
             by_name: RefCell::new(HashMap::new()),
@@ -386,7 +518,16 @@ impl Tree {
             carriers: HashMap::new(),
             includers: RefCell::new(None),
             ancestors: RefCell::new(HashMap::new()),
-        };
+        }
+    }
+
+    /// The namespace a set of declarations and edges add up to.
+    ///
+    /// Assembled in a scratch tree, because placing a declaration uses the
+    /// same lookups a query does. Whatever that scratch tree memoized along
+    /// the way was computed against a half-built namespace, and goes with it.
+    fn assemble(decls: Vec<DeclRow>, edges: Vec<EdgeRow>) -> HashMap<String, Entry> {
+        let mut tree = Tree::with_names(Names::Building(HashMap::new()), String::new());
 
         // Placing a name can depend on a name not placed yet: `class A::B`
         // needs `A`, and `A` may itself have been written compactly. So settle
@@ -420,7 +561,7 @@ impl Tree {
         let mut first = true;
         loop {
             rounds += 1;
-            let before = tree.names.len();
+            let before = tree.names.building().len();
             // Round one settles every declaration; later rounds revisit only
             // the ones whose placement can still change.
             for (decl, _) in decls.iter().zip(&movable).filter(|(_, m)| first || **m) {
@@ -434,7 +575,7 @@ impl Tree {
                 tree.declare_key(fqn, decl, nesting);
             }
             first = false;
-            if tree.names.len() == before {
+            if tree.names.building().len() == before {
                 break;
             }
         }
@@ -445,7 +586,7 @@ impl Tree {
                 decls.len(),
                 movable.iter().filter(|m| **m).count(),
                 (t1 - t0).as_secs_f64() * 1000.0,
-                tree.names.len()
+                tree.names.building().len()
             );
         }
         for ((decl, movable), placed) in decls.iter().zip(movable).zip(placed) {
@@ -473,7 +614,7 @@ impl Tree {
                 name: edge.target,
                 nesting,
             };
-            let entry = tree.names.entry(scope).or_default();
+            let entry = tree.names.building().entry(scope).or_default();
             match edge.relation.as_str() {
                 "prepend" => entry.mixins.push(Mixin {
                     kind: MixinKind::Prepend,
@@ -490,7 +631,7 @@ impl Tree {
                 _ => continue,
             };
         }
-        tree
+        std::mem::take(tree.names.building())
     }
 
     /// Ruby's `Module.nesting`, rebuilt from what the blob layer saw.
@@ -540,7 +681,7 @@ impl Tree {
         // constant lookup.
         for scope in scopes.iter().map(String::as_str).chain([""]) {
             let candidate = qualify(scope, prefix);
-            if self.names.contains_key(&candidate) {
+            if self.names.contains(&candidate) {
                 return qualify(&self.namespace_of(&candidate), last);
             }
         }
@@ -562,18 +703,19 @@ impl Tree {
     /// These entries carry **no sites**, which is the truth: the name exists
     /// and no line of code declares it.
     fn imply_namespaces(&mut self) {
+        let names = self.names.building();
         let mut implied: Vec<String> = Vec::new();
-        for fqn in self.names.keys() {
+        for fqn in names.keys() {
             let mut prefix = fqn.as_str();
             while let Some((parent, _)) = prefix.rsplit_once("::") {
-                if !self.names.contains_key(parent) {
+                if !names.contains_key(parent) {
                     implied.push(parent.to_string());
                 }
                 prefix = parent;
             }
         }
         for fqn in implied {
-            let entry = self.names.entry(fqn).or_default();
+            let entry = names.entry(fqn).or_default();
             if entry.kind.is_empty() {
                 entry.kind = "module".to_string();
             }
@@ -583,7 +725,7 @@ impl Tree {
     /// Everything about a name except where it is written. Idempotent, so the
     /// placement loop can run it as many times as it needs to.
     fn declare_key(&mut self, fqn: String, decl: &DeclRow, nesting: Vec<String>) {
-        let entry = self.names.entry(fqn).or_default();
+        let entry = self.names.building().entry(fqn).or_default();
         // A constant assigned into a class does not make the class a constant;
         // whichever declaration says "class" or "module" names the namespace.
         if entry.kind.is_empty() || (entry.kind == "constant" && decl.kind != "constant") {
@@ -600,16 +742,21 @@ impl Tree {
     }
 
     fn declare(&mut self, fqn: String, decl: &DeclRow) {
-        self.names.entry(fqn).or_default().sites.push(Site {
-            path: decl.path.clone(),
-            line: decl.line,
-            col: decl.col,
-            kind: decl.kind.clone(),
-        });
+        self.names
+            .building()
+            .entry(fqn)
+            .or_default()
+            .sites
+            .push(Site {
+                path: decl.path.clone(),
+                line: decl.line,
+                col: decl.col,
+                kind: decl.kind.clone(),
+            });
     }
 
-    pub(crate) fn sites(&self, fqn: &str) -> &[Site] {
-        self.names.get(fqn).map_or(&[], |e| &e.sites)
+    pub(crate) fn sites(&self, fqn: &str) -> Vec<Site> {
+        self.names.get(fqn).map(EntryRef::sites).unwrap_or_default()
     }
 }
 
@@ -670,8 +817,8 @@ impl Tree {
 
         // The parent chain is needed before includes, because includes dedup
         // against it.
-        let parent: Vec<String> = match entry.and_then(|e| e.superclass.as_ref()) {
-            Some(target) => self.chain_of(target, out, stack),
+        let parent: Vec<String> = match entry.and_then(EntryRef::superclass) {
+            Some(target) => self.chain_of(&target, out, stack),
             // Every class without an explicit superclass inherits Object, and
             // that tail is most of what core indexing buys: it is how `puts`
             // and `raise` become findable from an ordinary class body.
@@ -681,9 +828,9 @@ impl Tree {
 
         let mut prepends: Vec<String> = Vec::new();
         let mut includes: Vec<String> = Vec::new();
-        for mixin in entry.map(|e| e.mixins.as_slice()).unwrap_or_default() {
-            let mut ids = self.chain_of(&mixin.target, out, stack);
-            match mixin.kind {
+        for (kind, target) in entry.map(EntryRef::mixins).unwrap_or_default() {
+            let mut ids = self.chain_of(&target, out, stack);
+            match kind {
                 MixinKind::Prepend => {
                     // Last wins: an existing entry is pulled out and re-inserted
                     // at the front — unless the whole prepend is a no-op, when
@@ -720,22 +867,22 @@ impl Tree {
     ///
     /// Only classes — a module has no superclass at all — and not the two
     /// roots, whose own chain the core stub states outright.
-    fn inherits_object(&self, fqn: &str, entry: Option<&Entry>) -> bool {
-        entry.is_some_and(|e| e.kind == "class")
+    fn inherits_object(&self, fqn: &str, entry: Option<EntryRef>) -> bool {
+        entry.is_some_and(|e| e.kind() == "class")
             && fqn != OBJECT
             && fqn != "BasicObject"
-            && self.names.contains_key(OBJECT)
+            && self.names.contains(OBJECT)
     }
 
     /// One mixin or superclass target: its own whole chain, or nothing plus a
     /// note that we could not see it.
     fn chain_of(
         &self,
-        target: &Target,
+        target: &Written,
         out: &mut Ancestry,
         stack: &mut Vec<String>,
     ) -> Vec<String> {
-        match self.resolve_lexical(&target.name, &target.nesting) {
+        match self.resolve_lexical(target.name, &target.nesting) {
             Some(fqn) => {
                 let fqn = self.namespace_of(&fqn);
                 self.linearize(&fqn, out, stack)
@@ -743,8 +890,8 @@ impl Tree {
             // `class Widget < ActiveRecord::Base` in a checkout with no gems
             // indexed. The chain stops here, and the answer says so.
             None => {
-                if !out.unresolved.contains(&target.name) {
-                    out.unresolved.push(target.name.clone());
+                if !out.unresolved.iter().any(|u| u == target.name) {
+                    out.unresolved.push(target.name.to_string());
                 }
                 Vec::new()
             }
@@ -759,17 +906,17 @@ impl Tree {
     /// yet. Ruby has the same bootstrapping problem and resolves the
     /// superclass expression in the enclosing lexical scope, which is exactly
     /// this.
-    fn resolve_lexical(&self, written: &str, nesting: &[String]) -> Option<String> {
+    fn resolve_lexical(&self, written: &str, nesting: &[impl AsRef<str>]) -> Option<String> {
         let (head, rest) = split_path(written);
         let mut current = if let Some(head) = head.strip_prefix("::") {
-            self.names.contains_key(head).then(|| head.to_string())
+            self.names.contains(head).then(|| head.to_string())
         } else {
             nesting
                 .iter()
-                .map(String::as_str)
+                .map(AsRef::as_ref)
                 .chain([""])
                 .map(|scope| qualify(scope, head))
-                .find(|candidate| self.names.contains_key(candidate))
+                .find(|candidate| self.names.contains(candidate))
         }?;
         for segment in rest {
             current = self.descend(&current, segment)?;
@@ -785,10 +932,10 @@ impl Tree {
         let mut current = fqn.to_string();
         let mut seen = HashSet::new();
         while seen.insert(current.clone()) {
-            let Some(alias) = self.names.get(&current).and_then(|e| e.alias_of.as_ref()) else {
+            let Some(alias) = self.names.get(&current).and_then(EntryRef::alias_of) else {
                 break;
             };
-            match self.resolve_lexical(&alias.name, &alias.nesting) {
+            match self.resolve_lexical(alias.name, &alias.nesting) {
                 Some(next) => current = next,
                 None => break,
             }
@@ -801,14 +948,14 @@ impl Tree {
     fn descend(&self, parent: &str, segment: &str) -> Option<String> {
         let parent = &self.namespace_of(parent);
         let direct = qualify(parent, segment);
-        if self.names.contains_key(&direct) {
+        if self.names.contains(&direct) {
             return Some(direct);
         }
         self.ancestors(parent)
             .chain
             .iter()
             .map(|ancestor| qualify(ancestor, segment))
-            .find(|candidate| self.names.contains_key(candidate))
+            .find(|candidate| self.names.contains(candidate))
     }
 
     /// Ruby's constant lookup, in full, with the evidence behind the answer.
@@ -847,7 +994,7 @@ impl Tree {
                 continue; // the innermost scope is both a lexical scope and its
                 // own first ancestor; counting it twice would overstate the work
             }
-            if self.names.contains_key(&candidate) {
+            if self.names.contains(&candidate) {
                 found = Some((candidate, via));
                 break;
             }
@@ -928,7 +1075,7 @@ pub(crate) fn for_test(sources: &[(&str, &str)]) -> Tree {
         edges.extend(e);
         methods.extend(m);
     }
-    let mut tree = Tree::assemble(decls, edges);
+    let mut tree = Tree::from_rows(decls, edges);
     tree.add_methods(methods);
     tree
 }
@@ -1098,16 +1245,16 @@ mod tests {
     fn qualifies_a_nested_declaration_by_its_whole_lexical_path() {
         let tree = one("module A\n  module B\n    class C\n    end\n  end\nend\n");
         assert!(
-            tree.names.contains_key("A::B::C"),
+            tree.is_known("A::B::C"),
             "two levels of nesting qualify twice: {:?}",
-            tree.names.keys().collect::<Vec<_>>()
+            tree.declared()
         );
     }
 
     #[test]
     fn a_compact_declaration_opens_one_scope_and_creates_only_its_last_segment() {
         let tree = one("module A\nend\nmodule A::B\n  class C\n  end\nend\n");
-        assert!(tree.names.contains_key("A::B::C"));
+        assert!(tree.is_known("A::B::C"));
         // `module A::B` does not put `A` in the nesting, so a constant written
         // inside it cannot see `A`'s.
         let tree = one("module A\n  X = 1\nend\nmodule A::B\n  Y = X\nend\n");
@@ -1118,14 +1265,10 @@ mod tests {
     fn a_compact_prefix_is_resolved_rather_than_concatenated() {
         // `module A::B` inside `module X` lands under `X` when `X::A` exists…
         let tree = one("module X\n  module A\n  end\n  module A::B\n  end\nend\n");
-        assert!(
-            tree.names.contains_key("X::A::B"),
-            "{:?}",
-            tree.names.keys().collect::<Vec<_>>()
-        );
+        assert!(tree.is_known("X::A::B"), "{:?}", tree.declared());
         // …and at the top level when it does not.
         let tree = one("module A\nend\nmodule X\n  module A::B\n  end\nend\n");
-        assert!(tree.names.contains_key("A::B"));
+        assert!(tree.is_known("A::B"));
     }
 
     #[test]
@@ -1267,9 +1410,9 @@ mod tests {
     #[test]
     fn a_compact_prefix_escapes_the_enclosing_nesting_when_it_resolves_outside() {
         let tree = one("module Bar\nend\nmodule Foo\n  class Bar::Baz\n  end\nend\n");
-        assert!(tree.names.contains_key("Bar::Baz"));
+        assert!(tree.is_known("Bar::Baz"));
         assert!(
-            !tree.names.contains_key("Foo::Bar"),
+            !tree.is_known("Foo::Bar"),
             "the prefix resolved to the top-level Bar, so Foo gained nothing"
         );
     }
@@ -1286,7 +1429,7 @@ mod tests {
             found.sites.is_empty(),
             "the name exists and no line of code declares it — say so"
         );
-        assert!(tree.names.contains_key("ActivityPub::TagManager"));
+        assert!(tree.is_known("ActivityPub::TagManager"));
     }
 
     #[test]
@@ -1298,9 +1441,9 @@ mod tests {
     #[test]
     fn a_rooted_declaration_is_owned_by_the_top_level() {
         let tree = one("module Foo\n  class ::Bar\n    class Baz\n    end\n  end\nend\n");
-        assert!(tree.names.contains_key("Bar"));
-        assert!(tree.names.contains_key("Bar::Baz"));
-        assert!(!tree.names.contains_key("Foo::Bar"));
+        assert!(tree.is_known("Bar"));
+        assert!(tree.is_known("Bar::Baz"));
+        assert!(!tree.is_known("Foo::Bar"));
     }
 
     #[test]
@@ -1318,12 +1461,8 @@ mod tests {
     #[test]
     fn a_declaration_under_an_alias_lands_under_what_it_aliases() {
         let tree = one("class Foo\nend\nALIAS = Foo\nclass ALIAS::Bar\nend\n");
-        assert!(
-            tree.names.contains_key("Foo::Bar"),
-            "{:?}",
-            tree.names.keys().collect::<Vec<_>>()
-        );
-        assert!(!tree.names.contains_key("ALIAS::Bar"));
+        assert!(tree.is_known("Foo::Bar"), "{:?}", tree.declared());
+        assert!(!tree.is_known("ALIAS::Bar"));
     }
 
     #[test]
@@ -1577,7 +1716,7 @@ impl Tree {
             let extends = self
                 .names
                 .get(&class)
-                .map(|entry| entry.extends.clone())
+                .map(EntryRef::extends)
                 .unwrap_or_default();
             for target in extends.iter().rev() {
                 // `extend self` is the module-function idiom: the module
@@ -1586,7 +1725,7 @@ impl Tree {
                 let module = if target.name == "self" {
                     Some(class.clone())
                 } else {
-                    self.resolve_lexical(&target.name, &target.nesting)
+                    self.resolve_lexical(target.name, &target.nesting)
                         .map(|fqn| self.namespace_of(&fqn))
                 };
                 let Some(module) = module else { continue };
@@ -1641,15 +1780,15 @@ impl Tree {
     /// ActiveSupport indexed still writes `extend ActiveSupport::Concern`.
     fn concern_class_methods(&self, module_name: &str) -> Option<String> {
         let entry = self.names.get(module_name)?;
-        if entry.kind != "module" {
+        if entry.kind() != "module" {
             return None;
         }
         let is_concern = entry
-            .extends
+            .extends()
             .iter()
             .any(|target| target.name.ends_with("Concern"));
         let nested = qualify(module_name, "ClassMethods");
-        (is_concern && self.names.contains_key(&nested)).then_some(nested)
+        (is_concern && self.names.contains(&nested)).then_some(nested)
     }
 
     /// Only the superclass links — no mixins. Class methods are inherited down
@@ -1660,11 +1799,10 @@ impl Tree {
         let mut current = fqn.to_string();
         while seen.insert(current.clone()) {
             chain.push(current.clone());
-            let Some(superclass) = self.names.get(&current).and_then(|e| e.superclass.as_ref())
-            else {
+            let Some(superclass) = self.names.get(&current).and_then(EntryRef::superclass) else {
                 break;
             };
-            let Some(next) = self.resolve_lexical(&superclass.name, &superclass.nesting) else {
+            let Some(next) = self.resolve_lexical(superclass.name, &superclass.nesting) else {
                 break;
             };
             current = self.namespace_of(&next);
@@ -1768,12 +1906,12 @@ impl Tree {
             let mut map: HashMap<String, Vec<String>> = HashMap::new();
             // Only classes: resolving a module receiver to another module
             // would just move the problem.
-            let classes: Vec<String> = self
-                .names
-                .iter()
-                .filter(|(_, entry)| entry.kind == "class")
-                .map(|(fqn, _)| fqn.clone())
-                .collect();
+            let mut classes: Vec<String> = Vec::new();
+            self.names.for_each(|fqn, entry| {
+                if entry.kind() == "class" {
+                    classes.push(fqn.to_string());
+                }
+            });
             for class in classes {
                 for ancestor in &self.ancestors(&class).chain {
                     if ancestor != &class {
@@ -1798,22 +1936,23 @@ impl Tree {
     pub(crate) fn kind_of(&self, fqn: &str) -> Option<&str> {
         self.names
             .get(fqn)
-            .map(|entry| entry.kind.as_str())
+            .map(EntryRef::kind)
             .filter(|kind| !kind.is_empty())
     }
 
     pub(crate) fn is_known(&self, fqn: &str) -> bool {
-        self.names.contains_key(fqn)
+        self.names.contains(fqn)
     }
 
     /// Every declared class, module and constant, with its kind — for a
     /// caller that has to *list* a namespace rather than resolve one name
     /// (LSP completion, DEC-040).
     pub(crate) fn declared(&self) -> Vec<(String, String)> {
-        self.names
-            .iter()
-            .map(|(fqn, entry)| (fqn.clone(), entry.kind.clone()))
-            .collect()
+        let mut declared = Vec::new();
+        self.names.for_each(|fqn, entry| {
+            declared.push((fqn.to_string(), entry.kind().to_string()));
+        });
+        declared
     }
 
     /// Every method definition in the tree's checkouts, under each
@@ -2138,6 +2277,16 @@ impl Phases {
     }
 }
 
+/// A namespace laid out flat, held on the heap.
+fn freeze(names: &HashMap<String, Entry>) -> anyhow::Result<snapshot::Snapshot> {
+    let key = snapshot::Key::default();
+    let bytes = snapshot::encode(names, &key)?;
+    Ok(
+        snapshot::Snapshot::parse(snapshot::Bytes::Owned(bytes), &key)
+            .expect("a namespace just encoded parses"),
+    )
+}
+
 /// The implicit superclass of every class that does not name one.
 const OBJECT: &str = "Object";
 
@@ -2226,7 +2375,7 @@ mod rbi_preference_tests {
     /// dead against every real path in the store.
     #[test]
     fn real_source_beats_an_rbi_stub_for_the_same_method() {
-        let mut tree = Tree::assemble(
+        let mut tree = Tree::from_rows(
             vec![DeclRow {
                 name: "Widget".into(),
                 kind: "class".into(),
@@ -2259,7 +2408,7 @@ mod rbi_preference_tests {
     /// within one owner left the stub winning the lookup outright.
     #[test]
     fn a_stub_owner_does_not_beat_real_source_further_down_the_chain() {
-        let mut tree = Tree::assemble(
+        let mut tree = Tree::from_rows(
             vec![
                 DeclRow {
                     name: "Base".into(),
@@ -2302,7 +2451,7 @@ mod rbi_preference_tests {
     /// When the stub is all there is, it is still the best answer available.
     #[test]
     fn an_rbi_stub_is_kept_when_nothing_else_defines_the_method() {
-        let mut tree = Tree::assemble(Vec::new(), Vec::new());
+        let mut tree = Tree::from_rows(Vec::new(), Vec::new());
         tree.add_methods(vec![method(
             "Widget",
             "only_declared",

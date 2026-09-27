@@ -1132,7 +1132,7 @@ fn cmd_refs_by_name(
 /// takes the pages back in one go.
 type OneShotTree = std::mem::ManuallyDrop<Tree>;
 
-fn build_tree(store: &Store, root: &str) -> rusqlite::Result<OneShotTree> {
+fn build_tree(store: &Store, root: &str) -> anyhow::Result<OneShotTree> {
     Tree::build(store, root).map(std::mem::ManuallyDrop::new)
 }
 
