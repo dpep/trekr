@@ -1364,12 +1364,12 @@ impl<'pr> Extractor<'_> {
                     columns.push(("created_at".into(), macros::column_class("datetime")));
                     columns.push(("updated_at".into(), macros::column_class("datetime")));
                 }
-                // `t.references :author` is a foreign key plus the association.
+                // `t.references :author` is the `author_id` column. The
+                // `author` reader is the model's `belongs_to`, not the table's.
                 "references" | "belongs_to" => {
                     for arg in arg_nodes(&inner) {
                         if let Some(name) = literal_name(&arg) {
                             columns.push((format!("{name}_id"), macros::column_class("integer")));
-                            columns.push((name, None));
                         }
                     }
                 }

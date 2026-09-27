@@ -1,0 +1,6 @@
+# `t.references :author` in a schema makes the `author_id` column, and nothing
+# else: the `author` reader is `belongs_to`'s. The schema used to declare an
+# `author` too, and being indexed later it won the lookup, so `post.author`
+# pointed at the schema line instead of the association.
+def app/post.rb:8:10 status=resolved name=author owner=Post defined_via=belongs_to site=app/post.rb:2
+def app/post.rb:9:10 status=resolved name=author_id owner=Post defined_via=schema

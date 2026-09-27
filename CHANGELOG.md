@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`t.references :author` in a schema declares only `author_id`.** It also
+  declared an `author` reader, which Rails does not make there; when the
+  schema was read after the model, `post.author` pointed at the schema line
+  instead of `belongs_to :author`. Store v26.
+
 - **A local receiver is typed from the writes that reach it.** `post =
   Post.first; post.author` in a file where an earlier method wrote `post =
   Cpk::Post.create!` answered `Cpk::Post`, because the first assignment in the
