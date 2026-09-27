@@ -6,6 +6,13 @@
   prefix tells a terminal whose error it is; stderr keeps it. Outside a git
   checkout the message says so plainly instead of quoting `git rev-parse`.
 
+- **Exit codes, where they were wrong.** A directory given to `--def` or
+  `--symbols`, and a position with line or column `0` (`f.rb:0:0`), are
+  usage errors (`64`), not `74` and `1`. `--usage` with `TREKR_USAGE=off`
+  exits `1` with nothing recorded, not `64`: the command line was fine.
+  `--usage` on an editor that only opened and closed reports its sessions
+  instead of a bare heading.
+
 ## 0.3.0 — 2026-09-27
 
 - **Navigation works inside a gem's file in the editor.** After following a

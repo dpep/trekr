@@ -44,6 +44,18 @@ impl Spec {
             col: 0,
         })
     }
+
+    /// Why a position-shaped input names no position, if it does not: lines
+    /// and columns count from 1. `FILE:LINE` leaves the column 0 internally,
+    /// so only a written `:0` column is refused.
+    pub(crate) fn out_of_range(&self, written: &str) -> Option<String> {
+        let col_written = written
+            .rsplit_once(':')
+            .and_then(|(rest, _)| rest.rsplit_once(':'))
+            .is_some_and(|(_, line)| line.parse::<u32>().is_ok());
+        (self.line == 0 || (col_written && self.col == 0))
+            .then(|| format!("`{written}`: lines and columns count from 1, so 0 names no position"))
+    }
 }
 
 /// What the cursor is on. Ordered by how much this engine can say about it.
@@ -305,6 +317,12 @@ mod tests {
         assert_eq!(colonic.path, "/tmp/a:b/user.rb");
         assert_eq!((colonic.line, colonic.col), (42, 0));
         assert!(Spec::parse("app.rb").is_none());
+
+        // Zero is a position shape, so it is refused as one rather than
+        // dispatched elsewhere; a line-only spec's column is not a written 0.
+        let zero = |s: &str| Spec::parse(s).unwrap().out_of_range(s).is_some();
+        assert!(zero("a.rb:0:0") && zero("a.rb:0") && zero("a.rb:3:0"));
+        assert!(!zero("a.rb:3") && !zero("a.rb:3:1"));
         assert!(Spec::parse(":42").is_none());
     }
 

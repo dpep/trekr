@@ -61,7 +61,7 @@ agent. Exit codes mean something, and each means one thing:
 | Exit | Meaning |
 | --- | --- |
 | `0` | An answer: something matched, was indexed, or was collected. |
-| `1` | A definitive nothing: trekr looked, and it is not there. |
+| `1` | Nothing found: trekr looked, and did not find it. `status` says how sure: `no_such_method` is certain, `residue` names what it could not see (an unindexed ancestor, an untyped receiver). |
 | `2` | No answer yet: this checkout is not indexed. Run the `hint` (`trekr --index …`), then ask again. |
 | `64`–`74` | An error, below. |
 
@@ -163,7 +163,7 @@ too.
 agent, a person, an editor), how often they come back empty, and how slow. It
 counts locally — no queries, paths or repository names — in `trekr.usage.db`
 beside the index. `TREKR_USAGE=off` stops the counting: nothing is recorded,
-the file is never opened, and `--usage` has nothing to report. A path in
+the file is never opened, and `--usage` says so and exits `1`. A path in
 `TREKR_USAGE` moves the file instead.
 
 ### In a very large repo

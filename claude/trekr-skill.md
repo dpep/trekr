@@ -276,7 +276,7 @@ tiers the site `possible`.
   | exit | means | do |
   | --- | --- | --- |
   | `0` | an answer (`resolved` or `ambiguous`, something listed) | read it |
-  | `1` | a definitive nothing: `residue`, `no_such_method`, no mention | read `reason`/`candidates` |
+  | `1` | nothing found: `no_such_method` (certain), `residue` (it names what it could not see), no mention | read `reason`/`candidates` |
   | `2` | `status: not_indexed` | run the `hint`, ask again |
   | `64` | `usage`: the command line is wrong | fix the command; a retry won't help |
   | `66` | `not_found`, `not_a_repo`: a path is missing or in no checkout | fix the path |

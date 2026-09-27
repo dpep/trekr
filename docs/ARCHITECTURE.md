@@ -461,7 +461,7 @@ of a guess. Narrowing it is layer 3's job.
 | exit | meaning |
 |---|---|
 | 0 | something was indexed, or a query matched |
-| 1 | nothing matched, nothing to do — a definitive answer |
+| 1 | nothing matched, nothing to do — trekr looked; `status` says whether the nothing is certain or a residue |
 | 2 | the request could not be served (not a repo, unreadable file) |
 
 `--def` reparses the one file with Prism rather than reading stored spans, so

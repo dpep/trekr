@@ -33,7 +33,8 @@ use std::process::ExitCode;
         index and a reindex with no edits parses nothing.\n\n\
         EXIT CODES\n  \
         0   something was indexed, or a query matched\n  \
-        1   a definitive nothing: no match, nothing to collect\n  \
+        1   nothing found: no match, nothing to collect. `status` says whether that\n      \
+        is certain (no_such_method) or a residue that names what it could not see\n  \
         2   no answer yet: this checkout is not indexed (run --index)\n  \
         64  usage: the command line is wrong\n  \
         66  not_found, not_a_repo: a path it names is missing or not in a checkout\n  \
@@ -410,8 +411,15 @@ fn requested_output(args: impl IntoIterator<Item = std::ffi::OsString>) -> Outpu
     }
 }
 
-/// A file the caller named. Missing is their typo, not trekr's failure.
+/// A file the caller named. Missing is their typo, not trekr's failure, and
+/// so is a directory where a file was asked for.
 fn read_input(path: &Path) -> anyhow::Result<Vec<u8>> {
+    if path.is_dir() {
+        return Err(Failure::Usage.error(format!(
+            "{} is a directory; this asks about one file",
+            path.display()
+        )));
+    }
     std::fs::read(path).map_err(|error| {
         let kind = match error.kind() {
             std::io::ErrorKind::NotFound => Failure::NotFound,
@@ -1787,7 +1795,7 @@ fn not_indexed(out: Output, root: &Path, store: &Store) -> anyhow::Result<ExitCo
             }),
         )?,
     }
-    // Exit 2, not 1: `1` is this tool's "a definitive nothing" and would tell a
+    // Exit 2, not 1: `1` is this tool's "looked, found nothing" and would tell a
     // script the question was answered. It was not asked (DEC-067).
     Ok(ExitCode::from(2))
 }
@@ -1828,8 +1836,12 @@ fn cmd_def(
     explain: bool,
     pinned: Option<&Path>,
 ) -> anyhow::Result<ExitCode> {
+    let written = spec;
     let spec = position::Spec::parse(spec)
         .ok_or_else(|| Failure::Usage.error(format!("expected FILE:LINE:COL, got `{spec}`")))?;
+    if let Some(why) = spec.out_of_range(written) {
+        return Err(Failure::Usage.error(why));
+    }
     let source = read_input(Path::new(&spec.path))?;
     let facts = crate::extract::extract(&source);
     // The file as a site names it, whatever directory the question came from.
@@ -2435,9 +2447,18 @@ fn exit_on(happened: bool) -> ExitCode {
 /// Text is the summary; `--json`/`--ndjson` are the stored daily rows, the
 /// evidence the summary is folded from.
 fn cmd_usage(out: Output, days: Option<u32>) -> anyhow::Result<ExitCode> {
+    // Off is not a mistake in the command line: nothing was recorded, which
+    // is the same nothing as a counter that has not run yet.
     let Some(path) = crate::usage::path() else {
-        return Err(Failure::Usage
-            .error("usage counting is off ($TREKR_USAGE), so there is nothing to summarize"));
+        let why = "usage counting is off (TREKR_USAGE=off), so nothing is recorded";
+        match out {
+            Output::Text => println!("{why}"),
+            _ => {
+                eprintln!("trekr: {why}");
+                emit_rows(out, &[] as &[crate::usage::Row])?;
+            }
+        }
+        return Ok(ExitCode::from(1));
     };
     let rows = crate::usage::read(&path, days)?;
     if emit_rows(out, &rows)? {
@@ -2527,7 +2548,13 @@ fn usage_text(rows: &[crate::usage::Row], days: Option<u32>) -> String {
             })
             .map(|((_, name), f)| (name, f))
             .collect();
-        if shown.is_empty() {
+        // An editor that only opened and closed still has sessions to report;
+        // skipping it printed a bare heading, a summary of nothing.
+        let lifecycle = surface == "lsp"
+            && features
+                .keys()
+                .any(|(s, name)| s == "lsp" && LIFECYCLE.contains(&name.as_str()));
+        if shown.is_empty() && !lifecycle {
             continue;
         }
         shown.sort_by(|a, b| b.1.uses.cmp(&a.1.uses).then_with(|| a.0.cmp(b.0)));
@@ -2663,5 +2690,23 @@ mod tests {
         ] {
             assert!(mode(args) == want, "{args:?}");
         }
+    }
+
+    #[test]
+    fn an_editor_that_only_opened_still_has_sessions_to_report() {
+        let row = |feature: &str| crate::usage::Row {
+            day: "2026-01-01".into(),
+            surface: "lsp".into(),
+            feature: feature.into(),
+            flags: String::new(),
+            origin: "vscode".into(),
+            outcome: "hit".into(),
+            latency: String::new(),
+            cold: false,
+            count: 2,
+        };
+        let text = usage_text(&[row("session")], None);
+        assert!(text.contains("editor (--lsp)"), "{text}");
+        assert!(text.contains("sessions 2"), "{text}");
     }
 }

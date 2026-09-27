@@ -3430,7 +3430,7 @@ ported, with the same `kind` names where they mean the same thing: `usage`,
 | Exit | Meaning | `kind` |
 |---|---|---|
 | 0 | an answer | |
-| 1 | a definitive nothing | |
+| 1 | nothing found — `status` says whether certainly (DEC-080) | |
 | 2 | no answer yet: the checkout is not indexed (`status: not_indexed`) | |
 | 64 `EX_USAGE` | the command line is wrong | `usage` |
 | 66 `EX_NOINPUT` | a named path is missing, or in no checkout | `not_found`, `not_a_repo` |
@@ -4077,3 +4077,27 @@ clears it.
 the immediate transaction then has to span a migration that may take much
 longer than the busy timeout, and waiting openers need progress instead of a
 5 s wait.
+
+## DEC-080 — The CLI's contract: one name per concept, and `1` means "found nothing"
+
+**Decided.** The command line's public API is its flags, its output shape and
+its exit codes, and each follows one rule rather than whatever the command
+that introduced it chose.
+
+*Exit `1` is "looked, found nothing"*, not "certainly absent". `--def` on an
+untyped receiver, a method whose owner has an unindexed ancestor, and a
+constant nobody declared all exit `1` with `status: residue`; `status:
+no_such_method` is the certain one. The answer's `status` and `reason` say
+which, so the code and the message never disagree: the message hedges exactly
+when the status is residue. `2` stays reserved for "not indexed" (DEC-067),
+which running `--index` fixes. An unindexed ancestor is usually a gem that is
+not installed or a module built at runtime, which `--index` does not fix, so
+reusing `2` would send a retry loop around forever.
+
+*A mistake in the command line is `64`*, including one clap cannot see: a
+directory where a file is asked for, a position with line or column `0`.
+Settings that make a command have nothing to say are not mistakes:
+`TREKR_USAGE=off` makes `--usage` exit `1`, with nothing recorded.
+
+**Reverses if** a caller needs "certainly absent" and "not seen" told apart by
+the number alone. Then residue gets a code of its own above `2`, never `2`.

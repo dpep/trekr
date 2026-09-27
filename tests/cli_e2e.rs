@@ -1161,12 +1161,15 @@ fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
         (&dir, &[], &[], 64, "usage", "nothing to do"),
         (
             &dir,
-            &["--usage"],
-            &[("TREKR_USAGE", "off")],
+            &["--def", "widget.rb:0:0"],
+            &[],
             64,
             "usage",
-            "TREKR_USAGE",
+            "count from 1",
         ),
+        (&dir, &["widget.rb:3:0"], &[], 64, "usage", "count from 1"),
+        (&dir, &["--def", ".:1:1"], &[], 64, "usage", "directory"),
+        (&dir, &["--symbols", "."], &[], 64, "usage", "directory"),
         (
             &dir,
             &["--def", "gone.rb:1:1"],
@@ -1250,6 +1253,16 @@ fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
             );
         }
     }
+
+    // Counting switched off is nothing recorded, not a mistake in the call.
+    let off = trekr_env(&db, &dir, &["--usage"], &[("TREKR_USAGE", "off")]);
+    assert_eq!(off.status.code(), Some(1));
+    assert!(stdout(&off).contains("TREKR_USAGE=off"), "{off:?}");
+    let off = trekr_env(&db, &dir, &["--usage", "-j"], &[("TREKR_USAGE", "off")]);
+    assert_eq!(
+        (off.status.code(), json(&off)),
+        (Some(1), serde_json::json!([]))
+    );
 
     // The mode is read off argv before clap parses it: a flag in front of
     // the bad one, or inside a cluster, still asks for JSON.
