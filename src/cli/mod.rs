@@ -42,12 +42,20 @@ use std::process::ExitCode;
         70  internal: a bug\n  \
         74  database, io: the index or a file could not be read or written\n\n\
         Under --json/--ndjson an error is one {\"error\", \"kind\", \"code\"} object on \
-        stdout; the message is on stderr either way."
+        stdout; the message is on stderr either way.\n\n\
+        ENVIRONMENT\n  \
+        TREKR_DB     the index (default ~/.local/share/trekr/trekr.db); its tree snapshots\n               \
+        and Ruby core's files are kept beside it\n  \
+        TREKR_USAGE  the usage-count file (default: beside the index), or `off`\n  \
+        TREKR_JOBS   parse threads, as --jobs"
 )]
 struct Cli {
-    /// What to look up, dispatched on its shape: `FILE:LINE:COL` and
-    /// `FILE:LINE` ask what is at a position, `Owner#method` or `Owner.method`
-    /// asks about a method, and a bare `Constant` asks about a class or module.
+    /// What to look up, dispatched on its shape. `FILE:LINE:COL` and
+    /// `FILE:LINE` ask what is at a position, as `--def` does. `Owner#method`
+    /// or `Owner.method` answers with a card: where the method is defined and
+    /// how many call sites reach it, tiered — a summary; `--refs` lists the
+    /// sites. A bare `Constant` is a card too: where it is defined and what it
+    /// inherits. `--usage` counts these as `def` and `card`.
     ///
     /// Sugar over the flags, never a replacement: every shape it reaches is
     /// still addressable explicitly, so a script never has to depend on
@@ -98,7 +106,7 @@ struct Cli {
     /// otherwise answered from whichever app most recently indexed it — a pick
     /// that is deterministic but moves as you work (DEC-029). Pin it when a
     /// measurement has to be reproducible.
-    #[arg(long, value_name = "CHECKOUT", requires = "def")]
+    #[arg(long, value_name = "CHECKOUT")]
     context: Option<PathBuf>,
 
     /// The linearized ancestor chain of a class or module.
@@ -163,8 +171,9 @@ struct Cli {
     /// Show why an answer came out the way it did: the rung that resolved the
     /// receiver, the confidence and what graded it, the ancestors that could
     /// not be seen, and the ranked candidates behind a residue. The same facts
-    /// `--json` carries, rendered for a person.
-    #[arg(long, requires = "def")]
+    /// `--json` carries, rendered for a person. For a position: `--def
+    /// FILE:LINE:COL`, or the bare `FILE:LINE:COL`.
+    #[arg(long)]
     explain: bool,
 
     /// Emit results as JSON — a pretty object, or an array for row sets.
@@ -214,6 +223,32 @@ pub fn run() -> ExitCode {
     } else {
         Output::Text
     };
+
+    // Both qualify an answer about a position, which a bare `FILE:LINE:COL`
+    // asks as well as `--def` does.
+    let position = cli.def.is_some()
+        || cli.refs.is_none()
+            && cli
+                .input
+                .as_deref()
+                .is_some_and(|i| position::Spec::parse(i).is_some());
+    for (on, flag) in [
+        (cli.explain, "--explain"),
+        (cli.context.is_some(), "--context"),
+    ] {
+        if on && !position {
+            let message = format!(
+                "{flag} applies to a position: `trekr {flag} FILE:LINE:COL`, or with --def"
+            );
+            count(
+                "invalid",
+                String::new(),
+                Outcome::Error(Failure::Usage.as_str()),
+                started,
+            );
+            return fail(out, Failure::Usage, &message);
+        }
+    }
 
     // The feature each branch counts as; `None` for what is not a use of the
     // engine (`--usage` itself) or is counted by its own front (`--lsp`).
@@ -2295,11 +2330,31 @@ fn explanation(answer: &serde_json::Value) -> String {
     if let Some(context) = field("context") {
         out.push(format!("  context     {}", paths::pretty(&context)));
     }
-    if let Some(receiver) = field("receiver") {
-        let typed = field("receiver_type")
-            .map(|t| format!(" → {t}"))
-            .unwrap_or_default();
-        out.push(format!("  receiver    {receiver}{typed}"));
+    // A receiver that is itself a call was typed by what that call returns;
+    // its syntactic shape ("other") says nothing a reader can use.
+    let chained = field("resolved_via").filter(|via| via.starts_with("chain"));
+    match (
+        field("receiver"),
+        field("receiver_type"),
+        chained.as_deref(),
+    ) {
+        (_, Some(typed), Some("chain:name")) => {
+            let share = field("agreement")
+                .map(|a| format!(" ({a} of them declare one)"))
+                .unwrap_or_default();
+            out.push(format!(
+                "  receiver    a call → {typed}: its receiver is untyped, and every indexed \
+                 method of that name that declares a return type returns {typed}{share}"
+            ));
+        }
+        (_, Some(typed), Some(_)) => out.push(format!(
+            "  receiver    a call → {typed}, by the return type that method declares"
+        )),
+        (Some(receiver), typed, _) => {
+            let typed = typed.map(|t| format!(" → {t}")).unwrap_or_default();
+            out.push(format!("  receiver    {receiver}{typed}"));
+        }
+        _ => {}
     }
     if let Some(owner) = field("owner") {
         out.push(format!("  owner       {owner}"));
@@ -2878,6 +2933,22 @@ mod tests {
         ] {
             assert!(mode(args) == want, "{args:?}");
         }
+    }
+
+    #[test]
+    fn a_chained_receiver_is_explained_by_its_return_type_not_its_shape() {
+        let by_name = serde_json::json!({
+            "status": "resolved", "resolved_via": "chain:name",
+            "receiver": "other", "receiver_type": "String",
+        });
+        let text = explanation(&by_name);
+        assert!(text.contains("every indexed method of that name"), "{text}");
+        assert!(!text.contains("other →"), "{text}");
+        let by_sig = serde_json::json!({
+            "status": "resolved", "resolved_via": "chain",
+            "receiver": "local", "receiver_type": "Item",
+        });
+        assert!(explanation(&by_sig).contains("a call → Item, by the return type"));
     }
 
     #[test]

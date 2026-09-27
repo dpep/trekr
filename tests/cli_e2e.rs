@@ -1654,6 +1654,18 @@ fn explain_renders_the_disclosure_the_json_already_carries() {
     let residue_json = json(&trekr(&db, &dir, &["--def", "app.rb:14:11", "--json"]));
     assert!(!residue_json["candidates"].as_array().unwrap().is_empty());
 
+    // A bare position is a --def, so it takes --explain too; nothing else does.
+    let bare = stdout(&trekr(&db, &dir, &["app.rb:11:13", "--explain"]));
+    assert_eq!(bare, explained);
+    for args in [
+        &["--refs", "ship", "--explain"][..],
+        &["Widget#ship", "--explain"],
+    ] {
+        let out = trekr(&db, &dir, args);
+        assert_eq!(out.status.code(), Some(64), "{args:?}");
+        assert!(String::from_utf8_lossy(&out.stderr).contains("position"));
+    }
+
     let _ = fs::remove_dir_all(&dir);
 }
 

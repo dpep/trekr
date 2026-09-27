@@ -50,6 +50,8 @@ trekr --symbols lib/thing.rb     # outline a file before reading it
 trekr --refs 'Widget#save'       # references narrowed by receiver
 trekr --refs Widget              # every mention of a name in this checkout
 trekr --def lib/thing.rb:12:5    # what is this name, and where is it defined
+trekr lib/thing.rb:12:5 --explain  # the same, and why it came out that way
+trekr Widget#save                # a card: where it is defined, how many sites reach it
 trekr --ancestors Widget         # the linearized ancestor chain
 trekr --dead app/models          # methods nothing appears to call, graded
 trekr --gc --dry-run             # what old gem versions and deleted worktrees would free
@@ -160,6 +162,20 @@ whose only caller is itself a candidate is `single-caller`, not
 `unreferenced`, and its reason says so. `pretty_print` above is a fair warning: `pp` calls it by protocol, and
 trekr does not read ERB, so a method used only from a view looks unreferenced
 too.
+
+The bare forms are sugar: a position is `--def`, and `Owner#method` or a
+`Constant` is a **card** — a summary with the definition and, for a method,
+the reference counts by tier (`--refs` lists the sites themselves). `--usage`
+counts them as `def` and `card`.
+
+### Where it keeps things
+
+The index is `~/.local/share/trekr/trekr.db`. `TREKR_DB=/some/path.db` points
+every command at another one — a throwaway for CI, or one per project. Beside
+it: the tree snapshots (`trekr.trees/`), Ruby core's stubs as readable files
+(`core/String.rb`, where a core definition lands), and the usage counts
+(`trekr.usage.db`, moved or switched off by `TREKR_USAGE`, below).
+`trekr --help` lists the variables.
 
 ### Usage counts
 

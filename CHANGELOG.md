@@ -44,6 +44,12 @@
   candidate and inflated `scope`. Across checkouts, text writes every path
   whole, where it wrote each relative to the first scope's checkout.
 
+- **`--explain` and `--context` take a bare position**: `trekr f.rb:12:5
+  --explain` works, since a position is a `--def`. With anything else they
+  are a usage error that says so, where clap's said `--def` was required.
+  For a receiver typed by a call's return (`resolved_via: chain`,
+  `chain:name`), `--explain` says that, not `receiver other → String`.
+
 ### Added
 
 - **`--dead` says why**: every row has a `reason` (text prints it after the
@@ -51,6 +57,10 @@
   its `tier`, so a confirmed caller and an untyped same-name call look
   different. When that caller is itself a candidate, the reason says so: one
   pass does not cascade. Rows also carry `end_line`.
+
+- `--help` lists `TREKR_DB`, `TREKR_USAGE` and `TREKR_JOBS`, and says that
+  `Owner#method` without `--refs` is a card, a summary, which is the `card`
+  `--usage` counts. The README says where the index and its neighbours live.
 
 - `--symbols` rows carry `path` and `root`, and `--dead` rows carry `col`,
   like every other located row.
