@@ -310,7 +310,8 @@ The editor owns its lifetime; it retires itself when its binary is replaced.
 | module | owns |
 |---|---|
 | `mod.rs` | the loop: initialize, dispatch, shutdown/exit, error codes, idle warm-up, answers rewritten into the client's path spelling |
-| `inbox.rs` | reading the channel ahead, so `$/cancelRequest` is seen before the request it withdraws is reached, and mid-scan |
+| `wire.rs` | stdio framing: stdin read on the loop's own thread from the raw descriptor (no hidden read-ahead), stdout written by a thread |
+| `inbox.rs` | reading the wire ahead, so `$/cancelRequest` is seen before the request it withdraws is reached, and mid-scan |
 | `state.rs` | per-checkout trees (rebuilt when the surface key moves) and completion listings; documents — the editor's copy, or a disk read revalidated by mtime+length |
 | `handlers.rs` | the nine agent operations, syntax diagnostics |
 | `complete.rs` | completion (DEC-040) |

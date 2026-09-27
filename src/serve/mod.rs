@@ -17,10 +17,11 @@ mod handlers;
 mod inbox;
 pub(crate) mod log;
 mod state;
+mod wire;
 
 use inbox::{Inbox, Next};
 use log::Log;
-use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
+use lsp_server::{Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::Notification as _;
 use lsp_types::request::Request as _;
 use lsp_types::{
@@ -80,41 +81,62 @@ pub(crate) fn run(verbose: bool) -> anyhow::Result<()> {
             "binary": std::env::current_exe().ok().map(|p| p.to_string_lossy().into_owned()),
         }),
     );
-    let (connection, threads) = Connection::stdio();
-    // The connection owns the sender half of the writer thread's channel, so
-    // it has to be *dropped* before joining — otherwise the writer never sees
-    // the channel close and the join blocks forever. Taking it by value here
-    // is what makes that happen.
-    let result = serve(connection, &log);
+    let inbox = Inbox::new(wire::Reader::stdin(Vec::new())?);
+    let writer = wire::Writer::stdout();
+    let result = serve(&inbox, &writer, &log);
     log.event(
         "stop",
         serde_json::json!({ "error": result.as_ref().err().map(|e| e.to_string()) }),
     );
-    let outcome = result?;
-    if outcome == Outcome::Retired {
-        // Leave without joining. `join` waits on the reader first, and that
-        // thread is parked in a blocking read on stdin which an editor holds
-        // open — closing the descriptor turns the read into EOF on macOS but
-        // NOT on Linux, where close(2) does not disturb a read already in
-        // flight. Joining there hangs forever, having just logged that this
-        // build retired: precisely the silent staleness retirement exists to
-        // prevent. A retiring process has nothing left to unwind, so exit.
-        std::process::exit(0);
+    // Nothing reads stdin on another thread, so there is no reader to join —
+    // and none to leave parked in a read an editor holds open, which is what
+    // once made retirement hang on Linux.
+    writer.finish();
+    result
+}
+
+/// The handshake: wait for `initialize`, answer it with our capabilities, and
+/// wait for `initialized`. lsp-server's, over this transport.
+fn initialize(inbox: &Inbox, writer: &wire::Writer) -> anyhow::Result<serde_json::Value> {
+    let (id, params) = loop {
+        match inbox.next(None) {
+            Next::Message(Message::Request(request)) if request.method == "initialize" => {
+                break (request.id, request.params);
+            }
+            Next::Message(Message::Request(request)) => writer.send(
+                Response::new_err(
+                    request.id,
+                    lsp_server::ErrorCode::ServerNotInitialized as i32,
+                    format!("expected initialize request, got {}", request.method),
+                )
+                .into(),
+            )?,
+            Next::Message(Message::Notification(n))
+                if n.method != lsp_types::notification::Exit::METHOD => {}
+            Next::Idle => {}
+            Next::Message(other) => anyhow::bail!("expected initialize request, got {other:?}"),
+            Next::Closed => anyhow::bail!("the client disconnected before initialize"),
+        }
+    };
+    let result = serde_json::json!({ "capabilities": capabilities() });
+    writer.send(Response::new_ok(id, result).into())?;
+    loop {
+        match inbox.next(None) {
+            Next::Message(Message::Notification(n)) if n.method == "initialized" => {
+                return Ok(params);
+            }
+            Next::Idle => {}
+            Next::Message(other) => {
+                anyhow::bail!("expected initialized notification, got {other:?}")
+            }
+            Next::Closed => anyhow::bail!("the client disconnected before initialized"),
+        }
     }
-    threads.join()?;
-    Ok(())
 }
 
-/// Why the serve loop ended — retirement has to skip the thread join below.
-#[derive(PartialEq)]
-enum Outcome {
-    ShutDown,
-    Retired,
-}
-
-fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
+fn serve(inbox: &Inbox, writer: &wire::Writer, log: &Log) -> anyhow::Result<()> {
     let binary = Binary::current();
-    let params = connection.initialize(serde_json::to_value(capabilities())?)?;
+    let params = initialize(inbox, writer)?;
     let root = workspace_root(&params);
     log.event(
         "initialize",
@@ -137,13 +159,12 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
     let spelling = Spelling::of(&params, &root);
     let store = crate::store::open_default()?;
     let mut session = Session::open(root.clone(), store);
-    let inbox = Inbox::new(&connection);
     let mut indexer = fresh::Indexer::new(client.progress, client.index);
 
     if client.watch {
         // Changes the editor does not make — a checkout, a pull, a formatter —
         // only reach us if the client watches for them on our behalf.
-        connection.sender.send(watch_request())?;
+        writer.send(watch_request())?;
     }
     // A Ruby project nobody has indexed: start now, so the first question
     // finds more than core and gems. Anywhere else waits to be asked about.
@@ -157,7 +178,7 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
         for message in indexer.poll(log) {
             // A finished index moves the tree; warm it again when quiet.
             warm = Warm::Cold;
-            connection.sender.send(message)?;
+            writer.send(message)?;
         }
         // Nothing to answer: build what the first questions would otherwise
         // pay for — the root's tree, then completion's member listing — one
@@ -196,12 +217,10 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
         match message {
             Message::Request(request) => {
                 if request.method == lsp_types::request::Shutdown::METHOD {
-                    connection
-                        .sender
-                        .send(Response::new_ok(request.id, ()).into())?;
+                    writer.send(Response::new_ok(request.id, ()).into())?;
                     log.event("shutdown", serde_json::json!({}));
-                    await_exit(&connection, &inbox);
-                    return Ok(Outcome::ShutDown);
+                    await_exit(writer, inbox);
+                    return Ok(());
                 }
                 let id = request.id.clone();
                 let response = if inbox.is_cancelled(&id) {
@@ -222,7 +241,7 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
                     response
                 };
                 inbox.settle(&id);
-                connection.sender.send(Message::Response(response))?;
+                writer.send(Message::Response(response))?;
                 // Answer first, then check whether this build is still the
                 // current one. A server that keeps serving after its binary
                 // has been replaced is silent staleness — the bug class this
@@ -238,10 +257,9 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
                             "path": built.path.to_string_lossy(),
                         }),
                     );
-                    // The response above went out over a rendezvous channel,
-                    // so the writer already has it and flushes before it can
-                    // do anything else.
-                    return Ok(Outcome::Retired);
+                    // `run` finishes the writer, so the response above is
+                    // written before the process goes.
+                    return Ok(());
                 }
             }
             Message::Notification(notification) => {
@@ -249,7 +267,7 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
                     // Exit without shutdown: the protocol says stop, and so we
                     // do — there is no state here worth refusing to lose.
                     log.event("exit", serde_json::json!({ "shutdown": false }));
-                    return Ok(Outcome::ShutDown);
+                    return Ok(());
                 }
                 let method = notification.method.clone();
                 let published = notify(&mut session, &mut indexer, notification);
@@ -266,7 +284,7 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
                     {
                         spelling.apply(&mut n.params);
                     }
-                    connection.sender.send(diagnostics)?;
+                    writer.send(diagnostics)?;
                 }
             }
             Message::Response(_) => {}
@@ -275,8 +293,8 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
             indexer.want(root, false);
         }
     }
-    // The channel closed: the client went away without a shutdown request.
-    Ok(Outcome::ShutDown)
+    // The pipe closed: the client went away without a shutdown request.
+    Ok(())
 }
 
 /// How much of the root's state has been built ahead of being asked for.
@@ -302,7 +320,7 @@ impl Warm {
 /// and the reason this is not lsp-server's `handle_shutdown`: that reads the
 /// raw channel, and the `exit` it waits for may already be sitting in the
 /// inbox, read ahead with everything else.
-fn await_exit(connection: &Connection, inbox: &Inbox) {
+fn await_exit(writer: &wire::Writer, inbox: &Inbox) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
     loop {
         let left = deadline.saturating_duration_since(std::time::Instant::now());
@@ -316,7 +334,7 @@ fn await_exit(connection: &Connection, inbox: &Inbox) {
                 return;
             }
             Next::Message(Message::Request(request)) => {
-                let _ = connection.sender.send(
+                let _ = writer.send(
                     Response::new_err(
                         request.id,
                         lsp_server::ErrorCode::InvalidRequest as i32,
