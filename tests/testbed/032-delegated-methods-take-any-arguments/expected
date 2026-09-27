@@ -1,0 +1,6 @@
+# ActiveSupport's `delegate` generates `def name(...)`, so a delegated method
+# takes whatever its target takes. It was read as taking nothing, and every
+# untyped call with an argument was excluded on arity — 426 of rails'
+# `where` exclusions. (Forwardable's forwarders were already open.)
+refs Querying#where confirmed=1 possible=1 excluded=0
+refs Querying#find_each confirmed=0 possible=1 excluded=0

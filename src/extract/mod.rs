@@ -1547,6 +1547,14 @@ impl<'pr> Extractor<'_> {
                         name: "value".into(),
                     }];
                 }
+                // ActiveSupport generates `def name(...)`: it takes whatever
+                // the target does.
+                if macro_name == "delegate" {
+                    def.params = vec![Param {
+                        kind: ParamKind::Rest,
+                        name: "...".into(),
+                    }];
+                }
                 // A singular association's reader has a determinate type, which
                 // makes it a receiver source and not merely a method.
                 if !made.writer

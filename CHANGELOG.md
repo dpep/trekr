@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- **Upgrading drops and rebuilds the index** (store v30): run `trekr --index`
+  once per checkout.
+
+- **A delegated method takes any arguments.** ActiveSupport's `delegate`
+  generates `def name(...)`, and trekr read it as taking none, so `--refs`
+  excluded every untyped call with an argument on arity. On rails, 426 of
+  `ActiveRecord::Querying#where`'s 523 exclusions were these, among them
+  `Topic.where(…).where(…)`; they are `possible` now.
+
 ## 0.2.1 — 2026-09-27
 
 - **Upgrading drops and rebuilds the index** (store v29): run `trekr --index`
