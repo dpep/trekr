@@ -1988,3 +1988,101 @@ candidates on a rails-only store and 38 on one that also holds discourse and
 widget_shop. Those names reach the "plainly used" cap on other repos' calls.
 This is not fixed here, and until it is, compare `--dead` runs only on
 matching stores.
+
+## Precision gaps after 0.2.1 (2026-09-27)
+
+Six items from 0.2.1's known gaps: delegated methods' arity, `--dead`'s
+evidence scope (DEC-074), a split name's `unresolved`, a plain class in
+another gem (DEC-075), constants in a split class's body, and path forms
+(DEC-076). Each build ran against a store it indexed itself. The first commit
+bumps the store to v30, so 0.2.1 has stores of its own.
+
+### rails, the tracked queries
+
+| | 0.2.1 | now |
+| --- | ---: | ---: |
+| `ActiveRecord::Querying#where` confirmed / possible / excluded | 1,216 / 105 / 523 | **1,216 / 531 / 97** |
+| … excluded on arity | 426 | **0** |
+| `ActiveRecord::Querying#find_each` confirmed / possible / excluded | 12 / 6 / 8 | 12 / 13 / 1 |
+| `ConnectionHandling#lease_connection` confirmed / possible / excluded | 1,024 / 84 / 87 | same |
+
+All 426 arity exclusions of `where` became `possible`, and nothing else moved.
+They were untyped receivers, mostly a chain (`Topic.where(…).where(…)`,
+`mgr.where …`), excluded because `delegate(*QUERYING_METHODS, to: :all)` had
+been read as taking no arguments. `possible` is the honest tier for an untyped
+chain. Typing the chain is the next lever, not this one.
+
+### Gold set
+
+widget_shop, 3,243 sites, context pinned, every site scored:
+
+| | 0.2.1 | now |
+| --- | ---: | ---: |
+| gem floor, correct | 1,618 | **1,618** |
+| gem floor, confidently wrong | 92 | **92** |
+| gem residue-hit / residue-truth-absent | 689 / 406 | 686 / 409 |
+| `super` sites correct / confidently wrong | 118 / 0 | 118 / 0 |
+| app code | 33 correct, 1 wrong | same |
+
+Three verdicts moved, all from delegate arity, all residue-hit →
+residue-truth-absent. They are `klass.scope …` in `enum.rb` (twice) and
+`serialize` in `store.rb`. Delegated methods of the same names, such as the
+reflections' `delegate :scope`, now fit on arity. They crowd the true `def`
+out of the eight candidates shown. That is recorded as the cost. No other
+commit moved a verdict.
+
+### CLI differential
+
+The same 520 `--def` positions on rails and discourse, against 0.2.1, now
+compared on status, owner, site, confidence *and* the top three candidates.
+**No answer changed status, owner or site.** Sixteen residues reordered their
+candidates, all from delegate arity, with the truth in the top three neither
+before nor after. Discourse's `expect`/`eq` (14) now list
+`EndpointsCompliance`, whose `delegate`s fit, first. Two rails residues
+(`from`, `join`) gained a delegator in the top three. The constant fix
+changed none of the 60 sampled constants. Over the 2,200 bare constants read
+inside rails' split class bodies, three went residue → resolved
+(`ActiveRecord::TestCase::InTimeZone` twice, `SQLSubscriber`) and none
+changed otherwise.
+
+### Split names
+
+rails declares 48 top-level names with superclasses written differently. Five
+changed variants: `User`, `Post`, `Person`, `Session`, `CallbacksTest`. In
+each, a plain declaration in a gem that declares no variant had been merged
+into two or three other gems' classes. activemodel's test `User` had joined
+both activerecord's model and railties' template, and its `include
+ActiveModel::SecurePassword` with them. Each such declaration now stands
+alone. Discourse's one split name, `User`, loses a dry-initializer rake task's
+`class User`, which had joined the app model.
+
+### `--dead`
+
+rails, `--dead activerecord/lib activemodel/lib actionpack/lib`:
+
+| | 0.2.1 | now |
+| --- | ---: | ---: |
+| rails-only store | 2,425 | **2,443** |
+| same checkout, store also holding two discourse checkouts | 2,175 | **2,443** (byte-identical output) |
+| `super-only` on those two stores | 72 / 33 | 74 / 74 |
+| `super-only` with an empty `super_from` | 0 | 0 |
+
+The three `HttpAuthentication` `authenticate` methods are back as
+`single-caller`. That is the cost the 0.2.1 section recorded for the gap
+DEC-075 closes.
+
+DEC-038's history check: discourse at 2025-08-26 (ef503f2f8f9), `--dead
+app/models app/services`, candidates scored against today's defs (same
+instrument as the 0.2.1 run above, candidates / deleted since):
+
+| tier | 0.2.1, discourse-only store | 0.2.1, store with rails too | now, either store |
+| --- | ---: | ---: | ---: |
+| `unreferenced` | 198 / 13 | 194 / 13 | 199 / 13 |
+| `single-caller` | 711 / 15 | 688 / 14 | 712 / 15 |
+| `convention-only` | 290 / 17 | 283 / 16 | 290 / 17 |
+| `super-only` | 2 / 0 | 2 / 0 | 2 / 0 |
+
+The candidates no longer depend on what else is indexed (1,201 against 1,167
+for 0.2.1), and precision per tier is unchanged: `unreferenced` 13 of 199
+(6.5 %).
+
