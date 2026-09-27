@@ -171,7 +171,7 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                         candidates: if !receiver.rivals.is_empty() {
                             rival_landings(tree, &receiver, &call.name)
                         } else if receiver.ambiguous {
-                            competitors(tree, &call.name, &found.owner)
+                            competitors(tree, &call.name, &found.owner, receiver.via)
                         } else {
                             Vec::new()
                         },
@@ -1048,7 +1048,14 @@ fn last_segment(fqn: &str) -> &str {
 /// Ordered by the same rule the residue ranker uses for its last tier — this
 /// checkout's own code before a dependency's — so the list reads consistently
 /// whichever surface produced it.
-fn competitors(tree: &Tree, name: &str, winner: &str) -> Vec<Candidate> {
+fn competitors(tree: &Tree, name: &str, winner: &str, via: &str) -> Vec<Candidate> {
+    let why = match via {
+        "chain:name" => {
+            "defines the same name; the receiver's type is a guess from what the previous call returns"
+        }
+        "receiver_name" => "defines the same name; the receiver's name chose between them",
+        _ => "defines the same name; the receiver's type is not certain",
+    };
     let mut ranked: Vec<(bool, Candidate)> = tree
         .named(name)
         .into_iter()
@@ -1059,7 +1066,7 @@ fn competitors(tree: &Tree, name: &str, winner: &str) -> Vec<Candidate> {
                 Candidate {
                     owner: method.owner.clone(),
                     singleton: method.singleton,
-                    why: "defines the same name; the receiver's name chose between them",
+                    why,
                     kind: method.kind(),
                     site: method.site.clone(),
                 },
@@ -1487,12 +1494,19 @@ mod tests {
     fn a_definition_that_declares_nothing_is_a_competitor() {
         let source = format!(
             "{TYPED}class Book\n  def title\n  end\nend\n\
+             class Loud\n  def shout\n  end\nend\n\
              class W\n  def go(x)\n    x.title.shout\n  end\nend\n"
         );
         let found = answer(&source, "shout");
         assert_eq!(found.status, Status::Ambiguous);
         assert_eq!(found.owner.as_deref(), Some("Title"));
         assert_eq!(found.confidence, 0.5);
+        // The name `x` chose nothing; the previous call's return type did.
+        assert!(
+            found.candidates[0].why.contains("previous call"),
+            "{}",
+            found.candidates[0].why
+        );
     }
 
     #[test]

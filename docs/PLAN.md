@@ -299,10 +299,6 @@ Each ends in something runnable; earlier phases don't assume later ones.
 - **`--dead` counts a method's call to itself as a caller.** A recursive
   method no one else calls is not listed at all. Calls from inside a
   candidate's own span, on an implicit or `self` receiver, should not count.
-- **A `chain:name` competitor says "the receiver's name chose between
-  them"** (`resolve::competitors`), which is the receiver-name rung's wording;
-  for a chain it is the return types that agreed. The `--explain` line was
-  fixed; the candidate `why` lives in the resolve layer.
 
 Rough total to a usable, measurably-better engine: ~3 months of focused solo work,
 front-loaded on measurement. rwr's seed and rq's store/identity code are what make the
