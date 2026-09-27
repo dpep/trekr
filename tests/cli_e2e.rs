@@ -432,6 +432,16 @@ fn a_gem_is_indexed_once_and_a_missing_one_is_reported() {
     let (dir, db) = scratch("gems");
     repo(&dir);
 
+    // No lockfile, no gems: said, not left to look like an empty bundle.
+    let bare = json(&trekr(&db, &dir, &["--index", "--json"]));
+    assert_eq!(bare["gems"]["lockfile"], false);
+    assert!(stdout(&trekr(&db, &dir, &["--index"])).contains("no Gemfile.lock"));
+    let quiet = stdout(&trekr(&db, &dir, &["--index", "--no-gems"]));
+    assert!(
+        !quiet.contains("Gemfile"),
+        "--no-gems asked for none: {quiet}"
+    );
+
     // A vendored gem, exactly where bundler would put it, plus one the
     // lockfile names and disk does not have.
     let gem = dir.join("vendor/bundle/ruby/3.3.0/gems/widget-0.1.0/lib");
@@ -459,6 +469,7 @@ fn a_gem_is_indexed_once_and_a_missing_one_is_reported() {
     .unwrap();
 
     let first = json(&trekr(&db, &dir, &["--index", "--json"]));
+    assert_eq!(first["gems"]["lockfile"], true);
     assert_eq!(first["gems"]["found"], 1);
     assert_eq!(first["gems"]["indexed"], 1);
     assert_eq!(
@@ -797,6 +808,9 @@ fn a_constant_card_on_a_split_name_lists_each_declaration() {
 
     let card = json(&trekr(&db, &dir, &["Post", "--json"]));
     assert_eq!(card["status"], "ambiguous", "{card}");
+    // A Struct has no superclass line, so "two superclasses" would be wrong.
+    let text = stdout(&trekr(&db, &dir, &["Post"]));
+    assert!(text.starts_with("Post is 2 different classes"), "{text}");
     assert_eq!(card["variants"].as_array().map(Vec::len), Some(2), "{card}");
     assert_eq!(
         card["unresolved_ancestors"],
@@ -1230,6 +1244,22 @@ fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
             "FILE:LINE:COL",
         ),
         (&dir, &["not a thing"], &[], 64, "usage", "Expected"),
+        (
+            &dir,
+            &["Foo::Bar#baz#qux"],
+            &[],
+            64,
+            "usage",
+            "not a method",
+        ),
+        (
+            &dir,
+            &["--refs", "widget#resize"],
+            &[],
+            64,
+            "usage",
+            "constant",
+        ),
         (&dir, &[], &[], 64, "usage", "nothing to do"),
         (
             &dir,

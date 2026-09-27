@@ -1085,14 +1085,14 @@ fn split_receiver(tree: &Tree, call: &Call, path: &str, receiver: Receiver) -> M
             .map(|method| Candidate {
                 owner: method.owner.clone(),
                 singleton: method.singleton,
-                why: "another declaration of the receiver's class, with a different \
-                      superclass, defines it here",
+                why: "another declaration of the receiver's class, a different class \
+                      of the same name, defines it here",
                 kind: method.kind(),
                 site: method.site.clone(),
             })
             .collect(),
         reason: Some(format!(
-            "{} is declared with {} different superclasses in separate files; which runs \
+            "{} is {} different classes, declared in separate files; which runs \
              depends on which is loaded",
             receiver.fqn,
             variants.len()

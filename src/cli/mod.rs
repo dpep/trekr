@@ -712,7 +712,10 @@ fn index_gems(
     // Reading the lockfile and stat-ing ~200 conventional paths. Small, but it
     // happens on every index including a no-op, so it is worth naming.
     let located = profile::timed(profile, "gem-scan", || crate::gems::for_checkout(repo));
-    let mut report = GemReport::default();
+    let mut report = GemReport {
+        lockfile: repo.join("Gemfile.lock").is_file(),
+        ..GemReport::default()
+    };
     // Which gems this bundle resolves, whether or not they needed indexing —
     // an already-known gem still belongs to this app, and that is what makes a
     // position inside it answerable from here (DEC-029).
@@ -754,6 +757,9 @@ fn index_gems(
 
 #[derive(Debug, Default, serde::Serialize)]
 struct GemReport {
+    /// Whether the checkout has a `Gemfile.lock`. Without one no gem is
+    /// indexed, and that is said rather than left to look like an empty bundle.
+    lockfile: bool,
     /// Named by the lockfile and present on disk.
     found: usize,
     /// Read for the first time on this machine.
@@ -833,6 +839,11 @@ fn cmd_index(
             out,
             &serde_json::json!({ "repo": root_str, "indexed": counts, "gems": gems }),
         )?,
+    }
+    // Part of the report, beside the gems line it replaces: JSON has
+    // `gems.lockfile`, and stderr stays for errors and `--profile`.
+    if out == Output::Text && with_gems && !gems.lockfile {
+        println!("gems — none: no Gemfile.lock here, so a call into a gem answers as residue");
     }
     if out == Output::Text && (gems.found > 0 || !gems.missing.is_empty()) {
         println!(
@@ -1046,6 +1057,7 @@ type Parsed = HashMap<String, Option<crate::core::Facts>>;
 fn cmd_card(out: Output, text: &str) -> anyhow::Result<ExitCode> {
     use crate::resolve::refs;
     let query = refs::Query::parse(text);
+    check_method_shape(&query, text)?;
     let root = scan::repo_root(Path::new("."))?;
     let root_str = root.to_string_lossy().into_owned();
     let store = open_store()?;
@@ -1162,6 +1174,36 @@ fn cmd_card(out: Output, text: &str) -> anyhow::Result<ExitCode> {
     report(out, answer, !definition.is_empty(), &text_out)
 }
 
+/// Refuse a method query no Ruby could mean: the owner is a constant path
+/// (`Foo::Bar`), and the method one name after one `#` or `.`. The last
+/// separator splits, so `Foo#a#b` would otherwise ask `Foo#a` for `b` and
+/// answer "no indexed constant", which reads as a finding about the code.
+fn check_method_shape(query: &crate::resolve::refs::Query, text: &str) -> anyhow::Result<()> {
+    let Some(owner) = &query.owner else {
+        return Ok(());
+    };
+    let constant = |segment: &str| {
+        segment.starts_with(char::is_uppercase)
+            && segment.chars().all(|c| c.is_alphanumeric() || c == '_')
+    };
+    let owner_ok = owner
+        .strip_prefix("::")
+        .unwrap_or(owner)
+        .split("::")
+        .all(constant);
+    let name_ok = !query.name.is_empty()
+        && !query
+            .name
+            .contains(|c: char| c.is_whitespace() || c == ':' || c == '#');
+    if owner_ok && name_ok {
+        return Ok(());
+    }
+    Err(Failure::Usage.error(format!(
+        "`{text}` is not a method: expected Owner#method or Owner.method, \
+         with the owner a constant like Foo::Bar"
+    )))
+}
+
 /// Whether a method query found its method: the `status`, and the `reason`
 /// when it did not.
 ///
@@ -1261,6 +1303,7 @@ fn card_text(
 fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<ExitCode> {
     use crate::resolve::refs;
     let query = refs::Query::parse(text);
+    check_method_shape(&query, text)?;
     let root = scan::repo_root(Path::new("."))?;
     let root_str = root.to_string_lossy().into_owned();
     let store = open_store()?;
@@ -2275,7 +2318,7 @@ impl Split {
             listed: Vec::new(),
             unresolved: Vec::new(),
             text: vec![format!(
-                "{fqn} is declared with {} different superclasses, in separate files:",
+                "{fqn} is {} different classes, declared in separate files:",
                 variants.len()
             )],
         };

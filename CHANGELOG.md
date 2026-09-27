@@ -27,10 +27,21 @@
   `--usage` on an editor that only opened and closed reports its sessions
   instead of a bare heading.
 
+- **A method query no Ruby could mean is a usage error** (`64`):
+  `trekr 'Foo::Bar#baz#qux'`, `--refs widget#save`, `trekr thing.rb`. They
+  answered "no indexed constant", which reads as a finding about the code.
+
+- **A split name says it is N different classes**, not "declared with N
+  different superclasses": one of them may be a `Struct.new` or a plain
+  `class Post` in another program, with no superclass at all.
+
 ### Added
 
 - `--symbols` rows carry `path` and `root`, and `--dead` rows carry `col`,
   like every other located row.
+
+- **`--index` says when there is no `Gemfile.lock`**, so no gem was indexed:
+  a `gems — none` line in text, `gems.lockfile: false` in JSON.
 
 ## 0.3.0 — 2026-09-27
 
