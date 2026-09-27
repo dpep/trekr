@@ -411,6 +411,23 @@ fn every_testbed_case_answers_as_recorded() {
                             "{label}: {line}\n      expected {want:?} first, got {got:?}"
                         ));
                     }
+                    for assertion in rest.split_whitespace().skip(2) {
+                        let Some(listed) = assertion.strip_prefix("unresolved=") else {
+                            failures
+                                .push(format!("{label}: {line}\n      unknown key {assertion}"));
+                            continue;
+                        };
+                        let want: Vec<&str> = listed.split(',').filter(|n| !n.is_empty()).collect();
+                        let got: Vec<&str> = answer["unresolved"]
+                            .as_array()
+                            .map(|a| a.iter().filter_map(|n| n.as_str()).collect())
+                            .unwrap_or_default();
+                        if got != want {
+                            failures.push(format!(
+                                "{label}: {line}\n      unresolved: expected {want:?}, got {got:?}"
+                            ));
+                        }
+                    }
                 }
                 "dead" => {
                     let (answer, _) = trekr(&db, &dir, &["--dead", target, "--json"]);

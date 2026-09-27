@@ -955,6 +955,25 @@ fn cmd_card(out: Output, text: &str) -> anyhow::Result<ExitCode> {
                 &format!("no indexed constant named {}", query.name),
             );
         };
+        let variants = tree.variants_of(&fqn);
+        if !variants.is_empty() {
+            let split = Split::of(&tree, &fqn, &variants);
+            return report(
+                out,
+                serde_json::json!({
+                    "query": text,
+                    "status": "ambiguous",
+                    "fqn": fqn,
+                    "kind": tree.kind_of(&fqn),
+                    "definition": tree.sites(&fqn),
+                    "ancestors": [fqn],
+                    "unresolved_ancestors": split.unresolved,
+                    "variants": split.listed,
+                }),
+                true,
+                &split.text.join("\n"),
+            );
+        }
         let chain = tree.ancestors(&fqn);
         let ancestors = public_chain(&chain.chain);
         let sites = tree.sites(&fqn).to_vec();
@@ -2040,31 +2059,7 @@ fn split_ancestors(
     fqn: &str,
     variants: &[String],
 ) -> anyhow::Result<ExitCode> {
-    let mut text = vec![format!(
-        "{fqn} is declared with {} different superclasses, in separate files:",
-        variants.len()
-    )];
-    let mut listed = Vec::new();
-    for variant in variants {
-        let chain = tree.ancestors(variant);
-        let ancestors = public_chain(&chain.chain);
-        let sites = tree.sites(variant);
-        text.push(String::new());
-        for site in &sites {
-            text.push(format!(
-                "  {}:{}:{}",
-                paths::pretty(&site.path),
-                site.line,
-                site.col
-            ));
-        }
-        text.push(format!("  {}", ancestors.join(" < ")));
-        listed.push(serde_json::json!({
-            "definition": sites,
-            "ancestors": ancestors,
-            "unresolved": chain.unresolved,
-        }));
-    }
+    let split = Split::of(tree, fqn, variants);
     report(
         out,
         serde_json::json!({
@@ -2072,12 +2067,61 @@ fn split_ancestors(
             "fqn": fqn,
             "status": "ambiguous",
             "ancestors": [fqn],
-            "unresolved": tree.ancestors(fqn).unresolved,
-            "variants": listed,
+            "unresolved": split.unresolved,
+            "variants": split.listed,
         }),
         true,
-        &text.join("\n"),
+        &split.text.join("\n"),
     )
+}
+
+/// A split name's declarations, one chain each (DEC-072).
+struct Split {
+    listed: Vec<serde_json::Value>,
+    /// What no variant's chain could resolve. The name's own chain lists the
+    /// competing superclasses as unresolved, which is internal bookkeeping:
+    /// each one resolves in its variant.
+    unresolved: Vec<String>,
+    text: Vec<String>,
+}
+
+impl Split {
+    fn of(tree: &Tree, fqn: &str, variants: &[String]) -> Split {
+        let mut split = Split {
+            listed: Vec::new(),
+            unresolved: Vec::new(),
+            text: vec![format!(
+                "{fqn} is declared with {} different superclasses, in separate files:",
+                variants.len()
+            )],
+        };
+        for variant in variants {
+            let chain = tree.ancestors(variant);
+            for missing in &chain.unresolved {
+                if !split.unresolved.contains(missing) {
+                    split.unresolved.push(missing.clone());
+                }
+            }
+            let ancestors = public_chain(&chain.chain);
+            let sites = tree.sites(variant);
+            split.text.push(String::new());
+            for site in &sites {
+                split.text.push(format!(
+                    "  {}:{}:{}",
+                    paths::pretty(&site.path),
+                    site.line,
+                    site.col
+                ));
+            }
+            split.text.push(format!("  {}", ancestors.join(" < ")));
+            split.listed.push(serde_json::json!({
+                "definition": sites,
+                "ancestors": ancestors,
+                "unresolved": chain.unresolved,
+            }));
+        }
+        split
+    }
 }
 
 /// An ancestor chain as a person reads it: a split name's variant is its name.

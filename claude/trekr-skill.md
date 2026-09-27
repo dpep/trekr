@@ -252,7 +252,8 @@ trekr --ancestors Post --json               # linearized chain, unresolved named
 `class Post < ActiveRecord::Base`. Ruby would refuse to load both, so trekr
 keeps them apart: `--ancestors Post` answers `status: ambiguous` with one entry
 per variant under `variants` (`ancestors`, `definition`, `unresolved`), and
-the top-level chain is just `[Post]`. Other queries pick the variant nearest
+the top-level chain is just `[Post]`; the bare card `trekr Post` answers the
+same way. Other queries pick the variant nearest
 the file asking; when none is nearest, `--def` is `ambiguous` and `--refs`
 tiers the site `possible`.
 

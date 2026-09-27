@@ -18,5 +18,7 @@ def guides/elsewhere.rb:3:10 status=resolved owner=Record via=const
 # Equally near and both in `item.rb`: ambiguous, never a silent pick.
 def guides/elsewhere.rb:4:10 status=ambiguous owner=Record candidates=0
 ancestors Item Item
+# The competing superclasses are in the variants' chains, not unresolved.
+ancestors Post Post unresolved=
 refs Record.find_each confirmed=1
 refs Naming#to_param confirmed=1

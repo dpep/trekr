@@ -708,6 +708,45 @@ fn ancestors_linearize_in_rubys_order() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn a_constant_card_on_a_split_name_lists_each_declaration() {
+    let (dir, db) = scratch("splitcard");
+    git(&dir, &["init", "-q"]);
+    fs::create_dir_all(dir.join("fake")).unwrap();
+    fs::create_dir_all(dir.join("models")).unwrap();
+    fs::write(dir.join("fake/post.rb"), "Post = Struct.new(:title)\n").unwrap();
+    fs::write(
+        dir.join("models/post.rb"),
+        "class Record\nend\nclass Post < Record\nend\n",
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    trekr(&db, &dir, &["--index"]);
+
+    let card = json(&trekr(&db, &dir, &["Post", "--json"]));
+    assert_eq!(card["status"], "ambiguous", "{card}");
+    assert_eq!(card["variants"].as_array().map(Vec::len), Some(2), "{card}");
+    assert_eq!(
+        card["unresolved_ancestors"],
+        serde_json::json!([]),
+        "both superclasses resolve, each in its own declaration's chain"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// Two classes with the same method name, and call sites of each kind.
 fn collision_repo(dir: &Path) {
     git(dir, &["init", "-q"]);

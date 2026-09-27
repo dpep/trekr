@@ -17,6 +17,13 @@
   discourse was also indexed). It counts only the checkout now, and
   `mentions_by_name` is that checkout's count.
 
+- **A split name's top-level `unresolved` lists only what no declaration
+  resolves.** `--ancestors Post --json` on rails listed `Struct` and
+  `ActiveRecord::Base` as unresolved, though each resolves in its own
+  variant's chain. The bare card (`trekr Post`) called the same name
+  `resolved` with the one-entry chain `[Post]`; it now answers `ambiguous`
+  with `variants`, as `--ancestors` does.
+
 ## 0.2.1 — 2026-09-27
 
 - **Upgrading drops and rebuilds the index** (store v29): run `trekr --index`
