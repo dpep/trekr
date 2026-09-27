@@ -92,17 +92,19 @@ end
 def shape_sigs(table, block, positional_names)
   cells = table.select { |(given, _), _| given == block }
   return :absent if cells.empty?
+  # A shape RBS cannot type makes the state unsayable: the sigs for the rest
+  # would read as covering it (`first` would be an Array at every count).
+  return if cells.values.any?(&:nil?)
 
   values = cells.values.uniq
-  return [[nil, values.first]] if values.size == 1 && values.first
+  return [[nil, values.first]] if values.size == 1
   # Per count, which needs the counts to be finite and nameable, and a zero
   # count to have nothing to say: a `sig` naming no positional parameter means
   # "any count" (DEC-077).
   return if cells.key?([block, :rest])
   return if cells[[block, 0]]
 
-  cells.filter_map do |(_, argc), returns|
-    next unless returns
+  cells.map do |(_, argc), returns|
     return if argc > positional_names.size
 
     [argc, returns]
@@ -129,6 +131,10 @@ def sigs_for(method, known, params)
 
     return without.map { |shape| render.(shape, nil) }
   end
+  # Only `block: NilClass` confines a sig to its block state; a lone
+  # `T.proc` one is Sorbet's ordinary sig and would cover blockless calls.
+  return [] if without.nil?
+
   [[without, false], [with, true]].flat_map do |shapes, block|
     shapes.is_a?(Array) ? shapes.map { |shape| render.(shape, block) } : []
   end

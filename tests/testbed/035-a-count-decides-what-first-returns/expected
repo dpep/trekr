@@ -1,0 +1,3 @@
+# Core's `first` returns an Array only when given a count. The stub once said
+# Array for every call, so the element's `size` resolved to Array#size.
+def app.rb:3:17 status=residue candidate1=String

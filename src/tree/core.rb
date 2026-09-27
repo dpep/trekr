@@ -625,21 +625,17 @@ module Enumerable
   def sort_by(&block)
   end
 
-  sig { params(n: T.untyped).returns(Array) }
   def min(n = nil, &block)
   end
 
-  sig { params(n: T.untyped).returns(Array) }
   def max(n = nil, &block)
   end
 
   sig { params(block: NilClass).returns(Enumerator) }
-  sig { params(n: T.untyped, block: T.proc.void).returns(Array) }
   def min_by(n = nil, &block)
   end
 
   sig { params(block: NilClass).returns(Enumerator) }
-  sig { params(n: T.untyped, block: T.proc.void).returns(Array) }
   def max_by(n = nil, &block)
   end
 
@@ -700,7 +696,6 @@ module Enumerable
   def drop_while(&block)
   end
 
-  sig { params(n: T.untyped).returns(Array) }
   def first(n = nil)
   end
 
@@ -954,7 +949,6 @@ class Integer < Numeric
   def fdiv(numeric)
   end
 
-  sig { params(integer: T.untyped, integer2: T.untyped).returns(Integer) }
   def pow(integer, integer2 = nil)
   end
 
@@ -1128,7 +1122,6 @@ class String < Object
   def sub!(pattern, replacement = nil, &block)
   end
 
-  sig { params(pattern: T.untyped, block: NilClass).returns(Enumerator) }
   def gsub!(pattern, replacement = nil, &block)
   end
 
@@ -1314,11 +1307,9 @@ class Array < Object
   def append(*objects)
   end
 
-  sig { params(count: T.untyped).returns(Array) }
   def pop(count = nil)
   end
 
-  sig { params(count: T.untyped).returns(Array) }
   def shift(count = nil)
   end
 
@@ -1412,15 +1403,12 @@ class Array < Object
   def each_index(&block)
   end
 
-  sig { params(count: T.untyped).returns(Array) }
   def first(count = nil)
   end
 
-  sig { params(count: T.untyped).returns(Array) }
   def last(count = nil)
   end
 
-  sig { params(count: T.untyped).returns(Array) }
   def sample(count = nil, random: Random)
   end
 
@@ -1718,19 +1706,15 @@ class Range < Object
   def end
   end
 
-  sig { params(n: T.untyped).returns(Array) }
   def first(n = nil)
   end
 
-  sig { params(n: T.untyped).returns(Array) }
   def last(n = nil)
   end
 
-  sig { params(n: T.untyped).returns(Array) }
   def min(n = nil, &block)
   end
 
-  sig { params(n: T.untyped).returns(Array) }
   def max(n = nil, &block)
   end
 
@@ -2834,7 +2818,6 @@ module GC
 end
 
 module Marshal
-  sig { params(obj: T.untyped).returns(String) }
   def self.dump(obj, port = nil, limit = nil)
   end
 
@@ -2857,7 +2840,6 @@ module Process
   def self.exit!(status = false)
   end
 
-  sig { params(block: T.proc.void).returns(Integer) }
   def self.fork(&block)
   end
 
@@ -2873,7 +2855,6 @@ module Process
   def self.kill(signal, *ids)
   end
 
-  sig { params(clock_id: T.untyped).returns(Float) }
   def self.clock_gettime(clock_id, unit = :float_second)
   end
 end
