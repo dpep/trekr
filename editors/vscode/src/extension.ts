@@ -36,7 +36,10 @@ async function start() {
   const clientOptions: LanguageClientOptions = {
     documentSelector: [{ scheme: "file", language: "ruby" }],
     outputChannel: output,
-    initializationOptions: { index: config.get<boolean>("index", true) },
+    initializationOptions: {
+      index: config.get<boolean>("index", true),
+      referenceLimit: config.get<number>("referenceLimit", 1000),
+    },
     middleware: middlewareFor(config.get<string[]>("features") ?? []),
   };
   client = new LanguageClient("trekr", "trekr", serverOptions, clientOptions);

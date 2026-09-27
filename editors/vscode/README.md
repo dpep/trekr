@@ -34,6 +34,7 @@ by every worktree of the repo and kept current as you save.
 | `trekr.path` | `"trekr"` | The trekr binary. |
 | `trekr.features` | all | Which features are active. Remove one to leave it to another extension. |
 | `trekr.index` | `true` | Index an unindexed checkout in the background. |
+| `trekr.referenceLimit` | `1000` | Most locations Find All References returns, confirmed callers first; trekr says when it cut the list. |
 
 Upgrading trekr (`brew upgrade trekr`) needs no restart. The running server
 switches to the new binary within a couple of seconds and keeps your open

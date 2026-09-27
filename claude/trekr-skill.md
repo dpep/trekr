@@ -103,6 +103,11 @@ trekr --refs 'ActiveRecord::Querying#where' --json
 `Owner.method` asks about a class method instead. A bare `--refs name` keeps the
 whole-mention view.
 
+**Through the LSP tool, findReferences is capped** (1,000 by default, confirmed
+callers first) and the cut is only announced to editors, not to you. If you get
+exactly that many locations, the list was cut — run `trekr --refs` for all of
+them and their counts.
+
 ## What is at this position
 
 ```sh

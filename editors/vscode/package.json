@@ -2,7 +2,7 @@
   "name": "trekr",
   "displayName": "trekr — Ruby code intelligence",
   "description": "A Ruby language server backed by trekr: receiver-aware definitions, references narrowed by receiver, completion, call hierarchy.",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "publisher": "dpep",
   "license": "MIT",
   "repository": {
@@ -82,6 +82,12 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Index an unindexed checkout in the background (runs `trekr --index`, with progress in the status bar). Off: answers come from whatever `trekr --index` last recorded."
+        },
+        "trekr.referenceLimit": {
+          "type": "integer",
+          "default": 1000,
+          "minimum": 1,
+          "markdownDescription": "Most locations Find All References returns, confirmed callers first. When more exist, trekr says so and names the `trekr --refs` command that lists them all. Restart trekr to apply."
         }
       }
     }
