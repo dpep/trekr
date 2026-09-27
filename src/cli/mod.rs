@@ -597,31 +597,42 @@ fn gather_refs(
     use crate::resolve::refs;
     let mut found = Vec::new();
     let mut counts = refs::Counts::default();
-    for path in store.files_calling(root_str, &query.name)? {
-        let read = || {
-            std::fs::read(root.join(&path))
-                .ok()
-                .map(|bytes| extract::extract(&bytes))
-        };
-        let owned;
-        let facts = match parsed.as_deref_mut() {
-            Some(parsed) => parsed.entry(path.clone()).or_insert_with(read).as_ref(),
+    let mut local = Parsed::new();
+    // Parsed in parallel, tiered in order: the tree loads methods on demand
+    // through a `RefCell`, so only the parse can leave this thread. Chunked so
+    // a single query holds a few dozen files' facts at once, not all of them.
+    for chunk in store.files_calling(root_str, &query.name)?.chunks(64) {
+        let parsed: &mut Parsed = match parsed.as_deref_mut() {
+            Some(parsed) => parsed,
             None => {
-                owned = read();
-                owned.as_ref()
+                local.clear();
+                &mut local
             }
         };
-        let Some(facts) = facts else {
-            continue;
-        };
-        for call in facts.calls.iter().filter(|c| c.name == query.name) {
-            let reference = refs::tier_call(tree, facts, call, &path, query, target);
-            counts.record(&reference);
-            // Excluded sites are counted, not listed: the count is the product,
-            // and the list would be the grep we are trying to beat. `keep_all`
-            // is how `--include-excluded` makes the claim auditable.
-            if keep_all || reference.tier != refs::Tier::Excluded {
-                found.push(reference);
+        let fresh: Vec<(String, Option<crate::core::Facts>)> = chunk
+            .par_iter()
+            .filter(|path| !parsed.contains_key(*path))
+            .map(|path| {
+                let facts = std::fs::read(root.join(path))
+                    .ok()
+                    .map(|bytes| extract::extract(&bytes));
+                (path.clone(), facts)
+            })
+            .collect();
+        parsed.extend(fresh);
+        for path in chunk {
+            let Some(Some(facts)) = parsed.get(path) else {
+                continue;
+            };
+            for call in facts.calls.iter().filter(|c| c.name == query.name) {
+                let reference = refs::tier_call(tree, facts, call, path, query, target);
+                counts.record(&reference);
+                // Excluded sites are counted, not listed: the count is the product,
+                // and the list would be the grep we are trying to beat. `keep_all`
+                // is how `--include-excluded` makes the claim auditable.
+                if keep_all || reference.tier != refs::Tier::Excluded {
+                    found.push(reference);
+                }
             }
         }
     }

@@ -24,6 +24,8 @@
   rails' `activerecord/lib/active_record` 3.5 s → 0.56 s, discourse
   `app/models` 3.5 s → 1.3 s. Same candidates; peak memory rises by the parsed
   files held (+50–80 MB on those runs).
+- **`--refs Owner#method` is 10–30 % faster on a large app**: the files calling
+  the name are parsed in parallel. discourse `Topic#title` 0.56 s → 0.39 s.
 - **`--lsp` speaks the protocol's error vocabulary, and honours cancellation.**
   An unsupported method answers `MethodNotFound` (it answered `null`, which a
   client reads as "nothing here") and a malformed request `InvalidParams` (it
