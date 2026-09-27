@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- **Breaking for scripts: errors exit with their own codes, not `2`.** A bad
+  flag or value, or an input trekr cannot parse, exits `64`. A missing file or
+  a directory outside any checkout exits `66`, git that cannot run exits `69`,
+  a bug exits `70`, and a store or file I/O failure exits `74`. `2` now means
+  only `not_indexed`: run the `hint`, then ask again. A script that branched
+  on `2` for "failed" should test for `>= 64`. Plain `trekr` with nothing to do
+  exits `64`, where it used to exit `1`. The README and `trekr --help` have
+  the table.
+- **Errors are JSON under `--json`/`--ndjson`.** A failure prints one
+  `{"error", "kind", "code"}` object on stdout, where before it printed text
+  on stderr and nothing on stdout. This covers clap's parse errors too, even
+  when `-j` comes before the bad flag. The message is still on stderr, and in
+  text mode stdout stays empty. `kind` is `usage`, `not_found`, `not_a_repo`,
+  `git`, `internal`, `database` or `io`, the same names `--usage` now counts
+  errors under. An error reading a file now names the file.
+
 ## 0.2.0 — 2026-09-27
 
 - **Commands no longer stall while an index runs.** `--refs`, `--ancestors`,

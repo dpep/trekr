@@ -3407,3 +3407,67 @@ latency to the answers that were going to be stale anyway.
 **Reverses if** SQLite starts invoking the busy handler on a read
 transaction's upgrade. The lock tests in `store::lock_tests` pin that. Or if
 statistics are found stale on a read path that `--index` does not cover.
+
+## DEC-067 — Errors exit with sysexits codes, apart from every verdict; `2` means not indexed
+
+**Decided.** Every error exits on a sysexits code, one per remedy: `64` usage,
+`66` a path that does not exist or is outside any checkout, `69` git could not
+be run, `70` a bug, `74` the store or a file could not be read or written.
+Under `--json`/`--ndjson` an error is one `{"error", "kind", "code"}` object on
+stdout, and the message is on stderr in every mode. That includes clap's own
+parse errors, whose output mode is read off argv before clap parses it: `-j`,
+`--json`, `-J`, `--ndjson`, alone or in a cluster of short flags, and nothing
+after `--`. `Failure::exit_code` is the one mapping, and the JSON `code` is read
+from it, so the object and the process cannot disagree. This is rq's D22,
+ported, with the same `kind` names where they mean the same thing: `usage`,
+`not_found`, `internal`, `database`.
+
+| Exit | Meaning | `kind` |
+|---|---|---|
+| 0 | an answer | |
+| 1 | a definitive nothing | |
+| 2 | no answer yet: the checkout is not indexed (`status: not_indexed`) | |
+| 64 `EX_USAGE` | the command line is wrong | `usage` |
+| 66 `EX_NOINPUT` | a named path is missing, or in no checkout | `not_found`, `not_a_repo` |
+| 69 `EX_UNAVAILABLE` | git could not be run | `git` |
+| 70 `EX_SOFTWARE` | trekr failed at something that should always work | `internal` |
+| 74 `EX_IOERR` | the store, or a file it reads, failed | `database`, `io` |
+
+**Before this**, every error exited `2`, the code `not_indexed` also exits.
+Under `--json` only `not_indexed` was structured, and every other failure was
+plain text on stderr with nothing on stdout, so a JSON caller had nothing to
+parse. A script branching on `2` could not tell "index this checkout, then
+ask" from a typo'd flag or a file that does not exist. Clap exited `2` for a
+bad flag as well. A caller that indexed and retried on `2` would do so for a
+typo forever.
+
+**What `2` means now.** It is kept, for one thing: `not_indexed`. That is
+trekr's "no answer yet", the counterpart of rq's `warming`. The question was
+never asked, so it is not `1`. Nothing about the call is wrong, so it is not an
+error. There is one difference from rq. rq's `2` can be retried blindly,
+because rq finishes its own warm-up. trekr's CLI never indexes on its own, so
+the retry has to follow the `hint`. That is still one reaction to one code:
+run `trekr --index`, then ask again. Retiring `2` would have put a setup step
+on the error codes. That is the confusion DEC-035's `not_indexed` exists to
+prevent: it reads "the tool failed" when the truth is "nobody has looked yet".
+
+**How a failure gets its `kind`.** Where only the call site knows what a
+failure means, it is tagged there. A `NotFound` reading a file the caller named
+is their typo (`not_found`), so `--def` and `--symbols` tag it. A `NotFound`
+elsewhere is trekr's own problem. `--index PATH` and `--drop PATH` check that
+the path exists before asking git. Otherwise git runs in the nearest existing
+parent and can answer for a checkout the caller never meant. git's failures
+carry a type (`scan::GitError`), not a string, so "not a git repository" is
+`not_a_repo` and anything else is `git`. What nobody tagged is classified from
+the chain: SQLite is `database`, other I/O is `io`, and the rest is `internal`.
+An unanticipated failure is a bug by definition. `--usage` counts each failure
+under the same `kind` (DEC-063's `error:<kind>`). The earlier labels
+(`store`, `not-a-repo`, `other`, `input`) stay in the rows already kept.
+
+*Why two codes are shared.* The number is for the caller that cannot read JSON,
+and it needs to know what to do next. `not_found` and `not_a_repo` both mean
+"point it at the right path". `database` and `io` both mean "look at the disk
+or `$TREKR_DB`". `kind` still tells them apart for a JSON caller.
+
+*Reverses if:* a caller needs two errors under one code told apart without
+JSON. Split that code; never reuse `1` or `2`.

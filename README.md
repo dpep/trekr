@@ -55,8 +55,38 @@ trekr --gc --dry-run             # what old gem versions and deleted worktrees w
 ```
 
 Every command honors `--json` and `--ndjson`, because the intended caller is an
-agent. Exit codes mean something: `0` matched, `1` a definitive nothing, `2` the
-request could not be served.
+agent. Exit codes mean something, and each means one thing:
+
+| Exit | Meaning |
+| --- | --- |
+| `0` | An answer: something matched, was indexed, or was collected. |
+| `1` | A definitive nothing: trekr looked, and it is not there. |
+| `2` | No answer yet: this checkout is not indexed. Run the `hint` (`trekr --index …`), then ask again. |
+| `64`–`74` | An error, below. |
+
+### Errors
+
+When a run fails under `--json`/`--ndjson` — a bad flag, a file that does not
+exist, a directory outside any checkout, a store that cannot be opened — stdout
+carries one object instead of an answer:
+
+```json
+{ "error": "trekr: cannot read app/gone.rb: No such file or directory (os error 2)", "kind": "not_found", "code": 66 }
+```
+
+`kind` is stable, and `code` is the exit code. The message also goes to stderr;
+in text mode stdout stays empty. The codes come from `sysexits(3)`, one per
+remedy, the same as [rq](https://github.com/dpep/rq)'s:
+
+| `kind` | Exit | Meaning |
+| --- | --- | --- |
+| `usage` | 64 | The command line is wrong: an unknown flag, a bad value, an input whose shape trekr cannot tell, nothing asked — including flags before `--json`. It will not succeed on retry. |
+| `not_found`, `not_a_repo` | 66 | A path the command names does not exist, or no git checkout contains it. |
+| `git` | 69 | git could not be run. |
+| `internal` | 70 | trekr failed at something that should always work — a bug. |
+| `database`, `io` | 74 | The index, or a file it reads, could not be opened, read or written. |
+
+`trekr --help` lists the same table.
 
 `trekr --usage` shows which commands and editor features get used, by whom (an
 agent, a person, an editor), how often they come back empty, and how slow. It

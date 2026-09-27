@@ -10,7 +10,7 @@
 //! the same as it will once committed.
 
 use crate::core::Oid;
-use anyhow::{Context, Result, bail};
+use anyhow::Result;
 use sha1::{Digest, Sha1};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -78,18 +78,56 @@ fn parse_paths(out: &[u8]) -> Vec<String> {
         .collect()
 }
 
+/// git could not be run, or refused. A type rather than a string, so the CLI
+/// can tell "you are not in a checkout" from a store or file failure.
+#[derive(Debug)]
+pub(crate) struct GitError {
+    message: String,
+    source: Option<std::io::Error>,
+}
+
+impl GitError {
+    pub(crate) fn failed(message: impl Into<String>) -> Self {
+        GitError {
+            message: message.into(),
+            source: None,
+        }
+    }
+
+    /// git's own words for it, which are stable across versions.
+    pub(crate) fn not_a_repo(&self) -> bool {
+        self.message.contains("not a git repository")
+    }
+}
+
+impl std::fmt::Display for GitError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for GitError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        self.source.as_ref().map(|e| e as _)
+    }
+}
+
 fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let out = Command::new("git")
         .args(args)
         .current_dir(root)
         .output()
-        .with_context(|| format!("running git {}", args.join(" ")))?;
+        .map_err(|source| GitError {
+            message: format!("running git {}", args.join(" ")),
+            source: Some(source),
+        })?;
     if !out.status.success() {
-        bail!(
+        return Err(GitError::failed(format!(
             "git {} failed: {}",
             args.join(" "),
             String::from_utf8_lossy(&out.stderr).trim()
-        );
+        ))
+        .into());
     }
     Ok(out.stdout)
 }
@@ -110,7 +148,7 @@ pub(crate) fn repo_root(path: &Path) -> Result<PathBuf> {
     let out = git(dir, &["rev-parse", "--show-toplevel"])?;
     let path = String::from_utf8(out)?.trim().to_string();
     if path.is_empty() {
-        bail!("not a git repository: {}", dir.display());
+        return Err(GitError::failed(format!("not a git repository: {}", dir.display())).into());
     }
     Ok(PathBuf::from(path))
 }

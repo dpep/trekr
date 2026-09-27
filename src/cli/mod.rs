@@ -5,8 +5,11 @@
 //! reserved, and the default action stays free for the query verbs the resolve
 //! layer will add.
 
+mod failure;
 pub(crate) mod position;
 mod profile;
+
+use failure::{Failure, Tag};
 
 use crate::core::Oid;
 use crate::core::paths;
@@ -29,9 +32,16 @@ use std::process::ExitCode;
         Facts are keyed by git blob OID, so every worktree of a repo shares one \
         index and a reindex with no edits parses nothing.\n\n\
         EXIT CODES\n  \
-        0  something was indexed, or a query matched\n  \
-        1  nothing matched / nothing to do\n  \
-        2  the request could not be served (not a repo, unreadable file)"
+        0   something was indexed, or a query matched\n  \
+        1   a definitive nothing: no match, nothing to collect\n  \
+        2   no answer yet: this checkout is not indexed (run --index)\n  \
+        64  usage: the command line is wrong\n  \
+        66  not_found, not_a_repo: a path it names is missing or not in a checkout\n  \
+        69  git: git could not be run\n  \
+        70  internal: a bug\n  \
+        74  database, io: the index or a file could not be read or written\n\n\
+        Under --json/--ndjson an error is one {\"error\", \"kind\", \"code\"} object on \
+        stdout; the message is on stderr either way."
 )]
 struct Cli {
     /// What to look up, dispatched on its shape: `FILE:LINE:COL` and
@@ -178,25 +188,11 @@ pub fn run() -> ExitCode {
     let started = std::time::Instant::now();
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
-        Err(error) => {
-            let _ = error.print();
-            // `--help` and `--version` are questions about trekr, not uses of
-            // it; a malformed call is a use that failed, and worth counting.
-            use clap::error::ErrorKind;
-            if !matches!(
-                error.kind(),
-                ErrorKind::DisplayHelp
-                    | ErrorKind::DisplayVersion
-                    | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
-            ) {
-                count("invalid", String::new(), Outcome::Error("usage"), started);
-            }
-            return ExitCode::from(error.exit_code() as u8);
-        }
+        Err(error) => return clap_failure(error, started),
     };
 
     // Before any store or git work: generating a completion script must not
-    // need a checkout, and every other command refuses a non-repo with exit 2.
+    // need a checkout, and every other command refuses a non-repo.
     if let Some(shell) = cli.completions {
         clap_complete::generate(shell, &mut Cli::command(), "trekr", &mut std::io::stdout());
         return ExitCode::SUCCESS;
@@ -258,19 +254,18 @@ pub fn run() -> ExitCode {
             cmd_bare(out, input, cli.explain, cli.context.as_deref()),
         )
     } else {
-        eprintln!(
-            "trekr: nothing to do (try `trekr Widget#save`, `trekr app.rb:42`, \
-             or --index, --status, --usage)"
-        );
-        (Some("invalid"), Ok(ExitCode::from(1)))
+        (
+            Some("invalid"),
+            Err(Failure::Usage.error(
+                "nothing to do (try `trekr Widget#save`, `trekr app.rb:42`, \
+                 or --index, --status, --usage)",
+            )),
+        )
     };
 
     let code = match &result {
         Ok(code) => *code,
-        Err(e) => {
-            eprintln!("trekr: {e}");
-            ExitCode::from(2)
-        }
+        Err(e) => fail(out, Failure::of(e), &format!("trekr: {e:#}")),
     };
     // After the answer is out, never before it (rq DECISIONS D13).
     if let Some(feature) = feature {
@@ -281,8 +276,9 @@ pub fn run() -> ExitCode {
             (Some(outcome), _) => outcome,
             (None, Ok(code)) if *code == ExitCode::SUCCESS => Outcome::Hit,
             (None, Ok(code)) if *code == ExitCode::from(1) => Outcome::Empty,
-            (None, Ok(_)) => Outcome::Error("input"),
-            (None, Err(e)) => Outcome::Error(error_kind(e)),
+            // Only `not_indexed` exits otherwise, and it names its own outcome.
+            (None, Ok(_)) => Outcome::Error(Failure::Internal.as_str()),
+            (None, Err(e)) => Outcome::Error(Failure::of(e).as_str()),
         };
         let feature = note.feature.unwrap_or(feature);
         count(feature, crate::usage::join(&flags), outcome, started);
@@ -323,29 +319,130 @@ fn cli_flags(cli: &Cli, out: Output) -> Vec<&'static str> {
     .collect()
 }
 
-/// A failure, in a few words that say where to look.
-fn error_kind(error: &anyhow::Error) -> &'static str {
-    if error.chain().any(|e| e.is::<rusqlite::Error>()) {
-        "store"
-    } else if error.to_string().contains("not a git repository") {
-        "not-a-repo"
-    } else if error.chain().any(|e| e.is::<std::io::Error>()) {
-        "io"
-    } else {
-        "other"
+/// Report an error and return its exit code. The message always goes to
+/// stderr; a structured caller also gets it as one object on stdout.
+fn fail(out: Output, kind: Failure, message: &str) -> ExitCode {
+    eprintln!("{message}");
+    emit_error(out, kind, message);
+    ExitCode::from(kind.exit_code())
+}
+
+/// `{"error", "kind", "code"}` on stdout — nothing in text mode. `code` is
+/// the exit code the process leaves with, read from the same mapping.
+fn emit_error(out: Output, kind: Failure, message: &str) {
+    let error = serde_json::json!({
+        "error": message,
+        "kind": kind.as_str(),
+        "code": kind.exit_code(),
+    });
+    // Printed directly: a failing `emit_json` is reported through here.
+    let rendered = match out {
+        Output::Text => return,
+        Output::Json => serde_json::to_string_pretty(&error),
+        Output::Ndjson => serde_json::to_string(&error),
+    };
+    if let Ok(rendered) = rendered {
+        println!("{rendered}");
     }
+}
+
+/// A command line clap rejected. Not `error.exit()`: clap exits 2, which
+/// trekr gives "not indexed yet" (DEC-067).
+fn clap_failure(error: clap::Error, started: std::time::Instant) -> ExitCode {
+    // `--help` and `--version` are questions about trekr, not uses of it.
+    if !error.use_stderr() {
+        let _ = error.print();
+        return ExitCode::SUCCESS;
+    }
+    let _ = error.print();
+    // A malformed call is a use that failed, and worth counting.
+    count(
+        "invalid",
+        String::new(),
+        Outcome::Error(Failure::Usage.as_str()),
+        started,
+    );
+    let out = requested_output(std::env::args_os().skip(1));
+    let text = error.to_string();
+    emit_error(out, Failure::Usage, text.lines().next().unwrap_or_default());
+    ExitCode::from(Failure::Usage.exit_code())
+}
+
+/// The output mode argv asks for, read before clap has parsed it — so a
+/// caller that asked for JSON gets its usage error as JSON too. A cluster of
+/// short flags ends at the first that takes a value, and nothing after `--`
+/// is a flag. Same reading as rq's.
+fn requested_output(args: impl IntoIterator<Item = std::ffi::OsString>) -> Output {
+    let command = Cli::command();
+    let takes_value = |c: char| {
+        command
+            .get_arguments()
+            .any(|a| a.get_short() == Some(c) && a.get_action().takes_values())
+    };
+    let (mut json, mut ndjson) = (false, false);
+    for arg in args {
+        let arg = arg.to_string_lossy();
+        match arg.as_ref() {
+            "--" => break,
+            "--json" => json = true,
+            "--ndjson" => ndjson = true,
+            a if a.starts_with('-') && !a.starts_with("--") => {
+                for c in a.chars().skip(1) {
+                    match c {
+                        'j' => json = true,
+                        'J' => ndjson = true,
+                        c if takes_value(c) => break,
+                        _ => {}
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    // The precedence a parsed command line gets in `run`.
+    if ndjson {
+        Output::Ndjson
+    } else if json {
+        Output::Json
+    } else {
+        Output::Text
+    }
+}
+
+/// A file the caller named. Missing is their typo, not trekr's failure.
+fn read_input(path: &Path) -> anyhow::Result<Vec<u8>> {
+    std::fs::read(path).map_err(|error| {
+        let kind = match error.kind() {
+            std::io::ErrorKind::NotFound => Failure::NotFound,
+            _ => Failure::Io,
+        };
+        kind.error(format!("cannot read {}: {error}", path.display()))
+    })
+}
+
+/// The checkout containing a path the caller named.
+fn named_checkout(path: &Path) -> anyhow::Result<PathBuf> {
+    // Checked first: git would run in the nearest existing parent, and could
+    // answer for a checkout the caller never meant.
+    if !path.exists() {
+        return Err(Failure::NotFound.error(format!("no such path: {}", path.display())));
+    }
+    scan::repo_root(path)
 }
 
 /// The database: `$TREKR_DB`, else `~/.local/share/trekr/trekr.db`.
 fn open_store() -> anyhow::Result<Store> {
-    let path = match std::env::var("TREKR_DB") {
-        Ok(p) => PathBuf::from(p),
-        Err(_) => PathBuf::from(std::env::var("HOME")?).join(".local/share/trekr/trekr.db"),
+    let open = || -> anyhow::Result<Store> {
+        let path = match std::env::var("TREKR_DB") {
+            Ok(p) => PathBuf::from(p),
+            Err(_) => PathBuf::from(std::env::var("HOME")?).join(".local/share/trekr/trekr.db"),
+        };
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        Ok(Store::open(&path)?)
     };
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    Ok(Store::open(&path)?)
+    open().tag(Failure::Database)
 }
 
 fn emit_json<T: serde::Serialize>(out: Output, value: &T) -> anyhow::Result<()> {
@@ -578,7 +675,7 @@ fn cmd_index(
         profile.jobs = jobs;
     }
 
-    let root = scan::repo_root(path)?;
+    let root = named_checkout(path)?;
     let root_str = root.to_string_lossy().into_owned();
     // Sampled *before* the scan, deliberately. A fingerprint taken afterwards
     // would cover edits this index never saw and the next query would call them
@@ -717,7 +814,7 @@ fn cmd_status(out: Output) -> anyhow::Result<ExitCode> {
 /// Parsing also means any readable Ruby file outlines, in a repo or not, which
 /// is the same rule the LSP surface follows (DEC-024).
 fn cmd_symbols(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
-    let source = std::fs::read(path)?;
+    let source = read_input(path)?;
     let facts = extract::extract(&source);
     let symbols: Vec<crate::store::Symbol> = facts.defs.iter().map(Into::into).collect();
 
@@ -1244,11 +1341,10 @@ fn cmd_bare(
     if input.starts_with(|c: char| c.is_ascii_uppercase()) {
         return cmd_card(out, input);
     }
-    eprintln!(
-        "trekr: cannot tell what `{input}` is. Expected FILE:LINE[:COL], \
+    Err(Failure::Usage.error(format!(
+        "cannot tell what `{input}` is. Expected FILE:LINE[:COL], \
          Owner#method, Owner.method, or a Constant."
-    );
-    Ok(ExitCode::from(2))
+    )))
 }
 
 /// Definitions in scope that nothing appears to use (DEC-038).
@@ -1462,7 +1558,7 @@ fn not_indexed(out: Output, root: &Path) -> anyhow::Result<ExitCode> {
         )?,
     }
     // Exit 2, not 1: `1` is this tool's "a definitive nothing" and would tell a
-    // script the question was answered. It was not asked.
+    // script the question was answered. It was not asked (DEC-067).
     Ok(ExitCode::from(2))
 }
 
@@ -1503,8 +1599,8 @@ fn cmd_def(
     pinned: Option<&Path>,
 ) -> anyhow::Result<ExitCode> {
     let spec = position::Spec::parse(spec)
-        .ok_or_else(|| anyhow::anyhow!("expected FILE:LINE:COL, got `{spec}`"))?;
-    let source = std::fs::read(&spec.path)?;
+        .ok_or_else(|| Failure::Usage.error(format!("expected FILE:LINE:COL, got `{spec}`")))?;
+    let source = read_input(Path::new(&spec.path))?;
     let facts = crate::extract::extract(&source);
     let snapped = position::at_or_snap(&facts, spec.line, spec.col);
     let Some((under, snapped)) = snapped else {
@@ -1824,7 +1920,7 @@ fn report(
 }
 
 fn cmd_drop(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
-    let root = scan::repo_root(path)?;
+    let root = named_checkout(path)?;
     let root_str = root.to_string_lossy().into_owned();
     let dropped = open_store()?.drop_checkout(&root_str)?;
 
@@ -1956,7 +2052,8 @@ fn exit_on(happened: bool) -> ExitCode {
 /// evidence the summary is folded from.
 fn cmd_usage(out: Output, days: Option<u32>) -> anyhow::Result<ExitCode> {
     let Some(path) = crate::usage::path() else {
-        anyhow::bail!("usage counting is off ($TREKR_USAGE), so there is nothing to summarize");
+        return Err(Failure::Usage
+            .error("usage counting is off ($TREKR_USAGE), so there is nothing to summarize"));
     };
     let rows = crate::usage::read(&path, days)?;
     if emit_rows(out, &rows)? {
@@ -2162,4 +2259,25 @@ fn ranked(counts: &std::collections::BTreeMap<String, i64>) -> String {
         .map(|(k, v)| format!("{k} {v}"))
         .collect::<Vec<_>>()
         .join(" · ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_output_mode_is_read_off_argv_before_clap_parses_it() {
+        let mode = |args: &[&str]| requested_output(args.iter().map(std::ffi::OsString::from));
+        for (args, want) in [
+            (&["x", "--json"][..], Output::Json),
+            (&["x", "--ndjson"], Output::Ndjson),
+            (&["-j", "--bogus"], Output::Json),
+            (&["-jJ"], Output::Ndjson),
+            (&["x"], Output::Text),
+            (&["--", "-j"], Output::Text),
+            (&["--refs", "Widget#save", "--jobs", "2"], Output::Text),
+        ] {
+            assert!(mode(args) == want, "{args:?}");
+        }
+    }
 }

@@ -927,23 +927,169 @@ fn nothing_to_report_is_an_exit_code_not_an_error() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Every error exits on its own sysexits code — never 1 (an answer: nothing)
+/// or 2 (no answer yet) — and a structured caller gets it as one object on
+/// stdout, the message on stderr either way (DEC-067).
 #[test]
-fn a_request_that_cannot_be_served_is_distinct_from_an_empty_answer() {
-    let (dir, db) = scratch("notrepo");
-    // A plain directory, deliberately not `git init`ed.
-    let out = trekr(&db, &dir, &["--index"]);
-    assert_eq!(
-        out.status.code(),
-        Some(2),
-        "'not a repository' is not the same answer as 'nothing here'"
+fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
+    let (dir, db) = scratch("errors");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    // Outside any checkout, deliberately not `git init`ed.
+    let (plain, _) = scratch("errors-plain");
+    let no_git = dir.join("empty-path");
+    fs::create_dir_all(&no_git).unwrap();
+    let no_git = no_git.to_string_lossy().into_owned();
+
+    // (where, args, extra env, exit, kind, what stderr names)
+    type Case<'a> = (
+        &'a Path,
+        &'a [&'a str],
+        &'a [(&'a str, &'a str)],
+        i32,
+        &'a str,
+        &'a str,
     );
+    let cases: &[Case] = &[
+        (
+            &dir,
+            &["--no-such-flag"],
+            &[],
+            64,
+            "usage",
+            "--no-such-flag",
+        ),
+        (&dir, &["--gc", "--older-than", "7"], &[], 64, "usage", "7"),
+        (
+            &dir,
+            &["--def", "widget.rb"],
+            &[],
+            64,
+            "usage",
+            "FILE:LINE:COL",
+        ),
+        (&dir, &["not a thing"], &[], 64, "usage", "Expected"),
+        (&dir, &[], &[], 64, "usage", "nothing to do"),
+        (
+            &dir,
+            &["--usage"],
+            &[("TREKR_USAGE", "off")],
+            64,
+            "usage",
+            "TREKR_USAGE",
+        ),
+        (
+            &dir,
+            &["--def", "gone.rb:1:1"],
+            &[],
+            66,
+            "not_found",
+            "gone.rb",
+        ),
+        (
+            &dir,
+            &["--symbols", "gone.rb"],
+            &[],
+            66,
+            "not_found",
+            "gone.rb",
+        ),
+        (
+            &dir,
+            &["--index", "gone/deeper"],
+            &[],
+            66,
+            "not_found",
+            "gone/deeper",
+        ),
+        (
+            &plain,
+            &["--index"],
+            &[],
+            66,
+            "not_a_repo",
+            "not a git repository",
+        ),
+        (
+            &plain,
+            &["--refs", "Widget#resize"],
+            &[],
+            66,
+            "not_a_repo",
+            "not a git repository",
+        ),
+        (&dir, &["--index"], &[("PATH", &no_git)], 69, "git", "git"),
+    ];
+    for (cwd, args, env, code, kind, names) in cases {
+        let text = trekr_env(&db, cwd, args, env);
+        assert_eq!(text.status.code(), Some(*code), "{args:?}: {text:?}");
+        assert_eq!(
+            stdout(&text),
+            "",
+            "{args:?}: text mode keeps stdout for answers"
+        );
+        let stderr = String::from_utf8_lossy(&text.stderr);
+        assert!(stderr.contains(names), "{args:?} names {names}: {stderr}");
+
+        for (flag, compact) in [("--json", false), ("--ndjson", true), ("-j", false)] {
+            let args: Vec<&str> = args.iter().copied().chain([flag]).collect();
+            let out = trekr_env(&db, cwd, &args, env);
+            assert_eq!(out.status.code(), Some(*code), "{args:?}");
+            assert_eq!(
+                out.stdout.iter().filter(|b| **b == b'\n').count() == 1,
+                compact
+            );
+            let error = json(&out);
+            let mut keys: Vec<&String> = error.as_object().unwrap().keys().collect();
+            keys.sort();
+            assert_eq!(keys, ["code", "error", "kind"], "{args:?}: {error}");
+            assert_eq!(error["kind"], *kind, "{args:?}: {error}");
+            assert_eq!(error["code"], *code, "the object and the process agree");
+            let message = error["error"].as_str().unwrap();
+            assert!(message.contains(names), "{args:?}: {message}");
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                stderr.contains(message),
+                "{args:?}: the message is on stderr too"
+            );
+        }
+    }
+
+    // The mode is read off argv before clap parses it: a flag in front of
+    // the bad one, or inside a cluster, still asks for JSON.
+    for args in [
+        &["-j", "--no-such-flag"][..],
+        &["-jJ"],
+        &["--json", "--no-such-flag", "--"],
+    ] {
+        let out = trekr(&db, &dir, args);
+        assert_eq!(out.status.code(), Some(64), "{args:?}");
+        assert_eq!(json(&out)["kind"], "usage", "{args:?}");
+    }
+    // …but not after `--`, where nothing is a flag.
+    let out = trekr(&db, &dir, &["--no-such-flag", "--", "-j"]);
+    assert_eq!(out.status.code(), Some(64));
+    assert_eq!(stdout(&out), "");
+
+    // Asking about trekr is not an error, whatever the mode.
+    for args in [
+        &["--help"][..],
+        &["--version"],
+        &["-h", "--json"],
+        &["--version", "-J"],
+    ] {
+        let out = trekr(&db, &dir, args);
+        assert_eq!(out.status.code(), Some(0), "{args:?}");
+        assert!(out.stderr.is_empty(), "{args:?}");
+    }
 
     let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&plain);
 }
 
 /// Completions are generated from the parser, so they must not need a checkout
 /// — and the directory below deliberately is not one, because every other
-/// command refuses that with exit 2.
+/// command refuses that.
 #[test]
 fn a_completion_script_is_generated_without_a_repository() {
     let (dir, db) = scratch("completions");
@@ -1032,8 +1178,8 @@ fn an_older_binary_refuses_a_newer_database_rather_than_dropping_it() {
     let refused = trekr(&db, &dir, &["--status"]);
     assert_eq!(
         refused.status.code(),
-        Some(2),
-        "a request that cannot be served, not an empty answer"
+        Some(74),
+        "the store cannot be read: an error, not an empty answer"
     );
     let message = String::from_utf8_lossy(&refused.stderr);
     assert!(
@@ -1117,10 +1263,23 @@ fn help_and_version_are_not_counted_but_a_malformed_call_is() {
         "nothing counted"
     );
 
-    assert_eq!(trekr(&db, &dir, &["--no-such-flag"]).status.code(), Some(2));
+    assert_eq!(
+        trekr(&db, &dir, &["--no-such-flag"]).status.code(),
+        Some(64)
+    );
     let rows = json(&trekr(&db, &dir, &["--usage", "--json"]));
     assert_eq!(rows[0]["feature"], "invalid");
     assert_eq!(rows[0]["outcome"], "error:usage");
+    // A failure is counted under the same `kind` its JSON error carries.
+    trekr(&db, &dir, &["--symbols", "gone.rb"]);
+    let rows = json(&trekr(&db, &dir, &["--usage", "--json"]));
+    assert!(
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["feature"] == "symbols" && r["outcome"] == "error:not_found"),
+        "{rows}"
+    );
 
     // And `TREKR_USAGE=off` means off.
     trekr_env(&db, &dir, &["--no-such-flag"], &[("TREKR_USAGE", "off")]);
@@ -1667,7 +1826,7 @@ fn the_bare_grammar_dispatches_on_shape() {
 
     // A shape it cannot name is refused, not guessed at.
     let out = trekr(&db, &dir, &["not a thing"]);
-    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(out.status.code(), Some(64));
     let text = String::from_utf8_lossy(&out.stderr);
     assert!(
         text.contains("Expected"),
@@ -1882,7 +2041,7 @@ fn gc_collects_a_gem_version_no_bundle_names_and_an_index_brings_it_back() {
     assert_eq!(blobs(), 4, "the app, the shared file once, and each own.rb");
 
     let bare = run(&["--gc", "--older-than", "7"]);
-    assert_eq!(bare.status.code(), Some(2), "7 what? refused, not guessed");
+    assert_eq!(bare.status.code(), Some(64), "7 what? refused, not guessed");
 
     // Seen seconds ago, so the default window spares it.
     let recent = run(&["--gc", "--dry-run", "--json"]);

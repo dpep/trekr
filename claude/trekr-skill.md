@@ -73,6 +73,7 @@ second worktree of the same repo costs nothing — facts are keyed by git blob.
 | `status: not_indexed`, **exit 2** | nobody has indexed this repo. The answer names the root and the command. Run it; do not go looking for the definition. |
 | `status: residue`, exit 1 | trekr looked. The receiver is genuinely undetermined — ranked `candidates` say what it might be. |
 | exit 1, "no mention of …" | indexed, and the name really is not there. |
+| exit 64–74, `{"error", "kind", "code"}` | the call failed: `usage` (fix the command), `not_found`/`not_a_repo` (fix the path), `git`, `database`/`io`, `internal`. Not an answer about the code. |
 
 `trekr --status` lists what is indexed.
 
@@ -196,6 +197,10 @@ trekr --ancestors Post --json               # linearized chain, unresolved named
 ## Reading the output
 
 * `--json` everywhere; `--ndjson` for streaming.
-* Exit `0` matched, `1` a definitive nothing, `2` could not serve.
+* Exit `0` matched, `1` a definitive nothing, `2` not indexed yet (run the
+  `hint`). An error exits 64–74 by remedy — `64` usage, `66` a missing path
+  or no checkout, `69` git, `70` a bug, `74` the store or a file — and under
+  `--json` is one `{"error", "kind", "code"}` object on stdout. Branch on the
+  number; never read `64` as "nothing found".
 * `gems.missing` in `--index` output names gems the lockfile wants and disk
   lacks — a hole in every answer that would have come from them.
