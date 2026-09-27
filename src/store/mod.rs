@@ -82,6 +82,16 @@ pub(crate) fn open_default() -> anyhow::Result<Store> {
     Ok(Store::open(&path)?)
 }
 
+/// See `Store::files_calling_page`.
+const FILES_CALLING_PAGE: &str = "SELECT s.rowid, f.path
+   FROM call_site s INDEXED BY call_site_name
+   CROSS JOIN file f
+  WHERE s.name = ?2 AND s.rowid > ?3
+    AND f.blob_id = s.blob_id
+    AND f.checkout_id = (SELECT id FROM checkout WHERE root = ?1)
+  ORDER BY s.rowid
+  LIMIT ?4";
+
 impl Store {
     pub(crate) fn open(path: &Path) -> Result<Store> {
         let mut store = Store::init(Connection::open(path)?)?;
@@ -576,6 +586,40 @@ impl Store {
         )?;
         let rows = stmt.query_map(params![root, name], |r| r.get(0))?;
         rows.collect()
+    }
+
+    /// A page of the files in a checkout that call `name`, in the index's
+    /// own order: the call rows after `after`, at most `rows` of them, as
+    /// (the last row read, each row's file). Pass the last row back for the
+    /// next page; an empty page is the end.
+    ///
+    /// For a question that may stop long before the last file. `files_calling`
+    /// must read every call of the name to sort and deduplicate — 2.5 million
+    /// rows for `to` on a monorepo thirty times discourse — where this reads
+    /// only as far as it is asked to. A file with several calls appears once
+    /// per call; the caller deduplicates.
+    ///
+    /// The plan is pinned: from the name's index, then its files. Left to
+    /// itself, with statistics saying the name is everywhere, the bundled
+    /// SQLite walks every file of the checkout and sorts all their calls —
+    /// the whole listing again, 0.7 s a page at ten times discourse — or scans
+    /// the call table in row order, which for a rare name reads all of it.
+    pub(crate) fn files_calling_page(
+        &self,
+        root: &str,
+        name: &str,
+        after: i64,
+        rows: i64,
+    ) -> Result<(i64, Vec<String>)> {
+        let mut stmt = self.conn.prepare_cached(FILES_CALLING_PAGE)?;
+        let mut last = after;
+        let mut paths = Vec::new();
+        let mut found = stmt.query(params![root, name, after, rows])?;
+        while let Some(row) = found.next()? {
+            last = row.get(0)?;
+            paths.push(row.get(1)?);
+        }
+        Ok((last, paths))
     }
 
     /// How often each of these names is written as a call anywhere, counting
@@ -1269,6 +1313,69 @@ mod tests {
         ];
         assert_eq!(decode_params(&encode_params(&params)), params);
         assert!(decode_params("").is_empty());
+    }
+
+    #[test]
+    fn files_calling_pages_through_every_call_in_the_checkout_only() {
+        let mut store = Store::open_in_memory().unwrap();
+        let sources = [
+            ("a.rb", "x.go\nx.go\n"),
+            ("b.rb", "y.go\n"),
+            ("c.rb", "z.stop\n"),
+        ];
+        let files: Files = sources
+            .iter()
+            .map(|(path, src)| (path.to_string(), crate::scan::hash_blob(src.as_bytes())))
+            .collect();
+        let facts: Vec<_> = sources
+            .iter()
+            .map(|(_, src)| {
+                (
+                    crate::scan::hash_blob(src.as_bytes()),
+                    crate::extract::extract(src.as_bytes()),
+                )
+            })
+            .collect();
+        store.write("/a", &files, facts, 0).unwrap();
+        indexed(&mut store, "/other", "d.rb", "w.go\n");
+
+        let mut seen = Vec::new();
+        let mut after = 0;
+        loop {
+            let (last, page) = store.files_calling_page("/a", "go", after, 2).unwrap();
+            if page.is_empty() {
+                break;
+            }
+            assert!(page.len() <= 2);
+            seen.extend(page);
+            after = last;
+        }
+        seen.sort();
+        assert_eq!(
+            seen,
+            ["a.rb", "a.rb", "b.rb"],
+            "one row per call, this checkout's"
+        );
+
+        // Driven from the name, in row order, so nothing past the page is
+        // read — even when the statistics say the name is everywhere, which
+        // is when the planner once chose to read every file instead.
+        let common = "x.go\n".repeat(2000);
+        indexed(&mut store, "/big", "big.rb", &common);
+        store.conn.execute_batch("ANALYZE;").unwrap();
+        let plan: Vec<String> = store
+            .conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {FILES_CALLING_PAGE}"))
+            .unwrap()
+            .query_map(params!["/a", "go", 0, 2], |r| r.get(3))
+            .unwrap()
+            .collect::<Result<_>>()
+            .unwrap();
+        assert!(plan[0].contains("call_site_name"), "{plan:?}");
+        assert!(
+            !plan.iter().any(|step| step.contains("TEMP B-TREE")),
+            "{plan:?}"
+        );
     }
 
     #[test]
