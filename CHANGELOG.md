@@ -38,6 +38,15 @@
   inherited constant, because the lookup searched the split name, which has no
   ancestry.
 
+- **Paths in `--json`/`--ndjson` are relative to a `root` beside them.**
+  Every object with a `path` now carries `root`: the absolute root of the
+  checkout holding the file (a gem's root for a definition in a gem), or
+  `null` for Ruby core. `path` is relative to it everywhere, where definitions
+  and `--def` sites used to be absolute and references relative. `--dead`'s
+  `file` is now `path`. Scripts that read an absolute path should join `root`
+  and `path`. Text output writes paths in the asked-about checkout relative,
+  definitions included (they were `~/…`).
+
 ## 0.2.1 — 2026-09-27
 
 - **Upgrading drops and rebuilds the index** (store v29): run `trekr --index`

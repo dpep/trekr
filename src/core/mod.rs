@@ -40,7 +40,8 @@ pub(crate) mod paths {
 
     /// A path as a person should read it: `$HOME` shown as `~`.
     ///
-    /// **Display only.** `--json` and `--ndjson` keep absolute paths, because a
+    /// **Display only.** `--json` and `--ndjson` never write `~`: a path there
+    /// is relative to the absolute `root` beside it (DEC-076), because a
     /// machine consumer that has to expand `~` is one that will forget to, and
     /// LSP `Location` URIs are absolute `file://` by protocol. Every
     /// human-facing print site goes through here so the next output surface

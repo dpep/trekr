@@ -89,19 +89,22 @@ trekr --refs 'ActiveRecord::ConnectionHandling#lease_connection' --json
 
 ```json
 { "status": "resolved", "owner": "ActiveRecord::ConnectionHandling", "method": "lease_connection",
-  "definition": [{"path": "/…/rails/activerecord/lib/active_record/connection_handling.rb", "line": 269}],
+  "definition": [{"path": "activerecord/lib/active_record/connection_handling.rb", "line": 269,
+                  "root": "/…/rails"}],
   "counts": {"confirmed": 1024, "possible": 84, "excluded": 87,
              "excluded_different_owner": 56, "excluded_no_such_method": 31,
              "excluded_arity": 0},
   "references": [{"path": "actioncable/test/subscription_adapter/postgresql_test.rb",
-                  "line": 26, "col": 26, "tier": "confirmed",
+                  "root": "/…/rails", "line": 26, "col": 26, "tier": "confirmed",
                   "receiver": "const", "receiver_type": "ActiveRecord::Base",
                   "owner": "ActiveRecord::ConnectionHandling",
                   "why": "the receiver's type resolves here"}] }
 ```
 
-`definition` paths are absolute (the method may live in a gem); `references`
-paths are relative to the checkout.
+Every `path` in any answer is relative to the `root` beside it: the checkout
+holding the file, which for a gem's method is the gem. Join the two for a file
+to open. `root` is `null` only for Ruby core. Text output writes a path in the
+checkout you asked about relative to it, and anything else absolute.
 
 * **confirmed** — the receiver's type resolves and Ruby's lookup lands here.
 * **possible** — untyped receiver, nothing rules it out. Ranked, never dropped.
@@ -186,7 +189,7 @@ module. A `super` whose owner the source does not name — in a block, or
 
 ```sh
 trekr --def activerecord/lib/active_record/associations/has_many_through_association.rb:10:9
-# ~/…/activerecord/lib/active_record/associations/association.rb:41:11  initialize
+# activerecord/lib/active_record/associations/association.rb:41:11  initialize
 ```
 
 **Trust the disclosure**: `residue` means the receiver is genuinely
@@ -197,7 +200,7 @@ undetermined, not that the tool failed.
 ```json
 { "status": "resolved", "owner": "Widget", "kind": "declaration",
   "defined_via": "belongs_to",
-  "sites": [{"path": "app/models/widget.rb", "line": 7}] }
+  "sites": [{"path": "app/models/widget.rb", "root": "/…/app", "line": 7}] }
 ```
 
 * **`definition`** — the body is there. A `def`, or a `define_method` block

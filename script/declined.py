@@ -172,7 +172,7 @@ def where(path, app_root):
 
 
 def hits(place, site):
-    path = place.get("path") or ""
+    path = os.path.join(place.get("root") or "", place.get("path") or "")
     if os.path.realpath(path) != os.path.realpath(site["def_file"]):
         return False
     return abs(int(place.get("line", -99)) - int(site["def_line"])) <= 1

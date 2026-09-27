@@ -376,6 +376,12 @@ Operations are flags, not subcommands (rq's convention), so no word is reserved
 and the default action stays free for the query verbs layer 3 will add. Every
 command that prints honors `--json` / `--ndjson`.
 
+Every `path` in a JSON answer is relative to the `root` beside it, the
+absolute root of the checkout holding the file — the app, or the gem a
+definition lives in; `root` is `null` for Ruby core (DEC-076). Text writes a
+path in the asked-about checkout relative to it, and any other absolute with
+`~`.
+
 | command | answers |
 |---|---|
 | `--index [PATH]` | scan a checkout and store what is new |

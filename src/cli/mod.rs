@@ -445,11 +445,85 @@ fn open_store() -> anyhow::Result<Store> {
     open().tag(Failure::Database)
 }
 
+/// Where an answer's paths are written from (DEC-076): the checkout the
+/// question is about, which a relative path is relative to, and every root
+/// the store knows, gems included. Set once a command knows its checkout.
+struct Rooting {
+    base: String,
+    roots: Vec<String>,
+}
+
+static ROOTING: std::sync::OnceLock<Rooting> = std::sync::OnceLock::new();
+
+/// Answer from this checkout: paths in the output are written against it.
+fn answering_in(store: &Store, root: &str) {
+    ROOTING.get_or_init(|| Rooting {
+        base: root.to_string(),
+        roots: store.roots().unwrap_or_default(),
+    });
+}
+
+impl Rooting {
+    /// A path as the checkout holding it names it, and that checkout's root.
+    /// Ruby core and a file in no indexed checkout keep their path, rootless.
+    fn place(&self, path: &str) -> (String, serde_json::Value) {
+        if path.starts_with('<') {
+            return (path.to_string(), serde_json::Value::Null);
+        }
+        let absolute = match path.starts_with('/') {
+            true => path.to_string(),
+            false => format!("{}/{path}", self.base),
+        };
+        let holder = self
+            .roots
+            .iter()
+            .filter(|root| paths::under(root, &absolute))
+            .max_by_key(|root| root.len());
+        match holder {
+            Some(root) => (absolute[root.len() + 1..].to_string(), root.clone().into()),
+            None => (absolute, serde_json::Value::Null),
+        }
+    }
+}
+
+/// Every `path` in an answer made relative to its checkout, with `root`
+/// beside it naming that checkout.
+fn rooted(value: &mut serde_json::Value) {
+    let Some(rooting) = ROOTING.get() else {
+        return;
+    };
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(serde_json::Value::String(path)) = map.get("path") {
+                let (path, root) = rooting.place(path);
+                map.insert("path".into(), path.into());
+                map.insert("root".into(), root);
+            }
+            map.values_mut().for_each(rooted);
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(rooted),
+        _ => {}
+    }
+}
+
+/// A path as text shows it: relative inside the checkout being asked about,
+/// absolute (with `~`) anywhere else — a gem, Ruby core.
+fn shown(path: &str) -> String {
+    match ROOTING.get() {
+        Some(rooting) if paths::under(&rooting.base, path) => {
+            path[rooting.base.len() + 1..].to_string()
+        }
+        _ => paths::pretty(path),
+    }
+}
+
 fn emit_json<T: serde::Serialize>(out: Output, value: &T) -> anyhow::Result<()> {
+    let mut value = serde_json::to_value(value)?;
+    rooted(&mut value);
     let rendered = if out == Output::Json {
-        serde_json::to_string_pretty(value)?
+        serde_json::to_string_pretty(&value)?
     } else {
-        serde_json::to_string(value)?
+        serde_json::to_string(&value)?
     };
     println!("{rendered}");
     Ok(())
@@ -458,14 +532,19 @@ fn emit_json<T: serde::Serialize>(out: Output, value: &T) -> anyhow::Result<()> 
 /// Print a row set. `None` means it was handled; `Some` hands text mode back
 /// to the caller.
 fn emit_rows<T: serde::Serialize>(out: Output, rows: &[T]) -> anyhow::Result<bool> {
+    if out == Output::Text {
+        return Ok(false);
+    }
+    let mut rows = serde_json::to_value(rows)?;
+    rooted(&mut rows);
+    let rows = rows.as_array().cloned().unwrap_or_default();
     match out {
-        Output::Json => println!("{}", serde_json::to_string_pretty(rows)?),
-        Output::Ndjson => {
-            for row in rows {
+        Output::Json => println!("{}", serde_json::to_string_pretty(&rows)?),
+        _ => {
+            for row in &rows {
                 println!("{}", serde_json::to_string(row)?);
             }
         }
-        Output::Text => return Ok(false),
     }
     Ok(true)
 }
@@ -937,6 +1016,7 @@ fn cmd_card(out: Output, text: &str) -> anyhow::Result<ExitCode> {
     if !store.has_checkout(&root_str)? {
         return not_indexed(out, &root);
     }
+    answering_in(&store, &root_str);
     let tree = build_tree(&store, &root_str)?;
 
     // A constant: what it is, and what it inherits.
@@ -1111,7 +1191,7 @@ fn card_text(
     for site in sites {
         out.push(format!(
             "  {}:{}:{}",
-            paths::pretty(&site.path),
+            shown(&site.path),
             site.line,
             site.col
         ));
@@ -1151,6 +1231,7 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
     if !store.has_checkout(&root_str)? {
         return not_indexed(out, &root);
     }
+    answering_in(&store, &root_str);
 
     // A bare name narrows nothing, so it keeps the whole-mention view —
     // definitions and constant references included, which a method-shaped
@@ -1234,7 +1315,7 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
     for site in &definition {
         println!(
             "{}:{}:{}  definition",
-            paths::pretty(&site.path),
+            shown(&site.path),
             site.line,
             site.col
         );
@@ -1242,7 +1323,7 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
     for reference in &found {
         println!(
             "{}:{}:{}  {:<10} {}",
-            paths::pretty(&reference.path),
+            shown(&reference.path),
             reference.line,
             reference.col,
             format!("{:?}", reference.tier).to_lowercase(),
@@ -1319,7 +1400,7 @@ fn cmd_refs_by_name(
         };
         let line = format!(
             "{}:{}:{}  {:<11} {}",
-            paths::pretty(&row.path),
+            shown(&row.path),
             row.line,
             row.col,
             row.role,
@@ -1486,6 +1567,7 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
     if !store.has_checkout(&root_str)? {
         return not_indexed(out, &root);
     }
+    answering_in(&store, &root_str);
 
     let files = ruby_files(paths);
     let mut defined: Vec<(String, crate::core::Def, String)> = Vec::new();
@@ -1498,7 +1580,8 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
         // everything in it: these are the shapes that make "no references" a
         // weaker statement, and they are file-wide by nature.
         let risky = dynamic_markers(&source);
-        let shown = file.to_string_lossy().into_owned();
+        let absolute = std::fs::canonicalize(file).unwrap_or_else(|_| file.clone());
+        let at = absolute.to_string_lossy().into_owned();
         for def in facts.defs {
             if def.kind != crate::core::Kind::Method {
                 continue;
@@ -1510,7 +1593,7 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
             if def.via.is_some() {
                 continue;
             }
-            defined.push((shown.clone(), def, risky.clone()));
+            defined.push((at.clone(), def, risky.clone()));
         }
     }
 
@@ -1555,7 +1638,7 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
         rows.push(serde_json::json!({
             "name": def.name,
             "owner": owner,
-            "file": file,
+            "path": file,
             "line": def.pos.line,
             "tier": tier,
             "confirmed": counts.confirmed,
@@ -1581,7 +1664,7 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
         println!(
             "{:<16} {}:{}  {}{}",
             row["tier"].as_str().unwrap_or_default(),
-            paths::pretty(row["file"].as_str().unwrap_or_default()),
+            shown(row["path"].as_str().unwrap_or_default()),
             row["line"],
             row["name"].as_str().unwrap_or_default(),
             match row["caveat"].as_str().unwrap_or_default() {
@@ -1711,6 +1794,17 @@ fn cmd_def(
         .ok_or_else(|| Failure::Usage.error(format!("expected FILE:LINE:COL, got `{spec}`")))?;
     let source = read_input(Path::new(&spec.path))?;
     let facts = crate::extract::extract(&source);
+    // The file as a site names it, whatever directory the question came from.
+    let file = std::fs::canonicalize(&spec.path)
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| spec.path.clone());
+    // Branches that never build a tree still write their paths against the
+    // file's checkout.
+    if let Ok((root, store)) = checkout_for_query(Path::new(&spec.path), pinned)
+        && store.has_checkout(&root.to_string_lossy()).unwrap_or(false)
+    {
+        answering_in(&store, &root.to_string_lossy());
+    }
     // A `super` with no fact behind it is one whose method has no owner the
     // source names. Snapping would answer for another name on the line.
     if position::at_facts(&facts, spec.line, spec.col).is_none()
@@ -1736,14 +1830,14 @@ fn cmd_def(
     // name was nearest on the line.
     if spec.col > 0
         && position::at_facts(&facts, spec.line, spec.col).is_none()
-        && let Some(answer) = position::variable_at(&source, &spec.path, spec.line, spec.col)
+        && let Some(answer) = position::variable_at(&source, &file, spec.line, spec.col)
     {
         crate::usage::flag("variable");
         let resolved = answer["status"] == "resolved";
         let text = match answer["sites"].get(0) {
             Some(site) => format!(
                 "{}:{}:{}  {} `{}`",
-                paths::pretty(site["path"].as_str().unwrap_or_default()),
+                shown(site["path"].as_str().unwrap_or_default()),
                 site["line"],
                 site["col"],
                 answer["variable"].as_str().unwrap_or_default(),
@@ -1789,7 +1883,7 @@ fn cmd_def(
             "confidence": 1.0,
             "resolved_via": "definition",
             "sites": [{
-                "path": spec.path, "line": def.pos.line,
+                "path": file, "line": def.pos.line,
                 "col": def.pos.col, "kind": def.kind.as_str(),
             }],
         }),
@@ -1798,6 +1892,7 @@ fn cmd_def(
             if !store.has_checkout(&root.to_string_lossy())? {
                 return not_indexed(out, &root);
             }
+            answering_in(&store, &root.to_string_lossy());
             // Refresh before the tree is built, so the tree sees the new facts.
             freshness = refresh_for_query(&mut store, &root, Path::new(&spec.path));
             let tree = build_tree(&store, &root.to_string_lossy())?;
@@ -1828,6 +1923,7 @@ fn cmd_def(
             if !store.has_checkout(&root.to_string_lossy())? {
                 return not_indexed(out, &root);
             }
+            answering_in(&store, &root.to_string_lossy());
             // Refresh before the tree is built, so the tree sees the new facts.
             freshness = refresh_for_query(&mut store, &root, Path::new(&spec.path));
             let tree = build_tree(&store, &root.to_string_lossy())?;
@@ -1912,7 +2008,7 @@ fn cmd_def(
     let text = match answer["sites"].as_array().and_then(|s| s.first()) {
         Some(site) => format!(
             "{}:{}:{}  {}",
-            paths::pretty(site["path"].as_str().unwrap_or_default()),
+            shown(site["path"].as_str().unwrap_or_default()),
             site["line"],
             site["col"],
             answer["fqn"]
@@ -2006,7 +2102,7 @@ fn explanation(answer: &serde_json::Value) -> String {
                 "    {}. {}  {}:{}  — {}",
                 rank + 1,
                 candidate["owner"].as_str().unwrap_or("?"),
-                paths::pretty(site["path"].as_str().unwrap_or_default()),
+                shown(site["path"].as_str().unwrap_or_default()),
                 site["line"],
                 candidate["why"].as_str().unwrap_or_default(),
             ));
@@ -2020,6 +2116,7 @@ fn cmd_ancestors(out: Output, name: &str) -> anyhow::Result<ExitCode> {
     if !store.has_checkout(&root.to_string_lossy())? {
         return not_indexed(out, &root);
     }
+    answering_in(&store, &root.to_string_lossy());
     let resolution = tree.resolve(name, &[]);
     let Some(fqn) = resolution.fqn.clone() else {
         return report(
@@ -2113,7 +2210,7 @@ impl Split {
             for site in &sites {
                 split.text.push(format!(
                     "  {}:{}:{}",
-                    paths::pretty(&site.path),
+                    shown(&site.path),
                     site.line,
                     site.col
                 ));

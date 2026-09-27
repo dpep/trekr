@@ -75,7 +75,7 @@ def found_truth(answer, site):
     places = list(answer.get("sites") or [])
     places += [c.get("site", {}) for c in answer.get("candidates") or []]
     for place in places:
-        path = place.get("path") or ""
+        path = os.path.join(place.get("root") or "", place.get("path") or "")
         if os.path.realpath(path) != os.path.realpath(site["def_file"]):
             continue
         if abs(int(place.get("line", -99)) - int(site["def_line"])) <= 1:

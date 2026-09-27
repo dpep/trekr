@@ -137,6 +137,58 @@ fn indexes_reports_and_outlines_through_the_cli() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Every `path` in an answer, collected with the `root` beside it.
+fn paths_in(value: &serde_json::Value, found: &mut Vec<(String, serde_json::Value)>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(serde_json::Value::String(path)) = map.get("path") {
+                found.push((path.clone(), map.get("root").cloned().unwrap_or_default()));
+            }
+            map.values().for_each(|v| paths_in(v, found));
+        }
+        serde_json::Value::Array(items) => items.iter().for_each(|v| paths_in(v, found)),
+        _ => {}
+    }
+}
+
+#[test]
+fn every_path_is_relative_to_the_root_beside_it() {
+    let (dir, db) = scratch("paths");
+    repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+    let root = fs::canonicalize(&dir)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+
+    let answers = [
+        json(&trekr(&db, &dir, &["--def", "widget.rb:7:5", "--json"])),
+        json(&trekr(&db, &dir, &["--refs", "Widget#helper", "--json"])),
+        json(&trekr(&db, &dir, &["--refs", "helper", "--json"])),
+        json(&trekr(&db, &dir, &["Widget#helper", "--json"])),
+        json(&trekr(
+            &db,
+            &dir,
+            &["--dead", &format!("{root}/widget.rb"), "--json"],
+        )),
+    ];
+    for answer in &answers {
+        let mut found = Vec::new();
+        paths_in(answer, &mut found);
+        assert!(!found.is_empty(), "{answer}");
+        for (path, at) in found {
+            assert_eq!(path, "widget.rb", "{answer}");
+            assert_eq!(at, serde_json::json!(root), "{answer}");
+        }
+    }
+
+    // Text writes a path in the checkout relative to it, definitions included.
+    let text = stdout(&trekr(&db, &dir, &["--refs", "Widget#helper"]));
+    assert!(text.starts_with("widget.rb:12:7  definition"), "{text}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn indexes_edits_and_untracked_files_without_touching_the_git_index() {
     let (dir, db) = scratch("worktree");
@@ -1548,11 +1600,12 @@ fn a_gem_position_answers_from_an_app_that_resolves_it() {
         answer["status"], "resolved",
         "the sibling gem's method is reachable: {answer}"
     );
+    assert_eq!(answer["sites"][0]["path"], "lib/helper.rb", "{answer}");
     assert!(
-        answer["sites"][0]["path"]
+        answer["sites"][0]["root"]
             .as_str()
             .unwrap()
-            .contains("helper-1.0.0"),
+            .ends_with("helper-1.0.0"),
         "and it points at the gem that defines it: {answer}"
     );
     // An answer that depends on which app supplied the ancestors says which.

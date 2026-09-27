@@ -109,7 +109,7 @@ Name the owner and the same sites come back tiered by whether they can reach
 
 ```console
 $ trekr --refs 'ActiveRecord::Batches#find_each'
-~/code/lib/ruby/rails/activerecord/lib/active_record/relation/batches.rb:85:9  definition
+activerecord/lib/active_record/relation/batches.rb:85:9  definition
 activerecord/test/cases/batches_test.rb:948:13  confirmed  the receiver's type resolves here
 activerecord/lib/active_record/destroy_association_async_job.rb:28:82  possible   untyped receiver, enclosing class shares a namespace with the owner
 activerecord/test/cases/batches_test.rb:562:33  possible   untyped receiver, nothing rules it out
@@ -124,7 +124,7 @@ innermost scope's ancestors, then the top level.
 
 ```console
 $ trekr --def activerecord/lib/active_record/relation.rb:68:70
-~/code/lib/ruby/rails/activerecord/lib/active_record/relation/batches.rb:7:10  ActiveRecord::Batches
+activerecord/lib/active_record/relation/batches.rb:7:10  ActiveRecord::Batches
 
 $ trekr --ancestors ActiveRecord::Relation | head -3
 ActiveRecord::Relation
@@ -184,7 +184,7 @@ site is sorted by whether its receiver can actually reach it:
 
 ```console
 $ trekr --refs 'ActiveRecord::ConnectionHandling#lease_connection'
-~/code/lib/ruby/rails/activerecord/lib/active_record/connection_handling.rb:269:9  definition
+activerecord/lib/active_record/connection_handling.rb:269:9  definition
 actioncable/test/subscription_adapter/postgresql_test.rb:26:26  confirmed  the receiver's type resolves here
 actioncable/test/subscription_adapter/postgresql_test.rb:71:38  confirmed  the receiver's type resolves here
 ...

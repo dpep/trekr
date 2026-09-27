@@ -81,7 +81,8 @@ def ask(site):
 def hits(answer_sites, site):
     """Does any reported site name the file and line Ruby really used?"""
     for reported in answer_sites or []:
-        path = reported.get("path") or ""
+        # Relative to its `root` since DEC-076; older builds wrote it absolute.
+        path = os.path.join(reported.get("root") or "", reported.get("path") or "")
         if os.path.realpath(path) != os.path.realpath(site["def_file"]):
             continue
         # A definition's recorded line can differ by one from Ruby's, which

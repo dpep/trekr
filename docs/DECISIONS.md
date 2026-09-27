@@ -3807,3 +3807,40 @@ from the gemspec would settle it, and would be the next step if one turns up.
 reverses-if: a test helper's `$LOAD_PATH`, Zeitwerk's roots). This rule is
 then a special case of that one.
 
+## DEC-076 — Every path in an answer is relative to a `root` beside it
+
+**Decided.** In `--json` and `--ndjson`, every object with a `path` also has
+`root`: the absolute root of the indexed checkout holding the file, the gem's
+own root for a definition in a gem. `path` is relative to it. A path in no
+indexed checkout keeps its absolute form with `root: null`, and Ruby core's
+`<core>` stays as it is. `--dead`'s `file` is renamed `path` to match. Text
+output writes a path inside the checkout being asked about relative to its
+root, and every other path absolute with `$HOME` as `~`.
+
+**Before**, three forms mixed within one answer. `--refs` printed its
+`definition` as `~/…` absolute and its references relative. In JSON, sites
+from the tree (definitions, `--def`, candidates, the card) were absolute,
+references and bare `--refs` rows were relative to the checkout, a variable's
+sites were the path as typed, relative to wherever the caller stood, and
+`--dead`'s `file` was the argument as typed. A caller had to know which field
+was which to open a file.
+
+**Why relative plus `root`, not absolute everywhere.** It is rq's shape (rq
+0.53 added `root` per result), so an agent using both joins the same two
+fields. A relative path is also what a person pastes and what an answer
+about a checkout usually wants to show. Per object rather than once per
+answer, because one answer spans checkouts: a call in the app resolves to a
+definition in a gem.
+
+**How.** One pass over the finished JSON (`rooted`), run by `emit_json`,
+`emit_rows` and so `report`, rewrites every `path` it finds against the roots
+the store knows, choosing the deepest that holds it. A command states which
+checkout it answers from once, where it checks the checkout is indexed
+(`answering_in`). That is also the base for a path still written relative. The
+next command gets this without writing anything, and `tests/cli_e2e.rs`
+asserts it for `--def`, `--refs` (both forms), the card and `--dead`. The LSP
+is unchanged: its locations are `file://` URIs by protocol.
+
+*Reverses if:* a consumer needs absolute paths without joining. Then it gets
+a flag, not a second shape.
+
