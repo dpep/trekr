@@ -434,7 +434,7 @@ fn cmd_index(
     )?;
 
     let gems = if with_gems {
-        index_gems(&mut store, &root, &pool, &mut profile)?
+        store.batch(|store| index_gems(store, &root, &pool, &mut profile))?
     } else {
         GemReport::default()
     };

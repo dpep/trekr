@@ -1904,3 +1904,51 @@ knowledge is the flood this engine exists to avoid.
 **Reverses if** the member listing's memory or build time is measured hurting
 the design-point monorepo — then it becomes a store query per owner instead of
 a whole-table load.
+
+## DEC-041 — A bundle's gems are written in one transaction
+
+**Decided.** `--index` writes the checkout in its own transaction, as before,
+and then every newly-indexed gem inside **one** transaction (`Store::batch`).
+Each `write` is a savepoint, so it is still atomic on its own and still works
+outside a batch.
+
+**Why, measured.** DEC-014 found the store write was 85 % of a cold index and
+named batching as where to start. With gems it is worse than that, and not for
+the reason it looks: a cold discourse index spent **10.1 s** in store-write for
+2.8 M rows (280k rows/s), while discourse alone, one transaction, writes at
+750k rows/s. The difference is 297 commits. A commit writes every page the
+transaction dirtied into the WAL, the `name` indexes are keyed in effectively
+random order, so each gem — ~36 files on average — dirtied pages across most of
+`call_site_name` and paid to write them all again; and a WAL growing that fast
+checkpoints constantly, each with an `fsync`.
+
+Discourse, fresh database per run, five interleaved rounds, medians:
+
+| | wall | store-write | CPU | peak RSS |
+| --- | ---: | ---: | ---: | ---: |
+| one transaction per gem | 12.7 s | 10.1 s | 12.2 s | 421 MB |
+| **one per bundle** | **7.6 s** | **5.3 s** | 10.8 s | 444 MB |
+
+Rails with its gems: 2.7 s → 1.6 s. Discourse with `--no-gems` does not move
+(3.6 vs 3.8 s), which is the control: it was always one transaction. The two
+databases' logical contents — every fact keyed by blob OID, every file map,
+every `gem_use` row — hash identically.
+
+**Tried and not taken.** A larger `wal_autocheckpoint` bought most of the same
+win (100k pages: 11.3 → 7.8 s) by attacking the checkpoints rather than the
+commits, at the price of a WAL that can grow to 400 MB mid-index — a knob
+tuned to one machine, where batching removes the cause. A 256 MB page cache
+changed nothing (11.3 vs 11.7 s): the pages were not being evicted, they were
+being committed. Turning off foreign-key checks saved ~4 % and would have
+removed a check for a gain inside the noise.
+
+**The cost.** An index interrupted while writing gems keeps none of them, where
+it kept the ones already finished. Content addressing makes that a re-parse,
+not a loss, and the checkout's own map is committed before any gem is read.
+The write lock is held for the whole gem phase — ~5 s cold on discourse, the
+same order as the 3 s the checkout's own single write already held it.
+
+**Reverses if** a gem phase long enough to matter appears — the shape would be
+a first index of a very large bundle being interrupted routinely. Then commit
+in groups sized by rows written, not per gem.
+

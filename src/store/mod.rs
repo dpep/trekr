@@ -161,8 +161,9 @@ impl Store {
 
     /// Record one checkout's file map and any facts it brought with it.
     ///
-    /// One transaction: an interrupted index leaves the previous state intact
-    /// rather than a half-mapped checkout.
+    /// One savepoint: an interrupted index leaves the previous state intact
+    /// rather than a half-mapped checkout. A savepoint rather than a
+    /// transaction so that it nests inside `batch`.
     pub(crate) fn write(
         &mut self,
         root: &str,
@@ -170,7 +171,7 @@ impl Store {
         facts: Vec<(Oid, Facts)>,
         git_state: i64,
     ) -> Result<Indexed> {
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         let mut counts = Indexed {
             files: files.len(),
             parsed: facts.len(),
@@ -271,6 +272,28 @@ impl Store {
 
         tx.commit()?;
         Ok(counts)
+    }
+
+    /// Run `work` as one transaction, so every `write` inside it commits once.
+    ///
+    /// For many small writes in a row — a bundle's gems. A commit rewrites
+    /// every index page the transaction touched, and the name indexes are
+    /// keyed randomly, so each small commit rewrote most of them (DEC-041).
+    pub(crate) fn batch<T, E: From<rusqlite::Error>>(
+        &mut self,
+        work: impl FnOnce(&mut Store) -> std::result::Result<T, E>,
+    ) -> std::result::Result<T, E> {
+        self.conn.execute_batch("BEGIN")?;
+        match work(self) {
+            Ok(value) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(value)
+            }
+            Err(error) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(error)
+            }
+        }
     }
 
     /// One row per indexed checkout, plus the totals a caller wants to see.
@@ -593,7 +616,7 @@ impl Store {
     /// Rewritten wholesale on every index, like the file map, so a gem dropped
     /// from a Gemfile.lock stops being claimed.
     pub(crate) fn set_gems_used(&mut self, root: &str, gem_roots: &[String]) -> Result<()> {
-        let tx = self.conn.transaction()?;
+        let tx = self.conn.savepoint()?;
         let id: i64 = tx.query_row(
             "SELECT id FROM checkout WHERE root = ?1",
             params![root],
@@ -1011,7 +1034,7 @@ fn path_hash(path: &str) -> i64 {
     hash as i64
 }
 
-fn insert_facts(tx: &rusqlite::Transaction<'_>, oid: &Oid, facts: &Facts) -> Result<()> {
+fn insert_facts(tx: &Connection, oid: &Oid, facts: &Facts) -> Result<()> {
     tx.execute(
         "INSERT OR REPLACE INTO blob (oid, lines, parse_errors, surface)
          VALUES (?1, ?2, ?3, ?4)",
@@ -1140,6 +1163,28 @@ mod tests {
             0,
             "the same bytes are never parsed twice — that is the whole design"
         );
+    }
+
+    #[test]
+    fn a_failed_batch_keeps_none_of_its_writes() {
+        let mut store = Store::open_in_memory().unwrap();
+        indexed(&mut store, "/app", "a.rb", "class A\nend\n");
+        let failed: anyhow::Result<()> = store.batch(|store| {
+            indexed(store, "/gem1", "g.rb", "class G\nend\n");
+            anyhow::bail!("interrupted")
+        });
+        assert!(failed.is_err());
+        assert!(!store.has_checkout("/gem1").unwrap(), "rolled back whole");
+        assert!(store.has_checkout("/app").unwrap(), "earlier commits stand");
+
+        store
+            .batch(|store| {
+                indexed(store, "/gem1", "g.rb", "class G\nend\n");
+                indexed(store, "/gem2", "h.rb", "class H\nend\n");
+                Ok::<(), rusqlite::Error>(())
+            })
+            .unwrap();
+        assert!(store.has_checkout("/gem1").unwrap() && store.has_checkout("/gem2").unwrap());
     }
 
     #[test]

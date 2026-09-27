@@ -570,6 +570,15 @@ the same "more workers" advice reproduces there and flattens here: rq overlaps
 its single writer with the parse so workers keep feeding it, where trekr
 collects every fact and writes at the end.
 
+**With gems, the cost was the number of commits, not the rows** (DEC-041).
+A cold discourse index is its own 11k files plus 297 gems, and each gem was its
+own transaction. A commit writes every page the transaction dirtied, and the
+name indexes are keyed randomly, so each small gem rewrote most of them: 2.8 M
+rows took 10.1 s of store-write at 280k rows/s, against 750k rows/s for the
+app's single write. Writing a bundle's gems as one transaction took the cold
+index from **12.7 s to 7.6 s** (store-write 10.1 → 5.3 s, median of five,
+interleaved) and rails' from 2.7 s to 1.6 s. Same rows, byte for byte.
+
 **The query planner needs statistics, and this is not optional.** Without them
 SQLite plans `--refs` as a nested scan of the checkout's files: `--refs new` on
 rails took **90 seconds** for 13,684 rows. With `ANALYZE` run, the planner

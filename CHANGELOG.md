@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A cold `--index` that brings gems is about 40 % faster.** A bundle's gems
+  are written as one transaction instead of one each: discourse with its 297
+  gems went from 12.7 s to 7.6 s, rails from 2.7 s to 1.6 s. The index is
+  identical. An index interrupted while writing gems now keeps none of them,
+  rather than the ones it had finished — the checkout's own files are still
+  committed first.
 - **`--lsp` speaks the protocol's error vocabulary, and honours cancellation.**
   An unsupported method answers `MethodNotFound` (it answered `null`, which a
   client reads as "nothing here") and a malformed request `InvalidParams` (it
