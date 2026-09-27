@@ -1,0 +1,7 @@
+# Forwardable's `def_delegator`/`def_delegators` define methods the way
+# ActiveSupport's `delegate` does, and were not read: `start` in `go` found
+# nothing. The third argument of `def_delegator` renames the method.
+def app.rb:21:6 status=resolved name=start owner=Car kind=declaration defined_via=def_delegator site=app.rb:12
+def app.rb:21:13 status=resolved name=halt owner=Car kind=declaration defined_via=def_delegator site=app.rb:13
+def app.rb:21:19 status=resolved name=rev owner=Car kind=declaration defined_via=def_delegators site=app.rb:14
+refs Car#halt confirmed=1

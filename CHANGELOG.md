@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Forwardable's `def_delegator` and `def_delegators` define methods**, as
+  ActiveSupport's `delegate` does: `def_delegator :@engine, :stop, :halt`
+  defines `halt`, a declaration with `defined_via: def_delegator`. The
+  `instance_` and `single_` spellings are read too. Store v28.
+
 - **An alias lands on the body it copied.** `alias_method :old_greet, :greet`
   followed by a new `def greet` left `old_greet` pointing at the alias line,
   with nothing recording which `greet` it meant. When the aliased method is

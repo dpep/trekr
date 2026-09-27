@@ -162,8 +162,8 @@ undetermined, not that the tool failed.
 * **`definition`** — the body is there. A `def`, or a `define_method` block
   (`define_method(:x, some_method)` is a declaration: the body is elsewhere).
 * **`declaration`** — the name was made or described there and runs elsewhere:
-  a macro (`belongs_to`, `has_many`, `enum`, `scope`, `delegate`, `schema` for a
-  column, `define_model_callbacks`), an alias, a bare `private :foo`, or a
+  a macro (`belongs_to`, `has_many`, `enum`, `scope`, `delegate`,
+  `def_delegator`, `schema` for a column, `define_model_callbacks`), an alias, a bare `private :foo`, or a
   Sorbet stub (`defined_via: rbi`). `defined_via` names which.
 
   `rbi` is worth its own reaction: real source always wins over a stub, so a

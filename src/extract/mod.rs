@@ -824,6 +824,12 @@ impl<'pr> Extractor<'_> {
             "concerning" => self.handle_concerning(call, &args),
             "class_methods" => self.handle_class_methods(call, &args),
             "alias_method" => self.handle_alias_method(call, &args),
+            "def_delegator" | "def_instance_delegator" | "def_single_delegator" => {
+                self.handle_forwardable(&name, &args, false)
+            }
+            "def_delegators" | "def_instance_delegators" | "def_single_delegators" => {
+                self.handle_forwardable(&name, &args, true)
+            }
             "enum" => self.handle_enum(call, &args),
             // Any macro the expansion table knows. The probe argument only
             // asks "is this a macro we model" — the real names come below.
@@ -1545,6 +1551,51 @@ impl<'pr> Extractor<'_> {
             for arg in args {
                 self.visit(arg);
             }
+        }
+        any
+    }
+
+    /// Forwardable's `def_delegator :@engine, :stop, :halt` and
+    /// `def_delegators :@engine, :start, :rev` — ActiveSupport's `delegate`
+    /// under another name. The first argument is the accessor, never a method
+    /// defined here; `def_delegator`'s third argument renames the method.
+    /// The `single` forms define singleton methods.
+    fn handle_forwardable(&mut self, macro_name: &str, args: &[Node<'pr>], many: bool) -> bool {
+        let Some((_, methods)) = args.split_first() else {
+            return false;
+        };
+        let named: Vec<&Node<'pr>> = if many {
+            methods.iter().collect()
+        } else {
+            match methods {
+                [method] | [_, method] => vec![method],
+                _ => return false,
+            }
+        };
+        let mut any = false;
+        for arg in named {
+            let Some(name) = literal_name(arg) else {
+                continue;
+            };
+            let at = arg.location();
+            let mut def = self.def(name, Kind::Method, at.start_offset(), at.end_offset());
+            def.via = Some(
+                if many {
+                    "def_delegators"
+                } else {
+                    "def_delegator"
+                }
+                .into(),
+            );
+            def.visibility = self.visibility();
+            def.singleton = macro_name.contains("single") || self.in_singleton();
+            // Whatever the target takes.
+            def.params = vec![Param {
+                kind: ParamKind::Rest,
+                name: "args".into(),
+            }];
+            self.push_def(def);
+            any = true;
         }
         any
     }

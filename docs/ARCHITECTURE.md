@@ -82,7 +82,8 @@ its superclass, Struct's members as readers and writers, Data's as readers —
 and a block handed to them is its body.
 
 Macros are expanded at extraction, so no later layer needs to know they exist:
-`attr_accessor :x` becomes `x` and `x=`; `module_function` turns one `def` into a
+`attr_accessor :x` becomes `x` and `x=`; Forwardable's `def_delegator(s)`
+become the methods they forward; `module_function` turns one `def` into a
 public singleton method and a private instance one; `alias` and `alias_method`
 become methods with a `target` — and, when the aliased method is a `def`
 written above them in the same scope, the position of that body
