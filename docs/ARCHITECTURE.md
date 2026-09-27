@@ -1112,6 +1112,10 @@ Deliberate, and cheap to close when they earn it:
 - Instance, class, and global variables are not in the index (not in PLAN
   §4's Phase 1 fact set). The LSP answers locals, ivars and cvars from the
   files themselves (DEC-064); globals are not answered anywhere.
+- An `@ivar` *receiver* is typed by a vote of every write to it in the same
+  class in that file (DEC-071's known weak spot): no flow, and not the class's
+  other files, though the LSP's go-to-definition on the ivar itself searches
+  them (DEC-064).
 - Multi-write constant targets (`A, B = 1, 2`) define nothing.
 - `refine` is not modeled.
 - A `super` that lands in core is as right as `src/tree/core.rb` is complete:
