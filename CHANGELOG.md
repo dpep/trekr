@@ -29,8 +29,18 @@
 - **Hover names a method as Ruby docs do**: `String#downcase(*options)`, not
   `def String#downcase(*options)`. Completion's detail line matches.
 
-- **Upgrading drops and rebuilds the index** (store v31): run `trekr --index`
-  once per checkout.
+- **Upgrading drops and rebuilds the index** (store v32): run `trekr --index`
+  once per checkout. A query on a checkout not yet reindexed now says the
+  index format changed, rather than that the checkout was never indexed.
+
+- **Two trekrs opening an older store at once rebuild it once.** Both used to
+  drop and recreate it, so one failed with `table checkout already exists`,
+  and the store could be left missing indexes or with files pointing at
+  another repository's facts.
+
+- **Two `--index` runs over the same files both succeed.** The second failed
+  with `FOREIGN KEY constraint failed` when both parsed a file new to the
+  store, or with `database is locked` when both created the store.
 
 - **A delegated method takes any arguments.** ActiveSupport's `delegate`
   generates `def name(...)`, and trekr read it as taking none, so `--refs`

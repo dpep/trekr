@@ -392,6 +392,8 @@ blob(id, oid UNIQUE, lines, parse_errors)
 checkout(id, root UNIQUE, indexed_at, kind, surface_key, map_key, git_state)
   gem_use(checkout_id, gem_root)            ← which bundles name which gem
   file(checkout_id, path, blob_id)          ← the only table naming a path
+
+upgrade(from_version, at)                   ← a rebuild that dropped an older index
 ```
 
 **No table under `blob` may mention a path, a checkout, or a repository.**
@@ -418,6 +420,14 @@ and a refresh's transaction reads first, so SQLite refuses its upgrade to a
 write at once. The answer comes from what is committed; `--def` names the file
 it could not refresh (`index.busy`), and the LSP retries a save's refresh until
 it lands.
+
+**One schema per store, changed atomically** (DEC-079). A version mismatch is a
+drop-and-create inside one `BEGIN IMMEDIATE` that re-reads `user_version` under
+the lock, so two processes opening an old store rebuild it once. An index
+`write` and a batch are immediate transactions too — they read before they
+write and must be able to wait. Every write checks `user_version` inside its
+transaction and refuses a store another binary has since rebuilt, so a
+long-running process cannot put an old schema's facts into a new one.
 
 ## CLI
 

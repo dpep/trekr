@@ -13,7 +13,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 31;
+pub(crate) const VERSION: i64 = 32;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -141,6 +141,15 @@ CREATE TABLE file (
   PRIMARY KEY (checkout_id, path)
 ) WITHOUT ROWID;
 
+-- ── The store itself ──────────────────────────────────────────────────────
+
+-- A rebuild that threw an older index away, so a checkout missing afterwards
+-- is reported as an upgrade to reindex after, not as never indexed.
+CREATE TABLE upgrade (
+  from_version INTEGER NOT NULL,
+  at           INTEGER NOT NULL           -- unix seconds
+);
+
 CREATE INDEX gem_use_gem    ON gem_use(gem_root);
 CREATE INDEX def_name       ON def(name);
 CREATE INDEX def_blob       ON def(blob_id);
@@ -181,7 +190,8 @@ pub(crate) const BULK_INDEXES: [(&str, &str); 7] = [
 
 /// Every table, newest first, so dropping respects nothing (foreign keys are
 /// off during the drop anyway).
-pub(crate) const TABLES: [&str; 8] = [
+pub(crate) const TABLES: [&str; 9] = [
+    "upgrade",
     "gem_use",
     "file",
     "checkout",

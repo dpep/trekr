@@ -2337,6 +2337,153 @@ fn gc_collects_a_gem_version_no_bundle_names_and_an_index_brings_it_back() {
     let _ = fs::remove_dir_all(&gems);
 }
 
+/// Start trekr without waiting for it, so several can race for one store.
+fn spawn_trekr(db: &Path, cwd: &Path, args: &[&str]) -> std::process::Child {
+    neutral(Command::new(env!("CARGO_BIN_EXE_trekr")))
+        .args(args)
+        .current_dir(cwd)
+        .env("TREKR_DB", db)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn trekr")
+}
+
+fn reset(db: &Path) {
+    for suffix in ["", "-wal", "-shm"] {
+        let _ = fs::remove_file(format!("{}{suffix}", db.display()));
+    }
+}
+
+fn count(db: &Path, sql: &str) -> i64 {
+    rusqlite::Connection::open(db)
+        .unwrap()
+        .query_row(sql, [], |r| r.get(0))
+        .unwrap()
+}
+
+/// A store an older trekr left: a schema this one does not speak.
+fn old_store(db: &Path) {
+    reset(db);
+    rusqlite::Connection::open(db)
+        .unwrap()
+        .execute_batch(
+            "PRAGMA journal_mode=WAL; CREATE TABLE checkout (x); PRAGMA user_version = 1;",
+        )
+        .unwrap();
+}
+
+#[test]
+fn processes_opening_an_old_store_at_once_rebuild_it_once() {
+    let (dir, db) = scratch("old-race");
+    repo(&dir);
+    // What a complete rebuild leaves, to hold each raced one to.
+    let (_, reference) = scratch("old-race-ref");
+    trekr(&reference, &dir, &["--status"]);
+    let objects = "SELECT COUNT(*) FROM sqlite_master";
+    for round in 0..6 {
+        old_store(&db);
+        let racers: Vec<_> = (0..4)
+            .map(|i| {
+                let args: &[&str] = if i % 2 == 0 {
+                    &["--status", "--json"]
+                } else {
+                    &["--refs", "Widget#resize", "--json"]
+                };
+                spawn_trekr(&db, &dir, args)
+            })
+            .collect();
+        for racer in racers {
+            let out = racer.wait_with_output().unwrap();
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(stderr.is_empty(), "round {round}: {stderr}");
+        }
+        assert_eq!(
+            count(&db, objects),
+            count(&reference, objects),
+            "round {round}"
+        );
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM upgrade"),
+            1,
+            "round {round}"
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_checkout_missing_after_an_upgrade_says_so() {
+    let (dir, db) = scratch("upgraded");
+    repo(&dir);
+    old_store(&db);
+    let out = trekr(&db, &dir, &["--refs", "Widget#resize", "--json"]);
+    assert_eq!(out.status.code(), Some(2));
+    let answer = json(&out);
+    assert_eq!(answer["status"], "not_indexed");
+    let reason = answer["reason"].as_str().unwrap();
+    assert!(reason.contains("v1"), "{reason}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn concurrent_index_runs_over_shared_content_both_land() {
+    let (dir, db) = scratch("index-race");
+    repo(&dir);
+    for i in 0..20 {
+        fs::write(
+            dir.join(format!("part_{i}.rb")),
+            format!("class Part{i}\n  def run\n  end\nend\n"),
+        )
+        .unwrap();
+    }
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "parts",
+        ],
+    );
+    let clone = dir.with_extension("clone");
+    let _ = fs::remove_dir_all(&clone);
+    git(&dir, &["clone", "-q", ".", clone.to_str().unwrap()]);
+
+    for round in 0..6 {
+        reset(&db);
+        let racers = [&dir, &clone].map(|root| spawn_trekr(&db, root, &["--index", "--no-gems"]));
+        for racer in racers {
+            let out = racer.wait_with_output().unwrap();
+            assert!(
+                out.status.success(),
+                "round {round}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM checkout"),
+            2,
+            "round {round}"
+        );
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM file WHERE blob_id NOT IN (SELECT id FROM blob)"
+            ),
+            0,
+            "round {round}: a file row points at no blob"
+        );
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM blob"), 21, "round {round}");
+    }
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&clone);
+}
+
 #[test]
 fn drop_forgets_the_checkouts_tree_snapshots() {
     let (dir, db) = scratch("drop-trees");

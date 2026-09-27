@@ -2680,6 +2680,72 @@ fn a_save_during_someone_elses_write_lands_once_the_lock_is_free() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A store another trekr has rebuilt for a newer schema is not written by
+/// this one: its facts would be in the wrong format, and nothing would ever
+/// replace them. The server stops refreshing and says why in its log.
+#[test]
+fn a_save_after_another_trekr_rebuilt_the_store_is_refused_and_logged() {
+    let (dir, db) = scratch("save-rebuilt");
+    ruby_repo(&dir, &db, "class Widget\n  def save\n  end\nend\n");
+    trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    // Warm: the tree is built and its members listed, so nothing but the save
+    // reaches for the store afterwards.
+    for _ in 0..2 {
+        session.request(
+            "textDocument/definition",
+            serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}, "position": {"line": 0, "character": 7}}),
+        );
+    }
+    let store = rusqlite::Connection::open(&db).unwrap();
+    let version: i64 = store
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    store
+        .pragma_update(None, "user_version", version + 1)
+        .unwrap();
+    let blobs = || -> i64 {
+        store
+            .query_row("SELECT COUNT(*) FROM blob", [], |r| r.get(0))
+            .unwrap()
+    };
+    let before = blobs();
+
+    fs::write(
+        dir.join("app.rb"),
+        "class Widget\n  def save\n  end\n  def polish\n  end\nend\n",
+    )
+    .unwrap();
+    session.notify(
+        "textDocument/didSave",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    // Any request: the log is written between messages.
+    session.request(
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    session.stop();
+
+    assert_eq!(blobs(), before, "nothing written into the rebuilt store");
+    let refused = log_lines(&db)
+        .into_iter()
+        .find(|l| l["event"] == "refresh_refused")
+        .expect("the refusal is logged");
+    assert!(
+        refused["error"].as_str().unwrap().contains("schema"),
+        "{refused}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A Ruby project nobody indexed is indexed in the background, with progress
 /// for a client that can show it, and answers start arriving without anyone
 /// running `trekr --index`.

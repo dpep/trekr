@@ -28,21 +28,32 @@ pub(crate) const BULK: usize = 32;
 /// How often a refresh that met a busy index is tried again.
 const RETRY: std::time::Duration = std::time::Duration::from_millis(250);
 
-/// Bring one saved file's facts up to date. `false` when another process
-/// holds the write lock and the refresh has to be tried again.
+/// How a refresh ended.
+enum Refreshed {
+    /// Written, or nothing to write.
+    Done,
+    /// Another process holds the write lock: try again.
+    Busy,
+    /// The store was rebuilt for another schema since this server opened it.
+    /// Writing would put this build's facts into a store that is not its
+    /// format, so it stops until a restart or hot reload replaces it.
+    Refused(String),
+}
+
+/// Bring one saved file's facts up to date.
 ///
 /// Unconditional, unlike the CLI's probe-gated refresh: a save is the editor
 /// telling us the file changed, so there is nothing to probe for.
-fn refresh(session: &mut Session, path: &Path) -> bool {
+fn refresh(session: &mut Session, path: &Path) -> Refreshed {
     let Some(located) = session.locate(path) else {
-        return true;
+        return Refreshed::Done;
     };
     let root = located.root.to_string_lossy().into_owned();
     if !session.store().has_checkout(&root).unwrap_or(false) {
-        return true;
+        return Refreshed::Done;
     }
     let Ok(bytes) = std::fs::read(&located.absolute) else {
-        return true;
+        return Refreshed::Done;
     };
     let oid = crate::scan::hash_blob(&bytes);
     let known = session.store().has_blob(&oid).unwrap_or(false);
@@ -53,8 +64,11 @@ fn refresh(session: &mut Session, path: &Path) -> bool {
         .store_mut()
         .refresh_file(&root, &located.relative, &oid, facts.as_ref())
     {
-        Err(error) => !crate::store::is_busy(&error),
-        Ok(_) => true,
+        Err(error) if crate::store::is_busy(&error) => Refreshed::Busy,
+        Err(error) if crate::store::is_schema_mismatch(&error) => {
+            Refreshed::Refused(error.to_string())
+        }
+        Err(_) | Ok(_) => Refreshed::Done,
     }
 }
 
@@ -76,6 +90,10 @@ pub(crate) struct Indexer {
     deferred: Vec<PathBuf>,
     retried: std::time::Instant,
     jobs: u32,
+    /// The store was rebuilt for another schema: no more refreshes.
+    refused: bool,
+    /// Why, until `poll` logs it — once, not per save.
+    unlogged: Option<String>,
 }
 
 struct Job {
@@ -96,6 +114,8 @@ impl Indexer {
             deferred: Vec::new(),
             retried: std::time::Instant::now(),
             jobs: 0,
+            refused: false,
+            unlogged: None,
         }
     }
 
@@ -125,9 +145,22 @@ impl Indexer {
     /// Refresh one saved file now, or keep it for [`Indexer::retry`] if the
     /// index is being written. Never waits on the lock.
     pub(crate) fn refresh(&mut self, session: &mut Session, path: &Path) {
-        if !refresh(session, path) && !self.deferred.iter().any(|p| p == path) {
-            self.deferred.push(path.to_path_buf());
+        if self.refused {
+            return;
         }
+        match refresh(session, path) {
+            Refreshed::Busy if !self.deferred.iter().any(|p| p == path) => {
+                self.deferred.push(path.to_path_buf());
+            }
+            Refreshed::Refused(why) => self.refuse(why),
+            _ => {}
+        }
+    }
+
+    fn refuse(&mut self, why: String) {
+        self.refused = true;
+        self.unlogged = Some(why);
+        self.deferred.clear();
     }
 
     /// Try the deferred refreshes again, at the pace the loop wakes for an
@@ -138,13 +171,27 @@ impl Indexer {
             return;
         }
         self.retried = std::time::Instant::now();
-        self.deferred.retain(|path| !refresh(session, path));
+        let mut refused = None;
+        self.deferred.retain(|path| match refresh(session, path) {
+            Refreshed::Busy => true,
+            Refreshed::Refused(why) => {
+                refused = Some(why);
+                false
+            }
+            Refreshed::Done => false,
+        });
+        if let Some(why) = refused {
+            self.refuse(why);
+        }
     }
 
     /// Reap a finished run and start the next. Returns the messages to send —
     /// progress, and nothing else.
     pub(crate) fn poll(&mut self, log: &Log) -> Vec<Message> {
         let mut out = Vec::new();
+        if let Some(why) = self.unlogged.take() {
+            log.event("refresh_refused", serde_json::json!({ "error": why }));
+        }
         if let Some(job) = &mut self.running {
             match job.child.try_wait() {
                 Ok(None) => return out,

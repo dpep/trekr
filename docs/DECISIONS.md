@@ -3982,3 +3982,53 @@ only when they differ.
 `include_str!`s, and two places to edit), and a virtual URI scheme (the editor
 would need the extension to serve it, and an agent reading `--json` could not
 open it).
+
+## DEC-079 — A schema change is one immediate transaction, and every write re-checks it
+
+**Decided.** `Store::init` sets `busy_timeout` before any other statement,
+retries the switch to WAL, and rebuilds a store of another version inside one
+`BEGIN IMMEDIATE` that re-reads `user_version` under the lock. An index
+`write` and a `batch` are immediate transactions; a one-file refresh stays
+deferred so that it never waits (DEC-066). Every write reads `user_version`
+inside its own transaction and refuses a store another binary has rebuilt
+since this connection opened it; the LSP stops refreshing and logs
+`refresh_refused`. A blob row another writer inserted first is kept
+(`ON CONFLICT DO NOTHING`) rather than replaced, and a rebuild that dropped an
+older index is recorded in `upgrade`, so "not indexed" can say why.
+
+**Why.** Four races, each reproduced with two real processes on one store:
+
+- *Old store, two openers.* Both read the old version, then dropped and
+  created table by table with no transaction. One failed with
+  `table checkout already exists`; the store could keep 5 of its 12 indexes,
+  or `file` rows pointing at blob ids from a different generation, which a
+  later index reused, so one repository answered with another's facts. Every
+  run of two concurrent `--index` on a copied v29 store corrupted it (27 of
+  27); none do now.
+- *Current store, shared blobs.* Two indexes that both found a blob new both
+  inserted it. `INSERT OR REPLACE` deleted the first row, whose id `file`
+  rows already referenced, so the second failed on the foreign key (8 of 10
+  runs). Facts are a pure function of the bytes, so the first row is the answer.
+- *Fresh store.* The switch into WAL takes an exclusive lock without asking
+  the busy handler, so two processes creating the store failed one of them
+  (10 of 20). It is retried with jitter for as long as the busy timeout.
+- *Deferred read-then-write.* A deferred transaction that has read cannot wait
+  for the write lock: SQLite returns `SQLITE_BUSY` at once, since waiting could
+  deadlock. `batch` (a bundle's gems) read before writing, as the migration
+  would have. Immediate takes the lock, or waits for it, before reading. rq
+  found the same bug.
+
+Tree snapshots already had the schema version in their key. That did not help
+after a corruption, because the key is a function of what the store says, and
+a correct reindex reproduces the key of the wrong tree. `--drop` now removes
+the checkout's snapshots, so drop-then-index repairs both.
+
+**Not fixed, and cannot be.** A 0.2.1 LSP still running after a newer trekr
+rebuilds the store writes old-format facts into it, because 0.2.1 has no
+check. That applies only to builds before this one; restarting the editor
+clears it.
+
+**Reverses if** migrations ever become real, rather than drop-and-rebuild:
+the immediate transaction then has to span a migration that may take much
+longer than the busy timeout, and waiting openers need progress instead of a
+5 s wait.

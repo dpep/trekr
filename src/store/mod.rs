@@ -10,6 +10,8 @@
 mod gc;
 mod schema;
 
+pub(crate) use schema::VERSION;
+
 use crate::core::*;
 use crate::scan::Files;
 use rusqlite::{Connection, OptionalExtension, Result, params};
@@ -125,45 +127,100 @@ impl Store {
     }
 
     fn init(conn: Connection) -> Result<Store> {
-        // WAL lets a reader answer while an indexer writes; busy_timeout makes
-        // a second writer wait rather than fail. mmap reads pages from the
-        // shared page cache instead of copying each into this connection's own
-        // cache — the difference is most of an LSP server's private memory
-        // (DEC-051). An I/O error under a mapping is a SIGBUS rather than an
-        // error return, the risk rq's D8 took too.
+        // Before any other statement: switching to WAL and the migration below
+        // both take locks, and without a handler a second process opening the
+        // store at the same moment fails at once instead of waiting its turn.
+        conn.busy_timeout(BUSY)?;
+        // WAL lets a reader answer while an indexer writes.
+        wal(&conn)?;
+        // mmap reads pages from the shared page cache instead of copying each
+        // into this connection's own cache — the difference is most of an LSP
+        // server's private memory (DEC-051). An I/O error under a mapping is a
+        // SIGBUS rather than an error return, the risk rq's D8 took too.
         conn.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; \
-             PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32768; \
+            "PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32768; \
              PRAGMA mmap_size=1073741824;",
         )?;
-        let version: i64 = conn.pragma_query_value(None, "user_version", |r| r.get(0))?;
-        // An *older* binary must not drop a newer database. Two trekrs on one
-        // machine — one installed, one freshly built — would otherwise take
-        // turns wiping each other's index, and each would look like it had
-        // simply never been run.
-        if version > schema::VERSION {
-            return Err(rusqlite::Error::SqliteFailure(
-                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISMATCH),
-                Some(format!(
-                    "database is schema v{version} but this trekr speaks v{};                      upgrade trekr, or point $TREKR_DB elsewhere",
-                    schema::VERSION
-                )),
-            ));
+        let mut store = Store { conn, path: None };
+        if schema_version(&store.conn)? != schema::VERSION {
+            store.migrate()?;
         }
-        if version != schema::VERSION {
+        Ok(store)
+    }
+
+    /// Bring the schema to this binary's, as one transaction (DEC-079).
+    ///
+    /// The version is read again under the write lock: another process may
+    /// have rebuilt the store between the unlocked check and here, and a
+    /// second drop-and-create interleaved with the first is what left tables
+    /// from two generations side by side.
+    fn migrate(&mut self) -> Result<()> {
+        // A no-op inside a transaction, so it is set around one. Off, the
+        // drops are plain drops rather than a cascading delete of every fact.
+        self.conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+        let rebuilt = (|| {
+            let tx = self
+                .conn
+                .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let version = schema_version(&tx)?;
+            // An *older* binary must not drop a newer database. Two trekrs on
+            // one machine — one installed, one freshly built — would otherwise
+            // take turns wiping each other's index, and each would look like
+            // it had simply never been run.
+            if version > schema::VERSION {
+                return Err(schema_mismatch(format!(
+                    "database is schema v{version} but this trekr speaks v{}; \
+                     upgrade trekr, or point $TREKR_DB elsewhere",
+                    schema::VERSION
+                )));
+            }
+            if version == schema::VERSION {
+                return Ok(());
+            }
             // No migration, by design: see schema::VERSION. Reindexing costs
             // seconds and cannot leave the store half-converted.
-            if version != 0 {
-                conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
-                for table in schema::TABLES {
-                    conn.execute_batch(&format!("DROP TABLE IF EXISTS {table};"))?;
-                }
-                conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+            for table in schema::TABLES {
+                tx.execute_batch(&format!("DROP TABLE IF EXISTS {table};"))?;
             }
-            conn.execute_batch(schema::SCHEMA)?;
-            conn.pragma_update(None, "user_version", schema::VERSION)?;
+            tx.execute_batch(schema::SCHEMA)?;
+            if version != 0 {
+                tx.execute(
+                    "INSERT INTO upgrade (from_version, at) VALUES (?1, unixepoch())",
+                    params![version],
+                )?;
+            }
+            tx.pragma_update(None, "user_version", schema::VERSION)?;
+            tx.commit()
+        })();
+        self.conn.execute_batch("PRAGMA foreign_keys=ON;")?;
+        rebuilt.map_err(terse)
+    }
+
+    /// Refuse to write into a store another binary has since rebuilt for a
+    /// different schema. Asked inside the write's own transaction, so the
+    /// answer holds until it commits.
+    fn check_schema(conn: &Connection) -> Result<()> {
+        let version = schema_version(conn)?;
+        if version == schema::VERSION {
+            return Ok(());
         }
-        Ok(Store { conn, path: None })
+        Err(schema_mismatch(format!(
+            "the store is now schema v{version} and this trekr writes v{}; \
+             it was rebuilt by another trekr, so this one must restart",
+            schema::VERSION
+        )))
+    }
+
+    /// The schema the store was last rebuilt from, when that rebuild threw
+    /// an older index away — so "not indexed" can say why.
+    pub(crate) fn upgraded_from(&self) -> Result<Option<i64>> {
+        self.conn
+            .query_row(
+                "SELECT from_version FROM upgrade ORDER BY at DESC LIMIT 1",
+                [],
+                |r| r.get(0),
+            )
+            .optional()
     }
 
     /// Every blob OID this machine has already read.
@@ -228,7 +285,13 @@ impl Store {
         git_state: i64,
         bulk: bool,
     ) -> Result<Indexed> {
+        // On its own, the write is its own immediate transaction: a deferred
+        // one that reads first cannot wait for the lock, it fails.
+        if self.autocommit() {
+            return self.batch(|store| store.write_with(root, files, facts, git_state, bulk));
+        }
         let tx = self.conn.savepoint()?;
+        Store::check_schema(&tx)?;
         let mut counts = Indexed {
             files: files.len(),
             ..Indexed::default()
@@ -392,11 +455,15 @@ impl Store {
     /// For many small writes in a row — a bundle's gems. A commit rewrites
     /// every index page the transaction touched, and the name indexes are
     /// keyed randomly, so each small commit rewrote most of them (DEC-041).
+    ///
+    /// Immediate, so it waits for the write lock up front. A deferred
+    /// transaction that reads before it writes gets `SQLITE_BUSY` at the
+    /// write, without the busy handler, whenever another process wrote since.
     pub(crate) fn batch<T, E: From<rusqlite::Error>>(
         &mut self,
         work: impl FnOnce(&mut Store) -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E> {
-        self.conn.execute_batch("BEGIN")?;
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
         match work(self) {
             Ok(value) => {
                 self.conn.execute_batch("COMMIT")?;
@@ -779,8 +846,7 @@ impl Store {
     /// The store's schema version, which DEC-013 makes cover the extractor too.
     /// Half of a resident front's staleness check.
     pub(crate) fn schema_version(&self) -> Result<i64> {
-        self.conn
-            .pragma_query_value(None, "user_version", |r| r.get(0))
+        schema_version(&self.conn)
     }
 
     /// The checkout's whole file map, folded into one number at index time.
@@ -972,7 +1038,10 @@ impl Store {
         oid: &Oid,
         facts: Option<&Facts>,
     ) -> Result<bool> {
+        // Deferred on purpose: meeting a writer, it fails at once rather than
+        // waiting out the timeout, and the caller retries (DEC-066).
         let tx = self.conn.transaction()?;
+        Store::check_schema(&tx)?;
         let Some((checkout_id, surface_key, map_key)) = tx
             .query_row(
                 "SELECT id, surface_key, map_key FROM checkout WHERE root = ?1",
@@ -1145,6 +1214,56 @@ impl Drop for Store {
     fn drop(&mut self) {
         let _ = self.conn.busy_timeout(std::time::Duration::ZERO);
         let _ = self.conn.execute_batch("PRAGMA optimize;");
+    }
+}
+
+/// How long a writer waits for another's lock before giving up.
+const BUSY: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Put the store in WAL mode, which it then stays in.
+///
+/// The switch takes an exclusive lock without consulting the busy handler, so
+/// two processes creating the store at once failed one of them outright. It is
+/// retried with jitter, so two waiters do not keep colliding in step.
+fn wal(conn: &Connection) -> Result<()> {
+    let deadline = std::time::Instant::now() + BUSY;
+    loop {
+        match conn.pragma_update_and_check(None, "journal_mode", "WAL", |r| r.get::<_, String>(0)) {
+            Err(error) if is_busy(&error) && std::time::Instant::now() < deadline => {
+                let jitter = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.subsec_nanos() % 20);
+                std::thread::sleep(std::time::Duration::from_millis(5 + u64::from(jitter)));
+            }
+            other => return other.map(drop),
+        }
+    }
+}
+
+fn schema_version(conn: &Connection) -> Result<i64> {
+    conn.pragma_query_value(None, "user_version", |r| r.get(0))
+}
+
+fn schema_mismatch(message: String) -> rusqlite::Error {
+    rusqlite::Error::SqliteFailure(
+        rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_MISMATCH),
+        Some(message),
+    )
+}
+
+/// The store belongs to a different schema than this binary's.
+pub(crate) fn is_schema_mismatch(error: &rusqlite::Error) -> bool {
+    matches!(error, rusqlite::Error::SqliteFailure(e, _) if e.extended_code == rusqlite::ffi::SQLITE_MISMATCH)
+}
+
+/// An error without the SQL it came from: a failed `execute_batch` quotes the
+/// whole batch, which for the schema is a screenful.
+fn terse(error: rusqlite::Error) -> rusqlite::Error {
+    match error {
+        rusqlite::Error::SqlInputError { error, msg, .. } => {
+            rusqlite::Error::SqliteFailure(error, Some(msg))
+        }
+        other => other,
     }
 }
 
@@ -1353,9 +1472,13 @@ fn path_hash(path: &str) -> i64 {
 }
 
 fn insert_facts(tx: &Connection, oid: &Oid, facts: &Facts) -> Result<()> {
-    tx.execute(
-        "INSERT OR REPLACE INTO blob (oid, lines, parse_errors, surface)
-         VALUES (?1, ?2, ?3, ?4)",
+    // Another process may have recorded these bytes since this one decided
+    // they were new. Their facts are a pure function of the bytes, so the row
+    // already there is the answer; replacing it would give the blob a new id
+    // under every file that points at the old one.
+    let inserted = tx.execute(
+        "INSERT INTO blob (oid, lines, parse_errors, surface)
+         VALUES (?1, ?2, ?3, ?4) ON CONFLICT (oid) DO NOTHING",
         params![
             oid.0,
             facts.lines as i64,
@@ -1363,6 +1486,9 @@ fn insert_facts(tx: &Connection, oid: &Oid, facts: &Facts) -> Result<()> {
             facts.surface() as i64
         ],
     )?;
+    if inserted == 0 {
+        return Ok(());
+    }
     let blob_id = tx.last_insert_rowid();
 
     let mut def = tx.prepare_cached(
@@ -1955,5 +2081,101 @@ mod lock_tests {
         assert!(started.elapsed() < std::time::Duration::from_secs(1));
         drop(writer);
         let _ = std::fs::remove_file(&path);
+    }
+
+    fn scratch(label: &str) -> std::path::PathBuf {
+        let path =
+            std::env::temp_dir().join(format!("trekr-schema-{label}-{}.db", std::process::id()));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
+        path
+    }
+
+    #[test]
+    fn a_write_refuses_a_store_another_binary_rebuilt() {
+        let path = scratch("rebuilt");
+        let mut store = Store::open(&path).unwrap();
+        super::tests::indexed(&mut store, "/app", "a.rb", "class A\nend\n");
+        Connection::open(&path)
+            .unwrap()
+            .pragma_update(None, "user_version", schema::VERSION + 1)
+            .unwrap();
+
+        let src = b"class A\n  def moved\n  end\nend\n";
+        let oid = crate::scan::hash_blob(src);
+        let facts = crate::extract::extract(src);
+        let error = store
+            .refresh_file("/app", "a.rb", &oid, Some(&facts))
+            .expect_err("the schema moved");
+        assert!(is_schema_mismatch(&error), "{error}");
+        let files = Files::from([("a.rb".to_string(), oid.clone())]);
+        let error = store
+            .write("/app", &files, [(oid.clone(), facts)], 0)
+            .expect_err("the schema moved");
+        assert!(is_schema_mismatch(&error), "{error}");
+        assert!(!store.has_blob(&oid).unwrap(), "nothing written");
+        drop(store);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn a_blob_another_writer_recorded_first_keeps_its_row() {
+        let path = scratch("shared-blob");
+        let (mut first, mut second) = (Store::open(&path).unwrap(), Store::open(&path).unwrap());
+        let src = b"class A\n  def one\n  end\nend\n";
+        let oid = crate::scan::hash_blob(src);
+        let files = Files::from([("a.rb".to_string(), oid.clone())]);
+        // Both decided the blob was new before either wrote it.
+        let facts = crate::extract::extract(src);
+        first
+            .write("/one", &files, [(oid.clone(), facts.clone())], 0)
+            .unwrap();
+        second
+            .write("/two", &files, [(oid.clone(), facts)], 0)
+            .unwrap();
+
+        let count = |sql: &str| -> i64 { first.conn.query_row(sql, [], |r| r.get(0)).unwrap() };
+        assert_eq!(count("SELECT COUNT(*) FROM blob"), 1);
+        assert_eq!(
+            count("SELECT COUNT(*) FROM def"),
+            2,
+            "class and method, once"
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM file WHERE blob_id NOT IN (SELECT id FROM blob)"),
+            0
+        );
+        drop((first, second));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn opening_an_old_store_rebuilds_it_and_remembers_why() {
+        let path = scratch("old");
+        let old = Connection::open(&path).unwrap();
+        old.execute_batch("CREATE TABLE checkout (x); PRAGMA user_version = 3;")
+            .unwrap();
+        drop(old);
+        let store = Store::open(&path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), schema::VERSION);
+        assert_eq!(store.upgraded_from().unwrap(), Some(3));
+        assert!(store.status().unwrap().is_empty());
+        drop(store);
+        let fresh = scratch("fresh");
+        assert_eq!(Store::open(&fresh).unwrap().upgraded_from().unwrap(), None);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(&fresh);
+    }
+
+    #[test]
+    fn a_failed_batch_is_reported_without_its_sql() {
+        let conn = Connection::open_in_memory().unwrap();
+        let error = conn
+            .execute_batch("CREATE TABLE t (x); CREATE TABLE t (x);")
+            .unwrap_err();
+        let error = terse(error).to_string();
+        assert!(error.contains("already exists"), "{error}");
+        assert!(!error.contains("CREATE"), "{error}");
     }
 }

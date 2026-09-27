@@ -1014,7 +1014,7 @@ fn cmd_card(out: Output, text: &str) -> anyhow::Result<ExitCode> {
     let root_str = root.to_string_lossy().into_owned();
     let store = open_store()?;
     if !store.has_checkout(&root_str)? {
-        return not_indexed(out, &root);
+        return not_indexed(out, &root, &store);
     }
     answering_in(&store, &root_str);
     let tree = build_tree(&store, &root_str)?;
@@ -1229,7 +1229,7 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
     let root_str = root.to_string_lossy().into_owned();
     let store = open_store()?;
     if !store.has_checkout(&root_str)? {
-        return not_indexed(out, &root);
+        return not_indexed(out, &root, &store);
     }
     answering_in(&store, &root_str);
 
@@ -1566,7 +1566,7 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
     let store = open_store()?;
     for (root, _) in &checkouts {
         if !store.has_checkout(&root.to_string_lossy())? {
-            return not_indexed(out, root);
+            return not_indexed(out, root, &store);
         }
     }
     if let Some((first, _)) = checkouts.first() {
@@ -1750,11 +1750,26 @@ fn dynamic_markers(source: &[u8]) -> String {
 /// constant by that name" — which reads as *we looked and Ruby does not have
 /// it* when the truth is *nobody has looked yet*. One is a finding about the
 /// code, the other is a setup step, and they call for opposite reactions.
-fn not_indexed(out: Output, root: &Path) -> anyhow::Result<ExitCode> {
+fn not_indexed(out: Output, root: &Path, store: &Store) -> anyhow::Result<ExitCode> {
     crate::usage::outcome(Outcome::NotIndexed);
     let root = root.to_string_lossy().to_string();
     let hint = format!("trekr --index {}", paths::pretty(&root));
+    // A store rebuilt for a new schema looks exactly like one never used, and
+    // "never indexed" to someone who indexed yesterday reads as a bug.
+    let upgraded = store.upgraded_from()?;
+    let reason = match upgraded {
+        Some(from) => format!(
+            "trekr's index format changed (store v{from} to v{}), which dropped the old index; \
+             this checkout has not been indexed since",
+            crate::store::VERSION
+        ),
+        None => "this checkout has never been indexed, so there is nothing to answer from".into(),
+    };
     match out {
+        Output::Text if upgraded.is_some() => eprintln!(
+            "trekr: {} is not indexed — {reason}. Run: {hint}",
+            paths::pretty(&root)
+        ),
         Output::Text => {
             eprintln!(
                 "trekr: {} is not indexed — run: {hint}",
@@ -1766,7 +1781,7 @@ fn not_indexed(out: Output, root: &Path) -> anyhow::Result<ExitCode> {
             &serde_json::json!({
                 "status": "not_indexed",
                 "repo": root,
-                "reason": "this checkout has never been indexed, so there is nothing to answer from",
+                "reason": reason,
                 "hint": hint,
             }),
         )?,
@@ -1912,7 +1927,7 @@ fn cmd_def(
         position::Under::Constant(reference) => {
             let (root, mut store) = checkout_for_query(Path::new(&spec.path), pinned)?;
             if !store.has_checkout(&root.to_string_lossy())? {
-                return not_indexed(out, &root);
+                return not_indexed(out, &root, &store);
             }
             answering_in(&store, &root.to_string_lossy());
             // Refresh before the tree is built, so the tree sees the new facts.
@@ -1943,7 +1958,7 @@ fn cmd_def(
         position::Under::Call(call) => {
             let (root, mut store) = checkout_for_query(Path::new(&spec.path), pinned)?;
             if !store.has_checkout(&root.to_string_lossy())? {
-                return not_indexed(out, &root);
+                return not_indexed(out, &root, &store);
             }
             answering_in(&store, &root.to_string_lossy());
             // Refresh before the tree is built, so the tree sees the new facts.
@@ -2136,7 +2151,7 @@ fn explanation(answer: &serde_json::Value) -> String {
 fn cmd_ancestors(out: Output, name: &str) -> anyhow::Result<ExitCode> {
     let (root, store, tree) = tree_here()?;
     if !store.has_checkout(&root.to_string_lossy())? {
-        return not_indexed(out, &root);
+        return not_indexed(out, &root, &store);
     }
     answering_in(&store, &root.to_string_lossy());
     let resolution = tree.resolve(name, &[]);
