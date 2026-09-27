@@ -1,0 +1,9 @@
+# A `sig`'s return type was looked up from the method's owner, which skips the
+# scopes around it: inside `module Shop`, `Item` is Shop::Item, not ::Item.
+def app.rb:55:26 status=resolved owner=Shop::Item via=chain
+# Compact `class Shop::Flat` does not open Shop for lookup, so ::Item is right.
+def app.rb:56:25 status=resolved owner=Item via=chain
+# Rails finds an association's class from the model's name (`compute_type`):
+# Admin::User, whether the model is nested or written compactly.
+def app.rb:40:12 status=resolved owner=Admin::User
+def app.rb:49:10 status=resolved owner=Admin::User

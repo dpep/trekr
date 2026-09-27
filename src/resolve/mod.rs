@@ -575,9 +575,7 @@ fn returned_by(
     let method = tree.lookup(&receiver.fqn, receiver.singleton, &previous.name)?;
     let returns = method.returns_for(previous.argc, previous.block)?;
     Some(Receiver {
-        fqn: tree
-            .resolve(returns, std::slice::from_ref(&method.owner))
-            .fqn?,
+        fqn: tree.returned_class(&method, returns)?,
         singleton: false,
         via: "chain",
         rivals: Vec::new(),
@@ -608,10 +606,7 @@ fn by_return_types(tree: &Tree, previous: &Call) -> Option<Receiver> {
         votes.push(
             method
                 .returns_for(previous.argc, previous.block)
-                .and_then(|returns| {
-                    tree.resolve(returns, std::slice::from_ref(&method.owner))
-                        .fqn
-                }),
+                .and_then(|returns| tree.returned_class(&method, returns)),
         );
     }
     let mut declared = votes.iter().flatten();
@@ -869,25 +864,26 @@ fn type_of(
                 depth + 1,
                 steps + 1,
             )?;
-            let returns = tree.lookup(&owner, singleton, name)?.sig_returns.clone()?;
-            Some((tree.resolve(&returns, nesting).fqn?, false, "sig:step"))
+            let method = tree.lookup(&owner, singleton, name)?;
+            let returns = method.sig_returns.as_deref()?;
+            Some((tree.returned_class(&method, returns)?, false, "sig:step"))
         }
         // A `sig` names a usable class for 64 % of signatures against 3.9 %
         // from syntax alone (PLAN §2) — the highest-yield rung on the ladder.
         ValueShape::SelfCall(name) => {
             let scope = tree.scope_fqn(nesting)?;
-            let returns = tree.lookup(&scope, false, name)?.sig_returns.clone()?;
-            Some((tree.resolve(&returns, nesting).fqn?, false, "sig"))
+            let method = tree.lookup(&scope, false, name)?;
+            let returns = method.sig_returns.as_deref()?;
+            Some((tree.returned_class(&method, returns)?, false, "sig"))
         }
         ValueShape::ConstCall { recv, name } => {
             let owner = tree.resolve(recv, nesting).fqn?;
             // A declared return type is better evidence than a convention, so
             // it is tried first.
-            if let Some(returns) = tree
-                .lookup(&owner, true, name)
-                .and_then(|m| m.sig_returns.clone())
+            if let Some(method) = tree.lookup(&owner, true, name)
+                && let Some(returns) = method.sig_returns.as_deref()
             {
-                return Some((tree.resolve(&returns, nesting).fqn?, false, "sig"));
+                return Some((tree.returned_class(&method, returns)?, false, "sig"));
             }
             // ActiveRecord's finders return an instance of the class they are
             // called on. This is a convention, not a signature — `find` given

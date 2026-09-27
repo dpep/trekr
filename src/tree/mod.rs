@@ -233,6 +233,10 @@ pub(crate) struct MethodDef {
     pub(crate) sig_returns: Option<String>,
     #[serde(skip)]
     pub(crate) sig_overloads: Vec<crate::core::Overload>,
+    /// Lexical scope stack at the definition, innermost first: where a name
+    /// its `sig` writes is looked up.
+    #[serde(skip)]
+    pub(crate) nesting: Vec<String>,
     /// Required positional arity and whether the method takes more than that.
     pub(crate) arity: (u32, bool),
     pub(crate) site: Site,
@@ -1123,6 +1127,28 @@ impl Tree {
         self.resolve_from(written, written_nesting, None)
     }
 
+    /// The class a return type `method` declares denotes, looked up where
+    /// that type was written rather than where the method is called.
+    pub(crate) fn returned_class(&self, method: &MethodDef, written: &str) -> Option<String> {
+        // Rails finds an association's class from the model's name
+        // (`compute_type`), so `class Admin::Post` still sees `Admin::User`.
+        let nesting = if matches!(method.via.as_deref(), Some("belongs_to" | "has_one")) {
+            let mut prefixes: Vec<String> = Vec::new();
+            let mut name = method.owner.as_str();
+            loop {
+                prefixes.push(format!("::{name}"));
+                match name.rsplit_once("::") {
+                    Some((outer, _)) => name = outer,
+                    None => break,
+                }
+            }
+            prefixes
+        } else {
+            method.nesting.clone()
+        };
+        self.resolve(written, &nesting).fqn
+    }
+
     /// `resolve`, for a reference written in the file at `path`: inside a
     /// split class's body the ancestors searched are those of the variant that
     /// file declares, since the name itself has none (DEC-072).
@@ -1908,6 +1934,7 @@ impl Tree {
             },
             body_elsewhere,
             owner: self.owner_of(&row),
+            nesting: row.nesting,
             name: row.name,
             singleton: row.singleton,
             visibility: row.visibility,
