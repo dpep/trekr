@@ -274,6 +274,15 @@ Each ends in something runnable; earlier phases don't assume later ones.
 - The 100k-file design point: watch `.git` for ops, overlay dirty buffers, memory ceiling,
   contention with a concurrent indexer, multi-session worktrees.
 - Learned ranking only if rq's 2026-10-01 kill-criterion says the signal is real.
+  (It didn't: rq deleted learning on that evidence, rq DECISIONS D10.)
+
+**Backlog (not scheduled)**
+- Write-only instance variables in `--dead`: an `@x` set somewhere in a class or
+  its ancestors and never read. Cheap once variable navigation's write/read
+  finding exists; trustworthy only after ERB indexing, because a controller's
+  ivars are read by its views. Single-file lints (unused locals and params,
+  unreachable code, literal conditions, duplicate branches, shadowed rescues)
+  stay with RuboCop's `Lint/*` cops — trekr's niche is reasoning across files.
 
 Rough total to a usable, measurably-better engine: ~3 months of focused solo work,
 front-loaded on measurement. rwr's seed and rq's store/identity code are what make the
