@@ -11,6 +11,7 @@
 use super::snapshot::{self, Bytes, Invalid, Key, Snapshot};
 use crate::store::Store;
 use sha1::{Digest, Sha1};
+use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -39,23 +40,35 @@ pub(super) fn key(store: &Store, roots: &[String]) -> anyhow::Result<Key> {
         hash.update((bytes.len() as u64).to_le_bytes());
         hash.update(bytes);
     };
-    eat(b"trekr tree snapshot");
-    eat(&snapshot::FORMAT.to_le_bytes());
-    eat(env!("CARGO_PKG_VERSION").as_bytes());
-    for source in [
-        include_str!("mod.rs"),
-        include_str!("snapshot.rs"),
-        include_str!("core.rb"),
-        include_str!("../store/mod.rs"),
-    ] {
-        eat(source.as_bytes());
-    }
+    eat(code());
     eat(&store.schema_version()?.to_le_bytes());
     for (root, surface) in roots.iter().zip(store.surface_keys(roots)?) {
         eat(root.as_bytes());
         eat(&surface.to_le_bytes());
     }
     Ok(hash.finalize().into())
+}
+
+/// This binary's assembly, as a digest: the part of every key that never
+/// changes while the process runs.
+fn code() -> &'static [u8] {
+    static CODE: std::sync::OnceLock<Key> = std::sync::OnceLock::new();
+    CODE.get_or_init(|| {
+        let mut hash = Sha1::new();
+        hash.update(b"trekr tree snapshot");
+        hash.update(snapshot::FORMAT.to_le_bytes());
+        hash.update(env!("CARGO_PKG_VERSION"));
+        for source in [
+            include_str!("mod.rs"),
+            include_str!("snapshot.rs"),
+            include_str!("core.rb"),
+            include_str!("../store/mod.rs"),
+        ] {
+            hash.update((source.len() as u64).to_le_bytes());
+            hash.update(source);
+        }
+        hash.finalize().into()
+    })
 }
 
 /// `<checkout>-<key>.tree`. The checkout part is what lets a new snapshot
@@ -161,6 +174,55 @@ fn retire(dir: &Path, tag: &str, keep: &str) {
             let _ = std::fs::remove_file(entry.path());
         }
     }
+}
+
+/// What `--gc` removed from the snapshot directory, or — on a dry run —
+/// would have.
+#[derive(Debug, Default, serde::Serialize)]
+pub(crate) struct Swept {
+    pub(crate) files: usize,
+    pub(crate) bytes: u64,
+}
+
+/// Remove every snapshot no checkout's current key names, and any temporary
+/// file a dead writer left.
+///
+/// Writing a snapshot already retires its checkout's older ones; what that
+/// leaves is a snapshot whose key moved with no query since, and those of a
+/// checkout that is gone. `gone` names checkouts this same collection is
+/// removing, so that a dry run — which leaves them in the store — reports
+/// what the real one would do.
+pub(crate) fn sweep(store: &Store, gone: &[&str], dry_run: bool) -> anyhow::Result<Swept> {
+    let mut swept = Swept::default();
+    let Some(dir) = dir(store) else {
+        return Ok(swept);
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Ok(swept);
+    };
+    let mut live = HashSet::new();
+    for root in store.roots()? {
+        if gone.contains(&root.as_str()) {
+            continue;
+        }
+        let mut roots = store.gems_used(&root)?;
+        roots.push(root.clone());
+        live.insert(name(&root, &key(store, &roots)?));
+    }
+    for entry in entries.flatten() {
+        let file = entry.file_name();
+        let Some(file) = file.to_str() else { continue };
+        let stale = file.ends_with(SUFFIX) && !live.contains(file);
+        if !stale && !(file.ends_with(TEMP) && abandoned(&entry)) {
+            continue;
+        }
+        swept.files += 1;
+        swept.bytes += entry.metadata().map_or(0, |m| m.len());
+        if !dry_run {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    Ok(swept)
 }
 
 fn abandoned(entry: &std::fs::DirEntry) -> bool {
@@ -296,6 +358,40 @@ mod tests {
         assert_eq!(after.len(), 1);
         assert_ne!(after, before, "the stale key's file is gone");
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A dry run reports a checkout being collected in the same pass, and a
+    /// temporary file is swept only once a live writer could not own it.
+    #[test]
+    fn a_sweep_keeps_what_a_checkout_names_and_nothing_else() {
+        let (tmp, mut store) = store("sweep", &[WIDGET]);
+        let mut files = crate::scan::Files::new();
+        let other = "class Other\nend\n";
+        let oid = crate::scan::hash_blob(other.as_bytes());
+        files.insert("other.rb".to_string(), oid.clone());
+        let facts = vec![(oid, crate::extract::extract(other.as_bytes()))];
+        store.write("/other", &files, facts, 0).unwrap();
+        Tree::build(&store, ROOT).unwrap();
+        Tree::build(&store, "/other").unwrap();
+        let trees = dir(&store).unwrap();
+        let temp = |name: &str, age: u64| {
+            let file = std::fs::File::create(trees.join(name)).unwrap();
+            let then = std::time::SystemTime::now() - std::time::Duration::from_secs(age);
+            file.set_modified(then).unwrap();
+        };
+        temp("dead.1.2.tmp", 2 * 3600);
+        temp("live.3.4.tmp", 5);
+        assert_eq!(snapshots(&store).len(), 4);
+
+        let dry = sweep(&store, &["/other"], true).unwrap();
+        assert_eq!(dry.files, 2, "/other's tree and the dead writer's file");
+        assert_eq!(snapshots(&store).len(), 4, "a dry run removes nothing");
+
+        let done = sweep(&store, &[], false).unwrap();
+        assert_eq!(done.files, 1, "only the dead writer's file");
+        assert!(!snapshots(&store).contains(&"dead.1.2.tmp".to_string()));
+        assert_eq!(snapshots(&store).len(), 3);
+        let _ = std::fs::remove_dir_all(tmp);
     }
 
     /// Builders racing on one key each get a tree, and leave one file.

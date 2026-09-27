@@ -1851,11 +1851,13 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
         |root| Path::new(root).is_dir(),
         dry_run,
     )?;
+    let gone: Vec<&str> = garbage.checkouts.iter().map(|c| c.repo.as_str()).collect();
+    let snapshots = crate::tree::sweep_snapshots(&store, &gone, dry_run)?;
     if vacuum {
         store.vacuum()?;
     }
     let db_bytes = store.db_bytes()?;
-    let found = !garbage.checkouts.is_empty();
+    let found = !garbage.checkouts.is_empty() || snapshots.files > 0;
 
     if out != Output::Text {
         emit_json(
@@ -1868,6 +1870,7 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
                 "blobs": garbage.blobs,
                 "facts": garbage.facts,
                 "reclaimed_bytes": garbage.reclaimed_bytes,
+                "snapshots": snapshots,
                 "vacuumed": vacuum,
                 "db_bytes": db_bytes,
             }),
@@ -1875,9 +1878,14 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
         return Ok(exit_on(found));
     }
     let mb = |bytes: i64| bytes as f64 / 1e6;
+    let verb = if dry_run {
+        "would collect"
+    } else {
+        "collected"
+    };
     if !found {
         println!("nothing to collect");
-    } else {
+    } else if !garbage.checkouts.is_empty() {
         for c in &garbage.checkouts {
             let days = (now - c.last_seen) / 86_400;
             println!(
@@ -1889,17 +1897,19 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
             );
         }
         println!(
-            "\n{} {} checkouts: {} files, {} blobs, {} facts, {:.1} MB",
-            if dry_run {
-                "would collect"
-            } else {
-                "collected"
-            },
+            "\n{verb} {} checkouts: {} files, {} blobs, {} facts, {:.1} MB",
             garbage.checkouts.len(),
             garbage.files,
             garbage.blobs,
             garbage.facts,
             mb(garbage.reclaimed_bytes)
+        );
+    }
+    if snapshots.files > 0 {
+        println!(
+            "{verb} {} tree snapshots no checkout's index names any more: {:.1} MB",
+            snapshots.files,
+            mb(snapshots.bytes as i64)
         );
     }
     if vacuum {

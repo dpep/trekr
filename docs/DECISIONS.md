@@ -3259,6 +3259,13 @@ whoever has it mapped — and moves to the new one when its key moves. Two
 processes at different keys for one checkout can retire each other's file in
 a window; the cost is a rebuild, never a wrong answer.
 
+**Collected by `--gc`.** Retiring on write leaves two kinds of file: the
+snapshot of a checkout whose key moved with no query since, and the snapshot
+of a checkout that is gone. `--gc` recomputes every surviving checkout's
+current key and removes any `.tree` none of them names, plus temporaries older
+than an hour (a live writer takes seconds). A dry run treats the checkouts it
+would collect as gone, so it reports what the real pass does.
+
 **Why a checksum over every byte on open.** It is a tripwire for a torn or
 rotted file, and it reads every page — which for a mapping means the page
 cache's pages, not private memory. At 30× the whole load, checksum included,

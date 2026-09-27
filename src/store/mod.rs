@@ -802,6 +802,15 @@ impl Store {
             .collect())
     }
 
+    /// Every checkout's root.
+    pub(crate) fn roots(&self) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT root FROM checkout ORDER BY root")?;
+        let rows = stmt.query_map([], |r| r.get(0))?;
+        rows.collect()
+    }
+
     /// Record that this checkout's bundle resolves these gems.
     ///
     /// Rewritten wholesale on every index, so a gem dropped

@@ -9,6 +9,10 @@
   ~0.05 s and 30 MB; the first query after an index pays the build plus a
   ~120 MB write. The directory is a cache: deleting it costs one rebuild per
   checkout.
+- **`--gc` also removes tree snapshots no checkout's index names any more** —
+  one left by a checkout that was collected, or whose index moved with no
+  query since. `--json` reports them as `snapshots: {files, bytes}`, and they
+  count toward the exit code.
 - **Go to Definition on a variable.** In `--lsp`, Cmd-click a local or
   parameter and land on the assignments its value can come from — both
   branches of an `if`, the write at the bottom of a loop, a block or method

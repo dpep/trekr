@@ -20,6 +20,8 @@
 mod files;
 mod snapshot;
 
+pub(crate) use files::sweep as sweep_snapshots;
+
 use crate::core::Param;
 use crate::store::{DeclRow, EdgeRow, MethodRow, Store};
 use serde::Serialize;

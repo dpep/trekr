@@ -144,7 +144,10 @@ in it; they stay demand-loaded from SQL.
   byte. Any mismatch — truncated, another format, another key — is rebuilt and
   rewritten, never read.
 - **One per checkout.** Writing a snapshot retires the checkout's previous
-  ones, since refresh-on-save moves the key with every save.
+  ones, since refresh-on-save moves the key with every save. What that leaves
+  — a key that moved with no query since, a checkout that is gone, a
+  temporary file a dead writer left — `--gc` removes (`snapshots` in its
+  `--json`).
 
 A snapshot is built by whichever query first finds none for the current key.
 
@@ -311,7 +314,7 @@ command that prints honors `--json` / `--ndjson`.
 | `--def FILE:LINE:COL` | what is the name here, and where is it defined |
 | `--ancestors NAME` | the linearized ancestor chain |
 | `--drop [PATH]` | forget a checkout's file map |
-| `--gc [--dry-run] [--older-than AGE] [--vacuum]` | remove checkouts nothing can reach again, and the blobs only they mapped |
+| `--gc [--dry-run] [--older-than AGE] [--vacuum]` | remove checkouts nothing can reach again, the blobs only they mapped, and tree snapshots no checkout's index names |
 | `--usage [--days N]` | which commands and editor features get used, by whom, how often empty, how slow (see below) |
 
 `--refs` is **name-level, not resolved**: two unrelated `Config` classes both

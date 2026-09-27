@@ -17,6 +17,7 @@ fn scratch(label: &str) -> (PathBuf, PathBuf) {
     for suffix in ["", "-wal", "-shm"] {
         let _ = fs::remove_file(format!("{}{suffix}", db.display()));
     }
+    let _ = fs::remove_dir_all(db.with_extension("trees"));
     fs::create_dir_all(&dir).unwrap();
     (dir, db)
 }
@@ -1693,6 +1694,51 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
         hidden["caveat"].as_str().unwrap().contains("send"),
         "{hidden}"
     );
+}
+
+/// A query leaves its checkout's tree snapshot beside the store. Once the
+/// index moves on without another query, `--gc` removes the one nothing names
+/// any more — and never the current one.
+#[test]
+fn gc_removes_tree_snapshots_no_checkouts_index_names() {
+    let (dir, db) = scratch("gc-trees");
+    repo(&dir);
+    let trees = db.with_extension("trees");
+    let files = || fs::read_dir(&trees).map_or(0, |d| d.count());
+    trekr(&db, &dir, &["--index"]);
+    assert_eq!(
+        trekr(&db, &dir, &["--ancestors", "Widget"]).status.code(),
+        Some(0)
+    );
+    assert_eq!(files(), 1, "the query wrote its snapshot");
+
+    fs::write(dir.join("gadget.rb"), "class Gadget\nend\n").unwrap();
+    trekr(&db, &dir, &["--index"]);
+    let dry = trekr(&db, &dir, &["--gc", "--dry-run", "--json"]);
+    assert_eq!(
+        dry.status.code(),
+        Some(0),
+        "stale snapshots are something to collect"
+    );
+    let dry = json(&dry);
+    assert_eq!(dry["snapshots"]["files"], 1, "{dry}");
+    assert!(dry["snapshots"]["bytes"].as_u64().unwrap() > 0);
+    assert_eq!(files(), 1, "a dry run removes nothing");
+
+    let text = stdout(&trekr(&db, &dir, &["--gc"]));
+    assert!(text.contains("collected 1 tree snapshots"), "{text}");
+    assert_eq!(files(), 0);
+    let again = trekr(&db, &dir, &["--gc", "--json"]);
+    assert_eq!(again.status.code(), Some(1), "nothing left to collect");
+    assert_eq!(json(&again)["snapshots"]["files"], 0);
+
+    assert_eq!(
+        trekr(&db, &dir, &["--ancestors", "Gadget"]).status.code(),
+        Some(0)
+    );
+    assert_eq!(trekr(&db, &dir, &["--gc"]).status.code(), Some(1));
+    assert_eq!(files(), 1, "the current snapshot stays");
+    let _ = fs::remove_dir_all(&dir);
 }
 
 /// An app moves from one gem version to the next. The old version is kept while
