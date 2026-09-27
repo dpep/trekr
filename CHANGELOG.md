@@ -31,6 +31,10 @@
   A `hint` names `trekr --refs name` for the unnarrowed sites. Scripts that
   read those sites from the `Owner#name` form should ask the bare name.
 
+- **`--symbols` puts `#` only on instance methods** (`.` on class methods), not
+  on classes, modules and constants. Text lines from `--refs NAME` no longer
+  end in padding.
+
 - **`--dead` asks about the owner a method really has.** A method in `module
   Alpha; module Helpers` was checked against `Helpers`, the name as written,
   so every call that resolved to `Alpha::Helpers` was ruled out and a used

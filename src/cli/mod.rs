@@ -829,7 +829,11 @@ fn cmd_symbols(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::from(1));
     }
     for s in &symbols {
-        let marker = if s.singleton { "." } else { "#" };
+        let marker = match (s.kind.as_str(), s.singleton) {
+            ("method", true) => ".",
+            ("method", false) => "#",
+            _ => "",
+        };
         let params = if s.params.is_empty() {
             String::new()
         } else {
@@ -1294,7 +1298,7 @@ fn cmd_refs_by_name(
             (_, _, Some(recv), None) => recv.clone(),
             _ => String::new(),
         };
-        println!(
+        let line = format!(
             "{}:{}:{}  {:<11} {}",
             paths::pretty(&row.path),
             row.line,
@@ -1302,6 +1306,7 @@ fn cmd_refs_by_name(
             row.role,
             detail
         );
+        println!("{}", line.trim_end());
     }
     Ok(ExitCode::SUCCESS)
 }

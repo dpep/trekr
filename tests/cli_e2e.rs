@@ -129,6 +129,11 @@ fn indexes_reports_and_outlines_through_the_cli() {
     assert_eq!(symbols[3]["visibility"], "private");
     assert_eq!(symbols[2]["params"][1], "opt:height");
 
+    // `#` is Ruby's notation for an instance method, and only for one.
+    let text = stdout(&trekr(&db, &dir, &["--symbols", "widget.rb"]));
+    assert!(text.contains("class    Widget"), "{text}");
+    assert!(text.contains("#resize"), "{text}");
+
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -877,6 +882,11 @@ fn a_bare_name_still_reports_every_mention_and_now_says_what_each_resolves_to() 
         confirmed,
         ["Widget", "Gadget"],
         "each typed call site says which owner it reaches"
+    );
+    let text = stdout(&trekr(&db, &dir, &["--refs", "Widget"]));
+    assert!(
+        text.lines().all(|line| line == line.trim_end()),
+        "no line ends in padding: {text:?}"
     );
 
     let _ = fs::remove_dir_all(&dir);
