@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 — 2026-09-27
 
 - **Navigation works inside a gem's file in the editor.** After following a
   definition into a gem outside the checkout, definition, hover, references
