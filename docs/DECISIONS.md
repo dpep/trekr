@@ -4234,3 +4234,27 @@ base's own method stays the confirmed landing. A call on an explicit instance
 *Reverses if:* `self`'s type is ever narrowed per call path (it is not: nothing
 here follows a method to its callers), which would make "any subclass" too
 wide.
+
+## DEC-082 — A constant receiver is the class or module the constant names
+
+**Decided.** `Foo.bar` types its receiver by resolving `Foo` and then
+following what it is bound to: `Short = Router` makes `Short.go` a call on
+Router, and a constant bound to anything that is not a namespace
+(`NAMES = %w[a b]`, `ENV = …`) leaves the receiver untyped.
+
+**Before.** The receiver was typed as a class named after the constant. For a
+value that class defines nothing, so every call on it was excluded as
+`no_such_method`; for an alias it hid the aliased module, so `Short.go` was
+excluded from `Router.go`. On rails, across the 40-method `--refs`
+differential, 149 sites move from excluded to possible and none from
+confirmed: `Hash#fetch` on `DAYS_INTO_WEEK`, `HTTP_STATUS_CODES` and their
+kind; `Array#size` on test fixtures' arrays; `Array#first` on `ARGV`.
+`Array#join`'s `no_such_method` exclusions go from 24 to 14.
+
+**The named cost.** 43 of those sites are `ENV.fetch`, which is not
+`Hash#fetch`. Core writes `ENV = nil`, so the old answer excluded them for the
+wrong reason, and they are now `possible`.
+
+**Not done: typing a value by its literal.** It needs the extractor to record
+the literal's class on the constant and the tree to carry it, and it is in
+PLAN's backlog.

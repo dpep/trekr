@@ -111,6 +111,11 @@
 
 ### Fixed
 
+- **A call on a constant is a call on what the constant names.** `NAMES =
+  %w[a b]; NAMES.join` was excluded from `--refs Array#join` because `NAMES`
+  was treated as a class that defines nothing; it is now possible. `Short =
+  Router; Short.go` was excluded from `Router.go`; it is now confirmed.
+
 - **A method a superclass calls on `self` is no longer reported dead.** When
   `Base#run` calls `setup` and `Child` overrides `setup`, `--refs Child#setup`
   excluded the call and `--dead` listed `Child#setup` as unreferenced at clear

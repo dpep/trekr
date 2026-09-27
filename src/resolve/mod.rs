@@ -524,7 +524,10 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
         }
         RecvShape::Const => {
             let name = call.recv_text.as_ref()?;
-            let fqn = tree.resolve_at(name, &call.nesting, path).fqn?;
+            let written = tree.resolve_at(name, &call.nesting, path).fqn?;
+            // `NAMES.join` calls the value NAMES holds, whose class was not
+            // recorded; `Short.go` calls the module `Short = Router` names.
+            let fqn = tree.namespace_named(&written)?;
             Some(Receiver {
                 fqn,
                 // `Foo.bar` runs a class method.

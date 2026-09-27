@@ -1,0 +1,7 @@
+# A constant used as a receiver was typed as a class of its own name. For one
+# holding a value that class defines nothing, so `SEPARATORS.join` was
+# excluded from Array#join as `no_such_method`; what the constant holds was
+# not recorded, so it is untyped.
+refs Array#join confirmed=0 possible=1 excluded=0
+# And for `Short = Router` it hid Router: `Short.go` was excluded from Router.go.
+refs Router.go confirmed=1 possible=0 excluded=0

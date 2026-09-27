@@ -283,16 +283,15 @@ Each ends in something runnable; earlier phases don't assume later ones.
   ivars are read by its views. Single-file lints (unused locals and params,
   unreachable code, literal conditions, duplicate branches, shadowed rescues)
   stay with RuboCop's `Lint/*` cops — trekr's niche is reasoning across files.
-- **A value constant as a receiver is typed as its own name.** `NAMES =
-  %w[a b]; NAMES.join` types the receiver `NAMES`, which defines nothing, so
-  `--refs Array#join` excludes the call as `no_such_method`. On rails (no
-  gems), 11 of `Array#join`'s 22 `no_such_method` exclusions are this shape
-  (`ActionDispatch::Routing::SEPARATORS`, `SchemaTest::COLUMNS` ×4,
-  `Rails::Generators::AppName::RESERVED_NAMES` ×2, …). The fix is in the
-  receiver ladder: a constant assigned a literal takes the literal's class,
-  and one assigned anything else is untyped (`possible`), never a type of its
-  own. The other 11 are `Pathname`, which is stdlib and unindexed: typed, but
-  its chain is not incomplete, so it reads as certain.
+- **A value constant as a receiver is untyped, not typed by its value.**
+  `NAMES = %w[a b]; NAMES.join` is `possible` for `Array#join` (DEC-082);
+  typing it would need the extractor to record the literal's class on the
+  constant and the tree to carry it. That would also settle `ARGV`. `ENV` is
+  core's `ENV = nil`, so its 43 `ENV.fetch` sites on rails are `possible` for
+  `Hash#fetch` until core models it as the object it is. The other half of
+  `Array#join`'s `no_such_method` exclusions are `Pathname`, which is stdlib
+  and unindexed: typed, but its chain is not incomplete, so it reads as
+  certain.
 - **`delegate_missing_to` is not modelled.** A class that uses it answers any
   name, but only a written `def method_missing` makes a missing method
   `residue` (the card and `--refs Owner#m`); the macro needs the extractor to

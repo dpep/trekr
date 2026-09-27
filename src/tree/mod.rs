@@ -2321,6 +2321,14 @@ impl Tree {
             .filter(|kind| !kind.is_empty())
     }
 
+    /// The class or module a constant names when a call is sent to it,
+    /// following `Bar = Foo` through to Foo. `None` for a constant bound to a
+    /// value (`NAMES = %w[a b]`), which is not a class of its own name.
+    pub(crate) fn namespace_named(&self, fqn: &str) -> Option<String> {
+        let namespace = self.namespace_of(fqn);
+        (self.kind_of(&namespace) != Some("constant")).then_some(namespace)
+    }
+
     pub(crate) fn is_known(&self, fqn: &str) -> bool {
         self.names.contains(fqn)
     }
