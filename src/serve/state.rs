@@ -17,6 +17,7 @@
 //! start in. So the session holds a tree per checkout and finds the one a file
 //! belongs to (DEC-024).
 
+use super::complete::Members;
 use crate::core::Facts;
 use crate::store::Store;
 use crate::tree::Tree;
@@ -53,6 +54,9 @@ struct Checkout {
     /// What the tree was assembled from. Cheap to re-read, and it moves
     /// exactly when the assembled tree would differ.
     built_from: Option<Stamp>,
+    /// The tree's namespaces and method table, listed — what completion
+    /// reads. Built on first use and dropped with the tree it came from.
+    members: Option<Members>,
 }
 
 /// A file, placed in the checkout that owns it.
@@ -223,8 +227,20 @@ impl Session {
             }
             checkout.tree = Some(Tree::build(&self.store, &key)?);
             checkout.built_from = Some(stamp);
+            checkout.members = None;
         }
         Ok(checkout.tree.as_ref().expect("just built"))
+    }
+
+    /// A checkout's tree together with its listed members, for completion.
+    pub(crate) fn members(&mut self, root: &Path) -> anyhow::Result<(&Tree, &Members)> {
+        self.tree(root)?;
+        let checkout = self.checkouts.get_mut(root).expect("tree() just placed it");
+        let tree = checkout.tree.as_ref().expect("tree() just built it");
+        if checkout.members.is_none() {
+            checkout.members = Some(Members::of(tree));
+        }
+        Ok((tree, checkout.members.as_ref().expect("just built")))
     }
 
     /// The editor's copy of a file, replacing whatever was held for it. Used

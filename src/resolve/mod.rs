@@ -278,6 +278,14 @@ fn agreement(receiver: &Receiver) -> Option<String> {
         .then(|| format!("{}/{}", receiver.agreeing, receiver.total))
 }
 
+/// The type a call's receiver resolves to, and whether it is the class itself
+/// (a singleton lookup) — the ladder's answer without a method lookup, for a
+/// caller that lists what the receiver has rather than finding one method on
+/// it (LSP completion, DEC-040).
+pub(crate) fn receiver_type(tree: &Tree, facts: &Facts, call: &Call) -> Option<(String, bool)> {
+    receiver_of(tree, facts, call).map(|receiver| (receiver.fqn, receiver.singleton))
+}
+
 /// Climb the ladder until a rung names a type.
 pub(super) fn receiver_of(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
     match call.recv {

@@ -42,6 +42,14 @@
   background indexing off with the initialization option `{"index": false}`.
   The root's tree is built while the server is idle, so the first question no
   longer pays for it.
+- **`--lsp` answers `textDocument/completion`** (DEC-040), receiver-aware and
+  ranked. After `recv.` it lists what the receiver ladder says `recv` is — its
+  own methods, then each ancestor's in lookup order, private ones only on
+  `self`; after `Scope::`, that namespace's constants; on a bare word, locals
+  and parameters, then the enclosing class's methods, then constants in
+  lexical scope. An untyped receiver gets at most 20 same-prefix names marked
+  "receiver type unknown", never the whole index. Measured p90: 3.7 ms on
+  rails and 15 ms on discourse.
 
 ## 0.1.5 — 2026-08-26
 

@@ -1,14 +1,16 @@
-//! `trekr --lsp` — the nine operations an agent actually uses, over stdio.
+//! `trekr --lsp` — the nine operations an agent uses, and completion for the
+//! editor, over stdio.
 //!
 //! A thin resident front over the on-disk index, not an owner of it (PLAN §4).
 //! The editor owns the process: no auto-spawn, no lockfile, no lifecycle beyond
 //! "stdin closed, so stop". Everything it answers, the CLI can answer too; what
 //! it adds is not paying 210 ms to rebuild the tree on every keystroke.
 //!
-//! Deliberately absent, and permanently: completion, formatting, rename,
-//! semantic tokens. Claude Code's `LSP` tool exposes nine operations and none of
-//! those are among them (PLAN §1).
+//! Completion is here because the surface became an editor as well as an
+//! agent's tool (DEC-040, reversing PLAN §1 for completion alone). Still
+//! absent: formatting, rename, semantic tokens, type checking.
 
+mod complete;
 mod convert;
 mod fresh;
 mod handlers;
@@ -55,6 +57,10 @@ fn capabilities() -> ServerCapabilities {
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         implementation_provider: Some(lsp_types::ImplementationProviderCapability::Simple(true)),
         call_hierarchy_provider: Some(lsp_types::CallHierarchyServerCapability::Simple(true)),
+        completion_provider: Some(lsp_types::CompletionOptions {
+            trigger_characters: Some(vec![".".into(), ":".into()]),
+            ..Default::default()
+        }),
         ..Default::default()
     }
 }
@@ -143,26 +149,35 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
     if root.join("Gemfile").is_file() && !session.indexed(&root) {
         indexer.want(root.clone(), false);
     }
-    let mut warm = false;
+    let mut warm = Warm::Cold;
 
     loop {
         for message in indexer.poll(log) {
             // A finished index moves the tree; warm it again when quiet.
-            warm = false;
+            warm = Warm::Cold;
             connection.sender.send(message)?;
         }
-        if !warm && inbox.is_quiet() {
-            // Nothing to answer: build the root's tree now rather than on the
-            // first question, which would otherwise pay for it.
-            warm = true;
+        // Nothing to answer: build what the first questions would otherwise
+        // pay for — the root's tree, then completion's member listing — one
+        // step per quiet moment, so a request arriving meanwhile waits for at
+        // most one of them.
+        if warm < Warm::Done && inbox.is_quiet() {
             if session.indexed(&root) {
                 let started = std::time::Instant::now();
-                let built = session.tree(&root).is_ok();
+                let (step, built) = match warm {
+                    Warm::Cold => ("tree", session.tree(&root).is_ok()),
+                    _ => ("members", session.members(&root).is_ok()),
+                };
                 log.event(
                     "warm",
-                    serde_json::json!({ "ok": built, "ms": started.elapsed().as_millis() as u64 }),
+                    serde_json::json!({
+                        "step": step,
+                        "ok": built,
+                        "ms": started.elapsed().as_millis() as u64,
+                    }),
                 );
             }
+            warm = warm.next();
         }
         // While an index runs, wake periodically to notice it finish.
         let timeout = indexer.busy().then_some(Duration::from_millis(250));
@@ -246,6 +261,23 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
     }
     // The channel closed: the client went away without a shutdown request.
     Ok(Outcome::ShutDown)
+}
+
+/// How much of the root's state has been built ahead of being asked for.
+#[derive(Clone, Copy, PartialEq, PartialOrd)]
+enum Warm {
+    Cold,
+    Tree,
+    Done,
+}
+
+impl Warm {
+    fn next(self) -> Warm {
+        match self {
+            Warm::Cold => Warm::Tree,
+            _ => Warm::Done,
+        }
+    }
 }
 
 /// After `shutdown`, the only thing left to do is wait for `exit`.
@@ -469,6 +501,7 @@ fn route(
         req::CallHierarchyOutgoingCalls::METHOD => {
             run_handler(request, |p| handlers::outgoing_calls(session, p))
         }
+        req::Completion::METHOD => run_handler(request, |p| complete::completion(session, p)),
         other => Err(Unsupported(other.to_string()).into()),
     }
 }

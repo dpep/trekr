@@ -47,6 +47,10 @@ findReferences, hover, documentSymbol, workspaceSymbol, goToImplementation,
 prepareCallHierarchy, incomingCalls, outgoingCalls — plus diagnostics pushed after edits.
 That is the whole surface an agent-first server needs.
 
+*Revised 2026-09-26:* **completion** has since been built (DEC-040), because the
+LSP front now also serves an editor — trekr is meant to replace Ruby LSP in VS
+Code. The rest of the list stands.
+
 ## 2. What the research settled
 
 ### Ruby LSP / Rubydex

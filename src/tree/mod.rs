@@ -1727,6 +1727,50 @@ impl Tree {
     pub(crate) fn is_known(&self, fqn: &str) -> bool {
         self.names.contains_key(fqn)
     }
+
+    /// Every declared class, module and constant, with its kind — for a
+    /// caller that has to *list* a namespace rather than resolve one name
+    /// (LSP completion, DEC-040).
+    pub(crate) fn declared(&self) -> Vec<(String, String)> {
+        self.names
+            .iter()
+            .map(|(fqn, entry)| (fqn.clone(), entry.kind.clone()))
+            .collect()
+    }
+
+    /// The whole method table: every `(owner, singleton)` a definition is
+    /// keyed under — including a model a `table_name` carrier's columns were
+    /// re-keyed onto — and the definition.
+    ///
+    /// Loads every method in the tree's checkouts, which demand-loading exists
+    /// to avoid on the lookup path (DEC-025). Completion has to list, not look
+    /// up, and pays it once per tree; after this, `ensure` finds every name
+    /// already loaded and never reloads one, so nothing is indexed twice.
+    pub(crate) fn method_table(&self) -> Vec<(String, bool, MethodDef)> {
+        if let Some(loader) = &self.loader {
+            let loaded = self.loaded.borrow().clone();
+            if let Ok(rows) = loader.store.methods(&loader.roots) {
+                let fresh: Vec<MethodRow> = rows
+                    .into_iter()
+                    .filter(|row| !loaded.contains(&row.name))
+                    .collect();
+                let names: HashSet<String> = fresh.iter().map(|row| row.name.clone()).collect();
+                self.index_rows(fresh);
+                self.loaded.borrow_mut().extend(names);
+            }
+        }
+        let by_owner = self.by_owner.borrow();
+        let methods = self.methods.borrow();
+        by_owner
+            .iter()
+            .flat_map(|((owner, singleton, _), hits)| {
+                hits.iter()
+                    .map(|i| &methods[*i])
+                    .filter(|method| method.is_definition())
+                    .map(|method| (owner.clone(), *singleton, method.clone()))
+            })
+            .collect()
+    }
 }
 
 /// Required positional arity, and whether more are accepted.

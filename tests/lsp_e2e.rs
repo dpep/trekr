@@ -227,8 +227,12 @@ fn the_server_announces_only_what_it_answers() {
     }
     // Never: these are not what an agent uses, and claiming them would invite
     // an editor to route work here that this engine has no business doing.
+    assert_eq!(
+        caps["completionProvider"]["triggerCharacters"],
+        serde_json::json!([".", ":"]),
+        "completion, since DEC-040"
+    );
     for absent in [
-        "completionProvider",
         "renameProvider",
         "documentFormattingProvider",
         "semanticTokensProvider",
@@ -1789,6 +1793,175 @@ fn a_deleted_file_reported_by_the_watcher_leaves_the_index() {
         );
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+const SHOP: &str = concat!(
+    "module Shop\n",                 // 1
+    "  class Widget\n",              // 2
+    "    LIMIT = 3\n",               // 3
+    "    def save\n",                // 4
+    "    end\n",                     // 5
+    "    def self.build\n",          // 6
+    "    end\n",                     // 7
+    "    private\n",                 // 8
+    "    def secret\n",              // 9
+    "    end\n",                     // 10
+    "  end\n",                       // 11
+    "end\n",                         // 12
+    "class Gadget < Shop::Widget\n", // 13
+    "  def polish(level)\n",         // 14
+    "    count = 1\n",               // 15
+    "  end\n",                       // 16
+    "end\n",                         // 17
+);
+
+/// Complete at the end of `line` after replacing the file's text with
+/// `source`, returning (labels in rank order, isIncomplete).
+fn complete(
+    session: &mut Session,
+    dir: &Path,
+    source: &str,
+    line: u32,
+    version: i32,
+) -> (Vec<String>, bool) {
+    let character = source.lines().nth(line as usize).unwrap().len() as u32;
+    session.notify(
+        "textDocument/didChange",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(dir, "app.rb"), "version": version},
+            "contentChanges": [{"text": source}],
+        }),
+    );
+    let answer = session.request(
+        "textDocument/completion",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(dir, "app.rb")},
+            "position": {"line": line, "character": character},
+        }),
+    );
+    let mut items: Vec<(String, String)> = answer["result"]["items"]
+        .as_array()
+        .expect("a completion list")
+        .iter()
+        .map(|i| {
+            (
+                i["sortText"].as_str().unwrap().to_string(),
+                i["label"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    items.sort();
+    (
+        items.into_iter().map(|(_, label)| label).collect(),
+        answer["result"]["isIncomplete"].as_bool().unwrap(),
+    )
+}
+
+/// Completion is receiver-aware: after a typed receiver it lists that type's
+/// methods — own first, then inherited — and never the class-side ones, nor
+/// private ones on an explicit receiver. After the class itself it lists the
+/// class-side ones.
+#[test]
+fn completion_after_a_dot_lists_the_receivers_methods_in_lookup_order() {
+    let (dir, _db, mut session) = indexed_session("complete-dot", SHOP);
+    session.read();
+
+    let instance = format!("{SHOP}w = Shop::Widget.new\nw.\n");
+    let (labels, _) = complete(&mut session, &dir, &instance, 18, 2);
+    assert_eq!(
+        labels.first().map(String::as_str),
+        Some("save"),
+        "{labels:?}"
+    );
+    assert!(
+        !labels.contains(&"build".to_string()),
+        "a class method is not an instance's"
+    );
+    assert!(
+        !labels.contains(&"secret".to_string()),
+        "private, and the receiver is not self"
+    );
+    assert!(
+        labels.contains(&"object_id".to_string()),
+        "inherited from core, ranked after"
+    );
+
+    let class_side = format!("{SHOP}Shop::Widget.b\n");
+    let (labels, _) = complete(&mut session, &dir, &class_side, 17, 3);
+    assert_eq!(
+        labels.first().map(String::as_str),
+        Some("build"),
+        "{labels:?}"
+    );
+    assert!(!labels.contains(&"save".to_string()));
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn completion_after_a_scope_lists_its_constants() {
+    let (dir, _db, mut session) = indexed_session("complete-scope", SHOP);
+    session.read();
+    let (labels, _) = complete(&mut session, &dir, &format!("{SHOP}Shop::\n"), 17, 2);
+    assert_eq!(labels, ["Widget"]);
+    let (labels, _) = complete(
+        &mut session,
+        &dir,
+        &format!("{SHOP}Shop::Widget::\n"),
+        17,
+        3,
+    );
+    assert_eq!(labels, ["LIMIT"]);
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A bare word inside a method: locals and parameters first, then the
+/// enclosing class's methods up its chain — inherited ones included, private
+/// ones too, since the receiver is self.
+#[test]
+fn completion_of_a_bare_word_offers_locals_then_the_classs_methods() {
+    let (dir, _db, mut session) = indexed_session("complete-bare", SHOP);
+    session.read();
+    let source = SHOP.replace("    count = 1\n", "    count = 1\n    \n");
+    let (labels, _) = complete(&mut session, &dir, &source, 15, 2);
+    let at = |name: &str| labels.iter().position(|l| l == name);
+    assert!(at("count").is_some() && at("level").is_some(), "{labels:?}");
+    assert!(at("count") < at("polish"), "locals before methods");
+    assert!(at("polish") < at("save"), "own before inherited");
+    assert!(at("secret").is_some(), "private is callable on self");
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// An untyped receiver gets a short list of names that fit the prefix,
+/// marked incomplete — and nothing at all before a prefix is typed.
+#[test]
+fn completion_on_an_untyped_receiver_is_short_and_disclosed() {
+    let (dir, _db, mut session) = indexed_session("complete-untyped", SHOP);
+    session.read();
+    let (labels, incomplete) = complete(
+        &mut session,
+        &dir,
+        &format!("{SHOP}def go(x)\n  x.sa\n"),
+        18,
+        2,
+    );
+    assert!(labels.contains(&"save".to_string()), "{labels:?}");
+    assert!(incomplete, "guesses are never the whole answer");
+    let (labels, incomplete) = complete(
+        &mut session,
+        &dir,
+        &format!("{SHOP}def go(x)\n  x.\n"),
+        18,
+        3,
+    );
+    assert!(labels.is_empty() && incomplete, "{labels:?}");
 
     session.stop();
     let _ = fs::remove_dir_all(&dir);

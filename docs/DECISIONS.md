@@ -1843,3 +1843,64 @@ question. The first question after spawn was paying the 300–470 ms build.
 **Reverses if** concurrent writers are measured contending — a child index and
 a burst of saves both writing — enough to stall saves visibly. The answer would
 be queueing saves behind a running index rather than dropping the child.
+
+## DEC-040 — Completion is built, reversing PLAN §1 for completion alone
+
+**Decided (2026-09-26, at Daniel's direction).** `--lsp` answers
+`textDocument/completion`. PLAN §1 listed completion under "what not to build"
+because the only client then was Claude Code's `LSP` tool, whose nine
+operations do not include it. The surface is now an **editor** as well: trekr
+is meant to replace Ruby LSP and Sorbet in VS Code, and an editor language
+server without completion is not one people keep enabled. Formatting, rename,
+semantic tokens and type checking stay on the list.
+
+**What it is.** Receiver-aware and ranked, the same engine as `--def`:
+
+| context | what is offered, in rank order |
+|---|---|
+| `recv.` (typed by the ladder) | the type's methods, own first, then each ancestor in Ruby's lookup order; private only when the receiver is `self` |
+| `recv.` (untyped) | nothing until a prefix is typed; then at most 20 same-prefix names, most-defined first, each labelled "receiver type unknown", list marked incomplete |
+| `Scope::` | constants declared in that namespace and its ancestors |
+| bare word | locals and parameters, then the enclosing class's methods up its chain, then constants from the innermost lexical scope outward |
+
+Operators and setters are not offered after a dot, nothing is offered in a
+comment, string or symbol, and a list cut at 300 items is marked incomplete so
+the client asks again as the prefix narrows.
+
+**The mid-edit problem, and the trick that solves it.** The buffer rarely parses
+at the cursor — `w.` is a syntax error. The word being typed is replaced with a
+placeholder identifier before parsing (`w.trekr_completion_placeholder`), which
+the extractor records as a call with its receiver, nesting and singleton-ness:
+exactly the input `resolve::receiver_type` needs. No second parser, no
+completion-specific inference.
+
+**Cost, measured** over the stdio audit (25 files × 4 positions per corpus,
+completion right after the dot and after two typed characters):
+
+| | p50 | p90 | max |
+|---|---:|---:|---:|
+| rails, after the dot | 0.2 ms | 0.5 ms | 0.9 ms |
+| rails, two characters typed | 3.4 ms | 3.7 ms | 4.1 ms |
+| discourse, after the dot | 0.3 ms | 1.4 ms | 4.2 ms |
+| discourse, two characters typed | 6.9 ms | 15 ms | 17 ms |
+
+The price is the **whole method table**, which demand-loading (DEC-025) exists
+to avoid on the lookup path: listing needs every method, not one name. It is
+loaded once per tree — 220 ms on rails, 520 ms on discourse — while the server
+is idle after the tree itself is warm, so no keystroke pays it in the common
+case. Two additive APIs carry it: `Tree::method_table` and `Tree::declared`
+(tree/), and `resolve::receiver_type` (resolve/).
+
+**How often the right name is offered** after two typed characters: 18 of 33
+sampled rails call sites and 37 of 42 discourse. The misses are receivers the ladder cannot
+type — the same ceiling as `--def` (ARCHITECTURE: rails resolves ~40 % of
+method call sites) — where the short guess list did not contain the name.
+
+**Rejected: word-based completion for untyped receivers.** Every name in the
+index matching the prefix is what Ruby LSP's fallback amounts to and what the
+editor's own word completion already provides; ranking it as though it were
+knowledge is the flood this engine exists to avoid.
+
+**Reverses if** the member listing's memory or build time is measured hurting
+the design-point monorepo — then it becomes a store query per owner instead of
+a whole-table load.
