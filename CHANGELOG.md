@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`--dead` with scopes in two checkouts weighs each against its own.**
+  `trekr --dead lib ../worktree/lib` used the first path's checkout as the
+  evidence for both, so the answer depended on argument order. A path that
+  does not exist now exits 66 (`not_found`) instead of 1.
+
 - **A `super` is a possible reference only to a method that could be behind
   it.** When a class's ancestors were not all indexed, every `super` in it
   counted as a possible call of any same-named method in the checkout, so

@@ -1552,23 +1552,71 @@ fn cmd_bare(
 /// Scope is the argument, evidence is the **whole checkout** — a method used
 /// once from outside the scope is not a candidate, and a scope-local search
 /// would say it is. Not the whole store: what else is indexed must not change
-/// the answer (DEC-074).
+/// the answer (DEC-074). Scopes in two checkouts are each weighed against
+/// their own.
 fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
+    let mut checkouts: Vec<(PathBuf, Vec<PathBuf>)> = Vec::new();
+    for path in paths {
+        let root = named_checkout(path)?;
+        match checkouts.iter_mut().find(|(known, _)| *known == root) {
+            Some((_, scoped)) => scoped.push(path.clone()),
+            None => checkouts.push((root, vec![path.clone()])),
+        }
+    }
+    let store = open_store()?;
+    for (root, _) in &checkouts {
+        if !store.has_checkout(&root.to_string_lossy())? {
+            return not_indexed(out, root);
+        }
+    }
+    if let Some((first, _)) = checkouts.first() {
+        answering_in(&store, &first.to_string_lossy());
+    }
+
+    let mut rows: Vec<serde_json::Value> = Vec::new();
+    let mut scope = 0;
+    for (root, scoped) in &checkouts {
+        scope += dead_in(&store, root, scoped, &mut rows)?;
+    }
+
+    let found = !rows.is_empty();
+    if out != Output::Text {
+        emit_json(
+            out,
+            &serde_json::json!({ "scope": scope, "candidates": rows }),
+        )?;
+        return Ok(exit_on(found));
+    }
+    for row in &rows {
+        println!(
+            "{:<16} {}:{}  {}{}",
+            row["tier"].as_str().unwrap_or_default(),
+            shown(row["path"].as_str().unwrap_or_default()),
+            row["line"],
+            row["name"].as_str().unwrap_or_default(),
+            match row["caveat"].as_str().unwrap_or_default() {
+                "" => String::new(),
+                why => format!("   (lower confidence: {why})"),
+            }
+        );
+    }
+    if !found {
+        println!("no candidates in {scope} file(s)");
+    }
+    Ok(exit_on(found))
+}
+
+/// `--dead` over the scopes in one checkout, weighed against that checkout:
+/// pushes a row per candidate and returns how many files were in scope.
+fn dead_in(
+    store: &Store,
+    root: &Path,
+    paths: &[PathBuf],
+    rows: &mut Vec<serde_json::Value>,
+) -> anyhow::Result<usize> {
     use crate::resolve::refs;
 
-    let root = scan::repo_root(
-        paths
-            .first()
-            .map(PathBuf::as_path)
-            .unwrap_or(Path::new(".")),
-    )?;
     let root_str = root.to_string_lossy().into_owned();
-    let store = open_store()?;
-    if !store.has_checkout(&root_str)? {
-        return not_indexed(out, &root);
-    }
-    answering_in(&store, &root_str);
-
     let files = ruby_files(paths);
     let mut defined: Vec<(String, crate::core::Def, String)> = Vec::new();
     for file in &files {
@@ -1603,9 +1651,8 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
     let written_calls = store.written_calls(&root_str, &names, PLAINLY_USED + 1)?;
 
     // The expensive pass, only for names the cheap one could not clear.
-    let tree = build_tree(&store, &root_str)?;
+    let tree = build_tree(store, &root_str)?;
     let mut parsed = Parsed::new();
-    let mut rows: Vec<serde_json::Value> = Vec::new();
     for (file, def, risky) in &defined {
         let written = written_calls.get(&def.name).copied().unwrap_or(0);
         if written > PLAINLY_USED {
@@ -1624,8 +1671,8 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
         };
         let (found, counts) = gather_refs(
             &tree,
-            &store,
-            &root,
+            store,
+            root,
             &root_str,
             &query,
             Some(&owner),
@@ -1651,32 +1698,7 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
             "caveat": risky,
         }));
     }
-
-    let found = !rows.is_empty();
-    if out != Output::Text {
-        emit_json(
-            out,
-            &serde_json::json!({ "scope": files.len(), "candidates": rows }),
-        )?;
-        return Ok(exit_on(found));
-    }
-    for row in &rows {
-        println!(
-            "{:<16} {}:{}  {}{}",
-            row["tier"].as_str().unwrap_or_default(),
-            shown(row["path"].as_str().unwrap_or_default()),
-            row["line"],
-            row["name"].as_str().unwrap_or_default(),
-            match row["caveat"].as_str().unwrap_or_default() {
-                "" => String::new(),
-                why => format!("   (lower confidence: {why})"),
-            }
-        );
-    }
-    if !found {
-        println!("no candidates in {} file(s)", files.len());
-    }
-    Ok(exit_on(found))
+    Ok(files.len())
 }
 
 /// Ruby files under these paths, following directories one level of recursion.

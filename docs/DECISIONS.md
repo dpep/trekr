@@ -3785,6 +3785,16 @@ means the same thing on every machine.
 That would be a named rule for the hook (a job's `perform`), not a store-wide
 name count.
 
+*Amended before 0.3.0:* **each scope is weighed against its own checkout.**
+`--dead lib ../other-worktree/lib` took the first path's checkout as the
+evidence for both, so a method called three times in the second worktree was
+`single-caller` there when that path came second, and the answer turned on
+argument order. The scopes are now grouped by checkout, each group is weighed
+against its own, and the candidates are listed together. Refusing mixed
+checkouts would also have been correct, but comparing two worktrees is a
+reasonable thing to ask, and the grouping costs a loop. A path that does not
+exist is `not_found` (exit 66), as for every other command that names a file.
+
 ## DEC-075 — A plain class in a gem with no variant is that gem's own class
 
 **Decided.** When a name is split (DEC-072), a declaration with no superclass

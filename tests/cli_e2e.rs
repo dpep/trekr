@@ -1175,6 +1175,7 @@ fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
             "not_found",
             "gone.rb",
         ),
+        (&dir, &["--dead", "gone"], &[], 66, "not_found", "gone"),
         (
             &dir,
             &["--symbols", "gone.rb"],
@@ -2105,6 +2106,58 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
         hidden["caveat"].as_str().unwrap().contains("send"),
         "{hidden}"
     );
+}
+
+/// Scopes in two checkouts are each weighed against their own checkout's
+/// callers. The first path's checkout used to be the evidence for all of them,
+/// so the answer turned on argument order.
+#[test]
+fn dead_weighs_each_scope_against_its_own_checkout() {
+    let (base, db) = scratch("dead-two");
+    let (one, two) = (base.join("one"), base.join("two"));
+    let widget = "class Widget\n  def self.build\n  end\nend\n";
+    for (dir, calls) in [(&one, 1), (&two, 3)] {
+        fs::create_dir_all(dir).unwrap();
+        git(dir, &["init", "-q"]);
+        fs::write(dir.join("widget.rb"), widget).unwrap();
+        let body = "    Widget.build\n".repeat(calls);
+        fs::write(
+            dir.join("main.rb"),
+            format!("class Main\n  def go\n{body}  end\nend\n"),
+        )
+        .unwrap();
+        git(dir, &["add", "-A"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.email=t@e.st",
+                "-c",
+                "user.name=test",
+                "commit",
+                "-qm",
+                "init",
+            ],
+        );
+        assert!(trekr(&db, dir, &["--index"]).status.success());
+    }
+    let (one_scope, two_scope) = (
+        one.join("widget.rb").to_string_lossy().into_owned(),
+        two.join("widget.rb").to_string_lossy().into_owned(),
+    );
+    for args in [[&one_scope, &two_scope], [&two_scope, &one_scope]] {
+        let out = trekr(&db, &base, &["--dead", args[0], args[1], "--json"]);
+        let value = json(&out);
+        assert_eq!(value["scope"], 2, "{value}");
+        let candidates = value["candidates"].as_array().unwrap();
+        // One caller in `one`; three in `two`, which is not a candidate.
+        assert_eq!(candidates.len(), 1, "{args:?}: {value}");
+        assert_eq!(candidates[0]["tier"], "single-caller");
+        assert!(
+            candidates[0]["root"].as_str().unwrap().ends_with("/one"),
+            "{value}"
+        );
+    }
 }
 
 /// The index the LSP starts in the background prepares the tree snapshot its
