@@ -3552,6 +3552,21 @@ named only themselves. Such a `super` is now excluded (`different_owner`). A
 One whose owner the index does not know at all counts as an ordinary call of
 unknown origin, so `super-only` always says who reaches the method.
 
+**An unseen ancestor hides only what could sit there** (amended before 0.3.0).
+When nothing indexed after the owner matched, a chain with any unresolved
+ancestor tiered the `super` `possible` against every same-named method, in any
+class. On a store holding only activerecord, `ActiveRecord::Promise#
+pretty_print` was `super-only` from `CollectionProxy` and `Core`, neither of
+which has `Promise` as an ancestor: `CollectionProxy`'s one unresolved
+ancestor is a module (`ActiveModel::ForbiddenAttributesProtection`). A module
+can include another module but never a class, and a class enters a chain only
+as a superclass. So a class target stays `possible` only when some chain
+asked has a superclass line that stops short of `BasicObject`; otherwise the
+site is excluded like any other `super` that lands elsewhere. A module target,
+or a bare-name query, is unchanged. On that store six `super-only` candidates
+become `unreferenced`, and each is `unreferenced` on a store holding all of
+rails, which is the evidence the smaller store was missing.
+
 ## DEC-069 — A class built by a call and assigned to a constant is a class body
 
 **Decided.** `X = Struct.new(…)`, `Data.define(…)`, `Class.new(Base)` and

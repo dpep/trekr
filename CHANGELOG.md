@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **A `super` is a possible reference only to a method that could be behind
+  it.** When a class's ancestors were not all indexed, every `super` in it
+  counted as a possible call of any same-named method in the checkout, so
+  `--dead` graded unrelated methods `super-only` (on activerecord alone,
+  `Promise#pretty_print` from `CollectionProxy` and `Core`). An unindexed
+  module can hide another module, and only an unindexed superclass can hide a
+  class.
+
 - **Hover names a method as Ruby docs do**: `String#downcase(*options)`, not
   `def String#downcase(*options)`. Completion's detail line matches.
 

@@ -1,0 +1,10 @@
+# `Child#show` calls `super`, and `Child`'s chain has a module the index cannot
+# see. That made the `super` a possible reference to every `show` anywhere, so
+# `--dead` graded an unrelated class's method `super-only`. An unseen module can
+# include another module, but a class enters a chain only as a superclass.
+refs Stranger#show confirmed=0 possible=0 excluded=1
+refs Maybe#show confirmed=0 possible=1
+dead app.rb Stranger#show=unreferenced Maybe#show=super-only
+# Behind an unseen superclass, any class could be an ancestor.
+refs Faraway#render confirmed=0 possible=1
+dead app.rb Faraway#render=super-only

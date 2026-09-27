@@ -344,7 +344,8 @@ fn tier_super(
     if own {
         return never_itself();
     }
-    if !super::unresolved_behind(tree, &landings).is_empty() {
+    if !super::unresolved_behind(tree, &landings).is_empty() && could_hide(tree, &landings, target)
+    {
         return here(
             Tier::Possible,
             owner,
@@ -467,6 +468,27 @@ fn shares_namespace(one: &str, other: &str) -> bool {
 }
 
 /// What `--dead` makes of one method's references (DEC-038).
+/// Could the queried owner be one of the ancestors the index could not see?
+///
+/// An unseen module may include any module, so a module target always could.
+/// A class enters a chain only as a superclass, so it hides only behind a
+/// superclass line that stops short of `BasicObject`, never behind a mixin.
+fn could_hide(tree: &Tree, landings: &super::SuperLandings, target: Option<&str>) -> bool {
+    let Some(target) = target else {
+        return true;
+    };
+    if tree.kind_of(target) != Some("class") {
+        return true;
+    }
+    landings.per_class.iter().any(|(class, _)| {
+        !tree
+            .ancestors(class)
+            .chain
+            .iter()
+            .any(|a| a == "BasicObject")
+    })
+}
+
 #[derive(Debug, PartialEq)]
 pub(crate) struct Liveness {
     /// `None` when the method is plainly referenced and not a candidate.
