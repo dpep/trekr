@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **`--lsp` completion gives the same list for the same position.** A list
+  cut at its 300-item cap kept whichever members a hash map yielded first,
+  which changed from one server process to the next; it now keeps the names
+  that sort first, which are the ones the editor shows first anyway.
 - **A cold `--index` that brings gems is about 40 % faster.** A bundle's gems
   are written as one transaction instead of one each: discourse with its 297
   gems went from 12.7 s to 7.6 s, rails from 2.7 s to 1.6 s. The index is

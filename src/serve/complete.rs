@@ -95,6 +95,16 @@ impl Members {
             };
             children.entry(scope).or_default().push((name, kind));
         }
+        // By name, so the list cut at `MAX_ITEMS` is the same list every time
+        // and the one the client's own sort puts first. The table is a hash
+        // map, and its order changed from one process to the next. Stable,
+        // so a name's definitions keep the order a lookup would see them in.
+        for members in methods.values_mut() {
+            members.sort_by(|a, b| a.name.cmp(&b.name));
+        }
+        for constants in children.values_mut() {
+            constants.sort();
+        }
         let mut names: Vec<(String, usize)> = counts.into_iter().collect();
         names.sort();
         Members {

@@ -1956,6 +1956,28 @@ fn completion_of_a_bare_word_offers_locals_then_the_classs_methods() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A listing cut at its cap is the same listing every time: the names that
+/// sort first, as the client will show them. It was whichever members a hash
+/// map happened to yield first, which changed from one process to the next.
+#[test]
+fn a_truncated_completion_keeps_the_names_that_sort_first() {
+    // More methods than one answer carries, declared out of order.
+    let mut names: Vec<String> = (0..320).map(|i| format!("m{i:03}")).collect();
+    names.reverse();
+    let body: String = names.iter().map(|n| format!("  def {n}; end\n")).collect();
+    let source = format!("class Crowd\n{body}end\n");
+    let (dir, _db, mut session) = indexed_session("complete-cap", &source);
+    session.read();
+    let asking = format!("{source}w = Crowd.new\nw.\n");
+    let line = asking.lines().count() as u32 - 1;
+    let (labels, incomplete) = complete(&mut session, &dir, &asking, line, 2);
+    let expected: Vec<String> = (0..300).map(|i| format!("m{i:03}")).collect();
+    assert_eq!(labels, expected);
+    assert!(incomplete, "cut at the cap, so the client asks again");
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// An untyped receiver gets a short list of names that fit the prefix,
 /// marked incomplete — and nothing at all before a prefix is typed.
 #[test]
