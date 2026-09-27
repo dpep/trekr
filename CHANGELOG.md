@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **A cold `--index` with gems is about 0.4 s faster.** The set of blobs
+  already on this machine is read once per index, not once per gem: discourse
+  with its 297 gems 7.3 s → 6.8 s. Same index.
 - **`--lsp` uses about 40 % less memory once completion is ready.** Listing
   a checkout's members for completion no longer loads every method into the
   session's tree: discourse and rails in one session went from 630 MB to

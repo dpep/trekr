@@ -41,10 +41,7 @@ pub(crate) fn refresh(session: &mut Session, path: &Path) -> bool {
         return false;
     };
     let oid = crate::scan::hash_blob(&bytes);
-    let known = session
-        .store()
-        .known(&HashSet::from([oid.clone()]))
-        .is_ok_and(|found| found.contains(&oid));
+    let known = session.store().has_blob(&oid).unwrap_or(false);
     // Parse only a blob the store has never seen; the common save-after-undo
     // is bytes it already has, which costs one hash.
     let facts = (!known).then(|| crate::extract::extract(&bytes));

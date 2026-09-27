@@ -2135,3 +2135,33 @@ top costs 6 MB where it cost 105.
 tree — the shape would be a first `references` or `incomingCalls` that reads
 hundreds of names. Then preload the names a scan will ask for in one query,
 rather than bring back the whole table.
+
+## DEC-046 — An index reads the known blobs once, not once per gem
+
+**Decided.** `--index` loads the set of known blob OIDs once (`Store::blob_oids`)
+and adds each write's OIDs to it, instead of calling `known()` — a full scan
+of `blob` — for the checkout and again for every gem. A single-file refresh
+(`--def`'s DEC-035 refresh, the LSP's save) asks `Store::has_blob`, one probe
+of the OID index, where it too scanned the whole table for one OID.
+
+**Why, measured.** A cold discourse index calls it 298 times against a table
+growing to 22k rows: `known-diff` was 420 ms of the cold index. Discourse with
+its gems, fresh database per run, five interleaved rounds, medians:
+
+| | wall | known-diff |
+| --- | ---: | ---: |
+| scan per gem | 7.3 s | 420 ms |
+| **once per index** | **6.8 s** | 0 ms |
+
+A one-file reindex (183 vs 181 ms) and a no-op do not move: they pay the one
+scan either way. The two databases' logical contents hash identically.
+
+**Correctness is the in-memory set's to keep.** Gems do share bytes — two
+versions of a gem, a vendored copy. The set has to learn each write's OIDs,
+or the second gem re-parses the shared file and `INSERT OR REPLACE` gives the
+blob a new id under the first gem's map. An e2e test indexes two gems sharing
+a file and fails without that step.
+
+**Rejected: probing per OID for the whole index.** It scales with the files
+asked about rather than the store, which is right for one file and wrong for
+a no-op at scale: ~100k probes against one scan.

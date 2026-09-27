@@ -142,21 +142,26 @@ impl Store {
         Ok(Store { conn, path: None })
     }
 
-    /// Blob OIDs this machine has already read, of the ones asked about.
+    /// Every blob OID this machine has already read.
     ///
     /// Loaded whole rather than probed per OID: at 100k blobs it is a few MB
-    /// and one query, where the probe is 100k round trips.
-    pub(crate) fn known(&self, wanted: &HashSet<Oid>) -> Result<HashSet<Oid>> {
+    /// and one query, where the probe is 100k round trips. An index loads it
+    /// once and adds what it writes — reloading it per gem rescanned the
+    /// table ~300 times on a cold bundle.
+    pub(crate) fn blob_oids(&self) -> Result<HashSet<Oid>> {
         let mut stmt = self.conn.prepare("SELECT oid FROM blob")?;
-        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
-        let mut known = HashSet::new();
-        for oid in rows {
-            let oid = Oid(oid?);
-            if wanted.contains(&oid) {
-                known.insert(oid);
-            }
-        }
-        Ok(known)
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0).map(Oid))?;
+        rows.collect()
+    }
+
+    /// Has this machine read this one blob? One probe of the OID index, for
+    /// a caller that refreshes a single file.
+    pub(crate) fn has_blob(&self, oid: &Oid) -> Result<bool> {
+        self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM blob WHERE oid = ?1)",
+            params![oid.0],
+            |r| r.get(0),
+        )
     }
 
     /// Record one checkout's file map and any facts it brought with it.
@@ -1184,9 +1189,7 @@ mod tests {
     pub(super) fn indexed(store: &mut Store, root: &str, path: &str, src: &str) -> Indexed {
         let oid = crate::scan::hash_blob(src.as_bytes());
         let files = Files::from([(path.to_string(), oid.clone())]);
-        let wanted = HashSet::from([oid.clone()]);
-        let known = store.known(&wanted).unwrap();
-        let facts = if known.contains(&oid) {
+        let facts = if store.has_blob(&oid).unwrap() {
             Vec::new()
         } else {
             vec![(oid, crate::extract::extract(src.as_bytes()))]

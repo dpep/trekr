@@ -387,6 +387,61 @@ fn a_gem_is_indexed_once_and_a_missing_one_is_reported() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Two gems can ship a byte-identical file. It is one blob: parsed once, and
+/// the second gem's map points at the facts the first one wrote — rewriting
+/// the blob would orphan the first gem's rows.
+#[test]
+fn a_file_two_gems_share_is_parsed_once_and_answers_for_both() {
+    let (dir, db) = scratch("gems-shared");
+    repo(&dir);
+    let shared = "module Shared\n  def helpers\n  end\nend\n";
+    for (gem, own) in [("alpha-1.0.0", "Alpha"), ("beta-1.0.0", "Beta")] {
+        let lib = dir.join(format!("vendor/bundle/ruby/3.3.0/gems/{gem}/lib"));
+        fs::create_dir_all(&lib).unwrap();
+        fs::write(lib.join("shared.rb"), shared).unwrap();
+        fs::write(
+            lib.join("own.rb"),
+            format!("class {own}\n  include Shared\nend\n"),
+        )
+        .unwrap();
+    }
+    fs::write(
+        dir.join("Gemfile.lock"),
+        concat!(
+            "GEM\n",
+            "  remote: https://rubygems.org/\n",
+            "  specs:\n",
+            "    alpha (1.0.0)\n",
+            "    beta (1.0.0)\n",
+            "\n",
+            "DEPENDENCIES\n",
+            "  alpha\n",
+            "  beta\n",
+        ),
+    )
+    .unwrap();
+
+    let out = trekr(&db, &dir, &["--index", "--profile", "--json"]);
+    assert_eq!(json(&out)["gems"]["indexed"], 2);
+    let timings: serde_json::Value =
+        serde_json::from_str(String::from_utf8_lossy(&out.stderr).trim()).unwrap();
+    // The app's file, both gems' own files, and the shared one once.
+    assert_eq!(timings["parsed"], 4);
+
+    for class in ["Alpha", "Beta"] {
+        let answer = json(&trekr(&db, &dir, &["--ancestors", class, "--json"]));
+        let chain: Vec<&str> = answer["ancestors"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{answer}"))
+            .iter()
+            .map(|n| n.as_str().unwrap())
+            .collect();
+        assert!(chain.contains(&"Shared"), "{class}: {chain:?}");
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn every_command_speaks_ndjson_as_well_as_json() {
     let (dir, db) = scratch("ndjson");

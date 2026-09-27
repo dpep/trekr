@@ -267,14 +267,13 @@ fn worker_count(requested: usize) -> usize {
 fn index_files(
     store: &mut Store,
     root: &Path,
-    root_str: &str,
     files: &scan::Files,
     git_state: i64,
+    known: &mut HashSet<Oid>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
 ) -> anyhow::Result<crate::store::Indexed> {
-    let wanted: HashSet<Oid> = files.values().cloned().collect();
-    let known = profile::timed(profile, "known-diff", || store.known(&wanted))?;
+    let wanted: HashSet<&Oid> = files.values().collect();
 
     // One path per unknown blob: identical content under two names is one
     // parse, and which name it was read from cannot matter.
@@ -326,9 +325,13 @@ fn index_files(
     }
 
     let facts: Vec<_> = parsed.into_iter().map(|(oid, p)| (oid, p.facts)).collect();
-    Ok(profile::timed(profile, "store-write", || {
-        store.write(root_str, files, facts, git_state)
-    })?)
+    let fresh: Vec<Oid> = facts.iter().map(|(oid, _)| oid.clone()).collect();
+    let counts = profile::timed(profile, "store-write", || {
+        store.write(&root.to_string_lossy(), files, facts, git_state)
+    })?;
+    // Written now, so a later gem holding the same bytes does not parse them.
+    known.extend(fresh);
+    Ok(counts)
 }
 
 /// Index the gems this checkout resolves, skipping any already on this machine.
@@ -339,6 +342,7 @@ fn index_files(
 fn index_gems(
     store: &mut Store,
     repo: &Path,
+    known: &mut HashSet<Oid>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
 ) -> anyhow::Result<GemReport> {
@@ -377,7 +381,7 @@ fn index_gems(
         if files.is_empty() {
             continue;
         }
-        let counts = index_files(store, &gem_root, &root_str, &files, 0, pool, profile)?;
+        let counts = index_files(store, &gem_root, &files, 0, known, pool, profile)?;
         report.indexed += 1;
         report.files += counts.files;
     }
@@ -423,18 +427,19 @@ fn cmd_index(
 
     let mut store = open_store()?;
     let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
+    let mut known = profile::timed(&mut profile, "known-diff", || store.blob_oids())?;
     let counts = index_files(
         &mut store,
         &root,
-        &root_str,
         &files,
         git_state,
+        &mut known,
         &pool,
         &mut profile,
     )?;
 
     let gems = if with_gems {
-        store.batch(|store| index_gems(store, &root, &pool, &mut profile))?
+        store.batch(|store| index_gems(store, &root, &mut known, &pool, &mut profile))?
     } else {
         GemReport::default()
     };
@@ -994,10 +999,7 @@ fn refresh_for_query(store: &mut Store, root: &Path, file: &Path) -> Option<serd
     let oid = scan::hash_blob(&bytes);
     // Parse only when this blob is genuinely new — the common case after a
     // branch switch is bytes the store has seen before, which cost one hash.
-    let known = store
-        .known(&HashSet::from([oid.clone()]))
-        .map(|found| found.contains(&oid))
-        .unwrap_or(false);
+    let known = store.has_blob(&oid).unwrap_or(false);
     let facts = (!known).then(|| crate::extract::extract(&bytes));
     let changed = store
         .refresh_file(&root_str, &relative, &oid, facts.as_ref())
