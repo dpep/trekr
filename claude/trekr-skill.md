@@ -139,7 +139,11 @@ One limit worth knowing: an edit git has not noticed — no `add`, `status` or
 Every answer carries `status` (`resolved` | `ambiguous` | `residue`),
 `confidence`, and `resolved_via` — the rung that resolved the receiver (`self`,
 `const`, `local:new`, `literal`, `sig`, `sig:param`, `sig:step`, `includer`,
-`rbi_dsl`). A residue answer carries ranked `candidates` with a named reason
+`rbi_dsl`, `super`). On `super` it answers the method `super` runs: the next
+definition after the method's owner in the ancestors (prepends, the class,
+includes, the superclass chain), per includer when the method is in a module.
+A `super` whose owner the source does not name — in a block, or `def obj.x` —
+is `residue`, never a guess. A residue answer carries ranked `candidates` with a named reason
 each. **Trust the disclosure**: `residue` means the receiver is genuinely
 undetermined, not that the tool failed.
 
@@ -178,8 +182,9 @@ trekr --dead app/models app/services --json
 
 Every method defined in scope, checked against references from the **whole**
 index. Tiers: `unreferenced` (nothing found), `convention-only` (reached only by
-a symbol handed to a macro — usually a sign it *is* used), `single-caller` (one
-reference: the inlining candidate).
+a symbol handed to a macro — usually a sign it *is* used), `super-only` (reached
+only by `super` from the overrides in `super_from`: live exactly when they are),
+`single-caller` (one reference: the inlining candidate).
 
 **It never says "dead", and you should not either.** Measured against a year of
 discourse's history, `unreferenced` candidates were deleted 19.8 % of the time

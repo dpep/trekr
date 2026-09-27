@@ -1491,21 +1491,8 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
             Some(&mut parsed),
         )
         .unwrap_or_default();
-        // A symbol reference is tiered `possible`, so it is *inside*
-        // `counts.possible` — subtract it to ask what is written as a call.
-        // Without this, `convention-only` can never fire and a method reached
-        // only by `after_create :thing` reads as an ordinary single caller.
-        let by_symbol = found
-            .iter()
-            .filter(|reference| reference.receiver == "symbol")
-            .count();
-        let written_live = (counts.confirmed + counts.possible).saturating_sub(by_symbol);
-        let tier = match (written_live, by_symbol) {
-            (0, 0) => "unreferenced",
-            (0, _) => "convention-only",
-            (1, _) => "single-caller",
-            _ => continue,
-        };
+        let live = refs::liveness(&found, &counts);
+        let Some(tier) = live.tier else { continue };
         rows.push(serde_json::json!({
             "name": def.name,
             "owner": owner,
@@ -1514,7 +1501,9 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
             "tier": tier,
             "confirmed": counts.confirmed,
             "possible": counts.possible,
-            "symbol_refs": by_symbol,
+            "symbol_refs": live.by_symbol,
+            "super_refs": live.by_super,
+            "super_from": live.super_from,
             "mentions_by_name": written,
             "confidence": if risky.is_empty() { "clear" } else { "lower" },
             "caveat": risky,
@@ -1663,6 +1652,27 @@ fn cmd_def(
         .ok_or_else(|| Failure::Usage.error(format!("expected FILE:LINE:COL, got `{spec}`")))?;
     let source = read_input(Path::new(&spec.path))?;
     let facts = crate::extract::extract(&source);
+    // A `super` with no fact behind it is one whose method has no owner the
+    // source names. Snapping would answer for another name on the line.
+    if position::at_facts(&facts, spec.line, spec.col).is_none()
+        && position::word_at(&source, spec.line, spec.col).as_deref() == Some("super")
+    {
+        return report(
+            out,
+            serde_json::json!({
+                "query": format!("{}:{}:{}", spec.path, spec.line, spec.col),
+                "under": "call",
+                "name": "super",
+                "receiver": "super",
+                "status": "residue",
+                "confidence": 0.0,
+                "reason": "`super` in a method whose owner the source does not name — \
+                           outside a method, `def obj.x`, or a `def` inside a block",
+            }),
+            false,
+            "super  its method's owner is decided at runtime",
+        );
+    }
     let snapped = position::at_or_snap(&facts, spec.line, spec.col);
     let Some((under, snapped)) = snapped else {
         return report(

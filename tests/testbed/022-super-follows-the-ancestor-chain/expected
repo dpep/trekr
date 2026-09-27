@@ -1,0 +1,20 @@
+# `super` was unmodelled: `--def` on it snapped to another name on the line and
+# answered that one confidently, `--refs` never counted a super site, and
+# `--dead` called every method in a super chain unreferenced. Ruby says
+# prepended-widget-included-base: each super goes to the next owner *after*
+# the method's own in the receiver's ancestors, not to the superclass.
+def app.rb:3:20 status=resolved name=greet owner=Widget via=super
+def app.rb:9:19 status=resolved name=greet owner=Base via=super
+def app.rb:28:17 status=resolved name=greet owner=Included via=super
+def app.rb:32:5 status=resolved name=build owner=Base via=super
+# A computed superclass is an ancestor nobody indexed: residue, not a guess.
+def delegated.rb:5:18 status=residue name=greet
+refs Base#greet confirmed=1 possible=1 excluded_different_owner=3
+refs Widget#greet confirmed=1 possible=1 excluded_different_owner=3
+refs Base.build confirmed=1
+# Reached only through `super` is its own tier: live exactly when the override
+# that calls it is, which is not what `single-caller` or `unreferenced` say.
+dead app.rb Base#greet=super-only Widget#greet=super-only Included#greet=super-only Prepended#greet=single-caller Shown#show=unreferenced
+# A `def` in a block lands on whatever the block runs against, so its `super`
+# has no owner to start from — and must not snap to `+` or anything else.
+def evaluated.rb:3:20 status=residue name=super

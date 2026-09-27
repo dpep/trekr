@@ -485,8 +485,12 @@ pub(crate) enum RecvShape {
     Local,
     /// An instance or class variable: `@x.bar`, `@@x.bar`.
     Ivar,
-    /// Anything else — a chain, a literal, a block param, `super`.
+    /// Anything else — a chain, a literal, a block param.
     Other,
+    /// `super`, recorded under the name of the method it is written in: that
+    /// is the name Ruby looks up, starting *after* the method's own owner in
+    /// the receiver's ancestors.
+    Super,
     /// Not written as a call at all: a symbol handed to one, as
     /// `after_create :ensure_thing` or `attributes :name`. The method is
     /// invoked by name at runtime and the receiver is unknowable here, so this
@@ -505,6 +509,26 @@ impl RecvShape {
             RecvShape::Ivar => "ivar",
             RecvShape::Other => "other",
             RecvShape::Symbol => "symbol",
+            RecvShape::Super => "super",
+        }
+    }
+}
+
+impl Call {
+    /// How many bytes of source the call's name covers at `pos`. A `super`
+    /// site is named after its method but written as the keyword.
+    pub(crate) fn written_len(&self) -> usize {
+        match self.recv {
+            RecvShape::Super => "super".len(),
+            _ => self.name.len(),
+        }
+    }
+
+    /// What is written at `pos`, for a reader choosing between names.
+    pub(crate) fn written_name(&self) -> &str {
+        match self.recv {
+            RecvShape::Super => "super",
+            _ => &self.name,
         }
     }
 }

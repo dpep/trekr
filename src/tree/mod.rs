@@ -303,6 +303,10 @@ pub(crate) struct Tree {
     /// because the common path never asks: it costs a pass over every name and
     /// only a call inside a module needs it.
     includers: RefCell<Option<HashMap<String, Vec<String>>>>,
+    /// Module → the names that `include` or `prepend` it by name. Resolving
+    /// every mixin edge once is far cheaper than linearizing every class,
+    /// which is what `includers` pays.
+    mixers: RefCell<Option<HashMap<String, Vec<String>>>>,
     /// Names whose linearization is in progress. `descend` asks for a name's
     /// ancestors while resolving a path, and that path resolution can lead
     /// back to a name already being linearized — at which point `ancestors`
@@ -567,6 +571,7 @@ impl Tree {
             loaded: RefCell::new(HashSet::new()),
             carriers: HashMap::new(),
             includers: RefCell::new(None),
+            mixers: RefCell::new(None),
             ancestors: RefCell::new(HashMap::new()),
         }
     }
@@ -1883,6 +1888,32 @@ impl Tree {
             .or_else(|| self.first_in_chain(&chain, name, false))
     }
 
+    /// What `super` in `owner`'s `name` runs, for a receiver of type `fqn`:
+    /// the first definition *after* `owner` in `fqn`'s lookup chain.
+    ///
+    /// `None` when `owner` is not in that chain at all — the question does not
+    /// apply — and `Some(None)` when nothing after it defines the name.
+    pub(crate) fn after_in_chain(
+        &self,
+        fqn: &str,
+        singleton: bool,
+        owner: &str,
+        name: &str,
+    ) -> Option<Option<MethodDef>> {
+        self.ensure(name);
+        let chain = self.lookup_chain(fqn, singleton);
+        // A `def self.x` sits in `lookup_chain` as `(class, true)`, a `def x`
+        // as `(owner, false)` — so both halves have to match.
+        let at = chain
+            .iter()
+            .position(|(o, s)| o == owner && *s == singleton)?;
+        let rest = &chain[at + 1..];
+        Some(
+            self.first_in_chain(rest, name, true)
+                .or_else(|| self.first_in_chain(rest, name, false)),
+        )
+    }
+
     /// The first definition of `name` along `chain`; `real_only` skips `.rbi`
     /// declarations entirely.
     fn first_in_chain(
@@ -1980,6 +2011,49 @@ impl Tree {
             .as_ref()
             .and_then(|map| map.get(module).cloned())
             .unwrap_or_default()
+    }
+
+    /// The classes that `include` or `prepend` this module themselves, or
+    /// through a module that does — not their subclasses.
+    ///
+    /// Enough to answer where a module method's `super` goes: a subclass can
+    /// only add ancestors *before* its parent, so the part of its chain after
+    /// the module is its parent's, unless it mixes the module in again — and
+    /// then it is on this list itself.
+    pub(crate) fn mixers_of(&self, module: &str) -> Vec<String> {
+        if self.mixers.borrow().is_none() {
+            let mut map: HashMap<String, Vec<String>> = HashMap::new();
+            self.names.for_each(|fqn, entry| {
+                for (_, target) in entry.mixins() {
+                    if let Some(found) = self.resolve_lexical(target.name, &target.nesting) {
+                        map.entry(self.namespace_of(&found))
+                            .or_default()
+                            .push(fqn.to_string());
+                    }
+                }
+            });
+            *self.mixers.borrow_mut() = Some(map);
+        }
+        let mixers = self.mixers.borrow();
+        let Some(map) = mixers.as_ref() else {
+            return Vec::new();
+        };
+        let mut classes: Vec<String> = Vec::new();
+        let mut seen: HashSet<String> = HashSet::new();
+        let mut pending: Vec<String> = vec![module.to_string()];
+        while let Some(next) = pending.pop() {
+            for mixer in map.get(&next).into_iter().flatten() {
+                if !seen.insert(mixer.clone()) {
+                    continue;
+                }
+                match self.kind_of(mixer) {
+                    Some("class") => classes.push(mixer.clone()),
+                    _ => pending.push(mixer.clone()),
+                }
+            }
+        }
+        classes.sort();
+        classes
     }
 
     /// `class`, `module`, or `constant` — for a name the checkout declares.

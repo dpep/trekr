@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- **`super` is followed.** `--def` on a `super` answers the method it runs —
+  the next definition after the method's owner, prepends and includes in
+  Ruby's order, per including class for a module's method — with
+  `resolved_via: super`. It used to answer for some other name on the line,
+  confidently. `--refs` counts `super` sites (`receiver: super`), so a method
+  reached only from its overrides is no longer unreferenced, and `--dead` gives
+  those the new tier `super-only`, with `super_refs` and `super_from` naming
+  the overrides. A `super` whose owner the source does not name — in a
+  `class_eval` block, `def obj.x` — is residue. A class whose parent is
+  computed (`DelegateClass(Base)`) now names it as an unresolved ancestor
+  instead of inheriting `Object`. Upgrading drops and rebuilds the index
+  (store v23): run `trekr --index` once per checkout.
+
 - **Breaking for scripts: errors exit with their own codes, not `2`.** A bad
   flag or value, or an input trekr cannot parse, exits `64`. A missing file or
   a directory outside any checkout exits `66`, git that cannot run exits `69`,

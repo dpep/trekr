@@ -41,7 +41,8 @@ symbols app.rb   Widget,save,Job,run
 | `site` | `path:line`, matched on the path's tail |
 | `exit` | the process exit code, for cases about not dying |
 
-`refs QUERY` asserts the `counts` object. `symbols FILE` asserts the outline,
+`refs QUERY` asserts the `counts` object. `dead FILE Owner#name=tier …`
+asserts each method's `--dead` tier, `none` for one not reported. `symbols FILE` asserts the outline,
 in source order, comma-separated.
 
 `hover FILE:LINE:COL <text>` drives a real `--lsp` session and asserts the

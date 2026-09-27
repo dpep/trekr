@@ -54,6 +54,20 @@ def column_of(path, line, name)
   hits.first + 1
 end
 
+# A `super` is recorded as a call of the method it is written in, so the name
+# Ruby entered is not on the line — the keyword is. Only when the calling frame
+# *is* a method of that name and the line holds exactly one `super`: anything
+# looser would put the column on a token that dispatched something else.
+def super_column_of(path, line, name, frame)
+  return nil unless frame.base_label == name
+
+  text = (@lines ||= {})[path]&.[](line - 1) or return nil
+  hits = text.enum_for(:scan, /(?<![\w:@$.])super(?![\w?!])/).map { Regexp.last_match.begin(0) }
+  return nil unless hits.size == 1
+
+  hits.first + 1
+end
+
 def scope_of(path)
   return "app" if path.start_with?(APP_ROOT)
   return "gem" if path.include?("/gems/")
@@ -99,6 +113,11 @@ trace = TracePoint.new(:call) do |tp|
   next unless definition
 
   column = column_of(caller_path, location.lineno, tp.method_id.to_s)
+  via_super = false
+  unless column
+    column = super_column_of(caller_path, location.lineno, tp.method_id.to_s, location)
+    via_super = !column.nil?
+  end
   next unless column
 
   sites << {
@@ -111,7 +130,8 @@ trace = TracePoint.new(:call) do |tp|
     "owner" => tp.defined_class.to_s,
     "def_file" => definition[0],
     "def_line" => definition[1],
-    "scope" => scope_of(caller_path)
+    "scope" => scope_of(caller_path),
+    "super" => via_super
   }
 end
 

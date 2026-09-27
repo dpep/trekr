@@ -56,6 +56,13 @@ struct Frame {
     /// `module_function` seen with no arguments: every later `def` in this body
     /// becomes both a private instance method and a public singleton one.
     module_function: bool,
+    /// The method this body defines, which is the name a `super` in it looks
+    /// up. Blocks push no frame, so a `super` inside one still finds it.
+    method: Option<String>,
+    /// Blocks open in this body. A `def` inside one — `Class.new do`,
+    /// `class_eval do`, RSpec's `describe do` — lands on whatever the block is
+    /// run against, which the source does not say.
+    blocks: usize,
 }
 
 impl Frame {
@@ -72,6 +79,8 @@ impl Frame {
             },
             in_method: matches!(opens, Opens::Method { .. }),
             module_function: false,
+            method: None,
+            blocks: 0,
         }
     }
 }
@@ -140,6 +149,8 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             self_is_class: false,
             in_method: false,
             module_function: false,
+            method: None,
+            blocks: 0,
         }],
         pending_sig: None,
         pending_sig_params: Vec::new(),
@@ -427,6 +438,14 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                     .and_then(|c| c.receiver())
                     .and_then(|r| const_name(&r))
             });
+            // Anything else — `DelegateClass(Base)` — is a parent no constant
+            // names. Recorded as written, so the tree reports an ancestor it
+            // cannot see rather than giving the class a bare `Object` chain.
+            let named = named.or_else(|| {
+                let loc = sup.location();
+                let text = self.text(loc.start_offset(), loc.end_offset());
+                Some(text.split_whitespace().collect::<Vec<_>>().join(" "))
+            });
             if let Some(target) = named {
                 let pos = self.pos(sup.location().start_offset());
                 // The owner is the class being opened, so it is recorded even
@@ -507,7 +526,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         let loc = node.location();
         let name_start = node.name_loc().start_offset();
 
-        let mut def = self.def(name, Kind::Method, name_start, loc.end_offset());
+        let mut def = self.def(name.clone(), Kind::Method, name_start, loc.end_offset());
         def.singleton = singleton;
         def.params = params_of(node.parameters());
         def.sig_returns = self.pending_sig.take();
@@ -539,9 +558,16 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         }
         self.push_def(def);
 
+        // `super` looks up this name after the method's owner, so it is only
+        // recorded where the owner is the scope: not `def obj.x`, and not a
+        // `def` inside a block, whose owner is decided when the block runs.
+        let owner_is_scope = receiver.as_ref().is_none_or(|r| r.as_self_node().is_some())
+            && self.frames.last().is_some_and(|f| f.blocks == 0);
+
         // Descend for calls and constants in the body — but not through a
         // receiver we already recorded.
         self.enter(None, Opens::Method { singleton });
+        self.frame().method = owner_is_scope.then_some(name);
         if let Some(params) = node.parameters() {
             self.visit_parameters_node(&params);
         }
@@ -650,6 +676,38 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             self.record_assign(name, &node.value(), node.location().start_offset());
         }
         self.visit(&node.value());
+    }
+
+    fn visit_block_node(&mut self, node: &ruby_prism::BlockNode<'pr>) {
+        self.frame().blocks += 1;
+        ruby_prism::visit_block_node(self, node);
+        self.frame().blocks -= 1;
+    }
+
+    fn visit_lambda_node(&mut self, node: &ruby_prism::LambdaNode<'pr>) {
+        self.frame().blocks += 1;
+        ruby_prism::visit_lambda_node(self, node);
+        self.frame().blocks -= 1;
+    }
+
+    fn visit_super_node(&mut self, node: &ruby_prism::SuperNode<'pr>) {
+        let args: Vec<Node<'pr>> = node
+            .arguments()
+            .map(|a| a.arguments().iter().collect())
+            .unwrap_or_default();
+        self.record_super(
+            node.keyword_loc().start_offset(),
+            argc_of(&args),
+            node.block().is_some(),
+        );
+        ruby_prism::visit_super_node(self, node);
+    }
+
+    /// Bare `super` passes the method's own arguments on, so its count is
+    /// whatever the caller gave — unknowable here.
+    fn visit_forwarding_super_node(&mut self, node: &ruby_prism::ForwardingSuperNode<'pr>) {
+        self.record_super(node.location().start_offset(), None, node.block().is_some());
+        ruby_prism::visit_forwarding_super_node(self, node);
     }
 
     fn visit_alias_method_node(&mut self, node: &ruby_prism::AliasMethodNode<'pr>) {
@@ -1511,19 +1569,7 @@ impl<'pr> Extractor<'_> {
             None => (RecvShape::Implicit, None),
             Some(r) => receiver_shape(&r),
         };
-        let mut argc = Some(0u32);
-        for arg in arg_nodes(call) {
-            if arg.as_splat_node().is_some()
-                || arg.as_forwarding_arguments_node().is_some()
-                || arg.as_assoc_splat_node().is_some()
-            {
-                // A splat hides the real count; `None` says so rather than
-                // reporting a number that is wrong.
-                argc = None;
-                break;
-            }
-            argc = argc.map(|n| n + 1);
-        }
+        let argc = argc_of(&arg_nodes(call));
         let pos = self.pos(message.start_offset());
         // Not `in_singleton()`: that answers "is a `def` here a singleton
         // method", which is a different question. A bare call in a class body
@@ -1540,6 +1586,25 @@ impl<'pr> Extractor<'_> {
             pos,
         });
         self.record_symbol_arguments(call);
+    }
+
+    /// `super`, as a call of the enclosing method's name. Outside a method
+    /// there is no name for it to look up, and Ruby raises.
+    fn record_super(&mut self, offset: usize, argc: Option<u32>, block: bool) {
+        let Some(name) = self.frames.last().and_then(|f| f.method.clone()) else {
+            return;
+        };
+        let pos = self.pos(offset);
+        self.facts.calls.push(Call {
+            name,
+            recv: RecvShape::Super,
+            recv_text: None,
+            nesting: self.nesting.clone(),
+            singleton: self.self_is_class(),
+            argc,
+            block,
+            pos,
+        });
     }
 
     /// `after_create :ensure_thing` invokes `ensure_thing`, and nothing in the
@@ -1581,6 +1646,22 @@ impl<'pr> Extractor<'_> {
             });
         }
     }
+}
+
+/// Positional argument count, or `None` when a splat hides the real count —
+/// saying so rather than reporting a number that is wrong.
+fn argc_of(args: &[Node<'_>]) -> Option<u32> {
+    let mut argc = 0u32;
+    for arg in args {
+        if arg.as_splat_node().is_some()
+            || arg.as_forwarding_arguments_node().is_some()
+            || arg.as_assoc_splat_node().is_some()
+        {
+            return None;
+        }
+        argc += 1;
+    }
+    Some(argc)
 }
 
 /// Methods that hand back their receiver unchanged, so the type survives them.
@@ -1903,6 +1984,35 @@ mod tests {
         let facts = facts();
         assert_eq!(method(&facts, "label").target.as_deref(), Some("name"));
         assert_eq!(method(&facts, "caption").target.as_deref(), Some("title"));
+    }
+
+    /// `super` looks up the name of the method it is written in — through a
+    /// block, too — and outside any method there is no name to look up.
+    #[test]
+    fn a_super_is_a_call_of_its_enclosing_methods_name() {
+        let facts = extract(
+            b"class W < B\n  def save(x)\n    items.each { super(x) }\n  end\n  def self.build\n    super\n  end\nend\n",
+        );
+        let supers: Vec<(&str, bool, Option<u32>)> = facts
+            .calls
+            .iter()
+            .filter(|c| c.recv == RecvShape::Super)
+            .map(|c| (c.name.as_str(), c.singleton, c.argc))
+            .collect();
+        assert_eq!(supers, [("save", false, Some(1)), ("build", true, None)]);
+        // Outside a method, on another object, or in a block run against
+        // something the source does not name, the owner is not the scope.
+        for unplaced in [
+            "class W\n  super\nend\n",
+            "class W\n  def @w.save\n    super\n  end\nend\n",
+            "class W\n  Class.new(B) do\n    def save\n      super\n    end\n  end\nend\n",
+        ] {
+            let facts = extract(unplaced.as_bytes());
+            assert!(
+                facts.calls.iter().all(|c| c.recv != RecvShape::Super),
+                "{unplaced}"
+            );
+        }
     }
 
     #[test]

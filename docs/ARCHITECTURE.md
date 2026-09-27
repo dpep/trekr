@@ -66,7 +66,8 @@ The fact set:
 | **constant reference** | name as written, the nesting that will resolve it |
 | **call site** | name, **receiver shape**, receiver text, arity, block |
 
-Receiver shape — `implicit | self | const | local | ivar | other` — is the fact
+Receiver shape — `implicit | self | const | local | ivar | other | symbol |
+super` — is the fact
 Rubydex does not carry and the reason this engine is not a wrapper around it.
 53–66% of Ruby call sites are implicit self and need no inference at all.
 
@@ -176,7 +177,20 @@ The ladder, tried in order, stopping at the first rung that names a type:
 `sig:param` exists because half of graph_weaver's untyped local receivers turned
 out to be method *parameters* — they have no assignment to chase, so every rung
 that looks for one is structurally blind to them, and a signature had already
-said what they are. `sig:step` is deliberately **one** step: rwr's D61 measured
+said what they are. **`super` is its own rung**, recorded at extraction as a call of the
+enclosing method's name with receiver shape `super`. Ruby looks the name up
+*after* the method's owner in the ancestors of the object running it: a
+class's method answers from the class's own chain, because a subclass only
+adds ancestors in front of it; a module's method answers once per class that
+mixes it in (`Tree::mixers_of` — resolved mixin edges, not every class's
+linearization), agreeing or `ambiguous`. Only a `def` whose owner is its
+lexical scope records one: not `def obj.x`, not a `def` inside a block
+(`Class.new do`, `class_eval do`, `let`), whose owner is decided at runtime.
+`--def` on an unrecorded `super` says so rather than snapping to a neighbour.
+Core declares `initialize` on every class Ruby defines one for, since that is
+where `super` from an `initialize` most often lands.
+
+`sig:step` is deliberately **one** step: rwr's D61 measured
 70 % of returns ending in another call, so the recursive version drowns while
 the single sig-backed hop pays. A test asserts the second hop is refused.
 
@@ -253,6 +267,10 @@ already knows.
 | **confirmed** | the receiver's type resolves and Ruby's lookup from it lands on the queried method | yes |
 | **possible** | the receiver is untyped and nothing rules the site out — ranked by proximity | yes |
 | **excluded** | the receiver resolves elsewhere, or the arity does not fit | **counted**, and listable with `--include-excluded` |
+
+A `super` site is confirmed when every class that can run it lands on the
+queried method, possible when only some do or an ancestor after its owner is
+not indexed, and excluded when it lands elsewhere.
 
 `Widget#save` and `Widget.save` are different questions. A bare name narrows
 nothing, so it keeps the whole-mention view with each call site naming the owner
@@ -1043,4 +1061,7 @@ Deliberate, and cheap to close when they earn it:
   files themselves (DEC-064); globals are not answered anywhere.
 - Multi-write constant targets (`A, B = 1, 2`) define nothing.
 - `refine` is not modeled.
+- A `super` that lands in core is as right as `src/tree/core.rb` is complete:
+  a core class that defines the name without the stub declaring it sends the
+  lookup further up the chain.
 - Orphaned blobs are never collected (DEC-003).

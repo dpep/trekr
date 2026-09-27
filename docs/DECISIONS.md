@@ -3471,3 +3471,65 @@ or `$TREKR_DB`". `kind` still tells them apart for a JSON caller.
 
 *Reverses if:* a caller needs two errors under one code told apart without
 JSON. Split that code; never reuse `1` or `2`.
+
+## DEC-068 — `super` is a call of its method's name, looked up after the method's owner
+
+**Decided.** The extractor records `super` (and bare `super`) as a call of the
+enclosing method's name with receiver shape `super`, and the resolver answers
+it by Ruby's rule: the first definition of that name *after* the method's owner
+in the ancestors of the object running it. `--def` answers with
+`resolved_via: super`, `--refs` tiers super sites, and `--dead` gives a method
+reached only that way the tier `super-only`.
+
+**Before this**, `super` was not a fact at all. `--def` on it snapped to
+another name on the line and answered that one — `normalize(super(value))` in
+rails answered `normalize` at confidence 1.0 — and a method reached only from
+its overrides had no references, so `--dead` listed every method in a super
+chain as unreferenced.
+
+**Which classes are asked.** A class's method answers from the class's own
+chain: a subclass only adds ancestors in front of its parent, so the part after
+the class is the same for every object that can run the method. A module's
+method answers once per class that mixes it in, and they must agree to be
+`resolved`; disagreement is `ambiguous` with the other landings as candidates
+(DEC-027), and no includer is `residue`. The includers are the *mixers* —
+classes whose own `include`/`prepend` names the module, directly or through a
+module — rather than `includers_of`'s every class with the module in its chain,
+because a subclass's tail after the module is its parent's. The first cut used
+`includers_of` and paid 190 ms on rails for the one `super` it met, since that
+linearizes every class; resolving the mixin edges once costs a few
+milliseconds.
+
+**Only where the owner is the scope.** A `def obj.x`, and a `def` inside a
+block — `Class.new do`, `class_eval do`, RSpec's `let` — land on whatever the
+code runs against, so their `super` is not recorded and `--def` on it says so
+instead of snapping. A class whose superclass is computed
+(`DelegateClass(Base)`) records that expression as its parent, which resolves
+to nothing and so is named in `unresolved_ancestors`; it used to get Ruby's
+implicit `Object`, which sent `super` from its `initialize` to
+`BasicObject#initialize` with confidence 1.0.
+
+**Core had to say where `initialize` is.** The stub declared it only on
+BasicObject, so `super` in an exception's `initialize` resolved confidently to
+BasicObject. It now declares `initialize` on the 32 core classes Ruby defines
+one for, read off Ruby 3.4's `instance_method(:initialize).owner`, and
+`inherited` moved to Class, where Ruby has it. A `super` landing in core is
+still only as right as the stub is complete (ARCHITECTURE, known gaps).
+
+**`super-only` is its own tier** rather than `single-caller`, because a method
+reached from an override is live exactly when the override is — neither
+unused nor something to inline into its one caller. `super_from` names the
+overrides so a caller can check them.
+
+**Measured.** The widget_shop gold set, retraced with the tracer now keeping a
+`super` site when the calling frame is the method it entered and the line holds
+exactly one `super`: 3,243 sites, 168 of them `super`, both builds on their own
+store, context pinned to widget_shop, every site scored. The 0.2.0 build
+scored 0 of 128 super sites and put 38 more on another token; this one scores
+**118 of 163 correct, 138 found, 0 confidently wrong** (1 ambiguous-wrong). The
+gem floor went 1,502 → 1,621 correct with confidently-wrong unchanged at 93,
+and no site's verdict got worse. Across every `super` in rails (1,804) and
+discourse (625), `--def` answers: resolved 1,257 / 454, ambiguous 71 / 1, and
+the rest residue, the largest bucket being a module no indexed class mixes in
+(`composed_of` includes `Aggregations` inside a method) and a chain with
+nothing after the owner.

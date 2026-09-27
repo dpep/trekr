@@ -104,6 +104,9 @@ const MAX_CANDIDATES: usize = 8;
 /// `path` is the call site's file, relative to the checkout — one of the tiers
 /// residue candidates are ordered by.
 pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer {
+    if call.recv == RecvShape::Super {
+        return super_at(tree, call, path);
+    }
     let shape = call.recv.as_str();
     match receiver_of(tree, facts, call) {
         Some(receiver) => {
@@ -273,6 +276,136 @@ fn via_includers(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<Method
     })
 }
 
+/// Where one `super` goes, for every class that can run the method it is in.
+pub(super) struct SuperLandings {
+    /// The method's own owner — what `super` starts looking *after*.
+    pub(super) owner: String,
+    /// Each class that can run the method, and what `super` finds from it:
+    /// one entry for a class's own method, one per includer for a module's.
+    pub(super) per_class: Vec<(String, Option<crate::tree::MethodDef>)>,
+    /// The classes are a module's includers rather than the owner itself.
+    pub(super) via_includers: bool,
+}
+
+/// Ruby's rule for `super`: the next definition of the same name after the
+/// method's owner, in the ancestors of the object running it.
+///
+/// A class's method runs on instances of it and its subclasses, and a subclass
+/// can only add ancestors *before* the class, so the class's own chain is the
+/// answer for all of them. A module's method runs wherever it is mixed in, so
+/// each includer is asked — the same move as the `includer` rung.
+pub(super) fn super_landings(tree: &Tree, call: &Call) -> Result<SuperLandings, &'static str> {
+    let owner = tree
+        .scope_fqn(&call.nesting)
+        .filter(|owner| tree.is_known(owner))
+        .ok_or("the method `super` is in has no owner the index knows")?;
+    let via_includers = tree.kind_of(&owner) == Some("module") && !call.singleton;
+    let classes = if via_includers {
+        let mixers = tree.mixers_of(&owner);
+        if mixers.is_empty() {
+            return Err("`super` is in a module, and no class the index knows mixes it in");
+        }
+        mixers
+    } else {
+        vec![owner.clone()]
+    };
+    let per_class: Vec<(String, Option<crate::tree::MethodDef>)> = classes
+        .into_iter()
+        .filter_map(|class| {
+            let landing = tree.after_in_chain(&class, call.singleton, &owner, &call.name)?;
+            Some((class, landing))
+        })
+        .collect();
+    if per_class.is_empty() {
+        return Err("the method's owner is not in the ancestor chain `super` would walk");
+    }
+    Ok(SuperLandings {
+        owner,
+        per_class,
+        via_includers,
+    })
+}
+
+/// Ancestors of the classes a `super` was asked from that the index could not
+/// resolve — where an unseen definition could be hiding.
+pub(super) fn unresolved_behind(tree: &Tree, landings: &SuperLandings) -> Vec<String> {
+    let mut unseen: Vec<String> = Vec::new();
+    for (class, _) in &landings.per_class {
+        for name in &tree.ancestors(class).unresolved {
+            if !unseen.contains(name) {
+                unseen.push(name.clone());
+            }
+        }
+    }
+    unseen
+}
+
+/// `--def` on a `super`: the method it runs.
+fn super_at(tree: &Tree, call: &Call, path: &str) -> MethodAnswer {
+    let landings = match super_landings(tree, call) {
+        Ok(landings) => landings,
+        Err(reason) => return residue(tree, call, path, None, reason),
+    };
+    let unseen = unresolved_behind(tree, &landings);
+    let found: Vec<&crate::tree::MethodDef> = landings
+        .per_class
+        .iter()
+        .filter_map(|(_, landing)| landing.as_ref())
+        .collect();
+    let Some(winner) = found.first().copied() else {
+        let reason = if unseen.is_empty() {
+            "nothing after the method's owner in its indexed ancestors defines this name"
+        } else {
+            "nothing indexed after the method's owner defines this name, and some of \
+             its ancestors are not indexed"
+        };
+        let mut answer = residue(tree, call, path, None, reason);
+        answer.receiver_type = Some(landings.owner.clone());
+        answer.unresolved_ancestors = unseen;
+        return answer;
+    };
+    let same_place = |method: &crate::tree::MethodDef| {
+        method.site.line == winner.site.line && method.site.path == winner.site.path
+    };
+    let agreeing = found.iter().filter(|m| same_place(m)).count();
+    let total = landings.per_class.len();
+    // DEC-027: classes that disagree about where `super` lands are competitors.
+    let beaten: Vec<Candidate> = found
+        .iter()
+        .filter(|m| !same_place(m))
+        .take(MAX_CANDIDATES)
+        .map(|method| Candidate {
+            owner: method.owner.clone(),
+            singleton: method.singleton,
+            why: "`super` lands here from another class that mixes the module in",
+            kind: method.kind(),
+            site: method.site.clone(),
+        })
+        .collect();
+    MethodAnswer {
+        status: if agreeing == total {
+            Status::Resolved
+        } else {
+            Status::Ambiguous
+        },
+        confidence: share(agreeing, total),
+        resolved_via: Some("super".to_string()),
+        receiver: call.recv.as_str(),
+        receiver_kind: tree.kind_of(&landings.owner).map(str::to_string),
+        receiver_type: Some(landings.owner.clone()),
+        owner: Some(winner.owner.clone()),
+        kind: Some(winner.kind()),
+        defined_via: winner.declared_via(),
+        sites: vec![winner.site.clone()],
+        agreement: landings
+            .via_includers
+            .then(|| format!("{agreeing}/{total} includers")),
+        unresolved_ancestors: unseen,
+        candidates: beaten,
+        reason: None,
+    }
+}
+
 fn agreement(receiver: &Receiver) -> Option<String> {
     (receiver.total > 1 || receiver.agreeing != receiver.total)
         .then(|| format!("{}/{}", receiver.agreeing, receiver.total))
@@ -324,7 +457,8 @@ pub(super) fn receiver_of(tree: &Tree, facts: &Facts, call: &Call) -> Option<Rec
             .or_else(|| from_receiver_name(tree, call)),
         // A symbol names the method, never the receiver, so there is nothing
         // here to type — the same answer as `Other`, for a different reason.
-        RecvShape::Other | RecvShape::Symbol => None,
+        // `super` is typed by its own rule, `super_landings`.
+        RecvShape::Other | RecvShape::Symbol | RecvShape::Super => None,
     }
 }
 

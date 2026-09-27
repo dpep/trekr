@@ -599,7 +599,12 @@ pub(crate) fn references(
                 if reference.tier == refs::Tier::Excluded {
                     continue;
                 }
-                let range = lines.span(reference.line, reference.col, name.len());
+                // A `super` site is named after its method but spelled `super`.
+                let written = match reference.receiver {
+                    "super" => "super".len(),
+                    _ => name.len(),
+                };
+                let range = lines.span(reference.line, reference.col, written);
                 let (tier, proximity, path, line) = refs::order(&reference);
                 gathered.offer(
                     (tier, proximity, path, line, reference.col),
@@ -1724,7 +1729,7 @@ fn def_item(uri: Url, text: &str, def: &crate::core::Def) -> CallHierarchyItem {
 /// An item for a call whose target could not be found: the call itself.
 #[allow(deprecated)]
 fn call_item(uri: Url, text: &str, call: &crate::core::Call) -> CallHierarchyItem {
-    let range = convert::span(Some(text), call.pos.line, call.pos.col, call.name.len());
+    let range = convert::span(Some(text), call.pos.line, call.pos.col, call.written_len());
     CallHierarchyItem {
         name: call.name.clone(),
         kind: SymbolKind::METHOD,
@@ -1871,7 +1876,7 @@ pub(crate) fn incoming_calls(
                     }
                     let at = Location {
                         uri: uri.clone(),
-                        range: lines.span(call.pos.line, call.pos.col, name.len()),
+                        range: lines.span(call.pos.line, call.pos.col, call.written_len()),
                     };
                     let caller = enclosing_def(&file.facts, call.pos.line);
                     let key = (file.path.clone(), caller.map_or(0, |def| def.pos.line));
@@ -1948,7 +1953,7 @@ pub(crate) fn outgoing_calls(
         .filter(|call| call.pos.line >= start && call.pos.line <= end)
         .filter(|call| call.recv != crate::core::RecvShape::Symbol)
     {
-        let at = convert::span(Some(&text), call.pos.line, call.pos.col, call.name.len());
+        let at = convert::span(Some(&text), call.pos.line, call.pos.col, call.written_len());
         let to = callee_item(session, &path, &facts, call)
             .unwrap_or_else(|| call_item(uri.clone(), &text, call));
         let key = (

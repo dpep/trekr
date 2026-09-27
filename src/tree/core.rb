@@ -8,7 +8,9 @@
 #
 # Bodies are empty on purpose. Ancestry is the load-bearing part — it is what
 # gives every class an Object/Kernel/BasicObject tail — and the method lists
-# cover what real code actually calls, not what exists.
+# cover what real code actually calls, not what exists. `initialize` is the
+# exception: it is declared wherever Ruby defines its own, because `super` in
+# an `initialize` lands on it, and a missing one sends it on to BasicObject.
 
 class BasicObject
   def initialize; end
@@ -113,13 +115,13 @@ class Object < BasicObject
 end
 
 class Module < Object
+  def initialize; end
   def include(*modules); end
   def prepend(*modules); end
   def extend_object(object); end
   def included(base); end
   def extended(base); end
   def prepended(base); end
-  def inherited(subclass); end
   def attr_reader(*names); end
   def attr_writer(*names); end
   def attr_accessor(*names); end
@@ -164,6 +166,8 @@ class Module < Object
 end
 
 class Class < Module
+  def initialize(*args); end
+  def inherited(subclass); end
   def new(*args, &block); end
   def allocate; end
   def superclass; end
@@ -323,6 +327,7 @@ class Rational < Numeric; end
 class Complex < Numeric; end
 
 class String < Object
+  def initialize(*args); end
   include Comparable
 
   def +(other); end
@@ -404,6 +409,7 @@ class String < Object
 end
 
 class Array < Object
+  def initialize(*args); end
   include Enumerable
 
   def [](*args); end
@@ -476,6 +482,7 @@ class Array < Object
 end
 
 class Hash < Object
+  def initialize(ifnone = nil, capacity: 0, &block); end
   include Enumerable
 
   def [](key); end
@@ -534,6 +541,7 @@ class Hash < Object
 end
 
 class Range < Object
+  def initialize(*args); end
   include Enumerable
   def begin; end
   def end; end
@@ -552,6 +560,7 @@ class Range < Object
 end
 
 class Struct < Object
+  def initialize(*args); end
   include Enumerable
   def self.new(*args, &block); end
   def members; end
@@ -566,6 +575,7 @@ class Struct < Object
 end
 
 class Data < Object
+  def initialize(*args); end
   def self.define(*names, &block); end
   def with(**kwargs); end
   def to_h(&block); end
@@ -575,6 +585,7 @@ class Data < Object
 end
 
 class Set < Object
+  def initialize(enum = nil, &block); end
   include Enumerable
   def add(value); end
   def <<(value); end
@@ -596,6 +607,7 @@ class Set < Object
 end
 
 class Enumerator < Object
+  def initialize(*args); end
   include Enumerable
   def next; end
   def peek; end
@@ -647,6 +659,7 @@ class Binding < Object
 end
 
 class Regexp < Object
+  def initialize(*args); end
   def match(*args, &block); end
   def match?(*args); end
   def =~(other); end
@@ -672,6 +685,7 @@ class MatchData < Object
 end
 
 class Exception < Object
+  def initialize(*args); end
   def message; end
   def to_s; end
   def full_message(*args); end
@@ -685,28 +699,41 @@ end
 class ScriptError < Exception; end
 class LoadError < ScriptError; end
 class NotImplementedError < ScriptError; end
-class SyntaxError < ScriptError; end
+class SyntaxError < ScriptError
+  def initialize(*args); end
+end
 class NoMemoryError < Exception; end
 class SecurityError < Exception; end
-class SystemExit < Exception; end
-class SignalException < Exception; end
-class Interrupt < SignalException; end
+class SystemExit < Exception
+  def initialize(*args); end
+end
+class SignalException < Exception
+  def initialize(*args); end
+end
+class Interrupt < SignalException
+  def initialize(*args); end
+end
 class SystemStackError < Exception; end
 
 class StandardError < Exception; end
 class RuntimeError < StandardError; end
-class FrozenError < RuntimeError; end
+class FrozenError < RuntimeError
+  def initialize(*args); end
+end
 class ArgumentError < StandardError; end
 class TypeError < StandardError; end
 class NameError < StandardError
+  def initialize(*args); end
   def name; end
   def receiver; end
 end
 class NoMethodError < NameError
+  def initialize(*args); end
   def args; end
 end
 class IndexError < StandardError; end
 class KeyError < IndexError
+  def initialize(*args); end
   def key; end
   def receiver; end
 end
@@ -722,8 +749,12 @@ class ThreadError < StandardError; end
 class FiberError < StandardError; end
 class EncodingError < StandardError; end
 class NoMatchingPatternError < StandardError; end
-class NoMatchingPatternKeyError < NoMatchingPatternError; end
-class UncaughtThrowError < ArgumentError; end
+class NoMatchingPatternKeyError < NoMatchingPatternError
+  def initialize(*args); end
+end
+class UncaughtThrowError < ArgumentError
+  def initialize(*args); end
+end
 class ClosedQueueError < StopIteration; end
 
 module Errno
@@ -738,6 +769,7 @@ module Errno
 end
 
 class IO < Object
+  def initialize(*args); end
   include Enumerable
   def read(*args); end
   def write(*args); end
@@ -761,6 +793,7 @@ class IO < Object
 end
 
 class File < IO
+  def initialize(*args); end
   def self.read(*args); end
   def self.write(*args); end
   def self.open(*args, &block); end
@@ -798,6 +831,7 @@ class File < IO
 end
 
 class Dir < Object
+  def initialize(name, encoding: nil); end
   include Enumerable
   def self.glob(*args, &block); end
   def self.[](*args); end
@@ -814,6 +848,7 @@ class Dir < Object
 end
 
 class Time < Object
+  def initialize(*args); end
   include Comparable
   def self.now(*args); end
   def self.at(*args); end
@@ -853,6 +888,7 @@ class Random < Object
 end
 
 class Thread < Object
+  def initialize(*args); end
   def self.new(*args, &block); end
   def self.current; end
   def self.main; end
@@ -868,6 +904,7 @@ class Thread < Object
 end
 
 class Mutex < Object
+  def initialize; end
   def lock; end
   def unlock; end
   def locked?; end
@@ -876,6 +913,7 @@ class Mutex < Object
 end
 
 class Queue < Object
+  def initialize(*args); end
   def push(value); end
   def <<(value); end
   def pop(non_block = false); end
@@ -886,14 +924,18 @@ class Queue < Object
   def closed?; end
 end
 
-class SizedQueue < Queue; end
+class SizedQueue < Queue
+  def initialize(max); end
+end
 class ConditionVariable < Object
+  def initialize; end
   def wait(mutex, timeout = nil); end
   def signal; end
   def broadcast; end
 end
 
 class Fiber < Object
+  def initialize(*args); end
   def self.yield(*args); end
   def self.new(&block); end
   def resume(*args); end

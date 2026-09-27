@@ -100,7 +100,7 @@ fn names_on_line(facts: &crate::core::Facts, line: u32) -> Vec<(String, u32)> {
         .iter()
         .map(|d| (d.name.as_str(), d.pos))
         .chain(facts.const_refs.iter().map(|r| (r.name.as_str(), r.pos)))
-        .chain(facts.calls.iter().map(|c| (c.name.as_str(), c.pos)))
+        .chain(facts.calls.iter().map(|c| (c.written_name(), c.pos)))
     {
         if pos.line == line {
             found.push((last_segment(name).to_string(), pos.col));
@@ -152,6 +152,27 @@ pub(crate) fn at_or_snap(
     ))
 }
 
+/// The identifier the cursor is on, if it is on one. 1-based byte columns.
+pub(crate) fn word_at(source: &[u8], line: u32, col: u32) -> Option<String> {
+    let text = source
+        .split(|b| *b == b'\n')
+        .nth(line.checked_sub(1)? as usize)?;
+    let at = (col as usize).checked_sub(1)?;
+    let is_word = |b: &u8| b.is_ascii_alphanumeric() || *b == b'_' || *b >= 0x80;
+    if !text.get(at).is_some_and(is_word) {
+        return None;
+    }
+    let start = text[..at]
+        .iter()
+        .rposition(|b| !is_word(b))
+        .map_or(0, |i| i + 1);
+    let end = text[at..]
+        .iter()
+        .position(|b| !is_word(b))
+        .map_or(text.len(), |i| at + i);
+    String::from_utf8(text[start..end].to_vec()).ok()
+}
+
 /// The same, against facts already parsed — which a resident front has, and a
 /// one-shot CLI invocation does not.
 pub(crate) fn at_facts(facts: &crate::core::Facts, line: u32, col: u32) -> Option<Under> {
@@ -184,7 +205,7 @@ pub(crate) fn at_facts(facts: &crate::core::Facts, line: u32, col: u32) -> Optio
     facts
         .calls
         .iter()
-        .find(|c| covers(c.pos, c.name.len(), line, col))
+        .find(|c| covers(c.pos, c.written_len(), line, col))
         .cloned()
         .map(Under::Call)
 }
@@ -242,6 +263,15 @@ mod tests {
         };
         assert_eq!(call.name, "helper");
         assert_eq!(call.recv, crate::core::RecvShape::Implicit);
+    }
+
+    #[test]
+    fn the_word_under_the_cursor_is_read_whole() {
+        let source = b"x = 5\n  normalize(super(value))\n";
+        assert_eq!(word_at(source, 2, 15).as_deref(), Some("super"));
+        assert_eq!(word_at(source, 2, 5).as_deref(), Some("normalize"));
+        assert_eq!(word_at(source, 1, 2), None, "whitespace");
+        assert_eq!(word_at(source, 9, 1), None, "past the end");
     }
 
     #[test]

@@ -310,6 +310,24 @@ fn check_refs(case: &str, line: &str, answer: &serde_json::Value, failures: &mut
     }
 }
 
+/// `Owner#name=tier` for each candidate asked about; `none` means not reported.
+fn check_dead(case: &str, line: &str, answer: &serde_json::Value, failures: &mut Vec<String>) {
+    let rows = answer["candidates"].as_array().cloned().unwrap_or_default();
+    for (method, want) in pairs(line) {
+        let (owner, name) = method.rsplit_once('#').unwrap_or(("", &method));
+        let got = rows
+            .iter()
+            .find(|row| row["owner"] == owner && row["name"] == name)
+            .and_then(|row| row["tier"].as_str())
+            .unwrap_or("none");
+        if got != want {
+            failures.push(format!(
+                "{case}: {line}\n      {method}: expected `{want}`, got `{got}`"
+            ));
+        }
+    }
+}
+
 #[test]
 fn every_testbed_case_answers_as_recorded() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testbed");
@@ -362,6 +380,10 @@ fn every_testbed_case_answers_as_recorded() {
                 "refs" => {
                     let (answer, _) = trekr(&db, &dir, &["--refs", target, "--json"]);
                     check_refs(&label, line, &answer, &mut failures);
+                }
+                "dead" => {
+                    let (answer, _) = trekr(&db, &dir, &["--dead", target, "--json"]);
+                    check_dead(&label, line, &answer, &mut failures);
                 }
                 "symbols" => {
                     let (answer, _) = trekr(&db, &dir, &["--symbols", target, "--json"]);

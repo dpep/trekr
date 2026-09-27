@@ -171,6 +171,10 @@ pub(crate) fn tier_call(
         proximity,
     };
 
+    if call.recv == crate::core::RecvShape::Super {
+        return tier_super(tree, call, path, query, target);
+    }
+
     let Some(receiver) = super::receiver_of(tree, facts, call) else {
         return possible(tree, call, path, query, target, shape);
     };
@@ -216,6 +220,100 @@ pub(crate) fn tier_call(
             "the receiver's ancestors are not fully indexed",
             1,
             None,
+        ),
+    }
+}
+
+/// A `super` site, tiered by where it lands from each class that can run it.
+///
+/// Confirmed only when every such class lands on the queried method; some of
+/// them is `possible`, because which one runs depends on the object.
+fn tier_super(
+    tree: &Tree,
+    call: &Call,
+    path: &str,
+    query: &Query,
+    target: Option<&str>,
+) -> Reference {
+    let here = |tier, receiver_type, owner, why, proximity, ruling| Reference {
+        path: path.to_string(),
+        line: call.pos.line,
+        col: call.pos.col,
+        tier,
+        receiver: call.recv.as_str(),
+        receiver_type,
+        owner,
+        why,
+        ruling,
+        proximity,
+    };
+    let Ok(landings) = super::super_landings(tree, call) else {
+        return here(
+            Tier::Possible,
+            None,
+            None,
+            "`super` from a method whose owner the index cannot place",
+            3,
+            None,
+        );
+    };
+    let is_target = |method: &crate::tree::MethodDef| {
+        target.is_none_or(|target| method.owner == target && method.singleton == query.singleton)
+    };
+    let found: Vec<&crate::tree::MethodDef> = landings
+        .per_class
+        .iter()
+        .filter_map(|(_, landing)| landing.as_ref())
+        .collect();
+    let hits = found.iter().filter(|m| is_target(m)).count();
+    let owner = Some(landings.owner.clone());
+    let landed = found.first().map(|m| m.owner.clone());
+    if hits > 0 && hits == landings.per_class.len() {
+        return here(
+            Tier::Confirmed,
+            owner,
+            landed,
+            "`super` from an override lands here",
+            0,
+            None,
+        );
+    }
+    if hits > 0 {
+        return here(
+            Tier::Possible,
+            owner,
+            None,
+            "`super` lands here from some of the classes that mix its module in",
+            0,
+            None,
+        );
+    }
+    if !super::unresolved_behind(tree, &landings).is_empty() {
+        return here(
+            Tier::Possible,
+            owner,
+            None,
+            "`super` from a class whose ancestors are not fully indexed",
+            1,
+            None,
+        );
+    }
+    match landed {
+        Some(elsewhere) => here(
+            Tier::Excluded,
+            owner,
+            Some(elsewhere),
+            "`super` lands on a different owner",
+            0,
+            Some(Ruling::DifferentOwner),
+        ),
+        None => here(
+            Tier::Excluded,
+            owner,
+            None,
+            "nothing indexed after the method's owner defines this name",
+            0,
+            Some(Ruling::NoSuchMethod),
         ),
     }
 }
@@ -301,6 +399,49 @@ fn shares_namespace(one: &str, other: &str) -> bool {
     match (one.rsplit_once("::"), other.rsplit_once("::")) {
         (Some((a, _)), Some((b, _))) => a == b,
         _ => false,
+    }
+}
+
+/// What `--dead` makes of one method's references (DEC-038).
+#[derive(Debug, PartialEq)]
+pub(crate) struct Liveness {
+    /// `None` when the method is plainly referenced and not a candidate.
+    pub(crate) tier: Option<&'static str>,
+    pub(crate) by_symbol: usize,
+    pub(crate) by_super: usize,
+    /// The owners of the overrides whose `super` reaches it.
+    pub(crate) super_from: Vec<String>,
+}
+
+/// Tier a method by the references that survived narrowing.
+///
+/// Two kinds are split out of the written calls because they mean something
+/// else. A symbol handed to a macro invokes by name — real use, and the shape
+/// most likely to be coincidence. A `super` from an override makes the method
+/// live exactly when that override is: neither unused nor something to inline
+/// into its one caller, so it gets its own tier.
+pub(crate) fn liveness(found: &[Reference], counts: &Counts) -> Liveness {
+    let by_symbol = found.iter().filter(|r| r.receiver == "symbol").count();
+    let supers: Vec<&Reference> = found.iter().filter(|r| r.receiver == "super").collect();
+    let written = (counts.confirmed + counts.possible).saturating_sub(by_symbol + supers.len());
+    let tier = match (written, supers.len(), by_symbol) {
+        (0, 0, 0) => Some("unreferenced"),
+        (0, 0, _) => Some("convention-only"),
+        (0, _, _) => Some("super-only"),
+        (1, _, _) => Some("single-caller"),
+        _ => None,
+    };
+    let mut super_from: Vec<String> = Vec::new();
+    for owner in supers.iter().filter_map(|r| r.receiver_type.as_ref()) {
+        if !super_from.contains(owner) {
+            super_from.push(owner.clone());
+        }
+    }
+    Liveness {
+        tier,
+        by_symbol,
+        by_super: supers.len(),
+        super_from,
     }
 }
 

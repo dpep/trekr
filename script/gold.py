@@ -42,6 +42,8 @@ CONTEXT = os.environ.get("CONTEXT")
 # sampled too — with the same seed, so the sample is a fixed one.
 APP_SAMPLE = int(os.environ.get("APP_SAMPLE", "0"))
 SEED = int(os.environ.get("SEED", "12"))
+# Where to write one verdict per scored site, to diff two builds site by site.
+VERDICTS = os.environ.get("VERDICTS")
 
 try:
     sys.stdout.reconfigure(line_buffering=True)
@@ -272,6 +274,16 @@ def main(path):
     report("  of which the truth is generated",
            [r for r in app_rows if truth_is_generated(r[0])])
     report("GEM CODE (the floor)", [(s, v) for s, v in results if s["scope"] != "app"])
+    # `super` sites, wherever they are: traced since the engine modelled them.
+    report("SUPER SITES", [(s, v) for s, v in results if s.get("super")])
+
+    if VERDICTS:
+        with open(VERDICTS, "w") as out:
+            for site, why in results:
+                spec = f"{site['file']}:{site['line']}:{site['col']}"
+                out.write(json.dumps({"site": spec, "method": site["method"],
+                                      "super": bool(site.get("super")),
+                                      "scope": site["scope"], "verdict": why}) + "\n")
 
     if ranks:
         print("\nranking quality, where the truth was offered as a candidate:")
