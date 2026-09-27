@@ -316,7 +316,7 @@ the new binary in place (DEC-050).
 | `state.rs` | per-checkout trees (rebuilt when the surface key moves) and completion listings; documents — the editor's copy, or a disk read revalidated by mtime+length |
 | `handlers.rs` | the nine agent operations, syntax diagnostics |
 | `doc.rs` | a definition's doc comment and its signature as written, read from its file when asked (DEC-052) |
-| `complete.rs` | completion (DEC-040) |
+| `complete.rs` | completion (DEC-040), and the chosen item's doc on resolve (DEC-052) |
 | `fresh.rs` | refresh-on-save and the background `--index` child (DEC-039) |
 | `convert.rs` | UTF-16 ↔ byte columns, spans, a per-file line index |
 | `reload.rs` | hot reload: the launch-path stamp, probing the new build, the handoff file, the exec |
@@ -369,6 +369,11 @@ A file edited since it was indexed moves its definitions. The definition is
 found at the indexed line, or else as the one definition of that name, kind and
 scope in the file as it is now. If neither holds the hover shows no doc at all:
 a comment attached to the wrong definition is worse than none.
+
+`completionItem/resolve` shows the same doc and signature for the one item
+selected. The list itself carries none: it can be hundreds of items, and reading
+a file per item would stall every keystroke. `workspace/symbol` shows none for
+the same reason.
 
 **What reflects unsaved edits:** the open file's own facts (outline, position
 lookup, diagnostics, completion) and every file scan (`references`,

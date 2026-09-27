@@ -9,7 +9,8 @@
   and a linked `Defined in path:line`, naming the gem for gem code. The
   `status · confidence · via` line is gone. When the answer is a guess, the
   hover says so in words, like `receiver type unknown — 3 possible
-  definitions`; a confident answer carries no caveat. Docs are read from the definition's
+  definitions`; a confident answer carries no caveat. Choosing a completion
+  item shows the same doc and signature. Docs are read from the definition's
   file when you hover, so nothing is re-indexed and the store does not grow.
   `--json` output is unchanged.
 - **`--lsp` switches to a new trekr in place.** After `brew upgrade`, a

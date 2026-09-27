@@ -847,6 +847,51 @@ fn hover_follows_a_definition_that_moved_since_the_index() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// The doc arrives when an item is chosen, not with the list: a list can be
+/// hundreds of items, and reading a file for each would stall every keystroke.
+#[test]
+fn completion_resolves_a_chosen_items_doc() {
+    let (dir, mut session) = documented_session("complete-doc");
+    let edited = "class Job\n  def run\n    w = Widget.new\n    w.sa\n  end\nend\n";
+    fs::write(dir.join("job.rb"), edited).unwrap();
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "job.rb"), "languageId": "ruby", "version": 1, "text": edited
+        }}),
+    );
+    let list = session.request(
+        "textDocument/completion",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "job.rb")},
+            "position": {"line": 3, "character": 8},
+        }),
+    );
+    let items = list["result"]["items"].as_array().expect("a list");
+    let save = items
+        .iter()
+        .find(|item| item["label"] == "save")
+        .expect("save offered")
+        .clone();
+    assert!(
+        save.get("documentation").is_none(),
+        "not read up front: {save}"
+    );
+
+    let resolved = session.request("completionItem/resolve", save);
+    let item = &resolved["result"];
+    assert_eq!(
+        item["detail"], "def Widget#save(force = false, *rest, key: nil)",
+        "{item}"
+    );
+    let doc = item["documentation"]["value"].as_str().expect("markdown");
+    assert!(doc.contains("Saves the widget."), "{doc}");
+    assert!(doc.contains("Defined in [`app.rb:15`]"), "{doc}");
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_syntax_error_is_published_as_a_diagnostic_and_cleared_when_fixed() {
     let (dir, db) = scratch("diag");

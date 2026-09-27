@@ -64,6 +64,8 @@ fn capabilities() -> ServerCapabilities {
         call_hierarchy_provider: Some(lsp_types::CallHierarchyServerCapability::Simple(true)),
         completion_provider: Some(lsp_types::CompletionOptions {
             trigger_characters: Some(vec![".".into(), ":".into()]),
+            // Docs are read per item, on demand: a list can be hundreds long.
+            resolve_provider: Some(true),
             ..Default::default()
         }),
         ..Default::default()
@@ -699,6 +701,9 @@ fn route(
             run_handler(request, |p| handlers::outgoing_calls(session, p))
         }
         req::Completion::METHOD => run_handler(request, |p| complete::completion(session, p)),
+        req::ResolveCompletionItem::METHOD => {
+            run_handler(request, |p| complete::resolve(session, p))
+        }
         other => Err(Unsupported(other.to_string()).into()),
     }
 }

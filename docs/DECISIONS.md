@@ -2580,6 +2580,12 @@ Owner.name`. A macro-made method (`attr_reader`, `has_many`) has no parameter
 text of its own, so its parameters come from the extracted facts, with `…` for
 defaults the facts do not carry.
 
+**Completion** shows the same doc and signature on `completionItem/resolve`,
+for the one item chosen. Items carry `{root, owner, singleton}` or `{root,
+fqn}` in `data` to find it again. The list carries none, since a list can be
+hundreds of items. `workspace/symbol` shows none, because it fires per
+keystroke over up to 200 rows.
+
 **Not chosen.**
 
 - **Docs as blob facts** (the brief as first written). See above: it grows the

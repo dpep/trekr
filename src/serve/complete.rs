@@ -17,6 +17,7 @@
 //! `foo.` becomes `foo.trekr_…`, a call the extractor records with its
 //! receiver, nesting and singleton-ness — exactly what the ladder needs.
 
+use super::handlers;
 use super::state::Session;
 use crate::cli::position::{self, Under};
 use crate::core::{Facts, RecvShape};
@@ -150,7 +151,7 @@ pub(crate) fn completion(
     let under = position::at_facts(&facts, line, col);
 
     let (tree, members) = session.members(&located.root)?;
-    let mut list = Ranked::new(&prefix);
+    let mut list = Ranked::new(&prefix, &located.root);
     match (&context, under) {
         (Context::Member, Some(Under::Call(call))) => {
             match crate::resolve::receiver_type(tree, &facts, &call) {
@@ -204,6 +205,67 @@ pub(crate) fn completion(
         _ => {}
     }
     Ok(Some(list.finish(false)))
+}
+
+/// `completionItem/resolve`: the chosen item's signature as written and its
+/// doc comment, read now for this one item — never for the whole list, which
+/// would read a file per item on every keystroke.
+pub(crate) fn resolve(
+    session: &mut Session,
+    mut item: CompletionItem,
+) -> anyhow::Result<CompletionItem> {
+    let Some(data) = item.data.clone() else {
+        return Ok(item);
+    };
+    let Some(root) = data["root"].as_str().map(std::path::PathBuf::from) else {
+        return Ok(item);
+    };
+    let tree = session.tree(&root)?;
+    let found = if let Some(owner) = data["owner"].as_str() {
+        let singleton = data["singleton"].as_bool().unwrap_or(false);
+        tree.lookup(owner, singleton, &item.label).map(|method| {
+            (
+                method.site.clone(),
+                method.owner.clone(),
+                Some(method.singleton),
+                method.declared_via(),
+            )
+        })
+    } else if let Some(fqn) = data["fqn"].as_str() {
+        tree.sites(fqn)
+            .first()
+            .map(|site| (site.clone(), fqn.to_string(), None, None))
+    } else {
+        None
+    };
+    let Some((site, qualified, singleton, declared_via)) = found else {
+        return Ok(item);
+    };
+    let described = handlers::describe(
+        session,
+        &root,
+        &site,
+        &item.label,
+        Some(&qualified),
+        singleton,
+    );
+    let line = described.as_ref().map_or(site.line, |d| d.line);
+    let location = handlers::defined_in(session, &root, &site.path, line, declared_via.as_deref());
+    let mut card = handlers::Card {
+        location: Some(location),
+        ..Default::default()
+    };
+    if let Some(described) = described {
+        item.detail = Some(described.signature);
+        card.doc = described.doc;
+    }
+    item.documentation = Some(lsp_types::Documentation::MarkupContent(
+        lsp_types::MarkupContent {
+            kind: lsp_types::MarkupKind::Markdown,
+            value: card.markdown(),
+        },
+    ));
+    Ok(item)
 }
 
 /// Read the context off the text before the cursor: where the word being
@@ -277,15 +339,19 @@ fn in_comment_or_string(line: &str) -> bool {
 /// Items collected with their rank, filtered by the prefix as they arrive.
 struct Ranked {
     prefix: String,
+    /// The checkout the items come from, carried in each item's `data` so
+    /// `completionItem/resolve` can find its definition again.
+    root: String,
     seen: HashSet<String>,
     items: Vec<CompletionItem>,
     truncated: bool,
 }
 
 impl Ranked {
-    fn new(prefix: &str) -> Ranked {
+    fn new(prefix: &str, root: &std::path::Path) -> Ranked {
         Ranked {
             prefix: prefix.to_string(),
+            root: root.to_string_lossy().into_owned(),
             seen: HashSet::new(),
             items: Vec::new(),
             truncated: false,
@@ -293,7 +359,9 @@ impl Ranked {
     }
 
     /// First come wins: an override shadows what it overrides, and a local
-    /// shadows a method of the same name.
+    /// shadows a method of the same name. `find` says where the definition
+    /// is — `{"owner", "singleton"}` or `{"fqn"}` — for `resolve`.
+    #[allow(clippy::too_many_arguments)]
     fn add(
         &mut self,
         tier: u32,
@@ -302,6 +370,7 @@ impl Ranked {
         kind: CompletionItemKind,
         detail: String,
         from: Option<String>,
+        find: Option<serde_json::Value>,
     ) {
         if !matches(name, &self.prefix) || self.seen.contains(name) {
             return;
@@ -320,6 +389,10 @@ impl Ranked {
                 description: Some(description),
             }),
             sort_text: Some(format!("{tier}{depth:04}{name}")),
+            data: find.map(|mut find| {
+                find["root"] = self.root.clone().into();
+                find
+            }),
             ..Default::default()
         });
     }
@@ -403,6 +476,7 @@ fn add_methods(
                 CompletionItemKind::METHOD,
                 detail,
                 Some(owner.clone()),
+                Some(serde_json::json!({"owner": owner, "singleton": owner_singleton})),
             );
         }
     }
@@ -426,12 +500,21 @@ fn add_constants(list: &mut Ranked, tree: &Tree, members: &Members, scope: &str,
                 "module" => CompletionItemKind::MODULE,
                 _ => CompletionItemKind::CONSTANT,
             };
-            let detail = if owner.is_empty() {
+            let fqn = if owner.is_empty() {
                 name.clone()
             } else {
                 format!("{owner}::{name}")
             };
-            list.add(2, depth * 100 + step as u32, name, item_kind, detail, None);
+            let find = serde_json::json!({ "fqn": fqn });
+            list.add(
+                2,
+                depth * 100 + step as u32,
+                name,
+                item_kind,
+                fqn,
+                None,
+                Some(find),
+            );
         }
     }
 }
@@ -454,6 +537,7 @@ fn add_locals(list: &mut Ranked, facts: &Facts, line: u32) {
                     CompletionItemKind::VARIABLE,
                     "parameter".into(),
                     None,
+                    None,
                 );
             }
         }
@@ -471,6 +555,7 @@ fn add_locals(list: &mut Ranked, facts: &Facts, line: u32) {
             &assign.target,
             CompletionItemKind::VARIABLE,
             "local".into(),
+            None,
             None,
         );
     }
@@ -494,6 +579,7 @@ fn add_guesses(list: &mut Ranked, members: &Members, prefix: &str) {
             CompletionItemKind::METHOD,
             format!("receiver type unknown — {count} definitions of this name"),
             Some("?".into()),
+            None,
         );
     }
 }
