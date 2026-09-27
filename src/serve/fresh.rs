@@ -124,6 +124,17 @@ impl Indexer {
                             "ms": job.started.elapsed().as_millis() as u64,
                         }),
                     );
+                    log.count(
+                        "index",
+                        String::new(),
+                        if ok {
+                            crate::usage::Outcome::Hit
+                        } else {
+                            crate::usage::Outcome::Error("index")
+                        },
+                        Some(job.started.elapsed()),
+                        false,
+                    );
                     if self.progress {
                         out.push(progress(
                             &job.token,
@@ -174,6 +185,13 @@ impl Indexer {
                     log.event(
                         "index",
                         serde_json::json!({ "root": root.to_string_lossy(), "ok": false, "error": error.to_string() }),
+                    );
+                    log.count(
+                        "index",
+                        String::new(),
+                        crate::usage::Outcome::Error("spawn"),
+                        None,
+                        false,
                     );
                     self.done.insert(root);
                 }

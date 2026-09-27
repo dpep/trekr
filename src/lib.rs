@@ -7,3 +7,4 @@ pub(crate) mod scan;
 pub(crate) mod serve;
 pub(crate) mod store;
 pub(crate) mod tree;
+pub(crate) mod usage;

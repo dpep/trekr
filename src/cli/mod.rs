@@ -13,7 +13,6 @@ use crate::core::paths;
 use crate::store::Store;
 use crate::tree::{Status, Tree};
 use crate::{extract, scan};
-use anyhow::Context;
 use clap::{CommandFactory, Parser};
 use clap_complete::Shell;
 use rayon::prelude::*;
@@ -58,10 +57,15 @@ struct Cli {
     #[arg(long, conflicts_with_all = ["index", "symbols", "drop"])]
     status: bool,
 
-    /// Summarize what `--lsp` has been asked, from its own log: which
-    /// operations, how often the answer was empty, and what they cost.
+    /// Which commands and editor features have been used, by whom (an agent,
+    /// a person, an editor), how often they came back empty, and how slow.
+    /// Counts only — no queries, paths, or repository names are kept.
     #[arg(long, conflicts_with_all = ["index", "symbols", "drop", "refs", "def"])]
     usage: bool,
+
+    /// With `--usage`: only the last N days (default: all kept, 90).
+    #[arg(long, value_name = "N", requires = "usage", value_parser = clap::value_parser!(u32).range(1..))]
+    days: Option<u32>,
 
     /// Outline one file's definitions, in the order they are written.
     #[arg(long, value_name = "FILE", conflicts_with_all = ["index", "drop"])]
@@ -171,7 +175,25 @@ enum Output {
 }
 
 pub fn run() -> ExitCode {
-    let cli = Cli::parse();
+    let started = std::time::Instant::now();
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(error) => {
+            let _ = error.print();
+            // `--help` and `--version` are questions about trekr, not uses of
+            // it; a malformed call is a use that failed, and worth counting.
+            use clap::error::ErrorKind;
+            if !matches!(
+                error.kind(),
+                ErrorKind::DisplayHelp
+                    | ErrorKind::DisplayVersion
+                    | ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+            ) {
+                count("invalid", String::new(), Outcome::Error("usage"), started);
+            }
+            return ExitCode::from(error.exit_code() as u8);
+        }
+    };
 
     // Before any store or git work: generating a completion script must not
     // need a checkout, and every other command refuses a non-repo with exit 2.
@@ -194,44 +216,123 @@ pub fn run() -> ExitCode {
         Output::Text
     };
 
-    let result = if cli.lsp {
-        crate::serve::run(cli.profile).map(|()| ExitCode::SUCCESS)
+    // The feature each branch counts as; `None` for what is not a use of the
+    // engine (`--usage` itself) or is counted by its own front (`--lsp`).
+    let (feature, result) = if cli.lsp {
+        (
+            None,
+            crate::serve::run(cli.profile).map(|()| ExitCode::SUCCESS),
+        )
     } else if let Some(path) = &cli.index {
-        cmd_index(out, path, cli.jobs, cli.profile, !cli.no_gems)
+        (
+            Some("index"),
+            cmd_index(out, path, cli.jobs, cli.profile, !cli.no_gems),
+        )
     } else if let Some(path) = &cli.symbols {
-        cmd_symbols(out, path)
+        (Some("symbols"), cmd_symbols(out, path))
     } else if let Some(name) = &cli.refs {
-        cmd_refs(out, name, cli.include_excluded)
+        (Some("refs"), cmd_refs(out, name, cli.include_excluded))
     } else if let Some(spec) = &cli.def {
-        cmd_def(out, spec, cli.explain, cli.context.as_deref())
+        (
+            Some("def"),
+            cmd_def(out, spec, cli.explain, cli.context.as_deref()),
+        )
     } else if !cli.dead.is_empty() {
-        cmd_dead(out, &cli.dead)
+        (Some("dead"), cmd_dead(out, &cli.dead))
     } else if let Some(name) = &cli.ancestors {
-        cmd_ancestors(out, name)
+        (Some("ancestors"), cmd_ancestors(out, name))
     } else if let Some(path) = &cli.drop {
-        cmd_drop(out, path)
+        (Some("drop"), cmd_drop(out, path))
     } else if cli.gc {
-        cmd_gc(out, cli.older_than, cli.dry_run, cli.vacuum)
+        (
+            Some("gc"),
+            cmd_gc(out, cli.older_than, cli.dry_run, cli.vacuum),
+        )
     } else if cli.status {
-        cmd_status(out)
+        (Some("status"), cmd_status(out))
     } else if cli.usage {
-        cmd_usage(out)
+        (None, cmd_usage(out, cli.days))
     } else if let Some(input) = &cli.input {
-        cmd_bare(out, input, cli.explain, cli.context.as_deref())
+        (
+            Some("bare"),
+            cmd_bare(out, input, cli.explain, cli.context.as_deref()),
+        )
     } else {
         eprintln!(
             "trekr: nothing to do (try `trekr Widget#save`, `trekr app.rb:42`, \
              or --index, --status, --usage)"
         );
-        return ExitCode::from(1);
+        (Some("invalid"), Ok(ExitCode::from(1)))
     };
 
-    match result {
-        Ok(code) => code,
+    let code = match &result {
+        Ok(code) => *code,
         Err(e) => {
             eprintln!("trekr: {e}");
             ExitCode::from(2)
         }
+    };
+    // After the answer is out, never before it (rq DECISIONS D13).
+    if let Some(feature) = feature {
+        let note = crate::usage::take();
+        let mut flags = note.flags;
+        flags.extend(cli_flags(&cli, out));
+        let outcome = match (note.outcome, &result) {
+            (Some(outcome), _) => outcome,
+            (None, Ok(code)) if *code == ExitCode::SUCCESS => Outcome::Hit,
+            (None, Ok(code)) if *code == ExitCode::from(1) => Outcome::Empty,
+            (None, Ok(_)) => Outcome::Error("input"),
+            (None, Err(e)) => Outcome::Error(error_kind(e)),
+        };
+        let feature = note.feature.unwrap_or(feature);
+        count(feature, crate::usage::join(&flags), outcome, started);
+    }
+    code
+}
+
+use crate::usage::Outcome;
+
+/// Count one CLI use. The caller has already written its answer.
+fn count(feature: &str, flags: String, outcome: Outcome, started: std::time::Instant) {
+    crate::usage::Recorder::open().record(&crate::usage::Tally {
+        surface: "cli",
+        feature,
+        flags,
+        origin: &crate::usage::origin::detect(),
+        outcome,
+        latency: Some(started.elapsed()),
+        cold: false,
+    });
+}
+
+/// Which knobs a call reached for — names only, never their values.
+fn cli_flags(cli: &Cli, out: Output) -> Vec<&'static str> {
+    [
+        (out == Output::Json, "json"),
+        (out == Output::Ndjson, "ndjson"),
+        (cli.explain, "explain"),
+        (cli.context.is_some(), "context"),
+        (cli.include_excluded, "include-excluded"),
+        (cli.no_gems, "no-gems"),
+        (cli.dry_run, "dry-run"),
+        (cli.vacuum, "vacuum"),
+        (cli.profile, "profile"),
+    ]
+    .into_iter()
+    .filter_map(|(on, name)| on.then_some(name))
+    .collect()
+}
+
+/// A failure, in a few words that say where to look.
+fn error_kind(error: &anyhow::Error) -> &'static str {
+    if error.chain().any(|e| e.is::<rusqlite::Error>()) {
+        "store"
+    } else if error.to_string().contains("not a git repository") {
+        "not-a-repo"
+    } else if error.chain().any(|e| e.is::<std::io::Error>()) {
+        "io"
+    } else {
+        "other"
     }
 }
 
@@ -868,6 +969,7 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
     // definitions and constant references included, which a method-shaped
     // query has no use for.
     if query.owner.is_none() {
+        crate::usage::flag("by-name");
         return cmd_refs_by_name(out, &root, &root_str, &store, &query);
     }
 
@@ -893,6 +995,11 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
         "counts": counts,
         "references": found,
     });
+    // Sites that might call it and none that certainly do: an answer, but not
+    // the narrowing the command exists for.
+    if !found.is_empty() && counts.confirmed == 0 {
+        crate::usage::outcome(Outcome::Uncertain);
+    }
     if out != Output::Text {
         emit_json(out, &answer)?;
         return Ok(exit_on(!found.is_empty()));
@@ -1107,9 +1214,12 @@ fn cmd_bare(
 ) -> anyhow::Result<ExitCode> {
     // A position: the last field is a line number, so `Spec::parse` accepts it.
     // Checked first because a Windows-ish path could contain anything else.
+    crate::usage::flag("bare");
     if position::Spec::parse(input).is_some() {
+        crate::usage::feature("def");
         return cmd_def(out, input, explain, context);
     }
+    crate::usage::feature("card");
     // A method: `Owner#method` or `Owner.method`, which `--refs` already parses
     // and which is the one shape with a genuinely richer answer than a flag.
     if input.contains('#') || (input.contains('.') && !input.contains('/')) {
@@ -1315,6 +1425,7 @@ fn dynamic_markers(source: &[u8]) -> String {
 /// it* when the truth is *nobody has looked yet*. One is a finding about the
 /// code, the other is a setup step, and they call for opposite reactions.
 fn not_indexed(out: Output, root: &Path) -> anyhow::Result<ExitCode> {
+    crate::usage::outcome(Outcome::NotIndexed);
     let root = root.to_string_lossy().to_string();
     let hint = format!("trekr --index {}", paths::pretty(&root));
     match out {
@@ -1494,6 +1605,12 @@ fn cmd_def(
             }),
         );
     }
+    if freshness.is_some() {
+        crate::usage::flag("stale");
+    }
+    if snapped.is_some() {
+        crate::usage::flag("snapped");
+    }
     if let (Output::Text, Some(freshness)) = (out, &freshness) {
         match freshness["refreshed"].as_str() {
             Some(file) => eprintln!("trekr: {file} changed since the index — re-read it"),
@@ -1662,6 +1779,21 @@ fn report(
     matched: bool,
     text: &str,
 ) -> anyhow::Result<ExitCode> {
+    // Ambiguous is an answer, so it exits 0 — which is exactly why the count
+    // has to look past the exit code to see it.
+    let confidence = value["confidence"].as_f64().unwrap_or(1.0);
+    let guesses = value["candidates"]
+        .as_array()
+        .is_some_and(|c| !c.is_empty());
+    crate::usage::outcome(match value["status"].as_str() {
+        // Residue with ranked guesses is not nothing: it is the least certain
+        // answer there is, and the LSP counts it the same way.
+        _ if !matched && guesses => Outcome::Uncertain,
+        _ if !matched => Outcome::Empty,
+        Some("ambiguous") => Outcome::Uncertain,
+        _ if confidence < crate::usage::LOW_CONFIDENCE => Outcome::Uncertain,
+        _ => Outcome::Hit,
+    });
     match out {
         Output::Text => println!("{text}"),
         _ => emit_json(out, &value)?,
@@ -1785,176 +1917,217 @@ fn exit_on(happened: bool) -> ExitCode {
     }
 }
 
-/// What the resident front has actually been asked, from its own log.
+/// Which features get used, by whom, how often they come back empty, and how
+/// slow — the CLI's commands and the LSP's operations in one view (DEC-063).
 ///
-/// The log was written in session 11 to debug a defect; this is the other half
-/// of why it exists — which of the nine operations agents really call, how
-/// often the answer is empty, and what it costs. A summary command rather than
-/// a one-off script, so the answer regenerates itself as usage accumulates.
-fn cmd_usage(out: Output) -> anyhow::Result<ExitCode> {
-    let Some(path) = crate::serve::log::Log::where_to_look() else {
-        anyhow::bail!("logging is off ($TREKR_LOG), so there is nothing to summarize");
+/// Text is the summary; `--json`/`--ndjson` are the stored daily rows, the
+/// evidence the summary is folded from.
+fn cmd_usage(out: Output, days: Option<u32>) -> anyhow::Result<ExitCode> {
+    let Some(path) = crate::usage::path() else {
+        anyhow::bail!("usage counting is off ($TREKR_USAGE), so there is nothing to summarize");
     };
-    let text =
-        std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-
-    let mut sessions = 0usize;
-    let mut retirements = 0usize;
-    // The first request of a session pays for a cold page cache and a tree
-    // build; every one after it does not. Blending them makes the headline a
-    // measure of the disk, which no amount of work on trekr will improve —
-    // measured at 450 ms first and 0.58 ms warm in the same session.
-    let mut session_had_request = false;
-    let mut first = String::new();
-    let mut last = String::new();
-    let mut per_op: HashMap<String, OpUsage> = HashMap::new();
-    for line in text.lines() {
-        let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
-            continue;
-        };
-        if let Some(ts) = event.get("ts").and_then(|t| t.as_str()) {
-            if first.is_empty() {
-                first = ts.to_string();
-            }
-            last = ts.to_string();
-        }
-        match event.get("event").and_then(|e| e.as_str()) {
-            Some("start") => {
-                sessions += 1;
-                session_had_request = false;
-            }
-            Some("retire") => retirements += 1,
-            Some("request") => {
-                let Some(op) = event.get("op").and_then(|o| o.as_str()) else {
-                    continue;
-                };
-                let usage = per_op.entry(op.to_string()).or_default();
-                usage.calls += 1;
-                let first_of_session = !session_had_request;
-                session_had_request = true;
-                match event.get("answered").and_then(serde_json::Value::as_u64) {
-                    Some(0) => usage.empty += 1,
-                    Some(_) => usage.answered += 1,
-                    None => {}
-                }
-                if event.get("status").and_then(|s| s.as_str()) == Some("error") {
-                    usage.errors += 1;
-                }
-                if let Some(ms) = event.get("ms").and_then(serde_json::Value::as_f64) {
-                    if first_of_session {
-                        usage.cold.push(ms);
-                    } else {
-                        usage.timings.push(ms);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    let mut rows: Vec<UsageRow> = per_op
-        .into_iter()
-        .map(|(op, usage)| usage.finish(op))
-        .collect();
-    // Most-used first: the ranking is the point of the report.
-    rows.sort_by(|a, b| b.calls.cmp(&a.calls).then_with(|| a.op.cmp(&b.op)));
-    let total: usize = rows.iter().map(|r| r.calls).sum();
-
+    let rows = crate::usage::read(&path, days)?;
     if emit_rows(out, &rows)? {
-        return Ok(exit_on(total > 0));
+        return Ok(exit_on(!rows.is_empty()));
     }
     if rows.is_empty() {
         println!(
-            "no requests logged yet in {}",
+            "no usage recorded yet in {}",
             paths::pretty(&path.to_string_lossy())
         );
         return Ok(ExitCode::from(1));
     }
-    let retired = match retirements {
-        0 => String::new(),
-        n => format!(", {n} retired on a newer binary"),
-    };
-    println!(
-        "{total} requests over {sessions} session(s){retired}, {} — {}\n",
-        &first[..first.len().min(10)],
-        &last[..last.len().min(10)]
-    );
-    println!(
-        "{:<32}{:>6}{:>9}{:>9}{:>8}{:>10}",
-        "operation", "calls", "answered", "median", "p90", "cold 1st"
-    );
-    for row in &rows {
-        println!(
-            "{:<32}{:>6}{:>8.0}%{:>9.1}{:>8.1}{:>10}",
-            row.op,
-            row.calls,
-            100.0 * row.answered as f64 / row.calls.max(1) as f64,
-            row.median_ms,
-            row.p90_ms,
-            match row.cold_first_calls {
-                0 => "—".to_string(),
-                n => format!("{:.0} (n={n})", row.cold_first_ms),
-            },
-        );
-    }
+    print!("{}", usage_text(&rows, days));
     Ok(ExitCode::SUCCESS)
 }
 
-#[derive(Default)]
-struct OpUsage {
-    calls: usize,
-    answered: usize,
-    empty: usize,
-    errors: usize,
-    timings: Vec<f64>,
-    /// Requests that opened a session, and so paid for the cold cache.
-    cold: Vec<f64>,
-}
+/// LSP events that are the session's life rather than something asked of it.
+const LIFECYCLE: [&str; 6] = [
+    "session",
+    "resume",
+    "reload",
+    "reload-failed",
+    "retire",
+    "index",
+];
 
-impl OpUsage {
-    fn finish(mut self, op: String) -> UsageRow {
-        self.timings
-            .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        self.cold
-            .sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-        UsageRow {
-            op,
-            calls: self.calls,
-            answered: self.answered,
-            empty: self.empty,
-            errors: self.errors,
-            // Rounded to the precision a handful of samples actually carries.
-            median_ms: round1(percentile(&self.timings, 0.5)),
-            p90_ms: round1(percentile(&self.timings, 0.9)),
-            cold_first_ms: round1(percentile(&self.cold, 0.5)),
-            cold_first_calls: self.cold.len(),
+/// Fold daily rows into one line per feature, most used first.
+fn usage_text(rows: &[crate::usage::Row], days: Option<u32>) -> String {
+    use std::collections::BTreeMap;
+    use std::fmt::Write;
+
+    #[derive(Default)]
+    struct Feature {
+        uses: i64,
+        outcomes: BTreeMap<String, i64>,
+        /// Warm latency buckets; an LSP session's first request is kept apart
+        /// because it measures the disk and a tree build, not the engine.
+        latency: BTreeMap<String, i64>,
+        cold: BTreeMap<String, i64>,
+        callers: BTreeMap<String, i64>,
+    }
+    let mut features: BTreeMap<(String, String), Feature> = BTreeMap::new();
+    let mut flags: BTreeMap<String, i64> = BTreeMap::new();
+    for row in rows {
+        let f = features
+            .entry((row.surface.clone(), row.feature.clone()))
+            .or_default();
+        f.uses += row.count;
+        *f.outcomes.entry(row.outcome.clone()).or_default() += row.count;
+        *f.callers.entry(row.origin.clone()).or_default() += row.count;
+        if !row.latency.is_empty() {
+            let into = if row.cold {
+                &mut f.cold
+            } else {
+                &mut f.latency
+            };
+            *into.entry(row.latency.clone()).or_default() += row.count;
+        }
+        for flag in row.flags.split(',').filter(|f| !f.is_empty()) {
+            let key = format!("{} {flag}", row.feature);
+            *flags.entry(key).or_default() += row.count;
         }
     }
-}
 
-#[derive(serde::Serialize)]
-struct UsageRow {
-    op: String,
-    calls: usize,
-    answered: usize,
-    empty: usize,
-    errors: usize,
-    median_ms: f64,
-    p90_ms: f64,
-    /// Median of the requests that opened a session — the cold-cache cost,
-    /// reported apart because it measures the disk rather than the engine.
-    cold_first_ms: f64,
-    cold_first_calls: usize,
-}
+    let first = rows
+        .iter()
+        .map(|r| r.day.as_str())
+        .min()
+        .unwrap_or_default();
+    let last = rows
+        .iter()
+        .map(|r| r.day.as_str())
+        .max()
+        .unwrap_or_default();
+    let window = match days {
+        Some(n) => format!("last {n} day{}", if n == 1 { "" } else { "s" }),
+        None => format!("up to {} days kept", crate::usage::RETENTION_DAYS),
+    };
+    let mut text = format!("trekr usage, {window}: {first} — {last}\n");
 
-fn percentile(sorted: &[f64], q: f64) -> f64 {
-    if sorted.is_empty() {
-        return 0.0;
+    let count = |f: &Feature, outcome: &str| f.outcomes.get(outcome).copied().unwrap_or(0);
+    for (surface, title) in [("cli", "command line"), ("lsp", "editor (--lsp)")] {
+        let mut shown: Vec<(&String, &Feature)> = features
+            .iter()
+            .filter(|((s, name), _)| {
+                s == surface && !(s == "lsp" && LIFECYCLE.contains(&name.as_str()))
+            })
+            .map(|((_, name), f)| (name, f))
+            .collect();
+        if shown.is_empty() {
+            continue;
+        }
+        shown.sort_by(|a, b| b.1.uses.cmp(&a.1.uses).then_with(|| a.0.cmp(b.0)));
+        let _ = writeln!(
+            text,
+            "\n{:<22}{:>6}{:>6}{:>8}{:>7}{:>7}  {:<8}{:<8}callers",
+            title, "uses", "hit", "unsure", "empty", "error", "median", "p90"
+        );
+        for (name, f) in &shown {
+            let hit = count(f, "hit");
+            let unsure = count(f, "uncertain");
+            let empty = count(f, "empty");
+            let _ = writeln!(
+                text,
+                "{:<22}{:>6}{:>6}{:>8}{:>7}{:>7}  {:<8}{:<8}{}",
+                name,
+                f.uses,
+                hit,
+                unsure,
+                empty,
+                f.uses - hit - unsure - empty,
+                bucket_at(&f.latency, 0.5),
+                bucket_at(&f.latency, 0.9),
+                ranked(&f.callers),
+            );
+        }
+        // What the error column holds, so "error" is never a dead end.
+        let mut failures: BTreeMap<&str, i64> = BTreeMap::new();
+        for (_, f) in &shown {
+            for (outcome, n) in &f.outcomes {
+                if !matches!(outcome.as_str(), "hit" | "uncertain" | "empty") {
+                    *failures.entry(outcome.as_str()).or_default() += n;
+                }
+            }
+        }
+        if !failures.is_empty() {
+            let mut failures: Vec<(String, i64)> = failures
+                .into_iter()
+                .map(|(k, v)| (k.to_string(), v))
+                .collect();
+            failures.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+            let list: Vec<String> = failures.iter().map(|(k, v)| format!("{k} {v}")).collect();
+            let _ = writeln!(text, "  errors: {}", list.join(" · "));
+        }
+        if surface == "lsp" {
+            let mut cold: BTreeMap<String, i64> = BTreeMap::new();
+            for (_, f) in &shown {
+                for (bucket, n) in &f.cold {
+                    *cold.entry(bucket.clone()).or_default() += n;
+                }
+            }
+            let n: i64 = cold.values().sum();
+            if n > 0 {
+                let _ = writeln!(
+                    text,
+                    "  a session's first request: median {} (n={n}), kept out of the columns above",
+                    bucket_at(&cold, 0.5)
+                );
+            }
+            let life = |name: &str| {
+                features
+                    .get(&("lsp".to_string(), name.to_string()))
+                    .map(|f| (f.uses, f.uses - count(f, "hit")))
+                    .unwrap_or((0, 0))
+            };
+            let (sessions, _) = life("session");
+            let (resumed, _) = life("resume");
+            let (reloads, _) = life("reload");
+            let (reload_failed, _) = life("reload-failed");
+            let (retired, _) = life("retire");
+            let (indexes, index_failed) = life("index");
+            let _ = writeln!(
+                text,
+                "  sessions {sessions} · resumed after a hot reload {resumed} · reloads {reloads} \
+                 (failed {reload_failed}) · retired {retired} · background indexes {indexes} \
+                 (failed {index_failed})"
+            );
+        }
     }
-    let index = ((sorted.len() - 1) as f64 * q).round() as usize;
-    sorted[index]
+
+    if !flags.is_empty() {
+        let mut flags: Vec<(String, i64)> = flags.into_iter().collect();
+        flags.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+        let list: Vec<String> = flags.iter().map(|(k, v)| format!("{k} {v}")).collect();
+        let _ = writeln!(text, "\nflags and variants: {}", list.join(" · "));
+    }
+    text
 }
 
-fn round1(ms: f64) -> f64 {
-    (ms * 10.0).round() / 10.0
+/// The latency bucket holding the `q` quantile of these counts.
+fn bucket_at(counts: &std::collections::BTreeMap<String, i64>, q: f64) -> &'static str {
+    let total: i64 = counts.values().sum();
+    if total == 0 {
+        return "—";
+    }
+    let wanted = (total as f64 * q).ceil().max(1.0) as i64;
+    let mut seen = 0;
+    for bucket in crate::usage::BUCKETS {
+        seen += counts.get(bucket).copied().unwrap_or(0);
+        if seen >= wanted {
+            return bucket;
+        }
+    }
+    "—"
+}
+
+/// `claude-code 205 · human 7`, most first.
+fn ranked(counts: &std::collections::BTreeMap<String, i64>) -> String {
+    let mut sorted: Vec<(&String, &i64)> = counts.iter().collect();
+    sorted.sort_by(|a, b| b.1.cmp(a.1).then_with(|| a.0.cmp(b.0)));
+    sorted
+        .iter()
+        .map(|(k, v)| format!("{k} {v}"))
+        .collect::<Vec<_>>()
+        .join(" · ")
 }

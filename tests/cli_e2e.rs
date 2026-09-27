@@ -61,12 +61,31 @@ fn repo(dir: &Path) {
 }
 
 fn trekr(db: &Path, cwd: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_trekr"))
+    neutral(Command::new(env!("CARGO_BIN_EXE_trekr")))
         .args(args)
         .current_dir(cwd)
         .env("TREKR_DB", db)
         .output()
         .expect("run trekr")
+}
+
+/// A command whose caller is nobody in particular. Whoever runs the suite — an
+/// agent, CI — sets variables `--usage` reads to name the caller, and the
+/// usage tests assert on that name.
+fn neutral(mut command: Command) -> Command {
+    for var in [
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "AI_AGENT",
+        "CURSOR_TRACE_ID",
+        "CURSOR_AGENT",
+        "CI",
+        "GITHUB_ACTIONS",
+        "TREKR_USAGE",
+    ] {
+        command.env_remove(var);
+    }
+    command
 }
 
 fn stdout(out: &Output) -> String {
@@ -221,7 +240,7 @@ fn a_second_worktree_of_the_same_content_costs_no_parsing() {
 
 /// Run trekr with extra environment on top of the isolated database.
 fn trekr_env(db: &Path, cwd: &Path, args: &[&str], vars: &[(&str, &str)]) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_trekr"));
+    let mut command = neutral(Command::new(env!("CARGO_BIN_EXE_trekr")));
     command.args(args).current_dir(cwd).env("TREKR_DB", db);
     for (key, value) in vars {
         command.env(key, value);
@@ -1024,62 +1043,84 @@ fn an_older_binary_refuses_a_newer_database_rather_than_dropping_it() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// `--usage` turns the serve log into the dogfood signal it was written for:
-/// which operations agents call, and how often the answer was empty.
+/// Every CLI use is counted once its answer is out — by command, caller and
+/// outcome — and `--usage` folds the counts back into which commands get used,
+/// by whom, and how often they come back empty.
 #[test]
-fn usage_summarizes_the_lsp_log_and_says_nothing_when_it_is_empty() {
+fn usage_counts_each_command_by_caller_and_outcome() {
     let (dir, db) = scratch("usage");
-    fs::create_dir_all(&dir).unwrap();
-    let log = dir.join("lsp.log");
-    fs::write(&log, "").unwrap();
+    repo(&dir);
+    let agent = [("CLAUDECODE", "1")];
 
-    // Nothing logged is a definitive "no", not a failure.
-    let empty = trekr_env(
-        &db,
-        &dir,
-        &["--usage"],
-        &[("TREKR_LOG", log.to_str().unwrap())],
-    );
-    assert_eq!(empty.status.code(), Some(1));
+    // Nothing counted yet is a definitive "no", not a failure.
+    assert_eq!(trekr(&db, &dir, &["--usage"]).status.code(), Some(1));
 
-    fs::write(
-        &log,
-        concat!(
-            r#"{"ts":"2026-01-01T00:00:00.000Z","event":"start"}"#,
-            "\n",
-            r#"{"ts":"2026-01-01T00:00:01.000Z","event":"request","op":"textDocument/definition","ms":4.0,"answered":2,"status":"ok"}"#,
-            "\n",
-            r#"{"ts":"2026-01-01T00:00:02.000Z","event":"request","op":"textDocument/definition","ms":2.0,"answered":0,"status":"ok"}"#,
-            "\n",
-            r#"{"ts":"2026-01-01T00:00:03.000Z","event":"request","op":"textDocument/hover","ms":1.0,"answered":1,"status":"ok"}"#,
-            "\n",
-            // A line the log did not write cleanly must not stop the report.
-            "{not json\n",
-        ),
-    )
-    .unwrap();
+    // Asked before anything was indexed: the answer an agent needs to hear.
+    trekr_env(&db, &dir, &["--def", "widget.rb:7:5"], &agent);
+    trekr_env(&db, &dir, &["--index"], &agent);
+    trekr_env(&db, &dir, &["--def", "widget.rb:7:5", "--json"], &agent);
+    trekr_env(&db, &dir, &["Widget#nope"], &agent);
+    // No agent in the environment and no terminal: an unattributed pipe.
+    trekr(&db, &dir, &["--ancestors", "Widget"]);
 
-    let out = trekr_env(
-        &db,
-        &dir,
-        &["--usage", "--json"],
-        &[("TREKR_LOG", log.to_str().unwrap())],
-    );
+    let out = trekr(&db, &dir, &["--usage", "--json"]);
     assert_eq!(out.status.code(), Some(0));
     let rows = json(&out);
-    let rows = rows.as_array().expect("a row per operation");
-    // Most-used first: the ranking is the point of the report.
-    assert_eq!(rows[0]["op"], "textDocument/definition");
-    assert_eq!(rows[0]["calls"], 2);
-    assert_eq!(rows[0]["answered"], 1);
-    assert_eq!(rows[0]["empty"], 1, "an empty answer is counted as one");
-    assert_eq!(rows[1]["op"], "textDocument/hover");
-    // The first request of a session pays for a cold page cache and a tree
-    // build. Blending it into the median made the headline a measure of the
-    // disk: 415 ms became 88 ms on the real log once they were separated.
-    assert_eq!(rows[0]["cold_first_calls"], 1, "the session opener");
-    assert_eq!(rows[0]["cold_first_ms"], 4.0);
-    assert_eq!(rows[0]["median_ms"], 2.0, "and the median excludes it");
+    let rows = rows.as_array().expect("an array of daily rows");
+    let find = |feature: &str, outcome: &str| {
+        rows.iter()
+            .find(|r| r["feature"] == feature && r["outcome"] == outcome)
+            .unwrap_or_else(|| panic!("no {feature}/{outcome} row in {rows:?}"))
+    };
+    assert_eq!(find("def", "not-indexed")["origin"], "claude-code");
+    let def = find("def", "hit");
+    assert_eq!(def["surface"], "cli");
+    assert_eq!(def["flags"], "json");
+    assert_eq!(def["count"], 1);
+    assert!(def["latency"].as_str().unwrap().starts_with('<'));
+    // The bare grammar is counted as what it dispatched to, marked as bare.
+    assert_eq!(find("card", "empty")["flags"], "bare");
+    assert_eq!(find("ancestors", "hit")["origin"], "piped");
+    assert_eq!(find("index", "hit")["origin"], "claude-code");
+    // `--usage` itself is not a use of the engine.
+    assert!(!rows.iter().any(|r| r["feature"] == "usage"));
+    // Counts, not content: no query, path or repository is kept.
+    let text = serde_json::to_string(rows).unwrap();
+    assert!(!text.contains("Widget") && !text.contains("widget.rb"));
+    assert!(!text.contains(&dir.display().to_string()));
+
+    let summary = stdout(&trekr(&db, &dir, &["--usage"]));
+    assert!(summary.contains("command line"), "{summary}");
+    assert!(summary.contains("claude-code"), "{summary}");
+    let ndjson = stdout(&trekr(&db, &dir, &["--usage", "--ndjson", "--days", "1"]));
+    assert_eq!(ndjson.lines().count(), rows.len(), "today holds every row");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Asking trekr about itself is not a use of it; a call it could not parse is.
+#[test]
+fn help_and_version_are_not_counted_but_a_malformed_call_is() {
+    let (dir, db) = scratch("usage-help");
+    repo(&dir);
+    for args in [&["--help"][..], &["--version"], &["-h"]] {
+        assert_eq!(trekr(&db, &dir, args).status.code(), Some(0));
+    }
+    assert_eq!(
+        trekr(&db, &dir, &["--usage"]).status.code(),
+        Some(1),
+        "nothing counted"
+    );
+
+    assert_eq!(trekr(&db, &dir, &["--no-such-flag"]).status.code(), Some(2));
+    let rows = json(&trekr(&db, &dir, &["--usage", "--json"]));
+    assert_eq!(rows[0]["feature"], "invalid");
+    assert_eq!(rows[0]["outcome"], "error:usage");
+
+    // And `TREKR_USAGE=off` means off.
+    trekr_env(&db, &dir, &["--no-such-flag"], &[("TREKR_USAGE", "off")]);
+    let rows = json(&trekr(&db, &dir, &["--usage", "--json"]));
+    assert_eq!(rows[0]["count"], 1);
 
     let _ = fs::remove_dir_all(&dir);
 }

@@ -41,8 +41,8 @@ switches to the new binary within a couple of seconds and keeps your open
 files and unsaved edits.
 
 Commands: **trekr: Restart Language Server**, **trekr: Show Output**. The
-server's own log is `lsp.log` beside trekr's database (`trekr --usage`
-summarises it).
+server's own log is `lsp.log` beside trekr's database; `trekr --usage`
+counts which features the editor used.
 
 ## Replacing Ruby LSP and Sorbet
 

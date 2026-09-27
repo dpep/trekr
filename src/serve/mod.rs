@@ -25,6 +25,7 @@ mod require;
 mod state;
 mod wire;
 
+use crate::usage::Outcome;
 use inbox::{Inbox, Next};
 use log::Log;
 use lsp_server::{Message, Notification, Request, RequestId, Response};
@@ -100,6 +101,13 @@ pub(crate) fn run(verbose: bool) -> anyhow::Result<()> {
             log.event(
                 "resume",
                 serde_json::json!({ "ok": false, "error": error.to_string() }),
+            );
+            log.count(
+                "resume",
+                String::new(),
+                Outcome::Error("resume"),
+                None,
+                false,
             );
             return Err(error.context("resuming a hot-reloaded session"));
         }
@@ -216,6 +224,22 @@ fn serve(
         }),
     );
     log.detail("initialize_params", || params.clone());
+    let client_name = params
+        .get("clientInfo")
+        .and_then(|c| c.get("name"))
+        .and_then(|n| n.as_str());
+    log.set_client(client_name);
+    // A resumed session is the same session under a new build: counted as a
+    // resume, not a second start — but its first request is cold all the same,
+    // since the successor starts with nothing warmed.
+    log.count(
+        if resuming { "resume" } else { "session" },
+        String::new(),
+        Outcome::Hit,
+        None,
+        false,
+    );
+    let mut first_request = true;
 
     let client = Client::from(&params);
     let spelling = Spelling::of(&params, &root);
@@ -323,7 +347,13 @@ fn serve(
                         "request",
                         serde_json::json!({ "op": request.method, "status": "cancelled" }),
                     );
-                    cancelled(id.clone())
+                    let counted = Counted {
+                        feature: feature_of(&request.method),
+                        flags: String::new(),
+                        outcome: Outcome::Cancelled,
+                        latency: None,
+                    };
+                    (cancelled(id.clone()), counted)
                 } else {
                     let cancel = || inbox.is_cancelled(&id);
                     let out = Outbound {
@@ -331,14 +361,27 @@ fn serve(
                         spelling: spelling.as_ref(),
                         log,
                     };
-                    let mut response = dispatch(&mut session, request, &out, &cancel);
+                    let (mut response, counted) = dispatch(&mut session, request, &out, &cancel);
                     if let (Some(spelling), Some(result)) = (&spelling, response.result.as_mut()) {
                         spelling.apply(result);
                     }
-                    response
+                    (response, counted)
                 };
                 inbox.settle(&id);
-                writer.send(Message::Response(response))?;
+                writer.send(Message::Response(response.0))?;
+                // Counted once the answer is on its way, never ahead of it.
+                let counted = response.1;
+                let cold = first_request && counted.latency.is_some();
+                log.count(
+                    &counted.feature,
+                    counted.flags,
+                    counted.outcome,
+                    counted.latency,
+                    cold,
+                );
+                if cold {
+                    first_request = false;
+                }
             }
             Message::Notification(notification) => {
                 if notification.method == lsp_types::notification::Exit::METHOD {
@@ -469,6 +512,13 @@ fn swap(launched: &mut reload::Launched, stamp: reload::Stamp, now: Current, log
             "reload_failed",
             serde_json::json!({ "path": path, "error": error, "retry": retry }),
         );
+        log.count(
+            "reload-failed",
+            String::new(),
+            Outcome::Error("reload"),
+            None,
+            false,
+        );
         // A refusal that would recur is not retried at every quiet moment;
         // the next change to the file is tried afresh.
         if !retry {
@@ -485,6 +535,7 @@ fn swap(launched: &mut reload::Launched, stamp: reload::Stamp, now: Current, log
                 "retire",
                 serde_json::json!({ "reason": reason, "path": path }),
             );
+            log.count("retire", String::new(), Outcome::Hit, None, false);
             return Swap::Retire;
         }
         reload::Candidate::Broken { reason, transient } => {
@@ -513,6 +564,13 @@ fn swap(launched: &mut reload::Launched, stamp: reload::Stamp, now: Current, log
             // costs before the exec.
             "ms": started.elapsed().as_millis() as u64,
         }),
+    );
+    log.count(
+        "reload",
+        String::new(),
+        Outcome::Hit,
+        Some(started.elapsed()),
+        false,
     );
     // Everything answered so far goes out under this build.
     now.writer.flush();
@@ -584,12 +642,32 @@ impl Spelling {
     }
 }
 
+/// A request, as `--usage` counts it.
+struct Counted {
+    feature: String,
+    flags: String,
+    outcome: Outcome,
+    latency: Option<Duration>,
+}
+
+/// The operation, without the protocol's namespace: `definition`, `hover`,
+/// `completionItem/resolve`. Client-chosen text for a method trekr does not
+/// serve, so it is bounded like any other label.
+fn feature_of(method: &str) -> String {
+    let short = method.strip_prefix("textDocument/").unwrap_or(method);
+    short
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '$' | '_' | '-'))
+        .take(40)
+        .collect()
+}
+
 fn dispatch(
     session: &mut Session,
     request: Request,
     out: &Outbound,
     cancel: &dyn Fn() -> bool,
-) -> Response {
+) -> (Response, Counted) {
     let log = out.log;
     let id = request.id.clone();
     let method = request.method.clone();
@@ -597,8 +675,11 @@ fn dispatch(
     log.detail("request_params", || request.params.clone());
 
     let started = std::time::Instant::now();
+    // Whatever an earlier operation noted and nobody took is not this one's.
+    let _ = crate::usage::take();
     let result = route(session, request, out, cancel);
     let elapsed = started.elapsed();
+    let note = crate::usage::take();
 
     let (status, answered, code) = match &result {
         Ok(value) => ("ok", shape(value), None),
@@ -627,14 +708,30 @@ fn dispatch(
         }),
     );
 
-    match (result, code) {
+    let outcome = match (answered, code) {
+        (Some(0), _) => Outcome::Empty,
+        (Some(_), _) => note.outcome.unwrap_or(Outcome::Hit),
+        (None, Some(lsp_server::ErrorCode::RequestCanceled)) => Outcome::Cancelled,
+        (None, Some(lsp_server::ErrorCode::InvalidParams)) => Outcome::Error("params"),
+        (None, Some(lsp_server::ErrorCode::MethodNotFound)) => Outcome::Error("unsupported"),
+        (None, _) => Outcome::Error("internal"),
+    };
+    let counted = Counted {
+        feature: feature_of(&method),
+        flags: crate::usage::join(&note.flags),
+        outcome,
+        latency: Some(elapsed),
+    };
+
+    let response = match (result, code) {
         (Ok(value), _) => Response::new_ok(id, value),
         (Err(error), code) => Response::new_err(
             id,
             code.unwrap_or(lsp_server::ErrorCode::InternalError) as i32,
             error.to_string(),
         ),
-    }
+    };
+    (response, counted)
 }
 
 /// Why a request failed, in the protocol's vocabulary. A client treats these

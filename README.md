@@ -58,6 +58,11 @@ Every command honors `--json` and `--ndjson`, because the intended caller is an
 agent. Exit codes mean something: `0` matched, `1` a definitive nothing, `2` the
 request could not be served.
 
+`trekr --usage` shows which commands and editor features get used, by whom (an
+agent, a person, an editor), how often they come back empty, and how slow. It
+counts locally — no queries, paths or repository names — in `trekr.usage.db`
+beside the index; `TREKR_USAGE=off` turns it off.
+
 ```console
 $ trekr --refs find_each   # in rails — 4 of 26 mentions, one per receiver shape
 activerecord/lib/active_record/relation/batches.rb:85:9  definition  method

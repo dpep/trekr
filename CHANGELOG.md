@@ -8,6 +8,19 @@
   unchanged. On a busy machine the background index can take longer — a
   cold discourse index ~7 s → ~8–11 s. The LSP log records the child's
   priority as an `index_priority` event.
+- **`trekr --usage` now covers the command line as well as the editor.** Every
+  command (`--def`, `--refs`, `--dead`, the bare `Widget#save` form, …) and
+  every `--lsp` operation is counted by day, caller (`claude-code`, `human`,
+  `ci`, an editor's name, …), outcome (hit, uncertain, empty, not indexed,
+  error) and a coarse latency bucket, and `--usage` shows which get used, by
+  whom, how often they come back empty, and how slow. `--days N` narrows it;
+  `--json`/`--ndjson` emit the daily rows. Counts only: no queries, paths or
+  repository names are kept. They live in `trekr.usage.db` beside the index,
+  so a reindex or `--gc` never clears them, and rows older than 90 days are
+  dropped. `TREKR_USAGE=off` turns counting off. **The old log-based report is
+  gone**: `--usage` starts counting from this version, and `lsp.log` still
+  holds what came before. A hot-reloaded session's first request is now
+  reported as a session opener, as it always should have been.
 - **`--refs NAME` on a very common name is up to 2× faster in a large repo.**
   Each call site's tiering was matched to its row by scanning all of them;
   `--refs each` on a 336k-file repo 17.9 → 9.9 s.

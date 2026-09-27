@@ -29,8 +29,48 @@ fn isolated(program: &str) -> Command {
     command
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE");
+        .env_remove("GIT_INDEX_FILE")
+        // Whoever runs the suite — an agent, CI — is not the caller the usage
+        // counts are asserted against.
+        .env_remove("TREKR_USAGE");
+    for var in AGENT_VARS {
+        command.env_remove(var);
+    }
     command
+}
+
+/// What `--usage` reads to tell an agent from a person or CI.
+const AGENT_VARS: [&str; 7] = [
+    "CLAUDECODE",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "AI_AGENT",
+    "CURSOR_TRACE_ID",
+    "CURSOR_AGENT",
+    "CI",
+    "GITHUB_ACTIONS",
+];
+
+/// The usage rows a test's database has counted.
+fn usage_rows(db: &Path) -> Vec<serde_json::Value> {
+    let out = trekr()
+        .args(["--usage", "--json"])
+        .env("TREKR_DB", db)
+        .output()
+        .unwrap();
+    serde_json::from_slice::<serde_json::Value>(&out.stdout)
+        .expect("--usage --json is an array")
+        .as_array()
+        .unwrap()
+        .clone()
+}
+
+/// The summed count of the LSP rows matching every `(field, value)` given.
+fn counted(rows: &[serde_json::Value], matching: &[(&str, serde_json::Value)]) -> i64 {
+    rows.iter()
+        .filter(|r| r["surface"] == "lsp")
+        .filter(|r| matching.iter().all(|(k, v)| &r[*k] == v))
+        .map(|r| r["count"].as_i64().unwrap())
+        .sum()
 }
 
 fn trekr() -> Command {
@@ -469,6 +509,32 @@ fn definition_on_an_unresolved_receiver_offers_ranked_guesses() {
     assert!(!text.contains("confidence"), "and not as a number: {text}");
 
     session.stop();
+    // A guess is counted as one, in the editor and at the command line alike:
+    // `--usage` must not report a residue as a hit, nor as nothing.
+    let cli = trekr()
+        .args(["--def", "app.rb:11:11"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+    assert_eq!(cli.status.code(), Some(1), "residue exits 1");
+    let rows = usage_rows(&db);
+    assert_eq!(
+        counted(
+            &rows,
+            &[
+                ("feature", "definition".into()),
+                ("outcome", "uncertain".into())
+            ]
+        ),
+        1,
+        "{rows:?}"
+    );
+    assert!(
+        rows.iter()
+            .any(|r| r["surface"] == "cli" && r["feature"] == "def" && r["outcome"] == "uncertain"),
+        "{rows:?}"
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -1574,6 +1640,11 @@ fn the_binary() -> Vec<u8> {
     fs::read(env!("CARGO_BIN_EXE_trekr")).unwrap()
 }
 
+/// The database `scratch(label)` hands out, for a helper that kept it.
+fn scratch_db(label: &str) -> PathBuf {
+    std::env::temp_dir().join(format!("trekr-lsp-{}-{label}.db", std::process::id()))
+}
+
 /// The first logged `event`, waiting for it to appear. An idle server looks at
 /// its binary every couple of seconds, so this is what "trigger the check" is.
 fn logged(db: &Path, event: &str) -> serde_json::Value {
@@ -1696,6 +1767,24 @@ fn a_replaced_binary_takes_over_the_session_in_place() {
     );
 
     session.stop();
+    let rows = usage_rows(&db);
+    assert_eq!(
+        counted(&rows, &[("feature", "session".into())]),
+        1,
+        "{rows:?}"
+    );
+    assert_eq!(counted(&rows, &[("feature", "resume".into())]), 1);
+    assert_eq!(counted(&rows, &[("feature", "reload".into())]), 1);
+    // The successor starts with nothing warmed, so its first request is a
+    // session opener too — and kept out of the warm latencies.
+    assert_eq!(
+        counted(
+            &rows,
+            &[("feature", "documentSymbol".into()), ("cold", true.into())]
+        ),
+        2,
+        "{rows:?}"
+    );
     let _ = fs::remove_dir_all(&dir);
     let _ = fs::remove_dir_all(&bin);
 }
@@ -2978,6 +3067,15 @@ fn a_capped_answer_keeps_the_confirmed_caller_and_says_what_it_left_out() {
 
     // Uncut, both are listed, confirmed first, and nothing is said.
     session.stop();
+    let rows = usage_rows(&scratch_db("refs-cap"));
+    assert_eq!(
+        counted(
+            &rows,
+            &[("feature", "references".into()), ("flags", "cut".into())]
+        ),
+        1,
+        "a cap hit is counted, so `--usage` shows how often the limit bites: {rows:?}"
+    );
     let (dir, mut session) = many_file_session("refs-uncut", &evidence_files(), 10);
     let (answer, notes) =
         request_with_notes(&mut session, "textDocument/references", on_save(&dir, true));
@@ -3117,5 +3215,98 @@ fn a_bare_name_reads_only_as_far_as_the_limit() {
         said[0]
     );
     session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `--usage` sees the editor too: each request is counted by operation, caller
+/// and outcome once its answer is sent — the session opener apart from the
+/// rest, and a method trekr does not serve as the error it was.
+#[test]
+fn requests_are_counted_by_operation_caller_and_outcome() {
+    let (dir, db) = scratch("usage");
+    let source = repo(&dir);
+    let indexed = trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+    assert!(indexed.status.success());
+
+    let mut session = Session::start(&db, &dir);
+    session.request(
+        "initialize",
+        serde_json::json!({
+            "processId": null,
+            "rootUri": format!("file://{}", dir.display()),
+            "capabilities": {},
+            "clientInfo": { "name": "Widget Editor" },
+        }),
+    );
+    session.notify("initialized", serde_json::json!({}));
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+    let at = |line: u32, character: u32| {
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": line, "character": character},
+        })
+    };
+    // `w.save`, twice: the first opens the session, the second is warm.
+    session.request("textDocument/definition", at(7, 6));
+    session.request("textDocument/definition", at(7, 6));
+    // A blank line: nothing there.
+    session.request("textDocument/hover", at(9, 0));
+    session.request("textDocument/semanticTokens/full", at(0, 0));
+    session.stop();
+
+    let rows = usage_rows(&db);
+    let def = |outcome: &str, cold: bool| {
+        counted(
+            &rows,
+            &[
+                ("feature", "definition".into()),
+                ("outcome", outcome.into()),
+                ("cold", cold.into()),
+            ],
+        )
+    };
+    assert_eq!(def("hit", true), 1, "{rows:?}");
+    assert_eq!(def("hit", false), 1, "{rows:?}");
+    assert_eq!(
+        counted(
+            &rows,
+            &[("feature", "hover".into()), ("outcome", "empty".into())]
+        ),
+        1,
+        "{rows:?}"
+    );
+    assert_eq!(
+        counted(
+            &rows,
+            &[
+                ("feature", "semanticTokens/full".into()),
+                ("outcome", "error:unsupported".into())
+            ]
+        ),
+        1,
+        "{rows:?}"
+    );
+    assert_eq!(counted(&rows, &[("feature", "session".into())]), 1);
+    // No agent in the environment, so the editor names the caller.
+    assert!(
+        rows.iter()
+            .filter(|r| r["surface"] == "lsp")
+            .all(|r| r["origin"] == "widgeteditor"),
+        "{rows:?}"
+    );
+    // Counts, not content: nothing the request named is kept.
+    let text = serde_json::to_string(&rows).unwrap();
+    assert!(!text.contains("app.rb") && !text.contains(&dir.display().to_string()));
+
     let _ = fs::remove_dir_all(&dir);
 }

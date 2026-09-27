@@ -275,6 +275,7 @@ command that prints honors `--json` / `--ndjson`.
 | `--ancestors NAME` | the linearized ancestor chain |
 | `--drop [PATH]` | forget a checkout's file map |
 | `--gc [--dry-run] [--older-than AGE] [--vacuum]` | remove checkouts nothing can reach again, and the blobs only they mapped |
+| `--usage [--days N]` | which commands and editor features get used, by whom, how often empty, how slow (see below) |
 
 `--refs` is **name-level, not resolved**: two unrelated `Config` classes both
 answer, and so does every `#save` on every receiver. Each row says what sort of
@@ -301,6 +302,37 @@ receiver shape, which is where layer 3 will start.
 `$TREKR_DB` overrides the database path (default
 `~/.local/share/trekr/trekr.db`); the e2e tests use it for isolation.
 
+### Usage counts
+
+`src/usage/` counts every use of the engine so features can be kept, cut or
+improved on evidence (DEC-063). One table, in its own file
+(`trekr.usage.db` beside the store, `$TREKR_USAGE` to move it or `off`):
+
+```text
+usage_daily(day, surface, feature, flags, origin, outcome, latency, cold, count)
+  PRIMARY KEY (every column but count), WITHOUT ROWID
+```
+
+- `surface` `cli` | `lsp`. `feature` is the command (`def`, `refs`, `card`,
+  `dead`, `index`, …, `invalid` for a call that did not parse) or the LSP
+  operation without its `textDocument/` prefix, plus the lifecycle events
+  `session`, `resume`, `reload`, `reload-failed`, `retire`, `index`.
+- `flags` names the knobs and variants reached for (`json`, `explain`, `bare`,
+  `by-name`, `snapped`, `stale`, `require`, `cut`), never their values.
+- `origin` is rq's caller taxonomy (`claude-code`, `cursor`, `ci`, `human`,
+  `piped`); an LSP session with no agent in its environment is labelled by the
+  client's `clientInfo.name`.
+- `outcome` `hit` | `uncertain` (ambiguous, confidence below 0.5, or residue
+  with ranked guesses) | `empty` | `not-indexed` | `cancelled` |
+  `error:<kind>`.
+- `latency` is a decade bucket (`<1ms` … `10s+`); `cold` marks an LSP
+  session's first request, including the first after a hot-reload resume.
+
+No query text, path, or repository name is stored. The CLI counts in `run()`
+after the command's output is written; the LSP after the response is sent.
+Rows older than 90 days are pruned on write. `--usage` folds the rows into one
+line per feature; `--json`/`--ndjson` emit the rows themselves.
+
 ## LSP front
 
 `trekr --lsp` (`src/serve/`) is a resident front over the same store: the CLI's
@@ -322,7 +354,7 @@ the new binary in place (DEC-050).
 | `fresh.rs` | refresh-on-save and the background `--index` child (DEC-039) |
 | `convert.rs` | UTF-16 ↔ byte columns, spans, a per-file line index |
 | `reload.rs` | hot reload: the launch-path stamp, probing the new build, the handoff file, the exec |
-| `log.rs` | the ndjson log `--usage` reads |
+| `log.rs` | the ndjson debugging log, and the usage counts for LSP operations and lifecycle events |
 
 **Mapping ranked answers onto LSP**, which has no confidence field:
 

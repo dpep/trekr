@@ -3065,3 +3065,58 @@ is waiting on, and its cost is bounded by the non-starvable tier.
 tier, or a quiet-machine measurement shows the index slowdown is larger than
 the few seconds seen here. The larger lever for foreground latency during an
 index is the write-lock wait, not priority.
+
+## DEC-063 — Usage is counted, per day, in its own file
+
+**Decided.** Every CLI command and every LSP operation adds one to a daily
+counter keyed by surface, feature, flags, caller, outcome, latency bucket and
+(for the LSP) whether it opened a session — `usage_daily` in
+`trekr.usage.db` beside the store. `--usage` summarizes it; `--json` emits the
+rows. It replaces `--usage`'s old summary of `lsp.log`, which saw only the LSP,
+while agents mostly reach trekr through the CLI and its skill.
+
+**Why counted, and why this coarse.** The point is evidence for keeping,
+cutting or improving a feature — rq deleted its learning feature on exactly
+this (rq DECISIONS D10: 349 searches, 346 from claude-code, none used
+`--show`/`--open`). Those questions need which feature, which knob, who asked,
+and whether it came back empty, not what was asked. So nothing that names code
+is kept: no query, no path, no repository (a repo hash was considered and
+left out — "how many checkouts" answers no keep/cut question). Latency is a
+decade bucket, because one invocation's timing to the millisecond is noise.
+The caller taxonomy is rq's, copied, so the two tools' tables compare; an LSP
+session with no agent in its environment is labelled by its client's name.
+
+**Why a separate file.** The store is a cache that a VERSION bump drops
+(DEC-009) — 22 of them so far, several a month at times. Usage is the one thing
+trekr holds that cannot be re-derived, and a history wiped at every extractor
+fix could never compare a feature before and after a release. A file of its
+own also keeps `--gc` and `--drop` away from it, and it follows `$TREKR_DB`, so
+an isolated store (every e2e test) gets isolated counts. `$TREKR_USAGE` moves
+it or turns it `off`. Rows older than 90 days are pruned on write; at a few
+dozen distinct rows a day that bounds the file to a few hundred KB.
+
+**Why after the answer.** The CLI counts in `run()` once the command has
+printed, the LSP once the response is on the wire, as rq did after finding its
+write's tail under load (rq DECISIONS D13). A process still exits after the
+write, so it is not free for a caller that waits on exit: `--def` on a small
+repo, release build, 300 interleaved runs each way — median 28.9 → 29.1 ms,
+p90 34.1 → 36.1 ms. Within the run-to-run noise. The LSP keeps one connection
+open, so its per-request cost is the upsert alone.
+
+**Outcomes.** `hit`, `uncertain` (ambiguous, confidence below 0.5, or residue
+with ranked guesses — an answer, but not the certainty the product sells),
+`empty`, `not-indexed`, `cancelled`, `error:<kind>`. A handler notes what only
+it knows — the cursor was snapped, the references were cut, the definition was
+a `require` — through a per-thread note the dispatcher takes, rather than a
+parameter threaded through every handler.
+
+**Also fixed.** The log summary counted a hot-reload `resume` as neither a
+session nor a reason to treat the next request as cold, so the successor's
+first request — which rebuilds everything — was blended into the warm median.
+Counting in the process gets it right by construction: a resumed process
+starts with its first request cold and counts a `resume`, not a `session`.
+
+**Not kept.** The old summary's history: `lsp.log` is still written and still
+holds it, but `--usage` does not import it. **Reverses if** a question needs
+what was asked rather than which feature asked it — that is the log's job, at
+`TREKR_LOG_LEVEL=debug`, not this table's.

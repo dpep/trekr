@@ -6,9 +6,9 @@
 //!   arrived, what came back, and how long each took. The first live session
 //!   returned empty for everything and we had to *guess* why; a log answers it
 //!   in one read.
-//! * **usage signal** — which of the nine operations an agent actually calls,
-//!   against which checkouts, and how often the answer is empty. That is the
-//!   feedback loop that picks what to build next.
+//! * **what was asked** — against which checkouts, and what came back. The
+//!   *counts* — which operations, by whom, how often empty — are kept apart in
+//!   `crate::usage` (DEC-063), which keeps nothing that names code.
 //!
 //! Never stdout: that is the LSP wire. Default is `lsp.log` beside the
 //! database, one compact object per line, at a level cheap enough to leave on.
@@ -32,6 +32,11 @@ pub(crate) enum Level {
 pub(crate) struct Log {
     sink: Option<Mutex<Sink>>,
     level: Level,
+    /// The usage counts (DEC-063): kept apart from the sink, so `TREKR_LOG=off`
+    /// silences the log without blinding `--usage`.
+    usage: crate::usage::Recorder,
+    /// Who the session is for — the environment's agent, else the editor.
+    origin: Mutex<String>,
 }
 
 enum Sink {
@@ -63,7 +68,37 @@ impl Log {
         Log {
             sink: sink.map(Mutex::new),
             level,
+            usage: crate::usage::Recorder::open(),
+            origin: Mutex::new(crate::usage::origin::detect_lsp(None)),
         }
+    }
+
+    /// Name the caller once the client has introduced itself.
+    pub(crate) fn set_client(&self, client: Option<&str>) {
+        if let Ok(mut origin) = self.origin.lock() {
+            *origin = crate::usage::origin::detect_lsp(client);
+        }
+    }
+
+    /// Count one use of a feature. Call it once the client has its answer.
+    pub(crate) fn count(
+        &self,
+        feature: &str,
+        flags: String,
+        outcome: crate::usage::Outcome,
+        latency: Option<std::time::Duration>,
+        cold: bool,
+    ) {
+        let origin = self.origin.lock().map(|o| o.clone()).unwrap_or_default();
+        self.usage.record(&crate::usage::Tally {
+            surface: "lsp",
+            feature,
+            flags,
+            origin: &origin,
+            outcome,
+            latency,
+            cold,
+        });
     }
 
     pub(crate) fn debugging(&self) -> bool {
@@ -190,6 +225,8 @@ mod tests {
                 .map(Sink::File)
                 .map(Mutex::new),
             level: Level::Debug,
+            usage: crate::usage::Recorder::off(),
+            origin: Mutex::new(String::new()),
         };
         assert!(!log.debugging());
         log.event("request", serde_json::json!({"op": "x"}));

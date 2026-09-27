@@ -135,6 +135,7 @@ pub(crate) fn definition(
     let uri = params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;
     if let Some(required) = required_at(session, &uri, position) {
+        crate::usage::flag("require");
         return Ok(required_definition(session.definition_links, required));
     }
     let Some((located, pos)) = target(session, &uri, position) else {
@@ -383,6 +384,11 @@ fn resolve_at(
             .collect(),
         Under::Call(call) => {
             let answer = crate::resolve::method_at(tree, &facts, &call, &path);
+            if answer.status != crate::tree::Status::Resolved
+                || answer.confidence < crate::usage::LOW_CONFIDENCE
+            {
+                crate::usage::outcome(crate::usage::Outcome::Uncertain);
+            }
             if !answer.sites.is_empty() {
                 answer
                     .sites
@@ -630,6 +636,7 @@ pub(crate) fn references(
         }),
     );
     if cut.is_cut() {
+        crate::usage::flag("cut");
         out.notify(
             "window/showMessage",
             serde_json::json!({ "type": 3, "message": cut.message() }),
@@ -715,6 +722,7 @@ fn constant_references(
         of: gather::Of::Constant,
     };
     if cut.is_cut() {
+        crate::usage::flag("cut");
         out.notify(
             "window/showMessage",
             serde_json::json!({ "type": 3, "message": cut.message() }),
