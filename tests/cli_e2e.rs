@@ -1696,6 +1696,46 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
     );
 }
 
+/// The index the LSP starts in the background prepares the tree snapshot its
+/// next request would otherwise assemble; an index someone runs does not.
+#[test]
+fn only_a_background_index_prepares_the_tree() {
+    let (dir, db) = scratch("prebuild");
+    repo(&dir);
+    let trees = db.with_extension("trees");
+    let files = || fs::read_dir(&trees).map_or(0, |d| d.count());
+    trekr(&db, &dir, &["--index"]);
+    assert_eq!(
+        files(),
+        0,
+        "a foreground index leaves the tree to the first query"
+    );
+
+    fs::write(dir.join("gadget.rb"), "class Gadget\nend\n").unwrap();
+    let background = Command::new(env!("CARGO_BIN_EXE_trekr"))
+        .arg("--index")
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .env("TREKR_BACKGROUND", "1")
+        .output()
+        .unwrap();
+    assert!(background.status.success());
+    assert_eq!(files(), 1);
+    let profiled = Command::new(env!("CARGO_BIN_EXE_trekr"))
+        .args(["--ancestors", "Gadget"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .env("TREKR_PROFILE", "1")
+        .output()
+        .unwrap();
+    let profile = String::from_utf8_lossy(&profiled.stderr);
+    assert!(
+        profile.contains("snapshot-load") && !profile.contains("assemble"),
+        "the query maps what the index prepared: {profile}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A query leaves its checkout's tree snapshot beside the store. Once the
 /// index moves on without another query, `--gc` removes the one nothing names
 /// any more — and never the current one.

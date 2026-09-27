@@ -221,6 +221,11 @@ fn spawn(root: &Path) -> std::io::Result<Child> {
 /// `trekr --index` someone runs by hand stays at full speed.
 const BACKGROUND: &str = "TREKR_BACKGROUND";
 
+/// Is this an index run the LSP spawned?
+pub(crate) fn in_background() -> bool {
+    std::env::var_os(BACKGROUND).is_some()
+}
+
 /// In an index run the LSP spawned: drop CPU priority by 10 and disk I/O to a
 /// low but not starvable tier, and log what the kernel then holds — read
 /// back, not assumed, so a refused request shows as `unchanged`. Any other
@@ -233,7 +238,7 @@ const BACKGROUND: &str = "TREKR_BACKGROUND";
 /// Call before the run starts a thread: on Linux both settings are
 /// per-thread, and only threads created afterwards inherit them.
 pub(crate) fn yield_if_background() {
-    if std::env::var_os(BACKGROUND).is_none() {
+    if !in_background() {
         return;
     }
     // Best-effort: a refusal just means a less polite index.

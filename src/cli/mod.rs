@@ -656,6 +656,15 @@ fn cmd_index(
             );
         }
     }
+    // The LSP's own index prepares the tree its next request would otherwise
+    // assemble on the request thread. A run someone is waiting on does not:
+    // the cost is the same wherever it lands, and they may never query
+    // (DEC-065).
+    if crate::serve::fresh::in_background() {
+        profile::timed(&mut profile, "tree", || {
+            build_tree(&store, &root_str).map(|_| ())
+        })?;
+    }
     if let Some(profile) = profile {
         match out {
             Output::Text => profile.report_text(),
