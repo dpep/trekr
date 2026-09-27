@@ -433,23 +433,37 @@ fn agreement(receiver: &Receiver) -> Option<String> {
         .then(|| format!("{}/{}", receiver.agreeing, receiver.total))
 }
 
-/// The type a call's receiver resolves to, and whether it is the class itself
-/// (a singleton lookup) — the ladder's answer without a method lookup, for a
-/// caller that lists what the receiver has rather than finding one method on
-/// it (LSP completion, DEC-040).
+/// A receiver's type without a method lookup.
+pub(crate) struct ReceiverType {
+    pub(crate) fqn: String,
+    /// The class itself: a singleton lookup.
+    pub(crate) singleton: bool,
+    /// Another type was a known possibility, so what `fqn` has is not all
+    /// the receiver might.
+    pub(crate) ambiguous: bool,
+}
+
+/// The ladder's answer without a method lookup, for a caller that lists what
+/// the receiver has rather than finding one method on it (LSP completion,
+/// DEC-040).
 pub(crate) fn receiver_type(
     tree: &Tree,
     facts: &Facts,
     call: &Call,
     path: &str,
-) -> Option<(String, bool)> {
+) -> Option<ReceiverType> {
     receiver_of(tree, facts, call, path)
         .or_else(|| unanswered_guess(tree, facts, call, path))
-        .map(|receiver| (receiver.fqn, receiver.singleton))
+        .map(|receiver| ReceiverType {
+            fqn: receiver.fqn,
+            singleton: receiver.singleton,
+            ambiguous: receiver.ambiguous,
+        })
 }
 
 /// Completion asks before the method's name is written, so a guess by
-/// return type has no call to answer yet and is taken as it stands.
+/// return type has no call to answer yet and is taken as it stands — still
+/// `ambiguous` when a definition declared nothing, which the caller must say.
 fn unanswered_guess(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiver> {
     let RecvValue::Call(at) = call.recv_value.as_ref()? else {
         return None;

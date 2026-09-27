@@ -169,12 +169,23 @@ pub(crate) fn completion(
 
     let (tree, members) = session.members(&located.root)?;
     let mut list = Ranked::new(&prefix, &located.root);
+    let mut incomplete = false;
     match (&context, under) {
         (Context::Member, Some(Under::Call(call))) => {
             match crate::resolve::receiver_type(tree, &facts, &call, &located.relative) {
-                Some((fqn, singleton)) => {
+                Some(receiver) => {
                     let private = call.recv == RecvShape::SelfRecv;
-                    add_methods(&mut list, tree, members, &fqn, singleton, private, 1);
+                    add_methods(
+                        &mut list,
+                        tree,
+                        members,
+                        &receiver.fqn,
+                        receiver.singleton,
+                        private,
+                        1,
+                    );
+                    // One reading of several: the client must ask again.
+                    incomplete = receiver.ambiguous;
                 }
                 None => {
                     // Untyped: a few names that fit, said to be guesses, and
@@ -222,7 +233,7 @@ pub(crate) fn completion(
         }
         _ => {}
     }
-    Ok(Some(list.finish(false)))
+    Ok(Some(list.finish(incomplete)))
 }
 
 /// `completionItem/resolve`: the chosen item's signature as written and its

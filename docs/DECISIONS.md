@@ -1915,6 +1915,15 @@ knowledge is the flood this engine exists to avoid.
 the design-point monorepo — then it becomes a store query per owner instead of
 a whole-table load.
 
+**Amended after 0.3.0: an `ambiguous` receiver lists as incomplete.** A chain
+typed by name (DEC-077) is a guess, and completion listed it as the whole
+answer: `x.strip.` offered String's methods with `isIncomplete: false` though
+a `strip` in the app declares nothing. Any receiver the ladder calls
+`ambiguous` now marks the list incomplete, so the client asks again as the
+prefix narrows. The guess is still listed rather than dropped: `x.to_s.` is
+ambiguous in every real app (`NilClass#to_s` alone declares nothing), and
+dropping it would remove chain completion outright.
+
 ## DEC-041 — A bundle's gems are written in one transaction
 
 **Decided.** `--index` writes the checkout in its own transaction, as before,

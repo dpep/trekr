@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Completion after a guessed chain says it is not the whole list.** When
+  the receiver's type was one reading of several (`x.strip.` where the app
+  also defines a `strip`), the editor was told the list was complete and did
+  not ask again as you typed.
+
 - **A class method's return type is not overruled by an instance method's.**
   `self.class.build.spin` resolved to `Gadget#spin` because an unrelated
   instance method `Kit#build` returns a Gadget, even though the class method

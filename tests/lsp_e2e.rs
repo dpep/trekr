@@ -3105,7 +3105,8 @@ fn completion_on_an_untyped_receiver_is_short_and_disclosed() {
 
 /// A chain typed by what every definition of the previous name returns
 /// completes as go-to-definition resolves it, though the next name is not
-/// written yet.
+/// written yet — and says it is not the whole answer when a definition
+/// declared nothing.
 #[test]
 fn completion_after_a_chain_lists_what_the_chain_returns() {
     let (dir, _db, mut session) = indexed_session("complete-chain", SHOP);
@@ -3113,12 +3114,35 @@ fn completion_after_a_chain_lists_what_the_chain_returns() {
     let (labels, incomplete) = complete(
         &mut session,
         &dir,
-        &format!("{SHOP}def go(x)\n  x.to_s.\n"),
+        &format!("{SHOP}def go(x)\n  x.lines.\n"),
         18,
         2,
     );
+    assert!(labels.contains(&"flatten".to_string()), "{labels:?}");
+    assert!(
+        !incomplete,
+        "every definition agreed, so the listing is whole"
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+
+    // Label#strip declares nothing, so String is one reading of two.
+    let labelled = format!("{SHOP}class Label\n  def strip; end\nend\n");
+    let (dir, _db, mut session) = indexed_session("complete-chain-split", &labelled);
+    session.read();
+    let (labels, incomplete) = complete(
+        &mut session,
+        &dir,
+        &format!("{labelled}def go(x)\n  x.strip.\n"),
+        21,
+        2,
+    );
     assert!(labels.contains(&"upcase".to_string()), "{labels:?}");
-    assert!(!incomplete, "a typed receiver's listing is whole");
+    assert!(
+        incomplete,
+        "a guess among competitors is not the whole answer"
+    );
 
     session.stop();
     let _ = fs::remove_dir_all(&dir);
