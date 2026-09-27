@@ -4099,5 +4099,36 @@ directory where a file is asked for, a position with line or column `0`.
 Settings that make a command have nothing to say are not mistakes:
 `TREKR_USAGE=off` makes `--usage` exit `1`, with nothing recorded.
 
+*One name per concept in JSON.* A field means the same thing in every
+command that reports it, and a command that reports the fact uses that name:
+
+| Field | Means |
+|---|---|
+| `query` | the input, exactly as typed — never a path trekr rewrote |
+| `fqn` | the constant it resolved to |
+| `name` | the name at a position (`--def`), or a definition's own name (rows) |
+| `definition` | where the thing asked about is defined: an array of sites, always present, `[]` when unknown |
+| `candidates[].site` | one ranked guess's location, when there is no `definition` |
+| `receiver`, `receiver_text`, `receiver_type` | a call's receiver shape, its source text, its resolved type |
+| `unresolved_ancestors` | ancestors that could not be seen, top level and per variant |
+| `path`, `root`, `line`, `col` | every located object has all four (DEC-076) |
+| `repo` | a checkout's identity (`--index`, `--drop`, `--status`, `not_indexed`) |
+
+**Before**, each command named a fact as it was written: `--ancestors` said
+`name` and `unresolved` where the card said `query` and
+`unresolved_ancestors`, and the card's own `variants[]` said `unresolved`.
+Bare `--refs` rows said `recv`/`recv_text`, the storage column names, beside
+`Owner#m` rows that said `receiver`. `--def` said `sites` where the card and
+`--refs` said `definition`, and left it out of a residue, so a caller read two
+fields to learn where to go. `--symbols` rows had no `path`, `--dead` rows no
+`col`, and `--def`'s `query` was the canonical absolute path for a variable
+but the typed path otherwise. The renames were clean breaks, pre-1.0, with
+the migration in the changelog.
+
+*Why `definition` over `sites`.* It says what the locations are. `--refs` has
+`references` beside it, which are sites too; `sites` would not say which.
+
 **Reverses if** a caller needs "certainly absent" and "not seen" told apart by
 the number alone. Then residue gets a code of its own above `2`, never `2`.
+A new field that repeats a concept above under another name is the drift
+this closes; name it from the table.

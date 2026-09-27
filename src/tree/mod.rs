@@ -455,7 +455,8 @@ pub(crate) struct Resolution {
     /// these is a weaker "no" than one carrying none.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) unresolved_ancestors: Vec<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    /// `definition` on the wire, always present (DEC-080).
+    #[serde(rename = "definition")]
     pub(crate) sites: Vec<Site>,
 }
 

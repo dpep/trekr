@@ -133,7 +133,7 @@ line's other names as `alternatives`, so a follow-up can be exact. No
 `residue` with `reason: "no name at this position"`.
 
 **On a variable, `--def` answers the variable**, not the nearest call:
-`under: variable`, `resolved_via: flow`, and `sites` are the writes its value
+`under: variable`, `resolved_via: flow`, and `definition` is the writes its value
 can come from (`kind: assigned`).
 
 | `variable` | where the writes come from |
@@ -208,7 +208,7 @@ undetermined, not that the tool failed.
 ```json
 { "status": "resolved", "owner": "Widget", "kind": "declaration",
   "defined_via": "belongs_to",
-  "sites": [{"path": "app/models/widget.rb", "root": "/…/app", "line": 7}] }
+  "definition": [{"path": "app/models/widget.rb", "root": "/…/app", "line": 7}] }
 ```
 
 * **`definition`** — the body is there. A `def`, or a `define_method` block
@@ -227,7 +227,7 @@ wants — `belongs_to :supplier` explains `widget.supplier` better than the
 `define_method` inside Rails does — but it is **not** the code that runs, so do
 not go looking for a body there. Residue candidates carry their own `kind` too.
 
-(`kind` on the answer is about the *location*. `kind` inside `sites[]` and
+(`kind` on the answer is about the *location*. `kind` inside `definition[]` and
 `--symbols` is about the *symbol* — class, module, method, constant. Different
 questions, different nesting levels.)
 
@@ -262,7 +262,7 @@ trekr --ancestors Post --json               # linearized chain, unresolved named
 — common in a monorepo, where a test fake `Post = Struct.new(…)` sits beside
 `class Post < ActiveRecord::Base`. Ruby would refuse to load both, so trekr
 keeps them apart: `--ancestors Post` answers `status: ambiguous` with one entry
-per variant under `variants` (`ancestors`, `definition`, `unresolved`), and
+per variant under `variants` (`ancestors`, `definition`, `unresolved_ancestors`), and
 the top-level chain is just `[Post]`; the bare card `trekr Post` answers the
 same way. Other queries pick the variant nearest
 the file asking; when none is nearest, `--def` is `ambiguous` and `--refs`
@@ -271,6 +271,11 @@ tiers the site `possible`.
 ## Reading the output
 
 * `--json` everywhere; `--ndjson` for streaming.
+* One name per fact across commands: `query` is what you typed, `fqn` what
+  it resolved to, `definition` where it is defined (always present, `[]` when
+  unknown), `receiver`/`receiver_text`/`receiver_type` for a call's receiver,
+  `unresolved_ancestors` for what could not be seen, and `path` + `root` +
+  `line` + `col` on everything located.
 * Branch on the exit code; never read an error as "nothing found":
 
   | exit | means | do |

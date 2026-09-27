@@ -166,7 +166,7 @@ def verdict(site, answer):
     if answer.get("under") == "variable":
         return "column-mismatch"
 
-    reported = answer.get("sites") or []
+    reported = answer.get("definition") or []
     if answer.get("status") == "resolved" or reported:
         if hits(reported, site):
             return "correct"

@@ -171,6 +171,7 @@ fn every_path_is_relative_to_the_root_beside_it() {
             &dir,
             &["--dead", &format!("{root}/widget.rb"), "--json"],
         )),
+        json(&trekr(&db, &dir, &["--symbols", "widget.rb", "--json"])),
     ];
     for answer in &answers {
         let mut found = Vec::new();
@@ -180,6 +181,13 @@ fn every_path_is_relative_to_the_root_beside_it() {
             assert_eq!(path, "widget.rb", "{answer}");
             assert_eq!(at, serde_json::json!(root), "{answer}");
         }
+    }
+
+    // `query` is what was typed, wherever the caller stands.
+    let absolute = format!("{root}/widget.rb:7:5");
+    for spec in ["widget.rb:7:5", absolute.as_str()] {
+        let answer = json(&trekr(&db, &dir, &["--def", spec, "--json"]));
+        assert_eq!(answer["query"], spec, "{answer}");
     }
 
     // Text writes a path in the checkout relative to it, definitions included.
@@ -564,7 +572,7 @@ fn refs_disclose_the_receiver_rather_than_guessing_at_it() {
         .as_array()
         .unwrap()
         .iter()
-        .map(|r| (r["role"].as_str().unwrap(), r["recv"].as_str()))
+        .map(|r| (r["role"].as_str().unwrap(), r["receiver"].as_str()))
         .collect();
     assert_eq!(
         seen,
@@ -635,7 +643,7 @@ fn def_resolves_a_constant_through_the_ancestor_chain() {
     assert_eq!(answer["fqn"], "Shop::Base::SIZE");
     assert_eq!(answer["resolved_via"], "ancestor");
     assert_eq!(answer["confidence"], 1.0);
-    assert_eq!(answer["sites"][0]["line"], 3);
+    assert_eq!(answer["definition"][0]["line"], 3);
     assert_eq!(
         trekr(&db, &dir, &["--def", "app.rb:9:7"]).status.code(),
         Some(0)
@@ -672,7 +680,7 @@ fn def_resolves_an_implicit_call_through_the_ancestor_chain() {
     assert_eq!(answer["resolved_via"], "self");
     assert_eq!(answer["receiver_type"], "Shop::Widget");
     assert_eq!(answer["owner"], "Shop::Base");
-    assert_eq!(answer["sites"][0]["line"], 4);
+    assert_eq!(answer["definition"][0]["line"], 4);
     assert_eq!(answer["confidence"], 1.0);
 
     let _ = fs::remove_dir_all(&dir);
@@ -795,6 +803,70 @@ fn a_constant_card_on_a_split_name_lists_each_declaration() {
         serde_json::json!([]),
         "both superclasses resolve, each in its own declaration's chain"
     );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// One fact, one field name, in every command that reports it (DEC-080).
+#[test]
+fn the_same_fact_has_the_same_name_in_every_command() {
+    let (dir, db) = scratch("names");
+    repo(&dir);
+    fs::write(
+        dir.join("use.rb"),
+        "w = Widget.new\nw.resize(1)\nx.resize(2)\n",
+    )
+    .unwrap();
+    trekr(&db, &dir, &["--index"]);
+    let keys = |v: &serde_json::Value| -> Vec<String> {
+        let mut keys: Vec<String> = v.as_object().unwrap().keys().cloned().collect();
+        keys.sort();
+        keys
+    };
+
+    let chain = json(&trekr(&db, &dir, &["--ancestors", "Widget", "--json"]));
+    let card = json(&trekr(&db, &dir, &["Widget", "--json"]));
+    for answer in [&chain, &card] {
+        assert_eq!(answer["query"], "Widget", "{answer}");
+        assert_eq!(answer["fqn"], "Widget", "{answer}");
+        assert_eq!(
+            answer["unresolved_ancestors"],
+            serde_json::json!(["Base", "Trackable"]),
+            "{answer}"
+        );
+    }
+    assert!(!keys(&chain).contains(&"unresolved".to_string()), "{chain}");
+
+    // A receiver is `receiver`/`receiver_text`, by name or narrowed.
+    let rows = json(&trekr(&db, &dir, &["--refs", "resize", "--json"]));
+    let call = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["line"] == 2)
+        .unwrap();
+    assert_eq!(
+        (&call["receiver"], &call["receiver_text"]),
+        (&"local".into(), &"w".into())
+    );
+    let narrowed = json(&trekr(&db, &dir, &["--refs", "Widget#resize", "--json"]));
+    assert_eq!(narrowed["references"][0]["receiver"], "local", "{narrowed}");
+
+    // Where a thing is defined is `definition`, present even when unknown.
+    let resolved = json(&trekr(&db, &dir, &["--def", "use.rb:2:3", "--json"]));
+    assert_eq!(resolved["definition"][0]["line"], 6, "{resolved}");
+    let residue = json(&trekr(&db, &dir, &["--def", "use.rb:3:3", "--json"]));
+    assert_eq!(residue["definition"], serde_json::json!([]), "{residue}");
+    assert!(
+        residue["candidates"][0]["site"]["line"].is_number(),
+        "{residue}"
+    );
+
+    // Every located row has a line and a column.
+    let dead = json(&trekr(&db, &dir, &["--dead", "widget.rb", "--json"]));
+    for row in dead["candidates"].as_array().unwrap() {
+        assert!(row["col"].is_number(), "{row}");
+    }
 
     let _ = fs::remove_dir_all(&dir);
 }
@@ -1620,9 +1692,9 @@ fn a_gem_position_answers_from_an_app_that_resolves_it() {
         answer["status"], "resolved",
         "the sibling gem's method is reachable: {answer}"
     );
-    assert_eq!(answer["sites"][0]["path"], "lib/helper.rb", "{answer}");
+    assert_eq!(answer["definition"][0]["path"], "lib/helper.rb", "{answer}");
     assert!(
-        answer["sites"][0]["root"]
+        answer["definition"][0]["root"]
             .as_str()
             .unwrap()
             .ends_with("helper-1.0.0"),
@@ -1883,7 +1955,7 @@ fn a_query_refreshes_the_file_it_asks_about_and_says_the_rest_may_lag() {
     );
     assert_eq!(value["index"]["refreshed"], "widget.rb");
     assert_eq!(
-        value["sites"][0]["line"], 14,
+        value["definition"][0]["line"], 14,
         "the answer must use the moved definition: {value}"
     );
 
@@ -1942,7 +2014,7 @@ fn read_commands_answer_and_exit_while_another_process_writes() {
     assert_eq!(value["index"]["busy"], "widget.rb", "{value}");
     assert!(value["index"]["refreshed"].is_null(), "{value}");
     assert_eq!(
-        value["sites"][0]["line"], 12,
+        value["definition"][0]["line"], 12,
         "answered from the committed index: {value}"
     );
 
@@ -1950,7 +2022,7 @@ fn read_commands_answer_and_exit_while_another_process_writes() {
     let value = json(&trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]));
     assert_eq!(value["index"]["refreshed"], "widget.rb", "{value}");
     assert!(value["index"].get("busy").is_none(), "{value}");
-    assert_eq!(value["sites"][0]["line"], 14, "{value}");
+    assert_eq!(value["definition"][0]["line"], 14, "{value}");
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -1984,7 +2056,7 @@ fn an_edit_git_has_not_noticed_is_not_seen_by_the_probe() {
     assert!(trekr(&db, &dir, &["--index"]).status.success());
     let out = trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]);
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(value["sites"][0]["line"], 14, "after --index: {value}");
+    assert_eq!(value["definition"][0]["line"], 14, "after --index: {value}");
 }
 
 /// `trekr <input>` dispatches on shape (DEC-036), and every shape speaks JSON.

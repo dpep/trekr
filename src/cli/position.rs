@@ -215,14 +215,13 @@ pub(crate) fn variable_at(
         })
         .collect();
     let mut answer = serde_json::json!({
-        "query": format!("{path}:{line}:{col}"),
         "under": "variable",
         "variable": variable,
         "name": under.name,
         "status": if sites.is_empty() { "residue" } else { "resolved" },
         "confidence": if sites.is_empty() { 0.0 } else { 1.0 },
         "resolved_via": "flow",
-        "sites": sites,
+        "definition": sites,
     });
     let reason = match (under.sigil, writes.is_empty()) {
         (Sigil::Local, true) => Some("no write to this local reaches here"),

@@ -284,7 +284,7 @@ def main(path):
             return None
         if answer.get("name") and answer["name"] != site["method"]:
             return None  # a gold-column fault, not an engine outcome
-        if answer.get("status") == "resolved" or answer.get("sites"):
+        if answer.get("status") == "resolved" or answer.get("definition"):
             return None  # trekr committed; this script is about the declines
         return classify(site, answer, app_root)
 

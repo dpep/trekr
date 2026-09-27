@@ -72,7 +72,7 @@ def ask(site):
 
 def found_truth(answer, site):
     """Did trekr name the true definition, resolved or as a candidate?"""
-    places = list(answer.get("sites") or [])
+    places = list(answer.get("definition") or [])
     places += [c.get("site", {}) for c in answer.get("candidates") or []]
     for place in places:
         path = os.path.join(place.get("root") or "", place.get("path") or "")

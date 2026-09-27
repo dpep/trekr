@@ -1341,9 +1341,11 @@ pub(crate) struct Ref {
     pub(crate) role: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) kind: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// `receiver`/`receiver_text` on the wire, the names every other answer
+    /// gives the same facts (DEC-080).
+    #[serde(rename = "receiver", skip_serializing_if = "Option::is_none")]
     pub(crate) recv: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "receiver_text", skip_serializing_if = "Option::is_none")]
     pub(crate) recv_text: Option<String>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(crate) nesting: Vec<String>,
@@ -1387,7 +1389,7 @@ impl From<&Def> for Symbol {
 
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct Symbol {
-    /// Empty for `--symbols`, which already knows the file it asked about.
+    /// Empty for a freshly parsed definition until the caller names its file.
     #[serde(skip_serializing_if = "String::is_empty")]
     pub(crate) path: String,
     /// The checkout `path` is relative to. An internal join key — a

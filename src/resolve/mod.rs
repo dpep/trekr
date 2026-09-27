@@ -81,7 +81,9 @@ pub(crate) struct MethodAnswer {
     /// rather than merely being warned about it.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) defined_via: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    /// `definition` on the wire, as in every answer that names where a thing
+    /// is defined; always present, empty for a residue (DEC-080).
+    #[serde(rename = "definition")]
     pub(crate) sites: Vec<Site>,
     /// Assignments that agreed / were considered, when a rung inferred a type.
     #[serde(skip_serializing_if = "Option::is_none")]

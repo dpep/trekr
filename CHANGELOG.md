@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Changed
+
+- **JSON fields are named the same in every command** (DEC-080). Update a
+  consumer that reads the old names:
+  - `--def`: `sites` is now `definition`, and it is always present (`[]` for
+    a residue). `query` is what you typed; for a variable it was the
+    absolute path.
+  - `--ancestors`: `name` is now `query`, and `unresolved` is now
+    `unresolved_ancestors`, as on the card.
+  - `variants[].unresolved` (`--ancestors` and the card) is now
+    `variants[].unresolved_ancestors`.
+  - bare `--refs NAME` rows: `recv` is now `receiver`, `recv_text` is now
+    `receiver_text`, as in `--refs Owner#m` and `--def`.
+
 - **An error's message under `--json` no longer starts with `trekr:`.** The
   prefix tells a terminal whose error it is; stderr keeps it. Outside a git
   checkout the message says so plainly instead of quoting `git rev-parse`.
@@ -12,6 +26,11 @@
   exits `1` with nothing recorded, not `64`: the command line was fine.
   `--usage` on an editor that only opened and closed reports its sessions
   instead of a bare heading.
+
+### Added
+
+- `--symbols` rows carry `path` and `root`, and `--dead` rows carry `col`,
+  like every other located row.
 
 ## 0.3.0 — 2026-09-27
 

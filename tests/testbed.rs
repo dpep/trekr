@@ -272,7 +272,7 @@ fn check_def(
                 .unwrap_or("<none>")
                 .to_string(),
             "site" => {
-                let site = &answer["sites"][0];
+                let site = &answer["definition"][0];
                 format!(
                     "{}:{}",
                     site["path"].as_str().unwrap_or("<none>"),
@@ -418,7 +418,7 @@ fn every_testbed_case_answers_as_recorded() {
                             continue;
                         };
                         let want: Vec<&str> = listed.split(',').filter(|n| !n.is_empty()).collect();
-                        let got: Vec<&str> = answer["unresolved"]
+                        let got: Vec<&str> = answer["unresolved_ancestors"]
                             .as_array()
                             .map(|a| a.iter().filter_map(|n| n.as_str()).collect())
                             .unwrap_or_default();

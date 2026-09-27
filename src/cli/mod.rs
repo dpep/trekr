@@ -472,6 +472,24 @@ fn answering_in(store: &Store, root: &str) {
     });
 }
 
+/// Answer about one file that needs no index (`--symbols`): paths are
+/// written against its git checkout, and against the checkouts a store
+/// already holds. Never creates a store just to say where a file is.
+fn answering_about(file: &Path) {
+    let base = scan::repo_root(file).ok();
+    let mut roots: Vec<String> = crate::store::default_path()
+        .ok()
+        .filter(|db| db.exists())
+        .and_then(|_| open_store().ok())
+        .and_then(|store| store.roots().ok())
+        .unwrap_or_default();
+    roots.extend(base.iter().map(|b| b.to_string_lossy().into_owned()));
+    ROOTING.get_or_init(|| Rooting {
+        base: base.map_or_else(String::new, |b| b.to_string_lossy().into_owned()),
+        roots,
+    });
+}
+
 impl Rooting {
     /// A path as the checkout holding it names it, and that checkout's root.
     /// Ruby core and a file in no indexed checkout keep their path, rootless.
@@ -904,7 +922,16 @@ fn cmd_status(out: Output) -> anyhow::Result<ExitCode> {
 fn cmd_symbols(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
     let source = read_input(path)?;
     let facts = extract::extract(&source);
-    let symbols: Vec<crate::store::Symbol> = facts.defs.iter().map(Into::into).collect();
+    let file = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut symbols: Vec<crate::store::Symbol> = facts.defs.iter().map(Into::into).collect();
+    // Every row carries its location, like every other answer's (DEC-080).
+    if out != Output::Text {
+        answering_about(&file);
+        let file = file.to_string_lossy().into_owned();
+        for symbol in &mut symbols {
+            symbol.path.clone_from(&file);
+        }
+    }
 
     if emit_rows(out, &symbols)? {
         return Ok(exit_on(!symbols.is_empty()));
@@ -1696,6 +1723,7 @@ fn dead_in(
             "owner": owner,
             "path": file,
             "line": def.pos.line,
+            "col": def.pos.col,
             "tier": tier,
             "confirmed": counts.confirmed,
             "possible": counts.possible,
@@ -1863,12 +1891,13 @@ fn cmd_def(
         return report(
             out,
             serde_json::json!({
-                "query": format!("{}:{}:{}", spec.path, spec.line, spec.col),
+                "query": written,
                 "under": "call",
                 "name": "super",
                 "receiver": "super",
                 "status": "residue",
                 "confidence": 0.0,
+                "definition": [],
                 "reason": "`super` in a method whose owner the source does not name — \
                            outside a method, `def obj.x`, or a `def` inside a block",
             }),
@@ -1883,8 +1912,10 @@ fn cmd_def(
         && let Some(answer) = position::variable_at(&source, &file, spec.line, spec.col)
     {
         crate::usage::flag("variable");
+        let mut answer = answer;
+        answer["query"] = written.into();
         let resolved = answer["status"] == "resolved";
-        let text = match answer["sites"].get(0) {
+        let text = match answer["definition"].get(0) {
             Some(site) => format!(
                 "{}:{}:{}  {} `{}`",
                 shown(site["path"].as_str().unwrap_or_default()),
@@ -1906,9 +1937,10 @@ fn cmd_def(
         return report(
             out,
             serde_json::json!({
-                "query": format!("{}:{}:{}", spec.path, spec.line, spec.col),
+                "query": written,
                 "status": "residue",
                 "confidence": 0.0,
+                "definition": [],
                 "reason": "no name at this position",
             }),
             false,
@@ -1916,7 +1948,7 @@ fn cmd_def(
         );
     };
 
-    let query = format!("{}:{}:{}", spec.path, spec.line, spec.col);
+    let query = written.to_string();
     // Which checkout's assembled namespace answered. It is only ever a
     // surprise for a position inside a gem, which is answered from an app that
     // resolves it — and an answer that depends on which app must say which.
@@ -1932,7 +1964,7 @@ fn cmd_def(
             "status": "resolved",
             "confidence": 1.0,
             "resolved_via": "definition",
-            "sites": [{
+            "definition": [{
                 "path": file, "line": def.pos.line,
                 "col": def.pos.col, "kind": def.kind.as_str(),
             }],
@@ -2055,7 +2087,7 @@ fn cmd_def(
         );
     }
     let resolved = answer["status"] == "resolved" || answer["status"] == "ambiguous";
-    let text = match answer["sites"].as_array().and_then(|s| s.first()) {
+    let text = match answer["definition"].as_array().and_then(|s| s.first()) {
         Some(site) => format!(
             "{}:{}:{}  {}",
             shown(site["path"].as_str().unwrap_or_default()),
@@ -2172,7 +2204,7 @@ fn cmd_ancestors(out: Output, name: &str) -> anyhow::Result<ExitCode> {
         return report(
             out,
             serde_json::json!({
-                "name": name,
+                "query": name,
                 "status": "residue",
                 "confidence": 0.0,
                 "scopes_tried": resolution.scopes_tried,
@@ -2191,11 +2223,11 @@ fn cmd_ancestors(out: Output, name: &str) -> anyhow::Result<ExitCode> {
     report(
         out,
         serde_json::json!({
-            "name": name,
-            "fqn": fqn,
+            "query": name,
             "status": "resolved",
+            "fqn": fqn,
             "ancestors": ancestors,
-            "unresolved": chain.unresolved,
+            "unresolved_ancestors": chain.unresolved,
         }),
         true,
         &text,
@@ -2215,11 +2247,11 @@ fn split_ancestors(
     report(
         out,
         serde_json::json!({
-            "name": name,
-            "fqn": fqn,
+            "query": name,
             "status": "ambiguous",
+            "fqn": fqn,
             "ancestors": [fqn],
-            "unresolved": split.unresolved,
+            "unresolved_ancestors": split.unresolved,
             "variants": split.listed,
         }),
         true,
@@ -2269,7 +2301,7 @@ impl Split {
             split.listed.push(serde_json::json!({
                 "definition": sites,
                 "ancestors": ancestors,
-                "unresolved": chain.unresolved,
+                "unresolved_ancestors": chain.unresolved,
             }));
         }
         split
