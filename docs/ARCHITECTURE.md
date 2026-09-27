@@ -129,6 +129,16 @@ Two things the blob layer cannot know, resolved here:
   where go-to-definition on `Bar` belongs — but anywhere a *namespace* is
   wanted (`Bar::Baz`, `class Foo < Bar`) the alias is followed through.
 
+**A name declared with two superclasses is split** (DEC-072). Ruby raises
+"superclass mismatch" when both load, so a checkout holding `class Post <
+ActiveRecord::Base` and a test fake's `Post = Struct.new` holds two programs.
+Each superclass becomes a variant entry, `Post@1`, `Post@2`, holding that
+superclass and the mixins, extends and methods written nearest its
+declarations. `Post` keeps its sites and namespace and no ancestry. Queries map
+the name to the variant nearest the calling file (`Tree::variant_at`), with
+the file named for the class breaking a tie. Output names a variant by its
+name (`public_name`). An `.rbi` superclass never splits a name.
+
 **Flat once assembled** (DEC-060). Assembly writes a map, because placing a
 declaration reads the namespace still being written. The finished namespace is
 laid out as one flat byte layout ([`tree/snapshot.rs`](../src/tree/snapshot.rs))
@@ -1088,6 +1098,11 @@ Deliberate, and cheap to close when they earn it:
   *not* assigned to a constant is no scope at all — its methods land on the
   enclosing one, and their `super` is not recorded — and `class Foo <
   Struct.new(:a)` gets no member readers.
+- A name split by conflicting superclasses (DEC-072) is split by path
+  proximity, not by what each program loads. A superclass-less reopen equally
+  near two variants joins both, so a third program's plain `class User` is not
+  a class of its own. Constant lookup inside a split class's body does not
+  search the variant's ancestors.
 - `private_constant` / `private_class_method` are not read.
 - Instance, class, and global variables are not in the index (not in PLAN
   §4's Phase 1 fact set). The LSP answers locals, ivars and cvars from the

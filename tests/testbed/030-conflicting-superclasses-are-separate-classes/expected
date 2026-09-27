@@ -1,0 +1,22 @@
+# Two programs in one repository each define `Post`: a model (`class Post <
+# Record`) and a test fake (`Post = Struct.new`). Ruby would raise "superclass
+# mismatch" if both loaded, so they are two classes, not one reopened class.
+# Merged, the fake's superclass won and its mixins joined the model's chain,
+# and `Post.find_each` beside the model's tests lost its answer (DEC-072).
+def record/test/cases/batches_test.rb:3:10 status=resolved owner=Record via=const
+def record/test/cases/batches_test.rb:4:17 status=resolved owner=Record via=const
+def pack/test/fake_test.rb:4:10 status=resolved owner=Naming via=local:new
+# The fake's members are not the model's methods, and the model's are not the fake's.
+def record/test/cases/batches_test.rb:6:10 status=residue
+def pack/test/fake_test.rb:5:10 status=residue
+# The implicit receiver in the model's own file is the model.
+def record/test/models/post.rb:3:5 status=resolved owner=Record via=self
+ancestors SpecialPost SpecialPost,Post,Record,Object
+# Equally near both: the one declared in the file named for it is the one a
+# require or an autoloader reaches from anywhere.
+def guides/elsewhere.rb:3:10 status=resolved owner=Record via=const
+# Equally near and both in `item.rb`: ambiguous, never a silent pick.
+def guides/elsewhere.rb:4:10 status=ambiguous owner=Record candidates=0
+ancestors Item Item
+refs Record.find_each confirmed=1
+refs Naming#to_param confirmed=1

@@ -952,8 +952,9 @@ fn cmd_card(out: Output, text: &str) -> anyhow::Result<ExitCode> {
             );
         };
         let chain = tree.ancestors(&fqn);
+        let ancestors = public_chain(&chain.chain);
         let sites = tree.sites(&fqn).to_vec();
-        let text_out = card_text(&fqn, &sites, &chain.chain, None);
+        let text_out = card_text(&fqn, &sites, &ancestors, None);
         return report(
             out,
             serde_json::json!({
@@ -962,7 +963,7 @@ fn cmd_card(out: Output, text: &str) -> anyhow::Result<ExitCode> {
                 "fqn": fqn,
                 "kind": tree.kind_of(&fqn),
                 "definition": sites,
-                "ancestors": chain.chain,
+                "ancestors": ancestors,
                 "unresolved_ancestors": chain.unresolved,
             }),
             true,
@@ -1976,19 +1977,81 @@ fn cmd_ancestors(out: Output, name: &str) -> anyhow::Result<ExitCode> {
         );
     };
     let chain = tree.ancestors(&fqn);
-    let text = chain.chain.join("\n");
+    let variants = tree.variants_of(&fqn);
+    if !variants.is_empty() {
+        return split_ancestors(out, &tree, name, &fqn, &variants);
+    }
+    let ancestors = public_chain(&chain.chain);
+    let text = ancestors.join("\n");
     report(
         out,
         serde_json::json!({
             "name": name,
             "fqn": fqn,
             "status": "resolved",
-            "ancestors": chain.chain,
+            "ancestors": ancestors,
             "unresolved": chain.unresolved,
         }),
         true,
         &text,
     )
+}
+
+/// `--ancestors` on a name two programs declare with different superclasses:
+/// one chain per declaration, and none of them promoted (DEC-072).
+fn split_ancestors(
+    out: Output,
+    tree: &Tree,
+    name: &str,
+    fqn: &str,
+    variants: &[String],
+) -> anyhow::Result<ExitCode> {
+    let mut text = vec![format!(
+        "{fqn} is declared with {} different superclasses, in separate files:",
+        variants.len()
+    )];
+    let mut listed = Vec::new();
+    for variant in variants {
+        let chain = tree.ancestors(variant);
+        let ancestors = public_chain(&chain.chain);
+        let sites = tree.sites(variant);
+        text.push(String::new());
+        for site in &sites {
+            text.push(format!(
+                "  {}:{}:{}",
+                paths::pretty(&site.path),
+                site.line,
+                site.col
+            ));
+        }
+        text.push(format!("  {}", ancestors.join(" < ")));
+        listed.push(serde_json::json!({
+            "definition": sites,
+            "ancestors": ancestors,
+            "unresolved": chain.unresolved,
+        }));
+    }
+    report(
+        out,
+        serde_json::json!({
+            "name": name,
+            "fqn": fqn,
+            "status": "ambiguous",
+            "ancestors": [fqn],
+            "unresolved": tree.ancestors(fqn).unresolved,
+            "variants": listed,
+        }),
+        true,
+        &text.join("\n"),
+    )
+}
+
+/// An ancestor chain as a person reads it: a split name's variant is its name.
+fn public_chain(chain: &[String]) -> Vec<String> {
+    chain
+        .iter()
+        .map(|name| crate::tree::public_name(name).to_string())
+        .collect()
 }
 
 /// One answer, in whichever shape the caller asked for.

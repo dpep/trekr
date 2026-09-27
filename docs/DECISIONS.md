@@ -3618,3 +3618,85 @@ back, and it would be a naming convention stated as a type.
 Flow is worked out on first use from the source the facts now keep, so a query
 that never types a local pays nothing; the analysis lives in `serve/vars.rs`,
 now visible to `resolve/`.
+
+## DEC-072 — A name declared with two superclasses is two classes
+
+**Decided.** When a checkout declares one constant with superclasses that
+resolve to different classes — `class Post < ActiveRecord::Base` in one file,
+`Post = Struct.new(…)` or `class Post < Other` in another — the tree splits it.
+Each superclass is a *variant*: its own entry holding that superclass, and the
+mixins, extends and methods written nearest its declarations. The name itself
+keeps every declaration site and its nested constants, and no ancestry: its
+chain is `[Post]`, with the competing superclasses listed as `unresolved`.
+
+A query picks the variant from the file asking. The receiver ladder, `super`,
+the residue ranker and `--refs`' proximity all map a split name to the variant
+**nearest the call site** — the one whose declaring files share the most
+leading directories with it, the file itself nearest of all. Equally near
+several, the one declared in the file named for it wins (`post.rb` for
+`Post`): that is how an autoloader or `require "models/post"` reaches a class
+from anywhere, where a class in `fake_models.rb` or a benchmark script is
+reached only by what sits beside it. Still tied, the query gets the name: a
+method every variant defines identically is the answer, otherwise `--def` is
+`ambiguous` listing each variant's landing and `--refs` tiers the site
+`possible`. `--ancestors Post` answers `ambiguous` with one chain per variant.
+
+**Why.** Ruby raises "superclass mismatch" when both declarations load, so a
+checkout holding both is holding two programs. rails keeps its test fakes
+(`actionpack/test/lib/controller/fake_models.rb`) beside the models their
+suites never load; discourse has a benchmark script's `User = Data.define`
+beside `app/models/user.rb`. The old rule was that the first superclass edge
+wins, since "a disagreement in the index is bad input rather than a case to
+model". It is not bad input in a monorepo, and edges come in path order, so
+the winner was whichever file sorted first, and every declaration's mixins
+and methods went to it regardless. DEC-069 made it bite. `Post = Struct.new`
+used to be a constant with no edge, and it became a superclass edge that
+sorts before `activerecord/`. From then on, rails' `Post` inherited
+`Struct` with `ActiveModel::Conversion` mixed in, and `Post.find_each` beside
+the model's tests found nothing.
+
+**It was already latent in 0.2.0.** rails declares 47 top-level names with
+superclasses written differently. Some resolve to one class. Others do not:
+`Cpk::Book`, `Reply < Topic` against `Reply < ActiveRecord::Base`,
+`User < ApplicationRecord` against `User < ActiveRecord::Base`. The
+first-sorting file won each of those. `Cpk::Book.all` in
+`calculations_test.rb` was residue in both 0.2.0 and a411be2, because the
+fake's `Struct` sorted first. It now resolves.
+
+**Considered.**
+- *Keep first-wins, and prefer the declaration with more sites or the one in
+  the file named for the class.* One class still wins everywhere, so a
+  program's fake is wrong in the one place it is right: `actionview`'s tests
+  run against the `Struct`. Naming is kept as the tiebreak only.
+- *Always `ambiguous`.* Honest, but 0.2.0 answered `Post.where` beside
+  rails' models correctly by luck, and this would give that answer up
+  everywhere. Proximity keeps it, and says why.
+- *Merge.* That is the bug.
+
+**Where it stops.**
+- An `.rbi`'s superclass never splits a name. Tapioca writes the superclass
+  it saw at runtime, and that differs from the source whenever the source
+  computes it (concurrent-ruby's `class Map < Collection::MapImplementation`
+  against the RBI's `MriMapBackend`). Splitting on it cost six widget_shop
+  gold sites before it was excluded.
+- A declaration with no superclass is a reopen, and it joins its nearest
+  variant, or every variant tied for nearest. A third program's plain
+  `class User`, such as rails' `activemodel/test/models/user.rb`, is not a
+  class of its own, so `@user.authenticate` in activemodel's tests tiers
+  `possible` where the merge had excluded it by luck.
+- Constant lookup inside a split class's body does not search the variant's
+  ancestors, because the lexical scope is the name. A constant inherited from
+  `ActiveRecord::Base` and read bare inside such a model falls through to the
+  top level.
+
+**Measured** (BASELINE, "Precision fixes before 0.2.1"). On rails `--refs
+'ActiveRecord::Querying#where'` confirms 1,216 sites: 1,197 in 0.2.0, 860 at
+a411be2. `lease_connection` confirms 1,024: 1,024 in 0.2.0, 972 at a411be2.
+The widget_shop gold set moves no verdict against a411be2. Of the 520 CLI
+differential positions, one answer changed, and it is a fix.
+
+*Reverses if:* a checkout's programs can be read off something firmer than
+paths. That could be a gemspec's `files`, a test helper's `$LOAD_PATH`, or
+Zeitwerk's roots. Any of them would replace "nearest" with "reachable", and
+the split would stay.
+

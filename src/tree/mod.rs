@@ -19,6 +19,10 @@
 
 mod files;
 mod snapshot;
+mod variants;
+
+pub(crate) use variants::public_name;
+use variants::{PlacedEdge, nearest};
 
 pub(crate) use files::sweep as sweep_snapshots;
 
@@ -88,8 +92,8 @@ struct Entry {
     /// prepends seen *before* it, so `include A; prepend A` and
     /// `prepend A; include A` give different chains.
     mixins: Vec<Mixin>,
-    /// First one wins: Ruby raises on a conflicting reopen, so a disagreement
-    /// in the index is bad input rather than a case to model.
+    /// Declarations that disagree about it are two programs, and the name is
+    /// split before this is set (DEC-072), so every edge left here agrees.
     superclass: Option<Target>,
     /// `extend M` — M's *instance* methods become this scope's singleton
     /// methods. A different chain from `include`, which is why it is a
@@ -664,37 +668,90 @@ impl Tree {
         }
         tree.imply_namespaces();
 
-        for edge in edges {
-            let owner = tree.scopes(&edge.owner);
-            let scope = owner.first().cloned().unwrap_or_default();
-            // Ruby evaluates a superclass expression *outside* the class body:
-            // `class C < Base` looks up `Base` where `C` is written, not where
-            // `C`'s constants live. Every other relation is written inside.
-            let nesting = if edge.relation == "superclass" {
-                owner.get(1..).unwrap_or_default().to_vec()
-            } else {
-                owner.clone()
-            };
-            let target = Target {
-                name: edge.target,
-                nesting,
-            };
-            let entry = tree.names.building().entry(scope).or_default();
-            match edge.relation.as_str() {
-                "prepend" => entry.mixins.push(Mixin {
-                    kind: MixinKind::Prepend,
-                    target,
-                }),
-                "include" => entry.mixins.push(Mixin {
-                    kind: MixinKind::Include,
-                    target,
-                }),
-                "superclass" => {
-                    entry.superclass.get_or_insert(target);
+        let edges: Vec<PlacedEdge> = edges
+            .into_iter()
+            .map(|edge| {
+                let owner = tree.scopes(&edge.owner);
+                let scope = owner.first().cloned().unwrap_or_default();
+                // Ruby evaluates a superclass expression *outside* the class
+                // body: `class C < Base` looks up `Base` where `C` is written,
+                // not where `C`'s constants live. Every other relation is
+                // written inside.
+                let nesting = if edge.relation == "superclass" {
+                    owner.get(1..).unwrap_or_default().to_vec()
+                } else {
+                    owner.clone()
+                };
+                PlacedEdge {
+                    scope,
+                    relation: edge.relation,
+                    target: Target {
+                        name: edge.target,
+                        nesting,
+                    },
+                    path: edge.path,
                 }
-                "extend" => entry.extends.push(target),
-                _ => continue,
+            })
+            .collect();
+
+        // A name declared with two different superclasses is two classes in
+        // two programs (DEC-072), so it is split before anything attaches to it.
+        let split = tree.split_conflicts(&edges);
+        for edge in edges {
+            let owners: Vec<String> = match split.get(&edge.scope) {
+                None => vec![edge.scope.clone()],
+                Some(variants) if edge.relation == "superclass" => {
+                    let group = tree.superclass_group(&edge.target);
+                    variants
+                        .iter()
+                        .filter(|v| v.group == group)
+                        .map(|v| v.key.clone())
+                        .collect()
+                }
+                Some(variants) => nearest(
+                    &edge.scope,
+                    variants.iter().map(|v| (&v.anchors, v)),
+                    &edge.path,
+                )
+                .into_iter()
+                .map(|v| v.key.clone())
+                .collect(),
             };
+            let target = tree.aim(edge.target, &edge.path, &split);
+            for owner in owners {
+                let entry = tree.names.building().entry(owner).or_default();
+                match edge.relation.as_str() {
+                    "prepend" => entry.mixins.push(Mixin {
+                        kind: MixinKind::Prepend,
+                        target: target.clone(),
+                    }),
+                    "include" => entry.mixins.push(Mixin {
+                        kind: MixinKind::Include,
+                        target: target.clone(),
+                    }),
+                    "superclass" => {
+                        entry.superclass.get_or_insert(target.clone());
+                    }
+                    "extend" => entry.extends.push(target.clone()),
+                    _ => continue,
+                };
+            }
+        }
+        // Each half keeps the declarations nearest it. The name itself keeps
+        // them all: it is still where `Post` is written.
+        for (base, variants) in &split {
+            let sites = tree.names.building()[base].sites.clone();
+            for site in sites {
+                let near = nearest(base, variants.iter().map(|v| (&v.anchors, v)), &site.path);
+                for variant in near {
+                    tree.names
+                        .building()
+                        .get_mut(&variant.key)
+                        .expect("variants are declared by the split")
+                        .sites
+                        .push(site.clone());
+                }
+            }
         }
         std::mem::take(tree.names.building())
     }
@@ -880,6 +937,19 @@ impl Tree {
         stack.push(fqn.to_string());
         let entry = self.names.get(fqn);
 
+        // A split name has no ancestry of its own to give: which superclass it
+        // has depends on which program is running (DEC-072).
+        let conflicting = self.conflicting_superclasses(fqn);
+        if !conflicting.is_empty() {
+            for name in conflicting {
+                if !out.unresolved.contains(&name) {
+                    out.unresolved.push(name);
+                }
+            }
+            stack.pop();
+            return vec![fqn.to_string()];
+        }
+
         // The parent chain is needed before includes, because includes dedup
         // against it.
         let parent: Vec<String> = match entry.and_then(EntryRef::superclass) {
@@ -1019,7 +1089,7 @@ impl Tree {
         self.ancestors(parent)
             .chain
             .iter()
-            .map(|ancestor| qualify(ancestor, segment))
+            .map(|ancestor| qualify(public_name(ancestor), segment))
             .find(|candidate| self.names.contains(candidate))
     }
 
@@ -1045,7 +1115,7 @@ impl Tree {
                 let chain = self.ancestors(innermost);
                 unresolved = chain.unresolved.clone();
                 for ancestor in &chain.chain {
-                    candidates.push((qualify(ancestor, head), Via::Ancestor));
+                    candidates.push((qualify(public_name(ancestor), head), Via::Ancestor));
                 }
             }
             candidates.push((head.to_string(), Via::Root));
@@ -1602,6 +1672,48 @@ mod tests {
     }
 
     #[test]
+    fn conflicting_superclasses_make_two_classes_rather_than_one_merged_one() {
+        let tree = tree(&[
+            ("/r/lib/base.rb", "class Base\nend\nmodule Naming\nend\n"),
+            ("/r/models/post.rb", "class Post < Base\nend\n"),
+            (
+                "/r/fakes/fake.rb",
+                "Post = Struct.new(:title) do\n  include Naming\nend\n",
+            ),
+        ]);
+        let model = tree.variant_at("Post", "/r/models/post_test.rb");
+        let fake = tree.variant_at("Post", "/r/fakes/fake_test.rb");
+        assert_eq!(tree.ancestors(&model).chain[1..3], ["Base", "Object"]);
+        assert_eq!(tree.ancestors(&fake).chain[1..3], ["Naming", "Struct"]);
+        let neither = tree.ancestors("Post");
+        assert_eq!(neither.chain, ["Post"], "no superclass wins by sort order");
+        assert_eq!(neither.unresolved, ["Base", "Struct"]);
+    }
+
+    #[test]
+    fn an_rbi_describing_another_superclass_does_not_split_the_class() {
+        let tree = tree(&[
+            (
+                "/gems/g/lib/map.rb",
+                "class Backend\nend\nImpl = Backend\nclass Map < Impl\nend\n",
+            ),
+            ("/app/sorbet/rbi/gems/g.rbi", "class Map < Backend\nend\n"),
+            ("/app/sorbet/rbi/other.rbi", "class Map < Hash\nend\n"),
+        ]);
+        assert!(tree.variants_of("Map").is_empty());
+    }
+
+    #[test]
+    fn one_superclass_written_two_ways_is_one_class() {
+        let tree = tree(&[
+            ("/r/a.rb", "class Base\nend\nclass Post < Base\nend\n"),
+            ("/r/b/c.rb", "class Post < ::Base\nend\n"),
+        ]);
+        assert!(tree.variants_of("Post").is_empty());
+        assert_eq!(chain(&tree, "Post")[..2], ["Post", "Base"]);
+    }
+
+    #[test]
     fn a_superclass_is_resolved_in_the_scope_that_wrote_it() {
         let tree = one("module A\n  class Base\n  end\n  class C < Base\n  end\nend\n");
         assert_eq!(chain(&tree, "A::C"), ["A::C", "A::Base"]);
@@ -1686,6 +1798,16 @@ impl Tree {
         carriers
     }
 
+    /// The keys a definition is found under: its owner, or the variants of a
+    /// split owner nearest the file it is written in (DEC-072).
+    fn owners_of(&self, row: &MethodRow) -> Vec<String> {
+        let owner = self.owner_of(row);
+        match self.nearest_variants(&owner, &row.path) {
+            nearest if nearest.is_empty() => vec![owner],
+            nearest => nearest,
+        }
+    }
+
     /// Index rows into the method tables. Safe to call repeatedly, once per
     /// name, which is what demand-loading does.
     fn index_rows(&self, rows: Vec<MethodRow>) {
@@ -1693,23 +1815,25 @@ impl Tree {
         let mut by_owner = self.by_owner.borrow_mut();
         let mut by_name = self.by_name.borrow_mut();
         for row in rows {
+            let owners = self.owners_of(&row);
             let method = self.method_def(row);
-            let owner = method.owner.clone();
             let index = methods.len();
-            by_owner
-                .entry((owner.clone(), method.singleton, method.name.clone()))
-                .or_default()
-                .push(index);
-            // The carrier owns the schema's methods but is never *declared*, so
-            // it cannot be an ancestor — an include edge to it would not
-            // resolve. The columns are keyed onto the model instead, and
-            // nothing phantom enters the constant namespace.
-            if let Some(models) = self.carriers.get(&owner) {
-                for model in models {
-                    by_owner
-                        .entry((model.clone(), method.singleton, method.name.clone()))
-                        .or_default()
-                        .push(index);
+            for owner in owners {
+                by_owner
+                    .entry((owner.clone(), method.singleton, method.name.clone()))
+                    .or_default()
+                    .push(index);
+                // The carrier owns the schema's methods but is never *declared*,
+                // so it cannot be an ancestor — an include edge to it would not
+                // resolve. The columns are keyed onto the model instead, and
+                // nothing phantom enters the constant namespace.
+                if let Some(models) = self.carriers.get(&owner) {
+                    for model in models {
+                        by_owner
+                            .entry((model.clone(), method.singleton, method.name.clone()))
+                            .or_default()
+                            .push(index);
+                    }
                 }
             }
             by_name.entry(method.name.clone()).or_default().push(index);
@@ -1897,6 +2021,22 @@ impl Tree {
     /// this is exact rather than a guess.
     pub(crate) fn lookup(&self, fqn: &str, singleton: bool, name: &str) -> Option<MethodDef> {
         self.ensure(name);
+        // A split name asked about as itself runs whichever variant is loaded,
+        // so it has an answer only when every variant gives the same one.
+        let variants = self.variants_of(fqn);
+        if !variants.is_empty() {
+            let found: Vec<Option<MethodDef>> = variants
+                .iter()
+                .map(|variant| self.lookup(variant, singleton, name))
+                .collect();
+            let first = found.first()?.as_ref()?;
+            let agree = found.iter().all(|other| {
+                other.as_ref().is_some_and(|m| {
+                    m.site.path == first.site.path && m.site.line == first.site.line
+                })
+            });
+            return agree.then(|| first.clone());
+        }
         let chain = self.lookup_chain(fqn, singleton);
         // Ruby's ancestor order, but real source wins the whole chain before a
         // declaration wins any of it.
@@ -1966,8 +2106,8 @@ impl Tree {
                 // re-keyed onto a model by a `self.table_name` override, where
                 // the stored owner is the carrier class the convention
                 // invented — a name no code declares and an agent cannot look
-                // up (DEC-022).
-                method.owner = owner.clone();
+                // up (DEC-022). A split name's variant is its name.
+                method.owner = public_name(owner).to_string();
                 return Some(method);
             }
         }
@@ -2133,13 +2273,16 @@ impl Tree {
             if loaded.contains(&row.name) {
                 return;
             }
+            let owners = self.owners_of(&row);
             let method = self.method_def(row);
             if !method.is_definition() {
                 return;
             }
-            visit(&method.owner, method.singleton, &method);
-            for model in self.carriers.get(&method.owner).into_iter().flatten() {
-                visit(model, method.singleton, &method);
+            for owner in &owners {
+                visit(owner, method.singleton, &method);
+                for model in self.carriers.get(owner).into_iter().flatten() {
+                    visit(model, method.singleton, &method);
+                }
             }
         });
     }
@@ -2508,6 +2651,7 @@ fn rows_from(path: &str, source: &str) -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<Metho
             owner: a.owner,
             relation: a.relation.as_str().to_string(),
             target: a.target,
+            path: path.to_string(),
         });
     }
     (decls, edges, methods)
@@ -2601,6 +2745,7 @@ mod rbi_preference_tests {
                 owner: vec!["Widget".into()],
                 relation: "superclass".into(),
                 target: "Base".into(),
+                path: "/app/widget.rb".into(),
             }],
         );
         tree.add_methods(vec![

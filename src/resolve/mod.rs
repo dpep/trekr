@@ -106,11 +106,17 @@ const MAX_CANDIDATES: usize = 8;
 /// `path` is the call site's file, relative to the checkout — one of the tiers
 /// residue candidates are ordered by.
 pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer {
-    if call.recv == RecvShape::Super {
-        return super_at(tree, call, path);
-    }
+    let answer = if call.recv == RecvShape::Super {
+        super_at(tree, call, path)
+    } else {
+        call_at(tree, facts, call, path)
+    };
+    answer.published()
+}
+
+fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer {
     let shape = call.recv.as_str();
-    match receiver_of(tree, facts, call) {
+    match receiver_of(tree, facts, call, path) {
         Some(receiver) => {
             match tree.lookup(&receiver.fqn, receiver.singleton, &call.name) {
                 Some(found) => {
@@ -169,6 +175,11 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
                         },
                         reason: None,
                     }
+                }
+                // A name declared with conflicting superclasses, asked about
+                // from a file equally near two of them (DEC-072).
+                None if !tree.variants_of(&receiver.fqn).is_empty() => {
+                    split_receiver(tree, call, path, receiver)
                 }
                 // A call written inside a module has no receiver of its own:
                 // whatever includes the module is the receiver. When the index
@@ -298,10 +309,15 @@ pub(super) struct SuperLandings {
 /// can only add ancestors *before* the class, so the class's own chain is the
 /// answer for all of them. A module's method runs wherever it is mixed in, so
 /// each includer is asked — the same move as the `includer` rung.
-pub(super) fn super_landings(tree: &Tree, call: &Call) -> Result<SuperLandings, &'static str> {
+pub(super) fn super_landings(
+    tree: &Tree,
+    call: &Call,
+    path: &str,
+) -> Result<SuperLandings, &'static str> {
     let owner = tree
         .scope_fqn(&call.nesting)
         .filter(|owner| tree.is_known(owner))
+        .map(|owner| tree.variant_at(&owner, path))
         .ok_or("the method `super` is in has no owner the index knows")?;
     let via_includers = tree.kind_of(&owner) == Some("module") && !call.singleton;
     let classes = if via_includers {
@@ -346,7 +362,7 @@ pub(super) fn unresolved_behind(tree: &Tree, landings: &SuperLandings) -> Vec<St
 
 /// `--def` on a `super`: the method it runs.
 fn super_at(tree: &Tree, call: &Call, path: &str) -> MethodAnswer {
-    let landings = match super_landings(tree, call) {
+    let landings = match super_landings(tree, call, path) {
         Ok(landings) => landings,
         Err(reason) => return residue(tree, call, path, None, reason),
     };
@@ -419,12 +435,28 @@ fn agreement(receiver: &Receiver) -> Option<String> {
 /// (a singleton lookup) — the ladder's answer without a method lookup, for a
 /// caller that lists what the receiver has rather than finding one method on
 /// it (LSP completion, DEC-040).
-pub(crate) fn receiver_type(tree: &Tree, facts: &Facts, call: &Call) -> Option<(String, bool)> {
-    receiver_of(tree, facts, call).map(|receiver| (receiver.fqn, receiver.singleton))
+pub(crate) fn receiver_type(
+    tree: &Tree,
+    facts: &Facts,
+    call: &Call,
+    path: &str,
+) -> Option<(String, bool)> {
+    receiver_of(tree, facts, call, path).map(|receiver| (receiver.fqn, receiver.singleton))
 }
 
-/// Climb the ladder until a rung names a type.
-pub(super) fn receiver_of(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
+/// Climb the ladder until a rung names a type — and when that type is a name
+/// two programs declare differently, the one this file belongs to (DEC-072).
+pub(super) fn receiver_of(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiver> {
+    let mut receiver = typed(tree, facts, call)?;
+    receiver.fqn = tree.variant_at(&receiver.fqn, path);
+    for (rival, _) in &mut receiver.rivals {
+        *rival = tree.variant_at(rival, path);
+    }
+    Some(receiver)
+}
+
+/// The ladder itself.
+fn typed(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
     match call.recv {
         // The enclosing scope is the receiver by language rule. No inference
         // happens, which is why this rung is both the largest and the cheapest.
@@ -859,6 +891,71 @@ fn competitors(tree: &Tree, name: &str, winner: &str) -> Vec<Candidate> {
 }
 
 /// Where the call lands for each other type the receiver's writes gave it.
+/// A receiver whose class two programs declare with different superclasses,
+/// in a file no nearer one than the other: whichever is loaded answers, so
+/// each variant's landing is listed and none is promoted (DEC-072).
+fn split_receiver(tree: &Tree, call: &Call, path: &str, receiver: Receiver) -> MethodAnswer {
+    let variants = tree.variants_of(&receiver.fqn);
+    let landings: Vec<crate::tree::MethodDef> = variants
+        .iter()
+        .filter_map(|variant| tree.lookup(variant, receiver.singleton, &call.name))
+        .collect();
+    let Some(first) = landings.first() else {
+        return residue(
+            tree,
+            call,
+            path,
+            Some(receiver),
+            "the receiver's class is declared with conflicting superclasses, and none of \
+             them defines this name",
+        );
+    };
+    MethodAnswer {
+        status: Status::Ambiguous,
+        confidence: share(1, variants.len()),
+        resolved_via: Some(receiver.via.to_string()),
+        receiver: call.recv.as_str(),
+        receiver_kind: tree.kind_of(&receiver.fqn).map(str::to_string),
+        receiver_type: Some(receiver.fqn.clone()),
+        owner: Some(first.owner.clone()),
+        kind: Some(first.kind()),
+        defined_via: first.declared_via(),
+        sites: vec![first.site.clone()],
+        agreement: Some(format!("1/{} declarations", variants.len())),
+        unresolved_ancestors: Vec::new(),
+        candidates: landings[1..]
+            .iter()
+            .map(|method| Candidate {
+                owner: method.owner.clone(),
+                singleton: method.singleton,
+                why: "another declaration of the receiver's class, with a different \
+                      superclass, defines it here",
+                kind: method.kind(),
+                site: method.site.clone(),
+            })
+            .collect(),
+        reason: Some(format!(
+            "{} is declared with {} different superclasses in separate files; which runs \
+             depends on which is loaded",
+            receiver.fqn,
+            variants.len()
+        )),
+    }
+}
+
+impl MethodAnswer {
+    /// Names as a person wrote them: a split name's variant is its name.
+    fn published(mut self) -> MethodAnswer {
+        let public = |name: &mut String| *name = crate::tree::public_name(name).to_string();
+        self.receiver_type.as_mut().map(public);
+        self.owner.as_mut().map(public);
+        for candidate in &mut self.candidates {
+            public(&mut candidate.owner);
+        }
+        self
+    }
+}
+
 fn rival_landings(tree: &Tree, receiver: &Receiver, name: &str) -> Vec<Candidate> {
     receiver
         .rivals
@@ -886,7 +983,8 @@ fn residue(
     let here = call
         .nesting
         .first()
-        .and_then(|_| tree.scope_fqn(&call.nesting));
+        .and_then(|_| tree.scope_fqn(&call.nesting))
+        .map(|scope| tree.variant_at(&scope, path));
     let ancestors: Vec<String> = here
         .as_ref()
         .map(|fqn| tree.ancestors(fqn).chain.clone())

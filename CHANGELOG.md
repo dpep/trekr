@@ -6,6 +6,18 @@
   once per checkout. The extractor records `super`, classes built by calls,
   literal `define_method`, Forwardable delegators and alias bodies.
 
+- **A name declared with two superclasses is two classes.** A test fake's
+  `Post = Struct.new` in one directory and `class Post < ActiveRecord::Base` in
+  another used to merge: the file that sorted first gave `Post` its superclass,
+  and every declaration's mixins and methods went to that one class. On rails,
+  `Post.find_each` beside the models found nothing. Now each superclass is its
+  own class, and a call site gets the one declared nearest it. When two are
+  equally near, the one in the file named for the class wins (`post.rb`).
+  Still tied, `--def` answers `ambiguous` with each declaration's landing and
+  `--refs` tiers the site `possible`. `--ancestors` on such a name answers
+  `ambiguous` with one chain per declaration under `variants`. An `.rbi`'s
+  superclass never splits a name.
+
 - **`--dead` asks about the owner a method really has.** A method in `module
   Alpha; module Helpers` was checked against `Helpers`, the name as written,
   so every call that resolved to `Alpha::Helpers` was ruled out and a used

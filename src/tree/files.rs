@@ -60,6 +60,7 @@ fn code() -> &'static [u8] {
         hash.update(env!("CARGO_PKG_VERSION"));
         for source in [
             include_str!("mod.rs"),
+            include_str!("variants.rs"),
             include_str!("snapshot.rs"),
             include_str!("core.rb"),
             include_str!("../store/mod.rs"),

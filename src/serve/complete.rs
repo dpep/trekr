@@ -154,7 +154,7 @@ pub(crate) fn completion(
     let mut list = Ranked::new(&prefix, &located.root);
     match (&context, under) {
         (Context::Member, Some(Under::Call(call))) => {
-            match crate::resolve::receiver_type(tree, &facts, &call) {
+            match crate::resolve::receiver_type(tree, &facts, &call, &located.relative) {
                 Some((fqn, singleton)) => {
                     let private = call.recv == RecvShape::SelfRecv;
                     add_methods(&mut list, tree, members, &fqn, singleton, private, 1);
@@ -183,6 +183,7 @@ pub(crate) fn completion(
         (Context::Bare, Some(Under::Call(call))) => {
             add_locals(&mut list, &facts, line);
             if let Some(fqn) = tree.scope_fqn(&call.nesting) {
+                let fqn = tree.variant_at(&fqn, &located.relative);
                 add_methods(&mut list, tree, members, &fqn, call.singleton, true, 1);
             } else {
                 // Top level: `self` is `main`, an Object.
@@ -465,6 +466,7 @@ fn add_methods(
                 continue;
             }
             let marker = if *owner_singleton { "." } else { "#" };
+            let owner = crate::tree::public_name(owner);
             let detail = match &method.via {
                 Some(via) => format!("{owner}{marker}{} ({via})", method.name),
                 None => format!("{owner}{marker}{}", method.name),
@@ -475,7 +477,7 @@ fn add_methods(
                 &method.name,
                 CompletionItemKind::METHOD,
                 detail,
-                Some(owner.clone()),
+                Some(owner.to_string()),
                 Some(serde_json::json!({"owner": owner, "singleton": owner_singleton})),
             );
         }
@@ -491,6 +493,7 @@ fn add_constants(list: &mut Ranked, tree: &Tree, members: &Members, scope: &str,
         tree.ancestors(scope).chain.clone()
     };
     for (step, owner) in scopes.iter().enumerate() {
+        let owner = crate::tree::public_name(owner);
         let Some(children) = members.children.get(owner) else {
             continue;
         };

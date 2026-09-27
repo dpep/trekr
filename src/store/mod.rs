@@ -617,7 +617,7 @@ impl Store {
     /// Ruby applies them in, and therefore the order linearization reverses.
     pub(crate) fn ancestry(&self, roots: &[String]) -> Result<Vec<EdgeRow>> {
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT a.owner, a.relation, a.target
+            "SELECT a.owner, a.relation, a.target, c.root || '/' || f.path
                FROM ancestry a
                JOIN file f ON f.blob_id = a.blob_id
                JOIN checkout c ON c.id = f.checkout_id
@@ -630,6 +630,7 @@ impl Store {
                 owner: split_nesting(&r.get::<_, String>(0)?),
                 relation: r.get(1)?,
                 target: r.get(2)?,
+                path: r.get(3)?,
             })
         })?;
         rows.collect()
@@ -1172,6 +1173,9 @@ pub(crate) struct EdgeRow {
     pub(crate) owner: Vec<String>,
     pub(crate) relation: String,
     pub(crate) target: String,
+    /// The file that wrote it, absolute like a site's path: which of two
+    /// conflicting declarations of the owner it belongs to (DEC-072).
+    pub(crate) path: String,
 }
 
 #[derive(Debug, serde::Serialize)]

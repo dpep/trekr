@@ -157,6 +157,22 @@ pub(crate) fn tier_call(
     query: &Query,
     target: Option<&str>,
 ) -> Reference {
+    let mut reference = tier(tree, facts, call, path, query, target);
+    // A split name's variant is reported as the name (DEC-072).
+    let public = |name: &mut String| *name = crate::tree::public_name(name).to_string();
+    reference.receiver_type.as_mut().map(public);
+    reference.owner.as_mut().map(public);
+    reference
+}
+
+fn tier(
+    tree: &Tree,
+    facts: &Facts,
+    call: &Call,
+    path: &str,
+    query: &Query,
+    target: Option<&str>,
+) -> Reference {
     let shape = call.recv.as_str();
     let here = |tier, receiver_type, owner, why, proximity, ruling| Reference {
         path: path.to_string(),
@@ -175,7 +191,7 @@ pub(crate) fn tier_call(
         return tier_super(tree, call, path, query, target);
     }
 
-    let Some(receiver) = super::receiver_of(tree, facts, call) else {
+    let Some(receiver) = super::receiver_of(tree, facts, call, path) else {
         return possible(tree, call, path, query, target, shape);
     };
 
@@ -247,7 +263,7 @@ fn tier_super(
         ruling,
         proximity,
     };
-    let Ok(landings) = super::super_landings(tree, call) else {
+    let Ok(landings) = super::super_landings(tree, call, path) else {
         return here(
             Tier::Possible,
             None,
@@ -366,9 +382,17 @@ fn possible(
         };
     }
 
-    let scope = tree.scope_fqn(&call.nesting);
+    let scope = tree
+        .scope_fqn(&call.nesting)
+        .map(|scope| tree.variant_at(&scope, path));
+    let inherits = |scope: &str, target: &str| {
+        tree.ancestors(scope)
+            .chain
+            .iter()
+            .any(|a| crate::tree::public_name(a) == target)
+    };
     let (proximity, why) = match (&scope, target) {
-        (Some(scope), Some(target)) if tree.ancestors(scope).chain.iter().any(|a| a == target) => (
+        (Some(scope), Some(target)) if inherits(scope, target) => (
             0,
             "untyped receiver, but the enclosing class inherits from the owner",
         ),
@@ -463,10 +487,24 @@ pub(crate) fn definition_of(tree: &Tree, query: &Query) -> (Option<String>, Vec<
     let Some(owner) = tree.resolve(written, &[]).fqn else {
         return (None, Vec::new());
     };
-    let sites = tree
-        .lookup(&owner, query.singleton, &query.name)
-        .map(|method| vec![method.site.clone()])
-        .unwrap_or_default();
+    // A name two programs declare differently has a definition in each
+    // (DEC-072); asked about by name, it is every one of them.
+    let variants = tree.variants_of(&owner);
+    let classes = if variants.is_empty() {
+        vec![owner.clone()]
+    } else {
+        variants
+    };
+    let mut sites: Vec<Site> = Vec::new();
+    for class in &classes {
+        if let Some(method) = tree.lookup(class, query.singleton, &query.name)
+            && !sites
+                .iter()
+                .any(|s| s.path == method.site.path && s.line == method.site.line)
+        {
+            sites.push(method.site.clone());
+        }
+    }
     (Some(owner), sites)
 }
 
