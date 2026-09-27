@@ -44,6 +44,9 @@ APP_SAMPLE = int(os.environ.get("APP_SAMPLE", "0"))
 SEED = int(os.environ.get("SEED", "12"))
 # Where to write one verdict per scored site, to diff two builds site by site.
 VERDICTS = os.environ.get("VERDICTS")
+# The traced checkout, so a miss prints relative to it. A Rails app's misses
+# are under `app/`, a gem's are not.
+GOLD_ROOT = os.environ.get("GOLD_ROOT")
 
 try:
     sys.stdout.reconfigure(line_buffering=True)
@@ -102,6 +105,8 @@ def hits(answer_sites, site):
 # allowlist of three Rails files: that enumeration was never a principle, it
 # missed `define_method` and `delegate` generators entirely, and it is what made
 # session 29's model callbacks unscoreable.
+SPEC_FILE = re.compile(r"(^|/)(spec|test)/|_spec\.rb$|_test\.rb$")
+WRAPPER = re.compile(r"/sorbet-runtime-[^/]+/")
 PLAIN_DEF = re.compile(r"^\s*def\s+[A-Za-z_\[]")
 
 
@@ -152,6 +157,11 @@ def verdict(site, answer):
     """
     if answer in ("crashed", "not-indexed"):
         return answer
+    # sorbet-runtime replaces every `sig`'d method with a wrapper, and the
+    # trace sees the wrapper's line — the same few lines for every method — so
+    # the truth is not the method at all. A harness gap, kept out of the table.
+    if WRAPPER.search(site.get("def_file", "")):
+        return "wrapped"
     if not answer or answer.get("reason") == "no name at this position":
         return "no-name"
 
@@ -228,7 +238,8 @@ def main(path):
         results.append((site, verdict(site, answer)))
         if isinstance(answer, dict):
             site["_answer"] = {k: answer.get(k) for k in ("status", "confidence", "resolved_via")}
-        rank = candidate_rank(site, answer) if isinstance(answer, dict) else None
+        scored = results[-1][1] not in ("column-mismatch", "wrapped")
+        rank = candidate_rank(site, answer) if scored and isinstance(answer, dict) else None
         if rank:
             ranks.append((site["scope"], rank))
         if i % 50 == 0:
@@ -248,6 +259,7 @@ def main(path):
         "not-indexed",
         "crashed",
         "column-mismatch",
+        "wrapped",
     ]
 
     def report(label, rows):
@@ -257,13 +269,14 @@ def main(path):
         # engine, so it is reported beside the table and kept out of its
         # denominator rather than counted as an error.
         harness = sum(1 for _, v in rows if v == "column-mismatch")
-        scored = [r for r in rows if r[1] != "column-mismatch"]
+        wrapped = sum(1 for _, v in rows if v == "wrapped")
+        scored = [r for r in rows if r[1] not in ("column-mismatch", "wrapped")]
         tally = collections.Counter(v for _, v in scored)
         total = len(scored) or 1
         print(f"\n{label} — {total} scored call sites")
         width = max(len(k) for k in order)
         for key in order:
-            if key != "column-mismatch" and tally[key]:
+            if key not in ("column-mismatch", "wrapped") and tally[key]:
                 print(f"  {key:<{width}}  {tally[key]:>4}  {100 * tally[key] / total:>5.1f}%")
         found = tally["correct"] + tally["residue-hit"]
         print(f"  {'found the definition':<{width}}  {found:>4}  {100 * found / total:>5.1f}%")
@@ -271,6 +284,8 @@ def main(path):
               f"{100 * tally['wrong'] / total:>5.1f}%")
         if harness:
             print(f"  ({harness} excluded: the gold column names a different token)")
+        if wrapped:
+            print(f"  ({wrapped} excluded: the trace saw sorbet-runtime's wrapper, not the method)")
 
     app_rows = [(s, v) for s, v in results if s["scope"] == "app"]
     report("APP CODE", app_rows)
@@ -280,6 +295,13 @@ def main(path):
     # catches `define_method`, `delegate`, and an app's own generators too.
     report("  of which the truth is generated",
            [r for r in app_rows if truth_is_generated(r[0])])
+    # A gem's own suite calls into it from its specs, where the receiver is
+    # usually RSpec's; split so the library's figure is not the DSL's.
+    specs = [r for r in app_rows if SPEC_FILE.search(r[0]["file"])]
+    if specs and len(specs) < len(app_rows):
+        report("  of which the call site is a spec", specs)
+        report("  of which the call site is not a spec",
+               [r for r in app_rows if not SPEC_FILE.search(r[0]["file"])])
     report("GEM CODE (the floor)", [(s, v) for s, v in results if s["scope"] != "app"])
     # `super` sites, wherever they are: traced since the engine modelled them.
     report("SUPER SITES", [(s, v) for s, v in results if s.get("super")])
@@ -324,7 +346,8 @@ def main(path):
     if misses:
         print("\nevery app-code miss, which is the part worth reading:")
         for site, why in sorted(misses, key=lambda r: (r[0]["file"], r[0]["line"])):
-            where = site["file"].split("/app/")[-1]
+            where = (os.path.relpath(site["file"], GOLD_ROOT) if GOLD_ROOT
+                     else site["file"].split("/app/")[-1])
             print(f"  {why:<8} {where}:{site['line']}:{site['col']:<3} {site['method']:<18}"
                   f" → {os.path.basename(site['def_file'])}:{site['def_line']}")
 

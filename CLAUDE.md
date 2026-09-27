@@ -86,7 +86,8 @@ brew unlink trekr   # …verify…   then:   brew link trekr
 - Bench corpora (large, real): `~/code/lib/ruby/rails`, `~/code/lib/ruby/discourse`,
   `~/code/lib/ruby/mastodon`. Ranking/scale checks belong there, not in unit tests.
 - Accuracy is `script/gold.py` against the TracePoint gold set
-  ([BASELINE.md](docs/BASELINE.md)); the other engines are scored by `script/compare.py`
+  ([BASELINE.md](docs/BASELINE.md)) — widget_shop's, and a gem's own suite via
+  `make gold-gem GEM=…`; the other engines are scored by `script/compare.py`
   against the same sites over LSP ([COMPARISON.md](docs/COMPARISON.md)), which
   is an append-only series — add a dated row, never edit one.
 

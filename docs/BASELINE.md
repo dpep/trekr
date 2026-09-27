@@ -2144,3 +2144,58 @@ rails, `--refs`, confirmed / possible / excluded:
 | `String#gsub` | 10 / 149 / 0 | 57 / 102 / 0 |
 | `ActiveRecord::Querying#where` | 1,216 / 531 / 97 | unchanged |
 | `ActiveRecord::ConnectionHandling#lease_connection` | 1,024 / 84 / 87 | unchanged |
+
+## Gold sets from the user's own gems (2026-09-27)
+
+widget_shop was written for this evaluation; these were not. `script/gold_gem.sh`
+copies a gem, runs its own RSpec suite under the TracePoint tracer
+(`script/exercise_rspec.rb`), indexes the copy into a store of its own, and
+scores it with `script/gold.py` (`make gold-gem GEM=…`). Every suite passes
+offline. Scored with `APP_SAMPLE=600 SAMPLE=300 SEED=12`, build 3f6940e.
+
+"App" is the gem's own checkout, so it includes its specs; the split by call
+site is the part to read, because a spec's calls are mostly RSpec's DSL.
+
+| gem | traced app sites | scored | correct | found | confidently wrong |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| graph_weaver, not a spec | | 78 | 60 (76.9%) | 64 (82.1%) | 2 (2.6%) |
+| graph_weaver, a spec | | 482 | 58 (12.0%) | 290 (60.2%) | 1 (0.2%) |
+| graph_weaver, all app | 25,937 | 560 | 118 (21.1%) | 354 (63.2%) | 3 (0.5%) |
+| accord, all app | 5,023 | 600 | 56 (9.3%) | 435 (72.5%) | 1 (0.2%) |
+| accord, not a spec | | 64 | 48 (75.0%) | 57 (89.1%) | 1 (1.6%) |
+| accord, a spec | | 536 | 8 (1.5%) | 378 (70.5%) | 0 |
+| polyid, all app | 1,900 | 595 | 68 (11.4%) | 391 (65.7%) | 13 (2.2%) |
+| polyid, not a spec | | 56 | 29 (51.8%) | 50 (89.3%) | 0 |
+| polyid, a spec | | 539 | 39 (7.2%) | 341 (63.3%) | 13 (2.4%) |
+
+`found` is `correct` plus `residue-hit` (the truth among the ranked guesses).
+Gem floors: graph_weaver 53.7% correct / 1.2% wrong of 246, accord 50.8% /
+3.3% of 244, polyid 48.1% / 6.1% of 297.
+
+**What the numbers say.** In library code trekr is right three times in four
+and wrong a few times in a hundred. In specs it is almost never *right* —
+`expect`, `eq`, `it`, `describe`, `to` and every `let` are implicit calls in a
+block whose `self` is an RSpec example group, and nothing types that — but it
+still offers the truth among its guesses about two times in three. The same
+gap is 40% of all misses in the editor-click replay (`script/clicks.py`).
+
+**Every confidently wrong app site, read.**
+
+- polyid, 7: `RSpec.describe` resolves to minitest's `Kernel#describe` at
+  confidence 1. RSpec's `describe` is made by `define_singleton_method`, so the
+  lookup falls through to `Kernel`, where minitest (bundled through
+  activesupport) monkeypatched one in.
+- polyid, 6: `User.find` / `User.find_by` resolve to ActiveRecord's, not
+  `PolyId::Model`'s override, which reaches every model through
+  `ActiveSupport.on_load(:active_record) { include PolyId::Model }`.
+- accord `field.rb:166` `nested_schema`, graph_weaver
+  `install_generator.rb:164` `append_to_file` and `railtie.rb:566` `env`: a
+  call on `self` answered with the class's own method, where the object at
+  runtime was a subclass (in accord, `Fields::Array`; in graph_weaver, a spec's
+  stand-in) that overrides it.
+
+**Harness fix.** sorbet-runtime replaces each `sig`'d method with a wrapper,
+and the trace records the wrapper's line, so 7.6% of graph_weaver's app truths
+pointed at `call_validation_2_7.rb` or `_methods.rb`. They are excluded as
+`wrapped`, like a column mismatch, and reported beside the table; before that
+they were four of graph_weaver's six "confidently wrong".

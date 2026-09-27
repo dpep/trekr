@@ -6,7 +6,7 @@ export PATH := $(PATH):/opt/homebrew/opt/rustup/bin
 # script/bench.py stages them and reports the conditions (DEC-001).
 CORPORA ?= ~/code/lib/ruby/rails ~/code/lib/ruby/discourse ~/code/lib/ruby/mastodon ~/code/lib/ruby/ruby ~/code/lib/ruby/graph_weaver
 
-.PHONY: check build release bench dogfood vscode-test clicks
+.PHONY: check build release bench dogfood vscode-test clicks gold-gem
 
 ## the commit gate: fmt, clippy, tests, the VS Code extension's unit tests
 check:
@@ -46,4 +46,9 @@ endif
 ## copies: REPOS="/path/copy-a /path/copy-b" (script/clicks.py).
 clicks: release
 	@script/clicks.py $(REPOS)
+
+## a gold set from a gem's own spec suite, traced and scored in a copy of it:
+## make gold-gem GEM=~/code/lib/ruby/graph_weaver (script/gold_gem.sh).
+gold-gem: release
+	@script/gold_gem.sh $(GEM)
 
