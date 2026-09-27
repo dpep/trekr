@@ -3533,3 +3533,28 @@ discourse (625), `--def` answers: resolved 1,257 / 454, ambiguous 71 / 1, and
 the rest residue, the largest bucket being a module no indexed class mixes in
 (`composed_of` includes `Aggregations` inside a method) and a chain with
 nothing after the owner.
+
+## DEC-069 — A class built by a call and assigned to a constant is a class body
+
+**Decided.** `X = Struct.new(…)`, `Data.define(…)`, `Class.new(Base)` and
+`Module.new`, assigned to a constant, declare a class or module `X`: the parent
+is its superclass edge (`Struct`, `Data`, `Base`, or a computed parent as
+written), Struct's literal members become readers and writers and Data's
+readers, declared by `Struct.new` / `Data.define`, and the block is visited as
+the body. Before, `X` was a constant with no ancestors and the block's methods
+landed on the enclosing scope — `--ancestors Sub` answered `[Sub]`, status
+resolved.
+
+**The liberty, stated.** A block is `class_eval`'d, so its methods and the
+calls in it belong to `X` exactly as in a `class` body. Its *constants* do not:
+Ruby's cref inside the block is the enclosing scope, so `FOO = 1` there defines
+the outer `FOO`, and a constant read resolves without `X`'s ancestors. trekr
+scopes both to `X`. Keeping a second, lexical nesting beside the owning one
+would be exact, but a `class` written inside such a block then needs its
+methods placed by one and its body resolved by the other — machinery for code
+that working Ruby rarely writes, since a constant that resolves only through
+`X` raises there. The divergence is recorded as a known gap, not hidden.
+
+**Not modelled**: the same call unassigned (`klass = Class.new do`), whose
+owner no constant names, and `class Foo < Struct.new(:a)`, whose members live
+on an anonymous class between the two.

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **`X = Class.new(Base) do … end` is a class.** So are `Struct.new(…)`,
+  `Data.define(…)` and `Module.new` assigned to a constant: `--ancestors X`
+  names the parent (`Base`, `Struct`, `Data`), the methods in the block belong
+  to `X`, and Struct's and Data's members are methods on it (`defined_via:
+  Struct.new`). They were constants with no ancestors, and the block's methods
+  had no owner. `--symbols` lists such a constant as a `class` or `module`.
+  Upgrading rebuilds the index (store v24).
+
 - **`super` is followed.** `--def` on a `super` answers the method it runs —
   the next definition after the method's owner, prepends and includes in
   Ruby's order, per including class for a module's method — with

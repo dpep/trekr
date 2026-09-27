@@ -607,6 +607,12 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         };
         let value = node.value();
         let loc = node.name_loc();
+        if let Some(call) = value.as_call_node()
+            && let Some(made) = Made::by(&call)
+        {
+            self.handle_made(name, node, &call, made);
+            return;
+        }
         if let Some(symbols) = literal_symbol_array(&value) {
             self.symbol_arrays.insert(name.clone(), symbols);
         }
@@ -733,6 +739,37 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         def.via = Some("alias".into());
         def.target = Some(target);
         self.push_def(def);
+    }
+}
+
+/// A class or module built by a call rather than written with a keyword.
+#[derive(Clone, Copy, PartialEq)]
+enum Made {
+    /// `Struct.new(:a, :b)` — readers and writers for each member.
+    Struct,
+    /// `Data.define(:a, :b)` — readers only.
+    Data,
+    /// `Class.new(Base)`.
+    Class,
+    /// `Module.new`.
+    Module,
+}
+
+impl Made {
+    fn by(call: &ruby_prism::CallNode<'_>) -> Option<Made> {
+        let receiver = const_name(&call.receiver()?)?;
+        Some(
+            match (
+                receiver.trim_start_matches("::"),
+                method_name(call)?.as_str(),
+            ) {
+                ("Struct", "new") => Made::Struct,
+                ("Data", "define") => Made::Data,
+                ("Class", "new") => Made::Class,
+                ("Module", "new") => Made::Module,
+                _ => return None,
+            },
+        )
     }
 }
 
@@ -1605,6 +1642,115 @@ impl<'pr> Extractor<'_> {
             block,
             pos,
         });
+    }
+
+    /// `Point = Struct.new(:x, :y) do … end`, `Data.define`, `Class.new(Base)`
+    /// and `Module.new`, assigned to a constant: a class or module body.
+    ///
+    /// The block is `class_eval`'d, so its methods are the new class's and a
+    /// call in it dispatches on it. One liberty is taken: constants written
+    /// in the block are scoped as if it were a `class` body, where Ruby keeps
+    /// the enclosing scope's (ARCHITECTURE, known gaps).
+    fn handle_made(
+        &mut self,
+        name: String,
+        node: &ruby_prism::ConstantWriteNode<'pr>,
+        call: &ruby_prism::CallNode<'pr>,
+        made: Made,
+    ) {
+        let loc = node.name_loc();
+        let kind = match made {
+            Made::Module => Kind::Module,
+            _ => Kind::Class,
+        };
+        let def = self.def(
+            name.clone(),
+            kind,
+            loc.start_offset(),
+            node.location().end_offset(),
+        );
+        self.push_def(def);
+
+        let args = arg_nodes(call);
+        let parent = match made {
+            Made::Struct | Made::Data => call.receiver().and_then(|r| const_name(&r)),
+            // `Class.new` alone inherits Object, which the tree already gives
+            // every class with no written superclass.
+            Made::Class => args.first().map(|arg| {
+                const_name(arg).unwrap_or_else(|| {
+                    let at = arg.location();
+                    self.text(at.start_offset(), at.end_offset())
+                })
+            }),
+            Made::Module => None,
+        };
+        if let Some(target) = parent {
+            let mut owner = self.nesting.clone();
+            owner.insert(0, name.clone());
+            self.facts.ancestry.push(Ancestry {
+                owner,
+                relation: Relation::Superclass,
+                target,
+                pos: self.pos(call.location().start_offset()),
+            });
+        }
+
+        // Members: every literal argument, less the class name `Struct.new`
+        // takes first when handed a string, and the options hash.
+        let mut members: Vec<(String, usize)> = args
+            .iter()
+            .filter_map(|arg| Some((literal_name(arg)?, arg.location().start_offset())))
+            .collect();
+        if made == Made::Struct
+            && args.first().is_some_and(|a| a.as_string_node().is_some())
+            && members
+                .first()
+                .is_some_and(|(n, _)| n.starts_with(|c: char| c.is_ascii_uppercase()))
+        {
+            members.remove(0);
+        }
+        if !matches!(made, Made::Struct | Made::Data) {
+            members.clear();
+        }
+        let (start, end) = (call.location().start_offset(), call.location().end_offset());
+        let via = match made {
+            Made::Struct => "Struct.new",
+            _ => "Data.define",
+        };
+        self.nesting.insert(0, name.clone());
+        for (member, at) in members {
+            let mut reader = self.def(member.clone(), Kind::Method, start, end);
+            reader.pos = self.pos(at);
+            reader.via = Some(via.into());
+            self.push_def(reader);
+            if made == Made::Struct {
+                let mut writer = self.def(format!("{member}="), Kind::Method, start, end);
+                writer.pos = self.pos(at);
+                writer.via = Some(via.into());
+                writer.params = vec![Param {
+                    kind: ParamKind::Req,
+                    name: member,
+                }];
+                self.push_def(writer);
+            }
+        }
+        self.nesting.remove(0);
+
+        // Still an ordinary call, whose receiver and arguments are references.
+        self.record_call(call);
+        if let Some(receiver) = call.receiver() {
+            self.visit(&receiver);
+        }
+        if let Some(arguments) = call.arguments() {
+            self.visit_arguments_node(&arguments);
+        }
+        if let Some(block) = call.block().and_then(|b| b.as_block_node()) {
+            self.enter(Some(name), Opens::Scope);
+            if let Some(body) = block.body() {
+                self.visit(&body);
+            }
+            self.leave();
+        }
     }
 
     /// `after_create :ensure_thing` invokes `ensure_thing`, and nothing in the

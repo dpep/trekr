@@ -1,0 +1,15 @@
+# `X = Class.new(Base) do … end`, `Struct.new`, `Data.define` and `Module.new`
+# assigned to a constant are class and module bodies. Unmodelled, the methods
+# inside had no owner, `--ancestors Sub` answered `[Sub]` with its superclass
+# dropped, and `BaseThing#hello` had no definition to find references to.
+def app.rb:9:5 status=resolved owner=Sub via=self
+def app.rb:13:5 status=resolved owner=BaseThing via=super
+def app.rb:21:5 status=resolved name=x owner=Point kind=declaration
+def app.rb:27:6 status=resolved name=lat owner=Coord
+def app.rb:42:11 status=resolved name=x= owner=Point via=local:new
+def app.rb:52:5 status=resolved name=helper owner=Helpers
+ancestors Sub Sub,BaseThing,Object
+ancestors Point Point,Struct
+ancestors Coord Coord,Data
+ancestors Failure Failure,StandardError,Exception
+refs BaseThing#hello confirmed=1 excluded_different_owner=1

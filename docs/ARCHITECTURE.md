@@ -71,6 +71,11 @@ super` — is the fact
 Rubydex does not carry and the reason this engine is not a wrapper around it.
 53–66% of Ruby call sites are implicit self and need no inference at all.
 
+`Point = Struct.new(:x, :y)`, `Data.define`, `Class.new(Base)` and
+`Module.new` assigned to a constant declare a class or module — the parent as
+its superclass, Struct's members as readers and writers, Data's as readers —
+and a block handed to them is its body.
+
 Macros are expanded at extraction, so no later layer needs to know they exist:
 `attr_accessor :x` becomes `x` and `x=`; `module_function` turns one `def` into a
 public singleton method and a private instance one; `alias` and `alias_method`
@@ -1053,8 +1058,13 @@ biting on a real corpus.*
 
 Deliberate, and cheap to close when they earn it:
 
-- `Class.new` / `Module.new` bodies are owners but not lexical scopes; not
-  modeled. Constants inside them will be attributed to the enclosing scope.
+- `X = Class.new(Base) do … end` (and `Struct.new`, `Data.define`,
+  `Module.new`) is read as a class body, which is right for its methods and
+  calls and a liberty for its constants: Ruby scopes a constant written in the
+  block to the enclosing scope, and trekr to `X` (DEC-069). The same call
+  *not* assigned to a constant is no scope at all — its methods land on the
+  enclosing one, and their `super` is not recorded — and `class Foo <
+  Struct.new(:a)` gets no member readers.
 - `private_constant` / `private_class_method` are not read.
 - Instance, class, and global variables are not in the index (not in PLAN
   §4's Phase 1 fact set). The LSP answers locals, ivars and cvars from the

@@ -381,6 +381,25 @@ fn every_testbed_case_answers_as_recorded() {
                     let (answer, _) = trekr(&db, &dir, &["--refs", target, "--json"]);
                     check_refs(&label, line, &answer, &mut failures);
                 }
+                "ancestors" => {
+                    let (answer, _) = trekr(&db, &dir, &["--ancestors", target, "--json"]);
+                    let got: Vec<&str> = answer["ancestors"]
+                        .as_array()
+                        .map(|a| a.iter().filter_map(|n| n.as_str()).collect())
+                        .unwrap_or_default();
+                    let want: Vec<&str> = rest
+                        .split_whitespace()
+                        .nth(1)
+                        .unwrap_or_default()
+                        .split(',')
+                        .collect();
+                    // A prefix: the tail is core's, and not what a case is about.
+                    if !got.starts_with(&want) {
+                        failures.push(format!(
+                            "{label}: {line}\n      expected {want:?} first, got {got:?}"
+                        ));
+                    }
+                }
                 "dead" => {
                     let (answer, _) = trekr(&db, &dir, &["--dead", target, "--json"]);
                     check_dead(&label, line, &answer, &mut failures);
