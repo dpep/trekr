@@ -989,6 +989,81 @@ fn navigation_keeps_working_inside_a_gem_file() {
     let _ = fs::remove_dir_all(&gem_home);
 }
 
+/// Two apps whose bundles hold the same gem: a gem file opened from one
+/// app's workspace is answered from that app. The most recently indexed app
+/// answered instead, so references from inside the gem listed the other
+/// app's callers, and the session cached the pick.
+#[test]
+fn a_gem_file_is_answered_from_the_workspaces_own_app() {
+    let (mine, db) = scratch("gem-app-b");
+    let (other, _) = scratch("gem-app-a");
+    let gem_home = PathBuf::from(format!("{}-gems", mine.display()));
+    let _ = fs::remove_dir_all(&gem_home);
+    let lib = gem_home.join("gems/shelf-1.0.0/lib");
+    fs::create_dir_all(&lib).unwrap();
+    let gem_source = "module Shelf\n  class Box\n    def fill\n    end\n  end\nend\n";
+    let gem_file = lib.join("shelf.rb");
+    fs::write(&gem_file, gem_source).unwrap();
+    // `other` is indexed last, and sorts first on a tie in the same second.
+    for app in [&mine, &other] {
+        git(app, &["init", "-q"]);
+        fs::write(
+            app.join("Gemfile.lock"),
+            "GEM\n  remote: https://rubygems.org/\n  specs:\n    shelf (1.0.0)\n\nDEPENDENCIES\n  shelf\n",
+        )
+        .unwrap();
+        fs::write(
+            app.join("app.rb"),
+            "class Job\n  def run\n    Shelf::Box.new.fill\n  end\nend\n",
+        )
+        .unwrap();
+        commit_all(app);
+        let indexed = trekr()
+            .args(["--index"])
+            .current_dir(app)
+            .env("TREKR_DB", &db)
+            .env("GEM_HOME", &gem_home)
+            .output()
+            .unwrap();
+        assert!(indexed.status.success());
+    }
+
+    let mut session = Session::start(&db, &mine);
+    session.initialize(&mine);
+    let uri = format!("file://{}", gem_file.display());
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri, "languageId": "ruby", "version": 1, "text": gem_source
+        }}),
+    );
+    let references = session.request(
+        "textDocument/references",
+        serde_json::json!({
+            "textDocument": {"uri": uri},
+            "position": {"line": 2, "character": 8},
+            "context": {"includeDeclaration": false},
+        }),
+    );
+    let callers: Vec<&str> = references["result"]
+        .as_array()
+        .unwrap_or_else(|| panic!("references from inside the gem: {references}"))
+        .iter()
+        .filter_map(|location| location["uri"].as_str())
+        .filter(|uri| uri.ends_with("/app.rb"))
+        .collect();
+    let mine_name = mine.file_name().unwrap().to_str().unwrap();
+    assert!(
+        !callers.is_empty() && callers.iter().all(|uri| uri.contains(mine_name)),
+        "{references}"
+    );
+
+    session.stop();
+    for dir in [&mine, &other, &gem_home] {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
 /// Gems' own docs are much of the value: hovering a gem method shows what the
 /// gem wrote, and says which gem.
 #[test]

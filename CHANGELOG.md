@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **In the editor, a gem's file is answered from your workspace's app.** With
+  two apps bundling the same gem, definition, references and hover inside the
+  gem answered from whichever app was indexed last, and kept doing so for the
+  session.
+
 - **Completion after a guessed chain says it is not the whole list.** When
   the receiver's type was one reading of several (`x.strip.` where the app
   also defines a `strip`), the editor was told the list was complete and did

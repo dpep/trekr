@@ -262,7 +262,7 @@ impl Session {
                         .checkout_containing(&absolute.to_string_lossy())
                         .ok()
                         .flatten()
-                        .map(|gem| self.store.app_for_gem(&gem).ok().flatten().unwrap_or(gem))
+                        .map(|gem| self.app_for_gem(gem))
                         .map(PathBuf::from),
                 };
                 self.enclosing.insert(directory, found.clone());
@@ -270,6 +270,30 @@ impl Session {
             }
         }?;
         Some((root, absolute))
+    }
+
+    /// The app a gem's file is answered from: the workspace's own when its
+    /// bundle holds the gem, since that is the app the person is working in,
+    /// and otherwise the store's pick (DEC-029). The gem itself when no app has
+    /// it.
+    fn app_for_gem(&self, gem: String) -> String {
+        let root = std::fs::canonicalize(&self.root).unwrap_or_else(|_| self.root.clone());
+        let root = root.to_string_lossy().into_owned();
+        // The workspace is usually the checkout itself, which `containing`
+        // does not count as containing.
+        let workspace = match self.store.has_checkout(&root) {
+            Ok(true) => Some(root),
+            _ => self.store.checkout_containing(&root).ok().flatten(),
+        };
+        if let Some(app) = workspace
+            && self
+                .store
+                .gems_used(&app)
+                .is_ok_and(|gems| gems.contains(&gem))
+        {
+            return app;
+        }
+        self.store.app_for_gem(&gem).ok().flatten().unwrap_or(gem)
     }
 
     /// A checkout's assembled namespace, rebuilt only when the index beneath it

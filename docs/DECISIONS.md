@@ -989,6 +989,14 @@ surface key catches content drift within a checkout, not a lockfile edit nobody
 indexed — and the `context` field is what makes it diagnosable rather than
 mysterious.
 
+**Amended after 0.3.0: the editor's workspace comes first.** In the LSP, a gem
+file opened from a workspace whose own app's bundle holds the gem is answered
+from that app; the most-recently-indexed pick applies only when it does not.
+The session caches the pick per directory, so with two apps sharing a gem,
+indexing the other one once was enough to make the editor answer from it for
+the rest of the session. The CLI keeps the store's pick: it has no workspace,
+only a working directory, and nothing has shown that to be wrong yet.
+
 ## DEC-030 — `--gc` is dropped from the backlog, not deferred again
 
 **Decided.** No garbage collection, and it comes off the list rather than
