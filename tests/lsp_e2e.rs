@@ -280,6 +280,7 @@ fn the_server_announces_only_what_it_answers() {
         "implementationProvider",
         "callHierarchyProvider",
         "documentLinkProvider",
+        "documentHighlightProvider",
     ] {
         assert!(!caps[provider].is_null(), "{provider} is announced");
     }
@@ -3308,5 +3309,278 @@ fn requests_are_counted_by_operation_caller_and_outcome() {
     let text = serde_json::to_string(&rows).unwrap();
     assert!(!text.contains("app.rb") && !text.contains(&dir.display().to_string()));
 
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A checkout of several files, committed and indexed, with `open` open in the
+/// session.
+fn files_session(label: &str, files: &[(&str, &str)], open: &str) -> (PathBuf, Session) {
+    let (dir, db) = scratch(label);
+    git(&dir, &["init", "-q"]);
+    for (name, source) in files {
+        let path = dir.join(name);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, source).unwrap();
+    }
+    commit_all(&dir);
+    let indexed = trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+    assert!(indexed.status.success());
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let text = files.iter().find(|(name, _)| *name == open).unwrap().1;
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, open), "languageId": "ruby", "version": 1, "text": text
+        }}),
+    );
+    (dir, session)
+}
+
+/// `file:line` (1-based) of each location an answer holds; `[]` for null.
+fn sites_in(answer: &serde_json::Value) -> Vec<String> {
+    answer["result"]
+        .as_array()
+        .map(|locations| {
+            locations
+                .iter()
+                .map(|l| {
+                    let uri = l["uri"].as_str().unwrap();
+                    let file = uri.rsplit('/').next().unwrap();
+                    format!(
+                        "{file}:{}",
+                        l["range"]["start"]["line"].as_u64().unwrap() + 1
+                    )
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn ask(
+    session: &mut Session,
+    dir: &Path,
+    method: &str,
+    file: &str,
+    line: u32,
+    character: u32,
+) -> serde_json::Value {
+    session.request(
+        method,
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(dir, file)},
+            "position": {"line": line, "character": character},
+            "context": {"includeDeclaration": true},
+        }),
+    )
+}
+
+#[test]
+fn a_local_goes_to_the_assignments_its_value_can_come_from() {
+    let source = concat!(
+        "def total(items, rate:)\n", // 1
+        "  sum = 0\n",               // 2
+        "  if items.empty?\n",       // 3
+        "    sum = 1\n",             // 4
+        "  end\n",                   // 5
+        "  sum * rate\n",            // 6
+        "end\n",                     // 7
+    );
+    let (dir, mut session) = files_session("local", &[("app.rb", source)], "app.rb");
+    let sum = ask(
+        &mut session,
+        &dir,
+        "textDocument/definition",
+        "app.rb",
+        5,
+        3,
+    );
+    assert_eq!(
+        sites_in(&sum),
+        ["app.rb:2", "app.rb:4"],
+        "both branches reach"
+    );
+    let rate = ask(
+        &mut session,
+        &dir,
+        "textDocument/definition",
+        "app.rb",
+        5,
+        9,
+    );
+    assert_eq!(sites_in(&rate), ["app.rb:1"], "a keyword parameter");
+
+    let hover = ask(&mut session, &dir, "textDocument/hover", "app.rb", 5, 3);
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        "local `sum` · assigned at line 2 (and 1 more)"
+    );
+    let marks = ask(
+        &mut session,
+        &dir,
+        "textDocument/documentHighlight",
+        "app.rb",
+        5,
+        3,
+    );
+    let kinds: Vec<u64> = marks["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|h| h["kind"].as_u64().unwrap())
+        .collect();
+    assert_eq!(kinds, [3, 3, 2], "two writes, then the read");
+
+    // An unsaved edit moves the answer.
+    let edited = source.replace("  sum * rate\n", "  sum = 5\n  sum * rate\n");
+    session.notify(
+        "textDocument/didChange",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb"), "version": 2},
+            "contentChanges": [{"text": edited}],
+        }),
+    );
+    let sum = ask(
+        &mut session,
+        &dir,
+        "textDocument/definition",
+        "app.rb",
+        6,
+        3,
+    );
+    assert_eq!(sites_in(&sum), ["app.rb:6"]);
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+fn ivar_files() -> Vec<(&'static str, &'static str)> {
+    vec![
+        (
+            "base.rb",
+            concat!(
+                "class Base\n",        // 1
+                "  def setup\n",       // 2
+                "    @color = :red\n", // 3
+                "  end\n",             // 4
+                "end\n",               // 5
+            ),
+        ),
+        (
+            "widget.rb",
+            concat!(
+                "class Widget < Base\n",                   // 1
+                "  attr_accessor :size\n",                 // 2
+                "  def initialize(name)\n",                // 3
+                "    @name = name\n",                      // 4
+                "  end\n",                                 // 5
+                "  def label\n",                           // 6
+                "    [@name, @color, @size, @greeting]\n", // 7
+                "  end\n",                                 // 8
+                "end\n",                                   // 9
+            ),
+        ),
+        (
+            "widget_rename.rb",
+            concat!(
+                "class Widget\n",     // 1
+                "  def rename(to)\n", // 2
+                "    @name = to\n",   // 3
+                "  end\n",            // 4
+                "end\n",              // 5
+            ),
+        ),
+        (
+            "greeting.rb",
+            concat!(
+                "module Greeting\n",      // 1
+                "  def greet\n",          // 2
+                "    @greeting\n",        // 3
+                "  end\n",                // 4
+                "end\n",                  // 5
+                "class A\n",              // 6
+                "  include Greeting\n",   // 7
+                "  def initialize\n",     // 8
+                "    @greeting = 'hi'\n", // 9
+                "  end\n",                // 10
+                "end\n",                  // 11
+                "class B\n",              // 12
+                "  include Greeting\n",   // 13
+                "  def initialize\n",     // 14
+                "    @greeting = 'yo'\n", // 15
+                "  end\n",                // 16
+                "end\n",                  // 17
+            ),
+        ),
+    ]
+}
+
+#[test]
+fn an_ivar_goes_to_where_its_class_sets_it() {
+    let (dir, mut session) = files_session("ivar", &ivar_files(), "widget.rb");
+    let mut definition = |character| {
+        let answer = ask(
+            &mut session,
+            &dir,
+            "textDocument/definition",
+            "widget.rb",
+            6,
+            character,
+        );
+        sites_in(&answer)
+    };
+    assert_eq!(
+        definition(6),
+        ["widget.rb:4", "widget_rename.rb:3"],
+        "`initialize` first, then the reopened class"
+    );
+    assert_eq!(definition(13), ["base.rb:3"], "set in the superclass");
+    assert_eq!(definition(21), ["widget.rb:2"], "set by attr_accessor");
+    assert_eq!(
+        definition(28),
+        Vec::<String>::new(),
+        "not set by Widget or its ancestors: a guess is not an answer"
+    );
+
+    let hover = ask(&mut session, &dir, "textDocument/hover", "widget.rb", 6, 6);
+    assert_eq!(
+        hover["result"]["contents"]["value"],
+        "ivar `@name` · set in `initialize` (and 1 more)"
+    );
+    let references = ask(
+        &mut session,
+        &dir,
+        "textDocument/references",
+        "widget.rb",
+        6,
+        6,
+    );
+    assert_eq!(
+        sites_in(&references),
+        ["widget.rb:4", "widget.rb:7", "widget_rename.rb:3"]
+    );
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A module's ivar is set by whatever includes it — here, two classes. Which
+/// one is the object at runtime is not knowable, so there is no answer.
+#[test]
+fn an_ivar_in_a_module_mixed_into_several_classes_goes_nowhere() {
+    let (dir, mut session) = files_session("ivar-module", &ivar_files(), "greeting.rb");
+    let answer = ask(
+        &mut session,
+        &dir,
+        "textDocument/definition",
+        "greeting.rb",
+        2,
+        6,
+    );
+    assert_eq!(sites_in(&answer), Vec::<String>::new());
+    session.stop();
     let _ = fs::remove_dir_all(&dir);
 }

@@ -12,6 +12,7 @@ export const FEATURES = [
   "completion",
   "diagnostics",
   "documentLink",
+  "documentHighlight",
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -28,6 +29,7 @@ const HOOKS: Record<Feature, string[]> = {
   completion: ["provideCompletionItem"],
   diagnostics: ["handleDiagnostics"],
   documentLink: ["provideDocumentLinks", "resolveDocumentLink"],
+  documentHighlight: ["provideDocumentHighlights"],
 };
 
 /**

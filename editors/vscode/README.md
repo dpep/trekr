@@ -21,6 +21,7 @@ by every worktree of the repo and kept current as you save.
 | Find All References | Call sites that can reach *this* method — confirmed ones first, then possible ones; ones whose receiver resolves elsewhere are left out. On a class or constant: every reference Ruby's lookup resolves to it. |
 | Hover | The definition's signature and doc comment, and where it lives. A guess says so in words. |
 | `require` strings | Cmd-click or Go to Definition on a `require`, `require_relative`, `load` or `autoload` string opens the file it loads — the checkout's, a gem's, or the standard library's. Several matches give a peek list; hover names the file and gem; a string with one file behind it is underlined as a link. |
+| Variables | Cmd-click a local or parameter: the assignments its value can come from (both branches of an `if`, a loop's own later write, the parameter). Cmd-click an `@ivar`: where its class or an ancestor sets it — `@x =`, `attr_accessor`, `instance_variable_set` — `initialize` first; nothing when the object could be one of several classes. References, hover and highlighting of the other mentions work on both. |
 | Completion | After `recv.`: the receiver's methods, own first, then inherited. After `Scope::`: its constants. A bare word: locals, the class's methods, constants in scope. |
 | Outline, breadcrumbs, Go to Symbol | From the file as you have it, unsaved edits included. |
 | Go to Implementation | Classes that include a module; overrides of a method. |

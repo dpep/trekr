@@ -19,6 +19,7 @@
 
 use super::complete::Members;
 use super::require::{self, LoadPath, Require};
+use super::vars::{self, Vars};
 use crate::core::Facts;
 use crate::store::Store;
 use crate::tree::Tree;
@@ -91,6 +92,7 @@ pub(crate) struct Document {
     pub(crate) text: String,
     facts: Option<Facts>,
     requires: Option<Vec<Require>>,
+    vars: Option<std::rc::Rc<Vars>>,
     /// Where the text came from. The editor's copy is authoritative until it
     /// closes the file; a disk read is only as good as the file it was read
     /// from, and is re-read the moment that file changes.
@@ -120,6 +122,7 @@ impl Document {
             text,
             facts: None,
             requires: None,
+            vars: None,
             origin,
         }
     }
@@ -148,6 +151,14 @@ impl Document {
     pub(crate) fn requires(&mut self) -> &[Require] {
         self.requires
             .get_or_insert_with(|| require::requires_in(self.text.as_bytes()))
+    }
+
+    /// Its variables and what each read of a local can see — once per edit,
+    /// and shared, since an ivar answer reads several files' at once.
+    pub(crate) fn vars(&mut self) -> std::rc::Rc<Vars> {
+        self.vars
+            .get_or_insert_with(|| std::rc::Rc::new(vars::analyze(self.text.as_bytes())))
+            .clone()
     }
 }
 

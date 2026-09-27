@@ -132,7 +132,8 @@ different questions and answer differently.
 
 `trekr --lsp` speaks LSP: goToDefinition, findReferences, documentSymbol,
 workspaceSymbol, hover, goToImplementation, call hierarchy, and Prism syntax
-diagnostics. It keeps the index current as files are saved, and indexes an
+diagnostics — on methods and constants, and on local and instance variables
+too, with documentHighlight for the latter. It keeps the index current as files are saved, and indexes an
 unindexed checkout in the background.
 
 [claude/INSTALL.md](claude/INSTALL.md) wires up the skill and the server.

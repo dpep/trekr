@@ -3120,3 +3120,112 @@ starts with its first request cold and counts a `resume`, not a `session`.
 holds it, but `--usage` does not import it. **Reverses if** a question needs
 what was asked rather than which feature asked it — that is the log's job, at
 `TREKR_LOG_LEVEL=debug`, not this table's.
+
+## DEC-064 — A variable is answered from its file, when asked; an ivar only from its class's chain
+
+**Decided.** In `--lsp`, `definition`, `references`, `documentHighlight` (a new
+capability) and `hover` on a local, parameter, `@ivar` or `@@cvar` answer from
+the files themselves. `serve/vars.rs` is a pure walk of one file's Prism tree,
+cached on the document per edit; `serve/variables.rs` puts it on the wire and,
+for a member variable, reads the class's files through the tree. No blob fact,
+no schema change, no re-index — the DEC-052/DEC-053 shape: the index names the
+files, the question reads them.
+
+The ask was "click an `@thing` that is being used and land where it was set;
+best effort, or skip when it's too hard". Cmd-click on a variable answered
+nothing, so VS Code fell back to its word-based references.
+
+**Locals: flow, not the nearest line above.** Prism already decides which
+identifiers are locals and how many block scopes up each lives (`depth`), so
+scope is settled; what is left is which writes reach a read. The first design
+was "the latest assignment above, in the same scope chain". That is wrong on
+the two shapes a reader clicks most: `x = 1 if c` (the old value still reaches)
+and `if … x = 1 else x = 2 end` (both do). So the walk carries the set of
+writes that may have set each local:
+
+| construct | rule |
+|---|---|
+| `x = v`, targets, parameters | replaces the set (the value is walked first, so `x = x + 1` reads the old one) |
+| `if`/`unless`/`case`/`case…in`/`&&`/`||`/`rescue` modifier | each branch from the same state; results merged, the no-`else` path included |
+| `x ||= v`, `x &&= v` | the old set plus this write |
+| `x += v` | this write |
+| `begin … rescue` | a rescue clause sees the entry state plus every write the body made, since it may have stopped after any |
+| `while`/`until`/`for`/a block | may run again: a read at the top of the body sees the body's own later writes |
+| `def`/`class`/`module` | start empty and give nothing back |
+
+The loop rule needs the body's writes before the body is walked. Walking each
+loop body twice doubles per nesting level, and a spec file is ten deep. So the
+whole file is walked twice: the first pass records which writes each loop body
+holds (occurrences are numbered in walk order, so a body is an index range),
+and the second seeds each loop entry with those of an enclosing scope. Linear,
+and 6 ms on discourse's largest file (8,706 lines, half of it the parse).
+Carrying a nested block's own locals into that seed was the first version's
+bug — `users_controller_spec.rb` took 50 ms, because the top `describe` seeded
+every local in the file and each nested block cloned the lot.
+
+Every binding form is a write with its own name in the hover: method and block
+parameters of every shape (`|a, (b, c); d|` included), `in {x:}`, `=> x`,
+`in [a, *rest]`, a regexp's named captures, `rescue => e`, `for x in`,
+`a, b = …`. A write under the cursor is its own definition, which lets VS Code
+offer references from there, as it does on a method's `def`.
+
+**Ivars: the class's chain, or nothing.** An ivar belongs to an object, and the
+object is decided where it is written: an instance method or a
+`define_method` block writes the instance's; a class body, `def self.x` or
+`class << self` writes the class object's. The instance's writes are looked
+for in `Tree::ancestors` of the class — superclasses and included modules, as
+far as the tree resolves them — and the class object's in that class alone
+(class-level ivars are not inherited). `Tree::sites` names each owner's files,
+reopenings included; gems and core are skipped, and at most 64 files are read.
+A mention in those files counts when `Tree::scope_fqn` places its written
+nesting on the chain and `self` agrees. No tree API was added.
+
+Writes are `@x =`, `||=`/`&&=`/op-assigns, multi-assign and `rescue => @e`
+targets, `attr_writer`/`attr_accessor` (symbols or strings; `attr_reader`
+writes nothing), and `instance_variable_set(:@x, …)` with a literal name on
+`self`. `initialize` first, then by file and line: the first is where a reader
+looks, the rest is a peek list.
+
+What is **not** searched: a subclass (a base class reading an ivar its
+subclasses set), a module's includers (a concern reading an ivar the model
+sets), and a receiver other than `self` (`controller.instance_variable_set`).
+Each could be answered — `Tree::includers_of` exists — but the answer would be
+"one of these classes, depending on the object", and a module mixed into many
+classes makes that a list of guesses. Returning nothing leaves the editor's
+own word matching in place, which is honest about being text. When the class
+cannot be named at all (no checkout, a top-level ivar, a class not yet saved),
+the file at hand is searched — it is certainly part of the answer.
+
+**Class variables** follow the ivar rules, shared by the class and its
+instances. **Globals** are skipped: a write can be in any file of the program,
+and answering means scanning the checkout for a feature nobody asked for.
+
+**Highlight** is the file's own mentions, writes marked as writes, matched for
+an ivar by written nesting and `self` — no index needed, so it works in an
+unindexed checkout.
+
+**Measured** on discourse (release build, isolated store, a machine shared with
+other work; 20–60 variable positions per file): median 0.1–0.8 ms for
+definition, highlight, hover and references on a variable. The first ivar
+question about a class reads its files, up to 11 ms (`TopicQuery`), beyond the
+tree the session builds once for every operation. Spot-checked on `User` and
+`ApplicationController`: `@readonly_mode` lands in `lib/read_only_mixin.rb`,
+`@canonical_url` in `lib/canonical_url.rb`, `@import_mode` on its
+`attr_accessor`; `@asset_preload_links`, set only through
+`controller.instance_variable_set` in a helper, answers nothing.
+
+**Not chosen.**
+
+- **Variable facts in the index.** A local never crosses a file, and an ivar's
+  answer is a few files the tree already names. Storing them would put millions
+  of rows in every store (DEC-012 kept assignments out for the same reason) and
+  cost a re-index, for an answer that must reflect the unsaved buffer anyway.
+- **Every write of `@x` in the checkout.** One click on `@user` in a Rails app
+  would list hundreds of unrelated classes' writes.
+- **Includers of a module, subclasses of a class.** See above; an ambiguous
+  owner answers nothing.
+- **Globals.** See above.
+
+**Reverses if** "nothing" on a concern's ivar turns out to be what people click
+most — then a module with exactly one includer (`Tree::includers_of`) is a
+determinate answer and earns its keep.

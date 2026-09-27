@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Go to Definition on a variable.** In `--lsp`, Cmd-click a local or
+  parameter and land on the assignments its value can come from — both
+  branches of an `if`, the write at the bottom of a loop, a block or method
+  parameter, a pattern or `rescue => e` binding. Cmd-click an `@ivar` and land
+  on where its class sets it: `@x =`, `||=`, `attr_writer`/`attr_accessor`, or
+  `instance_variable_set(:@x, …)`, in the class's reopenings and ancestors,
+  `initialize` first. An ivar whose object could be one of several classes (a
+  module's, set by whatever includes it) answers nothing rather than a guess.
+  `@@class` variables work the same way; `$globals` are not answered. Find All
+  References lists every read and write, hover says where it was set
+  (``local `total` · assigned at line 12``), and the editor highlights the
+  other mentions in the file — a new `documentHighlight` capability, with a
+  `documentHighlight` entry in the VS Code extension's `trekr.features`. Read
+  from the open buffer, unsaved edits included; no re-index.
 - **The index `--lsp` starts in the background runs at lower priority**:
   nice +10 and a low disk-I/O tier, so it yields to the editor and to
   anything else on the machine. A `trekr --index` you run yourself is

@@ -349,6 +349,8 @@ the new binary in place (DEC-050).
 | `handlers.rs` | the nine agent operations, syntax diagnostics, `require` strings as links |
 | `gather.rs` | how much of a references answer is kept, in what order, and what is said about the rest (DEC-056) |
 | `require.rs` | which file a `require` string names: finding them in a file, the static load path, Ruby's search rules (DEC-053) |
+| `vars.rs` | a file's variables, pure: which writes each local read can see, each ivar with its written class and `self` (DEC-064) |
+| `variables.rs` | a variable under the cursor: definition, references, highlight, hover; an ivar's class files, read when asked (DEC-064) |
 | `doc.rs` | a definition's doc comment and its signature as written, read from its file when asked (DEC-052) |
 | `complete.rs` | completion (DEC-040), and the chosen item's doc on resolve (DEC-052) |
 | `fresh.rs` | refresh-on-save and the background `--index` child (DEC-039) |
@@ -484,6 +486,52 @@ that hold the path's first component; the checkout's own directories are stat'ed
 time, because they change. On discourse (308 directories) the build is
 8.6 ms, a warm `documentLink` over 70 requires 0.4–0.6 ms, and `definition` on
 one 0.1–0.26 ms.
+
+**A variable is answered from the file, not the index** (DEC-064).
+`definition`, `references`, `documentHighlight` and `hover` on a local,
+parameter, `@ivar` or `@@cvar` are answered before anything else is tried.
+Nothing is stored; `vars::analyze` walks a file's Prism tree once per edit,
+cached on the document like its facts.
+
+- **A local** goes to the writes its value can come from. Prism already says
+  which names are locals and how many block scopes up each lives (`depth`);
+  the walk adds flow. A write replaces what reaches; each branch of an
+  `if`/`unless`/`case`/`&&`/`||` starts from the same state and the branches'
+  results are merged; `||=` keeps the old value as a possibility and `+=`
+  does not; a `rescue` sees every write its body made; `def`, `class` and
+  `module` start empty. A loop body (`while`, `for`, any block) may run again,
+  so it is walked twice: the first pass records which writes each body holds,
+  and the second lets a read at its top see a write at its bottom. Every
+  binding form is a write — parameters of every shape, `|a, (b, c); d|`,
+  `in {x:}`, `=> x`, named captures, `rescue => e`, `for x in`, `a, b = …`.
+  A write under the cursor is its own definition. References and highlight
+  are every mention in the same scope.
+- **An ivar** goes to every write in its class and the class's ancestors:
+  `@x =`, op-assigns, multi-assign targets, `attr_writer`/`attr_accessor`
+  (symbol or string), and `instance_variable_set(:@x, …)` on `self`.
+  `initialize` first, then by file and line. Which object it lives on is
+  decided where it is written: in an instance method (or a `define_method`
+  block) it is the instance's, found through `Tree::ancestors`; in a class
+  body, a `def self.x` or `class << self` it is the class object's, found in
+  that class's own files only. `Tree::sites` names the files — reopened
+  classes included, gems and core left out, at most 64 — and each is parsed
+  when asked; a mention counts when `Tree::scope_fqn` places its written
+  nesting on the chain. With no checkout, no nesting, or a class the tree
+  does not know, only the file at hand is searched. Nothing is guessed from
+  outside the chain: a module's ivar set only by the classes that include it
+  has no definition. `@@x` follows the same rules, shared by the class and
+  its instances.
+- **Highlight** is the file's own mentions, writes marked as writes; for an
+  ivar the written nesting and `self` must match, which needs no index.
+- **Hover** is one line: ``local `total` · assigned at line 12 (and 1
+  more)``, ``ivar `@name` · set in `initialize` (and 1 more)``.
+
+Globals are not answered. On discourse (release build, other work on the
+machine) definition, highlight, hover and references on a variable take
+0.1–0.8 ms median. The first ivar question about a class reads its files,
+up to 11 ms (`TopicQuery`), on top of the tree the session builds once for
+every operation. Analysing the largest file, an 8,706-line spec, takes 6 ms,
+half of it Prism's parse.
 
 **What reflects unsaved edits:** the open file's own facts (outline, position
 lookup, diagnostics, completion) and every file scan (`references`,
@@ -907,8 +955,9 @@ Deliberate, and cheap to close when they earn it:
 - `Class.new` / `Module.new` bodies are owners but not lexical scopes; not
   modeled. Constants inside them will be attributed to the enclosing scope.
 - `private_constant` / `private_class_method` are not read.
-- Instance, class, and global variables are not recorded (not in PLAN §4's
-  Phase 1 fact set).
+- Instance, class, and global variables are not in the index (not in PLAN
+  §4's Phase 1 fact set). The LSP answers locals, ivars and cvars from the
+  files themselves (DEC-064); globals are not answered anywhere.
 - Multi-write constant targets (`A, B = 1, 2`) define nothing.
 - `refine` is not modeled.
 - Orphaned blobs are never collected (DEC-003).

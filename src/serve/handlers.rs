@@ -17,6 +17,7 @@ use super::doc::{self, Doc};
 use super::gather;
 use super::require::{self, Found, Origin};
 use super::state::{Located, Session};
+use super::variables;
 use crate::cli::position::{self, Under};
 use crate::core::{Def, Kind};
 use crate::resolve::refs;
@@ -87,7 +88,7 @@ fn file_uri(root: &Path, path: &str) -> Option<Url> {
 }
 
 /// Where a site path lives on disk.
-fn absolute_site(root: &Path, path: &str) -> Option<std::path::PathBuf> {
+pub(super) fn absolute_site(root: &Path, path: &str) -> Option<std::path::PathBuf> {
     if path == crate::tree::CORE_PATH {
         // Core is compiled into the binary; it is written out beside the
         // database so that `require` and `Array#each` land on a readable
@@ -137,6 +138,10 @@ pub(crate) fn definition(
     if let Some(required) = required_at(session, &uri, position) {
         crate::usage::flag("require");
         return Ok(required_definition(session.definition_links, required));
+    }
+    if let Some(under) = variables::under(session, &uri, position) {
+        let locations = variables::definition(session, &under);
+        return Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)));
     }
     let Some((located, pos)) = target(session, &uri, position) else {
         return Ok(None);
@@ -412,6 +417,19 @@ fn resolve_at(
     })
 }
 
+/// Every mention of the variable under the cursor in this file, reads and
+/// writes told apart. Anything else is left to the editor's word matching.
+pub(crate) fn document_highlight(
+    session: &mut Session,
+    params: lsp_types::DocumentHighlightParams,
+) -> anyhow::Result<Option<Vec<lsp_types::DocumentHighlight>>> {
+    let position = params.text_document_position_params;
+    Ok(
+        variables::under(session, &position.text_document.uri, position.position)
+            .map(|under| variables::highlight(&under)),
+    )
+}
+
 /// Call sites of the method at a position, confirmed before possible, at most
 /// `reference_limit` of them — and a word to the user when that cut anything.
 ///
@@ -430,6 +448,9 @@ pub(crate) fn references(
     let uri = params.text_document_position.text_document.uri;
     let position = params.text_document_position.position;
     let declarations = params.context.include_declaration;
+    if let Some(under) = variables::under(session, &uri, position) {
+        return Ok(Some(variables::references(session, &under)));
+    }
     let Some((located, pos)) = target(session, &uri, position) else {
         return Ok(None);
     };
@@ -1085,6 +1106,16 @@ pub(crate) fn hover(session: &mut Session, params: HoverParams) -> anyhow::Resul
                 value: required_hover(&required),
             }),
             range: Some(required.range),
+        }));
+    }
+    if let Some(under) = variables::under(session, &uri, position) {
+        let (value, range) = variables::hover(session, &under);
+        return Ok(Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value,
+            }),
+            range: Some(range),
         }));
     }
     let Some((located, pos)) = target(session, &uri, position) else {

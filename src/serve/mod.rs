@@ -23,6 +23,8 @@ pub(crate) mod log;
 mod reload;
 mod require;
 mod state;
+mod variables;
+mod vars;
 mod wire;
 
 use crate::usage::Outcome;
@@ -60,6 +62,7 @@ fn capabilities() -> ServerCapabilities {
         )),
         definition_provider: Some(OneOf::Left(true)),
         references_provider: Some(OneOf::Left(true)),
+        document_highlight_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
         workspace_symbol_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
@@ -820,6 +823,9 @@ fn route(
             run_handler(request, |p| handlers::workspace_symbol(session, p))
         }
         req::HoverRequest::METHOD => run_handler(request, |p| handlers::hover(session, p)),
+        req::DocumentHighlightRequest::METHOD => {
+            run_handler(request, |p| handlers::document_highlight(session, p))
+        }
         req::DocumentLinkRequest::METHOD => {
             run_handler(request, |p| handlers::document_link(session, p))
         }
