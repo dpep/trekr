@@ -45,9 +45,14 @@ pub(crate) fn public_name(fqn: &str) -> &str {
 impl Tree {
     /// Split every name whose superclass edges disagree, declaring an entry
     /// per variant. Keyed by the name split.
+    ///
+    /// A declaration with no superclass is a reopen of the variant nearest it
+    /// — unless it sits in a program (`programs`: gem roots) that declares no
+    /// variant at all, where it is that program's own class (DEC-075).
     pub(super) fn split_conflicts(
         &mut self,
         edges: &[PlacedEdge],
+        programs: &[String],
     ) -> HashMap<String, Vec<Variant>> {
         let mut groups: HashMap<&str, Vec<Variant>> = HashMap::new();
         // An `.rbi` describes a class some program defines; it is not a program
@@ -66,11 +71,43 @@ impl Tree {
                 }),
             }
         }
-        let split: HashMap<String, Vec<Variant>> = groups
+        let mut split: HashMap<String, Vec<Variant>> = groups
             .into_iter()
             .filter(|(_, variants)| variants.len() > 1)
             .map(|(scope, variants)| (scope.to_string(), variants))
             .collect();
+        for (name, variants) in split.iter_mut() {
+            let sites = self
+                .names
+                .get(name)
+                .map(EntryRef::sites)
+                .unwrap_or_default();
+            for site in sites {
+                let program = program_of(&site.path, programs);
+                let declared =
+                    |v: &Variant| v.anchors.iter().any(|a| program_of(a, programs) == program);
+                if variants.iter().any(|v| v.anchors.contains(&site.path))
+                    || variants
+                        .iter()
+                        .any(|v| !v.group.starts_with(MARK) && declared(v))
+                {
+                    continue;
+                }
+                // Its program's own class, shared by that program's reopens.
+                let group = format!("{MARK}{program}");
+                match variants.iter_mut().find(|v| v.group == group) {
+                    Some(variant) => variant.anchors.push(site.path),
+                    None => {
+                        let key = format!("{name}{MARK}{}", variants.len() + 1);
+                        variants.push(Variant {
+                            key,
+                            group,
+                            anchors: vec![site.path],
+                        });
+                    }
+                }
+            }
+        }
         let names = self.names.building();
         for variants in split.values() {
             for variant in variants {
@@ -192,6 +229,19 @@ impl Tree {
     }
 }
 
+/// The program a file belongs to: the deepest of `programs` holding it, or
+/// none when it is in none of them (a fixture with no gemspec).
+fn program_of<'a>(path: &str, programs: &'a [String]) -> &'a str {
+    programs
+        .iter()
+        .filter(|root| {
+            path.strip_prefix(root.as_str())
+                .is_some_and(|rest| rest.starts_with('/'))
+        })
+        .max_by_key(|root| root.len())
+        .map_or("", String::as_str)
+}
+
 /// The declarations of `name` nearest `path`: the most leading directories in
 /// common with one of their files, and the file itself nearest of all.
 ///
@@ -298,6 +348,21 @@ mod tests {
             from,
         );
         assert_eq!(found, ["model", "fake"]);
+    }
+
+    #[test]
+    fn a_file_belongs_to_the_deepest_program_holding_it() {
+        let programs = [
+            "/r".to_string(),
+            "/r/active".to_string(),
+            "/r/activemodel".to_string(),
+        ];
+        assert_eq!(
+            program_of("/r/activemodel/test/user.rb", &programs),
+            "/r/activemodel"
+        );
+        assert_eq!(program_of("/r/activerecord/user.rb", &programs), "/r");
+        assert_eq!(program_of("/elsewhere/user.rb", &programs), "");
     }
 
     #[test]

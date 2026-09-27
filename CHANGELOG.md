@@ -24,6 +24,14 @@
   `resolved` with the one-entry chain `[Post]`; it now answers `ambiguous`
   with `variants`, as `--ancestors` does.
 
+- **A plain `class User` in a gem of its own is its own class.** In a
+  monorepo, a name declared with two superclasses is already split per
+  declaration (0.2.1). A superclass-less declaration in a gem directory (one
+  holding a `.gemspec`) where neither is declared used to join every variant.
+  On rails, activemodel's test `User` had joined both activerecord's model and
+  railties' template. It now stands alone, as do plain `Post`, `Person`,
+  `Session` and `CallbacksTest` in other gems' tests.
+
 ## 0.2.1 — 2026-09-27
 
 - **Upgrading drops and rebuilds the index** (store v29): run `trekr --index`

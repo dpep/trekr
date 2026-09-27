@@ -804,6 +804,30 @@ impl Store {
             .or(Ok(0))
     }
 
+    /// Where each program in these checkouts starts: every root, and every
+    /// directory in them holding a `.gemspec` — rails' `activemodel/` is a
+    /// gem of its own inside the rails checkout (DEC-075). Absolute.
+    pub(crate) fn program_roots(&self, roots: &[String]) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT c.root, f.path FROM file f JOIN checkout c ON c.id = f.checkout_id
+              WHERE c.root IN ({}) AND f.path LIKE '%.gemspec'",
+            placeholders(roots.len())
+        ))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(roots), |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+        let mut found = roots.to_vec();
+        for row in rows {
+            let (root, path) = row?;
+            if let Some((dir, _)) = path.rsplit_once('/') {
+                found.push(format!("{root}/{dir}"));
+            }
+        }
+        found.sort();
+        found.dedup();
+        Ok(found)
+    }
+
     /// `surface_key` for each root in turn, in one query. A root the store
     /// has never indexed is 0, as there.
     pub(crate) fn surface_keys(&self, roots: &[String]) -> Result<Vec<i64>> {

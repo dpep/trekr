@@ -3697,7 +3697,8 @@ fake's `Struct` sorted first. It now resolves.
   against the RBI's `MriMapBackend`). Splitting on it cost six widget_shop
   gold sites before it was excluded.
 - A declaration with no superclass is a reopen, and it joins its nearest
-  variant, or every variant tied for nearest. A third program's plain
+  variant, or every variant tied for nearest. (*Amended by DEC-075:* not when
+  its gem declares no variant.) A third program's plain
   `class User`, such as rails' `activemodel/test/models/user.rb`, is not a
   class of its own, so `@user.authenticate` in activemodel's tests tiers
   `possible` where the merge had excluded it by luck.
@@ -3767,4 +3768,42 @@ means the same thing on every machine.
 *Reverses if:* a checkout's framework hooks need evidence from the framework.
 That would be a named rule for the hook (a job's `perform`), not a store-wide
 name count.
+
+## DEC-075 — A plain class in a gem with no variant is that gem's own class
+
+**Decided.** When a name is split (DEC-072), a declaration with no superclass
+that sits in a **program** where no variant is declared becomes a class of its
+own. A program is a checkout root or a directory holding a `.gemspec`, and a
+file belongs to the deepest one containing it. Every such declaration in one
+program is the same class. A plain declaration in a program that does declare
+a variant is a reopen, as before, and joins the variant nearest it.
+
+**Why gemspecs.** A monorepo's gems are its programs: rails' `activemodel/`
+tests run against activemodel, which never loads activerecord's `User <
+ActiveRecord::Base`. The gemspec is the one marker such a checkout writes down
+on purpose. It is already indexed (`.gemspec` is Ruby), and adding or removing
+one changes the checkout's surface key, so the tree snapshot follows it. The
+checkout root counts as a program, so a repository with one gemspec, or none,
+behaves exactly as before.
+
+**Before.** A superclass-less `class User` in `activemodel/test/models/user.rb`
+was as near to activerecord's `User` as to railties' template (no shared
+directory with either), so it joined both variants. Its `include
+ActiveModel::SecurePassword` went into activerecord's model, and
+`@user.authenticate` in activemodel's tests was `possible` against
+`HttpAuthentication`'s three `authenticate` methods. On rails five of the 48
+split names change: `User`, `Post`, `Person`, `Session`, `CallbacksTest`. In
+each, a plain declaration in activemodel, actioncable, activejob, actionview or
+activesupport's tests now stands alone, where it had been merged into two or
+three other gems' classes. `--dead` gets the three `authenticate` methods back
+as `single-caller`. DEC-072 had recorded exactly that as the cost of the gap.
+
+**The risk, stated.** A gem that reopens another gem's split class to patch it
+would now get its own class. That needs a split name *and* a cross-gem
+monkeypatch of it, and neither rails nor discourse has one. A dependency read
+from the gemspec would settle it, and would be the next step if one turns up.
+
+*Reverses if:* programs can be read off something firmer (DEC-072's
+reverses-if: a test helper's `$LOAD_PATH`, Zeitwerk's roots). This rule is
+then a special case of that one.
 

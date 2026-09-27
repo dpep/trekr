@@ -549,7 +549,7 @@ mod tests {
             decls.extend(d);
             edges.extend(e);
         }
-        super::super::Tree::assemble(decls, edges)
+        super::super::Tree::assemble(decls, edges, &[])
     }
 
     fn owned(names: &HashMap<String, Entry>, key: &Key) -> Vec<u8> {

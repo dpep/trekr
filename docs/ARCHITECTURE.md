@@ -1104,9 +1104,10 @@ Deliberate, and cheap to close when they earn it:
   enclosing one, and their `super` is not recorded — and `class Foo <
   Struct.new(:a)` gets no member readers.
 - A name split by conflicting superclasses (DEC-072) is split by path
-  proximity, not by what each program loads. A superclass-less reopen equally
-  near two variants joins both, so a third program's plain `class User` is not
-  a class of its own. Constant lookup inside a split class's body does not
+  proximity, not by what each program loads. A superclass-less declaration in
+  a gem directory (a `.gemspec`'s) that declares no variant is that gem's own
+  class (DEC-075). Otherwise it joins the nearest variant, or every variant
+  tied for nearest. Constant lookup inside a split class's body does not
   search the variant's ancestors.
 - `private_constant` / `private_class_method` are not read.
 - Instance, class, and global variables are not in the index (not in PLAN

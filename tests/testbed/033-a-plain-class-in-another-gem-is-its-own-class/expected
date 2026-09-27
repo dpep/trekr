@@ -1,0 +1,7 @@
+# Three gems in one repository each declare `User`: alpha's model (`< Record`),
+# beta's fake (`Struct.new`), and gamma's plain `class User`. A declaration
+# with no superclass is a reopen, and it joined every variant equally near —
+# here all of them — so gamma's `User` was a merge of the other two programs'
+# classes. It is its own program's class: nothing in another gem reopens it.
+def gamma/test/cases/user_test.rb:4:10 status=resolved owner=User via=local:new
+def gamma/test/cases/user_test.rb:5:10 status=residue

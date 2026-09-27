@@ -552,16 +552,17 @@ impl Tree {
     ) -> anyhow::Result<HashMap<String, Entry>> {
         decls.extend(phases.time("declarations", || store.declarations(roots))?);
         edges.extend(phases.time("ancestry", || store.ancestry(roots))?);
+        let programs = store.program_roots(roots)?;
         phases.decls = decls.len();
-        let names = Tree::assemble(decls, edges);
+        let names = Tree::assemble(decls, edges, &programs);
         phases.mark("assemble");
         Ok(names)
     }
 
     /// A tree from rows in hand, with nothing to load later.
     #[cfg(test)]
-    fn from_rows(decls: Vec<DeclRow>, edges: Vec<EdgeRow>) -> Tree {
-        let names = Tree::assemble(decls, edges);
+    fn from_rows(decls: Vec<DeclRow>, edges: Vec<EdgeRow>, programs: &[String]) -> Tree {
+        let names = Tree::assemble(decls, edges, programs);
         Tree::over(
             freeze(&names).expect("a test namespace fits"),
             String::new(),
@@ -595,7 +596,11 @@ impl Tree {
     /// Assembled in a scratch tree, because placing a declaration uses the
     /// same lookups a query does. Whatever that scratch tree memoized along
     /// the way was computed against a half-built namespace, and goes with it.
-    fn assemble(decls: Vec<DeclRow>, edges: Vec<EdgeRow>) -> HashMap<String, Entry> {
+    fn assemble(
+        decls: Vec<DeclRow>,
+        edges: Vec<EdgeRow>,
+        programs: &[String],
+    ) -> HashMap<String, Entry> {
         let mut tree = Tree::with_names(Names::Building(HashMap::new()), String::new());
 
         // Placing a name can depend on a name not placed yet: `class A::B`
@@ -696,7 +701,7 @@ impl Tree {
 
         // A name declared with two different superclasses is two classes in
         // two programs (DEC-072), so it is split before anything attaches to it.
-        let split = tree.split_conflicts(&edges);
+        let split = tree.split_conflicts(&edges, programs);
         for edge in edges {
             let owners: Vec<String> = match split.get(&edge.scope) {
                 None => vec![edge.scope.clone()],
@@ -1210,7 +1215,7 @@ pub(crate) fn for_test(sources: &[(&str, &str)]) -> Tree {
         edges.extend(e);
         methods.extend(m);
     }
-    let mut tree = Tree::from_rows(decls, edges);
+    let mut tree = Tree::from_rows(decls, edges, &[]);
     tree.add_methods(methods);
     tree
 }
@@ -2698,6 +2703,7 @@ mod rbi_preference_tests {
                 col: 1,
             }],
             Vec::new(),
+            &[],
         );
         tree.add_methods(vec![
             method("Widget", "save", "/gems/activerecord/lib/persistence.rb"),
@@ -2747,6 +2753,7 @@ mod rbi_preference_tests {
                 target: "Base".into(),
                 path: "/app/widget.rb".into(),
             }],
+            &[],
         );
         tree.add_methods(vec![
             // The real implementation, on the superclass.
@@ -2764,7 +2771,7 @@ mod rbi_preference_tests {
     /// When the stub is all there is, it is still the best answer available.
     #[test]
     fn an_rbi_stub_is_kept_when_nothing_else_defines_the_method() {
-        let mut tree = Tree::from_rows(Vec::new(), Vec::new());
+        let mut tree = Tree::from_rows(Vec::new(), Vec::new(), &[]);
         tree.add_methods(vec![method(
             "Widget",
             "only_declared",
