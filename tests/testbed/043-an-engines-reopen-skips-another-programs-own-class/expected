@@ -1,0 +1,8 @@
+# Case 035 plus a second engine whose test declares a plain `class User`: that
+# is the shipping engine's own class (DEC-075). The billing engine's `lib/`
+# reopen then joined it, being nearer than the app's model, so the
+# controller's `User.new.plan` found no `plan` and `--dead` offered it for
+# deletion. A program's own class is joined only from inside that program.
+def app/controllers/users_controller.rb:3:14 status=resolved owner=User via=chain
+refs User#plan confirmed=1 excluded=0
+dead engines/billing/lib/billing/user_ext.rb User#plan=single-caller

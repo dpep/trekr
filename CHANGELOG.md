@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **An engine's patch to an app class is not lost to a neighbouring engine's
+  test class.** With `class User` reopened in one engine's `lib/` and declared
+  plain in another engine's `test/`, the patch's methods went to the test
+  class, so the app's calls found nothing and `--dead` reported them
+  unreferenced.
+
 - **In the editor, a gem's file is answered from your workspace's app.** With
   two apps bundling the same gem, definition, references and hover inside the
   gem answered from whichever app was indexed last, and kept doing so for the

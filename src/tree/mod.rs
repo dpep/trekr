@@ -23,7 +23,7 @@ mod snapshot;
 mod variants;
 
 pub(crate) use variants::public_name;
-use variants::{PlacedEdge, nearest};
+use variants::{PlacedEdge, joinable, nearest};
 
 pub(crate) use files::forget as forget_snapshots;
 pub(crate) use files::sweep as sweep_snapshots;
@@ -735,7 +735,7 @@ impl Tree {
                 }
                 Some(variants) => nearest(
                     &edge.scope,
-                    variants.iter().map(|v| (&v.anchors, v)),
+                    joinable(variants, &edge.path, programs).map(|v| (&v.anchors, v)),
                     &edge.path,
                 )
                 .into_iter()
@@ -767,7 +767,8 @@ impl Tree {
         for (base, variants) in &split {
             let sites = tree.names.building()[base].sites.clone();
             for site in sites {
-                let near = nearest(base, variants.iter().map(|v| (&v.anchors, v)), &site.path);
+                let joining = joinable(variants, &site.path, programs);
+                let near = nearest(base, joining.map(|v| (&v.anchors, v)), &site.path);
                 for variant in near {
                     tree.names
                         .building()

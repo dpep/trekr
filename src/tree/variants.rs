@@ -231,6 +231,21 @@ impl Tree {
     }
 }
 
+/// The variants a declaration at `path` may join. A program's own class
+/// (DEC-075) is private to it: another program's `lib/` reopen patches a
+/// class that program loads, never one only its neighbour's tests see.
+pub(super) fn joinable<'a>(
+    variants: &'a [Variant],
+    path: &'a str,
+    programs: &'a [String],
+) -> impl Iterator<Item = &'a Variant> {
+    variants.iter().filter(move |v| {
+        v.group
+            .strip_prefix(MARK)
+            .is_none_or(|owner| owner == program_of(path, programs))
+    })
+}
+
 /// The program a file belongs to: the deepest of `programs` holding it, or
 /// none when it is in none of them (a fixture with no gemspec).
 fn program_of<'a>(path: &str, programs: &'a [String]) -> &'a str {

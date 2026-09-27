@@ -3861,6 +3861,15 @@ keep their own class. All five names this decision changed on rails are in
 tests, and rails' `--dead activerecord/lib activemodel/lib actionpack/lib` is
 byte-identical with and without the amendment.
 
+*Amended after 0.3.0:* a program's own class is private to it. With a second
+engine whose `test/user.rb` declares a plain `class User`, that file is the
+shipping engine's own class, and the billing engine's `lib/` reopen joined
+it: it is nearer than the app's model (both under `engines/`), so `plan` was
+again unreachable from the app. A reopen or an edge now joins only variants
+that are not another program's own class. The one class a program declares
+for itself is loaded by that program alone, which is the premise that made it
+a class of its own.
+
 *Reverses if:* programs can be read off something firmer (DEC-072's
 reverses-if: a test helper's `$LOAD_PATH`, Zeitwerk's roots). This rule is
 then a special case of that one.
