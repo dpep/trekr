@@ -161,6 +161,20 @@ impl<'a> LineIndex<'a> {
         }
     }
 
+    /// A byte offset into the text → an LSP position.
+    pub(crate) fn at(&self, offset: usize) -> Position {
+        let line = self.starts.partition_point(|&start| start <= offset) - 1;
+        self.position(line as u32 + 1, (offset - self.starts[line]) as u32 + 1)
+    }
+
+    /// Bytes `range` of the text → an LSP range.
+    pub(crate) fn range(&self, range: std::ops::Range<usize>) -> Range {
+        Range {
+            start: self.at(range.start),
+            end: self.at(range.end),
+        }
+    }
+
     /// `len` bytes of a name at our 1-based line and byte column.
     pub(crate) fn span(&self, line: u32, col: u32, len: usize) -> Range {
         Range {

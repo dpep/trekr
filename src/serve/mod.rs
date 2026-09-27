@@ -20,6 +20,7 @@ mod handlers;
 mod inbox;
 pub(crate) mod log;
 mod reload;
+mod require;
 mod state;
 mod wire;
 
@@ -61,6 +62,11 @@ fn capabilities() -> ServerCapabilities {
         workspace_symbol_provider: Some(OneOf::Left(true)),
         hover_provider: Some(HoverProviderCapability::Simple(true)),
         implementation_provider: Some(lsp_types::ImplementationProviderCapability::Simple(true)),
+        // `require` strings, resolved to the file they load.
+        document_link_provider: Some(lsp_types::DocumentLinkOptions {
+            resolve_provider: Some(false),
+            work_done_progress_options: Default::default(),
+        }),
         call_hierarchy_provider: Some(lsp_types::CallHierarchyServerCapability::Simple(true)),
         completion_provider: Some(lsp_types::CompletionOptions {
             trigger_characters: Some(vec![".".into(), ":".into()]),
@@ -214,6 +220,7 @@ fn serve(
     let spelling = Spelling::of(&params, &root);
     let store = crate::store::open_default()?;
     let mut session = Session::open(root.clone(), store);
+    session.definition_links = client.definition_links;
     for buffer in buffers {
         session.did_open(buffer.path, buffer.text, buffer.version);
     }
@@ -688,6 +695,9 @@ fn route(
             run_handler(request, |p| handlers::workspace_symbol(session, p))
         }
         req::HoverRequest::METHOD => run_handler(request, |p| handlers::hover(session, p)),
+        req::DocumentLinkRequest::METHOD => {
+            run_handler(request, |p| handlers::document_link(session, p))
+        }
         req::GotoImplementation::METHOD => {
             run_handler(request, |p| handlers::implementation(session, p))
         }
@@ -883,6 +893,8 @@ struct Client {
     /// `initializationOptions.index`: whether to index checkouts in the
     /// background. On unless turned off.
     index: bool,
+    /// `textDocument.definition.linkSupport`: it takes `LocationLink`s.
+    definition_links: bool,
 }
 
 impl Client {
@@ -893,6 +905,8 @@ impl Client {
             watch: flag("/capabilities/workspace/didChangeWatchedFiles/dynamicRegistration")
                 .unwrap_or(false),
             index: flag("/initializationOptions/index").unwrap_or(true),
+            definition_links: flag("/capabilities/textDocument/definition/linkSupport")
+                .unwrap_or(false),
         }
     }
 }

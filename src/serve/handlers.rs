@@ -14,6 +14,7 @@
 
 use super::convert::{self, LineIndex, path_to_uri, point, to_pos};
 use super::doc::{self, Doc};
+use super::require::{self, Found, Origin};
 use super::state::{Located, Session};
 use crate::cli::position::{self, Under};
 use crate::core::{Def, Kind};
@@ -22,9 +23,10 @@ use lsp_types::Uri as Url;
 use lsp_types::{
     CallHierarchyIncomingCall, CallHierarchyIncomingCallsParams, CallHierarchyItem,
     CallHierarchyOutgoingCall, CallHierarchyOutgoingCallsParams, CallHierarchyPrepareParams,
-    Diagnostic, DiagnosticSeverity, DocumentSymbol, DocumentSymbolParams, DocumentSymbolResponse,
-    GotoDefinitionParams, GotoDefinitionResponse, Hover, HoverContents, HoverParams, Location,
-    MarkupContent, MarkupKind, ReferenceParams, SymbolKind, WorkspaceSymbolParams,
+    Diagnostic, DiagnosticSeverity, DocumentLink, DocumentLinkParams, DocumentSymbol,
+    DocumentSymbolParams, DocumentSymbolResponse, GotoDefinitionParams, GotoDefinitionResponse,
+    Hover, HoverContents, HoverParams, Location, MarkupContent, MarkupKind, ReferenceParams,
+    SymbolKind, WorkspaceSymbolParams,
 };
 use std::collections::HashMap;
 use std::path::Path;
@@ -130,6 +132,9 @@ pub(crate) fn definition(
 ) -> anyhow::Result<Option<GotoDefinitionResponse>> {
     let uri = params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;
+    if let Some(required) = required_at(session, &uri, position) {
+        return Ok(required_definition(session.definition_links, required));
+    }
     let Some((located, pos)) = target(session, &uri, position) else {
         return Ok(None);
     };
@@ -140,6 +145,203 @@ pub(crate) fn definition(
         .filter_map(|(p, line, col)| location(&located.root, &p, line, col, name_len, None))
         .collect();
     Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)))
+}
+
+/// A `require` string under the cursor, and the files it names.
+struct Required {
+    /// The whole string literal: where the cursor is inside it does not
+    /// matter, and a path segment is not a target of its own — Ruby resolves
+    /// the whole string, and a directory is not something to open.
+    range: lsp_types::Range,
+    path: String,
+    found: Vec<Found>,
+    root: Option<std::path::PathBuf>,
+}
+
+fn required_at(
+    session: &mut Session,
+    uri: &Url,
+    position: lsp_types::Position,
+) -> Option<Required> {
+    let file = file_of(uri)?;
+    let document = session.document(&file)?;
+    let offset = convert::offset_of(&document.text, position);
+    let require = document
+        .requires()
+        .iter()
+        .find(|r| r.span.contains(&offset))?
+        .clone();
+    let range = LineIndex::new(&document.text).range(require.span.clone());
+    let root = session.locate(&file).map(|located| located.root);
+    let cx = require::Context {
+        file: &file,
+        root: root.as_deref(),
+        load_path: session.load_path(root.as_deref()),
+    };
+    let found = require::resolve(&require, &cx, Path::is_file);
+    Some(Required {
+        range,
+        path: require.path,
+        found,
+        root,
+    })
+}
+
+/// The required file, opened at its top. A compiled extension has nothing to
+/// open, and is not swapped for a `.rb` Ruby would not load.
+fn required_definition(links: bool, required: Required) -> Option<GotoDefinitionResponse> {
+    let top = lsp_types::Range::default();
+    let targets: Vec<Url> = required
+        .found
+        .iter()
+        .filter(|found| !found.native)
+        .filter_map(|found| path_to_uri(&found.file).parse().ok())
+        .collect();
+    if targets.is_empty() {
+        return None;
+    }
+    Some(match links {
+        true => GotoDefinitionResponse::Link(
+            targets
+                .into_iter()
+                .map(|target_uri| lsp_types::LocationLink {
+                    origin_selection_range: Some(required.range),
+                    target_uri,
+                    target_range: top,
+                    target_selection_range: top,
+                })
+                .collect(),
+        ),
+        false => GotoDefinitionResponse::Array(
+            targets
+                .into_iter()
+                .map(|uri| Location { uri, range: top })
+                .collect(),
+        ),
+    })
+}
+
+/// Which file a `require` loads, and from where — a gem by name and version.
+/// Several matches are listed, since which one Ruby loads depends on a load
+/// path this engine only knows by convention.
+fn required_hover(required: &Required) -> String {
+    let root = required.root.as_deref();
+    match required.found.as_slice() {
+        [] => format!(
+            "_No file found for `{}` — a gem that is not installed, or a path set up at runtime._",
+            required.path
+        ),
+        [one] => format!("Loads {}", found_line(one, root)),
+        several => {
+            let listed: Vec<String> = several
+                .iter()
+                .map(|found| format!("- {}", found_line(found, root)))
+                .collect();
+            format!(
+                "{} files match `{}`; Ruby loads the first on its load path at runtime:\n\n{}",
+                several.len(),
+                required.path,
+                listed.join("\n")
+            )
+        }
+    }
+}
+
+/// One found file: linked, shown within its gem or checkout, and named.
+fn found_line(found: &Found, root: Option<&Path>) -> String {
+    let (shown, whence) = found_place(found, root);
+    let shown = match found.native {
+        true => format!("`{shown}`, a compiled extension"),
+        false => format!("[`{shown}`]({})", path_to_uri(&found.file)),
+    };
+    match whence {
+        Some(whence) => format!("{shown} · {whence}"),
+        None => shown,
+    }
+}
+
+/// A found file's path within whatever holds it, and what that is when it is
+/// not the checkout.
+fn found_place(found: &Found, root: Option<&Path>) -> (String, Option<String>) {
+    let within = |base: &Path| {
+        found
+            .file
+            .strip_prefix(base)
+            .map(|p| p.to_string_lossy().into_owned())
+            .ok()
+    };
+    let name = |dir: &Path| {
+        dir.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default()
+    };
+    let whole = found.file.to_string_lossy();
+    match &found.origin {
+        Origin::Gem(gem) => (
+            within(gem).unwrap_or_else(|| whole.to_string()),
+            Some(format!("gem `{}`", name(gem))),
+        ),
+        Origin::Stdlib(dir) => (
+            within(dir).unwrap_or_else(|| whole.to_string()),
+            Some(format!("Ruby {} standard library", name(dir))),
+        ),
+        Origin::Checkout => (
+            root.and_then(within)
+                .unwrap_or_else(|| crate::core::paths::pretty(&whole)),
+            None,
+        ),
+    }
+}
+
+/// `require` strings as links, so they can be followed without asking.
+///
+/// Only a string with exactly one file behind it is a link: a link has one
+/// target, and picking one of several would be a guess made silently.
+/// Those — and anything unresolved — are still answered by `definition`,
+/// with every match.
+pub(crate) fn document_link(
+    session: &mut Session,
+    params: DocumentLinkParams,
+) -> anyhow::Result<Option<Vec<DocumentLink>>> {
+    let Some(file) = file_of(&params.text_document.uri) else {
+        return Ok(None);
+    };
+    let Some(document) = session.document(&file) else {
+        return Ok(None);
+    };
+    let requires = document.requires().to_vec();
+    if requires.is_empty() {
+        return Ok(None);
+    }
+    let text = document.text.clone();
+    let lines = LineIndex::new(&text);
+    let root = session.locate(&file).map(|located| located.root);
+    let cx = require::Context {
+        file: &file,
+        root: root.as_deref(),
+        load_path: session.load_path(root.as_deref()),
+    };
+    let mut links = Vec::new();
+    for require in requires {
+        let found = require::resolve(&require, &cx, Path::is_file);
+        let [one] = found.as_slice() else {
+            continue;
+        };
+        if one.native {
+            continue;
+        }
+        let (shown, whence) = found_place(one, root.as_deref());
+        links.push(DocumentLink {
+            range: lines.range(require.span),
+            target: path_to_uri(&one.file).parse().ok(),
+            tooltip: Some(match whence {
+                Some(whence) => format!("{shown} ({})", whence.replace('`', "")),
+                None => shown,
+            }),
+            data: None,
+        });
+    }
+    Ok(Some(links))
 }
 
 /// The name under a position, as written.
@@ -623,6 +825,15 @@ pub(crate) fn workspace_symbol(
 pub(crate) fn hover(session: &mut Session, params: HoverParams) -> anyhow::Result<Option<Hover>> {
     let uri = params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;
+    if let Some(required) = required_at(session, &uri, position) {
+        return Ok(Some(Hover {
+            contents: HoverContents::Markup(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: required_hover(&required),
+            }),
+            range: Some(required.range),
+        }));
+    }
     let Some((located, pos)) = target(session, &uri, position) else {
         return Ok(None);
     };

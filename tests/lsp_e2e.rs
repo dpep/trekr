@@ -239,6 +239,7 @@ fn the_server_announces_only_what_it_answers() {
         "hoverProvider",
         "implementationProvider",
         "callHierarchyProvider",
+        "documentLinkProvider",
     ] {
         assert!(!caps[provider].is_null(), "{provider} is announced");
     }
@@ -2602,5 +2603,185 @@ fn locations_come_back_in_the_spelling_the_client_used() {
 
     session.stop();
     let _ = fs::remove_file(&link);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A checkout requiring its own files and a vendored gem's. `shelf` is both
+/// the checkout's `lib/shelf.rb` and the gem's, so it has two answers.
+fn require_repo(dir: &Path) {
+    git(dir, &["init", "-q"]);
+    let gem = dir.join("vendor/bundle/ruby/3.3.0/gems/shelf-1.0.0/lib");
+    fs::create_dir_all(gem.join("shelf")).unwrap();
+    fs::write(gem.join("shelf.rb"), "module Shelf\nend\n").unwrap();
+    fs::write(
+        gem.join("shelf/rack.rb"),
+        "module Shelf\n  class Rack\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(dir.join(".gitignore"), "vendor/\n").unwrap();
+    fs::write(
+        dir.join("Gemfile.lock"),
+        "GEM\n  remote: https://rubygems.org/\n  specs:\n    shelf (1.0.0)\n\nDEPENDENCIES\n  shelf\n",
+    )
+    .unwrap();
+    fs::create_dir_all(dir.join("lib/widget")).unwrap();
+    fs::write(dir.join("lib/widget.rb"), "class Widget\nend\n").unwrap();
+    fs::write(dir.join("lib/widget/gear.rb"), "class Widget::Gear\nend\n").unwrap();
+    fs::write(dir.join("lib/shelf.rb"), "module Shelf\nend\n").unwrap();
+    fs::write(dir.join("app.rb"), REQUIRES).unwrap();
+    commit_all(dir);
+    let indexed = trekr()
+        .args(["--index"])
+        .current_dir(dir)
+        .env("TREKR_DB", dir.with_extension("db"))
+        .output()
+        .unwrap();
+    assert!(indexed.status.success());
+}
+
+const REQUIRES: &str = concat!(
+    "require_relative \"lib/widget/gear\"\n", // 1
+    "require \"widget\"\n",                   // 2
+    "require \"shelf/rack\"\n",               // 3
+    "require \"shelf\"\n",                    // 4
+    "require \"nowhere\"\n",                  // 5
+);
+
+fn definition_at(
+    session: &mut Session,
+    dir: &Path,
+    line: u32,
+    character: u32,
+) -> serde_json::Value {
+    session.request(
+        "textDocument/definition",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(dir, "app.rb")},
+            "position": {"line": line - 1, "character": character},
+        }),
+    )["result"]
+        .clone()
+}
+
+fn require_session(label: &str, capabilities: serde_json::Value) -> (PathBuf, Session) {
+    let (dir, _) = scratch(label);
+    require_repo(&dir);
+    let mut session = Session::start(&dir.with_extension("db"), &dir);
+    session.initialize_with(&dir, capabilities);
+    (dir, session)
+}
+
+/// The whole string is what was clicked, wherever in it the cursor is, and
+/// the answer is the file.
+#[test]
+fn definition_on_a_require_string_opens_the_required_file() {
+    let links = serde_json::json!({"textDocument": {"definition": {"linkSupport": true}}});
+    let (dir, mut session) = require_session("require-def", links);
+
+    let answer = definition_at(&mut session, &dir, 1, 24);
+    let [link] = answer.as_array().expect("links").as_slice() else {
+        panic!("one file: {answer}");
+    };
+    assert!(
+        link["targetUri"]
+            .as_str()
+            .unwrap()
+            .ends_with("/lib/widget/gear.rb"),
+        "{link}"
+    );
+    assert_eq!(
+        link["targetRange"]["start"],
+        serde_json::json!({"line": 0, "character": 0})
+    );
+    assert_eq!(
+        link["originSelectionRange"],
+        serde_json::json!({"start": {"line": 0, "character": 17}, "end": {"line": 0, "character": 34}}),
+        "the string literal, quotes included"
+    );
+
+    for (line, file) in [
+        (2, "/lib/widget.rb"),
+        (3, "/gems/shelf-1.0.0/lib/shelf/rack.rb"),
+    ] {
+        let answer = definition_at(&mut session, &dir, line, 10);
+        assert!(
+            answer[0]["targetUri"].as_str().unwrap().ends_with(file),
+            "line {line}: {answer}"
+        );
+    }
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Several files on the load path are all offered, the checkout's first; a
+/// require nothing satisfies answers nothing rather than a nearby file.
+#[test]
+fn a_require_with_several_files_lists_them_and_one_with_none_answers_nothing() {
+    let (dir, mut session) = require_session("require-many", serde_json::json!({}));
+
+    let answer = definition_at(&mut session, &dir, 4, 10);
+    let uris: Vec<&str> = answer
+        .as_array()
+        .expect("plain locations without linkSupport")
+        .iter()
+        .map(|location| location["uri"].as_str().unwrap())
+        .collect();
+    assert_eq!(uris.len(), 2, "{answer}");
+    assert!(uris[0].ends_with(&format!(
+        "{}/lib/shelf.rb",
+        dir.file_name().unwrap().to_string_lossy()
+    )));
+    assert!(uris[1].ends_with("/gems/shelf-1.0.0/lib/shelf.rb"));
+
+    assert!(definition_at(&mut session, &dir, 5, 10).is_null());
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn require_strings_with_one_file_behind_them_are_links() {
+    let (dir, mut session) = require_session("require-links", serde_json::json!({}));
+    let answer = session.request(
+        "textDocument/documentLink",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    let links = answer["result"].as_array().expect("links");
+    let lines: Vec<u64> = links
+        .iter()
+        .map(|link| link["range"]["start"]["line"].as_u64().unwrap())
+        .collect();
+    assert_eq!(
+        lines,
+        vec![0, 1, 2],
+        "the ambiguous and the missing are not links: {answer}"
+    );
+    assert!(
+        links[2]["target"]
+            .as_str()
+            .unwrap()
+            .ends_with("/shelf/rack.rb")
+    );
+    assert_eq!(links[2]["tooltip"], "lib/shelf/rack.rb (gem shelf-1.0.0)");
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn hover_on_a_require_names_the_file_and_its_gem() {
+    let (dir, mut session) = require_session("require-hover", serde_json::json!({}));
+
+    let text = hover_at(&mut session, &dir, 3, 12);
+    assert!(
+        text.starts_with("Loads [`lib/shelf/rack.rb`](file://")
+            && text.ends_with(" · gem `shelf-1.0.0`"),
+        "{text}"
+    );
+    let text = hover_at(&mut session, &dir, 4, 10);
+    assert!(text.starts_with("2 files match `shelf`"), "{text}");
+
+    session.stop();
     let _ = fs::remove_dir_all(&dir);
 }

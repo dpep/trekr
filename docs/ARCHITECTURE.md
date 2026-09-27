@@ -314,7 +314,8 @@ the new binary in place (DEC-050).
 | `wire.rs` | stdio framing: stdin read on the loop's own thread from the raw descriptor (no hidden read-ahead), stdout written by a thread |
 | `inbox.rs` | reading the wire ahead, so `$/cancelRequest` is seen before the request it withdraws is reached, and mid-scan |
 | `state.rs` | per-checkout trees (rebuilt when the surface key moves) and completion listings; documents — the editor's copy, or a disk read revalidated by mtime+length |
-| `handlers.rs` | the nine agent operations, syntax diagnostics |
+| `handlers.rs` | the nine agent operations, syntax diagnostics, `require` strings as links |
+| `require.rs` | which file a `require` string names: finding them in a file, the static load path, Ruby's search rules (DEC-053) |
 | `doc.rs` | a definition's doc comment and its signature as written, read from its file when asked (DEC-052) |
 | `complete.rs` | completion (DEC-040), and the chosen item's doc on resolve (DEC-052) |
 | `fresh.rs` | refresh-on-save and the background `--index` child (DEC-039) |
@@ -374,6 +375,42 @@ a comment attached to the wrong definition is worse than none.
 selected. The list itself carries none: it can be hundreds of items, and reading
 a file per item would stall every keystroke. `workspace/symbol` shows none for
 the same reason.
+
+**A `require` string is a path** (DEC-053). `definition`, `hover` and
+`documentLink` on the string literal of a `require`, `require_relative`,
+`load` or `autoload` answer with the file it loads, opened at its top. The
+whole literal is the origin, wherever the cursor is in it — a
+`LocationLink`'s `originSelectionRange` when the client takes links — because
+Ruby resolves the whole string and a directory is not a location.
+
+`require.rs` is two pure functions and one that reads the disk.
+`requires_in` parses a file with Prism and returns each call whose path is a
+literal, or a literal in disguise (`File.expand_path("x", __dir__)`,
+`File.join(__dir__, "x")`, `File.dirname(__FILE__) + "/x"`, `"#{__dir__}/x"`,
+`Rails.root.join("x")`), cached on the document per edit. `resolve` follows
+one the way Ruby would, given the directories and a file-exists test.
+`LoadPath::for_checkout` builds the load path, in order:
+
+1. the checkout's `lib/`, `spec/`, `test/` — rspec-core and `rails test` add
+   the last two, which is where `rails_helper` lives;
+2. its path gems' `lib/`, from `Gemfile.lock`'s `PATH` sections;
+3. each gem the bundle resolves (`Store::gems_used`), its `lib/`;
+4. the standard library of the Ruby those gems were installed into, and its
+   arch directory — beside the gem for rbenv, asdf, Homebrew and system Rubies,
+   under `.rvm/rubies` for rvm. A `vendor/bundle` names no Ruby and gets none.
+
+Per directory, `x.rb` then the compiled `x`, as `rb_find_file_ext` does. A
+compiled extension first on the path is named in the hover and is no
+definition. Several matches are all returned in path order, since the order
+among gems here is not bundler's. `documentLink` links only a string with
+exactly one file behind it; the others are left to `definition`'s peek list.
+
+The session keeps each checkout's load path until its `gems_used` changes.
+Gem and stdlib directories are listed once, so a lookup stats only the few
+that hold the path's first component; the checkout's own directories are stat'ed each
+time, because they change. On discourse (308 directories) the build is
+8.6 ms, a warm `documentLink` over 70 requires 0.4–0.6 ms, and `definition` on
+one 0.1–0.26 ms.
 
 **What reflects unsaved edits:** the open file's own facts (outline, position
 lookup, diagnostics, completion) and every file scan (`references`,

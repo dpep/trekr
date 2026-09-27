@@ -59,7 +59,8 @@
               "implementation",
               "callHierarchy",
               "completion",
-              "diagnostics"
+              "diagnostics",
+              "documentLink"
             ]
           },
           "uniqueItems": true,
@@ -72,7 +73,8 @@
             "implementation",
             "callHierarchy",
             "completion",
-            "diagnostics"
+            "diagnostics",
+            "documentLink"
           ],
           "markdownDescription": "Which trekr features are active. Remove one to leave it to another extension — e.g. drop `diagnostics` if another server already reports Ruby syntax errors. Takes effect on restart."
         },

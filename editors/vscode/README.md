@@ -19,7 +19,8 @@ by every worktree of the repo and kept current as you save.
 | --- | --- |
 | Go to Definition / Peek | Where the call actually goes: the receiver's type is resolved (`w = Widget.new; w.save` → `Widget#save`). An unresolvable receiver gives a short ranked peek list, never a single confident guess. |
 | Find All References | Call sites that can reach *this* method — confirmed ones first, then possible ones; ones whose receiver resolves elsewhere are left out. On a class or constant: every reference Ruby's lookup resolves to it. |
-| Hover | How the answer was reached: which rung resolved the receiver, and the confidence. |
+| Hover | The definition's signature and doc comment, and where it lives. A guess says so in words. |
+| `require` strings | Cmd-click or Go to Definition on a `require`, `require_relative`, `load` or `autoload` string opens the file it loads — the checkout's, a gem's, or the standard library's. Several matches give a peek list; hover names the file and gem; a string with one file behind it is underlined as a link. |
 | Completion | After `recv.`: the receiver's methods, own first, then inherited. After `Scope::`: its constants. A bare word: locals, the class's methods, constants in scope. |
 | Outline, breadcrumbs, Go to Symbol | From the file as you have it, unsaved edits included. |
 | Go to Implementation | Classes that include a module; overrides of a method. |

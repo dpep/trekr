@@ -2601,3 +2601,109 @@ keystroke over up to 200 rows.
 **Reverses if** a batch consumer needs docs, such as a `doc` field in `--def
 --json` for agents, or a search over doc text. A per-query file read is then the
 wrong shape, and docs earn a place in the blob layer.
+
+## DEC-053 — A `require` string is a link to the file it loads
+
+**Decided.** In `--lsp`, the string literal of a `require`,
+`require_relative`, `load` or `autoload` answers `definition`, `hover` and
+`documentLink` with the file it names, opened at its top. The whole literal is
+the origin — `originSelectionRange` on a `LocationLink` when the client
+advertises `linkSupport`, plain `Location`s otherwise. Resolution is static
+and lives in a pure module (`serve/require.rs`): given the requiring file, the
+string, the ordered load-path directories and a file-exists test.
+
+The report that started this: Cmd-clicking a `require_relative` path jumped to
+references of a same-named thing, because definition answered nothing and
+VS Code fell back.
+
+**The rules.**
+
+| call | where it looks | extension |
+|---|---|---|
+| `require_relative "a/b"` | the requiring file's directory | `.rb` appended unless written |
+| `require`, `autoload` | `./…`/`../…`: the checkout root, Ruby's working directory statically; absolute: itself; otherwise the load path | `.rb`, then compiled |
+| `load` | the load path, then the checkout root | as written |
+
+The load path, in order: the checkout's `lib/`, `spec/`, `test/`; its path
+gems' `lib/` (`Gemfile.lock` `PATH` sections — rails' `remote: .` holds a dozen
+gems, so each named gem's directory is offered too); each bundled gem's `lib/`
+(`Store::gems_used`); the stdlib of the Ruby those gems were installed into,
+then its arch directory.
+
+Per directory, `x.rb` then `x.so`/`x.bundle` before moving on — directory
+outer, extension inner, as `rb_find_file_ext` does. A compiled extension that
+comes first is Ruby's answer, so it is reported (the hover names it) and is no
+definition: there is nothing to open, and the `.rb` further down is not what
+runs. Several matches are all returned in path order: the definition is a peek
+list, the hover lists them. The order among gems here is alphabetical, not
+bundler's, which is why several are never collapsed into one.
+
+**Why `spec/` and `test/`.** rspec-core puts `lib` and its default path on
+`$LOAD_PATH` (`configuration.rb`: `directories = ['lib', default_path]`), and
+railties' `test_command.rb` appends `test`. That is the only way `require
+"rails_helper"` and `require "test_helper"` resolve at all. `app/*` is left
+out: `load_defaults "7.1"` sets `add_autoload_paths_to_load_path = false`, and
+requiring app code is the autoloader's job.
+
+**Paths built at runtime.** Followed only when they are literals in disguise:
+`File.expand_path("x", __dir__ | __FILE__ | File.dirname(__FILE__))`,
+`File.join(__dir__, "a", "b")`, `File.expand_path(File.dirname(__FILE__)) +
+"/x"`, `"#{__dir__}/x"`, `Rails.root.join("x")` with or without `.to_s`. Each
+has one answer whoever runs it. Anything else — a variable, a method, any
+other interpolation — answers nothing. Discourse has 1 467 top-level
+`require`s; the `dirname … + "/x"` idiom is 130 of them (vendored test
+suites), `expand_path(…, __FILE__)` 17, `Rails.root.join` 18. The span of a
+built path is its literal part(s).
+
+**The standard library** is found beside a gem the bundle resolved:
+`<prefix>/lib/ruby/gems/<abi>/gems/<gem>` sits beside `<prefix>/lib/ruby/<abi>`
+(rbenv, asdf, Homebrew, system), and rvm's `.rvm/gems/<ruby>[@set]/gems/<gem>`
+beside `.rvm/rubies/<ruby>/lib/ruby/<its one ABI directory>`. That is the Ruby
+the bundle was installed with, which is evidence; a `.ruby-version` lookup
+would be a second guess. A bundle vendored into `vendor/bundle` names no Ruby
+and gets no stdlib. `src/tree/core.rb` is no help here: it stubs core classes,
+not files. On discourse, `require "open3"` lands on rvm's `open3.rb`, and
+`require "json"` offers both the `json-2.19.9` gem and the stdlib copy.
+
+**Where the click lands.** The whole string, not the path segment under the
+cursor. Ruby resolves the whole string; a directory cannot be an LSP location;
+and a per-segment answer would make the target depend on where in the string
+the cursor happened to be, which is the surprise this fixes.
+
+**`documentLink`** links only a string with exactly one non-native file behind
+it. A link has one target, and picking one of several would be a guess made
+silently; those stay with `definition`'s peek list. An unresolved string is
+not underlined, so the underline itself says "this resolves". There is no
+`documentLink/resolve` step: resolving eagerly costs too little to defer.
+
+**Cost** (discourse, 308 load-path directories, release build, isolated store,
+server-side, repeated requests):
+
+| what | ms |
+|---|---|
+| building the load path, once per checkout | 8.6 |
+| `documentLink`, `lib/onebox/engine.rb` (70 requires) | 0.37–0.56 |
+| `documentLink`, `config/application.rb` (32) | 1.7–2.2 |
+| `documentLink`, `lib/guardian.rb` (16) | 1.0 |
+| first request on a file (read, parse, locate) | 7–16 |
+| `definition` / `hover` on a require string | 0.1–0.26 |
+
+What makes it cheap is listing each gem and stdlib directory once — they never
+change — so a lookup stats only the directories that hold the path's first
+component; the checkout's own few are stat'ed each time. The load path is kept
+until `gems_used` changes. Before the gem list was read once per request and
+the candidate names once per require (not once per directory), `guardian.rb`
+took 5–8 ms.
+
+**Not chosen.**
+
+- **Linking the first of several matches.** A silent guess.
+- **Segment-by-segment targets.** See above.
+- **Each gem's gemspec `require_paths`.** `lib/` is what `--index` walks and
+  nearly every gem's only entry; reading gemspecs is a Ruby-evaluation problem.
+- **Bundler's load-path order**, from the lockfile's dependency graph. The
+  honest alternative is listing every match, which is what is done.
+
+**Reverses if** several-match answers turn out common and noisy in use — then
+reconstructing bundler's order earns its keep and the first match can be the
+answer.

@@ -18,6 +18,7 @@
 //! belongs to (DEC-024).
 
 use super::complete::Members;
+use super::require::{self, LoadPath, Require};
 use crate::core::Facts;
 use crate::store::Store;
 use crate::tree::Tree;
@@ -46,6 +47,12 @@ pub(crate) struct Session {
     unindexed: Vec<PathBuf>,
     /// A checkout's members being listed on another thread (`list_members`).
     listing: Option<Listing>,
+    /// Each checkout's load path, and the gem roots it was built from — it is
+    /// rebuilt when the bundle moves, and otherwise never re-listed.
+    load_paths: HashMap<PathBuf, (Vec<String>, LoadPath)>,
+    /// The client takes `LocationLink`s from `definition`, which is what lets
+    /// a whole `require` string be the thing clicked.
+    pub(crate) definition_links: bool,
 }
 
 /// Members in the making, and the tree state they are being listed from.
@@ -81,6 +88,7 @@ pub(crate) struct Located {
 pub(crate) struct Document {
     pub(crate) text: String,
     facts: Option<Facts>,
+    requires: Option<Vec<Require>>,
     /// Where the text came from. The editor's copy is authoritative until it
     /// closes the file; a disk read is only as good as the file it was read
     /// from, and is re-read the moment that file changes.
@@ -109,6 +117,7 @@ impl Document {
         Document {
             text,
             facts: None,
+            requires: None,
             origin,
         }
     }
@@ -131,6 +140,13 @@ impl Document {
         self.facts
             .get_or_insert_with(|| crate::extract::extract(self.text.as_bytes()))
     }
+
+    /// The file's `require`s whose path is written literally — its own parse,
+    /// since facts do not keep string arguments; also once per edit.
+    pub(crate) fn requires(&mut self) -> &[Require] {
+        self.requires
+            .get_or_insert_with(|| require::requires_in(self.text.as_bytes()))
+    }
 }
 
 /// A cheap fingerprint of what a tree was assembled from: the store's schema
@@ -152,6 +168,8 @@ impl Session {
             open: HashMap::new(),
             unindexed: Vec::new(),
             listing: None,
+            load_paths: HashMap::new(),
+            definition_links: false,
         }
     }
 
@@ -241,6 +259,29 @@ impl Session {
             checkout.members = None;
         }
         Ok(checkout.tree.as_ref().expect("just built"))
+    }
+
+    /// A checkout's load path, as `require` searches it — built once and
+    /// kept until the checkout's bundle moves. Outside a checkout it is empty,
+    /// and only a path relative to the requiring file resolves.
+    pub(crate) fn load_path(&mut self, root: Option<&Path>) -> &LoadPath {
+        static NONE: LoadPath = LoadPath { dirs: Vec::new() };
+        let Some(root) = root else {
+            return &NONE;
+        };
+        let gems = self
+            .store
+            .gems_used(&root.to_string_lossy())
+            .unwrap_or_default();
+        let current = self
+            .load_paths
+            .get(root)
+            .is_some_and(|(from, _)| *from == gems);
+        if !current {
+            let built = LoadPath::for_checkout(root, &gems);
+            self.load_paths.insert(root.to_path_buf(), (gems, built));
+        }
+        &self.load_paths[root].1
     }
 
     /// A checkout's tree together with its listed members, for completion.

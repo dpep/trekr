@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Go to Definition on a `require` string opens the file.** In `--lsp`,
+  a `require`, `require_relative`, `load` or `autoload` string resolves to the
+  file it loads: relative to the requiring file, or along the load path —
+  the checkout's `lib/`, `spec/` and `test/`, its path gems, each bundled
+  gem's `lib/`, then the Ruby standard library the bundle was installed
+  beside. Where you click in the string does not matter. When several files
+  match (`json` is both a gem and stdlib), all are offered, first on the path
+  first. A native extension, a gem not on disk, or a path built at runtime
+  answers nothing rather than a nearby file; `File.expand_path("x", __dir__)`
+  and the other literal-in-disguise idioms are followed. Hover on the string
+  names the file and its gem, and strings with exactly one file behind them
+  are underlined as links (`textDocument/documentLink`). The VS Code
+  extension's `trekr.features` gains `documentLink`; if you have set that
+  list yourself, add it there to get the links.
 - **Hover shows what a definition is, not how trekr found it.** The hover
   now shows the signature as written (`def Widget#resize(width, height =
   nil)`, `class Foo < Bar`, `LIMIT = 10`). Below it comes the first paragraph

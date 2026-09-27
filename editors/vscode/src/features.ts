@@ -11,6 +11,7 @@ export const FEATURES = [
   "callHierarchy",
   "completion",
   "diagnostics",
+  "documentLink",
 ] as const;
 
 export type Feature = (typeof FEATURES)[number];
@@ -26,6 +27,7 @@ const HOOKS: Record<Feature, string[]> = {
   callHierarchy: ["prepareCallHierarchy", "provideCallHierarchyIncomingCalls", "provideCallHierarchyOutgoingCalls"],
   completion: ["provideCompletionItem"],
   diagnostics: ["handleDiagnostics"],
+  documentLink: ["provideDocumentLinks", "resolveDocumentLink"],
 };
 
 /**
