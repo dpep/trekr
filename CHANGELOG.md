@@ -2,41 +2,6 @@
 
 ## Unreleased
 
-- **A method a superclass calls on `self` is no longer reported dead.** When
-  `Base#run` calls `setup` and `Child` overrides `setup`, `--refs Child#setup`
-  excluded the call and `--dead` listed `Child#setup` as unreferenced at clear
-  confidence. Such calls are now possible references. On rails, 337 methods
-  (every validator's `validate_each`, the adapters' `configure_connection`)
-  leave the dead list.
-
-- **An engine's patch to an app class is not lost to a neighbouring engine's
-  test class.** With `class User` reopened in one engine's `lib/` and declared
-  plain in another engine's `test/`, the patch's methods went to the test
-  class, so the app's calls found nothing and `--dead` reported them
-  unreferenced.
-
-- **In the editor, a gem's file is answered from your workspace's app.** With
-  two apps bundling the same gem, definition, references and hover inside the
-  gem answered from whichever app was indexed last, and kept doing so for the
-  session.
-
-- **Completion after a guessed chain says it is not the whole list.** When
-  the receiver's type was one reading of several (`x.strip.` where the app
-  also defines a `strip`), the editor was told the list was complete and did
-  not ask again as you typed.
-
-- **A class method's return type is not overruled by an instance method's.**
-  `self.class.build.spin` resolved to `Gadget#spin` because an unrelated
-  instance method `Kit#build` returns a Gadget, even though the class method
-  `Builder.build` returns a Widget. A disagreement like that now leaves the
-  call unresolved.
-
-- **A qualified Sorbet return type keeps its namespace.**
-  `sig { returns(Stripe::Customer) }` was read as `Customer`, so inside
-  `module Billing` it typed the result as `Billing::Customer`, and `--dead`
-  reported the real `Stripe::Customer` methods unreferenced. `::Item` now
-  means the top-level `Item` too.
-
 - **Upgrading drops and rebuilds the index** (store v33): run `trekr --index`
   once per checkout, and restart any editor still running a trekr from
   before 0.3.0. Such an editor used to keep writing into the new store after
@@ -143,6 +108,43 @@
 
 - **`--index` says when there is no `Gemfile.lock`**, so no gem was indexed:
   a `gems — none` line in text, `gems.lockfile: false` in JSON.
+
+### Fixed
+
+- **A method a superclass calls on `self` is no longer reported dead.** When
+  `Base#run` calls `setup` and `Child` overrides `setup`, `--refs Child#setup`
+  excluded the call and `--dead` listed `Child#setup` as unreferenced at clear
+  confidence. Such calls are now possible references. On rails, 337 methods
+  (every validator's `validate_each`, the adapters' `configure_connection`)
+  leave the dead list.
+
+- **An engine's patch to an app class is not lost to a neighbouring engine's
+  test class.** With `class User` reopened in one engine's `lib/` and declared
+  plain in another engine's `test/`, the patch's methods went to the test
+  class, so the app's calls found nothing and `--dead` reported them
+  unreferenced.
+
+- **In the editor, a gem's file is answered from your workspace's app.** With
+  two apps bundling the same gem, definition, references and hover inside the
+  gem answered from whichever app was indexed last, and kept doing so for the
+  session.
+
+- **Completion after a guessed chain says it is not the whole list.** When
+  the receiver's type was one reading of several (`x.strip.` where the app
+  also defines a `strip`), the editor was told the list was complete and did
+  not ask again as you typed.
+
+- **A class method's return type is not overruled by an instance method's.**
+  `self.class.build.spin` resolved to `Gadget#spin` because an unrelated
+  instance method `Kit#build` returns a Gadget, even though the class method
+  `Builder.build` returns a Widget. A disagreement like that now leaves the
+  call unresolved.
+
+- **A qualified Sorbet return type keeps its namespace.**
+  `sig { returns(Stripe::Customer) }` was read as `Customer`, so inside
+  `module Billing` it typed the result as `Billing::Customer`, and `--dead`
+  reported the real `Stripe::Customer` methods unreferenced. `::Item` now
+  means the top-level `Item` too.
 
 ## 0.3.0 — 2026-09-27
 
