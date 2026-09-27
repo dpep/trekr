@@ -2336,3 +2336,17 @@ fn gc_collects_a_gem_version_no_bundle_names_and_an_index_brings_it_back() {
     let _ = fs::remove_dir_all(&app);
     let _ = fs::remove_dir_all(&gems);
 }
+
+#[test]
+fn drop_forgets_the_checkouts_tree_snapshots() {
+    let (dir, db) = scratch("drop-trees");
+    repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+    trekr(&db, &dir, &["--ancestors", "Widget"]);
+    let trees = db.with_extension("trees");
+    let snapshots = || fs::read_dir(&trees).map_or(0, |d| d.count());
+    assert!(snapshots() > 0, "a query leaves a snapshot to drop");
+    assert!(trekr(&db, &dir, &["--drop"]).status.success());
+    assert_eq!(snapshots(), 0);
+    let _ = fs::remove_dir_all(&dir);
+}

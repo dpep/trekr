@@ -2288,7 +2288,9 @@ fn report(
 fn cmd_drop(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
     let root = named_checkout(path)?;
     let root_str = root.to_string_lossy().into_owned();
-    let dropped = open_store()?.drop_checkout(&root_str)?;
+    let store = open_store()?;
+    let dropped = store.drop_checkout(&root_str)?;
+    crate::tree::forget_snapshots(&store, &root_str);
 
     match out {
         Output::Text if dropped == 0 => {

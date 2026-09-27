@@ -178,6 +178,18 @@ fn retire(dir: &Path, tag: &str, keep: &str) {
     }
 }
 
+/// Remove every snapshot of this checkout, for `--drop`.
+///
+/// A snapshot's key is a function of what the store says, so a store that once
+/// said something wrong keeps its wrong tree under a key a correct reindex
+/// reproduces. Dropping the checkout is how that is repaired, and has to reach
+/// the tree too.
+pub(crate) fn forget(store: &Store, root: &str) {
+    if let Some(dir) = dir(store) {
+        retire(&dir, &tag(root), "");
+    }
+}
+
 /// What `--gc` removed from the snapshot directory, or — on a dry run —
 /// would have.
 #[derive(Debug, Default, serde::Serialize)]

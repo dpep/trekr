@@ -25,6 +25,7 @@ mod variants;
 pub(crate) use variants::public_name;
 use variants::{PlacedEdge, nearest};
 
+pub(crate) use files::forget as forget_snapshots;
 pub(crate) use files::sweep as sweep_snapshots;
 
 use crate::core::Param;

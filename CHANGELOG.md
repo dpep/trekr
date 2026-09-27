@@ -21,6 +21,11 @@
   module can hide another module, and only an unindexed superclass can hide a
   class.
 
+- **`--drop` also removes the checkout's cached trees.** A tree is cached
+  under a key made from what the store says, so after a store answered
+  wrongly, drop-then-index rebuilt the same key and kept the wrong tree.
+  `trekr --drop` then `trekr --index` now repairs a checkout.
+
 - **Hover names a method as Ruby docs do**: `String#downcase(*options)`, not
   `def String#downcase(*options)`. Completion's detail line matches.
 
