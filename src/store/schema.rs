@@ -13,7 +13,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 26;
+pub(crate) const VERSION: i64 = 27;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -46,6 +46,8 @@ CREATE TABLE def (
   params      TEXT    NOT NULL,           -- 'req:a;opt:b;…', Ruby's vocabulary
   via         TEXT,
   target      TEXT,                       -- alias source, or `def Foo.x`'s Foo
+  target_line INTEGER,                    -- an alias's body, when written above it
+  target_col  INTEGER,
   sig_returns TEXT,                       -- class named by an inline Sorbet sig
   line        INTEGER NOT NULL,
   col         INTEGER NOT NULL,

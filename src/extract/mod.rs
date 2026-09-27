@@ -244,6 +244,7 @@ impl<'a> Extractor<'a> {
             via: None,
             target: None,
             sig_returns: None,
+            target_pos: None,
             sig_params: Vec::new(),
             pos: self.pos(start),
             end_line: self.pos(end).line,
@@ -761,6 +762,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         let mut def = self.def(name, Kind::Method, loc.start_offset(), loc.end_offset());
         def.singleton = self.in_singleton();
         def.via = Some("alias".into());
+        self.bind_alias(&mut def, &target);
         def.target = Some(target);
         self.push_def(def);
     }
@@ -1562,9 +1564,26 @@ impl<'pr> Extractor<'_> {
         let mut def = self.def(new, Kind::Method, loc.start_offset(), loc.end_offset());
         def.singleton = self.in_singleton();
         def.via = Some("alias_method".into());
+        self.bind_alias(&mut def, &old);
         def.target = Some(old);
         self.push_def(def);
         true
+    }
+
+    /// The body an alias copies, when it is a method written earlier in this
+    /// scope: its position, and its parameters, which the alias takes too.
+    fn bind_alias(&self, alias: &mut Def, target: &str) {
+        let Some(body) = self.facts.defs.iter().rev().find(|d| {
+            d.kind == Kind::Method
+                && d.name == target
+                && d.nesting == alias.nesting
+                && d.singleton == alias.singleton
+                && matches!(d.via.as_deref(), None | Some("define_method"))
+        }) else {
+            return;
+        };
+        alias.target_pos = Some(body.pos);
+        alias.params = body.params.clone();
     }
 
     fn handle_visibility(

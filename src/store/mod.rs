@@ -575,7 +575,8 @@ impl Store {
         let filter = if name.is_some() { "AND d.name = ?" } else { "" };
         let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT d.name, d.nesting, d.singleton, d.visibility, d.params, d.via,
-                    d.target, d.sig_returns, c.root || '/' || f.path, d.line, d.col
+                    d.target, d.sig_returns, c.root || '/' || f.path, d.line, d.col,
+                    d.target_line, d.target_col
                FROM def d
                JOIN file f ON f.blob_id = d.blob_id
                JOIN checkout c ON c.id = f.checkout_id
@@ -603,6 +604,10 @@ impl Store {
                 path: r.get(8)?,
                 line: r.get(9)?,
                 col: r.get(10)?,
+                target_pos: match (r.get::<_, Option<u32>>(11)?, r.get::<_, Option<u32>>(12)?) {
+                    (Some(line), Some(col)) => Some(crate::core::Pos { line, col }),
+                    _ => None,
+                },
             });
         }
         Ok(())
@@ -1157,6 +1162,8 @@ pub(crate) struct MethodRow {
     pub(crate) path: String,
     pub(crate) line: u32,
     pub(crate) col: u32,
+    /// An alias's body, when it was written above it in the same file.
+    pub(crate) target_pos: Option<crate::core::Pos>,
 }
 
 #[derive(Debug)]
@@ -1321,8 +1328,9 @@ fn insert_facts(tx: &Connection, oid: &Oid, facts: &Facts) -> Result<()> {
 
     let mut def = tx.prepare_cached(
         "INSERT INTO def (blob_id, name, kind, nesting, singleton, visibility, params,
-                          via, target, sig_returns, line, col, end_line)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13)",
+                          via, target, sig_returns, line, col, end_line,
+                          target_line, target_col)
+         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
     )?;
     for d in &facts.defs {
         def.execute(params![
@@ -1339,6 +1347,8 @@ fn insert_facts(tx: &Connection, oid: &Oid, facts: &Facts) -> Result<()> {
             d.pos.line,
             d.pos.col,
             d.end_line,
+            d.target_pos.map(|at| at.line),
+            d.target_pos.map(|at| at.col),
         ])?;
     }
 

@@ -218,6 +218,10 @@ impl Facts {
             eat(def.via.as_deref().unwrap_or("").as_bytes());
             eat(def.target.as_deref().unwrap_or("").as_bytes());
             eat(def.sig_returns.as_deref().unwrap_or("").as_bytes());
+            if let Some(at) = def.target_pos {
+                eat(&at.line.to_le_bytes());
+                eat(&at.col.to_le_bytes());
+            }
             eat(&def.pos.line.to_le_bytes());
             eat(&def.pos.col.to_le_bytes());
             eat(&def.end_line.to_le_bytes());
@@ -312,6 +316,10 @@ pub(crate) struct Def {
     /// Return type named by an inline Sorbet `sig`. 64% of sigs name a usable
     /// class vs 3.9% from syntax alone (PLAN §2) — cheap and high-yield.
     pub(crate) sig_returns: Option<String>,
+    /// For an alias: the body it copied, when that is a `def` earlier in this
+    /// blob. Ruby binds an alias to the method as it is *then*, so a later
+    /// `def` of the same name does not move it.
+    pub(crate) target_pos: Option<Pos>,
     /// Parameter name → class, from the `params(...)` half of a `sig`.
     ///
     /// Not stored: a parameter can only be a receiver inside the method that

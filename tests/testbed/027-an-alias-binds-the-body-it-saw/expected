@@ -1,0 +1,5 @@
+# `alias_method :old_greet, :greet` copies the `greet` that exists *then*. The
+# alias carried only the name, so following it could only find the last
+# `greet`; now it records the body it saw, and `old_greet` lands there.
+def app.rb:9:5 status=resolved name=old_greet owner=Gizmo kind=definition site=app.rb:2
+def app.rb:9:17 status=resolved name=first_greet owner=Gizmo kind=definition site=app.rb:2

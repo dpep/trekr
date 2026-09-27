@@ -84,7 +84,11 @@ and a block handed to them is its body.
 Macros are expanded at extraction, so no later layer needs to know they exist:
 `attr_accessor :x` becomes `x` and `x=`; `module_function` turns one `def` into a
 public singleton method and a private instance one; `alias` and `alias_method`
-become methods with a `target`.
+become methods with a `target` — and, when the aliased method is a `def`
+written above them in the same scope, the position of that body
+(`target_line`, `target_col`) and its parameters. Ruby binds an alias to the
+method as it is then, so a later `def` of the name does not move it, and
+lookup answers a bound alias with the body it copied.
 
 ### `tree/` — a checkout's namespace, rebuilt not patched
 
@@ -315,7 +319,7 @@ and this table is its summary.
 ```text
 blob(id, oid UNIQUE, lines, parse_errors)
   def(blob_id, name, kind, nesting, singleton, visibility, params,
-      via, target, sig_returns, line, col, end_line)
+      via, target, target_line, target_col, sig_returns, line, col, end_line)
   ancestry(blob_id, nesting, relation, target, line, col)
   const_ref(blob_id, name, nesting, line, col)
   call_site(blob_id, name, recv, recv_text, nesting, argc, block, line, col)

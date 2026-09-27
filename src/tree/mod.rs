@@ -232,6 +232,9 @@ pub(crate) struct MethodDef {
     /// instance_method(:y))` — so this site is a declaration.
     #[serde(skip)]
     pub(crate) body_elsewhere: bool,
+    /// An alias whose `site` is the body it copied, not the alias line.
+    #[serde(skip)]
+    pub(crate) bound: bool,
 }
 
 impl MethodDef {
@@ -242,6 +245,9 @@ impl MethodDef {
     /// `Site::is_rbi` has said exactly that since DEC-019, and `kind` shipped
     /// in session 30 without asking it.
     pub(crate) fn kind(&self) -> Kind {
+        if self.bound {
+            return Kind::Definition;
+        }
         if self.site.is_rbi() || self.body_elsewhere {
             return Kind::Declaration;
         }
@@ -1718,7 +1724,13 @@ impl Tree {
                 row.via.as_deref(),
                 Some("define_method") | Some("define_singleton_method")
             );
+        // An alias bound to a body in its file answers with that body: it is
+        // the code that runs, and a later `def` of the name does not move it.
+        let bound = row
+            .target_pos
+            .filter(|_| matches!(row.via.as_deref(), Some("alias") | Some("alias_method")));
         MethodDef {
+            bound: bound.is_some(),
             // A body written elsewhere takes whatever that body takes.
             arity: if body_elsewhere {
                 (0, true)
@@ -1734,8 +1746,8 @@ impl Tree {
             sig_returns: row.sig_returns,
             site: Site {
                 path: row.path,
-                line: row.line,
-                col: row.col,
+                line: bound.map_or(row.line, |at| at.line),
+                col: bound.map_or(row.col, |at| at.col),
                 kind: "method".into(),
             },
         }
@@ -2477,6 +2489,7 @@ fn rows_from(path: &str, source: &str) -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<Metho
                 path: path.to_string(),
                 line: d.pos.line,
                 col: d.pos.col,
+                target_pos: d.target_pos,
             });
         } else {
             decls.push(DeclRow {
@@ -2517,6 +2530,7 @@ mod rbi_preference_tests {
             path: path.into(),
             line: 1,
             col: 1,
+            target_pos: None,
         }
     }
 

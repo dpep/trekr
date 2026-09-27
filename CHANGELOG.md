@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **An alias lands on the body it copied.** `alias_method :old_greet, :greet`
+  followed by a new `def greet` left `old_greet` pointing at the alias line,
+  with nothing recording which `greet` it meant. When the aliased method is
+  written above the alias in the same scope, the alias now records that body
+  and its parameters, and `--def`/`--refs` on `old_greet` answer with it
+  (`kind: definition`). An alias of an inherited method is still the alias
+  line. Store v27.
+
 - **`--def` on a variable answers the variable.** `x = 5; puts x` asked at the
   second `x` answered `puts`, the nearest call on the line. A local or
   parameter now answers with the writes its value can come from, an `@ivar` or
