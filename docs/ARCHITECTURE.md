@@ -315,6 +315,7 @@ the new binary in place (DEC-050).
 | `inbox.rs` | reading the wire ahead, so `$/cancelRequest` is seen before the request it withdraws is reached, and mid-scan |
 | `state.rs` | per-checkout trees (rebuilt when the surface key moves) and completion listings; documents — the editor's copy, or a disk read revalidated by mtime+length |
 | `handlers.rs` | the nine agent operations, syntax diagnostics |
+| `doc.rs` | a definition's doc comment and its signature as written, read from its file when asked (DEC-052) |
 | `complete.rs` | completion (DEC-040) |
 | `fresh.rs` | refresh-on-save and the background `--index` child (DEC-039) |
 | `convert.rs` | UTF-16 ↔ byte columns, spans, a per-file line index |
@@ -325,13 +326,49 @@ the new binary in place (DEC-050).
 
 - `definition` returns the resolved site(s). Residue returns up to five ranked
   candidates, so the editor shows a peek list rather than jumping confidently
-  to a guess; `hover` at the same position says which rung resolved the
-  receiver and how confident that is.
+  to a guess; `hover` at the same position says, in words, that it is one.
 - `references` orders confirmed before possible and drops excluded — the order
   is the disclosure. On a class or constant it resolves every written constant
   and keeps those that land on the same FQN.
 - `incomingCalls` reports only the confirmed tier; its items are the calling
   methods, so the hierarchy can be walked.
+
+**Hover is for a person reading code** (DEC-052), so it shows what the
+definition is and leaves out how it was found:
+
+````text
+```ruby
+def ActiveRecord::Associations::ClassMethods#has_many(name, scope = nil, **options, &extension)
+```
+_caveat, only when the answer is a guess_
+first paragraph of the doc comment · **Deprecated** / **Returns** from YARD
+Defined in [`lib/active_record/associations.rb:1302`](file://…#L1302) · gem `activerecord-8.0.5.1`
+````
+
+The signature is the definition's own text after its name — parameters with
+their defaults, a class's `< Parent`, a constant's value — under the FQN the
+tree settled on. `status`, `confidence` and `resolved_via` stay in `--json`,
+where a caller branches on them; in a hover they were noise. What replaces
+them is a sentence, and only when it matters: `Best guess — … 3 other
+definitions of save exist` for an ambiguous pick, `receiver type unknown — 7
+possible definitions: …` for residue. Never a number.
+
+The doc is **read when asked, not indexed**. The site the tree returns names a
+file and a line; the session reads that file (the editor's buffer if open, else
+disk, cached while its mtime and length hold) and walks up from the definition
+over the contiguous comment block. The reader is `doc::doc_above`, a pure
+function of text and line. A blank line ends the block; a Sorbet `sig` between
+comment and `def` is stepped over; a bare `private` is not, since a comment
+above it heads a section. Magic comments, tool directives (`rubocop:`,
+`:call-seq:`, rbs-inline's `#:`) and RDoc's `#--`…`#++` are dropped, and
+`:nodoc:` means no doc. The summary is the first paragraph, capped at six lines
+and 400 bytes; of YARD's tags only `@return` and `@deprecated` are kept, because
+the signature already shows the parameters.
+
+A file edited since it was indexed moves its definitions. The definition is
+found at the indexed line, or else as the one definition of that name, kind and
+scope in the file as it is now. If neither holds the hover shows no doc at all:
+a comment attached to the wrong definition is worse than none.
 
 **What reflects unsaved edits:** the open file's own facts (outline, position
 lookup, diagnostics, completion) and every file scan (`references`,
@@ -476,6 +513,11 @@ the built binary over stdio:
 | `textDocument/definition` | 463 ms | **0–1 ms** |
 | `textDocument/documentSymbol` | 1 ms | **0 ms** |
 | `textDocument/hover` | 1 ms | **0 ms** |
+
+Reading the definition's file for its doc (DEC-052) adds 0.3–1.3 ms to a hover
+whose definition file the session has not read yet, and 0.2–0.45 ms once it
+has. Measured on discourse and rails, median of five, OS page cache warm. The
+largest was `has_many`, a 1,909-line file.
 | `textDocument/references` (`each`) | 257 ms | **25 ms** |
 
 The first call pays the 210 ms tree build; every one after it pays nothing. A

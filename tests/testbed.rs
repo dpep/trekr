@@ -16,7 +16,7 @@
 //! def app.rb:12:11 status=residue candidates=2
 //! refs Widget#save confirmed=2 possible=0
 //! symbols app.rb   Widget,save,Job,run
-//! hover app.rb:12:11 kind: `Declaration`
+//! hover app.rb:12:11 Declared by `attr_reader` in
 //! ```
 //!
 //! `hover` drives the **LSP** rather than the CLI, because some of what an

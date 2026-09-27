@@ -14,6 +14,7 @@
 
 mod complete;
 mod convert;
+mod doc;
 mod fresh;
 mod handlers;
 mod inbox;

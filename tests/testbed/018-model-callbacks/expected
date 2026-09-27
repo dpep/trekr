@@ -15,4 +15,4 @@
 def app.rb:13:3 status=resolved owner=Trackable::ClassMethods kind=declaration defined_via=define_model_callbacks site=app.rb:5
 def app.rb:14:3 status=resolved owner=Trackable::ClassMethods kind=declaration site=app.rb:6
 def app.rb:15:3 status=residue
-hover app.rb:13:3 kind: `Declaration` · `define_model_callbacks`
+hover app.rb:13:3 Declared by `define_model_callbacks` in

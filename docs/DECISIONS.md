@@ -2495,3 +2495,103 @@ truncation through its own locking, as it does for ordinary reads.
 **Reverses if** the store is put on a network filesystem, or the cold rails
 `--refs` regression is found to generalise — the thing to watch is a first
 query after a reboot.
+
+## DEC-052 — Hover reads the doc comment when asked, and says a guess in words
+
+**Decided.** A hover shows the definition's signature as written, the first
+paragraph of its doc comment, and a linked `Defined in path:line` (with the gem
+named, for gem code). The doc is read from the definition's file at hover time,
+not extracted at index time. `status`, `confidence` and `resolved_via` are no
+longer printed in the hover. When the answer is a guess, the hover says so in a
+sentence. `--json` is unchanged.
+
+**Why the internals left the hover.** Users read `status: Resolved ·
+confidence: 1.00 · via local:new` as noise, and on a confident answer it tells
+a person nothing. The principle that every answer carries its disclosure (see
+CLAUDE.md) is about what a *caller* can branch on, and `--json`/`--ndjson`
+still carry all three fields. A hover is read by a person. That person needs to
+know one thing: whether this might not be the method that runs. So a
+confident answer carries no caveat. A guess carries one, in words and never as
+a number:
+
+| answer | the hover says |
+|---|---|
+| resolved, certain | nothing extra |
+| resolved, assignments disagree | "The receiver's type is inferred from assignments that do not all agree." |
+| ambiguous | "Best guess — the receiver's type is inferred, and N other definitions of `x` exist." |
+| residue, receiver unknown | "receiver type unknown — N possible definitions: `A#x`, `B#x`, `C#x`, N more" |
+| residue, type known | "`T` has no `x` in anything trekr has indexed; it may come from a gem, a DSL, or `method_missing`." |
+
+A residue shows no signature and no doc. Showing the top candidate's would
+make a guess look like an answer, which is the one failure this engine exists
+to avoid.
+
+**Why read when asked, not indexed.** The first design stored a bounded
+summary per `def` row as a blob fact, with a VERSION bump and a cold re-index.
+That was turned down before it landed. A hover needs the doc of one
+definition, whose site the tree already has, and reading that one file costs
+little. Measured on discourse and rails (median of five, page cache warm), a
+hover whose definition file the session has not read yet costs 0.3–1.3 ms
+more, and 0.2–0.45 ms more once it has. The worst case was `has_many`, in a
+1,909-line file. Storing docs instead would grow every store, gem docs
+included, for a fact no index-wide query reads. It would also cost every user
+a re-index to ship. Reading also sees an unsaved buffer, which a stored fact
+cannot.
+
+The cost of reading is staleness. The index says line 15, and the file may
+have moved since. The definition is taken at the indexed line if one of the
+same name and kind is there. Otherwise it is taken as the only definition with
+that name, kind and enclosing scope in the file as it is now. If neither
+holds, no doc is shown. A comment attached to the wrong definition is worse
+than none, so this refuses rather than guesses.
+
+**What counts as the doc.** This is the contiguous `#` block directly above
+the definition, or an `=begin`/`=end` block whose `=end` sits there.
+
+- A blank line ends it.
+- A Sorbet `sig`, one line or `do … end`, is stepped over.
+- A bare `private` line is not stepped over: a comment above it heads a
+  section.
+- Dropped: magic comments, `rubocop:`/`standard:`/`steep:` directives, a
+  shebang, RDoc directives (`:call-seq:` with its body) and rbs-inline's `#:`
+  lines. Also dropped: RDoc's `#--`…`#++` hidden text, and headings
+  (`= Active Record`) at the top of a class doc.
+- `:nodoc:` and `:stopdoc:` mean no doc.
+
+The summary is the first paragraph, capped at six lines and 400 bytes and
+marked `…` when cut. The rest is one click away, at the linked definition.
+
+Of YARD's tags, `@return` (rendered as **Returns** `Type` — description, and
+omitted for `void`) and `@deprecated` (shown first) are kept. The signature
+cannot say either. `@param` is dropped because the signature above already
+shows the parameters with their defaults, so a list would repeat it at twice
+the height. `@example`, `@see`, `@raise`, `@option` and directives (`@!…`) are
+dropped as more than a glance.
+
+RDoc and YARD inline markup becomes Markdown: `+x+`, `<tt>x</tt>` and `{X#y}`
+become code, and `\Rails` loses its backslash. A stray `<` is escaped, or
+`Array<String>` renders as an unknown HTML tag and vanishes.
+
+**The signature** is the definition's own text after its name: the
+parenthesized parameters (whitespace collapsed, comments dropped, capped), a
+class's `< Parent`, or a constant's first line (`…` when it continues). This
+text goes after the FQN the tree settled on: `def Owner#name`, `def
+Owner.name`. A macro-made method (`attr_reader`, `has_many`) has no parameter
+text of its own, so its parameters come from the extracted facts, with `…` for
+defaults the facts do not carry.
+
+**Not chosen.**
+
+- **Docs as blob facts** (the brief as first written). See above: it grows the
+  store and forces a re-index for a fact read one definition at a time.
+- **A compact `@param` list.** It repeats the signature.
+- **Keeping the rung in words** ("resolved via the constructor"). It is true,
+  but a person reading a certain answer does not need it; `--def --json` and
+  `--explain` keep it.
+- **Reading every declaration site of a reopened class** for its doc.
+  `ActiveSupport` has hundreds of sites. The first five are read, and the first
+  with a doc wins.
+
+**Reverses if** a batch consumer needs docs, such as a `doc` field in `--def
+--json` for agents, or a search over doc text. A per-query file read is then the
+wrong shape, and docs earn a place in the blob layer.

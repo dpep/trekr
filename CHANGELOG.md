@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **Hover shows what a definition is, not how trekr found it.** The hover
+  now shows the signature as written (`def Widget#resize(width, height =
+  nil)`, `class Foo < Bar`, `LIMIT = 10`). Below it comes the first paragraph
+  of the doc comment above the definition, YARD's `@return` and `@deprecated`,
+  and a linked `Defined in path:line`, naming the gem for gem code. The
+  `status · confidence · via` line is gone. When the answer is a guess, the
+  hover says so in words, like `receiver type unknown — 3 possible
+  definitions`; a confident answer carries no caveat. Docs are read from the definition's
+  file when you hover, so nothing is re-indexed and the store does not grow.
+  `--json` output is unchanged.
 - **`--lsp` switches to a new trekr in place.** After `brew upgrade`, a
   reinstall or a `cargo build`, a running server hands its session to the new
   binary within a couple of seconds, on the same connection. Open files and

@@ -2,9 +2,9 @@
 //!
 //! Each is the CLI's answer in LSP's clothing — the same ladder, the same
 //! tiers, the same disclosure. Where LSP has no field for what this engine
-//! knows, the answer carries it anyway: `hover` says which rung resolved a
-//! receiver and how confident that makes it, and `references` orders confirmed
-//! before possible so the list itself is the disclosure.
+//! knows, the answer carries it anyway: `hover` says in words when an answer
+//! is a guess, and `references` orders confirmed before possible so the list
+//! itself is the disclosure.
 //!
 //! Two kinds of question, and they need different things. Outlining a file or
 //! reporting its syntax errors needs only the file's own bytes, so it is
@@ -13,8 +13,10 @@
 //! client's root (DEC-024).
 
 use super::convert::{self, LineIndex, path_to_uri, point, to_pos};
+use super::doc::{self, Doc};
 use super::state::{Located, Session};
 use crate::cli::position::{self, Under};
+use crate::core::{Def, Kind};
 use crate::resolve::refs;
 use lsp_types::Uri as Url;
 use lsp_types::{
@@ -613,95 +615,40 @@ pub(crate) fn workspace_symbol(
     Ok(Some(symbols))
 }
 
-/// Hover is where the disclosure lives: LSP has no confidence field, so the
-/// answer says it in words.
+/// What a reader wants at a glance: the signature as written, what its doc
+/// comment says, and where it lives. How the answer was reached stays out of
+/// it — except when the answer is a guess, which is said in words, because
+/// LSP has no confidence field and a confident-looking guess is the one thing
+/// this engine exists not to give.
 pub(crate) fn hover(session: &mut Session, params: HoverParams) -> anyhow::Result<Option<Hover>> {
     let uri = params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;
     let Some((located, pos)) = target(session, &uri, position) else {
         return Ok(None);
     };
-    let facts = session
+    let Some((facts, source)) = session
         .document(&located.absolute)
-        .map(|document| document.facts().clone());
-    let Some(facts) = facts else { return Ok(None) };
+        .map(|document| (document.facts().clone(), document.text.clone()))
+    else {
+        return Ok(None);
+    };
     let Some(under) = position::at_facts(&facts, pos.line, pos.col) else {
         return Ok(None);
     };
-    let path = located.relative.clone();
-    let tree = session.tree(&located.root)?;
-
-    let text = match under {
-        Under::Definition(def) => {
-            let params = def
-                .params
-                .iter()
-                .map(|p| format!("{}: {}", p.name, p.kind.as_str()))
-                .collect::<Vec<_>>()
-                .join(", ");
-            let mut out = format!("**{}**\n\n`{}`", def.name, params);
-            if let Some(returns) = &def.sig_returns {
-                out.push_str(&format!("\n\nreturns `{returns}`"));
-            }
-            out
-        }
-        Under::Constant(reference) => {
-            let resolution = tree.resolve(&reference.name, &reference.nesting);
-            format!(
-                "**{}**\n\nstatus: `{:?}` · confidence: {:.1}{}",
-                reference.name,
-                resolution.status,
-                resolution.confidence,
-                resolution
-                    .resolved_via
-                    .map(|via| format!(" · via `{via:?}`"))
-                    .unwrap_or_default()
-            )
-        }
-        Under::Call(call) => {
-            let answer = crate::resolve::method_at(tree, &facts, &call, &path);
-            let mut out = format!(
-                "**{}**\n\nreceiver: `{}`{}\n\nstatus: `{:?}` · confidence: {:.2}",
-                call.name,
-                answer.receiver,
-                answer
-                    .receiver_type
-                    .map(|t| format!(" → `{t}`"))
-                    .unwrap_or_default(),
-                answer.status,
-                answer.confidence,
-            );
-            if let Some(via) = answer.resolved_via {
-                out.push_str(&format!(" · via `{via}`"));
-            }
-            if let Some(owner) = answer.owner {
-                out.push_str(&format!("\n\ndefined in `{owner}`"));
-            }
-            // The `definition` response is a bare list of locations, so hover
-            // is the only LSP surface that can carry this.
-            if let Some(kind) = answer.kind {
-                let by = answer
-                    .defined_via
-                    .map(|via| format!(" · `{via}`"))
-                    .unwrap_or_default();
-                out.push_str(&format!("\n\nkind: `{kind:?}`{by}"));
-            }
-            if let Some(reason) = answer.reason {
-                out.push_str(&format!("\n\n{reason}"));
-            }
-            out
-        }
+    let card = match under {
+        Under::Definition(def) => hover_definition(session, &located.root, &def, &source)?,
+        Under::Constant(reference) => hover_constant(session, &located.root, &reference)?,
+        Under::Call(call) => hover_call(session, &located, &facts, &call)?,
     };
+    let mut text = card.markdown();
     // Said where the answer is read: an unindexed checkout answers from core
     // and gems alone, and a residue there is a gap in the index, not a
     // finding about the code.
-    let text = if session.indexed(&located.root) {
-        text
-    } else {
-        format!(
-            "{text}\n\n_This checkout is not indexed yet, so answers come from core and gems alone. trekr indexes it in the background; `trekr --index` does it now._"
-        )
-    };
+    if !session.indexed(&located.root) {
+        text.push_str(
+            "\n\n_This checkout is not indexed yet, so answers come from core and gems alone. trekr indexes it in the background; `trekr --index` does it now._",
+        );
+    }
     Ok(Some(Hover {
         contents: HoverContents::Markup(MarkupContent {
             kind: MarkupKind::Markdown,
@@ -709,6 +656,416 @@ pub(crate) fn hover(session: &mut Session, params: HoverParams) -> anyhow::Resul
         }),
         range: None,
     }))
+}
+
+/// A hover's parts, in the order they are read.
+#[derive(Default)]
+pub(super) struct Card {
+    pub(super) code: Option<String>,
+    /// Why this answer may not be the one that runs, in words.
+    pub(super) caveat: Option<String>,
+    pub(super) doc: Option<Doc>,
+    pub(super) location: Option<String>,
+}
+
+impl Card {
+    pub(super) fn markdown(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(code) = &self.code {
+            parts.push(format!("```ruby\n{code}\n```"));
+        }
+        if let Some(caveat) = &self.caveat {
+            parts.push(format!("_{caveat}_"));
+        }
+        if let Some(doc) = self.doc.as_ref().map(Doc::markdown)
+            && !doc.is_empty()
+        {
+            parts.push(doc);
+        }
+        if let Some(location) = &self.location {
+            parts.push(location.clone());
+        }
+        parts.join("\n\n")
+    }
+}
+
+/// The cursor is on a definition: it is the answer, read from the buffer.
+fn hover_definition(
+    session: &mut Session,
+    root: &Path,
+    def: &Def,
+    source: &str,
+) -> anyhow::Result<Card> {
+    let tree = session.tree(root)?;
+    let qualified = match def.kind {
+        Kind::Method => def
+            .target
+            .as_ref()
+            .map(|t| tree.resolve(t, &def.nesting).fqn.unwrap_or(t.clone()))
+            .or_else(|| tree.scope_fqn(&def.nesting)),
+        Kind::Class | Kind::Module => {
+            let own: Vec<String> = std::iter::once(def.name.clone())
+                .chain(def.nesting.iter().cloned())
+                .collect();
+            tree.scope_fqn(&own)
+        }
+        Kind::Constant => Some(match tree.scope_fqn(&def.nesting) {
+            Some(scope) if !scope.is_empty() => format!("{scope}::{}", def.name),
+            _ => def.name.clone(),
+        }),
+    };
+    let display = display_name(def, qualified.as_deref());
+    Ok(Card {
+        code: Some(doc::signature(def, &display, source)),
+        doc: doc::doc_above(source, def.pos.line),
+        ..Card::default()
+    })
+}
+
+/// A method is shown as `Owner#name`; anything else by its own FQN.
+fn display_name(def: &Def, qualified: Option<&str>) -> String {
+    match def.kind {
+        Kind::Method => doc::method_name(qualified, def.singleton, &def.name),
+        _ => qualified.map_or_else(|| def.name.clone(), str::to_string),
+    }
+}
+
+/// How many declaration sites of a reopened class are read looking for its
+/// doc. `ActiveSupport` is reopened in hundreds of files, and a hover must
+/// not read them all.
+const DOC_SITES: usize = 5;
+
+fn hover_constant(
+    session: &mut Session,
+    root: &Path,
+    reference: &crate::core::ConstRef,
+) -> anyhow::Result<Card> {
+    let tree = session.tree(root)?;
+    let resolution = tree.resolve(&reference.name, &reference.nesting);
+    let (Some(fqn), crate::tree::Status::Resolved) = (resolution.fqn.clone(), resolution.status)
+    else {
+        return Ok(Card {
+            caveat: Some(format!(
+                "`{}` is not defined anywhere trekr has indexed — it may be built at runtime, or come from a gem that is not installed.",
+                reference.name
+            )),
+            ..Card::default()
+        });
+    };
+    let kind = tree.kind_of(&fqn).unwrap_or("constant").to_string();
+    let sites = resolution.sites;
+    let mut read = Vec::new();
+    for site in sites.iter().take(DOC_SITES) {
+        if let Some(described) = describe(session, root, site, &fqn, Some(&fqn), None) {
+            read.push((site, described));
+        }
+    }
+    let primary = read
+        .iter()
+        .position(|(_, d)| d.doc.is_some())
+        .or((!read.is_empty()).then_some(0));
+    let (code, doc, location) = match primary.map(|i| read.swap_remove(i)) {
+        Some((site, described)) => (
+            described.signature,
+            described.doc,
+            Some(defined_in(session, root, &site.path, described.line, None)),
+        ),
+        None => (
+            match kind.as_str() {
+                "class" | "module" => format!("{kind} {fqn}"),
+                _ => fqn.clone(),
+            },
+            None,
+            sites
+                .first()
+                .map(|site| defined_in(session, root, &site.path, site.line, None)),
+        ),
+    };
+    let location = location.map(|l| match sites.len() {
+        0 | 1 => l,
+        2 => format!("{l} and 1 other place"),
+        n => format!("{l} and {} other places", n - 1),
+    });
+    Ok(Card {
+        code: Some(code),
+        doc,
+        location,
+        ..Card::default()
+    })
+}
+
+fn hover_call(
+    session: &mut Session,
+    located: &Located,
+    facts: &crate::core::Facts,
+    call: &crate::core::Call,
+) -> anyhow::Result<Card> {
+    use crate::tree::Status;
+    let root = &located.root;
+    let tree = session.tree(root)?;
+    let answer = crate::resolve::method_at(tree, facts, call, &located.relative);
+    let named = tree.named(&call.name);
+    let name = &call.name;
+
+    let site = match answer.status {
+        Status::Resolved | Status::Ambiguous => answer.sites.first().cloned(),
+        Status::Residue => None,
+    };
+    let Some(site) = site else {
+        return Ok(Card {
+            caveat: Some(residue_words(&answer, name, &named)),
+            ..Card::default()
+        });
+    };
+    let singleton = named
+        .iter()
+        .find(|m| m.site.path == site.path && m.site.line == site.line)
+        .map(|m| m.singleton);
+    let caveat = match answer.status {
+        Status::Ambiguous => Some(match named.len().saturating_sub(1) {
+            0 => "Best guess — the receiver's type is inferred, not declared.".to_string(),
+            n => format!(
+                "Best guess — the receiver's type is inferred, and {} of `{name}` {}.",
+                count(n, "other definition"),
+                if n == 1 { "exists" } else { "exist" }
+            ),
+        }),
+        Status::Resolved if answer.confidence < 1.0 => Some(match answer.resolved_via.as_deref() {
+            Some("includer") => format!(
+                "Called inside a module: found through the classes that include it, and not all of them define `{name}`."
+            ),
+            _ => "The receiver's type is inferred from assignments that do not all agree."
+                .to_string(),
+        }),
+        _ => None,
+    };
+    let owner = answer.owner.clone();
+    let described = describe(session, root, &site, name, owner.as_deref(), singleton);
+    let fallback = || {
+        format!(
+            "def {}",
+            doc::method_name(owner.as_deref(), singleton.unwrap_or(false), name)
+        )
+    };
+    let line = described.as_ref().map_or(site.line, |d| d.line);
+    let location = defined_in(
+        session,
+        root,
+        &site.path,
+        line,
+        answer.defined_via.as_deref(),
+    );
+    let (code, doc) = match described {
+        Some(d) => (d.signature, d.doc),
+        None => (fallback(), None),
+    };
+    Ok(Card {
+        code: Some(code),
+        caveat,
+        doc,
+        location: Some(location),
+    })
+}
+
+/// A residue, in words: what is not known, and what it could still be.
+fn residue_words(
+    answer: &crate::resolve::MethodAnswer,
+    name: &str,
+    named: &[crate::tree::MethodDef],
+) -> String {
+    let lead = format!("**`{name}`** — ");
+    match &answer.receiver_type {
+        Some(module) if answer.receiver_kind.as_deref() == Some("module") => format!(
+            "{lead}called inside module `{module}`, and no class that includes it defines `{name}`."
+        ),
+        Some(known) => {
+            let mut out = format!(
+                "{lead}`{known}` has no `{name}` in anything trekr has indexed; it may come from a gem, a DSL, or `method_missing`."
+            );
+            if !answer.unresolved_ancestors.is_empty() {
+                let missing: Vec<String> = answer
+                    .unresolved_ancestors
+                    .iter()
+                    .take(2)
+                    .map(|a| format!("`{a}`"))
+                    .collect();
+                out.push_str(&format!(
+                    " Some of its ancestors are not indexed ({}).",
+                    missing.join(", ")
+                ));
+            }
+            out
+        }
+        None if named.is_empty() => {
+            format!("{lead}receiver type unknown, and nothing trekr has indexed defines `{name}`.")
+        }
+        None => {
+            const SHOWN: usize = 3;
+            let mut shown: Vec<String> = answer
+                .candidates
+                .iter()
+                .take(SHOWN)
+                .map(|c| format!("`{}`", doc::method_name(Some(&c.owner), c.singleton, name)))
+                .collect();
+            if named.len() > shown.len() {
+                shown.push(format!("{} more", named.len() - shown.len()));
+            }
+            format!(
+                "{lead}receiver type unknown — {}: {}",
+                count(named.len(), "possible definition"),
+                shown.join(", ")
+            )
+        }
+    }
+}
+
+fn count(n: usize, noun: &str) -> String {
+    match n {
+        1 => format!("1 {noun}"),
+        n => format!("{n} {noun}s"),
+    }
+}
+
+/// A definition read from its own file, as it is now.
+pub(super) struct Described {
+    pub(super) signature: String,
+    pub(super) doc: Option<Doc>,
+    /// Where the definition is today, which an edit since the index moved.
+    pub(super) line: u32,
+}
+
+/// Read the definition an index site names, from its file as it is now: the
+/// editor's buffer if open, else disk (cached while unchanged).
+///
+/// `qualified` is the owner's FQN for a method and the name's own FQN
+/// otherwise; `singleton`, when known, picks between `module_function`'s two
+/// copies. `None` when the file no longer says unmistakably which definition
+/// the site meant — a doc attached to the wrong definition is worse than none.
+pub(super) fn describe(
+    session: &mut Session,
+    root: &Path,
+    site: &crate::tree::Site,
+    name: &str,
+    qualified: Option<&str>,
+    singleton: Option<bool>,
+) -> Option<Described> {
+    let absolute = absolute_site(root, &site.path)?;
+    let absolute = std::fs::canonicalize(&absolute).unwrap_or(absolute);
+    let document = session.document(&absolute)?;
+    let name = last_segment(name);
+    let fits = |d: &&Def| {
+        last_segment(&d.name) == name
+            && d.kind.as_str() == site.kind
+            && singleton.is_none_or(|s| d.singleton == s)
+    };
+    let def = {
+        let facts = document.facts();
+        match facts
+            .defs
+            .iter()
+            .filter(fits)
+            .find(|d| d.pos.line == site.line)
+        {
+            Some(def) => def.clone(),
+            // Edited since it was indexed. One definition of the name in the
+            // same scope is still unmistakably the one; two are a guess.
+            None => {
+                let mut moved = facts
+                    .defs
+                    .iter()
+                    .filter(fits)
+                    .filter(|d| same_scope(d, qualified));
+                let only = moved.next()?.clone();
+                if moved.next().is_some() {
+                    return None;
+                }
+                only
+            }
+        }
+    };
+    let text = &document.text;
+    Some(Described {
+        signature: doc::signature(&def, &display_name(&def, qualified), text),
+        doc: doc::doc_above(text, def.pos.line),
+        line: def.pos.line,
+    })
+}
+
+/// Was `def` written in the scope `qualified` names? By the last segment only,
+/// since a written nesting is not resolved — enough to tell `Widget#save`
+/// from `Gadget#save` in one file, which is all a moved definition needs.
+fn same_scope(def: &Def, qualified: Option<&str>) -> bool {
+    let scope = match def.kind {
+        Kind::Method => qualified,
+        _ => qualified
+            .and_then(|q| q.rsplit_once("::"))
+            .map(|(scope, _)| scope),
+    };
+    let written = match def.kind {
+        Kind::Method => def
+            .target
+            .as_deref()
+            .or(def.nesting.first().map(String::as_str)),
+        _ => def.nesting.first().map(String::as_str),
+    };
+    scope.map(last_segment) == written.map(last_segment)
+}
+
+/// "Defined in `path:line`", linked. A gem says which, since its path alone
+/// is a long way from telling you; a declaration says what declared it,
+/// because the code that runs is somewhere else.
+pub(super) fn defined_in(
+    session: &Session,
+    root: &Path,
+    path: &str,
+    line: u32,
+    declared_via: Option<&str>,
+) -> String {
+    let verb = match declared_via {
+        None => "Defined in".to_string(),
+        Some("rbi") => "Declared by a Sorbet stub in".to_string(),
+        Some(via) => format!("Declared by `{via}` in"),
+    };
+    if path == crate::tree::CORE_PATH {
+        return format!("{verb} Ruby core");
+    }
+    let Some(absolute) = absolute_site(root, path) else {
+        return format!("{verb} `{path}`");
+    };
+    let uri = format!("{}#L{line}", path_to_uri(&absolute));
+    let gem = Path::new(path)
+        .is_absolute()
+        .then(|| session.store().checkout_containing(path).ok().flatten())
+        .flatten()
+        // A gem is unpacked into a `gems/` directory under its `name-version`;
+        // any other checkout an answer points into is just a path.
+        .filter(|gem| {
+            Path::new(gem)
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|dir| dir == "gems")
+        });
+    match gem {
+        Some(gem) => {
+            let within = path.get(gem.len() + 1..).unwrap_or(path);
+            let label = Path::new(&gem)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            format!("{verb} [`{within}:{line}`]({uri}) · gem `{label}`")
+        }
+        None => {
+            let root = root.to_string_lossy();
+            let shown = match Path::new(path).is_absolute() {
+                true if crate::core::paths::under(&root, path) => {
+                    path[root.len()..].trim_start_matches('/').to_string()
+                }
+                true => crate::core::paths::pretty(path),
+                false => path.to_string(),
+            };
+            format!("{verb} [`{shown}:{line}`]({uri})")
+        }
+    }
 }
 
 /// Descendants of the class or module at the cursor.

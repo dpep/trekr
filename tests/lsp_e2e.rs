@@ -461,8 +461,11 @@ fn definition_on_an_unresolved_receiver_offers_ranked_guesses() {
         }),
     );
     let text = hover["result"]["contents"]["value"].as_str().unwrap();
-    assert!(text.contains("Residue"), "hover says it guessed: {text}");
-    assert!(text.contains("confidence: 0.00"), "and how much: {text}");
+    assert!(
+        text.contains("receiver type unknown — 2 possible definitions"),
+        "hover says it guessed, in words: {text}"
+    );
+    assert!(!text.contains("confidence"), "and not as a number: {text}");
 
     session.stop();
     let _ = fs::remove_dir_all(&dir);
@@ -524,10 +527,244 @@ fn a_core_method_lands_on_a_readable_stub_rather_than_nothing() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A repo whose definitions carry doc comments, and calls that resolve three
+/// ways: exactly, by a naming convention, and not at all.
+fn documented_repo(dir: &Path) -> String {
+    let source = concat!(
+        "# frozen_string_literal: true\n",              // 1
+        "\n",                                           // 2
+        "class Base\n",                                 // 3
+        "end\n",                                        // 4
+        "\n",                                           // 5
+        "# A thing on a shelf.\n",                      // 6
+        "class Widget < Base\n",                        // 7
+        "  # Largest size a widget may take.\n",        // 8
+        "  LIMIT = 10\n",                               // 9
+        "\n",                                           // 10
+        "  # Saves the widget.\n",                      // 11
+        "  #\n",                                        // 12
+        "  # Writes it through to the store.\n",        // 13
+        "  # @return [Boolean] whether it saved\n",     // 14
+        "  def save(force = false, *rest, key: nil)\n", // 15
+        "  end\n",                                      // 16
+        "\n",                                           // 17
+        "  def plain\n",                                // 18
+        "  end\n",                                      // 19
+        "end\n",                                        // 20
+        "\n",                                           // 21
+        "class Gadget\n",                               // 22
+        "  def save\n",                                 // 23
+        "  end\n",                                      // 24
+        "end\n",                                        // 25
+        "\n",                                           // 26
+        "class Job\n",                                  // 27
+        "  def run\n",                                  // 28
+        "    w = Widget.new\n",                         // 29
+        "    w.save\n",                                 // 30
+        "    w.plain\n",                                // 31
+        "    @gadget.save\n",                           // 32
+        "    Widget::LIMIT\n",                          // 33
+        "  end\n",                                      // 34
+        "end\n",                                        // 35
+    );
+    git(dir, &["init", "-q"]);
+    fs::write(dir.join("app.rb"), source).unwrap();
+    commit_all(dir);
+    source.to_string()
+}
+
+/// Hover text at a 1-based line and 0-based character of `app.rb`.
+fn hover_at(session: &mut Session, dir: &Path, line: u32, character: u32) -> String {
+    let answer = session.request(
+        "textDocument/hover",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(dir, "app.rb")},
+            "position": {"line": line - 1, "character": character},
+        }),
+    );
+    answer["result"]["contents"]["value"]
+        .as_str()
+        .expect("markdown")
+        .to_string()
+}
+
+/// None of the engine's bookkeeping reaches a reader: no status, no
+/// confidence, no rung, and no number standing in for any of them.
+fn assert_no_internals(text: &str) {
+    for internal in [
+        "status",
+        "confidence",
+        "via `",
+        "Resolved",
+        "Residue",
+        "local:new",
+    ] {
+        assert!(!text.contains(internal), "leaks `{internal}`: {text}");
+    }
+    // Links carry paths, and paths carry versions; the prose must not.
+    let prose: String = text
+        .split("](")
+        .map(|part| part.split_once(')').map_or(part, |(_, after)| after))
+        .collect();
+    let decimal = prose.as_bytes().windows(4).any(|w| {
+        w[0].is_ascii_digit() && w[1] == b'.' && w[2].is_ascii_digit() && w[3].is_ascii_digit()
+    });
+    assert!(!decimal, "no raw number stands in for certainty: {text}");
+}
+
+fn documented_session(label: &str) -> (PathBuf, Session) {
+    let (dir, db) = scratch(label);
+    let source = documented_repo(&dir);
+    trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+    (dir, session)
+}
+
 #[test]
-fn hover_discloses_the_rung_and_the_confidence() {
-    let (dir, db) = scratch("hover");
-    let source = repo(&dir);
+fn hover_shows_the_signature_as_written_and_the_doc_summary() {
+    let (dir, mut session) = documented_session("hover-doc");
+
+    let text = hover_at(&mut session, &dir, 30, 6);
+    assert!(
+        text.starts_with("```ruby\ndef Widget#save(force = false, *rest, key: nil)\n```"),
+        "the signature as written, owner first: {text}"
+    );
+    assert!(text.contains("Saves the widget."), "the summary: {text}");
+    assert!(
+        !text.contains("Writes it through"),
+        "only the first paragraph: {text}"
+    );
+    assert!(
+        text.contains("**Returns** `Boolean` — whether it saved"),
+        "and what it returns: {text}"
+    );
+    assert!(
+        text.contains("Defined in [`app.rb:15`](file://"),
+        "and where, linked: {text}"
+    );
+    assert!(
+        !text.contains("\n\n_"),
+        "a certain answer carries no caveat: {text}"
+    );
+    assert_no_internals(&text);
+
+    // No doc comment: the signature and the location, and nothing invented.
+    let text = hover_at(&mut session, &dir, 31, 6);
+    assert_eq!(
+        text,
+        format!(
+            "```ruby\ndef Widget#plain\n```\n\nDefined in [`app.rb:18`](file://{}/app.rb#L18)",
+            std::fs::canonicalize(&dir).unwrap().display()
+        )
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn hover_on_a_constant_or_class_reads_its_declaration() {
+    let (dir, mut session) = documented_session("hover-const");
+
+    let text = hover_at(&mut session, &dir, 33, 13);
+    assert!(
+        text.starts_with("```ruby\nWidget::LIMIT = 10\n```"),
+        "the constant and its value: {text}"
+    );
+    assert!(text.contains("Largest size a widget may take."), "{text}");
+
+    let text = hover_at(&mut session, &dir, 29, 9);
+    assert!(
+        text.starts_with("```ruby\nclass Widget < Base\n```"),
+        "the class and its parent: {text}"
+    );
+    assert!(
+        text.contains("A thing on a shelf."),
+        "the magic comment above it is not its doc, the class comment is: {text}"
+    );
+    assert!(!text.contains("frozen_string_literal"), "{text}");
+    assert_no_internals(&text);
+
+    // On the definition itself, from the buffer: no location, it is here.
+    let text = hover_at(&mut session, &dir, 15, 7);
+    assert!(text.contains("def Widget#save(force"), "{text}");
+    assert!(text.contains("Saves the widget."), "{text}");
+    assert!(!text.contains("Defined in"), "{text}");
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `@gadget` names `Gadget` by convention, and `Widget` defines `save` too:
+/// the answer is a guess, and the hover says so in words — not a number.
+#[test]
+fn hover_on_a_guess_says_so_in_plain_words() {
+    let (dir, mut session) = documented_session("hover-guess");
+
+    let text = hover_at(&mut session, &dir, 32, 13);
+    assert!(text.contains("def Gadget#save"), "the pick: {text}");
+    assert!(
+        text.contains(
+            "_Best guess — the receiver's type is inferred, and 1 other definition of `save` exists._"
+        ),
+        "said plainly: {text}"
+    );
+    assert_no_internals(&text);
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Gems' own docs are much of the value: hovering a gem method shows what the
+/// gem wrote, and says which gem.
+#[test]
+fn hover_on_a_gem_method_shows_the_gems_doc() {
+    let (dir, db) = scratch("hover-gem");
+    git(&dir, &["init", "-q"]);
+    let gem = dir.join("vendor/bundle/ruby/3.3.0/gems/shelf-1.0.0/lib");
+    fs::create_dir_all(&gem).unwrap();
+    fs::write(
+        gem.join("shelf.rb"),
+        concat!(
+            "module Shelf\n",
+            "  # Stacks +items+ onto the shelf.\n",
+            "  # @param items [Array<Item>]\n",
+            "  # @return [Array<Item>] what is on the shelf now\n",
+            "  def self.stack(*items)\n",
+            "  end\n",
+            "end\n",
+        ),
+    )
+    .unwrap();
+    fs::write(dir.join(".gitignore"), "vendor/\n").unwrap();
+    fs::write(
+        dir.join("Gemfile.lock"),
+        concat!(
+            "GEM\n",
+            "  remote: https://rubygems.org/\n",
+            "  specs:\n",
+            "    shelf (1.0.0)\n",
+            "\n",
+            "DEPENDENCIES\n",
+            "  shelf\n",
+        ),
+    )
+    .unwrap();
+    let source = "class Job\n  def run\n    Shelf.stack(1)\n  end\nend\n";
+    fs::write(dir.join("app.rb"), source).unwrap();
+    commit_all(&dir);
     trekr()
         .args(["--index"])
         .current_dir(&dir)
@@ -537,29 +774,73 @@ fn hover_discloses_the_rung_and_the_confidence() {
 
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
+    let text = hover_at(&mut session, &dir, 3, 11);
+    assert!(
+        text.starts_with("```ruby\ndef Shelf.stack(*items)\n```"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Stacks `items` onto the shelf."),
+        "the gem's own doc, RDoc markup as Markdown: {text}"
+    );
+    assert!(
+        text.contains("**Returns** `Array<Item>` — what is on the shelf now"),
+        "{text}"
+    );
+    assert!(
+        text.contains("[`lib/shelf.rb:5`]") && text.contains("gem `shelf-1.0.0`"),
+        "which gem, and where in it: {text}"
+    );
+    assert_no_internals(&text);
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A file edited since the index moved its definitions. The doc must follow
+/// the definition, or not be shown — never attach to whatever is on the old
+/// line now.
+#[test]
+fn hover_follows_a_definition_that_moved_since_the_index() {
+    let (dir, mut session) = documented_session("hover-moved");
+    let other = dir.join("other.rb");
+    fs::write(
+        &other,
+        "class Task\n  def go\n    w = Widget.new\n    w.save\n  end\nend\n",
+    )
+    .unwrap();
+    let moved = format!(
+        "# Unrelated.\nX = 1\n\n{}",
+        fs::read_to_string(dir.join("app.rb")).unwrap()
+    );
+    // On disk only: the index still has `save` on line 15, and `Gadget` has a
+    // `save` of its own to be confused with.
+    session.notify(
+        "textDocument/didClose",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    fs::write(dir.join("app.rb"), &moved).unwrap();
     session.notify(
         "textDocument/didOpen",
         serde_json::json!({"textDocument": {
-            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+            "uri": uri_of(&dir, "other.rb"), "languageId": "ruby", "version": 1,
+            "text": fs::read_to_string(&other).unwrap()
         }}),
     );
-
     let answer = session.request(
         "textDocument/hover",
         serde_json::json!({
-            "textDocument": {"uri": uri_of(&dir, "app.rb")},
-            "position": {"line": 7, "character": 6},
+            "textDocument": {"uri": uri_of(&dir, "other.rb")},
+            "position": {"line": 3, "character": 6},
         }),
     );
-    let text = answer["result"]["contents"]["value"]
-        .as_str()
-        .expect("markdown");
-    // LSP has no confidence field, so hover is where the disclosure lives.
-    assert!(text.contains("local:new"), "names the rung: {text}");
-    assert!(text.contains("Widget"), "names the receiver's type: {text}");
+    let text = answer["result"]["contents"]["value"].as_str().unwrap();
+    assert!(text.contains("def Widget#save(force"), "{text}");
+    assert!(text.contains("Saves the widget."), "{text}");
+    assert!(!text.contains("Unrelated"), "{text}");
     assert!(
-        text.contains("confidence"),
-        "and how sure that makes it: {text}"
+        text.contains("`app.rb:18`"),
+        "and the line it is on now, not the indexed one: {text}"
     );
 
     session.stop();

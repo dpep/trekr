@@ -10,5 +10,5 @@
 # agent can read it.
 def app.rb:11:7 status=resolved owner=Widget kind=declaration defined_via=attr_reader site=app.rb:2
 def app.rb:12:7 status=resolved owner=Widget kind=definition site=app.rb:4
-hover app.rb:11:7 kind: `Declaration` · `attr_reader`
-hover app.rb:12:7 kind: `Definition`
+hover app.rb:11:7 Declared by `attr_reader` in
+hover app.rb:12:7 Defined in

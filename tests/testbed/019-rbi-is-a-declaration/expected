@@ -9,4 +9,4 @@
 # wrong reason.
 def app.rb:4:7 status=resolved owner=Widget kind=declaration defined_via=rbi site=widget.rbi:2
 def app.rb:5:7 status=resolved owner=Widget kind=definition site=app.rb:10
-hover app.rb:4:7 kind: `Declaration` · `rbi`
+hover app.rb:4:7 Declared by a Sorbet stub in
