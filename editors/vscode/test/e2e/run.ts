@@ -22,11 +22,18 @@ async function main() {
 
   // trekr indexes git checkouts; the index is built up front so the suite
   // tests answers, not how long a background index takes.
-  const git = (...args: string[]) => execFileSync("git", args, { cwd: workspace });
+  // Without git's locating variables: a run under `git rebase --exec` exports
+  // GIT_DIR, and the fixture's `git init` would write into the real repo.
+  // Cleared on this process, so VS Code and the server it launches lose them too.
+  delete process.env.GIT_DIR;
+  delete process.env.GIT_WORK_TREE;
+  delete process.env.GIT_INDEX_FILE;
+  const env = process.env;
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: workspace, env });
   git("init", "-q");
   git("add", "-A");
   git("-c", "user.email=t@e.st", "-c", "user.name=test", "commit", "-qm", "fixture");
-  execFileSync(trekr, ["--index", "--no-gems"], { cwd: workspace, env: { ...process.env, TREKR_DB: db } });
+  execFileSync(trekr, ["--index", "--no-gems"], { cwd: workspace, env: { ...env, TREKR_DB: db } });
 
   try {
     await runTests({

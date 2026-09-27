@@ -20,8 +20,25 @@ fn scratch(label: &str) -> (PathBuf, PathBuf) {
     (dir, db)
 }
 
+/// A command with git's repository-locating variables cleared. A gate run
+/// under `git rebase --exec` exports `GIT_DIR`, and a fixture's `git init`
+/// then writes into the real repository — as does any git the binary under
+/// test runs.
+fn isolated(program: &str) -> Command {
+    let mut command = Command::new(program);
+    command
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE");
+    command
+}
+
+fn trekr() -> Command {
+    isolated(env!("CARGO_BIN_EXE_trekr"))
+}
+
 fn git(dir: &Path, args: &[&str]) {
-    let out = Command::new("git")
+    let out = isolated("git")
         .args(args)
         .current_dir(dir)
         .output()
@@ -73,7 +90,7 @@ struct Session {
 
 impl Session {
     fn start(db: &Path, dir: &Path) -> Session {
-        let mut child = Command::new(env!("CARGO_BIN_EXE_trekr"))
+        let mut child = trekr()
             .arg("--lsp")
             .current_dir(dir)
             .env("TREKR_DB", db)
@@ -248,7 +265,7 @@ fn go_to_definition_answers_from_the_resolved_receiver() {
     let (dir, db) = scratch("def");
     let source = repo(&dir);
     // The index has to exist; the server reads it, it does not build it.
-    let indexed = Command::new(env!("CARGO_BIN_EXE_trekr"))
+    let indexed = trekr()
         .args(["--index"])
         .current_dir(&dir)
         .env("TREKR_DB", &db)
@@ -321,7 +338,7 @@ fn references_narrow_to_the_method_asked_about_not_the_name() {
             "init",
         ],
     );
-    Command::new(env!("CARGO_BIN_EXE_trekr"))
+    trekr()
         .args(["--index"])
         .current_dir(&dir)
         .env("TREKR_DB", &db)
@@ -398,7 +415,7 @@ fn definition_on_an_unresolved_receiver_offers_ranked_guesses() {
             "init",
         ],
     );
-    Command::new(env!("CARGO_BIN_EXE_trekr"))
+    trekr()
         .args(["--index"])
         .current_dir(&dir)
         .env("TREKR_DB", &db)
@@ -470,7 +487,7 @@ fn a_core_method_lands_on_a_readable_stub_rather_than_nothing() {
             "init",
         ],
     );
-    Command::new(env!("CARGO_BIN_EXE_trekr"))
+    trekr()
         .args(["--index"])
         .current_dir(&dir)
         .env("TREKR_DB", &db)
@@ -511,7 +528,7 @@ fn a_core_method_lands_on_a_readable_stub_rather_than_nothing() {
 fn hover_discloses_the_rung_and_the_confidence() {
     let (dir, db) = scratch("hover");
     let source = repo(&dir);
-    Command::new(env!("CARGO_BIN_EXE_trekr"))
+    trekr()
         .args(["--index"])
         .current_dir(&dir)
         .env("TREKR_DB", &db)
@@ -700,7 +717,7 @@ fn ruby_repo(dir: &Path, db: &Path, source: &str) {
             "init",
         ],
     );
-    Command::new(env!("CARGO_BIN_EXE_trekr"))
+    trekr()
         .args(["--index"])
         .current_dir(dir)
         .env("TREKR_DB", db)
@@ -874,7 +891,7 @@ fn an_edit_reindexed_underneath_the_session_is_not_served_stale() {
         ],
     );
     let index = || {
-        Command::new(env!("CARGO_BIN_EXE_trekr"))
+        trekr()
             .args(["--index"])
             .current_dir(&dir)
             .env("TREKR_DB", &db)
@@ -954,7 +971,7 @@ fn implementation_on_an_abstract_method_finds_its_overrides() {
             "init",
         ],
     );
-    Command::new(env!("CARGO_BIN_EXE_trekr"))
+    trekr()
         .args(["--index"])
         .current_dir(&dir)
         .env("TREKR_DB", &db)
@@ -1033,7 +1050,7 @@ fn implementation_finds_an_override_that_lives_in_a_sibling_module() {
             "init",
         ],
     );
-    Command::new(env!("CARGO_BIN_EXE_trekr"))
+    trekr()
         .args(["--index"])
         .current_dir(&dir)
         .env("TREKR_DB", &db)
@@ -1103,7 +1120,7 @@ fn incoming_calls_name_the_method_each_call_sits_in() {
             "init",
         ],
     );
-    Command::new(env!("CARGO_BIN_EXE_trekr"))
+    trekr()
         .args(["--index"])
         .current_dir(&dir)
         .env("TREKR_DB", &db)
@@ -1195,7 +1212,7 @@ fn serve_retires_when_its_binary_is_replaced() {
     let binary = dir.join("trekr-under-test");
     fs::copy(env!("CARGO_BIN_EXE_trekr"), &binary).unwrap();
     let spawn = || {
-        Command::new(&binary)
+        isolated(binary.to_str().unwrap())
             .arg("--lsp")
             .current_dir(&dir)
             .env("TREKR_DB", &db)
@@ -1663,7 +1680,7 @@ fn a_saved_file_is_reindexed_so_other_files_see_its_new_methods() {
     ruby_repo(&dir, &db, "class Widget\n  def save\n  end\nend\n");
     fs::write(dir.join("job.rb"), "w = Widget.new\nw.polish\n").unwrap();
     commit_all(&dir);
-    Command::new(env!("CARGO_BIN_EXE_trekr"))
+    trekr()
         .args(["--index"])
         .current_dir(&dir)
         .env("TREKR_DB", &db)
@@ -1763,7 +1780,7 @@ fn a_deleted_file_reported_by_the_watcher_leaves_the_index() {
     ruby_repo(&dir, &db, "class Widget\n  def save\n  end\nend\n");
     fs::write(dir.join("gadget.rb"), "class Gadget\nend\n").unwrap();
     commit_all(&dir);
-    Command::new(env!("CARGO_BIN_EXE_trekr"))
+    trekr()
         .args(["--index"])
         .current_dir(&dir)
         .env("TREKR_DB", &db)
