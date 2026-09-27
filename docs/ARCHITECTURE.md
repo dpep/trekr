@@ -467,6 +467,12 @@ listing is built by a worker on its own connection and tree, which hands back
 only the listing (DEC-044). The listing streams every method row past the
 tree rather than loading them into it (DEC-045), so the session's tree stays
 demand-loaded. Background indexing is a child process, not a thread (DEC-039).
+The child is spawned with `TREKR_BACKGROUND=1` and lowers itself before it
+starts a thread — nice +10, disk I/O at macOS `IOPOL_UTILITY` or Linux
+best-effort level 7 — and logs what the kernel then holds as `index_priority`.
+The child does it rather than the spawn, so a hand-run `trekr --index` stays
+at full speed. Not the lowest I/O tier: the index writes under SQLite's write
+lock, and a starvable tier stretches the lock a save waits on (DEC-062).
 
 **Hot reload** (DEC-050). The loop stats the file it was launched as (argv[0],
 through symlinks) at every quiet moment, and every 2 s when idle. When that

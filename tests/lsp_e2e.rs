@@ -2330,6 +2330,50 @@ fn an_unindexed_project_is_indexed_in_the_background_with_progress() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// The background index steps out of the editor's way — lower CPU and disk
+/// priority — and a `trekr --index` run by hand does not.
+#[test]
+fn the_background_index_runs_at_lowered_priority_and_a_hand_run_does_not() {
+    let (dir, db) = scratch("niced");
+    git(&dir, &["init", "-q"]);
+    fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
+    fs::write(dir.join("app.rb"), "class Widget\nend\n").unwrap();
+    commit_all(&dir);
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    // The child reads its own priority back after lowering it, so this is
+    // what the kernel holds, not what was asked for.
+    let lowered = logged(&db, "index_priority");
+    assert!(
+        lowered["nice"].as_i64().unwrap() >= 10,
+        "niced by 10 from wherever the server ran: {lowered}"
+    );
+    let io = if cfg!(target_os = "macos") {
+        "utility"
+    } else {
+        "best-effort-7"
+    };
+    assert_eq!(lowered["io"], io, "{lowered}");
+    session.stop();
+
+    let by_hand = trekr()
+        .arg("--index")
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .env("TREKR_LOG", log_path(&db))
+        .output()
+        .unwrap();
+    assert!(by_hand.status.success());
+    let lowered = log_lines(&db)
+        .into_iter()
+        .filter(|line| line["event"] == "index_priority")
+        .count();
+    assert_eq!(lowered, 1, "only the server's child stepped aside");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A deleted file leaves the index. A deletion is reported by the client's
 /// watcher and handed to a full index, since refreshing one file can add or
 /// replace it but not remove it.

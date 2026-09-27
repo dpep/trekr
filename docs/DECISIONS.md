@@ -3024,3 +3024,44 @@ declarations, 2.1 s at 30× — is what a snapshot (DEC-060) replaces. So the
 shape is hybrid: SQLite as the source of truth for facts, purpose-built mapped
 snapshots for the hot, whole-namespace reads. A custom datastore would pay only
 if a first index at that scale has to fall well below minutes.
+
+## DEC-062 — The LSP's background index lowers its own priority, but not to the lowest I/O tier
+
+**Decided.** The `--index` child DEC-039 spawns is marked `TREKR_BACKGROUND=1`
+and, first thing, drops itself: `nice(10)`, and disk I/O to macOS
+`IOPOL_UTILITY` / Linux best-effort level 7. It reads both back and logs them
+(`index_priority`), so a refused request is visible rather than assumed. The
+child lowers itself instead of the spawn using `pre_exec`, so a hand-run
+`trekr --index` keeps full speed; rq's detached `--warm` does the same.
+
+**Rejected: the lowest I/O tier** (macOS `IOPOL_THROTTLE`, which rq's warm
+uses; Linux's idle class). Throttled I/O waits while anyone else's I/O is in
+flight, and the index does its writes inside SQLite's write transaction — so
+starving its I/O stretches the lock that a save's refresh, a CLI query's
+refresh, and every CLI run's close-time `PRAGMA optimize` wait on. Measured
+on a cold discourse index (store pre-loaded with mastodon, M-series, 8 cores,
+machine shared with other load): with no foreground I/O all tiers ran
+~7–8 s; against a synthetic fsync-heavy writer, median of 3, plain 11.3 s,
+utility 13.1 s, throttle 23.6 s. Under the LSP with queries running, throttle
+ran past 100 s in 2 of 5 runs (one unfinished at 300 s); utility's worst of 8
+was 18 s.
+rq can afford throttle because a warm is small; a cold monorepo index is not.
+
+**What it bought, measured.** Five interleaved before/after pairs, an LSP
+rooted at mastodon issuing definition, hover and references while its child
+cold-indexed discourse, plus a CLI `--def` between each round. Medians
+during the index, before → after: definition 1.2 → 1.7 ms, hover 0.4 →
+0.7 ms, references 16 → 27 ms, CLI `--def` 0.87 → 1.5 s; index 7.2 → 10.9 s.
+The quiet baselines drifted as much between runs (references 14 vs 21 ms),
+so no foreground gain is resolvable on this machine: definition and hover
+answer from the in-memory tree and barely contend, and the CLI's time is
+not CPU or disk at all — it is SQLite's 5 s `busy_timeout`, waiting on the
+index's write lock: with a write lock held by hand, every CLI command took
+5.4–5.9 s, `--def` before answering (`refresh_for_query`) and `--ancestors`
+after it (its answer at 0.19 s; the store's drop runs `PRAGMA optimize`). Kept anyway: it is the cheap, conventional courtesy for work nobody
+is waiting on, and its cost is bounded by the non-starvable tier.
+
+**Reverses if** a foreground regression is measured that traces to the lower
+tier, or a quiet-machine measurement shows the index slowdown is larger than
+the few seconds seen here. The larger lever for foreground latency during an
+index is the write-lock wait, not priority.

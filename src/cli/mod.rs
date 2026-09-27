@@ -469,6 +469,8 @@ fn cmd_index(
     want_profile: bool,
     with_gems: bool,
 ) -> anyhow::Result<ExitCode> {
+    // First, before the scan or the pool starts a thread.
+    crate::serve::fresh::yield_if_background();
     let mut profile = want_profile.then(profile::Profile::default);
     let jobs = worker_count(jobs);
     if let Some(profile) = profile.as_mut() {

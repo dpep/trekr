@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **The index `--lsp` starts in the background runs at lower priority**:
+  nice +10 and a low disk-I/O tier, so it yields to the editor and to
+  anything else on the machine. A `trekr --index` you run yourself is
+  unchanged. On a busy machine the background index can take longer — a
+  cold discourse index ~7 s → ~8–11 s. The LSP log records the child's
+  priority as an `index_priority` event.
 - **`--refs NAME` on a very common name is up to 2× faster in a large repo.**
   Each call site's tiering was matched to its row by scanning all of them;
   `--refs each` on a 336k-file repo 17.9 → 9.9 s.

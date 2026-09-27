@@ -15,7 +15,7 @@
 mod complete;
 mod convert;
 mod doc;
-mod fresh;
+pub(crate) mod fresh;
 mod gather;
 mod handlers;
 mod inbox;

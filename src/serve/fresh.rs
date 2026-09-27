@@ -184,16 +184,100 @@ impl Indexer {
 }
 
 /// `trekr --index ROOT`, from this very binary, silently. It inherits
-/// `TREKR_DB`, so it writes the store this server reads.
+/// `TREKR_DB`, so it writes the store this server reads, and is marked
+/// [`BACKGROUND`] so it steps out of the editor's way.
 fn spawn(root: &Path) -> std::io::Result<Child> {
     let binary = std::env::current_exe()?;
     Command::new(binary)
         .arg("--index")
         .arg(root)
+        .env(BACKGROUND, "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
+}
+
+/// Set on the index child: this run is background work, so it lowers its own
+/// CPU and disk priority. The child does it rather than the spawn, so a
+/// `trekr --index` someone runs by hand stays at full speed.
+const BACKGROUND: &str = "TREKR_BACKGROUND";
+
+/// In an index run the LSP spawned: drop CPU priority by 10 and disk I/O to a
+/// low but not starvable tier, and log what the kernel then holds — read
+/// back, not assumed, so a refused request shows as `unchanged`. Any other
+/// run: nothing.
+///
+/// Not the lowest I/O tier (macOS `IOPOL_THROTTLE`, Linux's idle class): the
+/// index holds SQLite's write lock while it writes, so an I/O tier that can
+/// be starved stretches the lock that a save or a CLI query waits on (DEC-062).
+///
+/// Call before the run starts a thread: on Linux both settings are
+/// per-thread, and only threads created afterwards inherit them.
+pub(crate) fn yield_if_background() {
+    if std::env::var_os(BACKGROUND).is_none() {
+        return;
+    }
+    // Best-effort: a refusal just means a less polite index.
+    // SAFETY: plain syscalls on this process; no memory crosses them.
+    let nice = unsafe {
+        libc::nice(10);
+        lower_io();
+        libc::getpriority(libc::PRIO_PROCESS, 0)
+    };
+    Log::open(false).event(
+        "index_priority",
+        serde_json::json!({ "pid": std::process::id(), "nice": nice, "io": io_class() }),
+    );
+}
+
+// <sys/resource.h>; not in the libc crate. IOPOL_TYPE_DISK = 0,
+// IOPOL_SCOPE_PROCESS = 0, IOPOL_UTILITY = 4.
+#[cfg(target_os = "macos")]
+unsafe extern "C" {
+    fn setiopolicy_np(iotype: libc::c_int, scope: libc::c_int, policy: libc::c_int) -> libc::c_int;
+    fn getiopolicy_np(iotype: libc::c_int, scope: libc::c_int) -> libc::c_int;
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn lower_io() {
+    unsafe { setiopolicy_np(0, 0, 4) };
+}
+
+#[cfg(target_os = "macos")]
+fn io_class() -> &'static str {
+    // SAFETY: a read of this process's own policy.
+    match unsafe { getiopolicy_np(0, 0) } {
+        4 => "utility",
+        _ => "unchanged",
+    }
+}
+
+// <linux/ioprio.h>: IOPRIO_WHO_PROCESS = 1, class above IOPRIO_CLASS_SHIFT =
+// 13, IOPRIO_CLASS_BE = 2 at its lowest level, 7. No libc wrapper exists.
+#[cfg(target_os = "linux")]
+const BEST_EFFORT_LOWEST: libc::c_long = (2 << 13) | 7;
+
+#[cfg(target_os = "linux")]
+unsafe fn lower_io() {
+    unsafe { libc::syscall(libc::SYS_ioprio_set, 1, 0, BEST_EFFORT_LOWEST) };
+}
+
+#[cfg(target_os = "linux")]
+fn io_class() -> &'static str {
+    // SAFETY: a read of this thread's own I/O priority.
+    match unsafe { libc::syscall(libc::SYS_ioprio_get, 1, 0) } {
+        BEST_EFFORT_LOWEST => "best-effort-7",
+        _ => "unchanged",
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+unsafe fn lower_io() {}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn io_class() -> &'static str {
+    "unchanged"
 }
 
 fn progress(token: &str, value: serde_json::Value) -> Message {
