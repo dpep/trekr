@@ -3956,6 +3956,51 @@ method lookup on Client and excluded four `where` references.
 confidence says. In the gold set its eleven picks have the right owner ten
 times.
 
+**Amended before release: three ways a declared return overstated.**
+
+- *A sig spoke for calls RBS did not type.* The generator wrote a per-count
+  `sig` for the one count RBS gave a class and skipped the others, so
+  `Array#first` carried `params(count: T.untyped).returns(Array)` alone. A lone
+  `sig` holds for every call, and `["a"].first.size` resolved to `Array#size`
+  at 1.0. A block state with any shape RBS cannot type now gets no `sig`, and
+  neither does a method whose blockless calls are untyped, since only
+  `block: NilClass` confines a `sig` to its state. 19 stubs lost theirs
+  (`first`/`last`/`min`/`max`/`pop`/`shift`/`sample`, `Integer#pow`,
+  `Process.clock_gettime`, `Marshal.dump`, `Process.fork`, `gsub!`). Refusing
+  a lone `sig` whose parameter count differs from the call's was turned down:
+  it would change what an ordinary Sorbet `sig` means in user code.
+- *A return type was looked up from the owner.* `sig { returns(Item) }` inside
+  `module Shop` found `::Item`, because resolution started at the method's
+  owner and skipped the scopes around it. A `sig` now resolves in the method's
+  lexical nesting, as Ruby does. An association's class resolves from the
+  model's *name*, as Rails' `compute_type` does, so a compact
+  `class Admin::Note` with `belongs_to :user` finds `Admin::User` where a
+  `sig` in the same class would not. These are two rules because two
+  evaluators read the names.
+- *A class method voted on an instance's return.* Core's `Dir.[]` is the only
+  `[]` declaring a return, so every `h[:a][:b]` typed `h[:a]` as an Array and
+  confirmed an `Array#[]` reference. An untyped receiver is taken to be an
+  instance, and only instance methods vote.
+
+Measured on rails, each build on a store it indexed itself:
+
+| `--refs` confirmed / possible / excluded | 0.2.1 | before | after |
+| --- | ---: | ---: | ---: |
+| `Array#[]` | 165 / 7,982 / 2,676 | 604 / 7,472 / 2,747 | 214 / 7,862 / 2,747 |
+| `Array#first` | 41 / 2,056 / 536 | 221 / 1,860 / 552 | 151 / 1,930 / 552 |
+| `String#sub` | 4 / 78 / 1 | 17 / 63 / 3 | 17 / 65 / 1 |
+| `Hash#[]` | 407 / 7,886 / 2,530 | 414 / 7,823 / 2,586 | 414 / 7,841 / 2,568 |
+
+The 49 `Array#[]` sites confirmed beyond 0.2.1 follow a `split`, `to_a`,
+`map` or `&`. The exclusions beyond it are the chain working
+(`Table.new(:users)[:id]` is Arel's, `Thread.current[:x]` is Thread's). The
+gold set is unmoved: every verdict matches before and after.
+
+One cost of the third, named: `projects.delete(1).size` now confirms
+`String#size`. `File.delete` used to disagree with `String#delete` and leave
+the call untyped; without it, String is the only declaring vote and the pick
+is `ambiguous`, which confirms as decided above.
+
 ## DEC-078 — Core is served one file per owner, and its stubs read as signatures
 
 **Decided.** `core.rb` stays the one source, and is served as one file per

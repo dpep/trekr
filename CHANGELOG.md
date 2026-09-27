@@ -26,6 +26,11 @@
   wrongly, drop-then-index rebuilt the same key and kept the wrong tree.
   `trekr --drop` then `trekr --index` now repairs a checkout.
 
+- **A Sorbet return type is looked up where the `sig` is written.** Inside
+  `module Shop`, `sig { returns(Item) }` means Shop::Item, but a local
+  assigned from that method (`i = order.item`) was typed from the caller's
+  scope, and could land on a top-level `Item`.
+
 - **Hover names a method as Ruby docs do**: `String#downcase(*options)`, not
   `def String#downcase(*options)`. Completion's detail line matches.
 
