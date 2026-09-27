@@ -11,6 +11,10 @@
 
 ### Fixed
 
+- On a compact `class A::B` or `module A::B`, a click on `B` found nothing,
+  and a click on `A` answered `B`. `B` now answers the definition and `A` the
+  namespace it is opened in, in the editor and in `--def`.
+
 - A hover on a call trekr could not settle counts as `unsure` in `--usage`,
   as the definition at the same position does; it counted as a hit.
 

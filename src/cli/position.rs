@@ -82,6 +82,43 @@ fn tail(name: &str) -> usize {
     name.rsplit("::").next().unwrap_or(name).len()
 }
 
+/// Where a definition's own name is written. A compact `class A::B` is
+/// recorded at the start of its path, but the name it opens is `B`, at the end.
+fn name_pos(def: &Def) -> Pos {
+    let shift = match def.kind {
+        Kind::Class | Kind::Module => def.name.len() - tail(&def.name),
+        _ => 0,
+    };
+    Pos {
+        line: def.pos.line,
+        col: def.pos.col + shift as u32,
+    }
+}
+
+/// On the `A` of a compact `class A::B`: the namespace it is opened in,
+/// answered as the reference it is. The extractor records the path whole, so
+/// the segment is read back out of the definition's name.
+fn compact_prefix(def: &Def, line: u32, col: u32) -> Option<ConstRef> {
+    if !matches!(def.kind, Kind::Class | Kind::Module) || def.pos.line != line {
+        return None;
+    }
+    let prefix = def.name.len() - tail(&def.name);
+    let offset = col.checked_sub(def.pos.col)? as usize;
+    if prefix == 0 || offset >= prefix {
+        return None;
+    }
+    let end = def
+        .name
+        .get(offset..)?
+        .find("::")
+        .map_or(prefix, |i| offset + i);
+    Some(ConstRef {
+        name: def.name.get(..end)?.to_string(),
+        nesting: def.nesting.clone(),
+        pos: def.pos,
+    })
+}
+
 /// The innermost fact at a position, preferring the most specific reading.
 ///
 /// Production goes through `at_or_snap`, which falls back to the nearest name
@@ -110,7 +147,7 @@ fn names_on_line(facts: &crate::core::Facts, line: u32) -> Vec<(String, u32)> {
     for (name, pos) in facts
         .defs
         .iter()
-        .map(|d| (d.name.as_str(), d.pos))
+        .map(|d| (d.name.as_str(), name_pos(d)))
         .chain(facts.const_refs.iter().map(|r| (r.name.as_str(), r.pos)))
         .chain(facts.calls.iter().map(|c| (c.written_name(), c.pos)))
     {
@@ -265,9 +302,12 @@ pub(crate) fn at_facts(facts: &crate::core::Facts, line: u32, col: u32) -> Optio
     if let Some(def) = facts
         .defs
         .iter()
-        .find(|d| covers(d.pos, tail(&d.name), line, col) && d.kind != Kind::Constant)
+        .find(|d| covers(name_pos(d), tail(&d.name), line, col) && d.kind != Kind::Constant)
     {
         return Some(Under::Definition(def.clone()));
+    }
+    if let Some(reference) = facts.defs.iter().find_map(|d| compact_prefix(d, line, col)) {
+        return Some(Under::Constant(reference));
     }
     // Longest name wins among constants: on the `B` of `A::B` both `A::B` and a
     // bare `B` may be recorded, and the qualified one is what was written.
@@ -282,7 +322,7 @@ pub(crate) fn at_facts(facts: &crate::core::Facts, line: u32, col: u32) -> Optio
     if let Some(def) = facts
         .defs
         .iter()
-        .find(|d| covers(d.pos, tail(&d.name), line, col))
+        .find(|d| covers(name_pos(d), tail(&d.name), line, col))
     {
         return Some(Under::Definition(def.clone()));
     }
@@ -343,6 +383,27 @@ mod tests {
             panic!("expected a definition");
         };
         assert_eq!(def.name, "Widget");
+    }
+
+    #[test]
+    fn a_compact_path_answers_each_segment_for_what_it_is() {
+        let source = b"class Outer::Mid::Inner\nend\nmodule Outer::Mixin\nend\n";
+        // `Inner`: the class being opened.
+        let Some(Under::Definition(def)) = at(source, 1, 19) else {
+            panic!("expected the class definition");
+        };
+        assert_eq!(def.name, "Outer::Mid::Inner");
+        let Some(Under::Definition(def)) = at(source, 3, 15) else {
+            panic!("expected the module definition");
+        };
+        assert_eq!(def.name, "Outer::Mixin");
+        // `Outer` and `Mid`: the namespaces it is opened in, as references.
+        for (col, name) in [(7, "Outer"), (14, "Outer::Mid")] {
+            let Some(Under::Constant(reference)) = at(source, 1, col) else {
+                panic!("expected a reference at column {col}");
+            };
+            assert_eq!(reference.name, name);
+        }
     }
 
     #[test]
