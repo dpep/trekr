@@ -10,3 +10,6 @@ refs Poster#shout confirmed=0 possible=1 excluded=1
 # Core's `sig`s type the headline case: whatever `x` is, `gsub` with a
 # replacement returns a String, so Symbol#downcase is not a candidate.
 def app.rb:31:22 status=resolved owner=String via=chain:name
+# Only core's `Dir.[]` declares what a `[]` returns, and it is a class method:
+# it said the untyped `h[:a]` was an Array, which confirmed every `x[a][b]`.
+def app.rb:37:10 status=residue

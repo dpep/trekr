@@ -31,3 +31,9 @@ class Label
     x.gsub(/a/, "").downcase
   end
 end
+
+class Lookup
+  def go(h)
+    h[:a][:b]
+  end
+end

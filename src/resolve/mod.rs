@@ -617,10 +617,16 @@ fn by_return_types(tree: &Tree, previous: &Call) -> Option<Receiver> {
     if crate::core::IDENTITY.contains(&previous.name.as_str()) {
         return None;
     }
-    let mut owners: Vec<(String, bool)> = Vec::new();
+    let mut owners: Vec<String> = Vec::new();
     let mut votes: Vec<Option<String>> = Vec::new();
-    for method in tree.named(&previous.name) {
-        let owner = (method.owner.clone(), method.singleton);
+    // An untyped receiver is taken to be an instance, since a class mostly
+    // arrives as a constant and is typed: `Dir.[]` says nothing of `h[:a]`.
+    let instance_methods = tree
+        .named(&previous.name)
+        .into_iter()
+        .filter(|m| !m.singleton);
+    for method in instance_methods {
+        let owner = method.owner.clone();
         if owners.contains(&owner) {
             continue;
         }
