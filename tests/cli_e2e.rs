@@ -108,6 +108,42 @@ fn indexes_reports_and_outlines_through_the_cli() {
 }
 
 #[test]
+fn indexes_edits_and_untracked_files_without_touching_the_git_index() {
+    let (dir, db) = scratch("worktree");
+    repo(&dir);
+    fs::write(dir.join(".gitignore"), "ignored/\n").unwrap();
+    fs::create_dir_all(dir.join("lib/deep")).unwrap();
+    fs::create_dir_all(dir.join("ignored")).unwrap();
+    fs::write(dir.join("lib/deep/fresh.rb"), "class Fresh\nend\n").unwrap();
+    fs::write(dir.join("ignored/skip.rb"), "class Skip\nend\n").unwrap();
+    fs::write(
+        dir.join("widget.rb"),
+        "class Widget\n  def edited\n  end\nend\n",
+    )
+    .unwrap();
+    let git_index = || {
+        fs::metadata(dir.join(".git/index"))
+            .unwrap()
+            .modified()
+            .unwrap()
+    };
+    let before = git_index();
+
+    let indexed = json(&trekr(&db, &dir, &["--index", "--json"]));
+    assert_eq!(indexed["indexed"]["files"], 2, "{indexed}");
+    assert_eq!(indexed["indexed"]["parsed"], 2, "the edit and the new file");
+    assert_eq!(
+        git_index(),
+        before,
+        "the freshness probe watches .git/index, so a scan must not rewrite it"
+    );
+    let found = stdout(&trekr(&db, &dir, &["--refs", "edited"]));
+    assert!(found.contains("widget.rb"), "the edit, not HEAD: {found}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn reindexing_an_unchanged_checkout_parses_nothing() {
     let (dir, db) = scratch("noop");
     repo(&dir);

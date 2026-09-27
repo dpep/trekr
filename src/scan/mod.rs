@@ -156,12 +156,30 @@ pub(crate) fn scan(root: &Path) -> Result<Files> {
     let mut files = parse_ls_files(&git(root, &["ls-files", "-s", "-z"])?);
 
     // Tracked files whose working-tree bytes differ from the index, plus files
-    // git has never seen. Both need hashing; nothing else does.
-    let mut dirty = parse_paths(&git(root, &["diff-files", "--name-only", "-z"])?);
-    dirty.extend(parse_paths(&git(
+    // git has never seen. Both need hashing; nothing else does. One `status`
+    // answers both, and unlike `ls-files -o` it uses git's untracked cache,
+    // which is most of a no-op index where it is enabled (DEC-043).
+    // `--no-optional-locks` keeps it from rewriting `.git/index`, which is
+    // what `git_fingerprint` watches.
+    let (mut dirty, untracked_dirs) = parse_status(&git(
         root,
-        &["ls-files", "-o", "--exclude-standard", "-z"],
-    )?));
+        &[
+            "--no-optional-locks",
+            "status",
+            "--porcelain",
+            "-z",
+            "--untracked-files=normal",
+            "--no-renames",
+            "--ignore-submodules=all",
+        ],
+    )?);
+    // `normal` names a wholly untracked directory rather than its files; list
+    // those alone, which walks only them.
+    if !untracked_dirs.is_empty() {
+        let mut args = vec!["ls-files", "-o", "--exclude-standard", "-z", "--"];
+        args.extend(untracked_dirs.iter().map(String::as_str));
+        dirty.extend(parse_paths(&git(root, &args)?));
+    }
 
     for path in dirty {
         if !is_ruby(&path) {
@@ -179,6 +197,34 @@ pub(crate) fn scan(root: &Path) -> Result<Files> {
         }
     }
     Ok(files)
+}
+
+/// Parse `git status --porcelain -z`: `XY <path>\0` per entry, plus the
+/// original path as a second field after a rename or copy.
+///
+/// Returns every path git reported — staged-only ones included, which rehash
+/// to the OID the index already gave them — and, separately, the untracked
+/// directories `--untracked-files=normal` collapsed to `dir/`.
+fn parse_status(out: &[u8]) -> (Vec<String>, Vec<String>) {
+    let (mut paths, mut dirs) = (Vec::new(), Vec::new());
+    let mut fields = out.split(|b| *b == 0);
+    while let Some(field) = fields.next() {
+        let Some((code, path)) = std::str::from_utf8(field)
+            .ok()
+            .and_then(|f| Some((f.get(..2)?, f.get(3..)?)))
+        else {
+            continue;
+        };
+        if code.contains(['R', 'C']) {
+            fields.next();
+        }
+        if code == "??" && path.ends_with('/') {
+            dirs.push(path.to_string());
+        } else if !path.is_empty() {
+            paths.push(path.to_string());
+        }
+    }
+    (paths, dirs)
 }
 
 /// Every Ruby file under a directory, hashed the way git would.
@@ -267,6 +313,26 @@ mod tests {
         for path in ["a/b.py", "README.md", "Gemfile.lock", "norb"] {
             assert!(!is_ruby(path), "{path} is not Ruby");
         }
+    }
+
+    #[test]
+    fn status_names_every_changed_path_and_the_untracked_directories_apart() {
+        let out = b" M app/a.rb\x00M  staged.rb\x00?? new.rb\x00?? fresh/\x00\
+                    UU conflict.rb\x00R  to.rb\x00from.rb\x00 D gone.rb\x00";
+        let (paths, dirs) = parse_status(out);
+        assert_eq!(
+            paths,
+            [
+                "app/a.rb",
+                "staged.rb",
+                "new.rb",
+                "conflict.rb",
+                "to.rb",
+                "gone.rb"
+            ],
+            "a rename's origin is its own field, not another path"
+        );
+        assert_eq!(dirs, ["fresh/"]);
     }
 
     #[test]

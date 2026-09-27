@@ -36,8 +36,9 @@ boundary below is stated as a prohibition rather than a preference.
 ### `scan/` — the only module that knows a path exists
 
 `git ls-files -s` yields path→OID for every tracked file in ~100 ms at 100k
-files. Files the working tree has changed (`git diff-files`) and files git has
-never seen (`git ls-files -o`) are hashed the way git does —
+files. Files the working tree has changed and files git has never seen — both
+from one `git status`, which uses git's untracked cache where it is enabled
+(DEC-043) — are hashed the way git does —
 `sha1("blob <len>\0" + bytes)` — so an uncommitted edit keys identically to the
 commit that will later contain it. A file that has vanished from the worktree is
 simply absent from the map; there is no deletion case to handle downstream.
@@ -321,7 +322,13 @@ significant figure.
   §8), *and* pays it again on every process boot.
 - **A second worktree costs ~0.2 s and zero parses.** A `--shared` clone of
   rails indexes with `parsed: 0` — the facts were already on disk.
-- **One edited file costs ~75 ms**, of which ~61 ms is the scan floor above.
+- **One edited file costs ~0.18 s on discourse** (2026-09-26), about half of
+  it rewriting the 11k-file map and most of the rest the scan. It had crept to
+  0.64 s once every index that parsed anything ran a full `ANALYZE` (DEC-042),
+  and to 0.27 s before the scan used git's untracked cache (DEC-043).
+- **The no-op scan is git's untracked-file walk**, and `git status` skips most
+  of it when `core.untrackedCache` is on: discourse no-op 165 → 86 ms, rails
+  64 → 41 ms. With the cache off it is the same walk as before (DEC-043).
 - Cold time is not the headline and is not uniformly better than Rubydex's
   (rails 1.5 s vs their 1.35 s index+resolve; discourse 3.2 s vs their 2.4 s).
   About 0.3 s of ours is the `ANALYZE` that keeps queries fast — a cost paid at

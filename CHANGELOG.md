@@ -12,6 +12,12 @@
   are regathered once the store has grown a tenth past the ones it has, instead
   of after every index that parsed anything. Re-indexing discourse after
   editing one file went from 0.64 s to 0.26 s.
+- **A no-op `--index` is up to twice as fast in a repo with git's untracked
+  cache on.** The scan asks `git status` for changed and untracked files, which
+  uses the cache, instead of `git ls-files -o`, which walks the whole worktree
+  every time: discourse 165 → 86 ms, rails 64 → 41 ms. **In a large repo, turn
+  the cache on** — `git config core.untrackedCache true` (or `feature.manyFiles
+  true`) — to get this; without it the scan costs what it did.
 - **`--lsp` speaks the protocol's error vocabulary, and honours cancellation.**
   An unsupported method answers `MethodNotFound` (it answered `null`, which a
   client reads as "nothing here") and a malformed request `InvalidParams` (it

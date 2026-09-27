@@ -1986,3 +1986,58 @@ adds a checkout without adding a blob.
 the threshold is the wrong instrument, and the query should be pinned (DEC-006's
 own reverses-if).
 
+## DEC-043 — The scan asks `git status`, so git's untracked cache can answer
+
+**Decided.** `scan` finds changed and untracked files with one
+`git --no-optional-locks status --porcelain -z --untracked-files=normal
+--no-renames --ignore-submodules=all`, instead of `git diff-files` plus
+`git ls-files -o --exclude-standard`. A wholly untracked directory, which
+`normal` collapses to `dir/`, is listed with `ls-files -o -- dir/`, which walks
+only that directory.
+
+**Why, measured.** DEC-035 found untracked-file discovery was ~90 % of a no-op
+scan and called it irreducible — "a full worktree walk that has to honour
+`.gitignore`". That is true of `ls-files -o`, which never consults git's
+untracked cache. `status` does: the cache records each directory's mtime and
+skips the readdir of any that has not changed. On discourse with the cache on,
+the untracked walk is 13–17 ms inside a 41–51 ms `status`, against 96–100 ms
+for `ls-files -o` alone.
+
+No-op `--index`, eleven interleaved rounds, medians:
+
+| | before | after |
+| --- | ---: | ---: |
+| discourse, cache on (as configured here) | 165 ms | **86 ms** |
+| rails, cache on | 64 ms | **41 ms** |
+| discourse, cache forced off | 166 ms | 158 ms |
+| rails, cache forced off | 64 ms | 59 ms |
+
+With the cache off `status` does the same walk, and the second process saved
+is the small win left. The file map is identical — the no-op's `store-write`
+stays at 1 ms because the map key matched.
+
+**What `status` reports that `diff-files` did not**: staged-only changes. They
+are rehashed like the rest and hash to the OID the index already gave them, so
+the map cannot differ; it costs one read per staged file. `status` also diffs
+the index against `HEAD`, about 5 ms on 24k tracked files.
+
+**The lock is load-bearing.** `status` refreshes and rewrites `.git/index` when
+it can, and `.git/index` is exactly what the freshness probe watches (DEC-035)
+— a scan that rewrote it would make the next query's probe lie.
+`--no-optional-locks` stops the write; an e2e test fails without it.
+
+**What trekr does not do** is turn the cache on. It is the user's repository
+and the user's config, and `-c core.untrackedCache=true` on a read-only call
+adds nothing: the cache lives in the index, which the call is forbidden to
+write. The changelog tells a monorepo user to enable it.
+
+**Unmeasured, and the number worth having next**: the 10M-line monorepo whose
+6 s no-op started DEC-035. If its untracked walk is ~94 % of that and its cache
+is on, the prediction is a no-op dominated by `ls-files -s` and the
+`HEAD` diff — well under 2 s. If it reads near 6 s, check
+`git config core.untrackedCache` before anything else.
+
+**Reverses if** a git version or configuration is found where `status`
+reports a different set of changed files than `diff-files` would — the e2e
+test pins edits, untracked directories and ignores, not every porcelain state.
+
