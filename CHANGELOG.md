@@ -81,6 +81,10 @@
   only `lsp.log` knew why. A core file that cannot be written out is logged
   (`core_files_failed`) at session start instead of silently landing nowhere.
 
+- **A `method_missing` in the owner's chain makes a missing method
+  `residue`, not `no_such_method`**: it answers any name. The card and
+  `--refs Owner#m` say which class defines it.
+
 ### Added
 
 - **`--dead` says why**: every row has a `reason` (text prints it after the

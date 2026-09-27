@@ -1317,6 +1317,21 @@ fn method_verdict(
         "method"
     };
     let name = &query.name;
+    // A `method_missing` in the chain answers any name, so "has no such
+    // method" would be a claim the code does not support. Core's own is
+    // BasicObject's NoMethodError, and says nothing.
+    if let Some(catcher) = tree.lookup(owner, query.singleton, "method_missing")
+        && !crate::tree::is_core(&catcher.site.path)
+    {
+        return (
+            "residue",
+            Some(format!(
+                "nothing in {owner}'s ancestors defines {what} {name}, but {} defines \
+                 method_missing, which may answer it",
+                crate::tree::public_name(&catcher.owner)
+            )),
+        );
+    }
     let unseen = &tree.ancestors(owner).unresolved;
     if unseen.is_empty() {
         return (

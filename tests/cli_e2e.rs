@@ -1108,6 +1108,11 @@ fn a_method_the_owner_does_not_have_is_named_as_such() {
     let (dir, db) = scratch("nosuchmethod");
     collision_repo(&dir);
     fs::write(dir.join("thing.rb"), "class Thing < Unindexed::Base\nend\n").unwrap();
+    fs::write(
+        dir.join("proxy.rb"),
+        "class Catcher\n  def method_missing(name, *args)\n  end\nend\nclass Proxy < Catcher\nend\n",
+    )
+    .unwrap();
     trekr(&db, &dir, &["--index"]);
 
     let defined = json(&trekr(&db, &dir, &["--refs", "Widget#save", "--json"]));
@@ -1137,6 +1142,16 @@ fn a_method_the_owner_does_not_have_is_named_as_such() {
         answer["reason"]
             .as_str()
             .is_some_and(|r| r.contains("Unindexed::Base")),
+        "{answer}"
+    );
+
+    // Nor can a `method_missing` in it, which answers any name.
+    let answer = json(&trekr(&db, &dir, &["Proxy#nope", "--json"]));
+    assert_eq!(answer["status"], "residue", "{answer}");
+    assert!(
+        answer["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("Catcher defines method_missing")),
         "{answer}"
     );
 
