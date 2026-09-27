@@ -4200,3 +4200,37 @@ the migration in the changelog.
 the number alone. Then residue gets a code of its own above `2`, never `2`.
 A new field that repeats a concept above under another name is the drift
 this closes; name it from the table.
+
+## DEC-081 — A call on `self` is a possible reference to a subclass's override
+
+**Decided.** A call whose receiver is `self`, written or implicit, is typed as
+the class it is written in. When `--refs` asks about a method whose owner
+inherits from that class (or includes that module), and Ruby's lookup from the
+class lands elsewhere or nowhere, the site is `possible` rather than excluded:
+`self` runs as any subclass, and the subclass's method is the one that runs.
+The template-method pattern, and a hook the base class never defines at all,
+are the same shape.
+
+```ruby
+class Base; def run; setup; end; def setup; end; end
+class Child < Base; def setup; end; end
+```
+
+**Before.** `Base#run`'s `setup` was excluded as a reference to `Child#setup`
+(`different_owner`), and `--dead` called `Child#setup` `unreferenced` at clear
+confidence. On rails that was each adapter's `configure_connection`, every
+`validate_each` (22 validators), `private_url` in each storage service, and
+337 candidates in all that are overrides a base or an included module calls on
+`self`: `--dead .` moves them from `unreferenced`, `convention-only` or
+`super-only` to referenced. Across the 40-method `--refs` differential, 29
+sites move from excluded to possible and none from confirmed; each checked is
+real dispatch (`Enumerable#index_by`'s `size` reaches `Array#size`,
+`DatabaseStatements`' `execute` each adapter's).
+
+**Not confirmed**, because which class runs depends on the object, and the
+base's own method stays the confirmed landing. A call on an explicit instance
+(`Base.new.setup`) is not `self` and is tiered as before.
+
+*Reverses if:* `self`'s type is ever narrowed per call path (it is not: nothing
+here follows a method to its callers), which would make "any subclass" too
+wide.

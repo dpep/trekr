@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **A method a superclass calls on `self` is no longer reported dead.** When
+  `Base#run` calls `setup` and `Child` overrides `setup`, `--refs Child#setup`
+  excluded the call and `--dead` listed `Child#setup` as unreferenced at clear
+  confidence. Such calls are now possible references. On rails, 337 methods
+  (every validator's `validate_each`, the adapters' `configure_connection`)
+  leave the dead list.
+
 - **An engine's patch to an app class is not lost to a neighbouring engine's
   test class.** With `class User` reopened in one engine's `lib/` and declared
   plain in another engine's `test/`, the patch's methods went to the test

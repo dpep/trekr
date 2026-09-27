@@ -199,6 +199,24 @@ fn tier(
     let matches = found.as_ref().is_some_and(|found| {
         target.is_none_or(|target| found.owner == target && found.singleton == query.singleton)
     });
+    // `self` is typed as the class the call is written in, but runs as any
+    // subclass: Base#run calling `setup` reaches Child#setup. The template
+    // method pattern, and a hook the base never defines is the same shape.
+    if receiver.via == "self"
+        && !matches
+        && target.is_some_and(|target| {
+            receiver.singleton == query.singleton && tree.inherits(target, &receiver.fqn)
+        })
+    {
+        return here(
+            Tier::Possible,
+            Some(receiver.fqn.clone()),
+            found.map(|found| found.owner),
+            "`self` may be a subclass that overrides this",
+            1,
+            None,
+        );
+    }
     // A type guessed from what a name's definitions return can confirm a
     // site, but ruling one out on it would rule out what the definitions that
     // declare nothing might have returned.

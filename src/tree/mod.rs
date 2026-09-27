@@ -909,6 +909,18 @@ impl Tree {
 }
 
 impl Tree {
+    /// Is `ancestor` somewhere in `fqn`'s chain other than `fqn` itself? A
+    /// split name's variants count as the name.
+    pub(crate) fn inherits(&self, fqn: &str, ancestor: &str) -> bool {
+        let ancestor = public_name(ancestor);
+        public_name(fqn) != ancestor
+            && self
+                .ancestors(fqn)
+                .chain
+                .iter()
+                .any(|a| public_name(a) == ancestor)
+    }
+
     /// The ancestor chain of a name, in Ruby's linearization order:
     /// `[prepends, self, includes, superclass's chain]`, with the first
     /// occurrence of each module winning.

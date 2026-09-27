@@ -1,0 +1,14 @@
+# The template-method pattern: Base#run calls `setup` on self, and a Child
+# overrides it. `self` was typed as Base, the lookup landed on Base#setup, and
+# the call was excluded, so `--dead` called Child#setup unreferenced — on
+# activerecord, every adapter's `configure_connection`. `self` can be any
+# subclass, so a self-call is a possible reference to a subclass's override,
+# including one of a hook the base class never defines (`finish`).
+refs Child#setup confirmed=0 possible=1 excluded=0
+refs Child#finish confirmed=0 possible=1 excluded=0
+dead app.rb Child#setup=single-caller Child#finish=single-caller
+# The base's own method is still the confirmed landing, a class outside the
+# hierarchy is still excluded, and a call on an explicit `Base.new` is not self.
+refs Base#setup confirmed=1 possible=0 excluded=0
+refs Stranger#setup confirmed=0 possible=0 excluded=1
+refs Sibling#other confirmed=0 possible=1 excluded=1
