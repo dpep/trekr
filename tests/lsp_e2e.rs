@@ -683,7 +683,7 @@ fn core_targets_read_as_their_owners_signatures() {
         )]
     );
     let hover = hover_at(&mut session, &dir, 4, 23);
-    assert!(hover.contains("def String#downcase(*options)"), "{hover}");
+    assert!(hover.contains("String#downcase(*options)"), "{hover}");
 
     session.stop();
     let _ = fs::remove_dir_all(&dir);
@@ -800,7 +800,7 @@ fn hover_shows_the_signature_as_written_and_the_doc_summary() {
 
     let text = hover_at(&mut session, &dir, 30, 6);
     assert!(
-        text.starts_with("```ruby\ndef Widget#save(force = false, *rest, key: nil)\n```"),
+        text.starts_with("```ruby\nWidget#save(force = false, *rest, key: nil)\n```"),
         "the signature as written, owner first: {text}"
     );
     assert!(text.contains("Saves the widget."), "the summary: {text}");
@@ -827,7 +827,7 @@ fn hover_shows_the_signature_as_written_and_the_doc_summary() {
     assert_eq!(
         text,
         format!(
-            "```ruby\ndef Widget#plain\n```\n\nDefined in [`app.rb:18`](file://{}/app.rb#L18)",
+            "```ruby\nWidget#plain\n```\n\nDefined in [`app.rb:18`](file://{}/app.rb#L18)",
             std::fs::canonicalize(&dir).unwrap().display()
         )
     );
@@ -861,7 +861,7 @@ fn hover_on_a_constant_or_class_reads_its_declaration() {
 
     // On the definition itself, from the buffer: no location, it is here.
     let text = hover_at(&mut session, &dir, 15, 7);
-    assert!(text.contains("def Widget#save(force"), "{text}");
+    assert!(text.contains("Widget#save(force"), "{text}");
     assert!(text.contains("Saves the widget."), "{text}");
     assert!(!text.contains("Defined in"), "{text}");
 
@@ -876,7 +876,7 @@ fn hover_on_a_guess_says_so_in_plain_words() {
     let (dir, mut session) = documented_session("hover-guess");
 
     let text = hover_at(&mut session, &dir, 32, 13);
-    assert!(text.contains("def Gadget#save"), "the pick: {text}");
+    assert!(text.contains("Gadget#save"), "the pick: {text}");
     assert!(
         text.contains(
             "_Best guess — the receiver's type is inferred, and 1 other definition of `save` exists._"
@@ -938,7 +938,7 @@ fn hover_on_a_gem_method_shows_the_gems_doc() {
     session.initialize(&dir);
     let text = hover_at(&mut session, &dir, 3, 11);
     assert!(
-        text.starts_with("```ruby\ndef Shelf.stack(*items)\n```"),
+        text.starts_with("```ruby\nShelf.stack(*items)\n```"),
         "{text}"
     );
     assert!(
@@ -997,7 +997,7 @@ fn hover_follows_a_definition_that_moved_since_the_index() {
         }),
     );
     let text = answer["result"]["contents"]["value"].as_str().unwrap();
-    assert!(text.contains("def Widget#save(force"), "{text}");
+    assert!(text.contains("Widget#save(force"), "{text}");
     assert!(text.contains("Saves the widget."), "{text}");
     assert!(!text.contains("Unrelated"), "{text}");
     assert!(
@@ -1043,7 +1043,7 @@ fn completion_resolves_a_chosen_items_doc() {
     let resolved = session.request("completionItem/resolve", save);
     let item = &resolved["result"];
     assert_eq!(
-        item["detail"], "def Widget#save(force = false, *rest, key: nil)",
+        item["detail"], "Widget#save(force = false, *rest, key: nil)",
         "{item}"
     );
     let doc = item["documentation"]["value"].as_str().expect("markdown");

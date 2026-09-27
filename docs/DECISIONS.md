@@ -2579,8 +2579,9 @@ become code, and `\Rails` loses its backslash. A stray `<` is escaped, or
 **The signature** is the definition's own text after its name: the
 parenthesized parameters (whitespace collapsed, comments dropped, capped), a
 class's `< Parent`, or a constant's first line (`…` when it continues). This
-text goes after the FQN the tree settled on: `def Owner#name`, `def
-Owner.name`. A macro-made method (`attr_reader`, `has_many`) has no parameter
+text goes after the FQN the tree settled on: `Owner#name(…)`,
+`Owner.name(…)`. A method carries no `def`: `def String#downcase` is not Ruby,
+and the `#`/`.` already says it is a method. A macro-made method (`attr_reader`, `has_many`) has no parameter
 text of its own, so its parameters come from the extracted facts, with `…` for
 defaults the facts do not carry.
 

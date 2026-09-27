@@ -451,16 +451,17 @@ pub(crate) fn method_name(owner: Option<&str>, singleton: bool, name: &str) -> S
     }
 }
 
-/// The definition's first line as a reader wants it: the keyword, the
-/// qualified name the caller settled on, and what was written after the name
-/// — a method's parameters, a class's superclass, a constant's value.
+/// The definition's first line as a reader wants it: the qualified name the
+/// caller settled on — after `class`/`module`, but a method bare, as Ruby docs
+/// name it — then what was written after the name: a method's parameters, a
+/// class's superclass, a constant's value.
 pub(crate) fn signature(def: &Def, qualified: &str, text: &str) -> String {
     let after = after_name(def, text);
     match def.kind {
         Kind::Method => {
             let written = after.filter(|_| def.via.is_none()).and_then(written_params);
             let params = written.unwrap_or_else(|| params_of(def));
-            format!("def {qualified}{params}")
+            format!("{qualified}{params}")
         }
         Kind::Class => {
             let parent = after
@@ -813,11 +814,11 @@ mod tests {
         assert_eq!(sig("NAMES", "NAMES"), "NAMES = %w[ …");
         assert_eq!(
             sig("resize", "Shop::Widget#resize"),
-            "def Shop::Widget#resize(width, height = nil, **opts)"
+            "Shop::Widget#resize(width, height = nil, **opts)"
         );
-        assert_eq!(sig("build", "Shop::Widget.build"), "def Shop::Widget.build");
-        assert_eq!(sig("bare", "bare"), "def bare(a, b)");
-        assert_eq!(sig("size", "Shop::Widget#size"), "def Shop::Widget#size");
+        assert_eq!(sig("build", "Shop::Widget.build"), "Shop::Widget.build");
+        assert_eq!(sig("bare", "bare"), "bare(a, b)");
+        assert_eq!(sig("size", "Shop::Widget#size"), "Shop::Widget#size");
     }
 
     #[test]

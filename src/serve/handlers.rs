@@ -1347,12 +1347,7 @@ fn hover_call(
     };
     let owner = answer.owner.clone();
     let described = describe(session, root, &site, name, owner.as_deref(), singleton);
-    let fallback = || {
-        format!(
-            "def {}",
-            doc::method_name(owner.as_deref(), singleton.unwrap_or(false), name)
-        )
-    };
+    let fallback = || doc::method_name(owner.as_deref(), singleton.unwrap_or(false), name);
     let line = described.as_ref().map_or(site.line, |d| d.line);
     let location = defined_in(
         session,

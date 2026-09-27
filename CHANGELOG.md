@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Hover names a method as Ruby docs do**: `String#downcase(*options)`, not
+  `def String#downcase(*options)`. Completion's detail line matches.
+
 - **Upgrading drops and rebuilds the index** (store v31): run `trekr --index`
   once per checkout.
 
