@@ -238,37 +238,58 @@ impl Store {
             return Ok(counts);
         }
 
-        // The map is rewritten wholesale. It is one row per file, and a
-        // delta would have to be right about deletes and renames to save a
-        // few milliseconds.
-        tx.execute(
-            "DELETE FROM file WHERE checkout_id = ?1",
-            params![checkout_id],
-        )?;
+        // Only the rows that moved are written. The stored map is read whole —
+        // one query — and diffed here: a path whose blob is unchanged costs
+        // nothing, a vanished path is deleted, and anything new or edited is
+        // upserted. Rewriting every row was most of a one-file reindex.
+        let mut stored: HashMap<String, (i64, String, i64)> = HashMap::new();
+        {
+            let mut read = tx.prepare(
+                "SELECT f.path, f.blob_id, b.oid, b.surface
+                   FROM file f JOIN blob b ON b.id = f.blob_id
+                  WHERE f.checkout_id = ?1",
+            )?;
+            let rows = read.query_map(params![checkout_id], |r| {
+                Ok((r.get::<_, String>(0)?, (r.get(1)?, r.get(2)?, r.get(3)?)))
+            })?;
+            for row in rows {
+                let (path, found) = row?;
+                stored.insert(path, found);
+            }
+        }
         let mut surface_key: i64 = 0;
         {
             let mut ids: HashMap<&Oid, (i64, i64)> = HashMap::new();
             let mut lookup = tx.prepare("SELECT id, surface FROM blob WHERE oid = ?1")?;
-            let mut insert =
-                tx.prepare("INSERT INTO file (checkout_id, path, blob_id) VALUES (?1, ?2, ?3)")?;
+            let mut upsert = tx.prepare(
+                "INSERT OR REPLACE INTO file (checkout_id, path, blob_id) VALUES (?1, ?2, ?3)",
+            )?;
             for (path, oid) in files {
-                let (id, surface) = match ids.get(oid) {
-                    Some(found) => *found,
-                    None => {
-                        let found = lookup.query_row(params![oid.0], |r| {
-                            Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
-                        })?;
-                        ids.insert(oid, found);
+                let (id, surface) = match stored.remove(path) {
+                    Some((id, known, surface)) if known == oid.0 => (id, surface),
+                    _ => {
+                        let found = match ids.get(oid) {
+                            Some(found) => *found,
+                            None => lookup.query_row(params![oid.0], |r| {
+                                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+                            })?,
+                        };
+                        upsert.execute(params![checkout_id, path, found.0])?;
                         found
                     }
                 };
-                insert.execute(params![checkout_id, path, id])?;
+                ids.insert(oid, (id, surface));
                 // Order-independent, so the map's iteration order cannot
                 // change the key; the path is mixed in because a rename moves
                 // where an answer points even when no blob changed.
                 surface_key = surface_key.wrapping_add(path_hash(path) ^ surface);
             }
             counts.blobs = ids.len();
+            // What is left was stored and is no longer in the checkout.
+            let mut delete = tx.prepare("DELETE FROM file WHERE checkout_id = ?1 AND path = ?2")?;
+            for path in stored.keys() {
+                delete.execute(params![checkout_id, path])?;
+            }
         }
 
         tx.execute(
@@ -639,7 +660,7 @@ impl Store {
 
     /// Record that this checkout's bundle resolves these gems.
     ///
-    /// Rewritten wholesale on every index, like the file map, so a gem dropped
+    /// Rewritten wholesale on every index, so a gem dropped
     /// from a Gemfile.lock stops being claimed.
     pub(crate) fn set_gems_used(&mut self, root: &str, gem_roots: &[String]) -> Result<()> {
         let tx = self.conn.savepoint()?;
@@ -1287,6 +1308,56 @@ mod tests {
             })
             .unwrap();
         assert!(store.has_checkout("/gem1").unwrap() && store.has_checkout("/gem2").unwrap());
+    }
+
+    /// Written as a delta, a map ends up exactly as a first write of the same
+    /// files would leave it: a vanished path gone, an edit and a rename
+    /// pointing at their new blobs, and the surface key agreeing.
+    #[test]
+    fn a_map_updated_in_place_matches_one_written_fresh() {
+        fn write(store: &mut Store, root: &str, files: &[(&str, &str)]) {
+            let mut map = Files::new();
+            let mut facts = Vec::new();
+            for (path, src) in files {
+                let oid = crate::scan::hash_blob(src.as_bytes());
+                map.insert(path.to_string(), oid.clone());
+                if !store.has_blob(&oid).unwrap() {
+                    facts.push((oid, crate::extract::extract(src.as_bytes())));
+                }
+            }
+            store.write(root, &map, facts, 0).unwrap();
+        }
+        fn map(store: &Store, root: &str) -> Vec<(String, String)> {
+            let mut stmt = store
+                .conn
+                .prepare(
+                    "SELECT f.path, b.oid FROM file f JOIN blob b ON b.id = f.blob_id
+                       JOIN checkout c ON c.id = f.checkout_id WHERE c.root = ?1 ORDER BY f.path",
+                )
+                .unwrap();
+            stmt.query_map(params![root], |r| Ok((r.get(0)?, r.get(1)?)))
+                .unwrap()
+                .collect::<Result<_>>()
+                .unwrap()
+        }
+        let mut store = Store::open_in_memory().unwrap();
+        let (a, b, c) = ("class A\nend\n", "class B\nend\n", "class C\nend\n");
+        write(
+            &mut store,
+            "/moved",
+            &[("a.rb", a), ("b.rb", b), ("keep.rb", c)],
+        );
+        // b.rb deleted, a.rb edited, keep.rb renamed to kept.rb.
+        let after = [("a.rb", b), ("kept.rb", c), ("new.rb", a)];
+        write(&mut store, "/moved", &after);
+        write(&mut store, "/fresh", &after);
+
+        assert_eq!(map(&store, "/moved"), map(&store, "/fresh"));
+        assert_eq!(map(&store, "/moved").len(), 3);
+        assert_eq!(
+            store.surface_key("/moved").unwrap(),
+            store.surface_key("/fresh").unwrap()
+        );
     }
 
     #[test]

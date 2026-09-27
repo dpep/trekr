@@ -362,8 +362,9 @@ significant figure.
   §8), *and* pays it again on every process boot.
 - **A second worktree costs ~0.2 s and zero parses.** A `--shared` clone of
   rails indexes with `parsed: 0` — the facts were already on disk.
-- **One edited file costs ~0.18 s on discourse** (2026-09-26), about half of
-  it rewriting the 11k-file map and most of the rest the scan. It had crept to
+- **One edited file costs ~0.15 s on discourse** (2026-09-26), about 60 ms
+  of it the scan and 60 ms the write — the edited blob's facts and the commit;
+  the 11k-file map is diffed and only its moved rows written (DEC-048). It had crept to
   0.64 s once every index that parsed anything ran a full `ANALYZE` (DEC-042),
   and to 0.27 s before the scan used git's untracked cache (DEC-043).
 - **The no-op scan is git's untracked-file walk**, and `git status` skips most

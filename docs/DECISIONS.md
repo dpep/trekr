@@ -2203,3 +2203,36 @@ from the files' own parse times, per worker.
 **Rejected: a larger or unbounded channel.** It trades back the memory for
 nothing — the writer is the bottleneck either way, so the queue is always
 full.
+
+## DEC-048 — The file map is written as a delta (DEC-035 revisited)
+
+**Decided.** When the map key says the map moved, `Store::write` reads the
+stored map once (path, blob, surface), diffs it against the scan, and writes
+only what moved: an upsert per new or edited path, a delete per vanished one.
+The surface key is folded over the final map exactly as before.
+
+**Why now.** DEC-035 kept the wholesale rewrite — "a delta would have to be
+right about deletes and renames to save a few milliseconds". The milliseconds
+grew: with the scan (DEC-043) and `ANALYZE` (DEC-042) cheaper, rewriting
+discourse's 11k rows was ~95 ms of a ~180 ms one-file reindex. The scratch
+discourse clone, one line appended to one file per run, twelve interleaved
+rounds:
+
+| | wall median | p90 | store-write |
+| --- | ---: | ---: | ---: |
+| wholesale rewrite | 188 ms | 202 ms | 95 ms |
+| **delta** | **154 ms** | **166 ms** | **62 ms** |
+
+Of the 62 ms left, timed inside the write: the edited blob's facts ~20 ms,
+reading the map ~7 ms, the diff ~3 ms, and the commit ~43 ms — which is
+the next lever, and looks like WAL checkpointing rather than anything the
+map does.
+
+**The correctness DEC-035 worried about is tested, not argued.** A unit test
+writes a map, then one with a deleted file, an edited one, a rename and an
+addition, and requires the result to equal a fresh write of the second map,
+surface key included; it fails without the delete. On discourse, an edit, a
+deletion, a rename and a new file indexed by each build into copies of the
+same store leave logical contents that hash identically. A first index reads
+an empty map and writes every row, as before; a branch switch touching every
+file costs about what the rewrite did.

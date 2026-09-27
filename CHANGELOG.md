@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Re-indexing after an edit is ~20 % faster in a large checkout.** Only the
+  file-map rows that changed are written, instead of the whole map: discourse
+  after a one-file edit 188 → 154 ms.
 - **`--index` uses a third of the memory on a first index.** Files are written
   as they are parsed instead of all parsed first: discourse with its gems
   peaks at 160 MB rather than 440 MB, and finishes ~5 % sooner. In
