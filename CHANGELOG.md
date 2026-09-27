@@ -17,6 +17,14 @@
   text mode stdout stays empty. `kind` is `usage`, `not_found`, `not_a_repo`,
   `git`, `internal`, `database` or `io`, the same names `--usage` now counts
   errors under. An error reading a file now names the file.
+- **`--refs 'Owner#method'` and `trekr Owner#method` say when the method does
+  not exist.** When the owner resolved but nothing in its ancestors defines
+  the method, the bare form said `status: resolved` with an empty
+  `definition`, and `--refs` printed nothing to say why. Both now say
+  `status: no_such_method` with a `reason` ("Widget has no method nope in its
+  ancestors"), and text mode prints the same line. If an ancestor is not
+  indexed, it answers `residue` instead and names that ancestor.
+  `--refs --json` gains `status` and, when there is one, `reason`.
 
 ## 0.2.0 — 2026-09-27
 

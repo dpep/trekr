@@ -72,6 +72,7 @@ second worktree of the same repo costs nothing — facts are keyed by git blob.
 | --- | --- |
 | `status: not_indexed`, **exit 2** | nobody has indexed this repo. The answer names the root and the command. Run it; do not go looking for the definition. |
 | `status: residue`, exit 1 | trekr looked. The receiver is genuinely undetermined — ranked `candidates` say what it might be. |
+| `status: no_such_method`, exit 1 | `'Owner#name'`: the owner resolved and nothing in its ancestors defines the name — `reason` says so. A chain with an unindexed ancestor is `residue` instead, naming it. |
 | exit 1, "no mention of …" | indexed, and the name really is not there. |
 | exit 64–74, `{"error", "kind", "code"}` | the call failed: `usage` (fix the command), `not_found`/`not_a_repo` (fix the path), `git`, `database`/`io`, `internal`. Not an answer about the code. |
 
@@ -86,7 +87,7 @@ trekr --refs 'ActiveRecord::Querying#where' --json
 ```
 
 ```json
-{ "owner": "ActiveRecord::Querying", "method": "where",
+{ "status": "resolved", "owner": "ActiveRecord::Querying", "method": "where",
   "definition": [{"path": "activerecord/lib/active_record/querying.rb", "line": 24}],
   "counts": {"confirmed": 1197, "possible": 69, "excluded": 541,
              "excluded_different_owner": 47, "excluded_no_such_method": 63,

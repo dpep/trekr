@@ -972,15 +972,19 @@ fn cmd_card(out: Output, text: &str) -> anyhow::Result<ExitCode> {
 
     // A method: where it is, and who can reach it.
     let (owner, definition) = refs::definition_of(&tree, &query);
+    let (status, reason) = method_verdict(&tree, &query, owner.as_deref(), !definition.is_empty());
     let Some(owner) = owner else {
+        let reason = reason.unwrap_or_default();
         return report(
             out,
-            serde_json::json!({ "query": text, "status": "residue", "confidence": 0.0 }),
+            serde_json::json!({
+                "query": text,
+                "status": status,
+                "confidence": 0.0,
+                "reason": reason,
+            }),
             false,
-            &format!(
-                "no indexed constant named {}",
-                query.owner.unwrap_or_default()
-            ),
+            &reason,
         );
     };
     let (_, counts) = gather_refs(
@@ -1000,21 +1004,74 @@ fn cmd_card(out: Output, text: &str) -> anyhow::Result<ExitCode> {
         true => format!("{owner}.{}", query.name),
         false => format!("{owner}#{}", query.name),
     };
-    let text_out = card_text(&shown, &definition, &[], Some(&counts));
-    report(
-        out,
-        serde_json::json!({
-            "query": text,
-            "status": "resolved",
-            "owner": owner,
-            "method": query.name,
-            "singleton": query.singleton,
-            "kind": kind,
-            "definition": definition,
-            "counts": counts,
-        }),
-        !definition.is_empty(),
-        &text_out,
+    let mut text_out = card_text(&shown, &definition, &[], Some(&counts));
+    let mut answer = serde_json::json!({
+        "query": text,
+        "status": status,
+        "owner": owner,
+        "method": query.name,
+        "singleton": query.singleton,
+        "kind": kind,
+        "definition": definition,
+        "counts": counts,
+    });
+    if let Some(reason) = reason {
+        text_out.push_str(&format!("\n  {reason}"));
+        answer["reason"] = reason.into();
+    }
+    report(out, answer, !definition.is_empty(), &text_out)
+}
+
+/// Whether a method query found its method: the `status`, and the `reason`
+/// when it did not.
+///
+/// An owner that resolves is not an answer about the method. "Nothing
+/// defines it" is only said when the owner's whole chain was seen — the same
+/// line `--refs` draws before it excludes a call site as `no_such_method`.
+fn method_verdict(
+    tree: &Tree,
+    query: &crate::resolve::refs::Query,
+    owner: Option<&str>,
+    found: bool,
+) -> (&'static str, Option<String>) {
+    let Some(owner) = owner else {
+        let written = query.owner.as_deref().unwrap_or("?");
+        return (
+            "residue",
+            Some(format!("no indexed constant named {written}")),
+        );
+    };
+    if found {
+        return ("resolved", None);
+    }
+    let what = if query.singleton {
+        "class method"
+    } else {
+        "method"
+    };
+    let name = &query.name;
+    let unseen = &tree.ancestors(owner).unresolved;
+    if unseen.is_empty() {
+        return (
+            "no_such_method",
+            Some(format!("{owner} has no {what} {name} in its ancestors")),
+        );
+    }
+    const SHOWN: usize = 3;
+    let named: Vec<&str> = unseen.iter().take(SHOWN).map(String::as_str).collect();
+    let more = unseen.len().saturating_sub(SHOWN);
+    let more = if more > 0 {
+        format!(", and {more} more")
+    } else {
+        String::new()
+    };
+    (
+        "residue",
+        Some(format!(
+            "nothing indexed in {owner}'s ancestors defines {what} {name}, but some of \
+             them are not indexed ({}{more}) and it may come from one",
+            named.join(", ")
+        )),
     )
 }
 
@@ -1092,8 +1149,10 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
         None,
     )?;
 
-    let answer = serde_json::json!({
+    let (status, reason) = method_verdict(&tree, &query, owner.as_deref(), !definition.is_empty());
+    let mut answer = serde_json::json!({
         "query": text,
+        "status": status,
         "owner": owner,
         "method": query.name,
         "singleton": query.singleton,
@@ -1101,6 +1160,9 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
         "counts": counts,
         "references": found,
     });
+    if let Some(reason) = &reason {
+        answer["reason"] = reason.as_str().into();
+    }
     // Sites that might call it and none that certainly do: an answer, but not
     // the narrowing the command exists for.
     if !found.is_empty() && counts.confirmed == 0 {
@@ -1111,11 +1173,10 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
         return Ok(exit_on(!found.is_empty()));
     }
 
+    if let Some(reason) = &reason {
+        println!("{reason}");
+    }
     if owner.is_none() {
-        println!(
-            "no indexed constant named {}",
-            query.owner.as_deref().unwrap_or("?")
-        );
         return Ok(ExitCode::from(1));
     }
     for site in &definition {

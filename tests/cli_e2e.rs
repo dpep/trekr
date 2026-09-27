@@ -894,6 +894,58 @@ fn refs_on_an_unknown_owner_is_a_definitive_no() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// An owner that resolves is not an answer about the method. When nothing in
+/// its ancestors defines the name, the status says so, in both modes and both
+/// commands — and only when the whole chain was seen.
+#[test]
+fn a_method_the_owner_does_not_have_is_named_as_such() {
+    let (dir, db) = scratch("nosuchmethod");
+    collision_repo(&dir);
+    fs::write(dir.join("thing.rb"), "class Thing < Unindexed::Base\nend\n").unwrap();
+    trekr(&db, &dir, &["--index"]);
+
+    let defined = json(&trekr(&db, &dir, &["--refs", "Widget#save", "--json"]));
+    assert_eq!(defined["status"], "resolved");
+
+    for args in [&["--refs", "Widget#nope"][..], &["Widget#nope"]] {
+        let out = trekr(&db, &dir, &[args, &["--json"]].concat());
+        assert_eq!(out.status.code(), Some(1), "{args:?}");
+        let answer = json(&out);
+        assert_eq!(answer["status"], "no_such_method", "{args:?}: {answer}");
+        let reason = answer["reason"].as_str().unwrap();
+        assert!(
+            reason.contains("Widget") && reason.contains("nope"),
+            "{args:?}: {reason}"
+        );
+        let text = stdout(&trekr(&db, &dir, args));
+        assert!(
+            text.contains(reason),
+            "{args:?}: the text says the same: {text}"
+        );
+    }
+
+    // A chain with a hole in it cannot rule the method out.
+    let answer = json(&trekr(&db, &dir, &["--refs", "Thing#nope", "--json"]));
+    assert_eq!(answer["status"], "residue", "{answer}");
+    assert!(
+        answer["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("Unindexed::Base")),
+        "{answer}"
+    );
+
+    // And an owner that does not resolve says that, rather than nothing.
+    let answer = json(&trekr(&db, &dir, &["--refs", "Nope#save", "--json"]));
+    assert_eq!(answer["status"], "residue", "{answer}");
+    assert!(
+        answer["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("Nope"))
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn nothing_to_report_is_an_exit_code_not_an_error() {
     let (dir, db) = scratch("empty");
