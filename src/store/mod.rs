@@ -82,6 +82,14 @@ pub(crate) fn open_default() -> anyhow::Result<Store> {
     Ok(Store::open(&path)?)
 }
 
+/// See `Store::files_calling`.
+const FILES_CALLING: &str = "SELECT f.path
+   FROM call_site s INDEXED BY call_site_name
+   CROSS JOIN file f
+  WHERE s.name = ?2
+    AND f.blob_id = s.blob_id
+    AND f.checkout_id = (SELECT id FROM checkout WHERE root = ?1)";
+
 /// See `Store::files_calling_page`.
 const FILES_CALLING_PAGE: &str = "SELECT s.rowid, f.path
    FROM call_site s INDEXED BY call_site_name
@@ -623,17 +631,18 @@ impl Store {
     /// rows, so an edit since the last index is still tiered correctly — and
     /// the ladder needs the file's assignments anyway, which are not stored
     /// (DEC-012). The index's job here is to say which files are worth opening.
+    ///
+    /// The plan is pinned, as `files_calling_page`'s is and for the same
+    /// reason: with statistics saying a name is everywhere, the bundled SQLite
+    /// chose to walk every file of the checkout and sort all their calls.
+    /// Deduplicated and ordered here rather than by a temp B-tree.
     pub(crate) fn files_calling(&self, root: &str, name: &str) -> Result<Vec<String>> {
-        let mut stmt = self.conn.prepare_cached(
-            "SELECT DISTINCT f.path
-               FROM call_site s
-               JOIN file f ON f.blob_id = s.blob_id
-               JOIN checkout c ON c.id = f.checkout_id
-              WHERE c.root = ?1 AND s.name = ?2
-              ORDER BY f.path",
-        )?;
+        let mut stmt = self.conn.prepare_cached(FILES_CALLING)?;
         let rows = stmt.query_map(params![root, name], |r| r.get(0))?;
-        rows.collect()
+        let mut paths = rows.collect::<Result<Vec<String>>>()?;
+        paths.sort_unstable();
+        paths.dedup();
+        Ok(paths)
     }
 
     /// A page of the files in a checkout that call `name`, in the index's
@@ -1420,6 +1429,34 @@ mod tests {
             .collect::<Result<_>>()
             .unwrap();
         assert!(plan[0].contains("call_site_name"), "{plan:?}");
+        assert!(
+            !plan.iter().any(|step| step.contains("TEMP B-TREE")),
+            "{plan:?}"
+        );
+    }
+
+    /// `files_calling` is driven from the name, whatever the statistics say
+    /// about how common it is, and sorts nothing in SQLite.
+    #[test]
+    fn files_calling_is_driven_from_the_name() {
+        let mut store = Store::open_in_memory().unwrap();
+        indexed(&mut store, "/a", "a.rb", "x.go\ny.stop\n");
+        indexed(&mut store, "/big", "big.rb", &"x.go\n".repeat(2000));
+        store.conn.execute_batch("ANALYZE;").unwrap();
+        assert_eq!(store.files_calling("/a", "go").unwrap(), ["a.rb"]);
+        let plan: Vec<String> = store
+            .conn
+            .prepare(&format!("EXPLAIN QUERY PLAN {FILES_CALLING}"))
+            .unwrap()
+            .query_map(params!["/a", "go"], |r| r.get(3))
+            .unwrap()
+            .collect::<Result<_>>()
+            .unwrap();
+        assert!(
+            plan.iter()
+                .any(|step| step.contains("SEARCH s USING INDEX call_site_name")),
+            "{plan:?}"
+        );
         assert!(
             !plan.iter().any(|step| step.contains("TEMP B-TREE")),
             "{plan:?}"

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **`--refs Owner#method` on a very common name no longer takes the slow plan.**
+  The query that lists the files calling a name is pinned to the name's
+  index, as the LSP's already is: `--refs Array#to` on a 336k-file repo
+  ~40 s → ~23 s. The README now says what a very large repo needs: git's
+  untracked cache and fsmonitor, and twice the store's size in free disk for
+  the first index.
 - **A first `--index` of a very large repo is up to 4× faster.** When an
   index will more than double the store, the fact tables' indexes are rebuilt
   by sorting after the rows are in, instead of updated row by row: a 336k-file

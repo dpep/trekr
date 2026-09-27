@@ -86,6 +86,16 @@ wrong turn on the ladder. Every answer carries `status`, `confidence`, and
 `resolved_via`; a method call comes back as honest residue with its receiver
 shape, because narrowing that needs a ladder that does not exist yet.
 
+### In a very large repo
+
+- Turn on git's own caches: `git config core.untrackedCache true` and
+  `git config core.fsmonitor true`. The scan asks `git status`; on a
+  336k-file repo they take it from 2.7 s to under 0.1 s.
+- A first `--index` needs free disk of about **twice the store's final size**
+  while it runs, because it is written as one transaction and the WAL holds
+  all of it until the commit. On that 336k-file repo the store is 4.4 GB, and
+  the first index takes about four minutes.
+
 ## References to a *method*, not a name
 
 This is the one no other Ruby tool has. Ask about a *method*, and every call

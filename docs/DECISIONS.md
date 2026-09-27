@@ -2874,3 +2874,27 @@ write. And the write stays one thread: SQLite has one writer per database, so
 a parallel write means a store split across database files — sharded by
 checkout or by blob — which is a redesign, not a knob, and is recorded here as
 the option if a first index at 30× still needs to fall well below minutes.
+
+## DEC-058 — `files_calling` is pinned to the name's index
+
+**Decided.** `Store::files_calling` reads `call_site INDEXED BY call_site_name
+CROSS JOIN file`, filtered to the checkout, and deduplicates and sorts the
+paths in Rust — the plan DEC-056 pinned for its paged sibling. A test runs
+`ANALYZE` over a name that is everywhere and requires the plan to start from
+`call_site_name` and to build no temp B-tree.
+
+**Why, measured.** The references lane (DEC-056) found the bundled SQLite,
+given statistics saying a name is common, choosing to walk every file of the
+checkout and sort all their calls: 34–56 s for `to` at 30× inside the server.
+The CLI's `--refs` reads the same list. On the 30× synthetic monorepo, `--refs
+Array#to` (2.4 M calls of `to` in the store), alternating builds: 44 / 31 s
+before, **25 / 21 s** after — noisy, and output identical. Where the planner
+already chose well it changes nothing: `Topic#title` 6.2 s both ways,
+`ActiveRecord::Persistence#save` 4.9 s both ways.
+
+**Measured and not taken: a covering `call_site(name, blob_id)` index.** It
+halves this query's SQL — `to` on discourse 73 → 37 ms, `title` 2.1 → 1.3 ms —
+for 2 MB more index. But the SQL is a sliver of a references query, which
+parses every file the list names (81k calls of `to` on discourse), and it
+would cost a schema version, so every user a cold re-index. Worth folding into
+the next schema change that happens for its own reasons.
