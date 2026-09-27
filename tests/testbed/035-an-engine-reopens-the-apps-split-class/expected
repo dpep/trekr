@@ -1,0 +1,9 @@
+# `User` is split: the app's model (`< Record`) and a test fake (`Struct.new`).
+# An engine with its own gemspec reopens the model from its `lib/` to add
+# `plan`. DEC-075 made that plain `class User` the engine's own class, so the
+# controller's `User.new.plan` reached a model with no `plan`: `--def` said it
+# does not exist and `--dead` offered it for deletion. A plain class on a
+# program's load path is a reopen, and joins the variant it is nearest.
+def app/controllers/users_controller.rb:3:14 status=resolved owner=User via=chain
+refs User#plan confirmed=1 excluded=0
+dead engines/billing/lib/billing/user_ext.rb User#plan=single-caller

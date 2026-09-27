@@ -47,8 +47,9 @@ impl Tree {
     /// per variant. Keyed by the name split.
     ///
     /// A declaration with no superclass is a reopen of the variant nearest it
-    /// — unless it sits in a program (`programs`: gem roots) that declares no
-    /// variant at all, where it is that program's own class (DEC-075).
+    /// — unless it sits outside the `lib/` of a program (`programs`: gem
+    /// roots) that declares no variant at all, where it is that program's own
+    /// class (DEC-075).
     pub(super) fn split_conflicts(
         &mut self,
         edges: &[PlacedEdge],
@@ -90,6 +91,7 @@ impl Tree {
                     || variants
                         .iter()
                         .any(|v| !v.group.starts_with(MARK) && declared(v))
+                    || loadable(&site.path, program)
                 {
                     continue;
                 }
@@ -242,6 +244,16 @@ fn program_of<'a>(path: &str, programs: &'a [String]) -> &'a str {
         .map_or("", String::as_str)
 }
 
+/// Is this file on its program's load path (`lib/`, a gemspec's default
+/// `require_paths`)? Other programs load it, so a plain class there may be
+/// patching theirs — an engine's `class User` reopening the app's model.
+fn loadable(path: &str, program: &str) -> bool {
+    !program.is_empty()
+        && path
+            .strip_prefix(program)
+            .is_some_and(|rest| rest.starts_with("/lib/"))
+}
+
 /// The declarations of `name` nearest `path`: the most leading directories in
 /// common with one of their files, and the file itself nearest of all.
 ///
@@ -363,6 +375,14 @@ mod tests {
         );
         assert_eq!(program_of("/r/activerecord/user.rb", &programs), "/r");
         assert_eq!(program_of("/elsewhere/user.rb", &programs), "");
+    }
+
+    #[test]
+    fn only_a_programs_lib_is_loadable_by_others() {
+        assert!(loadable("/r/billing/lib/billing/user.rb", "/r/billing"));
+        assert!(!loadable("/r/billing/test/user.rb", "/r/billing"));
+        assert!(!loadable("/r/billing_lib/x.rb", "/r/billing"));
+        assert!(!loadable("/r/lib/user.rb", ""));
     }
 
     #[test]

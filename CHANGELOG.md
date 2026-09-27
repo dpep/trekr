@@ -33,7 +33,9 @@
   holding a `.gemspec`) where neither is declared used to join every variant.
   On rails, activemodel's test `User` had joined both activerecord's model and
   railties' template. It now stands alone, as do plain `Post`, `Person`,
-  `Session` and `CallbacksTest` in other gems' tests.
+  `Session` and `CallbacksTest` in other gems' tests. One in the gem's `lib/`
+  is still a reopen, since that is what other programs load: an engine's
+  `class User` adding a method to the app's model.
 
 - **A bare constant inside a split class's body is looked up through that
   class's ancestors.** Inside `class Post < ActiveRecord::Base` beside a test

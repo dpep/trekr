@@ -3773,8 +3773,8 @@ name count.
 ## DEC-075 — A plain class in a gem with no variant is that gem's own class
 
 **Decided.** When a name is split (DEC-072), a declaration with no superclass
-that sits in a **program** where no variant is declared becomes a class of its
-own. A program is a checkout root or a directory holding a `.gemspec`, and a
+that sits in a **program** where no variant is declared, outside that
+program's `lib/`, becomes a class of its own. A program is a checkout root or a directory holding a `.gemspec`, and a
 file belongs to the deepest one containing it. Every such declaration in one
 program is the same class. A plain declaration in a program that does declare
 a variant is a reopen, as before, and joins the variant nearest it.
@@ -3803,6 +3803,21 @@ as `single-caller`. DEC-072 had recorded exactly that as the cost of the gap.
 would now get its own class. That needs a split name *and* a cross-gem
 monkeypatch of it, and neither rails nor discourse has one. A dependency read
 from the gemspec would settle it, and would be the next step if one turns up.
+
+*Amended:* it turned up before release, in the shape every Rails engine has. An
+app splits `User` (`app/models/user.rb < ApplicationRecord` beside a test's
+`User = Struct.new`), and an engine with its own gemspec adds a method from
+`engines/billing/lib/billing/user_ext.rb`. As the engine's own class,
+`User.new.plan` in the app's controller went to a model with no `plan`:
+`--def` said the method does not exist, `--refs` excluded the call, and
+`--dead` listed `plan` as `unreferenced`. So a plain declaration under a
+program's `lib/` is a reopen again and joins the variant nearest it. `lib/` is
+a gemspec's default `require_paths`, the part of a gem other programs load, so
+a plain class there is the one kind that can be patching someone else's. Its
+tests, benchmarks and fixtures are loaded only by the gem itself, and those
+keep their own class. All five names this decision changed on rails are in
+tests, and rails' `--dead activerecord/lib activemodel/lib actionpack/lib` is
+byte-identical with and without the amendment.
 
 *Reverses if:* programs can be read off something firmer (DEC-072's
 reverses-if: a test helper's `$LOAD_PATH`, Zeitwerk's roots). This rule is
