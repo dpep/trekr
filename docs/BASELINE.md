@@ -1902,3 +1902,89 @@ called from two models, stopped reading unreferenced. The two `super-only`
 candidates are `ReviewableActionBuilder#perform_delete_user` and
 `#perform_delete_and_block_user`, reached from the overrides in
 `ReviewableFlaggedPost` and `ReviewableQueuedPost`.
+
+## Precision fixes before 0.2.1 (2026-09-27)
+
+A docs pass ran the README's examples on rails and found DEC-069 had merged
+rails' test fakes into its models. Three related bugs came with it: a `super`
+counted against its own method, and `--refs` that listed sites for a method
+that does not exist. DEC-072 and DEC-073 cover them, and DEC-068 is amended.
+Each build below ran on a store it indexed itself.
+
+### rails, the queries that caught it
+
+| | 0.2.0 | a411be2 | now |
+| --- | ---: | ---: | ---: |
+| `--refs 'ActiveRecord::Querying#where'`, confirmed | 1,197 | 860 | **1,216** |
+| … excluded as `no_such_method` | 65 | 400 | 44 |
+| `--refs 'ActiveRecord::ConnectionHandling#lease_connection'`, confirmed | 1,024 | 972 | **1,024** |
+| `--def activerecord/test/cases/batches_test.rb:20:12` | `Querying#find_each` | residue | `Querying#find_each` |
+
+`where` against 0.2.0: 19 `Cpk::Book` sites went from excluded to confirmed.
+`Cpk::Book` was split between a model and actionview's fake in 0.2.0 too, and
+the fake had won. Two `Author` sites moved from `no_such_method` to arity
+exclusions, because DEC-071 left their receiver untyped. One site is new.
+`lease_connection` reaches 1,024 by a different set. Four railties
+`Post.lease_connection` sites are equally near the model and the fake, and the
+naming tiebreak (`post.rb`) is what keeps them confirmed. Two
+`pool.lease_connection` sites went from excluded to possible, because DEC-071
+stopped typing a block parameter from another method's write.
+
+### Gold set
+
+widget_shop, 3,243 sites, context pinned, every site scored:
+
+| | 0.2.0 | a411be2 | now |
+| --- | ---: | ---: | ---: |
+| gem floor, correct | 1,502 | 1,618 | **1,618** |
+| gem floor, confidently wrong | 93 | 92 | **92** |
+| `super` sites correct / confidently wrong | 0 / 0 | 118 / 0 | **118 / 0** |
+| app code | 33 correct, 1 wrong | same | same |
+| gem residue with the truth offered: top-3 | 66.6 % | 64.9 % | **66.8 %** |
+
+No verdict moved against a411be2. (This run of a411be2 scores 1,618, one fewer
+than the 1,619 recorded above. The same binary on another store gives the
+other figure, and nothing in this change is involved.) The top-3 gain is the
+`super` fix: a residue `super` no longer ranks its own method first. The first
+cut split names on `.rbi` superclasses too. It turned six gem sites wrong or
+residue, all in concurrent-ruby, whose `class Map < MapImplementation` Tapioca
+records as `< MriMapBackend`. That is why an `.rbi` never splits a name.
+
+### CLI differential
+
+The same 520 `--def` positions on rails and discourse, against a411be2. **One
+answer changed, and it is a fix:** `Cpk::Book.all` in `calculations_test.rb`
+was residue and now resolves to `Scoping::Named::ClassMethods#all`. Four rails
+`super` residues changed only their candidates, because each dropped the
+method the `super` is written in. Discourse moved nothing. Its one split name,
+`User` (a benchmark script's `Data.define`), resolves to `app/models/user.rb`
+from everywhere but the script's own directory.
+
+### `--dead`, `super-only`
+
+`--dead activerecord/lib activemodel/lib actionpack/lib`, rails-only stores:
+
+| | a411be2 | now |
+| --- | ---: | ---: |
+| `super-only` | 88 | 72 |
+| … with an empty `super_from` | 39 | **0** |
+| … naming only itself in `super_from` | 6 | **0** |
+| `unreferenced` / `single-caller` / `convention-only` | 651 / 1,559 / 131 | 663 / 1,556 / 134 |
+
+Thirteen moved from `super-only` to `unreferenced` and three to
+`convention-only`. For each, the only `super` had been its own. Four
+candidates dropped out. `reflect_on_all_aggregations` is a fix: it gained its
+three confirmed calls through `Customer`, whose fake had won the merge. The
+other three are the gap DEC-072 records. They are the `HttpAuthentication`
+`authenticate` methods, and each now has three possible calls on
+`@user.authenticate` in activemodel's tests. That `User` is a
+superclass-less class in a third program, and it joins both variants. The
+merge had excluded those sites by luck.
+
+**`--dead`'s candidates depend on what else is in the store.** Its cheap
+pre-filter, `Store::written_calls`, counts a name's calls across every blob,
+not only the checkout's. The same a411be2 binary finds 88 `super-only`
+candidates on a rails-only store and 38 on one that also holds discourse and
+widget_shop. Those names reach the "plainly used" cap on other repos' calls.
+This is not fixed here, and until it is, compare `--dead` runs only on
+matching stores.
