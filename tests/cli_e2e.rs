@@ -454,6 +454,7 @@ fn every_command_speaks_ndjson_as_well_as_json() {
         vec!["--symbols", "widget.rb", "--ndjson"],
         vec!["--refs", "helper", "--ndjson"],
         vec!["--def", "widget.rb:1:7", "--ndjson"],
+        vec!["--gc", "--dry-run", "--ndjson"],
     ] {
         let out = trekr(&db, &dir, &args);
         for line in stdout(&out).lines() {
@@ -1641,4 +1642,96 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
         hidden["caveat"].as_str().unwrap().contains("send"),
         "{hidden}"
     );
+}
+
+/// An app moves from one gem version to the next. The old version is kept while
+/// it is recent, collected once it is not — along with the file only it had,
+/// never the one both versions ship — and rebuilt the moment a lockfile names
+/// it again.
+#[test]
+fn gc_collects_a_gem_version_no_bundle_names_and_an_index_brings_it_back() {
+    let (app, db) = scratch("gc-app");
+    let (gems, _) = scratch("gc-gems");
+    repo(&app);
+    let shared = "module Shared\n  def helpers\n  end\nend\n";
+    for (gem, own) in [("widget-1.0.0", "Old"), ("widget-2.0.0", "New")] {
+        let lib = gems.join(format!("gems/{gem}/lib"));
+        fs::create_dir_all(&lib).unwrap();
+        fs::write(lib.join("shared.rb"), shared).unwrap();
+        fs::write(
+            lib.join("own.rb"),
+            format!("class {own}\n  include Shared\nend\n"),
+        )
+        .unwrap();
+    }
+    let lock = |version: &str| {
+        fs::write(
+            app.join("Gemfile.lock"),
+            format!("GEM\n  remote: https://rubygems.org/\n  specs:\n    widget ({version})\n"),
+        )
+        .unwrap();
+    };
+    let env = [("GEM_HOME", gems.to_str().unwrap())];
+    let run = |args: &[&str]| trekr_env(&db, &app, args, &env);
+    let blobs = || json(&run(&["--status", "--json"]))["totals"]["blobs"].clone();
+
+    lock("1.0.0");
+    run(&["--index"]);
+    lock("2.0.0");
+    run(&["--index"]);
+    let old_root = gems.join("gems/widget-1.0.0").canonicalize().unwrap();
+    assert_eq!(blobs(), 4, "the app, the shared file once, and each own.rb");
+
+    let bare = run(&["--gc", "--older-than", "7"]);
+    assert_eq!(bare.status.code(), Some(2), "7 what? refused, not guessed");
+
+    // Seen seconds ago, so the default window spares it.
+    let recent = run(&["--gc", "--dry-run", "--json"]);
+    assert_eq!(recent.status.code(), Some(1), "nothing to collect");
+    assert_eq!(json(&recent)["checkouts"], serde_json::json!([]));
+
+    let dry = run(&["--gc", "--dry-run", "--older-than", "0", "--json"]);
+    assert_eq!(dry.status.code(), Some(0));
+    let dry = json(&dry);
+    assert_eq!(
+        dry["checkouts"],
+        serde_json::json!([{
+            "repo": old_root.to_str().unwrap(),
+            "kind": "gem",
+            "reason": "unclaimed",
+            "last_seen": dry["checkouts"][0]["last_seen"],
+        }]),
+        "exactly the version the app moved past: {dry}"
+    );
+    assert!(dry["last_seen"].is_null() && dry["checkouts"][0]["last_seen"].is_i64());
+    for key in ["files", "blobs", "facts", "reclaimed_bytes", "db_bytes"] {
+        assert!(dry[key].is_i64(), "{key}: {dry}");
+    }
+    assert_eq!(dry["dry_run"], true);
+    assert_eq!(blobs(), 4, "a dry run removes nothing");
+
+    let done = json(&run(&["--gc", "--older-than", "0", "--vacuum", "--json"]));
+    assert_eq!(
+        (done["files"].clone(), done["blobs"].clone()),
+        (2.into(), 1.into())
+    );
+    assert_eq!(done["vacuumed"], true);
+    assert_eq!(
+        blobs(),
+        3,
+        "own.rb went; shared.rb is still mapped by 2.0.0"
+    );
+    let chain = json(&run(&["--ancestors", "New", "--json"]));
+    assert!(chain["ancestors"].to_string().contains("Shared"), "{chain}");
+
+    // Back to 1.0.0: the next index finds it missing and reads it again.
+    lock("1.0.0");
+    let again = json(&run(&["--index", "--json"]));
+    assert_eq!(again["gems"]["indexed"], 1, "{again}");
+    let chain = json(&run(&["--ancestors", "Old", "--json"]));
+    assert_eq!(chain["status"], "resolved", "{chain}");
+    assert!(chain["ancestors"].to_string().contains("Shared"), "{chain}");
+
+    let _ = fs::remove_dir_all(&app);
+    let _ = fs::remove_dir_all(&gems);
 }

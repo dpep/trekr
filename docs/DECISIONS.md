@@ -45,6 +45,9 @@ case in the obvious way.
 **Reverses if** measurement shows the database growing past what the sharing
 saves. Then the fix is an explicit `--gc`, not an implicit sweep.
 
+**Revisited by DEC-049:** still true of a blob some checkout maps; a checkout
+nothing can reach any more is collected, blobs only it mapped with it.
+
 ## DEC-004 — `private :foo` is a definition row, marked by `via`
 
 **Decided.** A bare visibility call with symbol arguments emits a `def` row with
@@ -1018,6 +1021,9 @@ indexes, or a long-lived database that outlives several schema versions once
 the schema settles. The check is the one query above, and it costs nothing to
 re-run. Reopen on an observation, not on a hunch — that is what four rollovers
 were trying to tell us.
+
+**Reopened by DEC-049** on exactly that: the query was right and the unit was
+wrong — an old gem version is never an orphan, it maps its own blobs.
 
 ### DEC-028 revisited (session 23) — one of the two ships, on the same bar
 
@@ -2236,3 +2242,87 @@ deletion, a rename and a new file indexed by each build into copies of the
 same store leave logical contents that hash identically. A first index reads
 an empty map and writes every row, as before; a branch switch touching every
 file costs about what the rewrite did.
+
+## DEC-049 — Checkouts nothing can reach are collected (DEC-003 and DEC-030 revisited)
+
+**Decided.** `trekr --gc [--dry-run] [--older-than AGE] [--vacuum]` removes
+every checkout a future index could not reach, unless an index saw it within
+`AGE` (default 7 days), and then the blobs no remaining checkout maps. Reach is
+decided per `checkout.kind`: a **repo** is reachable while its root is on disk;
+a **gem** while it is on disk *and* a surviving repo's bundle names it
+(`gem_use`). It is explicit — `--index` never sweeps.
+
+**Why DEC-030's zero was the wrong question.** It counted blobs referenced by no
+file, and there are still none. But a gem version every project has moved past
+is not an orphan: it maps its own blobs, so it is kept forever. The same holds
+for a deleted worktree's file map. Measured on this machine's store (schema v21,
+16 days old, a `.backup` copy):
+
+| | |
+| --- | ---: |
+| database | 446 MB |
+| checkouts | 684 (676 gems, 8 repos) |
+| gem names with more than one version | 125 of 505 (171 extra versions) |
+| gems no current lockfile names, or gone from disk | 32 |
+| gems no surviving repo's last index resolved | 47 |
+| repos whose root is gone (deleted agent worktrees, a scratch dir) | 3 of 8 |
+| **collectable checkouts** (this rule) | **69** |
+| blobs only they map | 1,091 of 38,036 (2.9 %) |
+| fact rows in those blobs | 289k of 4.8M (6.0 %) |
+| pages freed | 23.5 MB |
+| after `VACUUM` | 399 MB (−47 MB; 20 MB of that is fragmentation a `VACUUM` alone recovers) |
+
+Most gem versions with siblings are live — different projects pin different
+versions — which is why "delete the older version" would be wrong and the rule
+reads the bundles instead.
+
+**Last seen is `indexed_at`, not a new column.** A repo's no-op index already
+moves it, so it already meant "an index last vouched for this". A gem now gets
+the same: every index that names it moves its `indexed_at`, one indexed
+`UPDATE` per gem inside the gem batch (DEC-041), so no query pays anything,
+and a no-op index barely does: rails with its gems, ten interleaved rounds,
+162 ms median before and 140 ms after — noise. A second timestamp would equal
+the first for every repo.
+
+**`kind` is a column because disk cannot say it.** The first shape inferred it
+— a repo is a directory with `.git` — and bundler's git gems
+(`bundler/gems/<name>-<sha>/`) carry a `.git` of their own, so every stale
+revision of a git gem, the kind that churns most, would have been kept as a
+live repo. It is stamped where a bundle names the checkout. The column costs a
+schema bump (DEC-009: the store is rebuilt once, cold).
+
+**Why 7 days, and why a window at all.** The window is hysteresis, not the
+criterion — a checkout that is reachable is never collected however old, which
+matters because on the measured store every repo was last indexed 15–31 days
+ago. It exists so a lockfile flipped by a branch switch and flipped back does
+not re-parse; a week covers a branch parked over a weekend. Being wrong is
+cheap in both directions: a gem collected too early is re-read by the next
+index that names it, and one kept too long is ~340 KB (the average here). 30
+days would have collected 20 of the 69 here, because the store had not been
+written for 15 days — a window that long mostly measures how recently someone
+last ran `--index`.
+
+**Why not a sweep inside `--index`.** 6 % of fact rows after 16 days of heavy
+churn (Ruby upgrades, agent worktrees) is worth a command, not a stall: the
+collection took 2.3 s on this store, and `--index` is the LSP's refresh path.
+DEC-003 already said the fix is an explicit `--gc`. A pre-1.0 schema bump
+collects everything anyway (DEC-009).
+
+**Why `--vacuum` is opt-in.** A delete returns pages to SQLite's free list, which
+later indexes reuse, so the store stops growing without it. Shrinking the file
+is a `VACUUM` — 5.6 s here, holding the write lock — plus a WAL checkpoint so
+the bytes actually leave the disk.
+
+**The dry run is the real run, rolled back**, so the size it reports is
+measured, not estimated; on this store it cost 0.9 s.
+
+**Rebuild is on demand, and tested.** `--index` indexes any gem the lockfile
+names that the store lacks (`has_checkout`), so collecting a gem a project still
+wants costs one re-parse. An e2e test collects a gem version, switches the
+lockfile back, and requires the next index to re-read it and answer into it.
+
+**Reverses if** a third checkout kind arrives whose reachability is neither
+"on disk" nor "named by a bundle" — then `kind` grows a rule, not a special
+case — or if a store is observed where the collectable share is large enough
+(say a quarter) that waiting for someone to run `--gc` is the problem; then a
+bounded sweep during `--index`, off the LSP path, is the next step.

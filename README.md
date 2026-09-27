@@ -51,6 +51,7 @@ trekr --refs 'Widget#save'       # references narrowed by receiver
 trekr --refs Widget              # every mention of a name in this checkout
 trekr --def lib/thing.rb:12:5    # what is this name, and where is it defined
 trekr --ancestors Widget         # the linearized ancestor chain
+trekr --gc --dry-run             # what old gem versions and deleted worktrees would free
 ```
 
 Every command honors `--json` and `--ndjson`, because the intended caller is an

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **`trekr --gc` reclaims old gem versions and deleted worktrees.** A gem
+  version no indexed project's bundle names any more, and a checkout whose
+  directory is gone, used to be kept forever. `--gc` removes those an index has
+  not seen for `--older-than` (default `7d`), plus the parsed facts only they
+  held — never ones another checkout shares. `--dry-run` shows what it would
+  remove and the space; `--vacuum` also shrinks the file. A collected gem is
+  simply re-read by the next `--index` whose lockfile names it. On one
+  month-old store: 69 of 684 checkouts, 6 % of facts, 446 → 399 MB with
+  `--vacuum`. **The store is rebuilt once on upgrade** (schema change): the
+  first `--index` of each project is a cold one.
 - **Re-indexing after an edit is ~20 % faster in a large checkout.** Only the
   file-map rows that changed are written, instead of the whole map: discourse
   after a one-file edit 188 → 154 ms.

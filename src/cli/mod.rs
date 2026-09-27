@@ -93,6 +93,27 @@ struct Cli {
     #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = ".")]
     drop: Option<PathBuf>,
 
+    /// Remove checkouts nothing will ask about again: gem versions no
+    /// surviving project's bundle names, and projects whose root is gone.
+    /// Their blobs go too, unless another checkout still maps them.
+    #[arg(long, conflicts_with_all = ["index", "status", "symbols", "refs", "def", "ancestors", "drop", "lsp"])]
+    gc: bool,
+
+    /// With `--gc`: report what would be removed, and the space it would free,
+    /// without removing it.
+    #[arg(long, requires = "gc")]
+    dry_run: bool,
+
+    /// With `--gc`: spare anything an index saw more recently than this —
+    /// `36h`, `7d`, `2w`, or `0` for everything collectable now.
+    #[arg(long, value_name = "AGE", requires = "gc", default_value = "7d", value_parser = parse_age)]
+    older_than: u64,
+
+    /// With `--gc`: compact the database afterwards so the file shrinks.
+    /// Seconds on a large store, holding the write lock.
+    #[arg(long, requires = "gc", conflicts_with = "dry_run")]
+    vacuum: bool,
+
     /// Worker threads for parsing. 0 (the default) picks the machine's
     /// **physical** core count; `TREKR_JOBS` sets it too, and the flag wins.
     #[arg(long, value_name = "N", env = "TREKR_JOBS", default_value_t = 0)]
@@ -189,6 +210,8 @@ pub fn run() -> ExitCode {
         cmd_ancestors(out, name)
     } else if let Some(path) = &cli.drop {
         cmd_drop(out, path)
+    } else if cli.gc {
+        cmd_gc(out, cli.older_than, cli.dry_run, cli.vacuum)
     } else if cli.status {
         cmd_status(out)
     } else if cli.usage {
@@ -1627,6 +1650,95 @@ fn cmd_drop(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
         )?,
     }
     Ok(exit_on(dropped > 0))
+}
+
+/// `36h`, `7d`, `2w` — or `0`. A bare number is refused: minutes and days
+/// are both plausible readings, and guessing wrong deletes the wrong thing.
+fn parse_age(text: &str) -> Result<u64, String> {
+    if text == "0" {
+        return Ok(0);
+    }
+    let split = text.len() - text.chars().last().map_or(0, char::len_utf8);
+    let (count, unit) = text.split_at(split);
+    let count: u64 = count
+        .parse()
+        .map_err(|_| format!("`{text}` is not an age like 36h, 7d or 2w"))?;
+    let unit = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86_400,
+        "w" => 7 * 86_400,
+        _ => return Err(format!("`{text}`: the unit is one of s, m, h, d, w")),
+    };
+    Ok(count * unit)
+}
+
+fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::Result<ExitCode> {
+    let mut store = open_store()?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)?
+        .as_secs() as i64;
+    let garbage = store.collect(
+        now - older_than as i64,
+        |root| Path::new(root).is_dir(),
+        dry_run,
+    )?;
+    if vacuum {
+        store.vacuum()?;
+    }
+    let db_bytes = store.db_bytes()?;
+    let found = !garbage.checkouts.is_empty();
+
+    if out != Output::Text {
+        emit_json(
+            out,
+            &serde_json::json!({
+                "dry_run": dry_run,
+                "older_than": older_than,
+                "checkouts": garbage.checkouts,
+                "files": garbage.files,
+                "blobs": garbage.blobs,
+                "facts": garbage.facts,
+                "reclaimed_bytes": garbage.reclaimed_bytes,
+                "vacuumed": vacuum,
+                "db_bytes": db_bytes,
+            }),
+        )?;
+        return Ok(exit_on(found));
+    }
+    let mb = |bytes: i64| bytes as f64 / 1e6;
+    if !found {
+        println!("nothing to collect");
+    } else {
+        for c in &garbage.checkouts {
+            let days = (now - c.last_seen) / 86_400;
+            println!(
+                "{:<4} {:<9} {:>4}d  {}",
+                c.kind,
+                c.reason,
+                days,
+                paths::pretty(&c.repo)
+            );
+        }
+        println!(
+            "\n{} {} checkouts: {} files, {} blobs, {} facts, {:.1} MB",
+            if dry_run {
+                "would collect"
+            } else {
+                "collected"
+            },
+            garbage.checkouts.len(),
+            garbage.files,
+            garbage.blobs,
+            garbage.facts,
+            mb(garbage.reclaimed_bytes)
+        );
+    }
+    if vacuum {
+        println!("vacuumed: database is {:.1} MB", mb(db_bytes));
+    }
+    Ok(exit_on(found))
 }
 
 /// 0 when something happened, 1 when nothing did — so a script can branch on it.

@@ -172,6 +172,17 @@ is its own checkout rooted at its unpacked directory — which already encodes
 `name-version` — so two projects resolving the same version share one index and
 the second pays nothing (DEC-017). Only `lib/` is walked.
 
+**A gem version outlives the projects that used it** unless collected, because
+it still maps its own blobs and so is never an orphan. `trekr --gc` removes the
+checkouts no future index could reach — a gem on disk that no surviving repo's
+bundle names, a repo or gem whose root is gone — spares anything an index saw
+within `--older-than` (default 7 days), and then deletes only the blobs no
+remaining checkout maps. `checkout.kind` says which rule applies, and a gem's
+`indexed_at` moves every time a bundle names it, inside the index's own
+transaction. Collecting is safe because it is undone by the next index: a
+lockfile naming a gem the store lacks indexes it, collected or never seen
+(DEC-049).
+
 A gem the lockfile names and disk does not have is **reported**, in the text
 output and as `gems.missing` in `--json`. It is a hole in every answer that
 would have come from it, and a silent hole is indistinguishable from a method
@@ -227,7 +238,8 @@ blob(id, oid UNIQUE, lines, parse_errors)
   const_ref(blob_id, name, nesting, line, col)
   call_site(blob_id, name, recv, recv_text, nesting, argc, block, line, col)
 
-checkout(id, root UNIQUE, indexed_at)
+checkout(id, root UNIQUE, indexed_at, kind, surface_key, map_key, git_state)
+  gem_use(checkout_id, gem_root)            ← which bundles name which gem
   file(checkout_id, path, blob_id)          ← the only table naming a path
 ```
 
@@ -262,6 +274,7 @@ command that prints honors `--json` / `--ndjson`.
 | `--def FILE:LINE:COL` | what is the name here, and where is it defined |
 | `--ancestors NAME` | the linearized ancestor chain |
 | `--drop [PATH]` | forget a checkout's file map |
+| `--gc [--dry-run] [--older-than AGE] [--vacuum]` | remove checkouts nothing can reach again, and the blobs only they mapped |
 
 `--refs` is **name-level, not resolved**: two unrelated `Config` classes both
 answer, and so does every `#save` on every receiver. Each row says what sort of

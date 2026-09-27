@@ -13,7 +13,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 21;
+pub(crate) const VERSION: i64 = 22;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -95,7 +95,14 @@ CREATE TABLE call_site (
 CREATE TABLE checkout (
   id          INTEGER PRIMARY KEY,
   root        TEXT    NOT NULL UNIQUE,    -- absolute worktree path
-  indexed_at  INTEGER NOT NULL,           -- unix seconds
+  -- When an index pass last vouched for this checkout, unix seconds: its own
+  -- index (a no-op included), or — for a gem — a bundle naming it. `--gc`
+  -- reads it as "last seen" (DEC-049).
+  indexed_at  INTEGER NOT NULL,
+  -- repo | gem. They are kept alive by different evidence (DEC-049): a repo by
+  -- its root being on disk, a gem by a surviving repo's bundle naming it. Not
+  -- inferable from disk — bundler's git gems carry a `.git` of their own.
+  kind        TEXT    NOT NULL DEFAULT 'repo',
   -- The file map's whole surface, folded into one number at index time: the
   -- sum over files of hash(path) ^ blob.surface. A resident front checks
   -- staleness by reading this one row rather than re-aggregating the map.

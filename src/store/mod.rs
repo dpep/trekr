@@ -7,6 +7,7 @@
 //! Conventions (pragmas, `user_version` as the migration marker, `$TREKR_DB`)
 //! follow rq's `src/store/`.
 
+mod gc;
 mod schema;
 
 use crate::core::*;
@@ -662,6 +663,10 @@ impl Store {
     ///
     /// Rewritten wholesale on every index, so a gem dropped
     /// from a Gemfile.lock stops being claimed.
+    ///
+    /// Also where a checkout becomes a gem, and where a gem is last seen: each
+    /// one named is stamped `kind = 'gem'` and its `indexed_at` moved to now,
+    /// inside the index's own transaction, so `--gc` costs a query nothing.
     pub(crate) fn set_gems_used(&mut self, root: &str, gem_roots: &[String]) -> Result<()> {
         let tx = self.conn.savepoint()?;
         let id: i64 = tx.query_row(
@@ -673,8 +678,12 @@ impl Store {
         {
             let mut insert = tx
                 .prepare("INSERT OR IGNORE INTO gem_use (checkout_id, gem_root) VALUES (?1, ?2)")?;
+            let mut seen = tx.prepare(
+                "UPDATE checkout SET kind = 'gem', indexed_at = unixepoch() WHERE root = ?1",
+            )?;
             for gem in gem_roots {
                 insert.execute(params![id, gem])?;
+                seen.execute(params![gem])?;
             }
         }
         tx.commit()
