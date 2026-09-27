@@ -360,7 +360,9 @@ usage_daily(day, surface, feature, flags, origin, outcome, latency, cold, count)
   operation without its `textDocument/` prefix, plus the lifecycle events
   `session`, `resume`, `reload`, `reload-failed`, `retire`, `index`.
 - `flags` names the knobs and variants reached for (`json`, `explain`, `bare`,
-  `by-name`, `snapped`, `stale`, `require`, `cut`), never their values.
+  `by-name`, `snapped`, `stale`, `require`, `cut`, and `tree-built` when the
+  operation had to assemble the tree rather than map its snapshot), never
+  their values.
 - `origin` is rq's caller taxonomy (`claude-code`, `cursor`, `ci`, `human`,
   `piped`); an LSP session with no agent in its environment is labelled by the
   client's `clientInfo.name`.

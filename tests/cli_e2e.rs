@@ -1076,7 +1076,11 @@ fn usage_counts_each_command_by_caller_and_outcome() {
     assert_eq!(find("def", "not-indexed")["origin"], "claude-code");
     let def = find("def", "hit");
     assert_eq!(def["surface"], "cli");
-    assert_eq!(def["flags"], "json");
+    assert_eq!(
+        def["flags"], "json,tree-built",
+        "the first query after an index assembles the tree"
+    );
+    assert_eq!(find("ancestors", "hit")["flags"], "", "later ones map it");
     assert_eq!(def["count"], 1);
     assert!(def["latency"].as_str().unwrap().starts_with('<'));
     // The bare grammar is counted as what it dispatched to, marked as bare.

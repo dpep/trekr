@@ -464,6 +464,9 @@ impl Tree {
                     Ok(snapshot) => snapshot,
                     Err(miss) => {
                         phases.snapshot = miss.to_string();
+                        // How often a query pays for the assembly — what
+                        // decides whether building it earlier would pay.
+                        crate::usage::flag("tree-built");
                         let names = Tree::namespace(store, &roots, decls, edges, &mut phases)?;
                         let bytes = snapshot::encode(&names, &key)?;
                         phases.mark("snapshot-encode");
