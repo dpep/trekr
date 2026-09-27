@@ -2977,6 +2977,13 @@ fn completion_after_a_dot_lists_the_receivers_methods_in_lookup_order() {
         labels.contains(&"object_id".to_string()),
         "inherited from core, ranked after"
     );
+    // Kernel's module functions are private, as `private :name` makes any
+    // method: bare only.
+    assert!(!labels.contains(&"puts".to_string()), "{labels:?}");
+    assert!(
+        !labels.contains(&"method_missing".to_string()),
+        "{labels:?}"
+    );
 
     let class_side = format!("{SHOP}Shop::Widget.b\n");
     let (labels, _) = complete(&mut session, &dir, &class_side, 17, 3);
@@ -3023,6 +3030,7 @@ fn completion_of_a_bare_word_offers_locals_then_the_classs_methods() {
     assert!(at("count") < at("polish"), "locals before methods");
     assert!(at("polish") < at("save"), "own before inherited");
     assert!(at("secret").is_some(), "private is callable on self");
+    assert!(at("puts").is_some(), "and so is Kernel's");
 
     session.stop();
     let _ = fs::remove_dir_all(&dir);

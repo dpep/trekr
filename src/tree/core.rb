@@ -55,6 +55,8 @@ class BasicObject
 
   def singleton_method_added(symbol)
   end
+
+  private :initialize, :method_missing, :singleton_method_added
 end
 
 module Kernel
@@ -307,6 +309,14 @@ module Kernel
 
   def Complex(real, imag = 0, exception: true)
   end
+
+  # Module functions: callable bare, never on a receiver (`"x".puts` is a
+  # NoMethodError), so completion after a dot must not offer them.
+  private :puts, :print, :p, :pp, :raise, :fail, :require, :require_relative, :load,
+          :loop, :block_given?, :format, :sprintf, :printf, :rand, :srand, :sleep,
+          :catch, :throw, :lambda, :proc, :gets, :exit, :exit!, :abort, :at_exit,
+          :caller, :caller_locations, :binding, :warn, :system, :spawn, :open,
+          :Integer, :Float, :String, :Array, :Hash, :Rational, :Complex
 end
 
 class Object < BasicObject

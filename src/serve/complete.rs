@@ -78,7 +78,18 @@ impl Members {
     pub(crate) fn of(tree: &Tree) -> Members {
         let mut methods: HashMap<(String, bool), Vec<Member>> = HashMap::new();
         let mut counts: HashMap<String, usize> = HashMap::new();
+        // `private :puts` is a row of its own (DEC-004), not a method: it
+        // makes the owner's `puts` private, which only a lookup by name sees.
+        let mut hidden: HashSet<(String, bool, String)> = HashSet::new();
         tree.each_method(|owner, singleton, method| {
+            match method.via.as_deref() {
+                Some("private" | "protected" | "module_function") => {
+                    hidden.insert((owner.to_string(), singleton, method.name.clone()));
+                    return;
+                }
+                Some("public") => return,
+                _ => {}
+            }
             *counts.entry(method.name.clone()).or_default() += 1;
             let member = Member {
                 private: method.visibility == "private",
@@ -91,6 +102,12 @@ impl Members {
                 .or_default()
                 .push(member);
         });
+        for ((owner, singleton), members) in methods.iter_mut() {
+            for member in members.iter_mut() {
+                let key = (owner.clone(), *singleton, member.name.clone());
+                member.private |= hidden.contains(&key);
+            }
+        }
         let mut children: HashMap<String, Vec<(String, String)>> = HashMap::new();
         for (fqn, kind) in tree.declared() {
             let (scope, name) = match fqn.rsplit_once("::") {

@@ -1331,6 +1331,9 @@ mod tests {
         let listed = |tree: &Tree| {
             let mut all = Vec::new();
             tree.each_method(|owner, singleton, m| {
+                if !m.is_definition() {
+                    return;
+                }
                 let file = m.site.path.rsplit('/').next().unwrap().to_string();
                 all.push((
                     owner.to_string(),
@@ -2320,9 +2323,11 @@ impl Tree {
         declared
     }
 
-    /// Every method definition in the tree's checkouts, under each
-    /// `(owner, singleton)` it is keyed by — including a model a `table_name`
-    /// carrier's columns were re-keyed onto.
+    /// Every method row in the tree's checkouts, under each `(owner,
+    /// singleton)` it is keyed by — including a model a `table_name`
+    /// carrier's columns were re-keyed onto. That includes a bare `private
+    /// :name`, which is no definition but decides who may call one; `via`
+    /// tells them apart.
     ///
     /// Completion has to list, not look up, and this is its one pass over
     /// every method. Names not yet loaded are streamed from the store and
@@ -2334,9 +2339,7 @@ impl Tree {
             let methods = self.methods.borrow();
             for ((owner, singleton, _), hits) in by_owner.iter() {
                 for method in hits.iter().map(|i| &methods[*i]) {
-                    if method.is_definition() {
-                        visit(owner, *singleton, method);
-                    }
+                    visit(owner, *singleton, method);
                 }
             }
         }
@@ -2349,9 +2352,6 @@ impl Tree {
             }
             let owners = self.owners_of(&row);
             let method = self.method_def(row);
-            if !method.is_definition() {
-                return;
-            }
             for owner in &owners {
                 visit(owner, method.singleton, &method);
                 for model in self.carriers.get(owner).into_iter().flatten() {

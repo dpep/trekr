@@ -58,6 +58,11 @@
   pick up an edit to a gem (`--drop` it, then index the app), where both
   failed with git's `rev-parse` error.
 
+- **Completion after a dot leaves out private methods declared by name**:
+  `private :helper` hid nothing, and Kernel's module functions (`puts`,
+  `require`, `raise`, …) and BasicObject's `method_missing` were offered on
+  every receiver. They are still offered bare, inside a method.
+
 ### Added
 
 - **`--dead` says why**: every row has a `reason` (text prints it after the
