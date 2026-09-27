@@ -3078,6 +3078,27 @@ fn completion_on_an_untyped_receiver_is_short_and_disclosed() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A chain typed by what every definition of the previous name returns
+/// completes as go-to-definition resolves it, though the next name is not
+/// written yet.
+#[test]
+fn completion_after_a_chain_lists_what_the_chain_returns() {
+    let (dir, _db, mut session) = indexed_session("complete-chain", SHOP);
+    session.read();
+    let (labels, incomplete) = complete(
+        &mut session,
+        &dir,
+        &format!("{SHOP}def go(x)\n  x.to_s.\n"),
+        18,
+        2,
+    );
+    assert!(labels.contains(&"upcase".to_string()), "{labels:?}");
+    assert!(!incomplete, "a typed receiver's listing is whole");
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A workspace opened through a symlink is answered in the client's spelling.
 /// The store is canonical; sending canonical paths back made the editor open
 /// the same file a second time under its other name.

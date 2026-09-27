@@ -441,7 +441,29 @@ pub(crate) fn receiver_type(
     call: &Call,
     path: &str,
 ) -> Option<(String, bool)> {
-    receiver_of(tree, facts, call, path).map(|receiver| (receiver.fqn, receiver.singleton))
+    receiver_of(tree, facts, call, path)
+        .or_else(|| unanswered_guess(tree, facts, call, path))
+        .map(|receiver| (receiver.fqn, receiver.singleton))
+}
+
+/// Completion asks before the method's name is written, so a guess by
+/// return type has no call to answer yet and is taken as it stands.
+fn unanswered_guess(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiver> {
+    let RecvValue::Call(at) = call.recv_value.as_ref()? else {
+        return None;
+    };
+    let previous = facts
+        .calls
+        .iter()
+        .find(|c| c.pos == *at && c.recv != RecvShape::Symbol)?;
+    if typed_at(tree, facts, previous, path, 1).is_some() {
+        return None;
+    }
+    let guess = by_return_types(tree, previous)?;
+    Some(Receiver {
+        fqn: tree.variant_at(&guess.fqn, path),
+        ..guess
+    })
 }
 
 /// Climb the ladder until a rung names a type — and when that type is a name
