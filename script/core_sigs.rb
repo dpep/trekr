@@ -88,13 +88,24 @@ def return_table(method, known)
 end
 
 # One block state's sigs as `[count or nil, class]` pairs: nil when they
-# cannot be said, :absent when no overload covers the state at all.
+# cannot be said, :absent when no overload covers the state at all. A state
+# RBS types only at some counts is a `Partial` of those counts.
+Partial = Struct.new(:shapes)
+
 def shape_sigs(table, block, positional_names)
   cells = table.select { |(given, _), _| given == block }
   return :absent if cells.empty?
-  # A shape RBS cannot type makes the state unsayable: the sigs for the rest
-  # would read as covering it (`first` would be an Array at every count).
-  return if cells.values.any?(&:nil?)
+  # A shape RBS cannot type leaves only the counts that can be named: a sig
+  # naming none, or the rest, would read as covering it (`first` would be an
+  # Array at every count). Whether even those can be said depends on the
+  # other state, so the caller decides.
+  if cells.values.any?(&:nil?)
+    return Partial.new(
+      cells.filter_map do |(_, argc), returns|
+        [argc, returns] if returns && argc != :rest && argc.between?(1, positional_names.size)
+      end
+    )
+  end
 
   values = cells.values.uniq
   return [[nil, values.first]] if values.size == 1
@@ -131,12 +142,20 @@ def sigs_for(method, known, params)
 
     return without.map { |shape| render.(shape, nil) }
   end
-  # Only `block: NilClass` confines a sig to its block state; a lone
-  # `T.proc` one is Sorbet's ordinary sig and would cover blockless calls.
+  # Only `block: NilClass` confines a sig to its block state and count; a
+  # lone `T.proc` one is Sorbet's ordinary sig and would cover every call.
+  # So a partial state is said only beside a blockless sig that confines the
+  # whole set to overloads (`max_by(n) { }` is an Array, `max_by { }` is not).
   return [] if without.nil?
 
-  [[without, false], [with, true]].flat_map do |shapes, block|
-    shapes.is_a?(Array) ? shapes.map { |shape| render.(shape, block) } : []
+  shapes = ->(state) { state.is_a?(Partial) ? state.shapes : state }
+  if [without, with].any?(Partial) && !(block_param && shapes.(without).is_a?(Array) && shapes.(without).any?)
+    return []
+  end
+
+  [[without, false], [with, true]].flat_map do |state, block|
+    list = shapes.(state)
+    list.is_a?(Array) ? list.map { |shape| render.(shape, block) } : []
   end
 end
 

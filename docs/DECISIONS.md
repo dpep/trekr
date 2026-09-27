@@ -4040,6 +4040,13 @@ is `ambiguous`, which confirms as decided above.
   answer (`Dir.[]` alone must not type `h[:a]`), but one declaring another
   class objects to it and leaves the call untyped. Nothing is added to the
   vote count, so confidence elsewhere is unmoved.
+- *The pruning above dropped sigs that were exact.* A block state RBS types at
+  only some counts lost every sig, though a per-count sig beside a
+  `block: NilClass` one is an overload covering just its count and state. The
+  generator now writes the typed counts when a blockless sig confines the set:
+  `max_by(n) { }` and `min_by(n) { }` are Arrays and `gsub!(pattern)` is an
+  Enumerator again. `first(n)`, `last(n)`, `min(n)` and the rest take no
+  block parameter to confine them with, so they stay unsaid.
 
 ## DEC-078 — Core is served one file per owner, and its stubs read as signatures
 

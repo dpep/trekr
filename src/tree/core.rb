@@ -642,10 +642,12 @@ module Enumerable
   end
 
   sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(n: T.untyped, block: T.proc.void).returns(Array) }
   def min_by(n = nil, &block)
   end
 
   sig { params(block: NilClass).returns(Enumerator) }
+  sig { params(n: T.untyped, block: T.proc.void).returns(Array) }
   def max_by(n = nil, &block)
   end
 
@@ -1132,6 +1134,7 @@ class String < Object
   def sub!(pattern, replacement = nil, &block)
   end
 
+  sig { params(pattern: T.untyped, block: NilClass).returns(Enumerator) }
   def gsub!(pattern, replacement = nil, &block)
   end
 

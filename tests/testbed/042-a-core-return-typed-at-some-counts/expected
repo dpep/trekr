@@ -1,0 +1,8 @@
+# RBS types `max_by(n) { }` as an Array and `gsub!(pattern)` as an Enumerator,
+# but not the other shapes of either call. The generator dropped every sig for
+# a block state it could not type at every count, so these chains went untyped.
+def app.rb:3:43 status=resolved owner=Array via=chain
+def app.rb:5:22 status=resolved owner=Enumerator via=chain
+# The shapes RBS leaves untyped stay untyped: an element, and `self` or nil.
+def app.rb:4:40 status=residue
+def app.rb:6:27 status=residue
