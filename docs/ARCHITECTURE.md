@@ -298,7 +298,9 @@ an Integer look up `to_s` in Numeric) get none. 358 of 785 methods carry one.
 **Served one file per owner** (DEC-078). `src/tree/corelib.rs` cuts `core.rb`
 at its top-level `class`/`module` blocks and each is extracted as its own
 file, so a core site is `<core>/String.rb` at a line of that file. When a
-location has to be opened, the files are written beside the database —
+location has to be opened — by the editor, or in a CLI answer, where the site
+becomes `path: "String.rb"` under `root: <db dir>/core` — the files are
+written beside the database —
 `core/String.rb` next to `trekr.db`, rewritten only when they differ — and an
 editor's peek list reads `String.rb  def downcase(*options)` rather than two
 identical `core.rb  def downcase(*args); end`. Each `def` is multi-line so its first line

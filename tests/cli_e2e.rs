@@ -821,6 +821,25 @@ fn a_constant_card_on_a_split_name_lists_each_declaration() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A Ruby core definition lands on a file that exists, for the command line
+/// as for the editor: `<core>/String.rb` named nothing a caller could open.
+#[test]
+fn a_core_definition_is_a_file_that_exists() {
+    let (dir, db) = scratch("core-file");
+    repo(&dir);
+    fs::write(dir.join("use.rb"), "\"a\".upcase\n").unwrap();
+    trekr(&db, &dir, &["--index"]);
+    let answer = json(&trekr(&db, &dir, &["--def", "use.rb:1:5", "--json"]));
+    let site = &answer["definition"][0];
+    assert_eq!(site["path"], "String.rb", "{answer}");
+    let root = site["root"].as_str().expect("a root, not null");
+    let stub = fs::read_to_string(Path::new(root).join("String.rb")).unwrap();
+    assert!(stub.contains("def upcase"), "{stub}");
+    let text = stdout(&trekr(&db, &dir, &["--def", "use.rb:1:5"]));
+    assert!(text.contains("core/String.rb:"), "{text}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// One fact, one field name, in every command that reports it (DEC-080).
 #[test]
 fn the_same_fact_has_the_same_name_in_every_command() {

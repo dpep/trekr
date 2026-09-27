@@ -542,6 +542,9 @@ impl Rooting {
     /// A path as the checkout holding it names it, and that checkout's root.
     /// Ruby core and a file in no indexed checkout keep their path, rootless.
     fn place(&self, path: &str) -> (String, serde_json::Value) {
+        if let Some((dir, file)) = core_file(path) {
+            return (file, dir.into());
+        }
         if path.starts_with('<') {
             return (path.to_string(), serde_json::Value::Null);
         }
@@ -559,6 +562,18 @@ impl Rooting {
             None => (absolute, serde_json::Value::Null),
         }
     }
+}
+
+/// A Ruby core site as a file that exists: the stubs are written beside the
+/// store (DEC-078), so `<core>/String.rb` becomes `String.rb` under that
+/// directory, as it does for the editor. `None` for any other path, or when
+/// the files cannot be written, which leaves the site rootless.
+fn core_file(path: &str) -> Option<(String, String)> {
+    let file = path
+        .strip_prefix(crate::tree::CORE_PATH)?
+        .strip_prefix('/')?;
+    let dir = crate::store::core_dir().ok()?;
+    Some((dir.to_string_lossy().into_owned(), file.to_string()))
 }
 
 /// Every `path` in an answer made relative to its checkout, with `root`
@@ -587,6 +602,9 @@ static TEXT_ABSOLUTE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicB
 /// A path as text shows it: relative inside the checkout being asked about,
 /// absolute (with `~`) anywhere else — a gem, Ruby core.
 fn shown(path: &str) -> String {
+    if let Some((dir, file)) = core_file(path) {
+        return paths::pretty(&format!("{dir}/{file}"));
+    }
     match ROOTING.get() {
         _ if TEXT_ABSOLUTE.load(std::sync::atomic::Ordering::Relaxed) => paths::pretty(path),
         Some(rooting) if paths::under(&rooting.base, path) => {

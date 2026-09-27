@@ -186,8 +186,9 @@ separately:
   Ruby core carries Ruby 3.4's return types, so `x.gsub(a, b).downcase` is
   `String#downcase`.
 
-A core site's `path` is `<core>/String.rb` with `root: null`: the owner's
-stub, written beside the database as `core/String.rb` when an editor opens it.
+A core site is the owner's stub, written beside the database: `path:
+"String.rb"` with `root` the `core/` directory next to `trekr.db`, so it opens
+like any other site.
 
 **`super` is followed.** `--def` on a `super` answers the method it runs: the
 next definition after the method's owner in the ancestors (prepends, the

@@ -15,6 +15,11 @@
     `variants[].unresolved_ancestors`.
   - bare `--refs NAME` rows: `recv` is now `receiver`, `recv_text` is now
     `receiver_text`, as in `--refs Owner#m` and `--def`.
+  - A Ruby core site is `path: "String.rb"` with `root` the `core/`
+    directory beside the index, where it was `<core>/String.rb` with
+    `root: null`: the stubs are written there, so it opens like any site.
+    Text shows the file's full path. A consumer matching `<core>` should
+    match that `root` instead.
 
 - **An error's message under `--json` no longer starts with `trekr:`.** The
   prefix tells a terminal whose error it is; stderr keeps it. Outside a git

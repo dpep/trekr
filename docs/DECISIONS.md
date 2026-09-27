@@ -3885,6 +3885,11 @@ is unchanged: its locations are `file://` URIs by protocol.
 *Reverses if:* a consumer needs absolute paths without joining. Then it gets
 a flag, not a second shape.
 
+**Revised (DEC-080):** Ruby core no longer stays `<core>/…` with `root:
+null`. Its stubs are written beside the store, as the editor already wrote
+them, and a core site is `path: "String.rb"` under that directory, so every
+site in an answer opens the same way.
+
 ## DEC-077 — A receiver that is a call is typed by the call's declared return
 
 **Decided.** The `other` receiver bucket gets a rung after all: a receiver that
