@@ -146,6 +146,7 @@ fn resolve_at(
 pub(crate) fn references(
     session: &mut Session,
     params: ReferenceParams,
+    cancel: &dyn Fn() -> bool,
 ) -> anyhow::Result<Option<Vec<Location>>> {
     let uri = params.text_document_position.text_document.uri;
     let position = params.text_document_position.position;
@@ -198,7 +199,10 @@ pub(crate) fn references(
     let target = query.owner.clone();
 
     let mut found: Vec<refs::Reference> = Vec::new();
-    for candidate in paths {
+    for (n, candidate) in paths.into_iter().enumerate() {
+        if n % 64 == 63 && cancel() {
+            return Err(super::Cancelled.into());
+        }
         let Ok(bytes) = std::fs::read(root.join(&candidate)) else {
             continue;
         };
@@ -539,6 +543,7 @@ pub(crate) fn prepare_call_hierarchy(
 pub(crate) fn incoming_calls(
     session: &mut Session,
     params: CallHierarchyIncomingCallsParams,
+    cancel: &dyn Fn() -> bool,
 ) -> anyhow::Result<Option<Vec<CallHierarchyIncomingCall>>> {
     let name = params.item.name.clone();
     let Some(path) = convert::uri_to_path(params.item.uri.as_str()) else {
@@ -581,7 +586,10 @@ pub(crate) fn incoming_calls(
     // reader of a call tree is looking for. The reference's own `owner` is the
     // *callee's* — the same for every row, and so no help at all.
     let mut confirmed: Vec<(refs::Reference, Option<String>)> = Vec::new();
-    for candidate in paths {
+    for (n, candidate) in paths.into_iter().enumerate() {
+        if n % 64 == 63 && cancel() {
+            return Err(super::Cancelled.into());
+        }
         let Ok(bytes) = std::fs::read(root.join(&candidate)) else {
             continue;
         };
@@ -689,28 +697,39 @@ pub(crate) fn diagnostics(
     path: &Path,
     uri: Url,
 ) -> Option<lsp_server::Message> {
-    let errors = session.document(path)?.parse_errors();
+    let document = session.document(path)?;
+    let version = document.version();
+    let errors = document.parse_errors();
+    let text = document.text.as_str();
     let diagnostics: Vec<Diagnostic> = errors
         .into_iter()
         .map(|(line, col, message)| Diagnostic {
-            range: point(None, line, col),
+            range: point(Some(text), line, col),
             severity: Some(DiagnosticSeverity::ERROR),
             source: Some("trekr".into()),
             message,
             ..Default::default()
         })
         .collect();
+    Some(publish(uri, diagnostics, version))
+}
+
+/// A `publishDiagnostics` notification. An empty list is meaningful: it clears
+/// what was published before.
+pub(crate) fn publish(
+    uri: Url,
+    diagnostics: Vec<Diagnostic>,
+    version: Option<i32>,
+) -> lsp_server::Message {
     let params = lsp_types::PublishDiagnosticsParams {
         uri,
         diagnostics,
-        version: None,
+        version,
     };
-    Some(lsp_server::Message::Notification(
-        lsp_server::Notification {
-            method: lsp_types::notification::PublishDiagnostics::METHOD.to_string(),
-            params: serde_json::to_value(params).ok()?,
-        },
-    ))
+    lsp_server::Message::Notification(lsp_server::Notification {
+        method: lsp_types::notification::PublishDiagnostics::METHOD.to_string(),
+        params: serde_json::to_value(params).unwrap_or_default(),
+    })
 }
 
 use lsp_types::notification::Notification as _;

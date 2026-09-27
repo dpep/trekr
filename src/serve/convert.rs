@@ -90,6 +90,35 @@ pub(crate) fn to_position(text: Option<&str>, line: u32, col: u32) -> Position {
     }
 }
 
+/// The byte offset of an LSP position in `text`, clamped to the text: a
+/// position past the end of a line is the end of that line, and past the last
+/// line is the end of the text.
+pub(crate) fn offset_of(text: &str, position: Position) -> usize {
+    let mut start = 0;
+    for _ in 0..position.line {
+        match text[start..].find('\n') {
+            Some(newline) => start += newline + 1,
+            None => return text.len(),
+        }
+    }
+    let line_end = text[start..].find('\n').map_or(text.len(), |n| start + n);
+    let mut utf16 = 0u32;
+    for (index, ch) in text[start..line_end].char_indices() {
+        if utf16 >= position.character {
+            return start + index;
+        }
+        utf16 += ch.len_utf16() as u32;
+    }
+    line_end
+}
+
+/// Apply one ranged edit, as an incremental `didChange` carries it.
+pub(crate) fn apply_edit(text: &mut String, range: Range, replacement: &str) {
+    let start = offset_of(text, range.start);
+    let end = offset_of(text, range.end).max(start);
+    text.replace_range(start..end, replacement);
+}
+
 /// A zero-width range at a position — what a "go here" answer needs.
 pub(crate) fn point(text: Option<&str>, line: u32, col: u32) -> Range {
     let position = to_position(text, line, col);
@@ -137,6 +166,19 @@ mod tests {
             },
             "and back again"
         );
+    }
+
+    #[test]
+    fn a_ranged_edit_lands_where_the_client_meant_it() {
+        let mut text = "a = 1\né = 2\n".to_string();
+        let at = |line, character| Position { line, character };
+        // Replace the `2` after a two-byte, one-unit character.
+        apply_edit(&mut text, Range::new(at(1, 4), at(1, 5)), "3");
+        assert_eq!(text, "a = 1\né = 3\n");
+        // Past the end clamps rather than panicking.
+        apply_edit(&mut text, Range::new(at(9, 0), at(9, 9)), "# end\n");
+        assert_eq!(text, "a = 1\né = 3\n# end\n");
+        assert_eq!(offset_of("abc", at(0, 99)), 3);
     }
 
     #[test]

@@ -11,11 +11,13 @@
 
 mod convert;
 mod handlers;
+mod inbox;
 pub(crate) mod log;
 mod state;
 
+use inbox::{Inbox, Next};
 use log::Log;
-use lsp_server::{Connection, ExtractError, Message, Notification, Request, RequestId, Response};
+use lsp_server::{Connection, Message, Notification, Request, RequestId, Response};
 use lsp_types::notification::Notification as _;
 use lsp_types::request::Request as _;
 use lsp_types::{
@@ -114,15 +116,39 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
 
     let store = crate::store::open_default()?;
     let mut session = Session::open(root, store);
+    let inbox = Inbox::new(&connection);
 
-    for message in &connection.receiver {
+    loop {
+        let message = match inbox.next(None) {
+            Next::Message(message) => message,
+            Next::Idle => continue,
+            Next::Closed => break,
+        };
         match message {
             Message::Request(request) => {
-                if connection.handle_shutdown(&request)? {
+                if request.method == lsp_types::request::Shutdown::METHOD {
+                    connection
+                        .sender
+                        .send(Response::new_ok(request.id, ()).into())?;
                     log.event("shutdown", serde_json::json!({}));
+                    await_exit(&connection, &inbox);
                     return Ok(Outcome::ShutDown);
                 }
-                let response = dispatch(&mut session, request, log);
+                let id = request.id.clone();
+                let response = if inbox.is_cancelled(&id) {
+                    // Withdrawn before its turn came: the cheapest answer, and
+                    // the one that keeps a queue of stale hovers from being
+                    // worked through one by one.
+                    log.event(
+                        "request",
+                        serde_json::json!({ "op": request.method, "status": "cancelled" }),
+                    );
+                    cancelled(id.clone())
+                } else {
+                    let cancel = || inbox.is_cancelled(&id);
+                    dispatch(&mut session, request, log, &cancel)
+                };
+                inbox.settle(&id);
                 connection.sender.send(Message::Response(response))?;
                 // Answer first, then check whether this build is still the
                 // current one. A server that keeps serving after its binary
@@ -146,6 +172,12 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
                 }
             }
             Message::Notification(notification) => {
+                if notification.method == lsp_types::notification::Exit::METHOD {
+                    // Exit without shutdown: the protocol says stop, and so we
+                    // do — there is no state here worth refusing to lose.
+                    log.event("exit", serde_json::json!({ "shutdown": false }));
+                    return Ok(Outcome::ShutDown);
+                }
                 let method = notification.method.clone();
                 let published = notify(&mut session, notification);
                 log.event(
@@ -164,6 +196,49 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
     }
     // The channel closed: the client went away without a shutdown request.
     Ok(Outcome::ShutDown)
+}
+
+/// After `shutdown`, the only thing left to do is wait for `exit`.
+///
+/// Anything else that arrives is refused rather than served — the spec's rule,
+/// and the reason this is not lsp-server's `handle_shutdown`: that reads the
+/// raw channel, and the `exit` it waits for may already be sitting in the
+/// inbox, read ahead with everything else.
+fn await_exit(connection: &Connection, inbox: &Inbox) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let left = deadline.saturating_duration_since(std::time::Instant::now());
+        if left.is_zero() {
+            return;
+        }
+        match inbox.next(Some(left)) {
+            Next::Message(Message::Notification(n))
+                if n.method == lsp_types::notification::Exit::METHOD =>
+            {
+                return;
+            }
+            Next::Message(Message::Request(request)) => {
+                let _ = connection.sender.send(
+                    Response::new_err(
+                        request.id,
+                        lsp_server::ErrorCode::InvalidRequest as i32,
+                        "the server is shutting down".into(),
+                    )
+                    .into(),
+                );
+            }
+            Next::Message(_) | Next::Idle => {}
+            Next::Closed => return,
+        }
+    }
+}
+
+fn cancelled(id: RequestId) -> Response {
+    Response::new_err(
+        id,
+        lsp_server::ErrorCode::RequestCanceled as i32,
+        "cancelled".into(),
+    )
 }
 
 /// The executable this process is running, and when it was written.
@@ -214,19 +289,32 @@ fn workspace_root(params: &serde_json::Value) -> PathBuf {
     std::fs::canonicalize(&root).unwrap_or(root)
 }
 
-fn dispatch(session: &mut Session, request: Request, log: &Log) -> Response {
+fn dispatch(
+    session: &mut Session,
+    request: Request,
+    log: &Log,
+    cancel: &dyn Fn() -> bool,
+) -> Response {
     let id = request.id.clone();
     let method = request.method.clone();
     let asked = asked_about(&request.params);
     log.detail("request_params", || request.params.clone());
 
     let started = std::time::Instant::now();
-    let result = route(session, request);
+    let result = route(session, request, cancel);
     let elapsed = started.elapsed();
 
-    let (status, answered) = match &result {
-        Ok(value) => ("ok", shape(value)),
-        Err(_) => ("error", None),
+    let (status, answered, code) = match &result {
+        Ok(value) => ("ok", shape(value), None),
+        Err(error) => {
+            let code = error_code(error);
+            let status = if matches!(code, lsp_server::ErrorCode::RequestCanceled) {
+                "cancelled"
+            } else {
+                "error"
+            };
+            (status, None, Some(code))
+        }
     };
     log.event(
         "request",
@@ -243,29 +331,75 @@ fn dispatch(session: &mut Session, request: Request, log: &Log) -> Response {
         }),
     );
 
-    match result {
-        Ok(value) => Response {
+    match (result, code) {
+        (Ok(value), _) => Response::new_ok(id, value),
+        (Err(error), code) => Response::new_err(
             id,
-            result: Some(value),
-            error: None,
-        },
-        Err(error) => Response {
-            id,
-            result: None,
-            error: Some(lsp_server::ResponseError {
-                code: lsp_server::ErrorCode::InternalError as i32,
-                message: error.to_string(),
-                data: None,
-            }),
-        },
+            code.unwrap_or(lsp_server::ErrorCode::InternalError) as i32,
+            error.to_string(),
+        ),
     }
 }
 
-fn route(session: &mut Session, request: Request) -> anyhow::Result<serde_json::Value> {
+/// Why a request failed, in the protocol's vocabulary. A client treats these
+/// differently — `MethodNotFound` means "do not ask again", `RequestCanceled`
+/// means "you asked me to stop" — so collapsing them all into InternalError
+/// told it the server was broken when it was not.
+fn error_code(error: &anyhow::Error) -> lsp_server::ErrorCode {
+    use lsp_server::ErrorCode;
+    if error.is::<Cancelled>() {
+        ErrorCode::RequestCanceled
+    } else if error.is::<BadParams>() {
+        ErrorCode::InvalidParams
+    } else if error.is::<Unsupported>() {
+        ErrorCode::MethodNotFound
+    } else {
+        ErrorCode::InternalError
+    }
+}
+
+/// The client withdrew the request while it was being worked on.
+#[derive(Debug)]
+pub(crate) struct Cancelled;
+
+/// The params did not have the shape the method requires.
+#[derive(Debug)]
+struct BadParams(String);
+
+/// A method this server does not implement.
+#[derive(Debug)]
+struct Unsupported(String);
+
+impl std::fmt::Display for Cancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("cancelled")
+    }
+}
+impl std::fmt::Display for BadParams {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "invalid params: {}", self.0)
+    }
+}
+impl std::fmt::Display for Unsupported {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "trekr does not implement {}", self.0)
+    }
+}
+impl std::error::Error for Cancelled {}
+impl std::error::Error for BadParams {}
+impl std::error::Error for Unsupported {}
+
+fn route(
+    session: &mut Session,
+    request: Request,
+    cancel: &dyn Fn() -> bool,
+) -> anyhow::Result<serde_json::Value> {
     use lsp_types::request as req;
     match request.method.as_str() {
         req::GotoDefinition::METHOD => run_handler(request, |p| handlers::definition(session, p)),
-        req::References::METHOD => run_handler(request, |p| handlers::references(session, p)),
+        req::References::METHOD => {
+            run_handler(request, |p| handlers::references(session, p, cancel))
+        }
         req::DocumentSymbolRequest::METHOD => {
             run_handler(request, |p| handlers::document_symbol(session, p))
         }
@@ -280,14 +414,12 @@ fn route(session: &mut Session, request: Request) -> anyhow::Result<serde_json::
             run_handler(request, |p| handlers::prepare_call_hierarchy(session, p))
         }
         req::CallHierarchyIncomingCalls::METHOD => {
-            run_handler(request, |p| handlers::incoming_calls(session, p))
+            run_handler(request, |p| handlers::incoming_calls(session, p, cancel))
         }
         req::CallHierarchyOutgoingCalls::METHOD => {
             run_handler(request, |p| handlers::outgoing_calls(session, p))
         }
-        // Anything else: null rather than an error, so a client probing for a
-        // capability it did not read gets a civil answer.
-        _ => Ok(serde_json::Value::Null),
+        other => Err(Unsupported(other.to_string()).into()),
     }
 }
 
@@ -334,7 +466,7 @@ where
     P: serde::de::DeserializeOwned,
     R: serde::Serialize,
 {
-    let params: P = serde_json::from_value(request.params)?;
+    let params: P = serde_json::from_value(request.params).map_err(|e| BadParams(e.to_string()))?;
     Ok(serde_json::to_value(handler(params)?)?)
 }
 
@@ -351,23 +483,44 @@ fn notify(session: &mut Session, notification: Notification) -> Option<Message> 
             let params: lsp_types::DidOpenTextDocumentParams =
                 serde_json::from_value(notification.params).ok()?;
             let path = document_path(params.text_document.uri.as_str())?;
-            session.did_open(path.clone(), params.text_document.text);
+            session.did_open(
+                path.clone(),
+                params.text_document.text,
+                params.text_document.version,
+            );
             handlers::diagnostics(session, &path, params.text_document.uri)
         }
         note::DidChangeTextDocument::METHOD => {
             let params: lsp_types::DidChangeTextDocumentParams =
                 serde_json::from_value(notification.params).ok()?;
             let path = document_path(params.text_document.uri.as_str())?;
-            // FULL sync, so the last change carries the whole document.
-            let text = params.content_changes.into_iter().next_back()?.text;
-            session.did_open(path.clone(), text);
+            // FULL sync is what we asked for, so each change is normally the
+            // whole document. A client that sends ranged edits anyway gets
+            // them applied rather than mistaken for the whole file.
+            let mut text = session
+                .editor_text(&path)
+                .map(str::to_string)
+                .unwrap_or_default();
+            for change in params.content_changes {
+                match change.range {
+                    Some(range) => convert::apply_edit(&mut text, range, &change.text),
+                    None => text = change.text,
+                }
+            }
+            session.did_open(path.clone(), text, params.text_document.version);
             handlers::diagnostics(session, &path, params.text_document.uri)
         }
         note::DidCloseTextDocument::METHOD => {
             let params: lsp_types::DidCloseTextDocumentParams =
                 serde_json::from_value(notification.params).ok()?;
             session.did_close(&document_path(params.text_document.uri.as_str())?);
-            None
+            // A closed file's syntax errors would otherwise sit in the
+            // Problems panel until the file is opened again.
+            Some(handlers::publish(
+                params.text_document.uri,
+                Vec::new(),
+                None,
+            ))
         }
         _ => None,
     }
@@ -379,8 +532,3 @@ fn document_path(uri: &str) -> Option<PathBuf> {
     let path = convert::uri_to_path(uri)?;
     Some(std::fs::canonicalize(&path).unwrap_or(path))
 }
-
-/// Kept so the unused-import lint does not fire on the error types the
-/// dispatcher's shape implies.
-#[allow(dead_code)]
-fn _unused(_: ExtractError<Request>, _: RequestId) {}

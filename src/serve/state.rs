@@ -60,15 +60,48 @@ pub(crate) struct Located {
     pub(crate) absolute: PathBuf,
 }
 
-/// A file the editor has open, and its parse.
+/// A file's text and its parse — either the editor's copy or a read of disk.
 pub(crate) struct Document {
     pub(crate) text: String,
     facts: Option<Facts>,
+    /// Where the text came from. The editor's copy is authoritative until it
+    /// closes the file; a disk read is only as good as the file it was read
+    /// from, and is re-read the moment that file changes.
+    origin: Origin,
 }
 
+#[derive(Clone, Copy, PartialEq)]
+enum Origin {
+    /// The editor sent it, at this version.
+    Editor { version: i32 },
+    /// Read from disk, when the file had this modification time and length.
+    Disk {
+        modified: std::time::SystemTime,
+        len: u64,
+    },
+}
+
+/// How many disk reads to keep. An agent that walks a codebase would
+/// otherwise pin every file it ever asked about in memory for the life of the
+/// session; past this, the whole disk cache is dropped and rebuilt on demand,
+/// which costs one read per file and nothing else.
+const DISK_CACHE: usize = 256;
+
 impl Document {
-    pub(crate) fn new(text: String) -> Document {
-        Document { text, facts: None }
+    fn new(text: String, origin: Origin) -> Document {
+        Document {
+            text,
+            facts: None,
+            origin,
+        }
+    }
+
+    /// The editor's version, when this is the editor's copy.
+    pub(crate) fn version(&self) -> Option<i32> {
+        match self.origin {
+            Origin::Editor { version } => Some(version),
+            Origin::Disk { .. } => None,
+        }
     }
 
     /// Prism's syntax errors for this document.
@@ -169,8 +202,11 @@ impl Session {
         Ok(checkout.tree.as_ref().expect("just built"))
     }
 
-    pub(crate) fn did_open(&mut self, path: PathBuf, text: String) {
-        self.open.insert(path, Document::new(text));
+    /// The editor's copy of a file, replacing whatever was held for it. Used
+    /// for both open and change: sync is FULL, so each carries the whole text.
+    pub(crate) fn did_open(&mut self, path: PathBuf, text: String, version: i32) {
+        self.open
+            .insert(path, Document::new(text, Origin::Editor { version }));
     }
 
     pub(crate) fn did_close(&mut self, path: &Path) {
@@ -179,11 +215,50 @@ impl Session {
 
     /// The editor's copy if it has one, else what is on disk. The editor's copy
     /// is the one the user is looking at.
+    ///
+    /// A disk read is kept only while the file is unchanged. It used to be kept
+    /// forever, which served an agent the file as it was the first time it
+    /// asked — after the agent itself had edited it.
     pub(crate) fn document(&mut self, path: &Path) -> Option<&mut Document> {
-        if !self.open.contains_key(path) {
+        let fresh = match self.open.get(path).map(|d| d.origin) {
+            Some(Origin::Editor { .. }) => true,
+            Some(Origin::Disk { modified, len }) => {
+                disk_stamp(path).is_some_and(|now| now == (modified, len))
+            }
+            None => false,
+        };
+        if !fresh {
+            let (modified, len) = disk_stamp(path)?;
             let text = std::fs::read_to_string(path).ok()?;
-            self.open.insert(path.to_path_buf(), Document::new(text));
+            let disk = self
+                .open
+                .values()
+                .filter(|d| matches!(d.origin, Origin::Disk { .. }))
+                .count();
+            if disk >= DISK_CACHE {
+                self.open
+                    .retain(|_, d| matches!(d.origin, Origin::Editor { .. }));
+            }
+            self.open.insert(
+                path.to_path_buf(),
+                Document::new(text, Origin::Disk { modified, len }),
+            );
         }
         self.open.get_mut(path)
     }
+
+    /// The editor's text for a file, if the editor has it open — and only
+    /// then. A question that reads many files from disk asks this first, so an
+    /// unsaved edit is answered as the user sees it.
+    pub(crate) fn editor_text(&self, path: &Path) -> Option<&str> {
+        self.open
+            .get(path)
+            .filter(|d| matches!(d.origin, Origin::Editor { .. }))
+            .map(|d| d.text.as_str())
+    }
+}
+
+fn disk_stamp(path: &Path) -> Option<(std::time::SystemTime, u64)> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
 }

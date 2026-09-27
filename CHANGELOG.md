@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+- **`--lsp` speaks the protocol's error vocabulary, and honours cancellation.**
+  An unsupported method answers `MethodNotFound` (it answered `null`, which a
+  client reads as "nothing here") and a malformed request `InvalidParams` (it
+  answered `InternalError`). `$/cancelRequest` is now read ahead of the queue:
+  a request withdrawn before its turn is answered `RequestCancelled` without
+  being worked, and a long `references` / `incomingCalls` stops mid-scan.
+  `exit` stops the server with or without a preceding `shutdown`.
+- **`--lsp` no longer serves a file as it was the first time it was asked
+  about.** A file the editor has not opened is re-read when it changes on disk
+  — an agent that edited a file and then asked about it got the old answer.
+  Closing a file clears its syntax diagnostics, published diagnostics carry the
+  document version, and a ranged `didChange` is applied in place rather than
+  taken for the whole document.
+
 ## 0.1.5 — 2026-08-26
 
 - **`trekr --dead <path>…` finds candidates for deletion or inlining.** Scope is

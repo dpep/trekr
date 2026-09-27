@@ -1227,3 +1227,192 @@ fn serve_retires_when_its_binary_is_replaced() {
 
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// A client that asks for something this server does not do has to be told
+/// *that*, in the protocol's words — not handed a `null` it will read as "no
+/// answer here", and not an InternalError that reads as a crash.
+#[test]
+fn an_unsupported_method_and_a_malformed_request_get_their_own_error_codes() {
+    let (dir, db) = scratch("errors");
+    repo(&dir);
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+
+    let unknown = session.request("textDocument/formatting", serde_json::json!({}));
+    assert_eq!(unknown["error"]["code"], -32601, "MethodNotFound");
+
+    let malformed = session.request("textDocument/definition", serde_json::json!({"bogus": 1}));
+    assert_eq!(malformed["error"]["code"], -32602, "InvalidParams");
+
+    // And the server is still there afterwards.
+    let fine = session.request(
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    assert!(fine["result"].is_array());
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A cancelled request is answered with RequestCancelled rather than worked.
+///
+/// The cancellation is sent *first*, which is the one ordering a test can make
+/// deterministic: sent after, it races the server picking the request up. The
+/// server reads ahead, so a cancellation that arrives while an earlier request
+/// is still being answered is seen the same way.
+#[test]
+fn a_cancelled_request_is_not_answered_with_a_result() {
+    let (dir, db) = scratch("cancel");
+    repo(&dir);
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+
+    let id = session.next_id + 1;
+    session.notify("$/cancelRequest", serde_json::json!({ "id": id }));
+    let answer = session.request(
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    assert_eq!(answer["error"]["code"], -32800, "RequestCancelled");
+    assert!(answer.get("result").is_none());
+
+    // The next request with a fresh id is served normally.
+    let next = session.request(
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    assert!(next["result"].is_array());
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn closing_a_file_clears_its_diagnostics() {
+    let (dir, db) = scratch("close");
+    repo(&dir);
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let uri = uri_of(&dir, "app.rb");
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri, "languageId": "ruby", "version": 3, "text": "def broken(\n"
+        }}),
+    );
+    let published = session.read();
+    assert!(
+        !published["params"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(published["params"]["version"], 3, "tagged with the version");
+
+    session.notify(
+        "textDocument/didClose",
+        serde_json::json!({"textDocument": {"uri": uri}}),
+    );
+    let cleared = session.read();
+    assert_eq!(cleared["method"], "textDocument/publishDiagnostics");
+    assert!(
+        cleared["params"]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// FULL sync is what the server asks for, but a ranged edit must not be
+/// mistaken for the whole document.
+#[test]
+fn a_ranged_change_is_applied_rather_than_replacing_the_document() {
+    let (dir, db) = scratch("ranged");
+    repo(&dir);
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let uri = uri_of(&dir, "app.rb");
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri, "languageId": "ruby", "version": 1,
+            "text": "class Widget\n  def save\n  end\nend\n"
+        }}),
+    );
+    session.read();
+    // Rename `save` to `store` in place.
+    session.notify(
+        "textDocument/didChange",
+        serde_json::json!({
+            "textDocument": {"uri": uri, "version": 2},
+            "contentChanges": [{
+                "range": {"start": {"line": 1, "character": 6}, "end": {"line": 1, "character": 10}},
+                "text": "store"
+            }],
+        }),
+    );
+    session.read();
+    let answer = session.request(
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri}}),
+    );
+    let text = answer["result"].to_string();
+    assert!(text.contains("\"store\""), "{text}");
+    assert!(text.contains("\"Widget\""), "the rest of the file survived");
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A file the editor never opened is read from disk — and re-read when it
+/// changes there. An agent edits files and then asks about them; answering
+/// from the first read served it the file as it was before its own edit.
+#[test]
+fn a_file_read_from_disk_is_reread_after_it_changes() {
+    let (dir, db) = scratch("reread");
+    repo(&dir);
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let names = |session: &mut Session| {
+        session.request(
+            "textDocument/documentSymbol",
+            serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+        )["result"]
+            .to_string()
+    };
+    assert!(!names(&mut session).contains("Gadget"));
+    fs::write(
+        dir.join("app.rb"),
+        "class Gadget\n  def spin\n  end\nend\n# longer than before\n",
+    )
+    .unwrap();
+    assert!(names(&mut session).contains("Gadget"));
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `exit` ends the process whether or not `shutdown` came first — a client
+/// that skips it must not leave a server behind.
+#[test]
+fn exit_without_shutdown_still_stops_the_server() {
+    let (dir, db) = scratch("exit");
+    repo(&dir);
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify("exit", serde_json::json!(null));
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while session.child.try_wait().unwrap().is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the server ignored exit"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    session.stdin.take();
+    let _ = fs::remove_dir_all(&dir);
+}
