@@ -288,7 +288,7 @@ tiers the site `possible`.
   is on stderr either way:
 
   ```json
-  { "error": "trekr: cannot read app/gone.rb: No such file or directory (os error 2)", "kind": "not_found", "code": 66 }
+  { "error": "cannot read app/gone.rb: No such file or directory (os error 2)", "kind": "not_found", "code": 66 }
   ```
 * `gems.missing` in `--index` output names gems the lockfile wants and disk
   lacks — a hole in every answer that would have come from them.

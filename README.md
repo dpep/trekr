@@ -72,7 +72,7 @@ exist, a directory outside any checkout, a store that cannot be opened — stdou
 carries one object instead of an answer:
 
 ```json
-{ "error": "trekr: cannot read app/gone.rb: No such file or directory (os error 2)", "kind": "not_found", "code": 66 }
+{ "error": "cannot read app/gone.rb: No such file or directory (os error 2)", "kind": "not_found", "code": 66 }
 ```
 
 `kind` is stable, and `code` is the exit code. The message also goes to stderr;

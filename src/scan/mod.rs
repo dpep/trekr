@@ -118,7 +118,7 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
         .current_dir(root)
         .output()
         .map_err(|source| GitError {
-            message: format!("running git {}", args.join(" ")),
+            message: "could not run git (is it installed and on PATH?)".into(),
             source: Some(source),
         })?;
     if !out.status.success() {
@@ -145,10 +145,26 @@ pub(crate) fn repo_root(path: &Path) -> Result<PathBuf> {
             .filter(|parent| !parent.as_os_str().is_empty())
             .unwrap_or(Path::new("."))
     };
-    let out = git(dir, &["rev-parse", "--show-toplevel"])?;
+    // git's own complaint names `.git` and "parent directories"; say it plainly.
+    let not_a_repo = || {
+        let dir = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        GitError::failed(format!(
+            "not a git repository: {} (trekr answers inside a git checkout)",
+            crate::core::paths::pretty(&dir.to_string_lossy())
+        ))
+    };
+    let out = match git(dir, &["rev-parse", "--show-toplevel"]) {
+        Err(e)
+            if e.downcast_ref::<GitError>()
+                .is_some_and(GitError::not_a_repo) =>
+        {
+            return Err(not_a_repo().into());
+        }
+        out => out?,
+    };
     let path = String::from_utf8(out)?.trim().to_string();
     if path.is_empty() {
-        return Err(GitError::failed(format!("not a git repository: {}", dir.display())).into());
+        return Err(not_a_repo().into());
     }
     Ok(PathBuf::from(path))
 }

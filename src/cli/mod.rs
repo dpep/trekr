@@ -265,7 +265,7 @@ pub fn run() -> ExitCode {
 
     let code = match &result {
         Ok(code) => *code,
-        Err(e) => fail(out, Failure::of(e), &format!("trekr: {e:#}")),
+        Err(e) => fail(out, Failure::of(e), &format!("{e:#}")),
     };
     // After the answer is out, never before it (rq DECISIONS D13).
     if let Some(feature) = feature {
@@ -320,9 +320,10 @@ fn cli_flags(cli: &Cli, out: Output) -> Vec<&'static str> {
 }
 
 /// Report an error and return its exit code. The message always goes to
-/// stderr; a structured caller also gets it as one object on stdout.
+/// stderr; a structured caller also gets it as one object on stdout, without
+/// the `trekr:` that only a terminal needs to tell whose error it is.
 fn fail(out: Output, kind: Failure, message: &str) -> ExitCode {
-    eprintln!("{message}");
+    eprintln!("trekr: {message}");
     emit_error(out, kind, message);
     ExitCode::from(kind.exit_code())
 }

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- **An error's message under `--json` no longer starts with `trekr:`.** The
+  prefix tells a terminal whose error it is; stderr keeps it. Outside a git
+  checkout the message says so plainly instead of quoting `git rev-parse`.
+
 ## 0.3.0 — 2026-09-27
 
 - **Navigation works inside a gem's file in the editor.** After following a

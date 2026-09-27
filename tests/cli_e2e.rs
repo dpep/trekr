@@ -1237,6 +1237,12 @@ fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
             assert_eq!(error["code"], *code, "the object and the process agree");
             let message = error["error"].as_str().unwrap();
             assert!(message.contains(names), "{args:?}: {message}");
+            // The prefix tells a terminal whose error it is; JSON already knows.
+            assert!(!message.starts_with("trekr:"), "{args:?}: {message}");
+            assert!(
+                !message.contains("rev-parse"),
+                "git's words, not ours: {message}"
+            );
             let stderr = String::from_utf8_lossy(&out.stderr);
             assert!(
                 stderr.contains(message),
