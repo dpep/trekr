@@ -6,7 +6,7 @@ export PATH := $(PATH):/opt/homebrew/opt/rustup/bin
 # script/bench.py stages them and reports the conditions (DEC-001).
 CORPORA ?= ~/code/lib/ruby/rails ~/code/lib/ruby/discourse ~/code/lib/ruby/mastodon ~/code/lib/ruby/ruby ~/code/lib/ruby/graph_weaver
 
-.PHONY: check build release bench dogfood vscode-test
+.PHONY: check build release bench dogfood vscode-test clicks
 
 ## the commit gate: fmt, clippy, tests, the VS Code extension's unit tests
 check:
@@ -40,3 +40,10 @@ endif
 ifdef F
 	@cd $(REPO) && TREKR_DB=/tmp/trekr-dogfood.db $(CURDIR)/target/release/trekr --symbols $(F)
 endif
+
+## replay editor clicks — definition and hover on every name in a sample of
+## each repo's files — and bucket what came back empty or unsure. Point it at
+## copies: REPOS="/path/copy-a /path/copy-b" (script/clicks.py).
+clicks: release
+	@script/clicks.py $(REPOS)
+
