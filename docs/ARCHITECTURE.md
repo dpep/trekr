@@ -482,22 +482,49 @@ The log records `reload`, `resume`, `reload_failed` and `retire`.
 
 ## Measurements
 
-2026-08-24, Apple M2 (8 cores), release build, warm page cache. Reproduce with
-`make bench`. Cold time is a single run — a second one is by definition not
-cold; everything else is a median of five. Run-to-run variance is about 20 %, so
-these are two significant figures at best and are quoted that way.
+2026-09-27, Apple M2 (8 cores), release build at 4b035da, warm page cache, on
+a machine shared with other work (load 3–4). Reproduce with `make bench`. Cold
+time is a single run — a second one is by definition not cold; everything else
+is a median of five. Run-to-run variance is about 20 %, so these are two
+significant figures at best and are quoted that way.
 
 | corpus | files | cold | no-op reindex | defs | const refs | call sites | DB |
 |---|---:|---:|---:|---:|---:|---:|---:|
-| rails | 3,307 | 3.1 s | **77 ms** | 50,353 | 91,178 | 308,453 | 65 MB |
-| discourse | 11,287 | 8.6 s | **129 ms** | 59,194 | 206,215 | 1,227,403 | 154 MB |
-| CRuby | 7,931 | 2.3 s | **107 ms** | 56,552 | 171,994 | 666,534 | 72 MB |
+| rails | 3,307 | 1.9 s | **36 ms** | 65,279 | 91,170 | 352,656 | 65 MB |
+| discourse | 11,301 | 8.0 s | **80 ms** | 76,869 | 206,575 | 1,377,499 | 234 MB |
+| CRuby | 7,931 | 2.9 s | **67 ms** | 56,843 | 172,117 | 711,531 | 78 MB |
+| mastodon | 3,270 | 5.3 s | **33 ms** | 21,615 | 27,157 | 213,576 | 80 MB |
+| graph_weaver | 250 | 1.4 s | **24 ms** | 31,508 | 59,288 | 75,333 | 29 MB |
 
-Cold time and DB now include the checkout's **gems**, indexed once per machine
-and shared: rails is 86 gems / 1 897 files on top of its own 3 307. CRuby has
-no `Gemfile.lock`, which is why it did not move. A re-index still parses
-nothing; the extra 13 ms of no-op is the gem scan (5 ms) and one
-`has_checkout` per gem.
+Cold time and DB include the checkout's **gems**, indexed once per machine and
+shared: discourse brings 297 of them. DB is what each corpus added to one
+shared store, in this order, so a gem an earlier corpus brought is not counted
+again. A re-index still parses nothing.
+
+**At monorepo scale.** discourse's Ruby replicated N times, every file wrapped
+in its own module so that no two blobs and no two constants are alike —
+content addressing would otherwise flatter every number. 30× is 336k files,
+the size of the monorepo DEC-035 measured. Single runs, the machine shared.
+
+| | 1× | 10× | 30× |
+|---|---:|---:|---:|
+| cold `--index` (DEC-057) | 6.3 s | 40 s | 240 s |
+| cold `--index`, private memory peak | 100 MB | 180 MB | 390 MB |
+| DB | 0.26 GB | 1.5 GB | 4.4 GB |
+| no-op `--index` | 0.10 s | 0.78 s | 4.8 s |
+| — with git's untracked cache primed and fsmonitor on | | | 0.42 s |
+| one-file `--index` | 0.15 s | 0.92 s | 9.4 s |
+| `--def` | 0.33 s | 1.1 s | 2.9 s |
+| `--def`, private memory peak | 0.10 GB | 0.45 GB | 1.06 GB |
+| LSP first answer (tree build) | 0.23 s | 4.0 s | 2.7 s |
+| LSP live heap, tree + completion listing | 95 MB | 485 MB | 1.23 GB |
+
+What grows with the repo and is paid per question is the tree: every CLI query
+builds all of it (3.5 s at 30×, 2.1 s of that decoding declaration rows), and
+an LSP session holds it and the completion listing in private memory. The
+30× one-file reindex was mostly git walking a worktree whose caches had not
+been primed; with them, a no-op is dominated by trekr reading `git ls-files`
+into the file map.
 
 Cold time is the noisiest figure here — one run, and CRuby has swung between
 2.3 s and 3.9 s across runs on page-cache state alone. Treat it as one
@@ -620,9 +647,14 @@ what a full rebuild from SQL costs:
 
 | corpus | rebuild | total for `--ancestors` |
 |---|---:|---:|
-| rails | 202 ms | 212 ms |
-| discourse | 309 ms | 318 ms |
-| CRuby | 116 ms | 126 ms |
+| rails | 45 ms | 54 ms |
+| discourse | 166 ms | 174 ms |
+| CRuby | 30 ms | 39 ms |
+| mastodon | 146 ms | 154 ms |
+| graph_weaver | 55 ms | 65 ms |
+
+*(2026-09-27. The paragraphs below are history: the 202 / 309 / 116 ms they
+discuss were this table's earlier values.)*
 
 **This has now crossed DEC-007's threshold and the decision needs revisiting.**
 The progression is instructive: 43 ms with constants alone, 120 ms once method
@@ -794,10 +826,14 @@ entirely.
 
 | `--refs NAME` on rails | rows | time |
 |---|---:|---:|
-| `find_each` | 26 | 9 ms |
-| `save` | 625 | 13 ms |
-| `each` | 1,994 | 34 ms |
-| `new` | 13,684 | 89 ms |
+| `find_each` | 28 | 63 ms |
+| `save` | 716 | 188 ms |
+| `each` | 2,009 | 204 ms |
+| `new` | 13,736 | 662 ms |
+
+These were 9–89 ms when a bare name was a single query. It now names, for each
+call site, the owner the call reaches, which builds the tree and walks each
+site's receiver — the cost is that, not the query.
 
 **Where the bytes go.** 291 MB for the three corpora *and their gems*, up from
 236 MB without them. Gems cost about what the code they contain suggests —

@@ -2919,3 +2919,108 @@ four on the 30× synthetic monorepo, medians; output identical:
 
 Found by the unbounded-growth audit: every per-query structure that grows with
 the repo was checked for work that grows faster than it.
+
+## DEC-060 — The tree becomes a flat, interned, mmap'd snapshot — measured, not built
+
+**Recommended, for its own lane.** At monorepo scale the cost every question
+pays is the tree: each CLI query assembles the whole namespace from SQL, and
+each LSP session holds it privately. Measured on the 30× synthetic monorepo
+(discourse replicated with every blob and constant distinct):
+
+| | 1× (discourse) | 30× |
+| --- | ---: | ---: |
+| names / declarations | 45k / 70k | 395k / 894k |
+| tree build (`--ancestors`) | 170 ms | 3.5 s |
+| — of which the declarations SQL | 68 ms | 2.1 s |
+| — freeing it at exit (before DEC-054) | 16 ms | 216 ms |
+| `--def`, private memory peak | 0.10 GB | 1.06 GB |
+| LSP: tree / completion listing, live | 45 / 32 MB | 531 / ~490 MB |
+| a snapshot of it, estimated | 7 MB | 117 MB (61 MB of it paths) |
+| materialising it into today's structures (a clone) | 22–31 ms | 222–381 ms |
+
+**Where assemble's time goes** (sampled, discourse): allocation and freeing
+46 %, string work — `format!` in `qualify`, `rsplit_once` — 15 %, SipHash
+11 %, copying 9 %. Interning names to `u32` and flat arrays attack all of
+that, but not the 2.1 s of decoding rows at 30×. So interning alone is worth
+perhaps 3.5 → 2.8 s at 30×; it is not the fix, it is the format the fix wants.
+
+**The shape.** The assembled namespace — names interned to `u32`, entries in
+flat arrays indexed by id, sites and mixins as index ranges, paths stored once
+per root — written as a file and mapped read-only by every CLI query and LSP
+session. A deserialising snapshot would already cut the 30× build ~10× (the
+clone above is its floor); a zero-copy one makes the load a few page faults and
+moves the tree from private memory to shared page cache, which is what cuts
+1 GB per query and ~0.5 GB per server. Methods stay demand-loaded from SQL.
+
+**Cross-process safety, as a requirement of the format:**
+- **Immutable and content-keyed.** Named by a key over the format version, the
+  core stub's hash, and each root's surface key in tree order (checkout plus
+  every gem) — the inputs `Tree::build` reads. A file is never modified; a
+  mapped file written in place gives torn reads or SIGBUS.
+- **Written temp → fsync → atomic rename.** Two builders racing produce the
+  same bytes under the same name, so the rename is idempotent.
+- **Readers keep their mapping.** A replaced or unlinked file stays valid for
+  whoever has it mapped; a reader switches when its stamp moves, as the LSP
+  already does for its tree.
+- **Header** with magic, format version, key and a checksum; any mismatch —
+  including a Homebrew upgrade changing the format — is rebuilt, never read.
+- **GC** in `--gc`: a snapshot no checkout's current key names is deleted.
+- **Tests:** a concurrent writer and reader process; a truncated file; a
+  version mismatch; and the invariant that decides it all — a loaded snapshot
+  equals a fresh build — checked over the CLI differential and the gold set.
+
+**Write cost.** A rebuild plus a ~117 MB write at 30×, paid by `--index` when
+the key moves (so queries only read), or by the first query after.
+
+**Not done now** because it replaces the tree's representation, which every
+resolve path reads, and deserves a lane and its own DEC when built.
+
+## DEC-061 — Storage audit: what the bytes are, and what did not clear the bar
+
+**Where the bytes go.** discourse + rails + gems, 306 MB; the 30× store 4.6 GB:
+
+| | 1× | 30× |
+| --- | ---: | ---: |
+| `call_site` rows | 135 MB | 2.18 GB |
+| `call_site_name` | 47 MB | 794 MB |
+| `call_site_blob` | 32 MB | 610 MB |
+| `const_ref` + its two indexes | 43 MB | 560 MB |
+| `def` + its two indexes | 38 MB | 342 MB |
+| everything else | 11 MB | ~120 MB |
+
+Call sites are 70–78 % of the store. A row's 45.6-byte payload is mostly
+`nesting` (14.6 B, only 26.6k distinct values across 2.5 M rows), `name`
+(7.3 B) and `recv` (6.2 B, one of six words).
+
+**Measured and not taken:**
+- **Page size 8 K / 16 K** (fresh stores, discourse + rails, two runs): size
+  302–304 MB either way, tree query 170–175 ms, refs 314–330 ms. Nothing.
+- **`synchronous=OFF`**: one-file reindex 164 → 138 ms (store-write 66 →
+  34 ms; the rest is the WAL checkpoint's fsync). Turned down: a power loss can
+  then corrupt the store silently, and a corrupt store answers wrongly — the
+  accuracy constraint outranks 26 ms. A larger `wal_autocheckpoint` moved the
+  cost out of the write and not out of the run (163 ms).
+- **Dropping `call_site_blob` / `const_ref_blob`** (38 MB at 1×, 700 MB at
+  30×): no read uses them — `EXPLAIN QUERY PLAN` over the real queries reads
+  `def_blob`, `ancestry_blob`, `def_name`, `const_ref_name`, `call_site_name`,
+  `file_blob` — but refreshing a blob and `--gc` delete through them, and
+  without them each deleted blob is a scan of the table.
+- **A covering `call_site(name, blob_id)`** — see DEC-058.
+
+**The slimming that would clear it, sized for a schema lane:** interning
+`nesting` (~30 MB at 1×) and `name` (~20 MB across table and index), `recv` as
+an integer (~13 MB), and `call_site` as `WITHOUT ROWID` clustered by
+`(blob_id, seq)` so the blob index disappears (32 MB, and 610 MB at 30×, where
+random inserts fragmented it) — about 30 % of the store together. It touches
+every query over these tables, so it waits for a schema change that happens
+for its own reasons.
+
+**Is SQLite a bottleneck anywhere left?** Only for bulk writes. A 30× first
+index is 240 s after DEC-057, of which the single writer is most; a
+purpose-built append-only fact log could approach the parse's own speed, and
+per-shard databases would let the writer parallelise. Everything read on the
+query path is small and indexed by name, and the one O(repo) read — the tree's
+declarations, 2.1 s at 30× — is what a snapshot (DEC-060) replaces. So the
+shape is hybrid: SQLite as the source of truth for facts, purpose-built mapped
+snapshots for the hot, whole-namespace reads. A custom datastore would pay only
+if a first index at that scale has to fall well below minutes.
