@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-09-27
 
 - **Commands no longer stall while an index runs.** `--refs`, `--ancestors`,
   `--status` and the rest printed their answer and then sat up to 5 s before
