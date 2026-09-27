@@ -307,6 +307,10 @@ queried method, possible when only some do or an ancestor after its owner is
 not indexed, and excluded when it lands elsewhere. It is always excluded
 against the method it is written in: `super` looks after its own owner.
 
+An owner that does not resolve, or whose whole chain defines no such method,
+has no references at all (DEC-073). The answer lists nothing and exits `1`,
+and its `hint` names the bare-name query that lists every same-name site.
+
 `Widget#save` and `Widget.save` are different questions. A bare name narrows
 nothing, so it keeps the whole-mention view with each call site naming the owner
 it reaches.

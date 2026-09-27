@@ -946,6 +946,42 @@ fn a_method_the_owner_does_not_have_is_named_as_such() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A method that provably does not exist, or an owner that does not, has no
+/// references: the same-name call sites belong to other owners. Text and JSON
+/// agree on that, in the exit code and in what they list.
+#[test]
+fn refs_to_a_method_that_does_not_exist_list_nothing_in_either_mode() {
+    let (dir, db) = scratch("refsnothing");
+    collision_repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+
+    for query in ["Job#save", "Nope#save"] {
+        let text = trekr(&db, &dir, &["--refs", query]);
+        assert_eq!(text.status.code(), Some(1), "{query}: {}", stdout(&text));
+        assert!(
+            !stdout(&text).contains("app.rb:"),
+            "{query}: no site is listed: {}",
+            stdout(&text)
+        );
+        let out = trekr(&db, &dir, &["--refs", query, "--json"]);
+        assert_eq!(out.status.code(), Some(1), "{query}");
+        let answer = json(&out);
+        assert_eq!(
+            answer["references"],
+            serde_json::json!([]),
+            "{query}: {answer}"
+        );
+        assert!(
+            answer["hint"]
+                .as_str()
+                .is_some_and(|hint| hint.contains("--refs save")),
+            "{query}: points at the bare name: {answer}"
+        );
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn nothing_to_report_is_an_exit_code_not_an_error() {
     let (dir, db) = scratch("empty");

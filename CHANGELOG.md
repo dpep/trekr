@@ -24,6 +24,13 @@
   `super_from`, and `--def` offered it as the top candidate. Now every
   `super-only` candidate names who reaches it.
 
+- **`--refs 'Owner#name'` lists nothing for a method that is not there.**
+  When the owner does not resolve, or its whole chain has no such method
+  (`no_such_method`), text and `--json` both list no sites and exit `1`. They
+  used to disagree: the JSON listed every same-name call site and exited `0`.
+  A `hint` names `trekr --refs name` for the unnarrowed sites. Scripts that
+  read those sites from the `Owner#name` form should ask the bare name.
+
 - **`--dead` asks about the owner a method really has.** A method in `module
   Alpha; module Helpers` was checked against `Helpers`, the name as written,
   so every call that resolved to `Alpha::Helpers` was ruled out and a used

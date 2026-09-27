@@ -1139,6 +1139,39 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
 
     let tree = build_tree(&store, &root_str)?;
     let (owner, definition) = refs::definition_of(&tree, &query);
+    let (status, reason) = method_verdict(&tree, &query, owner.as_deref(), !definition.is_empty());
+
+    // An owner that does not exist, or a method its whole chain shows it does
+    // not have, has no references: every same-name site belongs to another
+    // owner, and the bare name is the question that lists them.
+    if owner.is_none() || status == "no_such_method" {
+        let reason = reason.unwrap_or_default();
+        let hint = format!("trekr --refs {}", query.name);
+        if out != Output::Text {
+            emit_json(
+                out,
+                &serde_json::json!({
+                    "query": text,
+                    "status": status,
+                    "owner": owner,
+                    "method": query.name,
+                    "singleton": query.singleton,
+                    "definition": definition,
+                    "counts": refs::Counts::default(),
+                    "references": [],
+                    "reason": reason,
+                    "hint": hint,
+                }),
+            )?;
+        } else {
+            println!(
+                "{reason}\n  every call site of {} by name: {hint}",
+                query.name
+            );
+        }
+        return Ok(ExitCode::from(1));
+    }
+
     let (found, counts) = gather_refs(
         &tree,
         &store,
@@ -1149,8 +1182,6 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
         include_excluded,
         None,
     )?;
-
-    let (status, reason) = method_verdict(&tree, &query, owner.as_deref(), !definition.is_empty());
     let mut answer = serde_json::json!({
         "query": text,
         "status": status,
@@ -1176,9 +1207,6 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
 
     if let Some(reason) = &reason {
         println!("{reason}");
-    }
-    if owner.is_none() {
-        return Ok(ExitCode::from(1));
     }
     for site in &definition {
         println!(

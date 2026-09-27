@@ -3713,3 +3713,22 @@ paths. That could be a gemspec's `files`, a test helper's `$LOAD_PATH`, or
 Zeitwerk's roots. Any of them would replace "nearest" with "reachable", and
 the split would stay.
 
+## DEC-073 — A method that provably does not exist has no references
+
+**Decided.** `--refs 'Owner#name'` answers with no references and exits `1`
+when the owner does not resolve (`status: residue`) or when its whole chain
+was seen and defines no `name` (`status: no_such_method`). Text and JSON
+agree: neither lists a site, and both carry the `reason` plus a `hint` naming
+the bare-name query, `trekr --refs name`, which does list them.
+
+**Before**, the unknown owner exited `1` in text but `0` under `--json`, with
+every same-name call site in the checkout listed as `possible` (686 for
+`Nopity#save` on rails). `no_such_method` listed the untyped sites and exited
+`0`, while the bare `Owner#name` card exited `1`. Those sites belong to other
+owners. The command's point is narrowing them, and offering them as possible
+references to a method that is not there reads as evidence that it is. The
+exit table (DEC-067) says `1` is a definitive nothing, and that is what these
+answers are.
+
+A chain with an unindexed ancestor stays `residue` and still lists its sites,
+because the method may be defined there.
