@@ -63,6 +63,10 @@
   `require`, `raise`, …) and BasicObject's `method_missing` were offered on
   every receiver. They are still offered bare, inside a method.
 
+- **A definition's highlight in the editor spans the name written there.**
+  It was the width of the name asked about, so `map` landing on `def collect`
+  lit `col`, and a `delegate :each` lit `:eac`.
+
 ### Added
 
 - **`--dead` says why**: every row has a `reason` (text prints it after the

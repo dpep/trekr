@@ -194,6 +194,38 @@ pub(crate) fn span(text: Option<&str>, line: u32, col: u32, len: usize) -> Range
     }
 }
 
+/// The name written at our 1-based line and byte column: its column and
+/// byte length. A site's name is not always the one asked about — an alias
+/// lands on the method it names (`map` on `def collect`), a `delegate` on a
+/// symbol (`:each`) or a splat (`*QUERYING_METHODS`) — so a range sized by
+/// the question spans the wrong text. A symbol's colon is left out; a splat
+/// is kept, since the name it hides is not written. `None` when no name
+/// starts there (an operator method), so the caller keeps its own width.
+pub(crate) fn written_at(text: &str, line: u32, col: u32) -> Option<(u32, usize)> {
+    let source = text.lines().nth(line.checked_sub(1)? as usize)?;
+    let rest = source.get(col.checked_sub(1)? as usize..)?;
+    let (skip, keep) = match rest.as_bytes().first()? {
+        b':' => (1, 0),
+        b'*' | b'&' => (0, 1),
+        _ => (0, 0),
+    };
+    let name = &rest[skip + keep..];
+    let ident = name
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(name.len());
+    if ident == 0 {
+        return None;
+    }
+    // `empty?`, `save!`, `name=` — but not the start of `!=`, `==`, `=~`, `=>`.
+    let after = &name.as_bytes()[ident..];
+    let suffix = match after {
+        [b'?' | b'!', b'=', ..] | [b'=', b'=' | b'~' | b'>', ..] => 0,
+        [b'?' | b'!' | b'=', ..] => 1,
+        _ => 0,
+    };
+    Some((col + skip as u32, keep + ident + suffix))
+}
+
 /// Whole lines `first..=last` — a definition's extent, from its first line to
 /// the end of its last, which is what an outline or a call-hierarchy item
 /// spans.
@@ -227,6 +259,35 @@ pub(crate) fn point(text: Option<&str>, line: u32, col: u32) -> Range {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_landing_spans_the_name_written_there() {
+        let text = "def collect\nalias map collect\ndelegate :each, to: :x\n\
+                    delegate(*QUERYING, to: :all)\ndef empty?; end\ndef []; end\n";
+        assert_eq!(written_at(text, 1, 5), Some((5, 7)), "collect, not map");
+        assert_eq!(
+            written_at(text, 3, 10),
+            Some((11, 4)),
+            "each, without its colon"
+        );
+        assert_eq!(written_at(text, 4, 10), Some((10, 9)), "the splat, whole");
+        assert_eq!(
+            written_at(text, 5, 5),
+            Some((5, 6)),
+            "a predicate keeps its ?"
+        );
+        assert_eq!(
+            written_at(text, 6, 5),
+            None,
+            "an operator keeps the asked width"
+        );
+        assert_eq!(
+            written_at("a==b\nc!=d\n", 1, 1),
+            Some((1, 1)),
+            "not a setter"
+        );
+        assert_eq!(written_at("a==b\nc!=d\n", 2, 1), Some((1, 1)), "not a bang");
+    }
 
     #[test]
     fn round_trips_a_path_through_a_uri() {

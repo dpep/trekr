@@ -66,6 +66,12 @@ fn location(
         }
     };
     let uri: Url = path_to_uri(&absolute).parse().ok()?;
+    // Sized by what is written there, which is not always the name asked
+    // about; a zero width is a point, and stays one.
+    let (col, len) = match text.filter(|_| len > 0) {
+        Some(text) => convert::written_at(text, line, col).unwrap_or((col, len)),
+        None => (col, len),
+    };
     Some(Location {
         uri,
         range: convert::span(text, line, col, len),
