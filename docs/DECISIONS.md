@@ -2165,3 +2165,41 @@ a file and fails without that step.
 **Rejected: probing per OID for the whole index.** It scales with the files
 asked about rather than the store, which is right for one file and wrong for
 a no-op at scale: ~100k probes against one scan.
+
+## DEC-047 — The parse streams into the write
+
+**Decided.** `index_files` parses on the pool into a bounded channel (256
+files) while the calling thread writes, inside the same savepoint, whatever
+has arrived. `Store::write` takes an iterator of facts rather than a `Vec`.
+Nothing else about the write changed; rows land in completion order, which was
+already arbitrary (the parse fanned out over a hash map).
+
+**Why, measured.** DEC-014 found the write was most of an index and that trekr,
+unlike rq, parsed everything before writing anything. The time that ordering
+cost turned out small; the memory did not. Fresh database per run, seven
+interleaved rounds, medians:
+
+| | wall | peak RSS |
+| --- | ---: | ---: |
+| discourse + gems, parse then write | 7.8 s | 444 MB |
+| **discourse + gems, overlapped** | **7.5 s** | **159 MB** |
+| rails + gems, parse then write | 1.73 s | 216 MB |
+| **rails + gems, overlapped** | **1.63 s** | **99 MB** |
+
+The wall gain is ~5 %, not the ~0.7 s of parse it could hide: with the two
+overlapped the write itself runs slower (parse + write went from 0.7 + 5.2 s
+to a combined ~5.6 s), consistent with eight parse workers competing with the
+writer for the machine. The memory is the result. Holding every fact of a
+checkout before writing it grows with the checkout — ~0.3 GB for discourse,
+so on the order of 10 GB for the 30× monorepo DEC-035 measured — and the
+channel bounds it by 256 files. Both databases' logical contents hash
+identically.
+
+**The profile changed meaning.** `parse` is now wall time until the last file
+is parsed, which includes waiting on the writer, and `store-write` is what the
+write took after that; they still sum to the whole. Parse speed is reported
+from the files' own parse times, per worker.
+
+**Rejected: a larger or unbounded channel.** It trades back the memory for
+nothing — the writer is the bottleneck either way, so the queue is always
+full.

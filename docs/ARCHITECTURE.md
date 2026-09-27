@@ -614,8 +614,10 @@ the majority. Anything that wants to make indexing faster should start here —
 batched or multi-row inserts, or relaxing durability for the bulk load — and
 not with the worker count (DEC-014). The shape differs from rq's, which is why
 the same "more workers" advice reproduces there and flattens here: rq overlaps
-its single writer with the parse so workers keep feeding it, where trekr
-collects every fact and writes at the end.
+its single writer with the parse so workers keep feeding it. trekr collected
+every fact and wrote at the end until DEC-047; it now streams parsed files to
+the writer too, so `--profile`'s `parse` is wall time that overlaps the write,
+and its throughput line is per worker.
 
 **With gems, the cost was the number of commits, not the rows** (DEC-041).
 A cold discourse index is its own 11k files plus 297 gems, and each gem was its

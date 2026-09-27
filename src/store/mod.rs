@@ -173,17 +173,18 @@ impl Store {
         &mut self,
         root: &str,
         files: &Files,
-        facts: Vec<(Oid, Facts)>,
+        facts: impl IntoIterator<Item = (Oid, Facts)>,
         git_state: i64,
     ) -> Result<Indexed> {
         let tx = self.conn.savepoint()?;
         let mut counts = Indexed {
             files: files.len(),
-            parsed: facts.len(),
             ..Indexed::default()
         };
 
-        for (oid, f) in &facts {
+        for (oid, f) in facts {
+            let (oid, f) = (&oid, &f);
+            counts.parsed += 1;
             counts.defs += f.defs.len();
             counts.refs += f.const_refs.len();
             counts.calls += f.calls.len();

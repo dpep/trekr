@@ -289,46 +289,63 @@ fn index_files(
         profile.skipped += wanted.len() - to_parse.len();
     }
 
-    let parsed: Vec<(Oid, extract::Parsed)> = profile::timed(profile, "parse", || {
-        pool.install(|| {
-            to_parse
-                .into_par_iter()
-                .filter_map(|(oid, path)| {
-                    let started = std::time::Instant::now();
-                    let bytes = std::fs::read(&path).ok()?;
-                    let facts = extract::extract(&bytes);
-                    Some((
-                        oid.clone(),
-                        extract::Parsed {
-                            facts,
-                            bytes: bytes.len() as u64,
-                            elapsed: started.elapsed(),
-                            path: path.to_string_lossy().into_owned(),
-                        },
-                    ))
-                })
-                .collect()
-        })
+    // Parsing fans out on the pool while this thread writes what has already
+    // been parsed: the write is single-threaded and most of the cost, so the
+    // parse hides behind it instead of running before it.
+    let started = std::time::Instant::now();
+    let profiling = profile.is_some();
+    let (send, parsed) = std::sync::mpsc::sync_channel::<(Oid, extract::Parsed)>(256);
+    let mut slow: Vec<profile::SlowFile> = Vec::new();
+    let mut bytes_read = 0u64;
+    let mut fresh: Vec<Oid> = Vec::new();
+    let (counts, parse_done) = std::thread::scope(|scope| {
+        let parsing = scope.spawn(move || {
+            pool.install(|| {
+                to_parse
+                    .into_par_iter()
+                    .for_each_with(send, |send, (oid, path)| {
+                        let started = std::time::Instant::now();
+                        let Ok(bytes) = std::fs::read(&path) else {
+                            return;
+                        };
+                        let facts = extract::extract(&bytes);
+                        let _ = send.send((
+                            oid.clone(),
+                            extract::Parsed {
+                                facts,
+                                bytes: bytes.len() as u64,
+                                elapsed: started.elapsed(),
+                                path: path.to_string_lossy().into_owned(),
+                            },
+                        ));
+                    })
+            });
+            std::time::Instant::now()
+        });
+        let facts = parsed.into_iter().map(|(oid, p)| {
+            bytes_read += p.bytes;
+            if profiling {
+                slow.push(profile::SlowFile {
+                    path: p.path,
+                    ms: p.elapsed.as_secs_f64() * 1000.0,
+                    bytes: p.bytes,
+                });
+            }
+            fresh.push(oid.clone());
+            (oid, p.facts)
+        });
+        let counts = store.write(&root.to_string_lossy(), files, facts, git_state);
+        (counts, parsing.join().expect("the parse does not panic"))
     });
-
+    let counts = counts?;
     if let Some(profile) = profile.as_mut() {
-        profile.bytes += parsed.iter().map(|(_, p)| p.bytes).sum::<u64>();
-        let slow = parsed
-            .iter()
-            .map(|(_, p)| profile::SlowFile {
-                path: p.path.clone(),
-                ms: p.elapsed.as_secs_f64() * 1000.0,
-                bytes: p.bytes,
-            })
-            .collect();
+        // The two overlap: `parse` runs until the last file is parsed, and
+        // `store-write` is what the write took after that.
+        profile.phase("parse", parse_done - started);
+        profile.phase("store-write", parse_done.elapsed());
+        profile.bytes += bytes_read;
         profile.merge_files(slow);
     }
-
-    let facts: Vec<_> = parsed.into_iter().map(|(oid, p)| (oid, p.facts)).collect();
-    let fresh: Vec<Oid> = facts.iter().map(|(oid, _)| oid.clone()).collect();
-    let counts = profile::timed(profile, "store-write", || {
-        store.write(&root.to_string_lossy(), files, facts, git_state)
-    })?;
     // Written now, so a later gem holding the same bytes does not parse them.
     known.extend(fresh);
     Ok(counts)

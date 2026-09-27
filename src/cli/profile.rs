@@ -33,6 +33,10 @@ pub(crate) struct Profile {
     pub(crate) bytes: u64,
     /// The slowest files to parse — this is what finds pathological inputs.
     slowest: Vec<SlowFile>,
+    /// Parse time summed over files. The `parse` phase is wall time and
+    /// overlaps the write, so it cannot say how fast the parser is.
+    #[serde(skip)]
+    parse_cpu: Duration,
 }
 
 #[derive(Debug, Serialize)]
@@ -62,6 +66,7 @@ impl Profile {
     /// Keep only the worst few, so a 100k-file index does not accumulate a
     /// 100k-entry list to sort at the end.
     pub(crate) fn saw_file(&mut self, path: String, elapsed: Duration, bytes: u64) {
+        self.parse_cpu += elapsed;
         let ms = elapsed.as_secs_f64() * 1000.0;
         if self.slowest.len() >= SLOWEST && self.slowest.last().is_some_and(|w| w.ms >= ms) {
             return;
@@ -88,9 +93,10 @@ impl Profile {
 
     /// MB of source per second through the parser — the number that says
     /// whether more workers would help.
+    /// MB parsed per second of one worker's time.
     fn parse_throughput(&self) -> Option<f64> {
-        let parse = self.phases.iter().find(|p| p.name == "parse")?;
-        (parse.ms > 0.0).then(|| (self.bytes as f64 / 1e6) / (parse.ms / 1000.0))
+        let cpu = self.parse_cpu.as_secs_f64();
+        (cpu > 0.0).then(|| (self.bytes as f64 / 1e6) / cpu)
     }
 
     pub(crate) fn report_text(&self) {
@@ -113,7 +119,7 @@ impl Profile {
         );
         if let Some(throughput) = self.parse_throughput() {
             eprintln!(
-                "  {:<14} {:.0} MB/s across {} jobs",
+                "  {:<14} {:.0} MB/s per job, {} jobs",
                 "throughput", throughput, self.jobs
             );
         }
@@ -180,11 +186,14 @@ mod tests {
     }
 
     #[test]
-    fn throughput_needs_a_parse_phase_to_divide_by() {
+    fn throughput_divides_by_the_files_own_parse_time_not_the_phase() {
         let mut profile = Profile::default();
         assert!(profile.parse_throughput().is_none());
         profile.bytes = 2_000_000;
-        profile.phase("parse", Duration::from_millis(1000));
+        // The phase overlaps the write, so its length says nothing about speed.
+        profile.phase("parse", Duration::from_millis(4000));
+        profile.saw_file("a.rb".into(), Duration::from_millis(600), 1_000_000);
+        profile.saw_file("b.rb".into(), Duration::from_millis(400), 1_000_000);
         assert_eq!(profile.parse_throughput(), Some(2.0));
     }
 }

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`--index` uses a third of the memory on a first index.** Files are written
+  as they are parsed instead of all parsed first: discourse with its gems
+  peaks at 160 MB rather than 440 MB, and finishes ~5 % sooner. In
+  `--profile`, `parse` now overlaps `store-write`, and the throughput line is
+  per worker.
 - **A cold `--index` with gems is about 0.4 s faster.** The set of blobs
   already on this machine is read once per index, not once per gem: discourse
   with its 297 gems 7.3 s → 6.8 s. Same index.
