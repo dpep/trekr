@@ -93,12 +93,16 @@ pub(super) fn returns(node: &Node<'_>) -> Option<String> {
 /// The class a Sorbet type expression denotes, or `None` when it denotes no
 /// single class (`T.untyped`, `T.any(..)`, `void`).
 fn type_name(node: &Node<'_>) -> Option<String> {
-    if let Some(read) = node.as_constant_read_node() {
-        return String::from_utf8(read.name().as_slice().to_vec()).ok();
-    }
-    if let Some(path) = node.as_constant_path_node() {
-        // `A::B` denotes B, the same way a constant path resolves elsewhere.
+    if let Some(path) = node.as_constant_path_node()
+        && path.parent().and_then(|p| const_text(&p)).as_deref() == Some("T")
+    {
+        // `T::Array` is Sorbet's spelling of Array, not a constant in T.
         return String::from_utf8(path.name()?.as_slice().to_vec()).ok();
+    }
+    // The path as written, `::` included: `Stripe::Customer` read as
+    // `Customer` resolves to whichever Customer is nearest (DEC-077).
+    if node.as_constant_read_node().is_some() || node.as_constant_path_node().is_some() {
+        return super::const_name(node);
     }
     let call = node.as_call_node()?;
     let first = || call.arguments().and_then(|a| a.arguments().iter().next());

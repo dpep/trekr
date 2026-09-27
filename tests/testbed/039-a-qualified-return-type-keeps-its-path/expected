@@ -1,0 +1,8 @@
+# A sig's return type kept only its last segment, so `Remote::Account` read as
+# `Account` and resolved to the Billing::Account next door — and `--dead` then
+# called Remote::Account#email unreferenced.
+def app.rb:36:18 status=resolved owner=Remote::Account via=chain
+def app.rb:37:18 status=resolved owner=Remote::Account via=chain
+# `::Item` is the top-level Item, not the Billing::Item the nesting finds first.
+def app.rb:38:20 status=resolved owner=Item via=chain
+refs Remote::Account#email confirmed=2 possible=0 excluded=0

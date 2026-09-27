@@ -4006,6 +4006,17 @@ One cost of the third, named: `projects.delete(1).size` now confirms
 the call untyped; without it, String is the only declaring vote and the pick
 is `ambiguous`, which confirms as decided above.
 
+**Amended after 0.3.0.**
+
+- *A qualified return kept only its last segment.* `returns(Stripe::Customer)`
+  was stored as `Customer`, which the method's nesting then resolved to the
+  `Billing::Customer` beside it at 1.0, and `--dead` called
+  `Stripe::Customer#email` unreferenced; `::Item` found the nested `Item`. The
+  path is stored as written, `::` included, and resolved as Ruby resolves a
+  qualified constant: the head through the nesting, the rest by descent.
+  `T::Array` and its kin stay `Array`, since `T` is Sorbet's namespace, not a
+  scope. An extractor change, so store v33.
+
 ## DEC-078 — Core is served one file per owner, and its stubs read as signatures
 
 **Decided.** `core.rb` stays the one source, and is served as one file per

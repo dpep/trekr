@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A qualified Sorbet return type keeps its namespace.**
+  `sig { returns(Stripe::Customer) }` was read as `Customer`, so inside
+  `module Billing` it typed the result as `Billing::Customer`, and `--dead`
+  reported the real `Stripe::Customer` methods unreferenced. `::Item` now
+  means the top-level `Item` too.
+
 - **Upgrading drops and rebuilds the index** (store v33): run `trekr --index`
   once per checkout, and restart any editor still running a trekr from
   before 0.3.0. Such an editor used to keep writing into the new store after
