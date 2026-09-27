@@ -664,11 +664,20 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             // A `define_method` block is the method's body: `self` there is
             // an instance, and a `super` looks up the name it defines.
             match self.defined_method(node) {
-                Some(method) => {
+                Some(DefinedBy::Scope(method)) => {
                     let singleton = method_name(node).as_deref() == Some("define_singleton_method")
                         || self.in_singleton();
                     self.enter(None, Opens::Method { singleton });
                     self.frame().method = method;
+                    self.visit(&block);
+                    self.leave();
+                }
+                // Some other object's method, or one made when a method runs:
+                // a `super` in it is not the enclosing method's, and its name
+                // is not known here.
+                Some(DefinedBy::Elsewhere) => {
+                    let singleton = self.self_is_class();
+                    self.enter(None, Opens::Method { singleton });
                     self.visit(&block);
                     self.leave();
                 }
@@ -766,6 +775,14 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         def.target = Some(target);
         self.push_def(def);
     }
+}
+
+/// Whose method a `define_method` block is the body of.
+enum DefinedBy {
+    /// This scope's, with its name when exactly one is knowable.
+    Scope(Option<String>),
+    /// Another object's, or one made when a method runs.
+    Elsewhere,
 }
 
 /// A class or module built by a call rather than written with a keyword.
@@ -1017,7 +1034,7 @@ impl<'pr> Extractor<'_> {
     /// The name a `define_method` block defines, when it defines exactly one —
     /// what a `super` inside it looks up. `None` for anything else, including
     /// a looped name that spells several.
-    fn defined_method(&self, call: &ruby_prism::CallNode<'pr>) -> Option<Option<String>> {
+    fn defined_method(&self, call: &ruby_prism::CallNode<'pr>) -> Option<DefinedBy> {
         if !matches!(
             method_name(call)?.as_str(),
             "define_method" | "define_singleton_method"
@@ -1025,14 +1042,16 @@ impl<'pr> Extractor<'_> {
             return None;
         }
         if !on_self(call) || self.in_method_body() {
-            return None;
+            return Some(DefinedBy::Elsewhere);
         }
-        let first = arg_nodes(call).into_iter().next()?;
-        Some(literal_name(&first).or_else(|| {
+        let Some(first) = arg_nodes(call).into_iter().next() else {
+            return Some(DefinedBy::Elsewhere);
+        };
+        Some(DefinedBy::Scope(literal_name(&first).or_else(|| {
             self.interpolated_names(&first)
                 .filter(|names| names.len() == 1)
                 .and_then(|mut names| names.pop())
-        }))
+        })))
     }
 
     /// Every name an interpolated string can spell, given what the enclosing
@@ -2289,6 +2308,7 @@ mod tests {
             "class W\n  super\nend\n",
             "class W\n  def @w.save\n    super\n  end\nend\n",
             "class W\n  Class.new(B) do\n    def save\n      super\n    end\n  end\nend\n",
+            "class W\n  def self.make(n)\n    define_method(n) { super() }\n  end\nend\n",
         ] {
             let facts = extract(unplaced.as_bytes());
             assert!(
