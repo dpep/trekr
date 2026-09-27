@@ -1,0 +1,1 @@
+Post = Struct.new(:title)

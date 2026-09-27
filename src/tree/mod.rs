@@ -1105,6 +1105,27 @@ impl Tree {
     /// level. Later segments descend through the previous one's ancestors
     /// instead — lexical nesting does not apply past the head.
     pub(crate) fn resolve(&self, written: &str, written_nesting: &[String]) -> Resolution {
+        self.resolve_from(written, written_nesting, None)
+    }
+
+    /// `resolve`, for a reference written in the file at `path`: inside a
+    /// split class's body the ancestors searched are those of the variant that
+    /// file declares, since the name itself has none (DEC-072).
+    pub(crate) fn resolve_at(
+        &self,
+        written: &str,
+        written_nesting: &[String],
+        path: &str,
+    ) -> Resolution {
+        self.resolve_from(written, written_nesting, Some(path))
+    }
+
+    fn resolve_from(
+        &self,
+        written: &str,
+        written_nesting: &[String],
+        path: Option<&str>,
+    ) -> Resolution {
         let nesting = self.scopes(written_nesting);
         let (head, rest) = split_path(written);
         let mut unresolved = Vec::new();
@@ -1117,7 +1138,11 @@ impl Tree {
                 candidates.push((qualify(scope, head), Via::Lexical));
             }
             if let Some(innermost) = nesting.first() {
-                let chain = self.ancestors(innermost);
+                let innermost = match path {
+                    Some(path) => self.variant_at(innermost, path),
+                    None => innermost.clone(),
+                };
+                let chain = self.ancestors(&innermost);
                 unresolved = chain.unresolved.clone();
                 for ancestor in &chain.chain {
                     candidates.push((qualify(public_name(ancestor), head), Via::Ancestor));

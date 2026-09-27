@@ -1802,7 +1802,12 @@ fn cmd_def(
             freshness = refresh_for_query(&mut store, &root, Path::new(&spec.path));
             let tree = build_tree(&store, &root.to_string_lossy())?;
             context = Some(root.to_string_lossy().into_owned());
-            let resolution = tree.resolve(&reference.name, &reference.nesting);
+            let relative = std::fs::canonicalize(&spec.path)
+                .ok()
+                .and_then(|abs| abs.strip_prefix(&root).ok().map(Path::to_path_buf))
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| spec.path.clone());
+            let resolution = tree.resolve_at(&reference.name, &reference.nesting, &relative);
             let mut value = serde_json::to_value(&resolution)?;
             let object = value.as_object_mut().expect("resolution is an object");
             object.insert("query".into(), query.clone().into());

@@ -32,6 +32,12 @@
   railties' template. It now stands alone, as do plain `Post`, `Person`,
   `Session` and `CallbacksTest` in other gems' tests.
 
+- **A bare constant inside a split class's body is looked up through that
+  class's ancestors.** Inside `class Post < ActiveRecord::Base` beside a test
+  fake's `Post = Struct.new`, `--def` and the editor found nothing for an
+  inherited constant, because the lookup searched the split name, which has no
+  ancestry.
+
 ## 0.2.1 — 2026-09-27
 
 - **Upgrading drops and rebuilds the index** (store v29): run `trekr --index`

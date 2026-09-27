@@ -382,7 +382,7 @@ fn resolve_at(
     Ok(match under {
         Under::Definition(def) => vec![(path, def.pos.line, def.pos.col)],
         Under::Constant(reference) => tree
-            .resolve(&reference.name, &reference.nesting)
+            .resolve_at(&reference.name, &reference.nesting, &path)
             .sites
             .into_iter()
             .map(|site| (site.path, site.line, site.col))
@@ -1137,7 +1137,9 @@ pub(crate) fn hover(session: &mut Session, params: HoverParams) -> anyhow::Resul
     };
     let card = match under {
         Under::Definition(def) => hover_definition(session, &located.root, &def, &source)?,
-        Under::Constant(reference) => hover_constant(session, &located.root, &reference)?,
+        Under::Constant(reference) => {
+            hover_constant(session, &located.root, &located.relative, &reference)?
+        }
         Under::Call(call) => hover_call(session, &located, &facts, &call)?,
     };
     let mut text = card.markdown();
@@ -1238,10 +1240,11 @@ const DOC_SITES: usize = 5;
 fn hover_constant(
     session: &mut Session,
     root: &Path,
+    path: &str,
     reference: &crate::core::ConstRef,
 ) -> anyhow::Result<Card> {
     let tree = session.tree(root)?;
-    let resolution = tree.resolve(&reference.name, &reference.nesting);
+    let resolution = tree.resolve_at(&reference.name, &reference.nesting, path);
     let (Some(fqn), crate::tree::Status::Resolved) = (resolution.fqn.clone(), resolution.status)
     else {
         return Ok(Card {

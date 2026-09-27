@@ -1,0 +1,6 @@
+# Inside `class Post < Record`, a bare `NotFound` is `Record::NotFound`, found
+# through Post's ancestors. When a test fake splits `Post` (DEC-072), the body's
+# lexical scope is the split name, which has no ancestry of its own, so the
+# lookup fell through to the top level and found nothing. It searches the
+# variant the file declares.
+def record/test/models/post.rb:3:11 status=resolved site=record/lib/record.rb:2

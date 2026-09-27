@@ -1107,8 +1107,9 @@ Deliberate, and cheap to close when they earn it:
   proximity, not by what each program loads. A superclass-less declaration in
   a gem directory (a `.gemspec`'s) that declares no variant is that gem's own
   class (DEC-075). Otherwise it joins the nearest variant, or every variant
-  tied for nearest. Constant lookup inside a split class's body does not
-  search the variant's ancestors.
+  tied for nearest. Constant lookup inside a split class's body searches the
+  variant its file declares, for `--def` and the LSP. A constant *receiver*
+  (`NotFound.new`) is still typed without it.
 - `private_constant` / `private_class_method` are not read.
 - Instance, class, and global variables are not in the index (not in PLAN
   §4's Phase 1 fact set). The LSP answers locals, ivars and cvars from the
