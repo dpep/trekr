@@ -467,7 +467,10 @@ impl Tree {
                         phases.snapshot = miss.to_string();
                         let names = Tree::namespace(store, &roots, decls, edges, &mut phases)?;
                         let bytes = snapshot::encode(&names, &key)?;
-                        drop(names);
+                        phases.mark("snapshot-encode");
+                        // Freeing a namespace's worth of strings is a third
+                        // of a second at 30×; nothing here waits for it.
+                        std::thread::spawn(move || drop(names));
                         let snapshot = files::save(&dir, root, &key, bytes);
                         phases.mark("snapshot-write");
                         snapshot

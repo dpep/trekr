@@ -333,30 +333,41 @@ pub(super) fn encode(names: &HashMap<String, Entry>, key: &Key) -> anyhow::Resul
         index[slot] = id(i)?;
     }
 
-    let words = |v: &[u32]| v.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>();
-    let sections: [Vec<u8>; SECTIONS] = [
-        std::mem::take(&mut w.strings),
-        words(&w.str_offs),
-        words(&records),
-        words(&w.sites),
-        words(&w.mixins),
-        words(&w.extends),
-        words(&w.targets),
-        words(&w.nest_offs),
-        words(&w.nest_items),
-        words(&index),
+    let words: [&[u32]; SECTIONS - 1] = [
+        &w.str_offs,
+        &records,
+        &w.sites,
+        &w.mixins,
+        &w.extends,
+        &w.targets,
+        &w.nest_offs,
+        &w.nest_items,
+        &index,
     ];
-    let mut out = vec![0u8; HEADER];
+    let total = HEADER + w.strings.len() + words.iter().map(|v| 4 * v.len() + 8).sum::<usize>() + 8;
+    let mut out = Vec::with_capacity(total);
+    out.resize(HEADER, 0);
     out[..8].copy_from_slice(MAGIC);
     out[8..12].copy_from_slice(&FORMAT.to_le_bytes());
     out[16..16 + key.len()].copy_from_slice(key);
-    for (i, section) in sections.iter().enumerate() {
+    let section = |i: usize, out: &mut Vec<u8>, write: &dyn Fn(&mut Vec<u8>)| {
         out.resize(out.len().next_multiple_of(8), 0);
+        let start = out.len();
+        write(out);
+        let len = (out.len() - start) as u64;
         let at = 64 + i * 16;
-        let offset = out.len() as u64;
-        out[at..at + 8].copy_from_slice(&offset.to_le_bytes());
-        out[at + 8..at + 16].copy_from_slice(&(section.len() as u64).to_le_bytes());
-        out.extend_from_slice(section);
+        out[at..at + 8].copy_from_slice(&(start as u64).to_le_bytes());
+        out[at + 8..at + 16].copy_from_slice(&len.to_le_bytes());
+    };
+    section(STR_BYTES, &mut out, &|out| {
+        out.extend_from_slice(&w.strings)
+    });
+    for (i, v) in words.into_iter().enumerate() {
+        section(i + 1, &mut out, &|out| {
+            for word in v {
+                out.extend_from_slice(&word.to_le_bytes());
+            }
+        });
     }
     let len = out.len() as u64;
     out[48..56].copy_from_slice(&len.to_le_bytes());
@@ -369,14 +380,60 @@ pub(super) fn encode(names: &HashMap<String, Entry>, key: &Key) -> anyhow::Resul
 struct Encoder<'a> {
     strings: Vec<u8>,
     str_offs: Vec<u32>,
-    interned: HashMap<&'a str, u32>,
+    interned: HashMap<&'a str, u32, Fx>,
     sites: Vec<u32>,
     mixins: Vec<u32>,
     extends: Vec<u32>,
     targets: Vec<u32>,
     nest_offs: Vec<u32>,
     nest_items: Vec<u32>,
-    nestings: HashMap<Vec<u32>, u32>,
+    nestings: HashMap<Vec<u32>, u32, Fx>,
+}
+
+/// rustc's Fx hash. The interner hashes every string in the namespace, and
+/// SipHash's DoS resistance buys nothing over names the store already holds.
+/// Only lookups go through it: ids are assigned in first-met order, so the
+/// encoded bytes do not depend on it.
+#[derive(Default, Clone, Copy)]
+struct Fx;
+
+impl std::hash::BuildHasher for Fx {
+    type Hasher = FxHasher;
+    fn build_hasher(&self) -> FxHasher {
+        FxHasher(0)
+    }
+}
+
+struct FxHasher(u64);
+
+impl std::hash::Hasher for FxHasher {
+    fn write(&mut self, bytes: &[u8]) {
+        let (words, rest) = bytes.as_chunks::<8>();
+        for word in words {
+            self.add(u64::from_le_bytes(*word));
+        }
+        for byte in rest {
+            self.add(*byte as u64);
+        }
+    }
+    fn write_u32(&mut self, n: u32) {
+        self.add(n as u64);
+    }
+    fn write_u64(&mut self, n: u64) {
+        self.add(n);
+    }
+    fn write_usize(&mut self, n: usize) {
+        self.add(n as u64);
+    }
+    fn finish(&self) -> u64 {
+        self.0
+    }
+}
+
+impl FxHasher {
+    fn add(&mut self, word: u64) {
+        self.0 = (self.0.rotate_left(5) ^ word).wrapping_mul(0x51_7c_c1_b7_27_22_0a_95);
+    }
 }
 
 impl<'a> Encoder<'a> {
