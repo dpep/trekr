@@ -345,6 +345,64 @@ fn go_to_definition_answers_from_the_resolved_receiver() {
 }
 
 #[test]
+fn a_click_that_finds_nothing_is_logged_where_usage_misses_reads_it() {
+    let (dir, db) = scratch("misses");
+    let source = repo(&dir);
+    let indexed = trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+    assert!(indexed.status.success());
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+    let at = |line: u32, character: u32| {
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": line, "character": character},
+        })
+    };
+    // `w.save` resolves: not a miss. The `end` on line 9 names nothing.
+    session.request("textDocument/definition", at(7, 6));
+    session.request("textDocument/definition", at(8, 3));
+    session.request("textDocument/hover", at(8, 3));
+    session.stop();
+
+    let out = trekr()
+        .args(["--usage", "--misses", "--json"])
+        .env("TREKR_DB", &db)
+        .env("TREKR_LOG", log_path(&db))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "misses were found");
+    let misses: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    let ops: Vec<&str> = misses.iter().map(|m| m["op"].as_str().unwrap()).collect();
+    assert_eq!(ops, ["definition", "hover"], "the hit is not a miss");
+    let miss = &misses[0];
+    assert_eq!(
+        (
+            miss["line"].as_u64(),
+            miss["col"].as_u64(),
+            miss["token"].as_str()
+        ),
+        (Some(9), Some(4), Some("end")),
+        "1-based, as --def takes it"
+    );
+    assert_eq!(miss["outcome"], "empty");
+    assert!(miss["file"].as_str().unwrap().ends_with("app.rb"));
+    assert!(miss["why"].as_str().is_some(), "the engine says why");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn references_narrow_to_the_method_asked_about_not_the_name() {
     let (dir, db) = scratch("refs");
     git(&dir, &["init", "-q"]);

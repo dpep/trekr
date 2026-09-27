@@ -20,6 +20,7 @@ mod gather;
 mod handlers;
 mod inbox;
 pub(crate) mod log;
+pub(crate) mod miss;
 mod reload;
 mod require;
 mod state;
@@ -369,6 +370,7 @@ fn serve(
                         flags: String::new(),
                         outcome: Outcome::Cancelled,
                         latency: None,
+                        miss: None,
                     };
                     (cancelled(id.clone()), counted)
                 } else {
@@ -398,6 +400,10 @@ fn serve(
                 );
                 if cold {
                     first_request = false;
+                }
+                if let Some(miss) = counted.miss {
+                    let text = session.document(&miss.path).map(|d| d.text.clone());
+                    log.event("miss", miss.event(text.as_deref()));
                 }
             }
             Message::Notification(notification) => {
@@ -695,6 +701,9 @@ struct Counted {
     flags: String,
     outcome: Outcome,
     latency: Option<Duration>,
+    /// A definition or hover that came back empty or unsure, logged once the
+    /// answer is sent (DEC-083).
+    miss: Option<miss::Miss>,
 }
 
 /// The operation, without the protocol's namespace: `definition`, `hover`,
@@ -719,11 +728,14 @@ fn dispatch(
     let id = request.id.clone();
     let method = request.method.clone();
     let asked = asked_about(&request.params);
+    let clicked =
+        miss::op_of(&method).and_then(|op| clicked_at(&request.params).map(|at| (op, at)));
     log.detail("request_params", || request.params.clone());
 
     let started = std::time::Instant::now();
     // Whatever an earlier operation noted and nobody took is not this one's.
     let _ = crate::usage::take();
+    let _ = miss::take_why();
     let result = route(session, request, out, cancel);
     let elapsed = started.elapsed();
     let note = crate::usage::take();
@@ -763,11 +775,23 @@ fn dispatch(
         (None, Some(lsp_server::ErrorCode::MethodNotFound)) => Outcome::Error("unsupported"),
         (None, _) => Outcome::Error("internal"),
     };
+    let why = miss::take_why();
+    let missed = matches!(outcome, Outcome::Empty | Outcome::Uncertain);
+    let miss = clicked
+        .filter(|_| missed)
+        .map(|(op, (path, position))| miss::Miss {
+            op,
+            path,
+            position,
+            outcome: outcome.label(),
+            why,
+        });
     let counted = Counted {
         feature: feature_of(&method),
         flags: crate::usage::join(&note.flags),
         outcome,
         latency: Some(elapsed),
+        miss,
     };
 
     let response = match (result, code) {
@@ -910,6 +934,15 @@ fn asked_about(params: &serde_json::Value) -> (Option<String>, Option<u64>) {
         // does, so a line copied out of it can be pasted into `--def`.
         .map(|line| line + 1);
     (document, line)
+}
+
+/// The file and position a click is about, in the session's spelling of the
+/// path.
+fn clicked_at(params: &serde_json::Value) -> Option<(PathBuf, lsp_types::Position)> {
+    let uri = params.get("textDocument")?.get("uri")?.as_str()?;
+    let path = convert::uri_to_path(uri)?;
+    let position = serde_json::from_value(params.get("position")?.clone()).ok()?;
+    Some((std::fs::canonicalize(&path).unwrap_or(path), position))
 }
 
 /// How much came back, without recording what. `null` is zero, and an empty

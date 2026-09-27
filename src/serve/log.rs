@@ -176,6 +176,16 @@ fn timestamp() -> String {
     iso8601(now.as_secs() as i64, now.subsec_millis())
 }
 
+/// Midnight UTC `days` ago, as the date prefix every `ts` starts with — a
+/// bound a timestamp compares against as text.
+pub(crate) fn days_ago(days: u32) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default();
+    let then = now.as_secs() as i64 - i64::from(days) * 86_400;
+    iso8601(then, 0)[..10].to_string()
+}
+
 fn iso8601(epoch_seconds: i64, millis: u32) -> String {
     let days = epoch_seconds.div_euclid(86_400);
     let seconds = epoch_seconds.rem_euclid(86_400);

@@ -150,9 +150,13 @@ pub(crate) fn definition(
     }
     if let Some(under) = variables::under(session, &uri, position) {
         let locations = variables::definition(session, &under);
+        if locations.is_empty() {
+            super::miss::why("a variable with no write in reach");
+        }
         return Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)));
     }
     let Some((located, pos)) = target(session, &uri, position) else {
+        super::miss::why(NO_CHECKOUT);
         return Ok(None);
     };
     let name_len = name_at(session, &located, pos).map_or(0, |n| last_segment(&n).len());
@@ -381,28 +385,32 @@ fn resolve_at(
         .document(&located.absolute)
         .map(|document| document.facts().clone());
     let Some(facts) = facts else {
+        super::miss::why(UNREADABLE);
         return Ok(Vec::new());
     };
     let Some(under) = position::at_facts(&facts, pos.line, pos.col) else {
+        super::miss::why(NO_NAME);
         return Ok(Vec::new());
     };
     let path = located.relative.clone();
     let tree = session.tree(&located.root)?;
     Ok(match under {
         Under::Definition(def) => vec![(path, def.pos.line, def.pos.col)],
-        Under::Constant(reference) => tree
-            .resolve_at(&reference.name, &reference.nesting, &path)
-            .sites
-            .into_iter()
-            .map(|site| (site.path, site.line, site.col))
-            .collect(),
+        Under::Constant(reference) => {
+            let sites = tree
+                .resolve_at(&reference.name, &reference.nesting, &path)
+                .sites;
+            if sites.is_empty() {
+                super::miss::why(format!("constant `{}` not found", reference.name));
+            }
+            sites
+                .into_iter()
+                .map(|site| (site.path, site.line, site.col))
+                .collect()
+        }
         Under::Call(call) => {
             let answer = crate::resolve::method_at(tree, &facts, &call, &path);
-            if answer.status != crate::tree::Status::Resolved
-                || answer.confidence < crate::usage::LOW_CONFIDENCE
-            {
-                crate::usage::outcome(crate::usage::Outcome::Uncertain);
-            }
+            note_uncertain(&answer);
             if !answer.sites.is_empty() {
                 answer
                     .sites
@@ -424,6 +432,39 @@ fn resolve_at(
             }
         }
     })
+}
+
+/// Why a click found nothing, when nothing more specific was noted.
+const NO_CHECKOUT: &str = "the file is in no checkout trekr knows";
+const UNREADABLE: &str = "the file could not be read";
+const NO_NAME: &str = "no name at this position";
+
+/// A call answer short of certain is counted `uncertain`, with its reason
+/// noted for the miss log — the same rule for definition and hover.
+fn note_uncertain(answer: &crate::resolve::MethodAnswer) {
+    use crate::tree::Status;
+    if answer.status == Status::Resolved && answer.confidence >= crate::usage::LOW_CONFIDENCE {
+        return;
+    }
+    crate::usage::outcome(crate::usage::Outcome::Uncertain);
+    let status = match answer.status {
+        Status::Resolved => "low confidence",
+        Status::Ambiguous => "ambiguous",
+        Status::Residue => "residue",
+    };
+    let typed = answer
+        .receiver_type
+        .as_deref()
+        .map(|t| format!(" `{t}`"))
+        .unwrap_or_default();
+    let mut why = format!("{status}; receiver {}{typed}", answer.receiver);
+    if let Some(via) = &answer.resolved_via {
+        why.push_str(&format!(" via {via}"));
+    }
+    if let Some(reason) = &answer.reason {
+        why.push_str(&format!(": {reason}"));
+    }
+    super::miss::why(why);
 }
 
 /// Every mention of the variable under the cursor in this file, reads and
@@ -1133,15 +1174,18 @@ pub(crate) fn hover(session: &mut Session, params: HoverParams) -> anyhow::Resul
         }));
     }
     let Some((located, pos)) = target(session, &uri, position) else {
+        super::miss::why(NO_CHECKOUT);
         return Ok(None);
     };
     let Some((facts, source)) = session
         .document(&located.absolute)
         .map(|document| (document.facts().clone(), document.text.clone()))
     else {
+        super::miss::why(UNREADABLE);
         return Ok(None);
     };
     let Some(under) = position::at_facts(&facts, pos.line, pos.col) else {
+        super::miss::why(NO_NAME);
         return Ok(None);
     };
     let card = match under {
@@ -1316,6 +1360,7 @@ fn hover_call(
     let root = &located.root;
     let tree = session.tree(root)?;
     let answer = crate::resolve::method_at(tree, facts, call, &located.relative);
+    note_uncertain(&answer);
     let named = tree.named(&call.name);
     let name = &call.name;
 

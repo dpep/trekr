@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **`trekr --usage --misses`** lists the editor's definitions and hovers that
+  came back empty or unsure — file, line, column, the token and trekr's reason
+  — so a miss rate in `--usage` comes with the positions behind it. Kept in
+  `lsp.log`, on this machine, and written after the answer is sent (DEC-083).
+
+### Fixed
+
+- A hover on a call trekr could not settle counts as `unsure` in `--usage`,
+  as the definition at the same position does; it counted as a hit.
+
 ## 0.4.0 — 2026-09-27
 
 - **Upgrading drops and rebuilds the index** (store v33): run `trekr --index`

@@ -88,6 +88,12 @@ struct Cli {
     #[arg(long, value_name = "N", requires = "usage", value_parser = clap::value_parser!(u32).range(1..))]
     days: Option<u32>,
 
+    /// With `--usage`: the editor's recent definitions and hovers that came
+    /// back empty or unsure — file, position, the token and trekr's reason —
+    /// read from `lsp.log`, which stays on this machine.
+    #[arg(long, requires = "usage")]
+    misses: bool,
+
     /// Outline one file's definitions, in the order they are written.
     #[arg(long, value_name = "FILE", conflicts_with_all = ["index", "drop"])]
     symbols: Option<PathBuf>,
@@ -285,7 +291,15 @@ pub fn run() -> ExitCode {
     } else if cli.status {
         (Some("status"), cmd_status(out))
     } else if cli.usage {
-        (None, cmd_usage(out, cli.days))
+        let days = cli.days;
+        (
+            None,
+            if cli.misses {
+                cmd_misses(out, days)
+            } else {
+                cmd_usage(out, days)
+            },
+        )
     } else if let Some(input) = &cli.input {
         (
             Some("bare"),
@@ -2788,6 +2802,60 @@ fn cmd_usage(out: Output, days: Option<u32>) -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::from(1));
     }
     print!("{}", usage_text(&rows, days));
+    Ok(ExitCode::SUCCESS)
+}
+
+/// The editor's recent misses, oldest first — the positions behind `--usage`'s
+/// `empty` and `unsure` columns (DEC-083).
+fn cmd_misses(out: Output, days: Option<u32>) -> anyhow::Result<ExitCode> {
+    let Some(log) = crate::serve::log::Log::where_to_look() else {
+        let why = "the LSP log is off or on stderr (TREKR_LOG), so no misses are recorded";
+        match out {
+            Output::Text => println!("{why}"),
+            _ => {
+                eprintln!("trekr: {why}");
+                emit_rows(out, &[] as &[crate::serve::miss::Recorded])?;
+            }
+        }
+        return Ok(ExitCode::from(1));
+    };
+    let since = days.map(|n| crate::serve::log::days_ago(n.saturating_sub(1)));
+    let misses = crate::serve::miss::read(&log, since.as_deref())?;
+    if emit_rows(out, &misses)? {
+        return Ok(exit_on(!misses.is_empty()));
+    }
+    if misses.is_empty() {
+        println!(
+            "no editor misses recorded in {}",
+            paths::pretty(&log.to_string_lossy())
+        );
+        return Ok(ExitCode::from(1));
+    }
+    for miss in &misses {
+        println!(
+            "{}  {:<10} {:<9} {}:{}:{}  {}{}",
+            &miss.ts[..miss.ts.len().min(16)],
+            miss.op,
+            miss.outcome,
+            paths::pretty(&miss.file),
+            miss.line,
+            miss.col,
+            if miss.token.is_empty() {
+                "(no token)"
+            } else {
+                &miss.token
+            },
+            miss.why
+                .as_deref()
+                .map(|w| format!(" — {w}"))
+                .unwrap_or_default(),
+        );
+    }
+    println!(
+        "\n{} misses, from {}",
+        misses.len(),
+        paths::pretty(&log.to_string_lossy())
+    );
     Ok(ExitCode::SUCCESS)
 }
 

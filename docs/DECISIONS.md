@@ -4258,3 +4258,34 @@ wrong reason, and they are now `possible`.
 **Not done: typing a value by its literal.** It needs the extractor to record
 the literal's class on the constant and the tree to carry it, and it is in
 PLAN's backlog.
+
+## DEC-083 — An editor miss is logged with its position and token, locally
+
+**Decided.** When an LSP definition or hover comes back empty or unsure (the
+`empty` and `uncertain` outcomes of DEC-063), the server writes one `miss`
+line to `lsp.log`: file, 1-based line and byte column (pasteable into `--def`),
+the token under the cursor, the outcome, and the engine's one-line reason
+(`residue; receiver local_variable: …`, `no name at this position`).
+`trekr --usage --misses` reads them back from the log's tail; `--json` gives
+one object per miss.
+
+**Why.** `--usage` said 30 of 72 definition requests in a day missed, and
+nobody could say which: the counts keep nothing that names code (DEC-063), and
+the log's `request` line had the file and line but not the column, the token
+or the verdict. A miss rate without its positions cannot be fixed.
+
+**Why the log, and not the usage file.** `lsp.log` already holds the file and
+line of every request, stays on the machine, and is silenced by
+`TREKR_LOG=off`; a miss line adds a column and a token to what it already
+names. The usage file's promise — no code, no paths — stays intact. A ring
+buffer of its own was considered and is not needed: `--misses` reads only the
+last 8 MB of the log, which at a month of daily use is all of it.
+
+**Off the hot path.** The handler notes its reason in a thread-local (one
+`String` on a miss, nothing on a hit); the token is read, and the line written,
+after the response is on the wire — as the usage count is.
+
+**Also.** A hover on a residue or ambiguous call now counts as `uncertain`, as
+a definition does. It counted `hit`, because the hover card is never empty,
+which made hover look more certain than definition at the same position.
+

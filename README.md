@@ -186,6 +186,13 @@ beside the index. `TREKR_USAGE=off` stops the counting: nothing is recorded,
 the file is never opened, and `--usage` says so and exits `1`. A path in
 `TREKR_USAGE` moves the file instead.
 
+`trekr --usage --misses` lists *which* editor clicks those were: every
+definition or hover that came back empty or unsure, with its file, line,
+column, the token under the cursor and trekr's one-line reason. They are read
+from `lsp.log` beside the index — the same local file that already records each
+request's file and line — so `TREKR_LOG=off` turns them off too. `--days N`
+narrows the window; `--json` gives one object per miss.
+
 ### In a very large repo
 
 - Turn on git's own caches: `git config core.untrackedCache true` and
