@@ -1826,3 +1826,79 @@ unrepresentable, which is precisely what DEC-033 ran into.
 now ships: **112 declaration, 2 residue, 0 confidently wrong**, against 112
 `wrong` before. The extraction is unchanged. Only the answer's ability to
 describe itself is new.
+
+## Ruby-semantics fixes, measured against 0.2.0 (2026-09-27)
+
+Seven findings from adversarial user testing (DEC-068 to DEC-071): `super`,
+classes built by `Struct.new`/`Data.define`/`Class.new`, literal
+`define_method`, local-receiver typing, `--def` on variables, alias binding,
+Forwardable. Every comparison below runs each build against a store it indexed
+itself.
+
+### Gold set, retraced with `super` sites
+
+The tracer now keeps a `super` site when the calling frame is the method Ruby
+entered and the line holds exactly one `super`, so the widget_shop trace grew to
+**3,243 sites, 168 of them `super`**. Every site scored, context pinned to
+widget_shop, `VERDICTS=` diffing each build against the one before it.
+
+| | 0.2.0 | now |
+| --- | ---: | ---: |
+| gem floor, correct | 1,502 | **1,619** |
+| gem floor, confidently wrong | 93 | **92** |
+| gem floor, `no-name` | 152 | 23 |
+| `super` sites scored | 128 (all `no-name`) | 163 |
+| `super` sites correct | 0 | **118** |
+| `super` sites confidently wrong | 0 | **0** |
+| app code | 33 correct, 1 wrong | unchanged |
+
+Every verdict that moved, by commit: `super` 162 sites to scored verdicts and
+ten gem residues gaining their truth as a candidate, nothing worse; literal
+`define_method` one residue-hit → correct; local typing by reaching writes
+three correct → residue-hit and one wrong → residue — parameters that the old
+file-wide vote typed from a same-named write in another method, right by
+coincidence three times and wrong once (DEC-071); alias binding one
+residue-hit → residue-truth-absent, a ranking side effect of the alias now
+taking its body's arity. The other commits moved nothing.
+
+### CLI differential on rails and discourse
+
+520 `--def` positions sampled with Prism from 600 files per corpus, seed 7 —
+150 calls, 30 constants, 40 local reads, 15 ivar reads, 25 `super` per corpus
+— asked of 0.2.0 and of this build. **186 answers changed, and every one was
+read: 165 fixed, 21 neutral, 0 regressed.**
+
+| | changed | classified |
+| --- | ---: | --- |
+| local reads | 80 | fixed: 0.2.0 snapped to a neighbouring name (76) or found nothing (4); now the variable with the writes it can see — ten sampled, all ten sites right |
+| ivar reads | 29 | fixed: 25 answered with their writes in the file, 4 honestly `residue` (set in another file) |
+| `super` | 50 | fixed: 36 resolved, 2 ambiguous, 12 residue (a `let` block, a `def` inside a block, `method_missing` after the owner) where 0.2.0 snapped to `merge`, `Date`, `join`… or found nothing |
+| calls | 20 | 6 fixed — three locals typed from the right write (`firm = Firm.first`, not `DependentFirm`), `MigrationProxy = Struct.new … do` resolving its own `filename`, `I18n.t` landing on the `translate` body its alias copied, a parameter no longer typed from another method; 14 neutral — core stub lines shifted (11), the same answer at higher confidence (2), and one resolved-at-0.1 guess from another method's write now `residue` |
+| constants | 7 | neutral: core stub lines shifted |
+
+### `--dead`, rerun against a year of discourse history
+
+DEC-038's check: a discourse clone at 2025-08-26 (ef503f2f8f9), `--dead
+app/models app/services`, each candidate scored by whether its owner's last
+segment still defines the name in today's checkout (6,825 commits later).
+**This is not session 36's instrument** — its base rate here is 1.2 % (5 of
+400 random methods in scope) against their 19.0 % — so only the two builds
+compare, not the eras.
+
+| tier | 0.2.0 | now |
+| --- | ---: | ---: |
+| `unreferenced` | 246, 22 deleted | **199**, 13 deleted |
+| `single-caller` | 654, 13 | 712, 15 |
+| `convention-only` | 287, 16 | 290, 17 |
+| `super-only` | — | 2, 0 |
+
+Six of 0.2.0's `unreferenced` had no owner at all — methods in a `Struct.new`
+block — and score as deleted under any owner-keyed check, so its precision there
+is 16 of 240 (6.7 %) against 13 of 199 (6.5 %) now: the same, on 41 fewer
+candidates. Those 41 mostly moved to `single-caller` because `--dead` now asks
+about a method's qualified owner (a call resolving to `Alpha::Helpers` had been
+ruled out for `Helpers`), and that is where discourse's `deprecate_column`,
+called from two models, stopped reading unreferenced. The two `super-only`
+candidates are `ReviewableActionBuilder#perform_delete_user` and
+`#perform_delete_and_block_user`, reached from the overrides in
+`ReviewableFlaggedPost` and `ReviewableQueuedPost`.

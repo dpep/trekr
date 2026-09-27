@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **Upgrading drops and rebuilds the index** (store v29): run `trekr --index`
+  once per checkout. The extractor records `super`, classes built by calls,
+  literal `define_method`, Forwardable delegators and alias bodies.
+
 - **`--dead` asks about the owner a method really has.** A method in `module
   Alpha; module Helpers` was checked against `Helpers`, the name as written,
   so every call that resolved to `Alpha::Helpers` was ruled out and a used
@@ -11,7 +15,7 @@
 - **Forwardable's `def_delegator` and `def_delegators` define methods**, as
   ActiveSupport's `delegate` does: `def_delegator :@engine, :stop, :halt`
   defines `halt`, a declaration with `defined_via: def_delegator`. The
-  `instance_` and `single_` spellings are read too. Store v28.
+  `instance_` and `single_` spellings are read too.
 
 - **An alias lands on the body it copied.** `alias_method :old_greet, :greet`
   followed by a new `def greet` left `old_greet` pointing at the alias line,
@@ -19,7 +23,7 @@
   written above the alias in the same scope, the alias now records that body
   and its parameters, and `--def`/`--refs` on `old_greet` answer with it
   (`kind: definition`). An alias of an inherited method is still the alias
-  line. Store v27.
+  line.
 
 - **`--def` on a variable answers the variable.** `x = 5; puts x` asked at the
   second `x` answered `puts`, the nearest call on the line. A local or
@@ -31,7 +35,7 @@
 - **`t.references :author` in a schema declares only `author_id`.** It also
   declared an `author` reader, which Rails does not make there; when the
   schema was read after the model, `post.author` pointed at the schema line
-  instead of `belongs_to :author`. Store v26.
+  instead of `belongs_to :author`.
 
 - **A local receiver is typed from the writes that reach it.** `post =
   Post.first; post.author` in a file where an earlier method wrote `post =
@@ -47,7 +51,7 @@
   The block is read as the method's body, so a bare call inside it dispatches
   on the instance. `define_method(:x, instance_method(:y))` is a declaration.
   That reason now says only what was checked: nothing indexed in the
-  receiver's ancestors defines the name. Store v25.
+  receiver's ancestors defines the name.
 
 - **`X = Class.new(Base) do … end` is a class.** So are `Struct.new(…)`,
   `Data.define(…)` and `Module.new` assigned to a constant: `--ancestors X`
@@ -55,7 +59,6 @@
   to `X`, and Struct's and Data's members are methods on it (`defined_via:
   Struct.new`). They were constants with no ancestors, and the block's methods
   had no owner. `--symbols` lists such a constant as a `class` or `module`.
-  Upgrading rebuilds the index (store v24).
 
 - **`super` is followed.** `--def` on a `super` answers the method it runs —
   the next definition after the method's owner, prepends and includes in
@@ -67,8 +70,7 @@
   the overrides. A `super` whose owner the source does not name — in a
   `class_eval` block, `def obj.x` — is residue. A class whose parent is
   computed (`DelegateClass(Base)`) now names it as an unresolved ancestor
-  instead of inheriting `Object`. Upgrading drops and rebuilds the index
-  (store v23): run `trekr --index` once per checkout.
+  instead of inheriting `Object`.
 
 - **Breaking for scripts: errors exit with their own codes, not `2`.** A bad
   flag or value, or an input trekr cannot parse, exits `64`. A missing file or
