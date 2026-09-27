@@ -6,12 +6,21 @@ asked about, completion from the receiver's actual ancestors, call hierarchy,
 outline, and syntax errors as you type. No project Ruby, no `bundle install`,
 no bootable app — trekr reads the source and its gems off disk.
 
-## Requirements
+## Install
 
-A `trekr` newer than 0.1.5 (the first with completion) on your `PATH` (`brew install dpep/tools/trekr`), or set
-`trekr.path`. Open a Ruby project and trekr indexes it in the background the
-first time (progress shows in the status bar); after that the index is shared
-by every worktree of the repo and kept current as you save.
+trekr 0.2.0 or newer on your `PATH` (`brew install dpep/tools/trekr`), or set
+`trekr.path`. The extension is not published to the Marketplace; build it from the
+[trekr repo](https://github.com/dpep/trekr):
+
+```sh
+npm --prefix editors/vscode ci
+npm --prefix editors/vscode run package              # writes editors/vscode/trekr-<version>.vsix
+code --install-extension editors/vscode/trekr-*.vsix  # or Extensions view → ⋯ → Install from VSIX
+```
+
+Open a Ruby project and trekr indexes it in the background the first time
+(progress shows in the status bar); after that the index is shared by every
+worktree of the repo and kept current as you save.
 
 ## What it does
 
@@ -19,9 +28,10 @@ by every worktree of the repo and kept current as you save.
 | --- | --- |
 | Go to Definition / Peek | Where the call actually goes: the receiver's type is resolved (`w = Widget.new; w.save` → `Widget#save`). An unresolvable receiver gives a short ranked peek list, never a single confident guess. |
 | Find All References | Call sites that can reach *this* method — confirmed ones first, then possible ones; ones whose receiver resolves elsewhere are left out. On a class or constant: every reference Ruby's lookup resolves to it. |
-| Hover | The definition's signature and doc comment, and where it lives. A guess says so in words. |
-| `require` strings | Cmd-click or Go to Definition on a `require`, `require_relative`, `load` or `autoload` string opens the file it loads — the checkout's, a gem's, or the standard library's. Several matches give a peek list; hover names the file and gem; a string with one file behind it is underlined as a link. |
-| Variables | Cmd-click a local or parameter: the assignments its value can come from (both branches of an `if`, a loop's own later write, the parameter). Cmd-click an `@ivar`: where its class or an ancestor sets it — `@x =`, `attr_accessor`, `instance_variable_set` — `initialize` first; nothing when the object could be one of several classes. References, hover and highlighting of the other mentions work on both. |
+| Hover | The definition's signature and doc comment, and where it lives — "Defined in", or "Declared by `belongs_to`" when a macro made the method. A resolved answer carries no caveat; a guess says so in words, never as a number. |
+| `require` strings | Cmd-click or Go to Definition on a `require`, `require_relative`, `load` or `autoload` string opens the file it loads — the checkout's, a gem's, or the standard library's. Several matches give a peek list; hover names the file and gem; a string with one file behind it is underlined as a link (`documentLink`). |
+| Variables | Cmd-click a local or parameter: the assignments its value can come from (both branches of an `if`, a loop's own later write, the parameter). Cmd-click an `@ivar` or `@@cvar`: where its class, a reopening of it, or an ancestor sets it — `@x =`, `attr_accessor`, `instance_variable_set` — `initialize` first; nothing when the object could be one of several classes. Find All References lists every read and write; hover says where it was set. `$globals` are not answered. |
+| Highlight | On a variable, its other mentions in the file (`documentHighlight`). Unsaved edits included. |
 | Completion | After `recv.`: the receiver's methods, own first, then inherited. After `Scope::`: its constants. A bare word: locals, the class's methods, constants in scope. |
 | Outline, breadcrumbs, Go to Symbol | From the file as you have it, unsaved edits included. |
 | Go to Implementation | Classes that include a module; overrides of a method. |
@@ -32,12 +42,12 @@ by every worktree of the repo and kept current as you save.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `trekr.path` | `"trekr"` | The trekr binary. |
-| `trekr.features` | all | Which features are active. Remove one to leave it to another extension. |
-| `trekr.index` | `true` | Index an unindexed checkout in the background. |
-| `trekr.referenceLimit` | `1000` | Most locations Find All References returns, confirmed callers first; trekr says when it cut the list. |
+| `trekr.path` | `"trekr"` | The trekr binary. Set an absolute path if VS Code's `PATH` lacks it (e.g. `/opt/homebrew/bin/trekr`). |
+| `trekr.features` | all | Which features are active: `definition`, `references`, `hover`, `documentSymbol`, `workspaceSymbol`, `implementation`, `callHierarchy`, `completion`, `diagnostics`, `documentLink`, `documentHighlight`. Remove one to leave it to another extension. Takes effect on restart. |
+| `trekr.index` | `true` | Index an unindexed checkout in the background. Off: answers come from whatever `trekr --index` last recorded. |
+| `trekr.referenceLimit` | `1000` | Most locations Find All References returns, confirmed callers first; trekr says when it cut the list and names the `trekr --refs` command for all of them. Takes effect on restart. |
 
-Upgrading trekr (`brew upgrade trekr`) needs no restart. The running server
+Upgrading trekr (`brew upgrade dpep/tools/trekr`) needs no restart. The running server
 switches to the new binary within a couple of seconds and keeps your open
 files and unsaved edits.
 
