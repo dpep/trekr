@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **A local receiver is typed from the writes that reach it.** `post =
+  Post.first; post.author` in a file where an earlier method wrote `post =
+  Cpk::Post.create!` answered `Cpk::Post`, because the first assignment in the
+  file won the vote. Now only the writes the read can see vote — not another
+  method's, not one a later write replaced — and when they disagree the answer
+  is `ambiguous`, listing where the other types land. `x ||= Foo.new` counts
+  as a write. `confidence` is still the share of those writes that agree.
+
 - **`define_method(:name) { … }` defines `name`.** Only the looped,
   interpolated form was read, so a plain literal name was missing, and `--def`
   on a call to it said the method came from "a gem, a DSL, or method_missing".

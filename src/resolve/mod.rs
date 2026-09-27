@@ -15,7 +15,7 @@
 
 pub(crate) mod refs;
 
-use crate::core::{Assign, Call, Facts, RecvShape, ValueShape};
+use crate::core::{Assign, Call, Facts, Pos, RecvShape, ValueShape};
 use crate::tree::{Kind, Site, Status, Tree};
 use serde::Serialize;
 
@@ -30,9 +30,11 @@ pub(super) struct Receiver {
     pub(super) agreeing: usize,
     pub(super) total: usize,
     /// The rung picked a winner that other definitions could equally have
-    /// been. Only a convention-based rung sets this; a language rule cannot be
-    /// ambiguous about what the receiver is.
+    /// been. A language rule cannot be ambiguous about what the receiver is;
+    /// a naming convention, or writes that disagree, can.
     pub(super) ambiguous: bool,
+    /// The other types the writes gave it, when they disagreed.
+    pub(super) rivals: Vec<(String, bool)>,
 }
 
 #[derive(Debug, Serialize)]
@@ -158,7 +160,9 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
                         // are known to exist — that is what made it ambiguous —
                         // so listing them is not hedging, it is the disclosure.
                         // A resolved answer has none to list.
-                        candidates: if receiver.ambiguous {
+                        candidates: if !receiver.rivals.is_empty() {
+                            rival_landings(tree, &receiver, &call.name)
+                        } else if receiver.ambiguous {
                             competitors(tree, &call.name, &found.owner)
                         } else {
                             Vec::new()
@@ -433,6 +437,7 @@ pub(super) fn receiver_of(tree: &Tree, facts: &Facts, call: &Call) -> Option<Rec
                 agreeing: 1,
                 total: 1,
                 ambiguous: false,
+                rivals: Vec::new(),
             })
         }
         RecvShape::Const => {
@@ -446,6 +451,7 @@ pub(super) fn receiver_of(tree: &Tree, facts: &Facts, call: &Call) -> Option<Rec
                 agreeing: 1,
                 total: 1,
                 ambiguous: false,
+                rivals: Vec::new(),
             })
         }
         // An assignment first, because it is the more specific evidence; a
@@ -513,6 +519,7 @@ fn from_receiver_name(tree: &Tree, call: &Call) -> Option<Receiver> {
         // picked among equals, which is what `ambiguous` is for — no
         // threshold, just whether anything else could have been the answer.
         ambiguous: others > 0,
+        rivals: Vec::new(),
     })
 }
 
@@ -536,6 +543,7 @@ fn from_sig_params(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> 
         agreeing: 1,
         total: 1,
         ambiguous: false,
+        rivals: Vec::new(),
     })
 }
 
@@ -553,40 +561,99 @@ fn enclosing_method(facts: &Facts, line: u32) -> Option<&crate::core::Def> {
         .min_by_key(|def| def.end_line - def.pos.line)
 }
 
-/// What a local or instance variable holds, judged from every assignment to it
-/// in this file.
+/// What a local or instance variable holds, judged from the assignments that
+/// can have set it.
 ///
-/// The scan is file-wide rather than flow-sensitive. That over-counts — an
-/// assignment in an unrelated method still votes — but it errs toward *lower*
-/// confidence, which is the safe direction for a number a caller may trust.
+/// A local's are the writes its read can see — the same flow analysis the LSP
+/// answers a local with (DEC-064): an assignment in another method, or one a
+/// later write replaced, has no vote. An instance variable spans methods, so
+/// every assignment to it in the file votes, which errs toward lower
+/// confidence. Writes that cannot be typed count against the answer, and
+/// writes that type differently make it `ambiguous` (DEC-071).
 fn from_assignments(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
     let target = call.recv_text.as_ref()?;
     let scope = call.nesting.first();
-    let relevant: Vec<&Assign> = facts
-        .assigns
-        .iter()
-        .filter(|a| &a.target == target && a.nesting.first() == scope)
-        .collect();
+    let seen = call
+        .recv_pos
+        .and_then(|read| facts.reaching(read, reaching_writes));
+    let (relevant, total): (Vec<&Assign>, usize) = match seen {
+        Some(writes) => (
+            facts
+                .assigns
+                .iter()
+                .filter(|a| &a.target == target && writes.contains(&a.pos))
+                .collect(),
+            writes.len(),
+        ),
+        None => {
+            let all: Vec<&Assign> = facts
+                .assigns
+                .iter()
+                .filter(|a| &a.target == target && a.nesting.first() == scope)
+                .collect();
+            let total = all.len();
+            (all, total)
+        }
+    };
     if relevant.is_empty() {
         return None;
     }
 
     let mut votes: Vec<(String, bool, &'static str)> = Vec::new();
     for assign in &relevant {
-        if let Some(vote) = type_of(tree, facts, &assign.value, &assign.nesting, 0, 0) {
+        if let Some(vote) = type_of(
+            tree,
+            facts,
+            &assign.value,
+            &assign.nesting,
+            assign.pos,
+            0,
+            0,
+        ) {
             votes.push(vote);
         }
     }
-    let (fqn, singleton, via) = votes.first().cloned()?;
+    // The type most writes agree on; among equals, the one written last.
+    let (fqn, singleton, via) = votes
+        .iter()
+        .rev()
+        .max_by_key(|(f, _, _)| votes.iter().filter(|(g, _, _)| g == f).count())
+        .cloned()?;
     let agreeing = votes.iter().filter(|(f, _, _)| *f == fqn).count();
+    let mut rivals: Vec<(String, bool)> = Vec::new();
+    for (other, side, _) in &votes {
+        if *other != fqn && !rivals.iter().any(|(r, _)| r == other) {
+            rivals.push((other.clone(), *side));
+        }
+    }
     Some(Receiver {
         fqn,
         singleton,
         via,
         agreeing,
-        total: relevant.len(),
-        ambiguous: false,
+        total,
+        ambiguous: !rivals.is_empty(),
+        rivals,
     })
+}
+
+/// Every local read in a source → the writes that may have set it.
+fn reaching_writes(source: &[u8]) -> std::collections::HashMap<Pos, Vec<Pos>> {
+    let vars = crate::serve::vars::analyze(source);
+    let lines = crate::extract::LineIndex::new(source);
+    let at = |occurrence: &crate::serve::vars::Occurrence| lines.pos(occurrence.span.start);
+    vars.occurrences
+        .iter()
+        .filter(|o| o.sigil == crate::serve::vars::Sigil::Local && o.read)
+        .map(|read| {
+            let writes = read
+                .reaches
+                .iter()
+                .map(|&i| at(&vars.occurrences[i as usize]))
+                .collect();
+            (at(read), writes)
+        })
+        .collect()
 }
 
 /// The class a value expression produces, if syntax or a `sig` names one.
@@ -595,6 +662,8 @@ fn type_of(
     facts: &Facts,
     value: &ValueShape,
     nesting: &[String],
+    // Where the value is written: a local it names was last set before here.
+    at: Pos,
     depth: usize,
     steps: usize,
 ) -> Option<(String, bool, &'static str)> {
@@ -607,8 +676,16 @@ fn type_of(
         // `x = Foo` holds the class itself, so `x.bar` is a class method.
         ValueShape::Const(name) => Some((tree.resolve(name, nesting).fqn?, true, "local:const")),
         ValueShape::Same(other) => {
-            let next = facts.assigns.iter().find(|a| &a.target == other)?;
-            type_of(tree, facts, &next.value, &next.nesting, depth + 1, steps)
+            let next = last_write_before(facts, other, at)?;
+            type_of(
+                tree,
+                facts,
+                &next.value,
+                &next.nesting,
+                next.pos,
+                depth + 1,
+                steps,
+            )
         }
         // Core knows what an Array is now, so `out = []` types `out`.
         ValueShape::Literal(class) => Some((tree.resolve(class, &[]).fqn?, false, "literal")),
@@ -619,12 +696,13 @@ fn type_of(
             if steps > 0 {
                 return None;
             }
-            let assign = facts.assigns.iter().find(|a| &a.target == recv)?;
+            let assign = last_write_before(facts, recv, at)?;
             let (owner, singleton, _) = type_of(
                 tree,
                 facts,
                 &assign.value,
                 &assign.nesting,
+                assign.pos,
                 depth + 1,
                 steps + 1,
             )?;
@@ -656,6 +734,18 @@ fn type_of(
         }
         ValueShape::Other => None,
     }
+}
+
+/// The assignment to `name` nearest before `at` — the one a straight-line
+/// read there would see. Not the flow analysis a receiver gets: a hop through
+/// another local is one step, and a branch there is rarer than the ordering
+/// mistake this avoids, which was taking the first write in the file.
+fn last_write_before<'f>(facts: &'f Facts, name: &str, at: Pos) -> Option<&'f Assign> {
+    facts
+        .assigns
+        .iter()
+        .filter(|a| a.target == name && a.pos < at)
+        .max_by_key(|a| a.pos)
 }
 
 /// A count over a count, rounded to the precision two counts actually carry.
@@ -765,6 +855,23 @@ fn competitors(tree: &Tree, name: &str, winner: &str) -> Vec<Candidate> {
         .into_iter()
         .take(MAX_CANDIDATES)
         .map(|(_, candidate)| candidate)
+        .collect()
+}
+
+/// Where the call lands for each other type the receiver's writes gave it.
+fn rival_landings(tree: &Tree, receiver: &Receiver, name: &str) -> Vec<Candidate> {
+    receiver
+        .rivals
+        .iter()
+        .filter_map(|(fqn, singleton)| tree.lookup(fqn, *singleton, name))
+        .take(MAX_CANDIDATES)
+        .map(|method| Candidate {
+            owner: method.owner.clone(),
+            singleton: method.singleton,
+            why: "another write the receiver's read can see gives it this type",
+            kind: method.kind(),
+            site: method.site.clone(),
+        })
         .collect()
 }
 
@@ -1339,18 +1446,36 @@ mod tests {
         assert_eq!(answer(source, "touch").status, Status::Residue);
     }
 
+    /// The rails miss: `post = Post.first` two lines up, and an earlier
+    /// method's `post = Cpk::Post.create!` casting the deciding vote.
     #[test]
-    fn assignments_that_disagree_lower_the_confidence_they_produced() {
+    fn a_write_in_another_method_has_no_vote() {
         let source = "class A\n  def go\n  end\nend\nclass B\n  def go\n  end\nend\n\
-                      class W\n  def one\n    x = A.new\n    x.go\n  end\n  \
-                      def two\n    x = B.new\n  end\nend\n";
+                      class W\n  def one\n    x = B.new\n  end\n  \
+                      def two\n    x = A.new\n    x.go\n  end\nend\n";
         let found = answer(source, "go");
         assert_eq!(found.status, Status::Resolved);
-        assert_eq!(
-            found.confidence, 0.5,
-            "two assignments were seen and only one agreed — a count, not a guess"
-        );
+        assert_eq!(found.owner.as_deref(), Some("A"));
+        assert_eq!(found.confidence, 1.0);
+    }
+
+    #[test]
+    fn a_write_replaced_before_the_read_has_no_vote() {
+        let source = "class A\n  def go\n  end\nend\nclass B\n  def go\n  end\nend\n\
+                      class W\n  def one\n    x = B.new\n    x = A.new\n    x.go\n  end\nend\n";
+        assert_eq!(answer(source, "go").owner.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn branches_that_type_it_differently_are_ambiguous_and_say_so() {
+        let source = "class A\n  def go\n  end\nend\nclass B\n  def go\n  end\nend\n\
+                      class W\n  def one(c)\n    if c\n      x = A.new\n    else\n      \
+                      x = B.new\n    end\n    x.go\n  end\nend\n";
+        let found = answer(source, "go");
+        assert_eq!(found.status, Status::Ambiguous);
+        assert_eq!(found.confidence, 0.5);
         assert_eq!(found.agreement.as_deref(), Some("1/2"));
+        assert_eq!(found.candidates.len(), 1, "the other branch's landing");
     }
 
     #[test]

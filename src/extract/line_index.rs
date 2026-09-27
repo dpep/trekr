@@ -6,13 +6,13 @@
 
 use crate::core::Pos;
 
-pub(super) struct LineIndex {
+pub(crate) struct LineIndex {
     /// Byte offset of the first character of each line.
     starts: Vec<usize>,
 }
 
 impl LineIndex {
-    pub(super) fn new(src: &[u8]) -> LineIndex {
+    pub(crate) fn new(src: &[u8]) -> LineIndex {
         let mut starts = vec![0];
         starts.extend(
             src.iter()
@@ -24,12 +24,12 @@ impl LineIndex {
     }
 
     /// Lines in the file. A trailing newline does not open a new line.
-    pub(super) fn count(&self) -> usize {
+    pub(crate) fn count(&self) -> usize {
         self.starts.len().saturating_sub(1).max(1)
     }
 
     /// 1-based line and column, as an editor and `file:line:col` mean them.
-    pub(super) fn pos(&self, offset: usize) -> Pos {
+    pub(crate) fn pos(&self, offset: usize) -> Pos {
         let line = self.starts.partition_point(|start| *start <= offset);
         let start = self.starts[line.saturating_sub(1)];
         Pos {

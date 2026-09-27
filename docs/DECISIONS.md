@@ -3575,3 +3575,46 @@ method_missing" when it was defined four lines up. The reason for a settled
 type with no method now says what was checked — "nothing indexed in its
 ancestors defines this name" — and names no cause, because the cause is
 exactly what was not seen.
+
+## DEC-071 — A local is typed by the writes its read can see; `ambiguous` means a known competitor, not a low number
+
+**Decided.** The assignment rungs (`local:new`, `local:const`, `literal`,
+`sig`, `finder`, …) vote only with the writes a local's read can see, from the
+same flow analysis the LSP answers a local with (DEC-064). The winner is the
+type most of them agree on, and the answer is `ambiguous` exactly when some
+write gives it another type, with those types' landings as `candidates`.
+`confidence` stays the share of reaching writes that agree, so a write that
+cannot be typed at all — a parameter, a block parameter, `x = compute` — lowers
+it without making the answer ambiguous.
+
+**The reported bug was a vote, not a lookup.** rails'
+`belongs_to_associations_test.rb:1042` resolved `post.author` on `Cpk::Post`
+at 0.13, agreement 1/8. Constant resolution was right — `Post` there is
+`::Post` either way. The ladder counted every `post =` in the file within the
+same class and took the *first* one's type: `Cpk::Post.create!`, 975 lines
+earlier in another test. It now answers `Post` at 1.0.
+
+**Why no confidence floor.** The question was whether `status` should drop to
+`ambiguous` below some confidence. On the widget_shop gold set, answers
+resolved below 1.0 are 20 right of 21: `includer` 6 of 6 (four of them below
+0.5), `receiver_name` 9 of 9 at 0.5, `local:new` 5 of 6 — and the wrong one is
+an instance variable at 0.5, whose file-wide vote is the known weak spot. A
+floor at DEC-063's 0.5 would demote four right answers and no wrong one. What
+made 0.13 misleading was evidence that should never have been counted, and
+removing it is what fixed that answer. So the two fields keep separate jobs:
+`status` says whether a competitor is *known* (DEC-027), `confidence` how much
+of the evidence agrees. `--usage` still counts anything below 0.5 as
+`uncertain`, and the LSP's hover still words a guess as one.
+
+**Measured.** Gold (widget_shop, 3,243 sites): three gem sites went `correct`
+→ `residue-hit` and one `wrong` → `residue`. All four were a parameter
+(`arel`, `condition`) or block parameter (`stmt`) typed by a same-named
+assignment in another method — right three times by coincidence, wrong once,
+and confident every time. The truth is still offered as a candidate for the
+three. That is the behaviour this decision wants, and it is recorded as a cost
+rather than hidden: a "same name elsewhere in the file" rung would win the three
+back, and it would be a naming convention stated as a type.
+
+Flow is worked out on first use from the source the facts now keep, so a query
+that never types a local pays nothing; the analysis lives in `serve/vars.rs`,
+now visible to `resolve/`.

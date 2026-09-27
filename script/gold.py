@@ -221,6 +221,8 @@ def main(path):
     for i, site in enumerate(app + gems, 1):
         answer = ask(site)
         results.append((site, verdict(site, answer)))
+        if isinstance(answer, dict):
+            site["_answer"] = {k: answer.get(k) for k in ("status", "confidence", "resolved_via")}
         rank = candidate_rank(site, answer) if isinstance(answer, dict) else None
         if rank:
             ranks.append((site["scope"], rank))
@@ -283,7 +285,8 @@ def main(path):
                 spec = f"{site['file']}:{site['line']}:{site['col']}"
                 out.write(json.dumps({"site": spec, "method": site["method"],
                                       "super": bool(site.get("super")),
-                                      "scope": site["scope"], "verdict": why}) + "\n")
+                                      "scope": site["scope"], "verdict": why,
+                                      **site.get("_answer", {})}) + "\n")
 
     if ranks:
         print("\nranking quality, where the truth was offered as a candidate:")

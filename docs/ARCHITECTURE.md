@@ -187,7 +187,16 @@ The ladder, tried in order, stopping at the first rung that names a type:
 `sig:param` exists because half of graph_weaver's untyped local receivers turned
 out to be method *parameters* — they have no assignment to chase, so every rung
 that looks for one is structurally blind to them, and a signature had already
-said what they are. **`super` is its own rung**, recorded at extraction as a call of the
+said what they are. **A local is typed from the writes its read can see** — the flow analysis the
+LSP answers a local with (`serve/vars.rs`, DEC-064), run on the file's source
+the first time a query needs it and kept on its facts. An assignment in
+another method, or one a later write replaced, has no vote; a write that
+cannot be typed (a parameter, `x = compute`) counts against the answer; and
+writes that type it differently make it `ambiguous`, with the other types'
+landings as candidates (DEC-071). An instance variable spans methods, so every
+assignment to it in the file still votes.
+
+**`super` is its own rung**, recorded at extraction as a call of the
 enclosing method's name with receiver shape `super`. Ruby looks the name up
 *after* the method's owner in the ancestors of the object running it: a
 class's method answers from the class's own chain, because a subclass only

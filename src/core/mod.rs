@@ -153,9 +153,30 @@ pub(crate) struct Facts {
     /// Prism reported syntax errors; the facts above are what survived.
     pub(crate) parse_errors: usize,
     pub(crate) lines: usize,
+    /// The bytes these facts were read from. Only a query needs them — to
+    /// work out, when asked, which writes a local's read can see.
+    pub(crate) source: Option<std::sync::Arc<[u8]>>,
+    /// Each local read → the writes that may have set it, worked out once on
+    /// first use (`Facts::reaching`).
+    pub(crate) flow: std::sync::OnceLock<std::collections::HashMap<Pos, Vec<Pos>>>,
 }
 
 impl Facts {
+    /// Which writes the local read at `read` can see, by the flow analysis
+    /// `analyze` does over the source — `None` when there is no source to run
+    /// it on, or the position is not a local read.
+    pub(crate) fn reaching(
+        &self,
+        read: Pos,
+        analyze: impl FnOnce(&[u8]) -> std::collections::HashMap<Pos, Vec<Pos>>,
+    ) -> Option<&[Pos]> {
+        let source = self.source.as_ref()?;
+        self.flow
+            .get_or_init(|| analyze(source))
+            .get(&read)
+            .map(Vec::as_slice)
+    }
+
     /// A digest of everything about this blob that the **tree layer** reads:
     /// its definitions and its ancestry edges. Calls, constant references and
     /// assignments are resolve-time facts and are deliberately excluded.
@@ -217,7 +238,7 @@ impl Facts {
 
 /// Where a fact sits in the source. 1-based line, 1-based column, matching
 /// what an editor shows and what `file:line:col` means everywhere else.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
 pub(crate) struct Pos {
     pub(crate) line: u32,
     pub(crate) col: u32,
@@ -464,6 +485,9 @@ pub(crate) struct Call {
     /// An implicit receiver means the class itself here and an instance of it
     /// otherwise — the same source text, two different lookups.
     pub(crate) singleton: bool,
+    /// Where a local receiver is read — the key to which writes it sees.
+    #[serde(skip)]
+    pub(crate) recv_pos: Option<Pos>,
     /// Positional argument count, or `None` when a splat makes it unknowable.
     pub(crate) argc: Option<u32>,
     pub(crate) block: bool,

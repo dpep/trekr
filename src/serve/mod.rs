@@ -24,7 +24,7 @@ mod reload;
 mod require;
 mod state;
 mod variables;
-mod vars;
+pub(crate) mod vars;
 mod wire;
 
 use crate::usage::Outcome;

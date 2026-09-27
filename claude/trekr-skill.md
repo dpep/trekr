@@ -136,7 +136,8 @@ ask again once the index finishes. No `index` field means the checkout has not m
 One limit worth knowing: an edit git has not noticed — no `add`, `status` or
 `diff` since — is invisible to the check, so run `--index` after bulk edits.
 
-Every answer carries `status` (`resolved` | `ambiguous` | `residue`),
+Every answer carries `status` (`resolved` | `ambiguous` — a pick with known
+competitors, listed as `candidates` | `residue`),
 `confidence`, and `resolved_via` — the rung that resolved the receiver (`self`,
 `const`, `local:new`, `literal`, `sig`, `sig:param`, `sig:step`, `includer`,
 `rbi_dsl`, `super`). On `super` it answers the method `super` runs: the next

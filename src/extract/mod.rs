@@ -18,7 +18,7 @@ pub(crate) use macros::{camelize, table_to_class};
 mod sig;
 
 use crate::core::*;
-use line_index::LineIndex;
+pub(crate) use line_index::LineIndex;
 use ruby_prism::{Node, Visit};
 use std::collections::HashMap;
 
@@ -136,6 +136,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         facts: Facts {
             parse_errors: parsed.errors().count(),
             lines: lines.count(),
+            source: Some(src.into()),
             ..Facts::default()
         },
         lines,
@@ -680,6 +681,17 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
     }
 
     fn visit_local_variable_write_node(&mut self, node: &ruby_prism::LocalVariableWriteNode<'pr>) {
+        if let Ok(name) = String::from_utf8(node.name().as_slice().to_vec()) {
+            self.record_assign(name, &node.value(), node.location().start_offset());
+        }
+        self.visit(&node.value());
+    }
+
+    /// `x ||= Foo.new` may be the write a later read sees, so it is one.
+    fn visit_local_variable_or_write_node(
+        &mut self,
+        node: &ruby_prism::LocalVariableOrWriteNode<'pr>,
+    ) {
         if let Ok(name) = String::from_utf8(node.name().as_slice().to_vec()) {
             self.record_assign(name, &node.value(), node.location().start_offset());
         }
@@ -1652,6 +1664,12 @@ impl<'pr> Extractor<'_> {
             None => (RecvShape::Implicit, None),
             Some(r) => receiver_shape(&r),
         };
+        let recv_pos = (recv == RecvShape::Local)
+            .then(|| {
+                call.receiver()
+                    .map(|r| self.pos(r.location().start_offset()))
+            })
+            .flatten();
         let argc = argc_of(&arg_nodes(call));
         let pos = self.pos(message.start_offset());
         // Not `in_singleton()`: that answers "is a `def` here a singleton
@@ -1664,6 +1682,7 @@ impl<'pr> Extractor<'_> {
             recv_text,
             nesting: self.nesting.clone(),
             singleton,
+            recv_pos,
             argc,
             block: call.block().is_some(),
             pos,
@@ -1684,6 +1703,7 @@ impl<'pr> Extractor<'_> {
             recv_text: None,
             nesting: self.nesting.clone(),
             singleton: self.self_is_class(),
+            recv_pos: None,
             argc,
             block,
             pos,
@@ -1831,6 +1851,7 @@ impl<'pr> Extractor<'_> {
                 recv_text: None,
                 nesting: self.nesting.clone(),
                 singleton: false,
+                recv_pos: None,
                 // Unknowable: whatever invokes it decides the arity.
                 argc: None,
                 block: false,
