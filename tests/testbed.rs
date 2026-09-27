@@ -37,9 +37,14 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn git(dir: &Path, args: &[&str]) {
+    // Run from a git hook or `rebase --exec`, these are set to the outer repo,
+    // and `init`/`commit` here would write into it instead of the scratch dir.
     let out = Command::new("git")
         .args(args)
         .current_dir(dir)
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
         .output()
         .expect("run git");
     assert!(out.status.success(), "git {args:?}: {out:?}");
