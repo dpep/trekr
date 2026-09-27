@@ -1,0 +1,9 @@
+# A method's `super` looks *after* its own owner, so it never lands on the
+# method it is written in. With no class mixing the module in, `--def` still
+# offered the method itself as the top candidate; with a mixer whose ancestors
+# are not indexed, `--refs` counted the method's own `super` as a possible
+# reference to it, and `--dead` called it `super-only` with nobody named in
+# `super_from`.
+def app.rb:16:5 status=residue name=load_all candidates=2 candidate1=Relation
+dead app.rb FetchWarning#load_all=unreferenced StaleCheck#extract=unreferenced Proxy#load_all=super-only Relation#load_all=super-only
+refs StaleCheck#extract possible=0 excluded_different_owner=1

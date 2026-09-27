@@ -3534,6 +3534,19 @@ the rest residue, the largest bucket being a module no indexed class mixes in
 (`composed_of` includes `Aggregations` inside a method) and a chain with
 nothing after the owner.
 
+**A `super` never lands on its own method** (amended before 0.2.1). The lookup
+starts after the owner, so the method a `super` is written in is the one
+definition it cannot reach. A chain that holds the owner twice is the one
+exception, and the lookup sees it exactly. Where the lookup could not settle
+(a module nothing mixes in, a mixer whose ancestors are not indexed), the
+method's own `super` was tiered `possible` against itself, and `--def` offered
+the method as its top candidate. On rails' `activerecord`, `activemodel` and
+`actionpack` libs, 39 `super-only` candidates named no `super_from`, and 6
+named only themselves. Such a `super` is now excluded (`different_owner`). A
+`super` from an unplaced method names that method's owner in `super_from`.
+One whose owner the index does not know at all counts as an ordinary call of
+unknown origin, so `super-only` always says who reaches the method.
+
 ## DEC-069 — A class built by a call and assigned to a constant is a class body
 
 **Decided.** `X = Struct.new(…)`, `Data.define(…)`, `Class.new(Base)` and

@@ -314,6 +314,17 @@ fn check_refs(case: &str, line: &str, answer: &serde_json::Value, failures: &mut
 /// `Owner#name=tier` for each candidate asked about; `none` means not reported.
 fn check_dead(case: &str, line: &str, answer: &serde_json::Value, failures: &mut Vec<String>) {
     let rows = answer["candidates"].as_array().cloned().unwrap_or_default();
+    // Reached only through `super` means reached from somewhere: the tier is
+    // not honest without the overrides that reach it.
+    for row in &rows {
+        let from = row["super_from"].as_array().map_or(0, Vec::len);
+        if row["tier"] == "super-only" && from == 0 {
+            failures.push(format!(
+                "{case}: {line}\n      {}#{} is super-only with no super_from",
+                row["owner"], row["name"]
+            ));
+        }
+    }
     for (method, want) in pairs(line) {
         let (owner, name) = method.rsplit_once('#').unwrap_or(("", &method));
         let got = rows

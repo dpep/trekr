@@ -304,7 +304,8 @@ already knows.
 
 A `super` site is confirmed when every class that can run it lands on the
 queried method, possible when only some do or an ancestor after its owner is
-not indexed, and excluded when it lands elsewhere.
+not indexed, and excluded when it lands elsewhere. It is always excluded
+against the method it is written in: `super` looks after its own owner.
 
 `Widget#save` and `Widget.save` are different questions. A bare name narrows
 nothing, so it keeps the whole-mention view with each call site naming the owner

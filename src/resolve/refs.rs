@@ -263,10 +263,32 @@ fn tier_super(
         ruling,
         proximity,
     };
+    let scope = tree.scope_fqn(&call.nesting).filter(|s| tree.is_known(s));
+    // `super` looks after its own method's owner, so the method it is written
+    // in is the one method it cannot reach — short of a chain that holds the
+    // owner twice, which the lookup below sees exactly.
+    let own = scope.as_deref().zip(target).is_some_and(|(scope, target)| {
+        crate::tree::public_name(scope) == target
+            && call.name == query.name
+            && call.singleton == query.singleton
+    });
+    let never_itself = || {
+        here(
+            Tier::Excluded,
+            scope.clone(),
+            None,
+            "a method's `super` never lands on the method itself",
+            0,
+            Some(Ruling::DifferentOwner),
+        )
+    };
     let Ok(landings) = super::super_landings(tree, call, path) else {
+        if own {
+            return never_itself();
+        }
         return here(
             Tier::Possible,
-            None,
+            scope.clone(),
             None,
             "`super` from a method whose owner the index cannot place",
             3,
@@ -303,6 +325,9 @@ fn tier_super(
             0,
             None,
         );
+    }
+    if own {
+        return never_itself();
     }
     if !super::unresolved_behind(tree, &landings).is_empty() {
         return here(
@@ -446,7 +471,12 @@ pub(crate) struct Liveness {
 /// into its one caller, so it gets its own tier.
 pub(crate) fn liveness(found: &[Reference], counts: &Counts) -> Liveness {
     let by_symbol = found.iter().filter(|r| r.receiver == "symbol").count();
-    let supers: Vec<&Reference> = found.iter().filter(|r| r.receiver == "super").collect();
+    // A `super` whose method has no owner the index knows comes from nowhere
+    // that can be named, so it counts as an ordinary call of unknown origin.
+    let supers: Vec<&Reference> = found
+        .iter()
+        .filter(|r| r.receiver == "super" && r.receiver_type.is_some())
+        .collect();
     let written = (counts.confirmed + counts.possible).saturating_sub(by_symbol + supers.len());
     let tier = match (written, supers.len(), by_symbol) {
         (0, 0, 0) => Some("unreferenced"),

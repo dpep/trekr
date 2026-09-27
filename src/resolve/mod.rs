@@ -1011,9 +1011,19 @@ fn residue(
         .unwrap_or_default()
         .contains("affinity");
 
+    // A `super` looks after its own method's owner: that method is the one
+    // definition it can never reach.
+    let own = |method: &crate::tree::MethodDef| {
+        call.recv == RecvShape::Super
+            && method.singleton == call.singleton
+            && here
+                .as_deref()
+                .is_some_and(|here| crate::tree::public_name(here) == method.owner)
+    };
     let mut ranked: Vec<(u8, bool, i32, Candidate)> = tree
         .named(&call.name)
         .into_iter()
+        .filter(|method| !own(method))
         .map(|method| {
             let fits = method.accepts(call.argc);
             let names_owner = named_type

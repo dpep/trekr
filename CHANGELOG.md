@@ -18,6 +18,12 @@
   `ambiguous` with one chain per declaration under `variants`. An `.rbi`'s
   superclass never splits a name.
 
+- **A `super` is never a reference to its own method.** `--refs` counted a
+  method's own `super` as a possible reference to it when the lookup could not
+  settle, `--dead` then called the method `super-only` with an empty
+  `super_from`, and `--def` offered it as the top candidate. Now every
+  `super-only` candidate names who reaches it.
+
 - **`--dead` asks about the owner a method really has.** A method in `module
   Alpha; module Helpers` was checked against `Helpers`, the name as written,
   so every call that resolved to `Alpha::Helpers` was ruled out and a used
