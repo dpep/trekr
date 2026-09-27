@@ -134,6 +134,7 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
     log.detail("initialize_params", || params.clone());
 
     let client = Client::from(&params);
+    let spelling = Spelling::of(&params, &root);
     let store = crate::store::open_default()?;
     let mut session = Session::open(root.clone(), store);
     let inbox = Inbox::new(&connection);
@@ -208,7 +209,11 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
                     cancelled(id.clone())
                 } else {
                     let cancel = || inbox.is_cancelled(&id);
-                    dispatch(&mut session, request, log, &cancel)
+                    let mut response = dispatch(&mut session, request, log, &cancel);
+                    if let (Some(spelling), Some(result)) = (&spelling, response.result.as_mut()) {
+                        spelling.apply(result);
+                    }
+                    response
                 };
                 inbox.settle(&id);
                 connection.sender.send(Message::Response(response))?;
@@ -249,7 +254,12 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
                         "diagnostics": published.is_some(),
                     }),
                 );
-                if let Some(diagnostics) = published {
+                if let Some(mut diagnostics) = published {
+                    if let (Some(spelling), Message::Notification(n)) =
+                        (&spelling, &mut diagnostics)
+                    {
+                        spelling.apply(&mut n.params);
+                    }
                     connection.sender.send(diagnostics)?;
                 }
             }
@@ -354,6 +364,16 @@ impl Binary {
 
 /// The workspace folder, from whichever field the client used.
 fn workspace_root(params: &serde_json::Value) -> PathBuf {
+    let spelled = client_root(params);
+    // The store keys checkouts on git's canonical path. An editor sends the
+    // path the user typed, and on macOS `/var` is a symlink to `/private/var` —
+    // so without this the tree is looked up under a root that does not exist
+    // and comes back empty, silently.
+    std::fs::canonicalize(&spelled).unwrap_or(spelled)
+}
+
+/// The workspace root as the client spelled it.
+fn client_root(params: &serde_json::Value) -> PathBuf {
     let folder = params
         .get("workspaceFolders")
         .and_then(|f| f.as_array())
@@ -361,14 +381,46 @@ fn workspace_root(params: &serde_json::Value) -> PathBuf {
         .and_then(|f| f.get("uri"))
         .and_then(|u| u.as_str())
         .or_else(|| params.get("rootUri").and_then(|u| u.as_str()));
-    let root = folder
+    folder
         .and_then(convert::uri_to_path)
-        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
-    // The store keys checkouts on git's canonical path. An editor sends the
-    // path the user typed, and on macOS `/var` is a symlink to `/private/var` —
-    // so without this the tree is looked up under a root that does not exist
-    // and comes back empty, silently.
-    std::fs::canonicalize(&root).unwrap_or(root)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_default())
+}
+
+/// Paths go out in the spelling the client used for its workspace.
+///
+/// Everything inside is canonical, because the store is. But a workspace
+/// opened through a symlink — `~/code` linked elsewhere, or macOS's `/var` —
+/// would then be sent locations under the *other* spelling, and an editor
+/// opens those as different files: a second tab, with its own unsaved state.
+struct Spelling {
+    canonical: String,
+    client: String,
+}
+
+impl Spelling {
+    fn of(params: &serde_json::Value, root: &std::path::Path) -> Option<Spelling> {
+        let client = client_root(params);
+        (client != root).then(|| Spelling {
+            canonical: convert::path_to_uri(root),
+            client: convert::path_to_uri(&client),
+        })
+    }
+
+    /// Rewrite every URI under the canonical root, anywhere in an answer.
+    fn apply(&self, value: &mut serde_json::Value) {
+        match value {
+            serde_json::Value::String(text) => {
+                if let Some(rest) = text.strip_prefix(&self.canonical)
+                    && (rest.is_empty() || rest.starts_with('/'))
+                {
+                    *text = format!("{}{rest}", self.client);
+                }
+            }
+            serde_json::Value::Array(items) => items.iter_mut().for_each(|v| self.apply(v)),
+            serde_json::Value::Object(map) => map.values_mut().for_each(|v| self.apply(v)),
+            _ => {}
+        }
+    }
 }
 
 fn dispatch(

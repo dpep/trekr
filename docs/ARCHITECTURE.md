@@ -180,14 +180,10 @@ that does not exist.
 The layering is core → gems → checkout, so a gem may reopen core and the
 checkout may reopen a gem, which is what Rails actually does.
 
-**A resident front would hold the tree, and nothing here prevents that.**
-`Tree::build(store, root)` is already the whole seam: it takes a store and a
-checkout root and returns a value with no borrowed state and no background
-work. A resident process (PLAN Phase 4) holds one, answers from it, and rebuilds
-when the checkout's blob set moves — which the store can already tell it,
-because that is what `--index` computes. Nothing is built for this yet, and
-deliberately: staleness detection written before there is a process to need it
-would be a guess at its shape.
+**The resident front holds the tree.** `Tree::build(store, root)` is the whole
+seam: it takes a store and a checkout root and returns a value with no borrowed
+state and no background work. `--lsp` holds one per checkout, answers from it,
+and rebuilds when the checkout's surface key moves — see [LSP front](#lsp-front).
 
 ### `resolve/refs.rs` — references narrowed by receiver
 
@@ -291,6 +287,47 @@ receiver shape, which is where layer 3 will start.
 
 `$TREKR_DB` overrides the database path (default
 `~/.local/share/trekr/trekr.db`); the e2e tests use it for isolation.
+
+## LSP front
+
+`trekr --lsp` (`src/serve/`) is a resident front over the same store: the CLI's
+answers in LSP's clothing, plus what only a resident process can do cheaply.
+The editor owns its lifetime; it retires itself when its binary is replaced.
+
+| module | owns |
+|---|---|
+| `mod.rs` | the loop: initialize, dispatch, shutdown/exit, error codes, idle warm-up, answers rewritten into the client's path spelling |
+| `inbox.rs` | reading the channel ahead, so `$/cancelRequest` is seen before the request it withdraws is reached, and mid-scan |
+| `state.rs` | per-checkout trees (rebuilt when the surface key moves) and completion listings; documents — the editor's copy, or a disk read revalidated by mtime+length |
+| `handlers.rs` | the nine agent operations, syntax diagnostics |
+| `complete.rs` | completion (DEC-040) |
+| `fresh.rs` | refresh-on-save and the background `--index` child (DEC-039) |
+| `convert.rs` | UTF-16 ↔ byte columns, spans, a per-file line index |
+| `log.rs` | the ndjson log `--usage` reads |
+
+**Mapping ranked answers onto LSP**, which has no confidence field:
+
+- `definition` returns the resolved site(s). Residue returns up to five ranked
+  candidates, so the editor shows a peek list rather than jumping confidently
+  to a guess; `hover` at the same position says which rung resolved the
+  receiver and how confident that is.
+- `references` orders confirmed before possible and drops excluded — the order
+  is the disclosure. On a class or constant it resolves every written constant
+  and keeps those that land on the same FQN.
+- `incomingCalls` reports only the confirmed tier; its items are the calling
+  methods, so the hierarchy can be walked.
+
+**What reflects unsaved edits:** the open file's own facts (outline, position
+lookup, diagnostics, completion) and every file scan (`references`,
+`incomingCalls`) — open buffers overlay disk. **What does not:** the tree,
+which is assembled from the index as of the last save. A method added but not
+saved is not yet visible from *other* files; saving moves the index
+(`Store::refresh_file`) and the tree follows.
+
+**Threads.** One: the tree uses `Rc` and is not shared. The expensive part of a
+file scan — reading and parsing candidates — fans out on rayon and returns
+facts; tiering stays on the main thread. Background indexing is a child
+process, not a thread (DEC-039).
 
 ## Measurements
 

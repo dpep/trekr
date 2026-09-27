@@ -66,6 +66,13 @@
   lexical scope. An untyped receiver gets at most 20 same-prefix names marked
   "receiver type unknown", never the whole index. Measured p90: 3.7 ms on
   rails and 15 ms on discourse.
+- **`--lsp` answers in the client's spelling of its workspace path.** Opened
+  through a symlink (or macOS's `/var`), locations came back under the
+  canonical path, and the editor opened the same file a second time.
+- **A VS Code extension**, in `editors/vscode/`: launches `trekr --lsp` for
+  Ruby files, with `trekr.path`, `trekr.features` (switch individual features
+  off) and `trekr.index` settings. Its README covers replacing Ruby LSP and
+  Sorbet and what that gives up.
 
 ## 0.1.5 — 2026-08-26
 

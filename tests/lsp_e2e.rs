@@ -1966,3 +1966,44 @@ fn completion_on_an_untyped_receiver_is_short_and_disclosed() {
     session.stop();
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// A workspace opened through a symlink is answered in the client's spelling.
+/// The store is canonical; sending canonical paths back made the editor open
+/// the same file a second time under its other name.
+#[cfg(unix)]
+#[test]
+fn locations_come_back_in_the_spelling_the_client_used() {
+    let source = concat!(
+        "class Widget\n",   // 1
+        "  def save\n",     // 2
+        "  end\n",          // 3
+        "end\n",            // 4
+        "w = Widget.new\n", // 5
+        "w.save\n",         // 6
+    );
+    let (dir, db) = scratch("spelling");
+    ruby_repo(&dir, &db, source);
+    let link = dir.with_extension("link");
+    let _ = fs::remove_file(&link);
+    std::os::unix::fs::symlink(&dir, &link).unwrap();
+
+    let mut session = Session::start(&db, &link);
+    session.initialize(&link);
+    let answer = session.request(
+        "textDocument/definition",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&link, "app.rb")},
+            "position": {"line": 5, "character": 3},
+        }),
+    );
+    let uri = answer["result"][0]["uri"].as_str().expect("a location");
+    assert_eq!(
+        uri,
+        uri_of(&link, "app.rb"),
+        "the link, not what it points at"
+    );
+
+    session.stop();
+    let _ = fs::remove_file(&link);
+    let _ = fs::remove_dir_all(&dir);
+}

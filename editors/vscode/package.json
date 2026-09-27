@@ -1,0 +1,105 @@
+{
+  "name": "trekr",
+  "displayName": "trekr — Ruby code intelligence",
+  "description": "A Ruby language server backed by trekr: receiver-aware definitions, references narrowed by receiver, completion, call hierarchy.",
+  "version": "0.1.0",
+  "publisher": "dpep",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dpep/trekr"
+  },
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "ruby",
+    "rails",
+    "language server",
+    "go to definition",
+    "find references"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [
+    "onLanguage:ruby",
+    "workspaceContains:Gemfile"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "trekr.restart",
+        "title": "trekr: Restart Language Server"
+      },
+      {
+        "command": "trekr.showOutput",
+        "title": "trekr: Show Output"
+      }
+    ],
+    "configuration": {
+      "title": "trekr",
+      "properties": {
+        "trekr.path": {
+          "type": "string",
+          "default": "trekr",
+          "markdownDescription": "Path to the `trekr` binary. The default finds it on `PATH`; set an absolute path if VS Code's `PATH` doesn't include it (e.g. `/opt/homebrew/bin/trekr`)."
+        },
+        "trekr.features": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "definition",
+              "references",
+              "hover",
+              "documentSymbol",
+              "workspaceSymbol",
+              "implementation",
+              "callHierarchy",
+              "completion",
+              "diagnostics"
+            ]
+          },
+          "uniqueItems": true,
+          "default": [
+            "definition",
+            "references",
+            "hover",
+            "documentSymbol",
+            "workspaceSymbol",
+            "implementation",
+            "callHierarchy",
+            "completion",
+            "diagnostics"
+          ],
+          "markdownDescription": "Which trekr features are active. Remove one to leave it to another extension — e.g. drop `diagnostics` if another server already reports Ruby syntax errors. Takes effect on restart."
+        },
+        "trekr.index": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Index an unindexed checkout in the background (runs `trekr --index`, with progress in the status bar). Off: answers come from whatever `trekr --index` last recorded."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "bundle": "esbuild src/extension.ts --bundle --platform=node --format=cjs --external:vscode --outfile=out/extension.js --minify --sourcemap",
+    "test": "npm run compile && node --test out/test/unit/*.test.js",
+    "test:e2e": "npm run compile && npm run bundle && node out/test/e2e/run.js",
+    "package": "npm run bundle && npx --yes @vscode/vsce package --no-dependencies",
+    "vscode:prepublish": "npm run bundle"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "~1.85.0",
+    "@vscode/test-electron": "^3.1.0",
+    "esbuild": "^0.25.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -116,11 +116,17 @@ different questions and answer differently.
 
 `trekr --lsp` speaks LSP: goToDefinition, findReferences, documentSymbol,
 workspaceSymbol, hover, goToImplementation, call hierarchy, and Prism syntax
-diagnostics. Deliberately not completion, rename, or formatting — an agent does
-not use them, and announcing them would invite an editor to route work here that
-this engine has no business doing.
+diagnostics. It keeps the index current as files are saved, and indexes an
+unindexed checkout in the background.
 
 [claude/INSTALL.md](claude/INSTALL.md) wires up the skill and the server.
+
+## In VS Code
+
+The same server, plus receiver-aware completion, through the extension in
+[editors/vscode](editors/vscode) — meant to replace Ruby LSP and Sorbet as the
+Ruby language server; its README says what that gives up and where to get it.
+Deliberately not rename, formatting, or semantic tokens.
 
 ## Development
 

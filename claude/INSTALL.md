@@ -58,11 +58,12 @@ named `lspServers` that has no `command`, and the whole file is dropped with
 Servers are read once at session start; a new session picks up the install.
 
 **`startupTimeout` is safe at the 5 s default.** `--lsp` answers `initialize`
-before touching the store: the tree is assembled lazily on the first query that
-needs it, not during the handshake. A repo that has never been indexed still
-completes the handshake — it simply answers nothing until you run `trekr --index`.
-The first *query* on a large repo pays the tree build (~210 ms on rails, ~310 ms
-on discourse); every one after it is warm.
+before touching the store, then builds the root's tree while it has nothing
+else to do (~90–470 ms on rails and discourse, depending on the page cache), so
+the first query usually finds it warm. A checkout that has never been indexed
+still completes the handshake: the server starts `trekr --index` for it in the
+background (DEC-039) and answers from core and gems until that finishes —
+`hover` says so. Saved edits are refreshed in the index as they happen.
 
 **The workspace root does not limit what it answers.** Claude Code roots the
 server at the session's directory, which is routinely a different repo — or one
@@ -92,11 +93,14 @@ picked. Both matter — a skill that's installed but never chosen answers nothin
 ## What it answers
 
 goToDefinition, findReferences, documentSymbol, workspaceSymbol, hover,
-goToImplementation, call hierarchy, and Prism syntax diagnostics.
+goToImplementation, call hierarchy, and Prism syntax diagnostics — plus
+completion, for editors (DEC-040).
 
-Not completion, rename, formatting, or semantic tokens — an agent does not use
-them, and announcing them would invite the editor to route work here that this
-engine has no business doing.
+Not rename, formatting, or semantic tokens.
+
+**In VS Code**, the client extension is in `editors/vscode/` (build a `.vsix`
+with `npm install && npm run package` there). Its README covers disabling Ruby
+LSP and Sorbet, what that gives up, and running alongside the rq extension.
 
 ## Reading the answers
 
