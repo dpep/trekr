@@ -150,6 +150,33 @@ CREATE INDEX call_site_blob ON call_site(blob_id);
 CREATE INDEX file_blob      ON file(blob_id);
 "#;
 
+/// The fact tables' secondary indexes: what a bulk load drops and rebuilds
+/// (DEC-057). Each statement is also in `SCHEMA`, and a test holds them equal.
+pub(crate) const BULK_INDEXES: [(&str, &str); 7] = [
+    ("def_name", "CREATE INDEX def_name       ON def(name);"),
+    ("def_blob", "CREATE INDEX def_blob       ON def(blob_id);"),
+    (
+        "ancestry_blob",
+        "CREATE INDEX ancestry_blob  ON ancestry(blob_id);",
+    ),
+    (
+        "const_ref_name",
+        "CREATE INDEX const_ref_name ON const_ref(name);",
+    ),
+    (
+        "const_ref_blob",
+        "CREATE INDEX const_ref_blob ON const_ref(blob_id);",
+    ),
+    (
+        "call_site_name",
+        "CREATE INDEX call_site_name ON call_site(name);",
+    ),
+    (
+        "call_site_blob",
+        "CREATE INDEX call_site_blob ON call_site(blob_id);",
+    ),
+];
+
 /// Every table, newest first, so dropping respects nothing (foreign keys are
 /// off during the drop anyway).
 pub(crate) const TABLES: [&str; 8] = [

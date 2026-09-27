@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A first `--index` of a very large repo is up to 4× faster.** When an
+  index will more than double the store, the fact tables' indexes are rebuilt
+  by sorting after the rows are in, instead of updated row by row: a 336k-file
+  monorepo 16 min → 4 min, discourse 7.5 → 6.3 s. Same index. A cold index
+  still needs free disk of about twice the store's size while it runs.
 - **A no-op `--index` in a very large repo is faster**: it no longer loads
   every known blob to find it has nothing to parse — 0.50 → 0.42 s on a
   336k-file monorepo. **In a repo that size, turn on git's fsmonitor**

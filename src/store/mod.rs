@@ -192,11 +192,44 @@ impl Store {
         facts: impl IntoIterator<Item = (Oid, Facts)>,
         git_state: i64,
     ) -> Result<Indexed> {
+        self.write_with(root, files, facts, git_state, false)
+    }
+
+    /// `write`, for a load that will more than double the store: the fact
+    /// tables' secondary indexes are dropped, the rows inserted, and the
+    /// indexes rebuilt by sorting (DEC-057). Inserting into them row by row is
+    /// random I/O once they outgrow the cache, and made a cold index grow
+    /// faster than the repo did. All of it is one savepoint, so a reader never
+    /// sees the store without its indexes and an interrupted load rolls the
+    /// drop back with everything else.
+    pub(crate) fn write_bulk(
+        &mut self,
+        root: &str,
+        files: &Files,
+        facts: impl IntoIterator<Item = (Oid, Facts)>,
+        git_state: i64,
+    ) -> Result<Indexed> {
+        self.write_with(root, files, facts, git_state, true)
+    }
+
+    fn write_with(
+        &mut self,
+        root: &str,
+        files: &Files,
+        facts: impl IntoIterator<Item = (Oid, Facts)>,
+        git_state: i64,
+        bulk: bool,
+    ) -> Result<Indexed> {
         let tx = self.conn.savepoint()?;
         let mut counts = Indexed {
             files: files.len(),
             ..Indexed::default()
         };
+        if bulk {
+            for (name, _) in schema::BULK_INDEXES {
+                tx.execute_batch(&format!("DROP INDEX IF EXISTS {name};"))?;
+            }
+        }
 
         for (oid, f) in facts {
             let (oid, f) = (&oid, &f);
@@ -205,6 +238,15 @@ impl Store {
             counts.refs += f.const_refs.len();
             counts.calls += f.calls.len();
             insert_facts(&tx, oid, f)?;
+        }
+        if bulk {
+            // The sort spills to disk: `temp_store` is MEMORY for queries, and
+            // there a 30× monorepo's sort held 1.5 GB.
+            tx.execute_batch("PRAGMA temp_store=FILE;")?;
+            for (_, create) in schema::BULK_INDEXES {
+                tx.execute_batch(create)?;
+            }
+            tx.execute_batch("PRAGMA temp_store=MEMORY;")?;
         }
 
         tx.execute(
@@ -329,6 +371,12 @@ impl Store {
             )
             .optional()?;
         Ok(stored.is_some_and(|(key, written)| written && key == map_key(files)))
+    }
+
+    /// Outside any transaction — so a write here commits on its own rather
+    /// than inside a `batch`.
+    pub(crate) fn autocommit(&self) -> bool {
+        self.conn.is_autocommit()
     }
 
     /// Run `work` as one transaction, so every `write` inside it commits once.
@@ -1451,6 +1499,76 @@ mod tests {
             })
             .unwrap();
         assert!(store.has_checkout("/gem1").unwrap() && store.has_checkout("/gem2").unwrap());
+    }
+
+    fn index_names(store: &Store) -> Vec<String> {
+        let mut stmt = store
+            .conn
+            .prepare("SELECT name FROM sqlite_schema WHERE type = 'index' AND sql IS NOT NULL ORDER BY name")
+            .unwrap();
+        stmt.query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_>>()
+            .unwrap()
+    }
+
+    fn one_file(src: &str) -> (Files, Vec<(Oid, Facts)>) {
+        let oid = crate::scan::hash_blob(src.as_bytes());
+        let files = Files::from([("a.rb".to_string(), oid.clone())]);
+        (files, vec![(oid, crate::extract::extract(src.as_bytes()))])
+    }
+
+    /// A bulk load leaves the same rows and the same indexes a plain write
+    /// does — it only gets there by sorting.
+    #[test]
+    fn a_bulk_write_leaves_what_a_plain_one_does() {
+        let src = "class Widget\n  def save; helper(1); Other::X; end\nend\n";
+        let mut plain = Store::open_in_memory().unwrap();
+        let mut bulk = Store::open_in_memory().unwrap();
+        let (files, facts) = one_file(src);
+        plain.write("/r", &files, facts, 0).unwrap();
+        let (files, facts) = one_file(src);
+        bulk.write_bulk("/r", &files, facts, 0).unwrap();
+        assert_eq!(index_names(&plain), index_names(&bulk));
+        let t = |s: &Store| s.totals().unwrap();
+        assert_eq!(
+            (t(&plain).defs, t(&plain).calls, t(&plain).const_refs),
+            (t(&bulk).defs, t(&bulk).calls, t(&bulk).const_refs)
+        );
+    }
+
+    /// A load interrupted after its indexes were dropped rolls the drop back
+    /// with its rows: the store is exactly as it was.
+    #[test]
+    fn an_interrupted_bulk_write_keeps_its_indexes() {
+        let mut store = Store::open_in_memory().unwrap();
+        indexed(&mut store, "/r", "a.rb", "class Widget\nend\n");
+        let before = (index_names(&store), store.totals().unwrap().defs);
+        let src = "class Gadget\n  def go; end\nend\n";
+        let oid = crate::scan::hash_blob(src.as_bytes());
+        let files = Files::from([("b.rb".to_string(), oid.clone())]);
+        let facts = (0..2).map(|i| {
+            assert!(i == 0, "interrupted mid-load");
+            (oid.clone(), crate::extract::extract(src.as_bytes()))
+        });
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            store.write_bulk("/r", &files, facts, 0)
+        }));
+        assert!(outcome.is_err());
+        assert_eq!((index_names(&store), store.totals().unwrap().defs), before);
+        assert!(index_names(&store).contains(&"call_site_name".to_string()));
+    }
+
+    #[test]
+    fn the_bulk_index_list_is_the_schema_s() {
+        let squash = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+        let schema = squash(schema::SCHEMA);
+        for (name, create) in schema::BULK_INDEXES {
+            assert!(
+                schema.contains(&squash(create)),
+                "{name} drifted from SCHEMA"
+            );
+        }
     }
 
     /// Written as a delta, a map ends up exactly as a first write of the same

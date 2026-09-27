@@ -320,6 +320,10 @@ fn index_files(
         profile.skipped += wanted.len() - to_parse.len();
     }
 
+    // A load that more than doubles the store rebuilds the fact indexes by
+    // sorting rather than inserting into them (DEC-057). Never inside a
+    // batch: a gem's rows are few, and the bundle's transaction is shared.
+    let bulk = store.autocommit() && known.as_ref().is_some_and(|k| to_parse.len() > k.len());
     // Parsing fans out on the pool while this thread writes what has already
     // been parsed: the write is single-threaded and most of the cost, so the
     // parse hides behind it instead of running before it.
@@ -365,7 +369,12 @@ fn index_files(
             fresh.push(oid.clone());
             (oid, p.facts)
         });
-        let counts = store.write(&root.to_string_lossy(), files, facts, git_state);
+        let root = root.to_string_lossy();
+        let counts = if bulk {
+            store.write_bulk(&root, files, facts, git_state)
+        } else {
+            store.write(&root, files, facts, git_state)
+        };
         (counts, parsing.join().expect("the parse does not panic"))
     });
     let counts = counts?;

@@ -2819,3 +2819,58 @@ the shell; it is left as is here.
 LSP tool sends a `partialResultToken` for references, so streaming serves no
 client in use today. Claude Code shows no `window/showMessage` either, so an
 agent gets exactly `referenceLimit` locations with no sign they were cut.
+
+## DEC-057 — A load that doubles the store rebuilds the fact indexes by sorting
+
+**Decided.** When an index is about to parse more blobs than the store already
+knows — a first index, above all — `Store::write_bulk` drops the fact tables'
+seven secondary indexes (`schema::BULK_INDEXES`), inserts the rows, and
+rebuilds the indexes with `CREATE INDEX`, all inside the checkout's one
+savepoint. The rebuild's sort spills to temporary files (`temp_store=FILE` for
+its duration), not to memory. Gems are never bulk-loaded: they write inside
+the bundle's shared transaction (DEC-041), and each is small.
+
+**Why, measured.** A cold index grew much faster than the repo. On the
+synthetic monorepo — discourse's Ruby replicated with every file and constant
+distinct, so content addressing cannot flatter it — a cold index took 7.9 s at
+1×, 56 s at 10× and 978 s at 30×. The single writer inserted every row into
+two random-keyed indexes per fact table; once those outgrew the page cache,
+each insert was a random read and write.
+
+| cold `--index`, quiet machine | before | **after** |
+| --- | ---: | ---: |
+| discourse + gems, 5 interleaved rounds | 7.5 s | **6.3 s** |
+| 10× monorepo, 2 interleaved rounds | 56.3 / 56.4 s | **39.9 / 40.3 s** |
+| 30× monorepo, one run each | 978 s | **240 s** |
+| 30× — database | 4.61 GB | 4.44 GB |
+| 30× — private memory peak | 331 MB | 393 MB |
+
+Both stores hash identically, 1,453 CLI queries are byte-identical with each
+build answering from a store it indexed itself, and the widget_shop gold
+report is identical on a store this path built.
+
+**Why it is safe to drop an index.** The drop, the rows and the rebuild are one
+savepoint. A reader in another process keeps its WAL snapshot — the old schema,
+indexes included — until the commit, and after it sees the new indexes: two
+LSP servers on discourse answered 2,645 requests while a 10× monorepo was
+bulk-loaded into their store, with no errors and every answer unchanged. An
+interrupted load rolls the drop back with everything else; a unit test panics
+a bulk write mid-rows and requires the indexes and rows to be as before, and it
+fails if the drop is moved outside the savepoint. A second test holds
+`BULK_INDEXES` equal to `SCHEMA`.
+
+**Tried and not taken.** At 10×, one run each: a 1 GB page cache made it
+slower (104 vs 80 s) and held 1.4 GB. Committing every 20k files bounded the
+WAL (0.36 GB) and was slower (120 s) — every commit rewrites the random index
+pages it touched, DEC-041's finding again. Sorting in memory held 1.5 GB at
+30×. Four sort threads (`PRAGMA threads`) were no faster than one and held
+70 MB more.
+
+**What it does not fix.** The WAL still grows to the size of the load (4.3 GB
+at 30×), because the checkout is one transaction; a cold index needs about
+twice the store's size in free disk, briefly. Bounding it means committing in
+batches, which costs time (above) and gives up the checkout's all-or-nothing
+write. And the write stays one thread: SQLite has one writer per database, so
+a parallel write means a store split across database files — sharded by
+checkout or by blob — which is a redesign, not a knob, and is recorded here as
+the option if a first index at 30× still needs to fall well below minutes.
