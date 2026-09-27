@@ -124,6 +124,30 @@ sorted and strings interned in first-met order, so one namespace always encodes
 to the same bytes. Whatever assembly memoized against the half-built namespace
 is dropped with it.
 
+**Persisted per checkout, and mapped** (DEC-065). `Tree::build` first looks
+for the checkout's snapshot beside the store — `trekr.trees/<checkout>-<key>.tree`
+next to `trekr.db` — and maps it read-only when its header checks out, so a
+query's namespace costs a validation instead of an assembly, and its pages
+are the page cache's, shared by every process on the store. Methods are not
+in it; they stay demand-loaded from SQL.
+
+- **The key is everything the namespace is a function of**: each root's
+  surface key and path in tree order (checkout plus every gem), the schema
+  version, the format number, and the source text of the code that assembles
+  and encodes it — so a rebuilt binary never reads a namespace an older
+  assembly produced.
+- **Never written in place.** A snapshot is written to a temporary name,
+  synced, and renamed over its final one; racing builders write identical
+  bytes. A process that mapped a file keeps reading it after it is replaced or
+  unlinked, and switches when its key moves, as the LSP always did.
+- **Checked on open**: magic, format, key, length and a checksum over every
+  byte. Any mismatch — truncated, another format, another key — is rebuilt and
+  rewritten, never read.
+- **One per checkout.** Writing a snapshot retires the checkout's previous
+  ones, since refresh-on-save moves the key with every save.
+
+A snapshot is built by whichever query first finds none for the current key.
+
 ### `resolve/` — which method does this call site run?
 
 The ladder, tried in order, stopping at the first rung that names a type:
@@ -206,6 +230,8 @@ checkout may reopen a gem, which is what Rails actually does.
 seam: it takes a store and a checkout root and returns a value with no borrowed
 state and no background work. `--lsp` holds one per checkout, answers from it,
 and rebuilds when the checkout's surface key moves — see [LSP front](#lsp-front).
+Both it and every CLI query map the same snapshot file, so the namespace is in
+memory once per machine rather than once per process.
 
 ### `resolve/refs.rs` — references narrowed by receiver
 
@@ -311,7 +337,9 @@ would look like a measurement (DEC-008). A method call is `residue` carrying its
 receiver shape, which is where layer 3 will start.
 
 `$TREKR_DB` overrides the database path (default
-`~/.local/share/trekr/trekr.db`); the e2e tests use it for isolation.
+`~/.local/share/trekr/trekr.db`); the e2e tests use it for isolation. Beside
+the database, `trekr.trees/` holds one tree snapshot per checkout (DEC-065) — a
+cache: deleting it costs each checkout one rebuild.
 
 ### Usage counts
 

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Queries stop rebuilding the namespace.** The assembled tree is written
+  once per checkout beside the database (`trekr.trees/`, next to `trekr.db`)
+  and mapped read-only by every CLI query and LSP session after that. On a
+  336k-file repo `--ancestors` goes from ~3.5 s and 1.1 GB of memory to
+  ~0.05 s and 30 MB; the first query after an index pays the build plus a
+  ~120 MB write. The directory is a cache: deleting it costs one rebuild per
+  checkout.
 - **Go to Definition on a variable.** In `--lsp`, Cmd-click a local or
   parameter and land on the assignments its value can come from — both
   branches of an `if`, the write at the bottom of a loop, a block or method

@@ -119,6 +119,11 @@ impl Store {
         }
     }
 
+    /// The database file, or `None` for an in-memory store.
+    pub(crate) fn path(&self) -> Option<&Path> {
+        self.path.as_deref()
+    }
+
     #[cfg(test)]
     pub(crate) fn open_in_memory() -> Result<Store> {
         Store::init(Connection::open_in_memory()?)
@@ -777,6 +782,24 @@ impl Store {
                 |r| r.get(0),
             )
             .or(Ok(0))
+    }
+
+    /// `surface_key` for each root in turn, in one query. A root the store
+    /// has never indexed is 0, as there.
+    pub(crate) fn surface_keys(&self, roots: &[String]) -> Result<Vec<i64>> {
+        let mut stmt = self.conn.prepare(&format!(
+            "SELECT root, surface_key FROM checkout WHERE root IN ({})",
+            placeholders(roots.len())
+        ))?;
+        let known: HashMap<String, i64> = stmt
+            .query_map(rusqlite::params_from_iter(roots), |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?
+            .collect::<Result<_>>()?;
+        Ok(roots
+            .iter()
+            .map(|root| known.get(root).copied().unwrap_or(0))
+            .collect())
     }
 
     /// Record that this checkout's bundle resolves these gems.

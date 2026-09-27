@@ -63,6 +63,8 @@ pub(super) enum Invalid {
 
 pub(super) enum Bytes {
     Owned(Vec<u8>),
+    /// A file's pages, shared with every process that maps it.
+    Mapped(memmap2::Mmap),
 }
 
 impl std::ops::Deref for Bytes {
@@ -70,6 +72,7 @@ impl std::ops::Deref for Bytes {
     fn deref(&self) -> &[u8] {
         match self {
             Bytes::Owned(v) => v,
+            Bytes::Mapped(m) => m,
         }
     }
 }
@@ -127,6 +130,12 @@ impl Snapshot {
             return Err(Invalid::Layout);
         }
         Ok(snapshot)
+    }
+
+    /// Whether this one is a file mapping rather than bytes on the heap.
+    #[cfg(test)]
+    pub(super) fn is_mapped(&self) -> bool {
+        matches!(self.bytes, Bytes::Mapped(_))
     }
 
     fn count(&self, section: usize, words: usize) -> usize {

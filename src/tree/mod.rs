@@ -11,8 +11,13 @@
 //! at all. It is cheap enough that adding any would be paying interest on a
 //! debt we do not have — see the measurement in docs/ARCHITECTURE.md.
 //!
+//! **Built once per key, then mapped.** The assembled namespace is a flat
+//! layout (`snapshot`) written beside the store (`files`); every later query
+//! whose inputs are unchanged maps it instead of assembling (DEC-060/065).
+//!
 //! Semantics follow Shopify's Rubydex (MIT) `docs/ruby-behaviors.md`.
 
+mod files;
 mod snapshot;
 
 use crate::core::Param;
@@ -430,7 +435,7 @@ impl Tree {
         // Core goes in first, so that a checkout reopening `class Object` adds
         // to it rather than being shadowed by it, and so that every class ends
         // up with an Object/Kernel/BasicObject tail.
-        let (mut decls, mut edges, mut methods) = core_rows();
+        let (decls, edges, mut methods) = core_rows();
 
         // Gems sit before the checkout so a gem may reopen core and the
         // checkout may reopen a gem — which is what Rails actually does. The
@@ -447,15 +452,30 @@ impl Tree {
         roots.push(root.to_string());
 
         let mut phases = Phases::default();
-        decls.extend(phases.time("declarations", || store.declarations(&roots))?);
-        edges.extend(phases.time("ancestry", || store.ancestry(&roots))?);
-        phases.decls = decls.len();
-
-        let names = Tree::assemble(decls, edges);
-        phases.mark("assemble");
-        let mut tree = Tree::over(freeze(&names)?, root.to_string());
-        drop(names);
-        phases.mark("snapshot");
+        // The namespace is read from the checkout's snapshot when one answers
+        // to what the store holds now, and assembled and written otherwise
+        // (DEC-065). Methods are not in it: they stay demand-loaded below.
+        let snapshot = match files::dir(store) {
+            Some(dir) => {
+                let key = files::key(store, &roots)?;
+                let path = dir.join(files::name(root, &key));
+                match phases.time("snapshot-load", || files::open(&path, &key)) {
+                    Ok(snapshot) => snapshot,
+                    Err(miss) => {
+                        phases.snapshot = miss.to_string();
+                        let names = Tree::namespace(store, &roots, decls, edges, &mut phases)?;
+                        let bytes = snapshot::encode(&names, &key)?;
+                        drop(names);
+                        let snapshot = files::save(&dir, root, &key, bytes);
+                        phases.mark("snapshot-write");
+                        snapshot
+                    }
+                }
+            }
+            // An in-memory store has nowhere to keep one.
+            None => freeze(&Tree::namespace(store, &roots, decls, edges, &mut phases)?)?,
+        };
+        let mut tree = Tree::over(snapshot, root.to_string());
 
         // The checkout's methods are *not* loaded here. Nothing needs all of
         // them, and fetching and indexing rails' 84,052 was 76 % of this build
@@ -488,6 +508,22 @@ impl Tree {
         }
         phases.report();
         Ok(tree)
+    }
+
+    /// Core's declarations and edges plus the store's, assembled.
+    fn namespace(
+        store: &Store,
+        roots: &[String],
+        mut decls: Vec<DeclRow>,
+        mut edges: Vec<EdgeRow>,
+        phases: &mut Phases,
+    ) -> anyhow::Result<HashMap<String, Entry>> {
+        decls.extend(phases.time("declarations", || store.declarations(roots))?);
+        edges.extend(phases.time("ancestry", || store.ancestry(roots))?);
+        phases.decls = decls.len();
+        let names = Tree::assemble(decls, edges);
+        phases.mark("assemble");
+        Ok(names)
     }
 
     /// A tree from rows in hand, with nothing to load later.
@@ -2225,6 +2261,8 @@ struct Phases {
     last: Option<std::time::Instant>,
     decls: usize,
     methods: usize,
+    /// Why the snapshot was not read, when it was not.
+    snapshot: String,
 }
 
 impl Phases {
@@ -2267,12 +2305,17 @@ impl Phases {
             .iter()
             .map(|(label, d)| format!("{label} {:.0}ms", d.as_secs_f64() * 1000.0))
             .collect();
+        let snapshot = match self.snapshot.as_str() {
+            "" => "",
+            _ => " — snapshot missed: ",
+        };
         eprintln!(
-            "tree: {} | total {:.0}ms ({} declarations, {} methods)",
+            "tree: {} | total {:.0}ms ({} declarations, {} methods){snapshot}{}",
             phases.join(" · "),
             total.as_secs_f64() * 1000.0,
             self.decls,
-            self.methods
+            self.methods,
+            self.snapshot,
         );
     }
 }

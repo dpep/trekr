@@ -3229,3 +3229,51 @@ tree the session builds once for every operation. Spot-checked on `User` and
 **Reverses if** "nothing" on a concern's ivar turns out to be what people click
 most — then a module with exactly one includer (`Tree::includers_of`) is a
 determinate answer and earns its keep.
+## DEC-065 — Tree snapshots live beside the store, one per checkout, keyed by their inputs
+
+**Decided.** DEC-060's snapshot is persisted as `trekr.trees/<checkout>-<key>.tree`
+next to the database, mapped read-only by every `Tree::build` whose key it
+answers to, and built by the first query that finds none. The format is one
+flat layout used both in memory and on disk, so a tree built in-process and a
+tree mapped from a file answer through the same code (`Names::Frozen`), and a
+fixture tree exercises the same path a real one does.
+
+**The key** is SHA-1 over the format number, the crate version, the source
+text of `tree/mod.rs`, `tree/snapshot.rs`, `tree/core.rb` and `store/mod.rs`,
+the schema version, and each root's path and surface key in tree order. The
+paths are in it because sites are absolute. The source text is in it because
+the format number only says the *layout* is the same: a release — or a dev
+build between two — that changes how the namespace is assembled would
+otherwise read a snapshot an older assembly produced and answer from it with
+nothing to say so. Hashing the source makes any edit to that code a rebuild,
+which costs one assembly per checkout and cannot be forgotten, as bumping a
+constant by hand can.
+
+**Why one per checkout, retired on write.** The LSP's refresh-on-save moves a
+checkout's surface key on every save; keeping every key's snapshot would leave
+a 120 MB file per save at 30×. A new snapshot therefore removes the same
+checkout's older ones (its name's prefix is the checkout's), and only its
+own: another checkout's current snapshot is not this one's to judge. A process
+still mapping a retired file is unaffected — an unlinked file stays valid for
+whoever has it mapped — and moves to the new one when its key moves. Two
+processes at different keys for one checkout can retire each other's file in
+a window; the cost is a rebuild, never a wrong answer.
+
+**Why a checksum over every byte on open.** It is a tripwire for a torn or
+rotted file, and it reads every page — which for a mapping means the page
+cache's pages, not private memory. At 30× the whole load, checksum included,
+is 14 ms against a 3.5 s assembly.
+
+**Correctness, checked.** 1,470 CLI queries and 944 LSP requests on discourse
+and widget_shop are byte-identical to 11dbbb6, each binary on its own store,
+both on the pass where four concurrent queries raced to build each snapshot
+and on the pass that read them; the widget_shop gold report over all 3,075
+sites is identical. Unit tests cover a truncated file, a format
+or key mismatch under the right name (each rebuilt and rewritten whole), a
+moved key (new file, old one retired), racing builders (one file), and a
+second *process* that rewrites the very file a reader has mapped and then
+unlinks it while the reader keeps answering — which fails if a snapshot is
+ever written in place.
+
+**Reverses if** the store moves to a network filesystem, where a mapping's
+guarantees are weaker (as for DEC-051).
