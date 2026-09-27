@@ -218,6 +218,8 @@ struct Walker<'s> {
     prior: Prior,
     loops: Vec<Range<usize>>,
     loop_seq: usize,
+    /// Each block body's occurrences, in the order the blocks close.
+    blocks: Vec<Range<usize>>,
     nesting: Vec<String>,
     /// Inside `class << self`.
     eigen: bool,
@@ -242,6 +244,7 @@ impl<'s> Walker<'s> {
             prior,
             loops: Vec::new(),
             loop_seq: 0,
+            blocks: Vec::new(),
             nesting: Vec::new(),
             eigen: false,
             method: None,
@@ -317,6 +320,21 @@ impl<'s> Walker<'s> {
         });
         if write.is_some() {
             self.state.insert(var, vec![index]);
+        }
+    }
+
+    /// `visit = lambda { … visit.call … }`: a block in the value runs only
+    /// once the assignment is done, so its reads of the name see that write.
+    /// A read outside a block (`x = x + 1`) does not.
+    fn reaches_its_own_blocks(&mut self, from: usize, blocks_from: usize) {
+        let write = self.occurrences.len() - 1;
+        let var = self.occurrences[write].var;
+        for block in &self.blocks[blocks_from..] {
+            for read in &mut self.occurrences[block.start.max(from)..block.end] {
+                if read.read && read.var == var && !read.reaches.contains(&(write as u32)) {
+                    read.reaches.push(write as u32);
+                }
+            }
         }
     }
 
@@ -576,6 +594,8 @@ impl<'pr> Visit<'pr> for Walker<'_> {
     }
 
     fn visit_local_variable_write_node(&mut self, node: &ruby_prism::LocalVariableWriteNode<'pr>) {
+        let from = self.occurrences.len();
+        let blocks_from = self.blocks.len();
         self.visit(&node.value());
         let at = node.name_loc().start_offset();
         self.local(
@@ -585,6 +605,7 @@ impl<'pr> Visit<'pr> for Walker<'_> {
             false,
             Some(Binding::Assign),
         );
+        self.reaches_its_own_blocks(from, blocks_from);
     }
 
     fn visit_local_variable_target_node(
@@ -988,10 +1009,12 @@ impl Walker<'_> {
 
     fn block(&mut self, parameters: Option<Node<'_>>, body: Option<Node<'_>>) {
         let own = self.push_scope();
+        let start = self.occurrences.len();
         self.repeated(Some(own), |w| {
             w.params(parameters, Binding::BlockParam);
             w.visit_opt(body);
         });
+        self.blocks.push(start..self.occurrences.len());
         self.scopes.pop();
         // Its own locals are gone; carrying them on would make every later
         // branch copy them, and a spec file is thousands of blocks.
@@ -1123,6 +1146,16 @@ mod tests {
         let src = "[1].each { y = 1; y }\ny = 2\ny\n";
         assert_eq!(defined_at(src, 1, "y", 1), [1]);
         assert_eq!(defined_at(src, 3, "y", 0), [2]);
+    }
+
+    #[test]
+    fn a_lambda_sees_the_assignment_that_holds_it() {
+        let src = "visit = lambda do |n|\n  visit.call(n)\nend\nf = ->(n) { f.(n) }\n";
+        assert_eq!(defined_at(src, 2, "visit", 0), [1]);
+        assert_eq!(defined_at(src, 4, "f", 1), [4]);
+        // Outside a block, the value is computed before the write.
+        let src = "x = 1\nx = x + 1\n";
+        assert_eq!(defined_at(src, 2, "x", 1), [1]);
     }
 
     #[test]

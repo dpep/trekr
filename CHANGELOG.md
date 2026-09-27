@@ -11,6 +11,10 @@
 
 ### Fixed
 
+- A lambda or block that calls the variable holding it
+  (`visit = lambda { … visit.call … }`) now finds that assignment; definition
+  and hover on the inner `visit` came back empty.
+
 - Core now has names real code reaches for and the stub lacked:
   `Float::INFINITY` and its siblings, `Process::CLOCK_MONOTONIC`,
   `Thread::Mutex` (and `Queue`, `SizedQueue`, `ConditionVariable`),
