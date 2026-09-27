@@ -153,6 +153,7 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
     let mut warm = Warm::Cold;
 
     loop {
+        session.collect_members(None);
         for message in indexer.poll(log) {
             // A finished index moves the tree; warm it again when quiet.
             warm = Warm::Cold;
@@ -167,7 +168,7 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
                 let started = std::time::Instant::now();
                 let (step, built) = match warm {
                     Warm::Cold => ("tree", session.tree(&root).is_ok()),
-                    _ => ("members", session.members(&root).is_ok()),
+                    _ => ("members", session.list_members(&root).is_ok()),
                 };
                 log.event(
                     "warm",
@@ -180,8 +181,13 @@ fn serve(connection: Connection, log: &Log) -> anyhow::Result<Outcome> {
             }
             warm = warm.next();
         }
-        // While an index runs, wake periodically to notice it finish.
-        let timeout = indexer.busy().then_some(Duration::from_millis(250));
+        // While warming, come straight back for the next step if nothing
+        // arrived; while an index runs, wake periodically to notice it finish.
+        let timeout = if warm < Warm::Done {
+            Some(Duration::ZERO)
+        } else {
+            indexer.busy().then_some(Duration::from_millis(250))
+        };
         let message = match inbox.next(timeout) {
             Next::Message(message) => message,
             Next::Idle => continue,

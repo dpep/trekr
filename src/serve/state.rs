@@ -23,6 +23,7 @@ use crate::store::Store;
 use crate::tree::Tree;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
 
 /// One LSP conversation: the store, a tree per checkout it has been asked
 /// about, and the documents the editor has open.
@@ -43,6 +44,15 @@ pub(crate) struct Session {
     /// Checkouts asked about that the store has never indexed. Drained by the
     /// serve loop into a background index; a question never waits for one.
     unindexed: Vec<PathBuf>,
+    /// A checkout's members being listed on another thread (`list_members`).
+    listing: Option<Listing>,
+}
+
+/// Members in the making, and the tree state they are being listed from.
+struct Listing {
+    root: PathBuf,
+    stamp: Stamp,
+    done: mpsc::Receiver<anyhow::Result<(Tree, Members)>>,
 }
 
 /// One checkout's assembled namespace, and what it was assembled from.
@@ -141,6 +151,7 @@ impl Session {
             enclosing: HashMap::new(),
             open: HashMap::new(),
             unindexed: Vec::new(),
+            listing: None,
         }
     }
 
@@ -235,12 +246,80 @@ impl Session {
     /// A checkout's tree together with its listed members, for completion.
     pub(crate) fn members(&mut self, root: &Path) -> anyhow::Result<(&Tree, &Members)> {
         self.tree(root)?;
+        // Being listed already: waiting for it beats starting over.
+        self.collect_members(Some(root));
         let checkout = self.checkouts.get_mut(root).expect("tree() just placed it");
         let tree = checkout.tree.as_ref().expect("tree() just built it");
         if checkout.members.is_none() {
             checkout.members = Some(Members::of(tree));
         }
         Ok((tree, checkout.members.as_ref().expect("just built")))
+    }
+
+    /// Start listing a checkout's members on another thread, so the idle
+    /// moment that prepares completion does not hold up the next request.
+    ///
+    /// Listing loads every method in the checkout — half a second on
+    /// discourse — which on the serve loop's thread was half a second that any
+    /// request arriving meanwhile waited. The worker assembles its own tree
+    /// from its own connection, lists it, and hands both back: the tree it
+    /// sends has every method loaded, so it replaces the session's.
+    pub(crate) fn list_members(&mut self, root: &Path) -> anyhow::Result<()> {
+        self.tree(root)?;
+        let checkout = &self.checkouts[root];
+        let stamp = checkout.built_from.expect("tree() just stamped it");
+        let listing = self
+            .listing
+            .as_ref()
+            .is_some_and(|l| l.root == root && l.stamp == stamp);
+        if checkout.members.is_some() || listing {
+            return Ok(());
+        }
+        // An in-memory store has no second connection; it lists on demand.
+        let Some(store) = self.store.reopen()? else {
+            return Ok(());
+        };
+        let key = root.to_string_lossy().into_owned();
+        let (send, done) = mpsc::channel();
+        std::thread::spawn(move || {
+            let built = Tree::build(&store, &key).map(|tree| {
+                let members = Members::of(&tree);
+                (tree, members)
+            });
+            let _ = send.send(built.map_err(Into::into));
+        });
+        self.listing = Some(Listing {
+            root: root.to_path_buf(),
+            stamp,
+            done,
+        });
+        Ok(())
+    }
+
+    /// Take a finished listing, if there is one — or wait for it, when it is
+    /// the checkout asked about. A listing made from a tree that has since
+    /// moved is dropped.
+    pub(crate) fn collect_members(&mut self, waiting_for: Option<&Path>) {
+        let Some(listing) = &self.listing else {
+            return;
+        };
+        let result = if waiting_for == Some(listing.root.as_path()) {
+            listing.done.recv().ok()
+        } else {
+            match listing.done.try_recv() {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => None,
+            }
+        };
+        let listing = self.listing.take().expect("checked above");
+        if let (Some(Ok((tree, members))), Some(checkout)) =
+            (result, self.checkouts.get_mut(&listing.root))
+            && checkout.built_from == Some(listing.stamp)
+        {
+            checkout.tree = Some(tree);
+            checkout.members = Some(members);
+        }
     }
 
     /// The editor's copy of a file, replacing whatever was held for it. Used

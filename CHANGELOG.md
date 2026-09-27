@@ -29,6 +29,10 @@
 - **Every resolved query builds its namespace about 20 % faster**, which is
   most of a CLI `--def`, `--ancestors` or `--refs` and the first answer of an
   `--lsp` session: discourse's tree 215 → 167 ms, rails' 57 → 46 ms.
+- **`--lsp` no longer stalls a request for half a second while it prepares
+  completion.** The member listing is built on a worker thread instead of the
+  one answering requests, and only a completion waits for it. After the first
+  answer, the next request on discourse took 0.5 s; it now takes 13–24 ms.
 - **`--lsp` speaks the protocol's error vocabulary, and honours cancellation.**
   An unsupported method answers `MethodNotFound` (it answered `null`, which a
   client reads as "nothing here") and a malformed request `InvalidParams` (it

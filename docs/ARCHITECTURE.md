@@ -324,9 +324,12 @@ which is assembled from the index as of the last save. A method added but not
 saved is not yet visible from *other* files; saving moves the index
 (`Store::refresh_file`) and the tree follows.
 
-**Threads.** One: the tree uses `Rc` and is not shared. The expensive part of a
-file scan — reading and parsing candidates — fans out on rayon and returns
-facts; tiering stays on the main thread. Background indexing is a child
+**Threads.** Requests are answered on one thread; the tree is not shared. Two
+things leave it: a file scan's reading and parsing fans out on rayon and
+returns facts, with tiering kept on the main thread; and completion's member
+listing is built by a worker on its own connection, which hands back its
+fully-loaded tree and the listing to replace the session's (DEC-044). The tree
+is `Send` for that hand-off and nothing else. Background indexing is a child
 process, not a thread (DEC-039).
 
 ## Measurements

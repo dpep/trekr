@@ -18,7 +18,7 @@ use crate::store::{DeclRow, EdgeRow, MethodRow, Store};
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
+use std::sync::Arc;
 
 /// A name's declaration site — the answer to "where is this?".
 #[derive(Clone, Debug, Serialize)]
@@ -191,7 +191,7 @@ pub(crate) struct Tree {
     /// the recursion under it is cheap, and caching mid-flight would mean
     /// caching a chain computed against a partial `seen` set — not the same
     /// answer.
-    ancestors: RefCell<HashMap<String, Rc<Ancestry>>>,
+    ancestors: RefCell<HashMap<String, Arc<Ancestry>>>,
 }
 
 /// A linearized ancestor chain, and how much of it we could actually build.
@@ -620,7 +620,7 @@ impl Tree {
     ///
     /// Memoized, because a file's every constant reference asks for the chain
     /// of the same enclosing class.
-    pub(crate) fn ancestors(&self, fqn: &str) -> Rc<Ancestry> {
+    pub(crate) fn ancestors(&self, fqn: &str) -> Arc<Ancestry> {
         let cached = self.ancestors.borrow().get(fqn).cloned();
         if let Some(cached) = cached {
             return cached;
@@ -634,11 +634,11 @@ impl Tree {
         // The outer call still computes the real chain, so the empty answer is
         // never what gets cached.
         if !self.in_flight.borrow_mut().insert(fqn.to_string()) {
-            return Rc::new(Ancestry::default());
+            return Arc::new(Ancestry::default());
         }
         let mut out = Ancestry::default();
         out.chain = self.linearize(fqn, &mut out, &mut Vec::new());
-        let chain = Rc::new(out);
+        let chain = Arc::new(out);
         self.in_flight.borrow_mut().remove(fqn);
         self.ancestors
             .borrow_mut()

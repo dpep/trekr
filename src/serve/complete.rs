@@ -20,7 +20,7 @@
 use super::state::Session;
 use crate::cli::position::{self, Under};
 use crate::core::{Facts, RecvShape};
-use crate::tree::{MethodDef, Tree};
+use crate::tree::Tree;
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionItemLabelDetails, CompletionList,
     CompletionParams, CompletionResponse,
@@ -55,7 +55,7 @@ const CONST_PLACEHOLDER: &str = "TrekrCompletionPlaceholder";
 /// A checkout's tree listed for completion: namespaces by scope, methods by
 /// owner. Built once per tree.
 pub(crate) struct Members {
-    methods: HashMap<(String, bool), Vec<MethodDef>>,
+    methods: HashMap<(String, bool), Vec<Member>>,
     /// Scope FQN (empty for top level) → its direct constants and their kinds.
     children: HashMap<String, Vec<(String, String)>>,
     /// Every method name and how many definitions carry it, sorted by name —
@@ -63,13 +63,29 @@ pub(crate) struct Members {
     names: Vec<(String, usize)>,
 }
 
+/// What a completion item needs of a method, and no more. The whole
+/// `MethodDef` — site path, owner, signature — held for every method in a
+/// checkout was most of an LSP session's memory.
+struct Member {
+    name: String,
+    private: bool,
+    via: Option<String>,
+    rbi: bool,
+}
+
 impl Members {
     pub(crate) fn of(tree: &Tree) -> Members {
-        let mut methods: HashMap<(String, bool), Vec<MethodDef>> = HashMap::new();
+        let mut methods: HashMap<(String, bool), Vec<Member>> = HashMap::new();
         let mut counts: HashMap<String, usize> = HashMap::new();
         for (owner, singleton, method) in tree.method_table() {
             *counts.entry(method.name.clone()).or_default() += 1;
-            methods.entry((owner, singleton)).or_default().push(method);
+            let member = Member {
+                private: method.visibility == "private",
+                rbi: method.site.is_rbi(),
+                via: method.via,
+                name: method.name,
+            };
+            methods.entry((owner, singleton)).or_default().push(member);
         }
         let mut children: HashMap<String, Vec<(String, String)>> = HashMap::new();
         for (fqn, kind) in tree.declared() {
@@ -356,10 +372,10 @@ fn add_methods(
         };
         // Real source before a Sorbet declaration of the same method, as a
         // lookup would prefer it.
-        let mut methods: Vec<&MethodDef> = methods.iter().collect();
-        methods.sort_by_key(|m| m.site.is_rbi());
+        let mut methods: Vec<&Member> = methods.iter().collect();
+        methods.sort_by_key(|m| m.rbi);
         for method in methods {
-            if !typeable(&method.name) || (!private && method.visibility == "private") {
+            if !typeable(&method.name) || (!private && method.private) {
                 continue;
             }
             let marker = if *owner_singleton { "." } else { "#" };

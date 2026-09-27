@@ -2041,3 +2041,48 @@ is on, the prediction is a no-op dominated by `ls-files -s` and the
 reports a different set of changed files than `diff-files` would — the e2e
 test pins edits, untracked directories and ignores, not every porcelain state.
 
+## DEC-044 — Completion's member listing is built off the request thread
+
+**Decided.** The idle warm-up's second step — listing every member of the
+root checkout for completion (DEC-040) — runs on a worker thread. The worker
+opens its own connection, assembles its own tree, lists it, and sends back the
+tree and the listing; the session installs both if the checkout's stamp has
+not moved meanwhile. Warm steps now run back to back while the inbox is quiet,
+rather than one per incoming message. `Tree` swapped `Rc<Ancestry>` for `Arc`
+to be `Send`; nothing else about it changed.
+
+**Why, measured.** Listing loads every method in the checkout: ~0.5 s on
+discourse (176k methods across the app and its gems). It ran on the serve loop,
+and because the loop only woke for a message, it ran *just after* the first
+answer — so the second request of a session, whatever it was, waited for it.
+`trekr --lsp` on discourse, a scripted client, four alternating runs each:
+
+| | before | after |
+| --- | ---: | ---: |
+| idle, then ask: second request (`hover`) | 495–560 ms | **13–24 ms** |
+| idle, then ask: first `references` | 138–170 ms | 149–167 ms |
+| ask at once: `documentSymbol` (needs no tree) | 576–622 ms | **25–32 ms** |
+| ask at once: first `completion` | 4–5 ms | 580–605 ms |
+
+The stall moved to the one request that needs the listing, when it is asked for
+before the listing exists; every other request stopped paying for it.
+
+**Why hand back the worker's tree.** The alternative kept the session's own
+tree and dropped the worker's. Its first `references` rose to ~340 ms in half
+the runs, because the session's tree then loaded each method name on demand
+where the listed tree already had them all — and RSS did not fall, since the
+allocator keeps the worker's freed pages (450 vs 448 MB).
+
+**Memory, measured alongside** (RSS, one session): 123 MB with discourse's
+tree; ~450 MB once its members are listed; +70 MB for references; +7 MB for a
+second checkout's (rails') tree; +30–110 MB for its members; +4 MB for 300 open
+documents. Completion's listing is the bulk. Slimming the listing to what an
+item shows (name, privacy, macro, `.rbi`) took the session from 678 to 635 MB.
+What would move it further is not loading every method into the tree to list
+them — a streaming listing from the rows — at the cost of the per-name loads
+above. Not done: recorded as the lever.
+
+**Reverses if** a client is found that asks for completion before anything
+else, often enough that the 0.6 s moving onto that request is the common case.
+Then the listing should start at `initialize` rather than after the tree.
+
