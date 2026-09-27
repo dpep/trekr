@@ -506,6 +506,14 @@ pub(crate) struct Liveness {
 /// most likely to be coincidence. A `super` from an override makes the method
 /// live exactly when that override is: neither unused nor something to inline
 /// into its one caller, so it gets its own tier.
+/// A reference that is an ordinary written call: not a symbol handed to a
+/// macro, and not a `super` from an override the index can name.
+pub(crate) fn is_written_call(reference: &Reference) -> bool {
+    reference.tier != Tier::Excluded
+        && reference.receiver != "symbol"
+        && !(reference.receiver == "super" && reference.receiver_type.is_some())
+}
+
 pub(crate) fn liveness(found: &[Reference], counts: &Counts) -> Liveness {
     let by_symbol = found.iter().filter(|r| r.receiver == "symbol").count();
     // A `super` whose method has no owner the index knows comes from nowhere

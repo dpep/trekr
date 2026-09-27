@@ -57,6 +57,8 @@ struct Cli {
 
     /// Find definitions in these files or directories that nothing appears to
     /// use — candidates for deletion or inlining, graded, never asserted.
+    /// One pass: a method whose only caller is itself a candidate is
+    /// `single-caller`, and its reason says so.
     #[arg(long, value_name = "PATH", num_args = 1..)]
     dead: Vec<PathBuf>,
 
@@ -533,10 +535,14 @@ fn rooted(value: &mut serde_json::Value) {
     }
 }
 
+/// Set when an answer spans checkouts: text then writes every path whole.
+static TEXT_ABSOLUTE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// A path as text shows it: relative inside the checkout being asked about,
 /// absolute (with `~`) anywhere else — a gem, Ruby core.
 fn shown(path: &str) -> String {
     match ROOTING.get() {
+        _ if TEXT_ABSOLUTE.load(std::sync::atomic::Ordering::Relaxed) => paths::pretty(path),
         Some(rooting) if paths::under(&rooting.base, path) => {
             path[rooting.base.len() + 1..].to_string()
         }
@@ -1648,8 +1654,13 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
             return not_indexed(out, root, &store);
         }
     }
+    // Across checkouts no one root is "here", so text writes every path
+    // whole rather than relative to whichever scope came first.
     if let Some((first, _)) = checkouts.first() {
         answering_in(&store, &first.to_string_lossy());
+    }
+    if checkouts.len() > 1 {
+        TEXT_ABSOLUTE.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
     let mut rows: Vec<serde_json::Value> = Vec::new();
@@ -1657,6 +1668,7 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
     for (root, scoped) in &checkouts {
         scope += dead_in(&store, root, scoped, &mut rows)?;
     }
+    note_candidate_callers(&mut rows);
 
     let found = !rows.is_empty();
     if out != Output::Text {
@@ -1668,11 +1680,11 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
     }
     for row in &rows {
         println!(
-            "{:<16} {}:{}  {}{}",
+            "{:<16} {}  {}  — {}{}",
             row["tier"].as_str().unwrap_or_default(),
-            shown(row["path"].as_str().unwrap_or_default()),
-            row["line"],
+            at_line(row),
             row["name"].as_str().unwrap_or_default(),
+            row["reason"].as_str().unwrap_or_default(),
             match row["caveat"].as_str().unwrap_or_default() {
                 "" => String::new(),
                 why => format!("   (lower confidence: {why})"),
@@ -1707,8 +1719,7 @@ fn dead_in(
         // everything in it: these are the shapes that make "no references" a
         // weaker statement, and they are file-wide by nature.
         let risky = dynamic_markers(&source);
-        let absolute = std::fs::canonicalize(file).unwrap_or_else(|_| file.clone());
-        let at = absolute.to_string_lossy().into_owned();
+        let at = file.to_string_lossy().into_owned();
         for def in facts.defs {
             if def.kind != crate::core::Kind::Method {
                 continue;
@@ -1761,12 +1772,55 @@ fn dead_in(
         .unwrap_or_default();
         let live = refs::liveness(&found, &counts);
         let Some(tier) = live.tier else { continue };
-        rows.push(serde_json::json!({
+        // The one written call a single caller has: whether it certainly
+        // reaches this method is the difference between inlining it and
+        // checking an untyped receiver first.
+        let caller = (tier == "single-caller")
+            .then(|| found.iter().find(|r| refs::is_written_call(r)))
+            .flatten()
+            .map(|r| {
+                serde_json::json!({
+                    "path": format!("{root_str}/{}", r.path),
+                    "line": r.line,
+                    "col": r.col,
+                    "tier": r.tier,
+                })
+            });
+        // Its only evidence of use is a call that may be another method's:
+        // that is weaker than a clear single caller, and says why.
+        let mut risky = risky.clone();
+        if caller.as_ref().is_some_and(|c| c["tier"] == "possible") {
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            risky.push_str("untyped caller");
+        }
+        let reason = match (tier, &caller) {
+            ("unreferenced", _) => "no call, symbol or `super` names it".to_string(),
+            ("convention-only", _) => format!(
+                "named only by a symbol handed to a macro ({})",
+                live.by_symbol
+            ),
+            ("super-only", _) => format!(
+                "reached only by `super` from {}",
+                live.super_from.join(", ")
+            ),
+            (_, Some(caller)) if caller["tier"] == "confirmed" => {
+                format!("one call, at {}", at_line(caller))
+            }
+            (_, Some(caller)) => format!(
+                "one possible call, at {}: its receiver is untyped",
+                at_line(caller)
+            ),
+            _ => String::new(),
+        };
+        let mut row = serde_json::json!({
             "name": def.name,
             "owner": owner,
             "path": file,
             "line": def.pos.line,
             "col": def.pos.col,
+            "end_line": def.end_line,
             "tier": tier,
             "confirmed": counts.confirmed,
             "possible": counts.possible,
@@ -1776,13 +1830,72 @@ fn dead_in(
             "mentions_by_name": written,
             "confidence": if risky.is_empty() { "clear" } else { "lower" },
             "caveat": risky,
-        }));
+            "reason": reason,
+        });
+        if let Some(caller) = caller {
+            row["caller"] = caller;
+        }
+        rows.push(row);
     }
     Ok(files.len())
 }
 
-/// Ruby files under these paths, following directories one level of recursion.
+/// One pass does not cascade: a method whose only caller is itself a
+/// candidate is `single-caller`, not `unreferenced`. Say so on the row,
+/// where the next question is asked.
+fn note_candidate_callers(rows: &mut [serde_json::Value]) {
+    let spans: Vec<(String, u64, u64, String)> = rows
+        .iter()
+        .map(|row| {
+            (
+                row["path"].as_str().unwrap_or_default().to_string(),
+                row["line"].as_u64().unwrap_or(0),
+                row["end_line"].as_u64().unwrap_or(0),
+                row["name"].as_str().unwrap_or_default().to_string(),
+            )
+        })
+        .collect();
+    for row in rows.iter_mut() {
+        let caller = &row["caller"];
+        let (Some(path), Some(line)) = (caller["path"].as_str(), caller["line"].as_u64()) else {
+            continue;
+        };
+        let within = spans
+            .iter()
+            .find(|(p, start, end, _)| p == path && (*start..=*end).contains(&line));
+        if let Some((_, _, _, name)) = within {
+            let reason = format!(
+                "{}; its caller, {name}, is itself a candidate",
+                row["reason"].as_str().unwrap_or_default()
+            );
+            row["reason"] = reason.into();
+        }
+    }
+}
+
+/// `path:line` of a located JSON object, as text shows a path.
+fn at_line(site: &serde_json::Value) -> String {
+    format!(
+        "{}:{}",
+        shown(site["path"].as_str().unwrap_or_default()),
+        site["line"]
+    )
+}
+
+/// Ruby files under these paths, each once: the same file named twice — a
+/// path repeated, a directory and a file in it, a symlink and its target —
+/// is one file in scope, and would otherwise be two candidates.
 fn ruby_files(paths: &[PathBuf]) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    ruby_files_under(paths)
+        .into_iter()
+        .map(|file| std::fs::canonicalize(&file).unwrap_or(file))
+        .filter(|file| seen.insert(file.clone()))
+        .collect()
+}
+
+/// Ruby files under these paths, following directories one level of recursion.
+fn ruby_files_under(paths: &[PathBuf]) -> Vec<PathBuf> {
     let mut found = Vec::new();
     for path in paths {
         if path.is_file() {
@@ -1795,7 +1908,7 @@ fn ruby_files(paths: &[PathBuf]) -> Vec<PathBuf> {
         for entry in walk.flatten() {
             let child = entry.path();
             if child.is_dir() {
-                found.extend(ruby_files(&[child]));
+                found.extend(ruby_files_under(&[child]));
             } else if child.extension().is_some_and(|e| e == "rb") {
                 found.push(child);
             }

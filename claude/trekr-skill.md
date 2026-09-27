@@ -241,7 +241,12 @@ Every method defined in scope, checked against references from the **whole
 checkout** (not other indexed repos, so the answer does not depend on them). Tiers: `unreferenced` (nothing found), `convention-only` (reached only by
 a symbol handed to a macro — usually a sign it *is* used), `super-only` (reached
 only by `super` from the overrides in `super_from`: live exactly when they are),
-`single-caller` (one reference: the inlining candidate).
+`single-caller` (one reference: the inlining candidate; `caller` names it, and
+its `tier` says whether it certainly reaches the method — `possible` is an
+untyped receiver, and grades the row `lower`). Every row has a `reason` in
+words. **One pass, no cascade:** a method whose only caller is itself a
+candidate is `single-caller`, and its `reason` says the caller is a candidate —
+delete the caller and it becomes unreferenced.
 
 **It never says "dead", and you should not either.** Measured against a year of
 discourse's history, `unreferenced` candidates were deleted 19.8 % of the time

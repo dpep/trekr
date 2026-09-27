@@ -2155,9 +2155,10 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
         dir.join("thing.rb"),
         "class Thing\n  validate :check_it\n\n  def check_it\n  end\n\n  \
          def used_once\n  end\n\n  def never_used\n  end\n\n  \
-         def run\n    used_once\n  end\nend\n",
+         def run\n    used_once\n  end\n\n  def maybe\n  end\nend\n",
     )
     .unwrap();
+    fs::write(dir.join("caller.rb"), "something.maybe\n").unwrap();
     git(&dir, &["add", "-A"]);
     git(
         &dir,
@@ -2187,6 +2188,23 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
     // the likeliest real candidate and the likeliest false positive.
     assert_eq!(by_name["check_it"]["tier"], "convention-only");
     assert_eq!(by_name["used_once"]["tier"], "single-caller");
+    // The one call is named, and whether it certainly reaches the method.
+    assert_eq!(by_name["used_once"]["caller"]["tier"], "confirmed");
+    assert_eq!(by_name["used_once"]["caller"]["line"], 14);
+    let reason = by_name["used_once"]["reason"].as_str().unwrap();
+    assert!(reason.contains("run, is itself a candidate"), "{reason}");
+    assert_eq!(by_name["maybe"]["caller"]["tier"], "possible");
+    assert_eq!(by_name["maybe"]["confidence"], "lower");
+    assert_eq!(by_name["maybe"]["caveat"], "untyped caller");
+    assert_eq!(by_name["used_once"]["confidence"], "clear");
+    assert!(
+        by_name["maybe"]["reason"]
+            .as_str()
+            .unwrap()
+            .contains("possible")
+    );
+    let text = stdout(&trekr(&db, &dir, &["--dead", "thing.rb"]));
+    assert!(text.contains("one possible call, at caller.rb:1"), "{text}");
     // The caller itself is used by nothing here, so it is reported too — but
     // never as anything stronger than a candidate.
     for candidate in value["candidates"].as_array().unwrap() {
@@ -2278,7 +2296,31 @@ fn dead_weighs_each_scope_against_its_own_checkout() {
             candidates[0]["root"].as_str().unwrap().ends_with("/one"),
             "{value}"
         );
+        // Text names no checkout as "here", so "widget.rb" alone would be
+        // read against the first scope's.
+        let text = stdout(&trekr(&db, &base, &["--dead", args[0], args[1]]));
+        assert!(text.contains("one/widget.rb:2"), "{text}");
     }
+
+    // A file named twice, directly and through its directory, is one file.
+    let dir = one.to_string_lossy().into_owned();
+    let twice = json(&trekr(
+        &db,
+        &base,
+        &["--dead", &one_scope, &dir, &one_scope, "--json"],
+    ));
+    assert_eq!(twice["scope"], 2, "widget.rb and main.rb: {twice}");
+    let names: Vec<&str> = twice["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["name"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        names.iter().filter(|n| **n == "build").count(),
+        1,
+        "{twice}"
+    );
 }
 
 /// The index the LSP starts in the background prepares the tree snapshot its

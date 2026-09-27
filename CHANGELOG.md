@@ -35,7 +35,22 @@
   different superclasses": one of them may be a `Struct.new` or a plain
   `class Post` in another program, with no superclass at all.
 
+- **`--dead` weighs an untyped single caller as `lower` confidence**, with
+  `caveat: untyped caller`: its only evidence of use is a call that may be
+  another method's. It was `clear`.
+
+- **`--dead` counts a file once**, however it is named: a path repeated, a
+  directory and a file in it, a symlink and its target. Each doubled every
+  candidate and inflated `scope`. Across checkouts, text writes every path
+  whole, where it wrote each relative to the first scope's checkout.
+
 ### Added
+
+- **`--dead` says why**: every row has a `reason` (text prints it after the
+  name), and a `single-caller` row has `caller` — where the one call is, and
+  its `tier`, so a confirmed caller and an untyped same-name call look
+  different. When that caller is itself a candidate, the reason says so: one
+  pass does not cascade. Rows also carry `end_line`.
 
 - `--symbols` rows carry `path` and `root`, and `--dead` rows carry `col`,
   like every other located row.
