@@ -63,6 +63,10 @@ module Kernel
   def puts(*objects)
   end
 
+  sig { returns(String) }
+  def __dir__
+  end
+
   def print(*objects)
   end
 
@@ -458,6 +462,13 @@ class Module < Object
 
   sig { returns(Array) }
   def private_instance_methods(include_super = true)
+  end
+
+  sig { returns(Array) }
+  def protected_instance_methods(include_super = true)
+  end
+
+  def using(mod)
   end
 
   def method_defined?(symbol, inherit = true)
@@ -970,6 +981,12 @@ class Integer < Numeric
 end
 
 class Float < Numeric
+  INFINITY = 1.0 / 0
+  NAN = 0.0 / 0
+  EPSILON = 2.220446049250313e-16
+  MAX = 1.7976931348623157e+308
+  MIN = 2.2250738585072014e-308
+
   def nan?
   end
 
@@ -2222,15 +2239,29 @@ class UncaughtThrowError < ArgumentError
 end
 class ClosedQueueError < StopIteration; end
 
+class SystemCallError < StandardError
+  sig { returns(Integer) }
+  def errno
+  end
+end
+
 module Errno
-  class ENOENT < StandardError; end
-  class EACCES < StandardError; end
-  class EEXIST < StandardError; end
-  class EPIPE < StandardError; end
-  class ECONNREFUSED < StandardError; end
-  class ETIMEDOUT < StandardError; end
-  class EISDIR < StandardError; end
-  class ENOTDIR < StandardError; end
+  class ENOENT < SystemCallError; end
+  class EACCES < SystemCallError; end
+  class EEXIST < SystemCallError; end
+  class EPIPE < SystemCallError; end
+  class ECONNREFUSED < SystemCallError; end
+  class ECONNRESET < SystemCallError; end
+  class ECONNABORTED < SystemCallError; end
+  class ENOTCONN < SystemCallError; end
+  class EHOSTUNREACH < SystemCallError; end
+  class ENETUNREACH < SystemCallError; end
+  class EADDRINUSE < SystemCallError; end
+  class EADDRNOTAVAIL < SystemCallError; end
+  class EINVAL < SystemCallError; end
+  class ETIMEDOUT < SystemCallError; end
+  class EISDIR < SystemCallError; end
+  class ENOTDIR < SystemCallError; end
 end
 
 class IO < Object
@@ -2493,6 +2524,22 @@ class Time < Object
   def self.at(*args)
   end
 
+  sig { returns(Time) }
+  def self.utc(year, *args)
+  end
+
+  sig { returns(Time) }
+  def self.gm(year, *args)
+  end
+
+  sig { returns(Time) }
+  def self.local(year, *args)
+  end
+
+  sig { returns(Time) }
+  def self.mktime(year, *args)
+  end
+
   def self.parse(*args)
   end
 
@@ -2611,6 +2658,13 @@ class Random < Object
 end
 
 class Thread < Object
+  # The synchronization classes live here too; the top-level names are the
+  # same classes.
+  Mutex = ::Mutex
+  Queue = ::Queue
+  SizedQueue = ::SizedQueue
+  ConditionVariable = ::ConditionVariable
+
   def initialize(*args)
   end
 
@@ -2839,6 +2893,11 @@ module Marshal
 end
 
 module Process
+  CLOCK_REALTIME = 0
+  CLOCK_MONOTONIC = 6
+  CLOCK_PROCESS_CPUTIME_ID = 12
+  CLOCK_THREAD_CPUTIME_ID = 16
+
   sig { returns(Integer) }
   def self.pid
   end

@@ -1,0 +1,11 @@
+# Names real code reaches for in core that the stub did not have, found by
+# replaying editor clicks across the user's gems: a click on each came back
+# empty, or found nothing to call on.
+def app.rb:3:20  status=resolved site=Float.rb:5
+def app.rb:4:46  status=resolved site=Process.rb:6
+# `Thread::Mutex` is `Mutex`, so what it builds answers `synchronize`.
+def app.rb:5:23  status=resolved owner=Mutex
+def app.rb:6:10  status=resolved owner=Time
+def app.rb:7:15  status=resolved owner=Kernel
+def app.rb:8:17  status=resolved site=Errno.rb:12
+def app.rb:12:3  status=resolved owner=Module

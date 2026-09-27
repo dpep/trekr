@@ -11,6 +11,13 @@
 
 ### Fixed
 
+- Core now has names real code reaches for and the stub lacked:
+  `Float::INFINITY` and its siblings, `Process::CLOCK_MONOTONIC`,
+  `Thread::Mutex` (and `Queue`, `SizedQueue`, `ConditionVariable`),
+  `SystemCallError` as every `Errno` class's parent and the network `Errno`s,
+  `Time.utc`/`gm`/`local`/`mktime`, `Kernel#__dir__`, `Module#using` and
+  `Module#protected_instance_methods`. Each answered nothing before.
+
 - On a compact `class A::B` or `module A::B`, a click on `B` found nothing,
   and a click on `A` answered `B`. `B` now answers the definition and `A` the
   namespace it is opened in, in the editor and in `--def`.
