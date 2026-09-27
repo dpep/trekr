@@ -382,27 +382,39 @@ impl Store {
     /// joined one onto the repo it happened to be asking about fabricated
     /// files that do not exist.
     pub(crate) fn declarations(&self, roots: &[String]) -> Result<Vec<DeclRow>> {
+        // Ordered here rather than by `ORDER BY c.id, f.path, d.line, d.col`:
+        // SQLite's sorter carried every row's absolute path through a temp
+        // b-tree and was a third of this query. Same keys, same byte order.
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT d.name, d.kind, d.nesting, d.target, c.root || '/' || f.path, d.line, d.col
+            "SELECT d.name, d.kind, d.nesting, d.target, c.root || '/' || f.path, d.line, d.col,
+                    c.id
                FROM def d
                JOIN file f ON f.blob_id = d.blob_id
                JOIN checkout c ON c.id = f.checkout_id
-              WHERE c.root IN ({}) AND d.kind IN ('class','module','constant')
-              ORDER BY c.id, f.path, d.line, d.col",
+              WHERE c.root IN ({}) AND d.kind IN ('class','module','constant')",
             placeholders(roots.len())
         ))?;
         let rows = stmt.query_map(rusqlite::params_from_iter(roots), |r| {
-            Ok(DeclRow {
-                name: r.get(0)?,
-                kind: r.get(1)?,
-                nesting: split_nesting(&r.get::<_, String>(2)?),
-                target: r.get(3)?,
-                path: r.get(4)?,
-                line: r.get(5)?,
-                col: r.get(6)?,
-            })
+            Ok((
+                r.get::<_, i64>(7)?,
+                DeclRow {
+                    name: r.get(0)?,
+                    kind: r.get(1)?,
+                    nesting: split_nesting(&r.get::<_, String>(2)?),
+                    target: r.get(3)?,
+                    path: r.get(4)?,
+                    line: r.get(5)?,
+                    col: r.get(6)?,
+                },
+            ))
         })?;
-        rows.collect()
+        let mut rows = rows.collect::<Result<Vec<_>>>()?;
+        // Within one checkout the root is a shared prefix, so comparing the
+        // absolute path orders exactly as the relative one would.
+        rows.sort_by(|(a_id, a), (b_id, b)| {
+            (a_id, &a.path, a.line, a.col).cmp(&(b_id, &b.path, b.line, b.col))
+        });
+        Ok(rows.into_iter().map(|(_, row)| row).collect())
     }
 
     /// Every method a checkout defines, in a stable order.
