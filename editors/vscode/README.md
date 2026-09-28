@@ -8,9 +8,14 @@ no bootable app — trekr reads the source and its gems off disk.
 
 ## Install
 
-trekr 0.2.0 or newer on your `PATH` (`brew install dpep/tools/trekr`), or set
-`trekr.path`. The extension is not published to the Marketplace; build it from the
-[trekr repo](https://github.com/dpep/trekr):
+1. Install the trekr binary, 0.5.0 or newer: `brew install dpep/tools/trekr`
+   (or `cargo install trekr`). The extension finds it on your `PATH`; set
+   `trekr.path` if VS Code's `PATH` doesn't include it.
+2. Install **trekr** from the Extensions view, or
+   `code --install-extension dpep.trekr`.
+
+To build the extension from the [trekr repo](https://github.com/dpep/trekr)
+instead:
 
 ```sh
 npm --prefix editors/vscode ci

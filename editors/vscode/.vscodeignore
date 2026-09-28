@@ -1,4 +1,5 @@
-# Only the bundled extension, manifest, README and license ship in the .vsix.
+# Only the bundled extension, manifest, README, changelog, license and icon ship
+# in the .vsix.
 # `npm run bundle` inlines vscode-languageclient into out/extension.js, so no
 # node_modules are needed at runtime.
 **
@@ -6,3 +7,5 @@
 !package.json
 !README.md
 !LICENSE.txt
+!CHANGELOG.md
+!images/icon.png

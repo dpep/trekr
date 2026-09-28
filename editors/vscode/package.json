@@ -2,9 +2,18 @@
   "name": "trekr",
   "displayName": "trekr — Ruby code intelligence",
   "description": "A Ruby language server backed by trekr: receiver-aware definitions, references narrowed by receiver, completion, call hierarchy.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "publisher": "dpep",
   "license": "MIT",
+  "icon": "images/icon.png",
+  "galleryBanner": {
+    "color": "#1b2030",
+    "theme": "dark"
+  },
+  "homepage": "https://github.com/dpep/trekr/tree/main/editors/vscode#readme",
+  "bugs": {
+    "url": "https://github.com/dpep/trekr/issues"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/dpep/trekr"
@@ -18,7 +27,9 @@
   "keywords": [
     "ruby",
     "rails",
+    "rspec",
     "language server",
+    "lsp",
     "go to definition",
     "find references"
   ],
