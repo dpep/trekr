@@ -115,6 +115,26 @@ pub(super) fn store_accessor(key: &str) -> Vec<Generated> {
     out
 }
 
+/// Does an `instance_*: false` option drop this method? `class_attribute`
+/// and the `mattr` family take `instance_accessor:`, `instance_reader:` and
+/// `instance_writer:`; `class_attribute` also `instance_predicate:`, which
+/// drops the class's predicate as well as the instance's.
+pub(super) fn dropped_by(made: &Generated, off: impl Fn(&str) -> bool) -> bool {
+    let predicate = made.name.ends_with('?');
+    if predicate && off("instance_predicate") {
+        return true;
+    }
+    if made.singleton {
+        return false;
+    }
+    let accessor = off("instance_accessor");
+    if made.writer {
+        accessor || off("instance_writer")
+    } else {
+        accessor || off("instance_reader")
+    }
+}
+
 /// The argument a macro takes when none is written: `has_secure_password`
 /// is `has_secure_password :password`.
 pub(super) fn default_argument(macro_name: &str) -> Option<&'static str> {
@@ -228,16 +248,16 @@ pub(super) fn generated(macro_name: &str, arg: &str) -> Vec<Generated> {
             Generated::class_writer(format!("{arg}=")),
             Generated::class_method(format!("{arg}?")),
         ],
-        "mattr_accessor" | "cattr_accessor" => {
+        "mattr_accessor" | "cattr_accessor" | "thread_mattr_accessor" | "thread_cattr_accessor" => {
             let mut out = accessor(arg);
             out.push(Generated::class_method(arg));
             out.push(Generated::class_writer(format!("{arg}=")));
             out
         }
-        "mattr_reader" | "cattr_reader" => {
+        "mattr_reader" | "cattr_reader" | "thread_mattr_reader" | "thread_cattr_reader" => {
             vec![Generated::reader(arg), Generated::class_method(arg)]
         }
-        "mattr_writer" | "cattr_writer" => vec![
+        "mattr_writer" | "cattr_writer" | "thread_mattr_writer" | "thread_cattr_writer" => vec![
             Generated::writer(format!("{arg}=")),
             Generated::class_writer(format!("{arg}=")),
         ],
@@ -454,6 +474,25 @@ mod tests {
         assert!(
             !made.iter().any(|m| m == "#authenticate"),
             "`authenticate` is only the password's alias"
+        );
+    }
+
+    #[test]
+    fn an_instance_option_drops_the_instance_side() {
+        let kept = |off: &[&str]| -> Vec<String> {
+            generated("class_attribute", "logger")
+                .into_iter()
+                .filter(|made| !dropped_by(made, |key| off.contains(&key)))
+                .map(|g| format!("{}{}", if g.singleton { "." } else { "#" }, g.name))
+                .collect()
+        };
+        assert_eq!(
+            kept(&["instance_writer"]),
+            ["#logger", "#logger?", ".logger", ".logger=", ".logger?"]
+        );
+        assert_eq!(
+            kept(&["instance_accessor", "instance_predicate"]),
+            [".logger", ".logger="]
         );
     }
 

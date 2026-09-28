@@ -4954,6 +4954,10 @@ dogfood corpora write most that it did not know, and fixes two it misread:
   itself for a key.
 - `alias_attribute :new, :old` declares `new` only (it declared `old` too),
   and with `attribute :x` gains `x?` and the dirty methods below.
+- `class_attribute` and the `mattr`/`cattr` family read their
+  `instance_accessor:`, `instance_reader:`, `instance_writer:` and (for
+  `class_attribute`) `instance_predicate:` options, and `thread_mattr_*` and
+  `thread_cattr_*` are the `mattr` family's.
 - `belongs_to :x` adds `x_changed?` and `x_previously_changed?`
   (ActiveRecord 7.1), and it and `has_one` add `reset_x`.
 - A schema column (DEC-022), an `attribute` and an `alias_attribute` gain

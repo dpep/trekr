@@ -54,6 +54,12 @@
 
 ### Fixed
 
+- `class_attribute`'s and the `mattr` family's `instance_accessor:`,
+  `instance_reader:`, `instance_writer:` and `instance_predicate:` options
+  are read: `class_attribute :x, instance_writer: false` declared an
+  instance writer Ruby does not have. `thread_mattr_accessor` and its kin
+  declare what `mattr_accessor` does (DEC-111).
+
 - `store_accessor :settings, :theme` declared a `settings` accessor: the
   first argument is the store, not a key. `prefix:`/`suffix:` now rename its
   keys. `alias_attribute :new, :old` declared `old` as well as `new`

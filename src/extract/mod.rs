@@ -2635,14 +2635,17 @@ impl<'pr> Extractor<'_> {
             let past = call.message_loc().map_or(start, |m| m.end_offset());
             names.push((default.to_string(), self.pos(past)));
         }
-        let reset_token =
-            keyword_value(args, "reset_token").is_none_or(|v| v.as_false_node().is_none());
+        let off = |key: &str| keyword_value(args, key).is_some_and(|v| v.as_false_node().is_some());
+        let accessor_options = macro_name == "class_attribute" || macro_name.contains("attr_");
 
         for (literal, pos) in names {
             let associated = macros::associated_class(macro_name, &literal, class_name.as_deref());
 
             for made in macros::generated(macro_name, &literal) {
-                if !reset_token && made.name.contains("reset_token") {
+                if off("reset_token") && made.name.contains("reset_token") {
+                    continue;
+                }
+                if accessor_options && macros::dropped_by(&made, off) {
                     continue;
                 }
                 if let Some(only) = &only

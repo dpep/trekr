@@ -1,0 +1,8 @@
+# `class_attribute :x, instance_writer: false` makes no instance writer, and
+# declaring one anyway answered a call Ruby would raise on. The instance_*
+# options of `class_attribute` and the `mattr` family are read;
+# `thread_mattr_accessor` declares what `mattr_accessor` does.
+def app.rb:6:10 status=residue
+def app.rb:7:5 status=resolved owner=Widget defined_via=class_attribute
+def app.rb:8:5 status=resolved owner=Widget defined_via=thread_mattr_accessor
+def app.rb:9:12 status=resolved owner=Widget defined_via=thread_mattr_accessor
