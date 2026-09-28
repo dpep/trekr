@@ -5636,7 +5636,8 @@ chain is marked:
   name") where it was excluded as `no_such_method`. A receiver that is some
   other class stays excluded: its marker would define *its* methods. A bare
   name's sites are possible whenever their receiver's own chain is marked.
-- `--def`'s residue reason names the marker as well.
+- `--def`'s residue reason names the marker as well, ahead of DEC-126's
+  "defined nowhere": the marked scope is the likelier maker than a gem.
 
 **Why.** A first-time user of 0.7.0 asked for `Faraday::Connection#get` and
 was told "has no method get in its ancestors", exit 1, and `--refs

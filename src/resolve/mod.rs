@@ -249,27 +249,25 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                 // on: a relation's to its model (DEC-116), a class's
                 // `delegate_missing_to` to its target (DEC-112).
                 None if let Some(answer) = handed_on(tree, call, path, &receiver) => answer,
+                // A method made from a name the source does not state may be
+                // this one, whether or not the name is defined elsewhere: the
+                // scope that makes such methods is the specific answer (DEC-130).
+                None if let Some((maker, how)) =
+                    tree.dynamic_in_chain(&receiver.fqn, receiver.singleton) =>
+                {
+                    let reason = format!(
+                        "{CHECKED}, but {maker} defines methods its source does not name ({})",
+                        tree.dynamic_note(&how)
+                    );
+                    residue(tree, call, path, Some(receiver), &reason)
+                }
                 None if defined_nowhere(tree, call) => {
                     residue(tree, call, path, Some(receiver), NOWHERE)
                 }
                 // The type is settled and Ruby would still not find the method
                 // in what is indexed. Say what was checked, never why: the
                 // cause is exactly what was not seen.
-                None => {
-                    let checked = "the receiver's type is known, and nothing indexed in \
-                                   its ancestors defines this name";
-                    // A method made from a name the source does not state
-                    // may be this one (DEC-130).
-                    let reason = match tree.dynamic_in_chain(&receiver.fqn, receiver.singleton) {
-                        Some((maker, how)) => format!(
-                            "{checked}, but {maker} defines methods its source does not \
-                             name ({})",
-                            tree.dynamic_note(&how)
-                        ),
-                        None => checked.to_string(),
-                    };
-                    residue(tree, call, path, Some(receiver), &reason)
-                }
+                None => residue(tree, call, path, Some(receiver), CHECKED),
             }
         }
         None if rspec::in_group(&call.nesting) && call.recv == RecvShape::Implicit => residue(
@@ -312,6 +310,10 @@ fn unmixed_reason(tree: &Tree, call: &Call, module: &str) -> String {
 /// Why a name no indexed file defines has no answer. Distinct from a known
 /// receiver whose ancestors lack it: there, the name exists and the chain
 /// does not reach it; here, nothing trekr read defines it at all.
+/// What a residue on a known receiver says was checked.
+const CHECKED: &str =
+    "the receiver's type is known, and nothing indexed in its ancestors defines this name";
+
 const NOWHERE: &str = "nothing trekr indexed defines this name anywhere — not this checkout, \
      its gems or Ruby core; a gem may generate it at runtime (Devise's \
      `authenticate_user!` is one), or define it in a gem that is not installed";

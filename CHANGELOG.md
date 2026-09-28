@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- **Upgrading drops and rebuilds the index** (store v39): run `trekr --index`
+  once per checkout.
+
+### Added
+
+- **A checkout with no `Gemfile.lock` gets its gems anyway**: what its
+  gemspecs and Gemfile declare, each at the highest installed version that
+  meets it, with their runtime dependencies. A gem's own specs now see
+  rspec-core — `describe`, `it_should_behave_like`, matchers — where every one
+  was residue. `--index` says so, and `--json` has `gems.resolved_from`
+  (`lockfile` or `declared`) (DEC-134).
+
+- **`--context DIR` points a name query at a checkout**: `trekr Widget#save
+  --context ~/app`, `--refs … --context`, `--ancestors … --context`, from any
+  directory. It already did for a position (DEC-135).
+
+- **`--dead` rows say `visibility`** — `public`, `protected` or `private`, and
+  text marks the non-public ones — since whether a deletion can break a caller
+  outside the checkout turns on it.
+
 ### Changed
 
 - **`--dead` has an `override` tier.** A method nothing calls by name that
@@ -38,6 +58,9 @@
 - **`--refs Owner#method` always ends with its tally**, `1 confirmed, 0
   possible, 0 excluded of 1 same-name call sites`; text left it out when
   nothing was excluded, which is when it is most worth saying.
+
+- **`--index PATH` says it indexed the checkout containing `PATH`** when `PATH`
+  is inside one rather than its root. It always indexed the whole checkout.
 
 ### Fixed
 
@@ -89,11 +112,6 @@
   `describe` read as Minitest's. Only a call counts now — `x.must_equal`,
   `require "minitest/spec"`, `Minitest::Spec` (DEC-123).
 
-- **Upgrading drops and rebuilds the index** (store v39): run `trekr --index`
-  once per checkout.
-
-### Fixed
-
 - **A method made from a name the source does not state is no longer "not
   there".** Where a class, or one of its ancestors, defines methods with
   `define_method` from a computed name or with a `class_eval` string, the card
@@ -133,28 +151,6 @@
 
 - **Concurrent `--index` runs wait for each other** instead of one failing with
   "database is locked" (exit 74) after 5 s (DEC-139).
-
-### Added
-
-- **A checkout with no `Gemfile.lock` gets its gems anyway**: what its
-  gemspecs and Gemfile declare, each at the highest installed version that
-  meets it, with their runtime dependencies. A gem's own specs now see
-  rspec-core — `describe`, `it_should_behave_like`, matchers — where every one
-  was residue. `--index` says so, and `--json` has `gems.resolved_from`
-  (`lockfile` or `declared`) (DEC-134).
-
-- **`--context DIR` points a name query at a checkout**: `trekr Widget#save
-  --context ~/app`, `--refs … --context`, `--ancestors … --context`, from any
-  directory. It already did for a position (DEC-135).
-
-- **`--dead` rows say `visibility`** — `public`, `protected` or `private`, and
-  text marks the non-public ones — since whether a deletion can break a caller
-  outside the checkout turns on it.
-
-### Changed
-
-- **`--index PATH` says it indexed the checkout containing `PATH`** when `PATH`
-  is inside one rather than its root. It always indexed the whole checkout.
 
 ## 0.7.0 — 2026-09-28
 
