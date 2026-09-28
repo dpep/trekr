@@ -307,13 +307,16 @@ fn check_def(
 
 fn check_refs(case: &str, line: &str, answer: &serde_json::Value, failures: &mut Vec<String>) {
     for (key, want) in pairs(line) {
-        let got = answer["counts"][&key]
-            .as_i64()
-            .map(|n| n.to_string())
-            .unwrap_or_else(|| "<none>".into());
+        let got = match key.as_str() {
+            "status" => answer["status"].as_str().unwrap_or("<none>").to_string(),
+            _ => answer["counts"][&key]
+                .as_i64()
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "<none>".into()),
+        };
         if got != want {
             failures.push(format!(
-                "{case}: {line}\n      counts.{key}: expected `{want}`, got `{got}`"
+                "{case}: {line}\n      {key}: expected `{want}`, got `{got}`"
             ));
         }
     }
@@ -390,6 +393,10 @@ fn every_testbed_case_answers_as_recorded() {
             match verb {
                 "def" => {
                     let (answer, code) = trekr(&db, &dir, &["--def", target, "--json"]);
+                    check_def(&label, line, &answer, code, &mut failures);
+                }
+                "card" => {
+                    let (answer, code) = trekr(&db, &dir, &[target, "--json"]);
                     check_def(&label, line, &answer, code, &mut failures);
                 }
                 "hover" => {

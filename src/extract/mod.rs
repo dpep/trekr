@@ -1089,6 +1089,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.handle_sent_mixin(node);
         self.handle_run_load_hooks(node);
         self.handle_define_method(node);
+        self.handle_string_eval(node);
         self.handle_group_member(node);
         self.handle_custom_matcher(node);
         self.handle_shared_include(node);
@@ -2077,10 +2078,18 @@ impl<'pr> Extractor<'_> {
             "define_singleton_method" => true,
             _ => return,
         };
+        if !on_self(call) {
+            return;
+        }
+        let at = call.location().start_offset();
         // Same rule as a mixin (DEC-031): inside a `def` this runs later,
         // against whatever `self` is then, and recording it here would invent a
-        // method on the wrong owner.
-        if !on_self(call) || self.in_method_body() {
+        // method on the wrong owner. In a class method `self` is the class, and
+        // what it defines there has no name this file can spell.
+        if self.in_method_body() {
+            if self.self_is_class() {
+                self.mark_dynamic(&name, at);
+            }
             return;
         }
         let args = arg_nodes(call);
@@ -2089,6 +2098,7 @@ impl<'pr> Extractor<'_> {
             .map(|name| vec![name])
             .or_else(|| self.interpolated_names(first))
         else {
+            self.mark_dynamic(&name, at);
             return;
         };
         // `define_method(:x, instance_method(:y))`: the body is that method's,
@@ -2121,6 +2131,45 @@ impl<'pr> Extractor<'_> {
             def.target = body_elsewhere.clone();
             self.push_def(def);
         }
+    }
+
+    /// `class_eval "def …"` on `self`: a string of code, whose methods
+    /// nothing here reads (DEC-130).
+    fn handle_string_eval(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        let Some(name) = method_name(call) else {
+            return;
+        };
+        if !matches!(name.as_str(), "class_eval" | "module_eval") || !on_self(call) {
+            return;
+        }
+        let evaluates_string = arg_nodes(call).first().is_some_and(|first| {
+            first.as_string_node().is_some() || first.as_interpolated_string_node().is_some()
+        });
+        if evaluates_string && self.self_is_class() {
+            self.mark_dynamic(&name, call.location().start_offset());
+        }
+    }
+
+    /// Say that this scope defines methods whose names the source does not
+    /// state, so that no answer claims it lacks one (DEC-130). Once per scope
+    /// and maker.
+    fn mark_dynamic(&mut self, by: &str, at: usize) {
+        if self.nesting.is_empty() || self.in_group_body() {
+            return;
+        }
+        let known = self.facts.ancestry.iter().any(|edge| {
+            edge.relation == Relation::Dynamic && edge.owner == self.nesting && edge.target == by
+        });
+        if known {
+            return;
+        }
+        let pos = self.pos(at);
+        self.facts.ancestry.push(Ancestry {
+            owner: self.nesting.clone(),
+            relation: Relation::Dynamic,
+            target: by.to_string(),
+            pos,
+        });
     }
 
     /// The name a `define_method` block defines, when it defines exactly one —

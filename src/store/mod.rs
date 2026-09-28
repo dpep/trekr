@@ -681,22 +681,31 @@ impl Store {
     /// Ruby applies them in, and therefore the order linearization reverses.
     pub(crate) fn ancestry(&self, roots: &[String]) -> Result<Vec<EdgeRow>> {
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT a.owner, a.relation, a.target, c.root || '/' || f.path
+            "SELECT a.owner, a.relation, a.target, c.root || '/' || f.path, a.line
                FROM ancestry a
                JOIN file f ON f.blob_id = a.blob_id
                JOIN checkout c ON c.id = f.checkout_id
-              WHERE c.root IN ({})
+              WHERE c.root IN ({}) AND a.relation != 'dynamic'
               ORDER BY c.id, f.path, a.line, a.col",
             placeholders(roots.len())
         ))?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(roots), |r| {
-            Ok(EdgeRow {
-                owner: split_nesting(&r.get::<_, String>(0)?),
-                relation: r.get(1)?,
-                target: r.get(2)?,
-                path: r.get(3)?,
-            })
-        })?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(roots), edge_row)?;
+        rows.collect()
+    }
+
+    /// The scopes that define methods the source does not name (DEC-130):
+    /// few, and read only when an answer is about to say a method is absent.
+    pub(crate) fn dynamic_markers(&self, roots: &[String]) -> Result<Vec<EdgeRow>> {
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT a.owner, a.relation, a.target, c.root || '/' || f.path, a.line
+               FROM ancestry a
+               JOIN file f ON f.blob_id = a.blob_id
+               JOIN checkout c ON c.id = f.checkout_id
+              WHERE c.root IN ({}) AND a.relation = 'dynamic'
+              ORDER BY c.id, f.path, a.line, a.col",
+            placeholders(roots.len())
+        ))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(roots), edge_row)?;
         rows.collect()
     }
 
@@ -1324,6 +1333,16 @@ pub(crate) struct MethodRow {
     pub(crate) target_pos: Option<crate::core::Pos>,
 }
 
+fn edge_row(r: &rusqlite::Row<'_>) -> Result<EdgeRow> {
+    Ok(EdgeRow {
+        owner: split_nesting(&r.get::<_, String>(0)?),
+        relation: r.get(1)?,
+        target: r.get(2)?,
+        path: r.get(3)?,
+        line: r.get(4)?,
+    })
+}
+
 #[derive(Debug)]
 pub(crate) struct EdgeRow {
     /// Scope stack including the receiving class or module, innermost first.
@@ -1333,6 +1352,7 @@ pub(crate) struct EdgeRow {
     /// The file that wrote it, absolute like a site's path: which of two
     /// conflicting declarations of the owner it belongs to (DEC-072).
     pub(crate) path: String,
+    pub(crate) line: u32,
 }
 
 #[derive(Debug, serde::Serialize)]

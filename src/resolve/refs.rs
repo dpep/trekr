@@ -329,6 +329,16 @@ fn tier(
                 ),
             }
         }
+        // Nothing indexed defines it, but the queried owner defines methods
+        // its source does not name, and this receiver is one of it (DEC-130).
+        None if unnamed_reach(tree, &receiver, query, target) => here(
+            Tier::Possible,
+            Some(receiver.fqn.clone()),
+            None,
+            "the receiver's class defines methods its source does not name",
+            1,
+            None,
+        ),
         // The type is settled and Ruby finds nothing — unless the chain was cut
         // short, in which case the missing ancestor could be the target.
         None if tree.ancestors(&receiver.fqn).unresolved.is_empty() => here(
@@ -348,6 +358,28 @@ fn tier(
             None,
         ),
     }
+}
+
+/// Could a receiver whose lookup found nothing still reach the queried
+/// method, because its owner defines methods by a name no literal spells?
+/// Only when the receiver is the owner or inherits from it: a marker on some
+/// other class defines that class's methods, not the queried one.
+fn unnamed_reach(
+    tree: &Tree,
+    receiver: &super::Receiver,
+    query: &Query,
+    target: Option<&str>,
+) -> bool {
+    let Some(target) = target else {
+        return tree
+            .dynamic_in_chain(&receiver.fqn, receiver.singleton)
+            .is_some();
+    };
+    tree.dynamic_in_chain(target, query.singleton).is_some()
+        && tree
+            .lookup_chain(&receiver.fqn, receiver.singleton)
+            .iter()
+            .any(|(owner, _)| crate::tree::public_name(owner) == target)
 }
 
 /// A `super` site, tiered by where it lands from each class that can run it.

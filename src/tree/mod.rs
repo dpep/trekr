@@ -374,6 +374,23 @@ pub(crate) struct Tree {
     /// caching a chain computed against a partial `seen` set — not the same
     /// answer.
     ancestors: RefCell<HashMap<String, Rc<Ancestry>>>,
+    /// The markers of scopes that define methods the source does not name
+    /// (DEC-130), as read: loaded on first need from the store, or handed
+    /// over whole by a tree that loads nothing.
+    dynamic_rows: RefCell<Option<Vec<EdgeRow>>>,
+    /// The same, by the scope's fully-qualified name.
+    dynamic: RefCell<Option<HashMap<String, Vec<Dynamic>>>>,
+}
+
+/// Where a scope defines methods its source does not name: a
+/// `define_method` whose name no literal spells, a `class_eval` string that
+/// was not read (DEC-130).
+#[derive(Clone, Debug)]
+pub(crate) struct Dynamic {
+    /// The method that does it: `define_method`, `class_eval`.
+    pub(crate) by: String,
+    pub(crate) path: String,
+    pub(crate) line: u32,
 }
 
 /// A linearized ancestor chain, and how much of it we could actually build.
@@ -573,6 +590,7 @@ impl Tree {
             // An in-memory store cannot be reopened, so there is nothing to
             // load from later: take everything now and stay eager.
             None => {
+                tree.dynamic_rows = RefCell::new(Some(store.dynamic_markers(&roots)?));
                 methods.extend(store.methods(&roots)?);
                 phases.methods = methods.len();
                 tree.add_methods(methods);
@@ -641,6 +659,8 @@ impl Tree {
             includers: RefCell::new(None),
             mixers: RefCell::new(None),
             ancestors: RefCell::new(HashMap::new()),
+            dynamic_rows: RefCell::new(None),
+            dynamic: RefCell::new(None),
         }
     }
 
@@ -655,6 +675,11 @@ impl Tree {
         programs: &[String],
     ) -> HashMap<String, Entry> {
         let mut tree = Tree::with_names(Names::Building(HashMap::new()), String::new());
+        // A scope's markers say nothing about its namespace (DEC-130).
+        let edges: Vec<EdgeRow> = edges
+            .into_iter()
+            .filter(|edge| edge.relation != "dynamic")
+            .collect();
 
         // Placing a name can depend on a name not placed yet: `class A::B`
         // needs `A`, and `A` may itself have been written compactly. So settle
@@ -1534,7 +1559,19 @@ pub(crate) fn for_test(sources: &[(&str, &str)]) -> Tree {
         edges.extend(e);
         methods.extend(m);
     }
+    let markers = edges
+        .iter()
+        .filter(|edge| edge.relation == "dynamic")
+        .map(|edge| EdgeRow {
+            owner: edge.owner.clone(),
+            relation: edge.relation.clone(),
+            target: edge.target.clone(),
+            path: edge.path.clone(),
+            line: edge.line,
+        })
+        .collect();
     let mut tree = Tree::from_rows(decls, edges, &[]);
+    tree.dynamic_rows = RefCell::new(Some(markers));
     tree.add_methods(methods);
     tree
 }
@@ -2563,6 +2600,60 @@ impl Tree {
             .unwrap_or_default()
     }
 
+    /// The first scope in `fqn`'s lookup chain that defines methods its source
+    /// does not name, and how (DEC-130): the reason "nothing defines it" is a
+    /// guess there. Either side of the scope counts, since a string of code can
+    /// define both.
+    pub(crate) fn dynamic_in_chain(&self, fqn: &str, singleton: bool) -> Option<(String, Dynamic)> {
+        self.place_dynamic();
+        let placed = self.dynamic.borrow();
+        let placed = placed.as_ref()?;
+        if placed.is_empty() {
+            return None;
+        }
+        self.lookup_chain(fqn, singleton)
+            .into_iter()
+            .find_map(|(owner, _)| {
+                let marker = placed.get(&owner)?.first()?;
+                Some((variants::public_name(&owner).to_string(), marker.clone()))
+            })
+    }
+
+    /// A marker as a reason says it: the method that does it, and where.
+    pub(crate) fn dynamic_note(&self, how: &Dynamic) -> String {
+        let path = match crate::core::paths::under(&self.root, &how.path) {
+            true => how.path[self.root.len() + 1..].to_string(),
+            false => crate::core::paths::pretty(&how.path),
+        };
+        format!("{}, {path}:{}", how.by, how.line)
+    }
+
+    fn place_dynamic(&self) {
+        if self.dynamic.borrow().is_some() {
+            return;
+        }
+        let rows = match self.dynamic_rows.borrow_mut().take() {
+            Some(rows) => rows,
+            None => self
+                .loader
+                .as_ref()
+                .and_then(|loader| loader.store.dynamic_markers(&loader.roots).ok())
+                .unwrap_or_default(),
+        };
+        let mut placed: HashMap<String, Vec<Dynamic>> = HashMap::new();
+        for row in rows {
+            let Some(owner) = self.scope_fqn(&row.owner) else {
+                continue;
+            };
+            placed.entry(owner).or_default().push(Dynamic {
+                by: row.target,
+                path: row.path,
+                line: row.line,
+            });
+        }
+        *self.dynamic.borrow_mut() = Some(placed);
+    }
+
     /// The fully-qualified name of the scope a fact was written in.
     pub(crate) fn scope_fqn(&self, written_nesting: &[String]) -> Option<String> {
         self.scopes(written_nesting).into_iter().next()
@@ -3109,6 +3200,7 @@ fn rows_from(path: &str, source: &str) -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<Metho
             relation: a.relation.as_str().to_string(),
             target: a.target,
             path: path.to_string(),
+            line: a.pos.line,
         });
     }
     (decls, edges, methods)
@@ -3205,6 +3297,7 @@ mod rbi_preference_tests {
                 relation: "superclass".into(),
                 target: "Base".into(),
                 path: "/app/widget.rb".into(),
+                line: 1,
             }],
             &[],
         );

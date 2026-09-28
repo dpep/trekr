@@ -1453,6 +1453,18 @@ fn method_verdict(
             )),
         );
     }
+    // A method made from a name the source does not state may be this one.
+    if let Some((maker, how)) = tree.dynamic_in_chain(owner, query.singleton) {
+        return (
+            "residue",
+            Some(format!(
+                "nothing in {owner}'s ancestors defines {what} {name}, but {maker} \
+                 defines methods its source does not name ({}), which may \
+                 include it",
+                tree.dynamic_note(&how)
+            )),
+        );
+    }
     let unseen = &tree.ancestors(owner).unresolved;
     if unseen.is_empty() {
         return (

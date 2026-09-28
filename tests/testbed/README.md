@@ -44,7 +44,9 @@ symbols app.rb   Widget,save,Job,run
 | `reason` | a word the residue's reason contains |
 | `exit` | the process exit code, for cases about not dying |
 
-`refs QUERY` asserts the `counts` object. `dead FILE Owner#name=tier …`
+`refs QUERY` asserts the `counts` object, and `status=` the answer's status.
+`card Owner#name` asserts the card's `status`, `reason`, `owner` and `exit`, as
+`def` does. `dead FILE Owner#name=tier …`
 asserts each method's `--dead` tier, `none` for one not reported. `ancestors NAME A,B,C`
 asserts the chain starts with those names, and `unresolved=X,Y` (empty for
 none) asserts the ancestors it could not resolve. `symbols FILE` asserts the outline,

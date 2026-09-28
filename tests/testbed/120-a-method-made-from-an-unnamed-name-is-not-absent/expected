@@ -1,0 +1,12 @@
+# A method made from a name the source does not state — a `class_eval` string
+# looped over another file's list, a `define_method` handed a macro's
+# parameter — was "no such method" to the card and `--refs`, exit 1, while
+# `--def` said residue: faraday's `Connection#get`, flipper's
+# `Wrapper#enable`. The scope that makes such methods is marked, and an
+# answer about a name it lacks hedges: residue, naming the maker, with the
+# calls on it possible. A class with no marker in its chain stays certain.
+card Widget#fetch status=residue reason=class_eval exit=1
+refs Widget#fetch status=residue possible=1 excluded=1
+def app.rb:25:12 status=residue reason=class_eval
+card Part#color status=residue reason=define_method
+card Plain#fetch status=no_such_method exit=1

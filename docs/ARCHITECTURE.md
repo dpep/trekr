@@ -161,6 +161,12 @@ Two things the blob layer cannot know, resolved here:
   The block's parameter is the class too, and a `def` in the block is a
   method of a module `on_load(:name)` that each such class prepends (DEC-104).
 
+**A scope that makes methods from unnamed names is marked** (DEC-130).
+`define_method` whose name nothing literal spells, and a `class_eval` string,
+write an `ancestry` row of relation `dynamic`. Assembly drops it; the tree
+reads the marks from the store only when an answer is about to say a chain
+lacks a method (`Tree::dynamic_in_chain`), and that answer hedges instead.
+
 **A name declared with two superclasses is split** (DEC-072). Ruby raises
 "superclass mismatch" when both load, so a checkout holding `class Post <
 ActiveRecord::Base` and a test fake's `Post = Struct.new` holds two programs.

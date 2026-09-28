@@ -89,6 +89,18 @@
   `describe` read as Minitest's. Only a call counts now — `x.must_equal`,
   `require "minitest/spec"`, `Minitest::Spec` (DEC-123).
 
+- **Upgrading drops and rebuilds the index** (store v39): run `trekr --index`
+  once per checkout.
+
+### Fixed
+
+- **A method made from a name the source does not state is no longer "not
+  there".** Where a class, or one of its ancestors, defines methods with
+  `define_method` from a computed name or with a `class_eval` string, the card
+  and `--refs Owner#name` answer `residue`, naming that class and line, instead
+  of `no_such_method`, and `--refs` lists the call sites on it as possible. It
+  was faraday's `Connection#get` and flipper's `Wrapper#enable` (DEC-130).
+
 ## 0.7.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v38): run `trekr --index`

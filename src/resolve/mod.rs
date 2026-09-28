@@ -255,14 +255,21 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                 // The type is settled and Ruby would still not find the method
                 // in what is indexed. Say what was checked, never why: the
                 // cause is exactly what was not seen.
-                None => residue(
-                    tree,
-                    call,
-                    path,
-                    Some(receiver),
-                    "the receiver's type is known, and nothing indexed in its \
-                     ancestors defines this name",
-                ),
+                None => {
+                    let checked = "the receiver's type is known, and nothing indexed in \
+                                   its ancestors defines this name";
+                    // A method made from a name the source does not state
+                    // may be this one (DEC-130).
+                    let reason = match tree.dynamic_in_chain(&receiver.fqn, receiver.singleton) {
+                        Some((maker, how)) => format!(
+                            "{checked}, but {maker} defines methods its source does not \
+                             name ({})",
+                            tree.dynamic_note(&how)
+                        ),
+                        None => checked.to_string(),
+                    };
+                    residue(tree, call, path, Some(receiver), &reason)
+                }
             }
         }
         None if rspec::in_group(&call.nesting) && call.recv == RecvShape::Implicit => residue(

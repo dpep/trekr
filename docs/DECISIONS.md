@@ -5612,3 +5612,45 @@ is in every model's chain).
 of the click misses, 47 of the 145 "module never mixed in" were names
 defined nowhere and are now that bucket.
 
+## DEC-130 — A scope that makes methods from unnamed names is marked, and no answer calls its method absent
+
+**Decided.** The extractor marks a scope that defines methods whose names its
+source does not state: `define_method` on `self` whose name no literal or
+literal loop spells (in a class body, or in a class method, where `self` is
+the class), and `class_eval`/`module_eval` handed a string. The mark is an
+`ancestry` row of relation `dynamic`, target the method that does it. It is no
+ancestor: the tree's assembly drops it, and a query reads the marks only when
+an answer is about to say a method is not there.
+
+Then, where nothing indexed in a chain defines the name and a scope in that
+chain is marked:
+
+- the card (`trekr Owner#name`) and `--refs Owner#name` answer `residue`, not
+  `no_such_method`, with a reason naming the scope, its maker and where
+  (`Widget defines methods its source does not name (class_eval,
+  lib/widget.rb:12), which may include it`). The card still exits `1`, as
+  every residue that found nothing does (DEC-080); `--refs` lists the call
+  sites instead of none (DEC-073's exit holds only for the certain answer).
+- a call site whose receiver is the queried owner, or inherits from it, is
+  `possible` ("the receiver's class defines methods its source does not
+  name") where it was excluded as `no_such_method`. A receiver that is some
+  other class stays excluded: its marker would define *its* methods. A bare
+  name's sites are possible whenever their receiver's own chain is marked.
+- `--def`'s residue reason names the marker as well.
+
+**Why.** A first-time user of 0.7.0 asked for `Faraday::Connection#get` and
+was told "has no method get in its ancestors", exit 1, and `--refs
+Flipper::Adapters::Wrapper#enable` said `no_such_method`. Both are real
+methods: faraday writes its verbs with `class_eval <<-RUBY … def #{method}`
+over a list another file assigns, flipper with `METHODS.each { |m|
+define_method(m) }`. `--def` on a call already said residue; the card and
+`--refs` claimed the certain answer DEC-073 reserves for a chain that was all
+seen. It was all seen — but not all of it could be read.
+
+**`method_missing` is not a marker here.** The card already hedges on a
+hand-written `method_missing` in the chain, and `--refs` keeps excluding
+those call sites, as DEC-112 decided for ActiveModel's.
+
+**Either side.** A mark covers the scope's instance and class methods alike,
+since one string can define both. It errs toward the hedge.
+

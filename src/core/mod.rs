@@ -541,6 +541,11 @@ pub(crate) enum Relation {
     /// `ActiveSupport.run_load_hooks(:active_record, Base)` (DEC-098). No
     /// ancestor itself, it says where a hook's mixins land.
     LoadHooks,
+    /// The owner defines methods whose names the source does not state:
+    /// `define_method(name)` with a name no literal spells, or a
+    /// `class_eval` string that was not read. The target is the method that
+    /// does it. No ancestor either: it is why "no such method" is a guess.
+    Dynamic,
 }
 
 impl Relation {
@@ -563,6 +568,7 @@ impl Relation {
             Relation::Extend => "extend",
             Relation::SingletonPrepend => "singleton_prepend",
             Relation::LoadHooks => "load_hooks",
+            Relation::Dynamic => "dynamic",
         }
     }
 
@@ -574,6 +580,7 @@ impl Relation {
             "extend" => Relation::Extend,
             "singleton_prepend" => Relation::SingletonPrepend,
             "load_hooks" => Relation::LoadHooks,
+            "dynamic" => Relation::Dynamic,
             _ => return None,
         })
     }
