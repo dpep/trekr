@@ -2417,3 +2417,83 @@ of their own:
 | rails `--dead` candidates | 2,366 | 2,364 |
 
 No confidently wrong count rose in any gold set.
+
+## Rails macros and the RSpec leftovers (2026-09-28)
+
+DEC-110 to DEC-116, against main at 0961cd6, each build on stores it indexed
+itself: the three gem gold sets (`APP_SAMPLE=600 SAMPLE=300 SEED=12`),
+widget_shop's trace with every site scored and context pinned, rails' 40
+`--refs` queries, `script/clicks.py` over the 13 dogfood repositories (21,154
+definition clicks), and a macro fixture: a copy of widget_shop with an
+`Account` model writing every macro the lane added (`has_secure_password`,
+`has_secure_token`, both attachment macros, three enums with and without
+affixes, `store`, `store_accessor`, `attribute`, `alias_attribute`,
+`class_attribute`, `cattr_accessor`, `mattr_accessor`, scopes,
+`accepts_nested_attributes_for`, `delegate_missing_to`) and a service calling
+them, traced under TracePoint (4,462 sites, 114 of them the app's) and click-
+replayed with `LIBRARY=app,lib`.
+
+### The macro fixture
+
+| | main | now |
+| --- | ---: | ---: |
+| app sites: correct / declaration / confidently wrong, of 112 → 114 | 55 / 20 / 2 | **63 / 47 / 0** |
+| … whose truth is generated (50): correct / declaration / declaration-offered / residue-nothing-known | 3 / 20 / 9 / 18 | 3 / **47** / 0 / 0 |
+| gem floor: correct / confidently wrong | 2,137 / 33 | 2,198 / 33 |
+| clicks: definition misses of 533 | 134 | **78** |
+| … "known type, method not found" | 42 | 2 |
+
+The last two app misses of that kind are `has_one_attached` and
+`has_many_attached` themselves: Active Storage's `Attached::Model` reaches
+models through an `on_load` inside an `initializer`, which DEC-098 does not
+follow.
+
+### Gold sets
+
+| | main | now |
+| --- | ---: | ---: |
+| widget_shop app: correct / confidently wrong | 19 / 2 | **21 / 1** |
+| widget_shop gem floor: correct / confidently wrong, of 2,838 → 2,899 | 1,525 / 19 | 1,586 / 19 |
+| graph_weaver, a spec: correct / declaration of 482 | 374 / 58 | 375 / 60 |
+| accord, a spec: declaration of 531 | 113 | 120 |
+| polyid gem floor: correct of 297 → 300 | 143 | 146 |
+
+No confidently wrong count rose anywhere. The gem floors' gains are
+column-mismatches made correct: a `class_attribute` or `scope` inside a
+concern's `included do` declared its routed `ClassMethods` at the macro's own
+name, so a click on the macro answered the module; the routing now declares
+it at `do` (DEC-110's refactor, DEC-099's rule). widget_shop's app `where` in
+`scope :affordable` is DEC-116; graph_weaver's `http_response` in `serving`'s
+block DEC-113; accord's seven declarations are its bare top-level
+`describe`s (DEC-115).
+
+### Click replay
+
+| | main | now |
+| --- | ---: | ---: |
+| library clicks missed of 8,630 | 2,137 | 2,137 |
+| spec clicks missed of 12,524 | 3,501 | **3,268** |
+| … "spec DSL and let names" | 308 | 264 |
+| … "chained receiver" | 1,137 | 957 |
+
+233 definition clicks that missed now answer, and none that answered miss:
+meddleware's `subject.use` (79, DEC-114), bare `describe` (43, DEC-115), and
+the rest calls on an implicit subject. The macros moved nothing here: these
+are gems, not Rails apps.
+
+### References
+
+rails, the 40 `--refs` queries: 30 `where` calls in scope bodies move from
+`ActiveRecord::Querying#where` (confirmed → excluded) to
+`ActiveRecord::QueryMethods#where` (excluded → confirmed) (DEC-116); five
+sites move excluded → possible: `reload` on `comments(:greetings)`, whose
+fixture accessor had been guessed an Integer by a name vote the new
+declarations dissolved, and `fetch` on `EncryptedConfiguration`, which
+`delegate_missing_to :options` (DEC-112). graph_weaver's
+`RSpec::SharedExampleGroups::RawHttpServer#http_response` went 0 confirmed,
+11 possible, 15 excluded to 26 confirmed (DEC-113).
+
+### Store
+
+rails: 88,292 → 101,906 definition rows, 65.3 → 67.1 MB, almost all the
+schema's dirty-tracking declarations (DEC-111).

@@ -29,7 +29,7 @@ the repo named; lines and columns are 1-based, as `--def` takes them.
 
 | position | repo | meant | got | fixed in |
 |---|---|---|---|---|
-| `spec/accord/types/decimal_spec.rb:5:1` `describe` | accord | RSpec's `describe`, exposed on `main` | residue | af03fb4 (testbed 086) |
+| `spec/accord/types/decimal_spec.rb:5:1` `describe` | accord | RSpec's `describe`, exposed on `main` | residue | 1e72d13 (testbed 086) |
 | `spec/transport_endpoint_spec.rb:96:35` `http_response` | graph_weaver | `def http_response` in the `shared_context` of `spec/support/raw_http_server.rb` | residue, the shared context's method offered first | 6332392 (testbed 084) |
 | `spec/models/user_spec.rb:54:33` `find` | polyid | `PolyId::Model::ClassMethods#find` | ActiveRecord's `find`, **resolved** | ecb44b5 (testbed 071) |
 | `spec/models/cache_spec.rb:81:12` `id_for` | polyid | `PolyId::Model::ClassMethods#id_for` | empty: `User` known, nothing defines it | ecb44b5 (testbed 071) |
