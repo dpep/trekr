@@ -222,14 +222,13 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                 None if tree.kind_of(&receiver.fqn) == Some("module") => {
                     match via_includers(tree, call, &receiver) {
                         Some(answer) => answer,
-                        None => residue(
-                            tree,
-                            call,
-                            path,
-                            Some(receiver),
-                            "the call is inside a module, and no class the index \
-                             knows of mixes it in and defines this name",
-                        ),
+                        None if defined_nowhere(tree, call) => {
+                            residue(tree, call, path, Some(receiver), NOWHERE)
+                        }
+                        None => {
+                            let reason = unmixed_reason(tree, call, &receiver.fqn);
+                            residue(tree, call, path, Some(receiver), &reason)
+                        }
                     }
                 }
                 // A spec whose bundle's rspec-core is not indexed: the
@@ -282,6 +281,25 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
             "the receiver's type is not determined by this file",
         ),
     }
+}
+
+/// Why a call in a module found nothing through the classes that mix it in:
+/// none does, or those that do lack the name — on the side the call runs
+/// on, which in an `included do` block is the class's own.
+fn unmixed_reason(tree: &Tree, call: &Call, module: &str) -> String {
+    let module = crate::tree::public_name(module);
+    if tree.includers_of(module).is_empty() {
+        return format!(
+            "the call is inside module {module}, and no class the index knows of mixes it in"
+        );
+    }
+    if call.singleton {
+        return format!(
+            "the call runs on the classes that include {module}, as a class method, \
+             and none of them has a class method of this name"
+        );
+    }
+    format!("the call is inside module {module}, and no class that mixes it in defines this name")
 }
 
 /// Why a name no indexed file defines has no answer. Distinct from a known
@@ -2724,7 +2742,9 @@ mod tests {
 
     #[test]
     fn a_module_nobody_mixes_in_says_that_rather_than_guessing() {
-        let source = "module Lonely\n  def run\n    nowhere\n  end\nend\n";
+        // Defined elsewhere, so the name exists and the module is the story.
+        let source = "module Lonely\n  def run\n    nowhere\n  end\nend\n\
+                      class Other\n  def nowhere\n  end\nend\n";
         let found = answer(source, "nowhere");
         assert_eq!(found.status, Status::Residue);
         assert!(found.reason.unwrap().contains("mixes it in"));

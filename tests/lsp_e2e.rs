@@ -3186,6 +3186,51 @@ fn completion_of_a_bare_word_offers_locals_then_the_classs_methods() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// In a module, `self` is whatever mixes it in: a bare word in its `included
+/// do` block is offered the includer's class methods, and one in its method
+/// the includer's instance methods, after the module's own (DEC-127).
+#[test]
+fn completion_in_a_module_offers_what_its_includers_have() {
+    let source = concat!(
+        "module ActiveSupport\n",                      // 0
+        "  module Concern\n",                          // 1
+        "    def included(base = nil, &block); end\n", // 2
+        "  end\n",                                     // 3
+        "end\n",                                       // 4
+        "module Trackable\n",                          // 5
+        "  extend ActiveSupport::Concern\n",           // 6
+        "  included do\n",                             // 7
+        "    \n",                                      // 8
+        "  end\n",                                     // 9
+        "  def track\n",                               // 10
+        "    \n",                                      // 11
+        "  end\n",                                     // 12
+        "end\n",                                       // 13
+        "class Widget\n",                              // 14
+        "  include Trackable\n",                       // 15
+        "  def self.tracked_scope; end\n",             // 16
+        "  def stamp!; end\n",                         // 17
+        "end\n",                                       // 18
+    );
+    let (dir, _db, mut session) = indexed_session("complete-mixed", source);
+    session.read();
+    let at_line = |line: usize, word: &str| {
+        let mut lines: Vec<String> = source.lines().map(str::to_string).collect();
+        lines[line] = format!("    {word}");
+        lines.join("\n") + "\n"
+    };
+    let (labels, _) = complete(&mut session, &dir, &at_line(8, "track"), 8, 2);
+    assert!(labels.contains(&"tracked_scope".to_string()), "{labels:?}");
+    assert!(
+        !labels.contains(&"stamp!".to_string()),
+        "an instance method: {labels:?}"
+    );
+    let (labels, _) = complete(&mut session, &dir, &at_line(11, "sta"), 11, 3);
+    assert!(labels.contains(&"stamp!".to_string()), "{labels:?}");
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A listing cut at its cap is the same listing every time: the names that
 /// sort first, as the client will show them. It was whichever members a hash
 /// map happened to yield first, which changed from one process to the next.

@@ -136,6 +136,10 @@ impl Members {
     }
 }
 
+/// How many classes that mix a module in lend their methods to a bare word
+/// in it. Past this the list is every class's, and says it is incomplete.
+const MIXERS_OFFERED: usize = 4;
+
 pub(crate) fn completion(
     session: &mut Session,
     params: CompletionParams,
@@ -213,6 +217,17 @@ pub(crate) fn completion(
             if let Some(fqn) = tree.scope_fqn(&call.nesting) {
                 let fqn = tree.variant_at(&fqn, &located.relative);
                 add_methods(&mut list, tree, members, &fqn, call.singleton, true, 1);
+                // In a module `self` is what mixes it in — an `included do`
+                // block, an `on_load` hook's body, a module method — so the
+                // mixers' methods are callable too, after the module's own
+                // (DEC-127). A module half the index mixes in offers a few.
+                if tree.kind_of(&fqn) == Some("module") {
+                    let mixers = tree.mixers_of(&fqn);
+                    for class in mixers.iter().take(MIXERS_OFFERED) {
+                        add_methods(&mut list, tree, members, class, call.singleton, true, 2);
+                    }
+                    incomplete |= mixers.len() > MIXERS_OFFERED;
+                }
             } else {
                 // Top level: `self` is `main`, an Object.
                 add_methods(&mut list, tree, members, "Object", false, true, 1);

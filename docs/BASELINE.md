@@ -2696,3 +2696,10 @@ unchanged; only the reason moved):
 | spec DSL and let names | 218 | 208 |
 
 No gold verdict moved.
+
+### A module's includers, in completion and residue (DEC-127)
+
+No gold verdict moved, and no click that answered stopped. Of the 145
+misses bucketed "module never mixed in", 47 name a method nothing indexed
+defines and are now "defined nowhere indexed" (443 → 490); the other 98
+are modules no indexed class mixes in.

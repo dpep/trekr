@@ -60,6 +60,15 @@
   core — and that a gem may generate it at runtime. The ancestors reason is
   kept for a name that exists elsewhere (DEC-126).
 
+- **In a module, completion offers what its includers have.** A bare word
+  in a concern's `included do` block is offered the including classes'
+  class methods, and one in the module's own methods their instance
+  methods, after the module's own; it offered only the module's. And a
+  residue there says which side was asked: `stamp!` in `included do`,
+  where the includer has only an instance `stamp!`, said "no class that
+  includes it defines `stamp!`", which was false; it says none has a class
+  method of that name (DEC-127).
+
 - **A call on `described_class` resolves.** `described_class.blocked?`
   answers the described class's own `blocked?`, and `described_class.new.x`
   its instance method, `resolved_via: described_class`; both were residue,

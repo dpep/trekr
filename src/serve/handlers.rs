@@ -1427,8 +1427,11 @@ fn residue_words(
 ) -> String {
     let lead = format!("**`{name}`** — ");
     match &answer.receiver_type {
-        Some(module) if answer.receiver_kind.as_deref() == Some("module") => format!(
-            "{lead}called inside module `{module}`, and no class that includes it defines `{name}`."
+        // The resolver's words: which side of the includers was asked is
+        // the difference between true and false here (DEC-127).
+        Some(_) if answer.receiver_kind.as_deref() == Some("module") => format!(
+            "{lead}{}.",
+            answer.reason.as_deref().unwrap_or("called inside a module")
         ),
         Some(known) => {
             let mut out = format!(

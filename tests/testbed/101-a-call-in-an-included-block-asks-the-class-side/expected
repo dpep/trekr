@@ -1,0 +1,11 @@
+# A call in `included do` runs on the including class itself, so Ruby asks
+# for a class method. Widget has `stamp!` only as an instance method, and the
+# residue said "no class that includes it defines `stamp!`" — false. It now
+# says which side was asked, and hover repeats the resolver's words.
+def app.rb:11:5 status=residue reason=method
+hover app.rb:11:5 as a class method
+# An instance-side call in the module: the includers lack it. The module is
+# named now.
+def app.rb:15:5 status=residue reason=Trackable
+# A module nothing mixes in says that.
+def app.rb:28:5 status=residue reason=Loose

@@ -5573,3 +5573,42 @@ nowhere indexed"), drawn from "symbol argument" (244), "chained receiver"
 (85), "known type, method not found" (54) and the rest; no gold verdict
 moved, since a residue's reason is not scored.
 
+## DEC-127 — In a module, `self` is what mixes it in, for completion and for the words
+
+**Decided.** Completion of a bare word in a module — its methods, its
+`included do` block — adds the methods of the classes that mix it in
+(`mixers_of`, at most four; past that the list is marked incomplete), on
+the side the call runs on, after the module's own. And a residue for a
+call in a module says which of three things happened: no indexed class
+mixes the module in; the includers were asked for an instance method and
+none has it; or, in an `included do` block, they were asked for a *class*
+method and none has one. The module is named. Hover shows the resolver's
+words instead of its own, and a name defined nowhere says so first
+(DEC-126).
+
+**Before**, a bare word in `included do` completed from the module alone,
+though the block runs on the including class, and hover on a call there
+said "no class that includes it defines `stamp!`" when the includer did,
+as an instance method: the lookup had been on the class side, which is
+right — Ruby would raise — and the words hid it.
+
+**Why `mixers_of`, and four.** A module's includers are every class with
+it in its chain, which for `ActiveRecord::Persistence` is every model; the
+classes whose own `include` names it are the ones a reader has in mind,
+and their subclasses add nothing a bare word in the module can rely on.
+Four covers a concern shared by a few models without turning the list into
+the union of an app.
+
+**Not done: `on_load` blocks.** A call directly in `ActiveSupport.on_load
+(:active_record) do`, or in a `def` there, is residue — "a block handed to
+a method that may run it on another object" — because the resolver does
+not type it, though DEC-098 and DEC-104 know which classes run the hook.
+Completion follows the resolver, so it offers Object's methods there.
+Typing those calls as the hooked classes' is its own change, with the
+cost question every includer-wide lookup carries (`on_load(:active_record)`
+is in every model's chain).
+
+**Measured** (BASELINE, "A first-time Rails user"): no gold verdict moved;
+of the click misses, 47 of the 145 "module never mixed in" were names
+defined nowhere and are now that bucket.
+

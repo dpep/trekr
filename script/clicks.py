@@ -275,6 +275,8 @@ def bucket(miss):
         return "defined nowhere indexed"
     if "no class the index knows of mixes it in" in why:
         return "module never mixed in"
+    if "that include" in why or "that mixes it in defines" in why:
+        return "known type, method not found"
     if "the receiver's type is known" in why:
         return "known type, method not found"
     if "receiver symbol" in why:
