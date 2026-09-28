@@ -9,5 +9,8 @@ def spec/widget_spec.rb:16:14 status=resolved site=spec/widget_spec.rb:12
 def spec/widget_spec.rb:17:16 status=resolved site=spec/widget_spec.rb:12
 def spec/widget_spec.rb:18:20 status=resolved site=spec/widget_spec.rb:12
 def spec/widget_spec.rb:19:21 status=residue reason=another
-def spec/widget_spec.rb:20:16 status=residue
+# A helper's block is vouched for one kind of call only: a name the helper's
+# own group defines (DEC-113). `assemble` instance_evals on the example
+# itself, so `part` is the example's here, as Ruby has it.
+def spec/widget_spec.rb:20:16 status=resolved site=spec/widget_spec.rb:12
 def spec/widget_spec.rb:21:17 status=residue

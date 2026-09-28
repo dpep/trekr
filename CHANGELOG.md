@@ -34,6 +34,13 @@
   `--refs` confirms it; when it has none, or the target lacks the name too,
   the residue says where the name went (DEC-112).
 
+- **A block handed to a shared group's own helper** sees the group's other
+  methods: in `serving { |s| s.write(http_response(500)) }`, where
+  `serving` and `http_response` are both the shared context's,
+  `http_response` resolves to it; it was residue. And `--refs` on a method
+  of a shared group, or any group's `let` or `def`, confirms the calls that
+  reach it through the group, where it counted them possible (DEC-113).
+
 ### Fixed
 
 - `store_accessor :settings, :theme` declared a `settings` accessor: the

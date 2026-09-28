@@ -191,6 +191,31 @@ fn tier(
         return tier_super(tree, call, path, query, target);
     }
 
+    // A group's own method, found through the group as `--def` finds it:
+    // a `let`, a `def` in the group, a shared group's (DEC-113).
+    if let Some(member) = super::example_member(tree, facts, call, path) {
+        let owner = member.owner();
+        let receiver_type = Some(crate::core::rspec::class_name(&call.nesting));
+        return if target.is_none_or(|target| owner == target) {
+            here(
+                Tier::Confirmed,
+                receiver_type,
+                Some(owner),
+                "the example group defines it",
+                0,
+                None,
+            )
+        } else {
+            here(
+                Tier::Excluded,
+                receiver_type,
+                Some(owner),
+                "the example group defines its own",
+                0,
+                Some(Ruling::DifferentOwner),
+            )
+        };
+    }
     let Some(receiver) = super::receiver_of(tree, facts, call, path) else {
         return possible(tree, call, path, query, target, shape);
     };

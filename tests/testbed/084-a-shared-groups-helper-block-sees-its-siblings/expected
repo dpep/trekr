@@ -1,0 +1,12 @@
+# A block handed to a spec's own helper may run as another object (DEC-084),
+# so a call in it was residue — including a call of the helper's own shared
+# group, which is where graph_weaver's `serving { |s| s.write(http_response(500)) }`
+# sent the reader. The group's own name, called in a block handed to the
+# group's own helper, is admitted: were the block run as another object,
+# that object would have to answer a name only this group defines (DEC-113).
+def spec/widget_spec.rb:8:27 status=resolved owner=RSpec::SharedExampleGroups::RawHttpServer site=spec/support/raw_http_server.rb:8
+# A name of another group is not the helper's sibling, and stays residue.
+def spec/widget_spec.rb:9:27 status=residue
+# `--refs` finds the shared group's callers through the group lookup, the
+# helper's block included; they were `no_such_method` exclusions.
+refs RSpec::SharedExampleGroups::RawHttpServer#http_response confirmed=2 possible=0 excluded=0

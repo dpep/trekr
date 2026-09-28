@@ -117,9 +117,7 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
 }
 
 fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer {
-    if let Some(member) =
-        group_member(tree, facts, call).filter(|_| on_the_example(tree, facts, call, path))
-    {
+    if let Some(member) = example_member(tree, facts, call, path) {
         return member_answer(tree, call, member, path);
     }
     if call.recv == RecvShape::Symbol
@@ -463,6 +461,29 @@ fn on_the_example(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> bool {
     false
 }
 
+/// The example group's own method a call names, when the call runs on the
+/// example: written there, or in a block handed to a helper of the same
+/// group that names it (DEC-113).
+pub(super) fn example_member<'f>(
+    tree: &Tree,
+    facts: &'f Facts,
+    call: &Call,
+    path: &str,
+) -> Option<Member<'f>> {
+    let member = group_member(tree, facts, call)?;
+    if on_the_example(tree, facts, call, path) {
+        return Some(member);
+    }
+    let helper = facts
+        .calls
+        .iter()
+        .find(|c| Some(c.pos) == call.block_owner && c.recv != RecvShape::Symbol)?;
+    let admitted = on_the_example(tree, facts, helper, path)
+        && !evaluates_its_block(helper)
+        && group_member(tree, facts, helper).is_some_and(|of| of.same_group(&member));
+    admitted.then_some(member)
+}
+
 /// Ruby's own ways to run a block as another object: `instance_eval` and its
 /// kin, and a class or module built with a body.
 fn evaluates_its_block(call: &Call) -> bool {
@@ -524,9 +545,32 @@ fn yields_to_its_caller(tree: &Tree, facts: &Facts, owner: &Call, path: &str) ->
 
 /// What a group's own name is: a `let`, `subject` or `def` of this file, or
 /// a method of a shared group the group includes (DEC-092).
-enum Member<'f> {
+pub(super) enum Member<'f> {
     Here(&'f Def),
     Shared(Box<crate::tree::MethodDef>),
+}
+
+impl Member<'_> {
+    /// Do both come from one group: one shared group's module, or one
+    /// group's body in this file?
+    fn same_group(&self, other: &Member<'_>) -> bool {
+        match (self, other) {
+            (Member::Here(a), Member::Here(b)) => a.nesting == b.nesting,
+            (Member::Shared(a), Member::Shared(b)) => a.owner == b.owner,
+            _ => false,
+        }
+    }
+
+    /// The owner an answer names, as `member_answer` reports it.
+    pub(super) fn owner(&self) -> String {
+        match self {
+            Member::Here(def) if rspec::is_shared_member(def) => {
+                def.nesting[0].trim_start_matches("::").to_string()
+            }
+            Member::Here(def) => rspec::class_name(&def.nesting),
+            Member::Shared(found) => found.owner.clone(),
+        }
+    }
 }
 
 /// A method an enclosing example group defines — a `let`, a `subject`, a
@@ -603,7 +647,7 @@ fn visible_member<'f>(facts: &'f Facts, nesting: &[String], name: &str) -> Optio
 }
 
 fn member_answer(tree: &Tree, call: &Call, member: Member<'_>, path: &str) -> MethodAnswer {
-    let (owner, kind, defined_via, site) = match member {
+    let (owner, kind, defined_via, site) = match &member {
         Member::Here(def) => {
             let kind = Kind::of(def.via.as_deref());
             let site = Site {
@@ -615,12 +659,7 @@ fn member_answer(tree: &Tree, call: &Call, member: Member<'_>, path: &str) -> Me
             let via = (kind == Kind::Declaration)
                 .then(|| def.via.clone())
                 .flatten();
-            let owner = if rspec::is_shared_member(def) {
-                def.nesting[0].trim_start_matches("::").to_string()
-            } else {
-                rspec::class_name(&def.nesting)
-            };
-            (owner, kind, via, site)
+            (member.owner(), kind, via, site)
         }
         Member::Shared(found) => (
             found.owner.clone(),

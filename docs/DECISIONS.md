@@ -5015,3 +5015,45 @@ hand-written: ActiveModel::AttributeMethods defines one, so every model
 would turn each `no_such_method` exclusion into `possible`, for a
 `method_missing` that answers attribute patterns alone. That is DEC-021's
 known weakness, and not this lane's to reopen.
+
+## DEC-113 — A helper's block may call the helper's own group
+
+**Decided.** DEC-084 vouches for a block in an example only when the method
+it is handed to is RSpec's, core's or a value's, since a spec's own helper
+may run it as another object. One call in such a block is now admitted: a
+call whose name is a method of the same group the helper is — both of one
+shared group's module, or both written in one group's body in the file —
+when the helper's own call runs on the example and is not one of Ruby's
+evaluating methods (`instance_eval`, `Class.new` and kin). It answers as a
+call on the example does, with the group's method.
+
+**Why this is sound enough.** If the helper did run the block as some
+object O, the call would be sent to O, and the spec passes, so O answers the
+name. The only definition the index holds of that name, in reach, is the
+group's own; O answering it by other means — a DSL's `method_missing`, an
+unindexed class that happens to share the helper group's name — is the
+coincidence this rule bets against. The bet is narrow on purpose: a `let` of
+the includer, an RSpec matcher or anything else in the block is still not
+vouched for, because nothing ties it to the helper. DEC-084's two
+confidently wrong answers do not qualify: `boolean` in `schema { … }` is
+Accord's DSL, not a sibling of `schema`, and `output` in `GraphWeaver.graph`
+is a constant's method.
+
+graph_weaver's `serving { |socket| socket.write(http_response(500, "…")) }`
+is the case: both are methods of the shared context `"raw http server"`, and
+`serving` hands its block to a thread that calls it, so `http_response` runs
+on the example. testbed 053's `assemble { part }` now resolves as well:
+`assemble` does `instance_eval` — on the example itself, so `part` is the
+example's there too.
+
+**`--refs` asks the group first.** A call site in a spec that names a group
+member — a `let`, a group's `def`, a shared group's method — is tiered by
+that member, as `--def` answers it: confirmed when it is the queried method,
+excluded (different owner) when the group defines its own. Before, the
+receiver was typed `ExampleGroup`, which does not define the name, and a
+shared group's callers were `possible` at best.
+
+**Not done.** Reading the helper's body to see whether it evaluates its
+block, which would admit every call in the block, not just its siblings.
+The helper is usually another file's (a `spec/support` shared context), so
+that is a stored fact per method, and the shared-group case did not need it.
