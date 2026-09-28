@@ -1526,8 +1526,10 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
             reference.why,
         );
     }
-    // The number a grep cannot produce, said out loud.
-    if counts.excluded > 0 {
+    // The number a grep cannot produce, said out loud — a zero included,
+    // since "nothing ruled out" is a finding too. An answer that lists no
+    // site has already said why.
+    if !found.is_empty() || reason.is_none() {
         println!(
             "\n{} confirmed, {} possible, {} excluded of {} same-name call sites",
             counts.confirmed,
@@ -1535,6 +1537,8 @@ fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<E
             counts.excluded,
             counts.confirmed + counts.possible + counts.excluded,
         );
+    }
+    if counts.excluded > 0 {
         // The three reasons are not equally strong, so they are not one number.
         println!(
             "  excluded: {} resolve to a different owner, {} define no such name, {} wrong arity",

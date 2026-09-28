@@ -23,6 +23,10 @@
   (`candidates`, `tiers` with every tier present, `confidence`). A script
   reading the text rows must stop at the blank line before it.
 
+- **`--refs Owner#method` always ends with its tally**, `1 confirmed, 0
+  possible, 0 excluded of 1 same-name call sites`; text left it out when
+  nothing was excluded, which is when it is most worth saying.
+
 ### Fixed
 
 - **A shared group's name answers the group.** A click on the string in

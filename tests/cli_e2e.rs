@@ -1026,6 +1026,11 @@ fn refs_for_a_class_method_are_a_different_question() {
             "    Widget.new.save\n", // 10 the instance method
             "  end\n",               // 11
             "end\n",                 // 12
+            "class Tool\n",          // 13
+            "  def fix\n",           // 14
+            "  end\n",               // 15
+            "end\n",                 // 16
+            "Tool.new.fix\n",        // 17
         ),
     )
     .unwrap();
@@ -1055,6 +1060,13 @@ fn refs_for_a_class_method_are_a_different_question() {
     assert_eq!(
         instance_method["counts"]["excluded"], 1,
         "the class-method call is excluded from the instance method's references"
+    );
+
+    // The tally is printed whether or not anything was ruled out.
+    let text = stdout(&trekr(&db, &dir, &["--refs", "Tool#fix"]));
+    assert!(
+        text.contains("1 confirmed, 0 possible, 0 excluded of 1 same-name call sites"),
+        "{text}"
     );
 
     let _ = fs::remove_dir_all(&dir);
