@@ -112,6 +112,12 @@
   in a module `on_load(:x)` the class prepends; that `def` used to be the
   top level's (DEC-104).
 
+- **A concern's `ClassMethods` are no longer its own class methods.**
+  `Api.build`, for a concern `Api` whose `ClassMethods` defines `build`,
+  resolved, where Ruby raises NoMethodError; so did the same on a concern
+  that includes `Api`. A call on `self` in the concern's body still finds
+  them, since its `included do` runs on the includer (DEC-105).
+
 ## 0.6.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v36): run `trekr --index`

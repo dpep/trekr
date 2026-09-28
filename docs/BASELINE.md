@@ -2575,3 +2575,15 @@ unreferenced.
 Nothing moved: no gold verdict, `--refs` tier, `--dead` tier or click. The
 shapes are rare (DEC-104 counts them), and none is in a gold trace.
 
+### A concern's `ClassMethods` are its includer's (DEC-105)
+
+Nothing moved: no gold verdict, `--refs` tier, `--dead` tier or click. The
+calls it changes (`Api.build` on a concern) raise in Ruby, so no trace holds
+one.
+
+Measured and not kept: the same without the exception for a call on `self`
+in the concern's body. rails `--dead` went 2,272 → 2,278 candidates, with
+unreferenced 446 → 449: the calls a concern makes in its own `included do`
+(`initialize_generated_modules`, `attribute_method_prefix`,
+`connection_class_for_self`) found nothing, and their methods looked unused.
+

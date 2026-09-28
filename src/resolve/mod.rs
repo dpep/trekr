@@ -37,6 +37,17 @@ pub(super) struct Receiver {
     pub(super) rivals: Vec<(String, bool)>,
 }
 
+impl Receiver {
+    /// The method this receiver runs: through `self`'s chain when the
+    /// receiver is the scope the call is written in (DEC-105).
+    pub(super) fn lookup(&self, tree: &Tree, name: &str) -> Option<crate::tree::MethodDef> {
+        match self.via {
+            "self" => tree.lookup_self(&self.fqn, self.singleton, name),
+            _ => tree.lookup(&self.fqn, self.singleton, name),
+        }
+    }
+}
+
 #[derive(Debug, Serialize)]
 pub(crate) struct Candidate {
     pub(crate) owner: String,
@@ -133,7 +144,7 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
             {
                 return predicate_answer(tree, facts, call, predicate, path);
             }
-            match tree.lookup(&receiver.fqn, receiver.singleton, &call.name) {
+            match receiver.lookup(tree, &call.name) {
                 Some(found) => {
                     // A method Tapioca generated has no source of its own. Send
                     // the caller to the class that generates it rather than to

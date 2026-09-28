@@ -317,6 +317,8 @@ Two things a naive implementation gets wrong here:
   contribute no class methods; `extend`ed ones do, along with *their* includes.
   A module prepended to the singleton class comes ahead of each level's own
   class methods (DEC-101).
+  A concern's own singleton chain has no `ClassMethods`: Concern gives them
+  to its includer (DEC-105).
 
 ### `gems/` and core — making the index contain the answers
 

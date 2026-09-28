@@ -1,0 +1,12 @@
+# Concern extends `ClassMethods` into what includes the concern, not into the
+# concern itself, and a concern that includes another defers it to its own
+# includer: `Api.build` and `Admin.build` raise NoMethodError. The tree put
+# every concern's own `ClassMethods` in its singleton chain, so both resolved.
+# A plain module that includes the concern is extended, as Ruby does, and
+# code in the concern's `included do` runs on the includer, so it still finds
+# them.
+def app.rb:27:5 status=residue
+def app.rb:28:7 status=residue
+def app.rb:29:7 status=resolved owner=Api::ClassMethods
+def app.rb:30:10 status=resolved owner=Api::ClassMethods
+def app.rb:10:5 status=resolved owner=Api::ClassMethods

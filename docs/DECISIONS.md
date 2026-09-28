@@ -5342,3 +5342,33 @@ found twice, neither sending a mixin. Both are in because DEC-098 named them.
 
 **Measured:** no gold verdict, `--refs` tier, `--dead` tier or click moved.
 
+## DEC-105 — A concern's `ClassMethods` are its includer's, not its own
+
+**Decided.** The singleton chain of a module that extends
+`ActiveSupport::Concern` no longer holds its own `ClassMethods`, nor those of
+the concerns it includes: Concern extends them into the first includer that
+is not a concern, and defers them past one that is. A class, or a plain
+module, that includes the concern keeps them as before. A call on `self`
+written in the concern's own body — `Receiver.via == "self"` — still walks
+the old chain, because the code there that reaches for the class side is
+`included do`, which runs on the includer and finds them.
+
+**Why.** `Api.build` resolved to `Api::ClassMethods#build` at confidence 1,
+and Ruby raises NoMethodError: the tree's rule for Concern ("every module in
+the chain that is a concern contributes its `ClassMethods`") was written for
+classes and applied to the concern's own singleton too.
+
+**The one exception, and why it is not wider.** A `self` call in the
+concern's module body, or in its `def self.x`, would raise in Ruby as
+`Api.build` does, and keeps the old answer. Telling it from `included do`
+needs the call to say which block it is in, which the blob layer does not
+record; such code crashes when it runs, so it is not what a gold trace or a
+reader meets.
+
+**Measured:** no gold verdict, `--refs` tier, `--dead` tier or click moved.
+Without the `self` exception, rails `--dead` gained six candidates and moved
+three more toward unreferenced — `ActiveRecord::Core::ClassMethods#
+connection_class_for_self`, `ActiveModel::AttributeMethods::ClassMethods#
+attribute_method_prefix` and the like, which each concern calls in its own
+`included do` — so a `self` call keeps the includer's view.
+

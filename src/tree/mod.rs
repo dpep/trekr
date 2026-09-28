@@ -2222,6 +2222,15 @@ impl Tree {
     /// included modules contribute no class methods — inserting at each level
     /// the level's own singleton methods and then whatever it `extend`s.
     pub(crate) fn lookup_chain(&self, fqn: &str, singleton: bool) -> Vec<(String, bool)> {
+        self.chain_for(fqn, singleton, false)
+    }
+
+    /// `as_self`: the chain a call on `self` written in `fqn`'s body walks.
+    /// In a concern that is its includer's, as far as the index can say:
+    /// code there that reaches the class side runs in `included do`, on the
+    /// class that included it, which has the concern's `ClassMethods`
+    /// (DEC-105).
+    fn chain_for(&self, fqn: &str, singleton: bool, as_self: bool) -> Vec<(String, bool)> {
         if !singleton {
             return self
                 .ancestors(fqn)
@@ -2271,8 +2280,13 @@ impl Tree {
             // ActiveSupport::Concern extends a module's nested `ClassMethods`
             // into whatever includes it. That is a *tree* fact — the module and
             // the class that includes it are different blobs — and it is how
-            // most Rails class methods come to exist.
+            // most Rails class methods come to exist. Not into a concern: it
+            // defers its own and its dependencies' to its includer (DEC-105).
+            let deferred = !as_self && self.is_concern(&class);
             for module_name in self.ancestors(&class).chain.clone() {
+                if deferred {
+                    break;
+                }
                 let Some(class_methods) = self.concern_class_methods(&module_name) else {
                     continue;
                 };
@@ -2300,6 +2314,17 @@ impl Tree {
             }
         }
         chain
+    }
+
+    /// Does this module extend `ActiveSupport::Concern`, as written?
+    fn is_concern(&self, module_name: &str) -> bool {
+        self.names.get(module_name).is_some_and(|entry| {
+            entry.kind() == "module"
+                && entry
+                    .extends()
+                    .iter()
+                    .any(|target| target.name.ends_with("Concern"))
+        })
     }
 
     /// A concern's nested `ClassMethods`, if this module is one.
@@ -2346,6 +2371,21 @@ impl Tree {
     /// chain that defines the name. Ruby's own rule, so within the indexed set
     /// this is exact rather than a guess.
     pub(crate) fn lookup(&self, fqn: &str, singleton: bool, name: &str) -> Option<MethodDef> {
+        self.lookup_along(fqn, singleton, name, false)
+    }
+
+    /// `lookup` for a call on `self` written in `fqn`'s body (DEC-105).
+    pub(crate) fn lookup_self(&self, fqn: &str, singleton: bool, name: &str) -> Option<MethodDef> {
+        self.lookup_along(fqn, singleton, name, true)
+    }
+
+    fn lookup_along(
+        &self,
+        fqn: &str,
+        singleton: bool,
+        name: &str,
+        as_self: bool,
+    ) -> Option<MethodDef> {
         self.ensure(name);
         // A split name asked about as itself runs whichever variant is loaded,
         // so it has an answer only when every variant gives the same one.
@@ -2353,7 +2393,7 @@ impl Tree {
         if !variants.is_empty() {
             let found: Vec<Option<MethodDef>> = variants
                 .iter()
-                .map(|variant| self.lookup(variant, singleton, name))
+                .map(|variant| self.lookup_along(variant, singleton, name, as_self))
                 .collect();
             let first = found.first()?.as_ref()?;
             let agree = found.iter().all(|other| {
@@ -2363,7 +2403,7 @@ impl Tree {
             });
             return agree.then(|| first.clone());
         }
-        let chain = self.lookup_chain(fqn, singleton);
+        let chain = self.chain_for(fqn, singleton, as_self);
         // Ruby's ancestor order, but real source wins the whole chain before a
         // declaration wins any of it.
         //
