@@ -38,6 +38,14 @@
   falls back); otherwise the residue names the rule and offers the predicate's
   definitions (DEC-090).
 
+### Fixed
+
+- A Minitest spec's `it`, in a checkout that bundles rspec-core too,
+  answered rspec-core's `it` with confidence 1, and every call in its blocks
+  was looked up on RSpec's example group. A file that writes Minitest's
+  expectations (`must_equal`, `wont_be`) or requires `minitest/spec` is no
+  longer read as RSpec (DEC-095).
+
 ## 0.5.0 — 2026-09-27
 
 - **Upgrading drops and rebuilds the index** (store v34): run `trekr --index`

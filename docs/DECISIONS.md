@@ -4675,3 +4675,24 @@ stubs, not an `Array[String]`, and no rung carries what a collection holds,
 so `split(…).reject(&:empty?)` stays residue. That is the lead: a typed
 element would answer this and every block parameter of `each` and `map`
 with it.
+
+## DEC-095 — A file that writes Minitest's expectations is not RSpec's
+
+**Decided.** A bare `describe` at the top of a file opens no RSpec group
+(DEC-084) when the file's bytes contain `.must_`, `.wont_`, `minitest/spec`
+or `Minitest::Spec`. `RSpec.describe` is RSpec's wherever it is written.
+
+**Why this tell.** DEC-084 named the cost: Minitest's spec DSL is RSpec's
+syntax, and rails writes it at the top of four arel tests. With rspec-core in
+the bundle, their `it` answered rspec-core's `it` at confidence 1. The file's
+name would tell them apart and the blob layer does not have it, and neither
+do the files' requires — rails' say only `require_relative "../helper"`. What
+they do write is Minitest's expectations, `_(dolly.wheres).must_equal …`,
+which no RSpec spec calls: Minitest defines `must_*` and `wont_*` on every
+object, RSpec defines neither.
+
+**A byte search, deliberately.** The tell is read before the visit, since the
+group opens at the file's first line and the expectations come later; a
+second parse to find them would cost more than the four files are worth. A
+comment or string that happens to contain `.must_` turns an RSpec file's bare
+`describe` off, which leaves it residue, as before DEC-084 — not wrong.

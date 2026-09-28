@@ -1,0 +1,8 @@
+# Minitest's spec DSL is RSpec's syntax, and a bare `describe` at the top of
+# a file was read as an RSpec group whatever the file was (DEC-084): with
+# rspec-core in the bundle, `it` in a Minitest spec answered rspec-core's
+# `it`, confidently, and every call in it was looked up on RSpec's example
+# group. A file that writes Minitest's expectations (`must_equal`, `wont_be`)
+# or requires minitest's spec is Minitest's, and its blocks are not RSpec's.
+def test/widget_test.rb:4:3 status=residue
+def test/widget_test.rb:6:5 reason=determined

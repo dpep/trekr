@@ -138,6 +138,8 @@ struct Extractor<'a> {
     /// The matcher handed to an expectation, by where its name starts, and
     /// what the expectation was handed (DEC-090).
     matcher_subjects: HashMap<usize, Sent>,
+    /// The file is a Minitest spec, whose bare `describe` is not RSpec's.
+    minitest: bool,
     facts: Facts,
 }
 
@@ -230,6 +232,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         configure_params: Vec::new(),
         open_blocks: Vec::new(),
         matcher_subjects: HashMap::new(),
+        minitest: minitest_spec(src),
     };
     ex.visit(&parsed.node());
     ex.facts
@@ -1607,7 +1610,7 @@ impl<'pr> Extractor<'_> {
             .is_some_and(|r| r.trim_start_matches("::") == "RSpec");
         let implicit = call.receiver().is_none();
         let in_group = self.in_group_body();
-        let at_top = self.frames.len() == 1;
+        let at_top = self.frames.len() == 1 && !self.minitest;
         let opens_group = (GROUP_METHODS.contains(&name)
             && (on_rspec || implicit && (in_group || at_top)))
             || (NESTED_GROUP_METHODS.contains(&name) && implicit && in_group);
@@ -2868,6 +2871,17 @@ impl<'pr> Extractor<'_> {
             });
         }
     }
+}
+
+/// Does this file write Minitest's spec DSL? Its `describe` is RSpec's
+/// syntax, so the tell is what else it writes: Minitest's expectations
+/// (`_(x).must_equal`, `wont_be`), or a require of its spec (DEC-095).
+/// A byte search, not a parse: the words are Minitest's alone.
+fn minitest_spec(src: &[u8]) -> bool {
+    const TELLS: [&[u8]; 4] = [b".must_", b".wont_", b"minitest/spec", b"Minitest::Spec"];
+    TELLS
+        .iter()
+        .any(|tell| src.windows(tell.len()).any(|w| w == *tell))
 }
 
 /// Positional argument count, or `None` when a splat hides the real count —
