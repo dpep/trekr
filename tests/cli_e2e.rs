@@ -430,6 +430,47 @@ fn jobs_comes_from_the_flag_then_the_environment_then_the_machine() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A name is asked about in the checkout `--context` names, from anywhere,
+/// as a position already could be.
+#[test]
+fn context_points_a_name_query_at_a_checkout() {
+    let (dir, db) = scratch("context");
+    repo(&dir);
+    trekr(&db, &dir, &["--index", "--no-gems"]);
+    let elsewhere = std::env::temp_dir();
+    let context = dir.to_string_lossy().into_owned();
+
+    let card = json(&trekr(
+        &db,
+        &elsewhere,
+        &["Widget#resize", "--context", &context, "--json"],
+    ));
+    assert_eq!(card["status"], "resolved");
+    let refs = json(&trekr(
+        &db,
+        &elsewhere,
+        &["--refs", "Widget#helper", "--context", &context, "--json"],
+    ));
+    assert_eq!(refs["counts"]["confirmed"], 1);
+    let chain = json(&trekr(
+        &db,
+        &elsewhere,
+        &["--ancestors", "Widget", "--context", &context, "--json"],
+    ));
+    assert_eq!(chain["ancestors"][0], "Widget");
+
+    let outline = trekr(
+        &db,
+        &dir,
+        &["--symbols", "widget.rb", "--context", &context],
+    );
+    assert_eq!(outline.status.code(), Some(64), "an outline names its file");
+    let missing = trekr(&db, &elsewhere, &["Widget", "--context", "/no/such/dir"]);
+    assert_eq!(missing.status.code(), Some(66));
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// Most gems commit no lockfile; what their gemspec declares is resolved to
 /// what is installed instead (DEC-134), and the answer says which it was.
 #[test]

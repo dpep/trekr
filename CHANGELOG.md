@@ -127,6 +127,10 @@
   was residue. `--index` says so, and `--json` has `gems.resolved_from`
   (`lockfile` or `declared`) (DEC-134).
 
+- **`--context DIR` points a name query at a checkout**: `trekr Widget#save
+  --context ~/app`, `--refs … --context`, `--ancestors … --context`, from any
+  directory. It already did for a position (DEC-135).
+
 - **`--dead` rows say `visibility`** — `public`, `protected` or `private`, and
   text marks the non-public ones — since whether a deletion can break a caller
   outside the checkout turns on it.

@@ -115,11 +115,12 @@ struct Cli {
     #[arg(long, value_name = "FILE:LINE:COL", conflicts_with_all = ["index", "drop", "symbols", "refs"])]
     def: Option<String>,
 
-    /// Answer as if asked from this checkout, instead of the one the path
-    /// belongs to. Only meaningful for a position inside a **gem**, which is
-    /// otherwise answered from whichever app most recently indexed it — a pick
-    /// that is deterministic but moves as you work (DEC-029). Pin it when a
-    /// measurement has to be reproducible.
+    /// Answer as if asked from this checkout. For a name — `Owner#method`, a
+    /// constant, `--refs`, `--ancestors` — the checkout the current directory
+    /// is in otherwise. For a position, the one the path belongs to, which
+    /// matters inside a **gem**: it is otherwise answered from whichever app
+    /// most recently indexed it, a pick that is deterministic but moves as you
+    /// work (DEC-029). Pin it when a measurement has to be reproducible.
     #[arg(long, value_name = "CHECKOUT")]
     context: Option<PathBuf>,
 
@@ -246,14 +247,21 @@ pub fn run() -> ExitCode {
                 .input
                 .as_deref()
                 .is_some_and(|i| position::Spec::parse(i).is_some());
-    for (on, flag) in [
-        (cli.explain, "--explain"),
-        (cli.context.is_some(), "--context"),
+    // `--context` also says which checkout a name is asked about in.
+    let named = cli.refs.is_some() || cli.ancestors.is_some() || cli.input.is_some();
+    for (on, flag, applies) in [
+        (cli.explain, "--explain", position),
+        (cli.context.is_some(), "--context", position || named),
     ] {
-        if on && !position {
-            let message = format!(
-                "{flag} applies to a position: `trekr {flag} FILE:LINE:COL`, or with --def"
-            );
+        if on && !applies {
+            let message = match flag {
+                "--context" => "--context applies to a query: a position, a name \
+                                (`trekr Widget#save --context DIR`), --refs or --ancestors"
+                    .to_string(),
+                _ => format!(
+                    "{flag} applies to a position: `trekr {flag} FILE:LINE:COL`, or with --def"
+                ),
+            };
             count(
                 "invalid",
                 String::new(),
@@ -279,7 +287,10 @@ pub fn run() -> ExitCode {
     } else if let Some(path) = &cli.symbols {
         (Some("symbols"), cmd_symbols(out, path))
     } else if let Some(name) = &cli.refs {
-        (Some("refs"), cmd_refs(out, name, cli.include_excluded))
+        (
+            Some("refs"),
+            cmd_refs(out, name, cli.include_excluded, cli.context.as_deref()),
+        )
     } else if let Some(spec) = &cli.def {
         (
             Some("def"),
@@ -288,7 +299,10 @@ pub fn run() -> ExitCode {
     } else if !cli.dead.is_empty() {
         (Some("dead"), cmd_dead(out, &cli.dead))
     } else if let Some(name) = &cli.ancestors {
-        (Some("ancestors"), cmd_ancestors(out, name))
+        (
+            Some("ancestors"),
+            cmd_ancestors(out, name, cli.context.as_deref()),
+        )
     } else if let Some(path) = &cli.drop {
         (Some("drop"), cmd_drop(out, path))
     } else if cli.gc {
@@ -489,6 +503,15 @@ fn read_input(path: &Path) -> anyhow::Result<Vec<u8>> {
 }
 
 /// The checkout containing a path the caller named.
+/// The checkout a name is asked about in: `--context`'s, else the one the
+/// current directory is in.
+fn asked_from(context: Option<&Path>) -> anyhow::Result<PathBuf> {
+    match context {
+        Some(dir) => named_checkout(dir),
+        None => scan::repo_root(Path::new(".")),
+    }
+}
+
 fn named_checkout(path: &Path) -> anyhow::Result<PathBuf> {
     // Checked first: git would run in the nearest existing parent, and could
     // answer for a checkout the caller never meant.
@@ -1280,11 +1303,11 @@ type Parsed = HashMap<String, Option<crate::core::Facts>>;
 /// calls it; asked about `Widget` they want the definition **and** what it
 /// inherits. Two commands' worth of answer, which is what makes this worth a
 /// shape rather than a synonym.
-fn cmd_card(out: Output, text: &str) -> anyhow::Result<ExitCode> {
+fn cmd_card(out: Output, text: &str, context: Option<&Path>) -> anyhow::Result<ExitCode> {
     use crate::resolve::refs;
     let query = refs::Query::parse(text);
     check_method_shape(&query, text)?;
-    let root = scan::repo_root(Path::new("."))?;
+    let root = asked_from(context)?;
     let root_str = root.to_string_lossy().into_owned();
     let store = open_store()?;
     if !store.has_checkout(&root_str)? {
@@ -1553,11 +1576,16 @@ fn card_text(
     out.join("\n")
 }
 
-fn cmd_refs(out: Output, text: &str, include_excluded: bool) -> anyhow::Result<ExitCode> {
+fn cmd_refs(
+    out: Output,
+    text: &str,
+    include_excluded: bool,
+    context: Option<&Path>,
+) -> anyhow::Result<ExitCode> {
     use crate::resolve::refs;
     let query = refs::Query::parse(text);
     check_method_shape(&query, text)?;
-    let root = scan::repo_root(Path::new("."))?;
+    let root = asked_from(context)?;
     let root_str = root.to_string_lossy().into_owned();
     let store = open_store()?;
     if !store.has_checkout(&root_str)? {
@@ -1867,10 +1895,10 @@ fn cmd_bare(
     // A method: `Owner#method` or `Owner.method`, which `--refs` already parses
     // and which is the one shape with a genuinely richer answer than a flag.
     if input.contains('#') || (input.contains('.') && !input.contains('/')) {
-        return cmd_card(out, input);
+        return cmd_card(out, input, context);
     }
     if input.starts_with(|c: char| c.is_ascii_uppercase()) {
-        return cmd_card(out, input);
+        return cmd_card(out, input, context);
     }
     Err(Failure::Usage.error(format!(
         "cannot tell what `{input}` is. Expected FILE:LINE[:COL], \
@@ -2355,10 +2383,14 @@ fn checkout_for(store: &Store, path: &Path) -> anyhow::Result<PathBuf> {
     }
 }
 
-/// The checkout we are standing in — for the queries that ask about a name
-/// rather than a position, where "here" is the only checkout meant.
-fn tree_here() -> anyhow::Result<(PathBuf, Store, OneShotTree)> {
-    tree_for(Path::new("."), None)
+/// The checkout we are standing in, or the one `--context` names — for the
+/// queries that ask about a name rather than a position.
+fn tree_here(context: Option<&Path>) -> anyhow::Result<(PathBuf, Store, OneShotTree)> {
+    let dir = context.unwrap_or(Path::new("."));
+    if !dir.exists() {
+        return Err(Failure::NotFound.error(format!("no such path: {}", dir.display())));
+    }
+    tree_for(dir, None)
 }
 
 fn cmd_def(
@@ -2727,8 +2759,8 @@ fn explanation(answer: &serde_json::Value) -> String {
     out.join("\n")
 }
 
-fn cmd_ancestors(out: Output, name: &str) -> anyhow::Result<ExitCode> {
-    let (root, store, tree) = tree_here()?;
+fn cmd_ancestors(out: Output, name: &str, context: Option<&Path>) -> anyhow::Result<ExitCode> {
+    let (root, store, tree) = tree_here(context)?;
     if !store.has_checkout(&root.to_string_lossy())? {
         return not_indexed(out, &root, &store);
     }

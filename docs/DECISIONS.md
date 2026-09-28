@@ -5784,3 +5784,21 @@ resolved, 7 not installed (rubocop at `~> 0.90`).
 per name, not a solver: two requirements from different dependents that no
 single installed version meets both leave the first one's pick.
 
+## DEC-135 — `--context` names the checkout for a name query too; no `-C`
+
+**Decided.** `--context DIR` applies to every query: a position (as
+before), a name (`trekr Widget#save`, `trekr Widget`), `--refs` and
+`--ancestors`. For a name it is the checkout asked about, where it was
+always the current directory's. `DIR` must exist (`66` otherwise) and be in
+a checkout; for `--ancestors`, as for a query from inside a gem, a gem
+answers from the app that resolves it. It still means nothing to `--index`,
+`--dead`, `--symbols` or `--drop`, which each name their own path, and says
+so (`64`).
+
+**Why.** A first-time user could only aim a name query by `cd`. `-C DIR`,
+git's spelling, was considered and turned down: trekr already had one flag
+for "answer as if asked from this checkout", and DEC-080 is one name per
+concept. `--context` for a position pins the checkout a gem's position is
+answered from; for a name there is no path to take it from at all, so the
+flag says the same thing where it was missing.
+

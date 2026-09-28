@@ -22,7 +22,9 @@ trekr app/models/user.rb:42:11   # position: what is at it
 trekr app/models/user.rb:42      # same, column optional
 ```
 
-Every shape takes `--json`. The flags below are the explicit forms of the same
+Every shape takes `--json`, and `--context DIR` asks it of the checkout at
+`DIR` instead of the current directory's (as do `--refs` and `--ancestors`).
+The flags below are the explicit forms of the same
 things and are not going away — prefer them in scripts, where relying on shape
 inference is a way to get surprised.
 
