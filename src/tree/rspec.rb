@@ -51,6 +51,9 @@ module RSpec
     class ExampleGroup
       include RSpec::Core::MockingAdapters::RSpec
       include RSpec::Matchers
+      # rspec-expectations' dsl.rb: `RSpec.configure { |c| c.extend self }`,
+      # so `matcher :name do … end` works in a group's body.
+      extend RSpec::Matchers::DSL
     end
 
     module MemoizedHelpers

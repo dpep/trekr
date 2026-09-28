@@ -4549,3 +4549,31 @@ a checkout that indexes no rspec-expectations — `be_nil` could be a real
 matcher the index cannot see, and reading it as `nil?` would be a guess. The
 matcher's call is resolve-time only: nothing is stored, so `--refs
 Widget#empty?` does not count `be_empty`.
+
+## DEC-091 — A custom matcher is a method its DSL call declares
+
+**Decided.** `RSpec::Matchers.define :name`, `define_negated_matcher :name, …`
+and `alias_matcher :name, …`, outside a method, declare an instance method
+`name` on `RSpec::Matchers`, written at the symbol, `defined_via`
+`RSpec::Matchers.define` (or the call used). The same calls — and `matcher`,
+`define`'s alias — written bare in a group's body declare a method of that
+group, as `let` does (DEC-084). The RSpec stub gains `ExampleGroup`'s `extend
+RSpec::Matchers::DSL`, which rspec-expectations does with `RSpec.configure {
+|c| c.extend self }`, so a click on `matcher` itself lands on the DSL.
+
+**Why.** Each is `define_method(name)` in `RSpec::Matchers::DSL`, on the
+module or group it is sent to, with the name a parameter — the macro shape
+DEC-085 reads within one file, but here the call is in the spec's support
+file and the definer in the gem. The receiver is written out, so this reads
+the call rather than inferring anything. Before, a spec's own matchers were
+residue, and a `have_error` or `be_a_twirp_response` was read as a predicate
+matcher (DEC-090), which RSpec never reaches for a name that exists.
+
+**The block is the matcher's.** `define :x do match { … } end` runs its
+block as the body of a `RSpec::Matchers::DSL::Matcher`, so a call in it is
+not the example's: a bare `define` or `matcher` joins `instance_eval` and
+`Class.new` among the calls whose block DEC-084 does not vouch for. Found
+before it shipped — with the stub's extend in place, `match` in such a block
+answered RSpec::Matchers' `match` matcher, confidently wrong.
+
+**Store v35**, since a support file's facts now hold the declaration.

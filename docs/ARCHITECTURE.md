@@ -314,7 +314,7 @@ is the signature. Code outside a block (the top-level constants) goes to
 core as `RSpec.rb` and read only when the index declares
 `RSpec::Core::ExampleGroup` (DEC-087). It holds what rspec-core wires when a
 suite boots: `RSpec.describe` and its kin, `ExampleGroup`'s includes of the
-matchers and mocks, and the return types of `expect` and `is_expected`. It
+matchers and mocks, its extend of the matcher DSL (DEC-091), and the return types of `expect` and `is_expected`. It
 declares no class or module, its edges come after the index's, and its
 methods before, so the gems' own definitions win. A method with no return
 type takes one from the stub, or from an `.rbi` declaring the same method.

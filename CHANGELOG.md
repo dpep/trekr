@@ -2,7 +2,16 @@
 
 ## Unreleased
 
+- **Upgrading drops and rebuilds the index** (store v35): run `trekr --index`
+  once per checkout.
+
 ### Added
+
+- **Custom RSpec matchers.** `RSpec::Matchers.define :name` (and
+  `define_negated_matcher`, `alias_matcher`) declares a matcher `name` that
+  every spec can call, and `matcher :name` in a group body declares one for
+  that group; a click on the matcher in an expectation now lands on the line
+  that defines it (DEC-091).
 
 - **RSpec predicate matchers.** `be_empty`, `be_valid` and `have_key` have no
   method of their own; RSpec answers them by calling `empty?`, `valid?` and

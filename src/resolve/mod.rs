@@ -366,7 +366,10 @@ fn evaluates_its_block(call: &Call) -> bool {
     ) || matches!(
         (constant, call.name.as_str()),
         (Some("Class" | "Module" | "Struct"), "new") | (Some("Data"), "define")
-    )
+    ) || (call.recv == RecvShape::Implicit
+        // A custom matcher's block is the body of a matcher, not of the
+        // example: its `match` is the DSL's, not RSpec::Matchers' (DEC-091).
+        && matches!(call.name.as_str(), "define" | "matcher"))
 }
 
 /// Is the method this block is handed to one known to call it as it stands?

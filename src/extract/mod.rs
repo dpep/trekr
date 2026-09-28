@@ -801,6 +801,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.handle_configure_mixin(node);
         self.handle_define_method(node);
         self.handle_group_member(node);
+        self.handle_custom_matcher(node);
         self.note_matcher_subject(node);
         let consumed = self.handle_macro(node);
         // A macro is *also* an ordinary method call — `belongs_to` really is
@@ -1051,6 +1052,15 @@ const GROUP_METHODS: [&str; 13] = [
     "shared_examples",
     "shared_context",
     "shared_examples_for",
+];
+
+/// RSpec's custom matcher DSL: each defines a matcher named by its first
+/// symbol (DEC-091). `matcher` is `define`'s alias.
+const MATCHER_DEFINERS: [&str; 4] = [
+    "define",
+    "matcher",
+    "define_negated_matcher",
+    "alias_matcher",
 ];
 
 /// Calls, inside a group, whose block is a nested group of its own.
@@ -1560,6 +1570,42 @@ impl<'pr> Extractor<'_> {
         crate::core::rspec::segment(&name)
     }
 
+    /// `RSpec::Matchers.define :name` makes `name` a method of RSpec::Matchers,
+    /// which every example group includes; so do `define_negated_matcher` and
+    /// `alias_matcher` for their first name (DEC-091). Inside a group, the
+    /// same calls define the group's own, as `let` does.
+    fn handle_custom_matcher(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        if self.in_method_body() {
+            return;
+        }
+        let Some(via) = method_name(call) else { return };
+        if !MATCHER_DEFINERS.contains(&via.as_str()) {
+            return;
+        }
+        let on_matchers = call
+            .receiver()
+            .and_then(|r| const_name(&r))
+            .is_some_and(|r| r.trim_start_matches("::") == crate::core::rspec::MATCHERS);
+        if !on_matchers {
+            return;
+        }
+        let Some(first) = arg_nodes(call).into_iter().next() else {
+            return;
+        };
+        let (Some(name), Some(at)) = (
+            first.as_symbol_node().and_then(|_| literal_name(&first)),
+            first.as_symbol_node().and_then(|symbol| symbol.value_loc()),
+        ) else {
+            return;
+        };
+        let (start, end) = (call.location().start_offset(), call.location().end_offset());
+        let mut def = self.def(name, Kind::Method, start, end);
+        def.nesting = vec![format!("::{}", crate::core::rspec::MATCHERS)];
+        def.pos = self.pos(at.start_offset());
+        def.via = Some(format!("{}.{via}", crate::core::rspec::MATCHERS));
+        self.facts.defs.push(def);
+    }
+
     /// `expect(x).to be_empty`: a matcher handed to an expectation asks the
     /// expectation's subject, so remember what that was until the matcher's
     /// call is recorded (DEC-090). `x.should be_empty` is the older spelling.
@@ -1626,7 +1672,9 @@ impl<'pr> Extractor<'_> {
             return;
         }
         let Some(via) = method_name(call) else { return };
-        if !matches!(via.as_str(), "let" | "let!" | "subject" | "subject!") {
+        if !matches!(via.as_str(), "let" | "let!" | "subject" | "subject!")
+            && !MATCHER_DEFINERS.contains(&via.as_str())
+        {
             return;
         }
         let mut names: Vec<(String, usize)> = Vec::new();

@@ -1,0 +1,14 @@
+# `RSpec::Matchers.define :have_widget` makes a method `have_widget` on
+# RSpec::Matchers, which every example group includes, and `matcher
+# :be_shiny` in a group body makes one on that group. Nothing wrote either as
+# a `def`, so a spec's own matchers answered residue — or, for a `have_` or
+# `be_` name, the predicate matcher RSpec would never reach.
+def spec/widget_spec.rb:7:18 status=resolved owner=RSpec::Matchers kind=declaration defined_via=RSpec::Matchers.define site=spec/support/matchers.rb:1
+def spec/widget_spec.rb:8:19 status=resolved owner=RSpec::Matchers kind=declaration site=spec/support/matchers.rb:5
+def spec/widget_spec.rb:9:18 status=resolved kind=declaration defined_via=matcher site=spec/widget_spec.rb:2
+# The group's matcher is the group's alone, and `matcher` is RSpec's DSL.
+def spec/widget_spec.rb:12:21 status=residue
+def spec/widget_spec.rb:2:3 status=resolved owner=RSpec::Matchers::DSL
+# A matcher's block is the matcher's body: `match` there is the DSL's, and
+# RSpec::Matchers' own `match` would be the wrong answer.
+def spec/widget_spec.rb:3:5 status=residue
