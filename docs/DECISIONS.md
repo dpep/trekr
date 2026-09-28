@@ -5105,3 +5105,32 @@ call is still untyped in general (`require_relative`, DOGFOOD).
 answered the module — and, being no constant written there, "no indexed
 constant by that name". It is declared at the `do`, as DEC-099 put a
 concern's `ClassMethods`, and the call answers as itself.
+
+## DEC-116 — A `scope`'s body runs on the model's relation
+
+**Decided.** The lambda (`->`, `lambda`, `proc`) a `scope` is given is its
+body, and ActiveRecord runs it with `instance_exec` on the model's relation.
+An implicit call in it has `ActiveRecord::Relation` for its receiver,
+`resolved_via: scope`, when the index knows that class. A name the relation
+does not define goes to the model's class methods — another scope, a `def
+self.` — as `ActiveRecord::Delegation` hands it there, answered with the
+model's method. `--refs` tiers such calls by the same answers.
+
+**Why.** It was typed as the class body around it, where `where` and
+`order` are `ActiveRecord::Querying`'s one-line delegations to `all`: a
+confident answer that is not the code that runs. That was the only kind of
+confidently wrong answer in widget_shop's app code besides a mailer stub,
+and both in the macro fixture's (`order`, `where`).
+
+**Measured.** widget_shop's app code, confidently wrong 2 → 1
+(`where` in `scope :affordable`, now correct); the macro fixture's 2 → 0
+(`order`, `where`). rails `--refs`: 30 `where` calls in scope bodies move
+from `ActiveRecord::Querying#where` (confirmed → excluded) to
+`ActiveRecord::QueryMethods#where` (excluded → confirmed); nothing else
+moved, and no click moved.
+
+**Not done.** What a scope returns is not typed: a `Relation` receiver would
+send `Widget.active.recent` to `Relation`, which lacks `recent` — it is
+`Widget`'s, reached through the relation's delegation, and the relation's
+type does not say which model it is for. Rails names that class
+(`Widget::ActiveRecord_Relation`) only at runtime.

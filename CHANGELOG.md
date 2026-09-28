@@ -54,6 +54,12 @@
 
 ### Fixed
 
+- **A `scope`'s body runs on the relation.** `scope :cheap, -> { where(…) }`
+  answered the class's delegating `where` (`ActiveRecord::Querying`),
+  confidently and wrongly; it is the relation's `QueryMethods#where`, and a
+  name the relation lacks — another scope, a class method — goes to the
+  model, `resolved_via: scope` (DEC-116).
+
 - `class_attribute`'s and the `mattr` family's `instance_accessor:`,
   `instance_reader:`, `instance_writer:` and `instance_predicate:` options
   are read: `class_attribute :x, instance_writer: false` declared an

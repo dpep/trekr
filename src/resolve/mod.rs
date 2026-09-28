@@ -235,9 +235,10 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                          not indexed",
                     )
                 }
-                // Ruby's lookup fails, and the class's `method_missing` hands
-                // the name on (DEC-112).
-                None if let Some(answer) = forwarded(tree, call, path, &receiver) => answer,
+                // Ruby's lookup fails, and a `method_missing` hands the name
+                // on: a relation's to its model (DEC-116), a class's
+                // `delegate_missing_to` to its target (DEC-112).
+                None if let Some(answer) = handed_on(tree, call, path, &receiver) => answer,
                 // The type is settled and Ruby would still not find the method
                 // in what is indexed. Say what was checked, never why: the
                 // cause is exactly what was not seen.
@@ -266,6 +267,43 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
             "the receiver's type is not determined by this file",
         ),
     }
+}
+
+/// Where a name the receiver lacks goes instead, when its class says.
+pub(super) fn handed_on(
+    tree: &Tree,
+    call: &Call,
+    path: &str,
+    receiver: &Receiver,
+) -> Option<MethodAnswer> {
+    to_the_model(tree, call, receiver).or_else(|| forwarded(tree, call, path, receiver))
+}
+
+/// The relation a scope's body runs on hands a name it lacks to its model's
+/// class methods — another scope, a class method — as
+/// `ActiveRecord::Delegation` does (DEC-116).
+fn to_the_model(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<MethodAnswer> {
+    if receiver.via != "scope" {
+        return None;
+    }
+    let model = tree.scope_fqn(&call.nesting)?;
+    let found = tree.lookup(&model, true, &call.name)?;
+    Some(MethodAnswer {
+        status: Status::Resolved,
+        confidence: 1.0,
+        resolved_via: Some("scope".to_string()),
+        receiver: call.recv.as_str(),
+        receiver_kind: tree.kind_of(&model).map(str::to_string),
+        receiver_type: Some(model),
+        owner: Some(found.owner.clone()),
+        kind: Some(found.kind()),
+        defined_via: found.declared_via(),
+        sites: vec![found.site.clone()],
+        agreement: None,
+        unresolved_ancestors: Vec::new(),
+        candidates: Vec::new(),
+        reason: None,
+    })
 }
 
 /// A name the receiver lacks, when its class `delegate_missing_to`s a
@@ -1012,6 +1050,9 @@ fn typed(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiver
     typed_at(tree, facts, call, path, 0)
 }
 
+/// What a `scope`'s body runs on (DEC-116).
+const RELATION: &str = "ActiveRecord::Relation";
+
 /// How many calls back a chain is followed. Each step needs a declared
 /// return type to continue, so the bound is a guard, not a tuning knob.
 const MAX_CHAIN: usize = 4;
@@ -1032,6 +1073,18 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
                     fqn: rspec::EXAMPLE_GROUP.to_string(),
                     singleton: call.singleton,
                     via: "example_group",
+                    agreeing: 1,
+                    total: 1,
+                    ambiguous: false,
+                    rivals: Vec::new(),
+                });
+            }
+            // A scope's body runs on the model's relation (DEC-116).
+            if call.in_scope && tree.is_known(RELATION) {
+                return Some(Receiver {
+                    fqn: RELATION.to_string(),
+                    singleton: false,
+                    via: "scope",
                     agreeing: 1,
                     total: 1,
                     ambiguous: false,

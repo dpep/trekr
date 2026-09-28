@@ -206,6 +206,7 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | `self` | the enclosing scope **is** the receiver — a language rule, no inference | 1.0 |
 | `example_group` | a call in a block RSpec runs: `RSpec::Core::ExampleGroup`, as a class in a group's body and an instance in an example (DEC-084) | 1.0 |
 | `let` | a call on a `let` or `subject`: what its block's last expression is, read as an assignment's value; `described_class` is the group's class (DEC-096) | agreeing / (1 + nested overrides), in a hook |
+| `scope` | a call in a `scope`'s lambda: `ActiveRecord::Relation`, which runs it; a name the relation lacks goes to the model's class methods (DEC-116) | 1.0 |
 | `implicit_subject` | `subject` or `is_expected` with no `subject` written in reach: an instance of the class the group describes (DEC-114) | 1.0 |
 | `main` | a bare top-level `describe` in a spec: `main`'s method sends it to `RSpec` (DEC-115) | 1.0 |
 | `symbol` | `send(:x)`, `obj.respond_to?(:x)`, `before_action :x`, `alias_method :a, :x`: `x` on the receiver of the reflective call, or on `self`'s instances for a class-level macro (DEC-093) | the receiver's |

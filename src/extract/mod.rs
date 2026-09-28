@@ -167,6 +167,8 @@ struct Extractor<'a> {
     /// The class each group we are in describes, innermost last: its
     /// constant argument, or its parent's (`described_class`, DEC-096).
     described: Vec<Option<String>>,
+    /// Inside a `scope`'s lambda, which runs on the model's relation (DEC-116).
+    scope_body: usize,
     facts: Facts,
 }
 
@@ -272,6 +274,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         matcher_subjects: HashMap::new(),
         minitest: minitest_spec(src),
         described: Vec::new(),
+        scope_body: 0,
     };
     ex.visit(&parsed.node());
     ex.facts
@@ -1426,6 +1429,16 @@ impl Made {
             },
         )
     }
+}
+
+/// `-> { }`, `lambda { }` or `proc { }`: a callable written in place.
+fn is_lambda(node: &Node<'_>) -> bool {
+    node.as_lambda_node().is_some()
+        || node.as_call_node().is_some_and(|call| {
+            call.receiver().is_none()
+                && call.block().is_some()
+                && matches!(method_name(&call).as_deref(), Some("lambda" | "proc"))
+        })
 }
 
 fn method_name(call: &ruby_prism::CallNode<'_>) -> Option<String> {
@@ -2694,9 +2707,13 @@ impl<'pr> Extractor<'_> {
             }
         }
         if any {
-            // The arguments are still constants in their own right.
+            // The arguments are still constants in their own right. A
+            // scope's lambda is its body, run on the relation (DEC-116).
             for arg in args {
+                let body = macro_name == "scope" && is_lambda(arg);
+                self.scope_body += usize::from(body);
                 self.visit(arg);
+                self.scope_body -= usize::from(body);
             }
         }
         any
@@ -3040,6 +3057,7 @@ impl<'pr> Extractor<'_> {
             recv_value,
             block_owner,
             in_example: self.frames.last().is_some_and(|f| f.example),
+            in_scope: self.scope_body > 0 && !self.in_method_body(),
             argc,
             block,
             pos,
@@ -3090,6 +3108,7 @@ impl<'pr> Extractor<'_> {
             recv_value: None,
             block_owner: None,
             in_example: false,
+            in_scope: false,
             argc: None,
             block: false,
             pos,
@@ -3109,6 +3128,7 @@ impl<'pr> Extractor<'_> {
             recv_value: to.recv_value,
             block_owner: self.open_blocks.last().copied().flatten(),
             in_example: self.frames.last().is_some_and(|f| f.example),
+            in_scope: self.scope_body > 0 && !self.in_method_body(),
             argc,
             block,
             pos,
@@ -3192,6 +3212,7 @@ impl<'pr> Extractor<'_> {
             recv_value: None,
             block_owner: None,
             in_example: false,
+            in_scope: false,
             stands_for: None,
             argc,
             block,
@@ -3348,6 +3369,7 @@ impl<'pr> Extractor<'_> {
                 recv_value: None,
                 block_owner: None,
                 in_example: false,
+                in_scope: false,
                 // Unknowable: whatever invokes it decides the arity.
                 argc: None,
                 block: false,

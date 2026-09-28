@@ -627,6 +627,10 @@ pub(crate) struct Call {
     /// their own `let`s (DEC-096).
     #[serde(skip)]
     pub(crate) in_example: bool,
+    /// Written in a `scope`'s body, which ActiveRecord runs on the model's
+    /// relation (DEC-116).
+    #[serde(skip)]
+    pub(crate) in_scope: bool,
     /// The call this name stands for, sent to the receiver it really has:
     /// RSpec's predicate matcher (`be_empty`) is `empty?` on the
     /// expectation's subject (DEC-090), and a symbol naming a method
