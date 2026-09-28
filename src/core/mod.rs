@@ -569,11 +569,13 @@ pub(crate) struct Call {
     /// or RSpec example body.
     #[serde(skip)]
     pub(crate) block_owner: Option<Pos>,
-    /// RSpec's predicate matcher (`be_empty`, `have_key`): the call it makes
-    /// on the expectation's subject — `empty?` sent to what `expect` was
-    /// handed, untyped when it was handed nothing this file shows.
+    /// The call this name stands for, sent to the receiver it really has:
+    /// RSpec's predicate matcher (`be_empty`) is `empty?` on the
+    /// expectation's subject (DEC-090), and a symbol naming a method
+    /// (`send(:x)`, `before_action :x`) is `x` on the object that will call
+    /// it (DEC-093). Untyped when the source does not say what that is.
     #[serde(skip)]
-    pub(crate) predicate: Option<Box<Call>>,
+    pub(crate) stands_for: Option<Box<Call>>,
     /// Positional argument count, or `None` when a splat makes it unknowable.
     pub(crate) argc: Option<u32>,
     pub(crate) block: bool,

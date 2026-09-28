@@ -137,28 +137,40 @@ struct Extractor<'a> {
     open_blocks: Vec<Option<Pos>>,
     /// The matcher handed to an expectation, by where its name starts, and
     /// what the expectation was handed (DEC-090).
-    matcher_subjects: HashMap<usize, Subject>,
+    matcher_subjects: HashMap<usize, Sent>,
     facts: Facts,
 }
 
-/// What an expectation is about, as a receiver: `x` in `expect(x).to`.
-/// Untyped when the source does not say — `is_expected`, a matcher not handed
-/// to one at all.
+/// What a name that stands for a call is really sent to: `x` in
+/// `expect(x).to be_empty`, `obj` in `obj.send(:name)`, `self` for
+/// `before_action :name`. Untyped when the source does not say —
+/// `is_expected`, a matcher not handed to an expectation at all.
 #[derive(Clone)]
-struct Subject {
+struct Sent {
     recv: RecvShape,
     recv_text: Option<String>,
     recv_pos: Option<Pos>,
     recv_value: Option<RecvValue>,
+    singleton: bool,
 }
 
-impl Subject {
-    const UNTYPED: Subject = Subject {
+impl Sent {
+    const UNTYPED: Sent = Sent {
         recv: RecvShape::Other,
         recv_text: None,
         recv_pos: None,
         recv_value: None,
+        singleton: false,
     };
+
+    /// `self`, as the class (`singleton`) or an instance of it.
+    fn to_self(singleton: bool) -> Sent {
+        Sent {
+            recv: RecvShape::Implicit,
+            singleton,
+            ..Sent::UNTYPED
+        }
+    }
 }
 
 /// Prism's syntax errors, with positions.
@@ -1097,6 +1109,16 @@ const GROUP_METHODS: [&str; 13] = [
     "shared_examples_for",
 ];
 
+/// Calls whose first symbol names a method of their receiver (DEC-093).
+const REFLECTIVE: [&str; 6] = [
+    "send",
+    "public_send",
+    "__send__",
+    "method",
+    "public_method",
+    "respond_to?",
+];
+
 /// RSpec's custom matcher DSL: each defines a matcher named by its first
 /// symbol (DEC-091). `matcher` is `define`'s alias.
 const MATCHER_DEFINERS: [&str; 4] = [
@@ -1714,13 +1736,13 @@ impl<'pr> Extractor<'_> {
                         [value] => self.subject_of(value),
                         _ => return,
                     },
-                    Some("is_expected") => Subject::UNTYPED,
+                    Some("is_expected") => Sent::UNTYPED,
                     _ => return,
                 }
             }
             "should" | "should_not" => match call.receiver() {
                 Some(value) => self.subject_of(&value),
-                None => Subject::UNTYPED,
+                None => Sent::UNTYPED,
             },
             _ => return,
         };
@@ -1740,9 +1762,10 @@ impl<'pr> Extractor<'_> {
     }
 
     /// An expression as a receiver, as `record_call` reads one.
-    fn subject_of(&self, value: &Node<'pr>) -> Subject {
+    fn subject_of(&self, value: &Node<'pr>) -> Sent {
         let (recv, recv_text) = receiver_shape(value);
-        Subject {
+        Sent {
+            singleton: self.self_is_class(),
             recv_pos: (recv == RecvShape::Local).then(|| self.pos(value.location().start_offset())),
             recv_value: (recv == RecvShape::Other)
                 .then(|| self.recv_value(value))
@@ -2514,28 +2537,15 @@ impl<'pr> Extractor<'_> {
         let singleton = self.self_is_class();
         let block_owner = self.open_blocks.last().copied().flatten();
         let block = call.block().is_some();
-        let predicate = (recv == RecvShape::Implicit && rspec::in_group(&self.nesting))
+        let stands_for = (recv == RecvShape::Implicit && rspec::in_group(&self.nesting))
             .then(|| rspec::predicate(&name))
             .flatten()
             .map(|predicate| {
                 let subject = self
                     .matcher_subjects
                     .remove(&message.start_offset())
-                    .unwrap_or(Subject::UNTYPED);
-                Box::new(Call {
-                    name: predicate,
-                    recv: subject.recv,
-                    recv_text: subject.recv_text,
-                    nesting: self.nesting.clone(),
-                    singleton: false,
-                    recv_pos: subject.recv_pos,
-                    recv_value: subject.recv_value,
-                    block_owner,
-                    argc,
-                    block,
-                    pos,
-                    predicate: None,
-                })
+                    .unwrap_or(Sent::UNTYPED);
+                self.sent(predicate, subject, pos, argc, block)
             });
         self.facts.calls.push(Call {
             name,
@@ -2549,9 +2559,62 @@ impl<'pr> Extractor<'_> {
             argc,
             block,
             pos,
-            predicate,
+            stands_for,
         });
         self.record_symbol_arguments(call);
+    }
+
+    /// The call a name stands for, sent where it really goes.
+    fn sent(&self, name: String, to: Sent, pos: Pos, argc: Option<u32>, block: bool) -> Box<Call> {
+        Box::new(Call {
+            name,
+            recv: to.recv,
+            recv_text: to.recv_text,
+            nesting: self.nesting.clone(),
+            singleton: to.singleton,
+            recv_pos: to.recv_pos,
+            recv_value: to.recv_value,
+            block_owner: self.open_blocks.last().copied().flatten(),
+            argc,
+            block,
+            pos,
+            stands_for: None,
+        })
+    }
+
+    /// What a symbol handed to this call names a method of, when that is a
+    /// rule rather than a guess (DEC-093): the receiver of a reflective call
+    /// (`send(:x)`, `obj.respond_to?(:x)`), and `self`'s instances for a
+    /// class-level call in a class or module body (`before_action :x`,
+    /// `alias_method :new, :old`, `private :x`).
+    fn symbol_receiver(&self, call: &ruby_prism::CallNode<'pr>, index: usize) -> Option<Sent> {
+        let name = method_name(call)?;
+        if REFLECTIVE.contains(&name.as_str()) {
+            if index > 0 {
+                return None;
+            }
+            return Some(match call.receiver() {
+                None => Sent::to_self(self.self_is_class()),
+                Some(receiver) => self.subject_of(&receiver),
+            });
+        }
+        let class_level = call.receiver().is_none()
+            && !self.in_method_body()
+            && !self.nesting.is_empty()
+            && !rspec::in_group(&self.nesting)
+            && (self.frames.last().is_some_and(|f| f.blocks == 0)
+                || self.in_concerns_included_block());
+        if !class_level {
+            return None;
+        }
+        match name.as_str() {
+            "private_class_method" | "public_class_method" => Some(Sent::to_self(true)),
+            // These name a callback chain, which is not the method of that name.
+            "define_callbacks" | "define_model_callbacks" | "set_callback" | "skip_callback" => {
+                None
+            }
+            _ => Some(Sent::to_self(self.in_singleton())),
+        }
     }
 
     /// A receiver worth typing that is not a name: the call before this one in
@@ -2594,7 +2657,7 @@ impl<'pr> Extractor<'_> {
             recv_pos: None,
             recv_value: None,
             block_owner: None,
-            predicate: None,
+            stands_for: None,
             argc,
             block,
             pos,
@@ -2721,7 +2784,7 @@ impl<'pr> Extractor<'_> {
     /// uses this". Err toward recording, and tier it as `possible` so the
     /// weakness is disclosed rather than hidden.
     fn record_symbol_arguments(&mut self, call: &ruby_prism::CallNode<'pr>) {
-        for arg in arg_nodes(call) {
+        for (index, arg) in arg_nodes(call).into_iter().enumerate() {
             // Only a bare symbol. A hash's *keys* are options, not methods, and
             // its values are visited on their own as ordinary arguments.
             let Some(symbol) = arg.as_symbol_node() else {
@@ -2736,6 +2799,10 @@ impl<'pr> Extractor<'_> {
             let Some(loc) = symbol.value_loc() else {
                 continue;
             };
+            let pos = self.pos(loc.start_offset());
+            let stands_for = self
+                .symbol_receiver(call, index)
+                .map(|to| self.sent(name.clone(), to, pos, None, false));
             self.facts.calls.push(Call {
                 name,
                 recv: RecvShape::Symbol,
@@ -2745,11 +2812,11 @@ impl<'pr> Extractor<'_> {
                 recv_pos: None,
                 recv_value: None,
                 block_owner: None,
-                predicate: None,
                 // Unknowable: whatever invokes it decides the arity.
                 argc: None,
                 block: false,
-                pos: self.pos(loc.start_offset()),
+                pos,
+                stands_for,
             });
         }
     }

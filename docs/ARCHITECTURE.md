@@ -190,6 +190,7 @@ The ladder, tried in order, stopping at the first rung that names a type:
 |---|---|---|
 | `self` | the enclosing scope **is** the receiver — a language rule, no inference | 1.0 |
 | `example_group` | a call in a block RSpec runs: `RSpec::Core::ExampleGroup`, as a class in a group's body and an instance in an example (DEC-084) | 1.0 |
+| `symbol` | `send(:x)`, `obj.respond_to?(:x)`, `before_action :x`, `alias_method :a, :x`: `x` on the receiver of the reflective call, or on `self`'s instances for a class-level macro (DEC-093) | the receiver's |
 | `predicate_matcher` | `be_empty` / `have_key` in a spec: the subject's `empty?` / `has_key?`, the subject typed by the rest of the ladder (DEC-090) | the subject's |
 | `includer` | a call inside a module, resolved through the classes that mix it in | agreeing / includers |
 | `const` | `Foo.bar` — resolve `Foo`, look up a *class* method | 1.0 |

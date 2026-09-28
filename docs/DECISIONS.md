@@ -4613,3 +4613,43 @@ group's body calling what its includer defines — `shared_examples` reading a
 includer is not the file's to say.
 
 **Store** unchanged at v35, since DEC-091 moved it in the same release.
+
+## DEC-093 — A symbol that names a method answers with the method
+
+**Decided.** A bare symbol argument (DEC-037 already records each as a
+`symbol`-shaped call) answers with a method in two cases, each a rule rather
+than a reading of intent:
+
+- **Reflective calls.** The first symbol of `send`, `public_send`, `__send__`,
+  `method`, `public_method` and `respond_to?` names a method of their
+  receiver — `self` when there is none — and the receiver is typed by the
+  ordinary ladder: `widget.public_send(:x)`, `Widget.new.send(:x)`,
+  `Widget.send(:x)` (a class method).
+- **Class-level calls.** A symbol handed to an implicit-receiver call in a
+  class or module body, outside any method and any block but a concern's
+  `included`, names a method of the class's instances: `before_action :x`,
+  `after_save :x`, `validate :x`, `alias_method :new, :old`, `private :x`,
+  `helper_method :x`. `private_class_method` and `public_class_method` name
+  class methods, and in `class << self` every one does.
+
+`resolved_via` is `symbol`; a symbol whose method is not found is residue
+whose reason says the symbol names a method of the receiver.
+
+**Why generic, and not a list of Rails macros.** The same reason DEC-037
+recorded every symbol: an app's own DSL is unknowable, and the answer is
+checked — a symbol answers only when a method of that name is found in the
+receiver's ancestors, so a symbol that names something else (`:string` in
+`attribute :price, :string`) stays residue. The conservatism is in the
+lookup, not in guessing which macros take method names.
+
+**The exception, named.** `define_callbacks`, `define_model_callbacks`,
+`set_callback` and `skip_callback` take the name of a callback *chain*, and
+`define_model_callbacks :save` sits in the same class as `def save`: reading
+the symbol as that method would be confidently wrong about a real class. They
+are excluded. Anything else whose symbol names a chain, a state or a route
+that happens to share a method's name is the rule's known cost.
+
+**Not done.** A symbol in a hash value (`if: :ready?`, `with: :handler`) or
+an array (`only: [:show]`) is still not recorded (DEC-037). `&:sym` is
+DEC-094. Nothing new is stored, so `--refs` still counts a symbol as a
+`possible` reference.

@@ -1,0 +1,22 @@
+# A symbol handed to a call is a name, not a call, so it answered residue:
+# "the receiver's type is not determined". Where the rule is Ruby's — the
+# first symbol of `send`, `public_send`, `method`, `respond_to?` names a
+# method of their receiver, and a class-level macro's names one of `self`'s
+# instances — the symbol answers with that method.
+def app.rb:2:16 status=resolved owner=Widget via=symbol site=app.rb:16
+def app.rb:3:21 status=resolved owner=Widget site=app.rb:10
+def app.rb:5:25 status=resolved owner=Widget site=app.rb:7
+def app.rb:11:11 status=resolved owner=Widget site=app.rb:19
+def app.rb:12:13 status=resolved owner=Widget site=app.rb:16
+def app.rb:23:26 status=resolved owner=Widget site=app.rb:7
+def app.rb:30:22 status=resolved owner=Widget site=app.rb:10
+def app.rb:31:18 status=resolved owner=Widget site=app.rb:7
+# A method nobody defines stays residue, saying which rule named it.
+def app.rb:13:18 status=residue reason=symbol
+# `map` is no reflective call: its symbol is a value, and says nothing.
+def app.rb:32:14 status=residue
+# The new name of an alias is the alias.
+def app.rb:3:17 status=resolved owner=Widget
+# A callback chain's name is not the method of that name: `:save` here names
+# the chain `run_callbacks(:save)` runs.
+def app.rb:37:21 status=residue

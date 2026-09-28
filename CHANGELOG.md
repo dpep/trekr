@@ -19,6 +19,13 @@
   it is written — a helper in `spec/support` included by a spec no longer
   answers residue (DEC-092).
 
+- **A symbol that names a method** resolves to it: the first symbol of
+  `send`, `public_send`, `__send__`, `method`, `public_method` and
+  `respond_to?` on their receiver (typed as any receiver is), and a symbol
+  handed to a class-level call — `before_action :x`, `after_save :x`,
+  `alias_method :new, :old`, `private :x` — on the class's instances. A
+  click on the symbol answered residue (DEC-093).
+
 - **RSpec predicate matchers.** `be_empty`, `be_valid` and `have_key` have no
   method of their own; RSpec answers them by calling `empty?`, `valid?` and
   `has_key?` on the expectation's subject. Where `expect(x)` types `x`, the

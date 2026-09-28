@@ -122,10 +122,15 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
     {
         return member_answer(tree, call, member, path);
     }
+    if call.recv == RecvShape::Symbol
+        && let Some(target) = &call.stands_for
+    {
+        return symbol_answer(tree, facts, call, target, path);
+    }
     let shape = call.recv.as_str();
     match receiver_of(tree, facts, call, path) {
         Some(receiver) => {
-            if let Some(predicate) = &call.predicate
+            if let Some(predicate) = &call.stands_for
                 && answered_by_matchers(tree, &receiver, &call.name)
             {
                 return predicate_answer(tree, facts, call, predicate, path);
@@ -313,6 +318,32 @@ fn predicate_answer(
     }
     MethodAnswer {
         resolved_via: Some("predicate_matcher".to_string()),
+        ..answer
+    }
+}
+
+/// A symbol that names a method answers with that method, looked up on the
+/// object that will call it: the receiver of `send` and its kin, `self` for a
+/// class-level macro (DEC-093).
+fn symbol_answer(
+    tree: &Tree,
+    facts: &Facts,
+    symbol: &Call,
+    target: &Call,
+    path: &str,
+) -> MethodAnswer {
+    let answer = call_at(tree, facts, target, path);
+    if answer.status == Status::Residue {
+        let why = answer.reason.clone().unwrap_or_default();
+        return MethodAnswer {
+            receiver: symbol.recv.as_str(),
+            reason: Some(format!("the symbol names a method of the receiver: {why}")),
+            ..answer
+        };
+    }
+    MethodAnswer {
+        receiver: symbol.recv.as_str(),
+        resolved_via: Some("symbol".to_string()),
         ..answer
     }
 }
