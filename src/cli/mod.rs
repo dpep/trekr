@@ -1779,10 +1779,11 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
     note_candidate_callers(&mut rows);
 
     let found = !rows.is_empty();
+    let summary = dead_summary(&rows);
     if out != Output::Text {
         emit_json(
             out,
-            &serde_json::json!({ "scope": scope, "candidates": rows }),
+            &serde_json::json!({ "scope": scope, "summary": summary, "candidates": rows }),
         )?;
         return Ok(exit_on(found));
     }
@@ -1801,8 +1802,46 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
     }
     if !found {
         println!("no candidates in {scope} file(s)");
+        return Ok(exit_on(found));
     }
+    let tiers: Vec<String> = DEAD_TIERS
+        .iter()
+        .map(|tier| (tier, summary["tiers"][tier].as_u64().unwrap_or(0)))
+        .filter(|(_, n)| *n > 0)
+        .map(|(tier, n)| format!("{n} {tier}"))
+        .collect();
+    println!(
+        "\n{} candidates in {scope} file(s): {} ({} clear, {} lower)",
+        rows.len(),
+        tiers.join(", "),
+        summary["confidence"]["clear"],
+        summary["confidence"]["lower"],
+    );
     Ok(exit_on(found))
+}
+
+/// `--dead`'s tiers, from the least evidence of use to the most.
+const DEAD_TIERS: [&str; 5] = [
+    "unreferenced",
+    "override",
+    "convention-only",
+    "super-only",
+    "single-caller",
+];
+
+/// How many candidates in each tier, and at each confidence. Every tier is
+/// present, so a script reads a zero rather than a missing key.
+fn dead_summary(rows: &[serde_json::Value]) -> serde_json::Value {
+    let count = |key: &str, value: &str| rows.iter().filter(|row| row[key] == value).count();
+    let tiers: serde_json::Map<String, serde_json::Value> = DEAD_TIERS
+        .iter()
+        .map(|tier| (tier.to_string(), count("tier", tier).into()))
+        .collect();
+    serde_json::json!({
+        "candidates": rows.len(),
+        "tiers": tiers,
+        "confidence": { "clear": count("confidence", "clear"), "lower": count("confidence", "lower") },
+    })
 }
 
 /// A candidate as Ruby's documentation names it: `Widget#save`, or

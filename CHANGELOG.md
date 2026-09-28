@@ -17,6 +17,12 @@
   `Widget#save`, or `Widget.build` for a class method, where the text showed
   the bare name and hid the difference. JSON rows gain `singleton`.
 
+- **`--dead` counts what it found.** The text ends with a line per tier and
+  confidence — `141 candidates in 33 file(s): 6 unreferenced, 7 override, …
+  (52 clear, 89 lower)` — and the JSON object gains `summary`
+  (`candidates`, `tiers` with every tier present, `confidence`). A script
+  reading the text rows must stop at the blank line before it.
+
 ### Fixed
 
 - **A call on `described_class` resolves.** `described_class.blocked?`

@@ -248,7 +248,7 @@ that overrides one is graded `lower`),
 `single-caller` (one reference: the inlining candidate; `caller` names it, and
 its `tier` says whether it certainly reaches the method — `possible` is an
 untyped receiver, and grades the row `lower`). Every row has a `reason` in
-words. **One pass, no cascade:** a method whose only caller is itself a
+words, and `summary` counts the rows per tier and per confidence. **One pass, no cascade:** a method whose only caller is itself a
 candidate is `single-caller`, and its `reason` says the caller is a candidate —
 delete the caller and it becomes unreferenced.
 

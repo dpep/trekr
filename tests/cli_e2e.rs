@@ -2270,6 +2270,15 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
     assert!(text.contains("one possible call, at caller.rb:1"), "{text}");
     // Named as Ruby's documentation names it, so a class method says so.
     assert!(text.contains("  Thing#never_used  "), "{text}");
+    // Counted by tier, in text and JSON alike; a tier with none is a zero.
+    assert!(
+        text.contains("5 candidates in 1 file(s): 2 unreferenced, 1 convention-only, 2 single-caller (4 clear, 1 lower)"),
+        "{text}"
+    );
+    assert_eq!(value["summary"]["candidates"], 5, "{value}");
+    assert_eq!(value["summary"]["tiers"]["single-caller"], 2, "{value}");
+    assert_eq!(value["summary"]["tiers"]["override"], 0, "{value}");
+    assert_eq!(value["summary"]["confidence"]["lower"], 1, "{value}");
     // The caller itself is used by nothing here, so it is reported too — but
     // never as anything stronger than a candidate.
     for candidate in value["candidates"].as_array().unwrap() {

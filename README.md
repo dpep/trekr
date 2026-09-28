@@ -150,6 +150,9 @@ override         activerecord/lib/active_record/associations/collection_proxy.rb
 single-caller    activerecord/lib/active_record/associations/preloader/association.rb:32  ActiveRecord::Associations::Preloader::Association::LoaderQuery#load_records_in_batch  — one possible call, at activerecord/lib/active_record/associations/preloader/batch.rb:42: its receiver is untyped; its caller, group_and_load_similar, is itself a candidate   (lower confidence: untyped caller)
 convention-only  activerecord/lib/active_record/associations/association.rb:198  ActiveRecord::Associations::Association#marshal_dump  — named only by a symbol handed to a macro (3)   (lower confidence: send)
 super-only       activerecord/lib/active_record/associations/belongs_to_association.rb:76  ActiveRecord::Associations::BelongsToAssociation#target_changed?  — reached only by `super` from ActiveRecord::Associations::BelongsToPolymorphicAssociation   (lower confidence: send, public_send)
+…
+
+141 candidates in 33 file(s): 6 unreferenced, 7 override, 7 convention-only, 3 super-only, 118 single-caller (52 clear, 89 lower)
 ```
 
 `unreferenced` means nothing was found, `single-caller` is one reference (an
@@ -160,7 +163,8 @@ reaches the method or is an untyped receiver that may be another's),
 `override` has no reference, but overrides a method an ancestor defines, so
 whatever calls that one — often the framework, never by this name — may run
 it; a candidate in another tier that overrides one is graded `lower`.
-Every row says which, in words. It is one pass and does not cascade: a method
+Every row says which, in words, and the last line counts them (`summary` in
+JSON). It is one pass and does not cascade: a method
 whose only caller is itself a candidate is `single-caller`, not
 `unreferenced`, and its reason says so. trekr does not read ERB, so a method
 used only from a view looks unreferenced.
