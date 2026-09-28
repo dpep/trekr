@@ -556,6 +556,12 @@ pub(crate) struct Call {
     /// return types this one, or a literal.
     #[serde(skip)]
     pub(crate) recv_value: Option<RecvValue>,
+    /// The call whose block this one is written in, innermost, when that
+    /// block runs on something the source does not say — found again among
+    /// the file's calls by its position. `None` directly in a method, class
+    /// or RSpec example body.
+    #[serde(skip)]
+    pub(crate) block_owner: Option<Pos>,
     /// Positional argument count, or `None` when a splat makes it unknowable.
     pub(crate) argc: Option<u32>,
     pub(crate) block: bool,

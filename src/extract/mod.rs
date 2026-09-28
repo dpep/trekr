@@ -131,6 +131,10 @@ struct Extractor<'a> {
     /// The block parameters of the `RSpec.configure do |config|` blocks we
     /// are in (DEC-088).
     configure_params: Vec<String>,
+    /// The blocks we are in, innermost last: the call each is handed to, or
+    /// `None` for one whose `self` is known — a method body, a class body, an
+    /// RSpec group or example.
+    open_blocks: Vec<Option<Pos>>,
     facts: Facts,
 }
 
@@ -189,6 +193,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         definers: HashMap::new(),
         singleton_exec: 0,
         configure_params: Vec::new(),
+        open_blocks: Vec::new(),
     };
     ex.visit(&parsed.node());
     ex.facts
@@ -223,6 +228,8 @@ impl<'a> Extractor<'a> {
             self.nesting.insert(0, name);
         }
         self.frames.push(Frame::new(pushed, opens));
+        // A frame's `self` is known, whatever block it sits in.
+        self.open_blocks.push(None);
     }
 
     /// What `self` is for a call written here.
@@ -256,6 +263,7 @@ impl<'a> Extractor<'a> {
     }
 
     fn leave(&mut self) {
+        self.open_blocks.pop();
         if let Some(frame) = self.frames.pop()
             && frame.pushed
         {
@@ -805,6 +813,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             });
             // A `define_method` block is the method's body: `self` there is
             // an instance, and a `super` looks up the name it defines.
+            let owner = node.message_loc().map(|m| self.pos(m.start_offset()));
             match self.defined_method(node) {
                 Some(DefinedBy::Scope(method)) => {
                     let singleton = method_name(node).as_deref() == Some("define_singleton_method")
@@ -846,7 +855,11 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                             }
                             self.leave();
                         }
-                        None => self.visit(&block),
+                        None => {
+                            self.open_blocks.push(owner);
+                            self.visit(&block);
+                            self.open_blocks.pop();
+                        }
                     },
                 },
             }
@@ -2249,6 +2262,7 @@ impl<'pr> Extractor<'_> {
             singleton,
             recv_pos,
             recv_value,
+            block_owner: self.open_blocks.last().copied().flatten(),
             argc,
             block: call.block().is_some(),
             pos,
@@ -2295,6 +2309,7 @@ impl<'pr> Extractor<'_> {
             singleton: self.self_is_class(),
             recv_pos: None,
             recv_value: None,
+            block_owner: None,
             argc,
             block,
             pos,
@@ -2444,6 +2459,7 @@ impl<'pr> Extractor<'_> {
                 singleton: false,
                 recv_pos: None,
                 recv_value: None,
+                block_owner: None,
                 // Unknowable: whatever invokes it decides the arity.
                 argc: None,
                 block: false,

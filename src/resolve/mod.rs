@@ -117,7 +117,9 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
 }
 
 fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer {
-    if let Some(member) = group_member(facts, call) {
+    if let Some(member) =
+        group_member(facts, call).filter(|_| on_the_example(tree, facts, call, path))
+    {
         return member_answer(tree, call, member, path);
     }
     let shape = call.recv.as_str();
@@ -229,6 +231,13 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                 ),
             }
         }
+        None if rspec::in_group(&call.nesting) && call.recv == RecvShape::Implicit => residue(
+            tree,
+            call,
+            path,
+            None,
+            "the call is in a block handed to a method that may run it on another object",
+        ),
         None => residue(
             tree,
             call,
@@ -236,6 +245,93 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
             None,
             "the receiver's type is not determined by this file",
         ),
+    }
+}
+
+/// Does a call in a spec still run on the example or group it is written in?
+///
+/// A block keeps its caller's `self` unless the method it is handed to
+/// evaluates it somewhere else, and only a method whose behaviour is known
+/// can be vouched for: RSpec's own (found on the example group), Ruby core's,
+/// or one sent to a value — an iterator. A block handed to a helper, or to a
+/// constant's method in the checkout or a gem, may be a DSL's body, so a
+/// call in it is not answered as the example's (DEC-084). So is one handed to
+/// the methods whose purpose is to change `self`.
+fn on_the_example(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> bool {
+    let mut current = call;
+    // Each step goes to an enclosing block, which is earlier in the file.
+    for _ in 0..facts.calls.len() {
+        let Some(at) = current.block_owner else {
+            return true;
+        };
+        let Some(owner) = facts
+            .calls
+            .iter()
+            .find(|c| c.pos == at && c.recv != RecvShape::Symbol)
+        else {
+            return false;
+        };
+        if !yields_to_its_caller(tree, facts, owner, path) {
+            return false;
+        }
+        current = owner;
+    }
+    false
+}
+
+/// Ruby's own ways to run a block as another object: `instance_eval` and its
+/// kin, and a class or module built with a body.
+fn evaluates_its_block(call: &Call) -> bool {
+    let constant = call
+        .recv_text
+        .as_deref()
+        .map(|r| r.trim_start_matches("::"));
+    matches!(
+        call.name.as_str(),
+        "instance_eval"
+            | "instance_exec"
+            | "class_eval"
+            | "class_exec"
+            | "module_eval"
+            | "module_exec"
+    ) || matches!(
+        (constant, call.name.as_str()),
+        (Some("Class" | "Module" | "Struct"), "new") | (Some("Data"), "define")
+    )
+}
+
+/// Is the method this block is handed to one known to call it as it stands?
+fn yields_to_its_caller(tree: &Tree, facts: &Facts, owner: &Call, path: &str) -> bool {
+    if evaluates_its_block(owner) {
+        return false;
+    }
+    match owner.recv {
+        RecvShape::Local | RecvShape::Ivar | RecvShape::Other => true,
+        RecvShape::Implicit | RecvShape::SelfRecv => {
+            rspec::in_group(&owner.nesting)
+                && group_member(facts, owner).is_none()
+                && tree
+                    .lookup(rspec::EXAMPLE_GROUP, owner.singleton, &owner.name)
+                    .is_some()
+        }
+        // Ruby's own: a class core declares, sending a method core defines or
+        // no one indexed does (`Dir.mktmpdir` is the standard library's).
+        RecvShape::Const => {
+            let Some(class) = owner
+                .recv_text
+                .as_deref()
+                .and_then(|name| tree.resolve_at(name, &owner.nesting, path).fqn)
+                .and_then(|fqn| tree.namespace_named(&fqn))
+            else {
+                return false;
+            };
+            let core = |site: &crate::tree::Site| crate::tree::is_core(&site.path);
+            tree.sites(&class).iter().any(core)
+                && tree
+                    .lookup(&class, true, &owner.name)
+                    .is_none_or(|method| core(&method.site))
+        }
+        RecvShape::Symbol | RecvShape::Super => false,
     }
 }
 
@@ -586,6 +682,9 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
             // A block RSpec runs: a group's body is a subclass of
             // ExampleGroup, and an example's an instance of one (DEC-084).
             if rspec::in_group(&call.nesting) {
+                if !on_the_example(tree, facts, call, path) {
+                    return None;
+                }
                 return Some(Receiver {
                     fqn: rspec::EXAMPLE_GROUP.to_string(),
                     singleton: call.singleton,

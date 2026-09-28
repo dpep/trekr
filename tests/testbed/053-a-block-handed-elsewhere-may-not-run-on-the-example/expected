@@ -1,0 +1,13 @@
+# A block in an example runs on the example only if the method it is handed
+# to calls it that way. `schema { boolean(:flag) }` in a spec is class_eval'd
+# into a new schema class, and `GraphWeaver.graph :x do output … end` is a
+# DSL's body: answering `boolean` and `output` from the example group was
+# confidently wrong. RSpec's own methods, a core class's and a value's
+# iterator are known to keep `self`; a helper, a gem's or the checkout's
+# constant's method, and `Class.new` are not vouched for.
+def spec/widget_spec.rb:16:14 status=resolved site=spec/widget_spec.rb:12
+def spec/widget_spec.rb:17:16 status=resolved site=spec/widget_spec.rb:12
+def spec/widget_spec.rb:18:20 status=resolved site=spec/widget_spec.rb:12
+def spec/widget_spec.rb:19:21 status=residue reason=another
+def spec/widget_spec.rb:20:16 status=residue
+def spec/widget_spec.rb:21:17 status=residue

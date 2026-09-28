@@ -4348,6 +4348,24 @@ shared context or an includer defines in another file is not found. Only
 what the group's body writes is the group's: a `def` in a `Class.new` block
 inside a `let` is that class's, and keeps the file's nesting as before.
 
+**A block handed elsewhere.** A block keeps its caller's `self` unless the
+method it is handed to runs it as another object, and trekr cannot see that
+in general. Inside an example it vouches only for a block handed to RSpec's
+own methods (found on the example group — `expect { }`, `travel_to`), to a
+class core declares, with a method core defines or nobody indexed does
+(`Dir.mktmpdir`), or to a method on a value (`items.each`); not for
+`instance_eval` and its kin, `Class.new`/`Struct.new`/`Module.new`, a spec's
+own helper, or a constant's method in the checkout or a gem. A call in one of
+those is residue saying so. In graph_weaver, accord and polyid's gold sets the
+example group had added exactly two confidently wrong answers, both of that
+shape — `boolean` in `schema { boolean(:flag) }`, which the helper
+`class_eval`s into a schema, and `output` in `GraphWeaver.graph :money do`, a
+DSL's body — and the rule removes both. It costs one declaration, a `let`
+called in a block handed to a spec's helper that yields, which is offered as
+a candidate instead. Stubbing `Dir.mktmpdir` in core was tried and made four
+calls to it confidently wrong: its source is the standard library's
+`tmpdir.rb`, a real file the stub stood in front of.
+
 ## DEC-085 — A class method that hands its parameter to `define_method` is a macro
 
 **Decided.** Inside a class method (`def self.m(name, …)`), a call that
