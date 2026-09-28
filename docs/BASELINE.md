@@ -2570,3 +2570,8 @@ the DEC-081 amendment, the same change moved three controller methods
 `ActionController::Rendering#_process_options`) single-caller →
 unreferenced.
 
+### An `on_load` block's parameter and `def`s (DEC-104)
+
+Nothing moved: no gold verdict, `--refs` tier, `--dead` tier or click. The
+shapes are rare (DEC-104 counts them), and none is in a gold trace.
+

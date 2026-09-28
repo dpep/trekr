@@ -30,6 +30,13 @@ struct LoadHook {
     depth: usize,
     /// Registered as its file loads, so its mixins are recorded.
     modelled: bool,
+    /// Called with the class instead of evaluated in it (`yield: true`), so
+    /// `self` is the caller's.
+    yields: bool,
+    /// The block's parameter, which is the class either way (DEC-104).
+    base: Option<String>,
+    /// Where the block opens: its `def`s' module is declared there.
+    at: usize,
 }
 
 /// A lexical scope in progress.
@@ -160,6 +167,8 @@ struct Extractor<'a> {
     included_depth: usize,
     /// Where the outermost `included do` we are in opens its block.
     included_at: Option<usize>,
+    /// The hooks an `on_load` block's `def` has declared a module for.
+    hook_modules: std::collections::HashSet<String>,
     /// The concerns `included do` has declared a `ClassMethods` for.
     routed_class_methods: std::collections::HashSet<Vec<String>>,
     /// Example groups named so far, by the nesting they were opened in: RSpec
@@ -293,6 +302,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         included_depth: 0,
         included_at: None,
         routed_class_methods: std::collections::HashSet::new(),
+        hook_modules: std::collections::HashSet::new(),
         group_names: HashMap::new(),
         definers: HashMap::new(),
         singleton_exec: 0,
@@ -390,6 +400,39 @@ impl<'a> Extractor<'a> {
         self.load_hooks
             .last()
             .filter(|hook| hook.depth == self.open_blocks.len())
+    }
+
+    /// The module an `on_load` block's `def`s go to, declared with the edge
+    /// that prepends it to the hooked classes the first time (DEC-104).
+    fn hook_module(&mut self) -> Option<String> {
+        let hook = self
+            .in_load_hook()
+            .filter(|hook| hook.modelled && !hook.yields && self.runs_as_file_loads())?;
+        let (name, at) = (hook.name.clone(), hook.at);
+        let module = format!("on_load(:{name})");
+        if self.hook_modules.insert(name.clone()) {
+            let mut decl = self.def(format!("::{module}"), Kind::Module, at, at);
+            decl.nesting.clear();
+            decl.via = Some("on_load".to_string());
+            self.facts.defs.push(decl);
+            let mut owner = vec![crate::core::runtime::hook(&name)];
+            owner.extend(self.nesting.iter().cloned());
+            let pos = self.pos(at);
+            self.facts.ancestry.push(Ancestry {
+                owner,
+                relation: Relation::Prepend,
+                target: format!("::{module}"),
+                pos,
+            });
+        }
+        Some(module)
+    }
+
+    /// The hook whose block's parameter this receiver is (DEC-104).
+    fn load_hook_base(&self, receiver: &Node<'_>) -> Option<&LoadHook> {
+        let read = receiver.as_local_variable_read_node()?;
+        self.in_load_hook()
+            .filter(|hook| hook.base.as_deref().map(str::as_bytes) == Some(read.name().as_slice()))
     }
 
     /// Is `self` the class or module whose body this is — not a method, a
@@ -928,6 +971,13 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             self.declare_class_methods();
         }
 
+        // A `def` in an `on_load` block defines on the hooked class, after
+        // the class body has: a module `on_load(:name)` the class prepends
+        // (DEC-104).
+        if !singleton && let Some(module) = self.hook_module() {
+            def.nesting = vec![format!("::{module}")];
+        }
+
         let module_function = self.frames.last().is_some_and(|f| f.module_function);
         if module_function && !singleton {
             // `module_function` makes one `def` into two methods: a public
@@ -1205,17 +1255,22 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                             // A hook registered later — in a Railtie's
                             // `initializer`, under an `if` — is still a hook,
                             // and its mixins are not the lexical scope's.
-                            let hook =
-                                load_hook(node).map(|name| (name, self.runs_as_file_loads()));
+                            let modelled = self.runs_as_file_loads();
+                            let hook = load_hook(node);
                             self.open_blocks.push(owner);
                             if iterates.is_some() {
                                 self.iterations.push(self.open_blocks.len());
                             }
-                            let hook = hook.inspect(|(name, modelled)| {
+                            let hook = hook.inspect(|(name, yields)| {
                                 self.load_hooks.push(LoadHook {
                                     name: name.clone(),
                                     depth: self.open_blocks.len(),
-                                    modelled: *modelled,
+                                    modelled,
+                                    yields: *yields,
+                                    base: first_block_param(node),
+                                    at: block
+                                        .as_block_node()
+                                        .map_or(0, |b| b.opening_loc().start_offset()),
                                 });
                             });
                             self.visit(&block);
@@ -1578,16 +1633,28 @@ fn on_active_support(call: &ruby_prism::CallNode<'_>) -> bool {
 }
 
 /// The hook an `ActiveSupport.on_load(:name) { … }` block is registered for,
-/// when the block runs on the hook's class. With `yield: true` the class is
-/// the block's argument instead, and `self` is the caller's.
-fn load_hook(call: &ruby_prism::CallNode<'_>) -> Option<String> {
+/// and whether it yields: with `yield: true` the class is the block's
+/// argument instead, and `self` is the caller's.
+fn load_hook(call: &ruby_prism::CallNode<'_>) -> Option<(String, bool)> {
     if method_name(call).as_deref() != Some("on_load") || !on_active_support(call) {
         return None;
     }
     let args = arg_nodes(call);
     let first = args.first()?;
     let name = first.as_symbol_node().and(literal_name(first))?;
-    keyword_value(&args, "yield").is_none().then_some(name)
+    Some((name, keyword_value(&args, "yield").is_some()))
+}
+
+/// The name of a block's first required parameter.
+fn first_block_param(call: &ruby_prism::CallNode<'_>) -> Option<String> {
+    let block = call.block()?.as_block_node()?;
+    let params = block
+        .parameters()?
+        .as_block_parameters_node()?
+        .parameters()?;
+    let first = params.requireds().iter().next()?;
+    let param = first.as_required_parameter_node()?;
+    String::from_utf8(param.name().as_slice().to_vec()).ok()
 }
 
 /// The mixin a hook method runs for: `included` for an `include`.
@@ -1759,7 +1826,7 @@ impl<'pr> Extractor<'_> {
     fn mixin_owner(&self) -> Option<Vec<String>> {
         // An `on_load` block runs on whatever runs the hook (DEC-098), a
         // `def` around it or not, but only if it is registered at all.
-        if let Some(hook) = self.in_load_hook() {
+        if let Some(hook) = self.in_load_hook().filter(|hook| !hook.yields) {
             let mut owner = vec![crate::core::runtime::hook(&hook.name)];
             owner.extend(self.nesting.iter().cloned());
             return (hook.modelled && self.runs_as_file_loads()).then_some(owner);
@@ -1953,6 +2020,16 @@ impl<'pr> Extractor<'_> {
         // to a hook's `base`, as its module is mixed in (DEC-102).
         let owners: Vec<Vec<String>> = match receiver {
             Some(receiver) if receiver.as_self_node().is_none() => {
+                if let Some(hook) = self.load_hook_base(&receiver) {
+                    // `on_load(:x) { |base| base.include(M) }` (DEC-104).
+                    if !hook.modelled || !self.runs_as_file_loads() {
+                        return;
+                    }
+                    let mut owner = vec![crate::core::runtime::hook(&hook.name)];
+                    owner.extend(self.nesting.iter().cloned());
+                    self.push_mixins(owner, relation, args, None);
+                    return;
+                }
                 match self.mixer_named(&receiver) {
                     Some(how) => vec![self.mixed_owner(how)],
                     None if self.runs_as_file_loads() => self

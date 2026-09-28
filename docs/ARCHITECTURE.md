@@ -158,6 +158,8 @@ Two things the blob layer cannot know, resolved here:
   starting `(on_load active_record)`, and the tree attaches it to every class
   that runs that hook. Sent and hooked edges attach after every body's, since
   they run once the class exists.
+  The block's parameter is the class too, and a `def` in the block is a
+  method of a module `on_load(:name)` that each such class prepends (DEC-104).
 
 **A name declared with two superclasses is split** (DEC-072). Ruby raises
 "superclass mismatch" when both load, so a checkout holding `class Post <

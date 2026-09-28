@@ -1,0 +1,15 @@
+# An `on_load` block is also handed the class that runs the hook, and with
+# `yield: true` that is the only way it reaches the class: a mixin sent to the
+# block's parameter is the hooked class's, as a bare one in the block is. It
+# was an ordinary call on a local. One under a condition still is not.
+def app.rb:24:11 status=resolved owner=Pricing
+def app.rb:25:11 status=resolved owner=Stocking
+def app.rb:26:7 status=residue
+# A `def` in the block defines on the hooked class, after its body has, so it
+# replaces the class's own: it sits in a module `on_load(:shelf)` the class
+# prepends. It was the top level's. A hook registered later, inside a
+# Railtie's `initializer`, is not read, as for its mixins.
+def app.rb:54:11 status=resolved owner=on_load(:shelf)
+def app.rb:55:11 status=resolved owner=on_load(:shelf)
+def app.rb:56:11 status=resolved owner=Shelf
+ancestors Shelf on_load(:shelf),Shelf,Stocking,Pricing

@@ -5306,3 +5306,39 @@ defines itself would win where Ruby's prepend beats it.
 PrimaryKey` now reaches `ActiveRecord::Base`, and railties' generator calls
 it there. Without DEC-081's amendment the same change had made three
 controller methods `unreferenced`.
+
+## DEC-104 — An `on_load` block's parameter and `def`s are the hooked class's
+
+**Decided.** Two leftovers of DEC-098:
+
+- **The block's parameter is the class.** `ActiveSupport.on_load(:x) do
+  |base| base.include(M) end` sends the mixin to every class that runs the
+  hook, as a bare `include` in the block does. With `yield: true` the
+  parameter is the only way the block reaches the class, and it counts the
+  same; a bare `include` in such a block is still not the class's, since
+  its `self` is the caller's.
+- **A `def` defines on the class.** In a block registered as its file loads
+  (not `yield: true`), a `def` is a method of a module `on_load(:x)`,
+  declared at the block's `do`, which each class running the hook prepends.
+  The hook runs after the class body, so its `def` replaces the class's own
+  method of that name; prepending says the same thing to a lookup. The
+  module is what `--def` names as the owner, and it shows in `--ancestors`.
+
+**Why a module, not the class.** The classes that run a hook are known only
+once the tree reads every `run_load_hooks` (DEC-098); a method's owner is
+settled from its own row. A module the hook prepends puts the method where
+the tree already carries hook edges, and needs nothing new below the
+extractor. The name is how the source writes it.
+
+**The approximation.** A `super` in such a `def` would, in Ruby, skip the
+replaced method; here it would reach it. It is not recorded, as for any
+`def` in a block. A `def self.x` in the block stays where it was.
+
+**How much there is.** In rails, discourse, mastodon and the installed gems,
+a `def` directly in an `on_load` block that runs as its file loads is
+railties' `test_help.rb`'s two `before_setup`s; the rest (27, actiontext's
+engine) sit in an `initializer` and are not read. The parameter form was
+found twice, neither sending a mixin. Both are in because DEC-098 named them.
+
+**Measured:** no gold verdict, `--refs` tier, `--dead` tier or click moved.
+

@@ -106,6 +106,12 @@
   includer, not the concern: a module prepended there now comes ahead of the
   includer's own methods, as in Ruby, instead of behind them (DEC-103).
 
+- **`ActiveSupport.on_load` blocks, the rest.** A mixin sent to the block's
+  parameter (`on_load(:x) { |base| base.include(M) }`, and with `yield:
+  true`) lands on the hooked class, and a `def` in the block defines on it,
+  in a module `on_load(:x)` the class prepends; that `def` used to be the
+  top level's (DEC-104).
+
 ## 0.6.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v36): run `trekr --index`
