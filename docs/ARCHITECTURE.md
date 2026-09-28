@@ -1257,6 +1257,9 @@ Deliberate, and cheap to close when they earn it:
   them (DEC-064).
 - Multi-write constant targets (`A, B = 1, 2`) define nothing.
 - `refine` is not modeled.
+- A `define_method` or `class_eval` string looped over a list another file
+  assigns names nothing: its scope is marked (DEC-130), so a missing name
+  there is residue, and the string's calls are still read (DEC-132).
 - A chain through a core method is typed from Ruby 3.4's RBS. A subclass that
   overrides the method with another return type (ActiveSupport's `SafeBuffer`
   is a String) is read as the core class.

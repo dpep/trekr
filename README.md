@@ -296,6 +296,10 @@ to surprise you:
   through a core method (`x.gsub(a, b).downcase`) takes Ruby 3.4's documented
   return type, even where a subclass such as ActiveSupport's `SafeBuffer`
   returns its own.
+- A method defined in a loop over a list *another file* assigns
+  (`METHODS_WITH_QUERY.each { class_eval "def #{m}…" }`) is not named. Its
+  class answers `residue` for such a name, never "no such method", and the
+  string's own calls are still read.
 - ERB templates are not read, and `refine` is not modeled.
 
 ## Development
