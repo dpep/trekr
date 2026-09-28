@@ -354,9 +354,13 @@ pub(super) fn lookup_on(
 /// Does a scope's body in this nesting run on an ActiveRecord relation? Only
 /// in a model, or a module a model includes: Mongoid and a plain class that
 /// defines its own `scope` run it on something else (DEC-136).
-fn runs_on_a_relation(tree: &Tree, call: &Call) -> bool {
+fn runs_on_a_relation(tree: &Tree, call: &Call, path: &str) -> bool {
     const BASE: &str = "ActiveRecord::Base";
-    let Some(scope) = tree.scope_fqn(&call.nesting) else {
+    // A name split by its superclasses is the variant this file declares.
+    let Some(scope) = tree
+        .scope_fqn(&call.nesting)
+        .map(|scope| tree.variant_at(&scope, path))
+    else {
         return false;
     };
     tree.inherits(&scope, BASE)
@@ -1207,7 +1211,7 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
                 });
             }
             // A scope's body runs on the model's relation (DEC-116).
-            if call.in_scope && tree.is_known(RELATION) && runs_on_a_relation(tree, call) {
+            if call.in_scope && tree.is_known(RELATION) && runs_on_a_relation(tree, call, path) {
                 return Some(Receiver {
                     fqn: RELATION.to_string(),
                     singleton: false,

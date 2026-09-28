@@ -5806,7 +5806,9 @@ flag says the same thing where it was missing.
 
 **Decided.** DEC-116 types a `scope`'s body as `ActiveRecord::Relation` only
 where the scope is written in a class that inherits `ActiveRecord::Base`, or
-in a module such a class includes (a concern's `included do`). Elsewhere —
+in a module such a class includes (a concern's `included do`). A name split
+by its superclasses (DEC-072) is the variant the file declares: rails' test
+`Post` is one. Elsewhere —
 Mongoid, ActiveHash, a class with its own `scope` — the body is typed as the
 class it is written in, as before DEC-116. And on the relation, a name
 whose lookup lands in core (`Kernel#display`, `#format`) answers the
