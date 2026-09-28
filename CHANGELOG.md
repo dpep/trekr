@@ -131,6 +131,9 @@
   `enum` in a concern's `included do` beats the schema column, so its reader is
   a String (DEC-138).
 
+- **Concurrent `--index` runs wait for each other** instead of one failing with
+  "database is locked" (exit 74) after 5 s (DEC-139).
+
 ### Added
 
 - **A checkout with no `Gemfile.lock` gets its gems anyway**: what its

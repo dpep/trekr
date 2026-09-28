@@ -934,6 +934,7 @@ fn cmd_index(
     let files = profile::timed(&mut profile, "scan", || scan::scan(&root))?;
 
     let mut store = open_store()?;
+    store.wait_as_writer()?;
     let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
     let mut known = None;
     let counts = index_files(
@@ -2924,6 +2925,7 @@ fn report(
 
 fn cmd_drop(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
     let store = open_store()?;
+    store.wait_as_writer()?;
     // A gem is no git checkout, and is dropped by the directory it was
     // indexed under; the next index of an app that uses it reads it again.
     let root = match named_checkout(path) {
@@ -2974,6 +2976,7 @@ fn parse_age(text: &str) -> Result<u64, String> {
 
 fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::Result<ExitCode> {
     let mut store = open_store()?;
+    store.wait_as_writer()?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as i64;

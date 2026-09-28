@@ -5860,3 +5860,14 @@ enum's on the concern behind it — `status.even?` went to `Integer#even?` at
 **Not done.** A class method is looked up as before: `scope` defines on the
 class itself, and order decides there. `has_secure_token` and `delegate`
 define on the class too, so they keep last-written-wins.
+
+## DEC-139 — An index waits for another writer as long as a writer takes
+
+**Decided.** `--index`, `--drop` and `--gc` wait up to ten minutes for
+another process's write lock; every other command keeps the 5 s handler,
+and a query still never waits (DEC-066).
+
+**Why.** Under load, two concurrent `--index` runs exited 74 "database is
+locked": one bundle's gems are one immediate transaction (DEC-041), and a
+cold one holds the lock far longer than 5 s. Waiting its turn was already a
+writer's job (DEC-066); 5 s was a query's number.

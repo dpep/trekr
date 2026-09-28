@@ -452,6 +452,12 @@ impl Store {
 
     /// Run `work` as one transaction, so every `write` inside it commits once.
     ///
+    /// Wait for another writer's turn as long as a writer takes, not as long
+    /// as a query would (DEC-139).
+    pub(crate) fn wait_as_writer(&self) -> Result<()> {
+        self.conn.busy_timeout(WRITER_WAIT)
+    }
+
     /// For many small writes in a row — a bundle's gems. A commit rewrites
     /// every index page the transaction touched, and the name indexes are
     /// keyed randomly, so each small commit rewrote most of them (DEC-041).
@@ -1227,8 +1233,13 @@ impl Drop for Store {
     }
 }
 
-/// How long a writer waits for another's lock before giving up.
+/// How long a connection waits for another's lock before giving up.
 const BUSY: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How long an index, a drop or a collection waits for another writer: one
+/// cold bundle's gems are one transaction and take far longer than `BUSY`
+/// (DEC-139). A query never waits at all (DEC-066).
+const WRITER_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// Put the store in WAL mode, which it then stays in.
 ///
@@ -1606,6 +1617,20 @@ mod tests {
             vec![(oid, crate::extract::extract(src.as_bytes()))]
         };
         store.write(root, &files, facts, 0).unwrap()
+    }
+
+    #[test]
+    fn a_writer_waits_longer_than_a_query() {
+        let store = Store::open_in_memory().unwrap();
+        let waits = |store: &Store| -> i64 {
+            store
+                .conn
+                .pragma_query_value(None, "busy_timeout", |r| r.get(0))
+                .unwrap()
+        };
+        assert_eq!(waits(&store), BUSY.as_millis() as i64);
+        store.wait_as_writer().unwrap();
+        assert_eq!(waits(&store), WRITER_WAIT.as_millis() as i64);
     }
 
     #[test]
