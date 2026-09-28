@@ -15,11 +15,7 @@ the repo named; lines and columns are 1-based, as `--def` takes them.
 
 | position | repo | meant | got | notes |
 |---|---|---|---|---|
-| `spec/models/user_spec.rb:1:7` `describe` | polyid | RSpec's `describe` (made by `define_singleton_method` in `rspec/core/dsl.rb`) | minitest's `Kernel#describe`, **resolved, confidence 1** | the first line of every spec: `RSpec` has no `describe` the index sees, so the lookup falls to `Kernel`, which minitest (bundled through activesupport) patched. 7 of polyid's 13 confidently wrong gold sites |
 | `spec/models/user_spec.rb:54:33` `find` | polyid | `PolyId::Model::ClassMethods#find` | ActiveRecord's `find`, **resolved** | same `on_load` include as `id_for` below; 6 of polyid's 13 confidently wrong gold sites |
-| `spec/accord/types/decimal_spec.rb:10:7` `expect` | accord | `RSpec::Matchers#expect` | residue, 8 guesses, Minitest's first | Every implicit call in a spec: the block's `self` is an example group. 40% of all click misses, and the largest gold-set bucket |
-| `spec/accord/types/decimal_spec.rb:10:14` `type` | accord | the `subject(:type)` block on line 6 | residue | `let`/`subject` define a method named by their symbol |
-| `spec/accord/types/decimal_spec.rb:10:36` `to` | accord | `RSpec::Expectations::ExpectationTarget#to` | residue, truth not among the guesses | follows once `expect` resolves and carries a return type |
 | `spec/models/cache_spec.rb:81:12` `id_for` | polyid | `PolyId::Model::ClassMethods#id_for` | empty: `User` known, nothing defines it | mixed into `ActiveRecord::Base` by `ActiveSupport.on_load(:active_record) { include PolyId::Model }` |
 | `spec/accord/money_spec.rb:114:21` `parse` | accord | `Accord::Schema.parse` | empty: `Class#parse` not found | `schema = Class.new(Accord::Schema) { … }` is a subclass, typed as a `Class` instance |
 | `spec/flipper/adapters/rollout_spec.rb:28:52` `new` | flipper | `Class#new` on the struct class | empty: `Struct#new` not found | `Struct.new(:id)` returns a class, typed as a `Struct` instance |
@@ -29,13 +25,21 @@ the repo named; lines and columns are 1-based, as `--def` takes them.
 | `lib/graph_weaver/client.rb:10:1` `require_relative` | graph_weaver | `Kernel#require_relative` | residue, 3 guesses | a top-level call outside any block is on `main`, an `Object`; the call does not record whether it is in a block |
 | `lib/network_resiliency/power_stats.rb:84:23` `percentile` | network_resiliency | `percentile` in the same class | residue | `alias_method :p, :percentile`, `method(:x)`, `send(:x)` on an implicit receiver name a method on `self` |
 | `lib/network_resiliency/syncer.rb:10:14` `synchronize` | network_resiliency | `Mutex#synchronize` | residue, 8 of 25 | `LOCK = Mutex.new`: a value constant is untyped (DEC-082, not done) |
-| `lib/accord/field.rb:166:7` `nested_schema` | accord | `Accord::Fields::Array#nested_schema`, the override the runtime object had | `Accord::Field#nested_schema`, **resolved, confidence 1** | a call on `self` whose method a subclass overrides; the answer could name the override as a competitor. Same shape: graph_weaver `install_generator.rb:164:11` `append_to_file` and `railtie.rb:566:19` `env`, overridden by a spec's stand-in |
+| `spec/transport_endpoint_spec.rb:96:35` `http_response` | graph_weaver | `def http_response` in the `shared_context` of `spec/support/raw_http_server.rb` | residue, nothing offered | a shared context's methods are file-local (DEC-084); `include_context` across files is not followed. It was offered as a candidate while the `def` counted as a top-level method |
+| `be_empty`, `be_valid`, `be_present` in any spec | accord, polyid, meddleware | `RSpec::Matchers#method_missing` (predicate matchers) | residue, "nothing indexed defines this name" | 45 of the replayed spec misses; a `method_missing` that answers a name pattern is not modelled |
+| `include_attrs`, `match_attrs` | webmock-twirp | `RSpec::Matchers.define :include_attrs` | residue | the matcher DSL's `define` names the method in another object's class |
+| `spec/accord/types/decimal_spec.rb:5:1` `describe` | accord | RSpec's `describe`, exposed on `main` | residue | a bare top-level `describe` is `main`'s; the stub states only `RSpec.describe` |
 | `lib/graph_weaver/tasks.rb:372:3` `namespace` | graph_weaver | `Rake::DSL#namespace` | residue | a rake task file's blocks; honest until blocks carry a `self` |
 
 ## Fixed
 
 | position | repo | meant | got | fixed in |
 |---|---|---|---|---|
+| `spec/models/user_spec.rb:1:7` `describe` | polyid | RSpec's `describe` | minitest's `Kernel#describe`, confidence 1 | 15c740c (testbed 051) |
+| `spec/accord/types/decimal_spec.rb:10:7` `expect` | accord | `RSpec::Matchers#expect` | residue | 4dedef0, 1d0b84e, 15c740c (testbed 046, 050, 051) |
+| `spec/accord/types/decimal_spec.rb:10:14` `type` | accord | the `subject(:type)` on line 6 | residue | 7ed44b8 (testbed 048) |
+| `spec/accord/types/decimal_spec.rb:10:36` `to` | accord | `ValueExpectationTarget#to` | residue | 15c740c, e4fce7c (testbed 051) |
+| `lib/accord/field.rb:166:7` `nested_schema` | accord | the override the object had | `Field#nested_schema`, confidence 1; now `ambiguous`, naming the overrides | f15c676 (testbed 054) |
 | `lib/graph_weaver/codegen/emit.rb:8:20` `Codegen` | graph_weaver | the class being opened | nothing; a click on `GraphWeaver` answered `Codegen` | f2d2b26 |
 | `Float::INFINITY`, `Process::CLOCK_MONOTONIC`, `Thread::Mutex`, `Errno::ENOTCONN`, `Time.utc`, `__dir__`, `Module#using` | berater, network_resiliency, graph_weaver, accord, amenable | the core definition | residue or empty | ff6f12a (testbed 045) |
 | `lib/graph_weaver/codegen/emit.rb:41:38` `visit` | graph_weaver | `visit = lambda do …` on line 32 | "a variable with no write in reach" | 5b5baeb |

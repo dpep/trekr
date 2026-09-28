@@ -2199,3 +2199,75 @@ and the trace records the wrapper's line, so 7.6% of graph_weaver's app truths
 pointed at `call_validation_2_7.rb` or `_methods.rb`. They are excluded as
 `wrapped`, like a column mismatch, and reported beside the table; before that
 they were four of graph_weaver's six "confidently wrong".
+
+## RSpec (2026-09-27)
+
+DEC-084 to DEC-089, against main at 7b3238c. Each build ran on stores it
+indexed itself. The gold sets are the ones `make gold-gem` traced for the
+section above, rescored (`APP_SAMPLE=600 SAMPLE=300 SEED=12`); widget_shop's
+is a 3,075-site trace, every site scored, context pinned.
+
+### Click replay
+
+`script/clicks.py`, the same 12 repositories and 20,290 definition clicks:
+
+| | 7b3238c | now |
+| --- | ---: | ---: |
+| library clicks missed (empty or unsure) | 2,130 of 8,431 (25.3%) | 2,114 (25.1%) |
+| spec clicks missed | 7,942 of 11,859 (67.0%) | 3,326 (28.0%) |
+| all misses | 10,072 | 5,440 |
+| … "spec DSL and let names" bucket | 4,015 | 246 |
+
+What is left in specs is mostly the dynamic buckets: chained receivers,
+untyped locals, symbol arguments. The implicit-receiver remainder is
+flipper, whose checkout indexes no rspec-core (129, answered as such), a
+bare top-level `describe`, predicate matchers, custom `Matchers.define`
+matchers and FactoryBot's `create` where no `config.include` names it.
+
+### Gold sets
+
+| | correct | declaration | found | confidently wrong |
+| --- | ---: | ---: | ---: | ---: |
+| graph_weaver, a spec, before | 58 of 482 (12.0%) | 0 | 290 (60.2%) | 1 |
+| graph_weaver, a spec, now | 372 (77.2%) | 57 | 392 (81.3%) | 1 |
+| graph_weaver, not a spec | 60 of 78 → 60 | 0 → 0 | 64 → 64 | 2 → 2 |
+| accord, a spec, before | 8 of 536 (1.5%) | 0 | 378 (70.5%) | 0 |
+| accord, a spec, now | 297 of 531 (55.9%) | 110 | 373 (70.2%) | 0 |
+| accord, not a spec | 48 of 64 → 48 | 0 → 0 | 57 → 57 | 1 → 0 (ambiguous) |
+| polyid, a spec, before | 39 of 539 (7.2%) | 14 | 341 (63.3%) | 13 |
+| polyid, a spec, now | 281 of 535 (52.5%) | 121 | 342 (63.9%) | 7 |
+| polyid, not a spec | 29 of 56 → 29 | 0 → 0 | 50 → 50 | 0 → 0 |
+
+A `let` answers with its line, a declaration (`defined_via: let`), where the
+trace saw the method rspec-core generates, so the `declaration` column is
+the lets. A few sites (accord 5, polyid 4) moved to `column-mismatch`: the
+name at the traced column is now a different one than the trace saw. polyid's seven are the `on_load` `find` the
+entry above records; `RSpec.describe`'s seven are gone.
+
+Gem floors: confidently wrong graph_weaver 3 → 2, accord 8 → 1, polyid 18 →
+8, the rest moving to `ambiguous-wrong` (DEC-081's amendment); correct
+unchanged at 132, 124, 143.
+
+widget_shop, 3,075 sites: app code unchanged (34 correct, 20 declarations, 1
+wrong of 61). Gem floor: correct 1,514 → 1,521 — six chains typed through a
+Tapioca `.rbi`'s return type (DEC-087) and one more — confidently wrong 92 →
+21, ambiguous-wrong 8 → 79. Every one of the 71 is a call on `self` whose
+method a subclass or a later-mixed module overrides, now named.
+
+### References
+
+rails, the 40 `--refs` queries: 37 unchanged; three sites move from possible
+to excluded, `ex.inspect` and `e.to_s` in `rescue … => e` (twice), now typed
+as the exception (DEC-089).
+
+### Measured and not kept
+
+The example group first vouched for every nested block in an example. The
+gold sets found two confidently wrong answers that way (`boolean` in a
+helper's `schema { }`, `output` in a `GraphWeaver.graph do`), and a core
+stub for `Dir.mktmpdir` made four `mktmpdir` calls wrong against the real
+`tmpdir.rb`. Both are in DEC-084. The RSpec stub first typed `expect(x)` as
+`ExpectationTarget`; 71 of graph_weaver's, 68 of accord's and 64 of polyid's
+`.to` and `.not_to` answers were
+confidently wrong until it said `ValueExpectationTarget`.
+

@@ -4345,6 +4345,12 @@ name (RSpec loads `*_spec.rb`), which the blob layer does not have.
 *Reverses if:* a checkout with both frameworks writes Minitest specs at the
 top level often enough to show up in its gold set.
 
+**Measured**, with DEC-085 to DEC-088 (BASELINE, "RSpec"): of 11,859 replayed
+clicks in spec files, 67.0% missed and now 28.0%; library files 25.3% and
+25.1%. A spec call site's gold answer is correct 77% of the time in
+graph_weaver (was 12%), 56% in accord (1.5%) and 53% in polyid (7.2%), and
+no gold set's confidently wrong count rose.
+
 **A group's own methods.** `let(:x)`, `let!(:x)`, `subject(:x)`, `subject`
 and a `def` in a group's body define a method on that group. They are facts
 of the file alone: the store and the tree never see them, and a call in a
