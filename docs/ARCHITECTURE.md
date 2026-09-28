@@ -128,6 +128,13 @@ Two things the blob layer cannot know, resolved here:
 - **Constant aliases.** `Bar = Foo` keeps its own declaration site — that is
   where go-to-definition on `Bar` belongs — but anywhere a *namespace* is
   wanted (`Bar::Baz`, `class Foo < Bar`) the alias is followed through.
+- **A mixin sent to a constant** (DEC-097). `Widget.include(Helpers)` and
+  `Widget.send(:prepend, Patch)` are edges whose owner nesting starts with a
+  `(sent Widget)` segment: the blob layer records the constant as written,
+  and the tree looks it up in the rest of the nesting — lexical scopes and the
+  top level, no ancestors, since no chain is complete while edges attach. A
+  receiver the tree does not hold drops the edge. One under a conditional or
+  inside a method is not recorded, since it may never run.
 
 **A name declared with two superclasses is split** (DEC-072). Ruby raises
 "superclass mismatch" when both load, so a checkout holding `class Post <

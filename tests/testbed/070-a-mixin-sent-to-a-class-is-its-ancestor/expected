@@ -1,0 +1,19 @@
+# `Engine.prepend(BootHook)` is a mixin as surely as `prepend` in Engine's
+# body, and was an ordinary call: the `super` in BootHook#boot found no
+# class mixing it in, and was only a possible reference to Engine#boot. A
+# constant the
+# call is sent to is looked up where the call is written (`Cart` inside
+# `Shop`), and one the index does not hold (`Missing`) gets no chain. A mixin
+# sent under a condition may never run: sorbet-runtime prepends to rspec-core
+# only `if defined?` it loaded first, and in accord's suite it had not. One
+# in a method runs only if the method is called (activerecord's encryption
+# `install_support`).
+# `self` sent from a module's body is the module (`Object.prepend(self)`).
+ancestors Engine BootHook,Engine
+def app.rb:8:5 status=resolved owner=Engine via=super
+refs Engine#boot confirmed=1
+dead app.rb Engine#boot=super-only Shop::Pricing#price=single-caller
+ancestors Shop::Cart Shop::Cart,Shop::Pricing
+def app.rb:44:16 status=resolved owner=Shop::Pricing
+def app.rb:45:12 status=resolved owner=Shop::Finder
+def app.rb:54:12 status=resolved owner=Audit

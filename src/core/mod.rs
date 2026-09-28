@@ -463,6 +463,25 @@ pub(crate) struct Ancestry {
     pub(crate) pos: Pos,
 }
 
+/// Ancestry written by a call rather than in a body: `Widget.include(Helpers)`
+/// (DEC-097). The receiving class is a constant the call names, so its edge's
+/// owner starts with a segment saying so, and the tree looks the constant up
+/// in the rest of the nesting instead of placing a body there.
+pub(crate) mod runtime {
+    const SENT: &str = "(sent ";
+
+    /// The owner segment for a mixin sent to the constant `receiver`, as
+    /// written.
+    pub(crate) fn sent(receiver: &str) -> String {
+        format!("{SENT}{receiver})")
+    }
+
+    /// The constant a `sent` segment names.
+    pub(crate) fn sent_to(segment: &str) -> Option<&str> {
+        segment.strip_prefix(SENT)?.strip_suffix(')')
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Relation {

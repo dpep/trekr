@@ -2328,3 +2328,33 @@ in the example's chain was RSpec::Matchers'. rspec-core's ExampleGroup
 defines its own, which comes first and calls `super`, so the rule passed its
 testbed and fired in no real spec; the checkpoint's replay showed the
 residue reason unchanged on all 38 sites.
+
+## Runtime ancestry (2026-09-28)
+
+DEC-097 onward, against main at eb84162. Each build ran on stores it indexed
+itself: the three gem gold sets (`APP_SAMPLE=600 SAMPLE=300 SEED=12`, the
+traces the RSpec section used), widget_shop's 2,987-site trace with every site
+scored and context pinned, rails' 40 `--refs` queries, `--dead
+activerecord/lib activemodel/lib actionpack/lib` on rails and `--dead lib` on
+a store holding only activerecord, and `script/clicks.py` over the same 13
+repositories (21,154 definition clicks).
+
+### Mixins sent to a constant (DEC-097)
+
+No gold set's confidently wrong count moved; one verdict moved in all four,
+accord's gem floor gaining a `super` (sorbet-runtime's
+`singleton_method_added`, residue-hit → correct). Clicks: definition misses
+5,953 → 5,940, "module never mixed in" 151 → 138. rails `--refs`: one site
+moved, possible → excluded, `super` in `BigDecimalWithDefaultFormat#to_s`
+now landing on `BigDecimal`'s. rails `--dead`: 2,366 candidates either way,
+six tiers moved and each toward referenced (`Relation#exec_queries` is
+reached by `super` from `RecordFetchWarning`, which activerecord prepends to
+it); the activerecord-only store swaps two tiers the same way.
+
+Measured and not kept: recording every sent mixin, conditional or in a method.
+accord's spec `let`s (four sites) went correct → confidently wrong through
+sorbet-runtime's `if defined?` prepend, widget_shop's `find_by` and `where`
+(two) through activerecord's encryption `install_support`. And 531 rails
+`--refs` sites moved excluded → possible while `Object.prepend(self)` in
+activesupport's `require_dependency.rb` put an unresolvable `self` into every
+chain; `self` in a module's body is now the module.

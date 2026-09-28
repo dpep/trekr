@@ -136,6 +136,9 @@ struct Extractor<'a> {
     /// The block parameters of the `RSpec.configure do |config|` blocks we
     /// are in (DEC-088).
     configure_params: Vec<String>,
+    /// How many conditionals we are inside — `if`, `unless`, `case`, `&&`,
+    /// `||`. A mixin sent from one may never run (DEC-097).
+    conditional: usize,
     /// The blocks we are in, innermost last: the call each is handed to, or
     /// `None` for one whose `self` is known — a method body, a class body, an
     /// RSpec group or example.
@@ -245,6 +248,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         definers: HashMap::new(),
         singleton_exec: 0,
         configure_params: Vec::new(),
+        conditional: 0,
         open_blocks: Vec::new(),
         matcher_subjects: HashMap::new(),
         minitest: minitest_spec(src),
@@ -298,6 +302,18 @@ impl<'a> Extractor<'a> {
 
     fn in_group_body(&self) -> bool {
         self.frames.last().is_some_and(|f| f.group)
+    }
+
+    /// Is `self` the class or module whose body this is — not a method, a
+    /// singleton, or a block that may run elsewhere?
+    fn self_is_the_scope(&self) -> bool {
+        !self.nesting.is_empty()
+            && !self.in_group_body()
+            && self.open_blocks.last() == Some(&None)
+            && self
+                .frames
+                .last()
+                .is_some_and(|f| !f.in_method && !f.singleton)
     }
 
     /// Inside `included do … end` of a module that extends `ActiveSupport::Concern`.
@@ -841,6 +857,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.handle_table_name(node);
         self.note_definer(node);
         self.handle_configure_mixin(node);
+        self.handle_sent_mixin(node);
         self.handle_define_method(node);
         self.handle_group_member(node);
         self.handle_custom_matcher(node);
@@ -1048,6 +1065,36 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             }
         }
         ruby_prism::visit_rescue_node(self, node);
+    }
+
+    fn visit_if_node(&mut self, node: &ruby_prism::IfNode<'pr>) {
+        self.conditional += 1;
+        ruby_prism::visit_if_node(self, node);
+        self.conditional -= 1;
+    }
+
+    fn visit_unless_node(&mut self, node: &ruby_prism::UnlessNode<'pr>) {
+        self.conditional += 1;
+        ruby_prism::visit_unless_node(self, node);
+        self.conditional -= 1;
+    }
+
+    fn visit_case_node(&mut self, node: &ruby_prism::CaseNode<'pr>) {
+        self.conditional += 1;
+        ruby_prism::visit_case_node(self, node);
+        self.conditional -= 1;
+    }
+
+    fn visit_and_node(&mut self, node: &ruby_prism::AndNode<'pr>) {
+        self.conditional += 1;
+        ruby_prism::visit_and_node(self, node);
+        self.conditional -= 1;
+    }
+
+    fn visit_or_node(&mut self, node: &ruby_prism::OrNode<'pr>) {
+        self.conditional += 1;
+        ruby_prism::visit_or_node(self, node);
+        self.conditional -= 1;
     }
 
     fn visit_block_node(&mut self, node: &ruby_prism::BlockNode<'pr>) {
@@ -1266,6 +1313,14 @@ fn method_name(call: &ruby_prism::CallNode<'_>) -> Option<String> {
     String::from_utf8(call.name().as_slice().to_vec()).ok()
 }
 
+/// The relation a mixin method's name makes. `superclass` is no method.
+fn mixin_relation(name: &str) -> Option<Relation> {
+    match name {
+        "include" | "prepend" | "extend" => Relation::parse(name),
+        _ => None,
+    }
+}
+
 impl<'pr> Extractor<'_> {
     /// Calls that define things rather than do things. Returns `true` when the
     /// call was fully consumed and must not also be recorded as a call site.
@@ -1371,9 +1426,22 @@ impl<'pr> Extractor<'_> {
         let Some(relation) = Relation::parse(macro_name) else {
             return false;
         };
-        if args.is_empty() {
+        let Some(owner) = self.mixin_owner() else {
             return false;
+        };
+        // `extend self` — the idiomatic module-function alternative.
+        let any = self.push_mixins(owner, relation, args, Some("self"));
+        if any {
+            // The argument constants are real references too.
+            for arg in args {
+                self.visit(arg);
+            }
         }
+        any
+    }
+
+    /// The scope an `include` on `self` written here mixes into.
+    fn mixin_owner(&self) -> Option<Vec<String>> {
         // A mixin written inside a `def` is not this scope's ancestor. It runs
         // when the method runs, against whatever `self` is then — which is why
         // `has_secure_password` can write `include ActiveModel::Validations`
@@ -1384,21 +1452,32 @@ impl<'pr> Extractor<'_> {
         // `alias_method :validate, :valid?` then beat the real
         // `ClassMethods#validate`. It stays an ordinary call site.
         if self.in_method_body() {
-            return false;
+            return None;
         }
         // A group is a class only its own file sees (DEC-084), and an edge on
         // it would land on the constant scope around it.
         if self.in_group_body() {
-            return false;
+            return None;
         }
+        Some(self.nesting.clone())
+    }
+
+    /// One edge per constant argument, onto `owner`. A `self` argument is
+    /// the target `own`, when there is one.
+    fn push_mixins(
+        &mut self,
+        owner: Vec<String>,
+        relation: Relation,
+        args: &[Node<'pr>],
+        own: Option<&str>,
+    ) -> bool {
         let mut any = false;
         // `include A, B` inserts B first — Ruby applies multi-arg mixins
         // right to left, and the ancestor order the tree layer builds is
         // exactly this list's order.
         for arg in args.iter().rev() {
             let target = if arg.as_self_node().is_some() {
-                // `extend self` — the idiomatic module-function alternative.
-                Some("self".to_string())
+                own.map(str::to_string)
             } else {
                 const_name(arg)
             };
@@ -1407,20 +1486,66 @@ impl<'pr> Extractor<'_> {
             };
             let pos = self.pos(arg.location().start_offset());
             self.facts.ancestry.push(Ancestry {
-                owner: self.nesting.clone(),
+                owner: owner.clone(),
                 relation,
                 target,
                 pos,
             });
             any = true;
         }
-        if any {
-            // The argument constants are real references too.
-            for arg in args {
-                self.visit(arg);
-            }
-        }
         any
+    }
+
+    /// A mixin sent rather than written in a body (DEC-097):
+    /// `Widget.include(Helpers)`, `Widget.send(:prepend, Patch)`, and
+    /// `send(:include, Helpers)` on `self`. A side effect: the call is still
+    /// a call, and its arguments are visited with it.
+    fn handle_sent_mixin(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        let Some(name) = method_name(call) else {
+            return;
+        };
+        let args = arg_nodes(call);
+        let (relation, args) = match name.as_str() {
+            "send" | "__send__" => match args.split_first() {
+                Some((first, rest)) => (
+                    literal_name(first).and_then(|sent| mixin_relation(&sent)),
+                    rest,
+                ),
+                None => return,
+            },
+            // On `self`, these are the macros `handle_mixin` reads.
+            _ if on_self(call) => return,
+            _ => (mixin_relation(&name), &args[..]),
+        };
+        // Only a mixin that runs when its file loads is recorded, since an
+        // edge that may not exist misleads worse than a missing one.
+        // `Patch.prepend(Fix) if defined?(Patch)` is how an optional
+        // integration is written, and sorbet-runtime prepends to rspec-core's
+        // `let` that way only if rspec-core loaded first. A mixin in a method
+        // runs if the method is called: activerecord's `install_support`
+        // includes its encryption queries into every model only when
+        // deterministic encryption is configured.
+        let may_not_run = self.conditional > 0 || self.in_method_body();
+        let Some(relation) = relation.filter(|_| !may_not_run) else {
+            return;
+        };
+        let owner = match call.receiver() {
+            None => self.mixin_owner(),
+            Some(receiver) if receiver.as_self_node().is_some() => self.mixin_owner(),
+            Some(receiver) => const_name(&receiver).map(|written| {
+                let mut owner = vec![crate::core::runtime::sent(&written)];
+                owner.extend(self.nesting.iter().cloned());
+                owner
+            }),
+        };
+        // `Object.prepend(self)` in a module's body sends the module.
+        let own = self
+            .self_is_the_scope()
+            .then(|| self.nesting.first().cloned())
+            .flatten();
+        if let Some(owner) = owner {
+            self.push_mixins(owner, relation, args, own.as_deref());
+        }
     }
 
     /// `define_method "#{callback}_action"` inside a literal `each` — a method

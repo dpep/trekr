@@ -28,7 +28,7 @@ use variants::{PlacedEdge, joinable, nearest};
 pub(crate) use files::forget as forget_snapshots;
 pub(crate) use files::sweep as sweep_snapshots;
 
-use crate::core::Param;
+use crate::core::{Param, runtime};
 use crate::store::{DeclRow, EdgeRow, MethodRow, Store};
 use serde::Serialize;
 use std::cell::RefCell;
@@ -708,19 +708,32 @@ impl Tree {
 
         let edges: Vec<PlacedEdge> = edges
             .into_iter()
-            .map(|edge| {
-                let owner = tree.scopes(&edge.owner);
-                let scope = owner.first().cloned().unwrap_or_default();
-                // Ruby evaluates a superclass expression *outside* the class
-                // body: `class C < Base` looks up `Base` where `C` is written,
-                // not where `C`'s constants live. Every other relation is
-                // written inside.
-                let nesting = if edge.relation == "superclass" {
-                    owner.get(1..).unwrap_or_default().to_vec()
-                } else {
-                    owner.clone()
+            .filter_map(|edge| {
+                let sent = edge.owner.first().and_then(|s| runtime::sent_to(s));
+                let (scope, nesting) = match sent {
+                    // `Widget.include(Helpers)` (DEC-097): both constants are
+                    // read where the call is written, and a receiver the
+                    // tree does not hold has no chain to join.
+                    Some(receiver) => {
+                        let written = tree.scopes(&edge.owner[1..]);
+                        (tree.find_scope(receiver, &written)?, written)
+                    }
+                    None => {
+                        let owner = tree.scopes(&edge.owner);
+                        let scope = owner.first().cloned().unwrap_or_default();
+                        // Ruby evaluates a superclass expression *outside* the
+                        // class body: `class C < Base` looks up `Base` where
+                        // `C` is written, not where `C`'s constants live.
+                        // Every other relation is written inside.
+                        let nesting = if edge.relation == "superclass" {
+                            owner.get(1..).unwrap_or_default().to_vec()
+                        } else {
+                            owner
+                        };
+                        (scope, nesting)
+                    }
                 };
-                PlacedEdge {
+                Some(PlacedEdge {
                     scope,
                     relation: edge.relation,
                     target: Target {
@@ -728,7 +741,7 @@ impl Tree {
                         nesting,
                     },
                     path: edge.path,
-                }
+                })
             })
             .collect();
 
@@ -856,6 +869,27 @@ impl Tree {
         // constantly because the prefix belongs to a gem. Top level is the
         // honest guess.
         qualify(prefix, last)
+    }
+
+    /// The class or module a constant written in `scopes` names, looked up
+    /// through the lexical scopes and the top level only: while edges are
+    /// being attached, no chain is complete enough to search.
+    fn find_scope(&self, written: &str, scopes: &[String]) -> Option<String> {
+        let (head, rest) = split_path(written);
+        let mut current = match head.strip_prefix("::") {
+            Some(head) => self.names.contains(head).then(|| head.to_string()),
+            None => scopes
+                .iter()
+                .map(String::as_str)
+                .chain([""])
+                .map(|scope| qualify(scope, head))
+                .find(|candidate| self.names.contains(candidate)),
+        }?;
+        for segment in rest {
+            let next = qualify(&self.namespace_of(&current), segment);
+            current = self.names.contains(&next).then_some(next)?;
+        }
+        Some(self.namespace_of(&current))
     }
 
     /// Create the namespaces that declarations imply but nothing declares.

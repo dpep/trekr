@@ -3584,6 +3584,19 @@ or a bare-name query, is unchanged. On that store six `super-only` candidates
 become `unreferenced`, and each is `unreferenced` on a store holding all of
 rails, which is the evidence the smaller store was missing.
 
+**A mixin sent at runtime is a mixer** (amended after 0.5.0, DEC-097). The
+amendment above had a hole: a class can take a module in without a line in
+its body — `Engine.prepend(BootHook)` — so `BootHook#boot`'s `super` found no
+mixer and was only a possible reference to `Engine#boot`. The direct fix,
+parked as `correct-b2`, kept every class target `possible` whenever the
+landings came through a module's includers. That restored this one site and,
+measured when it was parked, brought back seven false results, because it let a class look hidden with no
+evidence that anything hid it. Recording the sent mixin as an edge gives the
+`super` a real landing instead: `Engine` prepends `BootHook`, so the `super`
+confirms `Engine#boot`, and `could_hide` keeps its rule. An `include` sent the
+same way puts the module *behind* the class, where its `super` cannot reach
+the class's own method, and that is now what the chain says too.
+
 ## DEC-069 — A class built by a call and assigned to a constant is a class body
 
 **Decided.** `X = Struct.new(…)`, `Data.define(…)`, `Class.new(Base)` and
@@ -4732,3 +4745,54 @@ is written — is not modelled, so `is_expected` without a `subject` stays
 untyped. A `let` that a shared group defines is stored without its value, so
 a call on it from an includer is untyped. FactoryBot's `create(:widget)` names
 no class.
+
+## DEC-097 — A mixin sent to a constant is an edge, when it runs as its file loads
+
+**Decided.** `X.include(M)`, `X.prepend(M)`, `X.extend(M)`, and `X.send(:include,
+M)` (or `__send__`) are ancestry edges on `X`, as the same line in `X`'s body
+would be. `send(:include, M)` on `self` is `include M`. `self` as the argument,
+in a module's body, is the module (`Object.prepend(self)`). `X` is a constant
+as written, looked up by the tree where the call is written: the lexical
+scopes, then the top level. A receiver the tree does not hold has no chain for
+the edge to join, and the edge is dropped rather than inventing one.
+
+**Why.** It is how a gem patches another gem's class and how Rails' own core
+extensions are applied: `Range.prepend(ActiveSupport::CompareWithRange)`,
+`Integer.include(ActiveSupport::NumericWithFormat)`, polyid's
+`ActiveRecord::Relation.prepend(PolyId::Relation)`. Until now each was an
+ordinary call, so the patched method was invisible from the class, a `super`
+in the patch had no class to land in (DEC-068's amendment), and the patch's
+methods were `--dead` candidates.
+
+**Only what runs when its file loads.** A sent mixin under a conditional
+(`if`, `unless`, `case`, `&&`, `||`) or inside a method is not recorded. The
+first cut recorded every one, and accord's gold set lost four correct answers
+to it: sorbet-runtime writes `if defined?(::RSpec::Core::MemoizedHelpers::
+ClassMethods) … ::RSpec::…::ClassMethods.prepend(MemoizedHelpers)`, which
+runs only when rspec-core loaded first, and in accord's suite it had not, so
+`let` went to sorbet's wrapper where Ruby ran rspec-core's. widget_shop's lost
+two to activerecord's encryption `install_support`, a method that includes its
+query overrides into every model only when deterministic encryption is
+configured. Body mixins (`include M if cond`) keep being recorded as before:
+they are rare, and the rule is about the shape optional integrations are
+written in.
+
+**Why look the receiver up rather than place it** as DEC-086 places
+`X.class_eval do`. Placing is what a declaration does, and the receiver is a
+reference: `Cart.include(Pricing)` inside `module Shop` means `Shop::Cart` only
+if that exists, and `::Cart` otherwise. The lookup reads lexical scopes and
+the top level only, since no chain is complete while edges are being
+attached; a receiver that is found only through an ancestor is missed.
+
+**Measured** (BASELINE, "Mixins sent at runtime"): no gold set's confidently
+wrong count moved; accord's gem floor gained a correct answer and a `super`;
+the click replay's "module never mixed in" bucket went 151 → 138; the rails
+`--refs` differential moved one site (a `super` in `BigDecimal`'s patch now
+lands on `BigDecimal#to_s`, excluded from `TimeWithZone#to_s`); rails
+`--dead` moved six tiers, each toward referenced.
+
+**Not done.** `X.singleton_class.prepend(M)` (network_resiliency's adapters),
+a receiver held in a variable (`base.extend(ClassMethods)` in a
+`self.included` hook, `[Hash, Array].each { |k| k.prepend(M) }`). A block is
+not a condition: a Railtie `initializer do` runs at every boot, and its sent
+mixins are recorded.

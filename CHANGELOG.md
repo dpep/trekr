@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Upgrading drops and rebuilds the index** (store v35): run `trekr --index`
+- **Upgrading drops and rebuilds the index** (store v36): run `trekr --index`
   once per checkout.
 
 ### Added
@@ -45,6 +45,13 @@
   matcher now resolves to that predicate (`be_exist` to `exists?`, as RSpec
   falls back); otherwise the residue names the rule and offers the predicate's
   definitions (DEC-090).
+
+- **A mixin sent to a class is its ancestor.** `Widget.include(Helpers)`,
+  `Widget.prepend(Patch)`, `Widget.extend(Finder)` and `Widget.send(:include,
+  Helpers)` add to `Widget`'s chain as the same line in its body would, so
+  `Widget.new.help` resolves, and a `super` in a prepended module lands on the
+  class's own method (DEC-097). Only a mixin that runs as its file loads
+  counts: one under an `if` or inside a method may never run.
 
 ### Fixed
 
