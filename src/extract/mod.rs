@@ -519,11 +519,11 @@ impl<'a> Extractor<'a> {
         self.push_def(module);
     }
 
-    /// A class-level macro inside `included do` runs against the *includer*,
-    /// not the concern — so a class method it makes belongs where Concern
-    /// already puts an includer's class methods.
+    /// A class-level macro in an includer body — a concern's `included do`, or
+    /// a hook's `base.class_eval` — runs against the *includer*, so a class
+    /// method it makes belongs where Concern puts an includer's class methods.
     fn route_to_includer(&mut self, def: &mut Def) {
-        if def.singleton && self.in_concerns_included_block() {
+        if def.singleton && self.in_includer_body() {
             def.nesting.insert(0, "ClassMethods".to_string());
             def.singleton = false;
             self.declare_class_methods();
@@ -2992,14 +2992,6 @@ impl<'pr> Extractor<'_> {
                 // `class << self` still governs which side these land on.
                 def.singleton = made.singleton || in_singleton;
                 self.route_to_includer(&mut def);
-                // A class-level macro inside `included do` runs against the
-                // *includer*, not the concern — so its methods belong where
-                // Concern already puts an includer's class methods.
-                if def.singleton && self.in_includer_body() {
-                    def.nesting.insert(0, "ClassMethods".to_string());
-                    def.singleton = false;
-                    routed = true;
-                }
                 if made.writer {
                     def.params = vec![Param {
                         kind: ParamKind::Req,
