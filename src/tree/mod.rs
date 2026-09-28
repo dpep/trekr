@@ -1134,6 +1134,15 @@ impl Tree {
                 .any(|a| public_name(a) == ancestor)
     }
 
+    /// Does some class that has `module` in its chain also have `other`? A
+    /// call on `self` in the module then runs on an object where Ruby can
+    /// find `other`'s methods, though the module's own chain never names it.
+    pub(crate) fn shares_includer(&self, module: &str, other: &str) -> bool {
+        self.includers_of(module)
+            .iter()
+            .any(|class| public_name(class) == public_name(other) || self.inherits(class, other))
+    }
+
     /// The ancestor chain of a name, in Ruby's linearization order:
     /// `[prepends, self, includes, superclass's chain]`, with the first
     /// occurrence of each module winning.

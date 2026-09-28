@@ -4260,6 +4260,28 @@ the first cut, walking them, cost a cold `--def` on rails 0.4 s; this one
 moves a warm `--def` there from 21 to 23 ms (median of 7). `create_or_update` in `Persistence#save` now names
 `Timestamp#create_or_update`, which is what every model runs.
 
+**Amended: a module's includer counts** (made for DEC-103). In a module, `self` is
+whatever includes it, and a module often calls what it expects the includer
+to get from another module: actionpack's `AbstractController::Caching::
+Fragments` calls `instrument_name`, which `ActionController::Caching`
+provides to the same controllers. The rule asked only whether the target's
+owner had the calling module in its own chain, which held there by accident,
+because the concern's `included do` include was read as the concern's own;
+read as the includer's (DEC-103), three methods rails' controllers call this
+way went `single-caller` → `unreferenced`. Such a site is now `possible` when some
+class that has the calling module in its chain also has the target's owner
+("`self` is what includes this module, and one that does has this"); a
+target no includer has stays excluded.
+
+Measured on its own, before DEC-103: rails `--refs`, 52 sites excluded →
+possible across 11 of the 40 queries (28 of them `AbstractAdapter#execute`
+from the adapters' `SchemaStatements` modules), none from or to confirmed.
+`--dead` on rails 2,364 → 2,273 candidates, 69 of them `unreferenced`
+dropping out or becoming `single-caller`; on the activerecord-only store 1,661
+→ 1,597. Sampled, each is one adapter module calling what another module of
+the same adapter defines (`write_query?`, `quoted_binary`,
+`exec_rollback_to_savepoint`). No gold verdict or click moved.
+
 ## DEC-082 — A constant receiver is the class or module the constant names
 
 **Decided.** `Foo.bar` types its receiver by resolving `Foo` and then
@@ -5254,4 +5276,3 @@ in `Example`); no other gold verdict moved. Clicks: definition misses 5,637 →
 confirmed, in classes that `extend ActiveModel::Callbacks`, whose `extended`
 hook `class_eval`s `include ActiveSupport::Callbacks` into them. `--dead`
 did not move.
-

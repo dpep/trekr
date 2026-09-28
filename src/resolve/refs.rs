@@ -242,6 +242,25 @@ fn tier(
             None,
         );
     }
+    // In a module, `self` is whatever includes it, and a method another of
+    // the includer's modules defines is one it can reach: a module calling
+    // what it expects its includer to provide.
+    if receiver.via == "self"
+        && !receiver.singleton
+        && !query.singleton
+        && !matches
+        && tree.kind_of(&receiver.fqn) == Some("module")
+        && target.is_some_and(|target| tree.shares_includer(&receiver.fqn, target))
+    {
+        return here(
+            Tier::Possible,
+            Some(receiver.fqn.clone()),
+            found.map(|found| found.owner),
+            "`self` is what includes this module, and one that does has this",
+            1,
+            None,
+        );
+    }
     // A type guessed from what a name's definitions return can confirm a
     // site, but ruling one out on it would rule out what the definitions that
     // declare nothing might have returned.

@@ -1,0 +1,11 @@
+# In a module, `self` is whatever includes it, and a module often calls what
+# it expects its includer to get from another module: actionpack's caching
+# Fragments call `instrument_name`, which ActionController::Caching provides
+# to the same controllers. DEC-081 kept such a site `possible` only when the
+# target's owner had the calling module in its own chain, so `--refs` excluded
+# it ("nothing indexed defines this name") and `--dead` called the method
+# unreferenced. Palette, which nothing that includes Rendering has, stays
+# excluded.
+refs Options#options confirmed=0 possible=1 excluded=0
+refs Palette#palette possible=0 excluded=1
+dead app.rb Options#options=single-caller

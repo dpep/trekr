@@ -97,6 +97,11 @@
   ActiveSupport::Concern gives its includers class methods, and
   `Widget.track` found nothing (DEC-102).
 
+- `--refs` and `--dead`: a call on `self` in a module is a possible reference
+  to a method another module of the same includer defines — a module calling
+  what it expects its includer to provide. It was excluded, and `--dead`
+  called the method unreferenced (DEC-081, amended).
+
 ## 0.6.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v36): run `trekr --index`

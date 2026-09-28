@@ -2543,3 +2543,19 @@ ActiveModel::Callbacks`, whose `extended` hook `class_eval`s `include
 ActiveSupport::Callbacks`. Nothing else moved in the gold sets, and `--dead`
 did not move on either store.
 
+### A `self` call in a module reaches its includer's other modules (DEC-081, amended)
+
+| | DEC-102 | amended |
+| --- | ---: | ---: |
+| rails `--refs`, sites excluded → possible (40 queries) | | 52 |
+| … `AbstractAdapter#execute`, confirmed / possible / excluded | 0 / 469 / 116 | 0 / 497 / 88 |
+| rails `--dead` candidates | 2,364 | **2,273** |
+| … unreferenced | 515 | 446 |
+| activerecord-only `--dead` candidates | 1,661 | **1,597** |
+| … unreferenced | 399 | 348 |
+
+No gold verdict or click moved. The sites and candidates that moved are
+modules calling on `self` what a sibling module of the same includer defines,
+chiefly the database adapters' `SchemaStatements`, `DatabaseStatements` and
+`Quoting`.
+
