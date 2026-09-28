@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v38): run `trekr --index`
   once per checkout.
