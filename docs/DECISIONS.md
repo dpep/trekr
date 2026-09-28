@@ -4344,7 +4344,9 @@ RSpec numbers it. A `let` is a declaration (defined via `let`): the method
 that runs is the one `let` generates in rspec-core, and the block is what it
 calls. `subject(:x)` is written at the symbol, and its `subject` at the block,
 so a click on the word `subject` still asks what the macro is. A `let` that a
-shared context or an includer defines in another file is not found.
+shared context or an includer defines in another file is not found. Only
+what the group's body writes is the group's: a `def` in a `Class.new` block
+inside a `let` is that class's, and keeps the file's nesting as before.
 
 ## DEC-085 — A class method that hands its parameter to `define_method` is a macro
 

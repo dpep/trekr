@@ -23,4 +23,12 @@ RSpec.describe Widget do
     it { speed }
     it { subject }
   end
+
+  let(:fake) do
+    Class.new do
+      def size
+        9
+      end
+    end
+  end
 end

@@ -263,8 +263,19 @@ impl<'a> Extractor<'a> {
         }
     }
 
-    fn push_def(&mut self, def: Def) {
+    fn push_def(&mut self, mut def: Def) {
+        // Only what a group's body writes is the group's (DEC-084). A `def`
+        // in a block inside it — `Class.new do`, an example — belongs to
+        // whatever that block runs on, and keeps the file's nesting.
+        if def.is_group_member() && !self.writes_group_members() {
+            def.nesting
+                .retain(|scope| !crate::core::rspec::is_group(scope));
+        }
         self.facts.defs.push(def);
+    }
+
+    fn writes_group_members(&self) -> bool {
+        self.frames.last().is_some_and(|f| f.group && f.blocks == 0)
     }
 
     /// A definition with this blob's current nesting and the common defaults.
