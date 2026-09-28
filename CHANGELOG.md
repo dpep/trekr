@@ -34,6 +34,15 @@
 
 ### Fixed
 
+- `RSpec.describe` answered minitest's `Kernel#describe` with confidence 1
+  wherever minitest was in the bundle. It now answers RSpec's, from a stub of
+  what rspec-core builds when a suite boots — as do `eq`, `be`, `raise_error`,
+  `double` and the rest of `RSpec::Matchers` and rspec-mocks inside a spec,
+  and `.to` after `expect(…)` or `is_expected` (DEC-087).
+
+- A method with no return type takes one from an `.rbi` that declares it, as
+  Sorbet does, so a chain through it is typed.
+
 - A lambda or block that calls the variable holding it
   (`visit = lambda { … visit.call … }`) now finds that assignment; definition
   and hover on the inner `visit` came back empty.

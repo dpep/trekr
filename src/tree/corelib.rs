@@ -26,6 +26,24 @@ impl CoreFile {
     }
 }
 
+/// RSpec's runtime wiring, stated as source and served beside core (DEC-087).
+/// Its methods are declarations: RSpec makes them when a suite boots.
+pub(crate) const RSPEC_STUB: &str = "<core>/RSpec.rb";
+
+/// The RSpec stub, as a caller sees it.
+pub(crate) fn rspec_file() -> &'static CoreFile {
+    static FILE: std::sync::OnceLock<CoreFile> = std::sync::OnceLock::new();
+    FILE.get_or_init(|| CoreFile {
+        name: "RSpec.rb".to_string(),
+        text: include_str!("rspec.rb").to_string(),
+    })
+}
+
+/// Is this site in the RSpec stub?
+pub(crate) fn is_rspec_stub(path: &str) -> bool {
+    path == RSPEC_STUB
+}
+
 /// Is this site in Ruby core?
 pub(crate) fn is_core(path: &str) -> bool {
     path.strip_prefix(CORE_PATH)
@@ -131,7 +149,7 @@ pub(crate) fn materialize(dir: &Path) -> std::io::Result<()> {
         return Ok(());
     }
     std::fs::create_dir_all(dir)?;
-    for file in files() {
+    for file in files().iter().chain([rspec_file()]) {
         let path = dir.join(&file.name);
         if std::fs::read_to_string(&path).ok().as_deref() != Some(file.text.as_str()) {
             std::fs::write(&path, &file.text)?;
@@ -193,6 +211,14 @@ mod tests {
                 .text
                 .contains("  def downcase(*options)\n  end\n")
         );
+    }
+
+    #[test]
+    fn the_rspec_stub_is_valid_ruby_that_declares_no_class_of_its_own() {
+        let facts = crate::extract::extract(rspec_file().text.as_bytes());
+        assert_eq!(facts.parse_errors, 0);
+        assert!(is_core(&format!("{CORE_PATH}/{}", rspec_file().name)));
+        assert!(is_rspec_stub(RSPEC_STUB));
     }
 
     #[test]

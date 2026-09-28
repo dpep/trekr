@@ -271,7 +271,7 @@ impl MethodDef {
         if self.bound {
             return Kind::Definition;
         }
-        if self.site.is_rbi() || self.body_elsewhere {
+        if self.site.is_rbi() || self.body_elsewhere || is_rspec_stub(&self.site.path) {
             return Kind::Declaration;
         }
         Kind::of(self.via.as_deref())
@@ -282,10 +282,13 @@ impl MethodDef {
     pub(crate) fn declared_via(&self) -> Option<String> {
         match self.kind() {
             Kind::Definition => None,
-            Kind::Declaration => self
-                .via
-                .clone()
-                .or_else(|| self.site.is_rbi().then(|| "rbi".to_string())),
+            Kind::Declaration => self.via.clone().or_else(|| {
+                if is_rspec_stub(&self.site.path) {
+                    Some("rspec".to_string())
+                } else {
+                    self.site.is_rbi().then(|| "rbi".to_string())
+                }
+            }),
         }
     }
 
@@ -521,6 +524,11 @@ impl Tree {
             None => freeze(&Tree::namespace(store, &roots, decls, edges, &mut phases)?)?,
         };
         let mut tree = Tree::over(snapshot, root.to_string());
+        // The RSpec stub's methods, after core's and before the index's, so a
+        // method rspec defines itself wins over the stub's (DEC-087).
+        if tree.kind_of(crate::core::rspec::EXAMPLE_GROUP) == Some("class") {
+            methods.extend(rspec_rows().1);
+        }
 
         // The checkout's methods are *not* loaded here. Nothing needs all of
         // them, and fetching and indexing rails' 84,052 was 76 % of this build
@@ -572,6 +580,11 @@ impl Tree {
     ) -> anyhow::Result<HashMap<String, Entry>> {
         decls.extend(phases.time("declarations", || store.declarations(roots))?);
         edges.extend(phases.time("ancestry", || store.ancestry(roots))?);
+        // Last, so its mixins are the nearest: RSpec includes them after the
+        // class body has run.
+        if declares_example_group(&decls) {
+            edges.extend(rspec_rows().0);
+        }
         let programs = store.program_roots(roots)?;
         phases.decls = decls.len();
         let names = Tree::assemble(decls, edges, &programs);
@@ -2210,6 +2223,30 @@ impl Tree {
         None
     }
 
+    /// What a method that declares no return returns, from a declaration of
+    /// the same method that does — an `.rbi`, or the RSpec stub (DEC-087).
+    /// Sorbet reads an `.rbi`'s `sig` as the real method's, and so does this.
+    /// The declaration comes back with the type, since a type is looked up
+    /// where it is written.
+    pub(crate) fn declared_returns(
+        &self,
+        method: &MethodDef,
+        argc: Option<u32>,
+        block: bool,
+    ) -> Option<(MethodDef, String)> {
+        let by_owner = self.by_owner.borrow();
+        let methods = self.methods.borrow();
+        let key = (method.owner.clone(), method.singleton, method.name.clone());
+        by_owner.get(&key)?.iter().rev().find_map(|i| {
+            let declared = &methods[*i];
+            if !(declared.site.is_rbi() || is_rspec_stub(&declared.site.path)) {
+                return None;
+            }
+            let returns = declared.returns_for(argc, block)?.to_string();
+            Some((declared.clone(), returns))
+        })
+    }
+
     /// A path in the checkout, as a site carries it: absolute.
     pub(crate) fn site_path(&self, relative: &str) -> String {
         if self.root.is_empty() || std::path::Path::new(relative).is_absolute() {
@@ -2597,7 +2634,7 @@ mod singleton_tests {
 }
 
 pub(crate) use corelib::{
-    CORE_PATH, files as core_files, is_core, materialize as materialize_core,
+    CORE_PATH, files as core_files, is_core, is_rspec_stub, materialize as materialize_core,
 };
 
 /// Tapioca writes one `.rbi` per model describing the methods Rails generates
@@ -2722,6 +2759,27 @@ fn core_rows() -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<MethodRow>) {
         methods.extend(m);
     }
     (decls, edges, methods)
+}
+
+/// The RSpec stub's edges and methods (DEC-087). No declarations: every
+/// class and module it names is rspec's own, and a site here would add a
+/// place each of them is written.
+fn rspec_rows() -> (Vec<EdgeRow>, Vec<MethodRow>) {
+    let file = corelib::rspec_file();
+    let (_, edges, methods) = rows_from(corelib::RSPEC_STUB, &file.text);
+    (edges, methods)
+}
+
+/// Does the index hold rspec-core? Its `ExampleGroup` is what the stub wires.
+fn declares_example_group(decls: &[DeclRow]) -> bool {
+    decls.iter().any(|decl| {
+        if decl.kind != "class" {
+            return false;
+        }
+        let mut written: Vec<&str> = decl.nesting.iter().rev().map(String::as_str).collect();
+        written.push(&decl.name);
+        written.join("::").trim_start_matches("::") == crate::core::rspec::EXAMPLE_GROUP
+    })
 }
 
 /// One Ruby source's facts, in the row shapes the tree assembles from. Shared

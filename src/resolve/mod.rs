@@ -697,9 +697,12 @@ fn returned_by(
         });
     }
     let method = tree.lookup(&receiver.fqn, receiver.singleton, &previous.name)?;
-    let returns = method.returns_for(previous.argc, previous.block)?;
+    let (declarer, returns) = match method.returns_for(previous.argc, previous.block) {
+        Some(returns) => (method.clone(), returns.to_string()),
+        None => tree.declared_returns(&method, previous.argc, previous.block)?,
+    };
     Some(Receiver {
-        fqn: tree.returned_class(&method, returns)?,
+        fqn: tree.returned_class(&declarer, &returns)?,
         singleton: false,
         via: "chain",
         rivals: Vec::new(),
@@ -719,11 +722,13 @@ fn by_return_types(tree: &Tree, previous: &Call) -> Option<Receiver> {
     if crate::core::IDENTITY.contains(&previous.name.as_str()) {
         return None;
     }
-    let returned = |method: &crate::tree::MethodDef| {
-        method
-            .returns_for(previous.argc, previous.block)
-            .and_then(|returns| tree.returned_class(method, returns))
-    };
+    let returned =
+        |method: &crate::tree::MethodDef| match method.returns_for(previous.argc, previous.block) {
+            Some(returns) => tree.returned_class(method, returns),
+            None => tree
+                .declared_returns(method, previous.argc, previous.block)
+                .and_then(|(declarer, returns)| tree.returned_class(&declarer, &returns)),
+        };
     // An untyped receiver is taken to be an instance, since a class mostly
     // arrives as a constant and is typed: `Dir.[]` alone says nothing of
     // `h[:a]`. But `self.class.build` and `factory.build` are classes that

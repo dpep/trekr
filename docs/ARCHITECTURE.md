@@ -308,6 +308,15 @@ identical `core.rb  def downcase(*args); end`. Each `def` is multi-line so its f
 is the signature. Code outside a block (the top-level constants) goes to
 `Object.rb`; a class is declared once, since one file cannot hold two blocks.
 
+**RSpec's stub** is [`src/tree/rspec.rb`](../src/tree/rspec.rb), served beside
+core as `RSpec.rb` and read only when the index declares
+`RSpec::Core::ExampleGroup` (DEC-087). It holds what rspec-core wires when a
+suite boots: `RSpec.describe` and its kin, `ExampleGroup`'s includes of the
+matchers and mocks, and the return types of `expect` and `is_expected`. It
+declares no class or module, its edges come after the index's, and its
+methods before, so the gems' own definitions win. A method with no return
+type takes one from the stub, or from an `.rbi` declaring the same method.
+
 **Gems** come from reading, never from running (DEC-016): `Gemfile.lock`
 parsed directly, sources found by convention across `vendor/bundle`,
 `$GEM_HOME`, `$GEM_PATH`, rbenv, rvm, asdf, Homebrew and system paths. Each gem

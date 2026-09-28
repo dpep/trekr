@@ -1,0 +1,17 @@
+# rspec-core wires its DSL when a suite boots, and no reading of its source
+# shows it: `RSpec.describe` is made by `define_method` on RSpec's singleton
+# class, so the lookup fell through to Kernel and answered minitest's
+# `describe`, confidently, on the first line of every spec. `ExampleGroup`
+# gains `RSpec::Matchers` and rspec-mocks' methods by an `include` of a
+# variable, so `eq` and `double` were not found. And `expect` returns an
+# ExpectationTarget that no signature states, so `.to` was untyped. trekr's
+# RSpec stub says each, and is read only when rspec-core is indexed.
+def spec/widget_spec.rb:1:7 status=resolved owner=RSpec kind=declaration defined_via=rspec
+def spec/widget_spec.rb:3:5 status=resolved owner=RSpec::Matchers site=syntax.rb:6
+def spec/widget_spec.rb:3:15 status=resolved owner=RSpec::Expectations::ExpectationTarget::InstanceMethods via=chain
+def spec/widget_spec.rb:3:18 status=resolved owner=RSpec::Matchers
+def spec/widget_spec.rb:4:18 status=resolved owner=RSpec::Expectations::BlockExpectationTarget via=chain
+def spec/widget_spec.rb:5:17 status=resolved owner=RSpec::Expectations::ExpectationTarget::InstanceMethods via=chain
+def spec/widget_spec.rb:6:5 status=resolved owner=RSpec::Mocks::ExampleMethods
+ancestors RSpec::Core::ExampleGroup RSpec::Core::ExampleGroup,RSpec::Matchers,RSpec::Core::MockingAdapters::RSpec,RSpec::Mocks::ExampleMethods,RSpec::Core::MemoizedHelpers
+hover spec/widget_spec.rb:1:7 Made by RSpec when a suite boots

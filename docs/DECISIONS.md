@@ -4398,3 +4398,48 @@ sees only the default. A bare, single-segment constant inside another scope
 can say whether it is `A::String` or `::String`, and the blob layer does not
 look up.
 
+## DEC-087 — RSpec's runtime wiring is a stub, read only when rspec-core is indexed
+
+**Decided.** `src/tree/rspec.rb` states, as Ruby, the part of RSpec that is
+built when a suite boots and that no reading of the gems can follow:
+
+- `RSpec.describe`, `context`, `shared_examples` and their kin, which
+  `RSpec::Core::DSL.expose_example_group_alias` makes with `define_method` on
+  a name held in a variable;
+- `ExampleGroup` including `RSpec::Core::MockingAdapters::RSpec` and then
+  `RSpec::Matchers`, which `Configuration#configure_mock_framework` and
+  `#configure_expectation_framework` do by `include`-ing a variable;
+- the return types of `expect` (an `ExpectationTarget`, or a
+  `BlockExpectationTarget` given a block) and `is_expected`, which
+  `ExpectationTarget.for` decides at runtime and no signature states.
+
+It is served beside core as `RSpec.rb`, and the tree reads it only when the
+index declares `RSpec::Core::ExampleGroup`: without rspec-core it says
+nothing, and DEC-084's residue says what is missing. It declares no class or
+module, since every one it names is the gems' and a site in the stub would
+be another place each is written; its edges come last, as RSpec's includes
+run after the class body, and its methods sit after core's and before the
+index's, so a method the gems define themselves — `expect`, since DEC-086 —
+wins over the stub's. Its methods are declarations (`defined_via: rspec`):
+RSpec makes them, and the stub only says so.
+
+**A declaration's return type types the real method.** `expect`'s answer is
+rspec-expectations' own `def`, which declares nothing, so the stub's `sig`
+would never be read. A method with no return type now takes one from a
+declaration of the same method on the same owner — the stub, or an `.rbi` —
+as Sorbet reads an `.rbi`'s `sig` for the method it describes. That is what
+types `expect(x).to` and `is_expected.to` as `ExpectationTarget#to`.
+
+**Why a stub, not inference.** Each of these is a value flowing through a
+variable into `define_method`, `include` or `new` — `ExpectationTarget.for`
+returns one of two classes by an `if` — and following values is the thing
+DEC-020 declined. Four facts, written down where anyone can read them, cost
+less than an inference that would be right about these four and a guess
+everywhere else.
+
+**Before.** `RSpec.describe` found nothing on RSpec, fell through to Kernel,
+and answered minitest's `Kernel#describe` (bundled through activesupport) at
+confidence 1: the first line of every spec, and 7 of polyid's 13 confidently
+wrong gold sites. `eq`, `be`, `raise_error`, `double` and `receive` were not
+in ExampleGroup's ancestors, and `.to` after `expect` was untyped.
+

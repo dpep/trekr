@@ -1578,6 +1578,9 @@ pub(super) fn defined_in(
         Some("rbi") => "Declared by a Sorbet stub in".to_string(),
         Some(via) => format!("Declared by `{via}` in"),
     };
+    if crate::tree::is_rspec_stub(path) {
+        return "Made by RSpec when a suite boots, as trekr's RSpec stub states".to_string();
+    }
     if crate::tree::is_core(path) {
         return format!("{verb} Ruby core");
     }
