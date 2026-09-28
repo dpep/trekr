@@ -4670,7 +4670,8 @@ type is not determined" — with the name's definitions as candidates.
 
 **Why.** Nothing recorded it, so a click on `empty?` in
 `name.split("_").reject(&:empty?)` found no name at all, and `--refs` and
-`--dead` never saw the call: 197 of them in the lib directories of the 13 replayed repositories.
+`--dead` never saw the call: 197 of them in the lib directories of the 13
+dogfood repositories.
 Recording it as a symbol, not an ordinary call, keeps it a `possible`
 reference, which is what it is while the elements are untyped.
 

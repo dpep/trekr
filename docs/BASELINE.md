@@ -2271,3 +2271,60 @@ stub for `Dir.mktmpdir` made four `mktmpdir` calls wrong against the real
 `.to` and `.not_to` answers were
 confidently wrong until it said `ValueExpectationTarget`.
 
+
+## RSpec, the second pass (2026-09-28)
+
+DEC-090 to DEC-096, against main at eb84162, each build on stores it indexed
+itself; the same 12 click-replay repositories, the same three gem gold sets
+(`APP_SAMPLE=600 SAMPLE=300 SEED=12`), widget_shop's 3,075-site trace, and
+the rails `--refs` queries.
+
+### Click replay
+
+| | eb84162 | + matchers (DEC-090, 091) | + shared groups, symbols (092, 093) | + `&:`, Minitest, lets (094–096) |
+| --- | ---: | ---: | ---: | ---: |
+| library clicks missed | 2,114 of 8,431 (25.1%) | 2,114 | 2,088 (24.8%) | 2,088 |
+| spec clicks missed | 3,326 of 11,859 (28.0%) | 3,294 | 3,282 | 3,106 (26.2%) |
+| all misses | 5,440 | | 5,370 | 5,194 |
+| … "chained receiver" bucket | 1,251 | | 1,251 | 1,037 |
+| … "symbol naming a method" | 59 | | 30 | 26 |
+
+246 clicks that missed now answer, and no click that answered misses. The
+custom matchers are most of the second column (`include_attrs` 19,
+`match_attrs` 10); the lets are most of the last, the chained-receiver
+bucket's drop of 214, out of the 575 spec misses on a `let` or `subject`. Predicate matchers moved 38 misses to 36: the rule answers
+when the subject is typed, and in these suites the subject is mostly a `let`
+whose block is a chain (`subject { [].pluck(0) }`) or an untyped local, so
+the rest are residue that now names the predicate.
+
+### Gold sets
+
+| a spec call site | correct | declaration | found | confidently wrong |
+| --- | ---: | ---: | ---: | ---: |
+| graph_weaver, before | 372 of 482 | 57 | 392 | 1 |
+| graph_weaver, now | 374 | 58 | 395 | 1 |
+| accord, before | 297 of 531 | 110 | 373 | 0 |
+| accord, now | 323 | 113 | 374 | 0 |
+| polyid, before | 281 of 535 | 121 | 342 | 7 |
+| polyid, now | 288 | 124 | 342 | 7 |
+
+Not-a-spec call sites and every gem floor are unchanged, correct and
+confidently wrong alike (graph_weaver 60/2 and 132/2, accord 48/0 and 124/1,
+polyid 29/0 and 143/8). widget_shop: app 34 correct, 1 wrong; gem floor 1,521
+correct, 21 confidently wrong — unchanged. The declarations are custom
+matchers (DEC-091); the correct answers, calls on a typed `let` (DEC-096).
+
+### References
+
+rails, the 40 `--refs` queries: no site changes tier. 244 sites are new, all
+`possible`, all `&:name` block-passes that were not recorded (DEC-094) —
+117 of them `&:to_s` under `ActiveSupport::TimeWithZone#to_s`, 34 `&:first`,
+12 `&:strip`.
+
+### Measured and not kept
+
+The predicate-matcher rule first asked whether the nearest `method_missing`
+in the example's chain was RSpec::Matchers'. rspec-core's ExampleGroup
+defines its own, which comes first and calls `super`, so the rule passed its
+testbed and fired in no real spec; the checkpoint's replay showed the
+residue reason unchanged on all 38 sites.

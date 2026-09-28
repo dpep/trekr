@@ -21,20 +21,21 @@ the repo named; lines and columns are 1-based, as `--def` takes them.
 | `spec/flipper/adapters/rollout_spec.rb:28:52` `new` | flipper | `Class#new` on the struct class | empty: `Struct#new` not found | `Struct.new(:id)` returns a class, typed as a `Struct` instance |
 | `spec/dsl_spec.rb:16:43` `per` | berater | `Integer#per` in `refine Integer` (`lib/berater/dsl.rb`) | empty: `Integer` has no `per` | refinements are not modelled |
 | `lib/graph_weaver/codegen/emit.rb:45:7` `@variable_inputs` | graph_weaver | the write in `GraphWeaver::Codegen`, which includes `Emit` | hover "no assignment found", definition empty | an ivar read in a mixin is written by the includer (DEC-064 looks only in the class chain) |
-| `lib/graph_weaver/inflect.rb:18:32` `empty?` | graph_weaver | `String#empty?` | no name at this position | `&:empty?` is not recorded as a call |
 | `lib/graph_weaver/client.rb:10:1` `require_relative` | graph_weaver | `Kernel#require_relative` | residue, 3 guesses | a top-level call outside any block is on `main`, an `Object`; the call does not record whether it is in a block |
-| `lib/network_resiliency/power_stats.rb:84:23` `percentile` | network_resiliency | `percentile` in the same class | residue | `alias_method :p, :percentile`, `method(:x)`, `send(:x)` on an implicit receiver name a method on `self` |
 | `lib/network_resiliency/syncer.rb:10:14` `synchronize` | network_resiliency | `Mutex#synchronize` | residue, 8 of 25 | `LOCK = Mutex.new`: a value constant is untyped (DEC-082, not done) |
-| `spec/transport_endpoint_spec.rb:96:35` `http_response` | graph_weaver | `def http_response` in the `shared_context` of `spec/support/raw_http_server.rb` | residue, nothing offered | a shared context's methods are file-local (DEC-084); `include_context` across files is not followed. It was offered as a candidate while the `def` counted as a top-level method |
-| `be_empty`, `be_valid`, `be_present` in any spec | accord, polyid, meddleware | `RSpec::Matchers#method_missing` (predicate matchers) | residue, "nothing indexed defines this name" | 45 of the replayed spec misses; a `method_missing` that answers a name pattern is not modelled |
-| `include_attrs`, `match_attrs` | webmock-twirp | `RSpec::Matchers.define :include_attrs` | residue | the matcher DSL's `define` names the method in another object's class |
 | `spec/accord/types/decimal_spec.rb:5:1` `describe` | accord | RSpec's `describe`, exposed on `main` | residue | a bare top-level `describe` is `main`'s; the stub states only `RSpec.describe` |
 | `lib/graph_weaver/tasks.rb:372:3` `namespace` | graph_weaver | `Rake::DSL#namespace` | residue | a rake task file's blocks; honest until blocks carry a `self` |
+| `spec/transport_endpoint_spec.rb:96:35` `http_response` | graph_weaver | `def http_response` in the `shared_context` of `spec/support/raw_http_server.rb` | residue, the shared context's method offered first | the context is followed now (DEC-092); the call is in the block of `serving`, the context's own helper, which DEC-084 does not vouch runs on the example |
+| `lib/graph_weaver/inflect.rb:18:32` `empty?` | graph_weaver | `String#empty?` | residue, `empty?`'s definitions offered | `&:empty?` is recorded now (DEC-094); `split` returns an `Array` in core's stubs, with no element type |
+| `be_empty`, `be_valid` on a `let` whose block is a chain, or an untyped local | accord, berater, meddleware, polyid | the subject's predicate | residue naming the predicate-matcher rule, the predicate's definitions offered | the rule answers when the subject is typed (DEC-090, DEC-096); `subject { [].pluck(0) }` and `expect(input)` are not |
 
 ## Fixed
 
 | position | repo | meant | got | fixed in |
 |---|---|---|---|---|
+| `lib/network_resiliency/power_stats.rb:84:23` `percentile` | network_resiliency | `percentile` in the same class | residue | ca04313 (testbed 059) |
+| `include_attrs`, `match_attrs` | webmock-twirp | the group's `matcher :include_attrs` | residue | dd4873d (testbed 057) |
+| `be_empty`, `have_key` on a typed subject | — | the subject's `empty?`, `has_key?` | residue, "nothing indexed defines this name" | ac53bc6, ab31ba8, 664f67f (testbed 056, 062) |
 | `spec/models/user_spec.rb:1:7` `describe` | polyid | RSpec's `describe` | minitest's `Kernel#describe`, confidence 1 | 15c740c (testbed 051) |
 | `spec/accord/types/decimal_spec.rb:10:7` `expect` | accord | `RSpec::Matchers#expect` | residue | 4dedef0, 1d0b84e, 15c740c (testbed 046, 050, 051) |
 | `spec/accord/types/decimal_spec.rb:10:14` `type` | accord | the `subject(:type)` on line 6 | residue | 7ed44b8 (testbed 048) |
