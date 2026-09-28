@@ -1500,7 +1500,7 @@ fn insert_facts(tx: &Connection, oid: &Oid, facts: &Facts) -> Result<()> {
                           target_line, target_col)
          VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15)",
     )?;
-    for d in &facts.defs {
+    for d in facts.defs.iter().filter(|d| !d.is_group_member()) {
         def.execute(params![
             blob_id,
             d.name,

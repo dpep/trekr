@@ -15,7 +15,7 @@
 
 pub(crate) mod refs;
 
-use crate::core::{Assign, Call, Facts, Pos, RecvShape, RecvValue, ValueShape, rspec};
+use crate::core::{Assign, Call, Def, Facts, Pos, RecvShape, RecvValue, ValueShape, rspec};
 use crate::tree::{Kind, Site, Status, Tree};
 use serde::Serialize;
 
@@ -117,6 +117,9 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
 }
 
 fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer {
+    if let Some(member) = group_member(facts, call) {
+        return member_answer(tree, call, member, path);
+    }
     let shape = call.recv.as_str();
     match receiver_of(tree, facts, call, path) {
         Some(receiver) => {
@@ -231,6 +234,61 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
             None,
             "the receiver's type is not determined by this file",
         ),
+    }
+}
+
+/// A method an enclosing example group defines — a `let`, a `subject`, a
+/// `def` in its body — which only this file can see (DEC-084).
+///
+/// The innermost group that defines the name wins, as the subclass does, and
+/// within one group the last definition, as a redefined method does. A symbol
+/// is the definition itself only where it is written: `let(:name)`.
+fn group_member<'f>(facts: &'f Facts, call: &Call) -> Option<&'f Def> {
+    let named = |def: &&Def| def.is_group_member() && def.name == call.name;
+    if call.recv == RecvShape::Symbol {
+        return facts
+            .defs
+            .iter()
+            .filter(named)
+            .find(|def| def.pos == call.pos);
+    }
+    if !matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv)
+        || !rspec::in_group(&call.nesting)
+    {
+        return None;
+    }
+    facts
+        .defs
+        .iter()
+        .filter(named)
+        .filter(|def| def.singleton == call.singleton && call.nesting.ends_with(&def.nesting))
+        .max_by_key(|def| (def.nesting.len(), def.pos))
+}
+
+fn member_answer(tree: &Tree, call: &Call, member: &Def, path: &str) -> MethodAnswer {
+    let kind = Kind::of(member.via.as_deref());
+    MethodAnswer {
+        status: Status::Resolved,
+        confidence: 1.0,
+        resolved_via: Some("example_group".to_string()),
+        receiver: call.recv.as_str(),
+        receiver_type: (call.recv != RecvShape::Symbol).then(|| rspec::class_name(&call.nesting)),
+        receiver_kind: (call.recv != RecvShape::Symbol).then(|| "class".to_string()),
+        owner: Some(rspec::class_name(&member.nesting)),
+        kind: Some(kind),
+        defined_via: (kind == Kind::Declaration)
+            .then(|| member.via.clone())
+            .flatten(),
+        sites: vec![Site {
+            path: tree.site_path(path),
+            line: member.pos.line,
+            col: member.pos.col,
+            kind: "method".to_string(),
+        }],
+        agreement: None,
+        unresolved_ancestors: Vec::new(),
+        candidates: Vec::new(),
+        reason: None,
     }
 }
 

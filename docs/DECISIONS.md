@@ -4332,3 +4332,16 @@ name (RSpec loads `*_spec.rb`), which the blob layer does not have.
 
 *Reverses if:* a checkout with both frameworks writes Minitest specs at the
 top level often enough to show up in its gold set.
+
+**A group's own methods.** `let(:x)`, `let!(:x)`, `subject(:x)`, `subject`
+and a `def` in a group's body define a method on that group. They are facts
+of the file alone: the store and the tree never see them, and a call in a
+group asks its file for one before it asks rspec-core. A group sees its own
+and those of the groups around it — a nested group is a subclass — and the
+innermost definition wins, as the subclass's does; a sibling's is out of
+reach, which is why a repeated description is numbered, `WhenValid_2`, as
+RSpec numbers it. A `let` is a declaration (defined via `let`): the method
+that runs is the one `let` generates in rspec-core, and the block is what it
+calls. `subject(:x)` is written at the symbol, and its `subject` at the block,
+so a click on the word `subject` still asks what the macro is. A `let` that a
+shared context or an includer defines in another file is not found.

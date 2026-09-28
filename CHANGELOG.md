@@ -13,6 +13,11 @@
   `is_expected` now resolve where they answered residue. Without rspec-core in
   the index, the answer says that is what is missing (DEC-084).
 
+- **`let`, `subject` and a group's own `def`** are methods of their example
+  group: a click on a let's name in an example goes to the `let`, the
+  innermost group's first, and a click on the symbol in `let(:name)` is the
+  definition.
+
 - **`trekr --usage --misses`** lists the editor's definitions and hovers that
   came back empty or unsure — file, line, column, the token and trekr's reason
   — so a miss rate in `--usage` comes with the positions behind it. Kept in

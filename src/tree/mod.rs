@@ -2210,6 +2210,15 @@ impl Tree {
         None
     }
 
+    /// A path in the checkout, as a site carries it: absolute.
+    pub(crate) fn site_path(&self, relative: &str) -> String {
+        if self.root.is_empty() || std::path::Path::new(relative).is_absolute() {
+            relative.to_string()
+        } else {
+            format!("{}/{relative}", self.root)
+        }
+    }
+
     /// Is this site inside the checkout, rather than a gem or core?
     ///
     /// Exact rather than a guess at the path shape: site paths are absolute and

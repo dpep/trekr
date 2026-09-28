@@ -203,7 +203,7 @@ impl Facts {
                 hash = hash.wrapping_mul(0x100_0000_01b3);
             }
         };
-        for def in &self.defs {
+        for def in self.defs.iter().filter(|d| !d.is_group_member()) {
             eat(def.name.as_bytes());
             eat(def.kind.as_str().as_bytes());
             for scope in &def.nesting {
@@ -336,6 +336,15 @@ pub(crate) struct Def {
     pub(crate) sig_params: Vec<(String, String)>,
     pub(crate) pos: Pos,
     pub(crate) end_line: u32,
+}
+
+impl Def {
+    /// A method an RSpec example group defines — a `let`, a `subject`, a
+    /// `def` in its body. Visible only inside the group, so it is kept out of
+    /// the store and out of everything the tree reads (DEC-084).
+    pub(crate) fn is_group_member(&self) -> bool {
+        self.kind == Kind::Method && rspec::in_group(&self.nesting)
+    }
 }
 
 /// One `sig` among several, as the calls it describes (DEC-077).
@@ -671,6 +680,17 @@ pub(crate) mod rspec {
         nesting.first().is_some_and(|s| is_group(s))
     }
 
+    /// `RSpec::ExampleGroups::AccordTypesDecimal::WhenValid`, the name RSpec
+    /// gives the innermost group's class at runtime.
+    pub(crate) fn class_name(nesting: &[String]) -> String {
+        let names: Vec<&str> = nesting
+            .iter()
+            .rev()
+            .filter_map(|s| s.strip_prefix(OPEN)?.strip_suffix(')'))
+            .collect();
+        format!("RSpec::ExampleGroups::{}", names.join("::"))
+    }
+
     /// RSpec's `base_name_for`: a description as a constant name.
     pub(crate) fn base_name(description: &str) -> String {
         let mut name = String::new();
@@ -711,10 +731,14 @@ pub(crate) mod rspec {
         }
 
         #[test]
-        fn a_group_is_a_segment_of_its_own() {
+        fn a_group_is_named_from_the_outside_in() {
             let nesting = [segment("WhenIdle"), segment("Widget"), "Shop".to_string()];
             assert!(in_group(&nesting));
             assert!(!is_group(&nesting[2]));
+            assert_eq!(
+                class_name(&nesting),
+                "RSpec::ExampleGroups::Widget::WhenIdle"
+            );
         }
     }
 }
@@ -734,6 +758,14 @@ mod tests {
 #[cfg(test)]
 mod surface_tests {
     use crate::extract::extract;
+
+    /// A `let` is its file's alone (DEC-084): adding one rebuilds nothing.
+    #[test]
+    fn an_example_groups_own_method_is_not_on_the_surface() {
+        let base = extract(b"describe Widget do\n  let(:a) { 1 }\nend\n");
+        let more = extract(b"describe Widget do\n  let(:a) { 1 }\n  let(:b) { 2 }\nend\n");
+        assert_eq!(base.surface(), more.surface());
+    }
 
     /// The property the edit-churn defence rests on: a body-only edit leaves
     /// the surface alone, and anything the tree reads moves it.

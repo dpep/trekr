@@ -1,0 +1,17 @@
+# `let(:name)`, `subject(:name)` and a `def` in a group's body define a method
+# on that group, visible in it and in the groups nested in it and nowhere
+# else. A click on a let's name answered residue. The innermost group's
+# definition wins, as a subclass's method does.
+def spec/widget_spec.rb:13:10 status=resolved kind=declaration defined_via=subject owner=RSpec::ExampleGroups::Widget site=spec/widget_spec.rb:2
+def spec/widget_spec.rb:15:10 status=resolved owner=RSpec::ExampleGroups::Widget::WhenIdle site=spec/widget_spec.rb:11
+def spec/widget_spec.rb:2:42 status=resolved site=spec/widget_spec.rb:4
+def spec/widget_spec.rb:14:10 status=resolved kind=definition site=spec/widget_spec.rb:6
+def spec/widget_spec.rb:24:10 status=resolved defined_via=subject site=spec/widget_spec.rb:2
+# RSpec numbers a repeated description, and so does this: the second
+# "when idle" is a group of its own, and a sibling's `speed` is out of reach.
+def spec/widget_spec.rb:23:10 status=residue
+# The symbol is where the name is written, and `subject` itself is still the
+# macro's call.
+def spec/widget_spec.rb:2:3 status=resolved owner=RSpec::Core::MemoizedHelpers::ClassMethods
+def spec/widget_spec.rb:2:12 status=resolved site=spec/widget_spec.rb:2
+def spec/widget_spec.rb:19:10 status=resolved site=spec/widget_spec.rb:19

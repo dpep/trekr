@@ -656,6 +656,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.handle_create_table(node);
         self.handle_table_name(node);
         self.handle_define_method(node);
+        self.handle_group_member(node);
         let consumed = self.handle_macro(node);
         // A macro is *also* an ordinary method call — `belongs_to` really is
         // `ActiveRecord::Associations::ClassMethods#belongs_to`. Consuming one
@@ -1217,6 +1218,43 @@ impl<'pr> Extractor<'_> {
             n => format!("{base}_{n}"),
         };
         crate::core::rspec::segment(&name)
+    }
+
+    /// `let(:x)`, `let!(:x)`, `subject(:x)` and `subject` define a method on
+    /// the group, named by the symbol. Written where the name is, so a click
+    /// on the symbol is a click on the definition (DEC-084).
+    fn handle_group_member(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        if !self.in_group_body() || call.receiver().is_some() {
+            return;
+        }
+        let Some(via) = method_name(call) else { return };
+        if !matches!(via.as_str(), "let" | "let!" | "subject" | "subject!") {
+            return;
+        }
+        let mut names: Vec<(String, usize)> = Vec::new();
+        if let Some(first) = arg_nodes(call).into_iter().next()
+            && let Some(name) = literal_name(&first)
+        {
+            let at = first
+                .as_symbol_node()
+                .and_then(|symbol| symbol.value_loc())
+                .unwrap_or_else(|| first.location());
+            names.push((name, at.start_offset()));
+        }
+        // `subject` itself is written at the block, so a click on the word
+        // `subject` there still asks what the macro is.
+        if via.starts_with("subject")
+            && let Some(block) = call.block().and_then(|b| b.as_block_node())
+        {
+            names.push(("subject".to_string(), block.opening_loc().start_offset()));
+        }
+        let (start, end) = (call.location().start_offset(), call.location().end_offset());
+        for (name, at) in names {
+            let mut def = self.def(name, Kind::Method, start, end);
+            def.pos = self.pos(at);
+            def.via = Some(via.clone());
+            self.push_def(def);
+        }
     }
 
     /// Every name an interpolated string can spell, given what the enclosing
