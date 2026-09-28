@@ -18,6 +18,10 @@
   innermost group's first, and a click on the symbol in `let(:name)` is the
   definition.
 
+- A class method that hands its first parameter to `define_method` is read
+  as a macro: `define_example_method :it` declares `it`, so `it`, `describe`
+  and `context` in a spec land on rspec-core's own lines (DEC-085).
+
 - **`trekr --usage --misses`** lists the editor's definitions and hovers that
   came back empty or unsure — file, line, column, the token and trekr's reason
   — so a miss rate in `--usage` comes with the positions behind it. Kept in

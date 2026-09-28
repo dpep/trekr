@@ -4345,3 +4345,30 @@ that runs is the one `let` generates in rspec-core, and the block is what it
 calls. `subject(:x)` is written at the symbol, and its `subject` at the block,
 so a click on the word `subject` still asks what the macro is. A `let` that a
 shared context or an includer defines in another file is not found.
+
+## DEC-085 — A class method that hands its parameter to `define_method` is a macro
+
+**Decided.** Inside a class method (`def self.m(name, …)`), a call that
+passes the method's first parameter as the first argument of
+`define_method`, `define_singleton_method`, or another such method of the
+same scope makes `m` a macro. A later call `m :x` in that scope's body
+declares a method `x`, written at the symbol, `defined_via` `m`.
+`define_method` inside `(class << self; self; end).module_exec` or
+`singleton_class.class_eval` defines a class method.
+
+**Why.** rspec-core writes `it`, `describe` and `context` this way:
+`define_example_method :it` calls `idempotently_define_singleton_method(name)`,
+which calls `define_method(name, &definition)` on the singleton class. Nothing
+read it, so `it` answered residue in every spec even once its block's `self`
+was known (DEC-084): 622 of the 20,290 replayed clicks, `describe` and
+`context` 272 more. Read this way, the answer is the line that names the
+method, as for any macro, and a declaration, since the body that runs is the
+macro's block.
+
+**The limits, deliberately.** One file, and the macro defined before it is
+called, which is Ruby's own order for a class body. A name the method builds
+(`define_method("#{name}_label")`) is not its parameter and declares nothing:
+a name half-guessed is worse than none. A macro inherited from a superclass
+or a `ClassMethods` module is not followed, since its definition is another
+blob's fact.
+

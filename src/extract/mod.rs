@@ -65,6 +65,9 @@ struct Frame {
     blocks: usize,
     /// The body of an RSpec example group (DEC-084).
     group: bool,
+    /// In a class method's body, its first parameter: the name a macro would
+    /// hand to `define_method` (DEC-085).
+    definer: Option<String>,
 }
 
 impl Frame {
@@ -84,6 +87,7 @@ impl Frame {
             method: None,
             blocks: 0,
             group: false,
+            definer: None,
         }
     }
 }
@@ -114,6 +118,13 @@ struct Extractor<'a> {
     /// Example groups named so far, by the nesting they were opened in: RSpec
     /// numbers a repeated name (`WhenValid_2`), and so does this.
     group_names: HashMap<Vec<String>, HashMap<String, usize>>,
+    /// Class methods that define a method named by their first argument, by
+    /// the nesting they are defined in: whether what they define is a class
+    /// method (DEC-085).
+    definers: HashMap<(Vec<String>, String), bool>,
+    /// How many blocks deep we are in one that runs on the enclosing class's
+    /// singleton class — `(class << self; self; end).module_exec do`.
+    singleton_exec: usize,
     facts: Facts,
 }
 
@@ -160,6 +171,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             method: None,
             blocks: 0,
             group: false,
+            definer: None,
         }],
         pending_sigs: Vec::new(),
         pending_sig_params: Vec::new(),
@@ -167,6 +179,8 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         loop_values: Vec::new(),
         included_depth: 0,
         group_names: HashMap::new(),
+        definers: HashMap::new(),
+        singleton_exec: 0,
     };
     ex.visit(&parsed.node());
     ex.facts
@@ -353,6 +367,40 @@ fn on_self(call: &ruby_prism::CallNode<'_>) -> bool {
         None => true,
         Some(r) => r.as_self_node().is_some(),
     }
+}
+
+/// A `def`'s first required parameter's name.
+fn def_first_param(node: &ruby_prism::DefNode<'_>) -> Option<String> {
+    let first = node.parameters()?.requireds().iter().next()?;
+    let param = first.as_required_parameter_node()?;
+    String::from_utf8(param.name().as_slice().to_vec()).ok()
+}
+
+/// `(class << self; self; end).module_exec do` or `singleton_class.class_eval
+/// do`: a block whose `define_method` defines a class method.
+fn runs_on_singleton_class(call: &ruby_prism::CallNode<'_>) -> bool {
+    let evaluates = method_name(call).is_some_and(|name| {
+        matches!(
+            name.as_str(),
+            "module_exec" | "class_exec" | "module_eval" | "class_eval"
+        )
+    });
+    let Some(receiver) = call.receiver() else {
+        return false;
+    };
+    let own_singleton = if let Some(parens) = receiver.as_parentheses_node() {
+        parens
+            .body()
+            .and_then(|b| b.as_statements_node())
+            .and_then(|s| s.body().iter().next())
+            .and_then(|n| n.as_singleton_class_node())
+            .is_some_and(|n| n.expression().as_self_node().is_some())
+    } else {
+        receiver
+            .as_call_node()
+            .is_some_and(|c| on_self(&c) && method_name(&c).as_deref() == Some("singleton_class"))
+    };
+    evaluates && own_singleton
 }
 
 fn params_of(node: Option<ruby_prism::ParametersNode<'_>>) -> Vec<Param> {
@@ -592,8 +640,12 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
 
         // Descend for calls and constants in the body — but not through a
         // receiver we already recorded.
+        let definer = (singleton && owner_is_scope)
+            .then(|| def_first_param(node))
+            .flatten();
         self.enter(None, Opens::Method { singleton });
         self.frame().method = owner_is_scope.then_some(name);
+        self.frame().definer = definer;
         if let Some(params) = node.parameters() {
             self.visit_parameters_node(&params);
         }
@@ -655,6 +707,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         // just also say something about the model.
         self.handle_create_table(node);
         self.handle_table_name(node);
+        self.note_definer(node);
         self.handle_define_method(node);
         self.handle_group_member(node);
         let consumed = self.handle_macro(node);
@@ -686,6 +739,8 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                 && on_self(node)
                 && !self.in_method_body();
             self.included_depth += usize::from(included);
+            let on_singleton = runs_on_singleton_class(node);
+            self.singleton_exec += usize::from(on_singleton);
             // A `define_method` block is the method's body: `self` there is
             // an instance, and a `super` looks up the name it defines.
             match self.defined_method(node) {
@@ -724,6 +779,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                     None => self.visit(&block),
                 },
             }
+            self.singleton_exec -= usize::from(on_singleton);
             self.included_depth -= usize::from(included);
             if bound.is_some() {
                 self.loop_values.pop();
@@ -959,6 +1015,14 @@ impl<'pr> Extractor<'_> {
             "private" | "protected" | "public" | "module_function" => {
                 self.handle_visibility(call, &name, &args)
             }
+            _ if !self.in_method_body()
+                && self
+                    .definers
+                    .contains_key(&(self.nesting.clone(), name.clone())) =>
+            {
+                self.handle_definer_call(call, &name, &args);
+                false
+            }
             _ => false,
         }
     }
@@ -1160,6 +1224,66 @@ impl<'pr> Extractor<'_> {
                 .filter(|names| names.len() == 1)
                 .and_then(|mut names| names.pop())
         })))
+    }
+
+    /// Inside a class method, a call that defines a method named by the
+    /// method's first parameter makes the method a macro (DEC-085):
+    /// `define_method(name)`, `define_singleton_method(name)`, or another
+    /// macro of this scope handed `name`.
+    fn note_definer(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        let Some(frame) = self.frames.last() else {
+            return;
+        };
+        let (Some(param), Some(method)) = (frame.definer.clone(), frame.method.clone()) else {
+            return;
+        };
+        if !on_self(call) {
+            return;
+        }
+        let hands_param = arg_nodes(call)
+            .first()
+            .and_then(|arg| arg.as_local_variable_read_node())
+            .is_some_and(|read| read.name().as_slice() == param.as_bytes());
+        let Some(name) = method_name(call).filter(|_| hands_param) else {
+            return;
+        };
+        let singleton = match name.as_str() {
+            "define_singleton_method" => Some(true),
+            "define_method" => Some(self.singleton_exec > 0),
+            other => self
+                .definers
+                .get(&(self.nesting.clone(), other.to_string()))
+                .copied(),
+        };
+        if let Some(singleton) = singleton {
+            self.definers
+                .insert((self.nesting.clone(), method), singleton);
+        }
+    }
+
+    /// `define_example_method :it` — a macro of this scope, naming the method
+    /// it defines. Written where the name is, like any macro (DEC-085).
+    fn handle_definer_call(
+        &mut self,
+        call: &ruby_prism::CallNode<'pr>,
+        macro_name: &str,
+        args: &[Node<'pr>],
+    ) {
+        let Some(first) = args.first() else { return };
+        let Some(name) = literal_name(first) else {
+            return;
+        };
+        let singleton = self.definers[&(self.nesting.clone(), macro_name.to_string())];
+        let at = first
+            .as_symbol_node()
+            .and_then(|symbol| symbol.value_loc())
+            .unwrap_or_else(|| first.location());
+        let loc = call.location();
+        let mut def = self.def(name, Kind::Method, loc.start_offset(), loc.end_offset());
+        def.pos = self.pos(at.start_offset());
+        def.singleton = singleton;
+        def.via = Some(macro_name.to_string());
+        self.push_def(def);
     }
 
     /// Whether this call's block is RSpec's, and what it runs as (DEC-084).

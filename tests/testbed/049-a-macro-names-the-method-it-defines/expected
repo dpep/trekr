@@ -1,0 +1,12 @@
+# rspec-core writes `it`, `describe` and `context` as `define_example_method
+# :it`: a class method of ExampleGroup's whose argument names the method it
+# defines, through `define_method`. Nothing read that, so every `it` in a spec
+# answered residue even once its block's `self` was known. A method that hands
+# its first parameter to `define_method` — or to another such method in the
+# same file — is a macro, and a call to it names a method. `define_method`
+# inside `class << self` defines a class method.
+def spec/widget_spec.rb:2:3 status=resolved owner=RSpec::Core::ExampleGroup kind=declaration defined_via=define_example_group_method site=example_group.rb:22
+def spec/widget_spec.rb:3:5 status=resolved owner=RSpec::Core::ExampleGroup kind=declaration defined_via=define_example_method site=example_group.rb:20
+def app.rb:14:5 status=resolved owner=Widget kind=declaration defined_via=action site=app.rb:10
+# A name built from the parameter is not the parameter: nothing is guessed.
+def app.rb:15:5 status=residue
