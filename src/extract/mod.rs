@@ -2562,6 +2562,54 @@ impl<'pr> Extractor<'_> {
             stands_for,
         });
         self.record_symbol_arguments(call);
+        self.record_block_pass(call);
+    }
+
+    /// `parts.reject(&:empty?)` calls `empty?` on each element the block is
+    /// handed (DEC-094). Recorded as the symbol it is written as, standing for
+    /// a call on the elements, whose class is known only for a literal list
+    /// of one class.
+    fn record_block_pass(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        let Some(symbol) = call
+            .block()
+            .and_then(|b| b.as_block_argument_node())
+            .and_then(|b| b.expression())
+            .and_then(|e| e.as_symbol_node())
+        else {
+            return;
+        };
+        let (Some(name), Some(at)) = (
+            String::from_utf8(symbol.unescaped().to_vec()).ok(),
+            symbol.value_loc(),
+        ) else {
+            return;
+        };
+        let element = call.receiver().and_then(|r| {
+            let array = r.as_array_node()?;
+            let mut classes = array.elements().iter().map(|e| literal_class(&e));
+            let first = classes.next()??;
+            classes.all(|class| class == Some(first)).then_some(first)
+        });
+        let each = Sent {
+            recv_value: element.map(RecvValue::Literal),
+            ..Sent::UNTYPED
+        };
+        let pos = self.pos(at.start_offset());
+        let stands_for = Some(self.sent(name.clone(), each, pos, Some(0), false));
+        self.facts.calls.push(Call {
+            name,
+            recv: RecvShape::Symbol,
+            recv_text: None,
+            nesting: self.nesting.clone(),
+            singleton: false,
+            recv_pos: None,
+            recv_value: None,
+            block_owner: None,
+            argc: None,
+            block: false,
+            pos,
+            stands_for,
+        });
     }
 
     /// The call a name stands for, sent where it really goes.

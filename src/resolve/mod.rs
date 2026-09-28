@@ -337,7 +337,9 @@ fn symbol_answer(
         let why = answer.reason.clone().unwrap_or_default();
         return MethodAnswer {
             receiver: symbol.recv.as_str(),
-            reason: Some(format!("the symbol names a method of the receiver: {why}")),
+            reason: Some(format!(
+                "the symbol names a method of what it is sent to: {why}"
+            )),
             ..answer
         };
     }

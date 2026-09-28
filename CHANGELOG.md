@@ -26,6 +26,11 @@
   `alias_method :new, :old`, `private :x` — on the class's instances. A
   click on the symbol answered residue (DEC-093).
 
+- `items.map(&:name)` records `name` as a call on each element: a click on it
+  found no name at all. The elements' class is known for a literal list of
+  one class (`%w[a b].map(&:upcase)` is `String#upcase`); otherwise the
+  answer is residue with the method's definitions as candidates (DEC-094).
+
 - **RSpec predicate matchers.** `be_empty`, `be_valid` and `have_key` have no
   method of their own; RSpec answers them by calling `empty?`, `valid?` and
   `has_key?` on the expectation's subject. Where `expect(x)` types `x`, the

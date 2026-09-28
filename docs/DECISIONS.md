@@ -4653,3 +4653,25 @@ that happens to share a method's name is the rule's known cost.
 an array (`only: [:show]`) is still not recorded (DEC-037). `&:sym` is
 DEC-094. Nothing new is stored, so `--refs` still counts a symbol as a
 `possible` reference.
+
+## DEC-094 — `&:name` is a call of `name` on each element
+
+**Decided.** A block argument that is a literal symbol, `items.map(&:name)`,
+is recorded as a call named `name` at the symbol, shaped `symbol` like the
+arguments DEC-037 records, standing for a call on each element the block is
+handed. The element's class is known when the receiver is a literal array
+whose elements are all literals of one class; otherwise the answer is
+residue — "the symbol names a method of what it is sent to: the receiver's
+type is not determined" — with the name's definitions as candidates.
+
+**Why.** Nothing recorded it, so a click on `empty?` in
+`name.split("_").reject(&:empty?)` found no name at all, and `--refs` and
+`--dead` never saw the call: 197 of them in the lib directories of the 13 replayed repositories.
+Recording it as a symbol, not an ordinary call, keeps it a `possible`
+reference, which is what it is while the elements are untyped.
+
+**Not done.** Element types. `String#split` returns an `Array` in core's
+stubs, not an `Array[String]`, and no rung carries what a collection holds,
+so `split(…).reject(&:empty?)` stays residue. That is the lead: a typed
+element would answer this and every block parameter of `each` and `map`
+with it.

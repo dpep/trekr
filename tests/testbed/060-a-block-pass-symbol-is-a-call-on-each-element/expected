@@ -1,0 +1,6 @@
+# `parts.reject(&:empty?)` calls `empty?` on each element, and nothing
+# recorded it: a click on `empty?` found no name at all. It is a call on the
+# elements, whose type is known only for a literal list of one class.
+def app.rb:3:20 status=residue reason=symbol name=empty?
+def app.rb:4:19 status=resolved owner=String via=symbol name=upcase
+def app.rb:5:20 status=residue name=to_s
