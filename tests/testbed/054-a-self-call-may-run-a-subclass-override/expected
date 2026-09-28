@@ -1,0 +1,8 @@
+# DEC-081 for `--def`: `self` may be any subclass, so a call on it whose
+# method a subclass overrides runs that override for those objects. It was
+# answered with the base's method at confidence 1 — accord's `nested_schema`
+# on a `Fields::Array`, confidently wrong. The base's is still the answer, and
+# the overrides are its named competitors — a module a subclass mixes in too.
+def app.rb:3:5 status=ambiguous owner=Field site=app.rb:6 candidates=2 candidate1=ArrayField confidence=0.33
+# Nothing overrides it: nothing to disclose.
+def app.rb:29:5 status=resolved owner=Solo confidence=1

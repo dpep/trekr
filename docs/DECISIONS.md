@@ -4235,6 +4235,18 @@ base's own method stays the confirmed landing. A call on an explicit instance
 here follows a method to its callers), which would make "any subclass" too
 wide.
 
+**Amended: `--def` says so too.** A call on `self` whose method a subclass
+overrides — or a module that a class inheriting the receiver mixes in ahead of
+it — is answered `ambiguous`: the receiver's own method is still the answer
+and its site, and each override is a named competitor ("a subclass overrides
+it, and `self` may be one"), confidence one in the landings. It was
+`resolved` at 1, and accord's `nested_schema` on a `Fields::Array` was
+confidently wrong. The overrides are found from the name's definitions, not
+the receiver's descendants: `ActiveRecord::Persistence` has thousands, and
+the first cut, walking them, cost a cold `--def` on rails 0.4 s; this one
+moves a warm `--def` there from 21 to 23 ms (median of 7). `create_or_update` in `Persistence#save` now names
+`Timestamp#create_or_update`, which is what every model runs.
+
 ## DEC-082 — A constant receiver is the class or module the constant names
 
 **Decided.** `Foo.bar` types its receiver by resolving `Foo` and then

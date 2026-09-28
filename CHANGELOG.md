@@ -39,6 +39,11 @@
 
 ### Fixed
 
+- A call on `self` whose method a subclass overrides is `ambiguous` in
+  `--def` and the editor, naming the overrides, instead of resolved at
+  confidence 1 to the base's method, which is not what runs for those
+  subclasses (DEC-081).
+
 - `RSpec.describe` answered minitest's `Kernel#describe` with confidence 1
   wherever minitest was in the bundle. It now answers RSpec's, from a stub of
   what rspec-core builds when a suite boots — as do `eq`, `be`, `raise_error`,

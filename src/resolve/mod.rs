@@ -148,13 +148,20 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                     } else {
                         vec![found.site.clone()]
                     };
+                    let overrides = match receiver.via {
+                        "self" => self_overrides(tree, &receiver, &call.name, &found),
+                        _ => Vec::new(),
+                    };
                     MethodAnswer {
-                        status: if receiver.ambiguous {
+                        status: if receiver.ambiguous || !overrides.is_empty() {
                             Status::Ambiguous
                         } else {
                             Status::Resolved
                         },
-                        confidence: share(receiver.agreeing, receiver.total),
+                        confidence: match overrides.len() {
+                            0 => share(receiver.agreeing, receiver.total),
+                            n => share(1, n + 1),
+                        },
                         resolved_via: Some(if generated {
                             "rbi_dsl".to_string()
                         } else {
@@ -173,7 +180,9 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                         // are known to exist — that is what made it ambiguous —
                         // so listing them is not hedging, it is the disclosure.
                         // A resolved answer has none to list.
-                        candidates: if !receiver.rivals.is_empty() {
+                        candidates: if !overrides.is_empty() {
+                            overrides.into_iter().take(MAX_CANDIDATES).collect()
+                        } else if !receiver.rivals.is_empty() {
                             rival_landings(tree, &receiver, &call.name)
                         } else if receiver.ambiguous {
                             competitors(tree, &call.name, &found.owner, receiver.via)
@@ -388,6 +397,53 @@ fn member_answer(tree: &Tree, call: &Call, member: &Def, path: &str) -> MethodAn
         candidates: Vec::new(),
         reason: None,
     }
+}
+
+/// The methods a call on `self` runs instead of `found` when `self` is one of
+/// the subclasses that override it — the template-method pattern, which
+/// DEC-081 made a possible reference and this makes a named competitor of the
+/// answer. `self` runs as any class that inherits the method's caller.
+fn self_overrides(
+    tree: &Tree,
+    receiver: &Receiver,
+    name: &str,
+    found: &crate::tree::MethodDef,
+) -> Vec<Candidate> {
+    // Every definition of the name, not every subclass: the name's list is
+    // short, and a class with thousands of descendants is not.
+    tree.named(name)
+        .into_iter()
+        .filter(|method| {
+            method.singleton == receiver.singleton
+                && method.owner != found.owner
+                && overrides_for_self(tree, receiver, method)
+        })
+        .map(|method| Candidate {
+            owner: method.owner.clone(),
+            singleton: method.singleton,
+            why: "a subclass overrides it, and `self` may be one",
+            kind: method.kind(),
+            site: method.site.clone(),
+        })
+        .collect()
+}
+
+/// Does `self` reach `method` in some class it may be: a subclass that
+/// defines it, or a class inheriting the receiver that mixes in the module
+/// defining it ahead of the method found (`ActiveRecord::Callbacks`'
+/// `create_or_update` in front of `Persistence`'s, on every model).
+fn overrides_for_self(tree: &Tree, receiver: &Receiver, method: &crate::tree::MethodDef) -> bool {
+    if tree.kind_of(&method.owner) != Some("module") {
+        return tree.inherits(&method.owner, &receiver.fqn);
+    }
+    tree.mixers_of(&method.owner).iter().any(|class| {
+        (class == &receiver.fqn || tree.inherits(class, &receiver.fqn))
+            && tree
+                .lookup(class, receiver.singleton, &method.name)
+                .is_some_and(|landed| {
+                    landed.site.path == method.site.path && landed.site.line == method.site.line
+                })
+    })
 }
 
 /// Resolve a call written inside a module by asking the classes that mix it in.
