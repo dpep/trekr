@@ -504,6 +504,22 @@ fn group_member<'f>(tree: &Tree, facts: &'f Facts, call: &Call) -> Option<Member
     None
 }
 
+/// The group member `name` a call written at `nesting` sees, of this file's
+/// own: the innermost group's, the last written.
+fn visible_member<'f>(facts: &'f Facts, nesting: &[String], name: &str) -> Option<&'f Def> {
+    (0..nesting.len())
+        .map(|at| &nesting[at..])
+        .filter(|level| rspec::is_group(&level[0]))
+        .find_map(|level| {
+            facts
+                .defs
+                .iter()
+                .filter(|def| def.kind == crate::core::Kind::Method && !def.singleton)
+                .filter(|def| def.name == name && def.nesting == level)
+                .max_by_key(|def| def.pos)
+        })
+}
+
 fn member_answer(tree: &Tree, call: &Call, member: Member<'_>, path: &str) -> MethodAnswer {
     let (owner, kind, defined_via, site) = match member {
         Member::Here(def) => {
@@ -966,7 +982,89 @@ fn chained(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) ->
                 .find(|c| c.pos == *at && c.recv != RecvShape::Symbol)?;
             returned_by(tree, facts, previous, path, depth + 1, call)
         }
+        // `is_expected`: the example's `subject`, as if it were written.
+        RecvValue::Subject => {
+            let subject = Call {
+                name: "subject".to_string(),
+                recv: RecvShape::Implicit,
+                recv_text: None,
+                recv_pos: None,
+                recv_value: None,
+                argc: Some(0),
+                block: false,
+                stands_for: None,
+                ..call.clone()
+            };
+            let_typed(tree, facts, &subject, path, depth + 1)
+        }
     }
+}
+
+/// A `let` or `subject` answers with what its block returns, typed as an
+/// assignment's value is (DEC-096).
+fn let_typed(
+    tree: &Tree,
+    facts: &Facts,
+    call: &Call,
+    path: &str,
+    depth: usize,
+) -> Option<Receiver> {
+    if !matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv)
+        || !rspec::in_group(&call.nesting)
+        || !on_the_example(tree, facts, call, path)
+    {
+        return None;
+    }
+    let Some(Member::Here(def)) = group_member(tree, facts, call) else {
+        return None;
+    };
+    let typed = |def: &Def| {
+        type_of(
+            tree,
+            facts,
+            def.value.as_ref()?,
+            &def.nesting,
+            def.pos,
+            depth,
+            0,
+        )
+    };
+    let (fqn, singleton, _) = typed(def)?;
+    // A hook or a `let` runs in the groups nested in this one too, each with
+    // its own `let`s; an example's block runs only here.
+    let overrides: Vec<&Def> = if call.in_example {
+        Vec::new()
+    } else {
+        facts
+            .defs
+            .iter()
+            .filter(|other| other.is_group_member() && other.name == call.name)
+            .filter(|other| {
+                other.nesting.len() > call.nesting.len() && other.nesting.ends_with(&call.nesting)
+            })
+            .collect()
+    };
+    let mut rivals: Vec<(String, bool)> = Vec::new();
+    let mut agreeing = 1;
+    for other in &overrides {
+        match typed(other) {
+            Some((other, _, _)) if other == fqn => agreeing += 1,
+            Some((other, side, _)) if !rivals.iter().any(|(r, _)| *r == other) => {
+                rivals.push((other, side));
+            }
+            _ => {}
+        }
+    }
+    let total = 1 + overrides.len();
+    Some(Receiver {
+        fqn,
+        singleton,
+        via: "let",
+        agreeing,
+        total,
+        ambiguous: agreeing < total,
+        rivals,
+    })
 }
 
 /// What a call returns, as a receiver for the next one in its chain.
@@ -982,6 +1080,9 @@ fn returned_by(
     depth: usize,
     next: &Call,
 ) -> Option<Receiver> {
+    if let Some(receiver) = let_typed(tree, facts, previous, path, depth) {
+        return Some(receiver);
+    }
     let Some(receiver) = typed_at(tree, facts, previous, path, depth) else {
         // A guess among competitors has to answer the call it was made for,
         // as a name has to for `receiver_name`: one that does not is evidence
@@ -1328,6 +1429,21 @@ fn type_of(
         // A `sig` names a usable class for 64 % of signatures against 3.9 %
         // from syntax alone (PLAN §2) — the highest-yield rung on the ladder.
         ValueShape::SelfCall(name) => {
+            // `widget = thing`, where `thing` is a `let` (DEC-096).
+            if let Some(member) = visible_member(facts, nesting, name)
+                && let Some(value) = &member.value
+            {
+                return type_of(
+                    tree,
+                    facts,
+                    value,
+                    &member.nesting,
+                    member.pos,
+                    depth + 1,
+                    steps,
+                )
+                .map(|(fqn, singleton, _)| (fqn, singleton, "let"));
+            }
             let scope = tree.scope_fqn(nesting)?;
             let method = tree.lookup(&scope, false, name)?;
             let returns = method.sig_returns.as_deref()?;

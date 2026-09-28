@@ -31,6 +31,14 @@
   one class (`%w[a b].map(&:upcase)` is `String#upcase`); otherwise the
   answer is residue with the method's definitions as candidates (DEC-094).
 
+- **A `let` is typed by what its block returns**, as an assignment is:
+  `let(:widget) { Widget.new }` makes `widget.save` resolve to `Widget#save`,
+  and `described_class.new` is the class the group describes. `subject`
+  likewise, and `is_expected` expects it, so `is_expected.to be_empty` and
+  `expect(widget).to be_valid` reach the predicate. In a hook or another
+  `let`, a nested group's override of the `let` makes the answer `ambiguous`
+  (DEC-096).
+
 - **RSpec predicate matchers.** `be_empty`, `be_valid` and `have_key` have no
   method of their own; RSpec answers them by calling `empty?`, `valid?` and
   `has_key?` on the expectation's subject. Where `expect(x)` types `x`, the

@@ -4696,3 +4696,34 @@ group opens at the file's first line and the expectations come later; a
 second parse to find them would cost more than the four files are worth. A
 comment or string that happens to contain `.must_` turns an RSpec file's bare
 `describe` off, which leaves it residue, as before DEC-084 — not wrong.
+
+## DEC-096 — A `let` is typed by what its block returns
+
+**Decided.** A `let`, `let!`, `subject` or `subject!` whose block ends in an
+expression of a shape an assignment is typed from (`X.new`, a constant, a
+literal, a call whose `sig` names its return, a finder) types the calls made
+on it, as `x = X.new` types `x`: `widget.save`, `held = widget; held.save`,
+and the subject of `expect(widget)`. `described_class` in the block is the
+constant the innermost group that names one describes, so
+`described_class.new` is an instance of it. `is_expected` and a bare `should`
+expect the `subject`. The rung is `let`.
+
+**Why.** A spec's receivers are its `let`s: of the 2,676 definition clicks
+in spec files that still missed after DEC-090 to DEC-093, 575 are calls on a
+`let` or `subject` by name. And a predicate matcher (DEC-090) can say which
+predicate runs only when its subject has a type, which in a spec is mostly
+a `let`'s.
+
+**Nested groups override a `let`, and a hook sees the override.** A `before`,
+another `let`, or a method in a group runs in every group nested in it, and
+there `widget` is the nested group's `let` when it has one. So in those, each
+nested override is a competing write: the answer is `ambiguous`, confidence
+one in their number, naming the other types. An example's own block (`it`)
+runs only in its group, and is exempt. Only a hook's call is checked this
+way; `held = widget` in a hook reads the innermost `let` alone.
+
+**Not done.** The implicit subject — `described_class.new` when no `subject`
+is written — is not modelled, so `is_expected` without a `subject` stays
+untyped. A `let` that a shared group defines is stored without its value, so
+a call on it from an includer is untyped. FactoryBot's `create(:widget)` names
+no class.

@@ -1,0 +1,16 @@
+# A call on a `let` had no type: `widget.save` was residue in every spec,
+# and a predicate matcher on it could not say which predicate ran. A `let`
+# or `subject` is typed by its block's last expression, as an assignment is,
+# with `described_class` as the class the group describes; `is_expected`
+# expects the `subject`.
+def spec/widget_spec.rb:8:12 status=resolved owner=Widget via=let
+def spec/widget_spec.rb:9:11 status=resolved owner=Widget
+def spec/widget_spec.rb:10:10 status=resolved owner=Array
+def spec/widget_spec.rb:12:10 status=resolved owner=Widget
+def spec/widget_spec.rb:13:23 status=resolved owner=Widget via=predicate_matcher
+def spec/widget_spec.rb:14:20 status=resolved owner=Widget via=predicate_matcher
+# The innermost group's `let` is the one a call sees.
+def spec/widget_spec.rb:20:17 status=residue receiver_type=String
+# A hook runs in nested groups too, and there `widget` is the nested `let`:
+# the parent's is one answer of two.
+def spec/widget_spec.rb:27:21 status=ambiguous owner=Widget

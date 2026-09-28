@@ -65,6 +65,10 @@ struct Frame {
     blocks: usize,
     /// The body of an RSpec example group (DEC-084).
     group: bool,
+    /// The block of an example (`it`, `specify`), which runs in its own group
+    /// only — unlike a hook's, a `let`'s or a method's, which a nested group
+    /// runs too (DEC-096).
+    example: bool,
     /// In a class method's body, its first parameter: the name a macro would
     /// hand to `define_method` (DEC-085).
     definer: Option<String>,
@@ -89,6 +93,7 @@ impl Frame {
             method: None,
             blocks: 0,
             group: false,
+            example: false,
             definer: None,
             const_defaults: Vec::new(),
         }
@@ -140,6 +145,9 @@ struct Extractor<'a> {
     matcher_subjects: HashMap<usize, Sent>,
     /// The file is a Minitest spec, whose bare `describe` is not RSpec's.
     minitest: bool,
+    /// The class each group we are in describes, innermost last: its
+    /// constant argument, or its parent's (`described_class`, DEC-096).
+    described: Vec<Option<String>>,
     facts: Facts,
 }
 
@@ -163,6 +171,12 @@ impl Sent {
         recv_pos: None,
         recv_value: None,
         singleton: false,
+    };
+
+    /// The example's `subject`.
+    const SUBJECT: Sent = Sent {
+        recv_value: Some(RecvValue::Subject),
+        ..Sent::UNTYPED
     };
 
     /// `self`, as the class (`singleton`) or an instance of it.
@@ -218,6 +232,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             method: None,
             blocks: 0,
             group: false,
+            example: false,
             definer: None,
             const_defaults: Vec::new(),
         }],
@@ -233,6 +248,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         open_blocks: Vec::new(),
         matcher_subjects: HashMap::new(),
         minitest: minitest_spec(src),
+        described: Vec::new(),
     };
     ex.visit(&parsed.node());
     ex.facts
@@ -350,6 +366,7 @@ impl<'a> Extractor<'a> {
             target_pos: None,
             sig_overloads: Vec::new(),
             sig_params: Vec::new(),
+            value: None,
             pos: self.pos(start),
             end_line: self.pos(end).line,
         }
@@ -887,6 +904,11 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                 None => match self.spec_block(node) {
                     Some(SpecBlock::Group(description)) => {
                         let segment = self.group_segment(&description);
+                        let described = arg_nodes(node)
+                            .first()
+                            .and_then(const_name)
+                            .or_else(|| self.described.last().cloned().flatten());
+                        self.described.push(described);
                         self.enter(Some(segment), Opens::Scope);
                         self.frame().group = true;
                         // `it_behaves_like "x" do … end` is a group that
@@ -900,6 +922,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                             self.visit(&body);
                         }
                         self.leave();
+                        self.described.pop();
                     }
                     Some(SpecBlock::Shared(name)) => {
                         // Declared where it is written, so the module has a
@@ -913,6 +936,8 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                         );
                         module.nesting.clear();
                         self.facts.defs.push(module);
+                        // Its includer's `described_class`, not the file's.
+                        self.described.push(None);
                         self.enter(
                             Some(crate::core::rspec::shared_segment(&name)),
                             Opens::Scope,
@@ -922,9 +947,12 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                             self.visit(&body);
                         }
                         self.leave();
+                        self.described.pop();
                     }
                     Some(SpecBlock::Example) => {
                         self.enter(None, Opens::Method { singleton: false });
+                        self.frame().example = method_name(node)
+                            .is_some_and(|name| !INHERITED_BLOCKS.contains(&name.as_str()));
                         self.visit(&block);
                         self.leave();
                     }
@@ -1110,6 +1138,24 @@ const GROUP_METHODS: [&str; 13] = [
     "shared_examples",
     "shared_context",
     "shared_examples_for",
+];
+
+/// Example-method blocks that a nested group runs as well as their own:
+/// hooks, `let`s and `subject`s (DEC-096).
+const INHERITED_BLOCKS: [&str; 13] = [
+    "before",
+    "after",
+    "around",
+    "prepend_before",
+    "append_before",
+    "prepend_after",
+    "append_after",
+    "let",
+    "let!",
+    "subject",
+    "subject!",
+    "its",
+    "skip",
 ];
 
 /// Calls whose first symbol names a method of their receiver (DEC-093).
@@ -1719,6 +1765,36 @@ impl<'pr> Extractor<'_> {
         self.facts.defs.push(def);
     }
 
+    /// What a `let` block returns, as an assignment's value is read, with
+    /// `described_class` as the constant the group describes (DEC-096).
+    fn let_value(&self, value: &Node<'pr>) -> ValueShape {
+        let described = self.described.last().cloned().flatten();
+        let is_described_class = |node: &Node<'pr>| {
+            node.as_call_node().is_some_and(|c| {
+                c.receiver().is_none()
+                    && c.arguments().is_none()
+                    && method_name(&c).as_deref() == Some("described_class")
+            })
+        };
+        if let Some(class) = described {
+            if is_described_class(value) {
+                return ValueShape::Const(class);
+            }
+            if let Some(call) = value.as_call_node()
+                && method_name(&call).as_deref() == Some("new")
+                && call.receiver().is_some_and(|r| is_described_class(&r))
+            {
+                return ValueShape::New(class);
+            }
+        }
+        match value_shape(value) {
+            // A local read in the block was written in the block, which the
+            // file's assignments do not place.
+            ValueShape::Same(_) | ValueShape::LocalCall { .. } => ValueShape::Other,
+            shape => shape,
+        }
+    }
+
     /// `expect(x).to be_empty`: a matcher handed to an expectation asks the
     /// expectation's subject, so remember what that was until the matcher's
     /// call is recorded (DEC-090). `x.should be_empty` is the older spelling.
@@ -1739,13 +1815,13 @@ impl<'pr> Extractor<'_> {
                         [value] => self.subject_of(value),
                         _ => return,
                     },
-                    Some("is_expected") => Sent::UNTYPED,
+                    Some("is_expected") => Sent::SUBJECT,
                     _ => return,
                 }
             }
             "should" | "should_not" => match call.receiver() {
                 Some(value) => self.subject_of(&value),
-                None => Sent::UNTYPED,
+                None => Sent::SUBJECT,
             },
             _ => return,
         };
@@ -1809,10 +1885,18 @@ impl<'pr> Extractor<'_> {
             names.push(("subject".to_string(), block.opening_loc().start_offset()));
         }
         let (start, end) = (call.location().start_offset(), call.location().end_offset());
+        let value = matches!(via.as_str(), "let" | "let!" | "subject" | "subject!")
+            .then(|| {
+                let body = call.block()?.as_block_node()?.body()?;
+                let last = body.as_statements_node()?.body().iter().last()?;
+                Some(self.let_value(&last))
+            })
+            .flatten();
         for (name, at) in names {
             let mut def = self.def(name, Kind::Method, start, end);
             def.pos = self.pos(at);
             def.via = Some(via.clone());
+            def.value = value.clone();
             self.push_def(def);
         }
     }
@@ -2559,6 +2643,7 @@ impl<'pr> Extractor<'_> {
             recv_pos,
             recv_value,
             block_owner,
+            in_example: self.frames.last().is_some_and(|f| f.example),
             argc,
             block,
             pos,
@@ -2608,6 +2693,7 @@ impl<'pr> Extractor<'_> {
             recv_pos: None,
             recv_value: None,
             block_owner: None,
+            in_example: false,
             argc: None,
             block: false,
             pos,
@@ -2626,6 +2712,7 @@ impl<'pr> Extractor<'_> {
             recv_pos: to.recv_pos,
             recv_value: to.recv_value,
             block_owner: self.open_blocks.last().copied().flatten(),
+            in_example: self.frames.last().is_some_and(|f| f.example),
             argc,
             block,
             pos,
@@ -2708,6 +2795,7 @@ impl<'pr> Extractor<'_> {
             recv_pos: None,
             recv_value: None,
             block_owner: None,
+            in_example: false,
             stands_for: None,
             argc,
             block,
@@ -2863,6 +2951,7 @@ impl<'pr> Extractor<'_> {
                 recv_pos: None,
                 recv_value: None,
                 block_owner: None,
+                in_example: false,
                 // Unknowable: whatever invokes it decides the arity.
                 argc: None,
                 block: false,

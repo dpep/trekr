@@ -338,6 +338,10 @@ pub(crate) struct Def {
     /// declares it, and `--def` reparses that file anyway. Keeping it out of
     /// the schema is the same call as `Facts::assigns` (DEC-012).
     pub(crate) sig_params: Vec<(String, String)>,
+    /// What a `let` or `subject` block returns, in the shapes an assignment
+    /// is typed from (DEC-096). Not stored: a group's own methods never are.
+    #[serde(skip)]
+    pub(crate) value: Option<ValueShape>,
     pub(crate) pos: Pos,
     pub(crate) end_line: u32,
 }
@@ -569,6 +573,11 @@ pub(crate) struct Call {
     /// or RSpec example body.
     #[serde(skip)]
     pub(crate) block_owner: Option<Pos>,
+    /// Written in an example's own block (`it`), which runs in its group
+    /// alone — not a hook's or a `let`'s, which nested groups run too, with
+    /// their own `let`s (DEC-096).
+    #[serde(skip)]
+    pub(crate) in_example: bool,
     /// The call this name stands for, sent to the receiver it really has:
     /// RSpec's predicate matcher (`be_empty`) is `empty?` on the
     /// expectation's subject (DEC-090), and a symbol naming a method
@@ -590,6 +599,9 @@ pub(crate) enum RecvValue {
     Call(Pos),
     /// `"x".downcase`, `[].push` — a literal of this core class.
     Literal(&'static str),
+    /// The example's `subject`, which `is_expected` and a bare `should`
+    /// expect without writing it (DEC-096).
+    Subject,
 }
 
 /// The receiver ladder's rungs, in the order they are worth trying.
