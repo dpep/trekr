@@ -2721,3 +2721,56 @@ No gold verdict moved, and no click that answered stopped. Of the 145
 misses bucketed "module never mixed in", 47 name a method nothing indexed
 defines and are now "defined nowhere indexed" (443 → 490); the other 98
 are modules no indexed class mixes in.
+
+## Dynamic definitions, declared gems, and the 0.7.0 hunt (2026-09-28)
+
+DEC-130 to DEC-139, the `meta` branch against main at ce57862 (0.7.0 plus
+DEC-120–127), each build on stores it indexed itself: the three gem gold
+sets and a new flipper one (`APP_SAMPLE=600 SAMPLE=300 SEED=12`),
+widget_shop's 2,987-site trace, rails' 40 `--refs` queries, `--dead` on
+rails (activerecord, activemodel, actionpack `lib`) and on an
+activerecord-only store, and `script/clicks.py` over the same 13
+repositories (21,154 definition clicks).
+
+**flipper's gold set** is new: its own suite, 790 examples over the specs a
+local bundle can load (no sequel, redis, mongo or statsd; 24 failures, so a
+red suite), traced in a copy whose Gemfile was trimmed to installed gems.
+
+| | main | meta |
+| --- | ---: | ---: |
+| flipper app: correct / confidently wrong of 600 | 348 / 9 | **351 / 7** |
+| graph_weaver app: correct of 560 | 441 | **444** |
+| polyid gem floor: correct of 300 | 149 | **151** (1 residue-hit → ambiguous-wrong) |
+| widget_shop gem floor: correct of 2,899 | 1,586 | **1,595** |
+| accord; the other floors; widget_shop app | | unchanged |
+| clicks, empty / unsure of 21,154 | 2,096 / 3,197 | **1,917 / 3,177** |
+| rails `--refs`, 40 queries | | 3 excluded → possible, 3 possible → excluded, 3 new sites |
+| rails `--dead` candidates | 2,276 | 2,281 |
+| activerecord-only `--dead` candidates | 1,598 | 1,613 |
+
+No confidently wrong count rose in any gold set. flipper's two that fell
+are `flipper.features` in `flipper_integration_spec.rb`, whose `flipper` is
+`described_class.new(adapter)` — a `Flipper::DSL` (DEC-133). The clicks'
+179 fewer empty answers are mostly flipper's and faraday's specs, which see
+rspec-core now that their declared gems are indexed (DEC-134); "known type,
+method not found" rose 216 → 260 for the same reason — a type is known
+where it was not.
+
+The `--dead` growth is DEC-131 reading `define_method(name)` in a loop over
+a literal list: activerecord's test `AdapterHelper` defines
+`supports_index_include?` and fourteen more that way and forwards each with
+`public_send`, so the tests' calls now resolve to the helper and the
+adapters' methods lose them. `run_request` left faraday's list: its two
+other callers are in `class_eval` strings (DEC-132).
+
+**The first-time user's cases**, main → meta: `trekr
+'Faraday::Connection#get'` no_such_method, 82 possible → residue naming
+`connection.rb:198`, 143 possible; `--refs Flipper::Adapters::Wrapper#enable`
+no_such_method → 3 confirmed; `flipper[:search]` `Flipper.[]` at 1.0 →
+`Flipper::DSL`; `it_should_behave_like` residue → rspec-core's declaration.
+
+**Measured and turned back.** DEC-133 first made a custom `new` that says
+nothing untyped. accord lost 35 correct answers, widget_shop's floor 21, and
+529 rails `--refs` sites went excluded → possible; DEC-137 first typed
+`self.class` in a module too, and widget_shop's floor gained three
+confidently wrong answers. Both are narrowed as their decisions say.
