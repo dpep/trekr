@@ -1,0 +1,11 @@
+# flipper's adapter wrapper defines every adapter method as
+# `METHODS.each { |method| define_method(method) { … } }`, with `METHODS` a
+# literal list the same class assigns. Only a literal list written at the
+# `each` was read, and only an interpolated name, so `Wrapper#enable` was
+# "no such method". A constant this file assigns a list of literal names
+# iterates the same way, looked up lexically, and a bare loop variable names
+# each of them. `Other`'s `METHODS` is not the one written in `Wrapper`.
+def app.rb:25:13 status=resolved owner=Wrapper site=app.rb:9
+refs Wrapper#disable status=resolved confirmed=1
+def app.rb:10:9 status=resolved owner=Wrapper site=app.rb:15
+card Other#enable status=residue reason=define_method

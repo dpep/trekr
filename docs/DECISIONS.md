@@ -5654,3 +5654,25 @@ those call sites, as DEC-112 decided for ActiveModel's.
 **Either side.** A mark covers the scope's instance and class methods alike,
 since one string can define both. It errs toward the hedge.
 
+## DEC-131 — A loop over a constant's literal names defines each, and so does its bare variable
+
+**Decided.** The iteration whose block is read once per name (session 17's
+`[:before, :after].each do |callback|`) also runs over a constant this file
+assigns a list every element of which is a literal name — `%i[…]`, `%w[…]`,
+`[:a, "b"]`, `.freeze`d or not — looked up lexically among the scopes around
+the `each` (`METHODS` in `Wrapper` is `Wrapper`'s, not another class's in
+the same file), and over `reverse_each`. Inside it, `define_method(var)`
+names each value, as `define_method("#{var}_x")` already did.
+
+**Why.** flipper's `Adapters::Wrapper` defines all eleven adapter methods as
+`METHODS.each do |method| define_method(method) do … end end` with
+`METHODS = [:import, …].freeze` five lines up, and `--refs
+Flipper::Adapters::Wrapper#enable` answered `no_such_method`. DEC-100 already
+read a constant this file assigns a list of *classes*; a list of names is the
+same fact.
+
+**Not done.** A list another file assigns is that blob's fact: faraday's
+`METHODS_WITH_QUERY` is written in `methods.rb` and iterated in
+`connection.rb`. Such a loop's `define_method` marks its scope (DEC-130)
+instead. Neither is a list built by a call (`attribute_names.each`).
+

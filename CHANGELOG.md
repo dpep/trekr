@@ -101,6 +101,10 @@
   of `no_such_method`, and `--refs` lists the call sites on it as possible. It
   was faraday's `Connection#get` and flipper's `Wrapper#enable` (DEC-130).
 
+- **`METHODS.each { |m| define_method(m) { … } }` defines each name**, where
+  `METHODS` is a literal list of names the same file assigns: flipper's
+  `Wrapper#enable` resolves (DEC-131).
+
 ## 0.7.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v38): run `trekr --index`

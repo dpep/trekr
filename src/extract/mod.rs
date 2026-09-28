@@ -155,6 +155,10 @@ struct Extractor<'a> {
     /// Block parameters currently bound to a known list of literals by an
     /// enclosing `[…].each do |v|`. A stack, because these nest.
     loop_values: Vec<(String, Vec<String>)>,
+    /// Constants this file assigns a list every element of which is a
+    /// literal name, by the scope they are assigned in: what `METHODS.each`
+    /// iterates (DEC-131).
+    name_arrays: HashMap<(Vec<String>, String), Vec<String>>,
     /// Constants in this blob assigned a literal array of constants.
     constant_arrays: HashMap<String, Vec<String>>,
     /// Block parameters bound to each of a literal list of constants by an
@@ -296,6 +300,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         pending_sig_params: Vec::new(),
         symbol_arrays: HashMap::new(),
         loop_values: Vec::new(),
+        name_arrays: HashMap::new(),
         constant_arrays: HashMap::new(),
         constant_loops: Vec::new(),
         iterations: Vec::new(),
@@ -1071,6 +1076,10 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         if let Some(constants) = literal_constant_array(&value) {
             self.constant_arrays.insert(name.clone(), constants);
         }
+        if let Some(names) = every_element_literal(&value) {
+            self.name_arrays
+                .insert((self.nesting.clone(), name.clone()), names);
+        }
         let mut def = self.def(name, Kind::Constant, loc.start_offset(), loc.end_offset());
         // `Bar = Foo` is an alias: the tree layer follows it rather than
         // treating `Bar` as a fresh namespace.
@@ -1116,7 +1125,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             // `[:before, :after].each do |callback| … end` binds `callback` to
             // three known strings for the length of the block, which is what
             // lets a `define_method "#{callback}_action"` inside it be read.
-            let bound = literal_each(node).inspect(|binding| {
+            let bound = self.literal_each(node).inspect(|binding| {
                 self.loop_values.push(binding.clone());
             });
             let iterates = self.constant_each(node).inspect(|binding| {
@@ -2094,10 +2103,7 @@ impl<'pr> Extractor<'_> {
         }
         let args = arg_nodes(call);
         let Some(first) = args.first() else { return };
-        let Some(names) = literal_name(first)
-            .map(|name| vec![name])
-            .or_else(|| self.interpolated_names(first))
-        else {
+        let Some(names) = self.computed_names(first) else {
             self.mark_dynamic(&name, at);
             return;
         };
@@ -2188,11 +2194,58 @@ impl<'pr> Extractor<'_> {
         let Some(first) = arg_nodes(call).into_iter().next() else {
             return Some(DefinedBy::Elsewhere);
         };
-        Some(DefinedBy::Scope(literal_name(&first).or_else(|| {
-            self.interpolated_names(&first)
+        Some(DefinedBy::Scope(
+            self.computed_names(&first)
                 .filter(|names| names.len() == 1)
-                .and_then(|mut names| names.pop())
-        })))
+                .and_then(|mut names| names.pop()),
+        ))
+    }
+
+    /// Every name a method-name argument can be: a literal, a string built
+    /// from a loop's variable, or the variable itself (DEC-131). `None`
+    /// unless the source spells each of them.
+    fn computed_names(&self, node: &Node<'pr>) -> Option<Vec<String>> {
+        if let Some(name) = literal_name(node) {
+            return Some(vec![name]);
+        }
+        if let Some(read) = node.as_local_variable_read_node() {
+            return self
+                .loop_values
+                .iter()
+                .rev()
+                .find(|(bound, _)| bound.as_bytes() == read.name().as_slice())
+                .map(|(_, values)| values.clone());
+        }
+        self.interpolated_names(node)
+    }
+
+    /// `[:before, :after, :around].each do |callback| … end`, or the same over
+    /// a constant this file assigns such a list — the iteration whose body
+    /// can be read as if it were written out once per name.
+    ///
+    /// Deliberately narrow: `each` or `reverse_each`, exactly one required
+    /// block parameter, and a list every element of which is a literal name.
+    /// A constant another file assigns is that blob's fact, and not read.
+    fn literal_each(&self, call: &ruby_prism::CallNode<'pr>) -> Option<(String, Vec<String>)> {
+        if !matches!(method_name(call)?.as_str(), "each" | "reverse_each") {
+            return None;
+        }
+        let receiver = call.receiver()?;
+        let values = match every_element_literal(&receiver) {
+            Some(values) => values,
+            None => self.name_array(&const_name(&receiver)?)?,
+        };
+        Some((sole_block_param(call)?, values))
+    }
+
+    /// The literal list a constant read here names, looked up lexically
+    /// among the ones this file assigns.
+    fn name_array(&self, constant: &str) -> Option<Vec<String>> {
+        (0..=self.nesting.len()).find_map(|depth| {
+            self.name_arrays
+                .get(&(self.nesting[depth..].to_vec(), constant.to_string()))
+                .cloned()
+        })
     }
 
     /// `config.include Helpers` inside `RSpec.configure do |config|` mixes
@@ -3865,25 +3918,16 @@ fn literal_class(node: &Node<'_>) -> Option<&'static str> {
 /// a single unreadable element means the list is not known, and half a list
 /// would generate half a set of definitions while looking like a whole one.
 fn every_element_literal(node: &Node<'_>) -> Option<Vec<String>> {
+    if let Some(call) = node.as_call_node() {
+        if !crate::core::IDENTITY.contains(&method_name(&call)?.as_str()) {
+            return None;
+        }
+        return every_element_literal(&call.receiver()?);
+    }
     let array = node.as_array_node()?;
     let elements: Vec<Node<'_>> = array.elements().iter().collect();
     let names: Vec<String> = elements.iter().filter_map(literal_name).collect();
     (!names.is_empty() && names.len() == elements.len()).then_some(names)
-}
-
-/// `[:before, :after, :around].each do |callback| … end` — the one iteration
-/// shape whose body can be read as if it were written out.
-///
-/// Deliberately narrow: a literal array, `each`, and exactly one required block
-/// parameter. A constant array (`CALLBACKS.each`) is not here because its value
-/// is a different blob's fact, and `map`/`each_with_index` are not here because
-/// nothing needs them yet.
-fn literal_each(call: &ruby_prism::CallNode<'_>) -> Option<(String, Vec<String>)> {
-    if method_name(call)? != "each" {
-        return None;
-    }
-    let values = every_element_literal(&call.receiver()?)?;
-    Some((sole_block_param(call)?, values))
 }
 
 /// The name of a block's one required parameter, when that is all it takes.
