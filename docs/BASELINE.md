@@ -2497,3 +2497,23 @@ declarations dissolved, and `fetch` on `EncryptedConfiguration`, which
 
 rails: 88,292 → 101,906 definition rows, 65.3 → 67.1 MB, almost all the
 schema's dirty-tracking declarations (DEC-111).
+
+## Mixins through a variable (2026-09-28)
+
+DEC-100 onward, against main at 0961cd6 (0.6.0), each commit against the one
+before it. The same harness as "Runtime ancestry": each build on stores it
+indexed itself, the three gem gold sets (`APP_SAMPLE=600 SAMPLE=300
+SEED=12`), widget_shop's 2,987-site trace with every site scored and context
+pinned, rails' 40 `--refs` queries, `--dead activerecord/lib activemodel/lib
+actionpack/lib` on rails and `--dead lib` on a store holding only
+activerecord, and `script/clicks.py` over the same 13 repositories (21,154
+definition clicks). 0.6.0 reproduced the last table above exactly.
+
+### A literal list's loop (DEC-100)
+
+| `{ … }.to_json` | 0.6.0 | now |
+| --- | --- | --- |
+| discourse, `app/services/post_alerter.rb:480` | json's `GeneratorMethods#to_json`, resolved 1.0 | **ActiveSupport's encoder** |
+| rails, `request_forgery_protection.rb:353` | residue | **ActiveSupport's encoder** |
+
+Nothing else moved: no gold verdict, `--refs` tier, `--dead` tier or click.

@@ -131,6 +131,14 @@ struct Extractor<'a> {
     /// Block parameters currently bound to a known list of literals by an
     /// enclosing `[…].each do |v|`. A stack, because these nest.
     loop_values: Vec<(String, Vec<String>)>,
+    /// Constants in this blob assigned a literal array of constants.
+    constant_arrays: HashMap<String, Vec<String>>,
+    /// Block parameters bound to each of a literal list of constants by an
+    /// enclosing `[Hash, Array].each do |klass|` (DEC-100).
+    constant_loops: Vec<(String, Vec<String>)>,
+    /// How many blocks were open, each included, for the blocks that run as
+    /// their file loads though handed to a call: a literal list's iteration.
+    iterations: Vec<usize>,
     /// How many `included do` blocks we are inside.
     included_depth: usize,
     /// Where the outermost `included do` we are in opens its block.
@@ -261,6 +269,9 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         pending_sig_params: Vec::new(),
         symbol_arrays: HashMap::new(),
         loop_values: Vec::new(),
+        constant_arrays: HashMap::new(),
+        constant_loops: Vec::new(),
+        iterations: Vec::new(),
         included_depth: 0,
         included_at: None,
         routed_class_methods: std::collections::HashSet::new(),
@@ -336,12 +347,15 @@ impl<'a> Extractor<'a> {
     /// only when deterministic encryption is configured. And one in a block
     /// runs when the block's receiver decides, after whatever ran before it:
     /// a Railtie's `initializer do`. An `on_load` block counts as its class's
-    /// own file loading, which is when the hook runs it.
+    /// own file loading, which is when the hook runs it, and so does a
+    /// literal list's iteration, which runs where it is written (DEC-100).
     fn runs_as_file_loads(&self) -> bool {
-        let hooked = |at: usize| {
-            self.load_hooks
-                .iter()
-                .any(|hook| hook.modelled && hook.depth == at + 1)
+        let loads = |at: usize| {
+            self.iterations.contains(&(at + 1))
+                || self
+                    .load_hooks
+                    .iter()
+                    .any(|hook| hook.modelled && hook.depth == at + 1)
         };
         self.conditional == 0
             && !self.in_method_body()
@@ -349,7 +363,7 @@ impl<'a> Extractor<'a> {
                 .open_blocks
                 .iter()
                 .enumerate()
-                .all(|(at, block)| block.is_none() || hooked(at))
+                .all(|(at, block)| block.is_none() || loads(at))
     }
 
     /// The hook whose `on_load` block this is, directly: a block or a body
@@ -931,6 +945,9 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         if let Some(symbols) = literal_symbol_array(&value) {
             self.symbol_arrays.insert(name.clone(), symbols);
         }
+        if let Some(constants) = literal_constant_array(&value) {
+            self.constant_arrays.insert(name.clone(), constants);
+        }
         let mut def = self.def(name, Kind::Constant, loc.start_offset(), loc.end_offset());
         // `Bar = Foo` is an alias: the tree layer follows it rather than
         // treating `Bar` as a fresh namespace.
@@ -977,6 +994,9 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             // lets a `define_method "#{callback}_action"` inside it be read.
             let bound = literal_each(node).inspect(|binding| {
                 self.loop_values.push(binding.clone());
+            });
+            let iterates = self.constant_each(node).inspect(|binding| {
+                self.constant_loops.push(binding.clone());
             });
             let included = method_name(node).as_deref() == Some("included")
                 && on_self(node)
@@ -1092,6 +1112,9 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                             let hook =
                                 load_hook(node).map(|name| (name, self.runs_as_file_loads()));
                             self.open_blocks.push(owner);
+                            if iterates.is_some() {
+                                self.iterations.push(self.open_blocks.len());
+                            }
                             let hook = hook.inspect(|(name, modelled)| {
                                 self.load_hooks.push(LoadHook {
                                     name: name.clone(),
@@ -1102,6 +1125,9 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                             self.visit(&block);
                             if hook.is_some() {
                                 self.load_hooks.pop();
+                            }
+                            if iterates.is_some() {
+                                self.iterations.pop();
                             }
                             self.open_blocks.pop();
                         }
@@ -1118,6 +1144,9 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             }
             if bound.is_some() {
                 self.loop_values.pop();
+            }
+            if iterates.is_some() {
+                self.constant_loops.pop();
             }
         }
     }
@@ -1682,11 +1711,7 @@ impl<'pr> Extractor<'_> {
         let owner = if base.as_self_node().is_some() {
             self.self_is_the_scope().then(|| self.nesting.clone())
         } else {
-            const_name(base).map(|written| {
-                let mut owner = vec![crate::core::runtime::sent(&written)];
-                owner.extend(self.nesting.iter().cloned());
-                owner
-            })
+            const_name(base).map(|written| self.sent_owner(&written))
         };
         let Some(owner) = owner else {
             return;
@@ -1698,6 +1723,45 @@ impl<'pr> Extractor<'_> {
             target: hook,
             pos,
         });
+    }
+
+    /// The owner of an edge sent to the constant `written` from here: looked
+    /// up where the call is written (DEC-097).
+    fn sent_owner(&self, written: &str) -> Vec<String> {
+        let mut owner = vec![crate::core::runtime::sent(written)];
+        owner.extend(self.nesting.iter().cloned());
+        owner
+    }
+
+    /// The constants a receiver stands for: the one it names, or each of a
+    /// literal list's, for the parameter of a block iterating one (DEC-100).
+    fn constants_named(&self, receiver: &Node<'pr>) -> Vec<String> {
+        if let Some(read) = receiver.as_local_variable_read_node() {
+            let local = read.name().as_slice();
+            return self
+                .constant_loops
+                .iter()
+                .rev()
+                .find(|(param, _)| param.as_bytes() == local)
+                .map(|(_, constants)| constants.clone())
+                .unwrap_or_default();
+        }
+        const_name(receiver).into_iter().collect()
+    }
+
+    /// `[Hash, Array].each do |klass|`, or `KINDS.reverse_each` for a
+    /// constant this file assigns such a list: the block's parameter and the
+    /// constants it takes in turn.
+    fn constant_each(&self, call: &ruby_prism::CallNode<'pr>) -> Option<(String, Vec<String>)> {
+        if !matches!(method_name(call)?.as_str(), "each" | "reverse_each") {
+            return None;
+        }
+        let receiver = call.receiver()?;
+        let constants = match literal_constant_array(&receiver) {
+            Some(constants) => constants,
+            None => self.constant_arrays.get(&const_name(&receiver)?)?.clone(),
+        };
+        Some((sole_block_param(call)?, constants))
     }
 
     /// A mixin sent rather than written in a body (DEC-097):
@@ -1724,21 +1788,23 @@ impl<'pr> Extractor<'_> {
         let Some(relation) = relation.filter(|_| self.runs_as_file_loads()) else {
             return;
         };
-        let owner = match call.receiver() {
-            None => self.mixin_owner(),
-            Some(receiver) if receiver.as_self_node().is_some() => self.mixin_owner(),
-            Some(receiver) => const_name(&receiver).map(|written| {
-                let mut owner = vec![crate::core::runtime::sent(&written)];
-                owner.extend(self.nesting.iter().cloned());
-                owner
-            }),
+        let owners: Vec<Vec<String>> = match call.receiver() {
+            None => self.mixin_owner().into_iter().collect(),
+            Some(receiver) if receiver.as_self_node().is_some() => {
+                self.mixin_owner().into_iter().collect()
+            }
+            Some(receiver) => self
+                .constants_named(&receiver)
+                .iter()
+                .map(|written| self.sent_owner(written))
+                .collect(),
         };
         // `Object.prepend(self)` in a module's body sends the module.
         let own = self
             .self_is_the_scope()
             .then(|| self.nesting.first().cloned())
             .flatten();
-        if let Some(owner) = owner {
+        for owner in owners {
             self.push_mixins(owner, relation, args, own.as_deref());
         }
     }
@@ -3451,6 +3517,11 @@ fn literal_each(call: &ruby_prism::CallNode<'_>) -> Option<(String, Vec<String>)
         return None;
     }
     let values = every_element_literal(&call.receiver()?)?;
+    Some((sole_block_param(call)?, values))
+}
+
+/// The name of a block's one required parameter, when that is all it takes.
+fn sole_block_param(call: &ruby_prism::CallNode<'_>) -> Option<String> {
     let block = call.block()?.as_block_node()?;
     let params = block
         .parameters()?
@@ -3461,11 +3532,24 @@ fn literal_each(call: &ruby_prism::CallNode<'_>) -> Option<(String, Vec<String>)
     if required.len() != 1 || params.rest().is_some() || optionals != 0 {
         return None;
     }
-    let name = required
+    required
         .first()?
         .as_required_parameter_node()
-        .and_then(|p| String::from_utf8(p.name().as_slice().to_vec()).ok())?;
-    Some((name, values))
+        .and_then(|p| String::from_utf8(p.name().as_slice().to_vec()).ok())
+}
+
+/// `[Hash, Array]`, or the same `.freeze`d: every element a constant as
+/// written, or no list at all — half a list would look like a whole one.
+fn literal_constant_array(node: &Node<'_>) -> Option<Vec<String>> {
+    if let Some(call) = node.as_call_node() {
+        if !crate::core::IDENTITY.contains(&method_name(&call)?.as_str()) {
+            return None;
+        }
+        return literal_constant_array(&call.receiver()?);
+    }
+    let elements: Vec<Node<'_>> = node.as_array_node()?.elements().iter().collect();
+    let constants: Vec<String> = elements.iter().filter_map(const_name).collect();
+    (!constants.is_empty() && constants.len() == elements.len()).then_some(constants)
 }
 
 fn literal_symbol_array(node: &Node<'_>) -> Option<Vec<String>> {

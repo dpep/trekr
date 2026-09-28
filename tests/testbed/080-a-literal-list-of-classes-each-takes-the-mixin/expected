@@ -1,0 +1,13 @@
+# ActiveSupport sends its `to_json` to ten core classes from a loop over a
+# literal list, and the loop was a block handed to a call, which DEC-097 does
+# not read: `{ … }.to_json` answered the json gem's method, confidently, where
+# a Rails app runs ActiveSupport's. A literal list's iteration runs as its file
+# loads, and its block parameter is each of the list's constants in turn, as a
+# constant assigned such a list is. A list the source does not state, a loop in
+# a method, and a mixin under a condition are still not recorded.
+def app.rb:19:4 status=resolved owner=Encoder
+def app.rb:11:5 status=resolved owner=Generator via=super
+def app.rb:30:7 status=resolved owner=Loud
+ancestors Float Loud,Float
+def app.rb:46:3 status=resolved owner=Integer
+def app.rb:47:5 status=resolved owner=String

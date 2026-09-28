@@ -5134,3 +5134,38 @@ send `Widget.active.recent` to `Relation`, which lacks `recent` — it is
 `Widget`'s, reached through the relation's delegation, and the relation's
 type does not say which model it is for. Rails names that class
 (`Widget::ActiveRecord_Relation`) only at runtime.
+
+## DEC-100 — A loop over a literal list of classes sends its mixin to each
+
+**Decided.** In `[Hash, Array].each do |klass| … end` (or `reverse_each`),
+the block parameter is each of the list's constants in turn, and a mixin sent
+to it — `klass.include(M)`, `klass.send(:prepend, M)` — is one edge per
+constant, looked up where the call is written as DEC-097's are. A constant
+this file assigns a literal list (`KINDS = [Symbol, Float].freeze`) iterates
+the same way. Every element must be a constant as written, or the list is not
+read at all: half a list looks like a whole one. The iteration's block runs
+as its file loads, so it is not a block handed to an arbitrary call; a loop
+inside a method or a mixin under a conditional is still not recorded.
+
+**Why.** ActiveSupport's `core_ext/object/json.rb` ends with `[Enumerable,
+Object, Array, FalseClass, Float, Hash, Integer, NilClass, String,
+TrueClass].reverse_each do |klass| klass.include(ActiveSupport::
+ToJsonWithActiveSupportEncoder) end`. That is how every Rails app's
+`{ … }.to_json` runs ActiveSupport's encoder, and DEC-097 read none of it: the
+block is handed to a call. DEC-077 named the cost when literals were typed —
+discourse's `{ … }.to_json` resolved to the json gem's `GeneratorMethods`,
+confidently. On rails, where the json gem's methods are not indexed on Hash,
+the same site was residue.
+
+**Not done.** `%w[Hash Array]` holds strings, which become classes only
+through `const_get` or `constantize`; no such loop sends a mixin in rails or
+the installed gems, and it is not read. Neither is a list another file
+assigns, which is that blob's fact, nor a list built by a call
+(`descendants.each`), whose elements are not stated anywhere.
+
+**Measured** (BASELINE, "Mixins through a variable"): discourse's
+`{ … }.to_json` in `post_alerter.rb` went from `JSON::GeneratorMethods`,
+resolved at 1.0, to ActiveSupport's encoder; rails' in
+`request_forgery_protection.rb` from residue to the same. No gold verdict,
+`--refs` tier, `--dead` tier or replayed click moved: the loop is the only
+one of its kind in either corpus.

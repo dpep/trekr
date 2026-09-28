@@ -135,7 +135,9 @@ Two things the blob layer cannot know, resolved here:
   top level, no ancestors, since no chain is complete while edges attach. A
   receiver the tree does not hold drops the edge. One under a conditional,
   inside a method, or in a block handed to a call is not recorded, since it
-  may not have run.
+  may not have run. A literal list's `each` is not such a call: its block
+  parameter is each constant in turn, and the mixin one edge per constant
+  (DEC-100).
 - **An `on_load` hook's mixins** (DEC-098). `ActiveSupport.run_load_hooks(
   :active_record, Base)` is an edge of relation `load_hooks`, owner `Base`
   (sent) or the class body it is written in (`self`), target the hook's name.

@@ -71,6 +71,17 @@
   keys. `alias_attribute :new, :old` declared `old` as well as `new`
   (DEC-111).
 
+- **Upgrading drops and rebuilds the index** (store v37): run `trekr --index`
+  once per checkout.
+
+### Fixed
+
+- **A mixin sent from a loop over a literal list of classes** reaches each of
+  them: `[Hash, Array].each { |klass| klass.include(Encoder) }`, or the same
+  over a constant this file assigns such a list. ActiveSupport sends its
+  `to_json` to ten core classes this way, so `{ … }.to_json` answered the json
+  gem's method, or nothing, where a Rails app runs ActiveSupport's (DEC-100).
+
 ## 0.6.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v36): run `trekr --index`
