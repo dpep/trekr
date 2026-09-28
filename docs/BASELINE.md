@@ -2509,6 +2509,20 @@ actionpack/lib` on rails and `--dead lib` on a store holding only
 activerecord, and `script/clicks.py` over the same 13 repositories (21,154
 definition clicks). 0.6.0 reproduced the last table above exactly.
 
+The whole of it, 0.6.0 against DEC-105, each commit's own table below:
+
+| | 0.6.0 | DEC-105 |
+| --- | ---: | ---: |
+| polyid gem floor: correct / confidently wrong of 297 | 143 / 8 | **146 / 5** |
+| graph_weaver, accord, polyid app; the other gem floors; widget_shop | | unchanged |
+| clicks, definition misses of 21,154 | 5,638 | **5,586** |
+| rails `--refs`, 40 queries | | 8 excluded → confirmed, 52 excluded → possible |
+| rails `--dead` candidates / unreferenced | 2,364 / 515 | **2,272 / 446** |
+| activerecord-only `--dead` candidates / unreferenced | 1,661 / 399 | **1,597 / 348** |
+| discourse `{ … }.to_json` | json's, resolved 1.0 | **ActiveSupport's** |
+
+No confidently wrong count rose in any gold set.
+
 ### A literal list's loop (DEC-100)
 
 | `{ … }.to_json` | 0.6.0 | now |
