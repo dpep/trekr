@@ -1,0 +1,9 @@
+# A `def` inside `Target.class_eval do … end` defines `Target#aim`, and was
+# recorded on the scope around the block. rspec-expectations defines `expect`
+# as `syntax_host.module_exec do def expect … end end`, with `syntax_host`
+# defaulting to `::RSpec::Matchers`, and rspec-mocks `allow` and `receive` the
+# same way: each landed on `Syntax`, which nothing calls them on. The block's
+# methods belong to what it is evaluated in — a constant, or a parameter's
+# constant default.
+def app.rb:25:5 status=resolved owner=Host site=app.rb:7
+def app.rb:26:16 status=resolved owner=Target site=app.rb:17

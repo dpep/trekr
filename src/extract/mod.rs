@@ -68,6 +68,8 @@ struct Frame {
     /// In a class method's body, its first parameter: the name a macro would
     /// hand to `define_method` (DEC-085).
     definer: Option<String>,
+    /// In a method's body, its parameters that default to a constant.
+    const_defaults: Vec<(String, String)>,
 }
 
 impl Frame {
@@ -88,6 +90,7 @@ impl Frame {
             blocks: 0,
             group: false,
             definer: None,
+            const_defaults: Vec::new(),
         }
     }
 }
@@ -172,6 +175,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             blocks: 0,
             group: false,
             definer: None,
+            const_defaults: Vec::new(),
         }],
         pending_sigs: Vec::new(),
         pending_sig_params: Vec::new(),
@@ -374,6 +378,22 @@ fn def_first_param(node: &ruby_prism::DefNode<'_>) -> Option<String> {
     let first = node.parameters()?.requireds().iter().next()?;
     let param = first.as_required_parameter_node()?;
     String::from_utf8(param.name().as_slice().to_vec()).ok()
+}
+
+/// A `def`'s parameters whose default is a constant: `host = ::Host`.
+fn const_defaults(node: &ruby_prism::DefNode<'_>) -> Vec<(String, String)> {
+    let Some(params) = node.parameters() else {
+        return Vec::new();
+    };
+    params
+        .optionals()
+        .iter()
+        .filter_map(|p| {
+            let p = p.as_optional_parameter_node()?;
+            let name = String::from_utf8(p.name().as_slice().to_vec()).ok()?;
+            Some((name, const_name(&p.value())?))
+        })
+        .collect()
 }
 
 /// `(class << self; self; end).module_exec do` or `singleton_class.class_eval
@@ -646,6 +666,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.enter(None, Opens::Method { singleton });
         self.frame().method = owner_is_scope.then_some(name);
         self.frame().definer = definer;
+        self.frame().const_defaults = const_defaults(node);
         if let Some(params) = node.parameters() {
             self.visit_parameters_node(&params);
         }
@@ -776,7 +797,16 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                         self.visit(&block);
                         self.leave();
                     }
-                    None => self.visit(&block),
+                    None => match self.evaluated_in(node) {
+                        Some(scope) => {
+                            self.enter(Some(scope), Opens::Scope);
+                            if let Some(body) = block.as_block_node().and_then(|b| b.body()) {
+                                self.visit(&body);
+                            }
+                            self.leave();
+                        }
+                        None => self.visit(&block),
+                    },
                 },
             }
             self.singleton_exec -= usize::from(on_singleton);
@@ -1284,6 +1314,38 @@ impl<'pr> Extractor<'_> {
         def.singleton = singleton;
         def.via = Some(macro_name.to_string());
         self.push_def(def);
+    }
+
+    /// The class a `class_eval`/`module_exec` block is evaluated in, as a
+    /// scope to push: the constant it is sent to, or the constant a
+    /// parameter defaults to (`def enable(host = ::Host); host.module_exec do`).
+    /// A bare name inside another scope is left alone, since only a lookup
+    /// could say which constant it is (DEC-086).
+    fn evaluated_in(&self, call: &ruby_prism::CallNode<'pr>) -> Option<String> {
+        let name = method_name(call)?;
+        if !matches!(
+            name.as_str(),
+            "class_eval" | "class_exec" | "module_eval" | "module_exec"
+        ) || !arg_nodes(call).is_empty()
+        {
+            return None;
+        }
+        let receiver = call.receiver()?;
+        let written = match receiver.as_local_variable_read_node() {
+            Some(read) => {
+                let local = String::from_utf8(read.name().as_slice().to_vec()).ok()?;
+                self.frames
+                    .last()?
+                    .const_defaults
+                    .iter()
+                    .find(|(param, _)| *param == local)
+                    .map(|(_, constant)| constant.clone())?
+            }
+            None => const_name(&receiver)?,
+        };
+        let placeable =
+            written.starts_with("::") || written.contains("::") || self.nesting.is_empty();
+        placeable.then_some(written)
     }
 
     /// Whether this call's block is RSpec's, and what it runs as (DEC-084).

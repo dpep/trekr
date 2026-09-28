@@ -4372,3 +4372,29 @@ a name half-guessed is worse than none. A macro inherited from a superclass
 or a `ClassMethods` module is not followed, since its definition is another
 blob's fact.
 
+## DEC-086 — A block evaluated in a class defines that class's methods
+
+**Decided.** The block of `X.class_eval`, `class_exec`, `module_eval` or
+`module_exec` with no arguments is a body of `X`: a `def` in it is `X`'s
+method and a mixin in it is `X`'s ancestor. `X` is the constant the call is
+sent to, or, for a local that is a parameter of the enclosing method, the
+constant that parameter defaults to (`def enable(host = ::Host);
+host.module_exec do def greet`).
+
+**Before.** The `def` was recorded on the scope around the block.
+rspec-expectations defines `expect` as `syntax_host.module_exec do def expect
+… end end` with `syntax_host=::RSpec::Matchers`, and rspec-mocks defines
+`allow`, `receive` and `expect_any_instance_of` the same way: each landed on
+the `Syntax` module that writes them, which no spec calls them on. Its
+`minitest_integration.rb` has `Minitest::Test.class_eval do include
+::RSpec::Matchers; def expect` at the top of the file: that `expect` was a
+top-level method and the include an edge on nothing.
+
+**The guess, named.** A parameter's default is what the block runs against
+only when a caller passes nothing. rspec's own callers pass nothing; a
+caller that passes another host defines the method there as well, and trekr
+sees only the default. A bare, single-segment constant inside another scope
+(`module A; String.class_eval do`) is left as it was, because only a lookup
+can say whether it is `A::String` or `::String`, and the blob layer does not
+look up.
+

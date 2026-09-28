@@ -15,6 +15,7 @@ refs Base.build confirmed=1
 # Reached only through `super` is its own tier: live exactly when the override
 # that calls it is, which is not what `single-caller` or `unreferenced` say.
 dead app.rb Base#greet=super-only Widget#greet=super-only Included#greet=super-only Prepended#greet=single-caller Shown#show=unreferenced
-# A `def` in a block lands on whatever the block runs against, so its `super`
-# has no owner to start from — and must not snap to `+` or anything else.
-def evaluated.rb:3:20 status=residue name=super
+# A `def` in `Base.class_eval do` is Base's (DEC-086), so its `super` looks
+# after Base, finds nothing, and says so — it must not snap to `+` or anything
+# else on the line.
+def evaluated.rb:3:20 status=residue name=wave receiver_type=Base
