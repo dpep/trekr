@@ -15,6 +15,26 @@
   `enum a: {…}, b: {…}` is read. A prefixed or suffixed enum used to define
   no member methods at all (DEC-110).
 
+- **More Rails macros declare their methods**, each answering as a
+  declaration by its macro: `has_secure_password` (`authenticate`,
+  `password=`, `password_confirmation=`, the reset token), `has_secure_token`
+  (`regenerate_token`), `has_one_attached` and `has_many_attached` (the
+  reader, typed as Active Storage's proxy, the attachment and blob
+  associations, `with_attached_x`), `accepts_nested_attributes_for`
+  (`x_attributes=`), and `store`'s `accessors:`. A `belongs_to` adds
+  `x_changed?`, `x_previously_changed?` and `reset_x`; a schema column, an
+  `attribute` and an `alias_attribute` add the dirty tracking code calls
+  (`x_changed?`, `x_was`, `saved_change_to_x?`,
+  `will_save_change_to_x?`, `x_before_last_save`, `x_previously_changed?`)
+  (DEC-111).
+
+### Fixed
+
+- `store_accessor :settings, :theme` declared a `settings` accessor: the
+  first argument is the store, not a key. `prefix:`/`suffix:` now rename its
+  keys. `alias_attribute :new, :old` declared `old` as well as `new`
+  (DEC-111).
+
 ## 0.6.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v36): run `trekr --index`

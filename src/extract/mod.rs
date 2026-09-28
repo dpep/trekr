@@ -1481,6 +1481,7 @@ impl<'pr> Extractor<'_> {
                 self.handle_forwardable(&name, &args, true)
             }
             "enum" => self.handle_enum(call, &args),
+            "store" | "store_accessor" => self.handle_store(call, &name, &args),
             // Any macro the expansion table knows. The probe argument only
             // asks "is this a macro we model" — the real names come below.
             _ if !macros::generated(&name, "probe").is_empty() => {
@@ -2520,14 +2521,19 @@ impl<'pr> Extractor<'_> {
         let loc = call.location();
         let (start, end) = (loc.start_offset(), loc.end_offset());
         for (column, class) in columns {
-            // Getter, setter, predicate. The dirty-tracking family
-            // (`_changed?`, `_was`, `_before_last_save`, …) is deliberately out:
-            // it is a dozen names per column for a fraction of the calls.
+            // Getter, setter, predicate, and the dirty tracking code calls
+            // (DEC-111).
+            let dirty = macros::dirty(&column)
+                .into_iter()
+                .map(|made| (made.name, false));
             for (name, writer) in [
                 (column.clone(), false),
                 (format!("{column}="), true),
                 (format!("{column}?"), false),
-            ] {
+            ]
+            .into_iter()
+            .chain(dirty)
+            {
                 let mut def = self.def(name.clone(), Kind::Method, start, end);
                 def.nesting = vec![owner.clone()];
                 def.via = Some("schema".into());
@@ -2609,11 +2615,28 @@ impl<'pr> Extractor<'_> {
                 names.extend(listed.iter().map(|name| (name.clone(), pos)));
             }
         }
+        // `alias_attribute :new, :old` defines only the new name.
+        if macro_name == "alias_attribute" {
+            names.truncate(1);
+        }
+        // `has_secure_password` alone is `has_secure_password :password`. Its
+        // methods sit just past the macro's name, where no click lands on it.
+        if names.is_empty()
+            && let Some(default) = macros::default_argument(macro_name)
+        {
+            let past = call.message_loc().map_or(start, |m| m.end_offset());
+            names.push((default.to_string(), self.pos(past)));
+        }
+        let reset_token =
+            keyword_value(args, "reset_token").is_none_or(|v| v.as_false_node().is_none());
 
         for (literal, pos) in names {
             let associated = macros::associated_class(macro_name, &literal, class_name.as_deref());
 
             for made in macros::generated(macro_name, &literal) {
+                if !reset_token && made.name.contains("reset_token") {
+                    continue;
+                }
                 if let Some(only) = &only
                     && !only
                         .iter()
@@ -2646,6 +2669,7 @@ impl<'pr> Extractor<'_> {
                         name: "...".into(),
                     }];
                 }
+                def.sig_returns = made.returns.map(str::to_string);
                 // A singular association's reader has a determinate type, which
                 // makes it a receiver source and not merely a method.
                 if !made.writer
@@ -2662,6 +2686,82 @@ impl<'pr> Extractor<'_> {
             // The arguments are still constants in their own right.
             for arg in args {
                 self.visit(arg);
+            }
+        }
+        any
+    }
+
+    /// `store :settings, accessors: [:theme]` and `store_accessor :settings,
+    /// :theme` — accessors for keys of a serialized attribute, with the
+    /// dirty tracking ActiveRecord::Store writes for each. The first argument
+    /// is the store, not an accessor; `prefix:` and `suffix:` rename by
+    /// Rails' rule, `true` taking the store's name.
+    fn handle_store(
+        &mut self,
+        call: &ruby_prism::CallNode<'pr>,
+        macro_name: &str,
+        args: &[Node<'pr>],
+    ) -> bool {
+        let Some((store, keys)) = args.split_first() else {
+            return false;
+        };
+        let Some(store) = literal_name(store) else {
+            return false;
+        };
+        let listed = |node: &Node<'pr>| -> Vec<(String, usize)> {
+            match node.as_array_node() {
+                Some(array) => array
+                    .elements()
+                    .iter()
+                    .filter_map(|e| Some((literal_name(&e)?, e.location().start_offset())))
+                    .collect(),
+                None => literal_name(node)
+                    .map(|n| vec![(n, node.location().start_offset())])
+                    .unwrap_or_default(),
+            }
+        };
+        let keys: Vec<(String, usize)> = if macro_name == "store" {
+            keyword_value(args, "accessors")
+                .map(|v| listed(&v))
+                .unwrap_or_default()
+        } else {
+            keys.iter().flat_map(listed).collect()
+        };
+        let affix = |key: &str| -> Option<Option<String>> {
+            match keyword_value(args, key) {
+                None => Some(None),
+                Some(v) if v.as_true_node().is_some() => Some(Some(store.clone())),
+                Some(v) if v.as_false_node().is_some() || v.as_nil_node().is_some() => Some(None),
+                Some(v) => literal_name(&v).map(Some),
+            }
+        };
+        // A computed affix is a name we cannot spell.
+        let (Some(prefix), Some(suffix)) = (affix("prefix"), affix("suffix")) else {
+            return false;
+        };
+        let loc = call.location();
+        let (start, end) = (loc.start_offset(), loc.end_offset());
+        let visibility = self.visibility();
+        let mut any = false;
+        for (key, at) in keys {
+            let key = format!(
+                "{}{key}{}",
+                prefix.as_ref().map(|p| format!("{p}_")).unwrap_or_default(),
+                suffix.as_ref().map(|s| format!("_{s}")).unwrap_or_default()
+            );
+            for made in macros::store_accessor(&key) {
+                let mut def = self.def(made.name, Kind::Method, start, end);
+                def.pos = self.pos(at);
+                def.via = Some(macro_name.to_string());
+                def.visibility = visibility;
+                if made.writer {
+                    def.params = vec![Param {
+                        kind: ParamKind::Req,
+                        name: "value".into(),
+                    }];
+                }
+                self.push_def(def);
+                any = true;
             }
         }
         any

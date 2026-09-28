@@ -2252,8 +2252,12 @@ mod tests {
             "t.timestamps is two columns spelled as one call"
         );
         assert!(
-            tree.lookup("Post", false, "body_changed?").is_none(),
-            "the dirty-tracking family is deliberately out"
+            tree.lookup("Post", false, "body_changed?").is_some(),
+            "and the dirty tracking code calls (DEC-111)"
+        );
+        assert!(
+            tree.lookup("Post", false, "restore_body!").is_none(),
+            "but not the family's uncalled rest"
         );
     }
 

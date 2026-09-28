@@ -24,6 +24,8 @@ pub(super) struct Generated {
     pub(super) singleton: bool,
     /// Takes exactly one argument, so arity checks can rule call sites out.
     pub(super) writer: bool,
+    /// The class a reader returns, when the macro fixes it.
+    pub(super) returns: Option<&'static str>,
 }
 
 impl Generated {
@@ -32,6 +34,7 @@ impl Generated {
             name: name.into(),
             singleton: false,
             writer: false,
+            returns: None,
         }
     }
 
@@ -40,6 +43,7 @@ impl Generated {
             name: name.into(),
             singleton: false,
             writer: true,
+            returns: None,
         }
     }
 
@@ -48,7 +52,22 @@ impl Generated {
             name: name.into(),
             singleton: true,
             writer: false,
+            returns: None,
         }
+    }
+
+    fn class_writer(name: impl Into<String>) -> Generated {
+        Generated {
+            name: name.into(),
+            singleton: true,
+            writer: true,
+            returns: None,
+        }
+    }
+
+    fn returning(mut self, class: &'static str) -> Generated {
+        self.returns = Some(class);
+        self
     }
 }
 
@@ -58,6 +77,52 @@ fn accessor(name: &str) -> Vec<Generated> {
         Generated::reader(name),
         Generated::writer(format!("{name}=")),
     ]
+}
+
+/// The dirty-tracking methods ActiveModel gives an attribute — the ones code
+/// calls. The rest of the family (`x_change`, `restore_x!`, …) went
+/// uncalled in discourse and mastodon (DEC-111).
+pub(super) fn dirty(attribute: &str) -> Vec<Generated> {
+    [
+        format!("{attribute}_changed?"),
+        format!("{attribute}_was"),
+        format!("{attribute}_previously_changed?"),
+        format!("{attribute}_before_last_save"),
+        format!("saved_change_to_{attribute}?"),
+        format!("will_save_change_to_{attribute}?"),
+    ]
+    .into_iter()
+    .map(Generated::reader)
+    .collect()
+}
+
+/// A store accessor's methods: the accessor pair and the dirty tracking
+/// ActiveRecord::Store defines for it by hand.
+pub(super) fn store_accessor(key: &str) -> Vec<Generated> {
+    let mut out = accessor(key);
+    out.extend(
+        [
+            format!("{key}_changed?"),
+            format!("{key}_change"),
+            format!("{key}_was"),
+            format!("saved_change_to_{key}?"),
+            format!("saved_change_to_{key}"),
+            format!("{key}_before_last_save"),
+        ]
+        .into_iter()
+        .map(Generated::reader),
+    );
+    out
+}
+
+/// The argument a macro takes when none is written: `has_secure_password`
+/// is `has_secure_password :password`.
+pub(super) fn default_argument(macro_name: &str) -> Option<&'static str> {
+    match macro_name {
+        "has_secure_password" => Some("password"),
+        "has_secure_token" => Some("token"),
+        _ => None,
+    }
 }
 
 /// The methods `macro_name :arg` defines.
@@ -78,15 +143,67 @@ pub(super) fn generated(macro_name: &str, arg: &str) -> Vec<Generated> {
             out
         }
 
-        // A singular association brings the build/create family with it.
+        // A singular association brings the build/create family with it, and
+        // a `belongs_to` its own change tracking.
         "has_one" | "belongs_to" => {
             let mut out = accessor(arg);
             out.push(Generated::writer(format!("build_{arg}")));
             out.push(Generated::writer(format!("create_{arg}")));
             out.push(Generated::writer(format!("create_{arg}!")));
             out.push(Generated::reader(format!("reload_{arg}")));
+            out.push(Generated::reader(format!("reset_{arg}")));
+            if macro_name == "belongs_to" {
+                out.push(Generated::reader(format!("{arg}_changed?")));
+                out.push(Generated::reader(format!("{arg}_previously_changed?")));
+            }
             out
         }
+
+        // Active Storage: a proxy reader, the association to the attachment
+        // records and through them to the blobs, and a preloading scope.
+        "has_one_attached" => vec![
+            Generated::reader(arg).returning("::ActiveStorage::Attached::One"),
+            Generated::writer(format!("{arg}=")),
+            Generated::reader(format!("{arg}_attachment")).returning("::ActiveStorage::Attachment"),
+            Generated::writer(format!("{arg}_attachment=")),
+            Generated::reader(format!("{arg}_blob")).returning("::ActiveStorage::Blob"),
+            Generated::writer(format!("{arg}_blob=")),
+            Generated::class_method(format!("with_attached_{arg}")),
+        ],
+        "has_many_attached" => vec![
+            Generated::reader(arg).returning("::ActiveStorage::Attached::Many"),
+            Generated::writer(format!("{arg}=")),
+            Generated::reader(format!("{arg}_attachments")),
+            Generated::writer(format!("{arg}_attachments=")),
+            Generated::reader(format!("{arg}_blobs")),
+            Generated::writer(format!("{arg}_blobs=")),
+            Generated::class_method(format!("with_attached_{arg}")),
+        ],
+
+        "accepts_nested_attributes_for" => vec![Generated::writer(format!("{arg}_attributes="))],
+
+        // ActiveModel::SecurePassword, for `has_secure_password :arg`. The
+        // reset token's three methods are ActiveRecord's, which is where the
+        // macro is nearly always called.
+        "has_secure_password" => {
+            let mut out = vec![
+                Generated::reader(arg),
+                Generated::writer(format!("{arg}=")),
+                Generated::reader(format!("authenticate_{arg}")),
+                Generated::reader(format!("{arg}_salt")),
+                Generated::reader(format!("{arg}_reset_token")),
+                Generated::reader(format!("{arg}_reset_token_expires_in")),
+                Generated::class_method(format!("find_by_{arg}_reset_token")),
+                Generated::class_method(format!("find_by_{arg}_reset_token!")),
+            ];
+            out.extend(accessor(&format!("{arg}_confirmation")));
+            out.extend(accessor(&format!("{arg}_challenge")));
+            if arg == "password" {
+                out.push(Generated::reader("authenticate"));
+            }
+            out
+        }
+        "has_secure_token" => vec![Generated::reader(format!("regenerate_{arg}"))],
 
         // A scope is a class method.
         "scope" => vec![Generated::class_method(arg)],
@@ -108,21 +225,13 @@ pub(super) fn generated(macro_name: &str, arg: &str) -> Vec<Generated> {
             Generated::writer(format!("{arg}=")),
             Generated::reader(format!("{arg}?")),
             Generated::class_method(arg),
-            Generated {
-                name: format!("{arg}="),
-                singleton: true,
-                writer: true,
-            },
+            Generated::class_writer(format!("{arg}=")),
             Generated::class_method(format!("{arg}?")),
         ],
         "mattr_accessor" | "cattr_accessor" => {
             let mut out = accessor(arg);
             out.push(Generated::class_method(arg));
-            out.push(Generated {
-                name: format!("{arg}="),
-                singleton: true,
-                writer: true,
-            });
+            out.push(Generated::class_writer(format!("{arg}=")));
             out
         }
         "mattr_reader" | "cattr_reader" => {
@@ -130,15 +239,19 @@ pub(super) fn generated(macro_name: &str, arg: &str) -> Vec<Generated> {
         }
         "mattr_writer" | "cattr_writer" => vec![
             Generated::writer(format!("{arg}=")),
-            Generated {
-                name: format!("{arg}="),
-                singleton: true,
-                writer: true,
-            },
+            Generated::class_writer(format!("{arg}=")),
         ],
 
-        // An explicitly declared attribute, and an alias for one.
-        "attribute" | "store_accessor" | "alias_attribute" => accessor(arg),
+        // An explicitly declared attribute, and an alias for one: an
+        // attribute like any column, with its query method and dirty
+        // tracking. An alias names only its first argument (the caller's
+        // job); the second is the attribute it reads.
+        "attribute" | "alias_attribute" => {
+            let mut out = accessor(arg);
+            out.push(Generated::reader(format!("{arg}?")));
+            out.extend(dirty(arg));
+            out
+        }
 
         _ => Vec::new(),
     }
@@ -282,7 +395,10 @@ mod tests {
                 "#build_user",
                 "#create_user",
                 "#create_user!",
-                "#reload_user"
+                "#reload_user",
+                "#reset_user",
+                "#user_changed?",
+                "#user_previously_changed?"
             ]
         );
     }
@@ -321,6 +437,23 @@ mod tests {
             associated_class("has_many", "clients_of_firm", Some("Client")),
             None,
             "nor does naming its element's class"
+        );
+    }
+
+    #[test]
+    fn has_secure_password_names_its_attribute_throughout() {
+        let made = names("has_secure_password", "pin");
+        for name in [
+            "#pin=",
+            "#authenticate_pin",
+            "#pin_confirmation=",
+            ".find_by_pin_reset_token",
+        ] {
+            assert!(made.iter().any(|m| m == name), "{name} in {made:?}");
+        }
+        assert!(
+            !made.iter().any(|m| m == "#authenticate"),
+            "`authenticate` is only the password's alias"
         );
     }
 

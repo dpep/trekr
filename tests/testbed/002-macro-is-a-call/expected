@@ -6,4 +6,4 @@ def app.rb:3:3 name=attr_reader
 # A singular association brings its whole family, and `prefix: true` renames
 # what the delegation defines — refusing to model the prefix left every
 # prefixed delegation invisible.
-symbols app.rb Widget,supplier,supplier=,build_supplier,create_supplier,create_supplier!,reload_supplier,label,supplier_region
+symbols app.rb Widget,supplier,supplier=,build_supplier,create_supplier,create_supplier!,reload_supplier,reset_supplier,supplier_changed?,supplier_previously_changed?,label,supplier_region

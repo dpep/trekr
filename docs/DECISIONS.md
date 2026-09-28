@@ -4928,3 +4928,61 @@ and `db/` sorts after `app/`.
 **The limits.** A computed affix spells nothing, so its members are left out
 rather than guessed. Members computed at runtime (`enum status:
 Status.values`) declare only the attribute's three methods, as before.
+
+## DEC-111 — The common method-making Rails macros are declarations, picked by count
+
+**Decided.** The macro table (`src/extract/macros.rs`) gains the macros the
+dogfood corpora write most that it did not know, and fixes two it misread:
+
+- `has_secure_password [:attr]` (default `:password`): `attr`, `attr=`,
+  `attr_confirmation`, `attr_challenge` and their writers,
+  `authenticate_attr`, `attr_salt`, `authenticate` when the attribute is
+  `password`, and the reset token's `attr_reset_token`,
+  `attr_reset_token_expires_in` and class methods `find_by_attr_reset_token`
+  and `!` — unless `reset_token: false`. With no argument written, the
+  methods sit just past the macro's name, so a click on the name still
+  answers the macro.
+- `has_secure_token [:attr]` (default `:token`): `regenerate_attr`.
+- `has_one_attached :x`: `x`, returning `ActiveStorage::Attached::One`, `x=`,
+  `x_attachment`, `x_blob` and their writers, class method
+  `with_attached_x`; `has_many_attached` the same in the plural, returning
+  `ActiveStorage::Attached::Many`.
+- `accepts_nested_attributes_for :x`: `x_attributes=`.
+- `store :s, accessors: [...]` and `store_accessor :s, *keys`: each key's
+  accessor pair and the six dirty methods ActiveRecord::Store writes for it;
+  `prefix:`/`suffix:` rename by Rails' rule. `store_accessor` used to take `s`
+  itself for a key.
+- `alias_attribute :new, :old` declares `new` only (it declared `old` too),
+  and with `attribute :x` gains `x?` and the dirty methods below.
+- `belongs_to :x` adds `x_changed?` and `x_previously_changed?`
+  (ActiveRecord 7.1), and it and `has_one` add `reset_x`.
+- A schema column (DEC-022), an `attribute` and an `alias_attribute` gain
+  six dirty-tracking methods: `x_changed?`, `x_was`,
+  `x_previously_changed?`, `x_before_last_save`, `saved_change_to_x?` and
+  `will_save_change_to_x?`.
+
+**Why these, by count.** Declarations in discourse, mastodon and rails:
+`scope` 1,139, `attribute` 965, `enum` 191, `class_attribute` 168,
+`cattr_accessor`/`mattr_accessor` 176, `store`/`store_accessor` 88,
+`accepts_nested_attributes_for` 51, `alias_attribute` 52,
+`has_one_attached`/`has_many_attached` 33, `delegate_missing_to` 10,
+`has_secure_token` 9, `has_secure_password` 5. `scope`, `attribute`,
+`class_attribute` and the `mattr` family were already in the table.
+`normalizes` and `generates_token_for` make no method a caller names.
+
+**Dirty tracking, reversing DEC-022's cutoff.** DEC-022 left the family out
+as "a dozen names per column for a fraction of the calls", and DEC-022's
+revisit counted 50 of 270 declined attribute sites as dirty tracking. Counted
+in discourse's and mastodon's `app` and `lib`: `x_changed?` 107,
+`saved_change_to_x?` 79, `will_save_change_to_x?` 61, `x_previously_changed?`
+15, `x_was` 10, `x_before_last_save` 7; `x_change`, `x_in_database`,
+`x_change_to_be_saved`, `saved_change_to_x` and `restore_x!` none at all. The
+six that code calls are declared, the rest not (a store accessor keeps the
+six Rails writes for it by hand, `x_change` among them). The rails store grows by
+13,614 definition rows (88,292 → 101,906) and 2.7% on disk (65.3 → 67.1 MB).
+
+**Not done.** The dirty methods' owner is the model, where Rails puts them in
+`GeneratedAttributeMethods`, a module included when the class is made: a
+concern the model includes later that overrides `x_changed?` wins at runtime
+and loses here, as it already did for a column's reader. `store`'s own
+attribute (`settings`) is the column's, left to the schema.

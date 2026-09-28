@@ -1,0 +1,25 @@
+# Rails' common method-making macros, each declaring what Rails generates
+# and each answering as a declaration by the macro. Before, all of these
+# were "nothing indexed defines this name" but `handle`, and `store_accessor`
+# took the store's own name for an accessor.
+def app.rb:18:13 status=resolved owner=Account kind=declaration defined_via=has_secure_password site=app.rb:2
+def app.rb:19:13 status=resolved owner=Account defined_via=has_secure_token site=app.rb:3
+def app.rb:20:13 status=resolved owner=Account defined_via=has_one_attached site=app.rb:4
+# The attachment's reader returns Active Storage's proxy, which types the chain.
+def app.rb:20:20 status=resolved owner=ActiveStorage::Attached::One
+def app.rb:21:13 status=resolved owner=Account defined_via=has_many_attached site=app.rb:5
+def app.rb:22:13 status=resolved owner=Account defined_via=accepts_nested_attributes_for site=app.rb:8
+def app.rb:23:13 status=resolved owner=Account defined_via=store site=app.rb:9
+def app.rb:24:13 status=resolved owner=Account defined_via=store_accessor site=app.rb:10
+def app.rb:25:13 status=resolved owner=Account defined_via=alias_attribute site=app.rb:12
+# Dirty tracking: a column's, an association's, a declared attribute's.
+def app.rb:26:13 status=resolved owner=Account defined_via=schema
+def app.rb:27:13 status=resolved owner=Account defined_via=belongs_to site=app.rb:7
+def app.rb:28:13 status=resolved owner=Account defined_via=has_one site=app.rb:6
+def app.rb:29:13 status=resolved owner=Account defined_via=has_one_attached site=app.rb:4
+# The store's own name is its column's, not an accessor the store declares.
+def app.rb:30:13 status=residue
+def app.rb:31:13 status=resolved owner=Account defined_via=attribute site=app.rb:11
+# A macro written without its argument still answers as itself.
+def app.rb:2:3 name=has_secure_password
+hover app.rb:18:13 Declared by `has_secure_password` in
