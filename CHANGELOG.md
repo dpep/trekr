@@ -135,6 +135,11 @@
   text marks the non-public ones — since whether a deletion can break a caller
   outside the checkout turns on it.
 
+### Changed
+
+- **`--index PATH` says it indexed the checkout containing `PATH`** when `PATH`
+  is inside one rather than its root. It always indexed the whole checkout.
+
 ## 0.7.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v38): run `trekr --index`

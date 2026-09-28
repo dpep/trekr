@@ -112,6 +112,14 @@ fn indexes_reports_and_outlines_through_the_cli() {
         indexed["indexed"]["defs"].as_i64().unwrap() >= 4,
         "class, attr_reader, and both methods are definitions: {indexed}"
     );
+    // A path inside the checkout indexes all of it, and says so.
+    let within = stdout(&trekr(&db, &dir, &["--index", "widget.rb", "--no-gems"]));
+    assert!(
+        within.starts_with("indexed the checkout containing "),
+        "{within}"
+    );
+    let whole = stdout(&trekr(&db, &dir, &["--index", "--no-gems"]));
+    assert!(!whole.contains("containing"), "{whole}");
 
     let status = json(&trekr(&db, &dir, &["--status", "--json"]));
     assert_eq!(status["checkouts"][0]["files"], 1);

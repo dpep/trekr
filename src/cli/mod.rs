@@ -961,9 +961,20 @@ fn cmd_index(
         })?;
     }
 
+    // A path inside a checkout indexes all of it, by design: say which.
+    let within = std::fs::canonicalize(path)
+        .ok()
+        .filter(|named| *named != root)
+        .map(|named| {
+            format!(
+                "the checkout containing {}: ",
+                paths::pretty(&named.to_string_lossy())
+            )
+        })
+        .unwrap_or_default();
     match out {
         Output::Text => println!(
-            "indexed {} — {} files, {} blobs, {} parsed ({} defs, {} refs, {} calls)",
+            "indexed {within}{} — {} files, {} blobs, {} parsed ({} defs, {} refs, {} calls)",
             paths::pretty(&root_str),
             counts.files,
             counts.blobs,
