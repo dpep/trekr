@@ -71,9 +71,6 @@
   keys. `alias_attribute :new, :old` declared `old` as well as `new`
   (DEC-111).
 
-- **Upgrading drops and rebuilds the index** (store v37): run `trekr --index`
-  once per checkout.
-
 ### Fixed
 
 - **A mixin sent from a loop over a literal list of classes** reaches each of
