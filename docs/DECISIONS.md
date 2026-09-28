@@ -5206,3 +5206,52 @@ One click replayed was fixed, berater's `Berater.test_mode`, which
 run_callbacks`, which the module has through `class << self; include
 ActiveSupport::Callbacks`. `--dead` did not move.
 
+## DEC-102 — A module's `included` hook mixes into its includer
+
+**Decided.** In `def self.included(base)` of a module — or `extended`,
+`prepended`, and the same written in `class << self` — a mixin sent to
+`base` (`base.extend(M)`, `base.include(M)`, `base.send(:include, M)`,
+`base.singleton_class.prepend(M)`) is an edge on whatever mixes the module in
+that way, and `base.class_eval do … end` is a body of it: its `include`,
+`prepend` and `extend` are that scope's, and its `def self.x` and class-level
+macros go to the module's `ClassMethods`, as DEC-099 routes a concern's, with
+a `ClassMethods` declared at the `do` when the module writes none. The owner
+is a `(mixed include)` segment before the module's nesting, and the tree,
+once every body's edges are attached, gives each scope whose own mixins name
+the module the hook's edges: an `include` inserted right after the module,
+where Ruby puts it, an `extend` among the scope's extends. What a hook adds
+can have a hook of its own; each scope applies each module's once.
+
+**Why.** It is the classic idiom, from before ActiveSupport::Concern and
+everywhere in older gems: 715 `def self.included(` across the installed gems,
+242 `base.extend(`, 218 `base.class_eval`. `Widget.track` found nothing on a
+class whose module gave it `ClassMethods` this way, and a `super` in a module
+the hook includes had no class to land in.
+
+**Load time, by definition.** DEC-097 records nothing inside a method, and
+the hook is the one method whose body runs exactly when its module is mixed
+in. Its sends count; one under a conditional (`base.extend(X) if
+base.respond_to?(:x)`), or in a block other than `base.class_eval`, does
+not.
+
+**Only the direct mixer.** Ruby calls the hook with the scope that wrote
+`include Tracking`. When that is a module, the module gains the hook's
+includes, and so do its own includers through its chain; the hook's
+`extend`s reach the module's singleton and stop there. That is what the tree
+does. A concern is the exception Concern makes it — its `ClassMethods` reach
+the final includer through dependencies — and keeps DEC-099's routing.
+
+**The approximation.** A plain `def x` in `base.class_eval` stays on the
+module, which sits right behind the includer in its chain: the site is the
+one that runs, the owner is one step off, and an includer's own `x` wins
+where Ruby's redefinition would lose.
+
+**Measured** (BASELINE, "Mixins through a variable"): polyid's gem floor,
+confidently wrong 8 → 5 and correct 143 → 146 (rspec-core's `attr_accessor`
+in `Example`); no other gold verdict moved. Clicks: definition misses 5,637 →
+5,586, 51 of them `expect` and `is_expected` in rspec-twirp's specs. rails
+`--refs ActiveSupport::Callbacks#run_callbacks`: seven sites excluded →
+confirmed, in classes that `extend ActiveModel::Callbacks`, whose `extended`
+hook `class_eval`s `include ActiveSupport::Callbacks` into them. `--dead`
+did not move.
+

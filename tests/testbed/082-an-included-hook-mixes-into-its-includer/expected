@@ -1,0 +1,19 @@
+# `def self.included(base)` runs each time the module is included, with the
+# includer as `base`: `base.extend(ClassMethods)` is how every gem written
+# before ActiveSupport::Concern gives its includers class methods, and none
+# of it was read, so `Widget.track` found nothing. The hook's body runs at
+# include time by definition, so its sends count; one under a condition does
+# not. The edges land on whatever mixes the module in directly, as Ruby's do:
+# a module that includes Tracking gets Helpers into its own chain and so into
+# its includers', but ClassMethods only on its own singleton.
+def app.rb:41:8 status=resolved owner=Tracking::ClassMethods
+def app.rb:42:12 status=resolved owner=Tracking::Helpers
+def app.rb:43:12 status=resolved owner=Tracking::Extras
+def app.rb:44:12 status=resolved owner=Tracking
+def app.rb:45:8 status=resolved owner=Tracking::ClassMethods
+def app.rb:46:8 status=residue
+def app.rb:47:10 status=residue
+ancestors Widget Widget,Tracking::Extras,Tracking::Helpers,Tracking
+def app.rb:57:12 status=resolved owner=Tracking::Helpers
+def app.rb:58:8 status=residue
+def app.rb:77:8 status=resolved owner=Auditing::Logging

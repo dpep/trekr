@@ -84,6 +84,22 @@ struct Frame {
     definer: Option<String>,
     /// In a method's body, its parameters that default to a constant.
     const_defaults: Vec<(String, String)>,
+    /// A module's `included`/`extended`/`prepended` hook, or a `base.class_eval`
+    /// body inside one: code that runs on whatever mixes the module in
+    /// (DEC-102).
+    mixed: Option<Mixed>,
+}
+
+/// Code that runs on whatever mixes its module in (DEC-102).
+#[derive(Clone)]
+struct Mixed {
+    /// How the module is mixed in: `included` runs for an `include`.
+    how: Relation,
+    /// The hook's parameter, which holds the mixer. `None` in a
+    /// `base.class_eval` body, where `self` does.
+    base: Option<String>,
+    /// The conditionals open around it: one inside it may not run.
+    conditional: usize,
 }
 
 impl Frame {
@@ -106,6 +122,7 @@ impl Frame {
             example: false,
             definer: None,
             const_defaults: Vec::new(),
+            mixed: None,
         }
     }
 }
@@ -264,6 +281,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             example: false,
             definer: None,
             const_defaults: Vec::new(),
+            mixed: None,
         }],
         pending_sigs: Vec::new(),
         pending_sig_params: Vec::new(),
@@ -403,12 +421,54 @@ impl<'a> Extractor<'a> {
             })
     }
 
+    /// The code here runs on whatever mixes its module in, and runs whenever
+    /// that happens: directly in the hook or its `base.class_eval`, under no
+    /// condition of its own.
+    fn mixed(&self) -> Option<&Mixed> {
+        let frame = self.frames.last()?;
+        let mixed = frame.mixed.as_ref()?;
+        (frame.blocks == 0 && self.conditional == mixed.conditional).then_some(mixed)
+    }
+
+    /// A `base.class_eval` body in a hook: a body of the mixer, not the
+    /// module. How the module is mixed in, when it is one.
+    fn includer_how(&self) -> Option<Relation> {
+        self.mixed()
+            .filter(|mixed| mixed.base.is_none())
+            .map(|mixed| mixed.how)
+    }
+
+    /// Code that runs as a body of whatever mixes its module in: a concern's
+    /// `included do`, or a hook's `base.class_eval do`.
+    fn in_includer_body(&self) -> bool {
+        self.in_concerns_included_block() || self.includer_how().is_some()
+    }
+
+    /// The owner of an edge that lands on whatever mixes this module in by
+    /// `how` (DEC-102).
+    fn mixed_owner(&self, how: Relation) -> Vec<String> {
+        let mut owner = vec![crate::core::runtime::mixed(how.as_str())];
+        owner.extend(self.nesting.iter().cloned());
+        owner
+    }
+
     /// Declare the concern's `ClassMethods` that `included do` routes into,
     /// once per concern: it may be written nowhere else, and the module has
     /// to exist for the tree to carry what is routed there.
     fn declare_class_methods(&mut self) {
         if !self.routed_class_methods.insert(self.nesting.clone()) {
             return;
+        }
+        // A concern's `ClassMethods` reaches its includers by Concern's own
+        // rule; a hook's has to be sent there, as `base.extend` would.
+        if let Some(how) = self.includer_how() {
+            let pos = self.pos(self.included_at.unwrap_or_default());
+            self.facts.ancestry.push(Ancestry {
+                owner: self.mixed_owner(how),
+                relation: Relation::Extend,
+                target: "ClassMethods".to_string(),
+                pos,
+            });
         }
         let at = self.included_at.unwrap_or_default();
         let mut module = self.def("ClassMethods".to_string(), Kind::Module, at, at);
@@ -862,7 +922,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         // `def self.x` inside `included do` is the includer's class method,
         // where Concern puts `ClassMethods`' (and the macros above do).
         let on_self = receiver.as_ref().is_none_or(|r| r.as_self_node().is_some());
-        if singleton && on_self && self.in_concerns_included_block() {
+        if singleton && on_self && self.in_includer_body() {
             def.nesting.insert(0, "ClassMethods".to_string());
             def.singleton = false;
             self.declare_class_methods();
@@ -893,7 +953,20 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         let definer = (singleton && owner_is_scope)
             .then(|| def_first_param(node))
             .flatten();
+        // `def self.included(base)`, in a body rather than a method or block.
+        let mixed =
+            (singleton && owner_is_scope && !self.in_method_body() && !self.nesting.is_empty())
+                .then(|| mixin_hook(&name))
+                .flatten()
+                .and_then(|how| {
+                    Some(Mixed {
+                        how,
+                        base: Some(def_first_param(node)?),
+                        conditional: self.conditional,
+                    })
+                });
         self.enter(None, Opens::Method { singleton });
+        self.frame().mixed = mixed;
         self.frame().method = owner_is_scope.then_some(name);
         self.frame().definer = definer;
         self.frame().const_defaults = const_defaults(node);
@@ -1095,6 +1168,29 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                         self.frame().example = method_name(node)
                             .is_some_and(|name| !INHERITED_BLOCKS.contains(&name.as_str()));
                         self.visit(&block);
+                        self.leave();
+                    }
+                    None if let Some(how) = self.evaluated_in_mixer(node) => {
+                        let conditional = self.conditional;
+                        self.enter(None, Opens::Scope);
+                        self.frame().mixed = Some(Mixed {
+                            how,
+                            base: None,
+                            conditional,
+                        });
+                        // Where a `ClassMethods` it routes to is declared.
+                        let outermost = self.included_at.is_none();
+                        if outermost {
+                            self.included_at = block
+                                .as_block_node()
+                                .map(|b| b.opening_loc().start_offset());
+                        }
+                        if let Some(body) = block.as_block_node().and_then(|b| b.body()) {
+                            self.visit(&body);
+                        }
+                        if outermost {
+                            self.included_at = None;
+                        }
                         self.leave();
                     }
                     None => match self.evaluated_in(node) {
@@ -1494,6 +1590,16 @@ fn load_hook(call: &ruby_prism::CallNode<'_>) -> Option<String> {
     keyword_value(&args, "yield").is_none().then_some(name)
 }
 
+/// The mixin a hook method runs for: `included` for an `include`.
+fn mixin_hook(name: &str) -> Option<Relation> {
+    match name {
+        "included" => Some(Relation::Include),
+        "prepended" => Some(Relation::Prepend),
+        "extended" => Some(Relation::Extend),
+        _ => None,
+    }
+}
+
 /// The relation a mixin method's name makes. `superclass` is no method.
 fn mixin_relation(name: &str) -> Option<Relation> {
     match name {
@@ -1620,6 +1726,13 @@ impl<'pr> Extractor<'_> {
         }) else {
             return false;
         };
+        // `extend self` — the idiomatic module-function alternative.
+        let mut own = Some("self");
+        // A hook's `base.class_eval` body mixes into the mixer (DEC-102).
+        if let Some(how) = self.includer_how() {
+            owner = self.mixed_owner(how);
+            own = None;
+        }
         // `extend M` inside `included do` extends the includer, which is
         // what Concern does with `ClassMethods`: M is one of its ancestors.
         if relation == Relation::Extend && self.in_concerns_included_block() {
@@ -1627,8 +1740,7 @@ impl<'pr> Extractor<'_> {
             relation = Relation::Include;
             self.declare_class_methods();
         }
-        // `extend self` — the idiomatic module-function alternative.
-        let any = self.push_mixins(owner, relation, args, Some("self"));
+        let any = self.push_mixins(owner, relation, args, own);
         if any {
             // The argument constants are real references too.
             for arg in args {
@@ -1740,6 +1852,27 @@ impl<'pr> Extractor<'_> {
         owner
     }
 
+    /// A receiver that is the hook's `base`: how the module it holds is mixed
+    /// in (DEC-102).
+    fn mixer_named(&self, receiver: &Node<'pr>) -> Option<Relation> {
+        let read = receiver.as_local_variable_read_node()?;
+        let mixed = self.mixed()?;
+        (mixed.base.as_deref()?.as_bytes() == read.name().as_slice()).then_some(mixed.how)
+    }
+
+    /// `base.class_eval do … end` in a hook: a body of the mixer (DEC-102).
+    fn evaluated_in_mixer(&self, call: &ruby_prism::CallNode<'pr>) -> Option<Relation> {
+        let name = method_name(call)?;
+        let evaluates = matches!(
+            name.as_str(),
+            "class_eval" | "class_exec" | "module_eval" | "module_exec"
+        );
+        if !evaluates || !arg_nodes(call).is_empty() {
+            return None;
+        }
+        self.mixer_named(&call.receiver()?)
+    }
+
     /// The constants a receiver stands for: the one it names, or each of a
     /// literal list's, for the parameter of a block iterating one (DEC-100).
     fn constants_named(&self, receiver: &Node<'pr>) -> Vec<String> {
@@ -1792,7 +1925,7 @@ impl<'pr> Extractor<'_> {
             _ if on_self(call) => return,
             _ => (mixin_relation(&name), &args[..]),
         };
-        let Some(mut relation) = relation.filter(|_| self.runs_as_file_loads()) else {
+        let Some(mut relation) = relation else {
             return;
         };
         // `Adapter.singleton_class.prepend(Retrying)` (DEC-101).
@@ -1811,16 +1944,25 @@ impl<'pr> Extractor<'_> {
             }
             None => call.receiver(),
         };
+        // Only what runs as its file loads is recorded (DEC-097), or, sent
+        // to a hook's `base`, as its module is mixed in (DEC-102).
         let owners: Vec<Vec<String>> = match receiver {
-            None => self.mixin_owner().into_iter().collect(),
-            Some(receiver) if receiver.as_self_node().is_some() => {
-                self.mixin_owner().into_iter().collect()
+            Some(receiver) if receiver.as_self_node().is_none() => {
+                match self.mixer_named(&receiver) {
+                    Some(how) => vec![self.mixed_owner(how)],
+                    None if self.runs_as_file_loads() => self
+                        .constants_named(&receiver)
+                        .iter()
+                        .map(|written| self.sent_owner(written))
+                        .collect(),
+                    None => return,
+                }
             }
-            Some(receiver) => self
-                .constants_named(&receiver)
-                .iter()
-                .map(|written| self.sent_owner(written))
-                .collect(),
+            _ => match self.includer_how() {
+                Some(how) => vec![self.mixed_owner(how)],
+                None if self.runs_as_file_loads() => self.mixin_owner().into_iter().collect(),
+                None => return,
+            },
         };
         // `Object.prepend(self)` in a module's body sends the module.
         let own = self
@@ -2768,6 +2910,14 @@ impl<'pr> Extractor<'_> {
                 // `class << self` still governs which side these land on.
                 def.singleton = made.singleton || in_singleton;
                 self.route_to_includer(&mut def);
+                // A class-level macro inside `included do` runs against the
+                // *includer*, not the concern — so its methods belong where
+                // Concern already puts an includer's class methods.
+                if def.singleton && self.in_includer_body() {
+                    def.nesting.insert(0, "ClassMethods".to_string());
+                    def.singleton = false;
+                    routed = true;
+                }
                 if made.writer {
                     def.params = vec![Param {
                         kind: ParamKind::Req,
@@ -3245,8 +3395,7 @@ impl<'pr> Extractor<'_> {
             && !self.in_method_body()
             && !self.nesting.is_empty()
             && !rspec::in_group(&self.nesting)
-            && (self.frames.last().is_some_and(|f| f.blocks == 0)
-                || self.in_concerns_included_block());
+            && (self.frames.last().is_some_and(|f| f.blocks == 0) || self.in_includer_body());
         if !class_level {
             return None;
         }

@@ -73,6 +73,14 @@ struct Mixin {
     target: Target,
 }
 
+/// An edge a module's hook sends to whatever mixes the module in by `how`.
+#[derive(Clone, Debug)]
+struct MixedEdge {
+    how: String,
+    relation: String,
+    target: Target,
+}
+
 /// A constant reference this scope inherits or contains, before resolution.
 #[derive(Clone, Debug)]
 struct Target {
@@ -729,6 +737,30 @@ impl Tree {
                 }
             }
         }
+        // What a module's `included`/`extended`/`prepended` hook sends to
+        // whatever mixes it in (DEC-102), by the module, settled once every
+        // body's edges are attached.
+        let mut mixed: HashMap<String, Vec<MixedEdge>> = HashMap::new();
+        let edges: Vec<EdgeRow> = edges
+            .into_iter()
+            .filter(|edge| {
+                let Some(how) = edge.owner.first().and_then(|s| runtime::mixed_by(s)) else {
+                    return true;
+                };
+                let written = tree.scopes(&edge.owner[1..]);
+                if let Some(module) = written.first() {
+                    mixed.entry(module.clone()).or_default().push(MixedEdge {
+                        how: how.to_string(),
+                        relation: edge.relation.clone(),
+                        target: Target {
+                            name: edge.target.clone(),
+                            nesting: written.clone(),
+                        },
+                    });
+                }
+                false
+            })
+            .collect();
         let mut edges: Vec<(bool, PlacedEdge)> = edges
             .into_iter()
             .filter(|edge| edge.relation != "load_hooks")
@@ -821,6 +853,7 @@ impl Tree {
                 };
             }
         }
+        tree.apply_mixed(&mixed);
         // Each half keeps the declarations nearest it. The name itself keeps
         // them all: it is still where `Post` is written.
         for (base, variants) in &split {
@@ -839,6 +872,83 @@ impl Tree {
             }
         }
         std::mem::take(tree.names.building())
+    }
+
+    /// Give every scope that mixes in a module with a hook what the hook
+    /// sends its `base` (DEC-102): `include Tracking` gains the `Helpers`
+    /// that `Tracking.included` includes, right after `Tracking`, as Ruby
+    /// inserts it. Only a direct mixer gets them, since the hook runs with it
+    /// as `base`; a class that includes a module that includes `Tracking`
+    /// has the includes through that module's chain, and not the extends.
+    /// What a hook adds can have a hook of its own, and each (scope, module)
+    /// pair is applied once, which is what ends the walk.
+    fn apply_mixed(&mut self, mixed: &HashMap<String, Vec<MixedEdge>>) {
+        if mixed.is_empty() {
+            return;
+        }
+        let mut scopes: Vec<String> = self.names.building().keys().cloned().collect();
+        scopes.sort();
+        for scope in scopes {
+            let mut applied: HashSet<(&str, String)> = HashSet::new();
+            loop {
+                let entry = &self.names.building()[&scope];
+                let written = entry
+                    .mixins
+                    .iter()
+                    .enumerate()
+                    .map(|(at, m)| {
+                        let how = match m.kind {
+                            MixinKind::Prepend => "prepend",
+                            MixinKind::Include => "include",
+                        };
+                        (how, Some(at), m.target.clone())
+                    })
+                    .chain(entry.extends.iter().map(|t| ("extend", None, t.clone())))
+                    .collect::<Vec<_>>();
+                let next = written.into_iter().find_map(|(how, at, target)| {
+                    let module = self
+                        .resolve_lexical(&target.name, &target.nesting)
+                        .map(|fqn| self.namespace_of(&fqn))?;
+                    let hooked = mixed.get(&module)?.iter().any(|e| e.how == how);
+                    (hooked && !applied.contains(&(how, module.clone())))
+                        .then_some((how, at, module))
+                });
+                let Some((how, at, module)) = next else {
+                    break;
+                };
+                let entry = self
+                    .names
+                    .building()
+                    .get_mut(&scope)
+                    .expect("the scope was listed");
+                let mut after = at.map(|at| at + 1);
+                for edge in mixed[&module].iter().filter(|e| e.how == how) {
+                    let target = edge.target.clone();
+                    let kind = match edge.relation.as_str() {
+                        "include" => MixinKind::Include,
+                        "prepend" => MixinKind::Prepend,
+                        "extend" => {
+                            entry.extends.push(target);
+                            continue;
+                        }
+                        "singleton_prepend" => {
+                            entry.singleton_prepends.push(target);
+                            continue;
+                        }
+                        _ => continue,
+                    };
+                    let mixin = Mixin { kind, target };
+                    match after {
+                        Some(at) => {
+                            entry.mixins.insert(at, mixin);
+                            after = Some(at + 1);
+                        }
+                        None => entry.mixins.push(mixin),
+                    }
+                }
+                applied.insert((how, module));
+            }
+        }
     }
 
     /// Ruby's `Module.nesting`, rebuilt from what the blob layer saw.

@@ -89,6 +89,14 @@
   calls, and `include` inside `class << self` was read as an instance-side
   include, so `Widget.new.label` found a method Ruby raises on (DEC-101).
 
+- **`def self.included(base)` hooks are read.** `base.extend(ClassMethods)`,
+  `base.include(M)`, `base.send(:include, M)` and `base.singleton_class.
+  prepend(M)` in a module's `included`, `extended` or `prepended` hook land on
+  whatever mixes the module in, and a `def self.x` in `base.class_eval do`
+  is its class method. It is how every gem written before
+  ActiveSupport::Concern gives its includers class methods, and
+  `Widget.track` found nothing (DEC-102).
+
 ## 0.6.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v36): run `trekr --index`

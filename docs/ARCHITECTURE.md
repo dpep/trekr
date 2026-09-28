@@ -142,6 +142,14 @@ Two things the blob layer cannot know, resolved here:
   and `singleton_class.include(M)` are `extend` edges; `singleton_class.
   prepend(M)` is a `singleton_prepend` edge, which the class-method chain
   walks ahead of the class's own singleton methods.
+- **A hook's mixins** (DEC-102). A mixin sent to the `base` of `def
+  self.included(base)` (or `extended`, `prepended`), or written in its
+  `base.class_eval` body, has an owner starting `(mixed include)` (or
+  `prepend`, `extend`) before the module's nesting. The tree sets those edges
+  aside and, once every other edge is attached, gives them to each scope
+  whose own mixins name the module that way — an include right after the
+  module, as Ruby inserts it — repeating for what they add until nothing new
+  applies.
 - **An `on_load` hook's mixins** (DEC-098). `ActiveSupport.run_load_hooks(
   :active_record, Base)` is an edge of relation `load_hooks`, owner `Base`
   (sent) or the class body it is written in (`self`), target the hook's name.

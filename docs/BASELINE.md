@@ -2527,3 +2527,19 @@ site, excluded → confirmed: `ActiveJob::Callbacks.run_callbacks` in
 `execution.rb`, which the module has through `class << self; include
 ActiveSupport::Callbacks`, read until now as an include on its instances.
 
+### A module's `included` hook (DEC-102)
+
+| | DEC-101 | DEC-102 |
+| --- | ---: | ---: |
+| polyid gem floor: correct / confidently wrong of 297 | 143 / 8 | **146 / 5** |
+| clicks, definition misses of 21,154 | 5,637 | **5,586** |
+| … "known type, method not found" | 275 | 270 |
+| rails `--refs ActiveSupport::Callbacks#run_callbacks`, confirmed / possible / excluded | 43 / 2 / 11 | **50 / 2 / 4** |
+
+polyid's three are rspec-core's `attr_accessor` in `Example`, wrong →
+correct. The clicks are `expect` and `is_expected` in rspec-twirp's specs
+(51). The seven `run_callbacks` sites are in classes that `extend
+ActiveModel::Callbacks`, whose `extended` hook `class_eval`s `include
+ActiveSupport::Callbacks`. Nothing else moved in the gold sets, and `--dead`
+did not move on either store.
+

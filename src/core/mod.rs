@@ -474,9 +474,14 @@ pub(crate) struct Ancestry {
 ///
 /// An `ActiveSupport.on_load(:name)` block's mixins land on whatever runs the
 /// hook (DEC-098), so their owner starts with an `(on_load name)` segment.
+///
+/// A mixin sent to the `base` of `def self.included(base)` lands on whatever
+/// includes the module (DEC-102): `(mixed include)` before the module's own
+/// nesting, and `prepend` or `extend` for the other two hooks.
 pub(crate) mod runtime {
     const SENT: &str = "(sent ";
     const HOOK: &str = "(on_load ";
+    const MIXED: &str = "(mixed ";
 
     /// The owner segment for a mixin sent to the constant `receiver`, as
     /// written.
@@ -503,6 +508,17 @@ pub(crate) mod runtime {
     /// The hook a `hook` segment names.
     pub(crate) fn hook_name(segment: &str) -> Option<&str> {
         segment.strip_prefix(HOOK)?.strip_suffix(')')
+    }
+
+    /// The owner segment for a mixin that lands on whatever mixes the module
+    /// in by `how` — `include`, `prepend` or `extend`.
+    pub(crate) fn mixed(how: &str) -> String {
+        format!("{MIXED}{how})")
+    }
+
+    /// How a `mixed` segment's module is mixed in.
+    pub(crate) fn mixed_by(segment: &str) -> Option<&str> {
+        segment.strip_prefix(MIXED)?.strip_suffix(')')
     }
 }
 
