@@ -128,6 +128,9 @@ struct Extractor<'a> {
     /// How many blocks deep we are in one that runs on the enclosing class's
     /// singleton class — `(class << self; self; end).module_exec do`.
     singleton_exec: usize,
+    /// The block parameters of the `RSpec.configure do |config|` blocks we
+    /// are in (DEC-088).
+    configure_params: Vec<String>,
     facts: Facts,
 }
 
@@ -185,6 +188,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         group_names: HashMap::new(),
         definers: HashMap::new(),
         singleton_exec: 0,
+        configure_params: Vec::new(),
     };
     ex.visit(&parsed.node());
     ex.facts
@@ -376,6 +380,28 @@ fn on_self(call: &ruby_prism::CallNode<'_>) -> bool {
 /// A `def`'s first required parameter's name.
 fn def_first_param(node: &ruby_prism::DefNode<'_>) -> Option<String> {
     let first = node.parameters()?.requireds().iter().next()?;
+    let param = first.as_required_parameter_node()?;
+    String::from_utf8(param.name().as_slice().to_vec()).ok()
+}
+
+/// `RSpec.configure do |config|` — the name its block gives the
+/// configuration.
+fn rspec_configure_param(call: &ruby_prism::CallNode<'_>) -> Option<String> {
+    if method_name(call).as_deref() != Some("configure")
+        || call
+            .receiver()
+            .and_then(|r| const_name(&r))
+            .is_none_or(|r| r.trim_start_matches("::") != "RSpec")
+    {
+        return None;
+    }
+    let params = call
+        .block()?
+        .as_block_node()?
+        .parameters()?
+        .as_block_parameters_node()?
+        .parameters()?;
+    let first = params.requireds().iter().next()?;
     let param = first.as_required_parameter_node()?;
     String::from_utf8(param.name().as_slice().to_vec()).ok()
 }
@@ -729,6 +755,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.handle_create_table(node);
         self.handle_table_name(node);
         self.note_definer(node);
+        self.handle_configure_mixin(node);
         self.handle_define_method(node);
         self.handle_group_member(node);
         let consumed = self.handle_macro(node);
@@ -762,6 +789,9 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             self.included_depth += usize::from(included);
             let on_singleton = runs_on_singleton_class(node);
             self.singleton_exec += usize::from(on_singleton);
+            let configure = rspec_configure_param(node).inspect(|param| {
+                self.configure_params.push(param.clone());
+            });
             // A `define_method` block is the method's body: `self` there is
             // an instance, and a `super` looks up the name it defines.
             match self.defined_method(node) {
@@ -808,6 +838,9 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                         None => self.visit(&block),
                     },
                 },
+            }
+            if configure.is_some() {
+                self.configure_params.pop();
             }
             self.singleton_exec -= usize::from(on_singleton);
             self.included_depth -= usize::from(included);
@@ -1254,6 +1287,39 @@ impl<'pr> Extractor<'_> {
                 .filter(|names| names.len() == 1)
                 .and_then(|mut names| names.pop())
         })))
+    }
+
+    /// `config.include Helpers` inside `RSpec.configure do |config|` mixes
+    /// Helpers into every example group, and `config.extend` extends them
+    /// (DEC-088). A metadata filter after the module is not read.
+    fn handle_configure_mixin(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        let Some(relation) = method_name(call).and_then(|name| Relation::parse(&name)) else {
+            return;
+        };
+        let on_config = call
+            .receiver()
+            .and_then(|r| r.as_local_variable_read_node())
+            .is_some_and(|read| {
+                self.configure_params
+                    .iter()
+                    .any(|param| read.name().as_slice() == param.as_bytes())
+            });
+        if !on_config {
+            return;
+        }
+        let owner = vec![format!("::{}", crate::core::rspec::EXAMPLE_GROUP)];
+        for arg in arg_nodes(call).iter().rev() {
+            let Some(target) = const_name(arg) else {
+                continue;
+            };
+            let pos = self.pos(arg.location().start_offset());
+            self.facts.ancestry.push(Ancestry {
+                owner: owner.clone(),
+                relation,
+                target,
+                pos,
+            });
+        }
     }
 
     /// Inside a class method, a call that defines a method named by the

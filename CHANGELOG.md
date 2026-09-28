@@ -27,6 +27,11 @@
   is a parameter defaulting to a constant, as rspec defines `expect`, `allow`
   and `receive`. It was recorded on the scope around the block (DEC-086).
 
+- `config.include Helpers` and `config.extend Macros` in `RSpec.configure`
+  mix those modules into every example group, so a spec's helpers — FactoryBot's
+  `create`, a support module's methods — resolve. A metadata filter on the
+  include is not read (DEC-088).
+
 - **`trekr --usage --misses`** lists the editor's definitions and hovers that
   came back empty or unsure — file, line, column, the token and trekr's reason
   — so a miss rate in `--usage` comes with the positions behind it. Kept in

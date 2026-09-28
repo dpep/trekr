@@ -1,0 +1,7 @@
+# `config.include Helpers` in `RSpec.configure` mixes Helpers into every
+# example group, and `config.extend` extends them: a spec's helper calls
+# answered residue. A metadata filter (`type: :model`) narrows which groups
+# get it at runtime and is not read, so every group is taken to.
+def spec/widget_spec.rb:4:8 status=resolved owner=Helpers via=example_group
+def spec/widget_spec.rb:2:3 status=resolved owner=Macros via=example_group
+refs Helpers#sign_in confirmed=1

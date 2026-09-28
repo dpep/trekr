@@ -204,7 +204,9 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                 }
                 // A spec whose bundle's rspec-core is not indexed: the
                 // receiver is known, and nothing about it is.
-                None if receiver.via == "example_group" && !tree.is_known(&receiver.fqn) => {
+                None if receiver.via == "example_group"
+                    && tree.kind_of(&receiver.fqn).is_none() =>
+                {
                     residue(
                         tree,
                         call,

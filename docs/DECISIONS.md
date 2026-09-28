@@ -4443,3 +4443,26 @@ confidence 1: the first line of every spec, and 7 of polyid's 13 confidently
 wrong gold sites. `eq`, `be`, `raise_error`, `double` and `receive` were not
 in ExampleGroup's ancestors, and `.to` after `expect` was untyped.
 
+## DEC-088 — `RSpec.configure`'s `include` mixes a module into every example group
+
+**Decided.** Inside `RSpec.configure do |config|`, `config.include X` is an
+`include` edge on `RSpec::Core::ExampleGroup` and `config.extend X` an
+`extend` one, so a spec's helper calls find `X`'s methods.
+
+**Why.** It is how a suite brings in its helpers — FactoryBot's `create`,
+`travel_to`, a gem's own `stub_*` — and the calls were residue once a spec's
+`self` was known: "nothing indexed in its ancestors defines this name".
+The source states the module and the receiver outright, so this is a reading,
+not a guess.
+
+**The over-reach, named.** A metadata filter (`config.include Helpers, type:
+:model`) includes the module only into the groups that match, and the filter
+is not read: every group is taken to have it. The runtime also includes it
+into each group rather than into `ExampleGroup`, which matters only when two
+modules define the same name.
+
+**Honest without rspec, still.** The edge creates an `ExampleGroup` entry
+even when rspec-core is not indexed, so DEC-084's "rspec-core is not
+indexed" now asks whether anything *declares* the class, not whether the
+name exists.
+
