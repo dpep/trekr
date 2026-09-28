@@ -1,0 +1,10 @@
+# Rails writes a column's reader, an enum's methods and an association's
+# into modules the model includes as it is made, so they sit behind the
+# class and every module it includes. An `enum` in a concern's `included do`
+# lost to the schema's column (`status.upcase` was sent to Integer), and a
+# hand-written `def kind` above `enum :kind` lost to the enum, where Ruby
+# always runs the `def`. And `self.class` is the class, not Kernel#class's
+# `Class`, so `self.class.statuses` finds the enum's class method.
+def app.rb:13:12 status=resolved owner=String receiver_type=String
+def app.rb:14:16 status=resolved owner=Statusable::ClassMethods defined_via=enum
+def app.rb:25:5 status=resolved owner=Gadget site=app.rb:19

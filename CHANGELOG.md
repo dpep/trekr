@@ -126,6 +126,11 @@
 - **`x.class` is `x`'s class**, so `self.class.statuses` finds the enum's class
   method instead of residue (DEC-137).
 
+- **A method Rails generates loses to the class's own and its modules'.** A
+  hand-written `def status` above `enum :status` is the one that runs, and an
+  `enum` in a concern's `included do` beats the schema column, so its reader is
+  a String (DEC-138).
+
 ### Added
 
 - **A checkout with no `Gemfile.lock` gets its gems anyway**: what its

@@ -418,6 +418,44 @@ pub(crate) enum Via {
     Path,
 }
 
+/// Report where the *lookup* landed, which is Ruby's own `defined_class`. For
+/// an ordinary inherited method that is already the stored owner; it differs
+/// only for a method re-keyed onto a model by a `self.table_name` override,
+/// where the stored owner is the carrier class the convention invented — a
+/// name no code declares and an agent cannot look up (DEC-022). A split
+/// name's variant is its name.
+fn landed(method: &MethodDef, owner: &str) -> MethodDef {
+    let mut method = method.clone();
+    method.owner = public_name(owner).to_string();
+    method
+}
+
+/// Rails writes these into a module the model includes when it is made
+/// (`GeneratedAttributeMethods`, `GeneratedAssociationMethods`, an enum's or a
+/// store's own), so the class's own `def` of the name wins wherever it is
+/// written (DEC-138).
+fn into_generated_module(method: &MethodDef) -> bool {
+    matches!(
+        method.via.as_deref(),
+        Some(
+            "schema"
+                | "enum"
+                | "attribute"
+                | "alias_attribute"
+                | "belongs_to"
+                | "has_one"
+                | "has_many"
+                | "has_and_belongs_to_many"
+                | "has_one_attached"
+                | "has_many_attached"
+                | "accepts_nested_attributes_for"
+                | "has_secure_password"
+                | "store"
+                | "store_accessor"
+        )
+    )
+}
+
 /// Is the body of the method where we are pointing, or did something else make
 /// it there?
 ///
@@ -2513,35 +2551,42 @@ impl Tree {
     ) -> Option<MethodDef> {
         let by_owner = self.by_owner.borrow();
         let methods = self.methods.borrow();
-        for (owner, owner_singleton) in chain {
+        // What Rails generates into a module the class includes as it is
+        // made — a column, an `enum`, an association — sits behind the class
+        // and every module it includes later, so it is held until the chain
+        // reaches the next class (DEC-138). Among those, the model's
+        // declaration redefines the column's, as Rails' attribute API does.
+        let mut generated: Option<(usize, &String)> = None;
+        for (at, (owner, owner_singleton)) in chain.iter().enumerate() {
+            if at > 0 && self.kind_of(owner) == Some("class") && generated.is_some() {
+                break;
+            }
             let key = (owner.clone(), *owner_singleton, name.to_string());
-            if let Some(found) = by_owner.get(&key).and_then(|hits| {
-                let usable = |i: &&usize| {
-                    let method = &methods[**i];
-                    method.is_definition() && !(real_only && method.site.is_rbi())
-                };
-                // What the model declares (`enum`, `attribute`) redefines the
-                // column's attribute, as Rails' attribute API does, so the
-                // schema's declaration is the fallback.
-                let from_model = |i: &&usize| methods[**i].via.as_deref() != Some("schema");
-                hits.iter()
-                    .rev()
-                    .find(|i| usable(i) && from_model(i))
-                    .or_else(|| hits.iter().rev().find(usable))
-            }) {
-                let mut method = methods[*found].clone();
-                // Report where the *lookup* landed, which is Ruby's own
-                // `defined_class`. For an ordinary inherited method that is
-                // already the stored owner; it differs only for a method
-                // re-keyed onto a model by a `self.table_name` override, where
-                // the stored owner is the carrier class the convention
-                // invented — a name no code declares and an agent cannot look
-                // up (DEC-022). A split name's variant is its name.
-                method.owner = public_name(owner).to_string();
-                return Some(method);
+            let Some(hits) = by_owner.get(&key) else {
+                continue;
+            };
+            let usable = |i: &&usize| {
+                let method = &methods[**i];
+                method.is_definition() && !(real_only && method.site.is_rbi())
+            };
+            let in_module = |i: &&usize| !*owner_singleton && into_generated_module(&methods[**i]);
+            if let Some(own) = hits.iter().rev().find(|i| usable(i) && !in_module(i)) {
+                return Some(landed(&methods[*own], owner));
+            }
+            let from_model = |i: &&usize| methods[**i].via.as_deref() != Some("schema");
+            let best = hits
+                .iter()
+                .rev()
+                .find(|i| usable(i) && from_model(i))
+                .or_else(|| hits.iter().rev().find(usable));
+            let replaces = |held: usize| methods[held].via.as_deref() == Some("schema");
+            if let Some(best) = best
+                && generated.is_none_or(|(held, _)| replaces(held) && from_model(&best))
+            {
+                generated = Some((*best, owner));
             }
         }
-        None
+        generated.map(|(index, owner)| landed(&methods[index], owner))
     }
 
     /// What a method that declares no return returns, from a declaration of

@@ -5834,3 +5834,29 @@ subclass's override as DEC-081's does.
 `Class`, which has no `statuses`. testbed 040 pinned `self.class.build` as a
 split vote between two `build`s; it now answers `Builder.build`'s declared
 `Widget`, which is what runs unless a subclass overrides `build`.
+
+## DEC-138 — What Rails generates sits behind the class and the modules it includes
+
+**Decided.** An instance method declared by a macro Rails writes into a
+module the model includes as it is made — a schema column, `attribute`,
+`alias_attribute`, `enum`, `belongs_to`/`has_one`/`has_many`/HABTM,
+`has_one_attached`/`has_many_attached`, `accepts_nested_attributes_for`,
+`has_secure_password`, `store`/`store_accessor` — is held while the lookup
+walks the class and the modules it includes, and answers only if none of
+them defines the name, before the superclass is reached. Among the held
+ones, a model's declaration still beats the column's (DEC-110).
+
+**Why.** Rails includes `GeneratedAttributeMethods` and
+`GeneratedAssociationMethods` in `inherited`, before the class body runs, and
+an enum's and a store's methods go into modules of their own, so every
+module the body includes later, and the class itself, come first in the
+chain. Two silent wrong answers from the 0.7.0 hunt: a hand-written `def
+status` written above `enum :status` lost to the enum, because the lookup
+took the last-written definition; and an `enum` in a concern's `included
+do` lost to the schema's column, whose declaration sat on the class and the
+enum's on the concern behind it — `status.even?` went to `Integer#even?` at
+1.0, where the enum's reader returns a String.
+
+**Not done.** A class method is looked up as before: `scope` defines on the
+class itself, and order decides there. `has_secure_token` and `delegate`
+define on the class too, so they keep last-written-wins.
