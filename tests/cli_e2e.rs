@@ -2280,7 +2280,8 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
         dir.join("thing.rb"),
         "class Thing\n  validate :check_it\n\n  def check_it\n  end\n\n  \
          def used_once\n  end\n\n  def never_used\n  end\n\n  \
-         def run\n    used_once\n  end\n\n  def maybe\n  end\nend\n",
+         def run\n    used_once\n  end\n\n  def maybe\n  end\n\n  \
+         private\n\n  def secret\n  end\nend\n",
     )
     .unwrap();
     fs::write(dir.join("caller.rb"), "something.maybe\n").unwrap();
@@ -2309,6 +2310,9 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
         .collect();
 
     assert_eq!(by_name["never_used"]["tier"], "unreferenced");
+    // Whether deleting it can break a caller outside the checkout.
+    assert_eq!(by_name["never_used"]["visibility"], "public");
+    assert_eq!(by_name["secret"]["visibility"], "private");
     // Reached only by `validate :check_it` — its own tier, because it is both
     // the likeliest real candidate and the likeliest false positive.
     assert_eq!(by_name["check_it"]["tier"], "convention-only");
@@ -2334,13 +2338,14 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
     assert!(text.contains("  Thing#never_used  "), "{text}");
     // Counted by tier, in text and JSON alike; a tier with none is a zero.
     assert!(
-        text.contains("5 candidates in 1 file(s): 2 unreferenced, 1 convention-only, 2 single-caller (4 clear, 1 lower)"),
+        text.contains("6 candidates in 1 file(s): 3 unreferenced, 1 convention-only, 2 single-caller (5 clear, 1 lower)"),
         "{text}"
     );
-    assert_eq!(value["summary"]["candidates"], 5, "{value}");
+    assert_eq!(value["summary"]["candidates"], 6, "{value}");
     assert_eq!(value["summary"]["tiers"]["single-caller"], 2, "{value}");
     assert_eq!(value["summary"]["tiers"]["override"], 0, "{value}");
     assert_eq!(value["summary"]["confidence"]["lower"], 1, "{value}");
+    assert!(text.contains("Thing#secret (private)"), "{text}");
     // The caller itself is used by nothing here, so it is reported too — but
     // never as anything stronger than a candidate.
     for candidate in value["candidates"].as_array().unwrap() {
@@ -2351,7 +2356,8 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
     // A file whose dispatch is dynamic lowers confidence, and says which shape.
     fs::write(
         dir.join("dyn.rb"),
-        "class Dyn\n  def hidden\n  end\n\n  def go(n)\n    send(n)\n  end\nend\n",
+        "class Dyn\n  def hidden\n  end\n\n  def go(n)\n    send(n)\n  end\n\n  \
+         class_eval \"def #{NAME * 2}; end\"\nend\n",
     )
     .unwrap();
     git(&dir, &["add", "-A"]);
@@ -2377,10 +2383,10 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
         .find(|c| c["name"] == "hidden")
         .expect("hidden is a candidate");
     assert_eq!(hidden["confidence"], "lower");
-    assert!(
-        hidden["caveat"].as_str().unwrap().contains("send"),
-        "{hidden}"
-    );
+    let caveat = hidden["caveat"].as_str().unwrap();
+    assert!(caveat.contains("send"), "{hidden}");
+    // A string of code trekr could not read hides its calls too (DEC-132).
+    assert!(caveat.contains("class_eval string"), "{hidden}");
 }
 
 /// Scopes in two checkouts are each weighed against their own checkout's

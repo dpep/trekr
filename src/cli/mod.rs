@@ -1931,8 +1931,12 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
         return Ok(exit_on(found));
     }
     for row in &rows {
+        let visibility = match row["visibility"].as_str() {
+            Some("public") | None => String::new(),
+            Some(other) => format!(" ({other})"),
+        };
         println!(
-            "{:<16} {}  {}  — {}{}",
+            "{:<16} {}  {}{visibility}  — {}{}",
             row["tier"].as_str().unwrap_or_default(),
             at_line(row),
             dead_name(row),
@@ -2146,6 +2150,8 @@ fn dead_in(
             "name": def.name,
             "owner": owner,
             "singleton": def.singleton,
+            // Whether deleting it could break a caller outside the checkout.
+            "visibility": def.visibility.as_str(),
             "path": file,
             "line": def.pos.line,
             "col": def.pos.col,

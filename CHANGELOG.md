@@ -127,6 +127,10 @@
   was residue. `--index` says so, and `--json` has `gems.resolved_from`
   (`lockfile` or `declared`) (DEC-134).
 
+- **`--dead` rows say `visibility`** — `public`, `protected` or `private`, and
+  text marks the non-public ones — since whether a deletion can break a caller
+  outside the checkout turns on it.
+
 ## 0.7.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v38): run `trekr --index`

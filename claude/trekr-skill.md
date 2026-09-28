@@ -256,7 +256,9 @@ its `tier` says whether it certainly reaches the method — `possible` is an
 untyped receiver, and grades the row `lower`). Every row has a `reason` in
 words, and `summary` counts the rows per tier and per confidence. **One pass, no cascade:** a method whose only caller is itself a
 candidate is `single-caller`, and its `reason` says the caller is a candidate —
-delete the caller and it becomes unreferenced.
+delete the caller and it becomes unreferenced. `visibility` (`public`,
+`protected`, `private`) says whether a caller outside the checkout could
+break: a private candidate's evidence is complete, a public one's is not.
 
 **It never says "dead", and you should not either.** Measured against a year of
 discourse's history, `unreferenced` candidates were deleted 19.8 % of the time
