@@ -312,5 +312,6 @@ tiers the site `possible`.
   ```
 * `gems.missing` in `--index` output names gems the lockfile wants and disk
   lacks — a hole in every answer that would have come from them.
-  `gems.lockfile: false` means there was no `Gemfile.lock`, so no gem was
-  indexed at all.
+  `gems.resolved_from` is `lockfile`, or `declared` when there was no
+  `Gemfile.lock` and the gemspecs' and Gemfile's dependencies were resolved to
+  the highest installed versions instead; absent, no gem was indexed at all.

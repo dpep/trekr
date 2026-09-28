@@ -118,6 +118,15 @@
   `described_class.new(adapter)` is a `Flipper::DSL`, so `flipper[:search]` is
   `DSL#[]`, not `Flipper.[]` (DEC-133).
 
+### Added
+
+- **A checkout with no `Gemfile.lock` gets its gems anyway**: what its
+  gemspecs and Gemfile declare, each at the highest installed version that
+  meets it, with their runtime dependencies. A gem's own specs now see
+  rspec-core — `describe`, `it_should_behave_like`, matchers — where every one
+  was residue. `--index` says so, and `--json` has `gems.resolved_from`
+  (`lockfile` or `declared`) (DEC-134).
+
 ## 0.7.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v38): run `trekr --index`

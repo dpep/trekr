@@ -5750,3 +5750,37 @@ moves the answer.
 instance or a factory's call types nothing new. `private_class_method :new`
 is not read, as before.
 
+## DEC-134 — With no `Gemfile.lock`, the declared dependencies at their highest installed versions
+
+**Decided.** A checkout with no `Gemfile.lock` resolves its gems from what
+it declares: every `*.gemspec` at its root (`add_dependency`,
+`add_runtime_dependency`, `add_development_dependency`) and its `Gemfile`
+(`gem`), read with Prism. Each name's requirements, merged across files,
+pick the highest installed release that meets all of them (a prerelease
+only when no release does), searched in the roots a lockfile's gems are.
+Each installed gem's runtime dependencies follow, from the gemspec rubygems
+wrote in `specifications/` or failing that the one it shipped, until
+nothing new is named. Left out: a `gem` from `path:`, `git:` or `github:`,
+one for `platforms:`, and the checkout's own gemspecs. A requirement that
+interpolates (`"~> #{ENV['V'] || '1.4'}"`) is any version. `--index` says
+which list it used (`gems.resolved_from`: `lockfile` or `declared`), and a
+name nothing installed meets is reported missing with its requirement.
+
+**Why.** Most gems commit no lockfile, and trekr indexed no gem for them:
+a first-time gem author's specs had no rspec-core, so `describe`,
+`it_should_behave_like`, shared examples and every matcher answered
+residue ("rspec-core is not indexed"). flipper and faraday both. The gemspec
+and Gemfile say which gems, less exactly than a lockfile; the versions
+installed are the ones `bundle install` would most likely have locked, and
+the ones the author's specs run against.
+
+**Measured.** flipper: 90 gems resolved (89 indexed, 3,407 files, 7.5 s
+cold), 14 not installed — optional adapters (`dalli`, `mongo`) and dev
+tooling; `it_should_behave_like` in `redis_cache_spec.rb` now answers
+rspec-core's `define_nested_shared_group_method` declaration. faraday: 38
+resolved, 7 not installed (rubocop at `~> 0.90`).
+
+**Not done.** Git gems (`bundler/gems/`) and `eval_gemfile`. The choice is
+per name, not a solver: two requirements from different dependents that no
+single installed version meets both leave the first one's pick.
+

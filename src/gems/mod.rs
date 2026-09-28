@@ -13,6 +13,8 @@
 
 use std::path::{Path, PathBuf};
 
+mod declared;
+
 /// Where a lockfile says a gem comes from. It decides where to look, and
 /// whether to look at all.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -183,11 +185,15 @@ fn expand(pattern: &Path) -> Vec<PathBuf> {
     current
 }
 
+/// Every directory gems are unpacked into, in search-root order. Expanded
+/// once, not once per gem: there are ~100 gems and a handful of roots.
+fn gem_dirs(repo: &Path) -> Vec<PathBuf> {
+    search_roots(repo).iter().flat_map(|p| expand(p)).collect()
+}
+
 /// Find each gem's unpacked source, in search-root order.
 pub(crate) fn locate(repo: &Path, gems: Vec<Gem>) -> Vec<Located> {
-    // Expand the globs once, not once per gem: there are ~100 gems and a
-    // handful of roots.
-    let roots: Vec<PathBuf> = search_roots(repo).iter().flat_map(|p| expand(p)).collect();
+    let roots = gem_dirs(repo);
     // A git dependency is checked out under a sibling directory, named with
     // the revision rather than the version, so it needs a prefix search.
     let git_roots: Vec<PathBuf> = roots
@@ -243,14 +249,33 @@ fn is_checkout_of(dir: &str, name: &str) -> bool {
         })
 }
 
-/// The gems a checkout depends on, located on disk.
+/// Where a checkout's gem list came from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Resolved {
+    /// `Gemfile.lock`, exactly as bundler locked it.
+    Lockfile,
+    /// No lockfile: what the gemspecs and Gemfile declare, each at the
+    /// highest installed version that meets it (DEC-134).
+    Declared,
+}
+
+/// The gems a checkout depends on, located on disk, and where the list came
+/// from; `None` when nothing names any.
 ///
-/// An absent `Gemfile.lock` is not an error: plenty of Ruby has no bundle.
-pub(crate) fn for_checkout(repo: &Path) -> Vec<Located> {
-    let Ok(text) = std::fs::read_to_string(repo.join("Gemfile.lock")) else {
-        return Vec::new();
-    };
-    locate(repo, parse_lockfile(&text))
+/// An absent `Gemfile.lock` is not an error: most gems commit none, and their
+/// gemspec says the same thing less exactly.
+pub(crate) fn for_checkout(repo: &Path) -> (Vec<Located>, Option<Resolved>) {
+    if let Ok(text) = std::fs::read_to_string(repo.join("Gemfile.lock")) {
+        return (
+            locate(repo, parse_lockfile(&text)),
+            Some(Resolved::Lockfile),
+        );
+    }
+    match declared::resolve(repo, &gem_dirs(repo)) {
+        Some(located) => (located, Some(Resolved::Declared)),
+        None => (Vec::new(), None),
+    }
 }
 
 #[cfg(test)]

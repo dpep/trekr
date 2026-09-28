@@ -803,9 +803,11 @@ fn index_gems(
 ) -> anyhow::Result<GemReport> {
     // Reading the lockfile and stat-ing ~200 conventional paths. Small, but it
     // happens on every index including a no-op, so it is worth naming.
-    let located = profile::timed(profile, "gem-scan", || crate::gems::for_checkout(repo));
+    let (located, resolved_from) =
+        profile::timed(profile, "gem-scan", || crate::gems::for_checkout(repo));
     let mut report = GemReport {
-        lockfile: repo.join("Gemfile.lock").is_file(),
+        lockfile: resolved_from == Some(crate::gems::Resolved::Lockfile),
+        resolved_from,
         ..GemReport::default()
     };
     // Which gems this bundle resolves, whether or not they needed indexing —
@@ -849,9 +851,14 @@ fn index_gems(
 
 #[derive(Debug, Default, serde::Serialize)]
 struct GemReport {
-    /// Whether the checkout has a `Gemfile.lock`. Without one no gem is
-    /// indexed, and that is said rather than left to look like an empty bundle.
+    /// Whether the checkout has a `Gemfile.lock`.
     lockfile: bool,
+    /// Where the gem list came from: `lockfile`, or `declared` — the
+    /// gemspecs and Gemfile, each at the highest installed version that meets
+    /// it (DEC-134). Absent when nothing names a gem, and then none is
+    /// indexed, which is said rather than left to look like an empty bundle.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resolved_from: Option<crate::gems::Resolved>,
     /// Named by the lockfile and present on disk.
     found: usize,
     /// Read for the first time on this machine.
@@ -949,8 +956,17 @@ fn cmd_index(
     }
     // Part of the report, beside the gems line it replaces: JSON has
     // `gems.lockfile`, and stderr stays for errors and `--profile`.
-    if out == Output::Text && with_gems && !gems.lockfile {
-        println!("gems — none: no Gemfile.lock here, so a call into a gem answers as residue");
+    match gems.resolved_from {
+        _ if out != Output::Text || !with_gems => {}
+        None => println!(
+            "gems — none: no Gemfile.lock, gemspec or Gemfile here, so a call into a gem \
+             answers as residue"
+        ),
+        Some(crate::gems::Resolved::Declared) => println!(
+            "gems — no Gemfile.lock: the gemspecs' and Gemfile's dependencies, each at the \
+             highest installed version that meets it"
+        ),
+        Some(crate::gems::Resolved::Lockfile) => {}
     }
     if out == Output::Text && (gems.found > 0 || !gems.missing.is_empty()) {
         println!(
@@ -965,8 +981,12 @@ fn cmd_index(
             const SHOWN: usize = 6;
             let shown = gems.missing.iter().take(SHOWN).cloned().collect::<Vec<_>>();
             let more = gems.missing.len().saturating_sub(shown.len());
+            let named_by = match gems.resolved_from {
+                Some(crate::gems::Resolved::Declared) => "the gemspec or Gemfile",
+                _ => "Gemfile.lock",
+            };
             println!(
-                "  {} named by Gemfile.lock but not installed: {}{}",
+                "  {} named by {named_by} but not installed: {}{}",
                 gems.missing.len(),
                 shown.join(", "),
                 if more > 0 {

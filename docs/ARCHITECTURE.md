@@ -375,6 +375,15 @@ is its own checkout rooted at its unpacked directory — which already encodes
 `name-version` — so two projects resolving the same version share one index and
 the second pays nothing (DEC-017). Only `lib/` is walked.
 
+**No `Gemfile.lock`** — most gems commit none — and the list is what the
+checkout's gemspecs and Gemfile declare (`add_dependency`,
+`add_development_dependency`, `gem`, read with Prism), each at the highest
+installed release that meets its requirements, plus the runtime
+dependencies each installed gem's own gemspec names, to closure. A gem from
+a path or git, or for another platform, is left out; the checkout's own
+gemspecs are the checkout. `gems.resolved_from` says which list it was:
+`lockfile` or `declared` (DEC-134).
+
 **A gem version outlives the projects that used it** unless collected, because
 it still maps its own blobs and so is never an orphan. `trekr --gc` removes the
 checkouts no future index could reach — a gem on disk that no surviving repo's

@@ -430,6 +430,36 @@ fn jobs_comes_from_the_flag_then_the_environment_then_the_machine() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Most gems commit no lockfile; what their gemspec declares is resolved to
+/// what is installed instead (DEC-134), and the answer says which it was.
+#[test]
+fn with_no_lockfile_the_gemspecs_dependencies_are_resolved() {
+    let (dir, db) = scratch("declared");
+    repo(&dir);
+    for version in ["0.1.0", "0.2.0", "1.0.0"] {
+        let lib = dir.join(format!(
+            "vendor/bundle/ruby/3.3.0/gems/widget-{version}/lib"
+        ));
+        fs::create_dir_all(&lib).unwrap();
+        fs::write(lib.join("widget.rb"), "module Widget\nend\n").unwrap();
+    }
+    fs::write(
+        dir.join("app.gemspec"),
+        "Gem::Specification.new do |s|\n  s.add_development_dependency \"widget\", \"< 1\"\n  s.add_dependency \"absent\"\nend\n",
+    )
+    .unwrap();
+
+    let answer = json(&trekr(&db, &dir, &["--index", "--json"]));
+    assert_eq!(answer["gems"]["lockfile"], false);
+    assert_eq!(answer["gems"]["resolved_from"], "declared");
+    assert_eq!(answer["gems"]["found"], 1, "the highest below 1: 0.2.0");
+    assert_eq!(answer["gems"]["missing"], serde_json::json!(["absent *"]));
+    let text = stdout(&trekr(&db, &dir, &["--index"]));
+    assert!(text.contains("highest installed version"), "{text}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_gem_is_indexed_once_and_a_missing_one_is_reported() {
     let (dir, db) = scratch("gems");
@@ -438,6 +468,7 @@ fn a_gem_is_indexed_once_and_a_missing_one_is_reported() {
     // No lockfile, no gems: said, not left to look like an empty bundle.
     let bare = json(&trekr(&db, &dir, &["--index", "--json"]));
     assert_eq!(bare["gems"]["lockfile"], false);
+    assert!(bare["gems"].get("resolved_from").is_none());
     assert!(stdout(&trekr(&db, &dir, &["--index"])).contains("no Gemfile.lock"));
     let quiet = stdout(&trekr(&db, &dir, &["--index", "--no-gems"]));
     assert!(
