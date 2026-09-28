@@ -2331,7 +2331,8 @@ residue reason unchanged on all 38 sites.
 
 ## Runtime ancestry (2026-09-28)
 
-DEC-097 onward, against main at eb84162. Each build ran on stores it indexed
+DEC-097 to DEC-099, against main at eb84162 and again after rebasing (the
+last table). Each build ran on stores it indexed
 itself: the three gem gold sets (`APP_SAMPLE=600 SAMPLE=300 SEED=12`, the
 traces the RSpec section used), widget_shop's 2,987-site trace with every site
 scored and context pinned, rails' 40 `--refs` queries, `--dead
@@ -2396,7 +2397,23 @@ candidates; five change owner to `ActiveRecord::Core::ClassMethods`, and
 `strict_loading_violation!` and `asynchronous_queries_session` go
 unreferenced → single-caller.
 
-Across the three commits, against eb84162: no confidently wrong count rose
-anywhere; polyid's spec sites 7 → 0, widget_shop's gem floor 21 → 19. Correct
-answers: polyid app 310 → 337, accord gem floor 124 → 125, widget_shop gem
-floor 1,521 → 1,525. Click-replay definition misses 5,953 → 5,890.
+### Rebased onto the second RSpec pass
+
+The three commits were written and measured against eb84162, the tables
+above; rebased onto 89b2f50 they were measured again, both builds on stores
+of their own:
+
+| | 89b2f50 | now |
+| --- | ---: | ---: |
+| polyid, a spec: correct / confidently wrong of 535 | 288 / 7 | **309 / 0** |
+| polyid, not a spec: correct of 56 | 29 | **35** |
+| accord gem floor: correct of 244 | 124 | 125 |
+| widget_shop gem floor: correct / confidently wrong of 2,838 | 1,521 / 21 | **1,525 / 19** |
+| graph_weaver, accord app; the other gem floors | | unchanged |
+| clicks, definition misses of 21,154 | 5,701 | **5,638** |
+| … "known type, method not found" | 303 | 275 |
+| … "module never mixed in" | 181 | 146 |
+| rails `--refs`, 40 queries | | 2 sites moved, as above |
+| rails `--dead` candidates | 2,366 | 2,364 |
+
+No confidently wrong count rose in any gold set.

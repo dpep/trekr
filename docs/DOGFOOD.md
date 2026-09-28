@@ -15,8 +15,6 @@ the repo named; lines and columns are 1-based, as `--def` takes them.
 
 | position | repo | meant | got | notes |
 |---|---|---|---|---|
-| `spec/models/user_spec.rb:54:33` `find` | polyid | `PolyId::Model::ClassMethods#find` | ActiveRecord's `find`, **resolved** | same `on_load` include as `id_for` below; 6 of polyid's 13 confidently wrong gold sites |
-| `spec/models/cache_spec.rb:81:12` `id_for` | polyid | `PolyId::Model::ClassMethods#id_for` | empty: `User` known, nothing defines it | mixed into `ActiveRecord::Base` by `ActiveSupport.on_load(:active_record) { include PolyId::Model }` |
 | `spec/accord/money_spec.rb:114:21` `parse` | accord | `Accord::Schema.parse` | empty: `Class#parse` not found | `schema = Class.new(Accord::Schema) { … }` is a subclass, typed as a `Class` instance |
 | `spec/flipper/adapters/rollout_spec.rb:28:52` `new` | flipper | `Class#new` on the struct class | empty: `Struct#new` not found | `Struct.new(:id)` returns a class, typed as a `Struct` instance |
 | `spec/dsl_spec.rb:16:43` `per` | berater | `Integer#per` in `refine Integer` (`lib/berater/dsl.rb`) | empty: `Integer` has no `per` | refinements are not modelled |
@@ -33,6 +31,8 @@ the repo named; lines and columns are 1-based, as `--def` takes them.
 
 | position | repo | meant | got | fixed in |
 |---|---|---|---|---|
+| `spec/models/user_spec.rb:54:33` `find` | polyid | `PolyId::Model::ClassMethods#find` | ActiveRecord's `find`, **resolved** | ecb44b5 (testbed 071) |
+| `spec/models/cache_spec.rb:81:12` `id_for` | polyid | `PolyId::Model::ClassMethods#id_for` | empty: `User` known, nothing defines it | ecb44b5 (testbed 071) |
 | `lib/network_resiliency/power_stats.rb:84:23` `percentile` | network_resiliency | `percentile` in the same class | residue | ca04313 (testbed 059) |
 | `include_attrs`, `match_attrs` | webmock-twirp | the group's `matcher :include_attrs` | residue | dd4873d (testbed 057) |
 | `be_empty`, `have_key` on a typed subject | — | the subject's `empty?`, `has_key?` | residue, "nothing indexed defines this name" | ac53bc6, ab31ba8, 664f67f (testbed 056, 062) |
