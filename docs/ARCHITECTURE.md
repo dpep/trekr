@@ -206,6 +206,8 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | `self` | the enclosing scope **is** the receiver — a language rule, no inference | 1.0 |
 | `example_group` | a call in a block RSpec runs: `RSpec::Core::ExampleGroup`, as a class in a group's body and an instance in an example (DEC-084) | 1.0 |
 | `let` | a call on a `let` or `subject`: what its block's last expression is, read as an assignment's value; `described_class` is the group's class (DEC-096) | agreeing / (1 + nested overrides), in a hook |
+| `implicit_subject` | `subject` or `is_expected` with no `subject` written in reach: an instance of the class the group describes (DEC-114) | 1.0 |
+| `main` | a bare top-level `describe` in a spec: `main`'s method sends it to `RSpec` (DEC-115) | 1.0 |
 | `symbol` | `send(:x)`, `obj.respond_to?(:x)`, `before_action :x`, `alias_method :a, :x`: `x` on the receiver of the reflective call, or on `self`'s instances for a class-level macro (DEC-093) | the receiver's |
 | `predicate_matcher` | `be_empty` / `have_key` in a spec: the subject's `empty?` / `has_key?`, the subject typed by the rest of the ladder (DEC-090) | the subject's |
 | `includer` | a call inside a module, resolved through the classes that mix it in | agreeing / includers |
@@ -219,6 +221,7 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | `sig:step` | one call on an already-typed local, via that method's `sig` | agreeing / total |
 | `chain` | `a.b.c` — `b`'s receiver typed, `b` found, its `sig` read | the receiver's |
 | `chain:name` | `x.gsub(a, b).downcase` with `x` untyped — every `gsub` that declares a return agrees | declaring / definitions |
+| `delegate_missing_to` | the receiver's type has no such method, and its class's `delegate_missing_to :t` sends it to `t`, typed by `t`'s reader (DEC-112) | the receiver's |
 | `rbi_dsl` | resolved, then redirected from a Tapioca `.rbi` to the model | |
 
 `sig:param` exists because half of graph_weaver's untyped local receivers turned
