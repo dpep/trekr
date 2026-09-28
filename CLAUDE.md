@@ -116,3 +116,12 @@ earns a version bump (patch or minor; see `/semver`). Releases go through the
 `release` script and are supervisor-driven: keep `## Unreleased` accurate and
 leave the cutting to them. CI runs on **ubuntu**, so macOS-only correctness is
 not correctness.
+
+**The VS Code extension ships separately**, as `dpep.trekr` on the Marketplace,
+and `release` does not publish it. When `editors/vscode/` changes for users:
+bump `editors/vscode/package.json`'s version, add an entry to
+`editors/vscode/CHANGELOG.md`, `npm --prefix editors/vscode run package`, then
+`npx @vscode/vsce publish --packagePath editors/vscode/trekr-<version>.vsix`
+(after a one-time `vsce login dpep`; the Marketplace verifies each upload for a
+few minutes). A server-only change needs no extension release — the extension
+runs whatever `trekr` is installed.
