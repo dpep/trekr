@@ -4986,3 +4986,32 @@ six Rails writes for it by hand, `x_change` among them). The rails store grows b
 concern the model includes later that overrides `x_changed?` wins at runtime
 and loses here, as it already did for a column's reader. `store`'s own
 attribute (`settings`) is the column's, left to the schema.
+
+## DEC-112 — `delegate_missing_to` is followed when the lookup fails
+
+**Decided.** `delegate_missing_to :target` in a class body declares
+`method_missing` and `respond_to_missing?` (`defined_via:
+delegate_missing_to`), carrying the target's name. When Ruby's lookup on a
+typed receiver finds nothing and the first `method_missing` in its chain is
+one of these, the call is looked up on the class the target's reader
+returns — a `belongs_to`'s, a `sig`'d method's — and answers with that
+method, `resolved_via: delegate_missing_to`, as sure as the receiver was.
+`--refs` tiers such a site against that answer: confirmed when it lands on
+the queried method, excluded (different owner) when it lands elsewhere.
+
+**Honest where the target is not typed.** An `attr_reader` target — the usual
+presenter, `delegate_missing_to :account; attr_reader :account` — has no type,
+and the answer is residue saying so: "Presenter hands a name it lacks to
+`account` (delegate_missing_to), whose type is not determined", with the
+name's definitions as candidates; `--refs` counts it possible. A typed target
+that lacks the name too is residue naming the type. Before, all three were
+"nothing indexed in its ancestors defines this name", and `--refs` excluded
+them as `no_such_method` — a claim the class's own `method_missing`
+contradicts.
+
+**Only this `method_missing`.** Any other in the chain could also answer a
+name, and `--refs` still excludes a call on a class whose `method_missing` is
+hand-written: ActiveModel::AttributeMethods defines one, so every model
+would turn each `no_such_method` exclusion into `possible`, for a
+`method_missing` that answers attribute patterns alone. That is DEC-021's
+known weakness, and not this lane's to reopen.

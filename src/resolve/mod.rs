@@ -237,6 +237,9 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                          not indexed",
                     )
                 }
+                // Ruby's lookup fails, and the class's `method_missing` hands
+                // the name on (DEC-112).
+                None if let Some(answer) = forwarded(tree, call, path, &receiver) => answer,
                 // The type is settled and Ruby would still not find the method
                 // in what is indexed. Say what was checked, never why: the
                 // cause is exactly what was not seen.
@@ -265,6 +268,80 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
             "the receiver's type is not determined by this file",
         ),
     }
+}
+
+/// A name the receiver lacks, when its class `delegate_missing_to`s a
+/// target: the target's method, looked up on the class the target's reader
+/// returns. Residue that says so when that class is not known, or lacks the
+/// name too.
+pub(super) fn forwarded(
+    tree: &Tree,
+    call: &Call,
+    path: &str,
+    receiver: &Receiver,
+) -> Option<MethodAnswer> {
+    let catcher = tree.lookup(&receiver.fqn, receiver.singleton, "method_missing")?;
+    let target = catcher.forwards_to.as_deref()?;
+    let holder = crate::tree::public_name(&catcher.owner).to_string();
+    let typed = tree
+        .lookup(&receiver.fqn, receiver.singleton, target)
+        .and_then(|reader| {
+            let returns = reader.returns_for(Some(0), false)?.to_string();
+            tree.returned_class(&reader, &returns)
+        });
+    let Some(fqn) = typed else {
+        return Some(residue(
+            tree,
+            call,
+            path,
+            None,
+            &format!(
+                "{holder} hands a name it lacks to `{target}` (delegate_missing_to), \
+                 whose type is not determined"
+            ),
+        ));
+    };
+    let target_receiver = Receiver {
+        fqn: fqn.clone(),
+        singleton: false,
+        via: "delegate_missing_to",
+        agreeing: receiver.agreeing,
+        total: receiver.total,
+        ambiguous: receiver.ambiguous,
+        rivals: Vec::new(),
+    };
+    let Some(found) = tree.lookup(&fqn, false, &call.name) else {
+        return Some(residue(
+            tree,
+            call,
+            path,
+            Some(target_receiver),
+            &format!(
+                "{holder} hands a name it lacks to `{target}` (delegate_missing_to), \
+                 typed {fqn}, and nothing indexed in its ancestors defines this name"
+            ),
+        ));
+    };
+    Some(MethodAnswer {
+        status: if receiver.ambiguous {
+            Status::Ambiguous
+        } else {
+            Status::Resolved
+        },
+        confidence: share(receiver.agreeing, receiver.total),
+        resolved_via: Some("delegate_missing_to".to_string()),
+        receiver: call.recv.as_str(),
+        receiver_kind: tree.kind_of(&fqn).map(str::to_string),
+        receiver_type: Some(fqn),
+        owner: Some(found.owner.clone()),
+        kind: Some(found.kind()),
+        defined_via: found.declared_via(),
+        sites: vec![found.site.clone()],
+        agreement: agreement(receiver),
+        unresolved_ancestors: Vec::new(),
+        candidates: Vec::new(),
+        reason: None,
+    })
 }
 
 /// Is this a name only `RSpec::Matchers#method_missing` answers — no method

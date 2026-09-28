@@ -252,6 +252,36 @@ fn tier(
                 )
             }
         }
+        // Ruby finds nothing, and the class's `delegate_missing_to` hands the
+        // name on: to the target when its type says so (DEC-112).
+        None if let Some(answer) = super::forwarded(tree, call, path, &receiver) => {
+            match answer.owner {
+                Some(owner) if answer.status != super::Status::Residue => {
+                    let (tier, why, ruling) = if target.is_none_or(|target| owner == target) {
+                        (
+                            Tier::Confirmed,
+                            "the receiver's class delegates the name here",
+                            None,
+                        )
+                    } else {
+                        (
+                            Tier::Excluded,
+                            "the receiver's class delegates the name to a different owner",
+                            Some(Ruling::DifferentOwner),
+                        )
+                    };
+                    here(tier, answer.receiver_type, Some(owner), why, 0, ruling)
+                }
+                _ => here(
+                    Tier::Possible,
+                    Some(receiver.fqn.clone()),
+                    None,
+                    "the receiver's class delegates missing names to a value of no known type",
+                    1,
+                    None,
+                ),
+            }
+        }
         // The type is settled and Ruby finds nothing — unless the chain was cut
         // short, in which case the missing ancestor could be the target.
         None if tree.ancestors(&receiver.fqn).unresolved.is_empty() => here(

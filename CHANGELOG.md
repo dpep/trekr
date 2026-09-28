@@ -28,6 +28,12 @@
   `will_save_change_to_x?`, `x_before_last_save`, `x_previously_changed?`)
   (DEC-111).
 
+- **`delegate_missing_to :account`** hands a name the class lacks to
+  `account`: when its reader has a type (a `belongs_to` does), the call
+  resolves to that class's method, `resolved_via: delegate_missing_to`, and
+  `--refs` confirms it; when it has none, or the target lacks the name too,
+  the residue says where the name went (DEC-112).
+
 ### Fixed
 
 - `store_accessor :settings, :theme` declared a `settings` accessor: the

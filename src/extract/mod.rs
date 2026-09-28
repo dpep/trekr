@@ -1482,6 +1482,7 @@ impl<'pr> Extractor<'_> {
             }
             "enum" => self.handle_enum(call, &args),
             "store" | "store_accessor" => self.handle_store(call, &name, &args),
+            "delegate_missing_to" => self.handle_delegate_missing(&args),
             // Any macro the expansion table knows. The probe argument only
             // asks "is this a macro we model" — the real names come below.
             _ if !macros::generated(&name, "probe").is_empty() => {
@@ -2765,6 +2766,41 @@ impl<'pr> Extractor<'_> {
             }
         }
         any
+    }
+
+    /// `delegate_missing_to :account` — ActiveSupport writes a
+    /// `method_missing` and a `respond_to_missing?` that hand any name the
+    /// class lacks to `account`. Declared with the target, so a lookup that
+    /// finds nothing can follow it (DEC-112).
+    fn handle_delegate_missing(&mut self, args: &[Node<'pr>]) -> bool {
+        if self.in_method_body() {
+            return false;
+        }
+        let Some(first) = args.first() else {
+            return false;
+        };
+        let Some(target) = literal_name(first) else {
+            return false;
+        };
+        let at = first.location();
+        for name in ["method_missing", "respond_to_missing?"] {
+            let mut def = self.def(
+                name.to_string(),
+                Kind::Method,
+                at.start_offset(),
+                at.end_offset(),
+            );
+            def.via = Some("delegate_missing_to".into());
+            def.target = Some(target.clone());
+            def.visibility = self.visibility();
+            def.singleton = self.in_singleton();
+            def.params = vec![Param {
+                kind: ParamKind::Rest,
+                name: "args".into(),
+            }];
+            self.push_def(def);
+        }
+        true
     }
 
     /// Forwardable's `def_delegator :@engine, :stop, :halt` and

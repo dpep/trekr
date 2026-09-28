@@ -244,6 +244,8 @@ pub(crate) struct MethodDef {
     /// instance_method(:y))` — so this site is a declaration.
     #[serde(skip)]
     pub(crate) body_elsewhere: bool,
+    /// The method a `delegate_missing_to` hands every unknown name to.
+    pub(crate) forwards_to: Option<String>,
     /// An alias whose `site` is the body it copied, not the alias line.
     #[serde(skip)]
     pub(crate) bound: bool,
@@ -2031,7 +2033,12 @@ impl Tree {
         let bound = row
             .target_pos
             .filter(|_| matches!(row.via.as_deref(), Some("alias") | Some("alias_method")));
+        let forwards_to = row
+            .target
+            .clone()
+            .filter(|_| row.via.as_deref() == Some("delegate_missing_to"));
         MethodDef {
+            forwards_to,
             bound: bound.is_some(),
             // A body written elsewhere takes whatever that body takes.
             arity: if body_elsewhere {

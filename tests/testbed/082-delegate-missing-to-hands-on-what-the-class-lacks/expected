@@ -1,0 +1,11 @@
+# `delegate_missing_to :account` writes a `method_missing` that hands any
+# name the class lacks to `account`. When the target's reader has a type — a
+# `belongs_to` does — the name is looked up there, `resolved_via:
+# delegate_missing_to`. When it has none, or the target lacks the name too,
+# the residue says where the name went. Before, each was "nothing indexed in
+# its ancestors defines this name".
+def app.rb:22:13 status=resolved owner=Account via=delegate_missing_to site=app.rb:2
+def app.rb:10:5 status=resolved owner=Account via=delegate_missing_to site=app.rb:2
+def app.rb:23:13 status=residue reason=delegate_missing_to receiver_type=Account
+def app.rb:24:19 status=residue reason=delegate_missing_to
+refs Account#email confirmed=2 possible=1
