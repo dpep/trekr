@@ -4519,3 +4519,33 @@ classes rescued together are one write with a type each, so the answer is
 **Not done.** `rescue *ERRORS => e` names no class, so its write counts
 against the answer rather than typing it.
 
+## DEC-090 — A predicate matcher is the predicate it calls on the subject
+
+**Decided.** An implicit `be_xxx` or `have_xxx` call in an example group, for
+which the group has no method of that name and whose `method_missing` is
+`RSpec::Matchers`', answers with the method RSpec's `method_missing` sends:
+`be_empty` and `be_an_empty` → `empty?` (BePredicate), `have_key` →
+`has_key?` (Has), and for `be_`, the present tense (`be_exist` → `exists?`)
+when the subject has no `exist?`, as `BePredicate#predicate_method_name`
+does. The receiver is the expectation's subject — `x` in `expect(x).to`,
+`.not_to`, `.to_not`, or `x.should` — typed by the same ladder as any
+receiver; `resolved_via` is `predicate_matcher`.
+
+**Why.** It was residue in every spec, "nothing indexed in its ancestors
+defines this name": 38 of the replayed spec clicks, and the answer a reader
+wants is the predicate, since that is the code that runs and decides the
+expectation.
+
+**Honest where the source does not say.** `is_expected`, a bare `should`, and
+a matcher not handed to an expectation (`all(be_empty)`, `.and be_empty`)
+have a subject the file does not type, so the answer is residue whose reason
+names the rule — "`be_empty` is RSpec's predicate matcher, which calls
+`empty?` on the expectation's subject: …" — with the predicate's definitions
+as candidates. A matcher RSpec, a gem or the spec defines (`be_within`,
+`have_attributes`) is found first and is itself.
+
+**Only where RSpec's `method_missing` answers.** Without it in the chain —
+a checkout that indexes no rspec-expectations — `be_nil` could be a real
+matcher the index cannot see, and reading it as `nil?` would be a guess. The
+matcher's call is resolve-time only: nothing is stored, so `--refs
+Widget#empty?` does not count `be_empty`.

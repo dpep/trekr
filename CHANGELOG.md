@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **RSpec predicate matchers.** `be_empty`, `be_valid` and `have_key` have no
+  method of their own; RSpec answers them by calling `empty?`, `valid?` and
+  `has_key?` on the expectation's subject. Where `expect(x)` types `x`, the
+  matcher now resolves to that predicate (`be_exist` to `exists?`, as RSpec
+  falls back); otherwise the residue names the rule and offers the predicate's
+  definitions (DEC-090).
+
 ## 0.5.0 — 2026-09-27
 
 - **Upgrading drops and rebuilds the index** (store v34): run `trekr --index`

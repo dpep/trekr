@@ -135,7 +135,30 @@ struct Extractor<'a> {
     /// `None` for one whose `self` is known — a method body, a class body, an
     /// RSpec group or example.
     open_blocks: Vec<Option<Pos>>,
+    /// The matcher handed to an expectation, by where its name starts, and
+    /// what the expectation was handed (DEC-090).
+    matcher_subjects: HashMap<usize, Subject>,
     facts: Facts,
+}
+
+/// What an expectation is about, as a receiver: `x` in `expect(x).to`.
+/// Untyped when the source does not say — `is_expected`, a matcher not handed
+/// to one at all.
+#[derive(Clone)]
+struct Subject {
+    recv: RecvShape,
+    recv_text: Option<String>,
+    recv_pos: Option<Pos>,
+    recv_value: Option<RecvValue>,
+}
+
+impl Subject {
+    const UNTYPED: Subject = Subject {
+        recv: RecvShape::Other,
+        recv_text: None,
+        recv_pos: None,
+        recv_value: None,
+    };
 }
 
 /// Prism's syntax errors, with positions.
@@ -194,6 +217,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         singleton_exec: 0,
         configure_params: Vec::new(),
         open_blocks: Vec::new(),
+        matcher_subjects: HashMap::new(),
     };
     ex.visit(&parsed.node());
     ex.facts
@@ -777,6 +801,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.handle_configure_mixin(node);
         self.handle_define_method(node);
         self.handle_group_member(node);
+        self.note_matcher_subject(node);
         let consumed = self.handle_macro(node);
         // A macro is *also* an ordinary method call — `belongs_to` really is
         // `ActiveRecord::Associations::ClassMethods#belongs_to`. Consuming one
@@ -1533,6 +1558,64 @@ impl<'pr> Extractor<'_> {
             n => format!("{base}_{n}"),
         };
         crate::core::rspec::segment(&name)
+    }
+
+    /// `expect(x).to be_empty`: a matcher handed to an expectation asks the
+    /// expectation's subject, so remember what that was until the matcher's
+    /// call is recorded (DEC-090). `x.should be_empty` is the older spelling.
+    fn note_matcher_subject(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        let Some(name) = method_name(call) else {
+            return;
+        };
+        let subject = match name.as_str() {
+            "to" | "not_to" | "to_not" => {
+                let Some(target) = call.receiver().and_then(|r| r.as_call_node()) else {
+                    return;
+                };
+                if target.receiver().is_some() || target.block().is_some() {
+                    return;
+                }
+                match method_name(&target).as_deref() {
+                    Some("expect") => match arg_nodes(&target).as_slice() {
+                        [value] => self.subject_of(value),
+                        _ => return,
+                    },
+                    Some("is_expected") => Subject::UNTYPED,
+                    _ => return,
+                }
+            }
+            "should" | "should_not" => match call.receiver() {
+                Some(value) => self.subject_of(&value),
+                None => Subject::UNTYPED,
+            },
+            _ => return,
+        };
+        let Some(matcher) = arg_nodes(call)
+            .into_iter()
+            .next()
+            .and_then(|a| a.as_call_node())
+        else {
+            return;
+        };
+        if matcher.receiver().is_none()
+            && let Some(message) = matcher.message_loc()
+        {
+            self.matcher_subjects
+                .insert(message.start_offset(), subject);
+        }
+    }
+
+    /// An expression as a receiver, as `record_call` reads one.
+    fn subject_of(&self, value: &Node<'pr>) -> Subject {
+        let (recv, recv_text) = receiver_shape(value);
+        Subject {
+            recv_pos: (recv == RecvShape::Local).then(|| self.pos(value.location().start_offset())),
+            recv_value: (recv == RecvShape::Other)
+                .then(|| self.recv_value(value))
+                .flatten(),
+            recv,
+            recv_text,
+        }
     }
 
     /// `let(:x)`, `let!(:x)`, `subject(:x)` and `subject` define a method on
@@ -2293,6 +2376,31 @@ impl<'pr> Extractor<'_> {
         // method", which is a different question. A bare call in a class body
         // dispatches on the class even though a `def` there does not.
         let singleton = self.self_is_class();
+        let block_owner = self.open_blocks.last().copied().flatten();
+        let block = call.block().is_some();
+        let predicate = (recv == RecvShape::Implicit && rspec::in_group(&self.nesting))
+            .then(|| rspec::predicate(&name))
+            .flatten()
+            .map(|predicate| {
+                let subject = self
+                    .matcher_subjects
+                    .remove(&message.start_offset())
+                    .unwrap_or(Subject::UNTYPED);
+                Box::new(Call {
+                    name: predicate,
+                    recv: subject.recv,
+                    recv_text: subject.recv_text,
+                    nesting: self.nesting.clone(),
+                    singleton: false,
+                    recv_pos: subject.recv_pos,
+                    recv_value: subject.recv_value,
+                    block_owner,
+                    argc,
+                    block,
+                    pos,
+                    predicate: None,
+                })
+            });
         self.facts.calls.push(Call {
             name,
             recv,
@@ -2301,10 +2409,11 @@ impl<'pr> Extractor<'_> {
             singleton,
             recv_pos,
             recv_value,
-            block_owner: self.open_blocks.last().copied().flatten(),
+            block_owner,
             argc,
-            block: call.block().is_some(),
+            block,
             pos,
+            predicate,
         });
         self.record_symbol_arguments(call);
     }
@@ -2349,6 +2458,7 @@ impl<'pr> Extractor<'_> {
             recv_pos: None,
             recv_value: None,
             block_owner: None,
+            predicate: None,
             argc,
             block,
             pos,
@@ -2499,6 +2609,7 @@ impl<'pr> Extractor<'_> {
                 recv_pos: None,
                 recv_value: None,
                 block_owner: None,
+                predicate: None,
                 // Unknowable: whatever invokes it decides the arity.
                 argc: None,
                 block: false,

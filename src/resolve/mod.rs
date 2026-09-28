@@ -125,6 +125,11 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
     let shape = call.recv.as_str();
     match receiver_of(tree, facts, call, path) {
         Some(receiver) => {
+            if let Some(predicate) = &call.predicate
+                && answered_by_matchers(tree, &receiver, &call.name)
+            {
+                return predicate_answer(tree, facts, call, predicate, path);
+            }
             match tree.lookup(&receiver.fqn, receiver.singleton, &call.name) {
                 Some(found) => {
                     // A method Tapioca generated has no source of its own. Send
@@ -254,6 +259,61 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
             None,
             "the receiver's type is not determined by this file",
         ),
+    }
+}
+
+/// Is this a name only `RSpec::Matchers#method_missing` answers — no method
+/// of its own, on an example whose matchers' `method_missing` is RSpec's?
+fn answered_by_matchers(tree: &Tree, receiver: &Receiver, name: &str) -> bool {
+    receiver.via == "example_group"
+        && tree
+            .lookup(&receiver.fqn, receiver.singleton, name)
+            .is_none()
+        && tree
+            .lookup(&receiver.fqn, receiver.singleton, "method_missing")
+            .is_some_and(|catcher| catcher.owner == rspec::MATCHERS)
+}
+
+/// A predicate matcher answers with the predicate it calls on the subject:
+/// `be_empty` is `empty?`, or `empties?` when that is what the subject has,
+/// as BePredicate falls back to the present tense (DEC-090).
+fn predicate_answer(
+    tree: &Tree,
+    facts: &Facts,
+    matcher: &Call,
+    predicate: &Call,
+    path: &str,
+) -> MethodAnswer {
+    let answer = call_at(tree, facts, predicate, path);
+    let answer = match rspec::present_tense(&predicate.name) {
+        Some(present) if answer.status == Status::Residue && matcher.name.starts_with("be_") => {
+            let present = Call {
+                name: present,
+                ..predicate.clone()
+            };
+            let fallback = call_at(tree, facts, &present, path);
+            if fallback.status == Status::Residue {
+                answer
+            } else {
+                fallback
+            }
+        }
+        _ => answer,
+    };
+    if answer.status == Status::Residue {
+        let why = answer.reason.clone().unwrap_or_default();
+        return MethodAnswer {
+            reason: Some(format!(
+                "`{}` is RSpec's predicate matcher, which calls `{}` on the expectation's \
+                 subject: {why}",
+                matcher.name, predicate.name
+            )),
+            ..answer
+        };
+    }
+    MethodAnswer {
+        resolved_via: Some("predicate_matcher".to_string()),
+        ..answer
     }
 }
 

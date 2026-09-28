@@ -565,6 +565,11 @@ pub(crate) struct Call {
     /// or RSpec example body.
     #[serde(skip)]
     pub(crate) block_owner: Option<Pos>,
+    /// RSpec's predicate matcher (`be_empty`, `have_key`): the call it makes
+    /// on the expectation's subject — `empty?` sent to what `expect` was
+    /// handed, untyped when it was handed nothing this file shows.
+    #[serde(skip)]
+    pub(crate) predicate: Option<Box<Call>>,
     /// Positional argument count, or `None` when a splat makes it unknowable.
     pub(crate) argc: Option<u32>,
     pub(crate) block: bool,
@@ -673,6 +678,10 @@ pub(crate) mod rspec {
     /// What every example group subclasses.
     pub(crate) const EXAMPLE_GROUP: &str = "RSpec::Core::ExampleGroup";
 
+    /// Where the matchers live, and the `method_missing` that makes the
+    /// dynamic ones (DEC-090).
+    pub(crate) const MATCHERS: &str = "RSpec::Matchers";
+
     const OPEN: &str = "(group ";
 
     /// A group's segment, named as RSpec names the class (`AccordTypesDecimal`).
@@ -698,6 +707,29 @@ pub(crate) mod rspec {
             .filter_map(|s| s.strip_prefix(OPEN)?.strip_suffix(')'))
             .collect();
         format!("RSpec::ExampleGroups::{}", names.join("::"))
+    }
+
+    /// The predicate a dynamic matcher calls on its subject, as
+    /// `RSpec::Matchers#method_missing` reads the name: `be_empty` and
+    /// `be_an_empty` → `empty?` (BePredicate), `have_key` → `has_key?` (Has).
+    pub(crate) fn predicate(matcher: &str) -> Option<String> {
+        if matcher.ends_with(['?', '!', '=']) {
+            return None;
+        }
+        if let Some(root) = matcher.strip_prefix("have_") {
+            return (!root.is_empty()).then(|| format!("has_{root}?"));
+        }
+        let rest = matcher.strip_prefix("be_")?;
+        let root = rest
+            .strip_prefix("an_")
+            .or_else(|| rest.strip_prefix("a_"))
+            .unwrap_or(rest);
+        (!root.is_empty()).then(|| format!("{root}?"))
+    }
+
+    /// BePredicate's fallback when the subject has no `exist?`: `exists?`.
+    pub(crate) fn present_tense(predicate: &str) -> Option<String> {
+        predicate.strip_suffix('?').map(|root| format!("{root}s?"))
     }
 
     /// RSpec's `base_name_for`: a description as a constant name.
@@ -737,6 +769,17 @@ pub(crate) mod rspec {
             assert_eq!(base_name("#to_s"), "ToS");
             assert_eq!(base_name("2 widgets"), "Nested2Widgets");
             assert_eq!(base_name(""), "Anonymous");
+        }
+
+        #[test]
+        fn a_dynamic_matcher_names_the_predicate_it_calls() {
+            assert_eq!(predicate("be_empty").as_deref(), Some("empty?"));
+            assert_eq!(predicate("be_an_admin").as_deref(), Some("admin?"));
+            assert_eq!(predicate("be_a_uuid").as_deref(), Some("uuid?"));
+            assert_eq!(predicate("have_key").as_deref(), Some("has_key?"));
+            assert_eq!(predicate("be_"), None);
+            assert_eq!(predicate("eq"), None);
+            assert_eq!(present_tense("exist?").as_deref(), Some("exists?"));
         }
 
         #[test]

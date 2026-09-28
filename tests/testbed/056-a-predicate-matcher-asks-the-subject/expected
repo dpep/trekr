@@ -1,0 +1,17 @@
+# `be_empty` and `have_key` are RSpec's predicate matchers: no method of
+# those names exists, and `RSpec::Matchers#method_missing` answers them by
+# calling `empty?` / `has_key?` on the expectation's subject (BePredicate,
+# Has). They answered residue — "nothing indexed defines this name" — in every
+# spec. Where `expect(x)` types its subject, the answer is the subject's
+# predicate; `be_exist` falls back to the present tense, `exists?`, as RSpec
+# does.
+def spec/widget_spec.rb:4:23 status=resolved owner=Widget via=predicate_matcher site=lib/widget.rb:2
+def spec/widget_spec.rb:5:27 status=resolved owner=Widget site=lib/widget.rb:5
+def spec/widget_spec.rb:6:23 status=resolved owner=Widget site=lib/widget.rb:8
+# A matcher RSpec defines is itself, whatever its name looks like.
+def spec/widget_spec.rb:7:23 status=resolved owner=RSpec::Matchers
+# The rule is named when the subject is untyped, when its type has no such
+# predicate, and when the matcher is not handed to `to` at all.
+def spec/widget_spec.rb:8:22 status=residue reason=predicate
+def spec/widget_spec.rb:9:23 status=residue reason=predicate
+def spec/widget_spec.rb:10:29 status=residue reason=predicate
