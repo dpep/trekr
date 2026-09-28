@@ -4521,9 +4521,9 @@ against the answer rather than typing it.
 
 ## DEC-090 — A predicate matcher is the predicate it calls on the subject
 
-**Decided.** An implicit `be_xxx` or `have_xxx` call in an example group, for
-which the group has no method of that name and whose `method_missing` is
-`RSpec::Matchers`', answers with the method RSpec's `method_missing` sends:
+**Decided.** An implicit `be_xxx` or `have_xxx` call in an example, for
+which the group has no method of that name and whose ancestors hold
+`RSpec::Matchers` with its `method_missing`, answers with the method RSpec's `method_missing` sends:
 `be_empty` and `be_an_empty` → `empty?` (BePredicate), `have_key` →
 `has_key?` (Has), and for `be_`, the present tense (`be_exist` → `exists?`)
 when the subject has no `exist?`, as `BePredicate#predicate_method_name`
@@ -4544,7 +4544,11 @@ names the rule — "`be_empty` is RSpec's predicate matcher, which calls
 as candidates. A matcher RSpec, a gem or the spec defines (`be_within`,
 `have_attributes`) is found first and is itself.
 
-**Only where RSpec's `method_missing` answers.** Without it in the chain —
+**Only where RSpec's `method_missing` answers.** ExampleGroup defines a
+`method_missing` of its own, which comes first and hands every name that is
+not a group method on with `super`; the rule asks for RSpec::Matchers' in
+the chain, not the nearest — the first build asked for the nearest, and
+fired in no real spec. Without RSpec::Matchers' in the chain —
 a checkout that indexes no rspec-expectations — `be_nil` could be a real
 matcher the index cannot see, and reading it as `nil?` would be a guess. The
 matcher's call is resolve-time only: nothing is stored, so `--refs

@@ -25,6 +25,12 @@ module RSpec
         end
       end
 
+      # The real one raises for a group-only name, and otherwise hands on
+      # to `super`: RSpec::Matchers' own.
+      def method_missing(name, *args)
+        super(name, *args)
+      end
+
       define_example_method :it
       define_example_group_method :describe
     end

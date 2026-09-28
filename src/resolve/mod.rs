@@ -268,14 +268,19 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
 }
 
 /// Is this a name only `RSpec::Matchers#method_missing` answers — no method
-/// of its own, on an example whose matchers' `method_missing` is RSpec's?
+/// of its own, on an example that has RSpec's matchers? ExampleGroup's own
+/// `method_missing` comes first and hands every such name on with `super`.
 fn answered_by_matchers(tree: &Tree, receiver: &Receiver, name: &str) -> bool {
     receiver.via == "example_group"
+        && !receiver.singleton
+        && tree.lookup(&receiver.fqn, false, name).is_none()
         && tree
-            .lookup(&receiver.fqn, receiver.singleton, name)
-            .is_none()
+            .ancestors(&receiver.fqn)
+            .chain
+            .iter()
+            .any(|ancestor| ancestor == rspec::MATCHERS)
         && tree
-            .lookup(&receiver.fqn, receiver.singleton, "method_missing")
+            .lookup(rspec::MATCHERS, false, "method_missing")
             .is_some_and(|catcher| catcher.owner == rspec::MATCHERS)
 }
 

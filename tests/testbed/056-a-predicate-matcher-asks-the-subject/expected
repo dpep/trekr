@@ -5,6 +5,9 @@
 # spec. Where `expect(x)` types its subject, the answer is the subject's
 # predicate; `be_exist` falls back to the present tense, `exists?`, as RSpec
 # does.
+# ExampleGroup's own `method_missing` comes first in the chain, and hands on
+# to RSpec::Matchers' with `super`: the rule asks for RSpec::Matchers' in the
+# chain, not for the nearest.
 def spec/widget_spec.rb:4:23 status=resolved owner=Widget via=predicate_matcher site=lib/widget.rb:2
 def spec/widget_spec.rb:5:27 status=resolved owner=Widget site=lib/widget.rb:5
 def spec/widget_spec.rb:6:23 status=resolved owner=Widget site=lib/widget.rb:8
