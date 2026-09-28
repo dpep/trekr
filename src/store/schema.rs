@@ -69,7 +69,7 @@ CREATE TABLE def (
 CREATE TABLE ancestry (
   blob_id  INTEGER NOT NULL REFERENCES blob(id) ON DELETE CASCADE,
   owner    TEXT    NOT NULL,
-  relation TEXT    NOT NULL,              -- superclass | include | prepend | extend
+  relation TEXT    NOT NULL,              -- superclass | include | prepend | extend | load_hooks
   target   TEXT    NOT NULL,              -- constant as written, or 'self'
   line     INTEGER NOT NULL,
   col      INTEGER NOT NULL

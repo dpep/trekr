@@ -51,7 +51,14 @@
   Helpers)` add to `Widget`'s chain as the same line in its body would, so
   `Widget.new.help` resolves, and a `super` in a prepended module lands on the
   class's own method (DEC-097). Only a mixin that runs as its file loads
-  counts: one under an `if` or inside a method may never run.
+  counts: one under an `if`, inside a method or in a block may not have run.
+
+- **`ActiveSupport.on_load` blocks mix into the class that runs the hook.**
+  `ActiveSupport.on_load(:active_record) { include Tracking }` adds `Tracking`
+  to whatever calls `ActiveSupport.run_load_hooks(:active_record, …)` — read
+  from the indexed gems, not a table — so a gem's model methods and overrides
+  resolve on every model (DEC-098). An `include` in such a block was
+  previously credited to the class the block was written in.
 
 ### Fixed
 

@@ -706,44 +706,64 @@ impl Tree {
         }
         tree.imply_namespaces();
 
-        let edges: Vec<PlacedEdge> = edges
+        // Which classes run each `on_load` hook (DEC-098), settled first
+        // because a hook's mixins land on them.
+        let mut hook_bases: HashMap<String, Vec<String>> = HashMap::new();
+        for edge in edges.iter().filter(|edge| edge.relation == "load_hooks") {
+            if let Some((base, _)) = tree.edge_owner(&edge.owner) {
+                let bases = hook_bases.entry(edge.target.clone()).or_default();
+                if !bases.contains(&base) {
+                    bases.push(base);
+                }
+            }
+        }
+        let mut edges: Vec<(bool, PlacedEdge)> = edges
             .into_iter()
-            .filter_map(|edge| {
-                let sent = edge.owner.first().and_then(|s| runtime::sent_to(s));
-                let (scope, nesting) = match sent {
-                    // `Widget.include(Helpers)` (DEC-097): both constants are
-                    // read where the call is written, and a receiver the
-                    // tree does not hold has no chain to join.
-                    Some(receiver) => {
+            .filter(|edge| edge.relation != "load_hooks")
+            .flat_map(|edge| {
+                let runtime = edge.owner.first().is_some_and(|s| runtime::is_runtime(s));
+                let hook = edge.owner.first().and_then(|s| runtime::hook_name(s));
+                let owners: Vec<(String, Vec<String>)> = match hook {
+                    // Both the hook's classes and the module are read where
+                    // the block is written.
+                    Some(hook) => {
                         let written = tree.scopes(&edge.owner[1..]);
-                        (tree.find_scope(receiver, &written)?, written)
+                        let bases = hook_bases.get(hook).map(Vec::as_slice).unwrap_or_default();
+                        bases
+                            .iter()
+                            .map(|base| (base.clone(), written.clone()))
+                            .collect()
                     }
-                    None => {
-                        let owner = tree.scopes(&edge.owner);
-                        let scope = owner.first().cloned().unwrap_or_default();
-                        // Ruby evaluates a superclass expression *outside* the
-                        // class body: `class C < Base` looks up `Base` where
-                        // `C` is written, not where `C`'s constants live.
-                        // Every other relation is written inside.
-                        let nesting = if edge.relation == "superclass" {
-                            owner.get(1..).unwrap_or_default().to_vec()
-                        } else {
-                            owner
-                        };
-                        (scope, nesting)
-                    }
+                    None => tree.edge_owner(&edge.owner).into_iter().collect(),
                 };
-                Some(PlacedEdge {
-                    scope,
-                    relation: edge.relation,
-                    target: Target {
-                        name: edge.target,
-                        nesting,
-                    },
-                    path: edge.path,
+                owners.into_iter().map(move |(scope, nesting)| {
+                    // Ruby evaluates a superclass expression *outside* the
+                    // class body: `class C < Base` looks up `Base` where `C`
+                    // is written, not where `C`'s constants live. Every other
+                    // relation is written inside.
+                    let nesting = if edge.relation == "superclass" {
+                        nesting.get(1..).unwrap_or_default().to_vec()
+                    } else {
+                        nesting
+                    };
+                    let placed = PlacedEdge {
+                        scope,
+                        relation: edge.relation.clone(),
+                        target: Target {
+                            name: edge.target.clone(),
+                            nesting,
+                        },
+                        path: edge.path.clone(),
+                    };
+                    (runtime, placed)
                 })
             })
             .collect();
+        // A mixin sent to a class, or run by its hook, runs after the class
+        // body that defines it, whichever file sorts first — and the order of
+        // a class's mixins is the order of its ancestors.
+        edges.sort_by_key(|(runtime, _)| *runtime);
+        let edges: Vec<PlacedEdge> = edges.into_iter().map(|(_, edge)| edge).collect();
 
         // A name declared with two different superclasses is two classes in
         // two programs (DEC-072), so it is split before anything attaches to it.
@@ -869,6 +889,23 @@ impl Tree {
         // constantly because the prefix belongs to a gem. Top level is the
         // honest guess.
         qualify(prefix, last)
+    }
+
+    /// The scope an edge attaches to, and the nesting its target is written
+    /// in: the body the owner opens, or, for a mixin sent to a constant
+    /// (DEC-097), the class that constant names, with the nesting the call
+    /// is written in. A receiver the tree does not hold has no chain to join.
+    fn edge_owner(&self, owner: &[String]) -> Option<(String, Vec<String>)> {
+        match owner.first().and_then(|s| runtime::sent_to(s)) {
+            Some(receiver) => {
+                let written = self.scopes(&owner[1..]);
+                Some((self.find_scope(receiver, &written)?, written))
+            }
+            None => {
+                let scopes = self.scopes(owner);
+                Some((scopes.first().cloned().unwrap_or_default(), scopes))
+            }
+        }
     }
 
     /// The class or module a constant written in `scopes` names, looked up

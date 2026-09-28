@@ -467,8 +467,12 @@ pub(crate) struct Ancestry {
 /// (DEC-097). The receiving class is a constant the call names, so its edge's
 /// owner starts with a segment saying so, and the tree looks the constant up
 /// in the rest of the nesting instead of placing a body there.
+///
+/// An `ActiveSupport.on_load(:name)` block's mixins land on whatever runs the
+/// hook (DEC-098), so their owner starts with an `(on_load name)` segment.
 pub(crate) mod runtime {
     const SENT: &str = "(sent ";
+    const HOOK: &str = "(on_load ";
 
     /// The owner segment for a mixin sent to the constant `receiver`, as
     /// written.
@@ -480,6 +484,22 @@ pub(crate) mod runtime {
     pub(crate) fn sent_to(segment: &str) -> Option<&str> {
         segment.strip_prefix(SENT)?.strip_suffix(')')
     }
+
+    /// Is this owner segment a mixin sent or hooked rather than written in
+    /// a body?
+    pub(crate) fn is_runtime(segment: &str) -> bool {
+        segment.starts_with(SENT) || segment.starts_with(HOOK)
+    }
+
+    /// The owner segment for a mixin in an `on_load(:name)` block.
+    pub(crate) fn hook(name: &str) -> String {
+        format!("{HOOK}{name})")
+    }
+
+    /// The hook a `hook` segment names.
+    pub(crate) fn hook_name(segment: &str) -> Option<&str> {
+        segment.strip_prefix(HOOK)?.strip_suffix(')')
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -489,6 +509,10 @@ pub(crate) enum Relation {
     Include,
     Prepend,
     Extend,
+    /// The owner runs the `ActiveSupport.on_load` blocks the target names:
+    /// `ActiveSupport.run_load_hooks(:active_record, Base)` (DEC-098). No
+    /// ancestor itself, it says where a hook's mixins land.
+    LoadHooks,
 }
 
 impl Relation {
@@ -498,6 +522,7 @@ impl Relation {
             Relation::Include => "include",
             Relation::Prepend => "prepend",
             Relation::Extend => "extend",
+            Relation::LoadHooks => "load_hooks",
         }
     }
 
@@ -507,6 +532,7 @@ impl Relation {
             "include" => Relation::Include,
             "prepend" => Relation::Prepend,
             "extend" => Relation::Extend,
+            "load_hooks" => Relation::LoadHooks,
             _ => return None,
         })
     }

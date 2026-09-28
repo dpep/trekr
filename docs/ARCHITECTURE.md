@@ -133,8 +133,16 @@ Two things the blob layer cannot know, resolved here:
   `(sent Widget)` segment: the blob layer records the constant as written,
   and the tree looks it up in the rest of the nesting — lexical scopes and the
   top level, no ancestors, since no chain is complete while edges attach. A
-  receiver the tree does not hold drops the edge. One under a conditional or
-  inside a method is not recorded, since it may never run.
+  receiver the tree does not hold drops the edge. One under a conditional,
+  inside a method, or in a block handed to a call is not recorded, since it
+  may not have run.
+- **An `on_load` hook's mixins** (DEC-098). `ActiveSupport.run_load_hooks(
+  :active_record, Base)` is an edge of relation `load_hooks`, owner `Base`
+  (sent) or the class body it is written in (`self`), target the hook's name.
+  A mixin in `ActiveSupport.on_load(:active_record) { … }` has an owner
+  starting `(on_load active_record)`, and the tree attaches it to every class
+  that runs that hook. Sent and hooked edges attach after every body's, since
+  they run once the class exists.
 
 **A name declared with two superclasses is split** (DEC-072). Ruby raises
 "superclass mismatch" when both load, so a checkout holding `class Post <

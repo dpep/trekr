@@ -2358,3 +2358,30 @@ sorbet-runtime's `if defined?` prepend, widget_shop's `find_by` and `where`
 `--refs` sites moved excluded → possible while `Object.prepend(self)` in
 activesupport's `require_dependency.rb` put an unresolvable `self` into every
 chain; `self` in a module's body is now the module.
+
+### `on_load` hooks (DEC-098)
+
+Against the DEC-097 build (the three-build comparison, base → DEC-097 →
+DEC-098, is in each row where it moved):
+
+| | base | DEC-097 | DEC-098 |
+| --- | ---: | ---: | ---: |
+| polyid, a spec: correct / confidently wrong of 535 | 281 / 7 | 281 / 7 | **302 / 0** |
+| polyid, not a spec: correct of 56 | 29 | 29 | **35** |
+| accord gem floor: correct of 244 | 124 | 125 | 125 |
+| widget_shop gem floor: correct / confidently wrong of 2,838 | 1,521 / 21 | 1,521 / 21 | 1,521 / 21 |
+| clicks, definition misses of 21,154 | 5,953 | 5,940 | **5,890** |
+| … "known type, method not found" | 284 | 284 | 256 |
+| … "module never mixed in" | 151 | 138 | 116 |
+| rails `--dead` candidates | 2,366 | 2,366 | 2,365 |
+
+graph_weaver's and accord's app gold sets did not move. The polyid sites the
+dogfood log carried (`cache_spec.rb:81:12` `id_for`, `user_spec.rb:54:33`
+`find`) resolve to `PolyId::Model::ClassMethods`.
+
+Measured and not kept: recording hooks registered inside a block. The
+DEC-098 build that did moved widget_shop's gem floor to 22 confidently wrong:
+`action_methods` in actionmailer's `respond_to_missing?`, traced before the
+Railtie's `initializer` ran its `on_load(:action_mailer)` include of
+`AbstractController::UrlFor`. The same rule now covers sent mixins, and
+every move DEC-097 measured is still there.

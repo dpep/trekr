@@ -22,6 +22,10 @@ module Setup
   end
 end
 
+Engine.configure do
+  Engine.prepend(Optional)
+end
+
 module Shop
   class Cart
   end

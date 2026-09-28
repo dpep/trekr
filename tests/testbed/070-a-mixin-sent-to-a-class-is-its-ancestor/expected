@@ -7,13 +7,13 @@
 # sent under a condition may never run: sorbet-runtime prepends to rspec-core
 # only `if defined?` it loaded first, and in accord's suite it had not. One
 # in a method runs only if the method is called (activerecord's encryption
-# `install_support`).
+# `install_support`), and one in a block when the block's receiver runs it.
 # `self` sent from a module's body is the module (`Object.prepend(self)`).
 ancestors Engine BootHook,Engine
 def app.rb:8:5 status=resolved owner=Engine via=super
 refs Engine#boot confirmed=1
 dead app.rb Engine#boot=super-only Shop::Pricing#price=single-caller
 ancestors Shop::Cart Shop::Cart,Shop::Pricing
-def app.rb:44:16 status=resolved owner=Shop::Pricing
-def app.rb:45:12 status=resolved owner=Shop::Finder
-def app.rb:54:12 status=resolved owner=Audit
+def app.rb:48:16 status=resolved owner=Shop::Pricing
+def app.rb:49:12 status=resolved owner=Shop::Finder
+def app.rb:58:12 status=resolved owner=Audit

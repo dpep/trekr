@@ -22,6 +22,15 @@ pub(crate) use line_index::LineIndex;
 use ruby_prism::{Node, Visit};
 use std::collections::HashMap;
 
+/// An `ActiveSupport.on_load` block being read (DEC-098).
+struct LoadHook {
+    name: String,
+    /// How many blocks were open, this one included.
+    depth: usize,
+    /// Registered as its file loads, so its mixins are recorded.
+    modelled: bool,
+}
+
 /// A lexical scope in progress.
 /// What kind of body a frame opened. It decides two different things that are
 /// easy to conflate: whether a `def` inside it is a singleton method, and what
@@ -139,6 +148,8 @@ struct Extractor<'a> {
     /// How many conditionals we are inside — `if`, `unless`, `case`, `&&`,
     /// `||`. A mixin sent from one may never run (DEC-097).
     conditional: usize,
+    /// The `ActiveSupport.on_load` blocks we are in (DEC-098).
+    load_hooks: Vec<LoadHook>,
     /// The blocks we are in, innermost last: the call each is handed to, or
     /// `None` for one whose `self` is known — a method body, a class body, an
     /// RSpec group or example.
@@ -248,6 +259,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         definers: HashMap::new(),
         singleton_exec: 0,
         configure_params: Vec::new(),
+        load_hooks: Vec::new(),
         conditional: 0,
         open_blocks: Vec::new(),
         matcher_subjects: HashMap::new(),
@@ -302,6 +314,40 @@ impl<'a> Extractor<'a> {
 
     fn in_group_body(&self) -> bool {
         self.frames.last().is_some_and(|f| f.group)
+    }
+
+    /// Does code written here run when its file loads? A runtime mixin is
+    /// recorded only then (DEC-097), since an edge that may not exist misleads
+    /// worse than a missing one. `Patch.prepend(Fix) if defined?(Patch)` is
+    /// how an optional integration is written, and sorbet-runtime prepends to
+    /// rspec-core's `let` that way only if rspec-core loaded first. A mixin
+    /// in a method runs if the method is called: activerecord's
+    /// `install_support` includes its encryption queries into every model
+    /// only when deterministic encryption is configured. And one in a block
+    /// runs when the block's receiver decides, after whatever ran before it:
+    /// a Railtie's `initializer do`. An `on_load` block counts as its class's
+    /// own file loading, which is when the hook runs it.
+    fn runs_as_file_loads(&self) -> bool {
+        let hooked = |at: usize| {
+            self.load_hooks
+                .iter()
+                .any(|hook| hook.modelled && hook.depth == at + 1)
+        };
+        self.conditional == 0
+            && !self.in_method_body()
+            && self
+                .open_blocks
+                .iter()
+                .enumerate()
+                .all(|(at, block)| block.is_none() || hooked(at))
+    }
+
+    /// The hook whose `on_load` block this is, directly: a block or a body
+    /// inside it runs as something else.
+    fn in_load_hook(&self) -> Option<&LoadHook> {
+        self.load_hooks
+            .last()
+            .filter(|hook| hook.depth == self.open_blocks.len())
     }
 
     /// Is `self` the class or module whose body this is — not a method, a
@@ -858,6 +904,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.note_definer(node);
         self.handle_configure_mixin(node);
         self.handle_sent_mixin(node);
+        self.handle_run_load_hooks(node);
         self.handle_define_method(node);
         self.handle_group_member(node);
         self.handle_custom_matcher(node);
@@ -982,8 +1029,23 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                             self.leave();
                         }
                         None => {
+                            // A hook registered later — in a Railtie's
+                            // `initializer`, under an `if` — is still a hook,
+                            // and its mixins are not the lexical scope's.
+                            let hook =
+                                load_hook(node).map(|name| (name, self.runs_as_file_loads()));
                             self.open_blocks.push(owner);
+                            let hook = hook.inspect(|(name, modelled)| {
+                                self.load_hooks.push(LoadHook {
+                                    name: name.clone(),
+                                    depth: self.open_blocks.len(),
+                                    modelled: *modelled,
+                                });
+                            });
                             self.visit(&block);
+                            if hook.is_some() {
+                                self.load_hooks.pop();
+                            }
                             self.open_blocks.pop();
                         }
                     },
@@ -1313,6 +1375,26 @@ fn method_name(call: &ruby_prism::CallNode<'_>) -> Option<String> {
     String::from_utf8(call.name().as_slice().to_vec()).ok()
 }
 
+/// Is this call sent to `ActiveSupport`?
+fn on_active_support(call: &ruby_prism::CallNode<'_>) -> bool {
+    call.receiver()
+        .and_then(|r| const_name(&r))
+        .is_some_and(|r| r.trim_start_matches("::") == "ActiveSupport")
+}
+
+/// The hook an `ActiveSupport.on_load(:name) { … }` block is registered for,
+/// when the block runs on the hook's class. With `yield: true` the class is
+/// the block's argument instead, and `self` is the caller's.
+fn load_hook(call: &ruby_prism::CallNode<'_>) -> Option<String> {
+    if method_name(call).as_deref() != Some("on_load") || !on_active_support(call) {
+        return None;
+    }
+    let args = arg_nodes(call);
+    let first = args.first()?;
+    let name = first.as_symbol_node().and(literal_name(first))?;
+    keyword_value(&args, "yield").is_none().then_some(name)
+}
+
 /// The relation a mixin method's name makes. `superclass` is no method.
 fn mixin_relation(name: &str) -> Option<Relation> {
     match name {
@@ -1423,7 +1505,7 @@ impl<'pr> Extractor<'_> {
     }
 
     fn handle_mixin(&mut self, macro_name: &str, args: &[Node<'pr>]) -> bool {
-        let Some(relation) = Relation::parse(macro_name) else {
+        let Some(relation) = mixin_relation(macro_name) else {
             return false;
         };
         let Some(owner) = self.mixin_owner() else {
@@ -1442,6 +1524,13 @@ impl<'pr> Extractor<'_> {
 
     /// The scope an `include` on `self` written here mixes into.
     fn mixin_owner(&self) -> Option<Vec<String>> {
+        // An `on_load` block runs on whatever runs the hook (DEC-098), a
+        // `def` around it or not, but only if it is registered at all.
+        if let Some(hook) = self.in_load_hook() {
+            let mut owner = vec![crate::core::runtime::hook(&hook.name)];
+            owner.extend(self.nesting.iter().cloned());
+            return (hook.modelled && self.runs_as_file_loads()).then_some(owner);
+        }
         // A mixin written inside a `def` is not this scope's ancestor. It runs
         // when the method runs, against whatever `self` is then — which is why
         // `has_secure_password` can write `include ActiveModel::Validations`
@@ -1496,6 +1585,41 @@ impl<'pr> Extractor<'_> {
         any
     }
 
+    /// `ActiveSupport.run_load_hooks(:active_record, Base)`: `Base` runs the
+    /// hook's `on_load` blocks (DEC-098). The class is a constant, looked up
+    /// as a sent mixin's receiver is, or `self` in its own body.
+    fn handle_run_load_hooks(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        if method_name(call).as_deref() != Some("run_load_hooks") || !on_active_support(call) {
+            return;
+        }
+        let args = arg_nodes(call);
+        let [name, base, ..] = &args[..] else {
+            return;
+        };
+        let Some(hook) = name.as_symbol_node().and(literal_name(name)) else {
+            return;
+        };
+        let owner = if base.as_self_node().is_some() {
+            self.self_is_the_scope().then(|| self.nesting.clone())
+        } else {
+            const_name(base).map(|written| {
+                let mut owner = vec![crate::core::runtime::sent(&written)];
+                owner.extend(self.nesting.iter().cloned());
+                owner
+            })
+        };
+        let Some(owner) = owner else {
+            return;
+        };
+        let pos = self.pos(name.location().start_offset());
+        self.facts.ancestry.push(Ancestry {
+            owner,
+            relation: Relation::LoadHooks,
+            target: hook,
+            pos,
+        });
+    }
+
     /// A mixin sent rather than written in a body (DEC-097):
     /// `Widget.include(Helpers)`, `Widget.send(:prepend, Patch)`, and
     /// `send(:include, Helpers)` on `self`. A side effect: the call is still
@@ -1517,16 +1641,7 @@ impl<'pr> Extractor<'_> {
             _ if on_self(call) => return,
             _ => (mixin_relation(&name), &args[..]),
         };
-        // Only a mixin that runs when its file loads is recorded, since an
-        // edge that may not exist misleads worse than a missing one.
-        // `Patch.prepend(Fix) if defined?(Patch)` is how an optional
-        // integration is written, and sorbet-runtime prepends to rspec-core's
-        // `let` that way only if rspec-core loaded first. A mixin in a method
-        // runs if the method is called: activerecord's `install_support`
-        // includes its encryption queries into every model only when
-        // deterministic encryption is configured.
-        let may_not_run = self.conditional > 0 || self.in_method_body();
-        let Some(relation) = relation.filter(|_| !may_not_run) else {
+        let Some(relation) = relation.filter(|_| self.runs_as_file_loads()) else {
             return;
         };
         let owner = match call.receiver() {
@@ -1642,7 +1757,7 @@ impl<'pr> Extractor<'_> {
     /// Helpers into every example group, and `config.extend` extends them
     /// (DEC-088). A metadata filter after the module is not read.
     fn handle_configure_mixin(&mut self, call: &ruby_prism::CallNode<'pr>) {
-        let Some(relation) = method_name(call).and_then(|name| Relation::parse(&name)) else {
+        let Some(relation) = method_name(call).and_then(|name| mixin_relation(&name)) else {
             return;
         };
         let on_config = call

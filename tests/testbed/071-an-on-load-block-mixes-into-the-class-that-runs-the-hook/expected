@@ -1,0 +1,18 @@
+# `ActiveSupport.on_load(:engine) { extend Lookup }` runs its block in the
+# class that runs the hook, `ActiveSupport.run_load_hooks(:engine, Base)`,
+# and was an ordinary block: polyid's `User.id_for` found nothing, and
+# `User.find` went to ActiveRecord's instead of the override polyid mixes in
+# this way. The hook runs when the class's own file finishes, so its mixins
+# come after the class body's, whichever file sorts first. With `yield: true`
+# the class is the block's argument and `self` is not it.
+def app.rb:29:8 status=resolved owner=Lookup
+def app.rb:30:8 status=resolved owner=Lookup
+def app.rb:31:16 status=resolved owner=Tagging
+def app.rb:32:16 status=residue
+# A hook registered inside a block runs when that block does, after whatever
+# ran first: in widget_shop's trace, a mailer called `action_methods` before
+# the Railtie's `initializer` included `AbstractController::UrlFor`. It is
+# not recorded, and its `include` is not the enclosing class's either, which
+# it used to be.
+def app.rb:45:16 status=residue
+def app.rb:46:13 status=residue

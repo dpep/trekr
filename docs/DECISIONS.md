@@ -4765,17 +4765,22 @@ in the patch had no class to land in (DEC-068's amendment), and the patch's
 methods were `--dead` candidates.
 
 **Only what runs when its file loads.** A sent mixin under a conditional
-(`if`, `unless`, `case`, `&&`, `||`) or inside a method is not recorded. The
-first cut recorded every one, and accord's gold set lost four correct answers
+(`if`, `unless`, `case`, `&&`, `||`), inside a method, or inside a block
+handed to a call is not recorded. The first cut recorded every one, and accord's gold set lost four correct answers
 to it: sorbet-runtime writes `if defined?(::RSpec::Core::MemoizedHelpers::
 ClassMethods) … ::RSpec::…::ClassMethods.prepend(MemoizedHelpers)`, which
 runs only when rspec-core loaded first, and in accord's suite it had not, so
 `let` went to sorbet's wrapper where Ruby ran rspec-core's. widget_shop's lost
 two to activerecord's encryption `install_support`, a method that includes its
 query overrides into every model only when deterministic encryption is
-configured. Body mixins (`include M if cond`) keep being recorded as before:
-they are rare, and the rule is about the shape optional integrations are
-written in.
+configured. A block runs when its receiver decides, after whatever ran
+first; a Railtie's `initializer do` runs at boot, but widget_shop's trace
+had a mailer call `action_methods` before the initializer's `on_load` included
+`AbstractController::UrlFor` (DEC-098). Only a block that says what it runs
+as and when — a class body's `class_eval`, an `on_load` hook as its class
+loads — counts as loading. Body mixins (`include M if cond`) keep being
+recorded as before: they are rare, and the rule is about the shape optional
+integrations are written in.
 
 **Why look the receiver up rather than place it** as DEC-086 places
 `X.class_eval do`. Placing is what a declaration does, and the receiver is a
@@ -4793,6 +4798,65 @@ lands on `BigDecimal#to_s`, excluded from `TimeWithZone#to_s`); rails
 
 **Not done.** `X.singleton_class.prepend(M)` (network_resiliency's adapters),
 a receiver held in a variable (`base.extend(ClassMethods)` in a
-`self.included` hook, `[Hash, Array].each { |k| k.prepend(M) }`). A block is
-not a condition: a Railtie `initializer do` runs at every boot, and its sent
-mixins are recorded.
+`self.included` hook, `[Hash, Array].each { |k| k.prepend(M) }`).
+
+## DEC-098 — An `on_load` block mixes into the classes that run its hook
+
+**Decided.** `ActiveSupport.run_load_hooks(:name, Base)` is an edge of
+relation `load_hooks`: `Base` runs `name`'s hooks. `Base` is a constant, looked
+up as a sent mixin's receiver is (DEC-097), or `self` in a class body. A mixin
+in `ActiveSupport.on_load(:name) { … }` — `include`, `extend`, `prepend`,
+bare or on `self`, and mixins sent from the block — has an owner starting
+`(on_load name)`, and the tree attaches it to every class that runs `name`.
+The map from hook to class is read from the index, not a table:
+`:action_controller` is `ActionController::Base` and `ActionController::API`
+because both write `run_load_hooks(:action_controller, self)`, and a gem's own
+hook works the same way. A hook no indexed class runs attaches nothing.
+
+**Why.** It is the one way Rails lets a gem reach a framework class it must
+not load early, so it is how most model extensions arrive: polyid's
+`ActiveSupport.on_load(:active_record) { include PolyId::Model }`. Its
+`User.id_for` found nothing (25 empty clicks in the replay), and `User.find`
+and `User.find_by` went to ActiveRecord's own at confidence 1 instead of
+the override — seven of polyid's confidently wrong gold answers, and the
+whole of that number.
+
+**Ordered after the class body.** The hook runs when the class's file
+finishes, and a mixin sent to a class runs once the class exists. Both are
+attached after every body's edges, whichever file sorts first, because the
+order of a class's mixins is the order of its ancestors: polyid's
+`ClassMethods#find` has to come before `ActiveRecord::Core::ClassMethods#find`
+in `User`'s singleton chain, and `lib/polyid.rb` sorts before
+`lib/active_record/base.rb` in no store at all.
+
+**Only a hook registered as its file loads.** An `on_load` inside a block, a
+method or a conditional runs when that code does. widget_shop's trace shows
+the cost of ignoring that: actionmailer's Railtie registers `on_load(:action_
+mailer) { include AbstractController::UrlFor }` inside an `initializer`, and
+a mailer called `action_methods` before it ran, so recording it made one
+correct gold answer confidently wrong. Such a block is still known to be a
+hook, and its mixins are no longer credited to the class it is written in, as
+every block's are: activestorage's Engine used to include
+`ActiveStorage::Attached::Model` that way.
+
+**Why an edge, not a table of its own.** DEC-002 keeps one table for "this
+scope gains that ancestor", and a hook is what decides which scope gains it.
+The row needs a scope, a name and a place, which is an edge's shape; the
+relation says it is not an ancestor itself, and the tree consumes it before
+attaching the rest.
+
+**With `yield: true`** the block is called with the class as its argument
+instead of evaluated in it, so its `self` is the caller's and it is not read
+as a hook.
+
+**Not done.** A `def` in an `on_load` block (it stays on the lexical scope,
+as in any block), `on_load(:x) { |base| base.include M }`, and a call's
+receiver inside the block, which is still the block's residue.
+
+**Measured** (BASELINE, "Runtime ancestry"): polyid's gold set, spec sites
+confidently wrong 7 → 0, correct 281 → 302; library sites correct 29 → 35.
+No other gold set moved. Clicks: definition misses 5,940 → 5,890 ("known
+type, method not found" 284 → 256, "module never mixed in" 138 → 116). rails
+`--refs`: one site excluded → possible, activestorage's `reload`, whose
+module no longer has the Engine as a false mixer. `--dead` on rails: one
+candidate fewer; on the activerecord-only store, none moved.
