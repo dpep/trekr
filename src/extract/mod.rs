@@ -2218,6 +2218,12 @@ impl<'pr> Extractor<'_> {
         let at = call.location().start_offset();
         // Not read at all: its calls are missing too, which `--dead` says.
         let unread = format!("{name} string");
+        // A string inside a string is offsets into the outer one's text, not
+        // the file's; not worth composing the maps for.
+        if !self.evals.is_empty() {
+            self.mark_dynamic(&unread, at);
+            return;
+        }
         let Some(pieces) = code_pieces(&first) else {
             self.mark_dynamic(&unread, at);
             return;
@@ -4956,6 +4962,10 @@ mod macro_call_tests {
         assert_eq!(marks(&computed), ["class_eval string"]);
         let broken = extract(b"class C\n  class_eval \"def x(\"\nend\n");
         assert_eq!(marks(&broken), ["class_eval string"]);
+        let nested = extract(
+            b"class C\n  class_eval <<~RUBY\n    class_eval \"def inner; end\"\n  RUBY\nend\n",
+        );
+        assert_eq!(marks(&nested), ["class_eval string"]);
         let unstated = extract(
             b"class C\n  LIST.each do |m|\n    module_eval \"def #{m}; go(:#{m}); end\"\n  end\nend\n",
         );

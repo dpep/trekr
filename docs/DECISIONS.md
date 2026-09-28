@@ -5714,7 +5714,7 @@ them heredocs), most inside methods, and every one before this was a string.
 answer. Reading it would take storing a constant's literal value and
 expanding templated rows in the tree. A string sent to another receiver
 (`Foo.class_eval "…"`), `instance_eval` with a string, and `eval` are not
-read.
+read, nor a string evaluated inside such a string, which marks the scope.
 
 ## DEC-133 — `X.new` makes what a custom `new` says it makes
 
