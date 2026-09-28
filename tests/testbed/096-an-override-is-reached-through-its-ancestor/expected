@@ -1,0 +1,7 @@
+# A method that overrides one an ancestor defines runs wherever the ancestor's
+# does, and those callers are often in a framework the checkout never calls
+# into by name: ActiveRecord asks `readonly?` of every record it saves.
+# `--dead` called such an override `unreferenced` with clear confidence.
+dead app.rb Summary#readonly?=override Summary#table_name=override Frozen#readonly?=override
+# Nothing above it defines these, so nothing reaches them that way.
+dead app.rb Record#readonly?=unreferenced Summary#tally=unreferenced Unmixed#readonly?=unreferenced

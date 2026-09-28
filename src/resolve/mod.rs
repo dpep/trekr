@@ -908,6 +908,45 @@ pub(super) fn super_landings(
     })
 }
 
+/// The methods a definition overrides: what a `super` written in it would
+/// reach, from each class that can run it. Whoever calls one of those can
+/// reach this one instead, framework code the checkout never names included
+/// (DEC-121). Each is `Owner#name`, or `Owner.name` on the singleton side.
+pub(crate) fn overridden(tree: &Tree, def: &crate::core::Def, path: &str) -> Vec<String> {
+    let probe = Call {
+        name: def.name.clone(),
+        recv: RecvShape::Super,
+        recv_text: None,
+        nesting: def.nesting.clone(),
+        singleton: def.singleton,
+        recv_pos: None,
+        recv_value: None,
+        block_owner: None,
+        in_example: false,
+        in_scope: false,
+        stands_for: None,
+        argc: None,
+        block: false,
+        pos: def.pos,
+    };
+    let Ok(landings) = super_landings(tree, &probe, path) else {
+        return Vec::new();
+    };
+    let mut overridden: Vec<String> = Vec::new();
+    for method in landings.per_class.iter().filter_map(|(_, m)| m.as_ref()) {
+        let separator = if method.singleton { "." } else { "#" };
+        let label = format!(
+            "{}{separator}{}",
+            crate::tree::public_name(&method.owner),
+            method.name
+        );
+        if !overridden.contains(&label) {
+            overridden.push(label);
+        }
+    }
+    overridden
+}
+
 /// Ancestors of the classes a `super` was asked from that the index could not
 /// resolve — where an unseen definition could be hiding.
 pub(super) fn unresolved_behind(tree: &Tree, landings: &SuperLandings) -> Vec<String> {

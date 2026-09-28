@@ -242,6 +242,9 @@ Every method defined in scope, checked against references from the **whole
 checkout** (not other indexed repos, so the answer does not depend on them). Tiers: `unreferenced` (nothing found), `convention-only` (reached only by
 a symbol handed to a macro — usually a sign it *is* used), `super-only` (reached
 only by `super` from the overrides in `super_from`: live exactly when they are),
+`override` (no reference, but it overrides the ancestor methods in `overrides`,
+so a framework calling those runs it — `readonly?` on a model; any other tier
+that overrides one is graded `lower`),
 `single-caller` (one reference: the inlining candidate; `caller` names it, and
 its `tier` says whether it certainly reaches the method — `possible` is an
 untyped receiver, and grades the row `lower`). Every row has a `reason` in

@@ -332,6 +332,14 @@ fn check_dead(case: &str, line: &str, answer: &serde_json::Value, failures: &mut
                 row["owner"], row["name"]
             ));
         }
+        // Likewise an override names what it overrides.
+        let overrides = row["overrides"].as_array().map_or(0, Vec::len);
+        if row["tier"] == "override" && overrides == 0 {
+            failures.push(format!(
+                "{case}: {line}\n      {}#{} is an override of nothing",
+                row["owner"], row["name"]
+            ));
+        }
     }
     for (method, want) in pairs(line) {
         let (owner, name) = method.rsplit_once('#').unwrap_or(("", &method));

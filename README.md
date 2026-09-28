@@ -146,7 +146,7 @@ never a silent guess. Every answer carries `status`, `confidence`, and
 
 ```console
 $ trekr --dead activerecord/lib/active_record/associations
-unreferenced     activerecord/lib/active_record/associations/collection_proxy.rb:1123  pretty_print  — no call, symbol or `super` names it
+override         activerecord/lib/active_record/associations/collection_proxy.rb:1123  pretty_print  — no call names it, but it overrides ActiveRecord::Relation#pretty_print, so a call of that may run it
 single-caller    activerecord/lib/active_record/associations/preloader/association.rb:32  load_records_in_batch  — one possible call, at activerecord/lib/active_record/associations/preloader/batch.rb:42: its receiver is untyped; its caller, group_and_load_similar, is itself a candidate   (lower confidence: untyped caller)
 convention-only  activerecord/lib/active_record/associations/association.rb:198  marshal_dump  — named only by a symbol handed to a macro (3)   (lower confidence: send)
 super-only       activerecord/lib/active_record/associations/belongs_to_association.rb:76  target_changed?  — reached only by `super` from ActiveRecord::Associations::BelongsToPolymorphicAssociation   (lower confidence: send, public_send)
@@ -157,11 +157,13 @@ inlining candidate; `caller` in JSON says where, and whether it certainly
 reaches the method or is an untyped receiver that may be another's),
 `convention-only` is reached only by a symbol handed to a macro, and
 `super-only` only by `super` from its overrides — live exactly when they are.
+`override` has no reference, but overrides a method an ancestor defines, so
+whatever calls that one — often the framework, never by this name — may run
+it; a candidate in another tier that overrides one is graded `lower`.
 Every row says which, in words. It is one pass and does not cascade: a method
 whose only caller is itself a candidate is `single-caller`, not
-`unreferenced`, and its reason says so. `pretty_print` above is a fair warning: `pp` calls it by protocol, and
-trekr does not read ERB, so a method used only from a view looks unreferenced
-too.
+`unreferenced`, and its reason says so. trekr does not read ERB, so a method
+used only from a view looks unreferenced.
 
 The bare forms are sugar: a position is `--def`, and `Owner#method` or a
 `Constant` is a **card** — a summary with the definition and, for a method,

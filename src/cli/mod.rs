@@ -1880,6 +1880,13 @@ fn dead_in(
         .unwrap_or_default();
         let live = refs::liveness(&found, &counts);
         let Some(tier) = live.tier else { continue };
+        // Whoever calls the method this overrides may run it instead, and
+        // that is often a framework the checkout never names (DEC-121).
+        let overrides = crate::resolve::overridden(&tree, def, file);
+        let tier = match tier {
+            "unreferenced" if !overrides.is_empty() => "override",
+            tier => tier,
+        };
         // The one written call a single caller has: whether it certainly
         // reaches this method is the difference between inlining it and
         // checking an untyped receiver first.
@@ -1903,8 +1910,18 @@ fn dead_in(
             }
             risky.push_str("untyped caller");
         }
+        if tier != "override" && !overrides.is_empty() {
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            risky.push_str(&format!("overrides {}", overrides.join(", ")));
+        }
         let reason = match (tier, &caller) {
             ("unreferenced", _) => "no call, symbol or `super` names it".to_string(),
+            ("override", _) => format!(
+                "no call names it, but it overrides {}, so a call of that may run it",
+                overrides.join(", ")
+            ),
             ("convention-only", _) => format!(
                 "named only by a symbol handed to a macro ({})",
                 live.by_symbol
@@ -1936,7 +1953,8 @@ fn dead_in(
             "super_refs": live.by_super,
             "super_from": live.super_from,
             "mentions_by_name": written,
-            "confidence": if risky.is_empty() { "clear" } else { "lower" },
+            "overrides": overrides,
+            "confidence": if risky.is_empty() && tier != "override" { "clear" } else { "lower" },
             "caveat": risky,
             "reason": reason,
         });

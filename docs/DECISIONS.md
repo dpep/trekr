@@ -5399,3 +5399,48 @@ rule from `--explain`.
 residue → correct across graph_weaver, accord and polyid, 60 spec clicks
 that missed now answer, and no confidently wrong count, `--refs` tier or
 `--dead` tier on rails moved.
+
+## DEC-121 — An override is reached through what it overrides
+
+**Decided.** `--dead` asks of each candidate what a `super` written in it
+would reach — DEC-068's lookup, from the method's owner, or from each class
+that mixes in its module. Each landing is a method this one overrides, and
+whoever calls that one on an instance of this class runs this one. A
+candidate with no reference that overrides something is tier `override`,
+confidence `lower`, and its reason names the method it overrides; one in
+another tier gets `overrides X` in its `caveat`, which grades it `lower`.
+Every row carries `overrides`.
+
+**Before**, `DatabaseViewRecord#readonly?` in mastodon, which ActiveRecord's
+`Persistence` asks of every record it saves, was `unreferenced` with clear
+confidence, as were each Arel visitor's `visit_X` (dispatched by name from
+`ToSql`), `extended` hooks and `init_with`. On rails, 71 candidates move
+`unreferenced` → `override` and 254 more get the caveat; on activerecord
+alone 39 and 146; on mastodon 4 and 10 (BASELINE, "A first-time Rails
+user").
+
+**Why a tier and not only a caveat.** `unreferenced` means nothing was
+found, and something was: a definition the method replaces, whose callers
+may be anywhere, most often in a gem the checkout's evidence does not cover
+(DEC-074). A caveat on `unreferenced` would still sort it with the
+candidates that truly have nothing. Where a reference was found, the tier
+already says so and the override is one more way in, so it lowers the
+grade and nothing more.
+
+**Not counted twice.** DEC-081 already makes a `self` call in the ancestor a
+`possible` reference to the override, so such a method is not a candidate
+at all, or is `single-caller`; the new rule reads no reference and changes
+no count. `super-only` (DEC-068) is the other direction: a method that
+overrides' `super` reaches. A method can be both, and keeps `super-only`
+with the caveat.
+
+**Measured and not taken.** The finding that prompted this named
+`AccountSummary`'s `readonly?`, which is `def self.readonly?`, a class
+method: ActiveRecord defines no class-level `readonly?` and nothing in
+mastodon or its 304 installed gems calls one, so it stays `unreferenced`,
+correctly. `--dead`'s text showed the bare name, which hid the `self.`; the
+next change names the method as Ruby's documentation does. A `def` that
+shadows the writer Rails generates for a schema column (`def x=(value)`)
+also overrides something, in a generated module trekr models on the class;
+only one of mastodon's unreferenced writers is such a column, so it was left.
+

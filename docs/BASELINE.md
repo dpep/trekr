@@ -2630,3 +2630,24 @@ rails `--dead` tier moved. On mastodon one method left `single-caller` (a
 spec now confirms `EmailDomainBlock#requires_approval?`) and one entered it:
 `User::Omniauthable::ClassMethods#find_for_omniauth` had two spec sites
 counted possible that are `Identity.find_for_omniauth`, now excluded.
+
+### An override is reached through what it overrides (DEC-121)
+
+| `--dead` | DEC-120 | DEC-121 |
+| --- | ---: | ---: |
+| rails: unreferenced clear / lower | 286 / 160 | **230 / 145** |
+| … `override` | — | 71 |
+| … any tier, `clear` | 1,090 | **1,001** |
+| activerecord only: unreferenced clear / lower | 243 / 105 | **206 / 103** |
+| … `override` | — | 39 |
+| mastodon: unreferenced clear / lower | 53 / 16 | **51 / 14** |
+| … `override` | — | 4 |
+
+Candidate counts are unchanged: the tier moves, nothing enters or leaves.
+Sampled, every `override` is real dispatch: the Arel visitors' `visit_X`
+(`ToSql` sends them by node class), association subclasses' `target_scope`
+and `stale_state`, `extended` hooks, `init_with`, and on mastodon
+`DatabaseViewRecord#readonly?`, `Setting#method_missing`,
+`Account.readonly_attributes`, `Admin::AccountAction.i18n_scope`. `--dead`
+on rails takes as long as before, within the run-to-run noise (5–7 s on a
+loaded machine).

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Changed
+
+- **`--dead` has an `override` tier.** A method nothing calls by name that
+  overrides one an indexed ancestor defines — `readonly?` in a model, a
+  visitor's `visit_X`, a module's `extended` — was `unreferenced` with clear
+  confidence, though whatever calls the ancestor's method, framework code
+  included, runs it. It is now `override`, graded `lower`, and a candidate in
+  another tier that overrides a method is graded `lower` too, its `caveat`
+  naming it. Every row has an `overrides` array in JSON. A script that
+  switches on `tier` must handle the new value (DEC-121).
+
 ### Fixed
 
 - **A call on `described_class` resolves.** `described_class.blocked?`
