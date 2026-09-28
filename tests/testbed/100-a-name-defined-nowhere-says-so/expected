@@ -1,0 +1,6 @@
+# A name nothing indexed defines at all is a different finding from a known
+# receiver whose ancestors lack it: the first is usually a gem generating
+# the method at runtime (Devise's `authenticate_user!`), the second a method
+# on some other class. Both said the second.
+def app.rb:3:5 status=residue reason=anywhere
+def app.rb:4:5 status=residue reason=ancestors

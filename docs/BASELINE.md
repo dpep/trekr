@@ -2679,3 +2679,20 @@ click replay's sample of accord's specs does not include that file.
 
 No gold verdict and no click moved: the gold sets are call sites, and the
 click replay clicks identifiers, never the inside of a string.
+
+### A name defined nowhere (DEC-126)
+
+Click misses by bucket, of 21,154 definition clicks (the total is
+unchanged; only the reason moved):
+
+| bucket | DEC-124 | DEC-126 |
+| --- | ---: | ---: |
+| defined nowhere indexed | — | 443 |
+| symbol argument | 683 | 439 |
+| chained receiver | 897 | 812 |
+| known type, method not found | 270 | 216 |
+| untyped local or parameter | 1,069 | 1,041 |
+| unindexed ancestor or constant | 198 | 180 |
+| spec DSL and let names | 218 | 208 |
+
+No gold verdict moved.

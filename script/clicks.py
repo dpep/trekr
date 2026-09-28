@@ -247,6 +247,7 @@ BUCKETS = [
     ("module never mixed in", "dynamic"),
     ("variable without a visible write", "dynamic"),
     ("unindexed ancestor or constant", "unindexed"),
+    ("defined nowhere indexed", "unindexed"),
     ("not a name (symbol, key, literal)", "not code"),
     ("other", "unread"),
 ]
@@ -270,6 +271,8 @@ def bucket(miss):
         return "variable without a visible write"
     if why.startswith(("ambiguous", "low confidence")):
         return "typed, with competitors"
+    if "defines this name anywhere" in why:
+        return "defined nowhere indexed"
     if "no class the index knows of mixes it in" in why:
         return "module never mixed in"
     if "the receiver's type is known" in why:

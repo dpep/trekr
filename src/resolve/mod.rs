@@ -250,6 +250,9 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                 // on: a relation's to its model (DEC-116), a class's
                 // `delegate_missing_to` to its target (DEC-112).
                 None if let Some(answer) = handed_on(tree, call, path, &receiver) => answer,
+                None if defined_nowhere(tree, call) => {
+                    residue(tree, call, path, Some(receiver), NOWHERE)
+                }
                 // The type is settled and Ruby would still not find the method
                 // in what is indexed. Say what was checked, never why: the
                 // cause is exactly what was not seen.
@@ -270,6 +273,7 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
             None,
             "the call is in a block handed to a method that may run it on another object",
         ),
+        None if defined_nowhere(tree, call) => residue(tree, call, path, None, NOWHERE),
         None => residue(
             tree,
             call,
@@ -278,6 +282,18 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
             "the receiver's type is not determined by this file",
         ),
     }
+}
+
+/// Why a name no indexed file defines has no answer. Distinct from a known
+/// receiver whose ancestors lack it: there, the name exists and the chain
+/// does not reach it; here, nothing trekr read defines it at all.
+const NOWHERE: &str = "nothing trekr indexed defines this name anywhere — not this checkout, \
+     its gems or Ruby core; a gem may generate it at runtime (Devise's \
+     `authenticate_user!` is one), or define it in a gem that is not installed";
+
+/// Does no indexed definition, anywhere, carry this call's name?
+fn defined_nowhere(tree: &Tree, call: &Call) -> bool {
+    tree.named(&call.name).is_empty()
 }
 
 /// Where a name the receiver lacks goes instead, when its class says.
@@ -2745,8 +2761,10 @@ mod tests {
 
     #[test]
     fn a_known_receiver_with_no_such_method_says_so_differently() {
-        let source =
-            "class Box\nend\nclass W\n  def go\n    b = Box.new\n    b.missing\n  end\nend\n";
+        // Another class has it, so the name exists and Box's chain lacks it;
+        // a name defined nowhere says that instead (testbed 100).
+        let source = "class Box\nend\nclass Crate\n  def missing\n  end\nend\n\
+                      class W\n  def go\n    b = Box.new\n    b.missing\n  end\nend\n";
         let found = answer(source, "missing");
         assert_eq!(found.status, Status::Residue);
         assert_eq!(

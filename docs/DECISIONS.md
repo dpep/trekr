@@ -5547,3 +5547,29 @@ checkouts) passes `--all`.
 *Reverses if:* a consumer needs the whole list often enough that `--all` is
 the common case.
 
+## DEC-126 — A name defined nowhere is its own residue
+
+**Decided.** When no indexed definition anywhere — the checkout, its gems,
+Ruby core — carries a call's name, the residue says that: "nothing trekr
+indexed defines this name anywhere … a gem may generate it at runtime
+(Devise's `authenticate_user!` is one), or define it in a gem that is not
+installed". It takes the place of both "the receiver's type is known, and
+nothing indexed in its ancestors defines this name" and "the receiver's
+type is not determined by this file", each of which is still said when the
+name does exist somewhere.
+
+**Why.** The two are different findings with different next steps. A
+known receiver whose ancestors lack a name that other classes define is a
+question about this class's chain — a mixin not seen, a method on another
+object. A name defined nowhere is a question about what was indexed: a
+method a gem writes with `class_eval` of a string or `define_method` with a
+computed name, or a gem not installed. Devise's `authenticate_user!` is
+generated per mapping, and a first-time user read the ancestors wording as
+trekr saying their controller lacked it.
+
+**Measured** (BASELINE, "A first-time Rails user"): of the 21,154 replayed
+clicks, 443 misses are now the new bucket (`script/clicks.py`'s "defined
+nowhere indexed"), drawn from "symbol argument" (244), "chained receiver"
+(85), "known type, method not found" (54) and the rest; no gold verdict
+moved, since a residue's reason is not scored.
+

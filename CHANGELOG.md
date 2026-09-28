@@ -52,6 +52,14 @@
   at column 3: no name at column 2``. It was a stderr note a pipe
   dropped. `--help` and the README now say that a column on no name snaps.
 
+- **A name nothing indexed defines says so.** `before_action
+  :authenticate_user!` in a Devise app answered "the receiver's type is
+  known, and nothing indexed in its ancestors defines this name", which
+  reads as a method missing from the controller. The residue now says no
+  indexed file defines the name anywhere — the checkout, its gems, Ruby
+  core — and that a gem may generate it at runtime. The ancestors reason is
+  kept for a name that exists elsewhere (DEC-126).
+
 - **A call on `described_class` resolves.** `described_class.blocked?`
   answers the described class's own `blocked?`, and `described_class.new.x`
   its instance method, `resolved_via: described_class`; both were residue,
