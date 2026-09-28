@@ -4860,3 +4860,40 @@ type, method not found" 284 → 256, "module never mixed in" 138 → 116). rails
 `--refs`: one site excluded → possible, activestorage's `reload`, whose
 module no longer has the Engine as a false mixer. `--dead` on rails: one
 candidate fewer; on the activerecord-only store, none moved.
+
+## DEC-099 — A concern's `included do` extends and defines on the includer
+
+**Decided.** Inside `included do … end` of a module that extends
+`ActiveSupport::Concern`, `extend M` is an `include M` on the concern's
+`ClassMethods`, and `def self.x` (or a `def` in `class << self`) is
+`ClassMethods#x`. When the concern writes no `ClassMethods`, one is declared
+at the block's `do`, `defined_via: included`, as DEC-033's routing of
+class-level macros already does.
+
+**Why.** The block is `class_eval`'d into each includer, so its `extend` and
+its singleton `def`s land on the includer's singleton class, which is where
+Concern puts `ClassMethods`. The extractor read them as the concern's own:
+ActiveModel::API's `extend ActiveModel::Naming` and ActiveRecord::Core's
+`def self.strict_loading_violation!` reached no model. Routing through
+`ClassMethods` says the same thing with machinery the tree already has.
+
+**Declared at `do`.** The first cut declared the module at `included`, like
+the macro routing, and a click on `included` then answered `ClassMethods`:
+two of widget_shop's gold sites (the `included` in activesupport's
+`callbacks.rb` and actionpack's `caching.rb`) went correct → column-mismatch.
+`do` is no name a click lands on.
+
+**Not done.** `include` and `prepend` in the block still go to the concern
+itself: `include` differs from Ruby only in where the module sits relative to
+the concern, and `prepend` on the includer has no edge that says "ahead of
+whoever includes me". Neither was measured to matter; a `prepend` in an
+`included` block was not found in rails, discourse, mastodon or the installed
+gems. The classic `def self.included(base); base.extend(ClassMethods); end`
+is a receiver in a variable and stays unread (DEC-097).
+
+**Measured** (BASELINE, "Runtime ancestry"): widget_shop's gem floor, correct
+1,521 → 1,525 and confidently wrong 21 → 19 (`configurations` and
+`preventing_writes?`, both `def self.` in an `included` block). No other gold
+set, `--refs` query or click moved. rails `--dead` renames five candidates'
+owners to `ActiveRecord::Core::ClassMethods`, two of them unreferenced →
+single-caller.

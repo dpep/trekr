@@ -132,6 +132,10 @@ struct Extractor<'a> {
     loop_values: Vec<(String, Vec<String>)>,
     /// How many `included do` blocks we are inside.
     included_depth: usize,
+    /// Where the outermost `included do` we are in opens its block.
+    included_at: Option<usize>,
+    /// The concerns `included do` has declared a `ClassMethods` for.
+    routed_class_methods: std::collections::HashSet<Vec<String>>,
     /// Example groups named so far, by the nesting they were opened in: RSpec
     /// numbers a repeated name (`WhenValid_2`), and so does this.
     group_names: HashMap<Vec<String>, HashMap<String, usize>>,
@@ -255,6 +259,8 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         symbol_arrays: HashMap::new(),
         loop_values: Vec::new(),
         included_depth: 0,
+        included_at: None,
+        routed_class_methods: std::collections::HashSet::new(),
         group_names: HashMap::new(),
         definers: HashMap::new(),
         singleton_exec: 0,
@@ -377,6 +383,19 @@ impl<'a> Extractor<'a> {
                     && edge.owner == self.nesting
                     && edge.target.ends_with("Concern")
             })
+    }
+
+    /// Declare the concern's `ClassMethods` that `included do` routes into,
+    /// once per concern: it may be written nowhere else, and the module has
+    /// to exist for the tree to carry what is routed there.
+    fn declare_class_methods(&mut self) {
+        if !self.routed_class_methods.insert(self.nesting.clone()) {
+            return;
+        }
+        let at = self.included_at.unwrap_or_default();
+        let mut module = self.def("ClassMethods".to_string(), Kind::Module, at, at);
+        module.via = Some("included".to_string());
+        self.push_def(module);
     }
 
     fn leave(&mut self) {
@@ -811,6 +830,15 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             def.target = const_name(r);
         }
 
+        // `def self.x` inside `included do` is the includer's class method,
+        // where Concern puts `ClassMethods`' (and the macros above do).
+        let on_self = receiver.as_ref().is_none_or(|r| r.as_self_node().is_some());
+        if singleton && on_self && self.in_concerns_included_block() {
+            def.nesting.insert(0, "ClassMethods".to_string());
+            def.singleton = false;
+            self.declare_class_methods();
+        }
+
         let module_function = self.frames.last().is_some_and(|f| f.module_function);
         if module_function && !singleton {
             // `module_function` makes one `def` into two methods: a public
@@ -939,6 +967,13 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                 && on_self(node)
                 && !self.in_method_body();
             self.included_depth += usize::from(included);
+            // At `do`, where no name is: a declaration at `included` would
+            // answer a click on the call with the module.
+            if included && self.included_at.is_none() {
+                self.included_at = block
+                    .as_block_node()
+                    .map(|b| b.opening_loc().start_offset());
+            }
             let on_singleton = runs_on_singleton_class(node);
             self.singleton_exec += usize::from(on_singleton);
             let configure = rspec_configure_param(node).inspect(|param| {
@@ -1056,6 +1091,9 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             }
             self.singleton_exec -= usize::from(on_singleton);
             self.included_depth -= usize::from(included);
+            if self.included_depth == 0 {
+                self.included_at = None;
+            }
             if bound.is_some() {
                 self.loop_values.pop();
             }
@@ -1508,9 +1546,17 @@ impl<'pr> Extractor<'_> {
         let Some(relation) = mixin_relation(macro_name) else {
             return false;
         };
-        let Some(owner) = self.mixin_owner() else {
+        let Some(mut owner) = self.mixin_owner() else {
             return false;
         };
+        let mut relation = relation;
+        // `extend M` inside `included do` extends the includer, which is
+        // what Concern does with `ClassMethods`: M is one of its ancestors.
+        if relation == Relation::Extend && self.in_concerns_included_block() {
+            owner.insert(0, "ClassMethods".to_string());
+            relation = Relation::Include;
+            self.declare_class_methods();
+        }
         // `extend self` — the idiomatic module-function alternative.
         let any = self.push_mixins(owner, relation, args, Some("self"));
         if any {

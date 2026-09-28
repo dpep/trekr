@@ -60,6 +60,11 @@
   resolve on every model (DEC-098). An `include` in such a block was
   previously credited to the class the block was written in.
 
+- **`extend` and `def self.` inside a concern's `included do`** belong to the
+  class that includes the concern, where its class-level macros already went:
+  `included do extend ActiveModel::Naming end` gives every includer
+  `model_name` (DEC-099).
+
 ### Fixed
 
 - A Minitest spec's `it`, in a checkout that bundles rspec-core too,

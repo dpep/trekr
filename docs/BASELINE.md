@@ -2385,3 +2385,18 @@ DEC-098 build that did moved widget_shop's gem floor to 22 confidently wrong:
 Railtie's `initializer` ran its `on_load(:action_mailer)` include of
 `AbstractController::UrlFor`. The same rule now covers sent mixins, and
 every move DEC-097 measured is still there.
+
+### A concern's `included do` (DEC-099)
+
+widget_shop's gem floor: correct 1,521 → 1,525, confidently wrong 21 → 19,
+the two being `def self.` methods of ActiveRecord::Core's `included` block
+that a caller reached on a model. Nothing else in the gold sets, the 40
+`--refs` queries or the click replay moved. rails `--dead`: 2,365 → 2,364
+candidates; five change owner to `ActiveRecord::Core::ClassMethods`, and
+`strict_loading_violation!` and `asynchronous_queries_session` go
+unreferenced → single-caller.
+
+Across the three commits, against eb84162: no confidently wrong count rose
+anywhere; polyid's spec sites 7 → 0, widget_shop's gem floor 21 → 19. Correct
+answers: polyid app 310 → 337, accord gem floor 124 → 125, widget_shop gem
+floor 1,521 → 1,525. Click-replay definition misses 5,953 → 5,890.

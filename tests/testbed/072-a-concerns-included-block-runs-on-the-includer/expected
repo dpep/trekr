@@ -1,0 +1,8 @@
+# `included do … end` in a concern is evaluated in the class that includes
+# it. Its class-level macros already went to the includer's class methods;
+# its `extend` and `def self.` went to the concern's own singleton, where
+# ActiveModel::API's `extend ActiveModel::Naming` reaches no includer. They go
+# where Concern puts `ClassMethods`.
+def app.rb:26:8 status=resolved owner=Naming
+def app.rb:27:8 status=resolved owner=Api::ClassMethods
+def app.rb:28:8 status=resolved owner=Api::ClassMethods
