@@ -5832,6 +5832,13 @@ side. On `self` it keeps `self`'s view, so a concern's `self.class` walks
 its includer's class methods (DEC-105), and a call through it counts a
 subclass's override as DEC-081's does.
 
+**Only on a class.** In a module, `self.class` is whichever class includes
+it, and that class's own class method is the one that runs: typed as the
+module's side, activerecord's `Quoting#quote_table_name` (`self.class.
+quote_table_name`) answered `Quoting::ClassMethods` at 1.0 where the traced
+adapter's override ran — three confidently wrong answers in widget_shop's
+gem floor, measured before it was kept to classes.
+
 **Why.** `self.class.statuses` answered residue: `Kernel#class` returns
 `Class`, which has no `statuses`. testbed 040 pinned `self.class.build` as a
 split vote between two `build`s; it now answers `Builder.build`'s declared

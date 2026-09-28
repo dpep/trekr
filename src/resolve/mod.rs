@@ -1497,9 +1497,14 @@ fn returned_by(
         });
     }
     // `x.class` is the class `x` is an instance of, not `Kernel#class`'s
-    // declared `Class`. On `self` it keeps `self`'s view, so a concern's
-    // `self.class` reaches its includer's class methods (DEC-105, DEC-137).
-    if previous.name == "class" && previous.argc == Some(0) && !receiver.singleton {
+    // declared `Class`; on `self` a subclass's override still counts
+    // (DEC-081). Not in a module: `self.class` there is whichever class
+    // includes it, whose own class method wins (DEC-137).
+    if previous.name == "class"
+        && previous.argc == Some(0)
+        && !receiver.singleton
+        && tree.kind_of(&receiver.fqn) == Some("class")
+    {
         return Some(Receiver {
             singleton: true,
             via: if receiver.via == "self" {
