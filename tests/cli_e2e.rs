@@ -1776,6 +1776,28 @@ fn a_gem_position_answers_from_an_app_that_resolves_it() {
     );
     assert!(out.status.success(), "indexed the app and its gems");
 
+    // `--status` shows the app, its gems counted, not listed; `--all` lists.
+    let status = json(&trekr(&db, &app, &["--status", "--json"]));
+    let rows = status["checkouts"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{status}");
+    assert_eq!(rows[0]["kind"], "repo");
+    assert_eq!(rows[0]["gems"]["count"], 2, "{status}");
+    assert_eq!(rows[0]["gems"]["indexed"], 2, "{status}");
+    assert_eq!(
+        status["others"]["gems"], 0,
+        "the app's gems are counted on its row"
+    );
+    let every = json(&trekr(&db, &app, &["--status", "--all", "--json"]));
+    let kinds: Vec<&str> = every["checkouts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds.iter().filter(|k| **k == "gem").count(), 2, "{every}");
+    let text = stdout(&trekr(&db, &app, &["--status"]));
+    assert!(text.contains("+ 2 gems, all indexed"), "{text}");
+
     // The call lives in the `user` gem; the definition lives in `helper`.
     let spec = format!("{}:2:3", user.join("user.rb").display());
     let answer = json(&trekr(&db, &app, &["--def", &spec, "--json"]));
@@ -2669,6 +2691,11 @@ fn a_checkout_missing_after_an_upgrade_says_so() {
     let answer = json(&out);
     assert_eq!(answer["status"], "not_indexed");
     let reason = answer["reason"].as_str().unwrap();
+    assert!(reason.contains("v1"), "{reason}");
+    // `--status` says why it is empty too, rather than looking never used.
+    let out = trekr(&db, &dir, &["--status", "--json"]);
+    assert_eq!(out.status.code(), Some(1));
+    let reason = json(&out)["reason"].as_str().unwrap().to_string();
     assert!(reason.contains("v1"), "{reason}");
 
     // Once anything is indexed again, "not indexed" is about the checkout.

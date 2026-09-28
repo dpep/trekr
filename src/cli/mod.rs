@@ -74,9 +74,14 @@ struct Cli {
     #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = ".")]
     index: Option<PathBuf>,
 
-    /// Report what is indexed, per checkout, with the shared blob totals.
+    /// Report what is indexed: the checkout here and its gems, counted, with
+    /// the shared blob totals. `--all` lists every checkout
     #[arg(long, conflicts_with_all = ["index", "symbols", "drop"])]
     status: bool,
+
+    /// With `--status`: list every checkout on the machine, gems included
+    #[arg(long, requires = "status")]
+    all: bool,
 
     /// Which commands and editor features have been used, by whom (an agent,
     /// a person, an editor), how often they came back empty, and how slow.
@@ -292,7 +297,7 @@ pub fn run() -> ExitCode {
             cmd_gc(out, cli.older_than, cli.dry_run, cli.vacuum),
         )
     } else if cli.status {
-        (Some("status"), cmd_status(out))
+        (Some("status"), cmd_status(out, cli.all))
     } else if cli.usage {
         let days = cli.days;
         (
@@ -992,30 +997,129 @@ fn cmd_index(
     Ok(ExitCode::SUCCESS)
 }
 
-fn cmd_status(out: Output) -> anyhow::Result<ExitCode> {
+/// What is indexed. By default the checkout this is run in, with its gems
+/// counted rather than listed — a Rails app's bundle is hundreds of them —
+/// and a count of the rest; `--all` lists every checkout. Outside any
+/// checkout, the repos are listed and the gems counted.
+fn cmd_status(out: Output, all: bool) -> anyhow::Result<ExitCode> {
     let store = open_store()?;
     let checkouts = store.status()?;
     let totals = store.totals()?;
+    // An upgrade drops the index, and an empty store must say so, as a
+    // query does, rather than read as never used.
+    let reason = match checkouts.is_empty() {
+        true => Some(match store.upgraded_from()? {
+            Some(from) => upgrade_reason(from),
+            None => "nothing has been indexed yet".to_string(),
+        }),
+        false => None,
+    };
+    let here = match all {
+        true => None,
+        false => std::env::current_dir()
+            .ok()
+            .and_then(|dir| std::fs::canonicalize(dir).ok())
+            .and_then(|dir| {
+                store
+                    .checkout_containing(&dir.to_string_lossy())
+                    .ok()
+                    .flatten()
+            }),
+    };
+    let shown: Vec<&crate::store::Checkout> = checkouts
+        .iter()
+        .filter(|c| {
+            all || here
+                .as_ref()
+                .map_or(c.kind != "gem", |root| c.repo == *root)
+        })
+        .collect();
+    let indexed_files: HashMap<&str, i64> = checkouts
+        .iter()
+        .map(|c| (c.repo.as_str(), c.files))
+        .collect();
+    let mut rows: Vec<serde_json::Value> = Vec::new();
+    // Counted on a row above, so not among the others.
+    let mut counted: HashSet<String> = HashSet::new();
+    for checkout in &shown {
+        let mut row = serde_json::to_value(checkout)?;
+        if !all && checkout.kind != "gem" {
+            let used = store.gems_used(&checkout.repo)?;
+            counted.extend(used.iter().cloned());
+            let indexed: Vec<i64> = used
+                .iter()
+                .filter_map(|gem| indexed_files.get(gem.as_str()).copied())
+                .filter(|files| *files > 0)
+                .collect();
+            row["gems"] = serde_json::json!({
+                "count": used.len(),
+                "indexed": indexed.len(),
+                "files": indexed.iter().sum::<i64>(),
+            });
+        }
+        rows.push(row);
+    }
+    let hidden = |kind: &str| {
+        checkouts
+            .iter()
+            .filter(|c| (c.kind == "gem") == (kind == "gem"))
+            .filter(|c| !shown.iter().any(|s| s.repo == c.repo) && !counted.contains(&c.repo))
+            .count()
+    };
+    let others = serde_json::json!({ "repos": hidden("repo"), "gems": hidden("gem") });
 
     if out != Output::Text {
         // One object, because the totals are the point: they are what N
         // checkouts share, not the sum of what each one costs.
-        emit_json(
-            out,
-            &serde_json::json!({ "checkouts": checkouts, "totals": totals }),
-        )?;
+        let mut answer = serde_json::json!({
+            "checkouts": rows,
+            "others": others,
+            "totals": totals,
+        });
+        if let Some(reason) = &reason {
+            answer["reason"] = reason.as_str().into();
+        }
+        emit_json(out, &answer)?;
         return Ok(exit_on(!checkouts.is_empty()));
     }
-    if checkouts.is_empty() {
-        println!("nothing indexed yet (try `trekr --index`)");
+    if let Some(reason) = reason {
+        println!("{reason} (try `trekr --index`)");
         return Ok(ExitCode::from(1));
     }
-    for c in &checkouts {
+    for row in &rows {
         println!(
             "{:>7} files  {:>7} blobs  {}",
-            c.files,
-            c.blobs,
-            paths::pretty(&c.repo)
+            row["files"].as_i64().unwrap_or(0),
+            row["blobs"].as_i64().unwrap_or(0),
+            paths::pretty(row["repo"].as_str().unwrap_or_default())
+        );
+        let gems = &row["gems"];
+        let (Some(count), Some(indexed)) = (gems["count"].as_u64(), gems["indexed"].as_u64())
+        else {
+            continue;
+        };
+        let state = match (count, indexed) {
+            (0, _) => continue,
+            (n, i) if n == i => "all indexed".to_string(),
+            (_, i) => format!("{i} of {count} indexed"),
+        };
+        println!(
+            "{:>32}+ {count} gem{}, {state} ({} files)",
+            "",
+            if count == 1 { "" } else { "s" },
+            gems["files"].as_i64().unwrap_or(0)
+        );
+    }
+    let (repos, gems) = (
+        others["repos"].as_u64().unwrap_or(0),
+        others["gems"].as_u64().unwrap_or(0),
+    );
+    if repos + gems > 0 {
+        let plural = |n: u64, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
+        println!(
+            "\nalso indexed: {}, {} — `trekr --status --all` lists them",
+            plural(repos, "other repo"),
+            plural(gems, "gem")
         );
     }
     println!(
@@ -2120,6 +2224,15 @@ fn dynamic_markers(source: &[u8]) -> String {
     seen.join(", ")
 }
 
+/// Why the store holds nothing, when an upgrade emptied it.
+fn upgrade_reason(from: i64) -> String {
+    format!(
+        "trekr's index format changed (store v{from} to v{}), which dropped any \
+         earlier index; nothing has been indexed since",
+        crate::store::VERSION
+    )
+}
+
 /// A checkout nobody has indexed, when a query needs one.
 ///
 /// Worth its own answer because the alternative is a lie by omission: an empty
@@ -2141,11 +2254,7 @@ fn not_indexed(out: Output, root: &Path, store: &Store) -> anyhow::Result<ExitCo
         false => None,
     };
     let reason = match upgraded {
-        Some(from) => format!(
-            "trekr's index format changed (store v{from} to v{}), which dropped any \
-             earlier index; nothing has been indexed since",
-            crate::store::VERSION
-        ),
+        Some(from) => upgrade_reason(from),
         None => "this checkout has never been indexed, so there is nothing to answer from".into(),
     };
     match out {

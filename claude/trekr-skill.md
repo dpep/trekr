@@ -77,7 +77,11 @@ second worktree of the same repo costs nothing — facts are keyed by git blob.
 | exit 1, "no mention of …" | indexed, and the name really is not there. |
 | exit 64–74, `{"error", "kind", "code"}` | the call failed: `usage` (fix the command), `not_found`/`not_a_repo` (fix the path), `git`, `database`/`io`, `internal`. Not an answer about the code. |
 
-`trekr --status` lists what is indexed.
+`trekr --status` shows the checkout you are in, its gems counted (`gems:
+{count, indexed, files}`), and how many other checkouts are indexed
+(`others`); `--status --all` lists every checkout, each with `kind` (`repo`
+or `gem`). An empty store carries a `reason`, which names an upgrade that
+dropped the index.
 
 ## References to a *method*, not a name
 

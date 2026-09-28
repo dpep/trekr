@@ -5519,3 +5519,31 @@ RSpec::SharedExampleGroups::X` does not list the includes. That would need
 a constant reference the blob layer keeps, whose span is the string rather
 than the constant's written tail; nothing has asked for it.
 
+## DEC-125 — `--status` answers about the checkout you are in
+
+**Decided.** `--status` shows the checkout containing the working
+directory, with the gems its bundle resolves counted on its row (`gems:
+{count, indexed, files}`), and counts every other checkout (`others: {repos,
+gems}`). Outside any checkout it lists the repos, each with its gems
+counted. `--all` lists every checkout, gems included, each with `kind`.
+JSON and text show the same rows. An empty store carries `reason`: the
+upgrade that dropped the index (the wording `not_indexed` uses), or that
+nothing has been indexed.
+
+**Before**, `--status` listed every checkout in the store. Gems are
+checkouts, indexed once per machine and shared (DEC-029), so a first-time
+user on mastodon got 304 gem rows and had to scroll to find the app. The
+number they wanted — did my gems get indexed — was nowhere. And after an
+upgrade, `--status --json` was `checkouts: []`, exit 1, with none of the
+explanation `--def` and `--refs` give, so a store emptied by a format change
+read as one never used.
+
+**Why the default JSON changed too**, rather than only the text. The house
+rule is one answer in two encodings; a JSON that listed everything while
+the text summarized would make `--status --json` a different command. The
+one script that read the whole list (`script/absent.py`, mapping paths to
+checkouts) passes `--all`.
+
+*Reverses if:* a consumer needs the whole list often enough that `--all` is
+the common case.
+

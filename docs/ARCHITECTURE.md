@@ -501,7 +501,7 @@ path in the asked-about checkout relative to it, and any other absolute with
 | command | answers |
 |---|---|
 | `--index [PATH]` | scan a checkout and store what is new |
-| `--status` | what is indexed, per checkout, plus the shared totals |
+| `--status` | the checkout here, its gems counted, the rest counted, and the shared totals; `--all` lists every checkout (DEC-125) |
 | `--symbols FILE` | one file's definitions, in source order |
 | `--refs NAME` | every mention of a name in this checkout |
 | `--def FILE:LINE:COL` | what is the name here, and where is it defined |

@@ -23,6 +23,18 @@
   (`candidates`, `tiers` with every tier present, `confidence`). A script
   reading the text rows must stop at the blank line before it.
 
+- **`--status` shows the checkout you are in**, with its gems counted —
+  `+ 304 gems, all indexed (11502 files)` — and a count of what else is
+  indexed, where it listed every gem checkout on the machine (hundreds of
+  lines for one Rails app). Outside any checkout it lists the repos and
+  counts the gems. `--status --all` lists everything, as before. In JSON,
+  `checkouts` holds the same rows the text shows, each now with `kind`
+  (`repo` or `gem`) and, for a repo, `gems: {count, indexed, files}`, and
+  `others: {repos, gems}` counts the rest. **A script that read every
+  checkout from `--status --json` must add `--all`.** An empty store says
+  why in `reason` — an upgrade that dropped the index, or nothing indexed
+  yet — where it was a bare `checkouts: []` (DEC-125).
+
 - **`--refs Owner#method` always ends with its tally**, `1 confirmed, 0
   possible, 0 excluded of 1 same-name call sites`; text left it out when
   nothing was excluded, which is when it is most worth saying.

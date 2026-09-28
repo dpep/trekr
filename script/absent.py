@@ -48,7 +48,7 @@ except AttributeError:
 
 
 def checkout_roots():
-    out = subprocess.run([BIN, "--status", "--json"], capture_output=True).stdout
+    out = subprocess.run([BIN, "--status", "--all", "--json"], capture_output=True).stdout
     try:
         return sorted(
             (c["repo"] for c in json.loads(out)["checkouts"]), key=len, reverse=True

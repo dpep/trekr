@@ -45,7 +45,7 @@ and pays it again on every process boot because it never writes anything down.
 
 ```sh
 trekr --index                    # index the checkout you are standing in
-trekr --status                   # what is indexed, and what the checkouts share
+trekr --status                   # this checkout and its gems; --all lists every checkout
 trekr --symbols lib/thing.rb     # outline a file before reading it
 trekr --refs 'Widget#save'       # references narrowed by receiver
 trekr --refs Widget              # every mention of a name in this checkout

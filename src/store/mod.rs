@@ -479,16 +479,17 @@ impl Store {
     /// One row per indexed checkout, plus the totals a caller wants to see.
     pub(crate) fn status(&self) -> Result<Vec<Checkout>> {
         let mut stmt = self.conn.prepare(
-            "SELECT c.root, c.indexed_at, COUNT(f.path), COUNT(DISTINCT f.blob_id)
+            "SELECT c.root, c.kind, c.indexed_at, COUNT(f.path), COUNT(DISTINCT f.blob_id)
                FROM checkout c LEFT JOIN file f ON f.checkout_id = c.id
               GROUP BY c.id ORDER BY c.root",
         )?;
         let rows = stmt.query_map([], |r| {
             Ok(Checkout {
                 repo: r.get(0)?,
-                indexed_at: r.get(1)?,
-                files: r.get(2)?,
-                blobs: r.get(3)?,
+                kind: r.get(1)?,
+                indexed_at: r.get(2)?,
+                files: r.get(3)?,
+                blobs: r.get(4)?,
             })
         })?;
         rows.collect()
@@ -1276,6 +1277,8 @@ pub(crate) fn is_busy(error: &rusqlite::Error) -> bool {
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct Checkout {
     pub(crate) repo: String,
+    /// `repo`, or `gem` for a checkout some repo's bundle resolves.
+    pub(crate) kind: String,
     pub(crate) indexed_at: i64,
     pub(crate) files: i64,
     pub(crate) blobs: i64,
