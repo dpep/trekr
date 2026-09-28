@@ -12,6 +12,11 @@ module RSpec
       end
     end
 
+    class ValueExpectationTarget < ExpectationTarget
+      def to(matcher = nil, message = nil, &block)
+      end
+    end
+
     class BlockExpectationTarget < ExpectationTarget
       def to(matcher, message = nil, &block)
       end

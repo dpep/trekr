@@ -54,7 +54,7 @@ module RSpec
     end
 
     module MemoizedHelpers
-      sig { returns(RSpec::Expectations::ExpectationTarget) }
+      sig { returns(RSpec::Expectations::ValueExpectationTarget) }
       def is_expected
       end
     end
@@ -63,7 +63,7 @@ module RSpec
   module Matchers
     # `RSpec::Expectations::Syntax.enable_expect` defines this, and
     # `ExpectationTarget.for` picks the target by whether a block was given.
-    sig { params(value: T.untyped, block: NilClass).returns(RSpec::Expectations::ExpectationTarget) }
+    sig { params(value: T.untyped, block: NilClass).returns(RSpec::Expectations::ValueExpectationTarget) }
     sig { params(block: T.proc.void).returns(RSpec::Expectations::BlockExpectationTarget) }
     def expect(value = nil, &block)
     end

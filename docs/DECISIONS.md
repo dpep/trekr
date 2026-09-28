@@ -4409,7 +4409,7 @@ built when a suite boots and that no reading of the gems can follow:
 - `ExampleGroup` including `RSpec::Core::MockingAdapters::RSpec` and then
   `RSpec::Matchers`, which `Configuration#configure_mock_framework` and
   `#configure_expectation_framework` do by `include`-ing a variable;
-- the return types of `expect` (an `ExpectationTarget`, or a
+- the return types of `expect` (a `ValueExpectationTarget`, or a
   `BlockExpectationTarget` given a block) and `is_expected`, which
   `ExpectationTarget.for` decides at runtime and no signature states.
 
@@ -4428,7 +4428,7 @@ rspec-expectations' own `def`, which declares nothing, so the stub's `sig`
 would never be read. A method with no return type now takes one from a
 declaration of the same method on the same owner — the stub, or an `.rbi` —
 as Sorbet reads an `.rbi`'s `sig` for the method it describes. That is what
-types `expect(x).to` and `is_expected.to` as `ExpectationTarget#to`.
+types `expect(x).to` and `is_expected.to` as `ValueExpectationTarget#to`.
 
 **Why a stub, not inference.** Each of these is a value flowing through a
 variable into `define_method`, `include` or `new` — `ExpectationTarget.for`
