@@ -4271,7 +4271,8 @@ read as the includer's (DEC-103), three methods rails' controllers call this
 way went `single-caller` → `unreferenced`. Such a site is now `possible` when some
 class that has the calling module in its chain also has the target's owner
 ("`self` is what includes this module, and one that does has this"); a
-target no includer has stays excluded.
+target no includer has stays excluded. *Only ahead of the module's own
+landing* (DEC-122).
 
 Measured on its own, before DEC-103: rails `--refs`, 52 sites excluded →
 possible across 11 of the 40 queries (28 of them `AbstractAdapter#execute`
@@ -5443,4 +5444,32 @@ next change names the method as Ruby's documentation does. A `def` that
 shadows the writer Rails generates for a schema column (`def x=(value)`)
 also overrides something, in a generated module trekr models on the class;
 only one of mastodon's unreferenced writers is such a column, so it was left.
+
+## DEC-122 — A module's `self` call reaches an includer's method only ahead of its own landing
+
+**Decided.** DEC-081's amendment makes a `self` call in a module a
+`possible` reference to a method another of its includer's modules defines.
+That now holds only when some includer has the target *ahead of* the
+owner the call's lookup from the module found, or has it anywhere when the
+lookup found nothing. Behind the landing, Ruby finds the landing first and
+the target is shadowed; the site is excluded (`different_owner`).
+
+**Before**, the rule asked only whether an includer had the target in its
+chain at all. `class Widget; include Formatting; include Labeled; end` puts
+`Labeled` first, so `Labeled#show`'s `label` runs `Labeled#label` — which
+`--def` answered — while `--refs Formatting#label` counted the call and
+`--dead` called the method `single-caller`. The three disagreed about one
+call.
+
+**The stricter rule was measured and turned down**: counting the site only
+when an includer's first landing *is* the target reverts 36 real rails
+sites of the shape the amendment was made for, where the includer reaches
+the target through a module the call's own lookup never sees.
+
+**Measured** (BASELINE, "A first-time Rails user"): 2 of rails' 40 `--refs`
+queries move one site each possible → excluded (`valid?` from
+`ActiveRecord::Validations`, `execute` from PostgreSQL's
+`DatabaseStatements`); rails `--dead` gains 4 candidates and moves one
+`single-caller` to `super-only`, activerecord alone gains 1 — identical,
+candidate for candidate, to the build the hunt that found it validated.
 

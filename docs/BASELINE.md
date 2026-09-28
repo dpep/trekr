@@ -2651,3 +2651,20 @@ and `stale_state`, `extended` hooks, `init_with`, and on mastodon
 `Account.readonly_attributes`, `Admin::AccountAction.i18n_scope`. `--dead`
 on rails takes as long as before, within the run-to-run noise (5–7 s on a
 loaded machine).
+
+### A module's `self` call and a shadowed includer module (DEC-122)
+
+| | DEC-121 | DEC-122 |
+| --- | ---: | ---: |
+| rails `--refs` `ActiveModel::Validations#valid?`, confirmed / possible / excluded | 16 / 437 / 124 | 16 / 436 / 125 |
+| rails `--refs` `AbstractAdapter#execute` | 0 / 497 / 88 | 0 / 496 / 89 |
+| rails `--dead` candidates | 2,272 | **2,276** |
+| activerecord only `--dead` candidates | 1,597 | **1,598** |
+| mastodon `--dead` candidates | 1,035 | 1,035 |
+
+No other `--refs` site moved. The new candidates are `single-caller`s whose
+one possible call was a shadowed module method's
+(`raise_validation_error`, `create_routes`, `reset_routes`,
+`add_options_for_index_columns`), and `AbstractAdapter#warning_ignored?`
+moved `single-caller` → `super-only`. The hunt's own build of this fix gives
+byte-identical candidates on the same store.

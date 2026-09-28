@@ -250,7 +250,10 @@ fn tier(
         && !query.singleton
         && !matches
         && tree.kind_of(&receiver.fqn) == Some("module")
-        && target.is_some_and(|target| tree.shares_includer(&receiver.fqn, target))
+        && target.is_some_and(|target| {
+            let landing = found.as_ref().map(|found| found.owner.as_str());
+            tree.includer_reaches(&receiver.fqn, target, landing)
+        })
     {
         return here(
             Tier::Possible,

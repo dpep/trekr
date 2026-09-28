@@ -1134,13 +1134,30 @@ impl Tree {
                 .any(|a| public_name(a) == ancestor)
     }
 
-    /// Does some class that has `module` in its chain also have `other`? A
-    /// call on `self` in the module then runs on an object where Ruby can
-    /// find `other`'s methods, though the module's own chain never names it.
-    pub(crate) fn shares_includer(&self, module: &str, other: &str) -> bool {
-        self.includers_of(module)
-            .iter()
-            .any(|class| public_name(class) == public_name(other) || self.inherits(class, other))
+    /// Does some class that has `module` in its chain have `other` ahead of
+    /// `landing`, the owner a lookup from the module found (or anywhere, when
+    /// it found none)? A call on `self` in the module then runs on an object
+    /// where Ruby finds `other`'s method first, though the module's own chain
+    /// never names it. Behind the landing, it is shadowed.
+    pub(crate) fn includer_reaches(
+        &self,
+        module: &str,
+        other: &str,
+        landing: Option<&str>,
+    ) -> bool {
+        self.includers_of(module).iter().any(|class| {
+            let chain = &self.ancestors(class).chain;
+            let at = |name: &str| {
+                chain
+                    .iter()
+                    .position(|a| public_name(a) == public_name(name))
+            };
+            match (at(other), landing.map(at)) {
+                (Some(other), Some(Some(landing))) => other < landing,
+                (Some(_), _) => true,
+                (None, _) => false,
+            }
+        })
     }
 
     /// The ancestor chain of a name, in Ruby's linearization order:

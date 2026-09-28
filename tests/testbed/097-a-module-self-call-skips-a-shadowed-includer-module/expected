@@ -1,0 +1,11 @@
+# A `self` call in a module is a possible reference to a method another of
+# its includer's modules defines (DEC-081, amended) — only when that method
+# comes ahead of what the call finds. Widget includes Labeled after
+# Formatting, so Labeled's `label` shadows Formatting's, and `show` never
+# reaches Formatting#label; `--def` said so, `--refs` and `--dead` did not.
+def app.rb:13:5 status=resolved owner=Labeled
+refs Formatting#label confirmed=0 possible=0 excluded=1
+refs Tagging#tag confirmed=0 possible=0 excluded=1
+dead app.rb Formatting#label=unreferenced Tagging#tag=unreferenced
+# The includer's own method comes first, so it still counts.
+refs Widget#stamp confirmed=0 possible=1 excluded=0

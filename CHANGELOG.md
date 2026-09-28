@@ -31,6 +31,14 @@
   though `described_class` itself was followed. `--refs` confirms them
   (DEC-120).
 
+- **A module's `self` call skips a method its includer shadows.** In a
+  class that includes `Formatting` and then `Labeled`, `Labeled#show`
+  calling `label` runs `Labeled#label`, and `--def` said so, but `--refs
+  Formatting#label` counted the call possible and `--dead` called
+  `Formatting#label` single-caller. A method another of the includer's
+  modules defines counts only when it comes ahead of what the call finds
+  (DEC-122).
+
 ## 0.7.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v38): run `trekr --index`
