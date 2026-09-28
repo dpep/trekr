@@ -791,10 +791,16 @@ impl Tree {
     /// land under `X` or at the top level depending on what `X::A` is. Getting
     /// this wrong silently resolves every constant in a doubly-nested module to
     /// the wrong place, so it is worth the pass.
+    ///
+    /// An RSpec example group is no constant scope, and is read past (DEC-084).
     fn scopes(&self, written: &[String]) -> Vec<String> {
         let mut qualified: Vec<String> = Vec::new();
         // Outermost first: each scope is placed in the ones already built.
-        for name in written.iter().rev() {
+        for name in written
+            .iter()
+            .rev()
+            .filter(|name| !crate::core::rspec::is_group(name))
+        {
             let here = self.place(name, &qualified);
             qualified.insert(0, here);
         }

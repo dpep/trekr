@@ -1,0 +1,17 @@
+# A block RSpec runs was read as code at the top of the file, whose `self` is
+# `main`, so every `let`, `before` and `expect` in a spec came back residue. A
+# group's body runs on a subclass of RSpec::Core::ExampleGroup, and its
+# examples, hooks and lets on an instance of one: their calls are looked up
+# there, in whatever the index holds of rspec-core.
+def spec/widget_spec.rb:2:3 status=resolved owner=RSpec::Core::MemoizedHelpers::ClassMethods via=example_group
+def spec/widget_spec.rb:3:3 status=resolved owner=RSpec::Core::Hooks via=example_group
+def spec/widget_spec.rb:3:12 status=resolved owner=RSpec::Core::ExampleGroup via=example_group
+def spec/widget_spec.rb:6:5 status=resolved owner=RSpec::Core::MemoizedHelpers::ClassMethods
+def spec/widget_spec.rb:6:19 status=resolved owner=RSpec::Core::MemoizedHelpers
+# A `describe` at the top of a file is RSpec's too.
+def spec/gadget_spec.rb:2:3 status=resolved owner=RSpec::Core::MemoizedHelpers::ClassMethods
+def spec/gadget_spec.rb:2:16 status=resolved owner=RSpec::Core::ExampleGroup
+
+# A guard: the class written inside a group is the top-level constant it is
+# in Ruby, not a constant of the group.
+refs Helper#assist confirmed=1

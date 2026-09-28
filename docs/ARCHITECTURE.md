@@ -189,6 +189,7 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | rung | how the type is established | confidence |
 |---|---|---|
 | `self` | the enclosing scope **is** the receiver — a language rule, no inference | 1.0 |
+| `example_group` | a call in a block RSpec runs: `RSpec::Core::ExampleGroup`, as a class in a group's body and an instance in an example (DEC-084) | 1.0 |
 | `includer` | a call inside a module, resolved through the classes that mix it in | agreeing / includers |
 | `const` | `Foo.bar` — resolve `Foo`, look up a *class* method | 1.0 |
 | `local:new` | `x = Foo.new` | agreeing / total |

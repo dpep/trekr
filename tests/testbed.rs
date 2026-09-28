@@ -271,6 +271,11 @@ fn check_def(
                 .as_str()
                 .unwrap_or("<none>")
                 .to_string(),
+            "receiver_type" => answer["receiver_type"]
+                .as_str()
+                .unwrap_or("<none>")
+                .to_string(),
+            "reason" => answer["reason"].as_str().unwrap_or("<none>").to_string(),
             "site" => {
                 let site = &answer["definition"][0];
                 format!(
@@ -285,9 +290,12 @@ fn check_def(
             }
         };
         // Paths are absolute in an answer and relative in an expectation, so a
-        // site matches on its tail. Everything else is exact.
+        // site matches on its tail. A reason is prose, so one word of it is
+        // asserted. Everything else is exact.
         let matched = if key == "site" {
             got.ends_with(&want)
+        } else if key == "reason" {
+            got.contains(&want)
         } else {
             got == want
         };

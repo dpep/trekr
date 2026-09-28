@@ -4289,3 +4289,46 @@ after the response is on the wire — as the usage count is.
 a definition does. It counted `hit`, because the hover card is never empty,
 which made hover look more certain than definition at the same position.
 
+## DEC-084 — A block RSpec runs has an example group for its `self`
+
+**Decided.** The extractor recognises RSpec's block DSL and says what each
+block runs as. `describe`/`context`/`shared_examples` and their kin open an
+example group — at `RSpec.describe` anywhere outside a method, at a bare
+`describe` at the top of a file, and inside another group — and `it`,
+`before`, `let`, `subject` and the rest open an example, a method body on an
+instance of the group. A group is pushed onto the nesting as a segment of its
+own, `(group AccordTypesDecimal)`, named as RSpec names the class. An
+implicit call inside one is typed `RSpec::Core::ExampleGroup` — the class in
+a group's body, an instance in an example — and looked up in whatever the
+index holds of rspec-core, so `let`, `before`, `described_class` and
+`is_expected` land on rspec-core's own definitions.
+
+**Why a segment, and not a class.** A group is an anonymous class that only
+its file can reopen, and RSpec's own names collide across files: 111 of
+discourse's top-level descriptions are shared by two files or more ("Core
+features" by 33). A class per group would need the file in its name, and
+facts are a function of a blob's bytes, never its path. A segment needs no
+name outside its file. The tree reads past it — a constant or class written
+inside a group is the file's, as Ruby has it — so it changes nothing that
+does not look for it.
+
+**What was not modelled from the source.** Which block runs as what is
+rspec-core's `module_exec` and `instance_exec`, behind
+`define_example_group_method` and friends; no reading of the gem gets from
+`describe` to "this block is a class body". The DSL's names are the one thing
+stated here, as `belongs_to` and `attr_reader` are. Everything the block then
+calls is found in the gem.
+
+**Honest without rspec.** When the index holds no `RSpec::Core::ExampleGroup`,
+the answer is residue saying so — "the call runs on an RSpec example group,
+and rspec-core is not indexed" — rather than that the file does not
+determine the receiver.
+
+**The named cost.** A bare top-level `describe` is read as RSpec's. Minitest's
+spec DSL is the same syntax, and rails writes it in four arel tests; with no
+rspec-core indexed those answer residue as above, and a checkout bundling both
+would type such a file's calls as RSpec's. Telling them apart needs the file's
+name (RSpec loads `*_spec.rb`), which the blob layer does not have.
+
+*Reverses if:* a checkout with both frameworks writes Minitest specs at the
+top level often enough to show up in its gold set.

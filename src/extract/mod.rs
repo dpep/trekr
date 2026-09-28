@@ -63,6 +63,8 @@ struct Frame {
     /// `class_eval do`, RSpec's `describe do` — lands on whatever the block is
     /// run against, which the source does not say.
     blocks: usize,
+    /// The body of an RSpec example group (DEC-084).
+    group: bool,
 }
 
 impl Frame {
@@ -81,6 +83,7 @@ impl Frame {
             module_function: false,
             method: None,
             blocks: 0,
+            group: false,
         }
     }
 }
@@ -108,6 +111,9 @@ struct Extractor<'a> {
     loop_values: Vec<(String, Vec<String>)>,
     /// How many `included do` blocks we are inside.
     included_depth: usize,
+    /// Example groups named so far, by the nesting they were opened in: RSpec
+    /// numbers a repeated name (`WhenValid_2`), and so does this.
+    group_names: HashMap<Vec<String>, HashMap<String, usize>>,
     facts: Facts,
 }
 
@@ -153,12 +159,14 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             module_function: false,
             method: None,
             blocks: 0,
+            group: false,
         }],
         pending_sigs: Vec::new(),
         pending_sig_params: Vec::new(),
         symbol_arrays: HashMap::new(),
         loop_values: Vec::new(),
         included_depth: 0,
+        group_names: HashMap::new(),
     };
     ex.visit(&parsed.node());
     ex.facts
@@ -202,6 +210,10 @@ impl<'a> Extractor<'a> {
 
     fn in_method_body(&self) -> bool {
         self.frames.last().is_some_and(|f| f.in_method)
+    }
+
+    fn in_group_body(&self) -> bool {
+        self.frames.last().is_some_and(|f| f.group)
     }
 
     /// Inside `included do … end` of a module that extends `ActiveSupport::Concern`.
@@ -693,7 +705,23 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                     self.visit(&block);
                     self.leave();
                 }
-                None => self.visit(&block),
+                None => match self.spec_block(node) {
+                    Some(SpecBlock::Group(description)) => {
+                        let segment = self.group_segment(&description);
+                        self.enter(Some(segment), Opens::Scope);
+                        self.frame().group = true;
+                        if let Some(body) = block.as_block_node().and_then(|b| b.body()) {
+                            self.visit(&body);
+                        }
+                        self.leave();
+                    }
+                    Some(SpecBlock::Example) => {
+                        self.enter(None, Opens::Method { singleton: false });
+                        self.visit(&block);
+                        self.leave();
+                    }
+                    None => self.visit(&block),
+                },
             }
             self.included_depth -= usize::from(included);
             if bound.is_some() {
@@ -788,6 +816,68 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.push_def(def);
     }
 }
+
+/// What a block handed to RSpec's DSL runs as (DEC-084).
+enum SpecBlock {
+    /// The body of a new example group, described by this text.
+    Group(String),
+    /// An example, hook, `let` or `subject`: a method body on an instance of
+    /// the group.
+    Example,
+}
+
+/// Calls whose block is a new example group's body. The `shared_*` forms
+/// are module-exec'd into whichever group includes them, and a group is the
+/// nearest thing to that the file shows.
+const GROUP_METHODS: [&str; 13] = [
+    "describe",
+    "context",
+    "feature",
+    "example_group",
+    "xdescribe",
+    "xcontext",
+    "xfeature",
+    "fdescribe",
+    "fcontext",
+    "ffeature",
+    "shared_examples",
+    "shared_context",
+    "shared_examples_for",
+];
+
+/// Calls, inside a group, whose block is a nested group of its own.
+const NESTED_GROUP_METHODS: [&str; 2] = ["it_behaves_like", "it_should_behave_like"];
+
+/// Calls, inside a group, whose block runs on an example.
+const EXAMPLE_METHODS: [&str; 27] = [
+    "it",
+    "specify",
+    "example",
+    "scenario",
+    "focus",
+    "fit",
+    "fspecify",
+    "fexample",
+    "fscenario",
+    "xit",
+    "xspecify",
+    "xexample",
+    "xscenario",
+    "skip",
+    "pending",
+    "before",
+    "after",
+    "around",
+    "prepend_before",
+    "append_before",
+    "prepend_after",
+    "append_after",
+    "let",
+    "let!",
+    "subject",
+    "subject!",
+    "its",
+];
 
 /// Whose method a `define_method` block is the body of.
 enum DefinedBy {
@@ -944,6 +1034,11 @@ impl<'pr> Extractor<'_> {
         if self.in_method_body() {
             return false;
         }
+        // A group is a class only its own file sees (DEC-084), and an edge on
+        // it would land on the constant scope around it.
+        if self.in_group_body() {
+            return false;
+        }
         let mut any = false;
         // `include A, B` inserts B first — Ruby applies multi-arg mixins
         // right to left, and the ancestor order the tree layer builds is
@@ -1064,6 +1159,64 @@ impl<'pr> Extractor<'_> {
                 .filter(|names| names.len() == 1)
                 .and_then(|mut names| names.pop())
         })))
+    }
+
+    /// Whether this call's block is RSpec's, and what it runs as (DEC-084).
+    ///
+    /// A group opens at `RSpec.describe` anywhere outside a method, at a bare
+    /// `describe` at the top of a file, and at either inside another group.
+    /// Examples, hooks and `let`s open only inside a group.
+    fn spec_block(&self, call: &ruby_prism::CallNode<'pr>) -> Option<SpecBlock> {
+        call.block()?.as_block_node()?;
+        if self.in_method_body() {
+            return None;
+        }
+        let name = method_name(call)?;
+        let name = name.as_str();
+        let on_rspec = call
+            .receiver()
+            .and_then(|r| const_name(&r))
+            .is_some_and(|r| r.trim_start_matches("::") == "RSpec");
+        let implicit = call.receiver().is_none();
+        let in_group = self.in_group_body();
+        let at_top = self.frames.len() == 1;
+        let opens_group = (GROUP_METHODS.contains(&name)
+            && (on_rspec || implicit && (in_group || at_top)))
+            || (NESTED_GROUP_METHODS.contains(&name) && implicit && in_group);
+        if opens_group {
+            return Some(SpecBlock::Group(self.description(call)));
+        }
+        (EXAMPLE_METHODS.contains(&name) && implicit && in_group).then_some(SpecBlock::Example)
+    }
+
+    /// A group's description: its first argument, as RSpec reads it.
+    fn description(&self, call: &ruby_prism::CallNode<'pr>) -> String {
+        let Some(first) = arg_nodes(call).into_iter().next() else {
+            return String::new();
+        };
+        if let Some(name) = const_name(&first).or_else(|| literal_name(&first)) {
+            return name;
+        }
+        let at = first.location();
+        self.text(at.start_offset(), at.end_offset())
+    }
+
+    /// The nesting segment for a group opened here, numbered as RSpec numbers
+    /// a name its siblings already have.
+    fn group_segment(&mut self, description: &str) -> String {
+        let base = crate::core::rspec::base_name(description);
+        let seen = self
+            .group_names
+            .entry(self.nesting.clone())
+            .or_default()
+            .entry(base.clone())
+            .or_default();
+        *seen += 1;
+        let name = match *seen {
+            1 => base,
+            n => format!("{base}_{n}"),
+        };
+        crate::core::rspec::segment(&name)
     }
 
     /// Every name an interpolated string can spell, given what the enclosing

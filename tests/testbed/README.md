@@ -40,6 +40,8 @@ symbols app.rb   Widget,save,Job,run
 | `variable` | `local`, `parameter`, `ivar` or `cvar`, for a variable |
 | `defined_via` | the macro that declared it, for a declaration |
 | `site` | `path:line`, matched on the path's tail |
+| `receiver_type` | the type the receiver was given, resolved or not |
+| `reason` | a word the residue's reason contains |
 | `exit` | the process exit code, for cases about not dying |
 
 `refs QUERY` asserts the `counts` object. `dead FILE Owner#name=tier …`

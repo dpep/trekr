@@ -15,7 +15,7 @@
 
 pub(crate) mod refs;
 
-use crate::core::{Assign, Call, Facts, Pos, RecvShape, RecvValue, ValueShape};
+use crate::core::{Assign, Call, Facts, Pos, RecvShape, RecvValue, ValueShape, rspec};
 use crate::tree::{Kind, Site, Status, Tree};
 use serde::Serialize;
 
@@ -198,6 +198,18 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                              knows of mixes it in and defines this name",
                         ),
                     }
+                }
+                // A spec whose bundle's rspec-core is not indexed: the
+                // receiver is known, and nothing about it is.
+                None if receiver.via == "example_group" && !tree.is_known(&receiver.fqn) => {
+                    residue(
+                        tree,
+                        call,
+                        path,
+                        Some(receiver),
+                        "the call runs on an RSpec example group, and rspec-core is \
+                         not indexed",
+                    )
                 }
                 // The type is settled and Ruby would still not find the method
                 // in what is indexed. Say what was checked, never why: the
@@ -511,6 +523,19 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
         // The enclosing scope is the receiver by language rule. No inference
         // happens, which is why this rung is both the largest and the cheapest.
         RecvShape::Implicit | RecvShape::SelfRecv => {
+            // A block RSpec runs: a group's body is a subclass of
+            // ExampleGroup, and an example's an instance of one (DEC-084).
+            if rspec::in_group(&call.nesting) {
+                return Some(Receiver {
+                    fqn: rspec::EXAMPLE_GROUP.to_string(),
+                    singleton: call.singleton,
+                    via: "example_group",
+                    agreeing: 1,
+                    total: 1,
+                    ambiguous: false,
+                    rivals: Vec::new(),
+                });
+            }
             let fqn = tree.scope_fqn(&call.nesting)?;
             tree.is_known(&fqn).then_some(Receiver {
                 fqn,
@@ -1171,11 +1196,14 @@ fn residue(
     receiver: Option<Receiver>,
     reason: &str,
 ) -> MethodAnswer {
-    let here = call
-        .nesting
-        .first()
-        .and_then(|_| tree.scope_fqn(&call.nesting))
-        .map(|scope| tree.variant_at(&scope, path));
+    let here = if rspec::in_group(&call.nesting) {
+        Some(rspec::EXAMPLE_GROUP.to_string())
+    } else {
+        call.nesting
+            .first()
+            .and_then(|_| tree.scope_fqn(&call.nesting))
+            .map(|scope| tree.variant_at(&scope, path))
+    };
     let ancestors: Vec<String> = here
         .as_ref()
         .map(|fqn| tree.ancestors(fqn).chain.clone())

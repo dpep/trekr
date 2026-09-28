@@ -1,0 +1,4 @@
+# With no rspec-core in the index, a spec's calls are still known to run on an
+# example group. The answer says which class was missing rather than that the
+# file does not determine the receiver.
+def spec/widget_spec.rb:2:3 status=residue receiver_type=RSpec::Core::ExampleGroup reason=rspec-core

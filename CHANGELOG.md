@@ -2,7 +2,16 @@
 
 ## Unreleased
 
+- **Upgrading drops and rebuilds the index** (store v34): run `trekr --index`
+  once per checkout.
+
 ### Added
+
+- **RSpec.** A call inside a block RSpec runs — a `describe` or `context`
+  body, an `it`, `before` or `let` — is looked up on RSpec's example group, in
+  the rspec-core your bundle holds: `let`, `before`, `described_class` and
+  `is_expected` now resolve where they answered residue. Without rspec-core in
+  the index, the answer says that is what is missing (DEC-084).
 
 - **`trekr --usage --misses`** lists the editor's definitions and hovers that
   came back empty or unsure — file, line, column, the token and trekr's reason

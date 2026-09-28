@@ -641,6 +641,84 @@ pub(crate) fn split_nesting(s: &str) -> Vec<String> {
     }
 }
 
+/// RSpec's example groups (DEC-084).
+///
+/// `describe` builds an anonymous subclass of `RSpec::Core::ExampleGroup` and
+/// runs its block as that class's body; `it`, `before` and `let` run theirs
+/// on an instance of it. A group is pushed onto a nesting as a segment of its
+/// own, so a call inside one knows what `self` is. The segment is not a
+/// constant scope — a constant or class written inside a group is the file's,
+/// as Ruby has it — so the tree reads past it, and a method a group defines
+/// (`let`, `subject`, a `def`) is visible only from that group and the ones
+/// nested in it, so it never leaves its file.
+pub(crate) mod rspec {
+    /// What every example group subclasses.
+    pub(crate) const EXAMPLE_GROUP: &str = "RSpec::Core::ExampleGroup";
+
+    const OPEN: &str = "(group ";
+
+    /// A group's segment, named as RSpec names the class (`AccordTypesDecimal`).
+    pub(crate) fn segment(name: &str) -> String {
+        format!("{OPEN}{name})")
+    }
+
+    pub(crate) fn is_group(segment: &str) -> bool {
+        segment.starts_with(OPEN)
+    }
+
+    /// Is the innermost scope here an example group?
+    pub(crate) fn in_group(nesting: &[String]) -> bool {
+        nesting.first().is_some_and(|s| is_group(s))
+    }
+
+    /// RSpec's `base_name_for`: a description as a constant name.
+    pub(crate) fn base_name(description: &str) -> String {
+        let mut name = String::new();
+        let mut upcase = false;
+        for c in description.chars() {
+            if c.is_ascii_alphanumeric() {
+                if upcase {
+                    name.push(c.to_ascii_uppercase());
+                } else {
+                    name.push(c);
+                }
+                upcase = false;
+            } else {
+                upcase = true;
+            }
+        }
+        if let Some(first) = name.chars().next() {
+            name.replace_range(..1, &first.to_ascii_uppercase().to_string());
+        }
+        match name.chars().next() {
+            None => "Anonymous".to_string(),
+            Some(c) if !c.is_ascii_uppercase() => format!("Nested{name}"),
+            Some(_) => name,
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn a_description_is_named_as_rspec_names_its_class() {
+            assert_eq!(base_name("Accord::Types::Decimal"), "AccordTypesDecimal");
+            assert_eq!(base_name("when it is valid"), "WhenItIsValid");
+            assert_eq!(base_name("#to_s"), "ToS");
+            assert_eq!(base_name("2 widgets"), "Nested2Widgets");
+            assert_eq!(base_name(""), "Anonymous");
+        }
+
+        #[test]
+        fn a_group_is_a_segment_of_its_own() {
+            let nesting = [segment("WhenIdle"), segment("Widget"), "Shop".to_string()];
+            assert!(in_group(&nesting));
+            assert!(!is_group(&nesting[2]));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
