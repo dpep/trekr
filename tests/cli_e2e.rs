@@ -2268,6 +2268,8 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
     );
     let text = stdout(&trekr(&db, &dir, &["--dead", "thing.rb"]));
     assert!(text.contains("one possible call, at caller.rb:1"), "{text}");
+    // Named as Ruby's documentation names it, so a class method says so.
+    assert!(text.contains("  Thing#never_used  "), "{text}");
     // The caller itself is used by nothing here, so it is reported too — but
     // never as anything stronger than a candidate.
     for candidate in value["candidates"].as_array().unwrap() {
@@ -2355,6 +2357,7 @@ fn dead_weighs_each_scope_against_its_own_checkout() {
         // One caller in `one`; three in `two`, which is not a candidate.
         assert_eq!(candidates.len(), 1, "{args:?}: {value}");
         assert_eq!(candidates[0]["tier"], "single-caller");
+        assert_eq!(candidates[0]["singleton"], true);
         assert!(
             candidates[0]["root"].as_str().unwrap().ends_with("/one"),
             "{value}"
@@ -2362,7 +2365,7 @@ fn dead_weighs_each_scope_against_its_own_checkout() {
         // Text names no checkout as "here", so "widget.rb" alone would be
         // read against the first scope's.
         let text = stdout(&trekr(&db, &base, &["--dead", args[0], args[1]]));
-        assert!(text.contains("one/widget.rb:2"), "{text}");
+        assert!(text.contains("one/widget.rb:2  Widget.build"), "{text}");
     }
 
     // A file named twice, directly and through its directory, is one file.

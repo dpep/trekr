@@ -146,10 +146,10 @@ never a silent guess. Every answer carries `status`, `confidence`, and
 
 ```console
 $ trekr --dead activerecord/lib/active_record/associations
-override         activerecord/lib/active_record/associations/collection_proxy.rb:1123  pretty_print  — no call names it, but it overrides ActiveRecord::Relation#pretty_print, so a call of that may run it
-single-caller    activerecord/lib/active_record/associations/preloader/association.rb:32  load_records_in_batch  — one possible call, at activerecord/lib/active_record/associations/preloader/batch.rb:42: its receiver is untyped; its caller, group_and_load_similar, is itself a candidate   (lower confidence: untyped caller)
-convention-only  activerecord/lib/active_record/associations/association.rb:198  marshal_dump  — named only by a symbol handed to a macro (3)   (lower confidence: send)
-super-only       activerecord/lib/active_record/associations/belongs_to_association.rb:76  target_changed?  — reached only by `super` from ActiveRecord::Associations::BelongsToPolymorphicAssociation   (lower confidence: send, public_send)
+override         activerecord/lib/active_record/associations/collection_proxy.rb:1123  ActiveRecord::Associations::CollectionProxy#pretty_print  — no call names it, but it overrides ActiveRecord::Relation#pretty_print, so a call of that may run it
+single-caller    activerecord/lib/active_record/associations/preloader/association.rb:32  ActiveRecord::Associations::Preloader::Association::LoaderQuery#load_records_in_batch  — one possible call, at activerecord/lib/active_record/associations/preloader/batch.rb:42: its receiver is untyped; its caller, group_and_load_similar, is itself a candidate   (lower confidence: untyped caller)
+convention-only  activerecord/lib/active_record/associations/association.rb:198  ActiveRecord::Associations::Association#marshal_dump  — named only by a symbol handed to a macro (3)   (lower confidence: send)
+super-only       activerecord/lib/active_record/associations/belongs_to_association.rb:76  ActiveRecord::Associations::BelongsToAssociation#target_changed?  — reached only by `super` from ActiveRecord::Associations::BelongsToPolymorphicAssociation   (lower confidence: send, public_send)
 ```
 
 `unreferenced` means nothing was found, `single-caller` is one reference (an

@@ -1791,7 +1791,7 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
             "{:<16} {}  {}  — {}{}",
             row["tier"].as_str().unwrap_or_default(),
             at_line(row),
-            row["name"].as_str().unwrap_or_default(),
+            dead_name(row),
             row["reason"].as_str().unwrap_or_default(),
             match row["caveat"].as_str().unwrap_or_default() {
                 "" => String::new(),
@@ -1803,6 +1803,17 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
         println!("no candidates in {scope} file(s)");
     }
     Ok(exit_on(found))
+}
+
+/// A candidate as Ruby's documentation names it: `Widget#save`, or
+/// `Widget.build` for a method on the singleton.
+fn dead_name(row: &serde_json::Value) -> String {
+    let name = row["name"].as_str().unwrap_or_default();
+    match row["owner"].as_str().unwrap_or_default() {
+        "" => name.to_string(),
+        owner if row["singleton"] == true => format!("{owner}.{name}"),
+        owner => format!("{owner}#{name}"),
+    }
 }
 
 /// `--dead` over the scopes in one checkout, weighed against that checkout:
@@ -1942,6 +1953,7 @@ fn dead_in(
         let mut row = serde_json::json!({
             "name": def.name,
             "owner": owner,
+            "singleton": def.singleton,
             "path": file,
             "line": def.pos.line,
             "col": def.pos.col,

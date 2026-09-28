@@ -13,6 +13,10 @@
   naming it. Every row has an `overrides` array in JSON. A script that
   switches on `tier` must handle the new value (DEC-121).
 
+- **`--dead` names each candidate as Ruby's documentation does**:
+  `Widget#save`, or `Widget.build` for a class method, where the text showed
+  the bare name and hid the difference. JSON rows gain `singleton`.
+
 ### Fixed
 
 - **A call on `described_class` resolves.** `described_class.blocked?`
