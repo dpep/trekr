@@ -1,0 +1,15 @@
+# `described_class` is the constant the innermost group describes, so a call
+# on it is that class's singleton method, and `.new` an instance. It was
+# residue: the chain asked rspec-core's `described_class`, which declares no
+# return.
+def spec/widget_spec.rb:2:24 status=resolved owner=Widget via=described_class
+def spec/widget_spec.rb:3:28 status=resolved owner=Widget
+def spec/widget_spec.rb:6:26 status=resolved owner=Widget via=described_class
+def spec/widget_spec.rb:17:24 status=resolved owner=Helpers via=described_class
+refs Widget.build confirmed=2 possible=1 excluded=0
+# A `let` of that name is the `let`.
+def spec/widget_spec.rb:12:26 status=resolved owner=Array via=let
+# A group that describes a string has no class to describe.
+def spec/widget_spec.rb:21:24 status=residue
+# The word itself is still rspec-core's method.
+def spec/widget_spec.rb:2:8 status=resolved owner=RSpec::Core::ExampleGroup

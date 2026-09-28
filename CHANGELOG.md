@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **A call on `described_class` resolves.** `described_class.blocked?`
+  answers the described class's own `blocked?`, and `described_class.new.x`
+  its instance method, `resolved_via: described_class`; both were residue,
+  though `described_class` itself was followed. `--refs` confirms them
+  (DEC-120).
+
 ## 0.7.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v38): run `trekr --index`

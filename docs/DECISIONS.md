@@ -5372,3 +5372,30 @@ connection_class_for_self`, `ActiveModel::AttributeMethods::ClassMethods#
 attribute_method_prefix` and the like, which each concern calls in its own
 `included do` — so a `self` call keeps the includer's view.
 
+## DEC-120 — A call on `described_class` is a call on the described class
+
+**Decided.** `described_class.x`, called in a group or example, is typed as
+the class or module the innermost group that names a constant describes, on
+its singleton side — the constant itself, as RSpec's `described_class`
+returns it — and `described_class.new.x` as its instance, by the chain's
+`new` rule. The rung is `described_class`. A `let(:described_class)` in
+reach is the `let`, and a group that describes only strings has nothing to
+describe, so a call there stays residue.
+
+**Before**, DEC-096 read `described_class` only as a `let`'s value.
+Written as a receiver, it was a chain whose previous call is rspec-core's
+`ExampleGroup#described_class`, which declares no return, so the call was
+residue — `described_class.blocked?` in mastodon's `domain_block_spec.rb`
+offered five `blocked?`s ranked by arity. It is the most common receiver in
+a model spec.
+
+**Where it lives.** The resolver, from the file's `described` groups that
+DEC-114 already records, not the extractor. Recording the call as if
+`DomainBlock.blocked?` were written would have been one line, but it would
+have claimed `const` for something the source does not write, and hidden the
+rule from `--explain`.
+
+**Measured** (BASELINE, "A first-time Rails user"): 24 gold spec sites
+residue → correct across graph_weaver, accord and polyid, 60 spec clicks
+that missed now answer, and no confidently wrong count, `--refs` tier or
+`--dead` tier on rails moved.

@@ -2601,3 +2601,32 @@ unreferenced 446 → 449: the calls a concern makes in its own `included do`
 (`initialize_generated_modules`, `attribute_method_prefix`,
 `connection_class_for_self`) found nothing, and their methods looked unused.
 
+
+## A first-time Rails user (2026-09-28)
+
+DEC-120 onward, against main at 435a9a3 (0.7.0), each commit against the one
+before it, each build on stores it indexed itself: the three gem gold sets
+(`APP_SAMPLE=600 SAMPLE=300 SEED=12`), widget_shop's trace with every site
+scored and context pinned, rails' 40 `--refs` queries, `--dead
+activerecord/lib activemodel/lib actionpack/lib` on rails, `--dead lib` on a
+store holding only activerecord, `--dead app/models app/services` on
+mastodon (a `--depth 1` clone at 301087a, its 304 installed gems indexed),
+and `script/clicks.py` over the same 13 repositories (21,154 definition
+clicks). 0.7.0 reproduced the last section's rails and activerecord `--dead`
+counts exactly.
+
+### A call on `described_class` (DEC-120)
+
+| | 0.7.0 | DEC-120 |
+| --- | ---: | ---: |
+| graph_weaver, a spec: correct of 482 | 375 | **381** |
+| accord, a spec: correct of 531 | 323 | **325** |
+| polyid, a spec: correct of 535 | 309 | **325** |
+| spec clicks missed of 12,524 | 3,217 | **3,157** |
+| mastodon `--dead` candidates | 1,035 | 1,035 |
+
+Every move is residue → correct; no confidently wrong count, `--refs` tier or
+rails `--dead` tier moved. On mastodon one method left `single-caller` (a
+spec now confirms `EmailDomainBlock#requires_approval?`) and one entered it:
+`User::Omniauthable::ClassMethods#find_for_omniauth` had two spec sites
+counted possible that are `Identity.find_for_omniauth`, now excluded.

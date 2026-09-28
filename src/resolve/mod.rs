@@ -1271,15 +1271,7 @@ fn let_typed(
 /// of the class the innermost group describes, or the module itself, as
 /// `MemoizedHelpers#subject` makes it (DEC-114).
 fn implicit_subject(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiver> {
-    let (level, class) = (0..call.nesting.len()).find_map(|at| {
-        let level = &call.nesting[at..];
-        facts
-            .described
-            .iter()
-            .find(|(group, _)| group == level)
-            .map(|(_, class)| (level, class))
-    })?;
-    let fqn = tree.resolve_at(class, level, path).fqn?;
+    let fqn = described_by(tree, facts, &call.nesting, path)?;
     Some(Receiver {
         singleton: tree.kind_of(&fqn) != Some("class"),
         fqn,
@@ -1289,6 +1281,45 @@ fn implicit_subject(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Opti
         ambiguous: false,
         rivals: Vec::new(),
     })
+}
+
+/// `described_class`, which RSpec answers with the constant the innermost
+/// group that names one describes: a call on it is that class's own method
+/// (DEC-120). A `let` of the same name is the `let`.
+fn described_class(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiver> {
+    if call.name != "described_class"
+        || call.recv != RecvShape::Implicit
+        || call.argc != Some(0)
+        || call.block
+        || !rspec::in_group(&call.nesting)
+        || group_member(tree, facts, call).is_some()
+        || !on_the_example(tree, facts, call, path)
+    {
+        return None;
+    }
+    Some(Receiver {
+        fqn: described_by(tree, facts, &call.nesting, path)?,
+        singleton: true,
+        via: "described_class",
+        agreeing: 1,
+        total: 1,
+        ambiguous: false,
+        rivals: Vec::new(),
+    })
+}
+
+/// The class or module the innermost group around `nesting` that describes
+/// a constant describes.
+fn described_by(tree: &Tree, facts: &Facts, nesting: &[String], path: &str) -> Option<String> {
+    let (level, class) = (0..nesting.len()).find_map(|at| {
+        let level = &nesting[at..];
+        facts
+            .described
+            .iter()
+            .find(|(group, _)| group == level)
+            .map(|(_, class)| (level, class))
+    })?;
+    tree.resolve_at(class, level, path).fqn
 }
 
 /// What a call returns, as a receiver for the next one in its chain.
@@ -1304,7 +1335,9 @@ fn returned_by(
     depth: usize,
     next: &Call,
 ) -> Option<Receiver> {
-    if let Some(receiver) = let_typed(tree, facts, previous, path, depth) {
+    if let Some(receiver) = let_typed(tree, facts, previous, path, depth)
+        .or_else(|| described_class(tree, facts, previous, path))
+    {
         return Some(receiver);
     }
     let Some(receiver) = typed_at(tree, facts, previous, path, depth) else {
