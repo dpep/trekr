@@ -2559,3 +2559,14 @@ modules calling on `self` what a sibling module of the same includer defines,
 chiefly the database adapters' `SchemaStatements`, `DatabaseStatements` and
 `Quoting`.
 
+### A concern's `included do` includes into the includer (DEC-103)
+
+No gold verdict, `--refs` tier or click moved. rails `--dead`: 2,273 → 2,272
+candidates, `PrimaryKey::ClassMethods#dangerous_attribute_method?` now
+confirmed from railties' `ActiveRecord::Base.dangerous_attribute_method?`,
+since `included do include PrimaryKey` reaches the class. Measured without
+the DEC-081 amendment, the same change moved three controller methods
+(`ActionController::Caching#instrument_name` and `#instrument_payload`,
+`ActionController::Rendering#_process_options`) single-caller →
+unreferenced.
+

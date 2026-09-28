@@ -5276,3 +5276,33 @@ in `Example`); no other gold verdict moved. Clicks: definition misses 5,637 →
 confirmed, in classes that `extend ActiveModel::Callbacks`, whose `extended`
 hook `class_eval`s `include ActiveSupport::Callbacks` into them. `--dead`
 did not move.
+
+## DEC-103 — A concern's `included do` includes into the includer
+
+**Decided.** `include M` and `prepend M` inside `included do … end` of a
+module that extends `ActiveSupport::Concern` are `(mixed include)` edges
+(DEC-102): each class whose own `include` names the concern gets them, an
+`include` right after the concern and a `prepend` ahead of the class. The
+concern's `extend` keeps DEC-099's route through `ClassMethods`.
+
+**Why.** DEC-099 left both on the concern itself, measured to matter
+nowhere. For `include` that is close: the module sits behind the concern
+instead of ahead of it. For `prepend` it is the opposite of Ruby: the module
+sat behind the includer, so the includer's own method beat the one Ruby
+puts in front of it, and a `super` in the prepended module answered the
+concern's method where an includer runs its own. DEC-102's edges give both
+their real place for nothing further.
+
+**A concern that includes the concern** gets the edges itself, since its
+`include` names the concern, and passes them on to its own includer through
+its chain, which is where Concern's dependencies put them. The order differs
+from Ruby's in one way: a module the inner concern prepends sits ahead of the
+outer concern rather than ahead of the final class, so a method the class
+defines itself would win where Ruby's prepend beats it.
+
+**Measured** (BASELINE, "Mixins through a variable"): no gold verdict,
+`--refs` tier or click moved. rails `--dead` loses one candidate,
+`PrimaryKey::ClassMethods#dangerous_attribute_method?`: `included do include
+PrimaryKey` now reaches `ActiveRecord::Base`, and railties' generator calls
+it there. Without DEC-081's amendment the same change had made three
+controller methods `unreferenced`.

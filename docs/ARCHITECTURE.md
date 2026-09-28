@@ -149,7 +149,8 @@ Two things the blob layer cannot know, resolved here:
   aside and, once every other edge is attached, gives them to each scope
   whose own mixins name the module that way — an include right after the
   module, as Ruby inserts it — repeating for what they add until nothing new
-  applies.
+  applies. A concern's `included do` sends its `include` and `prepend` the
+  same way (DEC-103).
 - **An `on_load` hook's mixins** (DEC-098). `ActiveSupport.run_load_hooks(
   :active_record, Base)` is an edge of relation `load_hooks`, owner `Base`
   (sent) or the class body it is written in (`self`), target the hook's name.

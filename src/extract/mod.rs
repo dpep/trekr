@@ -1728,9 +1728,14 @@ impl<'pr> Extractor<'_> {
         };
         // `extend self` — the idiomatic module-function alternative.
         let mut own = Some("self");
-        // A hook's `base.class_eval` body mixes into the mixer (DEC-102).
+        // A hook's `base.class_eval` body mixes into the mixer (DEC-102), and
+        // so does a concern's `included do`, but for its `extend`, which
+        // Concern's `ClassMethods` carries to the includer (DEC-103).
         if let Some(how) = self.includer_how() {
             owner = self.mixed_owner(how);
+            own = None;
+        } else if relation != Relation::Extend && self.in_concerns_included_block() {
+            owner = self.mixed_owner(Relation::Include);
             own = None;
         }
         // `extend M` inside `included do` extends the includer, which is

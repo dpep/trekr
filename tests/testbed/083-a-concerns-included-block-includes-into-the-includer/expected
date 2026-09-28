@@ -1,0 +1,12 @@
+# `included do … end` is evaluated in the includer, so an `include` or
+# `prepend` written there mixes into the includer, not the concern. As the
+# concern's own, the prepend sat behind the includer: `Endpoint#serialize`
+# beat the Serializing that Ruby puts ahead of it, and Serializing's `super`
+# answered the concern's method, resolved, where an Endpoint runs its own. A
+# concern that includes the concern passes the mixins on to its own includer,
+# as Concern's dependencies do, and there the `super` does reach Api's.
+ancestors Endpoint Serializing,Endpoint,Auditing,Api
+def app.rb:40:14 status=resolved owner=Auditing
+def app.rb:41:14 status=resolved owner=Serializing
+def app.rb:3:5 status=ambiguous via=super
+def app.rb:42:13 status=resolved owner=Serializing

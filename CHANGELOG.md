@@ -102,6 +102,10 @@
   what it expects its includer to provide. It was excluded, and `--dead`
   called the method unreferenced (DEC-081, amended).
 
+- **`include` and `prepend` in a concern's `included do`** mix into the
+  includer, not the concern: a module prepended there now comes ahead of the
+  includer's own methods, as in Ruby, instead of behind them (DEC-103).
+
 ## 0.6.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v36): run `trekr --index`
