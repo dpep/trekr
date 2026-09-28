@@ -5716,3 +5716,37 @@ expanding templated rows in the tree. A string sent to another receiver
 (`Foo.class_eval "…"`), `instance_eval` with a string, and `eval` are not
 read.
 
+## DEC-133 — `X.new` makes what a custom `new` says it makes
+
+**Decided.** Wherever `X.new` types a value — `x = X.new` (`local:new`), a
+chain `X.new.y`, a `let` of `described_class.new`, and the implicit subject
+(DEC-114) — the class side of `X` is looked up for `new` first. `Class#new`
+(core) makes an `X`, as before. A `new` of `X`'s own, or of a module its
+class side has (`extend self`, a `ClassMethods`), that says it returns
+something else makes that: its `sig`, or — recorded by the extractor as its
+return — a last expression `Other.new(…)`, resolved from where the `new` is
+written. One that names a class the index cannot place makes nothing
+known. One that says nothing still makes an `X`.
+
+**Why.** flipper's `Flipper` is a module that `extend self`s and defines
+`def new(adapter, options = {}) DSL.new(adapter, options) end`. Its specs
+write `let(:flipper) { described_class.new(adapter) }`, and trekr typed
+`flipper` as a `Flipper` and answered `flipper[:search]` with `Flipper.[]`
+at confidence 1: confidently wrong. Ruby runs `Flipper::DSL#[]` — an alias
+of `feature`, whose body is the answer now.
+
+**A `new` that says nothing is an `X`, not residue.** The first cut made
+it residue, as the rule was first written, and measured worse: accord's
+gold set lost 35 correct answers, widget_shop's gem floor 21, and 529 rails
+`--refs` sites went from excluded to possible. Two `new`s did it.
+ActiveRecord's `Inheritance::ClassMethods#new`, every model's, ends in an
+`if` whose branches are a subclass's `new` (STI) and `super`. And sorbet's
+gem-generator tracer, which `Class.prepend`s a `new` that wraps `super`, is
+read as an edge on every class (DEC-097 cannot tell that it runs only under
+the tracer). Both make an `X`. Only positive evidence of another class
+moves the answer.
+
+**Not done.** A `new` whose last expression is an `if`, a cached
+instance or a factory's call types nothing new. `private_class_method :new`
+is not read, as before.
+

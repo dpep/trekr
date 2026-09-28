@@ -1,0 +1,10 @@
+# flipper's `Flipper.new` is a module method (`extend self`) returning
+# `DSL.new(...)`, and `described_class.new(adapter)` was typed as a
+# `Flipper`, so `flipper[:search]` answered `Flipper.[]` at confidence 1
+# where Ruby runs `Flipper::DSL#[]`. A `new` on `X`'s class side that says
+# it makes something else — a `sig`, or ending in `Other.new` — makes that.
+# One that says nothing is still taken to make an `X`, deliberately: most
+# end in `super` or wrap it, and sorbet's tracer prepends one to every class.
+def app.rb:36:8 status=resolved owner=Factory::Builder via=local:new
+def app.rb:37:11 status=resolved owner=Model
+def app.rb:39:8 status=resolved owner=Opaque via=local:new

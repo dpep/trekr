@@ -1003,6 +1003,10 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             sig::resolve(&std::mem::take(&mut self.pending_sigs), &def.params);
         def.sig_returns = returns;
         def.sig_overloads = overloads;
+        // A custom `new` says what it makes by what it ends with (DEC-133).
+        if name == "new" && def.sig_returns.is_none() && def.sig_overloads.is_empty() {
+            def.sig_returns = node.body().and_then(|body| made_by_new(&body));
+        }
         def.sig_params = std::mem::take(&mut self.pending_sig_params);
         // Visibility modifiers never reach `def self.x` — it is public whatever
         // the enclosing `private` says.
@@ -4193,6 +4197,17 @@ fn render(pieces: &[Piece], value: &str, file: &[u8]) -> Eval {
         }
     }
     eval
+}
+
+/// What a `def new` makes, when its last expression says: `Other.new(…)`
+/// makes an `Other` (DEC-133).
+fn made_by_new(body: &Node<'_>) -> Option<String> {
+    let last = body.as_statements_node()?.body().iter().last()?;
+    let call = last.as_call_node()?;
+    if method_name(&call).as_deref() != Some("new") {
+        return None;
+    }
+    const_name(&call.receiver()?)
 }
 
 /// Does a name or text a string of code produced spell the stand-in?

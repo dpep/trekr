@@ -1347,13 +1347,36 @@ fn let_typed(
     })
 }
 
+/// What `X.new` makes (DEC-133): an instance of `X`, unless the class side
+/// of `X` has a `new` of its own that says it returns something else — by a
+/// `sig`, or by ending in `Other.new`. Then that, or nothing known when the
+/// index cannot place it. A `new` that says nothing is taken to make an `X`:
+/// most end in `super`, or wrap it.
+pub(super) fn made_by_new(tree: &Tree, class: &str) -> Option<String> {
+    let Some(new) = tree.lookup(class, true, "new") else {
+        return Some(class.to_string());
+    };
+    if crate::tree::is_core(&new.site.path) {
+        return Some(class.to_string());
+    }
+    match new.returns_for(None, false) {
+        None => Some(class.to_string()),
+        Some(written) => tree.returned_class(&new, written),
+    }
+}
+
 /// RSpec's implicit `subject`, when no group in reach writes one: an instance
 /// of the class the innermost group describes, or the module itself, as
 /// `MemoizedHelpers#subject` makes it (DEC-114).
 fn implicit_subject(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiver> {
-    let fqn = described_by(tree, facts, &call.nesting, path)?;
+    let described = described_by(tree, facts, &call.nesting, path)?;
+    let singleton = tree.kind_of(&described) != Some("class");
+    let fqn = match singleton {
+        true => described,
+        false => made_by_new(tree, &described)?,
+    };
     Some(Receiver {
-        singleton: tree.kind_of(&fqn) != Some("class"),
+        singleton,
         fqn,
         via: "implicit_subject",
         agreeing: 1,
@@ -1436,6 +1459,7 @@ fn returned_by(
     // `Foo.new.bar`, as `x = Foo.new` types `x`.
     if previous.name == "new" && receiver.singleton {
         return Some(Receiver {
+            fqn: made_by_new(tree, &receiver.fqn)?,
             singleton: false,
             via: "chain",
             ..receiver
@@ -1722,7 +1746,10 @@ fn type_of(
         return None;
     }
     match value {
-        ValueShape::New(name) => Some((tree.resolve(name, nesting).fqn?, false, "local:new")),
+        ValueShape::New(name) => {
+            let class = tree.resolve(name, nesting).fqn?;
+            Some((made_by_new(tree, &class)?, false, "local:new"))
+        }
         ValueShape::Rescued(name) => {
             Some((tree.resolve(name, nesting).fqn?, false, "local:rescue"))
         }

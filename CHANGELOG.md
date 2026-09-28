@@ -112,6 +112,12 @@
   cannot render is flagged in `--dead` as `lower confidence: class_eval string`
   (DEC-132).
 
+- **`X.new` makes what a custom `new` says it makes.** When `X`'s class side
+  has a `new` whose `sig` or last line (`Other.new(…)`) names another class,
+  `X.new` is an instance of that class. flipper's
+  `described_class.new(adapter)` is a `Flipper::DSL`, so `flipper[:search]` is
+  `DSL#[]`, not `Flipper.[]` (DEC-133).
+
 ## 0.7.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v38): run `trekr --index`
