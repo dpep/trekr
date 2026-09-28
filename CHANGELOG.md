@@ -39,6 +39,12 @@
   modules defines counts only when it comes ahead of what the call finds
   (DEC-122).
 
+- **A string that mentions `.must_` no longer makes a spec Minitest's.**
+  `expect(events).to include("accord.parse.must_be_positive")` turned the
+  whole of accord's `instrumentation_spec.rb` into residue, its bare
+  `describe` read as Minitest's. Only a call counts now — `x.must_equal`,
+  `require "minitest/spec"`, `Minitest::Spec` (DEC-123).
+
 ## 0.7.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v38): run `trekr --index`

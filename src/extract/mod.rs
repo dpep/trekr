@@ -311,7 +311,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         conditional: 0,
         open_blocks: Vec::new(),
         matcher_subjects: HashMap::new(),
-        minitest: minitest_spec(src),
+        minitest: minitest_spec(src, &parsed.node()),
         described: Vec::new(),
         scope_body: 0,
     };
@@ -3694,13 +3694,59 @@ impl<'pr> Extractor<'_> {
 
 /// Does this file write Minitest's spec DSL? Its `describe` is RSpec's
 /// syntax, so the tell is what else it writes: Minitest's expectations
-/// (`_(x).must_equal`, `wont_be`), or a require of its spec (DEC-095).
-/// A byte search, not a parse: the words are Minitest's alone.
-fn minitest_spec(src: &[u8]) -> bool {
+/// (`_(x).must_equal`, `wont_be`), a require of its spec, or its constant
+/// (DEC-095). Only as code: a string or comment holding the words is not
+/// the call (DEC-123). The bytes are searched first, since most files
+/// hold none of them.
+fn minitest_spec(src: &[u8], root: &Node<'_>) -> bool {
     const TELLS: [&[u8]; 4] = [b".must_", b".wont_", b"minitest/spec", b"Minitest::Spec"];
-    TELLS
+    let written = TELLS
         .iter()
-        .any(|tell| src.windows(tell.len()).any(|w| w == *tell))
+        .any(|tell| src.windows(tell.len()).any(|w| w == *tell));
+    if !written {
+        return false;
+    }
+    let mut finder = MinitestTell { found: false };
+    finder.visit(root);
+    finder.found
+}
+
+/// Finds a Minitest tell in code (DEC-095, DEC-123).
+struct MinitestTell {
+    found: bool,
+}
+
+impl<'pr> Visit<'pr> for MinitestTell {
+    fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+        let name = node.name();
+        let name = name.as_slice();
+        let expectation =
+            node.receiver().is_some() && (name.starts_with(b"must_") || name.starts_with(b"wont_"));
+        let requires_spec = name == b"require"
+            && node
+                .arguments()
+                .and_then(|args| args.arguments().iter().next())
+                .and_then(|arg| arg.as_string_node())
+                .is_some_and(|path| path.unescaped() == b"minitest/spec");
+        if expectation || requires_spec {
+            self.found = true;
+            return;
+        }
+        ruby_prism::visit_call_node(self, node);
+    }
+
+    fn visit_constant_path_node(&mut self, node: &ruby_prism::ConstantPathNode<'pr>) {
+        let spec = node.name().is_some_and(|name| name.as_slice() == b"Spec")
+            && node
+                .parent()
+                .and_then(|parent| parent.as_constant_read_node())
+                .is_some_and(|parent| parent.name().as_slice() == b"Minitest");
+        if spec {
+            self.found = true;
+            return;
+        }
+        ruby_prism::visit_constant_path_node(self, node);
+    }
 }
 
 /// Positional argument count, or `None` when a splat hides the real count —

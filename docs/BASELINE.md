@@ -2668,3 +2668,9 @@ one possible call was a shadowed module method's
 `add_options_for_index_columns`), and `AbstractAdapter#warning_ignored?`
 moved `single-caller` → `super-only`. The hunt's own build of this fix gives
 byte-identical candidates on the same store.
+
+### Minitest's tell is a call (DEC-123)
+
+accord, a spec: correct of 531, 325 → **328**, all three residue → correct
+in `instrumentation_spec.rb`. No other gold verdict and no click moved; the
+click replay's sample of accord's specs does not include that file.

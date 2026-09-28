@@ -1,0 +1,8 @@
+# Minitest's tell (DEC-095) is a call it defines, `x.must_equal`, and was
+# read from the file's bytes: `.must_` in a string or a comment turned an
+# RSpec spec's bare `describe` into residue, and every call in the file
+# with it. Only a call counts now.
+def spec/widget_spec.rb:1:1 status=resolved owner=RSpec via=main
+def spec/widget_spec.rb:3:8 status=resolved owner=RSpec::Matchers
+# A Minitest spec still is one.
+def test/gadget_test.rb:1:1 status=residue

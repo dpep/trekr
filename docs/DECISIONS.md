@@ -4737,6 +4737,7 @@ group opens at the file's first line and the expectations come later; a
 second parse to find them would cost more than the four files are worth. A
 comment or string that happens to contain `.must_` turns an RSpec file's bare
 `describe` off, which leaves it residue, as before DEC-084 — not wrong.
+*Superseded by DEC-123*: the tell is read from the code.
 
 ## DEC-096 — A `let` is typed by what its block returns
 
@@ -5472,4 +5473,22 @@ queries move one site each possible → excluded (`valid?` from
 `DatabaseStatements`); rails `--dead` gains 4 candidates and moves one
 `single-caller` to `super-only`, activerecord alone gains 1 — identical,
 candidate for candidate, to the build the hunt that found it validated.
+
+## DEC-123 — Minitest's tell is a call, not a string
+
+**Decided.** DEC-095's tell — `.must_`, `.wont_`, `minitest/spec`,
+`Minitest::Spec` — counts only as code: a call named `must_*` or `wont_*`
+with a receiver, a `require "minitest/spec"`, or the constant path. The
+byte search stays, as the gate: a file holding none of the words is not
+walked. One that does is walked over the tree the extractor already parsed,
+so there is no second parse, which is what DEC-095 turned the AST down for.
+
+**Before**, accord's `spec/accord/instrumentation_spec.rb` asserts on the
+event name `"accord.parse.must_be_positive"`, which holds `.must_`: the
+file's bare `describe` opened no group, and every call in it was residue.
+DEC-095 called this outcome "not wrong", and it is not; it is also a whole
+file of answers thrown away for a word in a string.
+
+**Measured** (BASELINE, "A first-time Rails user"): accord's gold set, 3
+spec sites residue → correct; nothing else moved.
 
