@@ -2674,3 +2674,8 @@ byte-identical candidates on the same store.
 accord, a spec: correct of 531, 325 → **328**, all three residue → correct
 in `instrumentation_spec.rb`. No other gold verdict and no click moved; the
 click replay's sample of accord's specs does not include that file.
+
+### A shared group's name (DEC-124)
+
+No gold verdict and no click moved: the gold sets are call sites, and the
+click replay clicks identifiers, never the inside of a string.

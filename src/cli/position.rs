@@ -309,6 +309,18 @@ pub(crate) fn at_facts(facts: &crate::core::Facts, line: u32, col: u32) -> Optio
     if let Some(reference) = facts.defs.iter().find_map(|d| compact_prefix(d, line, col)) {
         return Some(Under::Constant(reference));
     }
+    // The literal `include_context` is handed names a shared group (DEC-124).
+    if let Some((pos, _, module)) = facts
+        .shared_names
+        .iter()
+        .find(|(pos, len, _)| covers(*pos, *len as usize, line, col))
+    {
+        return Some(Under::Constant(ConstRef {
+            name: module.clone(),
+            nesting: Vec::new(),
+            pos: *pos,
+        }));
+    }
     // Longest name wins among constants: on the `B` of `A::B` both `A::B` and a
     // bare `B` may be recorded, and the qualified one is what was written.
     if let Some(reference) = facts

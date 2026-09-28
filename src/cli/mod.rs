@@ -103,7 +103,10 @@ struct Cli {
     #[arg(long, value_name = "NAME", conflicts_with_all = ["index", "drop", "symbols"])]
     refs: Option<String>,
 
-    /// What is the name at this position, and where is it defined?
+    /// What is the name at this position, and where is it defined? A column
+    /// on no name — whitespace, a string, punctuation — answers for the
+    /// nearest name on that line and says so (`snapped_to`); a bare
+    /// `FILE:LINE` takes the line's first name
     #[arg(long, value_name = "FILE:LINE:COL", conflicts_with_all = ["index", "drop", "symbols", "refs"])]
     def: Option<String>,
 
@@ -2330,12 +2333,14 @@ fn cmd_def(
             object.insert("under".into(), "constant".into());
             object.insert("name".into(), reference.name.clone().into());
             if resolution.status == Status::Residue {
-                object.insert(
-                    "reason".into(),
+                let reason = if crate::core::rspec::is_shared_module(&reference.name) {
+                    "no top-level `shared_examples` or `shared_context` by this name is \
+                     indexed; one written inside a group is not followed"
+                } else {
                     "no indexed constant by that name; it may belong to a gem \
                      or be defined at runtime"
-                        .into(),
-                );
+                };
+                object.insert("reason".into(), reason.into());
             }
             value
         }
@@ -2412,19 +2417,6 @@ fn cmd_def(
             }
         }
     }
-    if let (Output::Text, Some(snapped)) = (out, &snapped) {
-        let others = match snapped.alternatives.len() {
-            0 => String::new(),
-            n => format!(
-                " ({n} other name{} on that line)",
-                if n == 1 { "" } else { "s" }
-            ),
-        };
-        eprintln!(
-            "trekr: answering for `{}` at column {}{others}",
-            snapped.name, snapped.col
-        );
-    }
     let resolved = answer["status"] == "resolved" || answer["status"] == "ambiguous";
     let text = match answer["definition"].as_array().and_then(|s| s.first()) {
         Some(site) => format!(
@@ -2450,6 +2442,28 @@ fn cmd_def(
             answer["name"].as_str().unwrap_or("?"),
             answer["reason"].as_str().unwrap_or("unresolved"),
         ),
+    };
+    // Beside the answer, not on stderr: an answer about a name the caller
+    // did not point at has to say so where it is read.
+    let text = match &snapped {
+        Some(snapped) => {
+            let others = match snapped.alternatives.len() {
+                0 => String::new(),
+                n => format!(
+                    " ({n} other name{} on that line)",
+                    if n == 1 { "" } else { "s" }
+                ),
+            };
+            let why = match spec.col {
+                0 => "no column given".to_string(),
+                col => format!("no name at column {col}"),
+            };
+            format!(
+                "{text}\n  snapped_to  `{}` at column {}: {why}{others}",
+                snapped.name, snapped.col
+            )
+        }
+        None => text,
     };
     let text = if explain && out == Output::Text {
         format!("{text}\n{}", explanation(&answer))

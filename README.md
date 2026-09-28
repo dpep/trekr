@@ -134,6 +134,12 @@ ActiveRecord::TokenFor::RelationMethods
 ActiveRecord::SignedId::RelationMethods
 ```
 
+A column that is on no name — whitespace, punctuation, most strings — answers
+for the nearest name on that line and says so under the answer, `snapped_to`
+in JSON; `FILE:LINE` takes the line's first name. The exception is a shared
+group's name: the string in `it_behaves_like "a widget"` answers the
+`shared_examples "a widget"` it includes.
+
 **98 % of rails constant references resolve** (91 % discourse) with core and
 the gems indexed; rails' remainder is one optional adapter that is not
 installed. A method call goes up a receiver ladder — `self`, a constant, a

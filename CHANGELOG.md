@@ -25,6 +25,17 @@
 
 ### Fixed
 
+- **A shared group's name answers the group.** A click on the string in
+  `it_behaves_like "a widget"`, `include_examples` or `include_context`
+  snapped to the method and landed in rspec-core; it answers the
+  `shared_examples`/`shared_context` of that name, in `--def`, hover and
+  the editor's go-to-definition. A name nothing indexed defines says so
+  (DEC-124).
+
+- **A snapped `--def` says so on stdout**, under the answer: ``snapped_to `it`
+  at column 3: no name at column 2``. It was a stderr note a pipe
+  dropped. `--help` and the README now say that a column on no name snaps.
+
 - **A call on `described_class` resolves.** `described_class.blocked?`
   answers the described class's own `blocked?`, and `described_class.new.x`
   its instance method, `resolved_via: described_class`; both were residue,

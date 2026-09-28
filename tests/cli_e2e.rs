@@ -1922,15 +1922,12 @@ fn a_rough_column_snaps_to_the_nearest_name_and_discloses_it() {
     assert_eq!(value["snapped_to"]["col"], 5);
     assert_eq!(near.status.code(), Some(0));
 
-    // The human surface says it in words; `--json` carries it structurally, so
-    // the note is text-only rather than duplicated onto every consumer.
-    let text = trekr(&db, &dir, &["--def", "widget.rb:7:3"]);
-    let told = String::from_utf8_lossy(&text.stderr);
+    // The human surface says it in words, beside the answer.
+    let told = stdout(&trekr(&db, &dir, &["--def", "widget.rb:7:3"]));
     assert!(
-        told.contains("answering for"),
-        "the snap must be told: {told}"
+        told.contains("snapped_to  `helper` at column 5: no name at column 3"),
+        "the snap must be told, and where: {told}"
     );
-    assert!(told.contains("column 5"), "and say where: {told}");
 
     // No column at all — the fully hand-typed case.
     let bare = trekr(&db, &dir, &["--def", "widget.rb:7", "--json"]);

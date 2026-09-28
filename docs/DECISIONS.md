@@ -5492,3 +5492,30 @@ file of answers thrown away for a word in a string.
 **Measured** (BASELINE, "A first-time Rails user"): accord's gold set, 3
 spec sites residue → correct; nothing else moved.
 
+## DEC-124 — A shared group's name, where it is included, is the group
+
+**Decided.** The literal handed to `include_context`, `include_examples`,
+`it_behaves_like` or `it_should_behave_like` in a group is recorded,
+file-local like DEC-114's described groups, with the module DEC-092 names
+from it. A position inside it answers as a reference to that module:
+`--def` and the editor's definition go to the `shared_examples` or
+`shared_context` block that makes it, hover shows its card. A name nothing
+indexed defines is residue saying no top-level shared group by that name
+is indexed.
+
+**Before**, a string holds no name, so the position snapped to the nearest
+one on the line, the includer method, and answered rspec-core's
+`it_behaves_like`: a confident answer to a question nobody asked. The
+string is the whole point of the line, and RSpec's key for the group.
+
+**Snapping, said where it is read.** The snap was disclosed by a stderr
+note, which a pipe or an agent's tool call drops, and `--help` and the
+README said nothing of it. The text answer now carries a `snapped_to` line
+under the answer, as JSON always did, and both documents say a column on
+no name snaps.
+
+**Not stored**, and so not a `--refs` answer: `--refs
+RSpec::SharedExampleGroups::X` does not list the includes. That would need
+a constant reference the blob layer keeps, whose span is the string rather
+than the constant's written tail; nothing has asked for it.
+

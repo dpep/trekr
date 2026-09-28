@@ -1,0 +1,11 @@
+# The string `include_context`, `include_examples` and `it_behaves_like` are
+# handed is the shared group they include, and a click on it is a click on
+# that group (DEC-124). It snapped to the method name and answered
+# rspec-core's `include_context`.
+def spec/widget_spec.rb:2:22 status=resolved name=RSpec::SharedExampleGroups::RawHttpServer site=spec/support/raw_http_server.rb:1
+def spec/widget_spec.rb:14:20 status=resolved site=spec/support/raw_http_server.rb:10
+hover spec/widget_spec.rb:2:22 RawHttpServer
+# A group nothing defines is still no answer, and says so.
+def spec/widget_spec.rb:18:20 status=residue reason=shared_examples
+# The call itself is still the call.
+def spec/widget_spec.rb:2:3 name=include_context

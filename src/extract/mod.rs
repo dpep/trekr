@@ -2347,6 +2347,30 @@ impl<'pr> Extractor<'_> {
         ))
     }
 
+    /// Where a group names the shared group it includes, so a click on the
+    /// literal is a click on the group (DEC-124).
+    fn note_shared_name(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        if !rspec::in_group(&self.nesting) {
+            return;
+        }
+        let (Some(module), Some(written)) = (
+            self.shared_included(call),
+            arg_nodes(call).into_iter().next(),
+        ) else {
+            return;
+        };
+        let (start, end) = (
+            written.location().start_offset(),
+            written.location().end_offset(),
+        );
+        let pos = self.pos(start);
+        if self.pos(end).line == pos.line {
+            self.facts
+                .shared_names
+                .push((pos, (end - start) as u32, module));
+        }
+    }
+
     /// `include_context "x"` and `include_examples "x"` include a shared
     /// group into the group they are written in (DEC-092).
     fn handle_shared_include(&mut self, call: &ruby_prism::CallNode<'pr>) {
@@ -3318,6 +3342,7 @@ impl<'pr> Extractor<'_> {
         let Some(message) = call.message_loc() else {
             return;
         };
+        self.note_shared_name(call);
         let (recv, recv_text) = match call.receiver() {
             None => (RecvShape::Implicit, None),
             Some(r) => receiver_shape(&r),

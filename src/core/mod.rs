@@ -159,6 +159,11 @@ pub(crate) struct Facts {
     /// constant as written — its own argument or its parent's. What an
     /// implicit `subject` is made from (DEC-114). Resolve-time, never stored.
     pub(crate) described: Vec<(Vec<String>, String)>,
+    /// The literal a shared group is included by — `"raw http server"` in
+    /// `include_context "raw http server"` — where it starts, its length on
+    /// the line, and the module it names, so a click on it is a click on the
+    /// group (DEC-124). Resolve-time, never stored.
+    pub(crate) shared_names: Vec<(Pos, u32, String)>,
     /// Prism reported syntax errors; the facts above are what survived.
     pub(crate) parse_errors: usize,
     pub(crate) lines: usize,
@@ -837,6 +842,12 @@ pub(crate) mod rspec {
     /// as `base_name` writes it.
     pub(crate) fn shared_module(name: &str) -> String {
         format!("{SHARED_GROUPS}::{name}")
+    }
+
+    /// Is this the module a shared group's name makes?
+    pub(crate) fn is_shared_module(fqn: &str) -> bool {
+        fqn.strip_prefix(SHARED_GROUPS)
+            .is_some_and(|name| name.starts_with("::"))
     }
 
     /// Is the innermost scope here an example group?

@@ -128,8 +128,10 @@ trekr --def app/models/post.rb:42          # column optional when typing by hand
 
 The column is forgiving: if it holds no name, trekr answers for the nearest one
 **on that line** and adds `snapped_to` — the name it picked, its column, and the
-line's other names as `alternatives`, so a follow-up can be exact. No
-`snapped_to` means the column hit the name. A line with no name at all is
+line's other names as `alternatives`, so a follow-up can be exact (text says
+it on the line under the answer). No `snapped_to` means the column hit the
+name. The string in `it_behaves_like "x"`, `include_examples` or
+`include_context` is not snapped: it answers the shared group of that name. A line with no name at all is
 `residue` with `reason: "no name at this position"`.
 
 **On a variable, `--def` answers the variable**, not the nearest call:
