@@ -138,6 +138,10 @@ Two things the blob layer cannot know, resolved here:
   may not have run. A literal list's `each` is not such a call: its block
   parameter is each constant in turn, and the mixin one edge per constant
   (DEC-100).
+- **A mixin into a singleton class** (DEC-101). `class << self; include M`
+  and `singleton_class.include(M)` are `extend` edges; `singleton_class.
+  prepend(M)` is a `singleton_prepend` edge, which the class-method chain
+  walks ahead of the class's own singleton methods.
 - **An `on_load` hook's mixins** (DEC-098). `ActiveSupport.run_load_hooks(
   :active_record, Base)` is an edge of relation `load_hooks`, owner `Base`
   (sent) or the class body it is written in (`self`), target the hook's name.
@@ -300,6 +304,8 @@ Two things a naive implementation gets wrong here:
   records the second separately.
 - **`Foo.bar` walks the superclass chain, not the MRO.** Included modules
   contribute no class methods; `extend`ed ones do, along with *their* includes.
+  A module prepended to the singleton class comes ahead of each level's own
+  class methods (DEC-101).
 
 ### `gems/` and core — making the index contain the answers
 

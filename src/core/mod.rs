@@ -513,6 +513,9 @@ pub(crate) enum Relation {
     Include,
     Prepend,
     Extend,
+    /// `singleton_class.prepend(M)`: M's methods come before the owner's own
+    /// class methods (DEC-101). Ruby has no one method for it.
+    SingletonPrepend,
     /// The owner runs the `ActiveSupport.on_load` blocks the target names:
     /// `ActiveSupport.run_load_hooks(:active_record, Base)` (DEC-098). No
     /// ancestor itself, it says where a hook's mixins land.
@@ -520,12 +523,24 @@ pub(crate) enum Relation {
 }
 
 impl Relation {
+    /// The same mixin sent to the singleton class: `include` there is
+    /// `extend`, and an `extend` there reaches the singleton's own singleton,
+    /// which nothing here models.
+    pub(crate) fn on_singleton(self) -> Option<Relation> {
+        match self {
+            Relation::Include => Some(Relation::Extend),
+            Relation::Prepend => Some(Relation::SingletonPrepend),
+            _ => None,
+        }
+    }
+
     pub(crate) fn as_str(self) -> &'static str {
         match self {
             Relation::Superclass => "superclass",
             Relation::Include => "include",
             Relation::Prepend => "prepend",
             Relation::Extend => "extend",
+            Relation::SingletonPrepend => "singleton_prepend",
             Relation::LoadHooks => "load_hooks",
         }
     }
@@ -536,6 +551,7 @@ impl Relation {
             "include" => Relation::Include,
             "prepend" => Relation::Prepend,
             "extend" => Relation::Extend,
+            "singleton_prepend" => Relation::SingletonPrepend,
             "load_hooks" => Relation::LoadHooks,
             _ => return None,
         })

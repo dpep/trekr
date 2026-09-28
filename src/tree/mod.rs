@@ -101,6 +101,9 @@ struct Entry {
     /// methods. A different chain from `include`, which is why it is a
     /// different field rather than another mixin kind.
     extends: Vec<Target>,
+    /// `singleton_class.prepend(M)` — M's instance methods come before this
+    /// scope's own singleton methods (DEC-101).
+    singleton_prepends: Vec<Target>,
     /// `Bar = Foo` — the right-hand side as written. `Bar` is a constant in its
     /// own right and keeps its own site; but anywhere a *namespace* is needed
     /// the alias is followed through.
@@ -201,7 +204,14 @@ impl<'a> EntryRef<'a> {
     fn extends(self) -> Vec<Written<'a>> {
         match self {
             EntryRef::Building(e) => e.extends.iter().map(Target::written).collect(),
-            EntryRef::Frozen(n) => n.extends(),
+            EntryRef::Frozen(n) => n.extends(false),
+        }
+    }
+
+    fn singleton_prepends(self) -> Vec<Written<'a>> {
+        match self {
+            EntryRef::Building(e) => e.singleton_prepends.iter().map(Target::written).collect(),
+            EntryRef::Frozen(n) => n.extends(true),
         }
     }
 
@@ -806,6 +816,7 @@ impl Tree {
                         entry.superclass.get_or_insert(target.clone());
                     }
                     "extend" => entry.extends.push(target.clone()),
+                    "singleton_prepend" => entry.singleton_prepends.push(target.clone()),
                     _ => continue,
                 };
             }
@@ -2103,14 +2114,23 @@ impl Tree {
         let mut chain = Vec::new();
         let mut seen = HashSet::new();
         for class in self.superclass_chain(fqn) {
+            let entry = self.names.get(&class);
+            // The last prepended runs first, ahead of the class's own.
+            let prepends = entry.map(EntryRef::singleton_prepends).unwrap_or_default();
+            for target in prepends.iter().rev() {
+                let Some(module) = self.resolve_lexical(target.name, &target.nesting) else {
+                    continue;
+                };
+                for ancestor in &self.ancestors(&self.namespace_of(&module)).chain {
+                    if seen.insert((ancestor.clone(), false)) {
+                        chain.push((ancestor.clone(), false));
+                    }
+                }
+            }
             if seen.insert((class.clone(), true)) {
                 chain.push((class.clone(), true));
             }
-            let extends = self
-                .names
-                .get(&class)
-                .map(EntryRef::extends)
-                .unwrap_or_default();
+            let extends = entry.map(EntryRef::extends).unwrap_or_default();
             for target in extends.iter().rev() {
                 // `extend self` is the module-function idiom: the module
                 // extends itself, so its own instance methods become singleton

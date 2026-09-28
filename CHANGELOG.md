@@ -82,6 +82,13 @@
   `to_json` to ten core classes this way, so `{ … }.to_json` answered the json
   gem's method, or nothing, where a Rails app runs ActiveSupport's (DEC-100).
 
+- **A mixin into a singleton class gives class methods.**
+  `X.singleton_class.include(M)` and `class << X; include M; end` extend `X`
+  with `M`; `X.singleton_class.prepend(M)` puts `M`'s methods ahead of `X`'s
+  own class methods, which is how a gem wraps another's. They were ordinary
+  calls, and `include` inside `class << self` was read as an instance-side
+  include, so `Widget.new.label` found a method Ruby raises on (DEC-101).
+
 ## 0.6.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v36): run `trekr --index`

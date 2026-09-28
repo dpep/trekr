@@ -1,0 +1,15 @@
+# A module mixed into a class's singleton class gives the class methods:
+# `singleton_class.include(M)` is `extend M`, behind the class's own
+# `def self.`s, and `singleton_class.prepend(M)` puts M's methods ahead of
+# them, which is how a gem wraps another gem's class methods. Both were
+# ordinary calls: `Adapter.connect` answered Adapter's own method,
+# confidently. `class << self; include M; end` was read as an `include` on
+# the class itself, so `Widget.new.label` found Naming#label, which Ruby
+# raises on.
+def app.rb:25:9 status=resolved owner=Retrying
+def app.rb:26:9 status=resolved owner=Adapter
+def app.rb:27:9 status=resolved owner=Closing
+def app.rb:38:9 status=resolved owner=Pooling
+def app.rb:56:8 status=resolved owner=Naming
+def app.rb:57:8 status=resolved owner=Retrying
+def app.rb:58:12 status=residue

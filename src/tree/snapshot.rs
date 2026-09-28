@@ -16,7 +16,7 @@ use std::collections::HashMap;
 
 const MAGIC: &[u8; 8] = b"trekrtre";
 /// Bumped whenever the layout below changes shape.
-pub(super) const FORMAT: u32 = 1;
+pub(super) const FORMAT: u32 = 2;
 const NONE: u32 = u32::MAX;
 
 // Sections, in file order. Each starts 8-byte aligned.
@@ -39,6 +39,8 @@ const NAME_WORDS: usize = 10;
 const SITE_WORDS: usize = 4;
 /// A mixin: kind (0 prepend, 1 include), target.
 const MIXIN_WORDS: usize = 2;
+/// A singleton mixin: kind (0 extend, 1 singleton prepend), target.
+const EXTEND_WORDS: usize = 2;
 /// A target: name, nesting list.
 const TARGET_WORDS: usize = 2;
 
@@ -259,9 +261,12 @@ impl<'a> NameRef<'a> {
             .collect()
     }
 
-    pub(super) fn extends(self) -> Vec<Written<'a>> {
+    /// `extend`s, or with `prepended` the singleton class's prepends.
+    pub(super) fn extends(self, prepended: bool) -> Vec<Written<'a>> {
+        let s = self.snap;
         self.range(6)
-            .map(|i| self.snap.target(self.snap.word(EXTENDS, i)))
+            .filter(|i| (s.word(EXTENDS, i * EXTEND_WORDS) == 1) == prepended)
+            .map(|i| s.target(s.word(EXTENDS, i * EXTEND_WORDS + 1)))
             .collect()
     }
 
@@ -301,10 +306,12 @@ pub(super) fn encode(names: &HashMap<String, Entry>, key: &Key) -> anyhow::Resul
             let target = w.target(&mixin.target.name, &mixin.target.nesting)?;
             w.mixins.extend([kind, target]);
         }
-        let extends = w.extends.len();
-        for target in &entry.extends {
+        let extends = w.extends.len() / EXTEND_WORDS;
+        let singleton = entry.extends.iter().map(|t| (0, t));
+        let prepended = entry.singleton_prepends.iter().map(|t| (1, t));
+        for (kind, target) in singleton.chain(prepended) {
             let target = w.target(&target.name, &target.nesting)?;
-            w.extends.push(target);
+            w.extends.extend([kind, target]);
         }
         let superclass = w.optional(&entry.superclass)?;
         let alias = w.optional(&entry.alias_of)?;
@@ -316,7 +323,7 @@ pub(super) fn encode(names: &HashMap<String, Entry>, key: &Key) -> anyhow::Resul
             id(mixins)?,
             id(entry.mixins.len())?,
             id(extends)?,
-            id(entry.extends.len())?,
+            id(entry.extends.len() + entry.singleton_prepends.len())?,
             superclass,
             alias,
         ]);
@@ -539,7 +546,7 @@ mod tests {
             ),
             (
                 "b.rb",
-                "module Outer\n  class W < Aliased\n    include M\n    prepend P\n    extend M\n  end\nend\n",
+                "module Outer\n  class W < Aliased\n    include M\n    prepend P\n    extend M\n    singleton_class.prepend(P)\n  end\nend\n",
             ),
             ("c.rb", "class Outer::W\nend\nclass Émigré\nend\n"),
         ];
@@ -605,10 +612,19 @@ mod tests {
                 .map(|m| (m.kind, written(&m.target)))
                 .collect();
             assert_eq!(mixins, want, "{fqn}");
-            let extends: Vec<_> = got.extends().into_iter().map(read).collect();
+            let extends: Vec<_> = got.extends(false).into_iter().map(read).collect();
             assert_eq!(
                 extends,
                 entry.extends.iter().map(written).collect::<Vec<_>>()
+            );
+            let prepends: Vec<_> = got.extends(true).into_iter().map(read).collect();
+            assert_eq!(
+                prepends,
+                entry
+                    .singleton_prepends
+                    .iter()
+                    .map(written)
+                    .collect::<Vec<_>>()
             );
             assert_eq!(
                 got.superclass().map(read),
@@ -624,6 +640,7 @@ mod tests {
         let fixture = snap.find("Outer::W").unwrap();
         assert_eq!(fixture.sites().len(), 2, "a reopen is one name, two sites");
         assert!(fixture.superclass().is_some() && fixture.mixins().len() == 2);
+        assert_eq!(fixture.extends(true).len(), 1, "a singleton prepend");
     }
 
     /// Racing builders must write one file: the bytes cannot depend on the

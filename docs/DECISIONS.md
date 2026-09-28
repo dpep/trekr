@@ -5169,3 +5169,40 @@ resolved at 1.0, to ActiveSupport's encoder; rails' in
 `request_forgery_protection.rb` from residue to the same. No gold verdict,
 `--refs` tier, `--dead` tier or replayed click moved: the loop is the only
 one of its kind in either corpus.
+
+## DEC-101 — A mixin into a singleton class is the class's own
+
+**Decided.** `include M` inside `class << self` or `class << X`, and
+`singleton_class.include(M)` sent to `self` or a constant, are `extend M` on
+that class. `prepend M` in the same places is a new relation,
+`singleton_prepend`: the tree walks `M`'s chain ahead of the class's own
+singleton methods, the last prepended first, then the class's `def self.`s,
+then what it extends. An `extend` there reaches the singleton class's own
+singleton, which nothing asks for, and is not recorded. A sent one keeps
+DEC-097's load-time rule.
+
+**Why.** It is how a gem wraps another gem's class methods:
+network_resiliency's adapters `singleton_class.prepend` their instrumentation,
+and rails writes `singleton_class.prepend` or `.include` 23 times.
+`X.singleton_class.prepend(M)` was an ordinary call, so `X.connect` answered
+`X`'s own method, confidently, where Ruby runs the wrapper. Worse,
+`class << self; include Naming; end` was read as an `include` on the class
+itself: its methods were found on instances, which have none of them.
+
+**Not stored as extends.** An extended module sits behind the class's own
+singleton methods, and a prepended one ahead of them, so the difference is
+the answer. Both are kept in the snapshot's extends section with a kind
+beside each target, as mixins keep prepend and include (snapshot format 2).
+
+**Not done.** A `super` in a module prepended to a singleton class is still
+residue — "no class the index knows mixes it in" — because DEC-068's mixers
+are the classes whose *instances* have the module. `X.singleton_class.
+extend(M)`, and a singleton class held in a variable, are not read.
+
+**Measured** (BASELINE, "Mixins through a variable"): no gold verdict moved.
+One click replayed was fixed, berater's `Berater.test_mode`, which
+`Berater.singleton_class.prepend Berater::TestMode` defines; one rails
+`--refs` site moved excluded → confirmed, `ActiveJob::Callbacks.
+run_callbacks`, which the module has through `class << self; include
+ActiveSupport::Callbacks`. `--dead` did not move.
+

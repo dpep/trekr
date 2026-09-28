@@ -2517,3 +2517,13 @@ definition clicks). 0.6.0 reproduced the last table above exactly.
 | rails, `request_forgery_protection.rb:353` | residue | **ActiveSupport's encoder** |
 
 Nothing else moved: no gold verdict, `--refs` tier, `--dead` tier or click.
+
+### A mixin into a singleton class (DEC-101)
+
+No gold verdict and no `--dead` tier moved. Clicks: definition misses 5,638 →
+5,637, "module never mixed in" 146 → 145 — berater's `Berater.test_mode`,
+from `Berater.singleton_class.prepend Berater::TestMode`. rails `--refs`: one
+site, excluded → confirmed: `ActiveJob::Callbacks.run_callbacks` in
+`execution.rb`, which the module has through `class << self; include
+ActiveSupport::Callbacks`, read until now as an include on its instances.
+

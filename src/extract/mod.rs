@@ -1612,7 +1612,14 @@ impl<'pr> Extractor<'_> {
         let Some(mut owner) = self.mixin_owner() else {
             return false;
         };
-        let mut relation = relation;
+        // `class << self; include M; end` mixes into the singleton class.
+        let Some(mut relation) = (if self.in_singleton() {
+            relation.on_singleton()
+        } else {
+            Some(relation)
+        }) else {
+            return false;
+        };
         // `extend M` inside `included do` extends the includer, which is
         // what Concern does with `ClassMethods`: M is one of its ancestors.
         if relation == Relation::Extend && self.in_concerns_included_block() {
@@ -1785,10 +1792,26 @@ impl<'pr> Extractor<'_> {
             _ if on_self(call) => return,
             _ => (mixin_relation(&name), &args[..]),
         };
-        let Some(relation) = relation.filter(|_| self.runs_as_file_loads()) else {
+        let Some(mut relation) = relation.filter(|_| self.runs_as_file_loads()) else {
             return;
         };
-        let owners: Vec<Vec<String>> = match call.receiver() {
+        // `Adapter.singleton_class.prepend(Retrying)` (DEC-101).
+        let singleton = call.receiver().and_then(|r| r.as_call_node()).filter(|r| {
+            method_name(r).as_deref() == Some("singleton_class")
+                && r.arguments().is_none()
+                && r.block().is_none()
+        });
+        let receiver = match &singleton {
+            Some(of) => {
+                let Some(on) = relation.on_singleton() else {
+                    return;
+                };
+                relation = on;
+                of.receiver()
+            }
+            None => call.receiver(),
+        };
+        let owners: Vec<Vec<String>> = match receiver {
             None => self.mixin_owner().into_iter().collect(),
             Some(receiver) if receiver.as_self_node().is_some() => {
                 self.mixin_owner().into_iter().collect()
