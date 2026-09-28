@@ -1,0 +1,7 @@
+# `rescue WidgetError => e` binds `e` to a WidgetError, and a bare `rescue =>
+# e` to a StandardError: `e.detail` answered that the receiver's type was not
+# determined. Two classes rescued together are two types, and the answer
+# says it is not sure which.
+def app.rb:10:7 status=resolved owner=WidgetError via=local:rescue
+def app.rb:16:11 status=resolved owner=Exception via=local:rescue
+def app.rb:22:13 status=ambiguous owner=WidgetError via=local:rescue

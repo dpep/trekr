@@ -7,6 +7,9 @@
 
 ### Added
 
+- `rescue WidgetError => e` types `e` as a WidgetError, and a bare
+  `rescue => e` as a StandardError, so `e.message` resolves (DEC-089).
+
 - **RSpec.** A call inside a block RSpec runs — a `describe` or `context`
   body, an `it`, `before` or `let` — is looked up on RSpec's example group, in
   the rspec-core your bundle holds: `let`, `before`, `described_class` and

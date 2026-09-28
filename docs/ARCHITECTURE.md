@@ -194,6 +194,7 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | `const` | `Foo.bar` — resolve `Foo`, look up a *class* method | 1.0 |
 | `local:new` | `x = Foo.new` | agreeing / total |
 | `local:const` | `x = Foo` — holds the class, so `x.bar` is a class method | agreeing / total |
+| `local:rescue` | `rescue Foo => e` — an instance of each class rescued; `StandardError` bare (DEC-089) | agreeing / total |
 | `literal` | `out = []`, or `"x".upcase` — core knows what a String is | agreeing / total |
 | `sig` | an inline Sorbet `sig` on the method the value came from | agreeing / total |
 | `sig:param` | the parameter's declared class, from `params(...)` | 1.0 |

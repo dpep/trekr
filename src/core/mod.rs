@@ -522,6 +522,9 @@ pub(crate) enum ValueShape {
     },
     /// `[]`, `{}`, `"x"`, `1` — a literal, whose class core now knows.
     Literal(&'static str),
+    /// `rescue X => e` — an instance of the class rescued; `StandardError`
+    /// for a bare `rescue => e`.
+    Rescued(String),
     Other,
 }
 

@@ -4498,3 +4498,18 @@ even when rspec-core is not indexed, so DEC-084's "rspec-core is not
 indexed" now asks whether anything *declares* the class, not whether the
 name exists.
 
+## DEC-089 — A rescued variable is an instance of what was rescued
+
+**Decided.** `rescue WidgetError => e` is a write to `e` of a WidgetError,
+typed `local:rescue`; a bare `rescue => e` of a StandardError. Several
+classes rescued together are one write with a type each, so the answer is
+`ambiguous` among them, confidence one in their number.
+
+**Why.** The flow analysis already knew the reference as a write (DEC-064's
+`bound by rescue`), and nothing gave it a type, so `e.message` and
+`e.detail` answered that the receiver's type was not determined, in every
+`rescue` clause. The class is written on the same line.
+
+**Not done.** `rescue *ERRORS => e` names no class, so its write counts
+against the answer rather than typing it.
+

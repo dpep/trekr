@@ -902,6 +902,45 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.visit(&node.value());
     }
 
+    /// `rescue WidgetError => e` writes `e`, once per class rescued, since
+    /// any of them may be what arrived.
+    fn visit_rescue_node(&mut self, node: &ruby_prism::RescueNode<'pr>) {
+        if let Some(reference) = node.reference() {
+            let target = reference
+                .as_local_variable_target_node()
+                .map(|t| t.name())
+                .or_else(|| {
+                    reference
+                        .as_instance_variable_target_node()
+                        .map(|t| t.name())
+                })
+                .and_then(|name| String::from_utf8(name.as_slice().to_vec()).ok());
+            if let Some(target) = target {
+                let classes: Vec<Node<'pr>> = node.exceptions().iter().collect();
+                let values: Vec<ValueShape> = if classes.is_empty() {
+                    vec![ValueShape::Rescued("StandardError".to_string())]
+                } else {
+                    classes
+                        .iter()
+                        .map(|class| {
+                            const_name(class).map_or(ValueShape::Other, ValueShape::Rescued)
+                        })
+                        .collect()
+                };
+                let pos = self.pos(reference.location().start_offset());
+                for value in values {
+                    self.facts.assigns.push(Assign {
+                        target: target.clone(),
+                        value,
+                        nesting: self.nesting.clone(),
+                        pos,
+                    });
+                }
+            }
+        }
+        ruby_prism::visit_rescue_node(self, node);
+    }
+
     fn visit_block_node(&mut self, node: &ruby_prism::BlockNode<'pr>) {
         self.frame().blocks += 1;
         ruby_prism::visit_block_node(self, node);

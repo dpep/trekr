@@ -1080,6 +1080,8 @@ fn from_assignments(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver>
         .max_by_key(|(f, _, _)| votes.iter().filter(|(g, _, _)| g == f).count())
         .cloned()?;
     let agreeing = votes.iter().filter(|(f, _, _)| *f == fqn).count();
+    // `rescue A, B => e` is one write with two types.
+    let total = total.max(votes.len());
     let mut rivals: Vec<(String, bool)> = Vec::new();
     for (other, side, _) in &votes {
         if *other != fqn && !rivals.iter().any(|(r, _)| r == other) {
@@ -1133,6 +1135,9 @@ fn type_of(
     }
     match value {
         ValueShape::New(name) => Some((tree.resolve(name, nesting).fqn?, false, "local:new")),
+        ValueShape::Rescued(name) => {
+            Some((tree.resolve(name, nesting).fqn?, false, "local:rescue"))
+        }
         // `x = Foo` holds the class itself, so `x.bar` is a class method.
         ValueShape::Const(name) => Some((tree.resolve(name, nesting).fqn?, true, "local:const")),
         ValueShape::Same(other) => {
