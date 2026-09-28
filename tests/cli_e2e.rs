@@ -18,6 +18,9 @@ fn scratch(label: &str) -> (PathBuf, PathBuf) {
         let _ = fs::remove_file(format!("{}{suffix}", db.display()));
     }
     let _ = fs::remove_dir_all(db.with_extension("trees"));
+    // The usage counts beside the store outlive a run, and a later run that
+    // reuses the process id would read them as its own.
+    let _ = fs::remove_file(db.with_extension("usage.db"));
     fs::create_dir_all(&dir).unwrap();
     (dir, db)
 }
