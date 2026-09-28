@@ -1999,7 +1999,17 @@ fn dead_in(
         // A dynamic-dispatch marker anywhere in the file lowers confidence for
         // everything in it: these are the shapes that make "no references" a
         // weaker statement, and they are file-wide by nature.
-        let risky = dynamic_markers(&source);
+        let mut risky = dynamic_markers(&source);
+        // A string of code not read: its calls are not in the index (DEC-132).
+        let unread = facts.ancestry.iter().any(|edge| {
+            edge.relation == crate::core::Relation::Dynamic && edge.target.ends_with(" string")
+        });
+        if unread {
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            risky.push_str("class_eval string");
+        }
         let at = file.to_string_lossy().into_owned();
         for def in facts.defs {
             if def.kind != crate::core::Kind::Method {

@@ -5676,3 +5676,43 @@ same fact.
 `connection.rb`. Such a loop's `define_method` marks its scope (DEC-130)
 instead. Neither is a list built by a call (`attribute_names.each`).
 
+## DEC-132 — A `class_eval` string is read as code, in its scope
+
+**Decided.** `class_eval` or `module_eval` on `self`, handed a string or a
+heredoc, has the string read as Ruby written in the scope: its `def`s are
+the scope's methods (`defined_via` the evaluator, a definition: the body is
+there), its calls are calls, its mixins edges. The string is rendered from
+the file's own bytes, each interpolation replaced, and every position a
+node of it reports maps back to the file — a literal byte to itself, a
+substituted value to the `#{` it replaced — so `--def` inside the heredoc
+lands where the text is.
+
+- **Only a simple interpolation.** Each must be a local, or a local through
+  `to_s`, `to_sym`, `upcase`, `downcase` or `capitalize`. Anything else, or
+  a rendering that does not parse cleanly, leaves the string unread and
+  marks the scope `class_eval string` (DEC-130), and `--dead` gives each
+  method in that file the caveat `class_eval string`.
+- **The code around the values is read once.** It is rendered with a
+  stand-in no Ruby name uses, and whatever mentions the stand-in — a `def`
+  it names, a call it names or is sent to, a constant, an assignment — is
+  dropped. The rest does not depend on the value, so a loop over three verbs
+  contributes each call in the string once, as it is written once.
+- **A `def` the value names is read once per value**, when the one local is
+  a literal loop's variable (DEC-131's loops). Otherwise its names are not
+  stated: the scope is marked `class_eval` and the answer hedges (DEC-130),
+  while the string's calls still count.
+
+**Why.** faraday's `Connection` defines `get`, `head`, `delete`, `trace`,
+`post`, `put` and `patch` this way, and each body calls `run_request`: with
+the strings unread, `--dead lib/faraday/connection.rb` called `run_request`
+single-caller where it has three, and `Connection#get` was "no such
+method". rails writes 82 string `class_eval`s and `module_eval`s (71 of
+them heredocs), most inside methods, and every one before this was a string.
+
+**Not done.** The verbs' list is `Faraday::METHODS_WITH_QUERY`, assigned in
+`methods.rb`: another blob's fact, so `get` stays a hedge rather than an
+answer. Reading it would take storing a constant's literal value and
+expanding templated rows in the tree. A string sent to another receiver
+(`Foo.class_eval "…"`), `instance_eval` with a string, and `eval` are not
+read.
+

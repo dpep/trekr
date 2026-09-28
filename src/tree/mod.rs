@@ -450,7 +450,9 @@ impl Kind {
             None
             | Some("module_function")
             | Some("define_method")
-            | Some("define_singleton_method") => Kind::Definition,
+            | Some("define_singleton_method")
+            | Some("class_eval")
+            | Some("module_eval") => Kind::Definition,
             Some(_) => Kind::Declaration,
         }
     }

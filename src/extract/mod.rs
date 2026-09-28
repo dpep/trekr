@@ -21,7 +21,7 @@ mod sig;
 use crate::core::*;
 pub(crate) use line_index::LineIndex;
 use ruby_prism::{Node, Visit};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// An `ActiveSupport.on_load` block being read (DEC-098).
 struct LoadHook {
@@ -207,8 +207,55 @@ struct Extractor<'a> {
     described: Vec<Option<String>>,
     /// Inside a `scope`'s lambda, which runs on the model's relation (DEC-116).
     scope_body: usize,
+    /// The strings of code being read in place of the file, innermost last
+    /// (DEC-132). Every offset a node of one reports is into its text.
+    evals: Vec<Eval>,
     facts: Facts,
 }
+
+/// A `class_eval` string rendered as the code it evaluates, and how its bytes
+/// map back to the file's (DEC-132).
+struct Eval {
+    src: Vec<u8>,
+    /// Each piece's start in `src`, its start in the file, and whether its
+    /// bytes are the file's own. A substituted value maps whole to the `#{`
+    /// it replaced.
+    pieces: Vec<(usize, usize, bool)>,
+}
+
+impl Eval {
+    fn origin(&self, offset: usize) -> usize {
+        let at = self
+            .pieces
+            .partition_point(|(start, _, _)| *start <= offset);
+        match self.pieces.get(at.saturating_sub(1)) {
+            Some((start, origin, true)) => origin + (offset - start),
+            Some((_, origin, false)) => *origin,
+            None => offset,
+        }
+    }
+}
+
+/// A piece of a string of code: bytes of the file, or an interpolation of a
+/// local, maybe through one method that renders a name simply.
+enum Piece {
+    Text {
+        start: usize,
+        end: usize,
+    },
+    Local {
+        name: Vec<u8>,
+        render: Option<String>,
+        at: usize,
+    },
+}
+
+/// What stands for a value no literal states while a string of code is read,
+/// so that only what does not depend on it is kept. Never a real name.
+const UNSTATED: &str = "trekr_unstated_name";
+
+/// The methods an interpolated name may go through and still be rendered.
+const RENDERS: [&str; 5] = ["to_s", "to_sym", "upcase", "downcase", "capitalize"];
 
 /// What a name that stands for a call is really sent to: `x` in
 /// `expect(x).to be_empty`, `obj` in `obj.send(:name)`, `self` for
@@ -319,6 +366,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         minitest: minitest_spec(src, &parsed.node()),
         described: Vec::new(),
         scope_body: 0,
+        evals: Vec::new(),
     };
     ex.visit(&parsed.node());
     ex.facts
@@ -326,11 +374,13 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
 
 impl<'a> Extractor<'a> {
     fn pos(&self, offset: usize) -> Pos {
+        let offset = self.evals.last().map_or(offset, |eval| eval.origin(offset));
         self.lines.pos(offset)
     }
 
     fn text(&self, start: usize, end: usize) -> String {
-        String::from_utf8_lossy(&self.src[start..end.min(self.src.len())]).into_owned()
+        let src = self.evals.last().map_or(self.src, |eval| &eval.src[..]);
+        String::from_utf8_lossy(&src[start..end.min(src.len())]).into_owned()
     }
 
     fn frame(&mut self) -> &mut Frame {
@@ -2139,21 +2189,150 @@ impl<'pr> Extractor<'_> {
         }
     }
 
-    /// `class_eval "def …"` on `self`: a string of code, whose methods
-    /// nothing here reads (DEC-130).
+    /// `class_eval <<-RUBY … RUBY` on `self`: the string is code, read as if
+    /// written in the scope (DEC-132). An interpolation must be a local, or a
+    /// local through one of `RENDERS`: the code around it is read once, and
+    /// a `def` whose name it spells is read once per value of a literal
+    /// loop's variable. Whatever else, or a name no loop states, marks the
+    /// scope (DEC-130).
     fn handle_string_eval(&mut self, call: &ruby_prism::CallNode<'pr>) {
         let Some(name) = method_name(call) else {
             return;
         };
-        if !matches!(name.as_str(), "class_eval" | "module_eval") || !on_self(call) {
+        if !matches!(name.as_str(), "class_eval" | "module_eval")
+            || !on_self(call)
+            || !self.self_is_class()
+        {
             return;
         }
-        let evaluates_string = arg_nodes(call).first().is_some_and(|first| {
-            first.as_string_node().is_some() || first.as_interpolated_string_node().is_some()
-        });
-        if evaluates_string && self.self_is_class() {
-            self.mark_dynamic(&name, call.location().start_offset());
+        let Some(first) = arg_nodes(call).into_iter().next() else {
+            return;
+        };
+        if first.as_string_node().is_none() && first.as_interpolated_string_node().is_none() {
+            return;
         }
+        let at = call.location().start_offset();
+        // Not read at all: its calls are missing too, which `--dead` says.
+        let unread = format!("{name} string");
+        let Some(pieces) = code_pieces(&first) else {
+            self.mark_dynamic(&unread, at);
+            return;
+        };
+        let mut locals: Vec<&[u8]> = pieces
+            .iter()
+            .filter_map(|piece| match piece {
+                Piece::Local { name, .. } => Some(name.as_slice()),
+                Piece::Text { .. } => None,
+            })
+            .collect();
+        locals.dedup();
+        let Some(unstated) = self.read_code(&name, &pieces, UNSTATED, None) else {
+            self.mark_dynamic(&unread, at);
+            return;
+        };
+        if unstated.is_empty() {
+            return;
+        }
+        let values = match locals.as_slice() {
+            [local] => self
+                .loop_values
+                .iter()
+                .rev()
+                .find(|(bound, _)| bound.as_bytes() == *local)
+                .map(|(_, values)| values.clone()),
+            _ => None,
+        };
+        let Some(values) = values else {
+            self.mark_dynamic(&name, at);
+            return;
+        };
+        for value in values {
+            self.read_code(&name, &pieces, &value, Some(&unstated));
+        }
+    }
+
+    /// Read a string of code with `value` for every interpolation, in a
+    /// scope frame, keeping what it adds. With no `named`, that is whatever
+    /// does not mention the value, and the answer is where the `def`s it
+    /// named were; with `named`, only the `def`s at those places. `None` when
+    /// the rendered code does not parse cleanly.
+    fn read_code(
+        &mut self,
+        evaluator: &str,
+        pieces: &[Piece],
+        value: &str,
+        named: Option<&HashSet<Pos>>,
+    ) -> Option<HashSet<Pos>> {
+        let eval = render(pieces, value, self.src);
+        // Parsed from its own copy: the nodes borrow it while `eval`, with
+        // the offsets they report, sits on the stack.
+        let code = eval.src.clone();
+        let parsed = ruby_prism::parse(&code);
+        if parsed.errors().count() > 0 {
+            return None;
+        }
+        let before = (
+            self.facts.defs.len(),
+            self.facts.calls.len(),
+            self.facts.const_refs.len(),
+            self.facts.assigns.len(),
+            self.facts.ancestry.len(),
+        );
+        self.evals.push(eval);
+        self.enter(None, Opens::Scope);
+        self.visit(&parsed.node());
+        self.leave();
+        self.evals.pop();
+
+        let facts = &mut self.facts;
+        let mut unstated = HashSet::new();
+        let added = facts.defs.split_off(before.0);
+        for mut def in added {
+            // Its body is here, written in a string: the string's evaluator
+            // made it, as a macro makes a declaration.
+            if def.kind == Kind::Method && def.via.is_none() {
+                def.via = Some(evaluator.to_string());
+            }
+            let spelled = mentions(&def.name, UNSTATED);
+            if spelled {
+                unstated.insert(def.pos);
+            }
+            let keep = match named {
+                None => !spelled,
+                Some(named) => named.contains(&def.pos),
+            };
+            if keep {
+                facts.defs.push(def);
+            }
+        }
+        if named.is_some() {
+            facts.calls.truncate(before.1);
+            facts.const_refs.truncate(before.2);
+            facts.assigns.truncate(before.3);
+            facts.ancestry.truncate(before.4);
+            return Some(unstated);
+        }
+        let tail = facts.calls.split_off(before.1);
+        facts.calls.extend(tail.into_iter().filter(|call| {
+            !mentions(&call.name, UNSTATED)
+                && !call
+                    .recv_text
+                    .as_deref()
+                    .is_some_and(|text| mentions(text, UNSTATED))
+        }));
+        let tail = facts.const_refs.split_off(before.2);
+        facts
+            .const_refs
+            .extend(tail.into_iter().filter(|r| !mentions(&r.name, UNSTATED)));
+        let tail = facts.assigns.split_off(before.3);
+        facts
+            .assigns
+            .extend(tail.into_iter().filter(|a| !mentions(&a.target, UNSTATED)));
+        let tail = facts.ancestry.split_off(before.4);
+        facts
+            .ancestry
+            .extend(tail.into_iter().filter(|a| !mentions(&a.target, UNSTATED)));
+        Some(unstated)
     }
 
     /// Say that this scope defines methods whose names the source does not
@@ -3930,6 +4109,97 @@ fn every_element_literal(node: &Node<'_>) -> Option<Vec<String>> {
     (!names.is_empty() && names.len() == elements.len()).then_some(names)
 }
 
+/// A string of code as pieces, when every interpolation in it is a local, or
+/// a local through one of `RENDERS`, and its pieces are contiguous bytes of
+/// the file. Read raw: the code keeps the file's lines.
+fn code_pieces(node: &Node<'_>) -> Option<Vec<Piece>> {
+    let text = |location: ruby_prism::Location<'_>| Piece::Text {
+        start: location.start_offset(),
+        end: location.end_offset(),
+    };
+    if let Some(string) = node.as_string_node() {
+        return Some(vec![text(string.content_loc())]);
+    }
+    let mut pieces = Vec::new();
+    let mut end: Option<usize> = None;
+    for part in node.as_interpolated_string_node()?.parts().iter() {
+        let at = part.location();
+        if end.is_some_and(|end| end != at.start_offset()) {
+            return None;
+        }
+        end = Some(at.end_offset());
+        if part.as_string_node().is_some() {
+            pieces.push(text(at));
+            continue;
+        }
+        let embedded = part.as_embedded_statements_node()?;
+        let statements: Vec<Node<'_>> = embedded.statements()?.body().iter().collect();
+        let [statement] = statements.as_slice() else {
+            return None;
+        };
+        let (read, render) = match statement.as_call_node() {
+            Some(call) => {
+                let method = method_name(&call)?;
+                if !RENDERS.contains(&method.as_str()) || call.arguments().is_some() {
+                    return None;
+                }
+                (
+                    call.receiver()?.as_local_variable_read_node()?,
+                    Some(method),
+                )
+            }
+            None => (statement.as_local_variable_read_node()?, None),
+        };
+        pieces.push(Piece::Local {
+            name: read.name().as_slice().to_vec(),
+            render,
+            at: at.start_offset(),
+        });
+    }
+    Some(pieces)
+}
+
+/// The code a string of pieces evaluates, with `value` for each local.
+fn render(pieces: &[Piece], value: &str, file: &[u8]) -> Eval {
+    let mut eval = Eval {
+        src: Vec::new(),
+        pieces: Vec::new(),
+    };
+    for piece in pieces {
+        let start = eval.src.len();
+        match piece {
+            Piece::Text { start: from, end } => {
+                eval.pieces.push((start, *from, true));
+                eval.src.extend_from_slice(&file[*from..*end]);
+            }
+            Piece::Local { render, at, .. } => {
+                eval.pieces.push((start, *at, false));
+                let shown = match render.as_deref() {
+                    Some("upcase") => value.to_uppercase(),
+                    Some("downcase") => value.to_lowercase(),
+                    Some("capitalize") => {
+                        let mut chars = value.chars();
+                        chars.next().map_or(String::new(), |first| {
+                            first
+                                .to_uppercase()
+                                .chain(chars.map(|c| c.to_ascii_lowercase()))
+                                .collect()
+                        })
+                    }
+                    _ => value.to_string(),
+                };
+                eval.src.extend_from_slice(shown.as_bytes());
+            }
+        }
+    }
+    eval
+}
+
+/// Does a name or text a string of code produced spell the stand-in?
+fn mentions(text: &str, unstated: &str) -> bool {
+    text.to_ascii_lowercase().contains(unstated)
+}
+
 /// The name of a block's one required parameter, when that is all it takes.
 fn sole_block_param(call: &ruby_prism::CallNode<'_>) -> Option<String> {
     let block = call.block()?.as_block_node()?;
@@ -4636,5 +4906,48 @@ mod macro_call_tests {
                 "{name} recorded once"
             );
         }
+    }
+
+    fn marks(facts: &Facts) -> Vec<&str> {
+        facts
+            .ancestry
+            .iter()
+            .filter(|edge| edge.relation == Relation::Dynamic)
+            .map(|edge| edge.target.as_str())
+            .collect()
+    }
+
+    /// A `def` read from a string lands where its name is written in the
+    /// file, not in the rendered string, whose values are longer or shorter
+    /// than the `#{…}` they replace.
+    #[test]
+    fn a_def_in_a_class_eval_string_is_placed_in_the_file() {
+        let facts = extract(
+            b"class C\n  %w[get].each do |m|\n    class_eval <<~RUBY\n      def x_#{m}_#{m.upcase}; helper; end\n    RUBY\n  end\nend\n",
+        );
+        let def = facts.defs.iter().find(|d| d.name == "x_get_GET");
+        assert_eq!(def.map(|d| (d.pos.line, d.pos.col)), Some((4, 11)));
+        let helper = facts.calls.iter().find(|c| c.name == "helper");
+        // After two substitutions on the line, still the file's column.
+        assert_eq!(helper.map(|c| (c.pos.line, c.pos.col)), Some((4, 31)));
+        assert!(marks(&facts).is_empty());
+    }
+
+    /// Code the string does not let us render is not read, and says so; code
+    /// that renders but names what no loop states keeps its calls.
+    #[test]
+    fn a_class_eval_string_that_cannot_be_read_marks_its_scope() {
+        let computed = extract(b"class C\n  class_eval \"def #{name.to_s * 2}; end\"\nend\n");
+        assert_eq!(marks(&computed), ["class_eval string"]);
+        let broken = extract(b"class C\n  class_eval \"def x(\"\nend\n");
+        assert_eq!(marks(&broken), ["class_eval string"]);
+        let unstated = extract(
+            b"class C\n  LIST.each do |m|\n    module_eval \"def #{m}; go(:#{m}); end\"\n  end\nend\n",
+        );
+        assert_eq!(marks(&unstated), ["module_eval"]);
+        assert!(unstated.defs.iter().all(|d| d.kind != Kind::Method));
+        let calls: Vec<&str> = unstated.calls.iter().map(|c| c.name.as_str()).collect();
+        assert!(calls.contains(&"go"), "{calls:?}");
+        assert!(calls.iter().all(|c| !c.contains(UNSTATED)));
     }
 }

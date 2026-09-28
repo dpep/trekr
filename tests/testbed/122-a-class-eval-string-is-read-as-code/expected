@@ -1,0 +1,13 @@
+# faraday writes its HTTP verbs as `class_eval <<-RUBY … def #{method} …
+# RUBY` in a loop, and nothing read the string: `Connection#put` was "no
+# such method", and the two `run_request` calls in the strings were not
+# calls, so `--dead` called `run_request` single-caller. The string is code:
+# read in the scope, the loop variable's values substituted, lines mapped
+# back to the file. Its calls count once, whatever the loop's length. A list
+# that is not this file's literal (`Http::QUERY`, a constant path) spells no
+# `def`, and marks the class instead; its body's calls are still read.
+def app.rb:32:16 status=resolved owner=Connection site=app.rb:18
+def app.rb:19:9 status=resolved owner=Connection site=app.rb:28
+refs Connection#run_request status=resolved confirmed=3
+dead app.rb Connection#run_request=none
+card Connection#get status=residue reason=class_eval

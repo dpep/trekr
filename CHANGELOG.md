@@ -105,6 +105,13 @@
   `METHODS` is a literal list of names the same file assigns: flipper's
   `Wrapper#enable` resolves (DEC-131).
 
+- **A `class_eval <<-RUBY … RUBY` string is read as code.** Its `def`s are the
+  class's methods (once per value when it loops over a literal list), its calls
+  count, and `--def` inside it answers. faraday's `run_request` is no longer
+  single-caller: two of its three calls are in such strings. A string trekr
+  cannot render is flagged in `--dead` as `lower confidence: class_eval string`
+  (DEC-132).
+
 ## 0.7.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v38): run `trekr --index`
