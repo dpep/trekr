@@ -4,6 +4,7 @@ report what came back empty or unsure.
 
     script/clicks.py REPO [REPO …]         # index, click, tally
     FILES=20 SEED=1 script/clicks.py REPO  # how many files per repo
+    LIBRARY=app,lib script/clicks.py APP   # a Rails app's code is in app/
 
 What a person does in an editor, replayed: `textDocument/definition` and
 `textDocument/hover` at the first character of every name in the file. The
@@ -31,6 +32,9 @@ FILES = int(os.environ.get("FILES", "12"))
 SEED = int(os.environ.get("SEED", "1"))
 OPS = [op for op in os.environ.get("OPS", "definition,hover").split(",") if op]
 MISSES = os.environ.get("MISSES")
+# The directories read as library code. A gem keeps it in lib/; a Rails app
+# mostly in app/ (LIBRARY=app,lib).
+LIBRARY = [d for d in os.environ.get("LIBRARY", "lib").split(",") if d]
 
 KEYWORDS = set("""
 alias and begin break case class def defined? do else elsif end ensure false for
@@ -141,7 +145,11 @@ def is_spec(path):
 
 
 def sample(root):
-    files = sorted(glob.glob(os.path.join(root, "lib/**/*.rb"), recursive=True))
+    files = sorted(
+        path
+        for top in LIBRARY
+        for path in glob.glob(os.path.join(root, top, "**/*.rb"), recursive=True)
+    )
     specs = sorted(glob.glob(os.path.join(root, "spec/**/*.rb"), recursive=True))
     rng = random.Random(SEED)
     rng.shuffle(files)
