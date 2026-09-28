@@ -1,0 +1,26 @@
+# An enum generates more than its predicates: the attribute's reader and
+# writer (the reader returns the member's name, a String, whatever the column
+# stores), a `not_` scope beside each member's scope, and names that `prefix:`
+# and `suffix:` build by a rule, not a guess — `true` takes the attribute,
+# a symbol is used as written, and a label that is not a word has its
+# punctuation replaced by `_`. `scopes: false` and `instance_methods: false`
+# turn their half off. Before, `prefix:`/`suffix:` refused every member, and
+# `not_admin` and `role` were not known at all.
+# The schema declares `role` too, as an Integer column; the model's own
+# declaration wins, as Rails' attribute API has it.
+def app.rb:9:5 status=resolved owner=Account kind=declaration defined_via=enum site=app.rb:2
+def app.rb:9:10 status=resolved owner=String
+def app.rb:10:5 status=resolved owner=Account defined_via=enum site=app.rb:2
+def app.rb:11:5 status=resolved owner=Account defined_via=enum site=app.rb:3
+def app.rb:12:5 status=resolved owner=Account defined_via=enum site=app.rb:4
+def app.rb:13:5 status=resolved owner=Account defined_via=enum site=app.rb:5
+def app.rb:14:5 status=residue
+def app.rb:18:5 status=resolved owner=Account defined_via=enum site=app.rb:2
+def app.rb:19:5 status=resolved owner=Account defined_via=enum site=app.rb:2
+def app.rb:20:5 status=resolved owner=Account defined_via=enum site=app.rb:3
+def app.rb:21:5 status=residue
+def app.rb:22:5 status=resolved owner=Account defined_via=enum site=app.rb:2
+hover app.rb:19:5 Declared by `enum` in
+# A click on the attribute is the attribute; on `enum`, the macro.
+def app.rb:2:9 name=role
+def app.rb:2:3 name=enum

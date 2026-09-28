@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+- **Upgrading drops and rebuilds the index** (store v38): run `trekr --index`
+  once per checkout.
+
+### Added
+
+- **`enum` generates what Rails generates.** The attribute's reader (a
+  String, whatever the column stores) and writer, a `not_` scope beside each
+  member's scope, and the names `prefix:` and `suffix:` build — `true` takes
+  the attribute's name, a symbol is used as written. `scopes: false` and
+  `instance_methods: false` are honoured, and every attribute of a Rails 6
+  `enum a: {…}, b: {…}` is read. A prefixed or suffixed enum used to define
+  no member methods at all (DEC-110).
+
 ## 0.6.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v36): run `trekr --index`

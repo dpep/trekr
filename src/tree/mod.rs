@@ -2274,10 +2274,18 @@ impl Tree {
         for (owner, owner_singleton) in chain {
             let key = (owner.clone(), *owner_singleton, name.to_string());
             if let Some(found) = by_owner.get(&key).and_then(|hits| {
-                hits.iter().rev().find(|i| {
+                let usable = |i: &&usize| {
                     let method = &methods[**i];
                     method.is_definition() && !(real_only && method.site.is_rbi())
-                })
+                };
+                // What the model declares (`enum`, `attribute`) redefines the
+                // column's attribute, as Rails' attribute API does, so the
+                // schema's declaration is the fallback.
+                let from_model = |i: &&usize| methods[**i].via.as_deref() != Some("schema");
+                hits.iter()
+                    .rev()
+                    .find(|i| usable(i) && from_model(i))
+                    .or_else(|| hits.iter().rev().find(usable))
             }) {
                 let mut method = methods[*found].clone();
                 // Report where the *lookup* landed, which is Ruby's own

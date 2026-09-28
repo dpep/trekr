@@ -11,6 +11,7 @@
 //! 3.8k-line `children()` table instead, but it needs to compare and duplicate
 //! trees; one-way extraction does not.
 
+mod enums;
 mod line_index;
 mod macros;
 
@@ -396,6 +397,17 @@ impl<'a> Extractor<'a> {
         let mut module = self.def("ClassMethods".to_string(), Kind::Module, at, at);
         module.via = Some("included".to_string());
         self.push_def(module);
+    }
+
+    /// A class-level macro inside `included do` runs against the *includer*,
+    /// not the concern — so a class method it makes belongs where Concern
+    /// already puts an includer's class methods.
+    fn route_to_includer(&mut self, def: &mut Def) {
+        if def.singleton && self.in_concerns_included_block() {
+            def.nesting.insert(0, "ClassMethods".to_string());
+            def.singleton = false;
+            self.declare_class_methods();
+        }
     }
 
     fn leave(&mut self) {
@@ -2364,101 +2376,61 @@ impl<'pr> Extractor<'_> {
         self.push_def(def);
     }
 
-    /// `enum status: { draft: 0, … }` — a predicate, a bang setter, and a scope
-    /// per member.
-    ///
-    /// Both spellings: Rails 6's `enum status: {…}` puts the attribute in the
-    /// options hash, Rails 7's `enum :status, {…}` makes it the first argument.
-    /// Members come from a literal hash's keys or a literal array's elements;
-    /// anything computed produces nothing.
+    /// `enum :status, { draft: 0, … }` — what ActiveRecord::Enum generates:
+    /// the attribute's reader and writer, the mapping's class method, and per
+    /// member a predicate, a bang setter, a scope and its `not_` scope, with
+    /// the member names built as Rails builds them (`enums`).
     fn handle_enum(&mut self, call: &ruby_prism::CallNode<'pr>, args: &[Node<'pr>]) -> bool {
-        let mut members: Vec<String> = Vec::new();
-        // The attribute itself, which names a *class* method holding the
-        // mapping: `enum :segment` gives `Model.segments`. Distinct from the
-        // members, which give the predicates and scopes below.
-        let mut attribute: Option<String> = args.first().and_then(literal_name);
-        let mut attribute_pos: Option<Pos> = attribute
-            .is_some()
-            .then(|| self.pos(args[0].location().start_offset()));
-        // A `prefix:`/`suffix:` option renames the member methods out of reach.
-        let mut renamed = false;
-        let mut collect = |node: &Node<'pr>| {
-            if let Some(hash) = node.as_hash_node() {
-                for element in hash.elements().iter() {
-                    if let Some(assoc) = element.as_assoc_node()
-                        && let Some(name) = literal_name(&assoc.key())
-                    {
-                        members.push(name);
-                    }
-                }
-            } else if let Some(array) = node.as_array_node() {
-                members.extend(array.elements().iter().filter_map(|e| literal_name(&e)));
-            }
-        };
-
-        for (index, arg) in args.iter().enumerate() {
-            // Rails 6 spelling: the attribute name is a key in the trailing
-            // hash and its value holds the members.
-            if let Some(hash) = arg.as_keyword_hash_node() {
-                for element in hash.elements().iter() {
-                    let Some(assoc) = element.as_assoc_node() else {
-                        continue;
-                    };
-                    // `prefix:`/`suffix:` rename every *member* method, so
-                    // those are refused rather than spelled wrongly. The
-                    // attribute's own plural accessor is not renamed by either,
-                    // so it survives — refusing it too was over-broad.
-                    let key = literal_name(&assoc.key()).unwrap_or_default();
-                    if key == "prefix" || key == "suffix" {
-                        renamed = true;
-                        continue;
-                    }
-                    if !matches!(key.as_str(), "default" | "validate" | "instance_methods") {
-                        // Rails 6 puts the attribute in this key.
-                        if attribute.is_none() {
-                            attribute = Some(key.clone());
-                            attribute_pos = Some(self.pos(assoc.key().location().start_offset()));
-                        }
-                        collect(&assoc.value());
-                    }
-                }
-            } else if index > 0 {
-                // Rails 7 spelling: members are a positional argument.
-                collect(arg);
-            }
-        }
-        if members.is_empty() && attribute.is_none() {
+        let declared = enums::declared(args);
+        if declared.is_empty() {
             return false;
         }
-        if renamed {
-            members.clear();
-        }
-
         let loc = call.location();
         let (start, end) = (loc.start_offset(), loc.end_offset());
         let in_singleton = self.in_singleton();
-        if let Some(attribute) = attribute {
-            let mut def = self.def(macros::pluralize(&attribute), Kind::Method, start, end);
-            def.via = Some("enum".into());
-            def.singleton = true;
-            // At the *attribute*, like every other macro-generated definition.
-            // Left at the call's own offset it sits exactly where `enum` does,
-            // and a position lookup — which prefers definitions — answers
-            // `subjects` to someone asking what `enum` is.
-            if let Some(pos) = attribute_pos {
-                def.pos = pos;
+        for decl in declared {
+            // At the attribute, like every macro-generated definition: left at
+            // the call's own offset they would sit where `enum` does, and a
+            // click on `enum` would answer one of them.
+            let at = self.pos(decl.at);
+            let attribute = &decl.attribute;
+            // The reader returns the member's name, whatever the column
+            // stores, so it is a String where the schema says Integer. It
+            // comes first: a click on the attribute answers the first
+            // definition written there.
+            let mut made = vec![
+                (attribute.clone(), false, at, Some("String")),
+                (format!("{attribute}="), false, at, None),
+                (macros::pluralize(attribute), true, at, None),
+            ];
+            for (label, offset) in &decl.members {
+                let Some(name) = decl.method_name(label) else {
+                    continue;
+                };
+                let at = self.pos(*offset);
+                if decl.instance_methods {
+                    made.push((format!("{name}?"), false, at, None));
+                    made.push((format!("{name}!"), false, at, None));
+                }
+                if decl.scopes {
+                    made.push((format!("not_{name}"), true, at, None));
+                    made.push((name, true, at, None));
+                }
             }
-            self.push_def(def);
-        }
-        for member in members {
-            for (name, singleton) in [
-                (format!("{member}?"), false),
-                (format!("{member}!"), false),
-                (member.clone(), true),
-            ] {
+            for (name, singleton, at, returns) in made {
+                let writer = name.ends_with('=');
                 let mut def = self.def(name, Kind::Method, start, end);
+                def.pos = at;
                 def.via = Some("enum".into());
                 def.singleton = singleton || in_singleton;
+                def.sig_returns = returns.map(str::to_string);
+                if writer {
+                    def.params = vec![Param {
+                        kind: ParamKind::Req,
+                        name: "value".into(),
+                    }];
+                }
+                self.route_to_includer(&mut def);
                 self.push_def(def);
             }
         }
@@ -2619,11 +2591,6 @@ impl<'pr> Extractor<'_> {
         let visibility = self.visibility();
         let in_singleton = self.in_singleton();
         let mut any = false;
-        // Whether anything was routed into a `ClassMethods` that may not be
-        // written anywhere. `ActiveRecord::Callbacks` happens to declare one;
-        // a concern that only ever writes `included do define_model_callbacks`
-        // does not, and the module has to exist for the tree to carry it.
-        let mut routed = false;
 
         // A splat of a constant this blob assigned a symbol array is still a
         // list of literal names; anything else computed produces nothing.
@@ -2664,14 +2631,7 @@ impl<'pr> Extractor<'_> {
                 def.visibility = visibility;
                 // `class << self` still governs which side these land on.
                 def.singleton = made.singleton || in_singleton;
-                // A class-level macro inside `included do` runs against the
-                // *includer*, not the concern — so its methods belong where
-                // Concern already puts an includer's class methods.
-                if def.singleton && self.in_concerns_included_block() {
-                    def.nesting.insert(0, "ClassMethods".to_string());
-                    def.singleton = false;
-                    routed = true;
-                }
+                self.route_to_includer(&mut def);
                 if made.writer {
                     def.params = vec![Param {
                         kind: ParamKind::Req,
@@ -2697,12 +2657,6 @@ impl<'pr> Extractor<'_> {
                 self.push_def(def);
                 any = true;
             }
-        }
-        if routed {
-            let mut module = self.def("ClassMethods".to_string(), Kind::Module, start, end);
-            module.via = Some("included".to_string());
-            module.nesting = self.nesting.clone();
-            self.push_def(module);
         }
         if any {
             // The arguments are still constants in their own right.
@@ -3898,29 +3852,35 @@ mod rails_dsl_tests {
     }
 
     /// `enum :segment, …` defines `Model.segments` — the mapping — as well as
-    /// the members' predicates. Only the members are renamed by `suffix:`, so
-    /// the plural survives an option that refuses everything else.
+    /// the members' predicates, and `suffix:` renames the members by Rails'
+    /// rule while leaving the plural alone.
     #[test]
     fn an_enum_defines_the_attributes_plural_class_method() {
-        let facts = extract(b"class W\n  enum :segment, { primary: 0, secondary: 1 }\nend\n");
-        let made: Vec<&str> = facts
-            .defs
-            .iter()
-            .filter(|d| d.via.as_deref() == Some("enum"))
-            .map(|d| d.name.as_str())
-            .collect();
-        assert!(made.contains(&"segments"), "the mapping accessor: {made:?}");
-        assert!(made.contains(&"primary?"), "and the members: {made:?}");
+        let made = |src: &[u8]| -> Vec<String> {
+            extract(src)
+                .defs
+                .into_iter()
+                .filter(|d| d.via.as_deref() == Some("enum"))
+                .map(|d| d.name)
+                .collect()
+        };
+        let plain = made(b"class W\n  enum :segment, { primary: 0, secondary: 1 }\nend\n");
+        assert!(
+            plain.iter().any(|n| n == "segments"),
+            "the mapping accessor: {plain:?}"
+        );
+        assert!(
+            plain.iter().any(|n| n == "primary?"),
+            "and the members: {plain:?}"
+        );
 
-        // `suffix:` renames the members out of reach; the plural is untouched.
-        let renamed = extract(b"class W\n  enum :segment, { primary: 0 }, suffix: true\nend\n");
-        let made: Vec<&str> = renamed
-            .defs
-            .iter()
-            .filter(|d| d.via.as_deref() == Some("enum"))
-            .map(|d| d.name.as_str())
-            .collect();
-        assert_eq!(made, ["segments"], "no guessed member names: {made:?}");
+        let renamed = made(b"class W\n  enum :segment, { primary: 0 }, suffix: true\nend\n");
+        assert!(renamed.iter().any(|n| n == "segments"), "{renamed:?}");
+        assert!(
+            renamed.iter().any(|n| n == "primary_segment?"),
+            "{renamed:?}"
+        );
+        assert!(!renamed.iter().any(|n| n == "primary?"), "{renamed:?}");
     }
 
     /// Somebody else's `class_methods` is not Concern's. Arguments are the

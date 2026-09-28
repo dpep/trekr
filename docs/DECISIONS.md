@@ -4897,3 +4897,34 @@ is a receiver in a variable and stays unread (DEC-097).
 set, `--refs` query or click moved. rails `--dead` renames five candidates'
 owners to `ActiveRecord::Core::ClassMethods`, two of them unreferenced →
 single-caller.
+
+## DEC-110 — `enum` declares every method ActiveRecord::Enum generates
+
+**Decided.** An `enum` declares, at the attribute: its reader, typed
+`String`, its writer, and the mapping's class method (`statuses`); and at
+each member: `x?`, `x!`, and the scopes `x` and `not_x`. A member's name is
+ActiveRecord::Enum's own rule, `"#{prefix}#{label}#{suffix}"` with a run of
+ASCII punctuation or space in the label made `_`: `prefix: true` takes the
+attribute's name, a symbol or string is used as written, `false` is none.
+`scopes: false` drops the scopes, `instance_methods: false` the predicates
+and bangs. Both spellings are read: Rails 7's `enum :status, {…}, prefix:
+true` (or `enum :status, active: 0, prefix: true`, whose members are the
+keywords that are not options), and Rails 6's `enum status: {…}, kind: […],
+_prefix: true`, where each keyword but the options is an enum and the options
+apply to all of them. Each is `defined_via: enum`, a declaration.
+
+**Why.** Before, a `prefix:` or `suffix:` refused every member, although the
+name it makes is a rule; `not_x` was not declared; and a Rails 6 call
+declaring two enums read only the first. The attribute itself was the
+schema's, where there was a schema, and typed from the column: `role.upcase`
+was sent to `Integer`, where Rails' enum reader returns the member's name.
+
+**A model's declaration wins over the schema's.** The schema declares an
+attribute on the model by convention (DEC-022), and the model's `enum` (or
+`attribute`) redefines it, as Rails' attribute API does. When one owner holds
+both, the lookup takes the model's. Before, whichever file sorted last won,
+and `db/` sorts after `app/`.
+
+**The limits.** A computed affix spells nothing, so its members are left out
+rather than guessed. Members computed at runtime (`enum status:
+Status.values`) declare only the attribute's three methods, as before.

@@ -2290,17 +2290,18 @@ mod tests {
     }
 
     #[test]
-    fn an_enum_with_a_prefix_refuses_rather_than_guess_names() {
-        let tree = crate::tree::for_test(&[(
-            "a.rb",
+    fn an_enum_with_a_prefix_spells_the_prefixed_name() {
+        for source in [
             "class Post\n  enum status: { draft: 0 }, _prefix: true\nend\n",
-        )]);
-        let _ = tree.lookup("Post", false, "draft?");
-        let tree = crate::tree::for_test(&[(
-            "a.rb",
-            "class Post\n  enum status: { draft: 0 }, prefix: true\nend\n",
-        )]);
-        assert!(tree.lookup("Post", false, "draft?").is_none());
+            "class Post\n  enum :status, { draft: 0 }, prefix: true\nend\n",
+        ] {
+            let tree = crate::tree::for_test(&[("a.rb", source)]);
+            assert!(tree.lookup("Post", false, "draft?").is_none(), "{source}");
+            assert!(
+                tree.lookup("Post", false, "status_draft?").is_some(),
+                "{source}"
+            );
+        }
     }
 
     #[test]
