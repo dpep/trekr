@@ -1136,8 +1136,10 @@ fn let_typed(
     {
         return None;
     }
-    let Some(Member::Here(def)) = group_member(tree, facts, call) else {
-        return None;
+    let def = match group_member(tree, facts, call) {
+        Some(Member::Here(def)) => def,
+        None if call.name == "subject" => return implicit_subject(tree, facts, call, path),
+        _ => return None,
     };
     let typed = |def: &Def| {
         type_of(
@@ -1185,6 +1187,30 @@ fn let_typed(
         total,
         ambiguous: agreeing < total,
         rivals,
+    })
+}
+
+/// RSpec's implicit `subject`, when no group in reach writes one: an instance
+/// of the class the innermost group describes, or the module itself, as
+/// `MemoizedHelpers#subject` makes it (DEC-114).
+fn implicit_subject(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiver> {
+    let (level, class) = (0..call.nesting.len()).find_map(|at| {
+        let level = &call.nesting[at..];
+        facts
+            .described
+            .iter()
+            .find(|(group, _)| group == level)
+            .map(|(_, class)| (level, class))
+    })?;
+    let fqn = tree.resolve_at(class, level, path).fqn?;
+    Some(Receiver {
+        singleton: tree.kind_of(&fqn) != Some("class"),
+        fqn,
+        via: "implicit_subject",
+        agreeing: 1,
+        total: 1,
+        ambiguous: false,
+        rivals: Vec::new(),
     })
 }
 

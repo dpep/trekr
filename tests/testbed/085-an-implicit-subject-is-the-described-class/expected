@@ -1,0 +1,10 @@
+# With no `subject` written, RSpec's is `described_class.new`: an instance of
+# the class the innermost group describes, the parent's for a group that
+# describes a string. `is_expected` and `subject` were untyped without one.
+def spec/widget_spec.rb:2:24 status=resolved owner=Widget via=predicate_matcher
+def spec/widget_spec.rb:3:16 status=resolved owner=Widget via=implicit_subject
+def spec/widget_spec.rb:6:18 status=resolved owner=Widget
+# A written subject, in this group or an outer one, is the subject.
+def spec/widget_spec.rb:12:18 status=resolved owner=Array
+# A group that describes no constant has a string for a subject; not modelled.
+def spec/widget_spec.rb:17:16 status=residue

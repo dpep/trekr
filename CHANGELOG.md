@@ -41,6 +41,11 @@
   of a shared group, or any group's `let` or `def`, confirms the calls that
   reach it through the group, where it counted them possible (DEC-113).
 
+- **RSpec's implicit subject.** With no `subject` written, `subject` and
+  `is_expected` are an instance of the class the group describes, as
+  `described_class.new` is, so `is_expected.to be_empty` reaches its
+  `empty?` and `subject.save` resolves (DEC-114).
+
 ### Fixed
 
 - `store_accessor :settings, :theme` declared a `settings` accessor: the

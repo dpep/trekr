@@ -155,6 +155,10 @@ pub(crate) struct Facts {
     /// shared group, by its nesting, and the shared group's module (DEC-092).
     /// A resolve-time fact, like `assigns`: never stored.
     pub(crate) shared_includes: Vec<(Vec<String>, String)>,
+    /// Each example group that describes a constant, by its nesting, and the
+    /// constant as written — its own argument or its parent's. What an
+    /// implicit `subject` is made from (DEC-114). Resolve-time, never stored.
+    pub(crate) described: Vec<(Vec<String>, String)>,
     /// Prism reported syntax errors; the facts above are what survived.
     pub(crate) parse_errors: usize,
     pub(crate) lines: usize,

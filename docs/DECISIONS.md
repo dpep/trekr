@@ -4742,7 +4742,7 @@ way; `held = widget` in a hook reads the innermost `let` alone.
 
 **Not done.** The implicit subject — `described_class.new` when no `subject`
 is written — is not modelled, so `is_expected` without a `subject` stays
-untyped. A `let` that a shared group defines is stored without its value, so
+untyped (done since, DEC-114). A `let` that a shared group defines is stored without its value, so
 a call on it from an includer is untyped. FactoryBot's `create(:widget)` names
 no class.
 
@@ -5057,3 +5057,24 @@ shared group's callers were `possible` at best.
 block, which would admit every call in the block, not just its siblings.
 The helper is usually another file's (a `spec/support` shared context), so
 that is a stored fact per method, and the shared-group case did not need it.
+
+## DEC-114 — The implicit subject is the described class's instance
+
+**Decided.** When no group in reach writes a `subject` — neither the call's
+group nor one around it, nor a shared group it includes — `subject`, and so
+`is_expected` and a bare `should`, is typed as RSpec's
+`MemoizedHelpers#subject` makes it: an instance of the class the innermost
+group describes (`described_class.new`), or the module itself when a module
+is described. The rung is `implicit_subject`. A group that describes a
+string inherits its parent's class, as `described_class` does; a spec that
+describes no constant at all has a string for a subject, which is not
+modelled and stays untyped.
+
+**Why.** DEC-096 left it as the named gap: `it { is_expected.to be_valid }`
+under `describe Widget do` is the idiom RSpec's own documentation leads with,
+and its predicate matcher could not say which predicate ran. The class is
+written on the group's first line; nothing is inferred.
+
+**Which group describes it** is a resolve-time fact of the file (each group
+that describes a constant, by its nesting), like the shared groups a group
+includes: never stored.

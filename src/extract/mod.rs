@@ -1019,9 +1019,12 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                             .first()
                             .and_then(const_name)
                             .or_else(|| self.described.last().cloned().flatten());
-                        self.described.push(described);
+                        self.described.push(described.clone());
                         self.enter(Some(segment), Opens::Scope);
                         self.frame().group = true;
+                        if let Some(class) = described {
+                            self.facts.described.push((self.nesting.clone(), class));
+                        }
                         // `it_behaves_like "x" do … end` is a group that
                         // includes x, and its block customizes that group.
                         if let Some(module) = self.shared_included(node) {
