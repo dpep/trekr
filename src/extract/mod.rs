@@ -1040,12 +1040,16 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                     }
                     Some(SpecBlock::Shared(name)) => {
                         // Declared where it is written, so the module has a
-                        // site: the call, since no constant is written.
+                        // site: at the block's opening, since no constant is
+                        // written and a click on the call is the call.
                         let at = node.location();
+                        let opening = block
+                            .as_block_node()
+                            .map_or(at.start_offset(), |b| b.opening_loc().start_offset());
                         let mut module = self.def(
                             format!("::{}", crate::core::rspec::shared_module(&name)),
                             Kind::Module,
-                            at.start_offset(),
+                            opening,
                             at.end_offset(),
                         );
                         module.nesting.clear();
@@ -2993,6 +2997,16 @@ impl<'pr> Extractor<'_> {
             .flatten();
         let recv_value = match (recv, call.receiver()) {
             (RecvShape::Other, Some(r)) => self.recv_value(&r),
+            // The group methods RSpec exposes on `main` (DEC-115).
+            (RecvShape::Implicit, None)
+                if self.nesting.is_empty()
+                    && matches!(
+                        self.spec_block(call),
+                        Some(SpecBlock::Group(_) | SpecBlock::Shared(_))
+                    ) =>
+            {
+                Some(RecvValue::Main)
+            }
             _ => None,
         };
         let argc = argc_of(&arg_nodes(call));

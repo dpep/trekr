@@ -5078,3 +5078,26 @@ written on the group's first line; nothing is inferred.
 **Which group describes it** is a resolve-time fact of the file (each group
 that describes a constant, by its nesting), like the shared groups a group
 includes: never stored.
+
+## DEC-115 — A bare top-level `describe` is sent from `main` to `RSpec`
+
+**Decided.** A group method called bare at the top of a spec — `describe`,
+`context`, `shared_examples`, `shared_context` and their kin, where DEC-084
+opens a group (so not in a Minitest spec, DEC-095) — has `main` for its
+receiver, and `main`'s method sends the call on to `RSpec`: the answer is
+the stub's `RSpec.describe`, `resolved_via: main`, a declaration by RSpec.
+Only when the index knows `RSpec`; otherwise residue as before.
+
+**Why.** rspec-core's `expose_dsl_globally`, on unless a suite turns it off,
+defines each group method on `main`'s singleton class and on `Module` as
+`::RSpec.__send__(name, …)`. accord writes every spec that way, so the first
+line of each answered residue ("the receiver's type is not determined by
+this file"). The call is the same one `RSpec.describe` makes, one hop later,
+so it answers with the same line; `main` itself is not modelled — a top-level
+call is still untyped in general (`require_relative`, DOGFOOD).
+
+**A shared group's module moves to its block's opening.** DEC-092 declared
+`RSpec::SharedExampleGroups::X` at the call, so a click on `shared_examples`
+answered the module — and, being no constant written there, "no indexed
+constant by that name". It is declared at the `do`, as DEC-099 put a
+concern's `ClassMethods`, and the call answers as itself.

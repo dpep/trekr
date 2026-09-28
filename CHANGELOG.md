@@ -46,6 +46,12 @@
   `described_class.new` is, so `is_expected.to be_empty` reaches its
   `empty?` and `subject.save` resolves (DEC-114).
 
+- **A bare top-level `describe`** in a spec answers `RSpec.describe`, as
+  RSpec's `expose_dsl_globally` makes it (`main.describe` sends to
+  `RSpec`), `resolved_via: main`; it was residue. `shared_examples` and
+  `shared_context` likewise, and a click on one no longer lands on the
+  module it declares (DEC-115).
+
 ### Fixed
 
 - `store_accessor :settings, :theme` declared a `settings` accessor: the

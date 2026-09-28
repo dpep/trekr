@@ -21,9 +21,7 @@ the repo named; lines and columns are 1-based, as `--def` takes them.
 | `lib/graph_weaver/codegen/emit.rb:45:7` `@variable_inputs` | graph_weaver | the write in `GraphWeaver::Codegen`, which includes `Emit` | hover "no assignment found", definition empty | an ivar read in a mixin is written by the includer (DEC-064 looks only in the class chain) |
 | `lib/graph_weaver/client.rb:10:1` `require_relative` | graph_weaver | `Kernel#require_relative` | residue, 3 guesses | a top-level call outside any block is on `main`, an `Object`; the call does not record whether it is in a block |
 | `lib/network_resiliency/syncer.rb:10:14` `synchronize` | network_resiliency | `Mutex#synchronize` | residue, 8 of 25 | `LOCK = Mutex.new`: a value constant is untyped (DEC-082, not done) |
-| `spec/accord/types/decimal_spec.rb:5:1` `describe` | accord | RSpec's `describe`, exposed on `main` | residue | a bare top-level `describe` is `main`'s; the stub states only `RSpec.describe` |
 | `lib/graph_weaver/tasks.rb:372:3` `namespace` | graph_weaver | `Rake::DSL#namespace` | residue | a rake task file's blocks; honest until blocks carry a `self` |
-| `spec/transport_endpoint_spec.rb:96:35` `http_response` | graph_weaver | `def http_response` in the `shared_context` of `spec/support/raw_http_server.rb` | residue, the shared context's method offered first | the context is followed now (DEC-092); the call is in the block of `serving`, the context's own helper, which DEC-084 does not vouch runs on the example |
 | `lib/graph_weaver/inflect.rb:18:32` `empty?` | graph_weaver | `String#empty?` | residue, `empty?`'s definitions offered | `&:empty?` is recorded now (DEC-094); `split` returns an `Array` in core's stubs, with no element type |
 | `be_empty`, `be_valid` on a `let` whose block is a chain, or an untyped local | accord, berater, meddleware, polyid | the subject's predicate | residue naming the predicate-matcher rule, the predicate's definitions offered | the rule answers when the subject is typed (DEC-090, DEC-096); `subject { [].pluck(0) }` and `expect(input)` are not |
 
@@ -31,6 +29,8 @@ the repo named; lines and columns are 1-based, as `--def` takes them.
 
 | position | repo | meant | got | fixed in |
 |---|---|---|---|---|
+| `spec/accord/types/decimal_spec.rb:5:1` `describe` | accord | RSpec's `describe`, exposed on `main` | residue | af03fb4 (testbed 086) |
+| `spec/transport_endpoint_spec.rb:96:35` `http_response` | graph_weaver | `def http_response` in the `shared_context` of `spec/support/raw_http_server.rb` | residue, the shared context's method offered first | 6332392 (testbed 084) |
 | `spec/models/user_spec.rb:54:33` `find` | polyid | `PolyId::Model::ClassMethods#find` | ActiveRecord's `find`, **resolved** | ecb44b5 (testbed 071) |
 | `spec/models/cache_spec.rb:81:12` `id_for` | polyid | `PolyId::Model::ClassMethods#id_for` | empty: `User` known, nothing defines it | ecb44b5 (testbed 071) |
 | `lib/network_resiliency/power_stats.rb:84:23` `percentile` | network_resiliency | `percentile` in the same class | residue | ca04313 (testbed 059) |

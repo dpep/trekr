@@ -651,6 +651,10 @@ pub(crate) enum RecvValue {
     /// The example's `subject`, which `is_expected` and a bare `should`
     /// expect without writing it (DEC-096).
     Subject,
+    /// `main`, for a bare `describe` at the top of a spec: RSpec's
+    /// `expose_dsl_globally` gives `main` its group methods, each sending to
+    /// `RSpec` (DEC-115).
+    Main,
 }
 
 /// The receiver ladder's rungs, in the order they are worth trying.
@@ -744,6 +748,10 @@ pub(crate) fn split_nesting(s: &str) -> Vec<String> {
 pub(crate) mod rspec {
     /// What every example group subclasses.
     pub(crate) const EXAMPLE_GROUP: &str = "RSpec::Core::ExampleGroup";
+
+    /// Where `RSpec.describe` and its kin live, and what a bare top-level
+    /// `describe` on `main` sends to (DEC-115).
+    pub(crate) const RSPEC: &str = "RSpec";
 
     /// Where the matchers live, and the `method_missing` that makes the
     /// dynamic ones (DEC-090).

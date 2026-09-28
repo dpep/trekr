@@ -1038,6 +1038,18 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
                     rivals: Vec::new(),
                 });
             }
+            // `describe` on `main`, which sends it to `RSpec` (DEC-115).
+            if call.recv_value == Some(RecvValue::Main) {
+                return tree.is_known(rspec::RSPEC).then(|| Receiver {
+                    fqn: rspec::RSPEC.to_string(),
+                    singleton: true,
+                    via: "main",
+                    agreeing: 1,
+                    total: 1,
+                    ambiguous: false,
+                    rivals: Vec::new(),
+                });
+            }
             let fqn = tree.scope_fqn(&call.nesting)?;
             tree.is_known(&fqn).then_some(Receiver {
                 fqn,
@@ -1103,6 +1115,7 @@ fn chained(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) ->
                 .find(|c| c.pos == *at && c.recv != RecvShape::Symbol)?;
             returned_by(tree, facts, previous, path, depth + 1, call)
         }
+        RecvValue::Main => None,
         // `is_expected`: the example's `subject`, as if it were written.
         RecvValue::Subject => {
             let subject = Call {

@@ -1,0 +1,8 @@
+# A bare `describe` at the top of a spec is sent to `main`, which RSpec's
+# `expose_dsl_globally` (the default) gives its group methods, each sending
+# the call on to `RSpec`. It answers `RSpec.describe`, as the written
+# `RSpec.describe` does; it was residue, the receiver undetermined.
+def spec/widget_spec.rb:1:1 status=resolved owner=RSpec via=main kind=declaration defined_via=rspec
+def spec/widget_spec.rb:5:1 status=resolved owner=RSpec via=main
+# A Minitest spec's `describe` is not RSpec's (DEC-095), and stays as it was.
+def test/gadget_test.rb:1:1 status=residue
