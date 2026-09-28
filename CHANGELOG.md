@@ -13,6 +13,12 @@
   that group; a click on the matcher in an expectation now lands on the line
   that defines it (DEC-091).
 
+- **Shared contexts across files.** The `let`s and methods of a top-level
+  `shared_context` or `shared_examples` are found from any group that pulls it
+  in with `include_context`, `include_examples` or `it_behaves_like`, wherever
+  it is written — a helper in `spec/support` included by a spec no longer
+  answers residue (DEC-092).
+
 - **RSpec predicate matchers.** `be_empty`, `be_valid` and `have_key` have no
   method of their own; RSpec answers them by calling `empty?`, `valid?` and
   `has_key?` on the expectation's subject. Where `expect(x)` types `x`, the

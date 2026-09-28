@@ -303,6 +303,16 @@ impl<'a> Extractor<'a> {
             def.nesting
                 .retain(|scope| !crate::core::rspec::is_group(scope));
         }
+        // A top-level shared group's own methods are its module's, which
+        // other files include (DEC-092).
+        if def.is_group_member()
+            && let Some(module) = def
+                .nesting
+                .first()
+                .and_then(|segment| crate::core::rspec::shared_module_of(segment))
+        {
+            def.nesting = vec![format!("::{module}")];
+        }
         self.facts.defs.push(def);
     }
 
@@ -802,6 +812,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.handle_define_method(node);
         self.handle_group_member(node);
         self.handle_custom_matcher(node);
+        self.handle_shared_include(node);
         self.note_matcher_subject(node);
         let consumed = self.handle_macro(node);
         // A macro is *also* an ordinary method call — `belongs_to` really is
@@ -862,6 +873,35 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                     Some(SpecBlock::Group(description)) => {
                         let segment = self.group_segment(&description);
                         self.enter(Some(segment), Opens::Scope);
+                        self.frame().group = true;
+                        // `it_behaves_like "x" do … end` is a group that
+                        // includes x, and its block customizes that group.
+                        if let Some(module) = self.shared_included(node) {
+                            self.facts
+                                .shared_includes
+                                .push((self.nesting.clone(), module));
+                        }
+                        if let Some(body) = block.as_block_node().and_then(|b| b.body()) {
+                            self.visit(&body);
+                        }
+                        self.leave();
+                    }
+                    Some(SpecBlock::Shared(name)) => {
+                        // Declared where it is written, so the module has a
+                        // site: the call, since no constant is written.
+                        let at = node.location();
+                        let mut module = self.def(
+                            format!("::{}", crate::core::rspec::shared_module(&name)),
+                            Kind::Module,
+                            at.start_offset(),
+                            at.end_offset(),
+                        );
+                        module.nesting.clear();
+                        self.facts.defs.push(module);
+                        self.enter(
+                            Some(crate::core::rspec::shared_segment(&name)),
+                            Opens::Scope,
+                        );
                         self.frame().group = true;
                         if let Some(body) = block.as_block_node().and_then(|b| b.body()) {
                             self.visit(&body);
@@ -1030,6 +1070,9 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
 enum SpecBlock {
     /// The body of a new example group, described by this text.
     Group(String),
+    /// The body of a top-level shared group, named as `base_name` writes its
+    /// name (DEC-092).
+    Shared(String),
     /// An example, hook, `let` or `subject`: a method body on an instance of
     /// the group.
     Example,
@@ -1061,6 +1104,18 @@ const MATCHER_DEFINERS: [&str; 4] = [
     "matcher",
     "define_negated_matcher",
     "alias_matcher",
+];
+
+/// Calls whose block is a shared group's body, run in whatever includes it.
+const SHARED_METHODS: [&str; 3] = ["shared_examples", "shared_context", "shared_examples_for"];
+
+/// Calls, inside a group, that include a shared group: into the group itself,
+/// or (`it_behaves_like`) into a nested group of their own.
+const SHARED_INCLUDERS: [&str; 4] = [
+    "include_context",
+    "include_examples",
+    "it_behaves_like",
+    "it_should_behave_like",
 ];
 
 /// Calls, inside a group, whose block is a nested group of its own.
@@ -1535,6 +1590,12 @@ impl<'pr> Extractor<'_> {
             && (on_rspec || implicit && (in_group || at_top)))
             || (NESTED_GROUP_METHODS.contains(&name) && implicit && in_group);
         if opens_group {
+            if SHARED_METHODS.contains(&name)
+                && !in_group
+                && let Some(shared) = arg_nodes(call).first().and_then(literal_name)
+            {
+                return Some(SpecBlock::Shared(crate::core::rspec::base_name(&shared)));
+            }
             return Some(SpecBlock::Group(self.description(call)));
         }
         (EXAMPLE_METHODS.contains(&name) && implicit && in_group).then_some(SpecBlock::Example)
@@ -1568,6 +1629,33 @@ impl<'pr> Extractor<'_> {
             n => format!("{base}_{n}"),
         };
         crate::core::rspec::segment(&name)
+    }
+
+    /// The shared group a call in a group's body includes, as its module: a
+    /// literal name, since that is RSpec's key for it (DEC-092).
+    fn shared_included(&self, call: &ruby_prism::CallNode<'pr>) -> Option<String> {
+        if call.receiver().is_some() || !SHARED_INCLUDERS.contains(&method_name(call)?.as_str()) {
+            return None;
+        }
+        let name = literal_name(arg_nodes(call).first()?)?;
+        Some(crate::core::rspec::shared_module(
+            &crate::core::rspec::base_name(&name),
+        ))
+    }
+
+    /// `include_context "x"` and `include_examples "x"` include a shared
+    /// group into the group they are written in (DEC-092).
+    fn handle_shared_include(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        let into_this_group = method_name(call)
+            .is_some_and(|name| matches!(name.as_str(), "include_context" | "include_examples"));
+        if !into_this_group || !self.writes_group_members() {
+            return;
+        }
+        if let Some(module) = self.shared_included(call) {
+            self.facts
+                .shared_includes
+                .push((self.nesting.clone(), module));
+        }
     }
 
     /// `RSpec::Matchers.define :name` makes `name` a method of RSpec::Matchers,

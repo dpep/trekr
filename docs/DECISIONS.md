@@ -4577,3 +4577,39 @@ before it shipped — with the stub's extend in place, `match` in such a block
 answered RSpec::Matchers' `match` matcher, confidently wrong.
 
 **Store v35**, since a support file's facts now hold the declaration.
+
+## DEC-092 — A top-level shared group is a module its includers include
+
+**Decided.** `shared_context "raw http server" do … end`,
+`shared_examples` and `shared_examples_for`, with a literal name and written
+outside any group (bare at the top of a file, or on `RSpec` anywhere outside
+a method), make a module, `RSpec::SharedExampleGroups::RawHttpServer` — the
+name as RSpec's `base_name_for` writes it, declared at the call. The `let`s,
+`subject`s and `def`s its body writes are that module's methods, and stored.
+`include_context "raw http server"` and `include_examples` in a group's body
+include the module into that group; `it_behaves_like` and
+`it_should_behave_like` into the nested group they make, which their block
+customizes. A call in a group finds, innermost group first, the group's own
+definitions (DEC-084), then the shared groups it includes, the last included
+first. Inside the shared body, its own module comes last.
+
+**Why a module, when DEC-084 turned down a class per group.** That was
+because a group's name is not unique — 111 of discourse's top-level
+descriptions are shared by two files — and facts cannot carry the file that
+would tell them apart. A top-level shared group is different in kind: RSpec
+registers it globally by its name, and an `include_context` elsewhere finds
+it by that name alone, so the name is already the key the module needs. It
+is also what RSpec does: `SharedExampleGroupModule` is a `Module`, and
+`include_context` includes it. The include is file-local, like a group's
+own methods, and is not stored.
+
+**The limits.** A shared group written inside a group is scoped to it in
+RSpec, and stays a group segment of that file, as before. A name that is not
+a literal, or an include by metadata (`shared_context "x", :db` picked up by
+`describe …, :db`), is not followed. Two names that `base_name` writes the
+same (`"raw http server"` and `:raw_http_server`) are one module. A shared
+group's body calling what its includer defines — `shared_examples` reading a
+`let` it expects the includer to supply — is still residue, since which
+includer is not the file's to say.
+
+**Store** unchanged at v35, since DEC-091 moved it in the same release.

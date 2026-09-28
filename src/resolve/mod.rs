@@ -118,7 +118,7 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
 
 fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer {
     if let Some(member) =
-        group_member(facts, call).filter(|_| on_the_example(tree, facts, call, path))
+        group_member(tree, facts, call).filter(|_| on_the_example(tree, facts, call, path))
     {
         return member_answer(tree, call, member, path);
     }
@@ -381,7 +381,7 @@ fn yields_to_its_caller(tree: &Tree, facts: &Facts, owner: &Call, path: &str) ->
         RecvShape::Local | RecvShape::Ivar | RecvShape::Other => true,
         RecvShape::Implicit | RecvShape::SelfRecv => {
             rspec::in_group(&owner.nesting)
-                && group_member(facts, owner).is_none()
+                && group_member(tree, facts, owner).is_none()
                 && tree
                     .lookup(rspec::EXAMPLE_GROUP, owner.singleton, &owner.name)
                     .is_some()
@@ -407,36 +407,97 @@ fn yields_to_its_caller(tree: &Tree, facts: &Facts, owner: &Call, path: &str) ->
     }
 }
 
+/// What a group's own name is: a `let`, `subject` or `def` of this file, or
+/// a method of a shared group the group includes (DEC-092).
+enum Member<'f> {
+    Here(&'f Def),
+    Shared(Box<crate::tree::MethodDef>),
+}
+
 /// A method an enclosing example group defines — a `let`, a `subject`, a
-/// `def` in its body — which only this file can see (DEC-084).
+/// `def` in its body — which only this file can see (DEC-084), or one a
+/// top-level shared group it includes defines, which any file can (DEC-092).
 ///
-/// The innermost group that defines the name wins, as the subclass does, and
-/// within one group the last definition, as a redefined method does. A symbol
-/// is the definition itself only where it is written: `let(:name)`.
-fn group_member<'f>(facts: &'f Facts, call: &Call) -> Option<&'f Def> {
-    let named = |def: &&Def| def.is_group_member() && def.name == call.name;
+/// The innermost group that has the name wins, as the subclass does: its own
+/// definitions first, the last one written, as a redefined method does; then
+/// the shared groups it includes, the last included first. A symbol is the
+/// definition itself only where it is written: `let(:name)`.
+fn group_member<'f>(tree: &Tree, facts: &'f Facts, call: &Call) -> Option<Member<'f>> {
+    let named = |def: &&Def| def.kind == crate::core::Kind::Method && def.name == call.name;
     if call.recv == RecvShape::Symbol {
         return facts
             .defs
             .iter()
             .filter(named)
-            .find(|def| def.pos == call.pos);
+            .filter(|def| def.is_group_member() || rspec::is_shared_member(def))
+            .find(|def| def.pos == call.pos)
+            .map(Member::Here);
     }
     if !matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv)
         || !rspec::in_group(&call.nesting)
     {
         return None;
     }
-    facts
-        .defs
-        .iter()
-        .filter(named)
-        .filter(|def| def.singleton == call.singleton && call.nesting.ends_with(&def.nesting))
-        .max_by_key(|def| (def.nesting.len(), def.pos))
+    for at in 0..call.nesting.len() {
+        let level = &call.nesting[at..];
+        if !rspec::is_group(&level[0]) {
+            continue;
+        }
+        let own = facts
+            .defs
+            .iter()
+            .filter(named)
+            .filter(|def| def.singleton == call.singleton && def.nesting == level)
+            .max_by_key(|def| def.pos);
+        if let Some(def) = own {
+            return Some(Member::Here(def));
+        }
+        if call.singleton {
+            continue;
+        }
+        let included = facts
+            .shared_includes
+            .iter()
+            .rev()
+            .filter(|(group, _)| group == level)
+            .map(|(_, module)| module.clone())
+            .chain(rspec::shared_module_of(&level[0]));
+        for module in included {
+            if let Some(found) = tree.lookup(&module, false, &call.name) {
+                return Some(Member::Shared(Box::new(found)));
+            }
+        }
+    }
+    None
 }
 
-fn member_answer(tree: &Tree, call: &Call, member: &Def, path: &str) -> MethodAnswer {
-    let kind = Kind::of(member.via.as_deref());
+fn member_answer(tree: &Tree, call: &Call, member: Member<'_>, path: &str) -> MethodAnswer {
+    let (owner, kind, defined_via, site) = match member {
+        Member::Here(def) => {
+            let kind = Kind::of(def.via.as_deref());
+            let site = Site {
+                path: tree.site_path(path),
+                line: def.pos.line,
+                col: def.pos.col,
+                kind: "method".to_string(),
+            };
+            let via = (kind == Kind::Declaration)
+                .then(|| def.via.clone())
+                .flatten();
+            let owner = if rspec::is_shared_member(def) {
+                def.nesting[0].trim_start_matches("::").to_string()
+            } else {
+                rspec::class_name(&def.nesting)
+            };
+            (owner, kind, via, site)
+        }
+        Member::Shared(found) => (
+            found.owner.clone(),
+            found.kind(),
+            found.declared_via(),
+            found.site.clone(),
+        ),
+    };
     MethodAnswer {
         status: Status::Resolved,
         confidence: 1.0,
@@ -444,17 +505,10 @@ fn member_answer(tree: &Tree, call: &Call, member: &Def, path: &str) -> MethodAn
         receiver: call.recv.as_str(),
         receiver_type: (call.recv != RecvShape::Symbol).then(|| rspec::class_name(&call.nesting)),
         receiver_kind: (call.recv != RecvShape::Symbol).then(|| "class".to_string()),
-        owner: Some(rspec::class_name(&member.nesting)),
+        owner: Some(owner),
         kind: Some(kind),
-        defined_via: (kind == Kind::Declaration)
-            .then(|| member.via.clone())
-            .flatten(),
-        sites: vec![Site {
-            path: tree.site_path(path),
-            line: member.pos.line,
-            col: member.pos.col,
-            kind: "method".to_string(),
-        }],
+        defined_via,
+        sites: vec![site],
         agreement: None,
         unresolved_ancestors: Vec::new(),
         candidates: Vec::new(),

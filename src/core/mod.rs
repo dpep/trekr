@@ -151,6 +151,10 @@ pub(crate) struct Facts {
     /// reparses that file. Keeping it out of the schema keeps 2 M rows out of
     /// the database for a fact that never crosses a file boundary.
     pub(crate) assigns: Vec<Assign>,
+    /// `include_context "x"` and its kin: the group that includes a top-level
+    /// shared group, by its nesting, and the shared group's module (DEC-092).
+    /// A resolve-time fact, like `assigns`: never stored.
+    pub(crate) shared_includes: Vec<(Vec<String>, String)>,
     /// Prism reported syntax errors; the facts above are what survived.
     pub(crate) parse_errors: usize,
     pub(crate) lines: usize,
@@ -684,13 +688,48 @@ pub(crate) mod rspec {
 
     const OPEN: &str = "(group ";
 
+    /// A top-level shared group's segment (DEC-092).
+    const SHARED: &str = "(shared ";
+
+    /// Where a top-level shared group's module is named: RSpec keys it by
+    /// name alone, so the name is the module's.
+    const SHARED_GROUPS: &str = "RSpec::SharedExampleGroups";
+
     /// A group's segment, named as RSpec names the class (`AccordTypesDecimal`).
     pub(crate) fn segment(name: &str) -> String {
         format!("{OPEN}{name})")
     }
 
+    /// The body of `shared_context "raw http server"` at the top of a file.
+    pub(crate) fn shared_segment(name: &str) -> String {
+        format!("{SHARED}{name})")
+    }
+
     pub(crate) fn is_group(segment: &str) -> bool {
-        segment.starts_with(OPEN)
+        segment.starts_with(OPEN) || segment.starts_with(SHARED)
+    }
+
+    /// The module a top-level shared group is, from its body's segment.
+    pub(crate) fn shared_module_of(segment: &str) -> Option<String> {
+        let name = segment.strip_prefix(SHARED)?.strip_suffix(')')?;
+        Some(shared_module(name))
+    }
+
+    /// A method a top-level shared group's body defines, which is its
+    /// module's rather than a group's (DEC-092).
+    pub(crate) fn is_shared_member(def: &super::Def) -> bool {
+        def.nesting.first().is_some_and(|scope| {
+            scope
+                .strip_prefix("::")
+                .and_then(|scope| scope.strip_prefix(SHARED_GROUPS))
+                .is_some_and(|name| name.starts_with("::"))
+        })
+    }
+
+    /// `RSpec::SharedExampleGroups::RawHttpServer`, for a shared group's name
+    /// as `base_name` writes it.
+    pub(crate) fn shared_module(name: &str) -> String {
+        format!("{SHARED_GROUPS}::{name}")
     }
 
     /// Is the innermost scope here an example group?
@@ -700,13 +739,24 @@ pub(crate) mod rspec {
 
     /// `RSpec::ExampleGroups::AccordTypesDecimal::WhenValid`, the name RSpec
     /// gives the innermost group's class at runtime.
+    /// A shared group's body runs in whichever group includes it, so a group
+    /// nested in one is named from the shared module.
     pub(crate) fn class_name(nesting: &[String]) -> String {
-        let names: Vec<&str> = nesting
-            .iter()
-            .rev()
-            .filter_map(|s| s.strip_prefix(OPEN)?.strip_suffix(')'))
-            .collect();
-        format!("RSpec::ExampleGroups::{}", names.join("::"))
+        let mut root = "RSpec::ExampleGroups".to_string();
+        let mut names: Vec<&str> = Vec::new();
+        for segment in nesting.iter().rev() {
+            if let Some(module) = shared_module_of(segment) {
+                root = module;
+                names.clear();
+            } else if let Some(name) = segment.strip_prefix(OPEN).and_then(|s| s.strip_suffix(')'))
+            {
+                names.push(name);
+            }
+        }
+        std::iter::once(root.as_str())
+            .chain(names)
+            .collect::<Vec<_>>()
+            .join("::")
     }
 
     /// The predicate a dynamic matcher calls on its subject, as

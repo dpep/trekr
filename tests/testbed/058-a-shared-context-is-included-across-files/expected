@@ -1,0 +1,18 @@
+# A shared context's lets and methods are the including group's: RSpec
+# includes the shared group's module into it. They were file-local, like any
+# group's (DEC-084), so `include_context` in another file found nothing.
+# A top-level shared group's name is RSpec's global key for it, so it is a
+# module of that name, and an include of it is an include of the module.
+def spec/widget_spec.rb:4:8 status=resolved owner=RSpec::SharedExampleGroups::RawHttpServer site=spec/support/raw_http_server.rb:4
+def spec/widget_spec.rb:12:8 status=resolved kind=declaration defined_via=let site=spec/support/raw_http_server.rb:2
+# A nested group's own `let` still beats the one its parent included.
+def spec/widget_spec.rb:9:10 status=resolved site=spec/widget_spec.rb:7
+# Inside the shared context its own let is found, and a group that never
+# includes it does not see it.
+def spec/support/raw_http_server.rb:7:13 status=resolved site=spec/support/raw_http_server.rb:2
+def spec/gadget_spec.rb:2:8 status=residue
+# A shared example group's body may call what its includer defines; the
+# file does not say which includer, so that stays residue.
+def spec/support/raw_http_server.rb:11:8 status=residue
+# The symbol in the shared context's `let(:port)` is still the definition.
+def spec/support/raw_http_server.rb:2:8 status=resolved site=spec/support/raw_http_server.rb:2
