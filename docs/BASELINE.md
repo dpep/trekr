@@ -2615,6 +2615,24 @@ and `script/clicks.py` over the same 13 repositories (21,154 definition
 clicks). 0.7.0 reproduced the last section's rails and activerecord `--dead`
 counts exactly.
 
+The whole of it, 0.7.0 against DEC-127 (rails and activerecord re-run at the
+end on a fresh clone of rails at dfd1e951aa, which gave the same counts):
+
+| | 0.7.0 | DEC-127 |
+| --- | ---: | ---: |
+| graph_weaver, a spec: correct / confidently wrong of 482 | 375 / 1 | **381** / 1 |
+| accord, a spec: correct / confidently wrong of 531 | 323 / 0 | **328** / 0 |
+| polyid, a spec: correct / confidently wrong of 535 | 309 / 0 | **325** / 0 |
+| the three gem floors; widget_shop app and floor | | unchanged |
+| spec clicks missed of 12,524 | 3,217 | **3,157** |
+| rails `--refs`, 40 queries | | 2 sites possible → excluded |
+| rails `--dead` candidates / unreferenced / override | 2,272 / 446 / — | 2,276 / **375** / 71 |
+| activerecord only | 1,597 / 348 / — | 1,598 / **309** / 39 |
+| mastodon `app/models app/services` | 1,035 / 69 / — | 1,035 / **65** / 4 |
+
+No confidently wrong count rose anywhere. widget_shop was last measured at
+DEC-126; DEC-127 changes only a residue's words and completion.
+
 ### A call on `described_class` (DEC-120)
 
 | | 0.7.0 | DEC-120 |
