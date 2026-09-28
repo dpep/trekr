@@ -144,7 +144,7 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
             {
                 return predicate_answer(tree, facts, call, predicate, path);
             }
-            match receiver.lookup(tree, &call.name) {
+            match lookup_on(tree, call, &receiver) {
                 Some(found) => {
                     // A method Tapioca generated has no source of its own. Send
                     // the caller to the class that generates it rather than to
@@ -329,6 +329,42 @@ pub(super) fn handed_on(
     receiver: &Receiver,
 ) -> Option<MethodAnswer> {
     to_the_model(tree, call, receiver).or_else(|| forwarded(tree, call, path, receiver))
+}
+
+/// Ruby's lookup from the receiver, but for a scope's body: the relation
+/// Rails builds has a delegation to each model class method that Kernel also
+/// answers (`display`, `format`), ahead of Kernel's own, so the model's wins
+/// (DEC-136).
+pub(super) fn lookup_on(
+    tree: &Tree,
+    call: &Call,
+    receiver: &Receiver,
+) -> Option<crate::tree::MethodDef> {
+    let found = receiver.lookup(tree, &call.name)?;
+    if receiver.via != "scope" || !crate::tree::is_core(&found.site.path) {
+        return Some(found);
+    }
+    let model = tree.scope_fqn(&call.nesting)?;
+    match tree.lookup(&model, true, &call.name) {
+        Some(own) if !crate::tree::is_core(&own.site.path) => Some(own),
+        _ => Some(found),
+    }
+}
+
+/// Does a scope's body in this nesting run on an ActiveRecord relation? Only
+/// in a model, or a module a model includes: Mongoid and a plain class that
+/// defines its own `scope` run it on something else (DEC-136).
+fn runs_on_a_relation(tree: &Tree, call: &Call) -> bool {
+    const BASE: &str = "ActiveRecord::Base";
+    let Some(scope) = tree.scope_fqn(&call.nesting) else {
+        return false;
+    };
+    tree.inherits(&scope, BASE)
+        || tree.kind_of(&scope) == Some("module")
+            && tree
+                .includers_of(&scope)
+                .iter()
+                .any(|includer| tree.inherits(includer, BASE))
 }
 
 /// The relation a scope's body runs on hands a name it lacks to its model's
@@ -1171,7 +1207,7 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
                 });
             }
             // A scope's body runs on the model's relation (DEC-116).
-            if call.in_scope && tree.is_known(RELATION) {
+            if call.in_scope && tree.is_known(RELATION) && runs_on_a_relation(tree, call) {
                 return Some(Receiver {
                     fqn: RELATION.to_string(),
                     singleton: false,

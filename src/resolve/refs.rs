@@ -220,7 +220,7 @@ fn tier(
         return possible(tree, call, path, query, target, shape);
     };
 
-    let found = receiver.lookup(tree, &call.name);
+    let found = super::lookup_on(tree, call, &receiver);
     let matches = found.as_ref().is_some_and(|found| {
         target.is_none_or(|target| found.owner == target && found.singleton == query.singleton)
     });

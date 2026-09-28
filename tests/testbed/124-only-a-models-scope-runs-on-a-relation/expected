@@ -1,0 +1,10 @@
+# DEC-116 typed a `scope`'s body as ActiveRecord::Relation in any class, so a
+# Mongoid-like document's and a plain class's own `scope` answered
+# `Relation#where` at 1.0. Only a model's scope — a class under
+# ActiveRecord::Base, or a module one includes — runs on the relation; the
+# rest run where they are written. And the relation Rails builds delegates a
+# model class method Kernel also answers (`display`) ahead of Kernel's.
+def app.rb:17:23 status=resolved owner=Document::ClassMethods via=self
+def app.rb:27:22 status=resolved owner=Plain via=self
+def app.rb:34:22 status=resolved owner=Widget via=scope
+def app.rb:35:22 status=resolved owner=ActiveRecord::QueryMethods via=scope

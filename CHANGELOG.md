@@ -118,6 +118,11 @@
   `described_class.new(adapter)` is a `Flipper::DSL`, so `flipper[:search]` is
   `DSL#[]`, not `Flipper.[]` (DEC-133).
 
+- **A `scope`'s body is a relation only in a model.** A Mongoid document's or a
+  plain class's `scope` no longer answers `ActiveRecord::Relation#where`, and a
+  model class method Kernel also has (`display`) called in a scope is the
+  model's (DEC-136).
+
 ### Added
 
 - **A checkout with no `Gemfile.lock` gets its gems anyway**: what its

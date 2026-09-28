@@ -5802,3 +5802,22 @@ concept. `--context` for a position pins the checkout a gem's position is
 answered from; for a name there is no path to take it from at all, so the
 flag says the same thing where it was missing.
 
+## DEC-136 — Only a model's scope runs on a relation, and the relation prefers the model's class method to Kernel's
+
+**Decided.** DEC-116 types a `scope`'s body as `ActiveRecord::Relation` only
+where the scope is written in a class that inherits `ActiveRecord::Base`, or
+in a module such a class includes (a concern's `included do`). Elsewhere —
+Mongoid, ActiveHash, a class with its own `scope` — the body is typed as the
+class it is written in, as before DEC-116. And on the relation, a name
+whose lookup lands in core (`Kernel#display`, `#format`) answers the
+model's own class method of that name when it has one.
+
+**Why.** The 0.7.0 hunt: the check was `in_scope && RELATION is known`, so
+any class's scope in a checkout that had ActiveRecord answered
+`Relation#where` at 1.0 — a Mongoid document's, a plain class's. Mongoid
+runs a scope's body with `instance_exec` on the class, and a plain class
+runs it wherever it calls it. For the second half, ActiveRecord's
+`Scoping::Named` generates a relation method for every model class method
+Kernel also responds to and `Relation` does not define (`generate_relation_
+method(name) if Kernel.respond_to?(name) && !Relation.method_defined?
+(name)`), so `scope :shown, -> { display }` runs the model's `display`.
