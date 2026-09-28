@@ -136,6 +136,10 @@ class Lsp:
         self.proc.wait()
 
 
+def is_spec(path):
+    return "/spec/" in path or path.endswith("_spec.rb")
+
+
 def sample(root):
     files = sorted(glob.glob(os.path.join(root, "lib/**/*.rb"), recursive=True))
     specs = sorted(glob.glob(os.path.join(root, "spec/**/*.rb"), recursive=True))
@@ -167,6 +171,7 @@ def run(root, env):
             for op in OPS:
                 lsp.request("textDocument/" + op, at)
                 sent[op] += 1
+                sent[op, is_spec(path)] += 1
         lsp.notify("textDocument/didClose", {"textDocument": {"uri": uri}})
     lsp.stop()
     return sent
@@ -183,9 +188,11 @@ def main(repos):
     env["TREKR_LOG"] = log
     out = open(MISSES, "w") if MISSES else None
     everything = []
+    totals = collections.Counter()
     for repo in repos:
         before = os.path.getsize(log) if os.path.exists(log) else 0
         sent = run(repo, env)
+        totals.update(sent)
         misses = []
         with open(log) as f:
             f.seek(before)
@@ -207,6 +214,11 @@ def main(repos):
             everything.append(m)
             if out:
                 out.write(json.dumps(m) + "\n")
+    print(f"\nall repos, {OPS[0]} missed (empty or unsure)")
+    for spec, label in ((False, "library"), (True, "spec")):
+        total = sum(n for key, n in totals.items() if key == (OPS[0], spec))
+        missed = sum(1 for m in everything if m["op"] == OPS[0] and is_spec(m["file"]) == spec)
+        print(f"  {label:<8} {total:>6} clicks   missed {missed:>6} {100 * missed / (total or 1):5.1f}%")
     summarize([m for m in everything if m["op"] == OPS[0]])
 
 
@@ -238,7 +250,7 @@ def bucket(miss):
         line = open(miss["file"], encoding="utf-8", errors="replace").read().split("\n")[miss["line"] - 1]
     except (OSError, IndexError):
         line = ""
-    spec = "/spec/" in miss["file"] or miss["file"].endswith("_spec.rb")
+    spec = is_spec(miss["file"])
     before = line[: miss["col"] - 1]
     if why == "no name at this position":
         if re.search(r"\b(class|module)\s+[\w:]*$", before):
