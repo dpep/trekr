@@ -123,6 +123,9 @@
   model class method Kernel also has (`display`) called in a scope is the
   model's (DEC-136).
 
+- **`x.class` is `x`'s class**, so `self.class.statuses` finds the enum's class
+  method instead of residue (DEC-137).
+
 ### Added
 
 - **A checkout with no `Gemfile.lock` gets its gems anyway**: what its

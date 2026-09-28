@@ -1492,6 +1492,20 @@ fn returned_by(
             ..receiver
         });
     }
+    // `x.class` is the class `x` is an instance of, not `Kernel#class`'s
+    // declared `Class`. On `self` it keeps `self`'s view, so a concern's
+    // `self.class` reaches its includer's class methods (DEC-105, DEC-137).
+    if previous.name == "class" && previous.argc == Some(0) && !receiver.singleton {
+        return Some(Receiver {
+            singleton: true,
+            via: if receiver.via == "self" {
+                "self"
+            } else {
+                "chain"
+            },
+            ..receiver
+        });
+    }
     // `Foo.new.bar`, as `x = Foo.new` types `x`.
     if previous.name == "new" && receiver.singleton {
         return Some(Receiver {

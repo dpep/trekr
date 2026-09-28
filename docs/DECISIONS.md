@@ -5821,3 +5821,16 @@ runs it wherever it calls it. For the second half, ActiveRecord's
 Kernel also responds to and `Relation` does not define (`generate_relation_
 method(name) if Kernel.respond_to?(name) && !Relation.method_defined?
 (name)`), so `scope :shown, -> { display }` runs the model's `display`.
+
+## DEC-137 — `x.class` is `x`'s class
+
+**Decided.** In a chain, `.class` with no arguments on a receiver typed as
+an instance of `X` is `X` itself: the next call is looked up on `X`'s class
+side. On `self` it keeps `self`'s view, so a concern's `self.class` walks
+its includer's class methods (DEC-105), and a call through it counts a
+subclass's override as DEC-081's does.
+
+**Why.** `self.class.statuses` answered residue: `Kernel#class` returns
+`Class`, which has no `statuses`. testbed 040 pinned `self.class.build` as a
+split vote between two `build`s; it now answers `Builder.build`'s declared
+`Widget`, which is what runs unless a subclass overrides `build`.
