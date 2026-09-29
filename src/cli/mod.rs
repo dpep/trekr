@@ -1030,6 +1030,7 @@ fn index_gems(
         lockfile: resolved_from == Some(crate::gems::Resolved::Lockfile),
         resolved_from: resolved_from.as_ref().map(crate::gems::Resolved::as_str),
         ruby,
+        ruby_not_found: crate::gems::stdlib::named_missing(repo),
         ..GemReport::default()
     };
     // The Ruby's stdlib before the gems, which reopen it (DEC-180).
@@ -1285,6 +1286,10 @@ struct GemReport {
     /// and how it was chosen (DEC-152).
     #[serde(skip_serializing_if = "Option::is_none")]
     ruby: Option<String>,
+    /// The Ruby version the checkout names when none of its installs is
+    /// found, so another Ruby's stdlib and gems answer (DEC-270).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ruby_not_found: Option<String>,
     /// Named by the lockfile and present on disk.
     found: usize,
     /// Of those, checked out from git (`bundler/gems/`).
@@ -1505,6 +1510,19 @@ fn cmd_index(
             );
         }
     }
+    if out == Output::Text
+        && with_gems
+        && let Some(version) = &gems.ruby_not_found
+    {
+        println!(
+            "ruby — the checkout names Ruby {version}, which is not installed \
+             (looked in rvm, rbenv, asdf, chruby, mise and Homebrew); {}",
+            match &gems.stdlib {
+                Some(stdlib) => format!("running on {} instead", stdlib.ruby),
+                None => "no other Ruby was chosen".to_string(),
+            }
+        );
+    }
     if out == Output::Text && with_gems && gems.stdlib.is_none() {
         // Core is its Ruby's: with none, nothing describes it (DEC-240).
         println!("stdlib — none: no Ruby found for this checkout, so nothing is known of core");
@@ -1634,6 +1652,9 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
                 .filter(|gem| Some(gem) != stdlib.as_ref())
                 .collect();
             counted.extend(used.iter().cloned());
+            if let Some(version) = crate::gems::stdlib::named_missing(Path::new(&checkout.repo)) {
+                row["ruby_not_found"] = version.into();
+            }
             if let Some(stdlib) = stdlib {
                 let rbs = store.rbs_about(&stdlib)?.map(|about| {
                     serde_json::json!({
@@ -1704,6 +1725,7 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
                 row["stdlib"]["files"].as_i64().unwrap_or(0),
                 paths::pretty(stdlib)
             );
+
             match row["stdlib"]["rbs"]["version"].as_str() {
                 Some(version) => println!(
                     "{:>32}+ signatures, rbs {version} ({}): {}",
@@ -1713,6 +1735,16 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
                 ),
                 None => println!("{:>32}+ no signatures: its Ruby carries no rbs gem", ""),
             }
+        }
+        if let Some(version) = row["ruby_not_found"].as_str() {
+            let instead = match row["stdlib"]["root"].as_str() {
+                Some(_) => "the stdlib above is another Ruby's",
+                None => "no Ruby, so nothing is known of core",
+            };
+            println!(
+                "{:>32}! the checkout names Ruby {version}, which is not installed: {instead}",
+                ""
+            );
         }
         let gems = &row["gems"];
         let (Some(count), Some(indexed)) = (gems["count"].as_u64(), gems["indexed"].as_u64())

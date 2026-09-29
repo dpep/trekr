@@ -343,18 +343,21 @@ pub(crate) fn for_checkout(repo: &Path) -> Option<Stdlib> {
     }
 }
 
+/// The Ruby version the checkout names when no install of it is found: the
+/// checkout then runs on another Ruby, and `--index` and `--status` say so.
+pub(crate) fn named_missing(repo: &Path) -> Option<String> {
+    let version = super::project_ruby(repo)?;
+    named(&version).is_none().then_some(version)
+}
+
 /// Every Ruby installed by a version manager or Homebrew, by its prefix.
 fn installs() -> Vec<PathBuf> {
-    let mut patterns = Vec::new();
-    if let Ok(home) = std::env::var("HOME") {
-        let home = PathBuf::from(home);
-        patterns.push(home.join(".rvm/rubies/*"));
-        patterns.push(home.join(".rbenv/versions/*"));
-        patterns.push(home.join(".asdf/installs/ruby/*"));
-    }
-    patterns.push(PathBuf::from("/opt/homebrew/Cellar/ruby/*"));
-    patterns.push(PathBuf::from("/usr/local/Cellar/ruby/*"));
-    patterns.iter().flat_map(|p| super::expand(p)).collect()
+    let mut found: Vec<PathBuf> = super::version_managers()
+        .iter()
+        .flat_map(|p| super::expand(p))
+        .collect();
+    found.extend(super::homebrew_kegs());
+    found
 }
 
 /// `ruby-3.4.9` → `3.4.9`; Homebrew's `3.4.9_1` keeps its revision out.

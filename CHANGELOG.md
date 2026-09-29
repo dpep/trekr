@@ -67,6 +67,13 @@
   `--status` per checkout; core's files are written under
   `<db dir>/core/rbs-<version>-<key>/` (DEC-240).
 
+- **A named Ruby is found wherever a version manager put it.** chruby's
+  (`~/.rubies`, `/opt/rubies`), mise's and Homebrew's versioned kegs
+  (`Cellar/ruby@3.3`) join rvm, rbenv and asdf, so a `.ruby-version` of
+  `3.3` runs on the installed 3.3 rather than `$GEM_HOME`'s Ruby. A named
+  version that is not installed is said by `--index` (`gems.ruby_not_found`,
+  with the Ruby used instead) and `--status` (DEC-270).
+
 - **A checkout that names no Ruby runs on the one it finds.** A directory
   with no Gemfile and no `.ruby-version` now indexes the stdlib of the Ruby
   `$GEM_HOME` names, else the `ruby` on `$PATH`, else the only Ruby

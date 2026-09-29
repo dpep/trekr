@@ -113,7 +113,11 @@ fn neutral(mut command: Command) -> Command {
     command
         .env_remove("GEM_HOME")
         .env_remove("GEM_PATH")
+        .env_remove("MISE_DATA_DIR")
+        .env_remove("XDG_DATA_HOME")
         .env("HOME", fixture_home())
+        // The machine's own Homebrew and `/opt/rubies` Rubies, out of sight.
+        .env("TREKR_TEST_SYSTEM", fixture_home())
         .env("PATH", git_only());
     for var in [
         "CLAUDECODE",
@@ -3292,12 +3296,28 @@ fn fake_ruby(
     files: &[(&str, &str)],
     defaults: &[(&str, &str, &[&str])],
 ) -> String {
+    fake_ruby_at(
+        &home.join(format!(".rvm/rubies/ruby-{version}")),
+        version,
+        files,
+        defaults,
+    )
+}
+
+/// A Ruby installed at `prefix`, as `fake_ruby` stages one.
+fn fake_ruby_at(
+    prefix: &Path,
+    version: &str,
+    files: &[(&str, &str)],
+    defaults: &[(&str, &str, &[&str])],
+) -> String {
     let abi = {
         let mut parts = version.split('.');
         format!("{}.{}.0", parts.next().unwrap(), parts.next().unwrap())
     };
-    let lib = home.join(format!(".rvm/rubies/ruby-{version}/lib/ruby"));
+    let lib = prefix.join("lib/ruby");
     let stdlib = lib.join(&abi);
+    fs::create_dir_all(&stdlib).unwrap();
     for (path, source) in files {
         let path = stdlib.join(path);
         fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -3571,6 +3591,72 @@ fn a_checkout_naming_no_ruby_runs_on_the_one_it_finds() {
     );
 
     for dir in [&dir, &empty, &prefix] {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+/// chruby's, mise's and Homebrew's versioned Rubies are found by the version
+/// a checkout names; one that is not installed is said, with the Ruby run on
+/// instead (DEC-270).
+#[test]
+fn a_named_ruby_is_found_wherever_a_version_manager_put_it() {
+    let (dir, db) = scratch("ruby-managers");
+    repo(&dir);
+    let (home, _) = scratch("ruby-managers-home");
+    let (system, _) = scratch("ruby-managers-system");
+    let installs = [
+        ("9.6.1", home.join(".rubies/ruby-9.6.1")),
+        ("9.5.2", home.join(".local/share/mise/installs/ruby/9.5.2")),
+        ("9.4.3", system.join("opt/homebrew/Cellar/ruby@9.4/9.4.3")),
+        ("9.3.1", system.join("opt/rubies/ruby-9.3.1")),
+    ];
+    let roots: Vec<String> = installs
+        .iter()
+        .map(|(version, prefix)| fake_ruby_at(prefix, version, &[], &[]))
+        .collect();
+    let env = [
+        ("HOME", home.to_str().unwrap()),
+        ("TREKR_TEST_SYSTEM", system.to_str().unwrap()),
+    ];
+    for ((version, _), root) in installs.iter().zip(&roots) {
+        // `9.4` names the highest 9.4, as `.ruby-version` often does.
+        let named = if *version == "9.4.3" { "9.4" } else { version };
+        fs::write(dir.join(".ruby-version"), format!("{named}\n")).unwrap();
+        let index = json(&trekr_env(&db, &dir, &["--index", "--json"], &env));
+        assert_eq!(index["gems"]["stdlib"]["root"], root.as_str(), "{index}");
+        assert!(index["gems"].get("ruby_not_found").is_none(), "{index}");
+    }
+
+    // Named, not installed: another Ruby answers, and that is said.
+    fs::write(dir.join(".ruby-version"), "9.2\n").unwrap();
+    let gem_home = format!("{}/lib/ruby/gems/9.6.0", installs[0].1.display());
+    let env = [
+        ("HOME", home.to_str().unwrap()),
+        ("TREKR_TEST_SYSTEM", system.to_str().unwrap()),
+        ("GEM_HOME", gem_home.as_str()),
+    ];
+    let index = json(&trekr_env(&db, &dir, &["--index", "--json"], &env));
+    assert_eq!(index["gems"]["ruby_not_found"], "9.2", "{index}");
+    assert_eq!(
+        index["gems"]["stdlib"]["root"],
+        roots[0].as_str(),
+        "{index}"
+    );
+    let text = stdout(&trekr_env(&db, &dir, &["--index"], &env));
+    assert!(
+        text.contains("names Ruby 9.2, which is not installed")
+            && text.contains("running on the Ruby $GEM_HOME names"),
+        "{text}"
+    );
+    let status = json(&trekr_env(&db, &dir, &["--status", "--json"], &env));
+    assert_eq!(status["checkouts"][0]["ruby_not_found"], "9.2", "{status}");
+    let status = stdout(&trekr_env(&db, &dir, &["--status"], &env));
+    assert!(
+        status.contains("names Ruby 9.2, which is not installed"),
+        "{status}"
+    );
+
+    for dir in [&dir, &home, &system] {
         let _ = fs::remove_dir_all(dir);
     }
 }

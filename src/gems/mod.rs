@@ -247,6 +247,68 @@ enum Named {
     Abi,
 }
 
+/// Where each version manager installs a Ruby, as a pattern whose last
+/// component is the install, named for its version: rvm, rbenv, asdf,
+/// chruby's two, and mise's.
+fn version_managers() -> Vec<PathBuf> {
+    let mut patterns = Vec::new();
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        patterns.push(home.join(".rvm/rubies/*"));
+        patterns.push(home.join(".rbenv/versions/*"));
+        patterns.push(home.join(".asdf/installs/ruby/*"));
+        patterns.push(home.join(".rubies/*"));
+    }
+    patterns.push(system("/opt/rubies/*"));
+    if let Some(mise) = mise_data() {
+        patterns.push(mise.join("installs/ruby/*"));
+    }
+    patterns
+}
+
+/// mise's data directory: `$MISE_DATA_DIR`, else under `$XDG_DATA_HOME`,
+/// else `~/.local/share/mise`.
+fn mise_data() -> Option<PathBuf> {
+    let set = |var: &str| {
+        std::env::var_os(var)
+            .filter(|v| !v.is_empty())
+            .map(PathBuf::from)
+    };
+    set("MISE_DATA_DIR")
+        .or_else(|| set("XDG_DATA_HOME").map(|data| data.join("mise")))
+        .or_else(|| set("HOME").map(|home| home.join(".local/share/mise")))
+}
+
+/// Homebrew's Rubies, `Cellar/ruby/3.4.9` and `Cellar/ruby@3.3/3.3.11`: a
+/// formula per minor version, which a `*` component cannot match by prefix.
+fn homebrew_kegs() -> Vec<PathBuf> {
+    ["/opt/homebrew/Cellar", "/usr/local/Cellar"]
+        .iter()
+        .flat_map(|cellar| {
+            std::fs::read_dir(system(cellar))
+                .into_iter()
+                .flatten()
+                .flatten()
+        })
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name == "ruby" || name.starts_with("ruby@")
+        })
+        .flat_map(|entry| expand(&entry.path().join("*")))
+        .collect()
+}
+
+/// A machine-wide path where Rubies are installed. `TREKR_TEST_SYSTEM`
+/// stands in for `/`, so a test sees only the Rubies it stages, whatever
+/// the machine running it has installed.
+fn system(path: &str) -> PathBuf {
+    match std::env::var_os("TREKR_TEST_SYSTEM") {
+        Some(root) => PathBuf::from(root).join(path.trim_start_matches('/')),
+        None => PathBuf::from(path),
+    }
+}
+
 /// Every Ruby installed on the machine, by convention.
 fn machine_roots() -> Vec<(PathBuf, Named)> {
     let mut roots = Vec::new();
@@ -262,6 +324,17 @@ fn machine_roots() -> Vec<(PathBuf, Named)> {
             home.join(".asdf/installs/ruby/*/lib/ruby/gems/*/gems"),
             Named::Install,
         ));
+        roots.push((home.join(".rubies/*/lib/ruby/gems/*/gems"), Named::Install));
+    }
+    roots.push((system("/opt/rubies/*/lib/ruby/gems/*/gems"), Named::Install));
+    if let Some(mise) = mise_data() {
+        roots.push((
+            mise.join("installs/ruby/*/lib/ruby/gems/*/gems"),
+            Named::Install,
+        ));
+    }
+    for keg in homebrew_kegs() {
+        roots.push((keg.join("lib/ruby/gems/*/gems"), Named::Install));
     }
     for system in [
         "/opt/homebrew/lib/ruby/gems/*/gems",

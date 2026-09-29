@@ -63,7 +63,10 @@ fn isolated(program: &str) -> Command {
         // counts are asserted against.
         .env_remove("TREKR_USAGE")
         // Nor is its Ruby the one a checkout runs on: the fixture's is.
-        .env("HOME", fixture_home());
+        .env("HOME", fixture_home())
+        .env("TREKR_TEST_SYSTEM", fixture_home())
+        .env_remove("MISE_DATA_DIR")
+        .env_remove("XDG_DATA_HOME");
     for var in AGENT_VARS {
         command.env_remove(var);
     }

@@ -8254,3 +8254,29 @@ index into its name's table, or carries the method a string macro made.
 concurrent reader can take whole without a lock: one map probe, then no
 more locking for the walk. A shared arena needs its indexes locked for
 every walk, and ties indices across names to load order.
+
+## DEC-270 — A Ruby is found wherever a version manager put it, and a named one that is not is said
+
+Amends DEC-152 and DEC-180's list of installs.
+
+**Decided.** The Rubies a named version is matched against are rvm's,
+rbenv's and asdf's, as before, and now chruby's (`~/.rubies/*`,
+`/opt/rubies/*`), mise's (`$MISE_DATA_DIR`, else `$XDG_DATA_HOME/mise`,
+else `~/.local/share/mise`, then `installs/ruby/*`) and every Homebrew keg,
+`Cellar/ruby/*` and each versioned formula's `Cellar/ruby@3.3/*`. The same
+installs' own gem directories join DEC-152's machine roots, matched by the
+install's version. When the version a checkout names matches no install,
+the checkout still runs on DEC-152's next choice, and `--index` says so —
+`gems.ruby_not_found` and a `ruby —` line naming the Ruby used instead —
+as does `--status`, per checkout (`ruby_not_found`, and a `!` line).
+
+**Why.** The hunt's `.ruby-version` of `3.3`, on a machine with Homebrew's
+`ruby@3.3` installed, was answered from `$GEM_HOME`'s 3.4.9 — its stdlib,
+its core, its gems — and nothing said so. `ruby@*` is a directory a `*`
+component cannot match by prefix, so the kegs are listed, not globbed.
+
+*Hermetic tests.* Homebrew's and `/opt/rubies` are machine-wide, so a test
+would see whatever the machine running it has installed — this one has two
+Homebrew Rubies, which turned DEC-242's "the only Ruby installed" into none.
+`TREKR_TEST_SYSTEM` stands in for `/` when looking for those, and the e2e
+harness points it at the fixture's home.
