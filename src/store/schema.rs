@@ -13,7 +13,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 47;
+pub(crate) const VERSION: i64 = 48;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -83,19 +83,15 @@ CREATE TABLE const_ref (
   col     INTEGER NOT NULL
 );
 
--- The receiver shape is the fact Rubydex does not carry, and the reason this
--- engine is not a wrapper around it.
-CREATE TABLE call_site (
-  blob_id   INTEGER NOT NULL REFERENCES blob(id) ON DELETE CASCADE,
-  name      TEXT    NOT NULL,
-  recv      TEXT    NOT NULL,             -- implicit | self | const | local | ivar | other
-  recv_text TEXT,
-  nesting   TEXT    NOT NULL,
-  singleton INTEGER NOT NULL,             -- written inside `def self.x`
-  argc      INTEGER,                      -- NULL when a splat hides the count
-  block     INTEGER NOT NULL,
-  line      INTEGER NOT NULL,
-  col       INTEGER NOT NULL
+-- Which names a blob calls, and how often: a posting list, not the sites.
+-- Every question about a call site reparses its file — the receiver ladder
+-- needs the file's assignments (DEC-012), and an edit since the index must
+-- still count — so the index only has to say which files to read (DEC-193).
+CREATE TABLE call_name (
+  blob_id INTEGER NOT NULL REFERENCES blob(id) ON DELETE CASCADE,
+  name    TEXT    NOT NULL,
+  calls   INTEGER NOT NULL,               -- call sites of `name` in the blob
+  symbols INTEGER NOT NULL                -- of which a symbol naming the method
 );
 
 -- A class or module body's call on itself, outside any method, with its
@@ -199,8 +195,8 @@ CREATE INDEX def_blob       ON def(blob_id);
 CREATE INDEX ancestry_blob  ON ancestry(blob_id);
 CREATE INDEX const_ref_name ON const_ref(name);
 CREATE INDEX const_ref_blob ON const_ref(blob_id);
-CREATE INDEX call_site_name ON call_site(name);
-CREATE INDEX call_site_blob ON call_site(blob_id);
+CREATE INDEX call_name_name ON call_name(name, blob_id);
+CREATE INDEX call_name_blob ON call_name(blob_id);
 CREATE INDEX body_call_name ON body_call(name);
 CREATE INDEX file_blob      ON file(blob_id);
 "#;
@@ -223,18 +219,21 @@ pub(crate) const BULK_INDEXES: [(&str, &str); 8] = [
         "CREATE INDEX const_ref_blob ON const_ref(blob_id);",
     ),
     (
-        "call_site_name",
-        "CREATE INDEX call_site_name ON call_site(name);",
+        "call_name_name",
+        "CREATE INDEX call_name_name ON call_name(name, blob_id);",
     ),
     (
-        "call_site_blob",
-        "CREATE INDEX call_site_blob ON call_site(blob_id);",
+        "call_name_blob",
+        "CREATE INDEX call_name_blob ON call_name(blob_id);",
     ),
     (
         "body_call_name",
         "CREATE INDEX body_call_name ON body_call(name);",
     ),
 ];
+
+/// Tables an older schema had and this one does not, dropped with the rest.
+pub(crate) const RETIRED: [&str; 1] = ["call_site"];
 
 /// Every table, newest first, so dropping respects nothing (foreign keys are
 /// off during the drop anyway).
@@ -246,7 +245,7 @@ pub(crate) const TABLES: [&str; 12] = [
     "file",
     "checkout",
     "body_call",
-    "call_site",
+    "call_name",
     "const_ref",
     "ancestry",
     "def",

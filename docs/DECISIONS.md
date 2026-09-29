@@ -6810,3 +6810,64 @@ their snapshots differently and retire each other's (DEC-065 said so); an
 interleaved benchmark of two binaries on one store therefore rebuilds on
 every query, and is not a measurement of either. Each build here answered
 from its own store.
+
+## DEC-193 — Call sites are stored as a posting list: which files call a name, not where
+
+**Decided.** `call_site` — one row per call, ten columns — is replaced by
+`call_name(blob_id, name, calls, symbols)`: one row per name a blob calls,
+with how many calls and how many of them are a symbol naming the method,
+indexed `(name, blob_id)` and `(blob_id)`. Store v48. Every reader of call
+sites already reparsed the files the index named: the tiering needs a file's
+assignments, which are not stored (DEC-012), and an edit since the index must
+still count. The index's only job was to say which files to open, and a
+posting list says it. What changed for each reader:
+
+- `files_calling` and the LSP's paged listing read postings. A page is now a
+  number of blobs, with every file of each blob in it, so no page splits a
+  blob's files; the order of files is the same (blob ids and call rows rose
+  together).
+- `written_calls` (`--dead`'s cheap filter) sums `calls - symbols` over the
+  checkout's postings, capped as before; `--status` and `--gc` sum `calls`, so
+  their counts are sites, as they were.
+- The bare-name listing (`--refs save`) took its call rows from the index. It
+  now takes them from the reparse its tiering already does, so a listed call
+  and its tier always come from the same bytes. On an index that is current
+  the rows are the same; on a stale one, a call deleted since the index is
+  no longer listed from the old facts.
+
+**Why, measured.** The algorithm review (scratch prototype, 600 names, 0
+disagreements in files or in `written_calls`) sized it; the numbers below are
+this build's. DEC-061 had found call sites 70–78 % of the store and sized a
+slimming that kept them; nothing reads them per site any more. DEC-058's
+covering `(name, blob_id)` index, deferred to the next schema change, is the
+posting list's own.
+
+Against the build before it (DEC-190–192), each on its own store, load
+10–18 from other work, so medians of three rounds (two at 100k, four for
+discourse) and one significant figure's confidence in the walls:
+
+| cold `--index` | wall before → after | store before → after |
+| --- | ---: | ---: |
+| discourse + gems | 8.4 → **5.0 s** | 329 → **121 MB** |
+| 10k files (below) | 3.1 → **1.9 s** | 145 → **59 MB** |
+| 50k files | 26 → **9.7 s** | 725 → **300 MB** |
+| 100k files | 58 → **20 s** | 1,532 → **599 MB** |
+| 50k new into a store of 50k (DEC-191) | 57 → 48 s | 1,579 → 630 MB |
+
+At 100k the rows' phase fell 32 → 10 s and the index rebuild 16 → 4.9 s. The
+load that does not double the store moved least: it still inserts every
+definition and constant reference into indexes that outgrew the cache.
+
+Queries that read postings, rails, 11–15 interleaved rounds: `--refs
+ActiveRecord::Persistence#save` 240 → 220 ms, bare `--refs new` (13.7k
+rows) 1.19 → 1.21 s, bare `--refs save` 268 → 264 ms, `--dead
+activemodel/lib` 555 → 570 ms — the same, within the noise. The reparse was
+always their cost.
+
+**Correctness.** Byte-identical to the build before it, each on its own store:
+the gold sets, 40 rails `--refs` answers, `--dead` over rails and
+activerecord, the probe, the click replay, `--status`; and the bare-name
+listing for 125 rails names, text and `--json`, the 40 most-called among
+them (`new`, `assert_equal`, …). A unit test pages a name's files two blobs at
+a time and requires each file once; the pinned plans (DEC-058) read the
+postings' covering index and build no temp B-tree.

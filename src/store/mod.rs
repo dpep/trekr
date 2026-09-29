@@ -15,7 +15,7 @@ pub(crate) use schema::VERSION;
 use crate::core::*;
 use crate::scan::Files;
 use rusqlite::{Connection, OptionalExtension, Result, params};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
 pub(crate) struct Store {
@@ -128,21 +128,24 @@ pub(crate) fn open_default() -> anyhow::Result<Store> {
 
 /// See `Store::files_calling`.
 const FILES_CALLING: &str = "SELECT f.path
-   FROM call_site s INDEXED BY call_site_name
+   FROM call_name s INDEXED BY call_name_name
    CROSS JOIN file f
   WHERE s.name = ?2
     AND f.blob_id = s.blob_id
     AND f.checkout_id = (SELECT id FROM checkout WHERE root = ?1)";
 
 /// See `Store::files_calling_page`.
-const FILES_CALLING_PAGE: &str = "SELECT s.rowid, f.path
-   FROM call_site s INDEXED BY call_site_name
-   CROSS JOIN file f
-  WHERE s.name = ?2 AND s.rowid > ?3
-    AND f.blob_id = s.blob_id
-    AND f.checkout_id = (SELECT id FROM checkout WHERE root = ?1)
-  ORDER BY s.rowid
-  LIMIT ?4";
+const FILES_CALLING_PAGE: &str = "SELECT p.blob_id, f.path
+   FROM (SELECT s.blob_id FROM call_name s INDEXED BY call_name_name
+          WHERE s.name = ?2 AND s.blob_id > ?3
+            AND EXISTS (SELECT 1 FROM file f
+                         WHERE f.blob_id = s.blob_id
+                           AND f.checkout_id = (SELECT id FROM checkout WHERE root = ?1))
+          ORDER BY s.blob_id
+          LIMIT ?4) p
+   CROSS JOIN file f INDEXED BY file_blob
+  WHERE f.blob_id = p.blob_id
+    AND f.checkout_id = (SELECT id FROM checkout WHERE root = ?1)";
 
 impl Store {
     pub(crate) fn open(path: &Path) -> Result<Store> {
@@ -230,7 +233,7 @@ impl Store {
             }
             // No migration, by design: see schema::VERSION. Reindexing costs
             // seconds and cannot leave the store half-converted.
-            for table in schema::TABLES {
+            for table in schema::TABLES.iter().chain(&schema::RETIRED) {
                 tx.execute_batch(&format!("DROP TABLE IF EXISTS {table};"))?;
             }
             tx.execute_batch(schema::SCHEMA)?;
@@ -582,18 +585,18 @@ impl Store {
             blobs: one("SELECT COUNT(*) FROM blob")?,
             defs: one("SELECT COUNT(*) FROM def")?,
             const_refs: one("SELECT COUNT(*) FROM const_ref")?,
-            calls: one("SELECT COUNT(*) FROM call_site")?,
+            calls: one("SELECT COALESCE(SUM(calls), 0) FROM call_name")?,
         })
     }
 
-    /// Every mention of a name in one checkout: definitions, constant
-    /// references, and call sites, in source order.
+    /// The definitions and constant references of a name in one checkout, in
+    /// source order. Its call sites are read from the files that call it
+    /// (`files_calling`): the index keeps which files, not where (DEC-193).
     ///
     /// **Name-level, not resolved.** Two unrelated classes called `Config` both
-    /// answer here, and so does every `#save` on every receiver. Each row says
-    /// what sort of mention it is and — for a call — what shape the receiver
-    /// had, which is what the resolve layer will narrow on. Saying that plainly
-    /// is better than a number that implies more than it knows.
+    /// answer here. Each row says what sort of mention it is, which is what the
+    /// resolve layer will narrow on. Saying that plainly is better than a
+    /// number that implies more than it knows.
     pub(crate) fn refs(&self, root: &str, name: &str) -> Result<Vec<Ref>> {
         let mut stmt = self.conn.prepare(
             "SELECT f.path, x.line, x.col, x.role, x.kind, x.recv, x.recv_text, x.nesting
@@ -604,9 +607,6 @@ impl Store {
                  UNION ALL
                  SELECT blob_id, line, col, 'constant', NULL, NULL, NULL, nesting
                    FROM const_ref WHERE name = ?2
-                 UNION ALL
-                 SELECT blob_id, line, col, 'call', NULL, recv, recv_text, nesting
-                   FROM call_site WHERE name = ?2
                ) x
                JOIN file f ON f.blob_id = x.blob_id
                JOIN checkout c ON c.id = f.checkout_id
@@ -873,15 +873,15 @@ impl Store {
     }
 
     /// A page of the files in a checkout that call `name`, in the index's
-    /// own order: the call rows after `after`, at most `rows` of them, as
-    /// (the last row read, each row's file). Pass the last row back for the
-    /// next page; an empty page is the end.
+    /// own order: the blobs after `after` calling it, at most `rows` of them,
+    /// as (the last blob read, each of their files). Pass the last blob back
+    /// for the next page; an empty page is the end. A page holds every file
+    /// of its blobs, so none is split across two.
     ///
     /// For a question that may stop long before the last file. `files_calling`
-    /// must read every call of the name to sort and deduplicate — 2.5 million
-    /// rows for `to` on a monorepo thirty times discourse — where this reads
-    /// only as far as it is asked to. A file with several calls appears once
-    /// per call; the caller deduplicates.
+    /// must read every file calling the name to sort and deduplicate, where
+    /// this reads only as far as it is asked to. A blob two paths share is
+    /// listed under each.
     ///
     /// The plan is pinned: from the name's index, then its files. Left to
     /// itself, with statistics saying the name is everywhere, the bundled
@@ -906,6 +906,19 @@ impl Store {
         Ok((last, paths))
     }
 
+    /// Whether any file of the checkout at `root` calls `name`.
+    pub(crate) fn calls_name(&self, root: &str, name: &str) -> Result<bool> {
+        self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM call_name s INDEXED BY call_name_name
+                             CROSS JOIN file f
+                            WHERE s.name = ?2
+                              AND f.blob_id = s.blob_id
+                              AND f.checkout_id = (SELECT id FROM checkout WHERE root = ?1))",
+            params![root, name],
+            |r| r.get(0),
+        )
+    }
+
     /// How often each of these names is written as a call in the checkout at
     /// `root`, counting up to `cap` — a name handed to a macro as a symbol is
     /// not counted.
@@ -928,13 +941,12 @@ impl Store {
         cap: i64,
     ) -> Result<HashMap<String, i64>> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT COUNT(*) FROM
-               (SELECT 1 FROM call_site s INDEXED BY call_site_name
-                  CROSS JOIN file f
-                 WHERE s.name = ?1 AND s.recv <> 'symbol'
-                   AND f.blob_id = s.blob_id
-                   AND f.checkout_id = (SELECT id FROM checkout WHERE root = ?2)
-                 LIMIT ?3)",
+            "SELECT MIN(?3, COALESCE(SUM(s.calls - s.symbols), 0))
+               FROM call_name s INDEXED BY call_name_name
+               CROSS JOIN file f
+              WHERE s.name = ?1
+                AND f.blob_id = s.blob_id
+                AND f.checkout_id = (SELECT id FROM checkout WHERE root = ?2)",
         )?;
         let mut found = HashMap::new();
         for name in names {
@@ -1710,6 +1722,24 @@ pub(crate) struct Ref {
     pub(crate) owner: Option<String>,
 }
 
+impl Ref {
+    /// A call site read from its file, as the listing shows one.
+    pub(crate) fn call(path: &str, call: &Call) -> Ref {
+        Ref {
+            path: path.to_string(),
+            line: call.pos.line,
+            col: call.pos.col,
+            role: "call".to_string(),
+            kind: None,
+            recv: Some(call.recv.as_str().to_string()),
+            recv_text: call.recv_text.clone(),
+            nesting: call.nesting.clone(),
+            tier: None,
+            owner: None,
+        }
+    }
+}
+
 /// A freshly parsed definition, in the shape the store returns.
 ///
 /// `path`/`root` stay empty: a caller holding the `Def` already knows the file
@@ -1926,24 +1956,17 @@ fn insert_facts(tx: &Connection, oid: &Oid, facts: &Facts) -> Result<()> {
         ])?;
     }
 
-    let mut call = tx.prepare_cached(
-        "INSERT INTO call_site
-             (blob_id, name, recv, recv_text, nesting, singleton, argc, block, line, col)
-         VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-    )?;
+    let mut named: BTreeMap<&str, (i64, i64)> = BTreeMap::new();
     for c in &facts.calls {
-        call.execute(params![
-            blob_id,
-            c.name,
-            c.recv.as_str(),
-            c.recv_text,
-            join_nesting(&c.nesting),
-            c.singleton as i64,
-            c.argc,
-            c.block as i64,
-            c.pos.line,
-            c.pos.col,
-        ])?;
+        let counts = named.entry(c.name.as_str()).or_default();
+        counts.0 += 1;
+        counts.1 += i64::from(c.recv == RecvShape::Symbol);
+    }
+    let mut call = tx.prepare_cached(
+        "INSERT INTO call_name (blob_id, name, calls, symbols) VALUES (?1,?2,?3,?4)",
+    )?;
+    for (name, (calls, symbols)) in named {
+        call.execute(params![blob_id, name, calls, symbols])?;
     }
     Ok(())
 }
@@ -2029,11 +2052,7 @@ mod tests {
             after = last;
         }
         seen.sort();
-        assert_eq!(
-            seen,
-            ["a.rb", "a.rb", "b.rb"],
-            "one row per call, this checkout's"
-        );
+        assert_eq!(seen, ["a.rb", "b.rb"], "one row per file, this checkout's");
 
         // Driven from the name, in row order, so nothing past the page is
         // read — even when the statistics say the name is everywhere, which
@@ -2049,7 +2068,11 @@ mod tests {
             .unwrap()
             .collect::<Result<_>>()
             .unwrap();
-        assert!(plan[0].contains("call_site_name"), "{plan:?}");
+        assert!(
+            plan.iter()
+                .any(|step| step.contains("USING COVERING INDEX call_name_name")),
+            "{plan:?}"
+        );
         assert!(
             !plan.iter().any(|step| step.contains("TEMP B-TREE")),
             "{plan:?}"
@@ -2075,7 +2098,7 @@ mod tests {
             .unwrap();
         assert!(
             plan.iter()
-                .any(|step| step.contains("SEARCH s USING INDEX call_site_name")),
+                .any(|step| step.contains("SEARCH s USING COVERING INDEX call_name_name")),
             "{plan:?}"
         );
         assert!(
@@ -2223,7 +2246,7 @@ mod tests {
         }));
         assert!(outcome.is_err());
         assert_eq!((index_names(&store), store.totals().unwrap().defs), before);
-        assert!(index_names(&store).contains(&"call_site_name".to_string()));
+        assert!(index_names(&store).contains(&"call_name_name".to_string()));
     }
 
     #[test]
@@ -2311,7 +2334,7 @@ mod tests {
     }
 
     #[test]
-    fn refs_report_every_mention_and_what_sort_it_is() {
+    fn refs_report_what_the_index_places_and_calls_by_file() {
         let mut store = Store::open_in_memory().unwrap();
         indexed(
             &mut store,
@@ -2320,19 +2343,12 @@ mod tests {
             "class Widget\n  def save\n  end\n  def go\n    save\n    other.save\n  end\nend\n",
         );
         let refs = store.refs("/a", "save").unwrap();
-        let seen: Vec<_> = refs
-            .iter()
-            .map(|r| (r.role.as_str(), r.recv.as_deref()))
-            .collect();
-        assert_eq!(
-            seen,
-            [
-                ("definition", None),
-                ("call", Some("implicit")),
-                ("call", Some("other")),
-            ],
-            "a name-level answer discloses the receiver rather than guessing"
-        );
+        let seen: Vec<_> = refs.iter().map(|r| (r.role.as_str(), r.line)).collect();
+        assert_eq!(seen, [("definition", 2)]);
+        // A call's place is its file's to say: the index keeps the file.
+        assert!(store.calls_name("/a", "save").unwrap());
+        assert_eq!(store.files_calling("/a", "save").unwrap(), ["w.rb"]);
+        assert!(!store.calls_name("/other", "save").unwrap());
         assert!(store.refs("/a", "absent").unwrap().is_empty());
     }
 

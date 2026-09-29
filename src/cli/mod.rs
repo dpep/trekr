@@ -1610,6 +1610,9 @@ fn gather_refs(
     // Keep the excluded sites too, so `--include-excluded` can show them.
     keep_all: bool,
     mut parsed: Option<&mut Parsed>,
+    // Every call of the name as a row of its own, for the bare-name listing:
+    // the index keeps which files call a name, not where (DEC-193).
+    mut sites: Option<&mut Vec<crate::store::Ref>>,
 ) -> anyhow::Result<(
     Vec<crate::resolve::refs::Reference>,
     crate::resolve::refs::Counts,
@@ -1645,6 +1648,9 @@ fn gather_refs(
                 continue;
             };
             for call in facts.calls.iter().filter(|c| c.name == query.name) {
+                if let Some(sites) = sites.as_deref_mut() {
+                    sites.push(crate::store::Ref::call(path, call));
+                }
                 let reference = refs::tier_call(tree, facts, call, path, query, target);
                 counts.record(&reference);
                 // Excluded sites are counted, not listed: the count is the product,
@@ -1764,6 +1770,7 @@ fn cmd_card(out: Output, text: &str, context: Option<&Path>) -> anyhow::Result<E
         &query,
         Some(&owner),
         false,
+        None,
         None,
     )?;
     let kind = tree
@@ -2013,6 +2020,7 @@ fn cmd_refs(
         owner.as_deref(),
         include_excluded,
         None,
+        None,
     )?;
     let mut answer = serde_json::json!({
         "query": text,
@@ -2090,10 +2098,31 @@ fn cmd_refs_by_name(
     query: &crate::resolve::refs::Query,
 ) -> anyhow::Result<ExitCode> {
     let mut rows = store.refs(root_str, &query.name)?;
-    let has_calls = rows.iter().any(|row| row.role == "call");
-    if has_calls {
+    if store.calls_name(root_str, &query.name)? {
         let tree = build_tree(store, root_str)?;
-        let (found, _) = gather_refs(&tree, store, root, root_str, query, None, false, None)?;
+        let mut calls = Vec::new();
+        let (found, _) = gather_refs(
+            &tree,
+            store,
+            root,
+            root_str,
+            query,
+            None,
+            false,
+            None,
+            Some(&mut calls),
+        )?;
+        rows.extend(calls);
+        // In the order the index's one query gave: by place, and at one place
+        // a definition, then a constant, then a call.
+        let rank = |role: &str| match role {
+            "definition" => 0,
+            "constant" => 1,
+            _ => 2,
+        };
+        rows.sort_by(|a, b| {
+            (&a.path, a.line, a.col, rank(&a.role)).cmp(&(&b.path, b.line, b.col, rank(&b.role)))
+        });
         // Match by position: one call site, one tiering. Keyed, because a
         // common name has as many sites as rows and a scan per row was
         // quadratic in them. First one wins, as the scan's `find` did.
@@ -2495,6 +2524,7 @@ fn dead_in(
             Some(&owner),
             false,
             Some(&mut parsed),
+            None,
         )
         .unwrap_or_default();
         let live = refs::liveness(&found, &counts);

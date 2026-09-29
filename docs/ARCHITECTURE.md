@@ -502,10 +502,12 @@ DSL-defined method is absent from the index without being absent from the
 program. Behaviour is unchanged — those sites are not listed — but the claim is
 split so a caller can see how much of it is inference.
 
-Files are reparsed rather than read from the stored call rows. The ladder needs
+Files are reparsed rather than read from stored call rows. The ladder needs
 the file's assignments, which are deliberately not stored (DEC-012), and
 reparsing means an edit since the last index is still tiered correctly. The
-index's only job here is to say which files are worth opening.
+index's only job here is to say which files are worth opening, so it keeps
+a posting list — which names each blob calls, and how often — and no call
+site at all (DEC-193).
 
 ### `store/` — SQLite, WAL, no cleverness
 
@@ -518,7 +520,7 @@ blob(id, oid UNIQUE, lines, parse_errors, surface, written_by)
       via, target, target_line, target_col, sig_returns, line, col, end_line)
   ancestry(blob_id, nesting, relation, target, line, col)
   const_ref(blob_id, name, nesting, line, col)
-  call_site(blob_id, name, recv, recv_text, nesting, argc, block, line, col)
+  call_name(blob_id, name, calls, symbols)  ← which names a blob calls (DEC-193)
   body_call(blob_id, name, nesting, args, line)  ← a body's call on itself (DEC-162)
 
 checkout(id, root UNIQUE, indexed_at, kind, surface_key, map_key, git_state)
@@ -1300,6 +1302,10 @@ layer says what it can do with it; and `call_site_blob` / `const_ref_blob`
 (34 MB, 14 %) exist for a foreign-key cascade that DEC-003 means never fires. Not
 optimized, deliberately: the encoding is boring on purpose and there is no
 measurement yet saying it needs to be otherwise.
+
+**Since DEC-193 call sites are a posting list**, one row per name a blob
+calls: discourse with its gems went 329 → 121 MB, and 100k files 1.5 →
+0.6 GB. The table above is the store before it.
 
 *Provenance: the local `discourse` and `mastodon` checkouts carry no `.git`, so
 discourse was staged into a scratch git repo to be measured. That is DEC-001

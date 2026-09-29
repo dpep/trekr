@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Upgrading drops and rebuilds the index** (store v47): run `trekr --index`
+- **Upgrading drops and rebuilds the index** (store v48): run `trekr --index`
   once per checkout. The first index on each Ruby also reads its standard
   library once — 179 files for Ruby 3.4 — shared by every app on that Ruby.
 
@@ -54,6 +54,14 @@
   only the LSP's background index did: discourse's first query 0.63 → 0.03 s,
   a 100k-file repository's 2.6 → 0.05 s. The index takes that time instead,
   when a declaration moved; `--profile` shows it as `tree` (DEC-192).
+
+- **The index is less than half the size, and a cold index about twice as
+  fast.** Call sites are stored as which files call each name rather than one
+  row per call — every answer about a call already reread the file. A
+  100k-file repository indexes in 20 s where it took 58, into 0.6 GB where it
+  took 1.5; discourse with its gems in 5 s and 121 MB. The bare-name `--refs
+  NAME` listing reads its call rows from the files, as its tiering already
+  did (DEC-193).
 
 - **`--status` in a checkout nobody indexed exits `2` with `status:
   not_indexed`**, the answer a query from there gives, where it listed

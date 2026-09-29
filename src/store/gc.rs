@@ -136,9 +136,15 @@ impl Store {
             "DELETE FROM gc_blob WHERE EXISTS (SELECT 1 FROM file WHERE blob_id = gc_blob.id)",
             [],
         )?;
-        for table in ["def", "ancestry", "const_ref", "call_site"] {
+        // A call is a site, counted from its name's posting (DEC-193).
+        for (table, rows) in [
+            ("def", "COUNT(*)"),
+            ("ancestry", "COUNT(*)"),
+            ("const_ref", "COUNT(*)"),
+            ("call_name", "COALESCE(SUM(calls), 0)"),
+        ] {
             let n: i64 = tx.query_row(
-                &format!("SELECT COUNT(*) FROM {table} WHERE blob_id IN (SELECT id FROM gc_blob)"),
+                &format!("SELECT {rows} FROM {table} WHERE blob_id IN (SELECT id FROM gc_blob)"),
                 [],
                 |r| r.get(0),
             )?;

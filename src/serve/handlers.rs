@@ -876,7 +876,7 @@ enum Source<'a> {
     },
 }
 
-/// Call rows per page of a paged listing — a few chunks of files' worth.
+/// Blobs per page of a paged listing — a few chunks of files' worth.
 const PAGE_ROWS: i64 = 4096;
 
 impl Source<'_> {
@@ -910,9 +910,8 @@ impl Source<'_> {
                     if *done {
                         break;
                     }
-                    // A page ends mid-file as often as not; the rest of that
-                    // file's rows are already `seen` when the next page brings
-                    // them.
+                    // A path already `seen` — an open buffer, read first —
+                    // is not read again.
                     let (last, page) = store.files_calling_page(root, name, *after, PAGE_ROWS)?;
                     *done = page.is_empty();
                     *after = last;
