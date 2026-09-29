@@ -8599,3 +8599,25 @@ names them in all but name. Two classes do not earn a mechanism.
 
 **Reverses if** a second sketch turns up in the gold sets or the clicks, or
 the rbs gem declares Lazy's overrides — then the answer is simply right.
+
+## DEC-264 — An editor's references tier on every core
+
+**Decided.** The LSP's file scan (`references`, `incomingCalls`) tiers each
+file's calls on the pool worker that parsed it, against the session's tree,
+which every worker can share since DEC-250. Each chunk still comes back to
+the request's thread in file order, where the gather keeps its cap and its
+order and a stream sends its batch (DEC-056); only the work that feeds them
+moved.
+
+**Why.** The scan's comment still said the tree "is not shareable across
+threads", and tiered on the request's thread while the parse fanned out —
+the same split DEC-250 retired for `--refs`, whose tiering is most of the
+time on a common name.
+
+**Measured** on rails, `textDocument/references` on six definitions after a
+hover warms the tree, no partial-result token (the whole scan, DEC-056's
+best 1,000), 7 rounds interleaved against the build before it, load 10–12,
+medians (max): `Persistence#save` 93 (100) → 44 (46) ms, `Validations#valid?`
+106 (108) → 66 (68), `QueryMethods#where` 126 (140) → 70 (74),
+`FinderMethods#find` 112 (119) → 60 (62), `Cache::Store#fetch` 64 (66) → 38
+(40), `Callbacks#run_callbacks` 6.5 → 5.5. Every answer is identical.

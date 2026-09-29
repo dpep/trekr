@@ -52,6 +52,11 @@
 
 ### Changed
 
+- **An editor's references answer about twice as fast.** The LSP tiers a
+  scan's call sites on every core, as `--refs` does: on rails,
+  `Persistence#save` 93 → 44 ms and `QueryMethods#where` 126 → 70 ms for the
+  same answer (DEC-264).
+
 - **`--refs` tiers on every core.** The workers share one tree, so its
   warm-up is paid once: a name with hundreds of thousands of call sites
   answers about twice as fast, and a rails query a third faster, for a

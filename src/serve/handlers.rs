@@ -629,21 +629,16 @@ pub(crate) fn references(
         gather::Policy::Best
     };
     let mut gathered = gather::Gather::new(limit, policy);
-    let reach = scan_files(&overlay, &root, source, &name, cancel, |files| {
+    let tier = |facts: &crate::core::Facts, call: &crate::core::Call, path: &str| {
+        refs::tier_call(tree, facts, call, path, &query, target.as_deref())
+    };
+    let reach = scan_files(&overlay, &root, source, &name, cancel, &tier, |files| {
         for file in files {
             let Some(uri) = file_uri(&root, &file.path) else {
                 continue;
             };
             let lines = LineIndex::new(&file.text);
-            for call in file.facts.calls.iter().filter(|c| c.name == query.name) {
-                let reference = refs::tier_call(
-                    tree,
-                    &file.facts,
-                    call,
-                    &file.path,
-                    &query,
-                    target.as_deref(),
-                );
+            for (_, reference) in file.tiered {
                 if reference.tier == refs::Tier::Excluded {
                     continue;
                 }
@@ -845,11 +840,13 @@ fn overlay(session: &Session, root: &Path) -> HashMap<String, String> {
         .collect()
 }
 
-/// One file read for a question that spans the checkout.
+/// One file read for a question that spans the checkout: each call of the
+/// name asked about, by its index in `facts.calls`, with its tier.
 struct Scanned {
     path: String,
     text: String,
     facts: crate::core::Facts,
+    tiered: Vec<(usize, refs::Reference)>,
 }
 
 /// How many files to parse between cancellation checks. Large enough that the
@@ -943,21 +940,23 @@ struct Reach {
     stopped: bool,
 }
 
-/// Read and parse the files a question needs — the editor's copy where it has
-/// one — in parallel, handing each chunk to `visit` in order until it says
-/// stop.
+/// Read, parse and tier the files a question needs — the editor's copy where
+/// it has one — in parallel, handing each chunk to `visit` in order until it
+/// says stop.
 ///
-/// The parse is the expensive part and it is a pure function of the bytes, so
-/// it fans out; `visit` runs on this thread, because the tree it consults is
-/// not shareable across threads. An open buffer that mentions `needle` is
-/// read first, even when the index does not list its file: the index is as of
-/// the last save, and the buffer is what the user is looking at.
+/// The parse and the tiering are the expensive part, and the tree `tier`
+/// consults is shared by every worker (DEC-250), so both fan out; `visit`
+/// runs on this thread, in file order, so a stream and the cap (DEC-056)
+/// see what they did. An open buffer that mentions `needle` is read first,
+/// even when the index does not list its file: the index is as of the last
+/// save, and the buffer is what the user is looking at.
 fn scan_files(
     overlay: &HashMap<String, String>,
     root: &Path,
     mut source: Source,
     needle: &str,
     cancel: &dyn Fn() -> bool,
+    tier: &(dyn Fn(&crate::core::Facts, &crate::core::Call, &str) -> refs::Reference + Sync),
     mut visit: impl FnMut(Vec<Scanned>) -> anyhow::Result<ControlFlow<()>>,
 ) -> anyhow::Result<Reach> {
     use rayon::prelude::*;
@@ -997,10 +996,18 @@ fn scan_files(
                     }
                 };
                 let facts = crate::extract::extract(text.as_bytes());
+                let tiered = facts
+                    .calls
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, call)| call.name == needle)
+                    .map(|(at, call)| (at, tier(&facts, call, path)))
+                    .collect();
                 Some(Scanned {
                     path: path.clone(),
                     text,
                     facts,
+                    tiered,
                 })
             })
             .collect();
@@ -1962,27 +1969,24 @@ pub(crate) fn incoming_calls(
     // Keyed by (file, the caller's def line), in first-seen order.
     let mut callers: Vec<CallHierarchyIncomingCall> = Vec::new();
     let mut index: HashMap<(String, u32), usize> = HashMap::new();
+    let tier = |facts: &crate::core::Facts, call: &crate::core::Call, path: &str| {
+        refs::tier_call(tree, facts, call, path, &query, target.as_deref())
+    };
     scan_files(
         &overlay,
         &root,
         Source::Listed(paths.into_iter()),
         &name,
         cancel,
+        &tier,
         |files| {
             for file in files {
                 let Some(uri) = file_uri(&root, &file.path) else {
                     continue;
                 };
                 let lines = LineIndex::new(&file.text);
-                for call in file.facts.calls.iter().filter(|c| c.name == name) {
-                    let reference = refs::tier_call(
-                        tree,
-                        &file.facts,
-                        call,
-                        &file.path,
-                        &query,
-                        target.as_deref(),
-                    );
+                for (at, reference) in &file.tiered {
+                    let call = &file.facts.calls[*at];
                     if reference.tier != refs::Tier::Confirmed {
                         continue;
                     }

@@ -982,10 +982,10 @@ it is retried every 250 ms until it lands, answers meanwhile coming from what
 is committed (DEC-066). The child scanned before the save, so its own write
 would not carry the edit.
 
-**Threads.** Requests are answered on one thread; the tree could be shared
-(DEC-250) but a request asks too little to split. Two
-things leave it: a file scan's reading and parsing fans out on rayon and
-returns facts, with tiering kept on the main thread; and completion's member
+**Threads.** Requests are answered on one thread. Two things leave it: a
+file scan's reading, parsing and tiering fan out on rayon against the
+shared tree (DEC-250), each chunk handed back in file order so the stream
+and the cap (DEC-056) are as they were (DEC-264); and completion's member
 listing is built by a worker on its own connection and tree, which hands back
 only the listing (DEC-044). The listing streams every method row past the
 tree rather than loading them into it (DEC-045), so the session's tree stays
