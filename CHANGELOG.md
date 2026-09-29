@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Upgrading drops and rebuilds the index** (store v44): run `trekr --index`
+- **Upgrading drops and rebuilds the index** (store v45): run `trekr --index`
   once per checkout.
 
 ### Changed
@@ -65,6 +65,13 @@
   `Reset.new` makes what `Factory.new` makes. A local whose writes disagree
   answers with the type that has the called name, ambiguous, where it was
   residue (DEC-165).
+
+- **`--refs` follows a `delegate`.** A call that lands on `delegate :name,
+  to: :x` counts toward the method `x`'s type runs: `Person.delete_by`,
+  through ActiveRecord's `delegate … to: :all`, is a confirmed call of
+  `ActiveRecord::Relation#delete_by`, where it was excluded
+  (`different_owner`). A target of no known type makes the site `possible`
+  (DEC-166).
 
 - **`--refs` counts a call whose receiver is typed as an ancestor.** A
   `sig`'s parameter or return, a finder's result, a `rescue`'s class, or the

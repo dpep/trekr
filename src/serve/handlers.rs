@@ -1253,9 +1253,12 @@ fn hover_definition(
 ) -> anyhow::Result<Card> {
     let tree = session.tree(root)?;
     let qualified = match def.kind {
+        // Only `def Foo.x` names its owner in `target`; a macro's is what
+        // it aliases or delegates to.
         Kind::Method => def
             .target
             .as_ref()
+            .filter(|_| def.via.is_none())
             .map(|t| tree.resolve(t, &def.nesting).fqn.unwrap_or(t.clone()))
             .or_else(|| tree.scope_fqn(&def.nesting)),
         Kind::Class | Kind::Module => {
@@ -1560,6 +1563,7 @@ fn same_scope(def: &Def, qualified: Option<&str>) -> bool {
         Kind::Method => def
             .target
             .as_deref()
+            .filter(|_| def.via.is_none())
             .or(def.nesting.first().map(String::as_str)),
         _ => def.nesting.first().map(String::as_str),
     };

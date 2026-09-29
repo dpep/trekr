@@ -316,6 +316,49 @@ fn tier(
             None,
         );
     }
+    // A delegate sends the name to its `to:` target: the site counts for
+    // the method that target's type runs (DEC-166).
+    if !matches
+        && let (Some(landed), Some(target)) = (found.as_ref(), target)
+        && let Some(sent) = delegated(tree, &receiver, landed)
+    {
+        let owns = |fqn: &str| {
+            tree.lookup(fqn, false, &query.name)
+                .is_some_and(|own| crate::tree::public_name(&own.owner) == target)
+        };
+        let answer = match sent {
+            Delegated::To { fqn, .. } if !query.singleton && owns(&fqn) => Some((
+                Tier::Confirmed,
+                "the receiver's class delegates this to a value whose type runs it",
+                0,
+            )),
+            Delegated::To { fqn, bound: true }
+                if !query.singleton && tree.inherits(target, &fqn) && owns(target) =>
+            {
+                Some((
+                    Tier::Possible,
+                    "the receiver's class delegates this to a value that may be the subclass defining it",
+                    1,
+                ))
+            }
+            Delegated::To { .. } => None,
+            Delegated::Untyped => Some((
+                Tier::Possible,
+                "the receiver's class delegates this to a value of no known type",
+                1,
+            )),
+        };
+        if let Some((tier, why, proximity)) = answer {
+            return here(
+                tier,
+                Some(receiver.fqn.clone()),
+                Some(landed.owner.clone()),
+                why,
+                proximity,
+                None,
+            );
+        }
+    }
     match found {
         Some(found) => {
             if matches {
@@ -397,6 +440,47 @@ fn tier(
             None,
         ),
     }
+}
+
+/// Where a delegate sends its name (DEC-166).
+enum Delegated {
+    /// A value of this type; `bound` when it may be a subclass.
+    To {
+        fqn: String,
+        bound: bool,
+    },
+    Untyped,
+}
+
+/// What a `delegate … to: :x` the call landed on sends the name to: the type
+/// `x`'s reader declares, or for `all`/`unscoped` on a model's class side,
+/// its relation. `None` for a method that is no delegate.
+fn delegated(
+    tree: &Tree,
+    receiver: &super::Receiver,
+    landed: &crate::tree::MethodDef,
+) -> Option<Delegated> {
+    if landed.via.as_deref() != Some("delegate") {
+        return None;
+    }
+    let to = landed.forwards_to.as_deref()?;
+    let reader = tree.lookup(&receiver.fqn, receiver.singleton, to);
+    if let Some(reader) = &reader
+        && let Some(returns) = reader.returns_for(Some(0), false)
+        && let Some(fqn) = tree.returned_class(reader, returns)
+    {
+        return Some(Delegated::To { fqn, bound: true });
+    }
+    const BASE: &str = "ActiveRecord::Base";
+    let model = receiver.singleton
+        && (crate::tree::public_name(&receiver.fqn) == BASE || tree.inherits(&receiver.fqn, BASE));
+    if model && matches!(to, "all" | "unscoped") && tree.is_known(super::RELATION) {
+        return Some(Delegated::To {
+            fqn: super::RELATION.to_string(),
+            bound: true,
+        });
+    }
+    Some(Delegated::Untyped)
 }
 
 /// Could a receiver whose lookup found nothing still reach the queried

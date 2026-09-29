@@ -1,0 +1,10 @@
+# Rails' `Querying` writes `delegate(*QUERYING_METHODS, to: :all)`, so
+# `Person.delete_by` runs `ActiveRecord::Relation#delete_by` on what `all`
+# returns. `--refs` excluded both calls as `different_owner` (they land on
+# the delegate), leaving `Relation#delete_by` with no callers in rails. A
+# call that lands on a delegate now counts toward the method its `to:`
+# target's type runs: the relation for `all` on a model, the reader's
+# declared type otherwise. A target of no known type may run any method of
+# the name, so the site is possible.
+refs ActiveRecord::Relation#delete_by confirmed=2 excluded=0
+refs Engine#delete_by possible=3 excluded=2

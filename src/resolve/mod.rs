@@ -1209,7 +1209,7 @@ fn typed(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiver
 }
 
 /// What a `scope`'s body runs on (DEC-116).
-const RELATION: &str = "ActiveRecord::Relation";
+pub(super) const RELATION: &str = "ActiveRecord::Relation";
 
 /// How many calls back a chain is followed. Each step needs a declared
 /// return type to continue, so the bound is a guard, not a tuning knob.

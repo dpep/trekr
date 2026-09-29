@@ -6449,3 +6449,46 @@ widget_shop, verdict files byte-identical), the 21,154 clicks, the rails
 sweeps unchanged. The rival rung stays general rather than limited to
 `local:new`, since no measured answer moved.
 
+## DEC-166 — A call that lands on a `delegate` counts toward what its target runs
+
+**Decided.** `delegate :name, to: :x` records `x` on the method it declares
+(the `def` row's `target`; a prefixed one sends another name and records
+nothing). When `--refs Owner#name` tiers a call whose lookup lands on such a
+delegate, and the delegate is not the method asked about, the call is sent
+on to what `x` holds:
+
+- **Typed.** `x`'s reader, looked up on the receiver's side, declares a
+  return type; or `x` is `all` or `unscoped` on the class side of
+  `ActiveRecord::Base` or a model, which returns the model's relation, an
+  `ActiveRecord::Relation`. Where that type's lookup lands on the queried
+  method, the site is `confirmed`; where the type is an ancestor of the
+  owner, which defines its own (DEC-140), `possible`; otherwise it stays
+  excluded as before.
+- **Untyped.** `x` holds a value of no known type, which may run any method
+  of the name: `possible`.
+
+**Why.** Rails' `Querying` writes `delegate(*QUERYING_METHODS, to: :all)`, so
+`Person.delete_by` runs `Relation#delete_by` on what `all` returns. `--refs`
+excluded every such call as `different_owner`, landing on the delegate, and
+`--dead` called `ActiveRecord::Relation#delete_by` single-caller, its callers
+all reaching it through the delegation (the downcast lane's finding).
+
+**Measured.** Every gold verdict (verdict files byte-identical), the 21,154
+clicks and both card sweeps unchanged. The rails `--refs` queries move 1,766
+sites out of excluded, none into it: 1,759 to confirmed, all a model's class
+method through `Querying`'s delegation (`QueryMethods#where` 42 → 1,228
+confirmed, `FinderMethods#first` 6 → 491, `#exists?` 3 → 91), and 7 to
+possible through a delegate of no known type (`TimeWithZone#to_s` via
+`Duration::Scalar`'s `to: :value`). Sampled, each is the method that runs.
+`--dead` on rails: 2,279 → 2,249 candidates (activerecord alone 1,611 →
+1,581). Gone are the relation methods only a delegation reaches
+(`Relation#delete_by`, `#destroy_by`, `#find_or_create_by!`,
+`FinderMethods#second!`, `Calculations#async_count` …) and methods reached
+through a `delegate … to: :scheme` whose reader is untyped
+(`Encryption::Scheme#downcase?`, `#with_context`); 13 more move from
+convention-only or unreferenced to single-caller. mastodon unchanged.
+
+**Not done.** `--def` on `Person.delete_by` still answers the delegate, which
+is the declaration a reader clicks through; it could name the relation's
+method as well. `to: :class` and a `to:` constant are untyped.
+

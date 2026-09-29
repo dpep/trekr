@@ -3861,7 +3861,7 @@ impl<'pr> Extractor<'_> {
         let prefix = match (macro_name, keyword_value(args, "prefix")) {
             ("delegate", Some(value)) => match literal_name(&value) {
                 Some(name) => Some(name),
-                None if value.as_true_node().is_some() => delegate_to,
+                None if value.as_true_node().is_some() => delegate_to.clone(),
                 // A computed prefix is a name we cannot know.
                 None => return false,
             },
@@ -3956,6 +3956,11 @@ impl<'pr> Extractor<'_> {
                         kind: ParamKind::Rest,
                         name: "...".into(),
                     }];
+                    // What it sends the name to, which `--refs` types
+                    // (DEC-166). A prefixed one sends another name.
+                    if prefix.is_none() {
+                        def.target = delegate_to.clone();
+                    }
                 }
                 def.sig_returns = made.returns.map(str::to_string);
                 // A singular association's reader has a determinate type, which

@@ -2261,10 +2261,12 @@ impl Tree {
         let bound = row
             .target_pos
             .filter(|_| matches!(row.via.as_deref(), Some("alias") | Some("alias_method")));
-        let forwards_to = row
-            .target
-            .clone()
-            .filter(|_| row.via.as_deref() == Some("delegate_missing_to"));
+        let forwards_to = row.target.clone().filter(|_| {
+            matches!(
+                row.via.as_deref(),
+                Some("delegate_missing_to") | Some("delegate")
+            )
+        });
         MethodDef {
             forwards_to,
             bound: bound.is_some(),
