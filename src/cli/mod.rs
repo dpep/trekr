@@ -215,6 +215,7 @@ enum Output {
 
 pub fn run() -> ExitCode {
     let started = std::time::Instant::now();
+    crate::store::untracked_memory();
     let cli = match Cli::try_parse() {
         Ok(cli) => cli,
         Err(error) => return clap_failure(error, started),

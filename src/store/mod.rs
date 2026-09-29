@@ -163,6 +163,18 @@ const FILES_CALLING_PAGE: &str = "SELECT p.blob_id, f.path
   WHERE f.blob_id = p.blob_id
     AND f.checkout_id = (SELECT id FROM checkout WHERE root = ?1)";
 
+/// Turn off SQLite's memory statistics, before any connection opens. They
+/// are kept under one process-wide mutex that every allocation takes, which
+/// connections on several threads then queue on (DEC-233); nothing reads them.
+pub(crate) fn untracked_memory() {
+    // SAFETY: sqlite3_config is only valid before SQLite initializes, which
+    // the first connection does; this runs before any is opened, and a call
+    // made too late is refused with SQLITE_MISUSE rather than acted on.
+    unsafe {
+        rusqlite::ffi::sqlite3_config(rusqlite::ffi::SQLITE_CONFIG_MEMSTATUS, 0);
+    }
+}
+
 impl Store {
     pub(crate) fn open(path: &Path) -> Result<Store> {
         let mut store = Store::init(Connection::open(path)?)?;
