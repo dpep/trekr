@@ -1991,20 +1991,6 @@ fn declares_a_bound(via: &str) -> bool {
 }
 
 /// Every local read in a source → the writes that may have set it.
-/// Work out ahead, off the thread that tiers, the flow a file's calls to
-/// `name` will likely ask for: a call on a local reads it, and so may one on
-/// another call's result. A head start only — a file it misses works the
-/// flow out when asked.
-pub(crate) fn prepare_flow(facts: &Facts, name: &str) {
-    if facts
-        .calls
-        .iter()
-        .any(|c| c.name == name && (c.recv_pos.is_some() || c.recv_value.is_some()))
-    {
-        facts.prepare_flow(reaching_writes);
-    }
-}
-
 fn reaching_writes(source: &[u8]) -> std::collections::HashMap<Pos, Vec<Pos>> {
     let vars = crate::serve::vars::analyze(source);
     let lines = crate::extract::LineIndex::new(source);

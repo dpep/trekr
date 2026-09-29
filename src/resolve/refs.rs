@@ -113,6 +113,16 @@ impl Counts {
             }
         }
     }
+
+    /// Another run's counts, added to these.
+    pub(crate) fn add(&mut self, other: &Counts) {
+        self.confirmed += other.confirmed;
+        self.possible += other.possible;
+        self.excluded += other.excluded;
+        self.excluded_different_owner += other.excluded_different_owner;
+        self.excluded_no_such_method += other.excluded_no_such_method;
+        self.excluded_arity += other.excluded_arity;
+    }
 }
 
 /// Why a call site was ruled out. The three reasons are **not** equally

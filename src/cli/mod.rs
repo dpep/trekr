@@ -1892,75 +1892,75 @@ fn gather_refs(
     crate::resolve::refs::Counts,
 )> {
     use crate::resolve::refs;
+    let files = store.files_calling(root_str, &query.name)?;
+    let listing = sites.is_some();
+    // Every worker tiers against the one tree, which is shared (DEC-250),
+    // and files come back in the order they were listed.
+    let tier = |path: &String, facts: &crate::core::Facts| {
+        let mut tiered = Tiered::default();
+        for call in facts.calls.iter().filter(|c| c.name == query.name) {
+            if listing {
+                tiered.sites.push(crate::store::Ref::call(path, call));
+            }
+            let reference = refs::tier_call(tree, facts, call, path, query, target);
+            tiered.counts.record(&reference);
+            // Excluded sites are counted, not listed: the count is the
+            // product, and the list would be the grep we are trying to
+            // beat. `keep_all` is how `--include-excluded` makes the
+            // claim auditable.
+            if keep_all || reference.tier != refs::Tier::Excluded {
+                tiered.found.push(reference);
+            }
+        }
+        tiered
+    };
+    let read = |path: &String| {
+        std::fs::read(root.join(path))
+            .ok()
+            .map(|bytes| extract::extract(&bytes))
+    };
+    let tiered: Vec<Tiered> = match parsed {
+        // Held across queries by the caller: parse what it lacks, then tier.
+        Some(parsed) => {
+            let fresh: Vec<_> = files
+                .par_iter()
+                .filter(|path| !parsed.contains_key(*path))
+                .map(|path| (path.clone(), read(path)))
+                .collect();
+            parsed.extend(fresh);
+            let parsed = &*parsed;
+            files
+                .par_iter()
+                .filter_map(|path| Some((path, parsed.get(path)?.as_ref()?)))
+                .map(|(path, facts)| tier(path, facts))
+                .collect()
+        }
+        // One query: each file is parsed and tiered on the worker that takes
+        // it, and only the files in flight are held.
+        None => files
+            .par_iter()
+            .filter_map(|path| Some(tier(path, &read(path)?)))
+            .collect(),
+    };
     let mut found = Vec::new();
     let mut counts = refs::Counts::default();
-    let mut local = Parsed::new();
-    // Held across queries by a caller that passes a map; otherwise only the
-    // chunk being tiered is kept.
-    let shared = parsed.is_some();
-    let parsed: &mut Parsed = parsed.unwrap_or(&mut local);
-    let read = |chunk: &[String], parsed: &Parsed| -> Vec<(String, Option<crate::core::Facts>)> {
-        chunk
-            .par_iter()
-            .filter(|path| !parsed.contains_key(*path))
-            .map(|path| {
-                let facts = std::fs::read(root.join(path))
-                    .ok()
-                    .map(|bytes| extract::extract(&bytes));
-                // The flow analysis reparses the file; here it runs in parallel.
-                if let Some(facts) = &facts {
-                    crate::resolve::prepare_flow(facts, &query.name);
-                }
-                (path.clone(), facts)
-            })
-            .collect()
-    };
-    let read = &read;
-    // Parsed in parallel, tiered in order: the tree loads methods on demand
-    // through a `RefCell`, so only the parse can leave this thread, and the
-    // next chunk is parsed while this one is tiered. Chunked so a single
-    // query holds a few dozen files' facts at once, not all of them.
-    let files = store.files_calling(root_str, &query.name)?;
-    let mut chunks = files.chunks(64);
-    let mut ready = chunks.next().map(|chunk| (chunk, read(chunk, parsed)));
-    while let Some((chunk, fresh)) = ready.take() {
-        if !shared {
-            parsed.clear();
+    for mut file in tiered {
+        found.append(&mut file.found);
+        counts.add(&file.counts);
+        if let Some(sites) = sites.as_deref_mut() {
+            sites.append(&mut file.sites);
         }
-        parsed.extend(fresh);
-        let parsed = &*parsed;
-        ready = std::thread::scope(|scope| {
-            let ahead = chunks
-                .next()
-                .map(|next| scope.spawn(move || (next, read(next, parsed))));
-            for path in chunk {
-                let Some(Some(facts)) = parsed.get(path) else {
-                    continue;
-                };
-                for call in facts.calls.iter().filter(|c| c.name == query.name) {
-                    if let Some(sites) = sites.as_deref_mut() {
-                        sites.push(crate::store::Ref::call(path, call));
-                    }
-                    let reference = refs::tier_call(tree, facts, call, path, query, target);
-                    counts.record(&reference);
-                    // Excluded sites are counted, not listed: the count is the
-                    // product, and the list would be the grep we are trying to
-                    // beat. `keep_all` is how `--include-excluded` makes the
-                    // claim auditable.
-                    if keep_all || reference.tier != refs::Tier::Excluded {
-                        found.push(reference);
-                    }
-                }
-            }
-            ahead.map(|parse| {
-                parse
-                    .join()
-                    .unwrap_or_else(|e| std::panic::resume_unwind(e))
-            })
-        });
     }
     found.sort_by_key(refs::order);
     Ok((found, counts))
+}
+
+/// One file's call sites, tiered.
+#[derive(Default)]
+struct Tiered {
+    found: Vec<crate::resolve::refs::Reference>,
+    counts: crate::resolve::refs::Counts,
+    sites: Vec<crate::store::Ref>,
 }
 
 /// A file's facts by checkout-relative path, `None` when it could not be read.
@@ -4145,6 +4145,79 @@ mod tests {
         assert!(bulk_load(25_000, 50_000));
         assert!(!bulk_load(12_500, 50_000), "a quarter inserts");
         assert!(!bulk_load(0, 0), "nothing to load");
+    }
+
+    /// Tiering on every worker against one tree gives what one thread gives,
+    /// in the same order, whether the files' facts are kept or not (DEC-250).
+    #[test]
+    fn workers_sharing_a_tree_tier_as_one_thread_does() {
+        use crate::resolve::refs;
+        let dir = std::env::temp_dir().join(format!("trekr-shared-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let repo = dir.join("repo");
+        let mut sources = vec![(
+            "lib/widget.rb".to_string(),
+            "class Widget\n  def save(a) = a\nend\nclass Gadget\n  def save = 1\nend\n".to_string(),
+        )];
+        // Receivers every rung decides, in more files than a worker takes.
+        for i in 0..67 {
+            let body = match i % 4 {
+                0 => "Widget.new.save(1)\n".to_string(),
+                1 => "g = Gadget.new\ng.save\n".to_string(),
+                2 => format!("class Widget\n  def go{i} = save(2)\nend\n"),
+                _ => "thing.save\nWidget.new.save\n".to_string(),
+            };
+            sources.push((format!("app/f{i:03}.rb"), body));
+        }
+        let mut files = crate::scan::Files::new();
+        let mut facts = Vec::new();
+        for (path, source) in &sources {
+            std::fs::create_dir_all(repo.join(path).parent().unwrap()).unwrap();
+            std::fs::write(repo.join(path), source).unwrap();
+            let oid = scan::hash_blob(source.as_bytes());
+            files.insert(path.clone(), oid.clone());
+            facts.push((oid, extract::extract(source.as_bytes())));
+        }
+        let root = repo.to_string_lossy().into_owned();
+        let db = dir.join("store.db");
+        Store::open(&db)
+            .unwrap()
+            .write(&root, &files, facts, 0)
+            .unwrap();
+        let query = refs::Query::parse("Widget#save");
+        let answer = |threads: usize, keep: bool| {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+            pool.install(|| {
+                // A connection stays on the thread that opened it.
+                let store = Store::open(&db).unwrap();
+                let tree = Tree::build(&store, &root).unwrap();
+                let mut parsed = Parsed::new();
+                let mut sites = Vec::new();
+                let (found, counts) = gather_refs(
+                    &tree,
+                    &store,
+                    &repo,
+                    &root,
+                    &query,
+                    Some("Widget"),
+                    true,
+                    keep.then_some(&mut parsed),
+                    Some(&mut sites),
+                )
+                .unwrap();
+                let sites: Vec<_> = sites.iter().map(|s| (&s.path, s.line, s.col)).collect();
+                serde_json::to_string(&(found, counts, format!("{sites:?}"))).unwrap()
+            })
+        };
+        let alone = answer(1, false);
+        assert!(alone.contains("confirmed") && alone.contains("excluded"));
+        for keep in [false, true] {
+            assert_eq!(answer(8, keep), alone, "keeping facts: {keep}");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
