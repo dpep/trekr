@@ -7477,3 +7477,44 @@ resolved by the caller's own definition, 86 `no_such_method` and 8 residue
 whose caller does not reach the macro). Most are `define_callbacks`'
 `_run_*_callbacks` and `_*_callbacks` across every class that declares a
 callback chain.
+
+## DEC-213 — A bound call reaches a module a subclass of the bound mixes in
+
+**Decided.** DEC-140's rule widens by one step. When `--refs` asks about a
+method of a module M, and a site's receiver is a bound T — a `sig`, a
+finder, the naming rung, or `self` — whose lookup lands elsewhere or
+nowhere, the site is `possible` where a class below T mixes M in (directly
+or through another module, `Tree::mixers_of`) and its own lookup of the name
+lands on M's method ("the receiver is typed as an ancestor, and may be a
+subclass that mixes this in"). The same holds for a delegate's bound target
+(DEC-166). A class that is not below T, or whose lookup finds something
+ahead of M, rules nothing back in. Instance methods only: a subclass that
+`extend`s M is not counted.
+
+**Why.** DEC-140's open item. `AbstractController::Base#process` calls
+`process_action` on `self`; every controller runs `AbstractController::
+Callbacks#process_action`, which `ActionController::Base` includes, and
+`--refs` excluded that call as `different_owner` — so `--dead` called
+`Callbacks#process_action` super-only. A method a subclass defines was
+already reachable that way; one a subclass mixes in is the same dispatch.
+
+**Measured** (against DEC-212). Every gold verdict, both rails `--refs` sets
+and the 21,154 clicks unchanged. A sweep of the 2,843 instance methods rails
+defines in a module some class with a superclass includes (by the module's
+name) moves 72 sites in 35 queries, all excluded → possible, none from or to
+confirmed. The largest: `ActionView::LogSubscriber::Utils#logger` (8, the
+base `LogSubscriber`'s own `logger` calls), `ActiveModel::AttributeMethods#
+respond_to?` from Active Support's `Object` extensions (`blank?`,
+`acts_like?`; any model is an `Object`, as DEC-140 kept), the association
+modules' `foreign_key_present?` and `build_record` reached from
+`Association`, `Type::Helpers::Numeric#cast` and `Mutable#cast` from
+`Type::Value`. Sampled, each is a template method a subclass's mixin
+answers. graph_weaver's sweep of all 2,090 of its methods: none. `--dead`:
+rails 2,252 → 2,244 candidates, activerecord alone 1,584 → 1,576 — gone are
+`ThroughAssociation#foreign_key_present?`, `#target_scope`, `#stale_state`,
+`#build_record`, `ForeignAssociation#foreign_key_present?` and each
+adapter's `DatabaseStatements#write_query?` — and `Callbacks#process_action`,
+`Rendering#process_action` (super-only), `ImplicitRender#method_for_action`,
+`BasicImplicitRender#send_action` (override) and `ControllerRuntime#
+process_action` (convention-only) become single-caller; mastodon's
+`QueryHelper#perform_data_query` moves override → single-caller.

@@ -177,6 +177,12 @@
   `X.new`, a literal and a constant still name the exact class. The site
   stays `confirmed` for the ancestor's own method (DEC-140).
 
+- **`--refs` counts it for a module a subclass mixes in, too.** A call
+  on `self`, or on a receiver declared as `T`, is `possible` for a module's
+  method when a subclass of `T` includes that module and runs its method:
+  `AbstractController::Base#process`'s `process_action` for
+  `AbstractController::Callbacks#process_action` (DEC-213).
+
 ### Fixed
 
 - **A macro in another file defines the methods its callers name.** A class

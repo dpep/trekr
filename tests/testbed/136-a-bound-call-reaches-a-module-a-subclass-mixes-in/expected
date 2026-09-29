@@ -1,0 +1,11 @@
+# DEC-140 counted a subclass's own method for a call typed as its ancestor,
+# but not a module a subclass mixes in: `item.label` with `item` a `Base`
+# may be a `Child`, whose `include Auditing` puts `Auditing#label` ahead of
+# `Base#label`, and it was excluded as `different_owner` (`trail`, which
+# `Base` lacks, as `no_such_method`). Both are possible now. `Base.new` is
+# exactly a `Base`, and `Other` reaches `Auditing` through a module but is
+# no subclass of `Base`, so those stay as they were.
+refs Auditing#label confirmed=1 possible=1 excluded=1
+refs Auditing#trail confirmed=0 possible=1 excluded=0
+refs Base#label confirmed=2 possible=0
+dead app.rb Auditing#trail=single-caller

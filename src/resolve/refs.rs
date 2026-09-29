@@ -301,17 +301,19 @@ fn tier(
         && !matches
         && target.is_some_and(|target| {
             receiver.singleton == query.singleton
-                && tree.inherits(target, &receiver.fqn)
-                && tree
-                    .lookup(target, query.singleton, &query.name)
-                    .is_some_and(|own| crate::tree::public_name(&own.owner) == target)
+                && below_reaches(tree, &receiver.fqn, target, query)
         })
     {
+        let why = if target.is_some_and(|target| tree.inherits(target, &receiver.fqn)) {
+            "the receiver is typed as an ancestor, and may be the subclass that defines this"
+        } else {
+            "the receiver is typed as an ancestor, and may be a subclass that mixes this in"
+        };
         return here(
             Tier::Possible,
             Some(receiver.fqn.clone()),
             found.map(|found| found.owner),
-            "the receiver is typed as an ancestor, and may be the subclass that defines this",
+            why,
             1,
             None,
         );
@@ -333,7 +335,7 @@ fn tier(
                 0,
             )),
             Delegated::To { fqn, bound: true }
-                if !query.singleton && tree.inherits(target, &fqn) && owns(target) =>
+                if !query.singleton && below_reaches(tree, &fqn, target, query) =>
             {
                 Some((
                     Tier::Possible,
@@ -440,6 +442,25 @@ fn tier(
             None,
         ),
     }
+}
+
+/// May an object of a class below `fqn` run `target`'s own `query` method:
+/// a subclass that defines it (DEC-140), or a subclass that mixes in the
+/// module `target` that does, ahead of whatever else defines it (DEC-213)?
+fn below_reaches(tree: &Tree, fqn: &str, target: &str, query: &Query) -> bool {
+    let lands = |class: &str| {
+        tree.lookup(class, query.singleton, &query.name)
+            .is_some_and(|own| crate::tree::public_name(&own.owner) == target)
+    };
+    if tree.inherits(target, fqn) {
+        return lands(target);
+    }
+    !query.singleton
+        && tree.kind_of(target) == Some("module")
+        && tree
+            .mixers_of(target)
+            .iter()
+            .any(|class| tree.inherits(class, fqn) && lands(class))
 }
 
 /// Where a delegate sends its name (DEC-166).
