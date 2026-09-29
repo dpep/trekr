@@ -957,6 +957,12 @@ output identical.
 | three servers, live heap together | 245 → 111 MB | 1220 → 482 MB | 3150 → 1595 MB |
 | three servers, footprint together | 475 → 170–245 MB | 1590 → 640 MB | 5450 → 2430 MB |
 
+**Since DEC-192–195** (2026-09-28): an index builds the snapshot, a method
+edit keeps it, and call sites are a posting list. On 85k distinct real Ruby
+files plus 15k variants (DEC-195), one quiet run: cold `--index` 42–44 →
+19–21 s, the first `--ancestors` after it 2.4 → 0.03 s, the store 1.5 →
+0.6 GB. The paragraph below is the state before.
+
 A query now pays for the tree only after the index under it moved, and then
 once: on a miss the build is the old assembly (1 s at 10×; 10–12 s at 30×
 straight after an index, when the declaration rows are no longer cached, and

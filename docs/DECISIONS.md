@@ -6922,3 +6922,58 @@ the one that is wrong about it — a save adding a class and a definition
 asked at once would answer from before the save. That wants its own
 decision, and a measurement of how often it is felt, which the usage log's
 `tree-built` flag now counts on its own.
+
+## DEC-195 — Where a 100k-file index goes now, and what did not clear the bar
+
+**The corpus.** Every distinct Ruby file on this machine — the checkouts in
+`~/code/lib/ruby` (rails, discourse, mastodon, CRuby, …), every installed
+gem, the installed Rubies' standard libraries, other local projects — copied into
+one git repository, keeping only the first copy of any content, since
+identical bytes are one blob and a duplicate would be a free skip: 85k
+files. The last 14.5k are the first 14.5k again with a distinct trailing comment,
+distinct blobs whose constants repeat. 10k and 50k are even strides through
+the same list. 472 MB of Ruby, 1.5 M definitions, 9.7 M calls at 100k.
+
+**The user's ten minutes** was DEC-191: the file map on a load that does not
+double the store. A cold index of the whole corpus was never that slow: 40 s
+at the start of this work, the machine shared. What is left, one quiet run,
+this branch against main, `--profile`:
+
+| 100k files | main | now |
+| --- | ---: | ---: |
+| cold `--index` | 42–44 s | **19–21 s** |
+| first `--ancestors` after it | 2.4 s | **0.03 s** |
+| first `--def` in a module after it | 1.5 s | **0.09 s** |
+| store | 1.5 GB | **0.6 GB** |
+
+Of the 20 s (DEC-193's run): the rows 10 s with the parse behind them, the
+index rebuild 4.9, the commit 1.2, the scan 0.9, `ANALYZE` 0.8, the tree
+1.5, the map 0.6. The parse alone is ~4 s of CPU across 8 workers; the
+single writer is still the wall, and its rows are now definitions and
+constant references.
+
+**Measured and not taken:**
+- **`mmap` off for the indexing connection.** With WAL, a mapped page read
+  asks the WAL index first, and a sample of the writer showed
+  `walFindFrame` under most page reads. Off: 50k cold 19.1 → 16.8 s, a
+  non-doubling load 36.2 → 37.2 s, both inside the noise of four and five
+  interleaved rounds at load 7–17.
+- **A 256 MB page cache for the write** (DEC-041 and DEC-057 tried larger
+  and smaller for other reasons): 50k cold 19.1 → 27.4 s median, worse in
+  three of five rounds.
+- **Lowering DEC-057's bulk threshold** (drop and rebuild the indexes for a
+  load of at least a quarter of the store): a 50k load into 50k, 83 → 68 s
+  median over four rounds with a p90 of 115 s, the other lanes running. Worth
+  measuring again on a quiet machine now that the rows are fewer; not
+  changed on that evidence.
+- **An outline that opens the store read-only** (DEC-190): 1–2 ms.
+
+**Not measured, and the next levers:**
+- **Gems one at a time.** `index_gems` walks, parses and writes each gem in
+  turn, ~36 files apiece on discourse, so the pool idles between gems and the
+  walk (`gem-walk`, 0.37 s of discourse's 6.7 s) runs on one thread. Parsing
+  the bundle as one stream while the writer takes gems in order would hide
+  both.
+- **The rows.** Definitions and constant references are now most of the
+  writer's work; DEC-061's interning of `nesting` and `name` is the sized
+  slimming for them.
