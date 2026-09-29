@@ -687,6 +687,12 @@ fn a_file_two_gems_share_is_parsed_once_and_answers_for_both() {
         )
         .unwrap();
     }
+    // Between them in the bundle's stream: a gem with no `lib/`, and one
+    // whose only file is a blob the first already parsed.
+    let gems = dir.join("vendor/bundle/ruby/3.3.0/gems");
+    fs::create_dir_all(gems.join("empty-1.0.0")).unwrap();
+    fs::create_dir_all(gems.join("gamma-1.0.0/lib")).unwrap();
+    fs::write(gems.join("gamma-1.0.0/lib/shared.rb"), shared).unwrap();
     fs::write(
         dir.join("Gemfile.lock"),
         concat!(
@@ -694,17 +700,21 @@ fn a_file_two_gems_share_is_parsed_once_and_answers_for_both() {
             "  remote: https://rubygems.org/\n",
             "  specs:\n",
             "    alpha (1.0.0)\n",
+            "    empty (1.0.0)\n",
+            "    gamma (1.0.0)\n",
             "    beta (1.0.0)\n",
             "\n",
             "DEPENDENCIES\n",
             "  alpha\n",
+            "  empty\n",
+            "  gamma\n",
             "  beta\n",
         ),
     )
     .unwrap();
 
     let out = trekr(&db, &dir, &["--index", "--profile", "--json"]);
-    assert_eq!(json(&out)["gems"]["indexed"], 2);
+    assert_eq!(json(&out)["gems"]["indexed"], 3);
     let timings: serde_json::Value =
         serde_json::from_str(String::from_utf8_lossy(&out.stderr).trim()).unwrap();
     // The app's file, both gems' own files, and the shared one once.

@@ -891,48 +891,24 @@ fn index_files(
     // Parsing fans out on the pool while this thread writes what has already
     // been parsed: the write is single-threaded and most of the cost, so the
     // parse hides behind it instead of running before it.
-    let started = std::time::Instant::now();
-    let profiling = profile.is_some();
+    let mut received = Received::new(profile.is_some());
     let (send, parsed) = std::sync::mpsc::sync_channel::<(Oid, extract::Parsed)>(256);
-    let mut slow: Vec<profile::SlowFile> = Vec::new();
-    let mut bytes_read = 0u64;
-    let mut fresh: Vec<Oid> = Vec::new();
     let (counts, parse_done) = std::thread::scope(|scope| {
         let parsing = scope.spawn(move || {
             pool.install(|| {
                 to_parse
                     .into_par_iter()
                     .for_each_with(send, |send, (oid, path)| {
-                        let started = std::time::Instant::now();
-                        let Ok(bytes) = std::fs::read(&path) else {
-                            return;
-                        };
-                        let facts = extract::extract(&bytes);
-                        let _ = send.send((
-                            oid.clone(),
-                            extract::Parsed {
-                                facts,
-                                bytes: bytes.len() as u64,
-                                elapsed: started.elapsed(),
-                                path: path.to_string_lossy().into_owned(),
-                            },
-                        ));
+                        if let Some(parsed) = parse_file(&path) {
+                            let _ = send.send((oid.clone(), parsed));
+                        }
                     })
             });
             std::time::Instant::now()
         });
-        let facts = parsed.into_iter().map(|(oid, p)| {
-            bytes_read += p.bytes;
-            if profiling {
-                slow.push(profile::SlowFile {
-                    path: p.path,
-                    ms: p.elapsed.as_secs_f64() * 1000.0,
-                    bytes: p.bytes,
-                });
-            }
-            fresh.push(oid.clone());
-            (oid, p.facts)
-        });
+        let facts = parsed
+            .into_iter()
+            .map(|(oid, parsed)| received.take(oid, parsed));
         let root = root.to_string_lossy();
         let counts = if bulk {
             store.write_bulk(&root, files, facts, git_state)
@@ -942,25 +918,83 @@ fn index_files(
         (counts, parsing.join().expect("the parse does not panic"))
     });
     let counts = counts?;
-    let timing = store.take_timing();
-    if let Some(profile) = profile.as_mut() {
-        // The two overlap: `parse` runs until the last file is parsed, and
-        // `store-write` is what the write took after that, less the parts
-        // that follow the rows, which are named on their own.
-        let after = timing.rebuild + timing.map + timing.commit;
-        profile.phase("parse", parse_done - started);
-        profile.phase("store-write", parse_done.elapsed().saturating_sub(after));
-        profile.phase("index-rebuild", timing.rebuild);
-        profile.phase("file-map", timing.map);
-        profile.phase("commit", timing.commit);
-        profile.bytes += bytes_read;
-        profile.merge_files(slow);
-    }
-    // Written now, so a later gem holding the same bytes does not parse them.
-    if let Some(known) = known.as_mut() {
-        known.extend(fresh);
-    }
+    received.finish(store, profile, known, parse_done);
     Ok(counts)
+}
+
+/// A file read and parsed for the writer, timed for `--profile`.
+fn parse_file(path: &Path) -> Option<extract::Parsed> {
+    let started = std::time::Instant::now();
+    let bytes = std::fs::read(path).ok()?;
+    let facts = extract::extract(&bytes);
+    Some(extract::Parsed {
+        facts,
+        bytes: bytes.len() as u64,
+        elapsed: started.elapsed(),
+        path: path.to_string_lossy().into_owned(),
+    })
+}
+
+/// What a write took from its parse, for the profile and the known set.
+struct Received {
+    started: std::time::Instant,
+    profiling: bool,
+    slow: Vec<profile::SlowFile>,
+    bytes: u64,
+    fresh: Vec<Oid>,
+}
+
+impl Received {
+    fn new(profiling: bool) -> Received {
+        Received {
+            started: std::time::Instant::now(),
+            profiling,
+            slow: Vec::new(),
+            bytes: 0,
+            fresh: Vec::new(),
+        }
+    }
+
+    fn take(&mut self, oid: Oid, parsed: extract::Parsed) -> (Oid, crate::core::Facts) {
+        self.bytes += parsed.bytes;
+        if self.profiling {
+            self.slow.push(profile::SlowFile {
+                path: parsed.path,
+                ms: parsed.elapsed.as_secs_f64() * 1000.0,
+                bytes: parsed.bytes,
+            });
+        }
+        self.fresh.push(oid.clone());
+        (oid, parsed.facts)
+    }
+
+    /// Once the write is in: its phases named, and what it parsed known.
+    fn finish(
+        self,
+        store: &mut Store,
+        profile: &mut Option<profile::Profile>,
+        known: &mut Option<HashSet<Oid>>,
+        parse_done: std::time::Instant,
+    ) {
+        let timing = store.take_timing();
+        if let Some(profile) = profile.as_mut() {
+            // The two overlap: `parse` runs until the last file is parsed, and
+            // `store-write` is what the write took after that, less the parts
+            // that follow the rows, which are named on their own.
+            let after = timing.rebuild + timing.map + timing.commit;
+            profile.phase("parse", parse_done - self.started);
+            profile.phase("store-write", parse_done.elapsed().saturating_sub(after));
+            profile.phase("index-rebuild", timing.rebuild);
+            profile.phase("file-map", timing.map);
+            profile.phase("commit", timing.commit);
+            profile.bytes += self.bytes;
+            profile.merge_files(self.slow);
+        }
+        // Written now, so a later gem holding the same bytes does not parse them.
+        if let Some(known) = known.as_mut() {
+            known.extend(self.fresh);
+        }
+    }
 }
 
 /// Index the gems this checkout resolves, skipping any already on this machine.
@@ -998,6 +1032,7 @@ fn index_gems(
     // an already-known gem still belongs to this app, and that is what makes a
     // position inside it answerable from here (DEC-029).
     let mut used: Vec<(String, String)> = Vec::new();
+    let mut fresh: Vec<PathBuf> = Vec::new();
     for entry in located {
         let named = format!("{} {}", entry.gem.name, entry.gem.version);
         if !entry.unread.is_empty() {
@@ -1047,17 +1082,13 @@ fn index_gems(
         let gem_root = std::fs::canonicalize(&gem_root).unwrap_or(gem_root);
         let root_str = gem_root.to_string_lossy().into_owned();
         used.push((root_str.clone(), entry.gem.name.clone()));
-        if store.has_checkout(&root_str)? {
+        if store.has_checkout(&root_str)? || fresh.contains(&gem_root) {
             report.already_indexed += 1;
             continue;
         }
-        // Only `lib/`: it is where a gem's public code lives, and a gem's
-        // spec/ and test/ trees are large and never navigated to.
-        let files = profile::timed(profile, "gem-walk", || scan::walk(&gem_root, "lib"));
-        if files.is_empty() {
-            continue;
-        }
-        let counts = index_files(store, &gem_root, &files, 0, known, pool, profile)?;
+        fresh.push(gem_root);
+    }
+    for counts in index_bundle(store, &fresh, known, pool, profile)? {
         report.indexed += 1;
         report.files += counts.files;
     }
@@ -1068,6 +1099,106 @@ fn index_gems(
         stdlib.hidden = store.hidden_default_gems(&repo)?;
     }
     Ok(report)
+}
+
+/// Files the bundle's stream parses at a time, and holds for the writer: two
+/// chunks' facts are in memory at once.
+const BUNDLE_CHUNK: usize = 128;
+
+/// Index the gems new to the store as one stream (DEC-232): every gem's
+/// `lib/` walked on the pool, every new blob parsed on it across gem
+/// boundaries, and each gem written in turn as its files arrive — where one
+/// gem at a time left the pool idle while each small gem was walked and
+/// written. What each gem indexed, for those with files.
+fn index_bundle(
+    store: &mut Store,
+    gems: &[PathBuf],
+    known: &mut Option<HashSet<Oid>>,
+    pool: &rayon::ThreadPool,
+    profile: &mut Option<profile::Profile>,
+) -> anyhow::Result<Vec<crate::store::Indexed>> {
+    if gems.is_empty() {
+        return Ok(Vec::new());
+    }
+    // Only `lib/`: it is where a gem's public code lives, and a gem's
+    // spec/ and test/ trees are large and never navigated to.
+    let walked: Vec<(&PathBuf, scan::Files)> = profile::timed(profile, "gem-walk", || {
+        pool.install(|| {
+            gems.par_iter()
+                .map(|gem| (gem, scan::walk(gem, "lib")))
+                .filter(|(_, files)| !files.is_empty())
+                .collect()
+        })
+    });
+    if walked.is_empty() {
+        return Ok(Vec::new());
+    }
+    if known.is_none() {
+        *known = Some(profile::timed(profile, "known-diff", || store.blob_oids())?);
+    }
+    // One path per unknown blob, in gem order: a blob two gems share is
+    // parsed for the first and known by the time the second is written.
+    let mut to_parse: Vec<(usize, Oid, PathBuf)> = Vec::new();
+    {
+        let known = known.as_ref().expect("just loaded");
+        let mut seen: HashSet<&Oid> = HashSet::new();
+        for (at, (root, files)) in walked.iter().enumerate() {
+            let wanted: HashSet<&Oid> = files.values().collect();
+            let before = to_parse.len();
+            for (rel, oid) in files.iter() {
+                if !known.contains(oid) && seen.insert(oid) {
+                    to_parse.push((at, oid.clone(), root.join(rel)));
+                }
+            }
+            if let Some(profile) = profile.as_mut() {
+                let parsed = to_parse.len() - before;
+                profile.blobs += wanted.len();
+                profile.parsed += parsed;
+                profile.skipped += wanted.len() - parsed;
+            }
+        }
+    }
+
+    // Parsed a chunk at a time on the pool, in order, while this thread
+    // writes the chunk before: each gem's facts arrive together and in turn.
+    let mut received = Received::new(profile.is_some());
+    let (send, parsed) =
+        std::sync::mpsc::sync_channel::<(usize, Oid, extract::Parsed)>(BUNDLE_CHUNK);
+    let (indexed, parse_done) = std::thread::scope(|scope| {
+        let parsing = scope.spawn(move || {
+            for chunk in to_parse.chunks(BUNDLE_CHUNK) {
+                let parsed: Vec<_> = pool.install(|| {
+                    chunk
+                        .par_iter()
+                        .filter_map(|(at, oid, path)| Some((*at, oid.clone(), parse_file(path)?)))
+                        .collect()
+                });
+                for item in parsed {
+                    // The writer failed and let go; its error is the answer.
+                    if send.send(item).is_err() {
+                        return std::time::Instant::now();
+                    }
+                }
+            }
+            std::time::Instant::now()
+        });
+        let mut parsed = parsed.into_iter().peekable();
+        let written: rusqlite::Result<Vec<_>> = walked
+            .iter()
+            .enumerate()
+            .map(|(at, (root, files))| {
+                let facts = std::iter::from_fn(|| parsed.next_if(|(gem, _, _)| *gem == at))
+                    .map(|(_, oid, p)| received.take(oid, p));
+                store.write(&root.to_string_lossy(), files, facts, 0)
+            })
+            .collect();
+        // A write that failed lets go of the rest, and the parse stops.
+        drop(parsed);
+        (written, parsing.join().expect("the parse does not panic"))
+    });
+    let indexed = indexed?;
+    received.finish(store, profile, known, parse_done);
+    Ok(indexed)
 }
 
 /// Index a Ruby's stdlib once per machine, with the files its default gems

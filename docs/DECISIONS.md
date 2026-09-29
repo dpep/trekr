@@ -7641,3 +7641,46 @@ an empty list where it found no entry, and both answer nothing. Byte-identical
 to main on the verify set (DEC-230's list) and the 100k `--def` and
 `Hash#[]` answers.
 
+## DEC-232 — The bundle's gems are indexed as one stream
+
+**Decided.** `index_gems` settles which gems are new, then `index_bundle`
+takes them together: every gem's `lib/` walked on the pool at once, every
+blob none of them has seen parsed on the pool in gem order, a chunk of 128
+at a time, and each gem written in turn, in the bundle's transaction, as its
+files arrive. A blob two gems share is parsed for the first and known by the
+second's write, as before. The app's own index (`index_files`) is unchanged
+and shares the parse and the profile's accounting with it
+(`parse_file`, `Received`).
+
+**Why.** DEC-195's unmeasured lever: one gem at a time, the walk (reading
+and hashing each file of `lib/`) ran on one thread, and each gem's parse —
+~36 files on discourse — could not start until the gem before it was
+written, so the pool idled between gems.
+
+**Measured.** A cold `--index` into a fresh store (its snapshot included),
+each build its own, interleaved, medians (p90), load 4–6 from other work:
+
+| | main | walk in parallel only | one stream | rounds |
+| --- | ---: | ---: | ---: | --- |
+| rails + 73 gems | 1.47 (1.87) s | 1.45 (1.52) s | **1.38** (1.54) s | 5 |
+| mastodon + 301 gems | 3.31 (5.62) s | 3.21 (3.61) s | **3.12** (3.78) s | 5 |
+| discourse + its gems | 4.75 (5.87) s | 4.76 (5.05) s | **4.25** (4.44) s | 5 |
+| 100k files + mastodon's bundle | 20.6 (29.5) s | 18.7 (19.4) s | **18.1** (25.6) s | 3 |
+
+`gem-walk` falls 1,522 → 266 ms on the last, 347 → 127 on discourse. CPU is
+0.1–0.6 s more, and peak footprint 5–25 MB more on the three apps across two
+campaigns (47 MB less at 100k files). Walking in parallel
+and then indexing one gem at a time — the contained version, twelve lines —
+takes most of the gain at 100k files and none on discourse, whose gems are
+many and small; the stream is what keeps the pool fed there.
+
+**Chunks of 128, not 512.** The first cut held 512 files' facts in the
+channel and 512 more being parsed: 17–38 MB over main on the three apps,
+for walls no better than 128's within the noise.
+
+**Checked.** Each index's own answer (files, blobs, parsed, gems) is
+identical, and so is every answer on the verify set (DEC-230), whose stores
+all index a bundle. An e2e case puts a gem with no `lib/` and one whose only
+file another gem already parsed between two gems, and requires three gems
+indexed and the shared blob parsed once.
+

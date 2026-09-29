@@ -41,6 +41,10 @@
 
 ### Changed
 
+- **A cold `--index` of an app with a bundle is 6–12 % faster.** The
+  bundle's gems are walked, parsed and written as one stream rather than one
+  gem at a time: discourse 4.75 → 4.25 s, mastodon 3.31 → 3.12 s (DEC-232).
+
 - **A definition or reference inside a module answers faster again.** A
   method lookup no longer allocates a key per step of the chain it walks:
   `--def` on `respond_to?` in `ActiveSupport::Tryable` on rails 65 → 49 ms,
