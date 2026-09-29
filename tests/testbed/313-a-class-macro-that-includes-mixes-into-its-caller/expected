@@ -1,0 +1,15 @@
+# draper's `delegate_all` is a class method whose body is `include
+# Draper::AutomaticDelegation`; a decorator's body calls it, and Ruby runs
+# the include on that decorator. The mixin sat in a method, which DEC-097
+# rightly records nowhere lexically, so `--ancestors CommentDecorator` lacked
+# it and every delegated call was "no such method". A class body's call of
+# a class macro that includes, prepends or extends a constant, unconditionally,
+# adds that edge to the calling class; a subclass that never calls it gains
+# nothing, and neither does an include behind a condition.
+ancestors CommentDecorator CommentDecorator,AutomaticDelegation,Decorator
+ancestors PlainDecorator PlainDecorator,Decorator
+card CommentDecorator#delegated status=resolved
+card PlainDecorator#delegated status=no_such_method
+ancestors Item Item,Tracked,Record
+card Item#tracked? status=resolved
+card Item.find_tracked status=resolved

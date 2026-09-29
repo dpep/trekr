@@ -412,6 +412,10 @@ pub(crate) struct Tree {
     /// (DEC-130), when handed over whole by a tree that loads nothing;
     /// otherwise read from the store on first need.
     dynamic_rows: Mutex<Option<Vec<EdgeRow>>>,
+    /// What each class gains by calling a class macro that mixes a constant
+    /// into it (DEC-313): `include`, `prepend` or `extend`, and the target as
+    /// the macro writes it. Placed once the tree can look methods up.
+    macro_mixins: HashMap<String, Vec<(crate::core::Relation, Target)>>,
     /// The markers placed: by the scope's fully-qualified name, and by the
     /// file that writes them (DEC-162).
     dynamic: OnceLock<Placed>,
@@ -902,7 +906,7 @@ impl Tree {
                 rows.extend(table_names);
                 tree.defs
                     .set("table_name".to_string(), Arc::new(tree.defs_of(rows)));
-                tree.loader = Some(Loader::new(own, roots));
+                tree.loader = Some(Loader::new(own, roots.clone()));
                 phases.mark("core-and-table-names");
             }
             // An in-memory store cannot be reopened, so there is nothing to
@@ -918,8 +922,95 @@ impl Tree {
                 phases.mark("index-methods");
             }
         }
+        let macros = store.macro_mixins(&roots)?;
+        if !macros.is_empty() {
+            let mut calls = HashMap::new();
+            for row in &macros {
+                if let Some(mixin) = crate::core::MacroMixin::parse(&row.target)
+                    && !calls.contains_key(&mixin.method)
+                {
+                    let found = store.body_calls(&roots, &mixin.method)?;
+                    calls.insert(mixin.method, found);
+                }
+            }
+            tree.place_macro_mixins(macros, &calls);
+            phases.mark("macro-mixins");
+        }
         phases.report();
         Ok(tree)
+    }
+
+    /// Put each class macro's mixin on every class whose body calls the
+    /// macro, where that class's class-side lookup of it lands on the macro
+    /// (DEC-313), as DEC-162 places a macro's markers. Chains and lookups
+    /// made while placing are made without them, and are dropped after.
+    fn place_macro_mixins(
+        &mut self,
+        rows: Vec<EdgeRow>,
+        calls: &HashMap<String, Vec<crate::store::BodyCallRow>>,
+    ) {
+        let mut placed: HashMap<String, Vec<(crate::core::Relation, Target)>> = HashMap::new();
+        for row in rows {
+            let Some(mixin) = crate::core::MacroMixin::parse(&row.target) else {
+                continue;
+            };
+            let Some((owner, nesting)) = self.edge_owner(&row.owner) else {
+                continue;
+            };
+            for call in calls
+                .get(&mixin.method)
+                .map(Vec::as_slice)
+                .unwrap_or_default()
+            {
+                let Some(caller) = self.scope_fqn(&call.nesting) else {
+                    continue;
+                };
+                let lands = self
+                    .lookup(&caller, true, &mixin.method)
+                    .is_some_and(|found| {
+                        found.owner == owner && found.singleton == mixin.singleton
+                    });
+                if !lands {
+                    continue;
+                }
+                let target = Target {
+                    name: mixin.target.clone(),
+                    nesting: nesting.clone(),
+                };
+                let edges = placed.entry(caller).or_default();
+                if !edges
+                    .iter()
+                    .any(|(how, known)| *how == mixin.how && known.name == target.name)
+                {
+                    edges.push((mixin.how, target));
+                }
+            }
+        }
+        if placed.is_empty() {
+            return;
+        }
+        self.macro_mixins = placed;
+        self.ancestors = Memo::new();
+        self.singleton_chains = Memo::new();
+        self.lookups = Memo::new();
+        self.includers = OnceLock::new();
+        self.mixers = OnceLock::new();
+        self.agreed_returns = Memo::new();
+    }
+
+    /// The mixins a class gains from the class macros its body calls
+    /// (DEC-313), of one relation.
+    fn macro_mixins_of(&self, fqn: &str, how: crate::core::Relation) -> Vec<Written<'_>> {
+        self.macro_mixins
+            .get(fqn)
+            .map(|edges| {
+                edges
+                    .iter()
+                    .filter(|(relation, _)| *relation == how)
+                    .map(|(_, target)| target.written())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// One checkout's namespace alone — no core, no gems, nothing to load
@@ -1037,6 +1128,7 @@ impl Tree {
             ancestors: Memo::new(),
             agreed_returns: Memo::new(),
             dynamic_rows: Mutex::new(None),
+            macro_mixins: HashMap::new(),
             dynamic: OnceLock::new(),
             markers: OnceLock::new(),
             callers: Memo::new(),
@@ -1707,7 +1799,15 @@ impl Tree {
         };
         self.innermost(|frame| frame.parent = parent);
 
-        for (kind, target) in entry.map(EntryRef::mixins).unwrap_or_default() {
+        let mut mixins = entry.map(EntryRef::mixins).unwrap_or_default();
+        for (how, kind) in [
+            (crate::core::Relation::Include, MixinKind::Include),
+            (crate::core::Relation::Prepend, MixinKind::Prepend),
+        ] {
+            let made = self.macro_mixins_of(fqn, how);
+            mixins.extend(made.into_iter().map(|target| (kind, target)));
+        }
+        for (kind, target) in mixins {
             let mut ids = self.chain_of(&target, out);
             self.innermost(|frame| match kind {
                 MixinKind::Prepend => {
@@ -3077,7 +3177,8 @@ impl Tree {
             if seen.insert((class.clone(), true)) {
                 chain.push((class.clone(), true));
             }
-            let extends = entry.map(EntryRef::extends).unwrap_or_default();
+            let mut extends = entry.map(EntryRef::extends).unwrap_or_default();
+            extends.extend(self.macro_mixins_of(&class, crate::core::Relation::Extend));
             for target in extends.iter().rev() {
                 // `extend self` is the module-function idiom: the module
                 // extends itself, so its own instance methods become singleton

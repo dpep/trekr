@@ -320,6 +320,12 @@
 
 ### Fixed
 
+- **A class macro's `include` reaches the class that calls it.** draper's
+  `delegate_all`, a class method whose body is `include
+  Draper::AutomaticDelegation`, left `--ancestors CommentDecorator` without
+  it. A class body's call of a macro that unconditionally includes,
+  prepends or extends a constant now gives that class the mixin (DEC-313).
+
 - **Text output says a little more.** A gem list cut short in `--index`
   ends "(--json lists all)"; `--index` says how many files repeat another's
   bytes when there are fewer blobs than files; and `--refs Owner#method

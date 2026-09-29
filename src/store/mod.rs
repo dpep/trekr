@@ -908,10 +908,28 @@ impl Store {
                FROM ancestry a
                JOIN file f ON f.blob_id = a.blob_id
                JOIN checkout c ON c.id = f.checkout_id
-              WHERE c.root IN ({}) AND a.relation != 'dynamic'
+              WHERE c.root IN ({}) AND a.relation NOT IN ('dynamic', 'macro')
               ORDER BY {}, f.path, a.line, a.col",
             numbered(1, roots.list.len()),
             layered(roots.list.len())
+        ))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(&roots.list), edge_row)?;
+        shown(roots, rows)
+    }
+
+    /// The mixins class macros send to whichever class body calls them: the
+    /// `macro` edges alone (DEC-313), few, placed once a tree is built.
+    pub(crate) fn macro_mixins(&self, roots: &Roots) -> Result<Vec<EdgeRow>> {
+        let count = roots.list.len();
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT a.owner, a.relation, a.target, c.root || '/' || f.path, a.line
+               FROM ancestry a
+               JOIN file f ON f.blob_id = a.blob_id
+               JOIN checkout c ON c.id = f.checkout_id
+              WHERE c.root IN ({}) AND a.relation = 'macro'
+              ORDER BY {}, f.path, a.line, a.col",
+            numbered(1, count),
+            layered(count)
         ))?;
         let rows = stmt.query_map(rusqlite::params_from_iter(&roots.list), edge_row)?;
         shown(roots, rows)

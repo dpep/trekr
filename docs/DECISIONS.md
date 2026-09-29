@@ -9043,3 +9043,34 @@ unchanged.
 models' own `scope :ordered` declarations as possible references, and
 faraday's `attr_reader :url_prefix` (connection.rb:28) was a possible
 caller of the reader it declares.
+
+## DEC-313 — A class macro's mixin lands on the class body that calls it
+
+**Decided.** An `include`, `prepend` or `extend` of a constant written in a
+method, on `self`, unconditionally and outside any block, is recorded as a
+`macro` edge on the method's owner (`core::MacroMixin`:
+`include|.delegate_all|Draper::AutomaticDelegation`). Once a tree is built,
+each such edge is placed on every class whose body calls the method on
+itself (DEC-162's body calls) and whose class-side lookup of it lands on
+that method — a subclass of the class that defines `def self.delegate_all`,
+or a class that extends the module whose instance method it is. The class
+gains the mixin as if its body wrote it: after its own mixins, so first
+among them in its chain.
+
+- **Still no lexical edge.** DEC-097's reason stands: `has_secure_password`'s
+  `include` in `ClassMethods` means the model, and recorded on the module
+  it invented an ancestor. The edge is placed only on a caller.
+- **Not in the snapshot.** The edges are read and placed per tree, after
+  the namespace, because a caller's body call is no namespace fact: a class
+  that starts calling the macro would not move the snapshot's key. Chains and
+  lookups made while placing are made without the new edges and dropped.
+- **A mixin that may not run is no edge**, as DEC-097 has it: `include
+  Extras if on` in the macro adds nothing, and nor does one in a block.
+- **One level.** A macro whose caller gains the macro's own caller's next
+  macro is not followed; nor is a macro called from `included do` or a
+  block, as for DEC-162.
+
+**Why.** The 0.8.1 testers: draper's `delegate_all` is `def self.delegate_all;
+include Draper::AutomaticDelegation; end`, called in each decorator's body.
+`--ancestors CommentDecorator` lacked `AutomaticDelegation`, so every call the
+decorator delegates to its object was "no such method".

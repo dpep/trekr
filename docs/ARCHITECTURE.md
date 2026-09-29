@@ -174,6 +174,13 @@ Two things the blob layer cannot know, resolved here:
   A call in the block, or in a `def` there, is typed as that class
   (`Tree::hooked`, read from the `load_hooks` edges on first need; DEC-214).
 
+**A class macro's mixin lands on its callers** (DEC-313). An `include`,
+`prepend` or `extend` of a constant written in a method, unconditionally,
+writes an `ancestry` row of relation `macro` on the method's owner
+(`core::MacroMixin`). Assembly never sees it; `Tree::build` places each on
+the classes whose body calls the method and whose class-side lookup lands on
+it, after the snapshot, and linearization reads them beside the class's own.
+
 **A scope that makes methods from unnamed names is marked** (DEC-130).
 `define_method` whose name nothing literal spells, and a `class_eval` string,
 write an `ancestry` row of relation `dynamic`. Assembly drops it; the tree

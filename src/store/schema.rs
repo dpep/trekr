@@ -75,7 +75,7 @@ CREATE TABLE def (
 CREATE TABLE ancestry (
   blob_id  INTEGER NOT NULL REFERENCES blob(id) ON DELETE CASCADE,
   owner    TEXT    NOT NULL,
-  relation TEXT    NOT NULL,              -- superclass | include | prepend | extend | singleton_prepend | load_hooks | dynamic
+  relation TEXT    NOT NULL,              -- superclass | include | prepend | extend | singleton_prepend | load_hooks | dynamic | macro
   target   TEXT    NOT NULL,              -- constant as written, or 'self'; for dynamic, maker[|side|shape]
   line     INTEGER NOT NULL,
   col      INTEGER NOT NULL

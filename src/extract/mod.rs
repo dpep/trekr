@@ -2229,6 +2229,11 @@ impl<'pr> Extractor<'_> {
         let Some(relation) = mixin_relation(macro_name) else {
             return false;
         };
+        if self.in_method_body() {
+            // Still an ordinary call site: it runs when the method does.
+            self.record_macro_mixin(relation, args);
+            return false;
+        }
         let Some(mut owner) = self.mixin_owner() else {
             return false;
         };
@@ -2267,6 +2272,48 @@ impl<'pr> Extractor<'_> {
             }
         }
         any
+    }
+
+    /// `include M` in a class method, or in a module's method that classes
+    /// extend, runs on whichever class body calls the method (DEC-313):
+    /// recorded on the method's owner, for the tree to place on each caller.
+    /// Only unconditionally and outside any block: a mixin that may not run
+    /// is no edge (DEC-097).
+    fn record_macro_mixin(&mut self, relation: Relation, args: &[Node<'pr>]) {
+        let Some(frame) = self.frames.last() else {
+            return;
+        };
+        let Some(method) = frame.method.clone() else {
+            return;
+        };
+        if frame.blocks > 0
+            || self.conditional > 0
+            || self.nesting.is_empty()
+            || !self.evals.is_empty()
+            || self.in_group_body()
+            || self.in_load_hook().is_some()
+        {
+            return;
+        }
+        let singleton = self.self_is_class();
+        for arg in args.iter().rev() {
+            let Some(target) = const_name(arg) else {
+                continue;
+            };
+            let mixin = crate::core::MacroMixin {
+                how: relation,
+                singleton,
+                method: method.clone(),
+                target,
+            };
+            let pos = self.pos(arg.location().start_offset());
+            self.facts.ancestry.push(Ancestry {
+                owner: self.nesting.clone(),
+                relation: Relation::Macro,
+                target: mixin.encode(),
+                pos,
+            });
+        }
     }
 
     /// The scope an `include` on `self` written here mixes into.
@@ -6070,7 +6117,8 @@ mod rails_dsl_tests {
     #[test]
     fn a_mixin_inside_a_method_is_not_this_scopes_ancestor() {
         let facts = extract(b"module M\n  def install\n    include Extra\n  end\nend\n");
-        assert!(facts.ancestry.is_empty());
+        // Only the macro's edge, for the classes that call it (DEC-313).
+        assert!(facts.ancestry.iter().all(|e| e.relation == Relation::Macro));
         // Still a call — `include` really is `Module#include`.
         assert!(facts.calls.iter().any(|c| c.name == "include"));
     }
@@ -6082,7 +6130,12 @@ mod rails_dsl_tests {
         let body = extract(b"class W\n  include Extra\nend\n");
         assert_eq!(body.ancestry.len(), 1);
         let deferred = extract(b"class W\n  def self.widen\n    include Extra\n  end\nend\n");
-        assert!(deferred.ancestry.is_empty());
+        let targets: Vec<(Relation, &str)> = deferred
+            .ancestry
+            .iter()
+            .map(|e| (e.relation, e.target.as_str()))
+            .collect();
+        assert_eq!(targets, [(Relation::Macro, "include|.widen|Extra")]);
     }
 
     /// Somebody else's `concerning` is not Rails'. A non-constant argument is

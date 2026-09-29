@@ -287,7 +287,7 @@ impl Facts {
             eat(&def.end_line.to_le_bytes());
         }
         for edge in &self.ancestry {
-            if namespace_only && edge.relation == Relation::Dynamic {
+            if namespace_only && matches!(edge.relation, Relation::Dynamic | Relation::Macro) {
                 continue;
             }
             for scope in &edge.owner {
@@ -595,6 +595,10 @@ pub(crate) enum Relation {
     /// `class_eval` string that was not read. The target is the method that
     /// does it. No ancestor either: it is why "no such method" is a guess.
     Dynamic,
+    /// A class macro's mixin: the owner's method includes, prepends or
+    /// extends the target into whichever class body calls it (DEC-313). The
+    /// target is a `MacroMixin`, encoded.
+    Macro,
 }
 
 impl Relation {
@@ -618,6 +622,7 @@ impl Relation {
             Relation::SingletonPrepend => "singleton_prepend",
             Relation::LoadHooks => "load_hooks",
             Relation::Dynamic => "dynamic",
+            Relation::Macro => "macro",
         }
     }
 
@@ -630,7 +635,50 @@ impl Relation {
             "singleton_prepend" => Relation::SingletonPrepend,
             "load_hooks" => Relation::LoadHooks,
             "dynamic" => Relation::Dynamic,
+            "macro" => Relation::Macro,
             _ => return None,
+        })
+    }
+}
+
+/// What a `macro` edge's target says (DEC-313): `def self.delegate_all;
+/// include AutomaticDelegation; end` is `include|.delegate_all|AutomaticDelegation`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MacroMixin {
+    /// `include`, `prepend` or `extend`.
+    pub(crate) how: Relation,
+    /// The macro is a class method of its owner, not an instance method of
+    /// a module that classes extend.
+    pub(crate) singleton: bool,
+    /// The macro's name: what a class body calls.
+    pub(crate) method: String,
+    /// The constant mixed in, as written in the macro.
+    pub(crate) target: String,
+}
+
+impl MacroMixin {
+    pub(crate) fn encode(&self) -> String {
+        let side = if self.singleton { '.' } else { '#' };
+        format!(
+            "{}|{side}{}|{}",
+            self.how.as_str(),
+            self.method,
+            self.target
+        )
+    }
+
+    pub(crate) fn parse(text: &str) -> Option<MacroMixin> {
+        let mut parts = text.splitn(3, '|');
+        let how = Relation::parse(parts.next()?)?;
+        let called = parts.next()?;
+        let singleton = called.starts_with('.');
+        let method = called.get(1..)?.to_string();
+        let target = parts.next()?.to_string();
+        Some(MacroMixin {
+            how,
+            singleton,
+            method,
+            target,
         })
     }
 }
