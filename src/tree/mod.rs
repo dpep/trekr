@@ -360,8 +360,10 @@ pub(crate) struct Tree {
     /// and an override search all ask about one name (DEC-025).
     loaded: RefCell<HashSet<String>>,
     methods: RefCell<Vec<MethodDef>>,
-    /// (owner, singleton, name) → definitions. A reopened class gives several.
-    by_owner: RefCell<HashMap<(String, bool, String), Vec<usize>>>,
+    /// name → owner → definitions, instance side then singleton. A reopened
+    /// class gives several. By name first, so walking a chain for one name
+    /// probes by the owner's `&str` and builds no key (DEC-231).
+    by_owner: RefCell<HashMap<String, Owners>>,
     /// name → every definition anywhere, for ranked residue.
     by_name: RefCell<HashMap<String, Vec<usize>>>,
     /// `named`'s answers, which are final once a name is loaded.
@@ -492,6 +494,10 @@ impl Chain {
         })
     }
 }
+
+/// A name's definitions by owner: indices into the methods, instance side
+/// then singleton.
+type Owners = HashMap<String, [Vec<usize>; 2]>;
 
 /// A lookup, as `lookup_along` keys it: (fqn, singleton, name, as_self).
 type LookupKey = (String, bool, String, bool);
@@ -2571,22 +2577,16 @@ impl Tree {
             let owners = self.owners_of(&row);
             let method = self.method_def(row);
             let index = methods.len();
+            let side = usize::from(method.singleton);
+            let named = by_owner.entry(method.name.clone()).or_default();
             for owner in owners {
-                by_owner
-                    .entry((owner.clone(), method.singleton, method.name.clone()))
-                    .or_default()
-                    .push(index);
+                named.entry(owner.clone()).or_default()[side].push(index);
                 // The carrier owns the schema's methods but is never *declared*,
                 // so it cannot be an ancestor — an include edge to it would not
                 // resolve. The columns are keyed onto the model instead, and
                 // nothing phantom enters the constant namespace.
-                if let Some(models) = self.carriers.get(&owner) {
-                    for model in models {
-                        by_owner
-                            .entry((model.clone(), method.singleton, method.name.clone()))
-                            .or_default()
-                            .push(index);
-                    }
+                for model in self.carriers.get(&owner).into_iter().flatten() {
+                    named.entry(model.clone()).or_default()[side].push(index);
                 }
             }
             by_name.entry(method.name.clone()).or_default().push(index);
@@ -3015,6 +3015,7 @@ impl Tree {
         real_only: bool,
     ) -> Option<Landing> {
         let by_owner = self.by_owner.borrow();
+        let owners = by_owner.get(name)?;
         let methods = self.methods.borrow();
         // What Rails generates into a module the class includes as it is
         // made — a column, an `enum`, an association — sits behind the class
@@ -3023,13 +3024,13 @@ impl Tree {
         // declaration redefines the column's, as Rails' attribute API does.
         let mut generated: Option<(usize, &str)> = None;
         for (at, (owner, owner_singleton)) in chain.iter().skip(from).enumerate() {
-            if at > 0 && self.kind_of(owner) == Some("class") && generated.is_some() {
+            if at > 0 && generated.is_some() && self.kind_of(owner) == Some("class") {
                 break;
             }
-            let key = (owner.to_string(), owner_singleton, name.to_string());
-            let Some(hits) = by_owner.get(&key) else {
+            let Some(sides) = owners.get(owner) else {
                 continue;
             };
+            let hits = &sides[usize::from(owner_singleton)];
             let usable = |i: &&usize| {
                 let method = &methods[**i];
                 method.is_definition() && !(real_only && method.site.is_rbi())
@@ -3073,9 +3074,12 @@ impl Tree {
     ) -> Option<(MethodDef, String)> {
         let by_owner = self.by_owner.borrow();
         let methods = self.methods.borrow();
-        let key = (method.owner.clone(), method.singleton, method.name.clone());
         let in_stdlib = self.in_stdlib(&method.site.path);
-        let stub = by_owner.get(&key).and_then(|hits| {
+        let hits = by_owner
+            .get(&method.name)
+            .and_then(|owners| owners.get(&method.owner))
+            .map(|sides| &sides[usize::from(method.singleton)]);
+        let stub = hits.and_then(|hits| {
             hits.iter().rev().find_map(|i| {
                 let declared = &methods[*i];
                 let describes = declared.site.is_rbi()
@@ -3092,14 +3096,15 @@ impl Tree {
         // and the real one are the method RBS describes.
         let rubys = in_stdlib || corelib::is_core(&method.site.path);
         stub.or_else(|| {
+            let key = (method.owner.clone(), method.singleton, method.name.clone());
             let declared = self.stdlib_signature(&key).filter(|_| rubys)?;
             let returns = declared.returns_for(argc, block)?.to_string();
             Some((declared.clone(), returns))
         })
     }
 
-    /// The return types RBS gives the stdlib's Ruby methods, keyed as
-    /// `by_owner` is (DEC-220).
+    /// The return types RBS gives the stdlib's Ruby methods, by (owner,
+    /// singleton, name) (DEC-220).
     fn stdlib_signature(&self, key: &(String, bool, String)) -> Option<MethodDef> {
         // Lent only where the stdlib they describe is indexed.
         self.stdlib.as_ref()?;
@@ -3592,9 +3597,11 @@ impl Tree {
         {
             let by_owner = self.by_owner.borrow();
             let methods = self.methods.borrow();
-            for ((owner, singleton, _), hits) in by_owner.iter() {
-                for method in hits.iter().map(|i| &methods[*i]) {
-                    visit(owner, *singleton, method);
+            for (owner, sides) in by_owner.values().flatten() {
+                for (side, hits) in sides.iter().enumerate() {
+                    for method in hits.iter().map(|i| &methods[*i]) {
+                        visit(owner, side == 1, method);
+                    }
                 }
             }
         }

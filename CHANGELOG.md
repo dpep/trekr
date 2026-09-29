@@ -41,6 +41,11 @@
 
 ### Changed
 
+- **A definition or reference inside a module answers faster again.** A
+  method lookup no longer allocates a key per step of the chain it walks:
+  `--def` on `respond_to?` in `ActiveSupport::Tryable` on rails 65 → 49 ms,
+  on a 100k-file checkout 0.47 → 0.30 s (DEC-231).
+
 - **A long `--refs` answer in `--json` or `--ndjson` takes half the
   memory.** Its references, and a bare-name listing's rows, are written as
   they are rendered rather than built whole first; the output is

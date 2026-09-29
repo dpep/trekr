@@ -7607,3 +7607,37 @@ sets, the rails `--refs` 40- and 51-query sets, `--dead` on three corpora,
 the probe, the clicks) and on the 100k `Hash#[]` in `--json`, `--ndjson` and
 text. A unit test renders a listing and a row set both ways, empty
 included, and requires the same bytes.
+
+## DEC-231 — A method lookup walks a name's owners without building a key per step
+
+**Decided.** The tree's method table is keyed by name, then owner, then side
+(`by_owner: name → owner → [instance, singleton]`), where it was keyed by the
+triple `(owner, singleton, name)`. `first_in_chain` — the walk every lookup
+makes down a chain — takes the name's owners once and probes each chain
+element by its `&str`. Its early stop at the next class after a generated
+method now asks whether one is held before it asks the snapshot whether the
+element is a class.
+
+**Why, measured.** DEC-200 named it: sampled at 1 ms, `first_in_chain` was
+54 % of a `--def` inside a module on the 100k corpus — per chain element two
+`String`s allocated for the key, hashed, and freed (~40 % of the function),
+and a snapshot lookup of the element's kind (~40 %) that answered a question
+only asked once a generated method was held, which it almost never is.
+
+`respond_to?` in `ActiveSupport::Tryable` (DEC-200's query), each build on
+its own store, interleaved, medians (p90), load 7–8 from other work:
+
+| | main | this | rounds |
+| --- | ---: | ---: | --- |
+| rails | 65 (66) ms | **49** (50) ms | 11 |
+| mastodon | 81 (82) ms | **63** (65) ms | 11 |
+| 100k files | 467 (468) ms | **296** (297) ms | 7 |
+
+Peak footprint unchanged (31, 35 and 239 MB).
+
+**Checked.** The table holds the same indices in the same order for every
+(owner, side, name); a lookup on the side a name was never defined on finds
+an empty list where it found no entry, and both answer nothing. Byte-identical
+to main on the verify set (DEC-230's list) and the 100k `--def` and
+`Hash#[]` answers.
+
