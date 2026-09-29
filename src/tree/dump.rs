@@ -52,15 +52,14 @@ fn dump_linearizations() {
             )
         })
         .collect();
-    let memo = tree.ancestors.borrow();
+    let memo = tree.ancestors.values();
     eprintln!(
         "{} names linearized in {} ms; {} chains memoized, {} of them closing a cycle",
         rows.len(),
         started.elapsed().as_millis(),
         memo.len(),
-        memo.values().filter(|m| m.cyclic).count()
+        memo.iter().filter(|m| m.cyclic).count()
     );
-    drop(memo);
     rows.sort();
     let mut file = std::fs::File::create(out).unwrap();
     for row in rows {

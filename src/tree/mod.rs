@@ -35,10 +35,12 @@ pub(crate) use files::sweep as sweep_snapshots;
 
 use crate::core::{Param, runtime};
 use crate::store::{DeclRow, EdgeRow, MethodRow, Roots, Store};
+use memo::Memo;
 use serde::Serialize;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
+use std::sync::Arc;
 
 /// A name's declaration site — the answer to "where is this?".
 #[derive(Clone, Debug, Serialize)]
@@ -343,6 +345,8 @@ impl MethodDef {
 }
 
 pub(crate) struct Tree {
+    /// Tells this tree's frames from another's on a thread's stack.
+    id: u64,
     /// The checkout this tree was built for. Everything outside it came from a
     /// gem or from core, which is a ranking signal: code in the repo you are
     /// standing in is likelier to be what you meant than a dependency's.
@@ -394,13 +398,8 @@ pub(crate) struct Tree {
     /// every mixin edge once is far cheaper than linearizing every class,
     /// which is what `includers` pays.
     mixers: RefCell<Option<HashMap<String, Vec<String>>>>,
-    /// Linearizations in progress, innermost last. A name asked for again
-    /// while its own frame is here is a cycle: through a superclass or mixin
-    /// edge (not valid Ruby), or through `descend` resolving a mixin's path
-    /// via the class's own ancestors (DEC-200).
-    linearizing: RefCell<Vec<Frame>>,
     /// Every name's chain, as it is when that name is the one asked (DEC-200).
-    ancestors: RefCell<HashMap<String, Memo>>,
+    ancestors: Memo<String, Memoized>,
     /// `agreed_return`, per (name, argc, block): a pure function of the
     /// tree, asked once per call site (DEC-201).
     agreed_returns: RefCell<HashMap<ReturnKey, Option<Rc<AgreedReturn>>>>,
@@ -422,10 +421,24 @@ pub(crate) struct Tree {
     /// hand it literal names (DEC-212): by name, then class, then side,
     /// worked out per name as a lookup misses it (DEC-235).
     made: RefCell<HashMap<String, Rc<Made>>>,
-    /// `place_dynamic` is running, and its own lookups must not wait on it.
-    placing: std::cell::Cell<bool>,
     /// Hook name → the classes that run it (DEC-098), read on first need.
     hooks: RefCell<Option<HashMap<String, Vec<String>>>>,
+}
+
+/// Every tree's `id`.
+static TREES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+thread_local! {
+    /// Linearizations in progress on this thread, innermost last, each
+    /// tagged with its tree. A name asked for again while its own frame is
+    /// here is a cycle: through a superclass or mixin edge (not valid Ruby),
+    /// or through `descend` resolving a mixin's path via the class's own
+    /// ancestors (DEC-200). Per thread because a frame is one call's: the
+    /// tree never hands work to another thread while one is open.
+    static LINEARIZING: RefCell<Vec<Frame>> = const { RefCell::new(Vec::new()) };
+    /// The tree whose `place_dynamic` or `made_for` is running on this
+    /// thread, whose own lookups must not wait on it; 0 for none.
+    static PLACING: Cell<u64> = const { Cell::new(0) };
 }
 
 /// Every marker with the class or module it marks.
@@ -528,7 +541,7 @@ type Pairs = Rc<[(String, bool)]>;
 /// instance's ancestry as it is memoized, or a class side's own walk.
 #[derive(Clone)]
 pub(crate) enum Chain {
-    Instance(Rc<Ancestry>),
+    Instance(Arc<Ancestry>),
     Singleton(Pairs),
 }
 
@@ -558,6 +571,8 @@ type ReturnKey = (String, Option<u32>, bool);
 /// One linearization in progress: the chain so far, and whether a cycle
 /// under it makes the answer depend on who asked (DEC-200).
 struct Frame {
+    /// The tree this frame is linearizing for.
+    tree: u64,
     fqn: String,
     /// The outermost frame a cycle under this one reached. Below this frame's
     /// own depth, its chain was built against a caller's partial one.
@@ -584,8 +599,9 @@ impl Frame {
 /// A memoized chain. A `cyclic` one was built from inside a cycle it closed
 /// itself, so it is the answer only when nothing else is in flight: a caller
 /// already in that cycle would have been cut where this one was not.
-struct Memo {
-    ancestry: Rc<Ancestry>,
+#[derive(Clone)]
+struct Memoized {
+    ancestry: Arc<Ancestry>,
     cyclic: bool,
 }
 
@@ -944,11 +960,11 @@ impl Tree {
 
     fn with_names(names: Names, root: String) -> Tree {
         Tree {
+            id: TREES.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             root,
             stdlib: None,
             stubs: None,
             stdlib_sigs: RefCell::new(HashMap::new()),
-            linearizing: RefCell::new(Vec::new()),
             names,
             methods: RefCell::new(Vec::new()),
             by_owner: RefCell::new(HashMap::new()),
@@ -961,7 +977,7 @@ impl Tree {
             carriers: HashMap::new(),
             includers: RefCell::new(None),
             mixers: RefCell::new(None),
-            ancestors: RefCell::new(HashMap::new()),
+            ancestors: Memo::new(),
             agreed_returns: RefCell::new(HashMap::new()),
             dynamic_rows: RefCell::new(None),
             dynamic: RefCell::new(None),
@@ -969,7 +985,6 @@ impl Tree {
             markers: RefCell::new(None),
             callers: RefCell::new(HashMap::new()),
             made: RefCell::new(HashMap::new()),
-            placing: std::cell::Cell::new(false),
             hooks: RefCell::new(None),
         }
     }
@@ -1512,7 +1527,7 @@ impl Tree {
     /// The ancestor chain of a name, in Ruby's linearization order:
     /// `[prepends, self, includes, superclass's chain]`, with the first
     /// occurrence of each module winning.
-    pub(crate) fn ancestors(&self, fqn: &str) -> Rc<Ancestry> {
+    pub(crate) fn ancestors(&self, fqn: &str) -> Arc<Ancestry> {
         self.linearized(fqn, false)
     }
 
@@ -1530,26 +1545,29 @@ impl Tree {
     /// first: a chain built against an outer frame's partial chain is not
     /// memoized, and one that closed a cycle of its own is reused only when
     /// nothing else is in flight.
-    fn linearized(&self, fqn: &str, structural: bool) -> Rc<Ancestry> {
-        if let Some(memo) = self.ancestors.borrow().get(fqn)
-            && (!memo.cyclic || self.linearizing.borrow().is_empty())
+    fn linearized(&self, fqn: &str, structural: bool) -> Arc<Ancestry> {
+        if let Some(memo) = self.ancestors.get(fqn)
+            && (!memo.cyclic || !self.in_flight())
         {
-            return memo.ancestry.clone();
+            return memo.ancestry;
         }
-        let depth = {
-            let mut frames = self.linearizing.borrow_mut();
-            if let Some(at) = frames.iter().position(|frame| frame.fqn == fqn) {
+        let depth = LINEARIZING.with_borrow_mut(|frames| {
+            if let Some(at) = frames
+                .iter()
+                .position(|frame| frame.tree == self.id && frame.fqn == fqn)
+            {
                 let so_far = (!structural).then(|| frames[at].so_far());
                 let top = frames.last_mut().expect("a frame is in flight");
                 top.low = top.low.min(at);
                 top.cyclic = true;
-                return Rc::new(Ancestry {
+                return Err(Arc::new(Ancestry {
                     chain: so_far.unwrap_or_default(),
                     unresolved: Vec::new(),
-                });
+                }));
             }
             let depth = frames.len();
             frames.push(Frame {
+                tree: self.id,
                 fqn: fqn.to_string(),
                 low: depth,
                 cyclic: false,
@@ -1557,30 +1575,36 @@ impl Tree {
                 includes: Vec::new(),
                 parent: Vec::new(),
             });
-            depth
+            Ok(depth)
+        });
+        let depth = match depth {
+            Ok(depth) => depth,
+            Err(cut) => return cut,
         };
         let mut out = Ancestry::default();
         out.chain = self.linearize(fqn, &mut out);
-        let frame = {
-            let mut frames = self.linearizing.borrow_mut();
+        let frame = LINEARIZING.with_borrow_mut(|frames| {
             let frame = frames.pop().expect("this call's frame");
-            if let Some(caller) = frames.last_mut() {
+            if let Some(caller) = frames.last_mut().filter(|caller| caller.tree == self.id) {
                 caller.low = caller.low.min(frame.low);
                 caller.cyclic |= frame.cyclic;
             }
             frame
-        };
-        let ancestry = Rc::new(out);
+        });
+        let ancestry = Arc::new(out);
         if frame.low >= depth {
-            self.ancestors
-                .borrow_mut()
-                .entry(fqn.to_string())
-                .or_insert_with(|| Memo {
-                    ancestry: ancestry.clone(),
-                    cyclic: frame.cyclic,
-                });
+            let memo = Memoized {
+                ancestry: ancestry.clone(),
+                cyclic: frame.cyclic,
+            };
+            self.ancestors.publish(fqn.to_string(), memo);
         }
         ancestry
+    }
+
+    /// Whether this thread is linearizing a name of this tree.
+    fn in_flight(&self) -> bool {
+        LINEARIZING.with_borrow(|frames| frames.iter().any(|frame| frame.tree == self.id))
     }
 
     /// Ruby's linearization, and the one place where prepend and include are
@@ -1668,12 +1692,9 @@ impl Tree {
     /// The frame `linearize` is working in: the last one, since every frame
     /// pushed under it has been popped by the time it resumes.
     fn innermost<T>(&self, work: impl FnOnce(&mut Frame) -> T) -> T {
-        work(
-            self.linearizing
-                .borrow_mut()
-                .last_mut()
-                .expect("linearize runs inside its frame"),
-        )
+        LINEARIZING.with_borrow_mut(|frames| {
+            work(frames.last_mut().expect("linearize runs inside its frame"))
+        })
     }
 
     /// A superclass's or mixin's whole chain, with what it could not resolve
@@ -2850,7 +2871,7 @@ impl Tree {
     /// method is that class's, and its site the macro's `class_eval`. Only
     /// on a miss, so what the chain's own source defines is never reordered.
     fn made_along(&self, chain: &Chain, name: &str) -> Option<Landing> {
-        if self.placing.get() {
+        if self.placing() {
             return None;
         }
         let made = self.made_for(name);
@@ -2884,6 +2905,11 @@ impl Tree {
             bound: false,
         });
         Some(landed(methods.len() - 1, &owner))
+    }
+
+    /// Whether this thread is placing markers for this tree.
+    fn placing(&self) -> bool {
+        PLACING.get() == self.id
     }
 
     /// Load every method at once — for a tree built from rows rather than from
@@ -3489,7 +3515,7 @@ impl Tree {
             return;
         }
         let markers = self.markers();
-        let was = self.placing.replace(true);
+        let was = PLACING.replace(self.id);
         let mut placed: HashMap<String, Vec<Dynamic>> = HashMap::new();
         let mut macros: Vec<&(String, Dynamic)> = Vec::new();
         for marker in markers.iter() {
@@ -3534,7 +3560,7 @@ impl Tree {
             }
         }
         *self.dynamic.borrow_mut() = Some(placed);
-        self.placing.set(was);
+        PLACING.set(was);
     }
 
     /// The methods string macros in other files make named `name`, by class
@@ -3546,7 +3572,7 @@ impl Tree {
             return made.clone();
         }
         let markers = self.markers();
-        let was = self.placing.replace(true);
+        let was = PLACING.replace(self.id);
         let mut made = Made::new();
         for (owner, how) in markers.iter() {
             if !may_expand_to(&how.maker, name) {
@@ -3569,7 +3595,7 @@ impl Tree {
                 }
             }
         }
-        self.placing.set(was);
+        PLACING.set(was);
         let made = Rc::new(made);
         self.made
             .borrow_mut()
