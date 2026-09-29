@@ -796,6 +796,7 @@ dependencies = [
  "anyhow",
  "clap",
  "clap_complete",
+ "hashbrown 0.17.1",
  "libc",
  "lsp-server",
  "lsp-types",

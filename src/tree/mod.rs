@@ -21,6 +21,9 @@ mod corelib;
 #[cfg(test)]
 mod dump;
 mod files;
+// Its users arrive over the next commits.
+#[allow(dead_code)]
+mod memo;
 mod snapshot;
 mod variants;
 
