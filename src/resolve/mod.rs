@@ -35,6 +35,10 @@ pub(super) struct Receiver {
     pub(super) ambiguous: bool,
     /// The other types the writes gave it, when they disagreed.
     pub(super) rivals: Vec<(String, bool)>,
+    /// The type is one the object conforms to — declared by a `sig`, or
+    /// read from a convention — not the class it was made as, so it may be
+    /// any subclass (DEC-140). Unsure is `false`: it rules nothing back in.
+    pub(super) bound: bool,
 }
 
 impl Receiver {
@@ -435,6 +439,7 @@ pub(super) fn forwarded(
         fqn: fqn.clone(),
         singleton: false,
         via: "delegate_missing_to",
+        bound: true,
         agreeing: receiver.agreeing,
         total: receiver.total,
         ambiguous: receiver.ambiguous,
@@ -1206,6 +1211,7 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
                     fqn: rspec::EXAMPLE_GROUP.to_string(),
                     singleton: call.singleton,
                     via: "example_group",
+                    bound: false,
                     agreeing: 1,
                     total: 1,
                     ambiguous: false,
@@ -1218,6 +1224,7 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
                     fqn: RELATION.to_string(),
                     singleton: false,
                     via: "scope",
+                    bound: false,
                     agreeing: 1,
                     total: 1,
                     ambiguous: false,
@@ -1230,6 +1237,7 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
                     fqn: rspec::RSPEC.to_string(),
                     singleton: true,
                     via: "main",
+                    bound: false,
                     agreeing: 1,
                     total: 1,
                     ambiguous: false,
@@ -1241,6 +1249,7 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
                 fqn,
                 singleton: call.singleton,
                 via: "self",
+                bound: true,
                 agreeing: 1,
                 total: 1,
                 ambiguous: false,
@@ -1258,6 +1267,7 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
                 // `Foo.bar` runs a class method.
                 singleton: true,
                 via: "const",
+                bound: false,
                 agreeing: 1,
                 total: 1,
                 ambiguous: false,
@@ -1286,6 +1296,7 @@ fn chained(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) ->
             fqn: tree.resolve(class, &[]).fqn?,
             singleton: false,
             via: "literal",
+            bound: false,
             agreeing: 1,
             total: 1,
             ambiguous: false,
@@ -1351,7 +1362,7 @@ fn let_typed(
             0,
         )
     };
-    let (fqn, singleton, _) = typed(def)?;
+    let (fqn, singleton, via) = typed(def)?;
     // A hook or a `let` runs in the groups nested in this one too, each with
     // its own `let`s; an example's block runs only here.
     let overrides: Vec<&Def> = if call.in_example {
@@ -1368,9 +1379,13 @@ fn let_typed(
     };
     let mut rivals: Vec<(String, bool)> = Vec::new();
     let mut agreeing = 1;
+    let mut bound = declares_a_bound(via);
     for other in &overrides {
         match typed(other) {
-            Some((other, _, _)) if other == fqn => agreeing += 1,
+            Some((other, _, via)) if other == fqn => {
+                agreeing += 1;
+                bound |= declares_a_bound(via);
+            }
             Some((other, side, _)) if !rivals.iter().any(|(r, _)| *r == other) => {
                 rivals.push((other, side));
             }
@@ -1386,6 +1401,7 @@ fn let_typed(
         total,
         ambiguous: agreeing < total,
         rivals,
+        bound,
     })
 }
 
@@ -1421,6 +1437,7 @@ fn implicit_subject(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Opti
         singleton,
         fqn,
         via: "implicit_subject",
+        bound: false,
         agreeing: 1,
         total: 1,
         ambiguous: false,
@@ -1446,6 +1463,7 @@ fn described_class(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Optio
         fqn: described_by(tree, facts, &call.nesting, path)?,
         singleton: true,
         via: "described_class",
+        bound: false,
         agreeing: 1,
         total: 1,
         ambiguous: false,
@@ -1517,7 +1535,8 @@ fn returned_by(
             ..receiver
         });
     }
-    // `Foo.new.bar`, as `x = Foo.new` types `x`.
+    // `Foo.new.bar`, as `x = Foo.new` types `x` — and `self.new` may make a
+    // subclass, so whether the type is a bound carries over.
     if previous.name == "new" && receiver.singleton {
         return Some(Receiver {
             fqn: made_by_new(tree, &receiver.fqn)?,
@@ -1536,6 +1555,7 @@ fn returned_by(
         singleton: false,
         via: "chain",
         rivals: Vec::new(),
+        bound: true,
         ..receiver
     })
 }
@@ -1594,6 +1614,7 @@ fn by_return_types(tree: &Tree, previous: &Call) -> Option<Receiver> {
         fqn,
         singleton: false,
         via: "chain:name",
+        bound: true,
         agreeing,
         total: votes.len(),
         ambiguous: agreeing < votes.len(),
@@ -1644,6 +1665,7 @@ fn from_receiver_name(tree: &Tree, call: &Call, path: &str) -> Option<Receiver> 
         fqn,
         singleton: false,
         via: "receiver_name",
+        bound: true,
         agreeing: 1,
         // The name is one hypothesis; "something else entirely" is always the
         // other; every other class defining this name is one more.
@@ -1673,6 +1695,7 @@ fn from_sig_params(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Optio
         fqn: tree.resolve_at(class, &call.nesting, path).fqn?,
         singleton: false,
         via: "sig:param",
+        bound: true,
         agreeing: 1,
         total: 1,
         ambiguous: false,
@@ -1753,6 +1776,10 @@ fn from_assignments(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver>
         .max_by_key(|(f, _, _)| votes.iter().filter(|(g, _, _)| g == f).count())
         .cloned()?;
     let agreeing = votes.iter().filter(|(f, _, _)| *f == fqn).count();
+    // Any write that may hold a subclass makes the read one that may.
+    let bound = votes
+        .iter()
+        .any(|(f, _, via)| *f == fqn && declares_a_bound(via));
     // `rescue A, B => e` is one write with two types.
     let total = total.max(votes.len());
     let mut rivals: Vec<(String, bool)> = Vec::new();
@@ -1769,7 +1796,15 @@ fn from_assignments(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver>
         total,
         ambiguous: !rivals.is_empty(),
         rivals,
+        bound,
     })
+}
+
+/// Does a value typed this way conform to its type rather than being made
+/// as it? A `sig`'s type, a finder's (STI hands back a subclass) and a
+/// `rescue`'s are bounds; `X.new`, a literal and a constant are the class.
+fn declares_a_bound(via: &str) -> bool {
+    matches!(via, "sig" | "sig:step" | "finder" | "local:rescue")
 }
 
 /// Every local read in a source → the writes that may have set it.

@@ -113,7 +113,9 @@ to open. `root` is `null` only for Ruby core. Text output writes a path in the
 checkout you asked about relative to it, and anything else absolute.
 
 * **confirmed** — the receiver's type resolves and Ruby's lookup lands here.
-* **possible** — untyped receiver, nothing rules it out. Ranked, never dropped.
+* **possible** — untyped receiver, nothing rules it out; or one typed as an
+  ancestor (`self`, a `sig`'s type) that may be the subclass defining this.
+  Ranked, never dropped.
 * **excluded** — counted, not listed. `--include-excluded` shows them with the
   reason, so the count is auditable.
 

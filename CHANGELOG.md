@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- **`--refs` counts a call whose receiver is typed as an ancestor.** A
+  `sig`'s parameter or return, a finder's result, a `rescue`'s class, or the
+  type a variable's name suggests is a type the object conforms to, and it
+  may be a subclass: `context.admin?` with `context: Lib::Context` runs
+  `App::Context#admin?` when handed one. Such a site was excluded
+  (`different_owner`, or `no_such_method` when the ancestor lacks the name)
+  from `--refs App::Context#admin?`, and a method only a subclass defines,
+  reached that way, was `unreferenced` in `--dead`. It is now `possible`;
+  `X.new`, a literal and a constant still name the exact class. The site
+  stays `confirmed` for the ancestor's own method (DEC-140).
+
 ## 0.8.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v39): run `trekr --index`

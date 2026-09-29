@@ -5881,3 +5881,71 @@ and a query still never waits (DEC-066).
 locked": one bundle's gems are one immediate transaction (DEC-041), and a
 cold one holds the lock far longer than 5 s. Waiting its turn was already a
 writer's job (DEC-066); 5 s was a query's number.
+
+## DEC-140 — A declared type is a bound: a call typed as an ancestor may reach a subclass's method
+
+**Decided.** A receiver's type is either the class the object was made as —
+`X.new`, a literal, a constant, `described_class` — or a type it conforms
+to: a `sig`'s parameter or return, a finder's result (STI hands back a
+subclass), a `rescue`'s class, the naming rung. The second is an upper
+bound. When `--refs` asks about a method whose owner inherits from a bound
+and defines the name itself, the site is `possible` ("the receiver is typed
+as an ancestor, and may be the subclass that defines this") where it was
+excluded: `different_owner` when the ancestor has its own, `no_such_method`
+when it has none. It is DEC-081's rule for `self`, on every rung whose type
+is a bound. A local or a `let` is a bound when a write that types it is one;
+`self.new` keeps `self`'s. The site stays `confirmed` for the ancestor's own
+method, and an owner that is an ancestor of the bound, with a closer
+override between, is still excluded.
+
+```ruby
+sig { params(context: ::Lib::Context).returns(T::Boolean) }
+def self.authorized?(context) = context.admin?  # App::Context < Lib::Context overrides admin?
+```
+
+**Why.** Reported: `--refs 'App::Context#admin?'` excluded that call, with
+`Lib::Context` known only from its `.rbi`, though an `App::Context` handed
+in runs its own `admin?` — the answer that lets someone delete or change a
+contract because trekr said nothing reaches it. `--dead` did worse for a
+method only the subclass defines, reached that way: `unreferenced`, clear.
+
+**Only a bound.** The report asked for `X.new` too. `Lib::Context.new.admin?`
+never runs a subclass's method, so a constructed, literal or constant type
+stays exact, and a rung that cannot say is taken as exact, which rules
+nothing back in. A custom `new` that declares another class (DEC-133) is
+taken as exact for the same reason.
+
+**No floor at `Object`.** Considered: requiring the bound to be something
+narrower than `Object`, `BasicObject` or `Kernel`, which every class
+inherits. Turned down: a receiver bounded by `Object` narrows nothing, which
+is what an untyped receiver is, and those are `possible` already. Excluding
+it would be the one claim — "provably not this method" — the type cannot
+support. Measured, the `Object` sites are the naming rung reading a variable
+called `object` (74 of the rails moves below, 62 of graph_weaver's), which
+was excluding every `inspect`, `to_s` and `respond_to?` a class overrides.
+
+**Measured** (BASELINE, "A declared type is a bound"): every gold verdict and
+all 21,154 clicks unchanged; rails' 40 `--refs` queries unchanged; a sweep
+of the 3,478 rails methods defined in a class with a superclass and named
+by another owner moves 1,007 sites excluded → possible across 122 queries,
+none from or to confirmed. Most are core bounds the naming and `sig` rungs
+give: `Hash` (a `hash` variable, 422; `HashWithIndifferentAccess#[]` goes
+8,337 → 8,457 possible), `String` (`SafeBuffer#+`, 180), a `rescue`'s
+`Exception` (109). Sampled, each is dispatch that can happen:
+`column.has_default?` on each adapter's `Column`, `ex.set_query` on a
+`rescue StatementInvalid => ex` reaching `MismatchedForeignKey`,
+`registration.matches?` reaching `DecorationRegistration`, `entry.value`
+reaching `Cache::Coder::LazyEntry`. graph_weaver's sweep of all 2,090 of its
+methods moves 281 sites across 82 queries, 121 of them a `node` typed
+`Codegen::Node` reaching each node class's override. `--dead`: rails 2,281 → 2,279
+candidates, activerecord alone 1,613 → 1,611, each an `override` whose
+caller is now counted.
+
+**Not done.** `--def` still answers the bound's own method `resolved`;
+DEC-081's amendment made a `self` call with overrides `ambiguous`, and doing
+so for a bound is its own decision, with gold verdicts to move. A module a
+subclass of the bound includes is not counted, as DEC-081's amendment counts
+a module's includers.
+
+*Reverses if:* a guard — `case node when Scalar`, `is_a?` — ever narrows a
+receiver per site, which would tighten the bound there.

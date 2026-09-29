@@ -9,8 +9,9 @@
 //!
 //! * **confirmed** — the receiver's type resolves and Ruby's lookup from it
 //!   lands on the queried method.
-//! * **possible** — the receiver is untyped, and nothing rules the site out.
-//!   Ranked by proximity, never dropped.
+//! * **possible** — the receiver is untyped, or typed as an ancestor of the
+//!   queried owner that may be it, and nothing rules the site out. Ranked by
+//!   proximity, never dropped.
 //! * **excluded** — the receiver resolves somewhere *else*, or the arity does
 //!   not fit. Not listed, but **counted**: that count is the difference
 //!   between this and a grep, so it is reported rather than quietly enjoyed.
@@ -273,6 +274,28 @@ fn tier(
             Some(receiver.fqn.clone()),
             found.map(|found| found.owner),
             "the receiver's type is a guess from what the previous call can return",
+            1,
+            None,
+        );
+    }
+    // A declared type is an upper bound: a receiver a `sig` says is a `Base`
+    // may be the `Child` whose own method is the one asked about, and then
+    // that is what runs. `X.new` is exactly an `X`, so it never is (DEC-140).
+    if receiver.bound
+        && !matches
+        && target.is_some_and(|target| {
+            receiver.singleton == query.singleton
+                && tree.inherits(target, &receiver.fqn)
+                && tree
+                    .lookup(target, query.singleton, &query.name)
+                    .is_some_and(|own| crate::tree::public_name(&own.owner) == target)
+        })
+    {
+        return here(
+            Tier::Possible,
+            Some(receiver.fqn.clone()),
+            found.map(|found| found.owner),
+            "the receiver is typed as an ancestor, and may be the subclass that defines this",
             1,
             None,
         );

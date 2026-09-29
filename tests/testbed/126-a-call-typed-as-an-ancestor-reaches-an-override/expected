@@ -1,0 +1,15 @@
+# A declared type is an upper bound, not the runtime class: a parameter a
+# `sig` types as `Lib::Context` may hold an `App::Context`, whose `admin?`
+# then runs. Such sites were excluded as `different_owner` from
+# `--refs App::Context#admin?`, the answer that lets someone delete a
+# contract because nothing reaches it. A sig parameter, a sig's return and
+# a finder's result are bounds; `X.new` is exactly `X`, and an unrelated
+# class is unrelated.
+refs App::Context#admin? confirmed=1 possible=3 excluded=3
+# The ancestor's own method is still where each bound call lands, and an
+# override below the receiver's type still shadows it.
+refs Lib::Context#admin? confirmed=5 possible=0 excluded=2
+# The ancestor never defines it, so the call was `no_such_method`.
+refs App::Context#audit confirmed=0 possible=1 excluded=0
+# An override the bound call reaches is referenced, not only an override.
+dead app/context.rb App::Context#locale=single-caller App::Context#audit=single-caller
