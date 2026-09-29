@@ -8940,3 +8940,50 @@ first an older trekr steps around.
 
 **Reverses if** side stores pile up in practice — then refusing with a clear message
 is the simpler shape.
+
+## DEC-310 — A string of code on Object hedges only the names it spells
+
+**Decided.** Three readings narrow what a string of code marks (DEC-160,
+DEC-161, DEC-162):
+
+- **A name in `defined?(…)` is asked about, not called.** minitest's
+  `infect_an_assertion :assert_mock, :must_verify if
+  defined?(infect_an_assertion)` recorded the `defined?` as a body call
+  handing the macro no names, so its shape `{1}` became `*` on
+  `Minitest::Expectations`, which minitest/spec includes into `Object`. Such a
+  call is neither a body call nor a macro to expand.
+- **A constant of the same file holding the code is that code.** pry's
+  `self.class.class_eval(*Pry::BINDING_METHOD_IMPL)`, in `Object#__binding__`,
+  evaluates a constant assigned `[<<-METHOD, __FILE__, __LINE__ + 1].freeze`.
+  A `class_eval` handed a constant (or its splat) that the file assigns a
+  string, or a list headed by one, marks by the `def`s that string spells:
+  `__pry__`, not `*`.
+- **A comment line is not code, and a string that spells no `def` makes
+  nothing.** The same heredoc's comment says the definition is "eval'd",
+  which DEC-160's "may make methods some other way" words matched. A string
+  with no interpolation, no `def`, no `define_method`/`attr_`/`alias`/…
+  and no `include`/`extend`/`prepend` — pry's `class_eval("binding")`,
+  rails' `eval "class Foo; yield; end"` — marks nothing.
+
+**Why.** The 0.8.1 first-time testers: in a normal gem the certain answer
+never fired. `Flipper::Gate#zz` and `Faraday::Error#zz` were residue, "Object
+defines methods its source does not name", from a development dependency's
+reopening of `Object` (pry in faraday's bundle, minitest in flipper's).
+
+**The dev-dependency filter, not taken.** Hedging only what a marker's source
+could reach — dropping a gem the Gemfile puts in `:development`/`:test`, or
+`add_development_dependency` — was the other candidate. It is the wrong
+question: the specs are code being asked about too, and they do load pry and
+minitest, so their patches are real there. A marker that spells its names is
+right for both. After the three readings no unshaped marker on `Object`,
+`Kernel`, `BasicObject`, `Module` or `Class` is left in flipper's, faraday's,
+draper's, mastodon's, once-campfire's or rails' indexes except
+ActiveSupport's `class_attribute`/`mattr_*` macros, which DEC-162's filter
+already keeps off every caller.
+
+**Measured**, the card sweep (`X#zz_nope`, `X.zz_nope` for every class and
+module the checkout defines): flipper 430 residue of 476 → 73 (357 back to
+`no_such_method`; 42 of the rest now name an ancestor not indexed, which the
+marker's reason had hidden), faraday 135 of 176 → 14 (121 back). Mastodon
+and once-campfire unchanged; rails 4,331 of 13,550 → 4,329, the two strings
+above that make no method on the class they are evaluated in.

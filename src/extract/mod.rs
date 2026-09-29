@@ -142,6 +142,10 @@ impl Frame {
     }
 }
 
+/// The `def`s a string of code spells: each one's side, if it says, and
+/// the shape of its name (DEC-160).
+type StringDefs = Vec<(Option<bool>, Option<String>)>;
+
 struct Extractor<'a> {
     src: &'a [u8],
     lines: LineIndex,
@@ -240,6 +244,13 @@ struct Extractor<'a> {
     /// Markers whose name is such a method's result, which may be written
     /// further down: the edge, the scope, the method.
     pending_shapes: Vec<(usize, Vec<String>, String)>,
+    /// How many `defined?(…)`s we are inside: a name there is asked about,
+    /// not called.
+    in_defined: usize,
+    /// Constants this file assigns a string of code, or a list whose first
+    /// element is one (`[<<-RUBY, __FILE__, __LINE__ + 1]`), as the `def`s
+    /// its text spells: what `class_eval(*IMPL)` evaluates (DEC-310).
+    code_constants: HashMap<String, StringDefs>,
     facts: Facts,
 }
 
@@ -419,6 +430,8 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         expanded: 0,
         string_methods: HashMap::new(),
         pending_shapes: Vec::new(),
+        in_defined: 0,
+        code_constants: HashMap::new(),
     };
     ex.visit(&parsed.node());
     ex.shape_pending();
@@ -1453,6 +1466,12 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         if let Some(symbols) = literal_symbol_array(&value) {
             self.symbol_arrays.insert(name.clone(), symbols);
         }
+        if self.evals.is_empty()
+            && let Some(code) = code_value(node.value())
+        {
+            let defs = string_defs(&code, self.src, &[]);
+            self.code_constants.insert(name.clone(), defs);
+        }
         if let Some(constants) = literal_constant_array(&value) {
             self.constant_arrays.insert(name.clone(), constants);
         }
@@ -1789,6 +1808,12 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             }
         }
         ruby_prism::visit_rescue_node(self, node);
+    }
+
+    fn visit_defined_node(&mut self, node: &ruby_prism::DefinedNode<'pr>) {
+        self.in_defined += 1;
+        ruby_prism::visit_defined_node(self, node);
+        self.in_defined -= 1;
     }
 
     fn visit_if_node(&mut self, node: &ruby_prism::IfNode<'pr>) {
@@ -2634,6 +2659,7 @@ impl<'pr> Extractor<'_> {
             if self.nesting.is_empty() || self.in_group_body() {
                 return;
             }
+            let from_constant = self.constant_code(&arg);
             match spelled_code(arg) {
                 Some(code) => {
                     if !class_side
@@ -2656,14 +2682,27 @@ impl<'pr> Extractor<'_> {
                         self.mark_dynamic_on(self.nesting.clone(), maker, at);
                     }
                 }
-                None => {
-                    let maker = Maker {
-                        by: unread,
-                        via: Some(via),
-                        ..Maker::default()
-                    };
-                    self.mark_dynamic_on(self.nesting.clone(), maker, at);
-                }
+                None => match from_constant {
+                    Some(defs) => {
+                        let side = class_side.then_some(true);
+                        self.mark_defs_on(
+                            self.nesting.clone(),
+                            &unread,
+                            defs,
+                            side,
+                            at,
+                            Some(&via),
+                        );
+                    }
+                    None => {
+                        let maker = Maker {
+                            by: unread,
+                            via: Some(via),
+                            ..Maker::default()
+                        };
+                        self.mark_dynamic_on(self.nesting.clone(), maker, at);
+                    }
+                },
             }
             return;
         }
@@ -2697,6 +2736,11 @@ impl<'pr> Extractor<'_> {
         }
         // `<<~RUBY.strip` is the heredoc's code; `.gsub(…)`, a local,
         // `[…].join` or `format(…)` is code the source does not spell.
+        if let Some(defs) = self.constant_code(&arg) {
+            let side = class_side.then_some(true);
+            self.mark_defs_on(owner, &unread, defs, side, at, None);
+            return;
+        }
         let Some(first) = spelled_code(arg) else {
             let maker = Maker {
                 by: unread,
@@ -2811,7 +2855,11 @@ impl<'pr> Extractor<'_> {
     /// mixes in a module around it, or from `Module` and `Class`, which
     /// every class is.
     fn expand_macro(&mut self, call: &ruby_prism::CallNode<'pr>) {
-        if !on_self(call) || !self.self_is_the_scope() || !self.evals.is_empty() {
+        if !on_self(call)
+            || !self.self_is_the_scope()
+            || !self.evals.is_empty()
+            || self.in_defined > 0
+        {
             return;
         }
         let Some(name) = method_name(call) else {
@@ -2889,16 +2937,42 @@ impl<'pr> Extractor<'_> {
     ) {
         let src = self.evals.last().map_or(self.src, |eval| &eval.src[..]);
         self.facts.unread_calls.extend(string_calls(code, src));
-        for (singleton, shape) in string_defs(code, src, &[]) {
+        let defs = string_defs(code, src, &[]);
+        self.mark_defs_on(owner, by, defs, class_side.then_some(true), at, via);
+    }
+
+    /// Mark `owner` once per `def` a string of code spells, on the side it
+    /// says unless `side` overrides it.
+    fn mark_defs_on(
+        &mut self,
+        owner: Vec<String>,
+        by: &str,
+        defs: StringDefs,
+        side: Option<bool>,
+        at: usize,
+        via: Option<&str>,
+    ) {
+        for (singleton, shape) in defs {
             let maker = Maker {
                 by: by.to_string(),
-                singleton: if class_side { Some(true) } else { singleton },
+                singleton: side.or(singleton),
                 shape,
                 via: via.map(str::to_string),
                 block: false,
             };
             self.mark_dynamic_on(owner.clone(), maker, at);
         }
+    }
+
+    /// `class_eval(*IMPL)` or `class_eval(IMPL)`, where this file assigns
+    /// `IMPL` a string of code: the `def`s its text spells (DEC-310).
+    fn constant_code(&self, arg: &Node<'_>) -> Option<StringDefs> {
+        let written = match arg.as_splat_node() {
+            Some(splat) => const_name(&splat.expression()?)?,
+            None => const_name(arg)?,
+        };
+        let last = written.rsplit("::").next()?;
+        self.code_constants.get(last).cloned()
     }
 
     /// Read a string of code with each local's value (the stand-in for any
@@ -4464,7 +4538,11 @@ impl<'pr> Extractor<'_> {
     /// the literal names it is handed: what a macro written in another file
     /// runs on (DEC-162).
     fn record_body_call(&mut self, call: &ruby_prism::CallNode<'pr>) {
-        if !on_self(call) || !self.self_is_the_scope() || !self.evals.is_empty() {
+        if !on_self(call)
+            || !self.self_is_the_scope()
+            || !self.evals.is_empty()
+            || self.in_defined > 0
+        {
             return;
         }
         let Some(name) = method_name(call) else {
@@ -4989,6 +5067,23 @@ fn spelled_code(arg: Node<'_>) -> Option<Node<'_>> {
         .then_some(inner)
 }
 
+/// A constant's value that is a string of code, or a list headed by one:
+/// `[<<-RUBY, __FILE__, __LINE__ + 1].freeze`, `class_eval`'s arguments.
+fn code_value(value: Node<'_>) -> Option<Node<'_>> {
+    let list = match value.as_call_node() {
+        Some(call)
+            if method_name(&call).as_deref() == Some("freeze") && call.arguments().is_none() =>
+        {
+            call.receiver()?
+        }
+        _ => value,
+    };
+    match list.as_array_node() {
+        Some(array) => spelled_code(array.elements().iter().next()?),
+        None => spelled_code(list),
+    }
+}
+
 /// A string of code's text, with `*` for each interpolation.
 fn starred_text(code: &Node<'_>, src: &[u8]) -> String {
     let raw = |at: ruby_prism::Location<'_>| {
@@ -5050,20 +5145,18 @@ fn string_calls(code: &Node<'_>, src: &[u8]) -> Vec<String> {
 /// What a string of code defines, by its text with `*` for each
 /// interpolation: the side and shape of each `def`. One unshaped entry for
 /// either side when the text may make methods some other way, or spells no
-/// `def` at all.
+/// `def` but has an interpolation or a mixin that could. Comment lines are
+/// not code: pry's says its method is "eval'd" (DEC-310).
 ///
 /// `handed` are a macro's positional parameters: an interpolation of the
 /// `k`th is `{k}`, the name its caller hands it (DEC-162).
-fn string_defs(
-    code: &Node<'_>,
-    src: &[u8],
-    handed: &[(String, String)],
-) -> Vec<(Option<bool>, Option<String>)> {
+fn string_defs(code: &Node<'_>, src: &[u8], handed: &[(String, String)]) -> StringDefs {
     let raw = |at: ruby_prism::Location<'_>| {
         String::from_utf8_lossy(&src[at.start_offset()..at.end_offset().min(src.len())])
             .into_owned()
     };
     let mut text = String::new();
+    let spelled = code.as_string_node().is_some();
     if let Some(string) = code.as_string_node() {
         text = raw(string.content_loc());
     } else if let Some(string) = code.as_interpolated_string_node() {
@@ -5074,6 +5167,11 @@ fn string_defs(
             }
         }
     }
+    let text: String = text
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
     const ELSEWISE: [&str; 7] = [
         "define_method",
         "attr_",
@@ -5087,7 +5185,7 @@ fn string_defs(
     if ELSEWISE.iter().any(|word| text.contains(word)) {
         return anything;
     }
-    let mut defs: Vec<(Option<bool>, Option<String>)> = Vec::new();
+    let mut defs: StringDefs = Vec::new();
     let bytes = text.as_bytes();
     let mut at = 0;
     while let Some(found) = text[at..].find("def") {
@@ -5114,7 +5212,11 @@ fn string_defs(
             defs.push(def);
         }
     }
-    if defs.is_empty() { anything } else { defs }
+    const MIXES: [&str; 3] = ["include", "extend", "prepend"];
+    if defs.is_empty() && (!spelled || MIXES.iter().any(|word| text.contains(word))) {
+        return anything;
+    }
+    defs
 }
 
 /// What each local of a string of code is while it is read: a name for some,

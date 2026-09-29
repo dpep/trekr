@@ -1,0 +1,11 @@
+# A development tool that reopens Object with a string of code hedged every
+# `no_such_method` on every class: minitest's `infect_an_assertion`, whose
+# `defined?(infect_an_assertion)` was read as a call handing it no names, and
+# pry's `class_eval(*Pry::BINDING_METHOD_IMPL)`, a constant of this file
+# holding the code, whose comment says "eval'd". Each makes only the names it
+# spells, so a name nobody makes is certain again.
+card Gate#zz_nope status=no_such_method exit=1
+card Gate.zz_nope status=no_such_method exit=1
+card Gate#must_be_empty status=resolved
+card Gate#must_verify status=resolved
+card Gate#__console__ status=residue reason=__console__

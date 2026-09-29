@@ -346,6 +346,14 @@
   wherever `--json` sits on the line. The README's usage-error row no
   longer reads as if a flag before `--json` were itself an error.
 
+- **A development tool's patch on `Object` no longer hedges every missing
+  method.** minitest's `infect_an_assertion` and pry's `__binding__` made
+  every `no_such_method` on every class residue — "Object defines methods
+  its source does not name" — so `Flipper::Gate#zz` was never certain. A
+  name in `defined?(…)` is no call, a `class_eval` of a constant the file
+  assigns code reads that code's `def`s, and a comment line in a string of
+  code is not code (DEC-310).
+
 - **StringIO, Zlib, Etc and StringScanner are known.** A stdlib library
   written only in C, with no Ruby file, is declared from its RBS signatures
   when its extension is there, as a partly compiled one already was:
