@@ -30,6 +30,17 @@ struct Dependency {
     /// Where each part of `requirements` was written, once merged: the file
     /// (`Gemfile`, `widget.gemspec`) and what it asks.
     from: Vec<(String, Vec<String>)>,
+    /// A Gemfile's `git:` or `github:` source: not an installed release,
+    /// but a checkout in `bundler/gems` (DEC-293).
+    git: Option<GitSource>,
+}
+
+/// A git source as a Gemfile writes it: the repository's name as bundler
+/// names its checkout (`None` when not a literal), and a `ref:`.
+#[derive(Clone, Debug, PartialEq)]
+struct GitSource {
+    repo: Option<String>,
+    revision: Option<String>,
 }
 
 /// How many times the picks are revised as the picked gems' own
@@ -79,11 +90,21 @@ pub(super) fn resolve(
     }
 
     let installed = Installed::scan(&[roots, fallback]);
+    // A git gem is its checkout, whatever version a dependent asks for, as
+    // bundler takes the Gemfile's source for every requirement on the name.
+    let git: BTreeMap<String, Result<Copy, Absence>> = declared
+        .iter()
+        .filter_map(|d| Some((d.name.clone(), d.git.as_ref()?)))
+        .map(|(name, source)| {
+            let found = git_checkout(&name, source, &[roots, fallback]);
+            (name, found)
+        })
+        .collect();
     // Every requirement written for a name, merged, before any is resolved:
     // the gemspec's `< 2` and the Gemfile's `~> 1.0` both bind.
     let mut direct: BTreeMap<String, Dependency> = BTreeMap::new();
     for dependency in declared {
-        if own.contains(&dependency.name) {
+        if own.contains(&dependency.name) || git.contains_key(&dependency.name) {
             continue;
         }
         match direct.get_mut(&dependency.name) {
@@ -111,7 +132,11 @@ pub(super) fn resolve(
             .map(|(name, d)| (name.clone(), d.requirements.clone()))
             .collect();
         for copy in picks.values().flatten() {
-            for dependency in needs.of(copy).iter().filter(|d| !own.contains(&d.name)) {
+            for dependency in needs
+                .of(copy)
+                .iter()
+                .filter(|d| !own.contains(&d.name) && !git.contains_key(&d.name))
+            {
                 wanted
                     .entry(dependency.name.clone())
                     .or_default()
@@ -134,10 +159,15 @@ pub(super) fn resolve(
                         .is_none()
             })
         };
-        let next: BTreeMap<String, Option<&Copy>> = wanted
+        let mut next: BTreeMap<String, Option<&Copy>> = wanted
             .iter()
             .map(|(name, requirements)| (name.clone(), installed.best(name, requirements, fits)))
             .collect();
+        for (name, found) in &git {
+            if let Ok(copy) = found {
+                next.insert(name.clone(), Some(copy));
+            }
+        }
         if next.len() == picks.len()
             && next
                 .iter()
@@ -150,7 +180,7 @@ pub(super) fn resolve(
     }
 
     let picks_final: Vec<&Copy> = picks.values().flatten().copied().collect();
-    let located = picks
+    let mut located: Vec<Located> = picks
         .into_iter()
         .map(|(name, copy)| {
             let unread = direct
@@ -160,9 +190,14 @@ pub(super) fn resolve(
             match copy {
                 Some(copy) => Located {
                     gem: Gem {
+                        source: match git.contains_key(&name) {
+                            true => Source::Git {
+                                checkout: copy.checkout.clone().unwrap_or_default(),
+                            },
+                            false => Source::Registry,
+                        },
                         name,
                         version: copy.written.clone(),
-                        source: Source::Registry,
                     },
                     place: Place::Dir(copy.path.clone()),
                     unread,
@@ -192,6 +227,22 @@ pub(super) fn resolve(
             }
         })
         .collect();
+    for (name, found) in git {
+        if let Err(absence) = found {
+            located.push(Located {
+                gem: Gem {
+                    name,
+                    version: String::new(),
+                    source: Source::Git {
+                        checkout: String::new(),
+                    },
+                },
+                place: Place::Missing(absence),
+                unread: Vec::new(),
+                elsewhere: false,
+            });
+        }
+    }
     Some(located)
 }
 
@@ -342,19 +393,29 @@ impl Collector {
         let [name] = self.values(first)?.try_into().ok()?;
         let mut requirements = Vec::new();
         let mut unread = Vec::new();
+        let mut git = None;
         for arg in rest {
             if let Some(options) = arg.as_keyword_hash_node() {
-                let elsewhere = options.elements().iter().any(|element| {
-                    let key = element
-                        .as_assoc_node()
-                        .and_then(|assoc| symbol(&assoc.key()));
-                    matches!(
-                        key.as_deref(),
-                        Some("path" | "git" | "github" | "platforms" | "platform")
-                    )
-                });
-                if gemfile && elsewhere {
-                    return None;
+                if !gemfile {
+                    continue;
+                }
+                let mut revision = None;
+                let mut from_git = false;
+                let mut repo = None;
+                for assoc in options.elements().iter().filter_map(|e| e.as_assoc_node()) {
+                    let value = string(&assoc.value());
+                    match symbol(&assoc.key()).as_deref() {
+                        Some("path" | "platforms" | "platform") => return None,
+                        Some("git" | "github") => {
+                            from_git = true;
+                            repo = value.map(|remote| super::repo_name(&remote).to_string());
+                        }
+                        Some("ref") => revision = value,
+                        _ => {}
+                    }
+                }
+                if from_git {
+                    git = Some(GitSource { repo, revision });
                 }
                 continue;
             }
@@ -371,6 +432,7 @@ impl Collector {
             unread,
             development,
             from: Vec::new(),
+            git,
         })
     }
 
@@ -638,6 +700,80 @@ struct Copy {
     /// Which list of roots it was found in: `0` the checkout's Ruby's,
     /// anything else a fallback.
     tier: usize,
+    /// A git gem's checkout in `bundler/gems`, `<repo>-<revision>`.
+    checkout: Option<String>,
+}
+
+/// A Gemfile's git gem without a lockfile: the one checkout of its
+/// repository in the roots' `bundler/gems`, at its `ref:` when that is a
+/// revision. None, or several, is said: with no lockfile there is no
+/// revision to tell them apart by (DEC-293).
+fn git_checkout(name: &str, source: &GitSource, tiers: &[&[PathBuf]]) -> Result<Copy, Absence> {
+    let Some(repo) = &source.repo else {
+        return Err(Absence::GitUnlocked(
+            "git source without a lockfile, written so trekr cannot read which repository".into(),
+        ));
+    };
+    let hex = |text: &str| !text.is_empty() && text.chars().all(|c| c.is_ascii_hexdigit());
+    let revision = source.revision.as_deref().filter(|r| hex(r));
+    let mut dirs: Vec<(usize, PathBuf)> = Vec::new();
+    for (tier, roots) in tiers.iter().enumerate() {
+        for root in roots.iter() {
+            let dir = root.parent().unwrap_or(root).join("bundler/gems");
+            if !dirs.iter().any(|(_, known)| *known == dir) {
+                dirs.push((tier, dir));
+            }
+        }
+    }
+    let mut found: Vec<(usize, PathBuf, String)> = Vec::new();
+    for (tier, dir) in &dirs {
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let checkout = entry.file_name().to_string_lossy().into_owned();
+            let Some(short) = checkout.strip_prefix(&format!("{repo}-")) else {
+                continue;
+            };
+            let at_revision = revision.is_none_or(|r| short.starts_with(r) || r.starts_with(short));
+            if short.len() == 12
+                && hex(short)
+                && at_revision
+                && !found.iter().any(|(_, _, known)| *known == checkout)
+            {
+                found.push((*tier, entry.path(), checkout));
+            }
+        }
+    }
+    let at = dirs
+        .iter()
+        .find(|(_, dir)| dir.is_dir())
+        .or(dirs.first())
+        .map(|(_, dir)| crate::core::paths::pretty(&dir.to_string_lossy()))
+        .unwrap_or_else(|| "bundler/gems".into());
+    let (tier, path, checkout) = match found.len() {
+        1 => found.remove(0),
+        0 => {
+            return Err(Absence::GitUnlocked(format!(
+                "git source without a lockfile, and no checkout of {repo} in {at}"
+            )));
+        }
+        n => {
+            return Err(Absence::GitUnlocked(format!(
+                "git source without a lockfile: {n} checkouts of {repo} in {at}, \
+                 and nothing says which revision"
+            )));
+        }
+    };
+    let Some(dir) = super::gemspec_dir(&path, name, true) else {
+        return Err(Absence::NoGemspec(path));
+    };
+    let revision = checkout[repo.len() + 1..].to_string();
+    Ok(Copy {
+        name: name.to_string(),
+        version: Version::parse("0").expect("a number parses"),
+        written: revision,
+        path: dir,
+        tier,
+        checkout: Some(checkout),
+    })
 }
 
 /// Every gem installed under the search roots, by name. The first root to
@@ -674,6 +810,7 @@ impl Installed {
                     written: written.to_string(),
                     path: entry.path(),
                     tier,
+                    checkout: None,
                 });
             }
         }

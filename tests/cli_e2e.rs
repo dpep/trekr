@@ -4259,6 +4259,94 @@ fn the_rubys_choice_is_structured_in_index_and_status() {
     let _ = fs::remove_dir_all(&home);
 }
 
+/// Without a lockfile, a Gemfile's git gem is its one checkout in
+/// `bundler/gems`; one with several or none is said, never dropped (DEC-293).
+#[test]
+fn without_a_lockfile_a_git_gem_is_its_one_checkout_or_said() {
+    let (dir, db) = scratch("declared-git");
+    repo(&dir);
+    let (home, _) = scratch("declared-git-home");
+    let prefix = home.join(".rvm/rubies/ruby-9.8.7");
+    fake_ruby_at(&prefix, "9.8.7", &[], &[]);
+    let checkouts = prefix.join("lib/ruby/gems/9.8.0/bundler/gems");
+    for (checkout, gem) in [
+        ("kit-0123456789ab", "kit"),
+        ("other-aaaaaaaaaaaa", "other"),
+        ("other-bbbbbbbbbbbb", "other"),
+    ] {
+        let lib = checkouts.join(checkout).join("lib");
+        fs::create_dir_all(&lib).unwrap();
+        fs::write(
+            checkouts.join(checkout).join(format!("{gem}.gemspec")),
+            "Gem::Specification.new do |s|\nend\n",
+        )
+        .unwrap();
+        let module = if gem == "kit" { "Kit" } else { "Other" };
+        fs::write(
+            lib.join(format!("{gem}.rb")),
+            format!("module {module}\nend\n"),
+        )
+        .unwrap();
+    }
+    fs::write(
+        dir.join("Gemfile"),
+        "gem \"kit\", github: \"acme/kit\"\n\
+         gem \"other\", github: \"acme/other\"\n\
+         gem \"gone\", git: \"https://example.com/acme/gone.git\"\n",
+    )
+    .unwrap();
+    fs::write(dir.join("use.rb"), "Kit\n").unwrap();
+    let env = [("HOME", home.to_str().unwrap())];
+
+    let gems = json(&trekr_env(&db, &dir, &["--index", "--json"], &env))["gems"].clone();
+    assert_eq!(
+        gems["picked"],
+        serde_json::json!(["kit 0123456789ab"]),
+        "{gems}"
+    );
+    assert_eq!(gems["from_git"], 1, "{gems}");
+    let why = |gem: &str| {
+        gems["unlocated"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{gems}"))
+            .iter()
+            .find(|u| u["gem"] == gem)
+            .unwrap_or_else(|| panic!("{gem} is said: {gems}"))["why"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert!(why("other").contains("which revision"), "{gems}");
+    assert!(why("gone").contains("no checkout of gone"), "{gems}");
+    let kit = json(&trekr_env(
+        &db,
+        &dir,
+        &["--def", "use.rb:1:1", "--json"],
+        &env,
+    ));
+    assert!(
+        kit["definition"][0]["root"]
+            .as_str()
+            .is_some_and(|root| root.ends_with("kit-0123456789ab")),
+        "{kit}"
+    );
+
+    // Once a lockfile governs, an edit to the Gemfile waits for it.
+    fs::write(dir.join("Gemfile.lock"), "GEM\n  specs:\n\nDEPENDENCIES\n").unwrap();
+    let gemfile = fs::File::options()
+        .append(true)
+        .open(dir.join("Gemfile"))
+        .unwrap();
+    gemfile
+        .set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(60))
+        .unwrap();
+    let text = stdout(&trekr_env(&db, &dir, &["--index"], &env));
+    assert!(text.contains("newer than Gemfile.lock"), "{text}");
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&home);
+}
+
 /// A stdlib method the core stub also writes keeps the stub's return type:
 /// `Set#size` is real source in a Ruby where `Set` is not core (DEC-182).
 #[test]

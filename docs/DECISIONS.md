@@ -5769,7 +5769,8 @@ only when no release does), searched in the roots a lockfile's gems are.
 Each installed gem's runtime dependencies follow, from the gemspec rubygems
 wrote in `specifications/` or failing that the one it shipped, until
 nothing new is named. Left out: a `gem` from `path:`, `git:` or `github:`,
-one for `platforms:`, and the checkout's own gemspecs. A requirement that
+one for `platforms:`, and the checkout's own gemspecs. (Amended by DEC-293:
+a `git:` or `github:` gem is its checkout, or said.) A requirement that
 interpolates (`"~> #{ENV['V'] || '1.4'}"`) is any version. `--index` says
 which list it used (`gems.resolved_from`: `lockfile` or `declared`), and a
 name nothing installed meets is reported missing with its requirement.
@@ -8822,3 +8823,38 @@ for a field whose only use is "why is this the Ruby".
 
 **Not done.** `prefix` — the install directory — is `root` less
 `lib/ruby/<abi>`, and nobody asked for it.
+
+## DEC-293 — Without a lockfile, a Gemfile's git gem is its one checkout, or it is said
+
+Amends DEC-134.
+
+**Decided.** A Gemfile's `gem "x", github: "owner/repo"` or `git: "…"` with
+no `Gemfile.lock` is looked for as bundler checks one out: a directory
+`<repo>-<12 hex>` in the `bundler/gems/` beside each gem directory searched
+(DEC-291's order, the checkout's Ruby's first), narrowed by a hex `ref:`.
+Exactly one: that checkout is the gem, in its gemspec's directory as
+DEC-150 finds it, counted in `gems.from_git`, picked as `name <revision>`,
+its own gemspec's runtime dependencies joining the picks. None, or more
+than one: the name is in `gems.unlocated` with why — "no checkout of rack in
+~/.rvm/gems/ruby-3.4.9/bundler/gems", or "2 checkouts of rack …, and nothing
+says which revision". Either way no other requirement picks a registry
+release for that name: bundler takes the Gemfile's source for every
+requirement on it. A `branch:` or `tag:` is not read; they name no
+revision a directory carries.
+
+**Why.** The 0.8.1 first-time tester: a Gemfile's git gem, without a
+lockfile, was in none of `missing`, `unlocated` or `picked` — the one
+failure that said nothing. faraday-gitsrc's `gem "rack", github:
+"rack/rack"` now indexes `rack-a9833c8f3bd6`, the one checkout on the
+machine; draper-gitsrc's `rails` and `mongoid` say there is none.
+
+**Why the one checkout.** With no lockfile nothing names a revision, and
+DEC-134 already takes "the highest installed" as the stand-in for what
+`bundle install` would have locked. One checkout is the installed one. Two
+have no order a directory name gives — the revision is a hash, and the
+checkout time is not the commit's — so it is said rather than guessed.
+
+**Also.** `--index` text says when the Gemfile is newer than
+`Gemfile.lock`: the lockfile is what is read, and a Gemfile edit counts
+only once `bundle install` relocks. A `path:` gem without a lockfile is
+still left out; it is DEC-150's third kind of checkout.

@@ -1519,6 +1519,11 @@ fn cmd_index(
              highest installed version that meets it, in {}",
             gems.ruby.as_deref().unwrap_or("every installed Ruby")
         ),
+        // The lockfile is what is read, so an edit to the Gemfile since is not.
+        Some(_) if gemfile_is_newer(&root) => println!(
+            "gems — the Gemfile is newer than Gemfile.lock, which is what is read: \
+             an edit to the Gemfile counts once `bundle install` relocks"
+        ),
         Some(_) => {}
     }
     let holes = !gems.missing.is_empty() || !gems.unlocated.is_empty() || !gems.unread.is_empty();
@@ -1655,6 +1660,15 @@ fn cmd_index(
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Whether the checkout's Gemfile was written after its Gemfile.lock.
+fn gemfile_is_newer(root: &Path) -> bool {
+    let written = |name: &str| std::fs::metadata(root.join(name)).and_then(|m| m.modified());
+    matches!(
+        (written("Gemfile"), written("Gemfile.lock")),
+        (Ok(gemfile), Ok(lock)) if gemfile > lock
+    )
 }
 
 /// A list of gems, cut short. The full list is in `--json`; a lockfile

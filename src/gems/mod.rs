@@ -94,6 +94,9 @@ pub(crate) enum Absence {
     /// Without a lockfile, requirements from several places that no
     /// installed version meets together, in words naming each place.
     Conflict(String),
+    /// Without a lockfile, a Gemfile's git gem with no one checkout to
+    /// take, in words saying why (DEC-293).
+    GitUnlocked(String),
 }
 
 impl Absence {
@@ -117,7 +120,7 @@ impl Absence {
                     at(stdlib)
                 )
             }
-            Absence::Conflict(said) => said.clone(),
+            Absence::Conflict(said) | Absence::GitUnlocked(said) => said.clone(),
         }
     }
 }
@@ -197,14 +200,19 @@ pub(crate) fn parse_lockfile(text: &str) -> Vec<Gem> {
 /// name, then the revision's first 12 characters. Mirrors
 /// `Bundler::Source::Git#base_name` and `#shortref_for_path`.
 fn git_checkout_name(remote: &str, revision: &str) -> String {
+    let short: String = revision.chars().take(12).collect();
+    format!("{}-{short}", repo_name(remote))
+}
+
+/// A remote's repository name, as bundler names its checkout: the last
+/// component, less `.git`. `github: "owner/repo"` reads the same way.
+fn repo_name(remote: &str) -> &str {
     let base = remote
         .trim_end_matches('/')
         .rsplit(['/', ':'])
         .next()
         .unwrap_or_default();
-    let base = base.strip_suffix(".git").unwrap_or(base);
-    let short: String = revision.chars().take(12).collect();
-    format!("{base}-{short}")
+    base.strip_suffix(".git").unwrap_or(base)
 }
 
 /// Directory patterns gems are unpacked into, most specific first. A single

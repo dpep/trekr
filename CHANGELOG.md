@@ -310,6 +310,14 @@
 
 ### Fixed
 
+- **A Gemfile's git gem is no longer dropped without a lockfile.** `gem
+  "rack", github: "rack/rack"` in a checkout with no `Gemfile.lock` was in
+  none of `missing`, `unlocated` or `picked`. It is now the one checkout of
+  that repository in `bundler/gems` (picked as `rack <revision>`, counted
+  in `from_git`), or listed in `gems.unlocated` saying there is none, or
+  several and nothing to choose by. `--index` also says when the Gemfile is
+  newer than `Gemfile.lock`, which is what is read (DEC-293).
+
 - **Gems come from the checkout's Ruby.** A checkout naming a Ruby in
   `.ruby-version` (or kept from its last index) had its stdlib from that
   Ruby and its gems from the shell's `$GEM_HOME`, another Ruby's:
