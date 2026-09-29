@@ -49,6 +49,12 @@
   whose cost grew with everything already written: 50k new files indexed
   beside 50k known took 245 s, 181 s of it the map, and take 72 s (DEC-191).
 
+- **The first query after `--index` is as fast as the ones after it.** Every
+  index now writes the tree snapshot the next query would have assembled —
+  only the LSP's background index did: discourse's first query 0.63 → 0.03 s,
+  a 100k-file repository's 2.6 → 0.05 s. The index takes that time instead,
+  when a declaration moved; `--profile` shows it as `tree` (DEC-192).
+
 - **`--status` in a checkout nobody indexed exits `2` with `status:
   not_indexed`**, the answer a query from there gives, where it listed
   another checkout as `checkouts[0]` and exited `0`. `checkouts` is `[]`;

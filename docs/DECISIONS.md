@@ -6750,3 +6750,63 @@ index's maps, its gems' included, take 0.11 s. Store size is unchanged
 an edit, a rename and an addition, must equal a fresh write of the second
 map, surface key included. It covers both statements. The gold sets, the
 `--refs` differential, `--dead` and the clicks are unchanged (DEC-192).
+
+## DEC-192 — Every index prepares the tree snapshot (DEC-065 revisited)
+
+**Decided.** `--index` ends — after its answer is printed — by writing the
+checkout's tree snapshot when none exists under the key the store now gives
+(`Tree::prepare`: the key, a `stat`, and on a miss the assembly DEC-065's
+first query ran). It was done only by the index the LSP starts in the
+background. A query still builds one when it finds none: after a `--def` that
+refreshed an edited file, a snapshot removed by hand, a store another build
+wrote. `--profile` reports it as `tree`; the tree layer's own `TREKR_PROFILE`
+lines stay out of an index's profile, which is JSON under `--json`.
+
+**Why.** The user's report: the first query after `--index` was surprisingly
+slow and the ones after it fast. That was DEC-065's design, not a cold cache:
+the first query after an index that moved the key assembled the namespace
+and wrote the snapshot, and every later one mapped it. DEC-065 measured that
+the cost is the same wherever it lands and put it on the query, because a
+foreground index "may never be followed by a query". The cost is the same;
+the budgets are not. A query's is tens of milliseconds and an agent issues
+several right after indexing — that is why it indexed — while an index's is
+seconds to minutes, and the assembly is a few percent of it. The first query
+also paid more than the assembly alone: on a store holding three apps and
+their gems, discourse's declarations read in 594 ms the first time and 71 ms
+warm — pages the index had pushed out of the cache.
+
+**Measured.** A cold index into a fresh store, then the same `--ancestors`
+twice, each build on its own store, four interleaved rounds (two at 100k),
+medians (p90), load 5–10 from other work. The index column is this build
+against main, so it carries DEC-191 as well:
+
+| | `--index` | first query | second |
+| --- | ---: | ---: | ---: |
+| rails | 3.10 → 3.17 s | 0.21 (0.25) → **0.02** s | 0.04 → 0.02 s |
+| discourse | 16.1 → 16.3 s | 0.63 (0.89) → **0.03** s | 0.05 → 0.03 s |
+| mastodon | 10.5 → 10.6 s | 0.52 (0.68) → **0.04** s | 0.05 → 0.05 s |
+| 100k files (below) | 89 → 96 s | 2.6 (3.1) → **0.05** s | 0.06 → 0.04 s |
+
+`--profile`'s `tree` phase: 0.38 s at 10k files, 1.6 s at 50k, 2.4 s at
+100k. After a one-file edit to a discourse clone, six rounds: an edit inside
+a method moves no declaration, so the key does not move and neither build
+assembles anything (index 279 → 289 ms, first query 55 → 40 ms); an edit that
+adds a class moves it, and the assembly moved from the query to the index —
+index 363 → 1,133 ms, first query 952 → 46 ms, together 1.31 → 1.18 s.
+
+**Correctness.** The snapshot is the same bytes whoever writes it — the key
+is the same function of the store, the assembly the same code — and a query
+still checks the header, key and checksum before it maps one. Every answer
+below is byte-identical to the previous build, each build answering from a
+store it indexed itself: the four gold sets and widget_shop's (every
+verdict), 40 rails `--refs` answers, `--dead` over rails and activerecord,
+the flipper/faraday probe, and 21,154 replayed editor clicks (misses equal
+but for timestamps). The e2e test that required a foreground index to leave
+the tree alone now requires it to write one, and the usage test's first
+query after an index no longer counts `tree-built`.
+
+**The cost that moved.** Two builds of different tree code on one store key
+their snapshots differently and retire each other's (DEC-065 said so); an
+interleaved benchmark of two binaries on one store therefore rebuilds on
+every query, and is not a measurement of either. Each build here answered
+from its own store.

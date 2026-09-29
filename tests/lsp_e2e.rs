@@ -3822,11 +3822,8 @@ fn a_capped_answer_keeps_the_confirmed_caller_and_says_what_it_left_out() {
     assert_eq!(
         counted(
             &rows,
-            // The session's first request, so it also assembled the tree.
-            &[
-                ("feature", "references".into()),
-                ("flags", "cut,tree-built".into())
-            ]
+            // The session's first request, mapping the tree its index prepared.
+            &[("feature", "references".into()), ("flags", "cut".into())]
         ),
         1,
         "a cap hit is counted, so `--usage` shows how often the limit bites: {rows:?}"

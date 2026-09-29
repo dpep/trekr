@@ -226,7 +226,8 @@ pub fn run() -> ExitCode {
         return ExitCode::SUCCESS;
     }
 
-    if cli.profile {
+    // An index reports its own phases; the tree it prepares is one of them.
+    if cli.profile && cli.index.is_none() {
         // The tree layer reads this rather than taking a parameter: it is
         // built from half a dozen call sites and the flag is a whole-process
         // decision.
@@ -1282,15 +1283,12 @@ fn cmd_index(
             );
         }
     }
-    // The LSP's own index prepares the tree its next request would otherwise
-    // assemble on the request thread. A run someone is waiting on does not:
-    // the cost is the same wherever it lands, and they may never query
-    // (DEC-065).
-    if crate::serve::fresh::in_background() {
-        profile::timed(&mut profile, "tree", || {
-            build_tree(&store, &root_str).map(|_| ())
-        })?;
-    }
+    // Every index prepares the tree snapshot the next query would otherwise
+    // assemble: the cost is the same either way, and a query's budget is
+    // milliseconds where an index's is seconds (DEC-192).
+    profile::timed(&mut profile, "tree", || {
+        crate::tree::Tree::prepare(&store, &root_str)
+    })?;
     if let Some(profile) = profile {
         match out {
             Output::Text => profile.report_text(),

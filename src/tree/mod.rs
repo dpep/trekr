@@ -647,6 +647,31 @@ impl Tree {
         Ok(tree)
     }
 
+    /// Write this checkout's snapshot if none answers to what the store holds
+    /// now, so the first query after an index maps it rather than assembling
+    /// it (DEC-192). Whether it built one. A file under the right name is
+    /// trusted to exist here; a query still verifies it, and rebuilds one that
+    /// does not check out.
+    pub(crate) fn prepare(store: &Store, root: &str) -> anyhow::Result<bool> {
+        let Some(dir) = files::dir(store) else {
+            return Ok(false);
+        };
+        let roots = roots(store, root)?;
+        let key = files::key(store, &roots)?;
+        if dir.join(files::name(root, &key)).exists() {
+            return Ok(false);
+        }
+        let (decls, edges, _) = core_rows();
+        let mut phases = Phases::default();
+        let names = Tree::namespace(store, &roots, decls, edges, &mut phases)?;
+        let bytes = snapshot::encode(&names, &key)?;
+        // The process ends soon after; freeing the namespace string by string
+        // buys nothing (DEC-054).
+        std::mem::forget(names);
+        files::publish(&dir, root, &key, &bytes);
+        Ok(true)
+    }
+
     /// What this checkout's tree is a function of, as a key that moves
     /// exactly when a rebuild would give a different namespace — its own
     /// files, and every gem its bundle names (DEC-065).

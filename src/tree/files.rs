@@ -136,15 +136,22 @@ pub(super) fn open(path: &Path, key: &Key) -> Result<Snapshot, Miss> {
 /// full disk) or mapped once written is still a correct tree, held on the
 /// heap instead.
 pub(super) fn save(dir: &Path, root: &str, key: &Key, bytes: Vec<u8>) -> Snapshot {
-    let name = name(root, key);
-    let path = dir.join(&name);
-    if write(dir, &path, &bytes).is_ok() {
-        retire(dir, &tag(root), &name);
-        if let Ok(mapped) = open(&path, key) {
-            return mapped;
-        }
+    if let Some(path) = publish(dir, root, key, &bytes)
+        && let Ok(mapped) = open(&path, key)
+    {
+        return mapped;
     }
     Snapshot::parse(Bytes::Owned(bytes), key).expect("a namespace just encoded parses")
+}
+
+/// Write a snapshot under its final name and retire the checkout's older
+/// ones; its path, or `None` when it could not be written.
+pub(super) fn publish(dir: &Path, root: &str, key: &Key, bytes: &[u8]) -> Option<PathBuf> {
+    let name = name(root, key);
+    let path = dir.join(&name);
+    write(dir, &path, bytes).ok()?;
+    retire(dir, &tag(root), &name);
+    Some(path)
 }
 
 /// Temporary name, sync, rename. Two writers racing on one key write the

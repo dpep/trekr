@@ -383,7 +383,8 @@ fn profile_reports_on_stderr_so_stdout_stays_the_answer() {
             "file-map",
             "commit",
             "gem-scan",
-            "analyze"
+            "analyze",
+            "tree"
         ],
         "field names stay stable — a caller graphs these"
     );
@@ -1755,10 +1756,14 @@ fn usage_counts_each_command_by_caller_and_outcome() {
     let def = find("def", "hit");
     assert_eq!(def["surface"], "cli");
     assert_eq!(
-        def["flags"], "json,tree-built",
-        "the first query after an index assembles the tree"
+        def["flags"], "json",
+        "the first query after an index maps the tree the index prepared"
     );
-    assert_eq!(find("ancestors", "hit")["flags"], "", "later ones map it");
+    assert_eq!(
+        find("ancestors", "hit")["flags"],
+        "",
+        "and so do later ones"
+    );
     assert_eq!(def["count"], 1);
     assert!(def["latency"].as_str().unwrap().starts_with('<'));
     // The bare grammar is counted as what it dispatched to, marked as bare.
@@ -2753,20 +2758,16 @@ fn dead_weighs_each_scope_against_its_own_checkout() {
     );
 }
 
-/// The index the LSP starts in the background prepares the tree snapshot its
-/// next request would otherwise assemble; an index someone runs does not.
+/// Every index prepares the tree snapshot the next query would otherwise
+/// assemble, the one the LSP starts in the background and one someone runs.
 #[test]
-fn only_a_background_index_prepares_the_tree() {
+fn an_index_prepares_the_tree() {
     let (dir, db) = scratch("prebuild");
     repo(&dir);
     let trees = db.with_extension("trees");
     let files = || fs::read_dir(&trees).map_or(0, |d| d.count());
     trekr(&db, &dir, &["--index"]);
-    assert_eq!(
-        files(),
-        0,
-        "a foreground index leaves the tree to the first query"
-    );
+    assert_eq!(files(), 1, "a foreground index prepares it too");
 
     fs::write(dir.join("gadget.rb"), "class Gadget\nend\n").unwrap();
     let background = Command::new(env!("CARGO_BIN_EXE_trekr"))
@@ -2803,14 +2804,24 @@ fn gc_removes_tree_snapshots_no_checkouts_index_names() {
     let trees = db.with_extension("trees");
     let files = || fs::read_dir(&trees).map_or(0, |d| d.count());
     trekr(&db, &dir, &["--index"]);
-    assert_eq!(
-        trekr(&db, &dir, &["--ancestors", "Widget"]).status.code(),
-        Some(0)
-    );
-    assert_eq!(files(), 1, "the query wrote its snapshot");
+    assert_eq!(files(), 1, "the index wrote its snapshot");
 
-    fs::write(dir.join("gadget.rb"), "class Gadget\nend\n").unwrap();
-    trekr(&db, &dir, &["--index"]);
+    // A snapshot under a key no checkout's index names any more: what a
+    // store move that no index or query followed leaves behind.
+    let current = fs::read_dir(&trees)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let name = current.file_name().unwrap().to_str().unwrap();
+    let (tag, _) = name.split_once('-').unwrap();
+    fs::copy(
+        &current,
+        trees.join(format!("{tag}-{}.tree", "0".repeat(40))),
+    )
+    .unwrap();
+    assert_eq!(files(), 2);
     let dry = trekr(&db, &dir, &["--gc", "--dry-run", "--json"]);
     assert_eq!(
         dry.status.code(),
@@ -2820,21 +2831,19 @@ fn gc_removes_tree_snapshots_no_checkouts_index_names() {
     let dry = json(&dry);
     assert_eq!(dry["snapshots"]["files"], 1, "{dry}");
     assert!(dry["snapshots"]["bytes"].as_u64().unwrap() > 0);
-    assert_eq!(files(), 1, "a dry run removes nothing");
+    assert_eq!(files(), 2, "a dry run removes nothing");
 
     let text = stdout(&trekr(&db, &dir, &["--gc"]));
     assert!(text.contains("collected 1 tree snapshots"), "{text}");
-    assert_eq!(files(), 0);
+    assert_eq!(files(), 1, "the current snapshot stays");
     let again = trekr(&db, &dir, &["--gc", "--json"]);
     assert_eq!(again.status.code(), Some(1), "nothing left to collect");
     assert_eq!(json(&again)["snapshots"]["files"], 0);
-
     assert_eq!(
-        trekr(&db, &dir, &["--ancestors", "Gadget"]).status.code(),
-        Some(0)
+        trekr(&db, &dir, &["--ancestors", "Widget"]).status.code(),
+        Some(0),
+        "and still answers"
     );
-    assert_eq!(trekr(&db, &dir, &["--gc"]).status.code(), Some(1));
-    assert_eq!(files(), 1, "the current snapshot stays");
     let _ = fs::remove_dir_all(&dir);
 }
 

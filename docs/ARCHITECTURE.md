@@ -224,12 +224,14 @@ in it; they stay demand-loaded from SQL.
   temporary file a dead writer left — `--gc` removes (`snapshots` in its
   `--json`).
 
-A snapshot is built by the index the LSP starts in the background, when it
-starts one, and otherwise by whichever query first finds none for the current
-key. Building it in every `--index` was measured and turned down: the cost is
-the same wherever it lands, and a foreground index may never be followed by a
-query (DEC-065). The LSP stamps each tree with the same key, so a bundle moving
-to another gem version rebuilds it as a checkout edit does.
+A snapshot is built by every `--index` whose key has no snapshot yet — the
+one the LSP starts in the background and one someone runs — after the answer
+is printed, and otherwise by whichever query first finds none for the current
+key (a `--def` that refreshed an edited file, a snapshot deleted by hand). The
+cost is the same wherever it lands, so it lands on the command whose budget is
+seconds rather than on the query whose budget is milliseconds (DEC-192,
+revisiting DEC-065). The LSP stamps each tree with the same key, so a bundle
+moving to another gem version rebuilds it as a checkout edit does.
 
 ### `resolve/` — which method does this call site run?
 
