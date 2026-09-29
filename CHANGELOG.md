@@ -38,6 +38,12 @@
   user's directory, a filesystem boundary). That fork was most of a fast
   answer: `--symbols --json` 22 → 14 ms, level with rq's (DEC-190).
 
+- **`--index --profile` names what follows the rows**: `index-rebuild`,
+  `file-map` and `commit` (the app's and the bundle's), and `gem-walk`,
+  reading each gem's files, so the phases add up to the wall time.
+  `store-write` is now the rows alone; a script graphing it sees it shrink by
+  what moved out (DEC-191).
+
 - **`--status` in a checkout nobody indexed exits `2` with `status:
   not_indexed`**, the answer a query from there gives, where it listed
   another checkout as `checkouts[0]` and exited `0`. `checkouts` is `[]`;

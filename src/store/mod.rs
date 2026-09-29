@@ -23,6 +23,21 @@ pub(crate) struct Store {
     /// Where this store lives, so a second connection to it can be opened.
     /// `None` for an in-memory store, which cannot be reached twice.
     path: Option<std::path::PathBuf>,
+    /// Where the writes since the last `take_timing` spent their time, for
+    /// `--index --profile`.
+    timing: WriteTiming,
+}
+
+/// The parts of a write that happen after its rows are in, timed apart so the
+/// profile's phases still sum to the whole.
+#[derive(Debug, Default, Clone, Copy)]
+pub(crate) struct WriteTiming {
+    /// Rebuilding the fact indexes after a bulk load (DEC-057).
+    pub(crate) rebuild: std::time::Duration,
+    /// Diffing and writing the file map (DEC-048).
+    pub(crate) map: std::time::Duration,
+    /// `COMMIT`, which is where the WAL is written and checkpointed.
+    pub(crate) commit: std::time::Duration,
 }
 
 /// The checkouts a tree is assembled from, in the order it layers them —
@@ -173,7 +188,11 @@ impl Store {
             "PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32768; \
              PRAGMA mmap_size=1073741824;",
         )?;
-        let mut store = Store { conn, path: None };
+        let mut store = Store {
+            conn,
+            path: None,
+            timing: WriteTiming::default(),
+        };
         if schema_version(&store.conn)? != schema::VERSION {
             store.migrate()?;
         }
@@ -345,12 +364,15 @@ impl Store {
         if bulk {
             // The sort spills to disk: `temp_store` is MEMORY for queries, and
             // there a 30× monorepo's sort held 1.5 GB.
+            let started = std::time::Instant::now();
             tx.execute_batch("PRAGMA temp_store=FILE;")?;
             for (_, create) in schema::BULK_INDEXES {
                 tx.execute_batch(create)?;
             }
             tx.execute_batch("PRAGMA temp_store=MEMORY;")?;
+            self.timing.rebuild += started.elapsed();
         }
+        let map_started = std::time::Instant::now();
 
         tx.execute(
             "INSERT OR IGNORE INTO checkout (root, indexed_at, surface_key, map_key, git_state)
@@ -394,6 +416,7 @@ impl Store {
                 params![checkout_id, git_state],
             )?;
             tx.commit()?;
+            self.timing.map += map_started.elapsed();
             return Ok(counts);
         }
 
@@ -457,6 +480,7 @@ impl Store {
         )?;
 
         tx.commit()?;
+        self.timing.map += map_started.elapsed();
         Ok(counts)
     }
 
@@ -474,6 +498,11 @@ impl Store {
             )
             .optional()?;
         Ok(stored.is_some_and(|(key, written)| written && key == map_key(files)))
+    }
+
+    /// Where the writes since the last call spent their time.
+    pub(crate) fn take_timing(&mut self) -> WriteTiming {
+        std::mem::take(&mut self.timing)
     }
 
     /// Outside any transaction — so a write here commits on its own rather
@@ -506,7 +535,9 @@ impl Store {
         self.conn.execute_batch("BEGIN IMMEDIATE")?;
         match work(self) {
             Ok(value) => {
+                let started = std::time::Instant::now();
                 self.conn.execute_batch("COMMIT")?;
+                self.timing.commit += started.elapsed();
                 Ok(value)
             }
             Err(error) => {

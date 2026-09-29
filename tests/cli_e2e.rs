@@ -379,6 +379,9 @@ fn profile_reports_on_stderr_so_stdout_stays_the_answer() {
             "known-diff",
             "parse",
             "store-write",
+            "index-rebuild",
+            "file-map",
+            "commit",
             "gem-scan",
             "analyze"
         ],

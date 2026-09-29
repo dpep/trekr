@@ -848,11 +848,17 @@ fn index_files(
         (counts, parsing.join().expect("the parse does not panic"))
     });
     let counts = counts?;
+    let timing = store.take_timing();
     if let Some(profile) = profile.as_mut() {
         // The two overlap: `parse` runs until the last file is parsed, and
-        // `store-write` is what the write took after that.
+        // `store-write` is what the write took after that, less the parts
+        // that follow the rows, which are named on their own.
+        let after = timing.rebuild + timing.map + timing.commit;
         profile.phase("parse", parse_done - started);
-        profile.phase("store-write", parse_done.elapsed());
+        profile.phase("store-write", parse_done.elapsed().saturating_sub(after));
+        profile.phase("index-rebuild", timing.rebuild);
+        profile.phase("file-map", timing.map);
+        profile.phase("commit", timing.commit);
         profile.bytes += bytes_read;
         profile.merge_files(slow);
     }
@@ -953,7 +959,7 @@ fn index_gems(
         }
         // Only `lib/`: it is where a gem's public code lives, and a gem's
         // spec/ and test/ trees are large and never navigated to.
-        let files = scan::walk(&gem_root, "lib");
+        let files = profile::timed(profile, "gem-walk", || scan::walk(&gem_root, "lib"));
         if files.is_empty() {
             continue;
         }
@@ -1135,7 +1141,13 @@ fn cmd_index(
     )?;
 
     let gems = if with_gems {
-        store.batch(|store| index_gems(store, &root, &mut known, &pool, &mut profile))?
+        let gems =
+            store.batch(|store| index_gems(store, &root, &mut known, &pool, &mut profile))?;
+        if let Some(profile) = profile.as_mut() {
+            // The bundle's one commit, outside every gem's own write.
+            profile.phase("commit", store.take_timing().commit);
+        }
+        gems
     } else {
         GemReport::default()
     };
