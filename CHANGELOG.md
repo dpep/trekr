@@ -20,7 +20,8 @@
   gem (json, logger, uri…) sees only its copy. `--index` reports it as
   `gems.stdlib` (`root`, `ruby`, `files`, `hidden`), and a lockfile naming a
   default gem at the version its Ruby ships counts it in `gems.from_stdlib`
-  rather than `missing`; `--status` shows it per checkout.
+  rather than `missing`; `--status` shows it per checkout. In an editor,
+  `require "set"` opens that Ruby's file, a vendored bundle included
   (DEC-180).
 
 - **A stdlib class that is partly compiled hedges a name its Ruby lacks.**

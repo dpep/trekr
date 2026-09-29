@@ -450,12 +450,18 @@ fn normalize(path: &Path) -> PathBuf {
 }
 
 impl LoadPath {
-    /// The load path of a checkout whose bundle resolves `gem_roots`.
+    /// The load path of a checkout whose bundle resolves `gem_roots`, on the
+    /// stdlib its index chose (DEC-180) — or, when it indexed none, the one
+    /// its gems were installed into.
     ///
     /// Reads the disk once per directory: the checkout's candidates are
     /// checked to exist, and each gem and stdlib directory is listed so later
     /// lookups can skip it without a stat.
-    pub(crate) fn for_checkout(root: &Path, gem_roots: &[String]) -> LoadPath {
+    pub(crate) fn for_checkout(
+        root: &Path,
+        gem_roots: &[String],
+        stdlib: Option<&str>,
+    ) -> LoadPath {
         let mut dirs = Vec::new();
         let mut checkout = |path: PathBuf| {
             if path.is_dir() && !dirs.iter().any(|d: &Dir| d.path == path) {
@@ -477,14 +483,20 @@ impl LoadPath {
                 checkout(normalize(&root.join(dir)));
             }
         }
-        for gem in gem_roots {
+        let gem_roots: Vec<&String> = gem_roots
+            .iter()
+            .filter(|gem| Some(gem.as_str()) != stdlib)
+            .collect();
+        for gem in &gem_roots {
             let gem = PathBuf::from(gem);
             dirs.extend(listed(gem.join("lib"), Origin::Gem(gem)));
         }
-        let stdlib = gem_roots.iter().find_map(|gem| {
-            let (lib_ruby, abi) = ruby_beside(Path::new(gem))?;
-            let abi = abi.or_else(|| only_abi(&lib_ruby))?;
-            Some(lib_ruby.join(abi))
+        let stdlib = stdlib.map(PathBuf::from).or_else(|| {
+            gem_roots.iter().find_map(|gem| {
+                let (lib_ruby, abi) = ruby_beside(Path::new(gem))?;
+                let abi = abi.or_else(|| only_abi(&lib_ruby))?;
+                Some(lib_ruby.join(abi))
+            })
         });
         if let Some(stdlib) = stdlib {
             let arch = listed(stdlib.clone(), Origin::Stdlib(stdlib.clone())).map(|dir| {
@@ -887,6 +899,42 @@ mod tests {
                 "{req:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_stdlib_the_index_chose_is_on_the_load_path_whatever_the_gems_say() {
+        let base = std::env::temp_dir().join(format!("trekr-loadpath-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let gem = base.join("app/vendor/bundle/ruby/3.4.0/gems/rack-3.0.0");
+        let stdlib = base.join("ruby/lib/ruby/3.4.0");
+        for dir in [gem.join("lib"), stdlib.clone()] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(stdlib.join("stash.rb"), "").unwrap();
+        let gems = [gem.to_string_lossy().into_owned()];
+        let stdlibs = |load_path: LoadPath| -> Vec<PathBuf> {
+            load_path
+                .dirs
+                .into_iter()
+                .filter(|dir| matches!(dir.origin, Origin::Stdlib(_)))
+                .map(|dir| dir.path)
+                .collect()
+        };
+        let app = base.join("app");
+        assert_eq!(
+            stdlibs(LoadPath::for_checkout(&app, &gems, None)),
+            Vec::<PathBuf>::new(),
+            "a vendored bundle names no Ruby"
+        );
+        assert_eq!(
+            stdlibs(LoadPath::for_checkout(
+                &app,
+                &gems,
+                Some(&stdlib.to_string_lossy())
+            )),
+            [stdlib]
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]

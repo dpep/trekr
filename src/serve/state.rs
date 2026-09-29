@@ -362,7 +362,12 @@ impl Session {
             .get(root)
             .is_some_and(|(from, _)| *from == gems);
         if !current {
-            let built = LoadPath::for_checkout(root, &gems);
+            let stdlib = self
+                .store
+                .tree_roots(&root.to_string_lossy())
+                .ok()
+                .and_then(|roots| roots.stdlib);
+            let built = LoadPath::for_checkout(root, &gems, stdlib.as_deref());
             self.load_paths.insert(root.to_path_buf(), (gems, built));
         }
         &self.load_paths[root].1

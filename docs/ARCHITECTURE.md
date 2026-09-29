@@ -790,9 +790,10 @@ one the way Ruby would, given the directories and a file-exists test.
    the last two, which is where `rails_helper` lives;
 2. its path gems' `lib/`, from `Gemfile.lock`'s `PATH` sections;
 3. each gem the bundle resolves (`Store::gems_used`), its `lib/`;
-4. the standard library of the Ruby those gems were installed into, and its
-   arch directory — beside the gem for rbenv, asdf, Homebrew and system Rubies,
-   under `.rvm/rubies` for rvm. A `vendor/bundle` names no Ruby and gets none.
+4. the standard library the index chose (DEC-180), and its arch directory;
+   when it indexed none, the one the gems were installed into — beside the
+   gem for rbenv, asdf, Homebrew and system Rubies, under `.rvm/rubies` for
+   rvm. A `vendor/bundle` names no Ruby and gets none.
 
 Per directory, `x.rb` then the compiled `x`, as `rb_find_file_ext` does. A
 compiled extension first on the path is named in the hover and is no
