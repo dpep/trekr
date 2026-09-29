@@ -1,6 +1,6 @@
 //! A stub's `sig`s: one per call shape, only where every overload that
 //! covers the shape agrees on one class (DEC-077). Ported from the generator
-//! it replaces (`core_sigs.rb`), rule for rule.
+//! it replaces (`script/core_sigs.rb`, retired by DEC-240), rule for rule.
 
 use super::env::{Method, Returns};
 use super::params::{Param, ParamKind};

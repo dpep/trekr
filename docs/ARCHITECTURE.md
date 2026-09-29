@@ -1461,7 +1461,7 @@ Deliberate, and cheap to close when they earn it:
   describes that this Ruby lacks (`OpenSSL::Engine` where OpenSSL has none),
   or that Ruby makes at runtime where no maker spells its shape (Ripper's
   `on_*`), is declared by the stub (DEC-240).
-- A `super` that lands in core is as right as `src/tree/core.rb` is complete:
-  a core class that defines the name without the stub declaring it sends the
+- A `super` that lands in core is as right as the Ruby's RBS is complete: a
+  core class that defines the name without RBS writing it there sends the
   lookup further up the chain.
 - Orphaned blobs are never collected (DEC-003).

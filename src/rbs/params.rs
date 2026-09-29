@@ -1,6 +1,7 @@
 //! A stub's parameter list, from a method's rdoc call-seq and its RBS
 //! overloads: named as the documentation names them, with the arity RBS
-//! gives. Ported from the generator it replaces (`core_sigs.rb`, DEC-078).
+//! gives. Ported from the generator it replaces (`script/core_sigs.rb`,
+//! DEC-078, retired by DEC-240).
 
 use super::env::Method;
 use super::parse::Function;
