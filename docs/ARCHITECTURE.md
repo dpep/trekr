@@ -119,6 +119,17 @@ So `prepend A; include A` gives `[A, Foo]` while `include A; prepend A` gives
 `[A, Foo, A]`. A single "seen" set gets that wrong and looks right on every
 simple case; the ported Rubydex torture tests in `src/tree/mod.rs` pin it.
 
+Every name's chain is memoized, sub-chains included, so a checkout is
+linearized once however many classes share a parent (DEC-200). A cycle —
+a name asked again while it is being linearized — answers empty through a
+superclass or mixin edge (not valid Ruby), and **the chain so far** through a
+path lookup: `include Widget::Helpers` inside `class Widget::Parser::Widget`
+names the class itself, and finds `Helpers` through the `::Widget` it included
+a line earlier, as Ruby does. A chain is always the one its name gets when it
+is asked first: one built against an outer frame's partial chain is not
+memoized, and one that closed its own cycle is reused only when nothing else
+is in flight.
+
 Two things the blob layer cannot know, resolved here:
 
 - **`Module.nesting`.** The blob layer records nesting *as written* (`["B", "A"]`

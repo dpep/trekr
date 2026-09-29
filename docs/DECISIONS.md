@@ -6977,3 +6977,81 @@ constant references.
 - **The rows.** Definitions and constant references are now most of the
   writer's work; DEC-061's interning of `nesting` and `name` is the sized
   slimming for them.
+
+## DEC-200 — Linearization is memoized per name, and a cycle has one answer
+
+**Decided.** Every name's chain is memoized, sub-chains included, where only
+the top-level `ancestors` call was before: a class linearized its whole
+superclass and mixin graph afresh, so a checkout paid for `Object`'s chain
+once per class. The recursion keeps a stack of frames, and a name asked
+again while its frame is on it closes a cycle:
+
+- through a **superclass or mixin edge** — not valid Ruby — it answers
+  empty, as before;
+- through a **path lookup** — `include Widget::Helpers` in `class
+  Widget::Parser::Widget`, where `Widget` is the class itself and `Helpers`
+  is found through the `::Widget` it included a line earlier — it answers
+  **the chain so far**: prepends, self, the includes read so far, and the
+  superclass's chain. That is what Ruby's `ancestors` says at that line, and
+  it is how Ruby resolves the constant.
+
+**Every chain is the one its name gets when it is asked first**, whatever was
+asked before it. A frame records the outermost frame a cycle under it
+reached (Tarjan's low-link); a chain built against an outer frame's partial
+chain is not memoized, and one that closed a cycle of its own (an SCC's root)
+is reused only when no frame is open — a caller inside that cycle would have
+been cut where the memoized walk was not. Everything else is a memo hit.
+
+**Which answer is right, per Ruby.** kramdown's `Kramdown::Parser::Kramdown`
+does `include ::Kramdown` and then, in `kramdown/html.rb`,
+`include Kramdown::Parser::Html::Parser` and `include Kramdown::Utils::Html`.
+`Kramdown` there is the class; Ruby finds `Parser` through the `::Kramdown`
+it already includes, so both modules are in its ancestors. Before, the class's
+own chain lacked them and listed them unresolved, while its subclasses
+(`GFM`, `Markdown`, `SmartyPants`) had them — because a subclass linearized
+the parent in a nested walk that did not count as in flight. Both now have
+them, pinned by testbed case 200 and by
+`a_chain_does_not_depend_on_what_was_asked_before_it`, which asks a cycle's
+names in both orders and failed before (a chain cached from inside another
+name's walk answered for later askers).
+
+**Measured.** Every class's and module's chain, instance and singleton, in
+one tree (`src/tree/dump.rs`), forward and reverse order, against the build
+before — release, one run each, load 7–15 on 8 cores:
+
+| corpus | names | before | after | differ |
+| --- | ---: | ---: | ---: | ---: |
+| rails | 9,699 | 437 ms | 210–291 ms | 0 |
+| mastodon | 16,825 | 543 ms | 229–331 ms | 0 |
+| c100k (100k files, no gems) | 72,176 | 479 s | 2.8–4.1 s | 1 |
+
+The one is `Kramdown::Parser::Kramdown`, above. Forward and reverse orders
+give identical dumps. 9 of rails' 9,715 memoized chains close a cycle,
+10 of mastodon's, 42 of c100k's.
+
+The pass that finds a module's includers linearizes every class; a `--def`
+inside a module pays it (`respond_to?` in `ActiveSupport::Tryable`, 7
+interleaved rounds, load 7–7.7): rails 0.40 → 0.18 s median (p90 0.42 →
+0.19), mastodon 0.46 → 0.28 s (p90 0.46 → 0.28). Outputs byte-identical, as
+are every gold set, the rails `--refs` 40- and 51-query sets, `--dead` on
+rails, activerecord and mastodon, and `make clicks`.
+
+**Rejected.**
+- **Caching sub-chains and skipping the cache when a cycle guard fired**
+  (the algorithm lane's prototype). Same speed, but a subclass reused its
+  parent's memoized chain where the build before re-linearized it nested:
+  on c100k the three Kramdown subclasses lost their Html modules, and the
+  answer still depended on asking order.
+- **Empty for every cycle, lookups included** ("members of an SCC see each
+  other empty"). Order-independent, and as fast, but Ruby's answer is the
+  chain so far: all four Kramdown parsers lose three modules each (the only
+  4 of c100k's 72,176 names where the two rules differ; none on rails or
+  mastodon).
+- **Recomputing an SCC's members after its root closes**, as a full Tarjan
+  pass would. Reusing a cyclic chain only at the top level gives the same
+  answers with no second pass, and so few chains close a cycle that
+  recomputing them nested costs nothing measurable.
+
+**Not done: the includers map in the snapshot.** It would make the pass free
+per query (~0.8 MB on rails, ~8 MB on c100k), but it changes the snapshot's
+format, which another lane is changing.

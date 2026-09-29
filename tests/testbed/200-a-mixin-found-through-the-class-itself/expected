@@ -1,0 +1,7 @@
+# `Widget` in `include Widget::Helpers` is the class itself, and `Helpers` is
+# found through the `::Widget` it included the line before, as Ruby finds it.
+# The class's own chain lacked it while a subclass's had it: the class was
+# being linearized when its own path asked for its ancestors (DEC-200).
+ancestors Widget::Parser::Widget Widget::Parser::Widget,Widget::Helpers,Widget,Widget::Parser::Base unresolved=
+ancestors Widget::Parser::Fancy Widget::Parser::Fancy,Widget::Parser::Widget,Widget::Helpers,Widget,Widget::Parser::Base unresolved=
+def app.rb:18:9 status=resolved owner=Widget::Helpers

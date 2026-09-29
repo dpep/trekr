@@ -70,6 +70,12 @@
   answer after such a save maps the snapshot instead of reassembling it
   (DEC-194).
 
+- **A question about a call inside a module is faster in a large repo.**
+  Finding which classes mix a module in linearized every class's whole
+  ancestry afresh; each chain is now built once. `--def` on `respond_to?`
+  inside `ActiveSupport::Tryable`: rails 0.40 → 0.18 s, mastodon 0.46 →
+  0.28 s, and minutes to seconds on a 100k-file checkout (DEC-200).
+
 - **`--status` in a checkout nobody indexed exits `2` with `status:
   not_indexed`**, the answer a query from there gives, where it listed
   another checkout as `checkouts[0]` and exited `0`. `checkouts` is `[]`;
@@ -153,6 +159,14 @@
   stays `confirmed` for the ancestor's own method (DEC-140).
 
 ### Fixed
+
+- **A class that names a mixin through its own ancestors includes it.**
+  `include Kramdown::Parser::Html::Parser` inside `class
+  Kramdown::Parser::Kramdown` (which had just done `include ::Kramdown`)
+  resolves as Ruby resolves it, so the class's own `--ancestors` lists the
+  module rather than reporting it unresolved; its subclasses already did.
+  A class's chain no longer depends on which class was asked about first
+  (DEC-200).
 
 - **A variable named `object` no longer types its receiver.** The naming
   rung read `object` as class `Object`, so `object.inspect` was a confirmed

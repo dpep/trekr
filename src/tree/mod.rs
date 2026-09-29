@@ -18,6 +18,8 @@
 //! Semantics follow Shopify's Rubydex (MIT) `docs/ruby-behaviors.md`.
 
 mod corelib;
+#[cfg(test)]
+mod dump;
 mod files;
 mod snapshot;
 mod variants;
@@ -365,17 +367,13 @@ pub(crate) struct Tree {
     /// every mixin edge once is far cheaper than linearizing every class,
     /// which is what `includers` pays.
     mixers: RefCell<Option<HashMap<String, Vec<String>>>>,
-    /// Names whose linearization is in progress. `descend` asks for a name's
-    /// ancestors while resolving a path, and that path resolution can lead
-    /// back to a name already being linearized — at which point `ancestors`
-    /// starts a *fresh* recursion stack and `linearize`'s own cycle guard,
-    /// which is per-call, cannot see it. This is the guard that spans calls.
-    in_flight: RefCell<HashSet<String>>,
-    /// Linearization is memoized per name. Only the top-level call is cached;
-    /// the recursion under it is cheap, and caching mid-flight would mean
-    /// caching a chain computed against a partial `seen` set — not the same
-    /// answer.
-    ancestors: RefCell<HashMap<String, Rc<Ancestry>>>,
+    /// Linearizations in progress, innermost last. A name asked for again
+    /// while its own frame is here is a cycle: through a superclass or mixin
+    /// edge (not valid Ruby), or through `descend` resolving a mixin's path
+    /// via the class's own ancestors (DEC-200).
+    linearizing: RefCell<Vec<Frame>>,
+    /// Every name's chain, as it is when that name is the one asked (DEC-200).
+    ancestors: RefCell<HashMap<String, Memo>>,
     /// The markers of scopes that define methods the source does not name
     /// (DEC-130), as read: loaded on first need from the store, or handed
     /// over whole by a tree that loads nothing.
@@ -406,6 +404,40 @@ pub(crate) struct Ancestry {
     /// dynamically built module. A miss further down the chain is only as
     /// trustworthy as this list is short, so it travels with the answer.
     pub(crate) unresolved: Vec<String>,
+}
+
+/// One linearization in progress: the chain so far, and whether a cycle
+/// under it makes the answer depend on who asked (DEC-200).
+struct Frame {
+    fqn: String,
+    /// The outermost frame a cycle under this one reached. Below this frame's
+    /// own depth, its chain was built against a caller's partial one.
+    low: usize,
+    /// A cycle closed somewhere under this frame.
+    cyclic: bool,
+    prepends: Vec<String>,
+    includes: Vec<String>,
+    parent: Vec<String>,
+}
+
+impl Frame {
+    /// What Ruby's `ancestors` would say at this point in the body: the
+    /// superclass's chain and the mixins read so far.
+    fn so_far(&self) -> Vec<String> {
+        let mut chain = self.prepends.clone();
+        chain.push(self.fqn.clone());
+        chain.extend(self.includes.iter().cloned());
+        chain.extend(self.parent.iter().cloned());
+        chain
+    }
+}
+
+/// A memoized chain. A `cyclic` one was built from inside a cycle it closed
+/// itself, so it is the answer only when nothing else is in flight: a caller
+/// already in that cycle would have been cut where this one was not.
+struct Memo {
+    ancestry: Rc<Ancestry>,
+    cyclic: bool,
 }
 
 /// Where in Ruby's lookup ladder an answer came from. The rungs are ordered,
@@ -722,7 +754,7 @@ impl Tree {
         Tree {
             root,
             stdlib: None,
-            in_flight: RefCell::new(HashSet::new()),
+            linearizing: RefCell::new(Vec::new()),
             names,
             methods: RefCell::new(Vec::new()),
             by_owner: RefCell::new(HashMap::new()),
@@ -1263,33 +1295,75 @@ impl Tree {
     /// The ancestor chain of a name, in Ruby's linearization order:
     /// `[prepends, self, includes, superclass's chain]`, with the first
     /// occurrence of each module winning.
-    ///
-    /// Memoized, because a file's every constant reference asks for the chain
-    /// of the same enclosing class.
     pub(crate) fn ancestors(&self, fqn: &str) -> Rc<Ancestry> {
-        let cached = self.ancestors.borrow().get(fqn).cloned();
-        if let Some(cached) = cached {
-            return cached;
+        self.linearized(fqn, false)
+    }
+
+    /// Memoized per name, sub-chains included, so that each name is
+    /// linearized once per tree however many classes inherit it (DEC-200).
+    ///
+    /// A name asked again while it is being linearized closes a cycle. Through
+    /// a superclass or mixin edge (`structural`) it answers empty, which lets a
+    /// half-written index finish. Through a lookup — `include Kramdown::Html`
+    /// in a class nested as `Kramdown::Parser::Kramdown`, where `Kramdown`
+    /// names the class itself and `::Html` is found through its ancestors — it
+    /// answers the chain so far, as Ruby's `ancestors` would at that line.
+    ///
+    /// Every answer is the one a fresh tree gives when this name is asked
+    /// first: a chain built against an outer frame's partial chain is not
+    /// memoized, and one that closed a cycle of its own is reused only when
+    /// nothing else is in flight.
+    fn linearized(&self, fqn: &str, structural: bool) -> Rc<Ancestry> {
+        if let Some(memo) = self.ancestors.borrow().get(fqn)
+            && (!memo.cyclic || self.linearizing.borrow().is_empty())
+        {
+            return memo.ancestry.clone();
         }
-        // Re-entered for a name already being linearized: answer empty rather
-        // than recurse, exactly as `linearize` does for a cycle it can see.
-        // The outer call still computes the real chain, so the empty answer is
-        // never what gets cached.
-        // Re-entered for a name already being linearized: answer empty rather
-        // than recurse, exactly as `linearize` does for a cycle it can see.
-        // The outer call still computes the real chain, so the empty answer is
-        // never what gets cached.
-        if !self.in_flight.borrow_mut().insert(fqn.to_string()) {
-            return Rc::new(Ancestry::default());
-        }
+        let depth = {
+            let mut frames = self.linearizing.borrow_mut();
+            if let Some(at) = frames.iter().position(|frame| frame.fqn == fqn) {
+                let so_far = (!structural).then(|| frames[at].so_far());
+                let top = frames.last_mut().expect("a frame is in flight");
+                top.low = top.low.min(at);
+                top.cyclic = true;
+                return Rc::new(Ancestry {
+                    chain: so_far.unwrap_or_default(),
+                    unresolved: Vec::new(),
+                });
+            }
+            let depth = frames.len();
+            frames.push(Frame {
+                fqn: fqn.to_string(),
+                low: depth,
+                cyclic: false,
+                prepends: Vec::new(),
+                includes: Vec::new(),
+                parent: Vec::new(),
+            });
+            depth
+        };
         let mut out = Ancestry::default();
-        out.chain = self.linearize(fqn, &mut out, &mut Vec::new());
-        let chain = Rc::new(out);
-        self.in_flight.borrow_mut().remove(fqn);
-        self.ancestors
-            .borrow_mut()
-            .insert(fqn.to_string(), chain.clone());
-        chain
+        out.chain = self.linearize(fqn, &mut out);
+        let frame = {
+            let mut frames = self.linearizing.borrow_mut();
+            let frame = frames.pop().expect("this call's frame");
+            if let Some(caller) = frames.last_mut() {
+                caller.low = caller.low.min(frame.low);
+                caller.cyclic |= frame.cyclic;
+            }
+            frame
+        };
+        let ancestry = Rc::new(out);
+        if frame.low >= depth {
+            self.ancestors
+                .borrow_mut()
+                .entry(fqn.to_string())
+                .or_insert_with(|| Memo {
+                    ancestry: ancestry.clone(),
+                    cyclic: frame.cyclic,
+                });
+        }
+        ancestry
     }
 
     /// Ruby's linearization, and the one place where prepend and include are
@@ -1305,13 +1379,10 @@ impl Tree {
     /// The asymmetry is real Ruby, not an artifact: `prepend A; include A` puts
     /// `A` once in front, while `include A; prepend A` puts it in *both* places.
     /// A single "seen" set gets that wrong and looks right on every simple case.
-    fn linearize(&self, fqn: &str, out: &mut Ancestry, stack: &mut Vec<String>) -> Vec<String> {
-        if stack.iter().any(|f| f == fqn) {
-            // Not valid Ruby, but a partial or half-written index reaches here.
-            // An empty chain lets the caller finish instead of recursing.
-            return Vec::new();
-        }
-        stack.push(fqn.to_string());
+    ///
+    /// Works on the innermost frame's lists, which are what a lookup that
+    /// comes back to this name sees as its chain so far.
+    fn linearize(&self, fqn: &str, out: &mut Ancestry) -> Vec<String> {
         let entry = self.names.get(fqn);
 
         // A split name has no ancestry of its own to give: which superclass it
@@ -1323,27 +1394,26 @@ impl Tree {
                     out.unresolved.push(name);
                 }
             }
-            stack.pop();
             return vec![fqn.to_string()];
         }
 
         // The parent chain is needed before includes, because includes dedup
         // against it.
         let parent: Vec<String> = match entry.and_then(EntryRef::superclass) {
-            Some(target) => self.chain_of(&target, out, stack),
+            Some(target) => self.chain_of(&target, out),
             // Every class without an explicit superclass inherits Object, and
             // that tail is most of what core indexing buys: it is how `puts`
             // and `raise` become findable from an ordinary class body.
-            None if self.inherits_object(fqn, entry) => self.linearize(OBJECT, out, stack),
+            None if self.inherits_object(fqn, entry) => self.sub_chain(OBJECT, out),
             None => Vec::new(),
         };
+        self.innermost(|frame| frame.parent = parent);
 
-        let mut prepends: Vec<String> = Vec::new();
-        let mut includes: Vec<String> = Vec::new();
         for (kind, target) in entry.map(EntryRef::mixins).unwrap_or_default() {
-            let mut ids = self.chain_of(&target, out, stack);
-            match kind {
+            let mut ids = self.chain_of(&target, out);
+            self.innermost(|frame| match kind {
                 MixinKind::Prepend => {
+                    let prepends = &mut frame.prepends;
                     // Last wins: an existing entry is pulled out and re-inserted
                     // at the front — unless the whole prepend is a no-op, when
                     // skipping it preserves the order already established.
@@ -1358,21 +1428,47 @@ impl Tree {
                     // First wins: anything already reachable keeps its deeper
                     // position instead of being pulled forward.
                     ids.retain(|id| {
-                        !prepends.contains(id) && !includes.contains(id) && !parent.contains(id)
+                        !frame.prepends.contains(id)
+                            && !frame.includes.contains(id)
+                            && !frame.parent.contains(id)
                     });
                     for id in ids.into_iter().rev() {
-                        includes.insert(0, id);
+                        frame.includes.insert(0, id);
                     }
                 }
-            }
+            });
         }
 
-        stack.pop();
-        let mut chain = prepends;
-        chain.push(fqn.to_string());
-        chain.extend(includes);
-        chain.extend(parent);
-        chain
+        self.innermost(|frame| {
+            let mut chain = std::mem::take(&mut frame.prepends);
+            chain.push(fqn.to_string());
+            chain.append(&mut frame.includes);
+            chain.append(&mut frame.parent);
+            chain
+        })
+    }
+
+    /// The frame `linearize` is working in: the last one, since every frame
+    /// pushed under it has been popped by the time it resumes.
+    fn innermost<T>(&self, work: impl FnOnce(&mut Frame) -> T) -> T {
+        work(
+            self.linearizing
+                .borrow_mut()
+                .last_mut()
+                .expect("linearize runs inside its frame"),
+        )
+    }
+
+    /// A superclass's or mixin's whole chain, with what it could not resolve
+    /// added to `out`'s, in the order a single walk would have met them.
+    fn sub_chain(&self, fqn: &str, out: &mut Ancestry) -> Vec<String> {
+        let sub = self.linearized(fqn, true);
+        for name in &sub.unresolved {
+            if !out.unresolved.contains(name) {
+                out.unresolved.push(name.clone());
+            }
+        }
+        sub.chain.clone()
     }
 
     /// Does this name get Ruby's implicit `< Object`?
@@ -1388,16 +1484,11 @@ impl Tree {
 
     /// One mixin or superclass target: its own whole chain, or nothing plus a
     /// note that we could not see it.
-    fn chain_of(
-        &self,
-        target: &Written,
-        out: &mut Ancestry,
-        stack: &mut Vec<String>,
-    ) -> Vec<String> {
+    fn chain_of(&self, target: &Written, out: &mut Ancestry) -> Vec<String> {
         match self.resolve_lexical(target.name, &target.nesting) {
             Some(fqn) => {
                 let fqn = self.namespace_of(&fqn);
-                self.linearize(&fqn, out, stack)
+                self.sub_chain(&fqn, out)
             }
             // `class Widget < ActiveRecord::Base` in a checkout with no gems
             // indexed. The chain stops here, and the answer says so.
@@ -1978,6 +2069,73 @@ mod tests {
             "module Foo\n  prepend Foo\nend\n",
         ] {
             assert_eq!(chain(&one(source), "Foo"), ["Foo"]);
+        }
+    }
+
+    /// A class whose mixin path runs through its own ancestors: `Widget` in
+    /// `include Widget::Helpers` is the class itself, and `Helpers` is found
+    /// through the `::Widget` it included a line earlier — Ruby resolves it.
+    const INCLUDES_THROUGH_ITSELF: &str = "module Widget\n  module Helpers\n  end\nend\n\
+        module Widget\n  module Parser\n    class Base\n    end\n\
+        class Widget < Base\n      include ::Widget\n      include Widget::Helpers\n    end\n\
+        class Fancy < Widget\n    end\n  end\nend\n";
+
+    #[test]
+    fn a_mixin_found_through_the_class_itself_sees_its_chain_so_far() {
+        let tree = one(INCLUDES_THROUGH_ITSELF);
+        assert_eq!(
+            chain(&tree, "Widget::Parser::Widget")[..4],
+            [
+                "Widget::Parser::Widget",
+                "Widget::Helpers",
+                "Widget",
+                "Widget::Parser::Base"
+            ]
+        );
+        assert!(
+            tree.ancestors("Widget::Parser::Widget")
+                .unresolved
+                .is_empty()
+        );
+    }
+
+    /// Memoized chains are the ones each name gets when asked first, so the
+    /// order of asking — a subclass before its parent, one side of a cycle
+    /// before the other — changes no answer (DEC-200).
+    #[test]
+    fn a_chain_does_not_depend_on_what_was_asked_before_it() {
+        let cases = [
+            (
+                INCLUDES_THROUGH_ITSELF,
+                vec!["Widget::Parser::Widget", "Widget::Parser::Fancy"],
+            ),
+            (
+                // Two classes whose mixin paths each run through the other's
+                // ancestors, and two modules that include each other.
+                "module Shared\n  module Inner\n  end\nend\n\
+                 class Alpha\n  include Shared\n  include Beta::Inner\nend\n\
+                 class Beta\n  include Shared\n  include Alpha::Inner\nend\n\
+                 module Gamma\n  include Delta\nend\nmodule Delta\n  include Gamma\nend\n\
+                 class Epsilon < Alpha\n  include Delta\nend\n",
+                vec!["Alpha", "Beta", "Gamma", "Delta", "Epsilon"],
+            ),
+        ];
+        for (source, names) in cases {
+            let first: Vec<Vec<String>> = names
+                .iter()
+                .map(|name| one(source).ancestors(name).chain.clone())
+                .collect();
+            for order in [names.clone(), names.iter().rev().copied().collect()] {
+                let tree = one(source);
+                for name in &order {
+                    let at = names.iter().position(|n| n == name).unwrap();
+                    assert_eq!(
+                        tree.ancestors(name).chain,
+                        first[at],
+                        "{name} after {order:?}"
+                    );
+                }
+            }
         }
     }
 
