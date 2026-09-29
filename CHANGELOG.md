@@ -179,6 +179,12 @@
 
 ### Fixed
 
+- **The app's own method wins over a gem's that reopens the same class.**
+  The app was layered before its gems, because it is indexed first, so where
+  both define one method a card, `--def` and `--refs` answered the gem's.
+  Ruby loads the bundle first; the app's definition is the one that runs
+  (DEC-210).
+
 - **A class that names a mixin through its own ancestors includes it.**
   `include Kramdown::Parser::Html::Parser` inside `class
   Kramdown::Parser::Kramdown` (which had just done `include ::Kramdown`)

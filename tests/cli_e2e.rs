@@ -3511,6 +3511,50 @@ fn a_gem_reopening_the_stdlib_answers_over_it_whatever_the_index_order() {
     let _ = fs::remove_dir_all(&home);
 }
 
+/// Ruby loads the bundle before the app, so where both reopen a class the
+/// app's method is the one that runs. The app is indexed first, and layering
+/// by insert order let the gem's win.
+#[test]
+fn the_apps_reopen_answers_over_a_gems() {
+    let (dir, db) = scratch("gem-layer");
+    ruby_app(
+        &dir,
+        "9.8.7",
+        &["patcher (1.0.0)"],
+        &[(
+            "patcher-1.0.0",
+            "patcher.rb",
+            "class Stash\n  def put(item)\n  end\nend\n",
+        )],
+    );
+    // As a real app has it: the bundle is not the app's own code.
+    fs::write(dir.join(".gitignore"), "vendor/\n").unwrap();
+    fs::create_dir_all(dir.join("lib")).unwrap();
+    fs::write(
+        dir.join("lib/stash.rb"),
+        "class Stash\n  def put(item)\n  end\nend\n\nStash.new.put(1)\n",
+    )
+    .unwrap();
+    trekr(&db, &dir, &["--index"]);
+
+    let answer = json(&trekr(&db, &dir, &["Stash#put", "--json"]));
+    let roots = definition_roots(&answer);
+    assert!(
+        roots.len() == 1 && Path::new(&roots[0]) == fs::canonicalize(&dir).unwrap(),
+        "{answer}"
+    );
+    let call = json(&trekr(&db, &dir, &["--def", "lib/stash.rb:6:11", "--json"]));
+    assert_eq!(call["status"], "resolved", "{call}");
+    assert!(
+        call["definition"][0]["path"]
+            .as_str()
+            .is_some_and(|p| p.ends_with("lib/stash.rb")),
+        "{call}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A stdlib class whose Ruby loads a compiled extension has methods no Ruby
 /// defines, so a name its Ruby lacks is residue there, and certain only for
 /// a class that is all Ruby (DEC-181).

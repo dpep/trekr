@@ -199,6 +199,11 @@ the name to the variant nearest the calling file (`Tree::variant_at`), with
 the file named for the class breaking a tie. Output names a variant by its
 name (`public_name`). An `.rbi` superclass never splits a name.
 
+Of the superclasses one class's declarations write — which Ruby requires to
+be the same class — the first that names a class is taken, so a computed one
+(`Impl = case …`) gives way to an `.rbi`'s literal whatever order the layers
+put them in (DEC-210).
+
 **Flat once assembled** (DEC-060). Assembly writes a map, because placing a
 declaration reads the namespace still being written. The finished namespace is
 laid out as one flat byte layout ([`tree/snapshot.rs`](../src/tree/snapshot.rs))
@@ -490,8 +495,10 @@ is first asked, as the index's are.
 
 The layering is core → stdlib → gems → checkout, so a gem may reopen core
 and the stdlib and the checkout may reopen a gem, which is what Rails
-actually does. The stdlib is layered by kind, not insert order, so a gem
-indexed before the stdlib still reopens it.
+actually does: Ruby loads the bundle before the app. Each layer is placed by
+kind, not insert order (`Roots::layer`) — an app is indexed before its gems,
+and a gem may be indexed before the stdlib — and gems keep insert order among
+themselves (DEC-210).
 
 **The resident front holds the tree.** `Tree::build(store, root)` is the whole
 seam: it takes a store and a checkout root and returns a value with no borrowed

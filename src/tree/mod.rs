@@ -1036,6 +1036,7 @@ impl Tree {
         // A name declared with two different superclasses is two classes in
         // two programs (DEC-072), so it is split before anything attaches to it.
         let split = tree.split_conflicts(&edges, programs);
+        let mut superclasses: HashMap<String, Vec<Target>> = HashMap::new();
         for edge in edges {
             let owners: Vec<String> = match split.get(&edge.scope) {
                 None => vec![edge.scope.clone()],
@@ -1058,6 +1059,10 @@ impl Tree {
             };
             let target = tree.aim(edge.target, &edge.path, &split);
             for owner in owners {
+                if edge.relation == "superclass" {
+                    superclasses.entry(owner).or_default().push(target.clone());
+                    continue;
+                }
                 let entry = tree.names.building().entry(owner).or_default();
                 match edge.relation.as_str() {
                     "prepend" => entry.mixins.push(Mixin {
@@ -1068,14 +1073,23 @@ impl Tree {
                         kind: MixinKind::Include,
                         target: target.clone(),
                     }),
-                    "superclass" => {
-                        entry.superclass.get_or_insert(target.clone());
-                    }
                     "extend" => entry.extends.push(target.clone()),
                     "singleton_prepend" => entry.singleton_prepends.push(target.clone()),
                     _ => continue,
                 };
             }
+        }
+        // Every `class X < Y` of one class names the same superclass at run
+        // time, or Ruby raises; what differs is whether the index can read it.
+        // A computed one (`Impl = case …`) reads as nothing, so the first that
+        // names a class is taken, whatever order the layers put them in.
+        for (owner, mut written) in superclasses {
+            let at = written
+                .iter()
+                .position(|target| tree.names_a_class(target))
+                .unwrap_or(0);
+            tree.names.building().entry(owner).or_default().superclass =
+                Some(written.swap_remove(at));
         }
         tree.apply_mixed(&mixed);
         // Each half keeps the declarations nearest it. The name itself keeps
@@ -1617,6 +1631,14 @@ impl Tree {
             current = self.descend(&current, segment)?;
         }
         Some(current)
+    }
+
+    /// Does a superclass as written resolve, before any ancestry is attached,
+    /// to a class?
+    fn names_a_class(&self, target: &Target) -> bool {
+        self.resolve_lexical(&target.name, &target.nesting)
+            .map(|fqn| self.namespace_of(&fqn))
+            .is_some_and(|fqn| self.names.get(&fqn).is_some_and(|e| e.kind() == "class"))
     }
 
     /// A constant assigned another constant is a second name for one thing.
@@ -2390,6 +2412,20 @@ mod tests {
             ("/app/sorbet/rbi/other.rbi", "class Map < Hash\nend\n"),
         ]);
         assert!(tree.variants_of("Map").is_empty());
+    }
+
+    /// A gem layers before the app, so its computed superclass is read before
+    /// the app's `.rbi` says what it computed to (DEC-210).
+    #[test]
+    fn a_computed_superclass_gives_way_to_one_that_names_a_class() {
+        let tree = tree(&[
+            (
+                "/gems/g/lib/map.rb",
+                "class Backend\nend\nImpl = case RUBY_ENGINE\n  when \"ruby\" then Backend\n  end\nclass Map < Impl\nend\n",
+            ),
+            ("/app/sorbet/rbi/gems/g.rbi", "class Map < Backend\nend\n"),
+        ]);
+        assert_eq!(chain(&tree, "Map")[..2], ["Map", "Backend"]);
     }
 
     #[test]

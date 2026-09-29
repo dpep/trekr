@@ -7334,3 +7334,49 @@ site sampled (24, across eight queries) is right: `@mutex = Monitor.new`,
 
 *Reverses if:* a gold set shows a stub `sig` making an answer confidently
 wrong, or a Ruby whose RBS disagrees with 3.8.0's on a method both type.
+
+## DEC-210 — The app's own checkout is the last layer, whatever the insert order
+
+**Decided.** A tree's rows are layered by checkout kind — the Ruby's stdlib,
+then the gems, then the checkout the tree is for — rather than by the order
+the checkouts were first indexed (`Roots::layer`; SQL's `layered`). Gems keep
+insert order among themselves. And of the superclasses one class's
+declarations write, the first that resolves to a class is taken, not the
+first in layer order.
+
+**Why.** ARCHITECTURE said core → stdlib → gems → checkout, and DEC-180 made
+the stdlib's place explicit, but the rest followed `checkout.id`: an app is
+indexed before its gems, so its rows came first and a gem's came after. The
+lookup takes the last definition in an owner, so a gem that reopens a class
+and defines the same method as the app won over the app's — the reverse of
+Ruby, which loads the bundle first and the app's definition last. A card,
+`--def` and every `--refs` tier on such a method answered the gem's
+(e2e: `the_apps_reopen_answers_over_a_gems`).
+
+**The superclass pick.** Ruby requires every `class X < Y` of one class to
+name the same superclass, so which declaration is read does not change the
+class — only whether the index can read it. Layer order had been choosing:
+an app's tapioca `.rbi` came first and gave `Concurrent::Map` and
+`Concurrent::Synchronization::LockableObject` their runtime superclass;
+with the app last, concurrent-ruby's own `class LockableObject <
+LockableObjectImplementation`, a constant assigned a `case`, came first and
+cut both chains. Measured before this rule: widget_shop's gem sites lost 11
+verdicts (5 correct → wrong, e.g. `Event.new` answering sorbet's
+`ClassOverride#new`; 6 correct → residue, `synchronize`, `Map#delete`) and
+graph_weaver's 2, confidently wrong 19 → 24 and 2 → 3. With it, none.
+
+**Measured** (against main 92b9622). Every gold verdict unchanged in all five
+sets; one widget_shop gem site's confidence moves 0.25 → 0.33. What moves is
+residue and ambiguous candidates' order where two share an owner: the gem's
+real `def` now lists ahead of the app's tapioca `.rbi` stub of it, as it
+should (`ActiveSupport::LogSubscriber#fetch_public_methods`, the association
+builders' `macro` and `valid_options`). Where the truth was offered, the
+gem sites' ranking went #1 8.6 % → 12.7 %, MRR 0.411 → 0.436, on 719 → 723
+offered (widget_shop), and #1 10.8 % → 13.5 %, MRR 0.449 → 0.462 on 37
+(graph_weaver). The rails 40- and 51-query `--refs` sets, `--dead` on rails,
+activerecord and mastodon, and the 21,154 clicks are unchanged: none of those
+corpora has a gem and an app defining one method.
+
+*Reverses if:* gems' order among themselves is ever read from the Gemfile or
+a require graph; that is still insert order, which a lockfile lists
+alphabetically.

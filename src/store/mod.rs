@@ -40,9 +40,9 @@ pub(crate) struct WriteTiming {
     pub(crate) commit: std::time::Duration,
 }
 
-/// The checkouts a tree is assembled from, in the order it layers them —
-/// the Ruby's stdlib, the bundle's gems, the checkout itself — and the stdlib
-/// files this app does not see (DEC-180).
+/// The checkouts a tree is assembled from — the Ruby's stdlib, the bundle's
+/// gems, the checkout itself, which is always last — and the stdlib files
+/// this app does not see (DEC-180).
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Roots {
     pub(crate) list: Vec<String>,
@@ -66,11 +66,26 @@ impl Roots {
     fn shows(&self, path: &str) -> bool {
         !self.hidden.contains(path)
     }
+
+    /// Where a checkout's rows sit in the layering: its Ruby's stdlib, then
+    /// the gems, then the checkout itself — Ruby's load order, so each layer
+    /// reopens the ones before it whatever order they were indexed in.
+    fn layer(&self, kind: &str, root: &str) -> u8 {
+        if kind == "stdlib" {
+            0
+        } else if self.list.last().is_some_and(|app| app == root) {
+            2
+        } else {
+            1
+        }
+    }
 }
 
-/// Layering order for rows from several checkouts: a Ruby's stdlib first,
-/// since the gems and the app reopen it, then insert order.
-const LAYERED: &str = "c.kind <> 'stdlib', c.id";
+/// [`Roots::layer`] as SQL, then insert order within a layer. `app` is the
+/// placeholder bound to the checkout's own root, the last of `Roots::list`.
+fn layered(app: usize) -> String {
+    format!("CASE WHEN c.kind = 'stdlib' THEN 0 WHEN c.root = ?{app} THEN 2 ELSE 1 END, c.id")
+}
 
 /// What one indexing pass did. Every count is honest about *work*, not about
 /// contents: `parsed` is the only expensive number in it.
@@ -654,7 +669,7 @@ impl Store {
         // b-tree and was a third of this query. Same keys, same byte order.
         let mut stmt = self.conn.prepare(&format!(
             "SELECT d.name, d.kind, d.nesting, d.target, c.root || '/' || f.path, d.line, d.col,
-                    c.kind <> 'stdlib', c.id
+                    c.kind, c.root, c.id
                FROM def d
                JOIN file f ON f.blob_id = d.blob_id
                JOIN checkout c ON c.id = f.checkout_id
@@ -662,8 +677,9 @@ impl Store {
             placeholders(roots.list.len())
         ))?;
         let rows = stmt.query_map(rusqlite::params_from_iter(&roots.list), |r| {
+            let layer = roots.layer(&r.get::<_, String>(7)?, &r.get::<_, String>(8)?);
             Ok((
-                (r.get::<_, bool>(7)?, r.get::<_, i64>(8)?),
+                (layer, r.get::<_, i64>(9)?),
                 DeclRow {
                     name: r.get(0)?,
                     kind: r.get(1)?,
@@ -720,9 +736,14 @@ impl Store {
         name: Option<&str>,
         mut visit: impl FnMut(MethodRow),
     ) -> Result<()> {
-        // Insert order is load-bearing: `lookup` takes the last definition, so
-        // a reopened class must arrive after the class it reopens.
-        let filter = if name.is_some() { "AND d.name = ?" } else { "" };
+        // Layering is load-bearing: `lookup` takes the last definition, so a
+        // reopened class must arrive after the class it reopens.
+        let count = roots.list.len();
+        let filter = if name.is_some() {
+            format!("AND d.name = ?{}", count + 1)
+        } else {
+            String::new()
+        };
         let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT d.name, d.nesting, d.singleton, d.visibility, d.params, d.via,
                     d.target, d.sig_returns, c.root || '/' || f.path, d.line, d.col,
@@ -731,8 +752,9 @@ impl Store {
                JOIN file f ON f.blob_id = d.blob_id
                JOIN checkout c ON c.id = f.checkout_id
               WHERE c.root IN ({}) AND d.kind = 'method' {filter}
-              ORDER BY {LAYERED}, f.path, d.line, d.col",
-            placeholders(roots.list.len())
+              ORDER BY {}, f.path, d.line, d.col",
+            numbered(1, count),
+            layered(count)
         ))?;
         let mut values: Vec<&dyn rusqlite::ToSql> = roots
             .list
@@ -780,8 +802,9 @@ impl Store {
                JOIN file f ON f.blob_id = a.blob_id
                JOIN checkout c ON c.id = f.checkout_id
               WHERE c.root IN ({}) AND a.relation != 'dynamic'
-              ORDER BY {LAYERED}, f.path, a.line, a.col",
-            placeholders(roots.list.len())
+              ORDER BY {}, f.path, a.line, a.col",
+            numbered(1, roots.list.len()),
+            layered(roots.list.len())
         ))?;
         let rows = stmt.query_map(rusqlite::params_from_iter(&roots.list), edge_row)?;
         shown(roots, rows)
@@ -827,10 +850,7 @@ impl Store {
                JOIN file f ON f.blob_id = c.blob_id
                JOIN checkout k ON k.id = f.checkout_id
               WHERE c.name = ?1 AND k.root IN ({})",
-            (2..roots.list.len() + 2)
-                .map(|i| format!("?{i}"))
-                .collect::<Vec<_>>()
-                .join(", ")
+            numbered(2, roots.list.len())
         ))?;
         let params = std::iter::once(name.to_string()).chain(roots.list.iter().cloned());
         let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| {
@@ -1827,6 +1847,18 @@ fn shown(roots: &Roots, rows: impl Iterator<Item = Result<EdgeRow>>) -> Result<V
         }
     }
     Ok(kept)
+}
+
+/// `?first, …` for `count` parameters, numbered so that a query can name
+/// one of them again.
+fn numbered(first: usize, count: usize) -> String {
+    if count == 0 {
+        return "NULL".to_string();
+    }
+    (first..first + count)
+        .map(|i| format!("?{i}"))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn placeholders(count: usize) -> String {
