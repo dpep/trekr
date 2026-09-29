@@ -6629,6 +6629,10 @@ their sites (51 and 26 possible) rather than `no_such_method`, and cards on
 Pathname, Digest, Ripper, Socket, Psych and `OpenSSL::*` hedge; gold verdicts
 and click totals are the build's without it.
 
+*Narrowed by DEC-220:* a compiled method RBS declares is now declared by the
+stdlib stub, so `Monitor#synchronize` resolves; the hedge stays for a name
+neither the Ruby nor its RBS writes.
+
 ## DEC-182 — A stdlib method the core stub also writes takes the stub's return
 
 **Decided.** A method in the stdlib with no return type of its own takes
@@ -7199,3 +7203,134 @@ answers).
   sorted. Streaming the array would take most of the difference.
 - **`first_in_chain`'s key** (DEC-200's list): a `(owner, singleton, name)`
   string key per chain element to probe `by_owner`.
+
+## DEC-220 — The stdlib's RBS signatures type its chains, and declare its compiled half
+
+**Decided.** `script/stdlib_sigs.rb` reads the `rbs` gem's signatures for
+the libraries DEC-180 indexes (39 of rbs 3.8.0's 59) and writes two
+checked-in stubs, both served only when the checkout's stdlib is indexed:
+
+- `src/tree/stdlib.rb`, the compiled half: every method the Ruby reports
+  with no source (`Pathname#read`, `Digest::Class.hexdigest`,
+  `Date#strftime`) — 1,140, 573 of them typed — and every class a
+  library's RBS declares. Served per top-level owner as
+  `<core>/stdlib/Pathname.rb`; its methods are declarations
+  (`defined_via: rbs`), indexed before the checkout's so a reopening
+  answers with its own. A class counts only where no Ruby file declares it
+  (`Digest::SHA256`, `OpenSSL::Digest::SHA1`), and only then do its
+  superclass and mixins; a method only on an owner the tree knows.
+- `src/tree/stdlib_sigs.rb`, the Ruby half: 792 methods written in Ruby
+  that RBS types (`Random::Formatter#hex`, `Time.parse`, `Pathname#join`).
+  Never a location; each lends its `sig` to the real definition, as the
+  core stub does `Set`'s (DEC-182), and to a core-stub method RBS types in
+  a library (`Time.parse`, `Dir.tmpdir`).
+
+The rules are `core_sigs.rb`'s (DEC-077): one `sig` per call shape only
+where every covering overload agrees, and none for a union, an optional,
+`bool`, `self` or an element type. Returns are written from the top
+(`::String`), since a stub's nesting would find `Psych::Set` for `Set`. A
+return must be a class nothing subclasses, as core's must — a module
+never is. Which methods exist, who owns them and which are compiled is
+asked of the Ruby itself, run without rubygems so that an installed
+digest 3.2.1 cannot stand in for the stdlib's.
+
+**Why checked in, and one version for every Ruby.** The engine runs no
+Ruby (PLAN §4), and reading RBS at index time would need the `rbs` gem, a
+Ruby to run it, and a second parser in Rust — for a file that changes when
+Ruby does. Generated once, the stub is deterministic, reviewable, and 127
+KB (core.rb is 45). Served for every Ruby like core's, it is safe because
+RBS's stdlib signatures barely move: the generator run against rbs 4.2.0
+types 1,338 methods to 3.8.0's 1,365, and of the 1,314 both type, none
+disagree. What does move is which libraries a Ruby has, and a stub method
+on an owner the tree does not know is dropped. The generator refuses a Ruby
+other than 3.4, and the stub's header names the rbs and Ruby it came from.
+
+**Why a `def` is cut out and extracted when its name is asked.** Parsing
+both stubs whole took ~12 ms of every tree build (20 → 33 ms for `--def` on
+a one-file app). `corelib::cut` splits the generated text at each `def`,
+wrapping it in its owner's compact name and visibility, and the tree
+extracts one the first time its name is loaded, as the index's are; a test
+holds every cut `def` to the rows the whole file extracts to. A lookup that
+never reaches the stdlib now costs nothing (20.1 vs 20.5 ms), and one that
+does a few ms.
+
+**Measured** against main (92b9622), each build on its own store, Ruby
+3.4.9.
+
+Gold sets: confidently wrong unchanged in every set (graph_weaver 3 app /
+2 gem, accord 0 / 1, polyid 0 / 5, flipper 7 / 8, widget_shop 1 / 19), and
+correct unchanged. Five residues that offered the truth no longer do
+(accord 1, flipper 1, widget_shop 3, all gem code): the eight candidates
+shown now include a stub declaration (`OpenSSL::X509::Store#chain`,
+`OpenSSL::OCSP::Response#status`, `OpenSSL::Config.load`) ahead of it.
+Eleven correct chain picks gain confidence (0.05 → 0.27, 0.17 → 0.24: a
+stdlib method of the name agrees) and seven lose a hundredth (0.08 → 0.07:
+one more class defines `id`), and polyid's 12 `create` residues go from
+truth-absent to declaration-offered.
+
+Clicks over the 13 dogfood repos: definition misses 5,059 → 5,056 of
+21,154, the "chained receiver" bucket 807 → 797; "typed, with competitors"
+238 → 247 as calls that were untyped become typed but contested.
+
+Rails `--refs` (68 queries: the 40 of DEC-200 plus 28 stdlib and core
+methods): 44 unchanged. Among the 40, only chains through a stdlib return
+move — `Date._parse(s).fetch` types `Hash`, so `Hash#fetch` confirmed
+27 → 60 and those 33 leave `ActiveSupport::Cache::Store#fetch`'s possible;
+`Digest::SHA256.hexdigest(s).first(10)` is a String, so six `first` sites
+leave `Array#first` and `FinderMethods#first` for ActiveSupport's. Among the stdlib ones:
+
+| confirmed / possible / excluded | main | this |
+| --- | ---: | ---: |
+| `Pathname#exist?` | residue, 0 / 220 / 303 | 5 / 37 / 481 |
+| `Pathname#read` | residue, 0 / 399 / 238 | 1 / 398 / 238 |
+| `Pathname#expand_path` | residue, 0 / 9 / 248 | 9 / 0 / 248 |
+| `Pathname#join` | 12 / 489 / 584 | 15 / 487 / 583 |
+| `Monitor#synchronize` | residue, 0 / 51 / 109 | 10 / 41 / 109 |
+| `Digest::Class.hexdigest` | residue, 0 / 26 / 18 | 3 / 5 / 36 |
+| `Date#strftime` | no such method | 9 / 43 / 18 |
+
+The 178 `exist?` sites newly excluded pass an argument (`File.exist?(p)`),
+which `Pathname#exist?` never takes; the 18 `hexdigest` ones are
+`OpenSSL::Digest::SHA1.hexdigest`, another owner. Every newly confirmed
+site sampled (24, across eight queries) is right: `@mutex = Monitor.new`,
+`yaml = Pathname.new(path)`, `Pathname(file).expand_path`,
+`parts = Date._iso8601(str)`, `Digest::SHA1.hexdigest(secret).first(4)`.
+`--dead` on rails and activerecord: unchanged.
+
+**The named costs.**
+
+- *More definitions, more competitors.* A stdlib method that returns
+  another class than core's same-named one makes `chain:name` refuse:
+  `create_table_info.sub(…).strip` loses String to `Pathname#sub`,
+  `args.flatten.join` Array to `Set#flatten`, `fn.bind(self).call` Method
+  to `Socket#bind`. Ten confirmed sites fall to possible across the
+  core queries, against eleven gained; none is wrong either way.
+- *Residue lists fill.* OpenSSL alone declares 658 methods, and a residue
+  shows eight candidates.
+
+**Left out, and why.**
+
+- `URI.parse(s).host`: `URI.parse` returns a union of URI's ten classes,
+  and `URI::Generic` is subclassed, so a `request_uri` would be looked up
+  where it is not.
+- `JSON.parse(s).fetch`: RBS says `untyped`, rightly — it is whatever the
+  JSON was.
+- `Set.new.add(x).include?`: `add` returns `self`, which this change reads
+  as DEC-077 does (not at all). Reading `self` as the identity rule would
+  type every `-> self` in core too, and wants its own measurement.
+- `Tempfile.new.path.upcase`, `URI::Generic#host`: `String?` is an
+  optional. `Logger.new(io).info` already resolved; it returns `true`.
+- `Time#iso8601` on a Ruby-3.4 `Time`: compiled into core, and core.rb does
+  not list it. The stdlib's `time.rb` still writes it, and that `def`
+  borrows RBS's return, which is what types `Time.parse(s).xmlschema`.
+- Libraries with no Ruby at all (`stringio`, `strscan`, `zlib`, `etc`,
+  `pty`, `io/console`): DEC-180 does not index them, so nothing owns the
+  stubs. A class Ruby declares keeps only the mixins its Ruby writes: a
+  mixin added in C (`Digest::Class` includes `Digest::Instance`) is not
+  added to it.
+- An app's own copy of a default gem (json from the bundle) is not the
+  stdlib's, and its Ruby methods borrow nothing; the compiled stubs still
+  answer on its classes, which it compiles the same way.
+
+*Reverses if:* a gold set shows a stub `sig` making an answer confidently
+wrong, or a Ruby whose RBS disagrees with 3.8.0's on a method both type.

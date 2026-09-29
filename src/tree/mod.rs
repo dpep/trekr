@@ -293,7 +293,11 @@ impl MethodDef {
         if self.bound {
             return Kind::Definition;
         }
-        if self.site.is_rbi() || self.body_elsewhere || is_rspec_stub(&self.site.path) {
+        if self.site.is_rbi()
+            || self.body_elsewhere
+            || is_rspec_stub(&self.site.path)
+            || is_stdlib_stub(&self.site.path)
+        {
             return Kind::Declaration;
         }
         Kind::of(self.via.as_deref())
@@ -307,6 +311,8 @@ impl MethodDef {
             Kind::Declaration => self.via.clone().or_else(|| {
                 if is_rspec_stub(&self.site.path) {
                     Some("rspec".to_string())
+                } else if is_stdlib_stub(&self.site.path) {
+                    Some("rbs".to_string())
                 } else {
                     self.site.is_rbi().then(|| "rbi".to_string())
                 }
@@ -340,6 +346,10 @@ pub(crate) struct Tree {
     root: String,
     /// The Ruby's stdlib the checkout runs on, when it indexed one (DEC-180).
     stdlib: Option<String>,
+    /// What the stdlib's Ruby methods return, from RBS, by (owner, singleton,
+    /// name), as each is first asked: lent to the real definitions, never a
+    /// location (DEC-220).
+    stdlib_sigs: RefCell<HashMap<(String, bool, String), Option<MethodDef>>>,
     names: Names,
     /// Where methods come from when the tree does not already have them.
     /// `None` for a tree built from rows in hand (fixtures), which is fully
@@ -737,6 +747,10 @@ impl Tree {
             // load from later: take everything now and stay eager.
             None => {
                 tree.dynamic_rows = RefCell::new(Some(store.dynamic_markers(&roots)?));
+                if tree.stdlib.is_some() {
+                    let stubs = corelib::stdlib_defs().values().flatten();
+                    methods.extend(stubs.flat_map(|def| tree.stub_rows(def)));
+                }
                 methods.extend(store.methods(&roots)?);
                 phases.methods = methods.len();
                 tree.add_methods(methods);
@@ -791,6 +805,11 @@ impl Tree {
     ) -> anyhow::Result<HashMap<String, Entry>> {
         decls.extend(phases.time("declarations", || store.declarations(roots))?);
         edges.extend(phases.time("ancestry", || store.ancestry(roots))?);
+        if roots.stdlib.is_some() {
+            let (stub_decls, stub_edges) = compiled_classes(&decls);
+            decls.extend(stub_decls);
+            edges.extend(stub_edges);
+        }
         // Last, so its mixins are the nearest: RSpec includes them after the
         // class body has run.
         if declares_example_group(&decls) {
@@ -822,6 +841,7 @@ impl Tree {
         Tree {
             root,
             stdlib: None,
+            stdlib_sigs: RefCell::new(HashMap::new()),
             linearizing: RefCell::new(Vec::new()),
             names,
             methods: RefCell::new(Vec::new()),
@@ -2564,9 +2584,27 @@ impl Tree {
         if !self.loaded.borrow_mut().insert(name.to_string()) {
             return;
         }
+        // The stdlib's compiled methods of this name go in first, so a class
+        // the app or a gem reopens answers with its own (DEC-220).
+        if self.stdlib.is_some()
+            && let Some(stubs) = corelib::stdlib_defs().get(name)
+        {
+            self.index_rows(stubs.iter().flat_map(|def| self.stub_rows(def)).collect());
+        }
         if let Ok(rows) = loader.store.methods_named(&loader.roots, name) {
             self.index_rows(rows);
         }
+    }
+
+    /// A stub's method as rows, sited in its own file — none when the tree
+    /// does not know its owner, since another Ruby may lack the library.
+    fn stub_rows(&self, def: &corelib::StubDef) -> Vec<MethodRow> {
+        let (_, _, mut rows) = rows_from(&def.path, &def.source);
+        rows.retain(|row| self.kind_of(&self.owner_of(row)).is_some());
+        for row in &mut rows {
+            row.line += def.shift;
+        }
+        rows
     }
 
     /// Load every method at once — for a tree built from rows rather than from
@@ -2918,8 +2956,9 @@ impl Tree {
     ///
     /// A stdlib method the core stub also writes — `Set#size` is stubbed for
     /// a Ruby where `Set` is core — takes the stub's return, since both
-    /// describe the one method (DEC-182). A gem's override of a core method
-    /// does not: it may return something else.
+    /// describe the one method (DEC-182), and one RBS types takes RBS's
+    /// (DEC-220). A gem's override of either does not: it may return
+    /// something else.
     pub(crate) fn declared_returns(
         &self,
         method: &MethodDef,
@@ -2930,17 +2969,45 @@ impl Tree {
         let methods = self.methods.borrow();
         let key = (method.owner.clone(), method.singleton, method.name.clone());
         let in_stdlib = self.in_stdlib(&method.site.path);
-        by_owner.get(&key)?.iter().rev().find_map(|i| {
-            let declared = &methods[*i];
-            let describes = declared.site.is_rbi()
-                || is_rspec_stub(&declared.site.path)
-                || (in_stdlib && corelib::is_core(&declared.site.path));
-            if !describes {
-                return None;
-            }
+        let stub = by_owner.get(&key).and_then(|hits| {
+            hits.iter().rev().find_map(|i| {
+                let declared = &methods[*i];
+                let describes = declared.site.is_rbi()
+                    || is_rspec_stub(&declared.site.path)
+                    || (in_stdlib && corelib::is_core(&declared.site.path));
+                if !describes {
+                    return None;
+                }
+                let returns = declared.returns_for(argc, block)?.to_string();
+                Some((declared.clone(), returns))
+            })
+        });
+        // Core's stub writes some stdlib methods too (`Time.parse`); both it
+        // and the real one are the method RBS describes.
+        let rubys = in_stdlib || corelib::is_core(&method.site.path);
+        stub.or_else(|| {
+            let declared = self.stdlib_signature(&key).filter(|_| rubys)?;
             let returns = declared.returns_for(argc, block)?.to_string();
             Some((declared.clone(), returns))
         })
+    }
+
+    /// The return types RBS gives the stdlib's Ruby methods, keyed as
+    /// `by_owner` is (DEC-220).
+    fn stdlib_signature(&self, key: &(String, bool, String)) -> Option<MethodDef> {
+        // Lent only where the stdlib they describe is indexed.
+        self.stdlib.as_ref()?;
+        if let Some(memo) = self.stdlib_sigs.borrow().get(key) {
+            return memo.clone();
+        }
+        let method = corelib::stdlib_sig_defs().get(key).and_then(|def| {
+            let (_, _, rows) = rows_from(&def.path, &def.source);
+            rows.into_iter().next().map(|row| self.method_def(row))
+        });
+        self.stdlib_sigs
+            .borrow_mut()
+            .insert(key.clone(), method.clone());
+        method
     }
 
     /// The class a call to `name` returns whatever its receiver, when every
@@ -3607,7 +3674,8 @@ mod singleton_tests {
 }
 
 pub(crate) use corelib::{
-    CORE_PATH, files as core_files, is_core, is_rspec_stub, materialize as materialize_core,
+    CORE_PATH, files as core_files, is_core, is_rspec_stub, is_stdlib_stub,
+    materialize as materialize_core,
 };
 
 /// Tapioca writes one `.rbi` per model describing the methods Rails generates
@@ -3733,6 +3801,47 @@ fn core_rows() -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<MethodRow>) {
     (decls, edges, methods)
 }
 
+/// The stdlib's compiled half (DEC-220), as rows.
+fn stdlib_rows() -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<MethodRow>) {
+    let (mut decls, mut edges, mut methods) = (Vec::new(), Vec::new(), Vec::new());
+    for file in corelib::stdlib_files() {
+        let (d, e, m) = rows_from(&file.site_path(), &file.text);
+        decls.extend(d);
+        edges.extend(e);
+        methods.extend(m);
+    }
+    (decls, edges, methods)
+}
+
+/// The classes only the stdlib's compiled half declares (`Digest::SHA256`),
+/// with their edges. A class some Ruby file declares keeps its own sites and
+/// ancestry: the stub does not add a second place it is written.
+fn compiled_classes(decls: &[DeclRow]) -> (Vec<DeclRow>, Vec<EdgeRow>) {
+    let written = |nesting: &[String], name: Option<&str>| {
+        let mut parts: Vec<&str> = nesting.iter().rev().map(String::as_str).collect();
+        parts.extend(name);
+        parts.join("::").trim_start_matches("::").to_string()
+    };
+    let declared: HashSet<String> = decls
+        .iter()
+        .map(|decl| written(&decl.nesting, Some(&decl.name)))
+        .collect();
+    let (stub_decls, stub_edges, _) = stdlib_rows();
+    let own: Vec<DeclRow> = stub_decls
+        .into_iter()
+        .filter(|decl| !declared.contains(&written(&decl.nesting, Some(&decl.name))))
+        .collect();
+    let owners: HashSet<String> = own
+        .iter()
+        .map(|decl| written(&decl.nesting, Some(&decl.name)))
+        .collect();
+    let edges = stub_edges
+        .into_iter()
+        .filter(|edge| owners.contains(&written(&edge.owner, None)))
+        .collect();
+    (own, edges)
+}
+
 /// The RSpec stub's edges and methods (DEC-087). No declarations: every
 /// class and module it names is rspec's own, and a site here would add a
 /// place each of them is written.
@@ -3803,6 +3912,71 @@ fn rows_from(path: &str, source: &str) -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<Metho
         });
     }
     (decls, edges, methods)
+}
+
+#[cfg(test)]
+mod stdlib_stub_tests {
+    use super::*;
+
+    /// What a row says, with its owner as written: a cut `def` is wrapped in
+    /// its owner's compact name, the whole file in nested blocks.
+    fn said(row: &MethodRow) -> String {
+        let owner: Vec<&str> = row.nesting.iter().rev().map(String::as_str).collect();
+        format!(
+            "{} {} {} {} {:?} {:?} {:?} {}:{}:{}",
+            owner.join("::"),
+            row.singleton,
+            row.name,
+            row.visibility,
+            row.params,
+            row.sig_returns,
+            row.sig_overloads,
+            row.path,
+            row.line,
+            row.col
+        )
+    }
+
+    /// Loading the stub a name at a time must read every method exactly as
+    /// parsing it whole does, or a query would see a different stdlib than
+    /// the one served.
+    #[test]
+    fn a_cut_def_extracts_as_the_whole_file_does() {
+        let mut whole: Vec<String> = stdlib_rows().2.iter().map(said).collect();
+        let mut cut: Vec<String> = corelib::stdlib_defs()
+            .values()
+            .flatten()
+            .flat_map(|def| {
+                let (_, _, mut rows) = rows_from(&def.path, &def.source);
+                for row in &mut rows {
+                    row.line += def.shift;
+                }
+                rows
+            })
+            .map(|row| said(&row))
+            .collect();
+        whole.sort();
+        cut.sort();
+        assert!(!whole.is_empty());
+        assert_eq!(whole, cut);
+
+        let (_, _, rows) = rows_from(corelib::STDLIB_SIGS, include_str!("stdlib_sigs.rb"));
+        let mut whole: Vec<String> = rows.iter().map(said).collect();
+        let mut cut: Vec<String> = corelib::stdlib_sig_defs()
+            .values()
+            .flat_map(|def| {
+                let (_, _, mut rows) = rows_from(&def.path, &def.source);
+                for row in &mut rows {
+                    row.line += def.shift;
+                }
+                rows
+            })
+            .map(|row| said(&row))
+            .collect();
+        whole.sort();
+        cut.sort();
+        assert_eq!(whole, cut);
+    }
 }
 
 #[cfg(test)]

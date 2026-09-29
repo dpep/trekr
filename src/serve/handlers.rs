@@ -1617,6 +1617,9 @@ pub(super) fn defined_in(
     if crate::tree::is_rspec_stub(path) {
         return "Made by RSpec when a suite boots, as trekr's RSpec stub states".to_string();
     }
+    if crate::tree::is_stdlib_stub(path) {
+        return "Compiled into Ruby's stdlib, as its RBS signature states".to_string();
+    }
     if crate::tree::is_core(path) {
         return format!("{verb} Ruby core");
     }

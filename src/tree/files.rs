@@ -85,6 +85,8 @@ fn code() -> &'static [u8] {
             include_str!("snapshot.rs"),
             include_str!("core.rb"),
             include_str!("rspec.rb"),
+            include_str!("stdlib.rb"),
+            include_str!("stdlib_sigs.rb"),
             include_str!("corelib.rs"),
             include_str!("../store/mod.rs"),
         ] {

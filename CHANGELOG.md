@@ -25,9 +25,19 @@
   (DEC-180).
 
 - **A stdlib class that is partly compiled hedges a name its Ruby lacks.**
-  `Monitor#synchronize`, `Pathname#exist?` and `OpenSSL::Cipher#encrypt` are
-  C; a card or `--def` on one is residue naming the extension, not "no such
-  method" (DEC-181).
+  A card or `--def` on a method its RBS signatures do not name either is
+  residue naming the extension, not "no such method" (DEC-181).
+
+- **Chains through the stdlib are typed, from its RBS signatures.**
+  `Pathname.new(x).join(y).read.upcase`, `Digest::SHA256.hexdigest(s).upcase`,
+  `SecureRandom.hex.length` and `Time.parse(s).year` resolve every call. A
+  method compiled into the stdlib (`Pathname#exist?`, `Monitor#synchronize`,
+  `Date#strftime`) answers with a declaration in `<core>/stdlib/Pathname.rb`
+  and friends, `defined_via: "rbs"`, where it was residue; its `--refs` sort
+  its sites. A class Ruby builds only in C or at runtime (`Digest::SHA256`,
+  `OpenSSL::Digest::SHA1`) is known. A return RBS gives as a union, an
+  optional, `bool` or `self` stays untyped — `URI.parse`, `Tempfile#path`,
+  `Set#add` — as core's do (DEC-220).
 
 ### Changed
 

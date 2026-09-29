@@ -1,0 +1,21 @@
+# A chain through the stdlib stopped where the stdlib's Ruby does: `read` is
+# compiled into pathname.so, and nothing said what `join`, `hexdigest` or
+# `hex` return. `ruby/` is staged as the app's Ruby, and RBS's signatures for
+# its stdlib type the chain (DEC-220).
+#
+# A compiled method is declared by the stub, and returns what RBS says.
+def app.rb:3:34 status=resolved owner=Pathname kind=declaration defined_via=rbs
+hover app.rb:3:34 Compiled into Ruby's stdlib
+def app.rb:3:39 status=resolved owner=String via=chain
+# `Digest::SHA256` is compiled whole: the stub declares it, under the
+# `Digest` the Ruby writes, and its superclass reaches `Digest::Class`.
+def app.rb:4:20 status=resolved owner=Digest::Class
+def app.rb:4:36 status=resolved owner=String via=chain
+# `hex` is written in Ruby, which keeps the location and borrows the return.
+def app.rb:5:22 status=resolved owner=String via=chain
+# Core's stub writes `Time.parse`, a method of `time.rb`; RBS types it too.
+def app.rb:6:22 status=resolved owner=Time via=chain
+# Left untyped on purpose. `URI.parse` returns a union of URI's classes, and
+# `add` returns `self`, which RBS says and the chain rules do not read.
+def app.rb:7:21 status=residue
+def app.rb:8:23 status=residue
