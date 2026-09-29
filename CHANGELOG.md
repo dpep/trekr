@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Upgrading drops and rebuilds the index** (store v40): run `trekr --index`
+  once per checkout.
+
 ### Changed
 
 - **`--status` in a checkout nobody indexed exits `2` with `status:
@@ -14,6 +17,17 @@
 
 - **`--status --context DIR`** reports on that checkout, from anywhere; it
   was a usage error (DEC-170).
+
+- **Fewer answers hedge on a `define_method` that cannot have made the
+  name.** 0.8.0 made a class that runs `define_method` or a `class_eval`
+  string answer residue for every name it lacks, on both sides. Now a name
+  the source spells is defined (`define_method(:made)` in a class method, a
+  local built from a literal loop's value), a `define_method` run on another
+  object marks nothing here, `define_singleton_method` hedges class methods
+  only, and a name whose text is partly spelled (`"_render_with_#{key}"`)
+  hedges only names of that shape. The reason names every marker in the
+  scope with its shape. On mastodon, cards for a name no class has went from
+  819 residue to 399 (0.7.0: 380) (DEC-160).
 
 - **`--refs` counts a call whose receiver is typed as an ancestor.** A
   `sig`'s parameter or return, a finder's result, a `rescue`'s class, or the

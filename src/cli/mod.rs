@@ -1733,7 +1733,7 @@ fn method_verdict(
         );
     }
     // A method made from a name the source does not state may be this one.
-    if let Some((maker, how)) = tree.dynamic_in_chain(owner, query.singleton) {
+    if let Some((maker, how)) = tree.dynamic_in_chain(owner, query.singleton, name) {
         return (
             "residue",
             Some(format!(
@@ -2290,7 +2290,10 @@ fn dead_in(
         let mut risky = dynamic_markers(&source);
         // A string of code not read: its calls are not in the index (DEC-132).
         let unread = facts.ancestry.iter().any(|edge| {
-            edge.relation == crate::core::Relation::Dynamic && edge.target.ends_with(" string")
+            edge.relation == crate::core::Relation::Dynamic
+                && crate::core::Maker::parse(&edge.target)
+                    .by
+                    .ends_with(" string")
         });
         if unread {
             if !risky.is_empty() {

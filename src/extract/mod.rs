@@ -210,6 +210,19 @@ struct Extractor<'a> {
     /// The strings of code being read in place of the file, innermost last
     /// (DEC-132). Every offset a node of one reports is into its text.
     evals: Vec<Eval>,
+    /// The frame depth of each literal list's iteration open: blocks that
+    /// leave `self` alone.
+    loop_frames: Vec<usize>,
+    /// Blocks open that are evaluated on some object other than `self` —
+    /// `mod.singleton_class.instance_eval do` — whose `define_method` is
+    /// not this scope's.
+    foreign_evals: usize,
+    /// Methods of each scope whose body is a string, as the shape of the
+    /// names it spells (DEC-160).
+    string_methods: HashMap<(Vec<String>, String), String>,
+    /// Markers whose name is such a method's result, which may be written
+    /// further down: the edge, the scope, the method.
+    pending_shapes: Vec<(usize, Vec<String>, String)>,
     facts: Facts,
 }
 
@@ -367,12 +380,30 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         described: Vec::new(),
         scope_body: 0,
         evals: Vec::new(),
+        loop_frames: Vec::new(),
+        foreign_evals: 0,
+        string_methods: HashMap::new(),
+        pending_shapes: Vec::new(),
     };
     ex.visit(&parsed.node());
+    ex.shape_pending();
     ex.facts
 }
 
 impl<'a> Extractor<'a> {
+    /// A marker named by a method of its scope that returns a string gets
+    /// that string's shape, now every method is seen (DEC-160).
+    fn shape_pending(&mut self) {
+        for (edge, nesting, method) in std::mem::take(&mut self.pending_shapes) {
+            let Some(shape) = self.string_methods.get(&(nesting, method)) else {
+                continue;
+            };
+            let mut maker = Maker::parse(&self.facts.ancestry[edge].target);
+            maker.shape = Some(shape.clone());
+            self.facts.ancestry[edge].target = maker.encode();
+        }
+    }
+
     fn pos(&self, offset: usize) -> Pos {
         let offset = self.evals.last().map_or(offset, |eval| eval.origin(offset));
         self.lines.pos(offset)
@@ -730,6 +761,89 @@ fn on_self(call: &ruby_prism::CallNode<'_>) -> bool {
     }
 }
 
+/// A call that defines a method by name, whoever it is sent to.
+struct Definer<'pr> {
+    /// `define_method` or `define_singleton_method`.
+    name: String,
+    /// Its arguments, after the name `send` is handed.
+    args: Vec<Node<'pr>>,
+    on: DefinedOn,
+}
+
+enum DefinedOn {
+    /// `define_method(…)`, `self.send(:define_method, …)`.
+    Own,
+    /// `singleton_class.define_method(…)`.
+    OwnSingleton,
+    /// `Target.define_method(…)`, `Target.send(:define_method, …)`.
+    Constant(String),
+}
+
+/// `define_method(…)` and the ways of sending it: to `singleton_class`, to a
+/// constant, or by `send`. `None` for another receiver, which names no class.
+fn definer<'pr>(call: &ruby_prism::CallNode<'pr>) -> Option<Definer<'pr>> {
+    let mut name = method_name(call)?;
+    let mut args = arg_nodes(call);
+    if matches!(name.as_str(), "send" | "__send__" | "public_send") {
+        name = literal_name(args.first()?)?;
+        args.remove(0);
+    }
+    if !matches!(name.as_str(), "define_method" | "define_singleton_method") {
+        return None;
+    }
+    let on = match call.receiver() {
+        None => DefinedOn::Own,
+        Some(r) if r.as_self_node().is_some() => DefinedOn::Own,
+        Some(r)
+            if r.as_call_node().is_some_and(|c| {
+                on_self(&c)
+                    && method_name(&c).as_deref() == Some("singleton_class")
+                    && c.arguments().is_none()
+            }) =>
+        {
+            DefinedOn::OwnSingleton
+        }
+        Some(r) => DefinedOn::Constant(const_name(&r)?),
+    };
+    Some(Definer { name, args, on })
+}
+
+/// The method a name argument calls on `self` to build the name:
+/// `define_method(_renderer_name(key))`.
+fn shaping_call(node: &Node<'_>) -> Option<String> {
+    let call = node.as_call_node()?;
+    on_self(&call).then(|| method_name(&call)).flatten()
+}
+
+/// A method body that is one string, as the shape of the names it spells.
+fn string_shape(body: &Node<'_>) -> Option<String> {
+    let statements = body.as_statements_node()?;
+    let mut statements = statements.body().iter();
+    let only = statements.next()?;
+    if statements.next().is_some() {
+        return None;
+    }
+    if let Some(name) = literal_name(&only) {
+        return Some(name);
+    }
+    let parts: Vec<Node<'_>> = only.as_interpolated_string_node()?.parts().iter().collect();
+    shape_of(&parts)
+}
+
+/// A string's parts as a name shape: the text, `*` for each interpolation.
+/// `None` unless some text is spelled.
+fn shape_of(parts: &[Node<'_>]) -> Option<String> {
+    let mut shape = String::new();
+    for part in parts {
+        match part.as_string_node() {
+            Some(text) => shape.push_str(std::str::from_utf8(text.unescaped()).ok()?),
+            None if shape.ends_with('*') => {}
+            None => shape.push('*'),
+        }
+    }
+    shape.chars().any(|c| c != '*').then_some(shape)
+}
+
 /// A `def`'s first required parameter's name.
 fn def_first_param(node: &ruby_prism::DefNode<'_>) -> Option<String> {
     let first = node.parameters()?.requireds().iter().next()?;
@@ -775,13 +889,46 @@ fn const_defaults(node: &ruby_prism::DefNode<'_>) -> Vec<(String, String)> {
         .collect()
 }
 
+/// A block evaluated with some object other than `self` as its `self`:
+/// `mod.class_eval do`, `x.singleton_class.instance_eval do`.
+fn evaluated_elsewhere(call: &ruby_prism::CallNode<'_>) -> bool {
+    // `Class.new(self) { define_method … }` defines on the new class.
+    let makes = method_name(call).as_deref() == Some("new")
+        && call
+            .receiver()
+            .and_then(|r| const_name(&r))
+            .is_some_and(|r| {
+                matches!(
+                    r.trim_start_matches("::"),
+                    "Class" | "Module" | "Struct" | "Data"
+                )
+            });
+    let evaluates = method_name(call).is_some_and(|name| {
+        matches!(
+            name.as_str(),
+            "module_exec"
+                | "class_exec"
+                | "module_eval"
+                | "class_eval"
+                | "instance_eval"
+                | "instance_exec"
+        )
+    });
+    makes || evaluates && !on_self(call)
+}
+
 /// `(class << self; self; end).module_exec do` or `singleton_class.class_eval
 /// do`: a block whose `define_method` defines a class method.
 fn runs_on_singleton_class(call: &ruby_prism::CallNode<'_>) -> bool {
     let evaluates = method_name(call).is_some_and(|name| {
         matches!(
             name.as_str(),
-            "module_exec" | "class_exec" | "module_eval" | "class_eval"
+            "module_exec"
+                | "class_exec"
+                | "module_eval"
+                | "class_eval"
+                | "instance_eval"
+                | "instance_exec"
         )
     });
     let Some(receiver) = call.receiver() else {
@@ -1074,6 +1221,10 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                         conditional: self.conditional,
                     })
                 });
+        if let Some(shape) = node.body().and_then(|body| string_shape(&body)) {
+            self.string_methods
+                .insert((self.nesting.clone(), name.clone()), shape);
+        }
         self.enter(None, Opens::Method { singleton });
         self.frame().mixed = mixed;
         self.frame().method = owner_is_scope.then_some(name);
@@ -1179,9 +1330,13 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             // `[:before, :after].each do |callback| … end` binds `callback` to
             // three known strings for the length of the block, which is what
             // lets a `define_method "#{callback}_action"` inside it be read.
+            let loop_depth = self.loop_values.len();
             let bound = self.literal_each(node).inspect(|binding| {
                 self.loop_values.push(binding.clone());
             });
+            if bound.is_some() {
+                self.loop_frames.push(self.frames.len());
+            }
             let iterates = self.constant_each(node).inspect(|binding| {
                 self.constant_loops.push(binding.clone());
             });
@@ -1321,6 +1476,8 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                             // and its mixins are not the lexical scope's.
                             let modelled = self.runs_as_file_loads();
                             let hook = load_hook(node);
+                            let foreign = evaluated_elsewhere(node) && !on_singleton;
+                            self.foreign_evals += usize::from(foreign);
                             self.open_blocks.push(owner);
                             if iterates.is_some() {
                                 self.iterations.push(self.open_blocks.len());
@@ -1344,6 +1501,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                             if iterates.is_some() {
                                 self.iterations.pop();
                             }
+                            self.foreign_evals -= usize::from(foreign);
                             self.open_blocks.pop();
                         }
                     },
@@ -1357,8 +1515,10 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             if self.included_depth == 0 {
                 self.included_at = None;
             }
+            // With the locals the loop's body built from its values.
+            self.loop_values.truncate(loop_depth);
             if bound.is_some() {
-                self.loop_values.pop();
+                self.loop_frames.pop();
             }
             if iterates.is_some() {
                 self.constant_loops.pop();
@@ -1368,6 +1528,11 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
 
     fn visit_local_variable_write_node(&mut self, node: &ruby_prism::LocalVariableWriteNode<'pr>) {
         if let Ok(name) = String::from_utf8(node.name().as_slice().to_vec()) {
+            // `meth = "sanitized_#{m}"` in a literal loop takes a value per
+            // name, as `m` does, until the loop ends (DEC-160).
+            if let Some(values) = self.interpolated_names(&node.value()) {
+                self.loop_values.push((name.clone(), values));
+            }
             self.record_assign(name, &node.value(), node.location().start_offset());
         }
         self.visit(&node.value());
@@ -2133,33 +2298,53 @@ impl<'pr> Extractor<'_> {
     /// A **side effect, not a consumption**: `define_method` is a real call
     /// site too, and its block is a method body full of ordinary code.
     fn handle_define_method(&mut self, call: &ruby_prism::CallNode<'pr>) {
-        let Some(name) = method_name(call) else {
+        let Some(Definer { name, args, on }) = definer(call) else {
             return;
         };
-        let singleton = match name.as_str() {
-            "define_method" => self.in_singleton(),
-            "define_singleton_method" => true,
-            _ => return,
+        let singleton = match (name.as_str(), &on) {
+            ("define_singleton_method", _) | (_, DefinedOn::OwnSingleton) => true,
+            (_, DefinedOn::Constant(_)) => false,
+            _ => self.in_singleton() || self.singleton_exec > 0,
         };
-        if !on_self(call) {
+        let at = call.location().start_offset();
+        // A block run on some other object — `mod.singleton_class.
+        // instance_eval do` — defines on it, and this scope is not it.
+        if self.foreign_evals > 0 && matches!(on, DefinedOn::Own | DefinedOn::OwnSingleton) {
             return;
         }
-        let at = call.location().start_offset();
-        // Same rule as a mixin (DEC-031): inside a `def` this runs later,
-        // against whatever `self` is then, and recording it here would invent a
-        // method on the wrong owner. In a class method `self` is the class, and
-        // what it defines there has no name this file can spell.
-        if self.in_method_body() {
-            if self.self_is_class() {
-                self.mark_dynamic(&name, at);
+        let Some(first) = args.first() else { return };
+        let computed = self.computed_names(first);
+        // Another class's methods are marked on it, never defined here,
+        // since its own file is where they belong.
+        if let DefinedOn::Constant(written) = &on {
+            let owner = self.sent_owner(written);
+            for shape in self.shapes(computed, first) {
+                let maker = Maker {
+                    by: name.clone(),
+                    singleton: Some(singleton),
+                    shape,
+                };
+                self.mark_dynamic_on(owner.clone(), maker, at);
             }
             return;
         }
-        let args = arg_nodes(call);
-        let Some(first) = args.first() else { return };
-        let Some(names) = self.computed_names(first) else {
-            self.mark_dynamic(&name, at);
+        // Same rule as a mixin (DEC-031): inside a `def` this runs later,
+        // against whatever `self` is then. In a class method `self` is the
+        // class, so a name the source spells is the class's method once the
+        // method runs (DEC-160), unless a block in between may run elsewhere,
+        // which marks the name instead. Any other name is marked, by its shape.
+        if self.in_method_body() && !self.self_is_class() {
             return;
+        }
+        let definable = !self.in_method_body() || self.blocks_are_loops();
+        let names = match computed {
+            Some(names) if definable => names,
+            computed => {
+                for shape in self.shapes(computed, first) {
+                    self.mark_dynamic_shaped(&name, singleton, shape, first, at);
+                }
+                return;
+            }
         };
         // `define_method(:x, instance_method(:y))`: the body is that method's,
         // not this line, so the definition is a declaration of it.
@@ -2221,11 +2406,11 @@ impl<'pr> Extractor<'_> {
         // A string inside a string is offsets into the outer one's text, not
         // the file's; not worth composing the maps for.
         if !self.evals.is_empty() {
-            self.mark_dynamic(&unread, at);
+            self.mark_string(&unread, &first, at);
             return;
         }
         let Some(pieces) = code_pieces(&first) else {
-            self.mark_dynamic(&unread, at);
+            self.mark_string(&unread, &first, at);
             return;
         };
         let mut locals: Vec<&[u8]> = pieces
@@ -2237,7 +2422,7 @@ impl<'pr> Extractor<'_> {
             .collect();
         locals.dedup();
         let Some(unstated) = self.read_code(&name, &pieces, UNSTATED, None) else {
-            self.mark_dynamic(&unread, at);
+            self.mark_string(&unread, &first, at);
             return;
         };
         if unstated.is_empty() {
@@ -2253,11 +2438,25 @@ impl<'pr> Extractor<'_> {
             _ => None,
         };
         let Some(values) = values else {
-            self.mark_dynamic(&name, at);
+            self.mark_string(&name, &first, at);
             return;
         };
         for value in values {
             self.read_code(&name, &pieces, &value, Some(&unstated));
+        }
+    }
+
+    /// Mark a scope for a string of code it could not read whole: once per
+    /// `def` the text spells, by that name's shape and side (DEC-160).
+    fn mark_string(&mut self, by: &str, code: &Node<'pr>, at: usize) {
+        let src = self.evals.last().map_or(self.src, |eval| &eval.src[..]);
+        for (singleton, shape) in string_defs(code, src) {
+            let maker = Maker {
+                by: by.to_string(),
+                singleton,
+                shape,
+            };
+            self.mark_dynamic_as(maker, at);
         }
     }
 
@@ -2348,23 +2547,85 @@ impl<'pr> Extractor<'_> {
     /// Say that this scope defines methods whose names the source does not
     /// state, so that no answer claims it lacks one (DEC-130). Once per scope
     /// and maker.
-    fn mark_dynamic(&mut self, by: &str, at: usize) {
+    fn mark_dynamic_as(&mut self, maker: Maker, at: usize) -> Option<usize> {
         if self.nesting.is_empty() || self.in_group_body() {
-            return;
+            return None;
         }
+        self.mark_dynamic_on(self.nesting.clone(), maker, at)
+    }
+
+    /// A marker on `owner`, once per owner and maker. The index of the
+    /// edge, which a shape resolved later rewrites.
+    fn mark_dynamic_on(&mut self, owner: Vec<String>, maker: Maker, at: usize) -> Option<usize> {
+        let target = maker.encode();
         let known = self.facts.ancestry.iter().any(|edge| {
-            edge.relation == Relation::Dynamic && edge.owner == self.nesting && edge.target == by
+            edge.relation == Relation::Dynamic && edge.owner == owner && edge.target == target
         });
         if known {
-            return;
+            return None;
         }
         let pos = self.pos(at);
         self.facts.ancestry.push(Ancestry {
-            owner: self.nesting.clone(),
+            owner,
             relation: Relation::Dynamic,
-            target: by.to_string(),
+            target,
             pos,
         });
+        Some(self.facts.ancestry.len() - 1)
+    }
+
+    /// A `define_method` whose name the source does not spell, marked with
+    /// the part it does: `"_render_with_#{key}"`, or a method of this scope
+    /// that returns such a string, which may be written below (DEC-160).
+    fn mark_dynamic_shaped(
+        &mut self,
+        by: &str,
+        singleton: bool,
+        shape: Option<String>,
+        name: &Node<'pr>,
+        at: usize,
+    ) {
+        let maker = Maker {
+            by: by.to_string(),
+            singleton: Some(singleton),
+            shape,
+        };
+        let unshaped = maker.shape.is_none();
+        let Some(edge) = self.mark_dynamic_as(maker, at) else {
+            return;
+        };
+        if unshaped && let Some(method) = shaping_call(name) {
+            self.pending_shapes
+                .push((edge, self.nesting.clone(), method));
+        }
+    }
+
+    /// The shape of the names a name argument spells: its literal text, with
+    /// `*` for each interpolation. `None` when it spells no text at all.
+    fn name_shape(&self, node: &Node<'pr>) -> Option<String> {
+        let parts: Vec<Node<'pr>> = if let Some(string) = node.as_interpolated_string_node() {
+            string.parts().iter().collect()
+        } else {
+            node.as_interpolated_symbol_node()?.parts().iter().collect()
+        };
+        shape_of(&parts)
+    }
+
+    /// The shapes to mark for a name argument: each name the source spells,
+    /// or the one shape its text gives.
+    fn shapes(&self, computed: Option<Vec<String>>, name: &Node<'pr>) -> Vec<Option<String>> {
+        match computed {
+            Some(names) => names.into_iter().map(Some).collect(),
+            None => vec![self.name_shape(name)],
+        }
+    }
+
+    /// Does a block around here leave `self` alone? Only a literal list's
+    /// iteration is known to, among the blocks open in this body.
+    fn blocks_are_loops(&self) -> bool {
+        let depth = self.frames.len();
+        let loops = self.loop_frames.iter().filter(|d| **d == depth).count();
+        self.frames.last().is_some_and(|f| f.blocks == loops)
     }
 
     /// The name a `define_method` block defines, when it defines exactly one —
@@ -4169,6 +4430,67 @@ fn code_pieces(node: &Node<'_>) -> Option<Vec<Piece>> {
     Some(pieces)
 }
 
+/// What a string of code defines, by its text with `*` for each
+/// interpolation: the side and shape of each `def`. One unshaped entry for
+/// either side when the text may make methods some other way, or spells no
+/// `def` at all.
+fn string_defs(code: &Node<'_>, src: &[u8]) -> Vec<(Option<bool>, Option<String>)> {
+    let raw = |at: ruby_prism::Location<'_>| {
+        String::from_utf8_lossy(&src[at.start_offset()..at.end_offset().min(src.len())])
+            .into_owned()
+    };
+    let mut text = String::new();
+    if let Some(string) = code.as_string_node() {
+        text = raw(string.content_loc());
+    } else if let Some(string) = code.as_interpolated_string_node() {
+        for part in string.parts().iter() {
+            match part.as_string_node() {
+                Some(_) => text.push_str(&raw(part.location())),
+                None => text.push('*'),
+            }
+        }
+    }
+    const ELSEWISE: [&str; 7] = [
+        "define_method",
+        "attr_",
+        "alias",
+        "delegate",
+        "eval",
+        "class <<",
+        "method_missing",
+    ];
+    let anything = vec![(None, None)];
+    if ELSEWISE.iter().any(|word| text.contains(word)) {
+        return anything;
+    }
+    let mut defs: Vec<(Option<bool>, Option<String>)> = Vec::new();
+    let bytes = text.as_bytes();
+    let mut at = 0;
+    while let Some(found) = text[at..].find("def") {
+        let start = at + found;
+        at = start + 3;
+        let bounded = start == 0 || matches!(bytes[start - 1], b' ' | b'\t' | b'\n' | b';');
+        if !bounded || !bytes.get(at).is_some_and(u8::is_ascii_whitespace) {
+            continue;
+        }
+        let rest = text[at..].trim_start();
+        let (singleton, rest) = match rest.strip_prefix("self.") {
+            Some(rest) => (true, rest),
+            None => (false, rest),
+        };
+        let name: String = rest
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '*' | '?' | '!' | '='))
+            .collect();
+        let shape = name.chars().any(|c| c != '*').then_some(name);
+        let def = (Some(singleton), shape);
+        if !defs.contains(&def) {
+            defs.push(def);
+        }
+    }
+    if defs.is_empty() { anything } else { defs }
+}
+
 /// The code a string of pieces evaluates, with `value` for each local.
 fn render(pieces: &[Piece], value: &str, file: &[u8]) -> Eval {
     let mut eval = Eval {
@@ -4938,6 +5260,23 @@ mod macro_call_tests {
             .collect()
     }
 
+    /// A local built from a loop's variable names each value too, and a
+    /// marker says the side and the shape it can make (DEC-160).
+    #[test]
+    fn a_marker_says_what_it_can_make() {
+        let derived = extract(
+            b"class C\n  [:a].each do |m|\n    n = \"x_#{m}\"\n    define_method(\"#{n}=\") {}\n  end\nend\n",
+        );
+        assert!(derived.defs.iter().any(|d| d.name == "x_a="));
+        assert!(marks(&derived).is_empty());
+        let shaped = extract(
+            b"class C\n  def self.a(k)\n    define_singleton_method(\"#{k}_x\") {}\n  end\nend\n",
+        );
+        assert_eq!(marks(&shaped), ["define_singleton_method|singleton|*_x"]);
+        let sent = extract(b"class C\n  [:a].each { |m| Other.send(:define_method, m) {} }\nend\n");
+        assert_eq!(marks(&sent), ["define_method|instance|a"]);
+    }
+
     /// A `def` read from a string lands where its name is written in the
     /// file, not in the rendered string, whose values are longer or shorter
     /// than the `#{…}` they replace.
@@ -4959,17 +5298,17 @@ mod macro_call_tests {
     #[test]
     fn a_class_eval_string_that_cannot_be_read_marks_its_scope() {
         let computed = extract(b"class C\n  class_eval \"def #{name.to_s * 2}; end\"\nend\n");
-        assert_eq!(marks(&computed), ["class_eval string"]);
+        assert_eq!(marks(&computed), ["class_eval string|instance|"]);
         let broken = extract(b"class C\n  class_eval \"def x(\"\nend\n");
-        assert_eq!(marks(&broken), ["class_eval string"]);
+        assert_eq!(marks(&broken), ["class_eval string|instance|x"]);
         let nested = extract(
             b"class C\n  class_eval <<~RUBY\n    class_eval \"def inner; end\"\n  RUBY\nend\n",
         );
-        assert_eq!(marks(&nested), ["class_eval string"]);
+        assert_eq!(marks(&nested), ["class_eval string|instance|inner"]);
         let unstated = extract(
             b"class C\n  LIST.each do |m|\n    module_eval \"def #{m}; go(:#{m}); end\"\n  end\nend\n",
         );
-        assert_eq!(marks(&unstated), ["module_eval"]);
+        assert_eq!(marks(&unstated), ["module_eval|instance|"]);
         assert!(unstated.defs.iter().all(|d| d.kind != Kind::Method));
         let calls: Vec<&str> = unstated.calls.iter().map(|c| c.name.as_str()).collect();
         assert!(calls.contains(&"go"), "{calls:?}");

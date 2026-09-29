@@ -6216,3 +6216,57 @@ two `JSON`s — a confidently wrong answer where there is residue now.
 Filtering it per app makes its file set depend on who indexed last. The
 fix is a checkout that owns part of a directory (a gem's `s.files` under
 the stdlib), which is a store change, decided separately.
+
+## DEC-160 — A marker hedges only the names it can make, on the side it makes them
+
+**Decided.** DEC-130's marker says more than "this scope makes methods". Its
+target is the maker, the side, and the shape of the names
+(`core::Maker`: `define_method|instance|_render_with_*`), and a chain's
+marker counts only for a name of that shape on that side:
+
+- `define_method` makes instance methods (class methods in `class << self`
+  or a `singleton_class` block), `define_singleton_method` class methods,
+  and a string of code whatever its `def`s say (`def self.x` or `def x`;
+  either side when it may make them some other way).
+- A name whose text the source spells in part is a shape:
+  `"_render_with_#{key}"` is `_render_with_*`, and so is a method of the
+  scope whose body is that string (`define_method(renderer_name(key))`,
+  looked up once the file is read). An unread string's `def`s give their
+  shapes from its text, `*` for each interpolation.
+- A name the source spells whole is defined, not marked: a literal
+  `define_method(:made)` in a class method is the class's method, with its
+  block or `&blk` as the body; `define_method(meth)` where `meth =
+  "sanitized_#{m}"` inside a literal loop names each value, as DEC-131's
+  variable does. Only when a block in between may run elsewhere is such a
+  name marked instead, by its exact shape.
+- A `define_method` in a block run on something else — `mod.singleton_class.
+  instance_eval do`, `Class.new(self) { … }` — marks nothing here. One sent
+  to a constant (`Target.send(:define_method, n)`, `Target.define_method`)
+  marks that constant, and `singleton_class.define_method(n)` defines on
+  the class side.
+- The reason names every marker of the scope that may have made the name,
+  with its shape: `(define_method, app.rb:48; define_method \`*_x\`, app.rb:52)`.
+
+**Why.** The 0.8.0 hunt: on mastodon, 16% of the certain "no such method"
+cards became residue (rails 3%), each claiming a scope "may include it" that
+could not. Three markers did most of it: actionpack's `Renderers.add`
+(`define_method(_render_with_renderer_method_name(key), &block)`), inherited
+by every controller; rails-html-sanitizer's
+`define_method(meth_name)` over a literal list, and minitest's `define_method
+:mu_pp, &:pretty_inspect` in `make_my_diffs_pretty!`. Every one of them spells
+the name, or most of it.
+
+**Measured**, the hunt's card sweep (a name no class has, `X#zz_nope` and
+`X.zz_nope` on every class): mastodon 819 residue of 3,128 → 399 (0.7.0:
+380); rails 607 of 4,824 → 490 (0.7.0: 477). What remains over 0.7.0 is
+a hedge that holds: thor's `register` (`define_method(subcommand_name)`),
+string `class_eval`s rails interpolates with a call (`#{env.delete_prefix
+("HTTP_").downcase}`), a hash's keys. Every gold verdict, the rails `--refs`
+queries and `--dead` on rails, activerecord and mastodon unchanged; of the
+21,154 replayed clicks, 37 misses moved from "known type, method not found"
+to "defined nowhere indexed", whose reason no longer names a marker that
+could not have made the name.
+
+**Not done.** A hash's `each |name, value|` (actiondispatch's `DIRECTIVES`),
+`each_with_index`, and a list a method returns (`keys.each`) are not literal
+loops, and their `define_method` stays an unshaped mark.

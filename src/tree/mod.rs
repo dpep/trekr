@@ -387,8 +387,9 @@ pub(crate) struct Tree {
 /// was not read (DEC-130).
 #[derive(Clone, Debug)]
 pub(crate) struct Dynamic {
-    /// The method that does it: `define_method`, `class_eval`.
-    pub(crate) by: String,
+    /// The method that does it — `define_method`, `class_eval` — with the
+    /// side and name shape it can make (DEC-160).
+    pub(crate) maker: crate::core::Maker,
     pub(crate) path: String,
     pub(crate) line: u32,
 }
@@ -2648,10 +2649,16 @@ impl Tree {
     }
 
     /// The first scope in `fqn`'s lookup chain that defines methods its source
-    /// does not name, and how (DEC-130): the reason "nothing defines it" is a
-    /// guess there. Either side of the scope counts, since a string of code can
-    /// define both.
-    pub(crate) fn dynamic_in_chain(&self, fqn: &str, singleton: bool) -> Option<(String, Dynamic)> {
+    /// does not name and may have made `name`, with every such marker there
+    /// (DEC-130): the reason "nothing defines it" is a guess there. A marker
+    /// counts on the side it makes methods on, and only for a name of its
+    /// shape (DEC-160).
+    pub(crate) fn dynamic_in_chain(
+        &self,
+        fqn: &str,
+        singleton: bool,
+        name: &str,
+    ) -> Option<(String, Vec<Dynamic>)> {
         self.place_dynamic();
         let placed = self.dynamic.borrow();
         let placed = placed.as_ref()?;
@@ -2660,19 +2667,34 @@ impl Tree {
         }
         self.lookup_chain(fqn, singleton)
             .into_iter()
-            .find_map(|(owner, _)| {
-                let marker = placed.get(&owner)?.first()?;
-                Some((variants::public_name(&owner).to_string(), marker.clone()))
+            .find_map(|(owner, side)| {
+                let makers: Vec<Dynamic> = placed
+                    .get(&owner)?
+                    .iter()
+                    .filter(|how| how.maker.may_make(name, side))
+                    .cloned()
+                    .collect();
+                (!makers.is_empty()).then(|| (variants::public_name(&owner).to_string(), makers))
             })
     }
 
-    /// A marker as a reason says it: the method that does it, and where.
-    pub(crate) fn dynamic_note(&self, how: &Dynamic) -> String {
-        let path = match crate::core::paths::under(&self.root, &how.path) {
-            true => how.path[self.root.len() + 1..].to_string(),
-            false => crate::core::paths::pretty(&how.path),
-        };
-        format!("{}, {path}:{}", how.by, how.line)
+    /// Markers as a reason says them: each method that does it, the shape
+    /// of the names when it is known, and where.
+    pub(crate) fn dynamic_note(&self, makers: &[Dynamic]) -> String {
+        makers
+            .iter()
+            .map(|how| {
+                let path = match crate::core::paths::under(&self.root, &how.path) {
+                    true => how.path[self.root.len() + 1..].to_string(),
+                    false => crate::core::paths::pretty(&how.path),
+                };
+                match &how.maker.shape {
+                    Some(shape) => format!("{} `{shape}`, {path}:{}", how.maker.by, how.line),
+                    None => format!("{}, {path}:{}", how.maker.by, how.line),
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
     }
 
     fn place_dynamic(&self) {
@@ -2689,11 +2711,12 @@ impl Tree {
         };
         let mut placed: HashMap<String, Vec<Dynamic>> = HashMap::new();
         for row in rows {
-            let Some(owner) = self.scope_fqn(&row.owner) else {
+            // A marker sent to a constant is that class's (DEC-160).
+            let Some((owner, _)) = self.edge_owner(&row.owner) else {
                 continue;
             };
             placed.entry(owner).or_default().push(Dynamic {
-                by: row.target,
+                maker: crate::core::Maker::parse(&row.target),
                 path: row.path,
                 line: row.line,
             });

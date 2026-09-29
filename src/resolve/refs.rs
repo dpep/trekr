@@ -395,10 +395,11 @@ fn unnamed_reach(
 ) -> bool {
     let Some(target) = target else {
         return tree
-            .dynamic_in_chain(&receiver.fqn, receiver.singleton)
+            .dynamic_in_chain(&receiver.fqn, receiver.singleton, &query.name)
             .is_some();
     };
-    tree.dynamic_in_chain(target, query.singleton).is_some()
+    tree.dynamic_in_chain(target, query.singleton, &query.name)
+        .is_some()
         && tree
             .lookup_chain(&receiver.fqn, receiver.singleton)
             .iter()

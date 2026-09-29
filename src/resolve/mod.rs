@@ -257,7 +257,7 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                 // this one, whether or not the name is defined elsewhere: the
                 // scope that makes such methods is the specific answer (DEC-130).
                 None if let Some((maker, how)) =
-                    tree.dynamic_in_chain(&receiver.fqn, receiver.singleton) =>
+                    tree.dynamic_in_chain(&receiver.fqn, receiver.singleton, &call.name) =>
                 {
                     let reason = format!(
                         "{CHECKED}, but {maker} defines methods its source does not name ({})",

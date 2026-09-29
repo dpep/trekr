@@ -1,0 +1,26 @@
+# The 0.8.0 marker (DEC-130) hedged every name, on both sides, of any class
+# whose scope ran a `define_method`, even when the name was a literal or a
+# literal loop's, when the method was run on another object, or when the
+# source spelled most of the name: 16% of mastodon's certain "no such
+# method" answers became residue. A name the source spells is defined, a
+# block run on another object marks nothing here, `define_singleton_method`
+# marks the class side only, and a spelled part of a name limits the hedge
+# to names of that shape, which the reason shows alongside every other
+# marker in the scope.
+card Kid#mu_pp status=resolved
+card Pretty#made status=resolved
+card Kid#zz_nope status=no_such_method exit=1
+card Setup#namespace status=no_such_method
+card Setup.namespace status=no_such_method
+card Single#zz_nope status=no_such_method
+card Single.zz_nope status=residue reason=define_singleton_method
+card Sanitized#sanitized_b status=resolved
+card Sanitized#zz_nope status=no_such_method
+card Renderers#_render_with_csv status=residue reason=_render_with_*
+card Renderers#zz_nope status=no_such_method
+card Renderers.zz_nope status=no_such_method
+card Both#zz_nope status=residue reason=app.rb:48
+card Both#run_x status=residue reason=*_x
+card Invokes#_invoke_all status=residue reason=_invoke_*
+card Invokes#zz_nope status=no_such_method
+card Templates#zz_nope status=no_such_method

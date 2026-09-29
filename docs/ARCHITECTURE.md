@@ -166,6 +166,10 @@ Two things the blob layer cannot know, resolved here:
 write an `ancestry` row of relation `dynamic`. Assembly drops it; the tree
 reads the marks from the store only when an answer is about to say a chain
 lacks a method (`Tree::dynamic_in_chain`), and that answer hedges instead.
+The target is the maker, and when the source says more, the side it makes
+methods on and the shape of their names (`define_method|instance|_render_*`,
+`core::Maker`); a mark counts only for a name of its shape on its side, and
+a mark sent to a constant is that constant's (DEC-160).
 
 **A name declared with two superclasses is split** (DEC-072). Ruby raises
 "superclass mismatch" when both load, so a checkout holding `class Post <

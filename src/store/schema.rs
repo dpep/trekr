@@ -13,7 +13,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 39;
+pub(crate) const VERSION: i64 = 40;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -70,7 +70,7 @@ CREATE TABLE ancestry (
   blob_id  INTEGER NOT NULL REFERENCES blob(id) ON DELETE CASCADE,
   owner    TEXT    NOT NULL,
   relation TEXT    NOT NULL,              -- superclass | include | prepend | extend | singleton_prepend | load_hooks | dynamic
-  target   TEXT    NOT NULL,              -- constant as written, or 'self'
+  target   TEXT    NOT NULL,              -- constant as written, or 'self'; for dynamic, maker[|side|shape]
   line     INTEGER NOT NULL,
   col      INTEGER NOT NULL
 );

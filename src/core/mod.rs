@@ -586,6 +586,81 @@ impl Relation {
     }
 }
 
+/// What a `dynamic` edge's target says (DEC-130, DEC-160): the method that
+/// makes the unnamed methods, which side of the owner they land on, and the
+/// shape their names take when the source spells part of it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct Maker {
+    /// `define_method`, `class_eval`, `class_eval string`.
+    pub(crate) by: String,
+    /// `Some(true)` for class methods only, `Some(false)` for instance
+    /// methods only, `None` for either: a string of code can make both.
+    pub(crate) singleton: Option<bool>,
+    /// The name with every part the source does not spell as `*`:
+    /// `_render_with_renderer_*`. `None` when nothing is spelled.
+    pub(crate) shape: Option<String>,
+}
+
+impl Maker {
+    /// As stored: the bare maker, or `by|side|shape` when it says more.
+    pub(crate) fn encode(&self) -> String {
+        if self.singleton.is_none() && self.shape.is_none() {
+            return self.by.clone();
+        }
+        let side = match self.singleton {
+            Some(true) => "singleton",
+            Some(false) => "instance",
+            None => "",
+        };
+        format!("{}|{side}|{}", self.by, self.shape.as_deref().unwrap_or(""))
+    }
+
+    pub(crate) fn parse(target: &str) -> Maker {
+        let mut parts = target.splitn(3, '|');
+        let by = parts.next().unwrap_or_default().to_string();
+        let singleton = match parts.next() {
+            Some("singleton") => Some(true),
+            Some("instance") => Some(false),
+            _ => None,
+        };
+        let shape = parts.next().filter(|s| !s.is_empty()).map(str::to_string);
+        Maker {
+            by,
+            singleton,
+            shape,
+        }
+    }
+
+    /// Could this maker have made `name`, on this side?
+    pub(crate) fn may_make(&self, name: &str, singleton: bool) -> bool {
+        self.singleton.is_none_or(|side| side == singleton)
+            && self
+                .shape
+                .as_deref()
+                .is_none_or(|shape| shape_matches(shape, name))
+    }
+}
+
+/// `*` is any run of characters, everything else itself.
+pub(crate) fn shape_matches(shape: &str, name: &str) -> bool {
+    let mut pieces = shape.split('*');
+    let first = pieces.next().unwrap_or_default();
+    let Some(mut rest) = name.strip_prefix(first) else {
+        return false;
+    };
+    let pieces: Vec<&str> = pieces.collect();
+    let Some((last, middle)) = pieces.split_last() else {
+        return rest.is_empty();
+    };
+    for piece in middle {
+        match rest.find(piece) {
+            Some(at) => rest = &rest[at + piece.len()..],
+            None => return false,
+        }
+    }
+    rest.ends_with(last)
+}
+
 /// A constant mentioned, with the lexical nesting that will resolve it.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub(crate) struct ConstRef {
@@ -1047,5 +1122,37 @@ mod surface_tests {
             "the calls and references really did change"
         );
         assert_eq!(before.surface(), after.surface());
+    }
+
+    #[test]
+    fn a_shape_matches_only_the_names_it_spells() {
+        use super::shape_matches;
+        assert!(shape_matches("_render_with_*", "_render_with_json"));
+        assert!(shape_matches("*_changed?", "name_changed?"));
+        assert!(shape_matches("a_*_b_*", "a_x_b_y"));
+        assert!(!shape_matches("_render_with_*", "zz_nope"));
+        assert!(!shape_matches("*_x", "x_y"));
+        assert!(!shape_matches("exact", "exactly"));
+    }
+
+    #[test]
+    fn a_maker_round_trips_what_it_says() {
+        use super::Maker;
+        assert_eq!(
+            Maker {
+                by: "define_method".into(),
+                ..Maker::default()
+            }
+            .encode(),
+            "define_method"
+        );
+        let full = Maker {
+            by: "define_method".into(),
+            singleton: Some(true),
+            shape: Some("x_*".into()),
+        };
+        assert_eq!(Maker::parse(&full.encode()), full);
+        assert!(full.may_make("x_a", true));
+        assert!(!full.may_make("x_a", false));
     }
 }
