@@ -2545,6 +2545,24 @@ impl Tree {
         )
     }
 
+    /// What a `super` in `found`, a method on `fqn`'s class side, runs: the
+    /// next `name` up that chain (DEC-165).
+    pub(crate) fn after_on_class_side(
+        &self,
+        fqn: &str,
+        found: &MethodDef,
+        name: &str,
+    ) -> Option<MethodDef> {
+        self.ensure(name);
+        let chain = self.lookup_chain(fqn, true);
+        let at = chain
+            .iter()
+            .position(|(o, s)| *o == found.owner && *s == found.singleton)?;
+        let rest = &chain[at + 1..];
+        self.first_in_chain(rest, name, true)
+            .or_else(|| self.first_in_chain(rest, name, false))
+    }
+
     /// The first definition of `name` along `chain`; `real_only` skips `.rbi`
     /// declarations entirely.
     fn first_in_chain(

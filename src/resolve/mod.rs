@@ -20,6 +20,7 @@ use crate::tree::{Kind, Site, Status, Tree};
 use serde::Serialize;
 
 /// How the receiver's type was established, and how strongly.
+#[derive(Clone)]
 pub(super) struct Receiver {
     pub(super) fqn: String,
     /// A class-method lookup rather than an instance-method one.
@@ -141,7 +142,7 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
         return symbol_answer(tree, facts, call, target, path);
     }
     let shape = call.recv.as_str();
-    match receiver_of(tree, facts, call, path) {
+    match receiver_of(tree, facts, call, path).map(|r| rival_with(tree, call, r)) {
         Some(receiver) => {
             if let Some(predicate) = &call.stands_for
                 && answered_by_matchers(tree, &receiver, &call.name)
@@ -1426,20 +1427,53 @@ fn let_typed(
 
 /// What `X.new` makes (DEC-133): an instance of `X`, unless the class side
 /// of `X` has a `new` of its own that says it returns something else — by a
-/// `sig`, or by ending in `Other.new`. Then that, or nothing known when the
-/// index cannot place it. A `new` that says nothing is taken to make an `X`:
-/// most end in `super`, or wrap it.
+/// `sig`, or by what it returns. `None` when that is nothing the index can
+/// place, or when its paths disagree (DEC-165): `made_by_new_all` has each.
 pub(super) fn made_by_new(tree: &Tree, class: &str) -> Option<String> {
-    let Some(new) = tree.lookup(class, true, "new") else {
-        return Some(class.to_string());
-    };
-    if crate::tree::is_core(&new.site.path) {
-        return Some(class.to_string());
+    match made_by_new_all(tree, class).as_slice() {
+        [only] => Some(only.clone()),
+        _ => None,
     }
-    match new.returns_for(None, false) {
-        None => Some(class.to_string()),
-        Some(written) => tree.returned_class(&new, written),
+}
+
+/// Every class `X.new` can make: a `new` that returns `super` makes what the
+/// next `new` up the class side makes, down to `Class#new`'s `X` (DEC-165).
+/// Empty when a path names a class the index cannot place.
+pub(super) fn made_by_new_all(tree: &Tree, class: &str) -> Vec<String> {
+    let mut made: Vec<String> = Vec::new();
+    let mut new = tree.lookup(class, true, "new");
+    // A chain of `super`s ends at core; the bound only guards a cycle.
+    for _ in 0..8 {
+        let Some(found) = new.take() else {
+            break;
+        };
+        if crate::tree::is_core(&found.site.path) {
+            break;
+        }
+        let Some(written) = found.returns_for(None, false) else {
+            break;
+        };
+        let mut follows = false;
+        for part in written.split('|') {
+            if part == "super" {
+                follows = true;
+                continue;
+            }
+            match tree.returned_class(&found, part) {
+                Some(other) if !made.contains(&other) => made.push(other),
+                Some(_) => {}
+                None => return Vec::new(),
+            }
+        }
+        if !follows {
+            return made;
+        }
+        new = tree.after_on_class_side(class, &found, "new");
     }
+    if !made.iter().any(|m| m == class) {
+        made.insert(0, class.to_string());
+    }
+    made
 }
 
 /// RSpec's implicit `subject`, when no group in reach writes one: an instance
@@ -1782,6 +1816,17 @@ fn from_assignments(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver>
 
     let mut votes: Vec<(String, bool, &'static str)> = Vec::new();
     for assign in &relevant {
+        // A custom `new` whose paths make different classes is one write
+        // with each type, as `rescue A, B => e` is (DEC-165).
+        if let ValueShape::New(name) = &assign.value
+            && let Some(class) = tree.resolve(name, &assign.nesting).fqn
+        {
+            let made = made_by_new_all(tree, &class);
+            if made.len() > 1 {
+                votes.extend(made.into_iter().map(|fqn| (fqn, false, "local:new")));
+                continue;
+            }
+        }
         if let Some(vote) = type_of(
             tree,
             facts,
@@ -2145,6 +2190,33 @@ impl MethodAnswer {
             public(&mut candidate.owner);
         }
         self
+    }
+}
+
+/// A receiver whose writes disagree, when the type they most agree on lacks
+/// the name and another has it: that one, still ambiguous, since the value
+/// may be either (DEC-165).
+pub(super) fn rival_with(tree: &Tree, call: &Call, receiver: Receiver) -> Receiver {
+    if receiver.rivals.is_empty() || lookup_on(tree, call, &receiver).is_some() {
+        return receiver;
+    }
+    let Some(at) = receiver
+        .rivals
+        .iter()
+        .position(|(fqn, singleton)| tree.lookup(fqn, *singleton, &call.name).is_some())
+    else {
+        return receiver;
+    };
+    let mut rivals = receiver.rivals.clone();
+    let (fqn, singleton) = rivals.remove(at);
+    rivals.insert(0, (receiver.fqn.clone(), receiver.singleton));
+    Receiver {
+        fqn,
+        singleton,
+        agreeing: 1,
+        ambiguous: true,
+        rivals,
+        ..receiver
     }
 }
 

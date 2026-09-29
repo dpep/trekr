@@ -5089,15 +5089,61 @@ fn render(pieces: &[Piece], values: &Values, file: &[u8]) -> Eval {
     eval
 }
 
-/// What a `def new` makes, when its last expression says: `Other.new(…)`
-/// makes an `Other` (DEC-133).
+/// What a `def new` makes, by every value it returns — each `return` and
+/// the last expression (DEC-133, DEC-165): `Other.new(…)` makes an `Other`,
+/// `super` whatever the next `new` up the chain makes. Several are joined by
+/// `|`; a path that says neither is not counted, as DEC-133 counts none.
 fn made_by_new(body: &Node<'_>) -> Option<String> {
-    let last = body.as_statements_node()?.body().iter().last()?;
-    let call = last.as_call_node()?;
+    let statements = body.as_statements_node()?;
+    let mut returned: Vec<Node<'_>> = Vec::new();
+    for statement in statements.body().iter() {
+        returns_in(&statement, &mut returned);
+    }
+    if let Some(last) = statements.body().iter().last() {
+        returned.push(last);
+    }
+    let mut made: Vec<String> = Vec::new();
+    for value in returned {
+        let Some(kind) = made_kind(&value) else {
+            continue;
+        };
+        if !made.contains(&kind) {
+            made.push(kind);
+        }
+    }
+    (!made.is_empty()).then(|| made.join("|"))
+}
+
+/// `super` or `Other.new(…)`, as `made_by_new` names it.
+fn made_kind(value: &Node<'_>) -> Option<String> {
+    if let Some(ret) = value.as_return_node() {
+        return made_kind(&ret.arguments()?.arguments().iter().next()?);
+    }
+    if value.as_super_node().is_some() || value.as_forwarding_super_node().is_some() {
+        return Some("super".to_string());
+    }
+    let call = value.as_call_node()?;
     if method_name(&call).as_deref() != Some("new") {
         return None;
     }
     const_name(&call.receiver()?)
+}
+
+/// The `return`s a body reaches without entering a block, a lambda or
+/// another `def`, which return from something else.
+fn returns_in<'pr>(node: &Node<'pr>, out: &mut Vec<Node<'pr>>) {
+    struct Returns<'a, 'pr> {
+        out: &'a mut Vec<Node<'pr>>,
+    }
+    impl<'pr> Visit<'pr> for Returns<'_, 'pr> {
+        fn visit_return_node(&mut self, node: &ruby_prism::ReturnNode<'pr>) {
+            self.out.push(node.as_node());
+        }
+        fn visit_block_node(&mut self, _: &ruby_prism::BlockNode<'pr>) {}
+        fn visit_lambda_node(&mut self, _: &ruby_prism::LambdaNode<'pr>) {}
+        fn visit_def_node(&mut self, _: &ruby_prism::DefNode<'pr>) {}
+    }
+    Returns { out }.visit(node);
 }
 
 /// Does a name or text a string of code produced spell the stand-in?

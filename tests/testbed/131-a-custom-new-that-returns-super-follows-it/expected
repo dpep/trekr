@@ -1,0 +1,11 @@
+# DEC-133 read a custom `new` by its last expression alone, so
+# `return super() if flag; Engine.new` typed every `Guarded.new` as an
+# `Engine` at confidence 1, and a subclass's `def self.new; super; end`
+# stopped the chain at a `new` that "says nothing", typing `Reset.new` as a
+# `Reset` though its parent's `new` makes an `Engine`. Every path a `new`
+# returns counts, `super` is followed up the class side, and paths that
+# disagree make the value either: ambiguous.
+def app.rb:29:9 status=ambiguous owner=Guarded
+def app.rb:30:9 status=ambiguous owner=Engine
+def app.rb:32:7 status=resolved owner=Engine via=local:new
+refs Engine#start confirmed=1 possible=1

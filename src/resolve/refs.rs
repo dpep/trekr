@@ -221,6 +221,22 @@ fn tier(
         return possible(tree, call, path, query, target, shape);
     };
 
+    // The type most writes give lacks the name, and another write's has
+    // it: the call may run that one (DEC-165).
+    let rival = super::rival_with(tree, call, receiver.clone());
+    if rival.fqn != receiver.fqn
+        && let Some(found) = super::lookup_on(tree, call, &rival)
+        && target.is_none_or(|target| found.owner == target && found.singleton == query.singleton)
+    {
+        return here(
+            Tier::Possible,
+            Some(rival.fqn.clone()),
+            Some(found.owner),
+            "another write the receiver's read can see gives it a type that has this",
+            1,
+            None,
+        );
+    }
     let found = super::lookup_on(tree, call, &receiver);
     let matches = found.as_ref().is_some_and(|found| {
         target.is_none_or(|target| found.owner == target && found.singleton == query.singleton)

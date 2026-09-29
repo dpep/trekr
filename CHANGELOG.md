@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Upgrading drops and rebuilds the index** (store v43): run `trekr --index`
+- **Upgrading drops and rebuilds the index** (store v44): run `trekr --index`
   once per checkout.
 
 ### Changed
@@ -57,6 +57,14 @@
 - **A string of code that would make more than 2,000 methods is marked
   instead of written out** (20,000 per file), and the reason says how many:
   300 names over 1,000 `def`s took 7 s to index (DEC-164).
+
+- **A custom `new` is read by every path it returns.** `return super() if
+  flag; Engine.new` typed every `Guarded.new` as an `Engine` at confidence
+  1; the value is now either, and a call on it is ambiguous. A subclass's
+  `def self.new; super; end` follows `super` to its parent's `new`, so
+  `Reset.new` makes what `Factory.new` makes. A local whose writes disagree
+  answers with the type that has the called name, ambiguous, where it was
+  residue (DEC-165).
 
 - **`--refs` counts a call whose receiver is typed as an ancestor.** A
   `sig`'s parameter or return, a finder's result, a `rescue`'s class, or the

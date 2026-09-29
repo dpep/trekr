@@ -6416,3 +6416,36 @@ same hedge.
 indexes and answers three queries in 0.56 s, from 1.34 s; `Huge#n5_7` is
 residue naming the marker, `--refs Huge#helper` still finds the 1,000 calls.
 
+## DEC-165 — A custom `new` makes what each of its paths returns, and `super` is followed
+
+**Decided.** DEC-133's custom `new` is read by every value it returns: each
+`return` its body reaches outside a block, lambda or nested `def`, and its
+last expression. `Other.new(…)` makes an `Other`; `super` (with or without
+arguments) makes whatever the next `new` up the class side makes, followed
+until one says something else or `Class#new` makes the class itself. A path
+that is neither still counts for nothing, as DEC-133 decided.
+
+- **Paths that agree** make that class, as before.
+- **Paths that disagree** make the value either. `x = Guarded.new(flag)` is
+  one write with each type, as `rescue A, B => e` is (DEC-071): the
+  receiver is ambiguous. Where only one type is needed — a chain
+  `Guarded.new.x`, a `let`, the implicit subject — nothing is known.
+- **The rival has the name.** When a local's writes disagree and the type
+  they most agree on lacks the called name while another has it, `--def`
+  answers ambiguous with the other's method, and `--refs` counts the site
+  `possible` for it. Before, it was residue ("the receiver's type is known")
+  and `no_such_method` for the other's method, though a value of the other
+  type runs it.
+
+**Why.** The 0.8.0 hunt: `def self.new(f); return super() if f; Engine.new;
+end` typed every `Guarded.new` as an `Engine` at 1.0 — confidently wrong
+whenever the flag is true — and `class Reset < Factory; def self.new; super;
+end; end` stopped at a `new` that says nothing, typing `Reset.new` as a
+`Reset` where Ruby's `super` runs `Factory.new`, which makes an `Engine`.
+
+**Measured.** Every gold verdict (graph_weaver, accord, polyid, flipper,
+widget_shop, verdict files byte-identical), the 21,154 clicks, the rails
+`--refs` queries, `--dead` on rails, activerecord and mastodon, and both card
+sweeps unchanged. The rival rung stays general rather than limited to
+`local:new`, since no measured answer moved.
+
