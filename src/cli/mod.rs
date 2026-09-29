@@ -1609,7 +1609,7 @@ fn gather_refs(
     target: Option<&str>,
     // Keep the excluded sites too, so `--include-excluded` can show them.
     keep_all: bool,
-    mut parsed: Option<&mut Parsed>,
+    parsed: Option<&mut Parsed>,
     // Every call of the name as a row of its own, for the bare-name listing:
     // the index keeps which files call a name, not where (DEC-193).
     mut sites: Option<&mut Vec<crate::store::Ref>>,
@@ -1621,18 +1621,12 @@ fn gather_refs(
     let mut found = Vec::new();
     let mut counts = refs::Counts::default();
     let mut local = Parsed::new();
-    // Parsed in parallel, tiered in order: the tree loads methods on demand
-    // through a `RefCell`, so only the parse can leave this thread. Chunked so
-    // a single query holds a few dozen files' facts at once, not all of them.
-    for chunk in store.files_calling(root_str, &query.name)?.chunks(64) {
-        let parsed: &mut Parsed = match parsed.as_deref_mut() {
-            Some(parsed) => parsed,
-            None => {
-                local.clear();
-                &mut local
-            }
-        };
-        let fresh: Vec<(String, Option<crate::core::Facts>)> = chunk
+    // Held across queries by a caller that passes a map; otherwise only the
+    // chunk being tiered is kept.
+    let shared = parsed.is_some();
+    let parsed: &mut Parsed = parsed.unwrap_or(&mut local);
+    let read = |chunk: &[String], parsed: &Parsed| -> Vec<(String, Option<crate::core::Facts>)> {
+        chunk
             .par_iter()
             .filter(|path| !parsed.contains_key(*path))
             .map(|path| {
@@ -1645,26 +1639,51 @@ fn gather_refs(
                 }
                 (path.clone(), facts)
             })
-            .collect();
+            .collect()
+    };
+    let read = &read;
+    // Parsed in parallel, tiered in order: the tree loads methods on demand
+    // through a `RefCell`, so only the parse can leave this thread, and the
+    // next chunk is parsed while this one is tiered. Chunked so a single
+    // query holds a few dozen files' facts at once, not all of them.
+    let files = store.files_calling(root_str, &query.name)?;
+    let mut chunks = files.chunks(64);
+    let mut ready = chunks.next().map(|chunk| (chunk, read(chunk, parsed)));
+    while let Some((chunk, fresh)) = ready.take() {
+        if !shared {
+            parsed.clear();
+        }
         parsed.extend(fresh);
-        for path in chunk {
-            let Some(Some(facts)) = parsed.get(path) else {
-                continue;
-            };
-            for call in facts.calls.iter().filter(|c| c.name == query.name) {
-                if let Some(sites) = sites.as_deref_mut() {
-                    sites.push(crate::store::Ref::call(path, call));
-                }
-                let reference = refs::tier_call(tree, facts, call, path, query, target);
-                counts.record(&reference);
-                // Excluded sites are counted, not listed: the count is the product,
-                // and the list would be the grep we are trying to beat. `keep_all`
-                // is how `--include-excluded` makes the claim auditable.
-                if keep_all || reference.tier != refs::Tier::Excluded {
-                    found.push(reference);
+        let parsed = &*parsed;
+        ready = std::thread::scope(|scope| {
+            let ahead = chunks
+                .next()
+                .map(|next| scope.spawn(move || (next, read(next, parsed))));
+            for path in chunk {
+                let Some(Some(facts)) = parsed.get(path) else {
+                    continue;
+                };
+                for call in facts.calls.iter().filter(|c| c.name == query.name) {
+                    if let Some(sites) = sites.as_deref_mut() {
+                        sites.push(crate::store::Ref::call(path, call));
+                    }
+                    let reference = refs::tier_call(tree, facts, call, path, query, target);
+                    counts.record(&reference);
+                    // Excluded sites are counted, not listed: the count is the
+                    // product, and the list would be the grep we are trying to
+                    // beat. `keep_all` is how `--include-excluded` makes the
+                    // claim auditable.
+                    if keep_all || reference.tier != refs::Tier::Excluded {
+                        found.push(reference);
+                    }
                 }
             }
-        }
+            ahead.map(|parse| {
+                parse
+                    .join()
+                    .unwrap_or_else(|e| std::panic::resume_unwind(e))
+            })
+        });
     }
     found.sort_by_key(refs::order);
     Ok((found, counts))
