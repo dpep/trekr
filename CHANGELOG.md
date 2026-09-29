@@ -57,6 +57,15 @@
 
 ### Changed
 
+- **`--refs` counts a call of a method the owner inherits.** Asked about
+  `Child#save` where only `Base` defines `save`, a call on a `Child` or a
+  subclass is `confirmed` where it was excluded as `different_owner`; a
+  `Base` or a sibling class running the same method stays excluded. On
+  rails, `--refs ActiveSupport::TestCase#assert_equal` goes from 0 to 23,378
+  confirmed, and `ActiveRecord::Base.new` from 0 to 1,490. A method the
+  owner defines itself answers as before, and `--dead` is unchanged
+  (DEC-280).
+
 - **An editor's references answer about twice as fast.** The LSP tiers a
   scan's call sites on every core, as `--refs` does: on rails,
   `Persistence#save` 93 → 44 ms and `QueryMethods#where` 126 → 70 ms for the

@@ -236,7 +236,9 @@ fn tier(
     let rival = super::rival_with(tree, call, receiver.clone());
     if rival.fqn != receiver.fqn
         && let Some(found) = super::lookup_on(tree, call, &rival)
-        && target.is_none_or(|target| found.owner == target && found.singleton == query.singleton)
+        && target.is_none_or(|target| {
+            runs_asked(tree, query, target, (&rival.fqn, rival.singleton), &found)
+        })
     {
         return here(
             Tier::Possible,
@@ -249,7 +251,15 @@ fn tier(
     }
     let found = super::lookup_on(tree, call, &receiver);
     let matches = found.as_ref().is_some_and(|found| {
-        target.is_none_or(|target| found.owner == target && found.singleton == query.singleton)
+        target.is_none_or(|target| {
+            runs_asked(
+                tree,
+                query,
+                target,
+                (&receiver.fqn, receiver.singleton),
+                found,
+            )
+        })
     });
     // `self` is typed as the class the call is written in, but runs as any
     // subclass: Base#run calling `setup` reaches Child#setup. The template
@@ -260,11 +270,16 @@ fn tier(
             receiver.singleton == query.singleton && tree.inherits(target, &receiver.fqn)
         })
     {
+        let why = if target.is_some_and(|target| inherited(tree, query, target).is_some()) {
+            "`self` may be the subclass that inherits this"
+        } else {
+            "`self` may be a subclass that overrides this"
+        };
         return here(
             Tier::Possible,
             Some(receiver.fqn.clone()),
             found.map(|found| found.owner),
-            "`self` may be a subclass that overrides this",
+            why,
             1,
             None,
         );
@@ -287,6 +302,23 @@ fn tier(
             Some(receiver.fqn.clone()),
             found.map(|found| found.owner),
             "`self` is what includes this module, and one that does has this",
+            1,
+            None,
+        );
+    }
+    // A guess among classes that define the name, landing on a method it
+    // only inherits, lands wherever its ancestors do — for `to_s`, Kernel's —
+    // so it cannot confirm a call of the owner that inherits that method.
+    if matches
+        && receiver.ambiguous
+        && let (Some(found), Some(target)) = (found.as_ref(), target)
+        && !(found.owner == target && found.singleton == query.singleton)
+    {
+        return here(
+            Tier::Possible,
+            Some(receiver.fqn.clone()),
+            Some(found.owner.clone()),
+            "the receiver's type is a guess, and one that inherits this",
             1,
             None,
         );
@@ -314,7 +346,11 @@ fn tier(
                 && below_reaches(tree, &receiver.fqn, target, query)
         })
     {
-        let why = if target.is_some_and(|target| tree.inherits(target, &receiver.fqn)) {
+        let below = target.is_some_and(|target| tree.inherits(target, &receiver.fqn));
+        let why = if below && target.is_some_and(|target| inherited(tree, query, target).is_some())
+        {
+            "the receiver is typed as an ancestor, and may be the subclass that inherits this"
+        } else if below {
             "the receiver is typed as an ancestor, and may be the subclass that defines this"
         } else {
             "the receiver is typed as an ancestor, and may be a subclass that mixes this in"
@@ -335,8 +371,10 @@ fn tier(
         && let Some(sent) = delegated(tree, &receiver, landed)
     {
         let owns = |fqn: &str| {
-            tree.lookup(fqn, false, &query.name)
-                .is_some_and(|own| crate::tree::public_name(&own.owner) == target)
+            tree.lookup(fqn, false, &query.name).is_some_and(|own| {
+                crate::tree::public_name(&own.owner) == target
+                    || at_or_below(tree, fqn, target) && is_inherited(tree, query, target, &own)
+            })
         };
         let answer = match sent {
             Delegated::To { fqn, .. } if !query.singleton && owns(&fqn) => Some((
@@ -383,11 +421,17 @@ fn tier(
                     None,
                 )
             } else {
+                let why = if target.is_some_and(|target| is_inherited(tree, query, target, &found))
+                {
+                    "the receiver's type inherits the same method, but is no subclass of the owner"
+                } else {
+                    "the receiver's type resolves to a different owner"
+                };
                 here(
                     Tier::Excluded,
                     Some(receiver.fqn.clone()),
                     Some(found.owner.clone()),
-                    "the receiver's type resolves to a different owner",
+                    why,
                     0,
                     Some(Ruling::DifferentOwner),
                 )
@@ -475,7 +519,10 @@ fn tier(
 fn below_reaches(tree: &Tree, fqn: &str, target: &str, query: &Query) -> bool {
     let lands = |class: &str| {
         tree.lookup(class, query.singleton, &query.name)
-            .is_some_and(|own| crate::tree::public_name(&own.owner) == target)
+            .is_some_and(|own| {
+                crate::tree::public_name(&own.owner) == target
+                    || is_inherited(tree, query, target, &own)
+            })
     };
     if tree.inherits(target, fqn) {
         return lands(target);
@@ -486,6 +533,46 @@ fn below_reaches(tree: &Tree, fqn: &str, target: &str, query: &Query) -> bool {
             .mixers_of(target)
             .iter()
             .any(|class| tree.inherits(class, fqn) && lands(class))
+}
+
+/// Does a receiver of type `on` (a class, and whether its class side) whose
+/// lookup found `method` run the queried one? The owner's own method from
+/// anywhere, or the method it inherits from the owner or a class below it:
+/// another class inheriting the same method is not calling the owner's
+/// (DEC-280).
+fn runs_asked(
+    tree: &Tree,
+    query: &Query,
+    target: &str,
+    (on, singleton): (&str, bool),
+    method: &crate::tree::MethodDef,
+) -> bool {
+    if method.owner == target && method.singleton == query.singleton {
+        return true;
+    }
+    singleton == query.singleton
+        && at_or_below(tree, on, target)
+        && is_inherited(tree, query, target, method)
+}
+
+/// The method the queried owner inherits, when it does not define its own.
+fn inherited(tree: &Tree, query: &Query, target: &str) -> Option<crate::tree::MethodDef> {
+    tree.lookup_owned(target, query.singleton, &query.name)
+        .filter(|asked| crate::tree::public_name(&asked.owner) != target)
+}
+
+/// Is `method` the one the queried owner inherits rather than defines?
+fn is_inherited(tree: &Tree, query: &Query, target: &str, method: &crate::tree::MethodDef) -> bool {
+    inherited(tree, query, target).is_some_and(|asked| {
+        asked.owner == method.owner
+            && asked.singleton == method.singleton
+            && asked.site.path == method.site.path
+            && asked.site.line == method.site.line
+    })
+}
+
+fn at_or_below(tree: &Tree, fqn: &str, target: &str) -> bool {
+    crate::tree::public_name(fqn) == target || tree.inherits(fqn, target)
 }
 
 /// Where a delegate sends its name (DEC-166).
@@ -607,15 +694,19 @@ fn tier_super(
             None,
         );
     };
-    let is_target = |method: &crate::tree::MethodDef| {
-        target.is_none_or(|target| method.owner == target && method.singleton == query.singleton)
+    let is_target = |class: &str, method: &crate::tree::MethodDef| {
+        target.is_none_or(|target| runs_asked(tree, query, target, (class, call.singleton), method))
     };
     let found: Vec<&crate::tree::MethodDef> = landings
         .per_class
         .iter()
         .filter_map(|(_, landing)| landing.as_ref())
         .collect();
-    let hits = found.iter().filter(|m| is_target(m)).count();
+    let hits = landings
+        .per_class
+        .iter()
+        .filter(|(class, landing)| landing.as_ref().is_some_and(|m| is_target(class, m)))
+        .count();
     let owner = Some(landings.owner.clone());
     let landed = found.first().map(|m| m.owner.clone());
     if hits > 0 && hits == landings.per_class.len() {
@@ -852,7 +943,7 @@ pub(crate) fn order(reference: &Reference) -> (u8, u8, String, u32) {
 }
 
 /// The method a query about `owner` lands on, in Ruby's notation, and
-/// whether the owner inherits it rather than defining it.
+/// whether the owner inherits it rather than defining it (DEC-280).
 pub(crate) fn resolves_to(tree: &Tree, owner: &str, query: &Query) -> Option<(String, bool)> {
     let method = tree.lookup_owned(owner, query.singleton, &query.name)?;
     let defined_by = crate::tree::public_name(&method.owner);

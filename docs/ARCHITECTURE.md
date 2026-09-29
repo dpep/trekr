@@ -573,6 +573,13 @@ any subclass, so a site whose lookup lands elsewhere is still possible for a
 method a subclass defines (DEC-081, DEC-140), or runs from a module a
 subclass mixes in (DEC-213).
 
+The queried method is what the owner's own place in its chain finds: its
+own definition, or the one it inherits (`resolves_to`, `inherited`). For an
+inherited one, a site confirms when its receiver is the owner or below it
+and lands there; a class outside the owner's subtree that inherits the same
+method is `different_owner`, and a naming-rung guess that only inherits it
+is `possible` (DEC-280).
+
 A `super` site is confirmed when every class that can run it lands on the
 queried method, possible when only some do or an ancestor after its owner is
 not indexed, and excluded when it lands elsewhere. It is always excluded

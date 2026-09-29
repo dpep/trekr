@@ -234,7 +234,7 @@ activerecord/lib/active_record/connection_handling.rb:270:23  possible   untyped
 ```
 
 **Confirmed** means the receiver's type resolves and Ruby's own lookup from it
-lands here. **Possible** means the receiver is untyped and nothing rules the
+lands here — for a method the owner inherits, from the owner or a subclass. **Possible** means the receiver is untyped and nothing rules the
 site out — ranked by proximity, never dropped. **Excluded** sites are not
 listed but are counted, because that count is the difference between this and a
 grep; `--include-excluded` lists them with their reason so the claim is

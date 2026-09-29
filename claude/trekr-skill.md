@@ -116,6 +116,9 @@ to open. `root` is `null` only for Ruby core. Text output writes a path in the
 checkout you asked about relative to it, and anything else absolute.
 
 * **confirmed** — the receiver's type resolves and Ruby's lookup lands here.
+  For a method the owner inherits (`resolves_to` names where, and `inherited`
+  is true), that is a receiver of the owner or a subclass landing on it;
+  another class inheriting the same method is excluded.
 * **possible** — untyped receiver, nothing rules it out; or one typed as an
   ancestor (`self`, a `sig`'s type) that may be the subclass defining this.
   Ranked, never dropped.

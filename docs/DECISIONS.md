@@ -8641,3 +8641,77 @@ hundred real ones.
 there is evidence a class is stale — the rbs gem marking deprecations, or a
 Ruby run once at index time to list what an extension defines.
 
+
+## DEC-280 — A call on a subclass runs the method it inherits
+
+**Decided.** `--refs Owner#name` asks about the method the owner's own place
+in its chain finds: its own definition, or the one it inherits
+(`resolves_to`, `inherited`; `Tree::lookup_owned`, so a module prepended to
+the owner is not taken for its method). For an inherited one, a site whose
+lookup lands on it is `confirmed` when the receiver is the owner or a class
+below it — an instance, `self` in the owner or a subclass, a `super` from an
+override below it, a delegate's target. A receiver outside that subtree that
+lands on the same method — the ancestor that defines it, a sibling — is
+`different_owner` ("the receiver's type inherits the same method, but is no
+subclass of the owner"). A receiver typed as an ancestor of the owner by a
+bound is `possible`, as for a method the owner defines (DEC-140), and so is
+`self` in an ancestor (DEC-081). An owner that defines the method itself is
+answered exactly as before.
+
+```ruby
+class Base; def save; end; end
+class Child < Base; end
+class Sibling < Base; end
+Child.new.save    # confirmed for Child#save
+Sibling.new.save  # excluded: Sibling runs Base#save without being a Child
+```
+
+**Why.** Asked. `--refs ActiveSupport::TestCase#assert_equal` answered 0
+confirmed, every call `different_owner`, because the method's owner is
+`Minitest::Assertions` — though each of those calls runs it on a
+`TestCase`. The question a person asks names the class they are looking at,
+not the module that happens to hold the `def`.
+
+**A guess confirms nothing it only inherits.** The naming rung types a
+local by its name, and is `ambiguous` when other classes define the method
+too. A guessed type that lacks the name lands wherever its ancestors define
+it, which for `to_s` is `Kernel` whatever the guess: `name.to_s`, a
+`String`, was typed `Name` and would have confirmed `Object#to_s`. Such a
+site is `possible` ("the receiver's type is a guess, and one that inherits
+this"), where the owner's own method still confirms on a guess, as before.
+
+**Measured** against main (8b3f1c9). Every gold verdict, all 21,154 clicks
+and `--dead` on rails and activerecord alone byte-identical — `--dead` asks
+about each method of the owner that defines it, which this leaves alone.
+The rails 40-query `--refs` set moves 171 sites excluded → confirmed in two
+queries, the 52-query set 25,043 excluded → confirmed and 55 excluded →
+possible in five; nothing leaves confirmed or possible:
+
+- `ActiveSupport::TestCase#assert_equal` (resolves to
+  `Minitest::Assertions#assert_equal`): 0 → 23,378 confirmed, every one an
+  implicit-`self` call in a `TestCase` subclass. The 249 still excluded are
+  107 calls in a test that is a `Minitest::Test` but no `TestCase` (Arel's,
+  `TestChangelog`) and 142 whose receiver's type has no such method
+  indexed (`no_such_method`), as before.
+- `ActiveRecord::Base.new` (`Inheritance::ClassMethods#new`, extended): 0 →
+  1,490, `Topic.new` and every model's.
+- `ActiveRecord::Base.establish_connection` (`ConnectionHandling`'s,
+  extended): 0 → 143, the base itself and models; the 39 left are the
+  connection handler's and each database task's own method.
+- `AbstractAdapter#execute` (`DatabaseStatements#execute`, included): 0 →
+  28, the MySQL adapters' calls and the `super` in PostgreSQL's and
+  SQLite3's `DatabaseStatements#execute`; SQLite3's own override stays
+  excluded.
+- `Object#to_s` (`Kernel#to_s`): 0 → 4 confirmed — `self` in `Object` and
+  `IO`, a `DeprecatedObjectProxy.new`, a `super` from
+  `BigDecimalWithDefaultFormat`, whose `BigDecimal` the index has no `to_s`
+  for — and 55 excluded → possible, each a naming-rung guess. Without the
+  guess rule those 55 were confirmed.
+
+Text only: a `self` call in an ancestor, still `possible`, now says "`self`
+may be the subclass that inherits this" (27 sites in the 52-query set), and
+an excluded site that runs the same method from outside the owner's subtree
+says so (107).
+
+*Reverses if:* the naming rung stops guessing among equals, when a guess
+could confirm an inherited method as it does an owned one.

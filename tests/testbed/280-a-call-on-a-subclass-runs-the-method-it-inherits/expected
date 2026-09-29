@@ -1,7 +1,17 @@
-# A method the owner inherits is named where it is defined: `Child#save` is
-# `Base#save`, and a class method from a module the superclass `extend`s is
-# that module's instance method.
-refs Child#save resolves_to=Base#save
-refs Base#save resolves_to=Base#save
-refs Child.connect resolves_to=Connecting#connect
+# `Child#save` is `Base#save`, inherited, and a call on a `Child` runs it:
+# `Child.new.save`, a `Grandchild`'s, `save` on `self` in `Child`, and the
+# `super` in an override below `Child`. Each was excluded as
+# `different_owner`, because the method's owner is `Base`, so asking about a
+# method a class inherits answered that nothing calls it. A `Base` or a
+# `Sibling` runs the same method without being a `Child` and stays excluded;
+# `Override.new` runs its own. A receiver typed as `Base` by a `sig`, and
+# `self` in `Base`, may be a `Child` (DEC-140, DEC-081). A local typed only
+# by its name, `grandchild`, is a guess among the classes defining `save`,
+# and a guess lacking the method lands on whatever it inherits.
+refs Child#save confirmed=4 possible=3 excluded=3 excluded_different_owner=3 resolves_to=Base#save
+# Asked of the owner that defines it, nothing moves.
+refs Base#save confirmed=9 possible=0 excluded=1 resolves_to=Base#save
+# A class method a module `extend`ed into the superclass: the same rule on
+# the class side.
+refs Child.connect confirmed=2 possible=0 excluded=2 resolves_to=Connecting#connect
 card Child#save status=resolved owner=Child resolves_to=Base#save site=app.rb:9
