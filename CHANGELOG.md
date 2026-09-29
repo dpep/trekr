@@ -69,6 +69,12 @@
   silently taken as any. `gems.picked` lists the version of every gem found,
   and the text says the picks when there is no lockfile (DEC-151).
 
+- **Without a lockfile, gems come from one Ruby.** The picks are made among
+  the gems installed for the Ruby `.ruby-version` (or the Gemfile's `ruby`)
+  names, else `$GEM_HOME`'s, else the `ruby` on `$PATH` — not the newest
+  copy any Ruby on the machine has. `--index` says which in the text and as
+  `gems.ruby` (DEC-152).
+
 ## 0.8.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v39): run `trekr --index`

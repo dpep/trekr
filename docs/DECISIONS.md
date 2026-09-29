@@ -6164,3 +6164,33 @@ activesupport "not installed" — both are.
 **Not done.** Still per name, not a solver: two requirements no single
 installed version meets leave the name missing with both written, rather
 than backtracking into a parent's other version.
+
+## DEC-152 — Without a lockfile, gems are picked from one Ruby's, and `--index` says which
+
+Amends DEC-134.
+
+**Decided.** A checkout with no `Gemfile.lock` resolves against the gem
+directories of one Ruby: the project's own (`BUNDLE_PATH`,
+`vendor/bundle`, `.bundle`), then the first of — the version
+`.ruby-version` or the Gemfile's literal `ruby "x"` names, matched to an
+rvm, rbenv or asdf install of it or to the directories for its ABI
+(`~/.gem/ruby/3.4.0`, Homebrew's); `$GEM_HOME`/`$GEM_PATH`; the `ruby` on
+`$PATH`, resolved to its prefix, with the other directories for its ABI.
+With none of them, every Ruby, as before, and that is said. `--index` has
+`gems.ruby`, the choice in words, and the text names it. A lockfile still
+searches every Ruby: it names exact versions, and any copy of one is the
+same bytes.
+
+**Why.** "The highest installed" depends on which Ruby: the hunt's gem
+resolved `rspec-core ~> 3.12.0` to 3.12.3 from Homebrew's Ruby 3.3 while
+everything else came from rvm's 3.4.9, where 3.12.2 is the newest. Its
+specs never ran against 3.12.3.
+
+**Measured.** The hunt's repro now picks rspec-core 3.12.2 and
+rspec-support 3.12.1 from rvm's 3.4.9; flipper resolves entirely from
+`$GEM_HOME`, the Ruby rvm made current. No lockfile checkout changes.
+
+**Not done.** rbenv's shims are scripts, not a prefix, so with rbenv and
+no `.ruby-version` the `$PATH` step finds nothing and every Ruby is
+searched — said as such. `ruby file: ".ruby-version"` in a Gemfile is not
+followed, and neither is `.tool-versions`.

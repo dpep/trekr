@@ -479,6 +479,61 @@ fn context_points_a_name_query_at_a_checkout() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Without a lockfile, the highest version is picked from one Ruby's gems:
+/// another Ruby's newer copy was never on this load path (DEC-152).
+#[test]
+fn with_no_lockfile_only_the_active_rubys_gems_are_picked() {
+    let (dir, db) = scratch("declared-ruby");
+    repo(&dir);
+    let (home, _) = scratch("declared-ruby-home");
+    let current = home.join(".rvm/gems/ruby-3.4.9");
+    for gems in [
+        current.join("gems/widget-0.2.0/lib"),
+        home.join(".gem/ruby/3.3.0/gems/widget-0.3.0/lib"),
+    ] {
+        fs::create_dir_all(&gems).unwrap();
+        fs::write(gems.join("widget.rb"), "module Widget\nend\n").unwrap();
+    }
+    fs::write(
+        dir.join("app.gemspec"),
+        "Gem::Specification.new do |s|\n  s.add_dependency \"widget\"\nend\n",
+    )
+    .unwrap();
+    let pick = |vars: &[(&str, &str)]| {
+        let mut env = vec![
+            ("HOME", home.to_str().unwrap()),
+            ("GEM_PATH", ""),
+            ("PATH", "/usr/bin:/bin"),
+        ];
+        env.extend_from_slice(vars);
+        json(&trekr_env(&db, &dir, &["--index", "--json"], &env))["gems"].clone()
+    };
+
+    let gems = pick(&[("GEM_HOME", current.to_str().unwrap())]);
+    assert_eq!(
+        gems["picked"],
+        serde_json::json!(["widget 0.2.0"]),
+        "{gems}"
+    );
+    assert!(
+        gems["ruby"].as_str().unwrap().contains("GEM_HOME"),
+        "{gems}"
+    );
+
+    // The checkout's own `.ruby-version` names the Ruby before the shell does.
+    fs::write(dir.join(".ruby-version"), "3.3.1\n").unwrap();
+    let gems = pick(&[("GEM_HOME", current.to_str().unwrap())]);
+    assert_eq!(
+        gems["picked"],
+        serde_json::json!(["widget 0.3.0"]),
+        "{gems}"
+    );
+    assert!(gems["ruby"].as_str().unwrap().contains("3.3.1"), "{gems}");
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&home);
+}
+
 /// Most gems commit no lockfile; what their gemspec declares is resolved to
 /// what is installed instead (DEC-134), and the answer says which it was.
 #[test]

@@ -193,38 +193,198 @@ fn git_checkout_name(remote: &str, revision: &str) -> String {
 /// Directory patterns gems are unpacked into, most specific first. A single
 /// `*` in a component means "try every directory here".
 fn search_roots(repo: &Path) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    let mut push = |path: PathBuf| roots.push(path);
+    let mut roots = project_roots(repo);
+    roots.extend(environment_roots());
+    roots.extend(machine_roots().into_iter().map(|(pattern, _)| pattern));
+    roots
+}
 
+/// Where the project itself has bundler install: always searched first.
+fn project_roots(repo: &Path) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
     // Bundler's configured path, when there is one, is where it installed.
     if let Some(path) = bundle_path(repo) {
-        push(path.join("ruby/*/gems"));
+        roots.push(path.join("ruby/*/gems"));
     }
     // Vendored into the project wins over the machine's: it is what the
     // project actually resolves.
-    push(repo.join("vendor/bundle/ruby/*/gems"));
-    push(repo.join(".bundle/ruby/*/gems"));
+    roots.push(repo.join("vendor/bundle/ruby/*/gems"));
+    roots.push(repo.join(".bundle/ruby/*/gems"));
+    roots
+}
 
-    if let Ok(home) = std::env::var("GEM_HOME") {
-        push(PathBuf::from(home).join("gems"));
+/// `$GEM_HOME` and `$GEM_PATH`: the Ruby a version manager made current.
+fn environment_roots() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(home) = std::env::var("GEM_HOME")
+        && !home.is_empty()
+    {
+        roots.push(PathBuf::from(home).join("gems"));
     }
     if let Ok(paths) = std::env::var("GEM_PATH") {
         for entry in paths.split(':').filter(|p| !p.is_empty()) {
-            push(PathBuf::from(entry).join("gems"));
+            roots.push(PathBuf::from(entry).join("gems"));
         }
     }
+    roots
+}
+
+/// Whether a machine root names a Ruby by its installed version
+/// (`versions/3.4.9`, `ruby-3.4.9`) or only by its ABI (`gems/3.4.0`).
+#[derive(Clone, Copy, PartialEq)]
+enum Named {
+    Install,
+    Abi,
+}
+
+/// Every Ruby installed on the machine, by convention.
+fn machine_roots() -> Vec<(PathBuf, Named)> {
+    let mut roots = Vec::new();
     if let Ok(home) = std::env::var("HOME") {
         let home = PathBuf::from(home);
-        push(home.join(".gem/ruby/*/gems"));
-        push(home.join(".rbenv/versions/*/lib/ruby/gems/*/gems"));
-        push(home.join(".rvm/gems/*/gems"));
-        push(home.join(".asdf/installs/ruby/*/lib/ruby/gems/*/gems"));
+        roots.push((home.join(".gem/ruby/*/gems"), Named::Abi));
+        roots.push((
+            home.join(".rbenv/versions/*/lib/ruby/gems/*/gems"),
+            Named::Install,
+        ));
+        roots.push((home.join(".rvm/gems/*/gems"), Named::Install));
+        roots.push((
+            home.join(".asdf/installs/ruby/*/lib/ruby/gems/*/gems"),
+            Named::Install,
+        ));
     }
-    push(PathBuf::from("/opt/homebrew/lib/ruby/gems/*/gems"));
-    push(PathBuf::from("/usr/local/lib/ruby/gems/*/gems"));
-    push(PathBuf::from("/usr/lib/ruby/gems/*/gems"));
-    push(PathBuf::from("/Library/Ruby/Gems/*/gems"));
+    for system in [
+        "/opt/homebrew/lib/ruby/gems/*/gems",
+        "/usr/local/lib/ruby/gems/*/gems",
+        "/usr/lib/ruby/gems/*/gems",
+        "/Library/Ruby/Gems/*/gems",
+    ] {
+        roots.push((PathBuf::from(system), Named::Abi));
+    }
     roots
+}
+
+/// The gem directories of the one Ruby a checkout without a lockfile runs
+/// on, and how it was chosen. A pick is "the highest installed", and
+/// installed means installed for *that* Ruby: another's copy may be newer
+/// and was never on this load path. In order: the version `.ruby-version`
+/// or the Gemfile's `ruby` names, `$GEM_HOME`/`$GEM_PATH`, the `ruby` on
+/// `$PATH`; with none of them, every Ruby, and that is said.
+fn active_ruby_dirs(repo: &Path) -> (Vec<PathBuf>, String) {
+    let mut dirs: Vec<PathBuf> = project_roots(repo).iter().flat_map(|p| expand(p)).collect();
+    let machine: Vec<(PathBuf, Named)> = machine_roots()
+        .into_iter()
+        .flat_map(|(pattern, named)| expand(&pattern).into_iter().map(move |dir| (dir, named)))
+        .collect();
+
+    if let Some(version) = project_ruby(repo) {
+        let abi = abi_of(&version);
+        let matching: Vec<PathBuf> = machine
+            .iter()
+            .filter(|(dir, named)| match named {
+                Named::Install => dir.components().any(|c| {
+                    let c = c.as_os_str().to_string_lossy();
+                    let c = c.strip_prefix("ruby-").unwrap_or(&c);
+                    c == version
+                        || c.starts_with(&format!("{version}."))
+                        || c.starts_with(&format!("{version}@"))
+                }),
+                Named::Abi => abi.as_deref().is_some_and(|abi| has_component(dir, abi)),
+            })
+            .map(|(dir, _)| dir.clone())
+            .collect();
+        if !matching.is_empty() {
+            dirs.extend(matching);
+            return (dirs, format!("Ruby {version}, which the checkout names"));
+        }
+    }
+
+    let environment: Vec<PathBuf> = environment_roots().iter().flat_map(|p| expand(p)).collect();
+    if !environment.is_empty() {
+        dirs.extend(environment);
+        let named = std::env::var("GEM_HOME").unwrap_or_default();
+        return (
+            dirs,
+            format!(
+                "the Ruby $GEM_HOME names ({})",
+                crate::core::paths::pretty(&named)
+            ),
+        );
+    }
+
+    if let Some(ruby) = path_ruby() {
+        // `<prefix>/bin/ruby`, and its gems in `<prefix>/lib/ruby/gems/<abi>`,
+        // and the machine's other directories for the same ABI.
+        let own: Vec<PathBuf> = ruby
+            .parent()
+            .and_then(Path::parent)
+            .map(|prefix| expand(&prefix.join("lib/ruby/gems/*/gems")))
+            .unwrap_or_default();
+        let abis: Vec<String> = own
+            .iter()
+            .filter_map(|dir| dir.parent()?.file_name())
+            .map(|abi| abi.to_string_lossy().into_owned())
+            .collect();
+        if !abis.is_empty() {
+            dirs.extend(own);
+            dirs.extend(
+                machine
+                    .iter()
+                    .filter(|(dir, named)| {
+                        *named == Named::Abi && abis.iter().any(|abi| has_component(dir, abi))
+                    })
+                    .map(|(dir, _)| dir.clone()),
+            );
+            let shown = crate::core::paths::pretty(&ruby.to_string_lossy());
+            return (dirs, format!("the ruby on $PATH ({shown})"));
+        }
+    }
+
+    dirs.extend(machine.into_iter().map(|(dir, _)| dir));
+    (
+        dirs,
+        "every installed Ruby: none is named or current".into(),
+    )
+}
+
+fn has_component(dir: &Path, name: &str) -> bool {
+    dir.components().any(|c| c.as_os_str() == name)
+}
+
+/// `3.4.9` → `3.4.0`, the directory rubygems installs a Ruby's gems under.
+fn abi_of(version: &str) -> Option<String> {
+    let mut parts = version.split('.');
+    let (major, minor) = (parts.next()?, parts.next()?);
+    let numeric = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+    (numeric(major) && numeric(minor)).then(|| format!("{major}.{minor}.0"))
+}
+
+/// The Ruby version the checkout names: `.ruby-version`, else the
+/// Gemfile's literal `ruby "3.4.1"`.
+fn project_ruby(repo: &Path) -> Option<String> {
+    let version = |text: &str| {
+        let text = text.trim().trim_matches(|c| c == '"' || c == '\'');
+        let text = text.strip_prefix("ruby-").unwrap_or(text);
+        text.starts_with(|c: char| c.is_ascii_digit())
+            .then(|| text.to_string())
+    };
+    if let Ok(text) = std::fs::read_to_string(repo.join(".ruby-version")) {
+        return text.lines().next().and_then(version);
+    }
+    let gemfile = std::fs::read_to_string(repo.join("Gemfile")).ok()?;
+    gemfile.lines().find_map(|line| {
+        let rest = line.trim_start().strip_prefix("ruby ")?;
+        version(rest.split(',').next()?)
+    })
+}
+
+/// The `ruby` executable `$PATH` finds, resolved through symlinks.
+fn path_ruby() -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join("ruby"))
+        .find(|candidate| candidate.is_file())
+        .and_then(|ruby| std::fs::canonicalize(ruby).ok())
 }
 
 /// Expand `*` components by reading the directory, depth-first.
@@ -377,14 +537,24 @@ fn gemspec_dir(source: &Path, name: &str, sole: bool) -> Option<PathBuf> {
 }
 
 /// Where a checkout's gem list came from.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Resolved {
     /// `Gemfile.lock`, exactly as bundler locked it.
     Lockfile,
     /// No lockfile: what the gemspecs and Gemfile declare, each at the
-    /// highest installed version that meets it (DEC-134).
-    Declared,
+    /// highest version installed for one Ruby — `ruby` says which, and how
+    /// it was chosen (DEC-134, DEC-152).
+    Declared { ruby: String },
+}
+
+impl Resolved {
+    /// `gems.resolved_from`.
+    pub(crate) fn as_str(&self) -> &'static str {
+        match self {
+            Resolved::Lockfile => "lockfile",
+            Resolved::Declared { .. } => "declared",
+        }
+    }
 }
 
 /// The gems a checkout depends on, located on disk, and where the list came
@@ -393,16 +563,20 @@ pub(crate) enum Resolved {
 /// An absent `Gemfile.lock` is not an error: most gems commit none, and their
 /// gemspec says the same thing less exactly.
 pub(crate) fn for_checkout(repo: &Path) -> (Vec<Located>, Option<Resolved>) {
-    if let Ok(text) = std::fs::read_to_string(repo.join("Gemfile.lock")) {
-        return (
+    let (located, resolved) = match std::fs::read_to_string(repo.join("Gemfile.lock")) {
+        Ok(text) => (
             locate(repo, parse_lockfile(&text)),
             Some(Resolved::Lockfile),
-        );
-    }
-    match declared::resolve(repo, &gem_dirs(repo)) {
-        Some(located) => (located, Some(Resolved::Declared)),
-        None => (Vec::new(), None),
-    }
+        ),
+        Err(_) => {
+            let (dirs, how) = active_ruby_dirs(repo);
+            match declared::resolve(repo, &dirs) {
+                Some(located) => (located, Some(Resolved::Declared { ruby: how })),
+                None => (Vec::new(), None),
+            }
+        }
+    };
+    (located, resolved)
 }
 
 #[cfg(test)]
@@ -643,6 +817,23 @@ BUNDLED WITH
         assert_eq!(gemspec_dir(&dir, "widget", true), Some(dir.clone()));
         assert_eq!(gemspec_dir(&dir, "widget", false), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_ruby_version_names_its_abi_directory() {
+        assert_eq!(abi_of("3.4.9").as_deref(), Some("3.4.0"));
+        assert_eq!(abi_of("3.4").as_deref(), Some("3.4.0"));
+        assert_eq!(abi_of("jruby-9.4"), None);
+        let repo = scratch("ruby-version");
+        std::fs::write(repo.join("Gemfile"), "source 'x'\nruby \"3.3.1\"\n").unwrap();
+        assert_eq!(project_ruby(&repo).as_deref(), Some("3.3.1"));
+        std::fs::write(repo.join(".ruby-version"), "ruby-3.4.9\n").unwrap();
+        assert_eq!(
+            project_ruby(&repo).as_deref(),
+            Some("3.4.9"),
+            ".ruby-version first"
+        );
+        let _ = std::fs::remove_dir_all(&repo);
     }
 
     #[test]

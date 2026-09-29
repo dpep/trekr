@@ -325,3 +325,6 @@ tiers the site `possible`.
   checkout). `gems.resolved_from` is `lockfile`, or `declared` when there was no
   `Gemfile.lock` and the gemspecs' and Gemfile's dependencies were resolved to
   the highest installed versions instead; absent, no gem was indexed at all.
+  `gems.picked` lists each gem found as `name version`; without a lockfile,
+  `gems.ruby` says whose Ruby the picks came from and `gems.unread` the
+  requirements trekr could not read (the highest installed was taken).
