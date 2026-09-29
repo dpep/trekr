@@ -41,6 +41,12 @@
 
 ### Changed
 
+- **A definition or reference inside a module answers two to three times
+  faster.** A lookup that finds nothing no longer works out every string
+  macro's methods, only those of the macros that could make its name:
+  `--def` on `respond_to?` in `ActiveSupport::Tryable` on rails 102 → 53 ms,
+  on a 100k-file checkout 0.87 → 0.33 s (DEC-235).
+
 - **Indexing a checkout half the size of the store or more is faster.** Such
   a load now rebuilds the store's indexes rather than inserting into them,
   as only a load bigger than the store did: 50k new files into a store of

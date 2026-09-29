@@ -189,7 +189,8 @@ class-side lookup of the name lands on it; `{k}` in its shape is the `k`th
 name that call hands it, `{k*}` each from the `k`th on (DEC-162). A string
 macro's `def` whose name a caller in another file spells whole is a method
 of that caller, at the macro's `class_eval`, where the caller's chain
-otherwise finds nothing (`Tree::made_along`, DEC-212); the string itself is
+otherwise finds nothing (`Tree::made_along`, DEC-212), worked out per name
+for only the macros whose shape could spell it (DEC-235); the string itself is
 not stored, so its calls are read only at a caller in its own file (DEC-163).
 Each string read keeps its rendered text and a byte map to the file
 (`Facts::strings`, resolve-time only), which the LSP's variable answers parse

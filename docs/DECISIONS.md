@@ -7648,7 +7648,8 @@ first miss, to see whether a string macro made the name. Sampled on
 da7cc69 with this change, placing is 75 % of the 100k `--def`. Placing only
 the markers `made` needs, or keeping `made` beside the snapshot, would take
 most of it back; `made_along` also still builds an `(owner, singleton,
-name)` key per chain element, the pattern this entry removes.
+name)` key per chain element, the pattern this entry removes. *DEC-235
+does both.*
 
 **Checked.** The table holds the same indices in the same order for every
 (owner, side, name); a lookup on the side a name was never defined on finds
@@ -7794,4 +7795,65 @@ smaller (630 → 608 MB).
 1:1, and `--refs 'Hash#[]'` and the module `--def` over the 100k checkout
 are byte-identical from a store loaded each way. The verify set (DEC-230)
 is unchanged. A unit test pins the line.
+
+## DEC-235 — A lookup's miss works out only the string macros that could make its name
+
+**Decided.** `made_along` (DEC-212) asks `made_for(name)`, memoized per
+name: of the markers — read once per tree, owners resolved (`markers`) — only
+the string macros whose shape, each `{k}` taken as any name, could spell
+`name` (`may_expand_to`) have their callers found, and the macro's `def` is
+expanded at each as before. The result is keyed by class, then side, and a
+chain is probed by each element's `&str` (DEC-231's pattern). A miss no
+longer places every marker; `place_dynamic` still does, for the hedges that
+list them (`dynamic_in_chain`, `dynamic_in_file`), and skips the methods a
+string macro makes by name, which are `made_for`'s. A macro's callers are
+memoized per (owner, macro), so the two share them.
+
+**Why, measured.** DEC-231's next lever. On the first miss of any lookup,
+`made_along` placed every marker in the tree to learn whether a string
+macro made the name, and placing finds each macro's callers by a class-side
+lookup of the macro's name at every class whose body calls it — loading
+that name's methods from the store. Sampled on the 100k `--def` in a module,
+placing was 73 % of the query: those lookups 53 % (their method loads 34 %),
+reading the markers 13 %, the body calls 6 %. `respond_to?` is a name no
+string macro can spell, so none of it was needed.
+
+`respond_to?` in `ActiveSupport::Tryable`, each build on its own store,
+interleaved, medians (p90), load 3–6 from other work:
+
+| | main (3ce6096) | this | rounds |
+| --- | ---: | ---: | --- |
+| rails | 102 (108) ms, 42 MB | **53** (55) ms, 31 MB | 11 |
+| mastodon | 116 (117) ms, 40 MB | **72** (73) ms, 35 MB | 11 |
+| 100k files | 868 (876) ms, 300 MB | **327** (333) ms, 242 MB | 7 |
+| rails, the 51-query `--refs` set | 7.86 s | **7.12** s | 5 |
+| 100k `--refs 'Hash#[]' --json` | 12.3 (12.7) s | 12.9 (14.3) s | 3 |
+
+Megabytes are peak footprint. The module `--def` is now below where it was
+before DEC-212 (467 ms at 100k, 65 ms on rails); `Hash#[]` is within the
+noise (CPU 37.7 → 38.1 s).
+
+**Why the prefilter is sound.** `expanded` makes a name only for a string
+maker (`class_eval`, `module_eval`, `instance_eval`, `eval`) with a side and
+a shape, from the shape with each `{k}` replaced by a name the call hands
+it; the shape with each `{k}` as `*` matches every such name, so no macro
+that could make `name` is skipped. `Maker::may_make` is not that test: it
+hands the shape one unnamed argument, and a `{k*}` with k ≥ 1 then makes no
+name at all, so it matches nothing — for the hedges it serves too.
+Callers are found in the markers' order and a later expansion replaces an
+earlier one, as in placement.
+
+**Checked.** Byte-identical to main on the verify set (DEC-230's list), on
+DEC-212's macro cards (174 rails and 630 mastodon queries, status, reason,
+site and counts), on the linearization dump (rails, mastodon, 100k) and on
+the 100k `--def` and `Hash#[]` answers. Testbed case 135 holds the
+answers; a unit test requires a miss on a name no macro makes to place no
+marker and find no macro's callers, fails when `made_along` places, and
+requires a made method to land as before.
+
+**One difference in kind, not seen in any answer.** Lookups made while
+finding callers are memoized with `made_along` off (`placing`), as before;
+since fewer callers are found at the first miss, a class-side lookup of a
+macro's own name may now be asked first outside that window. It answers
+differently only if a string macro in another file makes the macro itself.
 

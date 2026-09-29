@@ -406,13 +406,60 @@ pub(crate) struct Tree {
     dynamic: RefCell<Option<HashMap<String, Vec<Dynamic>>>>,
     /// Every marker, by the file that writes it (DEC-162).
     dynamic_files: RefCell<HashMap<String, Vec<Dynamic>>>,
+    /// Every marker with its owner resolved, in the store's order: what
+    /// placing reads, and what `made_for` reads without placing (DEC-235).
+    markers: RefCell<Option<Markers>>,
+    /// The classes whose body runs each macro, with the names each hands
+    /// it and its file, by (owner, macro).
+    callers: RefCell<HashMap<(String, String), Callers>>,
     /// The methods a string macro in another file makes on the classes that
-    /// hand it literal names, by (class, singleton, name) (DEC-212).
-    made: RefCell<HashMap<(String, bool, String), Dynamic>>,
+    /// hand it literal names (DEC-212): by name, then class, then side,
+    /// worked out per name as a lookup misses it (DEC-235).
+    made: RefCell<HashMap<String, Rc<Made>>>,
     /// `place_dynamic` is running, and its own lookups must not wait on it.
     placing: std::cell::Cell<bool>,
     /// Hook name → the classes that run it (DEC-098), read on first need.
     hooks: RefCell<Option<HashMap<String, Vec<String>>>>,
+}
+
+/// Every marker with the class or module it marks.
+type Markers = Rc<[(String, Dynamic)]>;
+
+/// A class whose body calls a macro: the class, the literal names the call
+/// hands it, and the file it is written in.
+type Caller = (String, Vec<Option<String>>, String);
+
+type Callers = Rc<[Caller]>;
+
+/// A name's string-macro methods by class, instance side then singleton.
+type Made = HashMap<String, [Option<Dynamic>; 2]>;
+
+/// A maker that runs a string as code, whose `def`s a caller's names spell.
+fn evals_code(by: &str) -> bool {
+    matches!(by, "class_eval" | "module_eval" | "instance_eval" | "eval")
+}
+
+/// Whether a string macro marker could make a method named `name` at some
+/// caller (`expanded`), whatever names the caller hands it: each `{k}` of
+/// its shape stands for any name. Decides which macros' callers a name's
+/// `made_for` has to find.
+fn may_expand_to(maker: &crate::core::Maker, name: &str) -> bool {
+    fn wildcard(shape: &str) -> String {
+        let Some(open) = shape.find('{') else {
+            return shape.to_string();
+        };
+        let Some(close) = shape[open..].find('}').map(|at| open + at) else {
+            return shape.to_string();
+        };
+        format!("{}*{}", &shape[..open], wildcard(&shape[close + 1..]))
+    }
+    maker.via.is_some()
+        && maker.singleton.is_some()
+        && evals_code(&maker.by)
+        && maker
+            .shape
+            .as_deref()
+            .is_some_and(|shape| crate::core::shape_matches(&wildcard(shape), name))
 }
 
 /// The side and name of the one method a string macro's `def` makes at a
@@ -421,10 +468,7 @@ pub(crate) struct Tree {
 /// names at extraction (DEC-163), where it could be.
 fn expanded(made: &Dynamic, called_in: &str) -> Option<(bool, String)> {
     let maker = &made.maker;
-    let string = matches!(
-        maker.by.as_str(),
-        "class_eval" | "module_eval" | "instance_eval" | "eval"
-    );
+    let string = evals_code(&maker.by);
     let name = maker.shape.as_deref()?;
     let spelled = !name.contains(['*', '{']);
     if !string || !spelled || called_in == made.path {
@@ -891,6 +935,8 @@ impl Tree {
             dynamic_rows: RefCell::new(None),
             dynamic: RefCell::new(None),
             dynamic_files: RefCell::new(HashMap::new()),
+            markers: RefCell::new(None),
+            callers: RefCell::new(HashMap::new()),
             made: RefCell::new(HashMap::new()),
             placing: std::cell::Cell::new(false),
             hooks: RefCell::new(None),
@@ -1902,6 +1948,51 @@ mod tests {
         tree(&[("a.rb", source)])
     }
 
+    /// A lookup that misses works out only the string macros that could
+    /// spell its name (DEC-235): a name none could make places no marker
+    /// and finds no macro's callers, and one that a macro makes lands as it
+    /// did when every marker was placed first.
+    #[test]
+    fn a_miss_finds_the_callers_of_only_the_macros_that_could_make_it() {
+        let sources = [
+            (
+                "macros.rb",
+                "module Macros\n  def self.included(base)\n    base.extend(ClassMethods)\n  end\n\n  module ClassMethods\n    def add_helper(name)\n      class_eval <<~RUBY, __FILE__, __LINE__ + 1\n        def #{name}_helper\n        end\n      RUBY\n    end\n\n    def add_flags(*names)\n      names.each do |name|\n        class_eval \"def #{name}?; end\"\n      end\n    end\n  end\nend\n",
+            ),
+            (
+                "widget.rb",
+                "class Widget\n  include Macros\n  add_helper :color\n  add_flags :active\nend\n",
+            ),
+        ];
+        let dir = std::env::temp_dir().join(format!("trekr-made-for-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = Store::open(&dir.join("t.db")).unwrap();
+        let mut files = crate::scan::Files::new();
+        let mut facts = Vec::new();
+        for (path, source) in sources {
+            let oid = crate::scan::hash_blob(source.as_bytes());
+            files.insert(path.to_string(), oid.clone());
+            facts.push((oid, crate::extract::extract(source.as_bytes())));
+        }
+        store.write("/repo", &files, facts, 0).unwrap();
+        let tree = Tree::build(&store, "/repo").unwrap();
+
+        assert!(tree.lookup("Widget", false, "zz_nope").is_none());
+        assert!(tree.dynamic.borrow().is_none(), "no marker placed");
+        assert!(tree.callers.borrow().is_empty(), "no macro's callers found");
+
+        let made = tree.lookup("Widget", false, "color_helper").expect("made");
+        assert_eq!(
+            (made.owner.as_str(), made.site.path.as_str()),
+            ("Widget", "/repo/macros.rb")
+        );
+        assert_eq!(tree.callers.borrow().len(), 1, "add_helper's alone");
+        assert!(tree.lookup("Widget", false, "active?").is_some());
+        assert!(tree.dynamic.borrow().is_none(), "still none placed");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Streaming the methods a demand-loaded tree has not fetched lists
     /// exactly what an eager tree holds: a name already loaded is not listed
     /// twice, a `private :x` assertion is not a definition, and a carrier's
@@ -2679,13 +2770,13 @@ impl Tree {
         if self.placing.get() {
             return None;
         }
-        self.place_dynamic();
+        let made = self.made_for(name);
+        if made.is_empty() {
+            return None;
+        }
         let (owner, singleton, how) = chain.iter().find_map(|(owner, side)| {
-            let key = (owner.to_string(), side, name.to_string());
-            self.made
-                .borrow()
-                .get(&key)
-                .map(|how| (key.0, side, how.clone()))
+            let how = made.get(owner)?[usize::from(side)].as_ref()?;
+            Some((owner.to_string(), side, how.clone()))
         })?;
         let mut methods = self.methods.borrow_mut();
         methods.push(MethodDef {
@@ -3313,7 +3404,100 @@ impl Tree {
         if self.dynamic.borrow().is_some() {
             return;
         }
-        self.placing.set(true);
+        let markers = self.markers();
+        let was = self.placing.replace(true);
+        let mut placed: HashMap<String, Vec<Dynamic>> = HashMap::new();
+        let mut macros: Vec<&(String, Dynamic)> = Vec::new();
+        for marker in markers.iter() {
+            let (owner, how) = marker;
+            self.dynamic_files
+                .borrow_mut()
+                .entry(how.path.clone())
+                .or_default()
+                .push(how.clone());
+            match how.maker.via.is_some() {
+                true => macros.push(marker),
+                false => placed.entry(owner.clone()).or_default().push(how.clone()),
+            }
+        }
+        for (owner, how) in macros {
+            let name = how.maker.via.clone().unwrap_or_default();
+            for (caller, args, called_in) in self.macro_callers(owner, &name).iter() {
+                // The names this call hands the macro are the names it makes.
+                let shapes = match how.maker.shape.as_deref() {
+                    Some(shape) => crate::core::handed(shape, args)
+                        .into_iter()
+                        .map(Some)
+                        .collect(),
+                    None => vec![None],
+                };
+                let makers = placed.entry(caller.clone()).or_default();
+                for shape in shapes {
+                    let mut made = how.clone();
+                    made.maker.shape = shape;
+                    // A method it makes by name is `made_for`'s, not a hedge.
+                    if expanded(&made, called_in).is_some() {
+                        continue;
+                    }
+                    if !makers.iter().any(|known| {
+                        known.maker == made.maker
+                            && known.path == made.path
+                            && known.line == made.line
+                    }) {
+                        makers.push(made);
+                    }
+                }
+            }
+        }
+        *self.dynamic.borrow_mut() = Some(placed);
+        self.placing.set(was);
+    }
+
+    /// The methods string macros in other files make named `name`, by class
+    /// and side (DEC-212). Only the macros whose shape could spell the name
+    /// have their callers found, so a miss on a name no macro makes costs a
+    /// pass over the markers and no lookup (DEC-235).
+    fn made_for(&self, name: &str) -> Rc<Made> {
+        if let Some(made) = self.made.borrow().get(name) {
+            return made.clone();
+        }
+        let markers = self.markers();
+        let was = self.placing.replace(true);
+        let mut made = Made::new();
+        for (owner, how) in markers.iter() {
+            if !may_expand_to(&how.maker, name) {
+                continue;
+            }
+            let (Some(via), Some(shape)) = (&how.maker.via, &how.maker.shape) else {
+                continue;
+            };
+            for (caller, args, called_in) in self.macro_callers(owner, via).iter() {
+                for shape in crate::core::handed(shape, args) {
+                    let mut maker = how.clone();
+                    maker.maker.shape = Some(shape);
+                    // Later wins, as a later call's `def` would.
+                    if let Some((singleton, spelled)) = expanded(&maker, called_in)
+                        && spelled == name
+                    {
+                        made.entry(caller.clone()).or_default()[usize::from(singleton)] =
+                            Some(maker);
+                    }
+                }
+            }
+        }
+        self.placing.set(was);
+        let made = Rc::new(made);
+        self.made
+            .borrow_mut()
+            .insert(name.to_string(), made.clone());
+        made
+    }
+
+    /// Every marker, read once, with the class or module it marks.
+    fn markers(&self) -> Markers {
+        if let Some(markers) = self.markers.borrow().as_ref() {
+            return markers.clone();
+        }
         let rows = match self.dynamic_rows.borrow_mut().take() {
             Some(rows) => rows,
             None => self
@@ -3322,8 +3506,7 @@ impl Tree {
                 .and_then(|loader| loader.store.dynamic_markers(&loader.roots).ok())
                 .unwrap_or_default(),
         };
-        let mut placed: HashMap<String, Vec<Dynamic>> = HashMap::new();
-        let mut macros: Vec<(String, Dynamic)> = Vec::new();
+        let mut markers = Vec::new();
         for row in rows {
             // A marker sent to a constant is that class's (DEC-160).
             let Some((owner, _)) = self.edge_owner(&row.owner) else {
@@ -3345,57 +3528,28 @@ impl Tree {
             {
                 continue;
             }
-            self.dynamic_files
-                .borrow_mut()
-                .entry(how.path.clone())
-                .or_default()
-                .push(how.clone());
-            match how.maker.via.is_some() {
-                true => macros.push((owner, how)),
-                false => placed.entry(owner).or_default().push(how),
-            }
+            markers.push((owner, how));
         }
-        let mut made: HashMap<(String, bool, String), Dynamic> = HashMap::new();
-        for (owner, how) in macros {
-            let name = how.maker.via.clone().unwrap_or_default();
-            for (caller, args, called_in) in self.macro_callers(&owner, &name) {
-                // The names this call hands the macro are the names it makes.
-                let shapes = match how.maker.shape.as_deref() {
-                    Some(shape) => crate::core::handed(shape, &args)
-                        .into_iter()
-                        .map(Some)
-                        .collect(),
-                    None => vec![None],
-                };
-                let makers = placed.entry(caller.clone()).or_default();
-                for shape in shapes {
-                    let mut maker = how.clone();
-                    maker.maker.shape = shape;
-                    if let Some((singleton, name)) = expanded(&maker, &called_in) {
-                        made.insert((caller.clone(), singleton, name), maker);
-                        continue;
-                    }
-                    let made = maker;
-                    if !makers.iter().any(|known| {
-                        known.maker == made.maker
-                            && known.path == made.path
-                            && known.line == made.line
-                    }) {
-                        makers.push(made);
-                    }
-                }
-            }
-        }
-        *self.dynamic.borrow_mut() = Some(placed);
-        *self.made.borrow_mut() = made;
-        self.placing.set(false);
+        let markers: Markers = markers.into();
+        *self.markers.borrow_mut() = Some(markers.clone());
+        markers
     }
 
     /// The classes whose body calls the macro `name`, an instance method of
     /// `owner`, and so run it on themselves (DEC-162): a body's call on
     /// itself outside any method, where the class side reaches `owner`.
     /// Each with the literal names that call hands it.
-    fn macro_callers(&self, owner: &str, name: &str) -> Vec<(String, Vec<Option<String>>, String)> {
+    fn macro_callers(&self, owner: &str, name: &str) -> Callers {
+        let key = (owner.to_string(), name.to_string());
+        if let Some(callers) = self.callers.borrow().get(&key) {
+            return callers.clone();
+        }
+        let callers: Callers = self.find_macro_callers(owner, name).into();
+        self.callers.borrow_mut().insert(key, callers.clone());
+        callers
+    }
+
+    fn find_macro_callers(&self, owner: &str, name: &str) -> Vec<Caller> {
         let Some(loader) = self.loader.as_ref() else {
             return Vec::new();
         };
