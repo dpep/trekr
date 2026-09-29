@@ -316,13 +316,14 @@ impl Session {
     /// moved.
     ///
     /// DEC-007 chose whole rebuilds over incremental patching; what decides
-    /// *whether* to rebuild is the tree's key, which folds every root's
+    /// *whether* to rebuild is the tree's stamp, which folds every root's
     /// surface key — each file's path and tree-relevant facts, as one number
-    /// per checkout at index time — into the name its snapshot is filed
-    /// under. The file count it replaced could not see an edit at all.
+    /// per checkout at index time — with its snapshot's key. A rebuild after
+    /// a method edit maps the same snapshot again (DEC-194). The file count
+    /// it replaced could not see an edit at all.
     pub(crate) fn tree(&mut self, root: &Path) -> anyhow::Result<&Tree> {
         let key = root.to_string_lossy().into_owned();
-        let stamp = Stamp(Tree::key(&self.store, &key)?);
+        let stamp = Stamp(Tree::stamp(&self.store, &key)?);
         let checkout = self.checkouts.entry(root.to_path_buf()).or_default();
         if checkout.built_from != Some(stamp) {
             // Partial is normal: answer from core and gems alone, and ask for

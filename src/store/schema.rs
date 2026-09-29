@@ -13,7 +13,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 48;
+pub(crate) const VERSION: i64 = 49;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -31,6 +31,9 @@ CREATE TABLE blob (
   -- blobs sharing it assemble the same tree, which is how an edit's effect
   -- on the tree is decided without rebuilding it. See `Facts::surface`.
   surface      INTEGER NOT NULL,
+  -- The part of it the tree snapshot holds: declarations and ancestry, not
+  -- methods. A method edit moves `surface` and leaves this (DEC-194).
+  namespace    INTEGER NOT NULL,
   -- The schema version that wrote the row. No reader needs it; it is here so
   -- a writer from before it fails to insert. A 0.2 LSP left running across an
   -- upgrade never rechecks the version, and a blob row is never rewritten, so
@@ -123,6 +126,8 @@ CREATE TABLE checkout (
   -- sum over files of hash(path) ^ blob.surface. A resident front checks
   -- staleness by reading this one row rather than re-aggregating the map.
   surface_key INTEGER NOT NULL,
+  -- The same fold over blob.namespace: what the tree snapshot is keyed by.
+  namespace_key INTEGER NOT NULL,
   -- The file map itself, folded the same way: the sum over files of
   -- hash(path) ^ hash(blob oid). Identical key means an identical map, so the
   -- rewrite below can be skipped outright — which is the whole cost of a

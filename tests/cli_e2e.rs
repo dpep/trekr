@@ -2794,6 +2794,48 @@ fn an_index_prepares_the_tree() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// The snapshot holds the namespace, not methods: an edit that adds and moves
+/// methods keeps it, and the query after still finds the new method (DEC-194).
+#[test]
+fn a_method_edit_keeps_the_tree_snapshot() {
+    let (dir, db) = scratch("method-edit");
+    repo(&dir);
+    let trees = db.with_extension("trees");
+    let names = || -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(&trees)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    trekr(&db, &dir, &["--index"]);
+    let before = names();
+    assert_eq!(before.len(), 1);
+
+    fs::write(
+        dir.join("widget.rb"),
+        "class Widget < Base\n  include Trackable\n\n  attr_reader :name\n\n  \
+         def resize(width, height = 1)\n    helper\n    polish\n  end\n\n  \
+         def polish\n  end\n\n  private\n\n  def helper\n  end\nend\n",
+    )
+    .unwrap();
+    trekr(&db, &dir, &["--index"]);
+    assert_eq!(names(), before, "the same snapshot, not a rebuilt one");
+    let refs = json(&trekr(&db, &dir, &["--refs", "Widget#polish", "--json"]));
+    assert_eq!(refs["counts"]["confirmed"], 1, "{refs}");
+
+    // A new class is the namespace's, and moves it.
+    fs::write(dir.join("gadget.rb"), "class Gadget\nend\n").unwrap();
+    trekr(&db, &dir, &["--index"]);
+    assert_ne!(names(), before);
+    assert_eq!(
+        trekr(&db, &dir, &["--ancestors", "Gadget"]).status.code(),
+        Some(0)
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A query leaves its checkout's tree snapshot beside the store. Once the
 /// index moves on without another query, `--gc` removes the one nothing names
 /// any more — and never the current one.

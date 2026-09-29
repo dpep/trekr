@@ -43,14 +43,29 @@ pub(super) fn key(store: &Store, roots: &Roots) -> anyhow::Result<Key> {
     };
     eat(code());
     eat(&store.schema_version()?.to_le_bytes());
-    for (root, surface) in roots.list.iter().zip(store.surface_keys(&roots.list)?) {
+    // The namespace keys, not the surface keys: a snapshot holds no method,
+    // so a method edit must not rebuild it (DEC-194).
+    for (root, namespace) in roots.list.iter().zip(store.namespace_keys(&roots.list)?) {
         eat(root.as_bytes());
-        eat(&surface.to_le_bytes());
+        eat(&namespace.to_le_bytes());
     }
     let mut hidden: Vec<&String> = roots.hidden.iter().collect();
     hidden.sort();
     for path in hidden {
         eat(path.as_bytes());
+    }
+    Ok(hash.finalize().into())
+}
+
+/// Everything a whole tree answers from: the snapshot's key and each root's
+/// surface key, which moves with any definition, methods included. A
+/// resident tree is rebuilt when this moves, and maps the snapshot again
+/// unless the key moved too.
+pub(super) fn stamp(store: &Store, roots: &Roots) -> anyhow::Result<Key> {
+    let mut hash = Sha1::new();
+    hash.update(key(store, roots)?);
+    for surface in store.surface_keys(&roots.list)? {
+        hash.update(surface.to_le_bytes());
     }
     Ok(hash.finalize().into())
 }

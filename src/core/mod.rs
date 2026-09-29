@@ -220,6 +220,19 @@ impl Facts {
     /// Including positions trades those 25 points for being correct by
     /// construction rather than by a metadata patch that has to be right.
     pub(crate) fn surface(&self) -> u64 {
+        self.digest(false)
+    }
+
+    /// The part of `surface` the tree snapshot holds: declarations — classes,
+    /// modules, constants — and the ancestry edges it assembles, with their
+    /// positions, and not methods, which a tree loads from the store on
+    /// demand, nor the dynamic markers it reads the same way. A method edit
+    /// moves `surface` and leaves this, so a snapshot survives it (DEC-194).
+    pub(crate) fn namespace(&self) -> u64 {
+        self.digest(true)
+    }
+
+    fn digest(&self, namespace_only: bool) -> u64 {
         // FNV-1a: no dependency, and the only property needed is that an
         // unrelated edit is overwhelmingly unlikely to land on the same value.
         let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
@@ -230,6 +243,22 @@ impl Facts {
             }
         };
         for def in self.defs.iter().filter(|d| !d.is_group_member()) {
+            if namespace_only {
+                if def.kind == Kind::Method {
+                    continue;
+                }
+                // What `Store::declarations` reads, and nothing else.
+                eat(def.name.as_bytes());
+                eat(def.kind.as_str().as_bytes());
+                for scope in &def.nesting {
+                    eat(scope.as_bytes());
+                    eat(b";");
+                }
+                eat(def.target.as_deref().unwrap_or("").as_bytes());
+                eat(&def.pos.line.to_le_bytes());
+                eat(&def.pos.col.to_le_bytes());
+                continue;
+            }
             eat(def.name.as_bytes());
             eat(def.kind.as_str().as_bytes());
             for scope in &def.nesting {
@@ -254,6 +283,9 @@ impl Facts {
             eat(&def.end_line.to_le_bytes());
         }
         for edge in &self.ancestry {
+            if namespace_only && edge.relation == Relation::Dynamic {
+                continue;
+            }
             for scope in &edge.owner {
                 eat(scope.as_bytes());
                 eat(b";");
@@ -1217,6 +1249,54 @@ mod surface_tests {
                 base.surface(),
                 extract(source).surface(),
                 "{label} must move the surface"
+            );
+        }
+    }
+
+    /// The snapshot holds no method, so a method edit — a new one, a moved
+    /// one, a changed arity — leaves the namespace alone, and a declaration
+    /// or an edge moves it (DEC-194).
+    #[test]
+    fn a_method_edit_leaves_the_namespace_alone() {
+        let base = extract(
+            b"class Widget\n  include Trackable\n  LIMIT = 3\n  def save\n    1\n  end\nend\n",
+        );
+        for (label, source) in [
+            (
+                "a changed arity and a new method",
+                b"class Widget\n  include Trackable\n  LIMIT = 3\n  def save(force)\n    1\n  end\n  def load\n  end\nend\n"
+                    .as_slice(),
+            ),
+            (
+                "a method that moved",
+                b"class Widget\n  include Trackable\n  LIMIT = 3\n\n  def save\n    1\n  end\nend\n"
+                    .as_slice(),
+            ),
+        ] {
+            let edited = extract(source);
+            assert_ne!(base.surface(), edited.surface(), "{label}");
+            assert_eq!(base.namespace(), edited.namespace(), "{label}");
+        }
+        for (label, source) in [
+            (
+                "a new class",
+                b"class Widget\n  include Trackable\n  LIMIT = 3\n  def save\n    1\n  end\nend\nclass Gadget\nend\n"
+                    .as_slice(),
+            ),
+            (
+                "a dropped mixin",
+                b"class Widget\n  LIMIT = 3\n  def save\n    1\n  end\nend\n".as_slice(),
+            ),
+            (
+                "a constant that moved",
+                b"class Widget\n  include Trackable\n\n  LIMIT = 3\n  def save\n    1\n  end\nend\n"
+                    .as_slice(),
+            ),
+        ] {
+            assert_ne!(
+                base.namespace(),
+                extract(source).namespace(),
+                "{label} must move the namespace"
             );
         }
     }

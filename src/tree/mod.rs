@@ -672,11 +672,13 @@ impl Tree {
         Ok(true)
     }
 
-    /// What this checkout's tree is a function of, as a key that moves
-    /// exactly when a rebuild would give a different namespace — its own
-    /// files, and every gem its bundle names (DEC-065).
-    pub(crate) fn key(store: &Store, root: &str) -> anyhow::Result<[u8; 20]> {
-        files::key(store, &roots(store, root)?)
+    /// What this checkout's whole tree is a function of — its namespace and
+    /// every method it loads on demand, across its own files and every gem
+    /// its bundle names — as a stamp that moves whenever a rebuilt tree
+    /// could answer differently (DEC-065). A method edit moves it and not
+    /// the snapshot's key, so the rebuild maps the snapshot again (DEC-194).
+    pub(crate) fn stamp(store: &Store, root: &str) -> anyhow::Result<[u8; 20]> {
+        files::stamp(store, &roots(store, root)?)
     }
 
     /// Core's declarations and edges plus the store's, assembled.

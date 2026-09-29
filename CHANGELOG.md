@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Upgrading drops and rebuilds the index** (store v48): run `trekr --index`
+- **Upgrading drops and rebuilds the index** (store v49): run `trekr --index`
   once per checkout. The first index on each Ruby also reads its standard
   library once — 179 files for Ruby 3.4 — shared by every app on that Ruby.
 
@@ -62,6 +62,13 @@
   took 1.5; discourse with its gems in 5 s and 121 MB. The bare-name `--refs
   NAME` listing reads its call rows from the files, as its tiering already
   did (DEC-193).
+
+- **Editing a method no longer rebuilds the tree snapshot.** The snapshot is
+  keyed by what it holds — classes, modules, constants and their ancestry —
+  so an edit inside or among methods keeps it: a method edit's `--index` on
+  discourse 450 → 142 ms, on 100k files 2.4 → 1.2 s, and an editor's next
+  answer after such a save maps the snapshot instead of reassembling it
+  (DEC-194).
 
 - **`--status` in a checkout nobody indexed exits `2` with `status:
   not_indexed`**, the answer a query from there gives, where it listed

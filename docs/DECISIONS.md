@@ -6871,3 +6871,54 @@ listing for 125 rails names, text and `--json`, the 40 most-called among
 them (`new`, `assert_equal`, …). A unit test pages a name's files two blobs at
 a time and requires each file once; the pinned plans (DEC-058) read the
 postings' covering index and build no temp B-tree.
+
+## DEC-194 — A tree snapshot is keyed by the namespace, not by every definition
+
+**Decided.** Each blob carries a second digest beside `surface`:
+`namespace` (`Facts::namespace`), over exactly what the snapshot is built from
+— its classes, modules and constants with their positions, and its ancestry
+edges other than the dynamic markers — and each checkout a `namespace_key`
+folded the way `surface_key` is. A snapshot's key (DEC-065) is made of the
+namespace keys; what decides whether a resident tree is rebuilt is a
+`stamp` over the snapshot's key and every root's surface key, so a method
+edit still rebuilds a tree — its demand-loaded methods and markers — and the
+rebuild maps the same snapshot instead of assembling one. Store v49.
+
+**Why.** The algorithm review: the key folded every method definition and its
+position, while the snapshot holds no method, so most edits rebuilt a
+namespace that had not changed — 3.2–3.5 s at 100k files, on the LSP's
+request thread (`state.rs::tree()`) and, since DEC-192, in `--index`. Its
+estimate from rails' history: 70 % of modified files move the surface and
+36 % the namespace; the rest are method edits, which now keep the snapshot.
+
+**Measured.** One line added inside the last method of `topic.rb`, then
+`--index` and `--ancestors`, each build on its own store, load 4–10:
+
+| | `--index` before → after | first query |
+| --- | ---: | ---: |
+| discourse clone, 6 rounds | 450 → **142 ms** | 18 → 18 ms |
+| 100k files, 3 rounds | 2.4 (p90 4.5) → **1.2 s** | 25 → 27 ms |
+
+A new class still moves the namespace and rebuilds, as it must (discourse
+438 → 434 ms). The LSP gains the same on every save that touches only
+methods: its tree is rebuilt against the same snapshot, mapped, in
+milliseconds.
+
+**Correctness.** The snapshot is a function of what `Store::declarations`,
+`Store::ancestry` (without dynamic markers) and the file map's paths say, and
+the namespace digest covers exactly those fields and the paths; the tree's
+methods and markers are loaded from the store on demand, and the stamp moves
+with them. A unit test requires a new method, a changed arity and a moved
+method to leave the namespace digest alone and a new class, a dropped mixin
+and a moved constant to move it; an e2e test requires a method edit to keep
+the snapshot file and the query after it to find the new method, and fails
+with the snapshot keyed by surface. The gold sets, `--refs`, `--dead`, the
+probe and the clicks are byte-identical to DEC-193's build.
+
+**Not done: building the new tree off the LSP's request thread** and
+answering from the old one meanwhile, as DEC-044 does for completion. What is
+left synchronous is an edit that moves a declaration, where the old tree is
+the one that is wrong about it — a save adding a class and a definition
+asked at once would answer from before the save. That wants its own
+decision, and a measurement of how often it is felt, which the usage log's
+`tree-built` flag now counts on its own.

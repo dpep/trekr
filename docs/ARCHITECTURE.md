@@ -207,7 +207,8 @@ are the page cache's, shared by every process on the store. Methods are not
 in it; they stay demand-loaded from SQL.
 
 - **The key is everything the namespace is a function of**: each root's
-  surface key and path in tree order (checkout plus every gem), the schema
+  namespace key — its files' declarations and ancestry, not their methods
+  (DEC-194) — and path in tree order (checkout plus every gem), the schema
   version, the format number, and the source text of the code that assembles
   and encodes it — so a rebuilt binary never reads a namespace an older
   assembly produced.
@@ -230,8 +231,10 @@ is printed, and otherwise by whichever query first finds none for the current
 key (a `--def` that refreshed an edited file, a snapshot deleted by hand). The
 cost is the same wherever it lands, so it lands on the command whose budget is
 seconds rather than on the query whose budget is milliseconds (DEC-192,
-revisiting DEC-065). The LSP stamps each tree with the same key, so a bundle
-moving to another gem version rebuilds it as a checkout edit does.
+revisiting DEC-065). The LSP stamps each tree with that key and every root's
+surface key, so a bundle moving to another gem version rebuilds it as a
+checkout edit does, and a method edit rebuilds it against the same snapshot
+(DEC-194).
 
 ### `resolve/` — which method does this call site run?
 
@@ -515,7 +518,7 @@ Schema in [`src/store/schema.rs`](../src/store/schema.rs); it is the authority
 and this table is its summary.
 
 ```text
-blob(id, oid UNIQUE, lines, parse_errors, surface, written_by)
+blob(id, oid UNIQUE, lines, parse_errors, surface, namespace, written_by)
   def(blob_id, name, kind, nesting, singleton, visibility, params,
       via, target, target_line, target_col, sig_returns, line, col, end_line)
   ancestry(blob_id, nesting, relation, target, line, col)
@@ -523,7 +526,8 @@ blob(id, oid UNIQUE, lines, parse_errors, surface, written_by)
   call_name(blob_id, name, calls, symbols)  ← which names a blob calls (DEC-193)
   body_call(blob_id, name, nesting, args, line)  ← a body's call on itself (DEC-162)
 
-checkout(id, root UNIQUE, indexed_at, kind, surface_key, map_key, git_state)
+checkout(id, root UNIQUE, indexed_at, kind, surface_key, namespace_key,
+         map_key, git_state)
   gem_use(checkout_id, gem_root, name)      ← which bundles name which gem;
                                               name NULL for the stdlib
   default_gem(checkout_id, name, version, path)

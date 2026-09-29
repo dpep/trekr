@@ -378,8 +378,9 @@ impl Store {
         let map_started = std::time::Instant::now();
 
         tx.execute(
-            "INSERT OR IGNORE INTO checkout (root, indexed_at, surface_key, map_key, git_state)
-             VALUES (?1, unixepoch(), 0, 0, 0)",
+            "INSERT OR IGNORE INTO checkout
+               (root, indexed_at, surface_key, namespace_key, map_key, git_state)
+             VALUES (?1, unixepoch(), 0, 0, 0, 0)",
             params![root],
         )?;
         tx.execute(
@@ -427,25 +428,29 @@ impl Store {
         // one query — and diffed here: a path whose blob is unchanged costs
         // nothing, a vanished path is deleted, and anything new or edited is
         // upserted. Rewriting every row was most of a one-file reindex.
-        let mut stored: HashMap<String, (i64, String, i64)> = HashMap::new();
+        let mut stored: HashMap<String, (i64, String, Digests)> = HashMap::new();
         {
             let mut read = tx.prepare(
-                "SELECT f.path, f.blob_id, b.oid, b.surface
+                "SELECT f.path, f.blob_id, b.oid, b.surface, b.namespace
                    FROM file f JOIN blob b ON b.id = f.blob_id
                   WHERE f.checkout_id = ?1",
             )?;
             let rows = read.query_map(params![checkout_id], |r| {
-                Ok((r.get::<_, String>(0)?, (r.get(1)?, r.get(2)?, r.get(3)?)))
+                Ok((
+                    r.get::<_, String>(0)?,
+                    (r.get(1)?, r.get(2)?, Digests(r.get(3)?, r.get(4)?)),
+                ))
             })?;
             for row in rows {
                 let (path, found) = row?;
                 stored.insert(path, found);
             }
         }
-        let mut surface_key: i64 = 0;
+        let mut keys = Digests::default();
         {
-            let mut ids: HashMap<&Oid, (i64, i64)> = HashMap::new();
-            let mut lookup = tx.prepare("SELECT id, surface FROM blob WHERE oid = ?1")?;
+            let mut ids: HashMap<&Oid, (i64, Digests)> = HashMap::new();
+            let mut lookup =
+                tx.prepare("SELECT id, surface, namespace FROM blob WHERE oid = ?1")?;
             // An insert for a new path and an update for an edited one, not
             // `INSERT OR REPLACE`: a statement that may delete as well as
             // insert opens a statement journal inside the savepoint, and its
@@ -455,13 +460,13 @@ impl Store {
             let mut update =
                 tx.prepare("UPDATE file SET blob_id = ?3 WHERE checkout_id = ?1 AND path = ?2")?;
             for (path, oid) in files {
-                let (id, surface) = match stored.remove(path) {
-                    Some((id, known, surface)) if known == oid.0 => (id, surface),
+                let (id, digests) = match stored.remove(path) {
+                    Some((id, known, digests)) if known == oid.0 => (id, digests),
                     was => {
                         let found = match ids.get(oid) {
                             Some(found) => *found,
                             None => lookup.query_row(params![oid.0], |r| {
-                                Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
+                                Ok((r.get::<_, i64>(0)?, Digests(r.get(1)?, r.get(2)?)))
                             })?,
                         };
                         let row = params![checkout_id, path, found.0];
@@ -472,11 +477,11 @@ impl Store {
                         found
                     }
                 };
-                ids.insert(oid, (id, surface));
+                ids.insert(oid, (id, digests));
                 // Order-independent, so the map's iteration order cannot
                 // change the key; the path is mixed in because a rename moves
                 // where an answer points even when no blob changed.
-                surface_key = surface_key.wrapping_add(path_hash(path) ^ surface);
+                keys = keys.add(path_hash(path), digests);
             }
             counts.blobs = ids.len();
             // What is left was stored and is no longer in the checkout.
@@ -487,8 +492,9 @@ impl Store {
         }
 
         tx.execute(
-            "UPDATE checkout SET surface_key = ?2, map_key = ?3, git_state = ?4 WHERE id = ?1",
-            params![checkout_id, surface_key, map_key, git_state],
+            "UPDATE checkout SET surface_key = ?2, namespace_key = ?3, map_key = ?4, git_state = ?5
+              WHERE id = ?1",
+            params![checkout_id, keys.0, keys.1, map_key, git_state],
         )?;
 
         tx.commit()?;
@@ -1058,8 +1064,18 @@ impl Store {
     /// `surface_key` for each root in turn, in one query. A root the store
     /// has never indexed is 0, as there.
     pub(crate) fn surface_keys(&self, roots: &[String]) -> Result<Vec<i64>> {
+        self.checkout_keys("surface_key", roots)
+    }
+
+    /// `namespace_key` for each root in turn: what a tree snapshot is a
+    /// function of, where `surface_keys` is what a whole tree is (DEC-194).
+    pub(crate) fn namespace_keys(&self, roots: &[String]) -> Result<Vec<i64>> {
+        self.checkout_keys("namespace_key", roots)
+    }
+
+    fn checkout_keys(&self, column: &str, roots: &[String]) -> Result<Vec<i64>> {
         let mut stmt = self.conn.prepare(&format!(
-            "SELECT root, surface_key FROM checkout WHERE root IN ({})",
+            "SELECT root, {column} FROM checkout WHERE root IN ({})",
             placeholders(roots.len())
         ))?;
         let known: HashMap<String, i64> = stmt
@@ -1347,15 +1363,15 @@ impl Store {
         // waiting out the timeout, and the caller retries (DEC-066).
         let tx = self.conn.transaction()?;
         Store::check_schema(&tx)?;
-        let Some((checkout_id, surface_key, map_key)) = tx
+        let Some((checkout_id, keys, map_key)) = tx
             .query_row(
-                "SELECT id, surface_key, map_key FROM checkout WHERE root = ?1",
+                "SELECT id, surface_key, namespace_key, map_key FROM checkout WHERE root = ?1",
                 params![root],
                 |r| {
                     Ok((
                         r.get::<_, i64>(0)?,
-                        r.get::<_, i64>(1)?,
-                        r.get::<_, i64>(2)?,
+                        Digests(r.get(1)?, r.get(2)?),
+                        r.get::<_, i64>(3)?,
                     ))
                 },
             )
@@ -1364,12 +1380,13 @@ impl Store {
             return Ok(false);
         };
 
-        let old: Option<(i64, String, i64)> = tx
+        let old: Option<(i64, String, Digests)> = tx
             .query_row(
-                "SELECT b.id, b.oid, b.surface FROM file f JOIN blob b ON b.id = f.blob_id
+                "SELECT b.id, b.oid, b.surface, b.namespace
+                   FROM file f JOIN blob b ON b.id = f.blob_id
                   WHERE f.checkout_id = ?1 AND f.path = ?2",
                 params![checkout_id, relative],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| Ok((r.get(0)?, r.get(1)?, Digests(r.get(2)?, r.get(3)?))),
             )
             .optional()?;
         if old.as_ref().is_some_and(|(_, known, _)| known == &oid.0) {
@@ -1381,11 +1398,11 @@ impl Store {
         if let Some(facts) = facts {
             insert_facts(&tx, oid, facts)?;
         }
-        let Some((blob_id, surface)) = tx
+        let Some((blob_id, digests)) = tx
             .query_row(
-                "SELECT id, surface FROM blob WHERE oid = ?1",
+                "SELECT id, surface, namespace FROM blob WHERE oid = ?1",
                 params![oid.0],
-                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?)),
+                |r| Ok((r.get::<_, i64>(0)?, Digests(r.get(1)?, r.get(2)?))),
             )
             .optional()?
         else {
@@ -1400,16 +1417,16 @@ impl Store {
         )?;
 
         let hashed = path_hash(relative);
-        let (mut surface_key, mut map_key) = (surface_key, map_key);
-        if let Some((_, known, old_surface)) = &old {
-            surface_key = surface_key.wrapping_sub(hashed ^ old_surface);
+        let (mut keys, mut map_key) = (keys, map_key);
+        if let Some((_, known, old_digests)) = &old {
+            keys = keys.sub(hashed, *old_digests);
             map_key = map_key.wrapping_sub(hashed ^ path_hash(known));
         }
-        surface_key = surface_key.wrapping_add(hashed ^ surface);
+        keys = keys.add(hashed, digests);
         map_key = map_key.wrapping_add(hashed ^ path_hash(&oid.0));
         tx.execute(
-            "UPDATE checkout SET surface_key = ?2, map_key = ?3 WHERE id = ?1",
-            params![checkout_id, surface_key, map_key],
+            "UPDATE checkout SET surface_key = ?2, namespace_key = ?3, map_key = ?4 WHERE id = ?1",
+            params![checkout_id, keys.0, keys.1, map_key],
         )?;
         tx.commit()?;
         Ok(true)
@@ -1847,6 +1864,30 @@ pub(crate) fn decode_params(s: &str) -> Vec<Param> {
         .collect()
 }
 
+/// A blob's two digests, or a checkout's folded sums of them: its surface
+/// (`Facts::surface`, every definition) and its namespace
+/// (`Facts::namespace`, what the tree snapshot holds).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct Digests(i64, i64);
+
+impl Digests {
+    /// A file's contribution, `path ^ digest`, folded in; the sum is
+    /// order-independent, so the map's iteration order cannot move a key.
+    fn add(self, path: i64, blob: Digests) -> Digests {
+        Digests(
+            self.0.wrapping_add(path ^ blob.0),
+            self.1.wrapping_add(path ^ blob.1),
+        )
+    }
+
+    fn sub(self, path: i64, blob: Digests) -> Digests {
+        Digests(
+            self.0.wrapping_sub(path ^ blob.0),
+            self.1.wrapping_sub(path ^ blob.1),
+        )
+    }
+}
+
 /// A path's contribution to a checkout's surface key. FNV-1a again — the same
 /// reasoning as `Facts::surface`, and the two are mixed with XOR so a file's
 /// identity and its contents both have to match.
@@ -1873,13 +1914,14 @@ fn insert_facts(tx: &Connection, oid: &Oid, facts: &Facts) -> Result<()> {
     // already there is the answer; replacing it would give the blob a new id
     // under every file that points at the old one.
     let inserted = tx.execute(
-        "INSERT INTO blob (oid, lines, parse_errors, surface, written_by)
-         VALUES (?1, ?2, ?3, ?4, ?5) ON CONFLICT (oid) DO NOTHING",
+        "INSERT INTO blob (oid, lines, parse_errors, surface, namespace, written_by)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (oid) DO NOTHING",
         params![
             oid.0,
             facts.lines as i64,
             facts.parse_errors as i64,
             facts.surface() as i64,
+            facts.namespace() as i64,
             schema::VERSION
         ],
     )?;
