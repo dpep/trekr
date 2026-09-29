@@ -172,6 +172,11 @@ pub(crate) struct Facts {
     /// therefore not calls here: why `--dead` hedges on a method of that
     /// shape (DEC-163). Never stored.
     pub(crate) unread_calls: Vec<String>,
+    /// Each string of code read in place, once: its rendered text, and the
+    /// file offset each of its bytes came from, `None` for a byte a value
+    /// was substituted for. What an editor's variable answers read too
+    /// (DEC-167). Never stored.
+    pub(crate) strings: Vec<StringCode>,
     /// Prism reported syntax errors; the facts above are what survived.
     pub(crate) parse_errors: usize,
     pub(crate) lines: usize,
@@ -719,6 +724,33 @@ pub(crate) fn shape_matches(shape: &str, name: &str) -> bool {
         }
     }
     rest.ends_with(last)
+}
+
+/// A string of code as read, with where its bytes are in the file (DEC-167).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct StringCode {
+    pub(crate) src: Vec<u8>,
+    /// Per byte of `src`, its offset in the file, or `None` for a byte of a
+    /// substituted value.
+    pub(crate) origin: Vec<Option<usize>>,
+}
+
+impl StringCode {
+    /// A span of the rendered text as a span of the file, when every byte
+    /// of it is the file's own and they are contiguous there.
+    pub(crate) fn place(&self, span: std::ops::Range<usize>) -> Option<std::ops::Range<usize>> {
+        if span.is_empty() {
+            let at = (*self.origin.get(span.start)?)?;
+            return Some(at..at);
+        }
+        let first = (*self.origin.get(span.start)?)?;
+        for (i, at) in self.origin.get(span.clone())?.iter().enumerate() {
+            if *at != Some(first + i) {
+                return None;
+            }
+        }
+        Some(first..first + span.len())
+    }
 }
 
 /// `add_helper :color` in a class body: a call on the class itself, with the

@@ -174,6 +174,9 @@ A mark written in an instance method carries the method (`via`): a macro,
 whose methods land on each class whose body calls it (`body_call`) and whose
 class-side lookup of the name lands on it; `{k}` in its shape is the `k`th
 name that call hands it, `{k*}` each from the `k`th on (DEC-162).
+Each string read keeps its rendered text and a byte map to the file
+(`Facts::strings`, resolve-time only), which the LSP's variable answers parse
+as part of the file (DEC-167).
 
 **A name declared with two superclasses is split** (DEC-072). Ruby raises
 "superclass mismatch" when both load, so a checkout holding `class Post <

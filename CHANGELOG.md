@@ -73,6 +73,11 @@
   (`different_owner`). A target of no known type makes the site `possible`
   (DEC-166).
 
+- **An editor answers inside a `class_eval` string trekr reads.** A local
+  there gets hover, highlight and go-to-definition, and a hover on a `def`
+  that makes one method per value (`def #{n}_x` in a loop) lists every
+  method, where it showed the first (DEC-167).
+
 - **`--refs` counts a call whose receiver is typed as an ancestor.** A
   `sig`'s parameter or return, a finder's result, a `rescue`'s class, or the
   type a variable's name suggests is a type the object conforms to, and it

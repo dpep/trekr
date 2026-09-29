@@ -251,6 +251,18 @@ struct Eval {
 }
 
 impl Eval {
+    /// The file offset of a byte that is the file's own; `None` for one of a
+    /// substituted value.
+    fn own(&self, offset: usize) -> Option<usize> {
+        let at = self
+            .pieces
+            .partition_point(|(start, _, _)| *start <= offset);
+        match self.pieces.get(at.checked_sub(1)?) {
+            Some((start, origin, true)) => Some(origin + (offset - start)),
+            _ => None,
+        }
+    }
+
     fn origin(&self, offset: usize) -> usize {
         let at = self
             .pieces
@@ -2818,6 +2830,14 @@ impl<'pr> Extractor<'_> {
             self.facts.ancestry.len(),
             self.facts.body_calls.len(),
         );
+        // Once per string, as written: its locals are the file's (DEC-167).
+        if bound.is_empty() && self.evals.is_empty() {
+            let origin = (0..eval.src.len()).map(|at| eval.own(at)).collect();
+            self.facts.strings.push(StringCode {
+                src: eval.src.clone(),
+                origin,
+            });
+        }
         self.evals.push(eval);
         self.enter(None, Opens::Scope);
         self.visit(&parsed.node());

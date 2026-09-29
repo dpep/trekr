@@ -1189,7 +1189,37 @@ pub(crate) fn hover(session: &mut Session, params: HoverParams) -> anyhow::Resul
         return Ok(None);
     };
     let card = match under {
-        Under::Definition(def) => hover_definition(session, &located.root, &def, &source)?,
+        Under::Definition(def) => {
+            let mut card = hover_definition(session, &located.root, &def, &source)?;
+            // A `def` in a string read once per value makes one method per
+            // value, all written here (DEC-167).
+            let made: Vec<&Def> = facts
+                .defs
+                .iter()
+                .filter(|other| {
+                    other.kind == Kind::Method
+                        && other.pos == def.pos
+                        && other.singleton == def.singleton
+                        && other.nesting == def.nesting
+                })
+                .collect();
+            if made.len() > 1 {
+                let tree = session.tree(&located.root)?;
+                let names: Vec<String> = made
+                    .iter()
+                    .map(|made| {
+                        let owner = tree.scope_fqn(&made.nesting);
+                        format!("`{}`", display_name(made, owner.as_deref()))
+                    })
+                    .collect();
+                card.caveat = Some(format!(
+                    "One of {} methods this line makes: {}",
+                    made.len(),
+                    names.join(", ")
+                ));
+            }
+            card
+        }
         Under::Constant(reference) => {
             hover_constant(session, &located.root, &located.relative, &reference)?
         }

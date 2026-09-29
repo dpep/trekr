@@ -156,10 +156,20 @@ impl Document {
 
     /// Its variables and what each read of a local can see — once per edit,
     /// and shared, since an ivar answer reads several files' at once.
+    /// A string of code the file evaluates contributes its locals, where
+    /// its bytes are the file's (DEC-167).
     pub(crate) fn vars(&mut self) -> std::rc::Rc<Vars> {
-        self.vars
-            .get_or_insert_with(|| std::rc::Rc::new(vars::analyze(self.text.as_bytes())))
-            .clone()
+        if let Some(vars) = &self.vars {
+            return vars.clone();
+        }
+        let mut vars = vars::analyze(self.text.as_bytes());
+        let strings = self.facts().strings.clone();
+        for string in strings {
+            vars.absorb(vars::analyze(&string.src), |span| string.place(span));
+        }
+        let vars = std::rc::Rc::new(vars);
+        self.vars = Some(vars.clone());
+        vars
     }
 }
 

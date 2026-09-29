@@ -142,6 +142,53 @@ impl Vars {
     pub(crate) fn owner(&self, of: &Occurrence) -> Option<&Owner> {
         of.owner.map(|i| &self.owners[i as usize])
     }
+
+    /// Take in the locals of a string of code this file evaluates, each
+    /// placed in the file by `place`; one `place` cannot put in the file — a
+    /// name a value was substituted into — is left out, and so is an ivar,
+    /// whose owner the string's own parse cannot say (DEC-167).
+    pub(crate) fn absorb(
+        &mut self,
+        other: Vars,
+        place: impl Fn(Range<usize>) -> Option<Range<usize>>,
+    ) {
+        let var_base = self
+            .occurrences
+            .iter()
+            .map(|o| o.var + 1)
+            .max()
+            .unwrap_or(0);
+        let mut kept: Vec<Option<u32>> = Vec::with_capacity(other.occurrences.len());
+        let mut next = self.occurrences.len() as u32;
+        let keep = |o: &Occurrence| o.sigil == Sigil::Local && place(o.span.clone()).is_some();
+        for occurrence in &other.occurrences {
+            match keep(occurrence).then_some(()) {
+                Some(_) => {
+                    kept.push(Some(next));
+                    next += 1;
+                }
+                None => kept.push(None),
+            }
+        }
+        for (occurrence, at) in other.occurrences.into_iter().zip(&kept) {
+            if at.is_none() {
+                continue;
+            }
+            let Some(span) = place(occurrence.span.clone()) else {
+                continue;
+            };
+            self.occurrences.push(Occurrence {
+                span,
+                var: occurrence.var + var_base,
+                reaches: occurrence
+                    .reaches
+                    .iter()
+                    .filter_map(|&i| kept[i as usize])
+                    .collect(),
+                ..occurrence
+            });
+        }
+    }
 }
 
 pub(crate) fn analyze(src: &[u8]) -> Vars {
@@ -1037,6 +1084,34 @@ impl Walker<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A local in a string of code is the file's where the string's bytes
+    /// are: its read finds its write, and every mention is highlighted
+    /// together, in file offsets (DEC-167). A name a value was substituted
+    /// into is left out.
+    #[test]
+    fn a_string_of_codes_locals_are_the_files() {
+        let src = "class W\n  [:a].each do |n|\n    class_eval <<~RUBY\n      def #{n}_x\n        total = 1\n        total + #{n}_y\n      end\n    RUBY\n  end\nend\n";
+        let mut vars = analyze(src.as_bytes());
+        for string in crate::extract::extract(src.as_bytes()).strings {
+            vars.absorb(analyze(&string.src), |span| string.place(span));
+        }
+        let read = src.find("total +").unwrap();
+        let write = src.find("total = 1").unwrap();
+        let at = vars.at(read).expect("the read is a local");
+        let found: Vec<usize> = vars
+            .local_definitions(at)
+            .iter()
+            .map(|o| o.span.start)
+            .collect();
+        assert_eq!(found, [write]);
+        assert_eq!(vars.same(at).len(), 2);
+        assert!(
+            vars.occurrences
+                .iter()
+                .all(|o| o.name != "trekr_unstated_name_y")
+        );
+    }
 
     /// The byte offset of the `nth` (0-based) whole-word `name` on a 1-based line.
     fn offset(src: &str, line: usize, name: &str, nth: usize) -> usize {

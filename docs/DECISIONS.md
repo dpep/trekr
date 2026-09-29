@@ -6492,3 +6492,24 @@ convention-only or unreferenced to single-caller. mastodon unchanged.
 is the declaration a reader clicks through; it could name the relation's
 method as well. `to: :class` and a `to:` constant are untyped.
 
+## DEC-167 — An editor answers inside a string of code trekr reads
+
+**Decided.** The extractor keeps, for each string of code it reads (DEC-132),
+the text as written with the stand-in for its values, and where each byte of
+it is in the file (`Facts::strings`, never stored). The LSP's variable answers
+— hover, highlight, definition — read the string's locals as the file's: its
+own parse of the text, each mention placed where its bytes are. A name a
+value was substituted into, and an instance variable, whose owner the
+string's own parse cannot say, are left out. And a hover on a `def` in such a
+string that makes one method per value lists them all: "One of 3 methods this
+line makes: `Widget#alpha_x`, `Widget#beta_x`, `Widget#gamma_x`", where it
+showed the first.
+
+**Why.** The 0.8.0 hunt: in a `class_eval` heredoc trekr reads, a local had no
+hover, highlight or definition, though the method calls around it answered,
+and hover on `def #{n}_x` showed `W#alpha_x` alone.
+
+**Measured.** Every gold verdict and the 21,154 clicks unchanged (the CLI
+answers are untouched: only the editor's variable answers read the strings);
+the extension's e2e suite passes against this build.
+
