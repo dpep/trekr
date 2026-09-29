@@ -1,0 +1,12 @@
+# A call directly in `ActiveSupport.on_load(:active_record) do`, or in a `def`
+# there, was residue — "the receiver's type is not determined" — though
+# DEC-098 and DEC-104 know which classes run the hook, and completion there
+# offered `Object`'s methods (DEC-127's open item). The block runs on the
+# class that runs the hook, and a `def` in it on that class's instances. A
+# hook two classes run is ambiguous between them; a block `yield: true`
+# hands the class in as an argument, so its `self` is still the caller's.
+def ext.rb:2:3 status=resolved owner=ActiveRecord::Base via=on_load receiver_type=ActiveRecord::Base
+def ext.rb:5:5 status=resolved owner=ActiveRecord::Base via=on_load
+def ext.rb:10:3 status=ambiguous candidates=1 candidate1=ActionController::API
+def ext.rb:14:3 status=residue
+hover ext.rb:2:3 ActiveRecord::Base.establish

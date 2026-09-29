@@ -3318,6 +3318,47 @@ fn completion_in_a_module_offers_what_its_includers_have() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// An `on_load` block runs on the class that runs the hook, and a `def` in
+/// it on that class's instances, so a bare word there completes from the
+/// class's methods, not `Object`'s (DEC-214).
+#[test]
+fn completion_in_an_on_load_block_offers_the_hooked_classs_methods() {
+    let source = concat!(
+        "module ActiveSupport\n",                                // 0
+        "  def self.on_load(name, options = {}, &block); end\n", // 1
+        "  def self.run_load_hooks(name, base = Object); end\n", // 2
+        "end\n",                                                 // 3
+        "class Record\n",                                        // 4
+        "  def self.establish_link(config); end\n",              // 5
+        "  def persist!; end\n",                                 // 6
+        "  ActiveSupport.run_load_hooks(:record, self)\n",       // 7
+        "end\n",                                                 // 8
+        "ActiveSupport.on_load(:record) do\n",                   // 9
+        "  \n",                                                  // 10
+        "  def touch_later\n",                                   // 11
+        "    \n",                                                // 12
+        "  end\n",                                               // 13
+        "end\n",                                                 // 14
+    );
+    let (dir, _db, mut session) = indexed_session("complete-on-load", source);
+    session.read();
+    let at_line = |line: usize, word: &str| {
+        let mut lines: Vec<String> = source.lines().map(str::to_string).collect();
+        lines[line] = format!("    {word}");
+        lines.join("\n") + "\n"
+    };
+    let (labels, _) = complete(&mut session, &dir, &at_line(10, "estab"), 10, 2);
+    assert!(labels.contains(&"establish_link".to_string()), "{labels:?}");
+    let (labels, _) = complete(&mut session, &dir, &at_line(12, "pers"), 12, 3);
+    assert!(labels.contains(&"persist!".to_string()), "{labels:?}");
+    assert!(
+        !labels.contains(&"establish_link".to_string()),
+        "a class method, in an instance's `def`: {labels:?}"
+    );
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A listing cut at its cap is the same listing every time: the names that
 /// sort first, as the client will show them. It was whichever members a hash
 /// map happened to yield first, which changed from one process to the next.

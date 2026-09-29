@@ -185,6 +185,12 @@
 
 ### Fixed
 
+- **A call in an `ActiveSupport.on_load` block runs on the hooked class.** A
+  bare call in `on_load(:active_record) do … end` is `ActiveRecord::Base`'s
+  class method, and one in a `def` there its instance method, for `--def`,
+  `--refs`, hover and VS Code's completion, which offered `Object`'s methods
+  there. A hook two classes run is ambiguous between them (DEC-214).
+
 - **A macro in another file defines the methods its callers name.** A class
   body's `add_helper :color`, where `add_helper` (in another file) writes
   `def #{name}_helper` in a `class_eval` string, makes `color_helper` a method

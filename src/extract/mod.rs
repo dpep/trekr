@@ -1592,6 +1592,18 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                             if iterates.is_some() {
                                 self.iterations.push(self.open_blocks.len());
                             }
+                            if let (Some((name, false)), Some(owner)) = (&hook, owner) {
+                                let span = block.location();
+                                let lines = (
+                                    self.pos(span.start_offset()).line,
+                                    self.pos(span.end_offset()).line,
+                                );
+                                self.facts.hook_blocks.push(crate::core::HookBlock {
+                                    name: name.clone(),
+                                    owner,
+                                    lines,
+                                });
+                            }
                             let hook = hook.inspect(|(name, yields)| {
                                 self.load_hooks.push(LoadHook {
                                     name: name.clone(),

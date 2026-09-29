@@ -409,6 +409,8 @@ pub(crate) struct Tree {
     made: RefCell<HashMap<(String, bool, String), Dynamic>>,
     /// `place_dynamic` is running, and its own lookups must not wait on it.
     placing: std::cell::Cell<bool>,
+    /// Hook name → the classes that run it (DEC-098), read on first need.
+    hooks: RefCell<Option<HashMap<String, Vec<String>>>>,
 }
 
 /// The side and name of the one method a string macro's `def` makes at a
@@ -885,6 +887,7 @@ impl Tree {
             dynamic_files: RefCell::new(HashMap::new()),
             made: RefCell::new(HashMap::new()),
             placing: std::cell::Cell::new(false),
+            hooks: RefCell::new(None),
         }
     }
 
@@ -3412,6 +3415,33 @@ impl Tree {
             }
         }
         callers
+    }
+
+    /// The classes that run the `on_load` hook `name`, in the order the
+    /// index layers them (DEC-214).
+    pub(crate) fn hooked(&self, name: &str) -> Vec<String> {
+        if self.hooks.borrow().is_none() {
+            let rows = self
+                .loader
+                .as_ref()
+                .and_then(|loader| loader.store.load_hooks(&loader.roots).ok())
+                .unwrap_or_default();
+            let mut hooks: HashMap<String, Vec<String>> = HashMap::new();
+            for row in rows {
+                if let Some((base, _)) = self.edge_owner(&row.owner) {
+                    let bases = hooks.entry(row.target).or_default();
+                    if !bases.contains(&base) {
+                        bases.push(base);
+                    }
+                }
+            }
+            *self.hooks.borrow_mut() = Some(hooks);
+        }
+        self.hooks
+            .borrow()
+            .as_ref()
+            .and_then(|hooks| hooks.get(name).cloned())
+            .unwrap_or_default()
     }
 
     /// The fully-qualified name of the scope a fact was written in.

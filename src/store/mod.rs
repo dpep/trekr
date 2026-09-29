@@ -810,6 +810,24 @@ impl Store {
         shown(roots, rows)
     }
 
+    /// Which classes run each `on_load` hook: the `load_hooks` edges alone
+    /// (DEC-098), read when a call in a hook's block is typed (DEC-214).
+    pub(crate) fn load_hooks(&self, roots: &Roots) -> Result<Vec<EdgeRow>> {
+        let count = roots.list.len();
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT a.owner, a.relation, a.target, c.root || '/' || f.path, a.line
+               FROM ancestry a
+               JOIN file f ON f.blob_id = a.blob_id
+               JOIN checkout c ON c.id = f.checkout_id
+              WHERE c.root IN ({}) AND a.relation = 'load_hooks'
+              ORDER BY {}, f.path, a.line, a.col",
+            numbered(1, count),
+            layered(count)
+        ))?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(&roots.list), edge_row)?;
+        shown(roots, rows)
+    }
+
     /// The scopes that define methods the source does not name (DEC-130):
     /// few, and read only when an answer is about to say a method is absent.
     pub(crate) fn dynamic_markers(&self, roots: &Roots) -> Result<Vec<EdgeRow>> {

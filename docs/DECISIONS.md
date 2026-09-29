@@ -5606,7 +5606,7 @@ not type it, though DEC-098 and DEC-104 know which classes run the hook.
 Completion follows the resolver, so it offers Object's methods there.
 Typing those calls as the hooked classes' is its own change, with the
 cost question every includer-wide lookup carries (`on_load(:active_record)`
-is in every model's chain).
+is in every model's chain). *DEC-214 does.*
 
 **Measured** (BASELINE, "A first-time Rails user"): no gold verdict moved;
 of the click misses, 47 of the 145 "module never mixed in" were names
@@ -7518,3 +7518,52 @@ adapter's `DatabaseStatements#write_query?` — and `Callbacks#process_action`,
 `BasicImplicitRender#send_action` (override) and `ControllerRuntime#
 process_action` (convention-only) become single-caller; mastodon's
 `QueryHelper#perform_data_query` moves override → single-caller.
+
+## DEC-214 — A call in an `on_load` block runs on the class that runs the hook
+
+**Decided.** A call with no receiver, or on `self`, written directly in an
+`ActiveSupport.on_load(:name) do … end` block is typed as the class that runs
+the hook, on its class side (`resolved_via` `on_load`); one in a `def`
+written directly in such a block, as that class's instances — a bound, since
+the method is inherited (DEC-104 puts the `def` on the class). The classes
+are read from the `load_hooks` edges (DEC-098) on first need
+(`Tree::hooked`); where two run the hook (`:action_controller` is
+`ActionController::Base` and `::API`), the first is the reading and the
+other its rival, so the answer is ambiguous and names it. A block
+registered `yield: true` hands the class in as an argument, and its `self`
+stays the caller's. Completion of a bare word follows: the hooked class's
+methods, on the block's side, where it offered `Object`'s or the lexical
+class's. Each block is a resolve-time fact (`Facts::hook_blocks`), never
+stored.
+
+**Why.** DEC-127's open item. `establish_connection` in activerecord's
+railtie, inside `on_load(:active_record)`, was typed as the `Railtie` the
+initializer is written in and `--refs ActiveRecord::ConnectionHandling#
+establish_connection` excluded it as `no_such_method`; a call in a gem's
+hook block at the top of a file was residue; and VS Code completed neither.
+
+**Not every block of the hook.** DEC-098 records a hook's mixins only when
+the block is registered as its file loads, because a mixin's place in the
+chain depends on when it runs. What `self` is in the block does not: an
+`on_load` in an `initializer` still runs its block on the hooked class, so
+its calls are typed too.
+
+**The cost.** Completion in such a block now lists the hooked class's
+methods — `ActiveRecord::Base`'s class side on an empty prefix. Measured on
+rails, LSP completion at `establish_connection` in the railtie, three
+servers each: the first request (which builds the tree) 335–342 ms before and
+335–336 ms after; the next eleven, median 3 → 4 ms on an empty prefix, 2 →
+2 ms on `estab`, which now offers `establish_connection` where it offered
+nothing. A model's own body is unchanged (3 ms): nothing is added to any
+chain, and the hook classes are read only for a call in a hook's block.
+
+**Measured** (against DEC-213 on main 99a11f7). No gold verdict moves into
+wrong or residue. widget_shop's gem sites gain 8 correct and 3 declarations,
+from residue offering them: actionpack's and actionmailer's railtie hooks
+(`protect_from_forgery`, `register_interceptors`, `register_observers`,
+`smtp_settings`), railties' `engine.rb` (`prepend_view_path`, twice) and
+propshaft's `before_action`; `wrap_parameters` and one `prepend_view_path`
+answer ambiguous-correct, their hook run by both `ActionController::Base`
+and `::API`. Confidently wrong unchanged in every set. The rails `--refs`
+sets move one site, excluded → confirmed: the railtie's
+`establish_connection`. `--dead` and the 21,154 clicks unchanged.

@@ -214,7 +214,16 @@ pub(crate) fn completion(
         }
         (Context::Bare, Some(Under::Call(call))) => {
             add_locals(&mut list, &facts, line);
-            if let Some(fqn) = tree.scope_fqn(&call.nesting) {
+            // An `on_load` block runs on the classes that run the hook
+            // (DEC-214).
+            if let Some(hooked) = crate::resolve::on_load_receiver(tree, &facts, &call) {
+                let bases =
+                    std::iter::once(&hooked.fqn).chain(hooked.rivals.iter().map(|(f, _)| f));
+                for class in bases.clone().take(MIXERS_OFFERED) {
+                    add_methods(&mut list, tree, members, class, hooked.singleton, true, 1);
+                }
+                incomplete |= bases.count() > MIXERS_OFFERED;
+            } else if let Some(fqn) = tree.scope_fqn(&call.nesting) {
                 let fqn = tree.variant_at(&fqn, &located.relative);
                 add_methods(&mut list, tree, members, &fqn, call.singleton, true, 1);
                 // In a module `self` is what mixes it in — an `included do`

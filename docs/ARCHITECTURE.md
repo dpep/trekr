@@ -171,6 +171,8 @@ Two things the blob layer cannot know, resolved here:
   they run once the class exists.
   The block's parameter is the class too, and a `def` in the block is a
   method of a module `on_load(:name)` that each such class prepends (DEC-104).
+  A call in the block, or in a `def` there, is typed as that class
+  (`Tree::hooked`, read from the `load_hooks` edges on first need; DEC-214).
 
 **A scope that makes methods from unnamed names is marked** (DEC-130).
 `define_method` whose name nothing literal spells, and a `class_eval` string,
@@ -269,6 +271,7 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | `described_class` | a call on `described_class`: the class or module the innermost group that names one describes, on its singleton side; `described_class.new.x` an instance (DEC-120) | 1.0 |
 | `implicit_subject` | `subject` or `is_expected` with no `subject` written in reach: an instance of the class the group describes (DEC-114) | 1.0 |
 | `main` | a bare top-level `describe` in a spec: `main`'s method sends it to `RSpec` (DEC-115) | 1.0 |
+| `on_load` | a call directly in `ActiveSupport.on_load(:x) do`: the class that runs the hook, on its class side; in a `def` there, its instances; two such classes are one's reading and the other's rival (DEC-214) | 1 / classes |
 | `symbol` | `send(:x)`, `obj.respond_to?(:x)`, `before_action :x`, `alias_method :a, :x`: `x` on the receiver of the reflective call, or on `self`'s instances for a class-level macro (DEC-093) | the receiver's |
 | `predicate_matcher` | `be_empty` / `have_key` in a spec: the subject's `empty?` / `has_key?`, the subject typed by the rest of the ladder (DEC-090) | the subject's |
 | `includer` | a call inside a module, resolved through the classes that mix it in | agreeing / includers |

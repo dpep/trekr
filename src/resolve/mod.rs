@@ -1342,6 +1342,10 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
                     rivals: Vec::new(),
                 });
             }
+            // An `on_load` block runs on the class that runs the hook (DEC-214).
+            if let Some(hooked) = on_load_receiver(tree, facts, call) {
+                return Some(hooked);
+            }
             // `describe` on `main`, which sends it to `RSpec` (DEC-115).
             if call.recv_value == Some(RecvValue::Main) {
                 return tree.is_known(rspec::RSPEC).then(|| Receiver {
@@ -1397,6 +1401,54 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
         // here to type. `super` is typed by its own rule, `super_landings`.
         RecvShape::Symbol | RecvShape::Super => None,
     }
+}
+
+/// `self` in an `ActiveSupport.on_load(:name)` block, or in a `def` written
+/// directly in one (DEC-214): the block is evaluated in each class that runs
+/// the hook, so a call directly in it is on that class, and a `def` there
+/// defines a method of its instances (DEC-104) — which may be a subclass's.
+/// Two classes that run the hook are one's reading and the other's rival.
+pub(crate) fn on_load_receiver(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
+    let (hook, singleton, bound) = match call.block_owner {
+        Some(owner) => {
+            let hook = facts.hook_blocks.iter().find(|hook| hook.owner == owner)?;
+            (hook, true, false)
+        }
+        None => {
+            let def = enclosing_method(facts, call.pos.line)?;
+            let hook = facts
+                .hook_blocks
+                .iter()
+                .filter(|hook| hook.lines.0 < def.pos.line && def.end_line <= hook.lines.1)
+                .max_by_key(|hook| hook.lines.0)?;
+            // Only a `def` whose body is the block's own: one in a class
+            // written inside it is that class's.
+            let in_class = facts.defs.iter().any(|scope| {
+                matches!(
+                    scope.kind,
+                    crate::core::Kind::Class | crate::core::Kind::Module
+                ) && hook.lines.0 < scope.pos.line
+                    && scope.pos.line < def.pos.line
+                    && def.end_line <= scope.end_line
+            });
+            if in_class {
+                return None;
+            }
+            (hook, call.singleton, true)
+        }
+    };
+    let bases = tree.hooked(&hook.name);
+    let (first, rest) = bases.split_first()?;
+    Some(Receiver {
+        fqn: first.clone(),
+        singleton,
+        via: "on_load",
+        bound,
+        agreeing: 1,
+        total: bases.len(),
+        ambiguous: !rest.is_empty(),
+        rivals: rest.iter().map(|base| (base.clone(), singleton)).collect(),
+    })
 }
 
 /// A receiver that is a value: a literal is its class, and a call returns
@@ -2293,7 +2345,10 @@ fn rival_landings(tree: &Tree, receiver: &Receiver, name: &str) -> Vec<Candidate
         .map(|method| Candidate {
             owner: method.owner.clone(),
             singleton: method.singleton,
-            why: "another write the receiver's read can see gives it this type",
+            why: match receiver.via {
+                "on_load" => "another class that runs the hook",
+                _ => "another write the receiver's read can see gives it this type",
+            },
             kind: method.kind(),
             site: method.site.clone(),
         })

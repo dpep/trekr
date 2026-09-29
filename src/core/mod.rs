@@ -177,6 +177,10 @@ pub(crate) struct Facts {
     /// was substituted for. What an editor's variable answers read too
     /// (DEC-167). Never stored.
     pub(crate) strings: Vec<StringCode>,
+    /// Each `ActiveSupport.on_load` block whose `self` is the hooked class
+    /// (not `yield: true`), for typing the calls in it (DEC-214). Never
+    /// stored.
+    pub(crate) hook_blocks: Vec<HookBlock>,
     /// Prism reported syntax errors; the facts above are what survived.
     pub(crate) parse_errors: usize,
     pub(crate) lines: usize,
@@ -776,6 +780,17 @@ pub(crate) fn shape_matches(shape: &str, name: &str) -> bool {
         }
     }
     rest.ends_with(last)
+}
+
+/// An `ActiveSupport.on_load(:name) do … end` block (DEC-214).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct HookBlock {
+    /// The hook, as `run_load_hooks` names it.
+    pub(crate) name: String,
+    /// What a call directly in the block has as its `block_owner`.
+    pub(crate) owner: Pos,
+    /// The block's first and last lines.
+    pub(crate) lines: (u32, u32),
 }
 
 /// A string of code as read, with where its bytes are in the file (DEC-167).
