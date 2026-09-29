@@ -5982,3 +5982,33 @@ field keeps one meaning — rows for the checkout asked about.
 *Reverses if:* a caller needs `--status` to mean "is anything indexed at
 all". That is `--status --all`'s exit code.
 
+## DEC-171 — A writer waiting for the lock says so
+
+**Decided.** A writer — `--index`, `--drop`, `--gc` — that finds another
+process holding the write lock prints "waiting for another trekr writer to
+finish with DB" on stderr once it has waited a second, then "still waiting
+(Ns)" every 10 s when stderr is a terminal and every minute when it is not.
+Nothing reaches stdout until the command's own answer, in every mode, so
+`--json | jq` is unchanged. The wait is still DEC-139's ten minutes; the
+busy handler is SQLite's `busy_timeout` backoff reimplemented so it can
+speak, and a query keeps the silent 5 s.
+
+**Before**, a queued `--index` sat silent for up to ten minutes, on a
+terminal too (hunt 7): indistinguishable from a hang, and the likeliest
+reaction — Ctrl-C and run it again — queues it again.
+
+**Why stderr under `--json` too.** An agent reading a JSON run sees stderr
+as the only sign of life, and it is where DEC-067 already puts every
+message; the rule that matters is that stdout carries only the answer.
+**Why a slower cadence off a terminal:** a CI log or an agent's transcript
+wants to know it is waiting, not a line every 10 s for ten minutes.
+
+**No pid.** SQLite does not say who holds a lock, and the holder need not
+be trekr at all (an LSP's refresh, or `sqlite3` in a shell). A pid file
+written by each writer would name the queued writers as readily as the one
+holding the lock, since every writer registers before it waits; a
+wrong pid is worse than none, since the obvious use of one is `kill`.
+
+*Reverses if:* the store gains a record of the lock holder that is right —
+then the notice names it.
+

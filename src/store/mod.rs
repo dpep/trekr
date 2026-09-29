@@ -453,9 +453,11 @@ impl Store {
     /// Run `work` as one transaction, so every `write` inside it commits once.
     ///
     /// Wait for another writer's turn as long as a writer takes, not as long
-    /// as a query would (DEC-139).
-    pub(crate) fn wait_as_writer(&self) -> Result<()> {
-        self.conn.busy_timeout(WRITER_WAIT)
+    /// as a query would (DEC-139), telling `notice` how long it has waited
+    /// each time the lock is still held (DEC-171).
+    pub(crate) fn wait_as_writer(&self, notice: WaitNotice) -> Result<()> {
+        let _ = WAIT_NOTICE.set(notice);
+        self.conn.busy_handler(Some(writer_busy))
     }
 
     /// For many small writes in a row — a bundle's gems. A commit rewrites
@@ -1241,6 +1243,38 @@ const BUSY: std::time::Duration = std::time::Duration::from_secs(5);
 /// (DEC-139). A query never waits at all (DEC-066).
 const WRITER_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
 
+/// Told how long a writer has waited so far, each time the lock is still held.
+pub(crate) type WaitNotice = fn(std::time::Duration);
+
+static WAIT_NOTICE: std::sync::OnceLock<WaitNotice> = std::sync::OnceLock::new();
+
+/// A writer's busy handler: SQLite's own `busy_timeout`, plus the notice.
+/// SQLite takes a plain `fn`, and restarts `attempt` at 0 for each wait.
+fn writer_busy(attempt: i32) -> bool {
+    thread_local!(static STARTED: std::cell::Cell<std::time::Instant> =
+        std::cell::Cell::new(std::time::Instant::now()));
+    if attempt == 0 {
+        STARTED.set(std::time::Instant::now());
+    }
+    let waited = STARTED.get().elapsed();
+    let Some(pause) = writer_pause(attempt, waited) else {
+        return false;
+    };
+    if let Some(notice) = WAIT_NOTICE.get() {
+        notice(waited);
+    }
+    std::thread::sleep(pause);
+    true
+}
+
+/// How long to sleep before trying the lock again — SQLite's `busy_timeout`
+/// backoff — or `None` once a writer has waited `WRITER_WAIT`.
+fn writer_pause(attempt: i32, waited: std::time::Duration) -> Option<std::time::Duration> {
+    const DELAYS_MS: [u64; 12] = [1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100];
+    let delay = DELAYS_MS[attempt.clamp(0, 11) as usize];
+    (waited < WRITER_WAIT).then(|| std::time::Duration::from_millis(delay))
+}
+
 /// Put the store in WAL mode, which it then stays in.
 ///
 /// The switch takes an exclusive lock without consulting the busy handler, so
@@ -1622,15 +1656,15 @@ mod tests {
     #[test]
     fn a_writer_waits_longer_than_a_query() {
         let store = Store::open_in_memory().unwrap();
-        let waits = |store: &Store| -> i64 {
-            store
-                .conn
-                .pragma_query_value(None, "busy_timeout", |r| r.get(0))
-                .unwrap()
-        };
-        assert_eq!(waits(&store), BUSY.as_millis() as i64);
-        store.wait_as_writer().unwrap();
-        assert_eq!(waits(&store), WRITER_WAIT.as_millis() as i64);
+        let waits = store
+            .conn
+            .pragma_query_value(None, "busy_timeout", |r| r.get::<_, i64>(0))
+            .unwrap();
+        assert_eq!(waits, BUSY.as_millis() as i64);
+        let past = |secs| std::time::Duration::from_secs(secs);
+        assert!(writer_pause(0, BUSY + past(1)).is_some());
+        assert!(writer_pause(500, WRITER_WAIT - past(1)).is_some());
+        assert_eq!(writer_pause(500, WRITER_WAIT), None);
     }
 
     #[test]

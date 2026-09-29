@@ -26,6 +26,15 @@
   `X.new`, a literal and a constant still name the exact class. The site
   stays `confirmed` for the ancestor's own method (DEC-140).
 
+### Fixed
+
+- **A queued `--index`, `--drop` or `--gc` says what it is waiting for.**
+  Behind another writer it waited up to ten minutes with no output; after a
+  second it now prints "waiting for another trekr writer …" on stderr, then
+  again every 10 s on a terminal (every minute otherwise). stdout is
+  unchanged: a `--json` caller still gets one answer when the write lands
+  (DEC-171).
+
 ## 0.8.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v39): run `trekr --index`

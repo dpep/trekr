@@ -2845,6 +2845,33 @@ fn status_in_an_unindexed_checkout_says_so_rather_than_showing_another() {
     let _ = fs::remove_dir_all(&nowhere);
 }
 
+/// A writer queued behind another says so on stderr rather than hanging
+/// silently, and a JSON caller still gets only its one answer on stdout.
+#[test]
+fn a_queued_index_says_what_it_is_waiting_for() {
+    let (dir, db) = scratch("queued");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    fs::write(dir.join("gadget.rb"), "class Gadget\nend\n").unwrap();
+
+    let holder = rusqlite::Connection::open(&db).unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let queued = spawn_trekr(&db, &dir, &["--index", "--json"]);
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    holder.execute_batch("ROLLBACK").unwrap();
+
+    let out = queued.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains("waiting for another"), "{stderr}");
+    assert_eq!(
+        json(&out)["indexed"]["parsed"],
+        1,
+        "stdout is the answer alone"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn concurrent_index_runs_over_shared_content_both_land() {
     let (dir, db) = scratch("index-race");

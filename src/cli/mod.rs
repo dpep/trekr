@@ -530,6 +530,43 @@ fn named_checkout(path: &Path) -> anyhow::Result<PathBuf> {
     scan::repo_root(path)
 }
 
+/// A writer queued behind another's lock says so on stderr — stdout stays the
+/// answer alone, in every mode — after a second, then every 10 s on a
+/// terminal and every minute otherwise (DEC-171).
+fn writer_waiting(waited: std::time::Duration) {
+    use std::io::IsTerminal;
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    // The next notice, in seconds of this wait; and how far the last call had
+    // waited, since a smaller number is a new wait, for another lock.
+    static DUE: AtomicU64 = AtomicU64::new(1);
+    static LAST: AtomicU64 = AtomicU64::new(0);
+    let (secs, millis) = (waited.as_secs(), waited.as_millis() as u64);
+    if millis < LAST.swap(millis, Relaxed) {
+        DUE.store(1, Relaxed);
+    }
+    let due = DUE.load(Relaxed);
+    if secs < due {
+        return;
+    }
+    let every = if std::io::stderr().is_terminal() {
+        10
+    } else {
+        60
+    };
+    DUE.store(secs - secs % every + every, Relaxed);
+    let db = store_path().map_or_else(
+        |_| "the index".into(),
+        |p| paths::pretty(&p.to_string_lossy()),
+    );
+    match due {
+        1 => eprintln!(
+            "trekr: waiting for another trekr writer to finish with {db} \
+             (it holds the write lock; this waits up to 10 minutes)"
+        ),
+        _ => eprintln!("trekr: still waiting for another trekr writer ({secs}s)"),
+    }
+}
+
 /// The indexed gem a path outside any git checkout belongs to, if any: gems
 /// are indexed per directory from an app's bundle, not as repositories.
 fn gem_holding(store: &Store, path: &Path) -> Option<String> {
@@ -542,12 +579,16 @@ fn gem_holding(store: &Store, path: &Path) -> Option<String> {
 }
 
 /// The database: `$TREKR_DB`, else `~/.local/share/trekr/trekr.db`.
+fn store_path() -> anyhow::Result<PathBuf> {
+    Ok(match std::env::var("TREKR_DB") {
+        Ok(p) => PathBuf::from(p),
+        Err(_) => PathBuf::from(std::env::var("HOME")?).join(".local/share/trekr/trekr.db"),
+    })
+}
+
 fn open_store() -> anyhow::Result<Store> {
     let open = || -> anyhow::Result<Store> {
-        let path = match std::env::var("TREKR_DB") {
-            Ok(p) => PathBuf::from(p),
-            Err(_) => PathBuf::from(std::env::var("HOME")?).join(".local/share/trekr/trekr.db"),
-        };
+        let path = store_path()?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -943,7 +984,7 @@ fn cmd_index(
     let files = profile::timed(&mut profile, "scan", || scan::scan(&root))?;
 
     let mut store = open_store()?;
-    store.wait_as_writer()?;
+    store.wait_as_writer(writer_waiting)?;
     let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
     let mut known = None;
     let counts = index_files(
@@ -3014,7 +3055,7 @@ fn report(
 
 fn cmd_drop(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
     let store = open_store()?;
-    store.wait_as_writer()?;
+    store.wait_as_writer(writer_waiting)?;
     // A gem is no git checkout, and is dropped by the directory it was
     // indexed under; the next index of an app that uses it reads it again.
     let root = match named_checkout(path) {
@@ -3065,7 +3106,7 @@ fn parse_age(text: &str) -> Result<u64, String> {
 
 fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::Result<ExitCode> {
     let mut store = open_store()?;
-    store.wait_as_writer()?;
+    store.wait_as_writer(writer_waiting)?;
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as i64;
