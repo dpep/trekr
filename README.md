@@ -291,11 +291,12 @@ to surprise you:
 - An `@ivar` receiver is typed by a vote of every write to it in that class
   *in that file* — not only the writes that reach the read, and not the
   class's other files.
-- A `super` that lands in Ruby core is only as right as trekr's core stubs
-  ([src/tree/core.rb](src/tree/core.rb)) are complete, and a chain typed
-  through a core method (`x.gsub(a, b).downcase`) takes Ruby 3.4's documented
-  return type, even where a subclass such as ActiveSupport's `SafeBuffer`
-  returns its own.
+- Core is read from the `rbs` gem the app's Ruby carries (bundled since Ruby
+  3.0), so a `super` that lands in Ruby core is only as right as those
+  signatures are complete, and a chain typed through a core method
+  (`x.gsub(a, b).downcase`) takes their documented return type, even where a
+  subclass such as ActiveSupport's `SafeBuffer` returns its own. A checkout
+  with no Ruby, or on a Ruby without rbs, knows nothing of core.
 - A method defined in a loop over a list *another file* assigns
   (`METHODS_WITH_QUERY.each { class_eval "def #{m}…" }`) is not named. Its
   class answers `residue` for such a name, never "no such method", and the

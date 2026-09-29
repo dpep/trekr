@@ -1,0 +1,10 @@
+module URI
+  def self.parse: (String uri) -> (URI::Generic | URI::HTTP)
+
+  class Generic
+    def host: () -> String?
+  end
+
+  class HTTP < URI::Generic
+  end
+end

@@ -31,7 +31,8 @@ pub(super) fn dir(store: &Store) -> Option<PathBuf> {
 ///
 /// Each root's surface key, in tree order, is what the store contributes;
 /// the paths themselves, because sites are absolute; the stdlib files the app
-/// does not see (DEC-180); and the code that
+/// does not see (DEC-180); the signatures core is stubbed from (DEC-240); and
+/// the code that
 /// assembles and encodes, by its own source text. The last is what keeps a
 /// rebuilt binary — a release, or a dev build between two — from reading a
 /// namespace an older assembly produced under the same format number.
@@ -53,6 +54,12 @@ pub(super) fn key(store: &Store, roots: &Roots) -> anyhow::Result<Key> {
     hidden.sort();
     for path in hidden {
         eat(path.as_bytes());
+    }
+    // Core's classes come from the Ruby's signatures (DEC-240).
+    if let Some(stdlib) = &roots.stdlib
+        && let Some((rbs, _, _)) = store.rbs_about(stdlib)?
+    {
+        eat(rbs.as_bytes());
     }
     Ok(hash.finalize().into())
 }
@@ -83,10 +90,7 @@ fn code() -> &'static [u8] {
             include_str!("mod.rs"),
             include_str!("variants.rs"),
             include_str!("snapshot.rs"),
-            include_str!("core.rb"),
             include_str!("rspec.rb"),
-            include_str!("stdlib.rb"),
-            include_str!("stdlib_sigs.rb"),
             include_str!("corelib.rs"),
             include_str!("../store/mod.rs"),
         ] {

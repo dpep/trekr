@@ -1,13 +1,17 @@
-//! Ruby core, served as one file per top-level class or module.
+//! Ruby core and the stdlib's compiled half, served as one file per
+//! top-level class or module.
 //!
-//! `core.rb` stays the single source (DEC-015). What a definition points at is
-//! a file named for its owner — `<core>/String.rb` — because an editor's peek
-//! list shows a file name and the target's first line, and several hits in one
-//! `core.rb` read as copies of the same thing (DEC-078). Each file is
-//! extracted as it is served, so its lines are the file's own.
+//! The stubs are written at index time from the rbs gem the app's Ruby
+//! carries (DEC-240) and stored with its stdlib; a tree serves the ones its
+//! Ruby has. What a definition points at is a file named for its owner —
+//! `<core>/<rbs>/String.rb` — because an editor's peek list shows a file name
+//! and the target's first line, and several hits in one file read as copies
+//! of the same thing (DEC-078). Each file is extracted as it is served, so its
+//! lines are the file's own.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// What every core site's path starts with. Deliberately not a real path: a
 /// file is written for it only when something has to open one.
@@ -15,16 +19,9 @@ pub(crate) const CORE_PATH: &str = "<core>";
 
 /// One owner's stub, as a caller sees it.
 pub(crate) struct CoreFile {
-    /// `String.rb`.
+    /// `String.rb`, `stdlib/Pathname.rb`.
     pub(crate) name: String,
     pub(crate) text: String,
-}
-
-impl CoreFile {
-    /// The site path its definitions carry: `<core>/String.rb`.
-    pub(crate) fn site_path(&self) -> String {
-        format!("{CORE_PATH}/{}", self.name)
-    }
 }
 
 /// RSpec's runtime wiring, stated as source and served beside core (DEC-087).
@@ -33,31 +30,25 @@ pub(crate) const RSPEC_STUB: &str = "<core>/RSpec.rb";
 
 /// The RSpec stub, as a caller sees it.
 pub(crate) fn rspec_file() -> &'static CoreFile {
-    static FILE: std::sync::OnceLock<CoreFile> = std::sync::OnceLock::new();
+    static FILE: OnceLock<CoreFile> = OnceLock::new();
     FILE.get_or_init(|| CoreFile {
         name: "RSpec.rb".to_string(),
         text: include_str!("rspec.rb").to_string(),
     })
 }
 
-/// Where the stdlib's compiled half is served: `<core>/stdlib/Pathname.rb`
-/// (DEC-220). Under core, since what is compiled into a Ruby is Ruby's own.
+/// Where the stdlib's compiled half is served, under its Ruby's directory:
+/// `<core>/<rbs>/stdlib/Pathname.rb` (DEC-220). Under core, since what is
+/// compiled into a Ruby is Ruby's own.
 const STDLIB_DIR: &str = "stdlib/";
 
-/// The stdlib's compiled half, one file per top-level owner, as a caller
-/// sees it (DEC-220). Served only for a checkout whose stdlib is indexed.
-pub(crate) fn stdlib_files() -> &'static [CoreFile] {
-    static FILES: std::sync::OnceLock<Vec<CoreFile>> = std::sync::OnceLock::new();
-    FILES.get_or_init(|| split(include_str!("stdlib.rb"), STDLIB_DIR, stdlib_header))
-}
+/// The return types lent to the stdlib's Ruby methods, which are never a
+/// location (DEC-220): `<core>/<rbs>/stdlib-sigs.rb`, never opened.
+const STDLIB_SIGS: &str = "stdlib-sigs.rb";
 
-/// Return types for the stdlib's Ruby methods, which lend them to the real
-/// definitions and are never a location (DEC-220). Its path is never opened.
-pub(crate) const STDLIB_SIGS: &str = "<core>/stdlib-sigs.rb";
-
-/// One `def` of a generated stub, cut out with what it needs to extract to
-/// the same method, so that a query parses only the names it asks about.
-/// Parsing both stubs whole cost every tree build ~12 ms, twice core's.
+/// One `def` of a stub, cut out with what it needs to extract to the same
+/// method, so that a query parses only the names it asks about. Parsing the
+/// stubs whole cost every tree build more than the rest of it (DEC-220).
 pub(crate) struct StubDef {
     pub(crate) owner: String,
     pub(crate) singleton: bool,
@@ -70,41 +61,155 @@ pub(crate) struct StubDef {
     pub(crate) source: String,
 }
 
-/// The stdlib's compiled methods, by name.
-pub(crate) fn stdlib_defs() -> &'static HashMap<String, Vec<StubDef>> {
-    static DEFS: std::sync::OnceLock<HashMap<String, Vec<StubDef>>> = std::sync::OnceLock::new();
-    DEFS.get_or_init(|| {
-        let mut by_name: HashMap<String, Vec<StubDef>> = HashMap::new();
-        for file in stdlib_files() {
-            for def in cut(&file.site_path(), &file.text) {
-                by_name.entry(def.name.clone()).or_default().push(def);
+/// One Ruby's stubs, from its signatures, each part cut on first use.
+pub(crate) struct Stubs {
+    /// `rbs-3.8.0-1a2b3c4d`: the directory its files are served under, one
+    /// per Ruby and rbs gem, so two Rubies' `String.rb` never collide.
+    pub(crate) id: String,
+    pub(crate) version: String,
+    core_text: String,
+    stdlib_text: String,
+    sigs_text: String,
+    core: OnceLock<Vec<CoreFile>>,
+    stdlib: OnceLock<Vec<CoreFile>>,
+    core_defs: OnceLock<HashMap<String, Vec<StubDef>>>,
+    stdlib_defs: OnceLock<HashMap<String, Vec<StubDef>>>,
+    sig_defs: OnceLock<HashMap<(String, bool, String), StubDef>>,
+}
+
+/// Every set of stubs this process has served, by id, so a path handed out
+/// can be written to disk when something opens it.
+fn served() -> &'static Mutex<HashMap<String, Arc<Stubs>>> {
+    static SERVED: OnceLock<Mutex<HashMap<String, Arc<Stubs>>>> = OnceLock::new();
+    SERVED.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+impl Stubs {
+    /// The stubs a store row holds, shared with any tree that already
+    /// served them in this process.
+    pub(crate) fn from_row(row: crate::store::Rbs) -> Arc<Stubs> {
+        let id = format!("rbs-{}-{}", row.version, &row.key[..row.key.len().min(8)]);
+        let mut served = served()
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        served
+            .entry(id.clone())
+            .or_insert_with(|| {
+                Arc::new(Stubs {
+                    id,
+                    version: row.version,
+                    core_text: row.core,
+                    stdlib_text: row.stdlib,
+                    sigs_text: row.sigs,
+                    core: OnceLock::new(),
+                    stdlib: OnceLock::new(),
+                    core_defs: OnceLock::new(),
+                    stdlib_defs: OnceLock::new(),
+                    sig_defs: OnceLock::new(),
+                })
+            })
+            .clone()
+    }
+
+    /// `<core>/rbs-3.8.0-…/`: what each of its sites' paths starts with.
+    fn prefix(&self) -> String {
+        format!("{CORE_PATH}/{}/", self.id)
+    }
+
+    /// Core, one file per top-level owner.
+    pub(crate) fn core_files(&self) -> &[CoreFile] {
+        self.core
+            .get_or_init(|| split(&self.core_text, "", &self.version))
+    }
+
+    /// The stdlib's compiled half, one file per top-level owner.
+    pub(crate) fn stdlib_files(&self) -> &[CoreFile] {
+        self.stdlib
+            .get_or_init(|| split(&self.stdlib_text, STDLIB_DIR, &self.version))
+    }
+
+    /// A file's site path: `<core>/rbs-3.8.0-…/String.rb`.
+    pub(crate) fn site_path(&self, file: &CoreFile) -> String {
+        format!("{}{}", self.prefix(), file.name)
+    }
+
+    /// Core's methods, by name.
+    pub(crate) fn core_defs(&self) -> &HashMap<String, Vec<StubDef>> {
+        self.core_defs
+            .get_or_init(|| by_name(self, self.core_files()))
+    }
+
+    /// The stdlib's compiled methods, by name.
+    pub(crate) fn stdlib_defs(&self) -> &HashMap<String, Vec<StubDef>> {
+        self.stdlib_defs
+            .get_or_init(|| by_name(self, self.stdlib_files()))
+    }
+
+    /// The return types lent to the stdlib's Ruby methods, by (owner,
+    /// singleton, name).
+    pub(crate) fn sig_defs(&self) -> &HashMap<(String, bool, String), StubDef> {
+        self.sig_defs.get_or_init(|| {
+            let path = format!("{}{STDLIB_SIGS}", self.prefix());
+            cut(&path, &self.sigs_text)
+                .into_iter()
+                .map(|def| ((def.owner.clone(), def.singleton, def.name.clone()), def))
+                .collect()
+        })
+    }
+
+    /// The whole text lent from, for a test that holds the cut to it.
+    #[cfg(test)]
+    pub(crate) fn sigs_text(&self) -> (String, &str) {
+        (format!("{}{STDLIB_SIGS}", self.prefix()), &self.sigs_text)
+    }
+
+    /// A core file with every `def` blanked out, lines kept: its classes,
+    /// mixins and constants, which a namespace is assembled from, without
+    /// parsing the methods a query loads by name.
+    pub(crate) fn skeleton(file: &CoreFile) -> String {
+        let mut out = String::with_capacity(file.text.len());
+        let mut in_def: Option<usize> = None;
+        for line in file.text.lines() {
+            let trimmed = line.trim_start();
+            let indent = line.len() - trimmed.len();
+            let blank = match in_def {
+                Some(open) => {
+                    if trimmed == "end" && indent == open {
+                        in_def = None;
+                    }
+                    true
+                }
+                None if trimmed.starts_with("def ") => {
+                    if !trimmed.ends_with("; end") {
+                        in_def = Some(indent);
+                    }
+                    true
+                }
+                None => trimmed.starts_with("sig {"),
+            };
+            if !blank {
+                out.push_str(line);
             }
+            out.push('\n');
         }
-        by_name
-    })
+        out
+    }
 }
 
-/// The return types lent to the stdlib's Ruby methods, by (owner,
-/// singleton, name).
-pub(crate) fn stdlib_sig_defs() -> &'static HashMap<(String, bool, String), StubDef> {
-    static DEFS: std::sync::OnceLock<HashMap<(String, bool, String), StubDef>> =
-        std::sync::OnceLock::new();
-    DEFS.get_or_init(|| {
-        cut(STDLIB_SIGS, stdlib_sigs())
-            .into_iter()
-            .map(|def| ((def.owner.clone(), def.singleton, def.name.clone()), def))
-            .collect()
-    })
-}
-
-fn stdlib_sigs() -> &'static str {
-    include_str!("stdlib_sigs.rb")
+fn by_name(stubs: &Stubs, files: &[CoreFile]) -> HashMap<String, Vec<StubDef>> {
+    let mut by_name: HashMap<String, Vec<StubDef>> = HashMap::new();
+    for file in files {
+        for def in cut(&stubs.site_path(file), &file.text) {
+            by_name.entry(def.name.clone()).or_default().push(def);
+        }
+    }
+    by_name
 }
 
 /// A generated stub's `def`s, each with its owner written compactly around
-/// it. Reads only the shape `script/stdlib_sigs.rb` writes — nested
-/// `class`/`module` blocks, `private`/`protected` lines, `sig`s directly
-/// above each `def` — and leaves the Ruby itself to the extractor.
+/// it. Reads only the shape the generator writes — nested `class`/`module`
+/// blocks, `private`/`protected` lines, `sig`s directly above each `def` —
+/// and leaves the Ruby itself to the extractor.
 fn cut(path: &str, text: &str) -> Vec<StubDef> {
     let mut defs = Vec::new();
     // (indent, owner, visibility) for each open block.
@@ -173,11 +278,16 @@ fn cut(path: &str, text: &str) -> Vec<StubDef> {
     defs
 }
 
+/// `<core>/rbs-3.8.0-…/stdlib/Pathname.rb` → (`rbs-3.8.0-…`, `stdlib/Pathname.rb`).
+fn served_path(path: &str) -> Option<(&str, &str)> {
+    path.strip_prefix(CORE_PATH)?
+        .strip_prefix('/')?
+        .split_once('/')
+}
+
 /// Is this site a declaration in the stdlib's compiled half?
 pub(crate) fn is_stdlib_stub(path: &str) -> bool {
-    path.strip_prefix(CORE_PATH)
-        .and_then(|rest| rest.strip_prefix('/'))
-        .is_some_and(|rest| rest.starts_with(STDLIB_DIR))
+    served_path(path).is_some_and(|(_, file)| file.starts_with(STDLIB_DIR))
 }
 
 /// Is this site in the RSpec stub?
@@ -191,20 +301,14 @@ pub(crate) fn is_core(path: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
-/// Every core file, split from `core.rb` once per process.
-pub(crate) fn files() -> &'static [CoreFile] {
-    static FILES: std::sync::OnceLock<Vec<CoreFile>> = std::sync::OnceLock::new();
-    FILES.get_or_init(|| split(include_str!("core.rb"), "", header))
-}
-
 /// A stub cut at its top-level `class`/`module` blocks, each file named for
 /// its owner under `dir`.
 ///
 /// A block takes the comment written directly above it. Code outside any
 /// block — the top-level constants — goes to `Object.rb`, since a top-level
-/// constant is Object's. `core.rb`'s own header describes the whole corpus and
+/// constant is Object's. The stub's own header describes the whole corpus and
 /// is left behind; each file gets a line of its own saying what it is.
-fn split(source: &str, dir: &str, header: fn(&str) -> String) -> Vec<CoreFile> {
+fn split(source: &str, dir: &str, version: &str) -> Vec<CoreFile> {
     let mut blocks: Vec<(String, Vec<&str>)> = Vec::new();
     let mut loose: Vec<&str> = Vec::new();
     let mut comment: Vec<&str> = Vec::new();
@@ -239,7 +343,7 @@ fn split(source: &str, dir: &str, header: fn(&str) -> String) -> Vec<CoreFile> {
             None => loose.extend(lines),
         }
     }
-    debug_assert!(open.is_none(), "core.rb ends inside a block");
+    debug_assert!(open.is_none(), "a stub ends inside a block");
 
     let mut files: Vec<CoreFile> = Vec::new();
     for (name, lines) in blocks {
@@ -247,7 +351,7 @@ fn split(source: &str, dir: &str, header: fn(&str) -> String) -> Vec<CoreFile> {
             !files.iter().any(|f| f.name == format!("{dir}{name}.rb")),
             "{name} is declared twice; one file cannot hold both"
         );
-        let mut text = header(&name);
+        let mut text = header(&name, dir, version);
         text.push_str(&lines.join("\n"));
         text.push('\n');
         if name == "Object" && !loose.is_empty() {
@@ -263,18 +367,18 @@ fn split(source: &str, dir: &str, header: fn(&str) -> String) -> Vec<CoreFile> {
     files
 }
 
-fn header(name: &str) -> String {
+fn header(name: &str, dir: &str, version: &str) -> String {
+    let what = if dir.is_empty() {
+        format!("# Ruby core: {name}, from rbs {version}'s signatures. A stub trekr")
+    } else {
+        format!(
+            "# Ruby's stdlib: {name}, the methods compiled into it rather than\n\
+             # written in Ruby, from rbs {version}'s signatures. A stub trekr"
+        )
+    };
     format!(
-        "# Ruby core: {name}. A stub trekr navigates by, not Ruby's source;\n\
-         # the real documentation is https://docs.ruby-lang.org/en/3.4/{name}.html\n\n"
-    )
-}
-
-fn stdlib_header(name: &str) -> String {
-    format!(
-        "# Ruby's stdlib: {name}, the methods compiled into it rather than\n\
-         # written in Ruby, from their RBS signatures. A stub trekr navigates by;\n\
-         # the real documentation is https://docs.ruby-lang.org/en/3.4/{name}.html\n\n"
+        "{what}\n# navigates by, not Ruby's source; the real documentation is\n\
+         # https://docs.ruby-lang.org/en/master/{name}.html\n\n"
     )
 }
 
@@ -290,22 +394,54 @@ fn top_level_name(line: &str) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-/// Write the core files into `dir`, rewriting only what differs so an editor
-/// watching them is not churned. Once per directory per process.
-pub(crate) fn materialize(dir: &Path) -> std::io::Result<()> {
-    static DONE: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
-    let mut done = DONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    if done.iter().any(|d| d == dir) {
-        return Ok(());
+/// The directory a core site's file is written in, and its name there:
+/// `<core>/rbs-3.8.0-…/String.rb` is `String.rb` in `<dir>/rbs-3.8.0-…`.
+/// The RSpec stub is `RSpec.rb` in `dir` itself.
+pub(crate) fn file_of(dir: &Path, path: &str) -> Option<(PathBuf, String)> {
+    if is_rspec_stub(path) {
+        return Some((dir.to_path_buf(), rspec_file().name.clone()));
     }
-    std::fs::create_dir_all(dir.join(STDLIB_DIR))?;
-    for file in files().iter().chain(stdlib_files()).chain([rspec_file()]) {
-        let path = dir.join(&file.name);
-        if std::fs::read_to_string(&path).ok().as_deref() != Some(file.text.as_str()) {
-            std::fs::write(&path, &file.text)?;
+    let (id, file) = served_path(path)?;
+    Some((dir.join(id), file.to_string()))
+}
+
+/// Write the RSpec stub into `dir`, and the files of every set of stubs
+/// served in this process into `dir/<id>/`, rewriting only what differs so
+/// an editor watching them is not churned. Once per set per directory.
+pub(crate) fn materialize(dir: &Path) -> std::io::Result<()> {
+    static DONE: Mutex<Vec<PathBuf>> = Mutex::new(Vec::new());
+    let mut done = DONE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let sets: Vec<Arc<Stubs>> = served()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .values()
+        .cloned()
+        .collect();
+    let mut targets: Vec<(PathBuf, Vec<&CoreFile>)> = Vec::new();
+    if !done.iter().any(|d| d == dir) {
+        targets.push((dir.to_path_buf(), vec![rspec_file()]));
+    }
+    for stubs in &sets {
+        let at = dir.join(&stubs.id);
+        if !done.contains(&at) {
+            let files = stubs
+                .core_files()
+                .iter()
+                .chain(stubs.stdlib_files())
+                .collect();
+            targets.push((at, files));
         }
     }
-    done.push(dir.to_path_buf());
+    for (at, files) in targets {
+        std::fs::create_dir_all(at.join(STDLIB_DIR))?;
+        for file in files {
+            let path = at.join(&file.name);
+            if std::fs::read_to_string(&path).ok().as_deref() != Some(file.text.as_str()) {
+                std::fs::write(&path, &file.text)?;
+            }
+        }
+        done.push(at);
+    }
     Ok(())
 }
 
@@ -325,7 +461,7 @@ mod tests {
         let files = split(
             "# header\n\nclass A < Object\n  def x\n  end\nend\n\n# about B\nmodule B\nend\nclass C < A; end\n",
             "",
-            header,
+            "9.9.9",
         );
         let names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
         assert_eq!(names, ["A.rb", "B.rb", "C.rb"]);
@@ -339,7 +475,7 @@ mod tests {
 
     #[test]
     fn top_level_constants_go_to_object() {
-        let files = split("class Object\nend\n\nENV = nil\n", "", header);
+        let files = split("class Object\nend\n\nENV = nil\n", "", "9.9.9");
         assert!(
             file(&files, "Object.rb")
                 .text
@@ -348,8 +484,9 @@ mod tests {
     }
 
     #[test]
-    fn the_real_corpus_splits_into_distinct_valid_files() {
-        let files = files();
+    fn the_test_core_splits_into_distinct_valid_files() {
+        let stubs = super::super::test_stubs();
+        let files = stubs.core_files();
         let mut names: Vec<&str> = files.iter().map(|f| f.name.as_str()).collect();
         names.sort_unstable();
         names.dedup();
@@ -366,37 +503,44 @@ mod tests {
     }
 
     #[test]
-    fn the_stdlib_stubs_are_valid_ruby_served_under_their_own_directory() {
-        for f in stdlib_files() {
-            let facts = crate::extract::extract(f.text.as_bytes());
-            assert_eq!(facts.parse_errors, 0, "{} must be valid Ruby", f.name);
-            assert!(is_stdlib_stub(&f.site_path()), "{}", f.name);
-        }
-        let facts = crate::extract::extract(stdlib_sigs().as_bytes());
-        assert_eq!(facts.parse_errors, 0);
-        assert!(stdlib_defs().contains_key("hexdigest"));
-        assert!(
-            file(stdlib_files(), "stdlib/Pathname.rb")
-                .text
-                .contains("  def read(")
+    fn a_skeleton_keeps_every_line_and_no_def() {
+        let file = CoreFile {
+            name: "A.rb".into(),
+            text: "class A\n  include ::B\n\n  sig { returns(::String) }\n  def x(y)\n  end\n\n  X = nil\nend\n".into(),
+        };
+        let skeleton = Stubs::skeleton(&file);
+        assert_eq!(skeleton.lines().count(), file.text.lines().count());
+        assert_eq!(
+            skeleton,
+            "class A\n  include ::B\n\n\n\n\n\n  X = nil\nend\n"
         );
-        assert!(!is_stdlib_stub("<core>/String.rb"));
-        assert!(is_core(STDLIB_SIGS) && !is_stdlib_stub(STDLIB_SIGS));
+    }
+
+    #[test]
+    fn served_paths_are_recognised_and_nothing_else_is() {
+        assert!(is_core("<core>/rbs-9.9.9-abcd/String.rb"));
+        assert!(is_core(RSPEC_STUB));
+        assert!(!is_core("<corelib>/x.rb"));
+        assert!(!is_core("lib/core.rb"));
+        assert!(is_stdlib_stub("<core>/rbs-9.9.9-abcd/stdlib/Pathname.rb"));
+        assert!(!is_stdlib_stub("<core>/rbs-9.9.9-abcd/String.rb"));
+        assert!(!is_stdlib_stub("<core>/rbs-9.9.9-abcd/stdlib-sigs.rb"));
+        assert!(!is_stdlib_stub(RSPEC_STUB));
+        let dir = Path::new("/d");
+        assert_eq!(
+            file_of(dir, "<core>/rbs-9.9.9-abcd/stdlib/Pathname.rb"),
+            Some((dir.join("rbs-9.9.9-abcd"), "stdlib/Pathname.rb".to_string()))
+        );
+        assert_eq!(
+            file_of(dir, RSPEC_STUB),
+            Some((dir.to_path_buf(), "RSpec.rb".to_string()))
+        );
     }
 
     #[test]
     fn the_rspec_stub_is_valid_ruby_that_declares_no_class_of_its_own() {
         let facts = crate::extract::extract(rspec_file().text.as_bytes());
         assert_eq!(facts.parse_errors, 0);
-        assert!(is_core(&format!("{CORE_PATH}/{}", rspec_file().name)));
         assert!(is_rspec_stub(RSPEC_STUB));
-    }
-
-    #[test]
-    fn core_paths_are_recognised_and_nothing_else_is() {
-        assert!(is_core("<core>/String.rb"));
-        assert!(is_core("<core>"));
-        assert!(!is_core("<corelib>/x.rb"));
-        assert!(!is_core("lib/core.rb"));
     }
 }

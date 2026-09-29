@@ -95,14 +95,12 @@ fn file_uri(root: &Path, path: &str) -> Option<Url> {
 
 /// Where a site path lives on disk.
 pub(super) fn absolute_site(root: &Path, path: &str) -> Option<std::path::PathBuf> {
-    if let Some(file) = path
-        .strip_prefix(crate::tree::CORE_PATH)
-        .and_then(|rest| rest.strip_prefix('/'))
-    {
-        // Core is compiled into the binary; it is written out beside the
+    if crate::tree::is_core(path) {
+        // Core's stubs live in the store; they are written out beside the
         // database so that `require` and `Array#each` land on a readable
         // signature instead of answering nothing.
-        crate::store::core_dir().ok().map(|dir| dir.join(file))
+        let dir = crate::store::core_dir().ok()?;
+        crate::tree::core_file_of(&dir, path).map(|(dir, file)| dir.join(file))
     } else if path.starts_with('<') {
         None
     } else if Path::new(path).is_absolute() {

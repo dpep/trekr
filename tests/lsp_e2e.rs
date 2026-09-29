@@ -18,7 +18,35 @@ fn scratch(label: &str) -> (PathBuf, PathBuf) {
     }
     let _ = fs::remove_dir_all(db.with_extension("trees"));
     fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(".ruby-version"), "9.8.7\n").unwrap();
     (dir, db)
+}
+
+const SUITE: &str = "lsp";
+
+/// A home holding one Ruby, 9.8.7, installed as rvm installs one, with an
+/// empty stdlib and the rbs fixture as its signatures: what core is served
+/// from (DEC-240), whatever Ruby the machine running the suite has. Every
+/// scratch checkout names it.
+fn fixture_home() -> PathBuf {
+    static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| {
+        let home = std::env::temp_dir().join(format!("trekr-{SUITE}-ruby-{}", std::process::id()));
+        let lib = home.join(".rvm/rubies/ruby-9.8.7/lib/ruby");
+        fs::create_dir_all(lib.join("9.8.0")).unwrap();
+        fs::create_dir_all(lib.join("gems/9.8.0/specifications/default")).unwrap();
+        fs::create_dir_all(lib.join("gems/9.8.0/gems")).unwrap();
+        let rbs = lib.join("gems/9.8.0/gems/rbs-9.9.9");
+        if !rbs.exists() {
+            std::os::unix::fs::symlink(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rbs"),
+                rbs,
+            )
+            .unwrap();
+        }
+        home
+    })
+    .clone()
 }
 
 /// A command with git's repository-locating variables cleared. A gate run
@@ -33,7 +61,9 @@ fn isolated(program: &str) -> Command {
         .env_remove("GIT_INDEX_FILE")
         // Whoever runs the suite — an agent, CI — is not the caller the usage
         // counts are asserted against.
-        .env_remove("TREKR_USAGE");
+        .env_remove("TREKR_USAGE")
+        // Nor is its Ruby the one a checkout runs on: the fixture's is.
+        .env("HOME", fixture_home());
     for var in AGENT_VARS {
         command.env_remove(var);
     }
@@ -645,7 +675,7 @@ fn a_core_method_lands_on_a_readable_stub_rather_than_nothing() {
     let uri = locations[0]["uri"].as_str().unwrap();
     // A file named for the owner, so a peek list says whose method it is.
     assert!(
-        uri.ends_with("/core/Kernel.rb"),
+        uri.contains("/core/rbs-") && uri.ends_with("/Kernel.rb"),
         "lands in Kernel's stub: {uri}"
     );
     let path = uri.strip_prefix("file://").unwrap();

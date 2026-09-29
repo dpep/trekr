@@ -1,0 +1,9 @@
+module JSON
+  def self.generate: (untyped obj) -> String
+  def self.dump_default_options: () -> Hash[Symbol, untyped]
+end
+
+class Time
+  def self.json_create: (Hash[String, untyped] object) -> Time
+  def to_json: (*untyped) -> String
+end

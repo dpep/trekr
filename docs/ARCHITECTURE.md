@@ -231,10 +231,11 @@ in it; they stay demand-loaded from SQL.
 
 - **The key is everything the namespace is a function of**: each root's
   namespace key — its files' declarations and ancestry, not their methods
-  (DEC-194) — and path in tree order (checkout plus every gem), the schema
-  version, the format number, and the source text of the code that assembles
-  and encodes it — so a rebuilt binary never reads a namespace an older
-  assembly produced.
+  (DEC-194) — and path in tree order (checkout plus every gem), the key of
+  the signatures core is stubbed from (DEC-240), the schema version, the
+  format number, and the source text of the code that assembles and encodes
+  it — so a rebuilt binary never reads a namespace an older assembly
+  produced.
 - **Never written in place.** A snapshot is written to a temporary name,
   synced, and renamed over its final one; racing builders write identical
   bytes. A process that mapped a file keeps reading it after it is replaced or
@@ -373,32 +374,47 @@ Two things a naive implementation gets wrong here:
 Two of the three reasons a lookup failed were "the thing is not in the index".
 Both are now addressable without a Ruby toolchain.
 
-**Core** is [`src/tree/core.rb`](../src/tree/core.rb): ~3000 lines of ordinary
-Ruby with empty bodies, read at tree-build time by the same `extract()` a
-checkout goes through (DEC-015). The ancestry is what earns it — every class
-gets its implicit `< Object`, and a singleton chain continues into
-`Class → Module → Object`, which is what makes `puts`, `raise`, `Foo.new`, and
-a class body's `prepend` resolve at all.
+**Core** is the app's Ruby's own: the signatures of the `rbs` gem that Ruby
+carries — bundled with it since Ruby 3.0, or installed for it; the highest
+version with a `core/` — read when the Ruby's stdlib is indexed and written
+as ordinary Ruby with empty bodies, which the tree reads through the same
+`extract()` a checkout goes through (DEC-015, DEC-240). The ancestry is what
+earns it — every class gets its implicit `< Object`, and a singleton chain
+continues into `Class → Module → Object`, which is what makes `puts`,
+`raise`, `Foo.new`, and a class body's `prepend` resolve at all. A checkout
+with no Ruby, or on a Ruby with no rbs gem, has no core: a call into it is
+residue, and `--index` says why.
 
-Its parameters and return types come from Ruby 3.4's RBS through
-[`script/core_sigs.rb`](../script/core_sigs.rb), which rewrites the stub in
-place: parameter names from the method's rdoc call-seq (`downcase(*options)`),
-arity from RBS, and a Sorbet `sig` wherever the return is one class for the
-call's shape (DEC-077). A union, `bool`, an optional, an element type
-(`first` → `Elem`), `self`, and a class core subclasses (`Numeric#+` would make
-an Integer look up `to_s` in Numeric) get none. 358 of 785 methods carry one.
+`src/rbs/` reads RBS by hand (`parse.rs`): declarations and their ancestry,
+and each method's overloads down to its parameters' shape and the one type
+it returns; a member it cannot read is skipped, not the file, so an rbs a
+version newer or older than the reader still serves. Names resolve through
+the scopes they are written in, generics are erased, RBS's unnamed modules
+(`Random::Formatter`'s methods) are their includer's, and an alias takes the
+method it names. The stubs keep the rules the checked-in generator had:
+parameter names from the method's rdoc call-seq (`downcase(*options)`), arity
+from RBS, and a Sorbet `sig` wherever the return is one class for the call's
+shape (DEC-077). A union, `bool`, an optional, an element type (`first` →
+`Elem`), `self`, a module, `Class`, and a class RBS subclasses (`Numeric#+`
+would make an Integer look up `to_s` in Numeric) get none; returns are
+written from the top (`::String`), since a stub nests its owners.
 
-**Served one file per owner** (DEC-078). `src/tree/corelib.rs` cuts `core.rb`
-at its top-level `class`/`module` blocks and each is extracted as its own
-file, so a core site is `<core>/String.rb` at a line of that file. When a
-location has to be opened — by the editor, or in a CLI answer, where the site
-becomes `path: "String.rb"` under `root: <db dir>/core` — the files are
-written beside the database —
-`core/String.rb` next to `trekr.db`, rewritten only when they differ — and an
-editor's peek list reads `String.rb  def downcase(*options)` rather than two
-identical `core.rb  def downcase(*args); end`. Each `def` is multi-line so its first line
-is the signature. Code outside a block (the top-level constants) goes to
-`Object.rb`; a class is declared once, since one file cannot hold two blocks.
+**Served one file per owner** (DEC-078). The stubs are stored with the
+stdlib's checkout (`rbs`, `rbs_use`), one row per Ruby and rbs gem, and
+`src/tree/corelib.rs` cuts them at their top-level `class`/`module` blocks,
+each extracted as its own file: a core site is
+`<core>/rbs-3.8.0-<key>/String.rb` at a line of that file, a directory per
+Ruby's signatures so two Rubies' `String.rb` never collide. When a location
+has to be opened — by the editor, or in a CLI answer, where the site becomes
+`path: "String.rb"` under `root: <db dir>/core/rbs-3.8.0-<key>` — the files
+are written beside the database, rewritten only when they differ, and an
+editor's peek list reads `String.rb  def downcase(*options)`. Each `def` is
+multi-line so its first line is the signature. Code outside a block (the
+top-level constants) goes to `Object.rb`; a class is declared once, since one
+file cannot hold two blocks. A namespace is assembled from core's classes,
+mixins and constants alone — each file with its `def`s blanked, lines kept —
+and core's methods are cut out one `def` at a time and extracted when their
+name is first asked, as the index's are (`corelib::cut`, DEC-220).
 
 **RSpec's stub** is [`src/tree/rspec.rb`](../src/tree/rspec.rb), served beside
 core as `RSpec.rb` and read only when the index declares
@@ -485,22 +501,29 @@ declares is never marked. And a stdlib method the core stub also writes
 (`Set#size`) takes the stub's return type while keeping the stdlib's
 location (DEC-182).
 
-What the stdlib's source cannot say comes from the `rbs` gem's signatures
-for it, generated by [`script/stdlib_sigs.rb`](../script/stdlib_sigs.rb)
-into two checked-in stubs, and read only when the checkout's stdlib is
-indexed (DEC-220). `src/tree/stdlib.rb` declares the compiled half —
-`Pathname#read`, `Digest::Class.hexdigest`, and every class no Ruby file
-declares (`Digest::SHA256`) — served one file per top-level owner as
-`<core>/stdlib/Pathname.rb`; its methods are declarations (`defined_via:
-rbs`) and sit before the index's, so a reopening answers with its own.
-`src/tree/stdlib_sigs.rb` is never a location: it lends each Ruby method RBS
-types its `sig`, as the core stub does `Set`'s. Both follow `core_sigs.rb`'s
-rules, and the generator asks the Ruby itself (without rubygems) which
-methods exist, who owns them and which are compiled. A stub method counts
-only on an owner the tree knows, so another Ruby missing a library gains
-nothing from it, and a stub class only where no Ruby file declares it. Each
-`def` is cut out of the stub by `corelib::cut` and extracted when its name
-is first asked, as the index's are.
+What the stdlib's source cannot say comes from the same rbs gem's
+signatures for the libraries the stdlib has — an rbs library whose file
+`require` loads is indexed — written with core's at index time into two more
+stubs, read only when the checkout's stdlib is indexed (DEC-220, DEC-240).
+The *stdlib* stub declares the compiled half — `Pathname#read`,
+`Digest::Class.hexdigest`, and every class no Ruby file declares
+(`Digest::SHA256`) — served one file per top-level owner as
+`<core>/<rbs>/stdlib/Pathname.rb`; its methods are declarations
+(`defined_via: rbs`) and sit before the index's, so a reopening answers with
+its own. The *sigs* stub is never a location: it lends each Ruby method RBS
+types its `sig`, as the core stub does `Set`'s.
+
+Which is which is inferred from the index's facts, with no Ruby run: a
+method the stdlib's Ruby defines lends; one it does not is compiled when its
+library has a file a compiled extension backs (DEC-181), unless a file the
+index leaves out defines it with `def` (`json/add/`'s `Time#to_json`), or a
+Ruby maker on its class spells its shape (`Ripper::SexpBuilder`'s `on_*`).
+A method of a library with no extension, which its Ruby does not define, is
+made at runtime or not at all, and gets nothing. A stub class is written
+only where no Ruby file declares it and its library compiles, and a stub
+method counts only on an owner the tree knows, so another Ruby missing a
+library gains nothing from it. Owners are read from a tree of the stdlib
+alone (`Tree::alone`), so `class << Time` inside `class Time` is `Time`'s.
 
 The layering is core → stdlib → gems → checkout, so a gem may reopen core
 and the stdlib and the checkout may reopen a gem, which is what Rails
@@ -1422,9 +1445,16 @@ Deliberate, and cheap to close when they earn it:
 - A `define_method` or `class_eval` string looped over a list another file
   assigns names nothing: its scope is marked (DEC-130), so a missing name
   there is residue, and the string's calls are still read (DEC-132).
-- A chain through a core method is typed from Ruby 3.4's RBS. A subclass that
-  overrides the method with another return type (ActiveSupport's `SafeBuffer`
-  is a String) is read as the core class.
+- A chain through a core method is typed from the Ruby's own RBS — the
+  highest rbs gem it carries, which may describe a newer Ruby. A subclass
+  that overrides the method with another return type (ActiveSupport's
+  `SafeBuffer` is a String) is read as the core class.
+- Without a Ruby, or on one with no rbs gem, nothing is known of core
+  (DEC-240).
+- Which stdlib methods are compiled is inferred, not asked: a method RBS
+  describes that this Ruby lacks (`OpenSSL::Engine` where OpenSSL has none),
+  or that Ruby makes at runtime where no maker spells its shape (Ripper's
+  `on_*`), is declared by the stub (DEC-240).
 - A `super` that lands in core is as right as `src/tree/core.rb` is complete:
   a core class that defines the name without the stub declaring it sends the
   lookup further up the chain.

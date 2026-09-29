@@ -663,15 +663,14 @@ impl Rooting {
 }
 
 /// A Ruby core site as a file that exists: the stubs are written beside the
-/// store (DEC-078), so `<core>/String.rb` becomes `String.rb` under that
-/// directory, as it does for the editor. `None` for any other path, or when
-/// the files cannot be written, which leaves the site rootless.
+/// store (DEC-078), so `<core>/rbs-3.8.0-…/String.rb` becomes `String.rb`
+/// under that Ruby's directory there, as it does for the editor. `None` for
+/// any other path, or when the files cannot be written, which leaves the
+/// site rootless.
 fn core_file(path: &str) -> Option<(String, String)> {
-    let file = path
-        .strip_prefix(crate::tree::CORE_PATH)?
-        .strip_prefix('/')?;
     let dir = crate::store::core_dir().ok()?;
-    Some((dir.to_string_lossy().into_owned(), file.to_string()))
+    let (dir, file) = crate::tree::core_file_of(&dir, path)?;
+    Some((dir.to_string_lossy().into_owned(), file))
 }
 
 /// Every `path` in an answer made relative to its checkout, with `root`

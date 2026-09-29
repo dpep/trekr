@@ -1,0 +1,6 @@
+# A receiver named after a class is that class unless the enclosing scope
+# answers the call too. Core read from RBS gives every object Kernel's
+# module functions — `autoload?` among them, private — and a private method
+# is no reading of `cref.autoload?`: an explicit receiver cannot call it
+# (DEC-240).
+def app.rb:8:10 owner=Cref via=receiver_name

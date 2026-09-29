@@ -1,0 +1,3867 @@
+# rbs 3.8.0's core signatures, trimmed to what the tests reach for: the
+# classes and method names trekr's hand-written core stub once had, each
+# method's call-seq kept of its comment. A test fixture, not a stub.
+
+class Array[unchecked out Elem] < Object
+  include Enumerable[Elem]
+  # <!--
+  #   - Array.new -> new_empty_array
+  #   - Array.new(array) -> new_array
+  #   - Array.new(size, default_value = nil) -> new_array
+  #   - Array.new(size = 0) {|index| ... } -> new_array
+  # -->
+  def initialize: () -> void
+                | (::Array[Elem] ary) -> void
+                | (int size, ?Elem val) -> void
+                | (int size) { (::Integer index) -> Elem } -> void
+  # <!--
+  #   - [](*args)
+  # -->
+  def self.[]: [U] (*U) -> ::Array[U]
+  # <!--
+  #   - self & other_array -> new_array
+  # -->
+  def &: (::Array[untyped] | _ToAry[untyped]) -> ::Array[Elem]
+  # <!--
+  #   - self * n -> new_array
+  #   - self * string_separator -> new_string
+  # -->
+  def *: (string str) -> ::String
+       | (int int) -> ::Array[Elem]
+  # <!--
+  #   - self + other_array -> new_array
+  # -->
+  def +: [U] (_ToAry[U]) -> ::Array[Elem | U]
+  # <!--
+  #   - self - other_array -> new_array
+  # -->
+  def -: (_ToAry[untyped]) -> ::Array[Elem]
+  # <!--
+  #   - self << object -> self
+  # -->
+  def <<: (Elem) -> self
+  # <!--
+  #   - self[index] -> object or nil
+  #   - self[start, length] -> object or nil
+  #   - self[range] -> object or nil
+  #   - self[aseq] -> object or nil
+  #   - slice(index) -> object or nil
+  #   - slice(start, length) -> object or nil
+  #   - slice(range) -> object or nil
+  #   - slice(aseq) -> object or nil
+  # -->
+  def []: %a{implicitly-returns-nil} (int index) -> Elem
+        | (int start, int length) -> ::Array[Elem]?
+        | (::Range[::Integer?] range) -> ::Array[Elem]?
+  # <!--
+  #   - self[index] = object -> object
+  #   - self[start, length] = object -> object
+  #   - self[range] = object -> object
+  # -->
+  def []=: (int index, Elem obj) -> Elem
+         | (int start, int length, Elem obj) -> Elem
+         | (int start, int length, ::Array[Elem]) -> ::Array[Elem]
+         | (int start, int length, nil) -> nil
+         | (::Range[::Integer?], Elem obj) -> Elem
+         | (::Range[::Integer?], ::Array[Elem]) -> ::Array[Elem]
+         | (::Range[::Integer?], nil) -> nil
+  alias append push
+  # <!--
+  #   - assoc(object) -> found_array or nil
+  # -->
+  def assoc: (untyped) -> ::Array[untyped]?
+  # <!--
+  #   - bsearch {|element| ... } -> found_element or nil
+  #   - bsearch -> new_enumerator
+  # -->
+  def bsearch: () -> ::Enumerator[Elem, Elem?]
+             | () { (Elem) -> (true | false) } -> Elem?
+             | () { (Elem) -> ::Integer } -> Elem?
+  # <!--
+  #   - clear -> self
+  # -->
+  def clear: () -> self
+  # <!--
+  #   - collect! {|element| ... } -> new_array
+  #   - collect! -> new_enumerator
+  #   - map! {|element| ... } -> new_array
+  #   - map! -> new_enumerator
+  # -->
+  def collect!: () { (Elem item) -> Elem } -> self
+              | () -> ::Enumerator[Elem, self]
+  # <!--
+  #   - combination(count) {|element| ... } -> self
+  #   - combination(count) -> new_enumerator
+  # -->
+  def combination: (int n) { (::Array[Elem]) -> void } -> self
+                 | (int n) -> ::Enumerator[::Array[Elem], self]
+  # <!--
+  #   - compact -> new_array
+  # -->
+  def compact: () -> ::Array[Elem]
+  # <!--
+  #   - compact! -> self or nil
+  # -->
+  def compact!: () -> self?
+  # <!--
+  #   - concat(*other_arrays) -> self
+  # -->
+  def concat: (*::Array[Elem] arrays) -> self
+  # <!--
+  #   - delete(object) -> last_removed_object
+  #   - delete(object) {|element| ... } -> last_removed_object or block_return
+  # -->
+  def delete: (Elem obj) -> Elem?
+            | [S, T] (S obj) { (S) -> T } -> (Elem | T)
+  # <!--
+  #   - delete_at(index) -> removed_object or nil
+  # -->
+  def delete_at: %a{implicitly-returns-nil} (int index) -> Elem
+  # <!--
+  #   - delete_if {|element| ... } -> self
+  #   - delete_if -> new_numerator
+  # -->
+  def delete_if: () { (Elem item) -> boolish } -> self
+               | () -> ::Enumerator[Elem, self]
+  # <!--
+  #   - array.dig(index, *identifiers) -> object
+  # -->
+  def dig: (int idx) -> Elem?
+         | (int idx, untyped, *untyped) -> untyped
+  # <!--
+  #   - each {|element| ... } -> self
+  #   - each -> new_enumerator
+  # -->
+  def each: () -> ::Enumerator[Elem, self]
+          | () { (Elem item) -> void } -> self
+  # <!--
+  #   - each_index {|index| ... } -> self
+  #   - each_index -> new_enumerator
+  # -->
+  def each_index: () { (::Integer index) -> void } -> self
+                | () -> ::Enumerator[::Integer, self]
+  # <!--
+  #   - array.empty?  -> true or false
+  # -->
+  def empty?: () -> bool
+  # <!--
+  #   - fill(object, start = nil, count = nil) -> new_array
+  #   - fill(object, range) -> new_array
+  #   - fill(start = nil, count = nil) {|element| ... } -> new_array
+  #   - fill(range) {|element| ... } -> new_array
+  # -->
+  def fill: (Elem obj) -> self
+          | (Elem obj, int? start, ?int? length) -> self
+          | (Elem obj, ::Range[::Integer] range) -> self
+          | (?int? start, ?int? length) { (::Integer index) -> Elem } -> self
+          | (::Range[::Integer] range) { (::Integer index) -> Elem } -> self
+  # <!--
+  #   - first -> object or nil
+  #   - first(count) -> new_array
+  # -->
+  def first: %a{implicitly-returns-nil} () -> Elem
+           | (int n) -> ::Array[Elem]
+  # <!--
+  #   - flatten(depth = nil) -> new_array
+  # -->
+  def flatten: (?int level) -> ::Array[untyped]
+  # <!--
+  #   - flatten!(depth = nil) -> self or nil
+  # -->
+  def flatten!: (?int level) -> self?
+  # <!--
+  #   - hash -> integer
+  # -->
+  def hash: () -> ::Integer
+  alias index find_index
+  # <!--
+  #   - insert(index, *objects) -> self
+  # -->
+  def insert: (int index, *Elem obj) -> self
+  # <!--
+  #   - array.join(separator = $,) -> new_string
+  # -->
+  def join: (?string separator) -> String
+  # <!--
+  #   - last  -> last_object or nil
+  #   - last(count) -> new_array
+  # -->
+  def last: %a{implicitly-returns-nil} () -> Elem
+          | (int n) -> ::Array[Elem]
+  # <!--
+  #   - length -> integer
+  #   - size -> integer
+  # -->
+  def length: () -> ::Integer
+  alias map! collect!
+  # <!--
+  #   - pack(template, buffer: nil) -> string
+  # -->
+  def pack: (string fmt, ?buffer: String?) -> String
+  # <!--
+  #   - permutation(count = self.size) {|permutation| ... } -> self
+  #   - permutation(count = self.size) -> new_enumerator
+  # -->
+  def permutation: (?int n) -> ::Enumerator[::Array[Elem], ::Array[Elem]]
+                 | (?int n) { (::Array[Elem] p) -> void } -> ::Array[Elem]
+  # <!--
+  #   - pop -> object or nil
+  #   - pop(count) -> new_array
+  # -->
+  def pop: () -> Elem?
+         | (int n) -> ::Array[Elem]
+  alias prepend unshift
+  # <!--
+  #   - product(*other_arrays) -> new_array
+  #   - product(*other_arrays) {|combination| ... } -> self
+  # -->
+  def product: () -> ::Array[[ Elem ]]
+             | [X] (::Array[X] other_ary) -> ::Array[[ Elem, X ]]
+             | [X, Y] (::Array[X] other_ary1, ::Array[Y] other_ary2) -> ::Array[[ Elem, X, Y ]]
+             | [U] (*::Array[U] other_arys) -> ::Array[::Array[Elem | U]]
+  # <!--
+  #   - push(*objects) -> self
+  #   - append(*objects) -> self
+  # -->
+  def push: (*Elem obj) -> self
+  # <!--
+  #   - rassoc(object) -> found_array or nil
+  # -->
+  alias rassoc assoc
+  # <!--
+  #   - reject! {|element| ... } -> self or nil
+  #   - reject! -> new_enumerator
+  # -->
+  def reject!: () { (Elem item) -> boolish } -> self?
+             | () -> ::Enumerator[Elem, self?]
+  def replace: (::Array[Elem]) -> self
+  # <!--
+  #   - reverse -> new_array
+  # -->
+  def reverse: () -> ::Array[Elem]
+  # <!--
+  #   - reverse! -> self
+  # -->
+  def reverse!: () -> ::Array[Elem]
+  # <!--
+  #   - rindex(object) -> integer or nil
+  #   - rindex {|element| ... } -> integer or nil
+  #   - rindex -> new_enumerator
+  # -->
+  def rindex: (untyped obj) -> ::Integer?
+            | () { (Elem item) -> boolish } -> ::Integer?
+            | () -> ::Enumerator[Elem, ::Integer?]
+  # <!--
+  #   - rotate(count = 1) -> new_array
+  # -->
+  def rotate: (?int count) -> ::Array[Elem]
+  # <!--
+  #   - sample(random: Random) -> object
+  #   - sample(count, random: Random) -> new_ary
+  # -->
+  def sample: %a{implicitly-returns-nil} (?random: _Rand rng) -> Elem
+            | (int n, ?random: _Rand rng) -> ::Array[Elem]
+  # <!--
+  #   - select! {|element| ... } -> self or nil
+  #   - select! -> new_enumerator
+  #   - filter! {|element| ... } -> self or nil
+  #   - filter! -> new_enumerator
+  # -->
+  def select!: () { (Elem item) -> boolish } -> self?
+             | () -> ::Enumerator[Elem, self?]
+  # <!--
+  #   - shift -> object or nil
+  #   - shift(count) -> new_array or nil
+  # -->
+  def shift: %a{implicitly-returns-nil} () -> Elem
+           | (int n) -> ::Array[Elem]
+  # <!--
+  #   - shuffle(random: Random) -> new_array
+  # -->
+  def shuffle: (?random: _Rand rng) -> ::Array[Elem]
+  alias size length
+  def slice: %a{implicitly-returns-nil} (int index) -> Elem
+           | (int start, int length) -> ::Array[Elem]?
+           | (::Range[::Integer] range) -> ::Array[Elem]?
+  # <!--
+  #   - slice!(index) -> object or nil
+  #   - slice!(start, length) -> new_array or nil
+  #   - slice!(range) -> new_array or nil
+  # -->
+  def slice!: %a{implicitly-returns-nil} (int index) -> Elem
+            | (int start, int length) -> ::Array[Elem]?
+            | (::Range[::Integer] range) -> ::Array[Elem]?
+  # <!--
+  #   - sort! -> self
+  #   - sort! {|a, b| ... } -> self
+  # -->
+  def sort!: () -> self
+           | () { (Elem a, Elem b) -> ::Integer } -> self
+  # <!--
+  #   - sort_by! {|element| ... } -> self
+  #   - sort_by! -> new_enumerator
+  # -->
+  def sort_by!: [U] () { (Elem obj) -> U } -> ::Array[Elem]
+              | () -> ::Enumerator[Elem, ::Array[Elem]]
+  # <!--
+  #   - to_a -> self or new_array
+  # -->
+  def to_a: () -> ::Array[Elem]
+  # <!--
+  #   - array.to_ary -> self
+  # -->
+  def to_ary: () -> self
+  # <!--
+  #   - to_h -> new_hash
+  #   - to_h {|element| ... } -> new_hash
+  # -->
+  def to_h: () -> Hash[untyped, untyped]
+          | [T, S] () { (Elem) -> [ T, S ] } -> Hash[T, S]
+  # <!--
+  #   - transpose -> new_array
+  # -->
+  def transpose: () -> ::Array[::Array[untyped]]
+  # <!--
+  #   - uniq -> new_array
+  #   - uniq {|element| ... } -> new_array
+  # -->
+  def uniq: () -> ::Array[Elem]
+          | () { (Elem item) -> untyped } -> ::Array[Elem]
+  # <!--
+  #   - uniq! -> self or nil
+  #   - uniq! {|element| ... } -> self or nil
+  # -->
+  def uniq!: () -> self?
+           | () { (Elem) -> untyped } -> self?
+  # <!--
+  #   - unshift(*objects) -> self
+  #   - prepend(*objects) -> self
+  # -->
+  def unshift: (*Elem obj) -> self
+  # <!--
+  #   - values_at(*specifiers) -> new_array
+  # -->
+  def values_at: (*int | ::Range[::Integer] selector) -> ::Array[Elem?]
+  # <!--
+  #   - self | other_array -> new_array
+  # -->
+  def |: [T] (::Array[T] other_ary) -> ::Array[Elem | T]
+  private
+end
+class BasicObject
+  # <!--
+  #   - !obj    -> true or false
+  # -->
+  def !: () -> bool
+  # <!--
+  #   - obj != other        -> true or false
+  # -->
+  def !=: (untyped other) -> bool
+  # <!--
+  #   - obj == other        -> true or false
+  #   - obj.equal?(other)   -> true or false
+  #   - obj.eql?(other)     -> true or false
+  # -->
+  def ==: (untyped other) -> bool
+  # <!--
+  #   - obj.__id__       -> integer
+  #   - obj.object_id    -> integer
+  # -->
+  def __id__: () -> Integer
+  # <!--
+  #   - foo.send(symbol [, args...])       -> obj
+  #   - foo.__send__(symbol [, args...])   -> obj
+  #   - foo.send(string [, args...])       -> obj
+  #   - foo.__send__(string [, args...])   -> obj
+  # -->
+  def __send__: (interned name, *untyped, **untyped) ?{ (?) -> untyped } -> untyped
+  alias equal? ==
+  # <!--
+  #   - obj.instance_eval(string [, filename [, lineno]] )   -> obj
+  #   - obj.instance_eval {|obj| block }                     -> obj
+  # -->
+  def instance_eval: (string code, ?string filename, ?int lineno) -> untyped
+                   | [U] () { (self) [self: self] -> U } -> U
+  # <!--
+  #   - obj.instance_exec(arg...) {|var...| block }                       -> obj
+  # -->
+  def instance_exec: [U] (*untyped, **untyped) { (?) [self: self] -> U } -> U
+  # <!--
+  #   - BasicObject.new
+  # -->
+  def initialize: () -> void
+  private
+  # <!--
+  #   - obj.method_missing(symbol [, *args] )   -> result
+  # -->
+  def method_missing: (Symbol, *untyped, **untyped) ?{ (?) -> untyped } -> untyped
+  # <!--
+  #   - singleton_method_added(symbol)
+  # -->
+  def singleton_method_added: (Symbol name) -> nil
+end
+class Binding
+  # <!--
+  #   - binding.eval(string [, filename [,lineno]])  -> obj
+  # -->
+  def eval: (string src, ?string filename, ?int lineno) -> untyped
+  # <!--
+  #   - binding.local_variable_get(symbol) -> obj
+  # -->
+  def local_variable_get: (interned varname) -> untyped
+  # <!--
+  #   - binding.local_variable_set(symbol, obj) -> obj
+  # -->
+  def local_variable_set: [U] (interned varname, U obj) -> U
+  # <!--
+  #   - binding.local_variables -> Array
+  # -->
+  def local_variables: () -> Array[Symbol]
+  # <!--
+  #   - binding.receiver    -> object
+  # -->
+  def receiver: () -> untyped
+end
+class Class < Module
+  # <!--
+  #   - Class.new(super_class=Object)               -> a_class
+  #   - Class.new(super_class=Object) { |mod| ... } -> a_class
+  # -->
+  def initialize: (?Class superclass) ?{ (Class newclass) -> void } -> void
+  # <!--
+  #   - class.allocate()   ->   obj
+  # -->
+  def allocate: () -> untyped
+  # <!--
+  #   - inherited(subclass)
+  # -->
+  def inherited: (Class arg0) -> untyped
+  # <!--
+  #   - class.new(args, ...)    ->  obj
+  # -->
+  def new: () -> untyped
+  # <!--
+  #   - class.superclass -> a_super_class or nil
+  # -->
+  def superclass: () -> Class?
+end
+module Comparable : _WithSpaceshipOperator
+  # <!--
+  #   - obj < other    -> true or false
+  # -->
+  def <: (untyped other) -> bool
+  # <!--
+  #   - obj <= other    -> true or false
+  # -->
+  def <=: (untyped other) -> bool
+  # <!--
+  #   - obj == other    -> true or false
+  # -->
+  def ==: (untyped other) -> bool
+  # <!--
+  #   - obj > other    -> true or false
+  # -->
+  def >: (untyped other) -> bool
+  # <!--
+  #   - obj >= other    -> true or false
+  # -->
+  def >=: (untyped other) -> bool
+  # <!--
+  #   - obj.between?(min, max)    -> true or false
+  # -->
+  def between?: (untyped min, untyped max) -> bool
+  # <!--
+  #   - obj.clamp(min, max) ->  obj
+  #   - obj.clamp(range)    ->  obj
+  # -->
+  def clamp: [A, B] (A min, B max) -> (self | A | B)
+           | [A] (Range[A]) -> (self | A)
+end
+class Complex < Numeric
+end
+ARGV: Array[String]
+RUBY_ENGINE: String
+RUBY_PLATFORM: String
+RUBY_VERSION: String
+class Data
+  # <!--
+  #   - define(*symbols) -> class
+  # -->
+  def self.define: [KLASS < _DataClass] (*Symbol) ?{ (KLASS) [self: KLASS] -> void } -> KLASS
+  # <!--
+  #   - deconstruct     -> array
+  # -->
+  def deconstruct: () -> Array[untyped]
+  # <!--
+  #   - deconstruct_keys(array_of_names_or_nil) -> hash
+  # -->
+  def deconstruct_keys: (?Array[Symbol]?) -> Hash[Symbol, untyped]
+  # <!--
+  #   - members -> array_of_symbols
+  # -->
+  def members: () -> Array[Symbol]
+  # <!--
+  #   - to_h -> hash
+  #   - to_h {|name, value| ... } -> hash
+  # -->
+  def to_h: () -> Hash[Symbol, untyped]
+  # <!--
+  #   - with(**kwargs) -> instance
+  # -->
+  def with: (**untyped) -> instance
+end
+class Dir
+  include Enumerable[String]
+  # <!--
+  #   - Dir.new(dirpath) -> dir
+  #   - Dir.new(dirpath, encoding: nil) -> dir
+  # -->
+  def initialize: (path dir, ?encoding: encoding?) -> void
+  # <!--
+  #   - Dir[*patterns, base: nil, sort: true] -> array
+  # -->
+  def self.[]: (*path patterns, ?base: path?, ?sort: bool) -> Array[String]
+  # <!--
+  #   - Dir.chdir(new_dirpath) -> 0
+  #   - Dir.chdir -> 0
+  #   - Dir.chdir(new_dirpath) {|new_dirpath| ... } -> object
+  #   - Dir.chdir {|cur_dirpath| ... } -> object
+  # -->
+  def self.chdir: (?path dir) -> 0
+                | [U] (?path dir) { (String dir) -> U } -> U
+  # <!--
+  #   - Dir.children(dirpath) -> array
+  #   - Dir.children(dirpath, encoding: 'UTF-8') -> array
+  # -->
+  def self.children: (path dirname, ?encoding: encoding?) -> Array[String]
+  # <!--
+  #   - Dir.each_child(dirpath) {|entry_name| ... } -> nil
+  #   - Dir.each_child(dirpath, encoding: 'UTF-8') {|entry_name| ... }  -> nil
+  # -->
+  def self.each_child: (path dirname, ?encoding: encoding?) -> Enumerator[String, nil]
+                     | (path dirname, ?encoding: encoding?) { (String filename) -> void } -> nil
+  # <!--
+  #   - Dir.entries(dirname, encoding: 'UTF-8') -> array
+  # -->
+  def self.entries: (path dirname, ?encoding: encoding?) -> Array[String]
+  # <!--
+  #   - Dir.exist?(dirpath) ->  true or false
+  # -->
+  def self.exist?: (path | io file_name) -> bool
+  # <!--
+  #   - Dir.glob(*patterns, flags: 0, base: nil, sort: true) -> array
+  #   - Dir.glob(*patterns, flags: 0, base: nil, sort: true) {|entry_name| ... } -> nil
+  # -->
+  def self.glob: (array[path] | path pattern, ?int flags, ?base: path?, ?sort: bool) -> Array[String]
+               | (array[path] | path pattern, ?int flags, ?base: path?, ?sort: bool) { (String pathname) -> void } -> nil
+  # <!--
+  #   - Dir.home(user_name = nil) -> dirpath
+  # -->
+  def self.home: (?string? user) -> String
+  # <!--
+  #   - Dir.mkdir(dirpath, permissions = 0775) -> 0
+  # -->
+  def self.mkdir: (path dirname, ?int permissions) -> 0
+  # <!--
+  #   - Dir.pwd -> string
+  # -->
+  alias self.pwd self.getwd
+  # <!--
+  #   - Dir.rmdir(dirpath) -> 0
+  # -->
+  alias self.rmdir self.delete
+  # <!--
+  #   - chdir -> 0
+  #   - chdir { ... } -> object
+  # -->
+  def chdir: () -> Integer
+           | [T] () { () -> T } -> T
+  # <!--
+  #   - children -> array
+  # -->
+  def children: () -> Array[String]
+  # <!--
+  #   - each_child {|entry_name| ... } -> self
+  # -->
+  def each_child: () { (String) -> void } -> self
+                | () -> Enumerator[String, self]
+end
+class Encoding
+  # <!--
+  #   - Encoding.default_external -> enc
+  # -->
+  def self.default_external: () -> Encoding
+  # <!--
+  #   - Encoding.default_internal -> enc
+  # -->
+  def self.default_internal: () -> Encoding?
+  def name: () -> String
+end
+module Enumerable[unchecked out Elem] : _Each[Elem]
+  # <!--
+  #   - all?                  -> true or false
+  #   - all?(pattern)         -> true or false
+  #   - all? {|element| ... } -> true or false
+  # -->
+  def all?: () -> bool
+          | () { (Elem) -> boolish } -> bool
+  # <!--
+  #   - any?                  -> true or false
+  #   - any?(pattern)         -> true or false
+  #   - any? {|element| ... } -> true or false
+  # -->
+  def any?: () -> bool
+          | () { (Elem) -> boolish } -> bool
+  # <!--
+  #   - map {|element| ... } -> array
+  #   - map -> enumerator
+  # -->
+  def collect: [U] () { (Elem arg0) -> U } -> ::Array[U]
+             | () -> ::Enumerator[Elem, ::Array[untyped]]
+  def collect_concat: [U] () { (Elem) -> (::Array[U] | U) } -> ::Array[U]
+                    | () -> ::Enumerator[Elem, ::Array[untyped]]
+  # <!--
+  #   - count -> integer
+  #   - count(object) -> integer
+  #   - count {|element| ... } -> integer
+  # -->
+  def count: () -> Integer
+           | (Elem) -> Integer
+           | () { (Elem) -> boolish } -> Integer
+  # <!--
+  #   - cycle(n = nil) {|element| ...} ->  nil
+  #   - cycle(n = nil)                 ->  enumerator
+  # -->
+  def cycle: (?Integer n) { (Elem arg0) -> untyped } -> NilClass
+           | (?Integer n) -> ::Enumerator[Elem, NilClass]
+  def detect: (?Proc ifnone) { (Elem) -> boolish } -> Elem?
+            | (?Proc ifnone) -> ::Enumerator[Elem, Elem?]
+  # <!--
+  #   - drop(n) -> array
+  # -->
+  def drop: (Integer n) -> ::Array[Elem]
+  # <!--
+  #   - drop_while {|element| ... } -> array
+  #   - drop_while                  -> enumerator
+  # -->
+  def drop_while: () { (Elem) -> boolish } -> ::Array[Elem]
+                | () -> ::Enumerator[Elem, ::Array[Elem]]
+  # <!--
+  #   - each_cons(n) { ... } ->  self
+  #   - each_cons(n)         ->  enumerator
+  # -->
+  def each_cons: (Integer n) { (::Array[Elem]) -> void } -> self
+               | (Integer n) -> ::Enumerator[::Array[Elem], self]
+  # <!--
+  #   - each_with_index(*args) {|element, i| ..... } -> self
+  #   - each_with_index(*args)                       -> enumerator
+  # -->
+  def each_with_index: () { (Elem, Integer index) -> untyped } -> self
+                     | () -> ::Enumerator[[ Elem, Integer ], self]
+  # <!--
+  #   - each_with_object(object) { |(*args), memo_object| ... }  ->  object
+  #   - each_with_object(object)                                 ->  enumerator
+  # -->
+  def each_with_object: [U] (U obj) { (Elem, U obj) -> untyped } -> U
+                      | [U] (U obj) -> ::Enumerator[[ Elem, U ], U]
+  def entries: () -> ::Array[Elem]
+  # <!--
+  #   - select {|element| ... } -> array
+  #   - select -> enumerator
+  # -->
+  def find_all: () { (Elem) -> boolish } -> ::Array[Elem]
+              | () -> ::Enumerator[Elem, ::Array[Elem]]
+  alias select find_all
+  alias filter find_all
+  # <!--
+  #   - find_index(object) -> integer or nil
+  #   - find_index {|element| ... } -> integer or nil
+  #   - find_index -> enumerator
+  # -->
+  def find_index: (untyped value) -> Integer?
+                | () { (Elem) -> boolish } -> Integer?
+                | () -> ::Enumerator[Elem, Integer?]
+  # <!--
+  #   - first    -> element or nil
+  #   - first(n) -> array
+  # -->
+  def first: () -> Elem?
+           | (_ToInt n) -> ::Array[Elem]
+  # <!--
+  #   - group_by {|element| ... } -> hash
+  #   - group_by                  -> enumerator
+  # -->
+  def group_by: [U] () { (Elem arg0) -> U } -> ::Hash[U, ::Array[Elem]]
+              | () -> ::Enumerator[Elem, ::Array[Elem]]
+  def include?: (Elem arg0) -> bool
+  # <!--
+  #   - inject(symbol)                -> object
+  #   - inject(initial_value, symbol) -> object
+  #   - inject {|memo, value| ... }   -> object
+  #   - inject(initial_value) {|memo, value| ... } -> object
+  # -->
+  def inject: (untyped init, Symbol method) -> untyped
+            | (Symbol method) -> untyped
+            | [A] (A initial) { (A, Elem) -> A } -> A
+            | () { (Elem, Elem) -> Elem } -> Elem
+  # <!--
+  #   - max                  -> element
+  #   - max(n)               -> array
+  #   - max {|a, b| ... }    -> element
+  #   - max(n) {|a, b| ... } -> array
+  # -->
+  def max: () -> Elem?
+         | () { (Elem arg0, Elem arg1) -> Integer } -> Elem?
+         | (Integer arg0) -> ::Array[Elem]
+         | (Integer arg0) { (Elem arg0, Elem arg1) -> Integer } -> ::Array[Elem]
+  # <!--
+  #   - max_by {|element| ... }    -> element
+  #   - max_by(n) {|element| ... } -> array
+  #   - max_by                     -> enumerator
+  #   - max_by(n)                  -> enumerator
+  # -->
+  def max_by: () -> ::Enumerator[Elem, Elem?]
+            | () { (Elem arg0) -> (Comparable | ::Array[untyped]) } -> Elem?
+            | (Integer arg0) -> ::Enumerator[Elem, ::Array[Elem]]
+            | (Integer arg0) { (Elem arg0) -> (Comparable | ::Array[untyped]) } -> ::Array[Elem]
+  # <!--
+  #   - min                  -> element
+  #   - min(n)               -> array
+  #   - min {|a, b| ... }    -> element
+  #   - min(n) {|a, b| ... } -> array
+  # -->
+  def min: () -> Elem?
+         | () { (Elem arg0, Elem arg1) -> Integer } -> Elem?
+         | (Integer arg0) -> ::Array[Elem]
+         | (Integer arg0) { (Elem arg0, Elem arg1) -> Integer } -> ::Array[Elem]
+  # <!--
+  #   - min_by {|element| ... }    -> element
+  #   - min_by(n) {|element| ... } -> array
+  #   - min_by                     -> enumerator
+  #   - min_by(n)                  -> enumerator
+  # -->
+  def min_by: () -> ::Enumerator[Elem, Elem?]
+            | () { (Elem arg0) -> (Comparable | ::Array[untyped]) } -> Elem?
+            | (Integer arg0) -> ::Enumerator[Elem, ::Array[Elem]]
+            | (Integer arg0) { (Elem arg0) -> (Comparable | ::Array[untyped]) } -> ::Array[Elem]
+  # <!--
+  #   - minmax               -> [minimum, maximum]
+  #   - minmax {|a, b| ... } -> [minimum, maximum]
+  # -->
+  def minmax: () -> [ Elem?, Elem? ]
+            | () { (Elem arg0, Elem arg1) -> Integer } -> [ Elem?, Elem? ]
+  # <!--
+  #   - none?                  -> true or false
+  #   - none?(pattern)         -> true or false
+  #   - none? {|element| ... } -> true or false
+  # -->
+  def none?: () -> bool
+           | () { (Elem) -> boolish } -> bool
+  # <!--
+  #   - one?                  -> true or false
+  #   - one?(pattern)         -> true or false
+  #   - one? {|element| ... } -> true or false
+  # -->
+  def one?: () -> bool
+          | () { (Elem) -> boolish } -> bool
+  # <!--
+  #   - partition {|element| ... } -> [true_array, false_array]
+  #   - partition -> enumerator
+  # -->
+  def partition: () { (Elem) -> boolish } -> [ ::Array[Elem], ::Array[Elem] ]
+               | () -> ::Enumerator[Elem, [ ::Array[Elem], ::Array[Elem] ]]
+  # <!--
+  #   - reject {|element| ... } -> array
+  #   - reject -> enumerator
+  # -->
+  def reject: () { (Elem) -> boolish } -> ::Array[Elem]
+            | () -> ::Enumerator[Elem, ::Array[Elem]]
+  # <!--
+  #   - reverse_each(*args) {|element| ... } ->  self
+  #   - reverse_each(*args)                  ->  enumerator
+  # -->
+  def reverse_each: () { (Elem arg0) -> untyped } -> void
+                  | () -> ::Enumerator[Elem]
+  # <!--
+  #   - sort               -> array
+  #   - sort {|a, b| ... } -> array
+  # -->
+  def sort: () -> ::Array[Elem]
+          | () { (Elem arg0, Elem arg1) -> Integer } -> ::Array[Elem]
+  # <!--
+  #   - sort_by {|element| ... } -> array
+  #   - sort_by                  -> enumerator
+  # -->
+  def sort_by: () { (Elem arg0) -> (Comparable | ::Array[untyped]) } -> ::Array[Elem]
+             | () -> ::Enumerator[Elem, ::Array[Elem]]
+  # <!--
+  #   - take(n) -> array
+  # -->
+  def take: (Integer n) -> ::Array[Elem]
+  # <!--
+  #   - take_while {|element| ... } -> array
+  #   - take_while                  -> enumerator
+  # -->
+  def take_while: () { (Elem) -> boolish } -> ::Array[Elem]
+                | () -> ::Enumerator[Elem, ::Array[Elem]]
+  # <!--
+  #   - to_h(*args) -> hash
+  #   - to_h(*args) {|element| ... }  -> hash
+  # -->
+  def to_h: () -> ::Hash[untyped, untyped]
+          | [T, U] () { (Elem) -> [ T, U ] } -> ::Hash[T, U]
+  # <!--
+  #   - each_slice(n) { ... }  ->  self
+  #   - each_slice(n)          ->  enumerator
+  # -->
+  def each_slice: (Integer n) { (::Array[Elem]) -> void } -> self
+                | (Integer n) -> ::Enumerator[::Array[Elem], self]
+  # <!--
+  #   - find(if_none_proc = nil) {|element| ... } -> object or nil
+  #   - find(if_none_proc = nil) -> enumerator
+  # -->
+  def find: () { (Elem) -> boolish } -> Elem?
+          | () -> ::Enumerator[Elem, Elem?]
+          | [T] (_NotFound[T] ifnone) { (Elem) -> boolish } -> (Elem | T)
+          | [T] (_NotFound[T] ifnone) -> ::Enumerator[Elem, Elem | T]
+  # <!--
+  #   - flat_map {|element| ... } -> array
+  #   - flat_map -> enumerator
+  # -->
+  def flat_map: [U] () { (Elem) -> (Array[U] | U) } -> Array[U]
+              | () -> ::Enumerator[Elem, Array[untyped]]
+  def map: [U] () { (Elem arg0) -> U } -> ::Array[U]
+         | () -> ::Enumerator[Elem, ::Array[untyped]]
+  # <!--
+  #   - include?(object) -> true or false
+  # -->
+  def member?: (Elem arg0) -> bool
+  alias reduce inject
+  # <!--
+  #   - to_a(*args) -> array
+  # -->
+  def to_a: () -> ::Array[Elem]
+  # <!--
+  #   - e.lazy -> lazy_enumerator
+  # -->
+  def lazy: () -> Enumerator::Lazy[Elem]
+  # <!--
+  #   - uniq                  -> array
+  #   - uniq {|element| ... } -> array
+  # -->
+  def uniq: () -> ::Array[Elem]
+          | () { (Elem item) -> untyped } -> ::Array[Elem]
+  # <!--
+  #   - sum(initial_value = 0)                  -> number
+  #   - sum(initial_value = 0) {|element| ... } -> object
+  # -->
+  def sum: () -> (Elem | Integer)
+         | [T] () { (Elem arg0) -> T } -> (Integer | T)
+         | [T] (?T arg0) -> (Elem | T)
+         | [U] (?U arg0) { (Elem arg0) -> U } -> U
+  # <!--
+  #   - filter_map {|element| ... } -> array
+  #   - filter_map -> enumerator
+  # -->
+  def filter_map: [U] () { (Elem elem) -> (nil | false | U) } -> ::Array[U]
+                | () -> ::Enumerator[Elem, ::Array[untyped]]
+  # <!--
+  #   - tally(hash = {}) -> hash
+  # -->
+  def tally: (?Hash[Elem, Integer] hash) -> ::Hash[Elem, Integer]
+  # <!--
+  #   - each_entry(*args) {|element| ... } -> self
+  #   - each_entry(*args)                  -> enumerator
+  # -->
+  def each_entry: () -> ::Enumerator[Elem, self]
+                | () { (Elem arg0) -> untyped } -> self
+  # <!--
+  #   - zip(*other_enums) -> array
+  #   - zip(*other_enums) {|array| ... } -> nil
+  # -->
+  def zip: [Elem2] (_Each[Elem2] enum) -> Array[[ Elem, Elem2? ]]
+         | (_Each[untyped], *_Each[untyped]) -> Array[Array[untyped]]
+         | [Elem2] (_Each[Elem2]) { ([ Elem, Elem2? ]) -> void } -> nil
+         | (_Each[untyped], *_Each[untyped]) { (Array[untyped]) -> void } -> nil
+  # <!--
+  #   - enum.chunk_while {|elt_before, elt_after| bool } -> an_enumerator
+  # -->
+  def chunk_while: () { (Elem elt_before, Elem elt_after) -> boolish } -> ::Enumerator[::Array[Elem]]
+  # <!--
+  #   - enum.slice_when {|elt_before, elt_after| bool } -> an_enumerator
+  # -->
+  def slice_when: () { (Elem elt_before, Elem elt_after) -> boolish } -> ::Enumerator[::Array[Elem]]
+end
+class Enumerator[unchecked out Elem, out Return = void] < Object
+  include Enumerable[Elem]
+  # <!--
+  #   - enum.each { |elm| block }                    -> obj
+  #   - enum.each                                    -> enum
+  #   - enum.each(*appending_args) { |elm| block }   -> obj
+  #   - enum.each(*appending_args)                   -> an_enumerator
+  # -->
+  def each: () { (Elem arg0) -> untyped } -> Return
+          | () -> self
+  # <!--
+  #   - Enumerator.new(size = nil) { |yielder| ... }
+  # -->
+  def initialize: (?Integer arg0) { (Enumerator::Yielder arg0) -> Return } -> void
+  # <!--
+  #   - e.next   -> object
+  # -->
+  def next: () -> Elem
+  # <!--
+  #   - e.peek   -> object
+  # -->
+  def peek: () -> Elem
+  # <!--
+  #   - e.rewind   -> e
+  # -->
+  def rewind: () -> self
+  # <!--
+  #   - e.size          -> int, Float::INFINITY or nil
+  # -->
+  def size: () -> (Integer | Float)?
+  # <!--
+  #   - e.with_index(offset = 0) {|(*args), idx| ... }
+  #   - e.with_index(offset = 0)
+  # -->
+  def with_index: (?Integer offset) { (Elem arg0, Integer arg1) -> untyped } -> Return
+                | (?Integer offset) -> ::Enumerator[[ Elem, Integer ], Return]
+  def with_object: [U] (U obj) { (Elem, U obj) -> untyped } -> U
+                 | [U] (U obj) -> ::Enumerator[[ Elem, U ], U]
+end
+class Enumerator::Lazy[out Elem, out Return = void] < Enumerator[Elem, Return]
+end
+class Enumerator::Yielder < Object
+  def <<: (untyped arg0) -> void
+  def yield: (*untyped arg0) -> void
+end
+class Enumerator[unchecked out Elem, out Return = void]
+end
+ENV: RBS::Unnamed::ENVClass
+module Errno
+  class EACCES < SystemCallError
+  end
+  class EADDRINUSE < SystemCallError
+  end
+  class EADDRNOTAVAIL < SystemCallError
+  end
+  class ECONNABORTED < SystemCallError
+  end
+  class ECONNREFUSED < SystemCallError
+  end
+  class ECONNRESET < SystemCallError
+  end
+  class EEXIST < SystemCallError
+  end
+  class EHOSTUNREACH < SystemCallError
+  end
+  class EINVAL < SystemCallError
+  end
+  class EISDIR < SystemCallError
+  end
+  class ENETUNREACH < SystemCallError
+  end
+  class ENOENT < SystemCallError
+  end
+  class ENOTCONN < SystemCallError
+  end
+  class ENOTDIR < SystemCallError
+  end
+  class EPIPE < SystemCallError
+  end
+  class ETIMEDOUT < SystemCallError
+  end
+end
+class ArgumentError < StandardError
+end
+class ClosedQueueError < StopIteration
+end
+class EncodingError < StandardError
+end
+class EOFError < IOError
+end
+class FloatDomainError < RangeError
+end
+class FrozenError[T] < RuntimeError
+  # <!--
+  #   - FrozenError.new(msg=nil, receiver: nil)  -> frozen_error
+  # -->
+  def initialize: (?string? msg, ?receiver: T?) -> void
+end
+class IndexError < StandardError
+end
+class Interrupt < SignalException
+  def initialize: (?string) -> void
+end
+class IOError < StandardError
+end
+class KeyError[K, R] < IndexError
+  # <!--
+  #   - KeyError.new(message=nil, receiver: nil, key: nil) -> key_error
+  # -->
+  def initialize: (?string msg, ?receiver: R?, ?key: K?) -> void
+  # <!--
+  #   - key_error.key  -> object
+  # -->
+  def key: () -> K?
+  # <!--
+  #   - key_error.receiver  -> object
+  # -->
+  def receiver: () -> R?
+end
+class LoadError < ScriptError
+end
+class LocalJumpError < StandardError
+end
+class NameError[T] < StandardError
+  # <!--
+  #   - NameError.new(msg=nil, name=nil, receiver: nil)  -> name_error
+  # -->
+  def initialize: (?string msg, ?String? name, ?receiver: T?) -> void
+  # <!--
+  #   - name_error.name    ->  string or nil
+  # -->
+  def name: () -> String?
+  # <!--
+  #   - name_error.receiver  -> object
+  # -->
+  def receiver: () -> T?
+end
+class NoMatchingPatternError < StandardError
+end
+class NoMatchingPatternKeyError[M, K] < NoMatchingPatternError
+  # <!--
+  #   - NoMatchingPatternKeyError.new(message=nil, matchee: nil, key: nil) -> no_matching_pattern_key_error
+  # -->
+  def initialize: (?string message, matchee: M, key: K) -> void
+end
+class NoMemoryError < Exception
+end
+class NoMethodError[T] < NameError[T]
+  # <!--
+  #   - NoMethodError.new(msg=nil, name=nil, args=nil, private=false, receiver: nil)  -> no_method_error
+  # -->
+  def initialize: (?string? msg, ?String? name, ?Array[untyped] args, ?boolish `private`, ?receiver: T?) -> void
+  # <!--
+  #   - no_method_error.args  -> obj
+  # -->
+  def args: () -> Array[untyped]
+end
+class NotImplementedError < ScriptError
+end
+class RangeError < StandardError
+end
+class RegexpError < StandardError
+end
+class RuntimeError < StandardError
+end
+class ScriptError < Exception
+end
+class SecurityError < Exception
+end
+class SignalException < Exception
+  # <!--
+  #   - SignalException.new(sig_name)              ->  signal_exception
+  #   - SignalException.new(sig_number [, name])   ->  signal_exception
+  # -->
+  def initialize: (?string sig_name) -> void
+                | (int sig_number, ?string sig_name) -> void
+end
+class StandardError < Exception
+end
+class StopIteration < IndexError
+end
+class SyntaxError < ScriptError
+  # <!--
+  #   - SyntaxError.new([msg])  -> syntax_error
+  # -->
+  def initialize: (?string msg) -> void
+end
+class SystemCallError < StandardError
+  # <!--
+  #   - SystemCallError.new(msg, errno)  -> system_call_error_subclass
+  # -->
+  def initialize: (string msg, Integer errno) -> void
+  # <!--
+  #   - system_call_error.errno   -> integer
+  # -->
+  def errno: () -> Integer
+end
+class SystemExit < Exception
+  # <!--
+  #   - SystemExit.new              -> system_exit
+  #   - SystemExit.new(status)      -> system_exit
+  #   - SystemExit.new(status, msg) -> system_exit
+  #   - SystemExit.new(msg)         -> system_exit
+  # -->
+  def initialize: () -> void
+                | (string msg) -> void
+                | (true | false | int status, ?string msg) -> void
+end
+class SystemStackError < Exception
+end
+class ThreadError < StandardError
+end
+class TypeError < StandardError
+end
+class UncaughtThrowError < ArgumentError
+  # <!--
+  #   - new(*args)
+  # -->
+  def initialize: (untyped tag, untyped value) -> void
+end
+class ZeroDivisionError < StandardError
+end
+class Exception
+  # <!--
+  #   - exception(message = nil) -> self or new_exception
+  # -->
+  def self.exception: (?string | _ToS msg) -> instance
+  # <!--
+  #   - backtrace -> array or nil
+  # -->
+  def backtrace: () -> Array[String]?
+  # <!--
+  #   - backtrace_locations -> array or nil
+  # -->
+  def backtrace_locations: () -> Array[Thread::Backtrace::Location]?
+  # <!--
+  #   - cause -> exception or nil
+  # -->
+  def cause: () -> Exception?
+  # <!--
+  #   - exception(message = nil) -> self or new_exception
+  # -->
+  def exception: (?self) -> self
+               | (string | _ToS message) -> instance
+  # <!--
+  #   - Exception.new(message = nil) -> exception
+  # -->
+  def initialize: (?string | _ToS message) -> void
+  # <!--
+  #   - message -> string
+  # -->
+  def message: () -> String
+  # <!--
+  #   - to_s -> string
+  # -->
+  def to_s: () -> String
+  # <!--
+  #   - full_message(highlight: true, order: :top) -> string
+  # -->
+  def full_message: (?highlight: bool?, ?order: (:top | :bottom | string)?) -> String
+end
+class FalseClass
+end
+class Fiber < Object
+  # <!--
+  #   - Fiber.yield(args, ...) -> obj
+  # -->
+  def self.yield: (*untyped) -> untyped
+  # <!--
+  #   - Fiber.new(blocking: false, storage: true) { |*args| ... } -> fiber
+  # -->
+  def initialize: (?blocking: boolish, ?storage: true | Hash[interned, untyped] | nil) { (?) -> void } -> void
+  # <!--
+  #   - fiber.alive? -> true or false
+  # -->
+  def alive?: () -> bool
+  # <!--
+  #   - fiber.resume(args, ...) -> obj
+  # -->
+  def resume: (*untyped) -> untyped
+end
+class FiberError < StandardError
+end
+class File < IO
+  # <!--
+  #   - File.new(path, mode = 'r', perm = 0666, **opts) -> file
+  # -->
+  def initialize: (string | _ToPath | int file_name, ?string | int mode, ?int perm) -> void
+  # <!--
+  #   - File.absolute_path(file_name [, dir_string] )  ->  abs_file_name
+  # -->
+  def self.absolute_path: (string | _ToPath file_name, ?string | _ToPath dir_string) -> String
+  # <!--
+  #   - File.atime(file_name)  ->  time
+  # -->
+  def self.atime: (string | _ToPath | IO file_name) -> Time
+  # <!--
+  #   - File.basename(file_name [, suffix] )  ->  base_name
+  # -->
+  def self.basename: (string | _ToPath file_name, ?string suffix) -> String
+  # <!--
+  #   - File.ctime(file_name)  -> time
+  # -->
+  def self.ctime: (string | _ToPath | IO file_name) -> Time
+  # <!--
+  #   - File.delete(file_name, ...)  -> integer
+  #   - File.unlink(file_name, ...)  -> integer
+  # -->
+  alias self.delete self.unlink
+  # <!--
+  #   - File.directory?(path) -> true or false
+  # -->
+  def self.directory?: (string | _ToPath | IO path) -> bool
+  # <!--
+  #   - File.dirname(file_name, level = 1)  ->  dir_name
+  # -->
+  def self.dirname: (string | _ToPath file_name, ?Integer level) -> String
+  # <!--
+  #   - File.executable?(file_name)   -> true or false
+  # -->
+  def self.executable?: (string | _ToPath file_name) -> bool
+  # <!--
+  #   - File.exist?(file_name)    ->  true or false
+  # -->
+  def self.exist?: (string | _ToPath | IO file_name) -> bool
+  # <!--
+  #   - File.expand_path(file_name [, dir_string] )  ->  abs_file_name
+  # -->
+  def self.expand_path: (string | _ToPath file_name, ?string | _ToPath dir_string) -> String
+  # <!--
+  #   - File.extname(path)  ->  string
+  # -->
+  def self.extname: (string | _ToPath path) -> String
+  # <!--
+  #   - File.file?(file) -> true or false
+  # -->
+  def self.file?: (string | _ToPath | IO file) -> bool
+  # <!--
+  #   - File.join(string, ...)  ->  string
+  # -->
+  def self.join: (*path) -> String
+  # <!--
+  #   - File.mtime(file_name)  ->  time
+  # -->
+  def self.mtime: (string | _ToPath | IO file_name) -> Time
+  # <!--
+  #   - File.open(path, mode = 'r', perm = 0666, **opts) -> file
+  #   - File.open(path, mode = 'r', perm = 0666, **opts) {|f| ... } -> object
+  # -->
+  def self.open: (string | _ToPath | int file_name, ?string | int mode, ?int perm) -> instance
+               | [T] (string | _ToPath | int file_name, ?string | int mode, ?int perm) { (File) -> T } -> T
+  # <!--
+  #   - File.path(path)  ->  string
+  # -->
+  def self.path: (string | _ToPath path) -> String
+  # <!--
+  #   - File.readable?(file_name)   -> true or false
+  # -->
+  def self.readable?: (string | _ToPath file_name) -> bool
+  # <!--
+  #   - File.realpath(pathname [, dir_string])  ->  real_pathname
+  # -->
+  def self.realpath: (string | _ToPath pathname, ?string | _ToPath dir_string) -> String
+  # <!--
+  #   - File.rename(old_name, new_name)   -> 0
+  # -->
+  def self.rename: (string | _ToPath old_name, string | _ToPath new_name) -> 0
+  # <!--
+  #   - File.size(file_name)   -> integer
+  # -->
+  def self.size: (string | _ToPath | IO file_name) -> Integer
+  # <!--
+  #   - File.size?(file_name)   -> Integer or nil
+  # -->
+  def self.size?: (string | _ToPath | IO file_name) -> Integer?
+  # <!--
+  #   - File.split(file_name)   -> array
+  # -->
+  def self.split: (string | _ToPath file_name) -> [ String, String ]
+  # <!--
+  #   - File.stat(filepath) ->  stat
+  # -->
+  def self.stat: (string | _ToPath file_name) -> File::Stat
+  # <!--
+  #   - File.symlink?(filepath) -> true or false
+  # -->
+  def self.symlink?: (string | _ToPath file_name) -> bool
+  # <!--
+  #   - File.delete(file_name, ...)  -> integer
+  #   - File.unlink(file_name, ...)  -> integer
+  # -->
+  def self.unlink: (*string | _ToPath file_name) -> Integer
+  # <!--
+  #   - File.writable?(file_name)   -> true or false
+  # -->
+  def self.writable?: (string | _ToPath file_name) -> bool
+  # <!--
+  #   - File.zero?(file_name)   -> true or false
+  # -->
+  def self.zero?: (string | _ToPath | IO file_name) -> bool
+  # <!--
+  #   - file.atime    -> time
+  # -->
+  def atime: () -> Time
+  # <!--
+  #   - file.ctime  ->  time
+  # -->
+  def ctime: () -> Time
+  # <!--
+  #   - file.mtime  ->  time
+  # -->
+  def mtime: () -> Time
+  # <!--
+  #   - file.path  ->  filename
+  #   - file.to_path  ->  filename
+  # -->
+  def path: () -> String
+  # <!--
+  #   - file.size    -> integer
+  # -->
+  def size: () -> Integer
+end
+class Float < Numeric
+  # <!--
+  #   - finite? -> true or false
+  # -->
+  def finite?: () -> bool
+  # <!--
+  #   - infinite? -> -1, 1, or nil
+  # -->
+  def infinite?: () -> Integer?
+  # <!--
+  #   - nan? -> true or false
+  # -->
+  def nan?: () -> bool
+  # <!--
+  #   - truncate(ndigits = 0) -> float or integer
+  # -->
+  def truncate: () -> Integer
+              | (Integer ndigits) -> (Integer | Float)
+end
+Float::EPSILON: Float
+Float::INFINITY: Float
+Float::MAX: Float
+Float::MIN: Float
+Float::NAN: Float
+module GC
+  # <!--
+  #   - GC.disable -> true or false
+  # -->
+  def self.disable: () -> bool
+  # <!--
+  #   - GC.enable -> true or false
+  # -->
+  def self.enable: () -> bool
+  # <!--
+  #   - start(full_mark: true, immediate_mark: true, immediate_sweep: true)
+  # -->
+  def self.start: (?immediate_sweep: boolish, ?immediate_mark: boolish, ?full_mark: boolish) -> nil
+  # <!--
+  #   - GC.stat -> Hash
+  #   - GC.stat(hash) -> Hash
+  #   - GC.stat(:key) -> Numeric
+  # -->
+  def self.stat: (?Hash[Symbol, untyped]? hash) -> Hash[Symbol, untyped]
+               | (Symbol key) -> Integer
+  # <!--
+  #   - GC.compact
+  # -->
+  def self.compact: () -> compact_info
+end
+class Hash[unchecked out K, unchecked out V] < Object
+  include Enumerable[[ K, V ]]
+  # <!--
+  #   - Hash[] -> new_empty_hash
+  #   - Hash[hash] -> new_hash
+  #   - Hash[ [*2_element_arrays] ] -> new_hash
+  #   - Hash[*objects] -> new_hash
+  # -->
+  def self.[]: [U, V] (_ToHash[U, V]) -> ::Hash[U, V]
+             | [U, V] (Array[[ U, V ]]) -> ::Hash[U, V]
+             | (*untyped) -> ::Hash[untyped, untyped]
+  # <!--
+  #   - hash[key] -> value
+  # -->
+  def []: %a{implicitly-returns-nil} (K arg0) -> V
+  # <!--
+  #   - hash[key] = value -> value
+  #   - hash.store(key, value)
+  # -->
+  def []=: (K arg0, V arg1) -> V
+  # <!--
+  #   - hash.any? -> true or false
+  #   - hash.any?(object) -> true or false
+  #   - hash.any? {|key, value| ... } -> true or false
+  # -->
+  def any?: () -> bool
+          | (untyped pattern) -> bool
+          | () { (K, V) -> boolish } -> bool
+  # <!--
+  #   - hash.clear -> self
+  # -->
+  def clear: () -> self
+  # <!--
+  #   - hash.compact -> new_hash
+  # -->
+  def compact: () -> ::Hash[K, V]
+  # <!--
+  #   - hash.compact! -> self or nil
+  # -->
+  def compact!: () -> self?
+  # <!--
+  #   - hash.default -> object
+  #   - hash.default(key) -> object
+  # -->
+  def default: (?K arg0) -> V?
+  # <!--
+  #   - hash.default = value -> object
+  # -->
+  def default=: (V arg0) -> V
+  # <!--
+  #   - hash.default_proc -> proc or nil
+  # -->
+  def default_proc: () -> (Proc | nil)
+  # <!--
+  #   - hash.delete(key) -> value or nil
+  #   - hash.delete(key) {|key| ... } -> object
+  # -->
+  def delete: (K arg0) -> V?
+            | [U] (K arg0) { (K arg0) -> U } -> (U | V)
+  # <!--
+  #   - hash.delete_if {|key, value| ... } -> self
+  #   - hash.delete_if -> new_enumerator
+  # -->
+  def delete_if: () { (K, V) -> boolish } -> self
+               | () -> ::Enumerator[[ K, V ], self]
+  # <!--
+  #   - hash.dig(key, *identifiers) -> object
+  # -->
+  def dig: (K, *untyped) -> untyped
+  def each: () { ([ K, V ] arg0) -> untyped } -> self
+          | () -> ::Enumerator[[ K, V ], self]
+  # <!--
+  #   - hash.each_key {|key| ... } -> self
+  #   - hash.each_key -> new_enumerator
+  # -->
+  def each_key: () { (K arg0) -> untyped } -> ::Hash[K, V]
+              | () -> ::Enumerator[K, self]
+  # <!--
+  #   - hash.each {|key, value| ... } -> self
+  #   - hash.each_pair {|key, value| ... } -> self
+  #   - hash.each -> new_enumerator
+  #   - hash.each_pair -> new_enumerator
+  # -->
+  alias each_pair each
+  # <!--
+  #   - hash.each_value {|value| ... } -> self
+  #   - hash.each_value -> new_enumerator
+  # -->
+  def each_value: () { (V arg0) -> untyped } -> self
+                | () -> ::Enumerator[V, self]
+  # <!--
+  #   - hash.empty? -> true or false
+  # -->
+  def empty?: () -> bool
+  # <!--
+  #   - hsh.except(*keys) -> a_hash
+  # -->
+  def except: (*K) -> ::Hash[K, V]
+  # <!--
+  #   - hash.fetch(key) -> object
+  #   - hash.fetch(key, default_value) -> object
+  #   - hash.fetch(key) {|key| ... } -> object
+  # -->
+  def fetch: (K arg0) -> V
+           | [X] (K arg0, X arg1) -> (V | X)
+           | [X] (K arg0) { (K arg0) -> X } -> (V | X)
+  # <!--
+  #   - hash.fetch_values(*keys) -> new_array
+  #   - hash.fetch_values(*keys) {|key| ... } -> new_array
+  # -->
+  def fetch_values: (*K) -> ::Array[V]
+                  | [X] (*K) { (K) -> X } -> ::Array[V | X]
+  def has_key?: (K arg0) -> bool
+  # <!--
+  #   - hash.has_value?(value) -> true or false
+  #   - hash.value?(value) -> true or false
+  # -->
+  def has_value?: (V arg0) -> bool
+  # <!--
+  #   - hash.include?(key) -> true or false
+  #   - hash.has_key?(key) -> true or false
+  #   - hash.key?(key) -> true or false
+  #   - hash.member?(key) -> true or false
+  # -->
+  alias include? has_key?
+  # <!--
+  #   - hash.invert -> new_hash
+  # -->
+  def invert: () -> ::Hash[V, K]
+  # <!--
+  #   - hash.keep_if {|key, value| ... } -> self
+  #   - hash.keep_if -> new_enumerator
+  # -->
+  def keep_if: () { (K, V) -> boolish } -> self
+             | () -> ::Enumerator[[ K, V ], self]
+  # <!--
+  #   - hash.key(value) -> key or nil
+  # -->
+  def key: (V) -> K?
+  alias key? has_key?
+  # <!--
+  #   - hash.keys -> new_array
+  # -->
+  def keys: () -> ::Array[K]
+  def length: () -> Integer
+  alias member? has_key?
+  # <!--
+  #   - hash.merge -> copy_of_self
+  #   - hash.merge(*other_hashes) -> new_hash
+  #   - hash.merge(*other_hashes) { |key, old_value, new_value| ... } -> new_hash
+  # -->
+  def merge: [A, B] (*::Hash[A, B] other_hashes) -> ::Hash[A | K, B | V]
+           | [A, B, C] (*::Hash[A, B] other_hashes) { (K key, V oldval, B newval) -> C } -> ::Hash[A | K, B | V | C]
+  def merge!: (*::Hash[K, V] other_hashes) -> self
+            | (*::Hash[K, V] other_hashes) { (K key, V oldval, V newval) -> V } -> self
+  # <!--
+  #   - hash.reject! {|key, value| ... } -> self or nil
+  #   - hash.reject! -> new_enumerator
+  # -->
+  def reject!: () -> ::Enumerator[[ K, V ], self?]
+             | () { (K, V) -> boolish } -> self?
+  def replace: (Hash[K, V]) -> self
+  # <!--
+  #   - hash.select! {|key, value| ... } -> self or nil
+  #   - hash.select! -> new_enumerator
+  # -->
+  alias select! filter!
+  # <!--
+  #   - hash.length -> integer
+  #   - hash.size -> integer
+  # -->
+  alias size length
+  # <!--
+  #   - hash.slice(*keys) -> new_hash
+  # -->
+  def slice: (*K) -> ::Hash[K, V]
+  alias store []=
+  # <!--
+  #   - hash.to_a -> new_array
+  # -->
+  def to_a: () -> ::Array[[ K, V ]]
+  # <!--
+  #   - hash.to_h -> self or new_hash
+  #   - hash.to_h {|key, value| ... } -> new_hash
+  # -->
+  def to_h: () -> Hash[K, V]
+          | [A, B] () { (K, V) -> [ A, B ] } -> Hash[A, B]
+  # <!--
+  #   - hash.transform_keys {|key| ... } -> new_hash
+  #   - hash.transform_keys(hash2) -> new_hash
+  #   - hash.transform_keys(hash2) {|other_key| ...} -> new_hash
+  #   - hash.transform_keys -> new_enumerator
+  # -->
+  def transform_keys: () -> Enumerator[K, Hash[untyped, V]]
+                    | [A] () { (K) -> A } -> Hash[A, V]
+  # <!--
+  #   - hash.transform_keys! {|key| ... } -> self
+  #   - hash.transform_keys!(hash2) -> self
+  #   - hash.transform_keys!(hash2) {|other_key| ...} -> self
+  #   - hash.transform_keys! -> new_enumerator
+  # -->
+  def transform_keys!: () -> Enumerator[K, self]
+                     | () { (K) -> K } -> self
+  # <!--
+  #   - hash.transform_values {|value| ... } -> new_hash
+  #   - hash.transform_values -> new_enumerator
+  # -->
+  def transform_values: () -> Enumerator[V, Hash[K, untyped]]
+                      | [A] () { (V) -> A } -> Hash[K, A]
+  # <!--
+  #   - hash.transform_values! {|value| ... } -> self
+  #   - hash.transform_values! -> new_enumerator
+  # -->
+  def transform_values!: () -> Enumerator[V, self]
+                       | () { (V) -> V } -> self
+  # <!--
+  #   - hash.merge! -> self
+  #   - hash.merge!(*other_hashes) -> self
+  #   - hash.merge!(*other_hashes) { |key, old_value, new_value| ... } -> self
+  # -->
+  alias update merge!
+  alias value? has_value?
+  # <!--
+  #   - hash.values -> new_array
+  # -->
+  def values: () -> ::Array[V]
+  # <!--
+  #   - hash.values_at(*keys) -> new_array
+  # -->
+  def values_at: (*K arg0) -> ::Array[V?]
+  private
+  # <!--
+  #   - Hash.new(default_value = nil) -> new_hash
+  #   - Hash.new(default_value = nil, capacity: size) -> new_hash
+  #   - Hash.new {|hash, key| ... } -> new_hash
+  #   - Hash.new(capacity: size) {|hash, key| ... } -> new_hash
+  # -->
+  def initialize: (?capacity: int) -> void
+                | [V] (V default, ?capacity: int) -> void
+                | [A, B] (?capacity: int) { (Hash[A, B] hash, A key) -> B } -> void
+end
+class Integer < Numeric
+  # <!--
+  #   - bit_length -> integer
+  # -->
+  def bit_length: () -> Integer
+  # <!--
+  #   - chr           -> string
+  #   - chr(encoding) -> string
+  # -->
+  def chr: (?encoding) -> String
+  # <!--
+  #   - digits(base = 10) -> array_of_integers
+  # -->
+  def digits: (?int base) -> ::Array[Integer]
+  # <!--
+  #   - downto(limit) {|i| ... } -> self
+  #   - downto(limit)            ->  enumerator
+  # -->
+  def downto: (Numeric limit) { (Integer) -> void } -> Integer
+            | (Numeric limit) -> ::Enumerator[Integer, self]
+  # <!--
+  #   - even? -> true or false
+  # -->
+  def even?: () -> bool
+  # <!--
+  #   - fdiv(numeric) -> float
+  # -->
+  def fdiv: (Numeric) -> Float
+  # <!--
+  #   - int.gcd(other_int)  ->  integer
+  # -->
+  def gcd: (Integer) -> Integer
+  # <!--
+  #   - int.lcm(other_int)  ->  integer
+  # -->
+  def lcm: (Integer) -> Integer
+  def next: () -> Integer
+  # <!--
+  #   - odd? -> true or false
+  # -->
+  def odd?: () -> bool
+  # <!--
+  #   - ord -> self
+  # -->
+  def ord: () -> Integer
+  # <!--
+  #   - integer.pow(numeric)           ->  numeric
+  #   - integer.pow(integer, integer)  ->  integer
+  # -->
+  def pow: (Integer other) -> (Integer | Rational)
+         | (Integer other, Integer modulo) -> Integer
+         | (Float) -> (Float | Complex)
+         | (Rational) -> (Float | Rational | Complex)
+         | (Complex) -> Complex
+  # <!--
+  #   - pred -> next_integer
+  # -->
+  def pred: () -> Integer
+  # <!--
+  #   - succ -> next_integer
+  # -->
+  def succ: () -> Integer
+  # <!--
+  #   - times {|i| ... } -> self
+  #   - times            -> enumerator
+  # -->
+  def times: () { (Integer) -> void } -> self
+           | () -> ::Enumerator[Integer, self]
+  # <!--
+  #   - to_s(base = 10)  ->  string
+  # -->
+  def to_s: () -> String
+          | (2) -> String
+          | (3) -> String
+          | (4) -> String
+          | (5) -> String
+          | (6) -> String
+          | (7) -> String
+          | (8) -> String
+          | (9) -> String
+          | (10) -> String
+          | (11) -> String
+          | (12) -> String
+          | (13) -> String
+          | (14) -> String
+          | (15) -> String
+          | (16) -> String
+          | (17) -> String
+          | (18) -> String
+          | (19) -> String
+          | (20) -> String
+          | (21) -> String
+          | (22) -> String
+          | (23) -> String
+          | (24) -> String
+          | (25) -> String
+          | (26) -> String
+          | (27) -> String
+          | (28) -> String
+          | (29) -> String
+          | (30) -> String
+          | (31) -> String
+          | (32) -> String
+          | (33) -> String
+          | (34) -> String
+          | (35) -> String
+          | (36) -> String
+          | (int base) -> String
+  # <!--
+  #   - upto(limit) {|i| ... } -> self
+  #   - upto(limit)            ->  enumerator
+  # -->
+  def upto: (Numeric limit) { (Integer) -> void } -> Integer
+          | (Numeric limit) -> ::Enumerator[Integer, self]
+end
+class IO < Object
+  include File::Constants
+  include Enumerable[String]
+  # <!--
+  #   - close -> nil
+  # -->
+  def close: () -> nil
+  # <!--
+  #   - closed? -> true or false
+  # -->
+  def closed?: () -> bool
+  # <!--
+  #   - fileno -> integer
+  # -->
+  def fileno: () -> Integer
+  # <!--
+  #   - flush -> self
+  # -->
+  def flush: () -> self
+  # <!--
+  #   - gets(sep = $/, chomp: false)   -> string or nil
+  #   - gets(limit, chomp: false)      -> string or nil
+  #   - gets(sep, limit, chomp: false) -> string or nil
+  # -->
+  def gets: (string? sep, ?int limit, ?chomp: boolish) -> String?
+          | (?int limit, ?chomp: boolish) -> String?
+  # <!--
+  #   - IO.new(fd, mode = 'r', **opts) -> io
+  # -->
+  def initialize: ( int fd, ?string | int mode, ?path: string?, ?external_encoding: String | Encoding | nil, ?internal_encoding: String | Encoding | nil, ?encoding: String | Encoding | nil, ?textmode: boolish, ?binmode: boolish, ?autoclose: boolish, ?mode: String) -> void
+  # <!--
+  #   - print(*objects) -> nil
+  # -->
+  def print: (*untyped objects) -> nil
+  # <!--
+  #   - printf(format_string, *objects) -> nil
+  # -->
+  def printf: (String format_string, *untyped objects) -> nil
+  # <!--
+  #   - puts(*objects) -> nil
+  # -->
+  def puts: (*untyped objects) -> nil
+  # <!--
+  #   - read(maxlen = nil, out_string = nil) -> new_string, out_string, or nil
+  # -->
+  def read: (?nil, ?string outbuf) -> String
+          | (int? length, ?string outbuf) -> String?
+  # <!--
+  #   - readline(sep = $/, chomp: false)   -> string
+  #   - readline(limit, chomp: false)      -> string
+  #   - readline(sep, limit, chomp: false) -> string
+  # -->
+  def readline: (?String sep, ?Integer limit, ?chomp: boolish) -> String
+  # <!--
+  #   - readlines(sep = $/, chomp: false)   -> array
+  #   - readlines(limit, chomp: false)       -> array
+  #   - readlines(sep, limit, chomp: false) -> array
+  # -->
+  def readlines: (?String sep, ?Integer limit, ?chomp: boolish) -> ::Array[String]
+  # <!--
+  #   - rewind -> 0
+  # -->
+  def rewind: () -> Integer
+  # <!--
+  #   - seek(offset, whence = IO::SEEK_SET) -> 0
+  # -->
+  def seek: (Integer amount, ?Integer whence) -> Integer
+  # <!--
+  #   - sync -> true or false
+  # -->
+  def sync: () -> bool
+  # <!--
+  #   - sync = boolean -> boolean
+  # -->
+  def sync=: (boolish boolean) -> boolish
+  alias pos tell
+  # <!--
+  #   - write(*objects) -> integer
+  # -->
+  def write: (*_ToS string) -> Integer
+  # <!--
+  #   - IO.binread(path, length = nil, offset = 0)    -> string or nil
+  # -->
+  def self.binread: (String name, ?Integer length, ?Integer offset) -> String
+  # <!--
+  #   - IO.binwrite(path, string, offset = 0)    -> integer
+  # -->
+  def self.binwrite: (String name, _ToS string, ?Integer offset, ?mode: String mode) -> Integer
+  # <!--
+  #   - IO.foreach(path, sep = $/, **opts) {|line| block }       -> nil
+  #   - IO.foreach(path, limit, **opts) {|line| block }          -> nil
+  #   - IO.foreach(path, sep, limit, **opts) {|line| block }     -> nil
+  #   - IO.foreach(...)                                          -> an_enumerator
+  # -->
+  def self.foreach: (string | _ToPath path, ?String sep, ?Integer limit, ?external_encoding: String | Encoding | nil, ?internal_encoding: String | Encoding | nil, ?encoding: String | Encoding | nil, ?textmode: boolish, ?binmode: boolish, ?autoclose: boolish, ?mode: String, ?chomp: boolish) { (String line) -> void } -> nil
+                  | (string | _ToPath path, ?String sep, ?Integer limit, ?external_encoding: String | Encoding | nil, ?internal_encoding: String | Encoding | nil, ?encoding: String | Encoding | nil, ?textmode: boolish, ?binmode: boolish, ?autoclose: boolish, ?mode: String, ?chomp: boolish) -> ::Enumerator[String, nil]
+  # <!--
+  #   - IO.read(path, length = nil, offset = 0, **opts)    -> string or nil
+  # -->
+  def self.read: (String name, ?Integer length, ?Integer offset, ?external_encoding: String | Encoding | nil, ?internal_encoding: String | Encoding | nil, ?encoding: String | Encoding | nil, ?textmode: boolish, ?binmode: boolish, ?autoclose: boolish, ?mode: String) -> String
+  # <!--
+  #   - IO.readlines(path, sep = $/, **opts)     -> array
+  #   - IO.readlines(path, limit, **opts)      -> array
+  #   - IO.readlines(path, sep, limit, **opts) -> array
+  # -->
+  def self.readlines: (String | _ToPath name, ?String sep, ?Integer limit, ?external_encoding: String | Encoding | nil, ?internal_encoding: String | Encoding | nil, ?encoding: String | Encoding | nil, ?textmode: boolish, ?binmode: boolish, ?autoclose: boolish, ?mode: String, ?chomp: boolish) -> ::Array[String]
+  # <!--
+  #   - IO.write(path, data, offset = 0, **opts)    -> integer
+  # -->
+  def self.write: (String path, _ToS data, ?Integer offset, ?external_encoding: String | Encoding | nil, ?internal_encoding: String | Encoding | nil, ?encoding: String | Encoding | nil, ?textmode: boolish, ?binmode: boolish, ?autoclose: boolish, ?mode: String) -> Integer
+  def each_line: (?string sep, ?int limit, ?chomp: boolish) { (String line) -> void } -> self
+               | (?string sep, ?int limit, ?chomp: boolish) -> ::Enumerator[String, self]
+  alias eof? eof
+end
+class IO
+end
+class IO
+end
+module Kernel : BasicObject
+  # <!--
+  #   - caller(start=1, length=nil)  -> array or nil
+  #   - caller(range)                -> array or nil
+  # -->
+  def self?.caller: (Integer start_or_range, ?Integer length) -> ::Array[String]?
+                  | (::Range[Integer] start_or_range) -> ::Array[String]?
+                  | () -> ::Array[String]
+  # <!--
+  #   - caller_locations(start=1, length=nil)    -> array or nil
+  #   - caller_locations(range)                  -> array or nil
+  # -->
+  def self?.caller_locations: (?Integer start_or_range, ?Integer length) -> ::Array[Thread::Backtrace::Location]?
+                            | (?::Range[Integer] start_or_range) -> ::Array[Thread::Backtrace::Location]?
+  # <!--
+  #   - catch([tag]) {|tag| block }  -> obj
+  # -->
+  def self?.catch: [T] (T tag) { (T tag) -> untyped } -> untyped
+                 | () { (Object tag) -> untyped } -> untyped
+  # <!--
+  #   - obj.class    -> class
+  # -->
+  def class: () -> Class
+  # <!--
+  #   - block_given?   -> true or false
+  # -->
+  def self?.block_given?: () -> bool
+  # <!--
+  #   - srand(number = Random.new_seed) -> old_seed
+  # -->
+  def self?.srand: (?int number) -> Integer
+  # <!--
+  #   - Process.fork { ... } -> integer or nil
+  #   - Process.fork -> integer or nil
+  # -->
+  def self?.fork: () -> Integer?
+                | () { () -> void } -> Integer
+  # <!--
+  #   - Array(object) -> object or new_array
+  # -->
+  def self?.Array: (nil) -> []
+                 | [T] (array[T] | _ToA[T] array_like) -> Array[T]
+                 | [T] (T ele) -> [T]
+  # <!--
+  #   - Complex(real, imag = 0, exception: true) -> complex or nil
+  #   - Complex(s, exception: true) -> complex or nil
+  # -->
+  def self?.Complex: (_ToC complex_like, ?exception: true) -> Complex
+                   | (_ToC complex_like, exception: bool) -> Complex?
+                   | (Numeric | String real, ?Numeric | String imag, ?exception: true) -> Complex
+                   | (Numeric | String real, ?Numeric | String imag, exception: bool) -> Complex?
+                   | (untyped, ?untyped, ?exception: bool) -> Complex?
+  # <!--
+  #   - Float(arg, exception: true)    -> float or nil
+  # -->
+  def self?.Float: (_ToF float_like, ?exception: true) -> Float
+                 | (_ToF float_like, exception: bool) -> Float?
+                 | (untyped, ?exception: bool) -> Float?
+  # <!--
+  #   - Hash(object) -> object or new_hash
+  # -->
+  def self?.Hash: [K, V] (nil | [] _empty) -> Hash[K, V]
+                | [K, V] (hash[K, V] hash_like) -> Hash[K, V]
+  # <!--
+  #   - Integer(object, base = 0, exception: true) -> integer or nil
+  # -->
+  def self?.Integer: (int | _ToI int_like, ?exception: true) -> Integer
+                   | (int | _ToI int_like, exception: bool) -> Integer?
+                   | (string str, int base, ?exception: true) -> Integer
+                   | (string str, int base, exception: bool) -> Integer?
+                   | (untyped, ?untyped, ?exception: bool) -> Integer?
+  # <!--
+  #   - Rational(x, y, exception: true)  ->  rational or nil
+  #   - Rational(arg, exception: true)   ->  rational or nil
+  # -->
+  def self?.Rational: (int | _ToR rational_like, ?exception: true) -> Rational
+                    | (int | _ToR rational_like, exception: bool) -> Rational?
+                    | (int | _ToR numer, ?int | _ToR denom, ?exception: true) -> Rational
+                    | (int | _ToR numer, ?int | _ToR denom, exception: bool) -> Rational?
+                    | [T] (Numeric & _RationalDiv[T] numer, Numeric denom, ?exception: bool) -> T
+                    | [T < Numeric] (T value, 1, ?exception: bool) -> T
+                    | (untyped, ?untyped, ?exception: bool) -> Rational?
+  # <!--
+  #   - String(object) -> object or new_string
+  # -->
+  def self?.String: (string | _ToS string_like) -> String
+  # <!--
+  #   - __dir__         -> string
+  # -->
+  def self?.__dir__: () -> String?
+  # <!--
+  #   - abort
+  #   - Process.abort(msg = nil)
+  # -->
+  def self?.abort: (?string msg) -> bot
+  # <!--
+  #   - at_exit { block } -> proc
+  # -->
+  def self?.at_exit: () { () -> void } -> Proc
+  # <!--
+  #   - binding -> a_binding
+  # -->
+  def self?.binding: () -> Binding
+  # <!--
+  #   - exit(status = true)
+  #   - Process.exit(status = true)
+  # -->
+  def self?.exit: (?int | bool status) -> bot
+  # <!--
+  #   - exit!(status = false)
+  #   - Process.exit!(status = false)
+  # -->
+  def self?.exit!: (?int | bool status) -> bot
+  def self?.fail: () -> bot
+                | (string message, ?cause: Exception?) -> bot
+                | (_Exception exception, ?_ToS? message, ?String | Array[String] | Array[Thread::Backtrace::Location] | nil backtrace, ?cause: Exception?) -> bot
+                | (_Exception exception, ?cause: Exception?, **untyped) -> bot
+  # <!--
+  #   - raise(exception, message = exception.to_s, backtrace = nil, cause: $!)
+  #   - raise(message = nil, cause: $!)
+  # -->
+  alias raise fail
+  alias self.raise self.fail
+  def self?.format: (String format, *untyped args) -> String
+  # <!--
+  #   - sprintf(format_string *objects)  -> string
+  # -->
+  alias sprintf format
+  alias self.sprintf self.format
+  # <!--
+  #   - gets(sep=$/ [, getline_args])     -> string or nil
+  #   - gets(limit [, getline_args])      -> string or nil
+  #   - gets(sep, limit [, getline_args]) -> string or nil
+  # -->
+  def self?.gets: (?String arg0, ?Integer arg1) -> String?
+  # <!--
+  #   - load(filename, wrap=false)   -> true
+  # -->
+  def self?.load: (String filename, ?Module | bool) -> bool
+  # <!--
+  #   - loop { block }
+  #   - loop            -> an_enumerator
+  # -->
+  def self?.loop: () { () -> void } -> bot
+                | () -> ::Enumerator[nil, bot]
+  # <!--
+  #   - open(path, mode = 'r', perm = 0666, **opts)             -> io or nil
+  #   - open(path, mode = 'r', perm = 0666, **opts) {|io| ... } -> obj
+  # -->
+  def self?.open: (String name, ?String mode, ?Integer perm) -> IO?
+                | [T] (String name, ?String mode, ?Integer perm) { (IO) -> T } -> T
+  # <!--
+  #   - print(*objects) -> nil
+  # -->
+  def self?.print: (*_ToS args) -> nil
+  # <!--
+  #   - printf(format_string, *objects)               -> nil
+  #   - printf(io, format_string, *objects) -> nil
+  # -->
+  def self?.printf: () -> nil
+                  | (String fmt, *untyped args) -> nil
+                  | (_Writer io, string fmt, *untyped args) -> nil
+  # <!--
+  #   - proc   { |...| block }  -> a_proc
+  # -->
+  def self?.proc: () { (?) -> untyped } -> Proc
+  # <!--
+  #   - lambda { |...| block }  -> a_proc
+  # -->
+  def self?.lambda: () { () -> untyped } -> Proc
+  # <!--
+  #   - puts(*objects)    -> nil
+  # -->
+  def self?.puts: (*_ToS objects) -> nil
+  # <!--
+  #   - p(object)   -> obj
+  #   - p(*objects) -> array of objects
+  #   - p           -> nil
+  # -->
+  def self?.p: [T < _Inspect] (T arg0) -> T
+             | (_Inspect arg0, _Inspect arg1, *_Inspect rest) -> Array[_Inspect]
+             | () -> nil
+  # <!--
+  #   - pp(*objs)
+  # -->
+  def self?.pp: [T] (T arg0) -> T
+              | (untyped, untyped, *untyped) -> Array[untyped]
+              | () -> nil
+  # <!--
+  #   - rand(max=0)    -> number
+  # -->
+  def self?.rand: (?0) -> Float
+                | (int arg0) -> Integer
+                | (::Range[Integer] arg0) -> Integer?
+                | (::Range[Float] arg0) -> Float?
+  # <!--
+  #   - require(path)
+  # -->
+  def self?.require: (String path) -> bool
+  # <!--
+  #   - require_relative(string) -> true or false
+  # -->
+  def self?.require_relative: (String feature) -> bool
+  # <!--
+  #   - sleep(secs = nil) -> slept_secs
+  # -->
+  def self?.sleep: (?nil) -> bot
+                 | (Time::_Timeout duration) -> Integer
+  # <!--
+  #   - throw(tag [, obj])
+  # -->
+  def self?.throw: (untyped tag, ?untyped obj) -> bot
+  # <!--
+  #   - warn(*msgs, uplevel: nil, category: nil)   -> nil
+  # -->
+  def self?.warn: (*_ToS msg, ?uplevel: int?, ?category: Warning::category?) -> nil
+  # <!--
+  #   - spawn([env, ] command_line, options = {}) -> pid
+  #   - spawn([env, ] exe_path, *args, options  = {}) -> pid
+  # -->
+  def self?.spawn: (String command, *String args, ?unsetenv_others: boolish, ?pgroup: true | Integer, ?umask: Integer, ?in: redirect_fd, ?out: redirect_fd, ?err: redirect_fd, ?close_others: boolish, ?chdir: String) -> Integer
+                 | (Hash[string, string?] env, String command, *String args, ?unsetenv_others: boolish, ?pgroup: true | Integer, ?umask: Integer, ?in: redirect_fd, ?out: redirect_fd, ?err: redirect_fd, ?close_others: boolish, ?chdir: String) -> Integer
+  # <!--
+  #   - system([env, ] command_line, options = {}, exception: false) -> true, false, or nil
+  #   - system([env, ] exe_path, *args, options  = {}, exception: false) -> true, false, or nil
+  # -->
+  def self?.system: (String command, *String args, ?unsetenv_others: boolish, ?pgroup: true | Integer, ?umask: Integer, ?in: redirect_fd, ?out: redirect_fd, ?err: redirect_fd, ?close_others: boolish, ?chdir: String, ?exception: bool) -> (NilClass | FalseClass | TrueClass)
+                  | (Hash[string, string?] env, String command, *String args, ?unsetenv_others: boolish, ?pgroup: true | Integer, ?umask: Integer, ?in: redirect_fd, ?out: redirect_fd, ?err: redirect_fd, ?close_others: boolish, ?chdir: String, ?exception: bool) -> (NilClass | FalseClass | TrueClass)
+  # <!--
+  #   - obj !~ other  -> true or false
+  # -->
+  def !~: (untyped other) -> bool
+  # <!--
+  #   - obj <=> other -> 0 or nil
+  # -->
+  def <=>: (untyped other) -> 0?
+  # <!--
+  #   - obj === other   -> true or false
+  # -->
+  alias === ==
+  # <!--
+  #   - obj.clone(freeze: nil) -> an_object
+  # -->
+  def clone: (?freeze: bool?) -> self
+  # <!--
+  #   - define_singleton_method(symbol, method) -> symbol
+  #   - define_singleton_method(symbol) { block } -> symbol
+  # -->
+  def define_singleton_method: (interned name, Method | UnboundMethod | Proc method) -> Symbol
+                             | (interned name) { (?) -> untyped } -> Symbol
+  # <!--
+  #   - display(port = $>) -> nil
+  # -->
+  def display: (?_Writer port) -> nil
+  # <!--
+  #   - obj.dup -> an_object
+  # -->
+  def dup: () -> self
+  def enum_for: (?interned method, *untyped, **untyped) ?{ (*untyped, **untyped) -> Integer } -> Enumerator[untyped, untyped]
+  alias to_enum enum_for
+  # <!--
+  #   - obj == other        -> true or false
+  #   - obj.equal?(other)   -> true or false
+  #   - obj.eql?(other)     -> true or false
+  # -->
+  def eql?: (untyped other) -> bool
+  # <!--
+  #   - obj.extend(module, ...)    -> obj
+  # -->
+  def extend: (Module module, *Module other_modules) -> self
+  # <!--
+  #   - obj.freeze    -> obj
+  # -->
+  def freeze: () -> self
+  # <!--
+  #   - obj.frozen?    -> true or false
+  # -->
+  def frozen?: () -> bool
+  # <!--
+  #   - obj.hash    -> integer
+  # -->
+  def hash: () -> Integer
+  # <!--
+  #   - obj.inspect   -> string
+  # -->
+  def inspect: () -> String
+  # <!--
+  #   - obj.instance_of?(class)    -> true or false
+  # -->
+  def instance_of?: (Module | Class module_or_class) -> bool
+  # <!--
+  #   - obj.instance_variable_defined?(symbol)    -> true or false
+  #   - obj.instance_variable_defined?(string)    -> true or false
+  # -->
+  def instance_variable_defined?: (interned variable) -> bool
+  # <!--
+  #   - obj.instance_variable_get(symbol)    -> obj
+  #   - obj.instance_variable_get(string)    -> obj
+  # -->
+  def instance_variable_get: (interned variable) -> untyped
+  # <!--
+  #   - obj.instance_variable_set(symbol, obj)    -> obj
+  #   - obj.instance_variable_set(string, obj)    -> obj
+  # -->
+  def instance_variable_set: [T] (interned variable, T value) -> T
+  # <!--
+  #   - obj.instance_variables    -> array
+  # -->
+  def instance_variables: () -> Array[Symbol]
+  def is_a?: (Module | Class module_or_class) -> bool
+  alias kind_of? is_a?
+  # <!--
+  #   - obj.itself    -> obj
+  # -->
+  def itself: () -> self
+  # <!--
+  #   - obj.method(sym)    -> method
+  # -->
+  def method: (interned name) -> Method
+  # <!--
+  #   - obj.methods(regular=true)    -> array
+  # -->
+  def methods: (?boolish regular) -> Array[Symbol]
+  # <!--
+  #   - obj.nil?               -> true or false
+  # -->
+  def nil?: () -> false
+  # <!--
+  #   - obj.__id__       -> integer
+  #   - obj.object_id    -> integer
+  # -->
+  alias object_id __id__
+  # <!--
+  #   - obj.private_methods(all=true)   -> array
+  # -->
+  def private_methods: (?boolish all) -> Array[Symbol]
+  # <!--
+  #   - obj.public_methods(all=true)   -> array
+  # -->
+  def public_methods: (?boolish all) -> Array[Symbol]
+  # <!--
+  #   - obj.public_send(symbol [, args...])  -> obj
+  #   - obj.public_send(string [, args...])  -> obj
+  # -->
+  def public_send: (interned name, *untyped, **untyped) ?{ (?) -> untyped } -> untyped
+  # <!--
+  #   - obj.respond_to?(symbol, include_all=false) -> true or false
+  #   - obj.respond_to?(string, include_all=false) -> true or false
+  # -->
+  def respond_to?: (interned name, ?boolish include_all) -> bool
+  # <!--
+  #   - foo.send(symbol [, args...])       -> obj
+  #   - foo.__send__(symbol [, args...])   -> obj
+  #   - foo.send(string [, args...])       -> obj
+  #   - foo.__send__(string [, args...])   -> obj
+  # -->
+  alias send __send__
+  # <!--
+  #   - obj.singleton_class    -> class
+  # -->
+  def singleton_class: () -> Class
+  # <!--
+  #   - obj.tap {|x| block }    -> obj
+  # -->
+  def tap: () { (self) -> void } -> self
+  # <!--
+  #   - obj.to_s    -> string
+  # -->
+  def to_s: () -> String
+  # <!--
+  #   - yield_self()
+  # -->
+  def yield_self: () -> Enumerator[self, untyped]
+                | [T] () { (self) -> T } -> T
+  # <!--
+  #   - obj.then {|x| block }          -> an_object
+  # -->
+  alias then yield_self
+  private
+end
+module Marshal
+  # <!--
+  #   - dump( obj [, anIO] , limit=-1 ) -> anIO
+  # -->
+  def self?.dump: [W < _Writer] (untyped obj, W port, ?int? limit) -> W
+                | (untyped obj, ?Integer limit) -> String
+  # <!--
+  #   - load(source, proc = nil, freeze: false) -> obj
+  #   - restore(source, proc = nil, freeze: false) -> obj
+  # -->
+  def self.load: (string | _Source source, ?freeze: boolish) -> untyped
+               | [A] (string | _Source source, _Proc[A] proc, ?freeze: boolish) -> A
+end
+class MatchData
+  # <!--
+  #   - matchdata[index] -> string or nil
+  #   - matchdata[start, length] -> array
+  #   - matchdata[range] -> array
+  #   - matchdata[name] -> string or nil
+  # -->
+  def []: (capture backref, ?nil) -> String?
+        | (int start, int length) -> Array[String?]
+        | (range[int?] range) -> Array[String?]
+  # <!--
+  #   - begin(n) -> integer
+  #   - begin(name) -> integer
+  # -->
+  def begin: (capture backref) -> Integer?
+  # <!--
+  #   - captures -> array
+  # -->
+  def captures: () -> Array[String?]
+  # <!--
+  #   - end(n) -> integer
+  #   - end(name) -> integer
+  # -->
+  def end: (capture backref) -> Integer?
+  # <!--
+  #   - named_captures(symbolize_names: false) -> hash
+  # -->
+  def named_captures: () -> Hash[String, String?]
+                    | (symbolize_names: true) -> Hash[Symbol, String?]
+                    | (symbolize_names: boolish) -> Hash[String | Symbol, String?]
+  # <!--
+  #   - names -> array_of_names
+  # -->
+  def names: () -> Array[String]
+  # <!--
+  #   - post_match   -> str
+  # -->
+  def post_match: () -> String
+  # <!--
+  #   - pre_match -> string
+  # -->
+  def pre_match: () -> String
+  # <!--
+  #   - to_a -> array
+  # -->
+  def to_a: () -> Array[String?]
+end
+module Math
+  # <!--
+  #   - Math.atan(x)    -> Float
+  # -->
+  def self.atan: (double x) -> Float
+  # <!--
+  #   - Math.atan2(y, x) -> float
+  # -->
+  def self.atan2: (double y, double x) -> Float
+  # <!--
+  #   - Math.cbrt(x) -> float
+  # -->
+  def self.cbrt: (double x) -> Float
+  # <!--
+  #   - Math.cos(x) -> float
+  # -->
+  def self.cos: (double x) -> Float
+  # <!--
+  #   - Math.exp(x) -> float
+  # -->
+  def self.exp: (double x) -> Float
+  # <!--
+  #   - Math.hypot(a, b) -> float
+  # -->
+  def self.hypot: (double x, double y) -> Float
+  # <!--
+  #   - Math.log(x, base = Math::E) -> Float
+  # -->
+  def self.log: (double x, ?double base) -> Float
+  # <!--
+  #   - Math.log10(x) -> float
+  # -->
+  def self.log10: (double x) -> Float
+  # <!--
+  #   - Math.log2(x) -> float
+  # -->
+  def self.log2: (double x) -> Float
+  # <!--
+  #   - Math.sin(x) -> float
+  # -->
+  def self.sin: (double x) -> Float
+  # <!--
+  #   - Math.sqrt(x) -> float
+  # -->
+  def self.sqrt: (double x) -> Float
+  # <!--
+  #   - Math.tan(x) -> float
+  # -->
+  def self.tan: (double x) -> Float
+end
+class Method
+  # <!--
+  #   - meth.to_proc    -> proc
+  # -->
+  def to_proc: () -> Proc
+  # <!--
+  #   - meth.call(args, ...)    -> obj
+  # -->
+  def call: (?) -> untyped
+  # <!--
+  #   - meth.arity    -> integer
+  # -->
+  def arity: () -> Integer
+  # <!--
+  #   - meth.name    -> symbol
+  # -->
+  def name: () -> Symbol
+  # <!--
+  #   - meth.owner    -> class_or_module
+  # -->
+  def owner: () -> (Class | Module)
+  # <!--
+  #   - meth.parameters  -> array
+  # -->
+  def parameters: () -> param_types
+  # <!--
+  #   - meth.receiver    -> object
+  # -->
+  def receiver: () -> untyped
+  # <!--
+  #   - meth.source_location  -> [String, Integer]
+  # -->
+  def source_location: () -> [String, Integer]?
+  # <!--
+  #   - meth.unbind    -> unbound_method
+  # -->
+  def unbind: () -> UnboundMethod
+end
+class Module < Object
+  # <!--
+  #   - Module.constants   -> array
+  #   - Module.constants(inherited)   -> array
+  # -->
+  def self.constants: () -> ::Array[Integer]
+  # <!--
+  #   - mod < other   ->  true, false, or nil
+  # -->
+  def <: (Module other) -> bool?
+  # <!--
+  #   - mod <= other   ->  true, false, or nil
+  # -->
+  def <=: (Module other) -> bool?
+  # <!--
+  #   - mod > other   ->  true, false, or nil
+  # -->
+  def >: (Module other) -> bool?
+  # <!--
+  #   - mod >= other   ->  true, false, or nil
+  # -->
+  def >=: (Module other) -> bool?
+  # <!--
+  #   - alias_method(new_name, old_name)   -> symbol
+  # -->
+  def alias_method: (interned new_name, interned old_name) -> ::Symbol
+  # <!--
+  #   - mod.ancestors -> array
+  # -->
+  def ancestors: () -> ::Array[Module]
+  # <!--
+  #   - attr_accessor(symbol, ...)    -> array
+  #   - attr_accessor(string, ...)    -> array
+  # -->
+  def attr_accessor: (*interned arg0) -> Array[Symbol]
+  # <!--
+  #   - attr_reader(symbol, ...)  -> array
+  #   - attr(symbol, ...)         -> array
+  #   - attr_reader(string, ...)  -> array
+  #   - attr(string, ...)         -> array
+  # -->
+  def attr_reader: (*interned arg0) -> Array[Symbol]
+  # <!--
+  #   - attr_writer(symbol, ...)    -> array
+  #   - attr_writer(string, ...)    -> array
+  # -->
+  def attr_writer: (*interned arg0) -> Array[Symbol]
+  def class_eval: (String arg0, ?String filename, ?Integer lineno) -> untyped
+                | [U] () { (self m) [self: self] -> U } -> U
+  def class_exec: [U] (*untyped, **untyped) { (?) [self: self] -> U } -> U
+  # <!--
+  #   - mod.const_defined?(sym, inherit=true)   -> true or false
+  #   - mod.const_defined?(str, inherit=true)   -> true or false
+  # -->
+  def const_defined?: (interned name, ?boolish inherit) -> bool
+  # <!--
+  #   - mod.const_get(sym, inherit=true)    -> obj
+  #   - mod.const_get(str, inherit=true)    -> obj
+  # -->
+  def const_get: (interned name, ?boolish inherit) -> untyped
+  # <!--
+  #   - mod.const_missing(sym)    -> obj
+  # -->
+  def const_missing: (Symbol arg0) -> untyped
+  # <!--
+  #   - mod.const_set(sym, obj)    -> obj
+  #   - mod.const_set(str, obj)    -> obj
+  # -->
+  def const_set: (interned arg0, untyped arg1) -> untyped
+  # <!--
+  #   - mod.constants(inherit=true)    -> array
+  # -->
+  def constants: (?boolish inherit) -> ::Array[Symbol]
+  # <!--
+  #   - define_method(symbol, method)     -> symbol
+  #   - define_method(symbol) { block }   -> symbol
+  # -->
+  def define_method: (interned symbol, ^() [self: instance] -> untyped | Method | UnboundMethod method) -> Symbol
+                   | (interned symbol) { () [self: instance] -> untyped } -> Symbol
+  # <!--
+  #   - extend_object(obj)    -> obj
+  # -->
+  def extend_object: (untyped arg0) -> untyped
+  # <!--
+  #   - extended(othermod)
+  # -->
+  def extended: (Module othermod) -> untyped
+  # <!--
+  #   - include(module, ...)    -> self
+  # -->
+  def include: (Module, *Module arg0) -> self
+  # <!--
+  #   - mod.include?(module)    -> true or false
+  # -->
+  def include?: (Module arg0) -> bool
+  # <!--
+  #   - included(othermod)
+  # -->
+  def included: (Module othermod) -> untyped
+  # <!--
+  #   - mod.included_modules -> array
+  # -->
+  def included_modules: () -> ::Array[Module]
+  # <!--
+  #   - Module.new                  -> mod
+  #   - Module.new {|mod| block }   -> mod
+  # -->
+  def initialize: () -> void
+                | () { (Module arg0) -> untyped } -> void
+  # <!--
+  #   - mod.instance_method(symbol)   -> unbound_method
+  # -->
+  def instance_method: (interned arg0) -> UnboundMethod
+  # <!--
+  #   - mod.instance_methods(include_super=true)   -> array
+  # -->
+  def instance_methods: (?boolish include_super) -> ::Array[Symbol]
+  # <!--
+  #   - mod.method_defined?(symbol, inherit=true)    -> true or false
+  #   - mod.method_defined?(string, inherit=true)    -> true or false
+  # -->
+  def method_defined?: (interned name, ?boolish inherit) -> bool
+  # <!--
+  #   - mod.class_eval(string [, filename [, lineno]])  -> obj
+  #   - mod.class_eval {|mod| block }                   -> obj
+  #   - mod.module_eval(string [, filename [, lineno]]) -> obj
+  #   - mod.module_eval {|mod| block }                  -> obj
+  # -->
+  def module_eval: (String arg0, ?String filename, ?Integer lineno) -> untyped
+                 | [U] () { (self m) [self: self] -> U } -> U
+  # <!--
+  #   - mod.module_exec(arg...) {|var...| block }       -> obj
+  #   - mod.class_exec(arg...) {|var...| block }        -> obj
+  # -->
+  def module_exec: [U] (*untyped, **untyped) { (?) [self: self] -> U } -> U
+  # <!--
+  #   - module_function                                -> nil
+  #   - module_function(method_name)                   -> method_name
+  #   - module_function(method_name, method_name, ...) -> array
+  # -->
+  def module_function: () -> nil
+                     | (Symbol method_name) -> Symbol
+                     | (Symbol, Symbol, *Symbol method_name) -> Array[Symbol]
+                     | (string method_name) -> string
+                     | (interned, interned, *interned method_name) -> Array[interned]
+  # <!--
+  #   - mod.name    -> string or nil
+  # -->
+  def name: () -> String?
+  # <!--
+  #   - prepend(module, ...)    -> self
+  # -->
+  def prepend: (Module, *Module arg0) -> self
+  # <!--
+  #   - prepended(othermod)
+  # -->
+  def prepended: (Module othermod) -> untyped
+  # <!--
+  #   - private                                -> nil
+  #   - private(method_name)                   -> method_name
+  #   - private(method_name, method_name, ...) -> array
+  #   - private(array)                         -> array
+  # -->
+  def private: () -> nil
+             | (Symbol method_name) -> Symbol
+             | (Symbol, Symbol, *Symbol method_name) -> Array[Symbol]
+             | (string method_name) -> string
+             | (interned, interned, *interned method_name) -> Array[interned]
+             | (Array[interned]) -> Array[interned]
+  # <!--
+  #   - mod.private_class_method(symbol, ...)   -> mod
+  #   - mod.private_class_method(string, ...)   -> mod
+  #   - mod.private_class_method(array)         -> mod
+  # -->
+  def private_class_method: (*interned arg0) -> self
+                          | (Array[interned] arg0) -> self
+  # <!--
+  #   - mod.private_constant(symbol, ...)    => mod
+  # -->
+  def private_constant: (*interned arg0) -> self
+  # <!--
+  #   - mod.private_instance_methods(include_super=true)    -> array
+  # -->
+  def private_instance_methods: (?boolish include_super) -> ::Array[Symbol]
+  # <!--
+  #   - mod.private_method_defined?(symbol, inherit=true)    -> true or false
+  #   - mod.private_method_defined?(string, inherit=true)    -> true or false
+  # -->
+  def private_method_defined?: (interned name, ?boolish inherit) -> bool
+  # <!--
+  #   - protected                                -> nil
+  #   - protected(method_name)                   -> method_name
+  #   - protected(method_name, method_name, ...) -> array
+  #   - protected(array)                         -> array
+  # -->
+  def protected: () -> nil
+               | (Symbol method_name) -> Symbol
+               | (Symbol, Symbol, *Symbol method_name) -> Array[Symbol]
+               | (string method_name) -> string
+               | (interned, interned, *interned method_name) -> Array[interned]
+               | (Array[interned]) -> Array[interned]
+  # <!--
+  #   - mod.protected_instance_methods(include_super=true)   -> array
+  # -->
+  def protected_instance_methods: (?boolish include_super) -> ::Array[Symbol]
+  # <!--
+  #   - public                                -> nil
+  #   - public(method_name)                   -> method_name
+  #   - public(method_name, method_name, ...) -> array
+  #   - public(array)                         -> array
+  # -->
+  def public: () -> nil
+            | (Symbol method_name) -> Symbol
+            | (Symbol, Symbol, *Symbol method_name) -> Array[Symbol]
+            | (string method_name) -> string
+            | (interned, interned, *interned method_name) -> Array[interned]
+            | (Array[interned]) -> Array[interned]
+  # <!--
+  #   - mod.public_class_method(symbol, ...)    -> mod
+  #   - mod.public_class_method(string, ...)    -> mod
+  #   - mod.public_class_method(array)          -> mod
+  # -->
+  def public_class_method: (*interned arg0) -> self
+                         | (Array[interned] arg0) -> self
+  # <!--
+  #   - mod.public_constant(symbol, ...)    => mod
+  # -->
+  def public_constant: (*interned arg0) -> self
+  # <!--
+  #   - mod.public_instance_methods(include_super=true)   -> array
+  # -->
+  def public_instance_methods: (?boolish include_super) -> ::Array[Symbol]
+  # <!--
+  #   - remove_method(symbol)   -> self
+  #   - remove_method(string)   -> self
+  # -->
+  def remove_method: (*interned arg0) -> self
+  # <!--
+  #   - undef_method(symbol)    -> self
+  #   - undef_method(string)    -> self
+  # -->
+  def undef_method: (*interned arg0) -> self
+  # <!--
+  #   - using(module)    -> self
+  # -->
+  def using: (Module arg0) -> self
+  # <!--
+  #   - attr(name, ...) -> array
+  #   - attr(name, true) -> array
+  #   - attr(name, false) -> array
+  # -->
+  def attr: (*interned arg0) -> Array[Symbol]
+end
+class NilClass
+  # <!--
+  #   - false & object -> false
+  #   - nil & object   -> false
+  # -->
+  def &: (untyped obj) -> false
+  # <!--
+  #   - nil.nil?  -> true
+  # -->
+  def nil?: () -> true
+  # <!--
+  #   - to_a -> []
+  # -->
+  def to_a: () -> []
+  # <!--
+  #   - to_h -> {}
+  # -->
+  def to_h: () -> {}
+  # <!--
+  #   - to_s -> ''
+  # -->
+  def to_s: () -> ""
+  # <!--
+  #   - false | object -> true or false
+  #   - nil   | object -> true or false
+  # -->
+  def |: (nil | false) -> false
+       | (untyped obj) -> bool
+end
+class Numeric
+  include Comparable
+  # <!--
+  #   - self % other -> real_numeric
+  # -->
+  def %: (Numeric) -> Numeric
+  def +: (Numeric) -> Numeric
+  def -: (Numeric) -> Numeric
+  # <!--
+  #   - abs -> numeric
+  # -->
+  def abs: () -> Numeric
+  # <!--
+  #   - ceil(ndigits = 0) -> float or integer
+  # -->
+  def ceil: () -> Integer
+          | (Integer digits) -> (Integer | Numeric)
+  # <!--
+  #   - coerce(other) -> array
+  # -->
+  def coerce: (Numeric) -> [ Numeric, Numeric ]
+  # <!--
+  #   - divmod(other) -> array
+  # -->
+  def divmod: (Numeric) -> [ Numeric, Numeric ]
+  # <!--
+  #   - floor(ndigits = 0) -> float or integer
+  # -->
+  def floor: () -> Integer
+           | (Integer digits) -> Numeric
+  # <!--
+  #   - negative? -> true or false
+  # -->
+  def negative?: () -> bool
+  # <!--
+  #   - nonzero?  ->  self or nil
+  # -->
+  def nonzero?: () -> self?
+  # <!--
+  #   - positive? -> true or false
+  # -->
+  def positive?: () -> bool
+  # <!--
+  #   - round(digits = 0) -> integer or float
+  # -->
+  def round: () -> Integer
+           | (Integer digits) -> Numeric
+  # <!--
+  #   - step(to = nil, by = 1) {|n| ... } ->  self
+  #   - step(to = nil, by = 1)            ->  enumerator
+  #   - step(to = nil, by: 1) {|n| ... }  ->  self
+  #   - step(to = nil, by: 1)             ->  enumerator
+  #   - step(by: 1, to: ) {|n| ... }      ->  self
+  #   - step(by: 1, to: )                 ->  enumerator
+  #   - step(by: , to: nil) {|n| ... }    ->  self
+  #   - step(by: , to: nil)               ->  enumerator
+  # -->
+  def step: (?Numeric limit, ?Numeric step) { (Numeric) -> void } -> self
+          | (?Numeric limit, ?Numeric step) -> Enumerator[Numeric, self]
+          | (?by: Numeric, ?to: Numeric) { (Numeric) -> void } -> self
+          | (?by: Numeric, ?to: Numeric) -> Enumerator[Numeric, self]
+  # <!--
+  #   - to_int -> integer
+  # -->
+  def to_int: () -> Integer
+  # <!--
+  #   - zero? -> true or false
+  # -->
+  def zero?: () -> bool
+end
+class Object < BasicObject
+  include Kernel
+end
+module ObjectSpace
+  # <!--
+  #   - ObjectSpace.count_objects([result_hash]) -> hash
+  # -->
+  def self.count_objects: (?Hash[Symbol, Integer] result_hash) -> Hash[Symbol, Integer]
+  # <!--
+  #   - ObjectSpace.define_finalizer(obj, aProc=proc())
+  # -->
+  def self.define_finalizer: (untyped obj, ^(Integer id) -> void aProc) -> [ Integer, Proc ]
+                           | (untyped obj) { (Integer id) -> void } -> [ Integer, Proc ]
+  # <!--
+  #   - ObjectSpace.each_object([module]) {|obj| ... } -> integer
+  #   - ObjectSpace.each_object([module])              -> an_enumerator
+  # -->
+  def self.each_object: (?Module `module`) -> Enumerator[untyped, Integer]
+                      | (?Module `module`) { (untyped obj) -> void } -> Integer
+  # <!--
+  #   - garbage_collect(full_mark: true, immediate_mark: true, immediate_sweep: true)
+  # -->
+  def self.garbage_collect: (?full_mark: bool, ?immediate_mark: bool, ?immediate_sweep: bool) -> void
+  private
+  # <!--
+  #   - garbage_collect(full_mark: true, immediate_mark: true, immediate_sweep: true)
+  # -->
+  def garbage_collect: (?full_mark: bool, ?immediate_mark: bool, ?immediate_sweep: bool) -> void
+end
+module ObjectSpace
+end
+class Proc
+  alias === call
+  alias yield call
+  # <!--
+  #   - prc.arity -> integer
+  # -->
+  def arity: () -> Integer
+  # <!--
+  #   - prc.call(params,...)   -> obj
+  #   - prc[params,...]        -> obj
+  #   - prc.(params,...)       -> obj
+  #   - prc.yield(params,...)  -> obj
+  # -->
+  def call: (?) -> untyped
+  alias [] call
+  # <!--
+  #   - prc.curry         -> a_proc
+  #   - prc.curry(arity)  -> a_proc
+  # -->
+  def curry: (?int? arity) -> Proc
+  # <!--
+  #   - prc.lambda? -> true or false
+  # -->
+  def lambda?: () -> bool
+  # <!--
+  #   - prc.parameters(lambda: nil)  -> array
+  # -->
+  def parameters: (?lambda: boolish) -> Method::param_types
+  # <!--
+  #   - prc.to_proc -> proc
+  # -->
+  def to_proc: () -> self
+end
+module Process
+  # <!--
+  #   - Process.clock_gettime(clock_id, unit = :float_second) -> number
+  # -->
+  def self.clock_gettime: (Symbol | Integer clock_id) -> Float
+                        | (Symbol | Integer clock_id, :float_second | :float_millisecond | :float_microsecond unit) -> Float
+                        | (Symbol | Integer clock_id, :second | :millisecond | :microsecond | :nanosecond unit) -> Integer
+  # <!--
+  #   - Process.kill(signal, *ids) -> count
+  # -->
+  def self.kill: (Integer | interned signal, *Integer pids) -> Integer
+  # <!--
+  #   - Process.pid -> integer
+  # -->
+  def self.pid: () -> Integer
+  # <!--
+  #   - Process.ppid -> integer
+  # -->
+  def self.ppid: () -> Integer
+  # <!--
+  #   - Process.wait(pid = -1, flags = 0) -> integer
+  # -->
+  def self.wait: (?Integer pid, ?Integer flags) -> Integer
+end
+Process::CLOCK_MONOTONIC: Integer
+Process::CLOCK_PROCESS_CPUTIME_ID: Integer
+Process::CLOCK_REALTIME: Integer
+Process::CLOCK_THREAD_CPUTIME_ID: Integer
+class Process::Status < Object
+end
+class Ractor
+  private
+end
+class Random < RBS::Unnamed::Random_Base
+  # <!--
+  #   - Random.new(seed = Random.new_seed) -> prng
+  # -->
+  def initialize: (?Integer seed) -> void
+  # <!--
+  #   - Random.new_seed -> integer
+  # -->
+  def self.new_seed: () -> Integer
+  # <!--
+  #   - Random.rand -> float
+  #   - Random.rand(max) -> number
+  #   - Random.rand(range) -> number
+  # -->
+  def self.rand: (?0) -> Float
+               | (Integer | ::Range[Integer] max) -> Integer
+               | (Float | ::Range[Float] max) -> Float
+               | [T < Numeric] (::Range[T]) -> T
+  # <!--
+  #   - srand(number = Random.new_seed) -> old_seed
+  # -->
+  def self.srand: (?Integer number) -> Integer
+  # <!--
+  #   - prng.seed -> integer
+  # -->
+  def seed: () -> Integer
+  private
+end
+class Random::Base < RBS::Unnamed::Random_Base
+end
+module Random::Formatter
+  include RBS::Unnamed::Random_Formatter
+end
+class Range[out Elem] < Object
+  include Enumerable[Elem]
+  # <!--
+  #   - self.begin -> object
+  # -->
+  def begin: () -> Elem
+  # <!--
+  #   - cover?(object) -> true or false
+  #   - cover?(range) -> true or false
+  # -->
+  def cover?: (untyped obj) -> bool
+  # <!--
+  #   - each {|element| ... } -> self
+  #   - each                  -> an_enumerator
+  # -->
+  def each: () { (Elem arg0) -> untyped } -> self
+          | () -> ::Enumerator[Elem, self]
+  # <!--
+  #   - self.end -> object
+  # -->
+  def end: () -> Elem
+  # <!--
+  #   - exclude_end? -> true or false
+  # -->
+  def exclude_end?: () -> bool
+  # <!--
+  #   - first -> object
+  #   - first(n) -> array
+  # -->
+  def first: () -> Elem
+           | (Integer n) -> ::Array[Elem]
+  def include?: (untyped obj) -> bool
+  # <!--
+  #   - Range.new(begin, end, exclude_end = false) -> new_range
+  # -->
+  def initialize: (Elem from, Elem to, ?boolish exclude_end) -> void
+  # <!--
+  #   - last -> object
+  #   - last(n) -> array
+  # -->
+  def last: () -> Elem
+          | (Integer n) -> ::Array[Elem]
+  # <!--
+  #   - max -> object
+  #   - max(n) -> array
+  #   - max {|a, b| ... } -> object
+  #   - max(n) {|a, b| ... } -> array
+  # -->
+  def max: () -> Elem
+         | () { (Elem a, Elem b) -> Integer } -> Elem
+         | (Integer n) -> ::Array[Elem]
+         | (Integer n) { (Elem a, Elem b) -> Integer } -> ::Array[Elem]
+  # <!--
+  #   - min -> object
+  #   - min(n) -> array
+  #   - min {|a, b| ... } -> object
+  #   - min(n) {|a, b| ... } -> array
+  # -->
+  def min: () -> Elem
+         | () { (Elem a, Elem b) -> Integer } -> Elem
+         | (Integer n) -> ::Array[Elem]
+         | (Integer n) { (Elem a, Elem b) -> Integer } -> ::Array[Elem]
+  # <!--
+  #   - size -> non_negative_integer or Infinity or nil
+  # -->
+  def size: () -> Integer?
+          | () -> Float?
+  # <!--
+  #   - step(s = 1) {|element| ... } -> self
+  #   - step(s = 1)                  -> enumerator/arithmetic_sequence
+  # -->
+  def step: (?Numeric | int) -> Enumerator[Elem, self]
+          | (?Numeric | int) { (Elem element) -> void } -> self
+          | (untyped) -> Enumerator[Elem, self]
+          | (untyped) { (Elem element) -> void } -> self
+end
+class Rational < Numeric
+end
+module RBS
+  module Unnamed
+  end
+end
+module RBS
+  module Unnamed
+  end
+end
+module RBS
+  module Unnamed
+    class Random_Base
+      include Random_Formatter
+      extend Random_Formatter
+      # <!--
+      #   - Random.new(seed = Random.new_seed) -> prng
+      # -->
+      def initialize: (?Integer seed) -> void
+      # <!--
+      #   - prng.rand -> float
+      #   - prng.rand(max) -> number
+      #   - prng.rand(range) -> number
+      # -->
+      def rand: (?0) -> Float
+              | (Integer | ::Range[Integer] max) -> Integer
+              | (Float | ::Range[Float] max) -> Float
+      # <!--
+      #   - prng.bytes(size) -> string
+      # -->
+      def bytes: (Integer size) -> String
+    end
+    module Random_Formatter
+    end
+  end
+end
+class Regexp
+  # <!--
+  #   - Regexp.escape(string) -> new_string
+  # -->
+  def self.escape: (interned str) -> String
+  # <!--
+  #   - Regexp.last_match -> matchdata or nil
+  #   - Regexp.last_match(n) -> string or nil
+  #   - Regexp.last_match(name) -> string or nil
+  # -->
+  def self.last_match: () -> MatchData?
+                     | (MatchData::capture capture) -> String?
+  # <!--
+  #   - Regexp.union(*patterns) -> regexp
+  #   - Regexp.union(array_of_patterns) -> regexp
+  # -->
+  def self.union: (*Regexp | _ToRegexp | string patterns) -> Regexp
+                | (array[Regexp | _ToRegexp | string] patterns) -> Regexp
+                | (Symbol | [Symbol] symbol_pattern) -> Regexp
+  # <!--
+  #   - Regexp.new(string, options = 0, timeout: nil) -> regexp
+  #   - Regexp.new(regexp, timeout: nil) -> regexp
+  # -->
+  def initialize: (Regexp regexp, ?timeout: _ToF?) -> void
+                | (string pattern, ?int | string | bool | nil options, ?timeout: _ToF?) -> void
+  # <!--
+  #   - regexp === string -> true or false
+  # -->
+  def ===: (untyped other) -> bool
+  # <!--
+  #   - regexp =~ string -> integer or nil
+  # -->
+  def =~: (interned? string) -> Integer?
+        | (nil) -> nil
+  # <!--
+  #   - match(string, offset = 0) -> matchdata or nil
+  #   - match(string, offset = 0) {|matchdata| ... } -> object
+  # -->
+  def match: (interned? str, ?int offset) -> MatchData?
+           | [T] (interned? str, ?int offset) { (MatchData matchdata) -> T } -> T?
+           | (nil, ?int offset) ?{ (MatchData matchdata) -> void } -> nil
+  # <!--
+  #   - match?(string) -> true or false
+  #   - match?(string, offset = 0) -> true or false
+  # -->
+  def match?: (interned str, ?int offset) -> bool
+            | (nil, ?int offset) -> false
+  # <!--
+  #   - names -> array_of_names
+  # -->
+  def names: () -> Array[String]
+  # <!--
+  #   - options -> integer
+  # -->
+  def options: () -> Integer
+  # <!--
+  #   - source -> string
+  # -->
+  def source: () -> String
+end
+class Set[unchecked out A]
+  include Enumerable[A]
+  # <!--
+  #   - new(enum = nil) { |o| ... }
+  # -->
+  def initialize: (_Each[A]) -> untyped
+                | [X] (_Each[X]) { (X) -> A } -> untyped
+                | (?nil) -> untyped
+  # <!--
+  #   - &(enum)
+  # -->
+  def &: (_Each[A]) -> self
+  # <!--
+  #   - |(enum)
+  # -->
+  def |: (_Each[A]) -> self
+  # <!--
+  #   - -(enum)
+  # -->
+  def -: (_Each[A]) -> self
+  # <!--
+  #   - add(o)
+  # -->
+  def add: (A) -> self
+  # <!--
+  #   - <<(o)
+  # -->
+  alias << add
+  # <!--
+  #   - add?(o)
+  # -->
+  def add?: (A) -> self?
+  # <!--
+  #   - include?(o)
+  # -->
+  def include?: (A) -> bool
+  # <!--
+  #   - member?(o)
+  # -->
+  alias member? include?
+  # <!--
+  #   - delete(o)
+  # -->
+  def delete: (A) -> self
+  # <!--
+  #   - each(&block)
+  # -->
+  def each: () { (A) -> void } -> self
+          | () -> Enumerator[A, self]
+  # <!--
+  #   - empty?()
+  # -->
+  def empty?: () -> bool
+  # <!--
+  #   - size()
+  # -->
+  def size: () -> Integer
+  # <!--
+  #   - length()
+  # -->
+  alias length size
+  # <!--
+  #   - merge(*enums, **nil)
+  # -->
+  def merge: (*_Each[A]) -> self
+  # <!--
+  #   - subset?(set)
+  # -->
+  def subset?: (self) -> bool
+  # <!--
+  #   - superset?(set)
+  # -->
+  def superset?: (self) -> bool
+  # <!--
+  #   - to_a()
+  # -->
+  def to_a: () -> Array[A]
+end
+module Enumerable[unchecked out Elem]
+  # <!--
+  #   - to_set(klass = Set, *args, &block)
+  # -->
+  def to_set: () -> Set[Elem]
+            | [T] () { (Elem) -> T } -> Set[T]
+end
+module Signal
+  # <!--
+  #   - Signal.list -> a_hash
+  # -->
+  def self?.list: () -> Hash[String, Integer]
+  # <!--
+  #   - Signal.trap( signal, command ) -> obj
+  #   - Signal.trap( signal ) {| | block } -> obj
+  # -->
+  def self?.trap: (Integer | interned signal) { (Integer) -> void } -> trap_command
+                | (Integer | interned signal, trap_command command) -> trap_command
+end
+class String
+  include Comparable
+  # <!--
+  #   - String.new(string = '', **opts) -> new_string
+  # -->
+  def initialize: (?string source, ?encoding: encoding, ?capacity: int) -> void
+  # <!--
+  #   - string % object -> new_string
+  # -->
+  def %: (array[untyped] positional_args) -> String
+       | (hash[Symbol, untyped] named_args) -> String
+       | (untyped arg) -> String
+  # <!--
+  #   - string * integer -> new_string
+  # -->
+  def *: (int amount) -> String
+  # <!--
+  #   - string + other_string -> new_string
+  # -->
+  def +: (string other_string) -> String
+  # <!--
+  #   - string << object -> string
+  # -->
+  def <<: (string | Integer str_or_codepoint) -> self
+  # <!--
+  #   - string =~ regexp -> integer or nil
+  #   - string =~ object -> integer or nil
+  # -->
+  def =~: (Regexp regex) -> Integer?
+        | [T] (_MatchAgainst[self, T] object) -> T
+  # <!--
+  #   - string[index] -> new_string or nil
+  #   - string[start, length] -> new_string or nil
+  #   - string[range] -> new_string or nil
+  #   - string[regexp, capture = 0] -> new_string or nil
+  #   - string[substring] -> new_string or nil
+  # -->
+  def []: (int start, ?int length) -> String?
+        | (range[int?] range) -> String?
+        | (Regexp regexp, ?MatchData::capture backref) -> String?
+        | (String substring) -> String?
+  # <!--
+  #   - string[index] = new_string
+  #   - string[start, length] = new_string
+  #   - string[range] = new_string
+  #   - string[regexp, capture = 0] = new_string
+  #   - string[substring] = new_string
+  # -->
+  def []=: [T < _ToStr] (int index, T replacement) -> T
+         | [T < _ToStr] (int start, int length, T replacement) -> T
+         | [T < _ToStr] (range[int?] range, T replacement) -> T
+         | [T < _ToStr] (Regexp regexp, T replacement) -> T
+         | [T < _ToStr] (Regexp regexp, MatchData::capture backref, T replacement) -> T
+         | [T < _ToStr] (String substring, T replacement) -> T
+  # <!--
+  #   - bytes -> array_of_bytes
+  # -->
+  def bytes: () -> Array[Integer]
+           | () { (Integer byte) -> void } -> self
+  # <!--
+  #   - bytesize -> integer
+  # -->
+  def bytesize: () -> Integer
+  # <!--
+  #   - capitalize(*options) -> string
+  # -->
+  def capitalize: () -> String
+                | (:ascii | :lithuanian | :turkic) -> String
+                | (:lithuanian, :turkic) -> String
+                | (:turkic, :lithuanian) -> String
+  # <!--
+  #   - center(size, pad_string = ' ') -> new_string
+  # -->
+  def center: (int width, ?string pad_string) -> String
+  # <!--
+  #   - chars -> array_of_characters
+  # -->
+  def chars: () -> Array[String]
+           | () { (String char) -> void } -> self
+  # <!--
+  #   - chomp(line_sep = $/) -> new_string
+  # -->
+  def chomp: (?string? separator) -> String
+  # <!--
+  #   - chop -> new_string
+  # -->
+  def chop: () -> String
+  # <!--
+  #   - concat(*objects) -> string
+  # -->
+  def concat: (*string | Integer string_or_codepoints) -> self
+  # <!--
+  #   - count(*selectors) -> integer
+  # -->
+  def count: (selector selector_0, *selector more_selectors) -> Integer
+  # <!--
+  #   - delete(*selectors) -> new_string
+  # -->
+  def delete: (selector selector_0, *selector more_selectors) -> String
+  # <!--
+  #   - downcase(*options) -> string
+  # -->
+  def downcase: () -> String
+              | (:ascii | :fold | :lithuanian | :turkic) -> String
+              | (:lithuanian, :turkic) -> String
+              | (:turkic, :lithuanian) -> String
+  # <!--
+  #   - each_char {|c| ... } -> self
+  #   - each_char            -> enumerator
+  # -->
+  def each_char: () -> Enumerator[String, self]
+               | () { (String char) -> void } -> self
+  # <!--
+  #   - each_line(line_sep = $/, chomp: false) {|substring| ... } -> self
+  #   - each_line(line_sep = $/, chomp: false)                    -> enumerator
+  # -->
+  def each_line: (?string? separator, ?chomp: boolish) -> Enumerator[String, self]
+               | (?string? separator, ?chomp: boolish) { (String line) -> void } -> self
+  # <!--
+  #   - empty? -> true or false
+  # -->
+  def empty?: () -> bool
+  # <!--
+  #   - encode(dst_encoding = Encoding.default_internal, **enc_opts) -> string
+  #   - encode(dst_encoding, src_encoding, **enc_opts)   -> string
+  # -->
+  def encode: (
+    ?encoding source_encoding,
+    ?encoding? from_encoding,
+    ?invalid: :replace ?,
+    ?undef: :replace ?,
+    ?replace: string?,
+    ?xml: (:text | :attr)?,
+    ?newline: (:universal | :crlf | :cr | :lf)?,
+    ?universal_newline: boolish,
+    ?cr_newline: boolish,
+    ?crlf_newline: boolish,
+    ?lf_newline: boolish,
+    ?fallback: ^(String) -> string? | Method | _EncodeFallbackAref
+  ) -> instance
+  # <!--
+  #   - obj.encoding   -> encoding
+  # -->
+  def encoding: () -> Encoding
+  # <!--
+  #   - end_with?(*strings) -> true or false
+  # -->
+  def end_with?: (*string suffixes) -> bool
+  # <!--
+  #   - force_encoding(encoding) -> self
+  # -->
+  def force_encoding: (encoding enc) -> self
+  # <!--
+  #   - freeze()
+  # -->
+  def freeze: () -> self
+  # <!--
+  #   - gsub(pattern, replacement)   -> new_string
+  #   - gsub(pattern) {|match| ... } -> new_string
+  #   - gsub(pattern)                -> enumerator
+  # -->
+  def gsub: (Regexp | string pattern, string | hash[String, _ToS] replacement) -> String
+          | (Regexp | string pattern) -> Enumerator[String, String]
+          | (Regexp | string pattern) { (String match) -> _ToS } -> String
+  # <!--
+  #   - gsub!(pattern, replacement)   -> self or nil
+  #   - gsub!(pattern) {|match| ... } -> self or nil
+  #   - gsub!(pattern)                -> an_enumerator
+  # -->
+  def gsub!: (Regexp | string pattern, string | hash[String, _ToS] replacement) -> self?
+           | (Regexp | string pattern) -> Enumerator[String, self?]
+           | (Regexp | string pattern) { (String match) -> _ToS } -> self?
+  # <!--
+  #   - hash -> integer
+  # -->
+  def hash: () -> Integer
+  # <!--
+  #   - include?(other_string) -> true or false
+  # -->
+  def include?: (string other_string) -> bool
+  # <!--
+  #   - index(substring, offset = 0) -> integer or nil
+  #   - index(regexp, offset = 0) -> integer or nil
+  # -->
+  def index: (Regexp | string pattern, ?int offset) -> Integer?
+  # <!--
+  #   - insert(index, other_string) -> self
+  # -->
+  def insert: (int index, string other_str) -> self
+  # <!--
+  #   - inspect -> string
+  # -->
+  def inspect: () -> String
+  # <!--
+  #   - length -> integer
+  # -->
+  def length: () -> Integer
+  # <!--
+  #   - lines(Line_sep = $/, chomp: false) -> array_of_strings
+  # -->
+  def lines: (?string? separator, ?chomp: boolish) -> Array[String]
+           | (?string? separator, ?chomp: boolish) { (String line) -> void } -> self
+  # <!--
+  #   - ljust(size, pad_string = ' ') -> new_string
+  # -->
+  def ljust: (int size, ?string pad_string) -> String
+  # <!--
+  #   - lstrip -> new_string
+  # -->
+  def lstrip: () -> String
+  # <!--
+  #   - match(pattern, offset = 0) -> matchdata or nil
+  #   - match(pattern, offset = 0) {|matchdata| ... } -> object
+  # -->
+  def match: (Regexp | string pattern, ?int offset) -> MatchData?
+           | [T] (Regexp | string pattern, ?int offset) { (MatchData matchdata) -> T } -> T?
+  # <!--
+  #   - match?(pattern, offset = 0) -> true or false
+  # -->
+  def match?: (Regexp | string pattern, ?int offset) -> bool
+  alias next succ
+  # <!--
+  #   - ord -> integer
+  # -->
+  def ord: () -> Integer
+  # <!--
+  #   - prepend(*other_strings)  -> string
+  # -->
+  def prepend: (*string other_strings) -> self
+  def replace: (string other_string) -> self
+  # <!--
+  #   - reverse -> string
+  # -->
+  def reverse: () -> String
+  # <!--
+  #   - rindex(substring, offset = self.length) -> integer or nil
+  #   - rindex(regexp, offset = self.length) -> integer or nil
+  # -->
+  def rindex: (Regexp | string pattern, ?int offset) -> Integer?
+  # <!--
+  #   - rjust(size, pad_string = ' ') -> new_string
+  # -->
+  def rjust: (int size, ?string pad_string) -> String
+  # <!--
+  #   - rstrip -> new_string
+  # -->
+  def rstrip: () -> String
+  # <!--
+  #   - scan(string_or_regexp) -> array
+  #   - scan(string_or_regexp) {|matches| ... } -> self
+  # -->
+  def scan: (Regexp pattern) -> Array[String | Array[String?]]
+          | (Regexp pattern) { (String | Array[String?] matches) -> void } -> self
+          | (string pattern) -> Array[String]
+          | (string pattern) { (String match) -> void } -> self
+  alias size length
+  alias slice []
+  # <!--
+  #   - slice!(index)               -> new_string or nil
+  #   - slice!(start, length)       -> new_string or nil
+  #   - slice!(range)               -> new_string or nil
+  #   - slice!(regexp, capture = 0) -> new_string or nil
+  #   - slice!(substring)           -> new_string or nil
+  # -->
+  def slice!: (int index, ?int length) -> String?
+            | (range[int?] range) -> String?
+            | (String substring) -> String?
+            | (Regexp regexp, ?MatchData::capture backref) -> String?
+  # <!--
+  #   - split(field_sep = $;, limit = 0) -> array
+  #   - split(field_sep = $;, limit = 0) {|substring| ... } -> self
+  # -->
+  def split: (?Regexp | string | nil pattern, ?int limit) -> Array[String]
+           | (?Regexp | string | nil pattern, ?int limit) { (String substring) -> void } -> self
+  # <!--
+  #   - squeeze(*selectors) -> new_string
+  # -->
+  def squeeze: (*selector selectors) -> String
+  # <!--
+  #   - start_with?(*string_or_regexp) -> true or false
+  # -->
+  def start_with?: (*Regexp | string prefixes) -> bool
+  # <!--
+  #   - strip -> new_string
+  # -->
+  def strip: () -> String
+  # <!--
+  #   - sub(pattern, replacement)   -> new_string
+  #   - sub(pattern) {|match| ... } -> new_string
+  # -->
+  def sub: (Regexp | string pattern, string | hash[String, _ToS] replacement) -> String
+         | (Regexp | string pattern) { (String match) -> _ToS } -> String
+  # <!--
+  #   - sub!(pattern, replacement)   -> self or nil
+  #   - sub!(pattern) {|match| ... } -> self or nil
+  # -->
+  def sub!: (Regexp | string pattern, string | hash[String, _ToS] replacement) -> self?
+          | (Regexp | string pattern) { (String match) -> _ToS } -> self?
+  # <!--
+  #   - succ -> new_str
+  # -->
+  def succ: () -> String
+  # <!--
+  #   - swapcase(*options) -> string
+  # -->
+  def swapcase: () -> String
+              | (:ascii | :lithuanian | :turkic) -> String
+              | (:lithuanian, :turkic) -> String
+              | (:turkic, :lithuanian) -> String
+  # <!--
+  #   - to_c -> complex
+  # -->
+  def to_c: () -> Complex
+  # <!--
+  #   - to_f -> float
+  # -->
+  def to_f: () -> Float
+  # <!--
+  #   - to_i(base = 10) -> integer
+  # -->
+  def to_i: (?int radix) -> Integer
+  # <!--
+  #   - str.to_r  ->  rational
+  # -->
+  def to_r: () -> Rational
+  # <!--
+  #   - to_s -> self or string
+  # -->
+  def to_s: () -> String
+  alias to_str to_s
+  alias to_sym intern
+  # <!--
+  #   - tr(selector, replacements) -> new_string
+  # -->
+  def tr: (selector source, string relpacement) -> String
+  # <!--
+  #   - unicode_normalize(form = :nfc) -> string
+  # -->
+  def unicode_normalize: (?:nfc | :nfd | :nfkc | :nfkd form) -> self
+  # <!--
+  #   - unpack(template, offset: 0, &block) -> array
+  # -->
+  def unpack: (string template, ?offset: int) -> Array[Integer | Float | String | nil]
+            | (string template, ?offset: int) { (Integer | Float | String | nil value) -> void } -> nil
+  # <!--
+  #   - unpack1(template, offset: 0) -> object
+  # -->
+  def unpack1: (string template, ?offset: int) -> (Integer | Float | String)?
+  # <!--
+  #   - upcase(*options) -> string
+  # -->
+  def upcase: () -> String
+            | (:ascii | :lithuanian | :turkic) -> String
+            | (:lithuanian, :turkic) -> String
+            | (:turkic, :lithuanian) -> String
+  # <!--
+  #   - valid_encoding? -> true or false
+  # -->
+  def valid_encoding?: () -> bool
+end
+class Struct[Elem]
+  include Enumerable[Elem]
+  # <!--
+  #   - Struct.new(*member_names, keyword_init: nil){|Struct_subclass| ... } -> Struct_subclass
+  #   - Struct.new(class_name, *member_names, keyword_init: nil){|Struct_subclass| ... } -> Struct_subclass
+  #   - Struct_subclass.new(*member_names) -> Struct_subclass_instance
+  #   - Struct_subclass.new(**member_names) -> Struct_subclass_instance
+  # -->
+  def self.new: (string? classname, *interned fields, ?keyword_init: boolish?) ?{ (singleton(Struct)) [self: singleton(Struct)] -> void } -> untyped
+              | (Symbol field1, *interned fields, ?keyword_init: boolish?) ?{ (singleton(Struct)) [self: singleton(Struct)] -> void } -> untyped
+  # <!--
+  #   - StructClass::members -> array_of_symbols
+  # -->
+  def self.members: () -> Array[Symbol]
+  # <!--
+  #   - to_a     -> array
+  # -->
+  def to_a: () -> Array[Elem]
+  # <!--
+  #   - to_h -> hash
+  #   - to_h {|name, value| ... } -> hash
+  # -->
+  def to_h: () -> Hash[Symbol, Elem]
+          | [K, V] () { (Symbol key, Elem value) -> [K, V] } -> Hash[K, V]
+  # <!--
+  #   - each {|value| ... } -> self
+  #   - each -> enumerator
+  # -->
+  def each: () -> Enumerator[Elem, self]
+          | () { (Elem value) -> void } -> self
+  # <!--
+  #   - struct[name] -> object
+  #   - struct[n] -> object
+  # -->
+  def []: (index name_or_position) -> Elem
+  # <!--
+  #   - struct[name] = value -> value
+  #   - struct[n] = value -> value
+  # -->
+  def []=: (index name_or_position, Elem value) -> Elem
+  # <!--
+  #   - members -> array_of_symbols
+  # -->
+  def members: () -> Array[Symbol]
+  # <!--
+  #   - dig(name, *identifiers) -> object
+  #   - dig(n, *identifiers) -> object
+  # -->
+  def dig: (index name_or_position) -> Elem
+         | (index name_or_position, untyped, *untyped) -> untyped
+  alias deconstruct to_a
+  # <!--
+  #   - deconstruct_keys(array_of_names) -> hash
+  # -->
+  def deconstruct_keys: (Array[index & Hash::_Key]? indices) -> Hash[index & Hash::_Key, Elem]
+end
+class Symbol
+  include Comparable
+  # <!--
+  #   - symbol[index] -> string or nil
+  #   - symbol[start, length] -> string or nil
+  #   - symbol[range] -> string or nil
+  #   - symbol[regexp, capture = 0] -> string or nil
+  #   - symbol[substring] -> string or nil
+  # -->
+  def []: (int start, ?int length) -> String?
+        | (range[int?] range) -> String?
+        | (Regexp regexp, ?MatchData::capture backref) -> String?
+        | (String substring) -> String?
+  # <!--
+  #   - downcase(*options) -> symbol
+  # -->
+  def downcase: () -> Symbol
+              | (:ascii | :fold | :lithuanian | :turkic) -> Symbol
+              | (:lithuanian, :turkic) -> Symbol
+              | (:turkic, :lithuanian) -> Symbol
+  # <!--
+  #   - end_with?(*strings) -> true or false
+  # -->
+  def end_with?: (*string suffixes) -> bool
+  # <!--
+  #   - length -> integer
+  # -->
+  def length: () -> Integer
+  # <!--
+  #   - name -> string
+  # -->
+  def name: () -> String
+  # <!--
+  #   - start_with?(*string_or_regexp) -> true or false
+  # -->
+  def start_with?: (*Regexp | string prefixes) -> bool
+  # <!--
+  #   - to_proc
+  # -->
+  def to_proc: () -> Proc
+  # <!--
+  #   - to_s -> string
+  # -->
+  def to_s: () -> String
+  # <!--
+  #   - to_sym -> self
+  # -->
+  def to_sym: () -> self
+  # <!--
+  #   - upcase(*options) -> symbol
+  # -->
+  def upcase: () -> Symbol
+            | (:ascii | :lithuanian | :turkic) -> Symbol
+            | (:lithuanian, :turkic) -> Symbol
+            | (:turkic, :lithuanian) -> Symbol
+end
+class Thread < Object
+  # <!--
+  #   - Thread.current   -> thread
+  # -->
+  def self.current: () -> Thread
+  # <!--
+  #   - Thread.main   -> thread
+  # -->
+  def self.main: () -> Thread
+  # <!--
+  #   - thr[sym]   -> obj or nil
+  # -->
+  def []: (interned key) -> untyped
+  # <!--
+  #   - thr[sym] = obj   -> obj
+  # -->
+  def []=: (interned key, untyped value) -> untyped
+  # <!--
+  #   - thr.alive?   -> true or false
+  # -->
+  def alive?: () -> bool
+  # <!--
+  #   - thr.exit        -> thr
+  #   - thr.kill        -> thr
+  #   - thr.terminate   -> thr
+  # -->
+  def kill: () -> Thread?
+  # <!--
+  #   - Thread.new { ... }                  -> thread
+  #   - Thread.new(*args, &proc)            -> thread
+  #   - Thread.new(*args) { |args| ... }    -> thread
+  # -->
+  def initialize: (*untyped) { (?) -> void } -> void
+  # <!--
+  #   - thr.join          -> thr
+  #   - thr.join(limit)   -> thr
+  # -->
+  def join: (*untyped limit) -> Thread
+  # <!--
+  #   - thr.name   -> string
+  # -->
+  def name: () -> String
+  # <!--
+  #   - thr.name=(name)   -> string
+  # -->
+  def name=: (untyped name) -> untyped
+  # <!--
+  #   - thr.value   -> obj
+  # -->
+  def value: () -> untyped
+  # <!--
+  #   - Thread.kill(thread)   -> thread
+  # -->
+  def self.kill: (Thread thread) -> untyped
+  # <!--
+  #   - Thread.list   -> array
+  # -->
+  def self.list: () -> untyped
+end
+class Thread::Backtrace < Object
+end
+class Thread::Backtrace::Location
+end
+class Thread::ConditionVariable < Object
+  # <!--
+  #   - broadcast()
+  # -->
+  def broadcast: () -> self
+  # <!--
+  #   - signal()
+  # -->
+  def signal: () -> self
+  # <!--
+  #   - wait(mutex, timeout=nil)
+  # -->
+  def wait: (Thread::Mutex mutex, ?Time::_Timeout? timeout) -> Integer?
+end
+class Thread::Mutex < Object
+  # <!--
+  #   - mutex.lock  -> self
+  # -->
+  def lock: () -> self
+  # <!--
+  #   - mutex.locked?  -> true or false
+  # -->
+  def locked?: () -> bool
+  # <!--
+  #   - mutex.synchronize { ... }    -> result of the block
+  # -->
+  def synchronize: [X] () { () -> X } -> X
+  # <!--
+  #   - mutex.try_lock  -> true or false
+  # -->
+  def try_lock: () -> bool
+  # <!--
+  #   - mutex.unlock    -> self
+  # -->
+  def unlock: () -> self
+end
+class Thread::Queue[Elem = untyped] < Object
+  alias << push
+  # <!--
+  #   - close
+  # -->
+  def close: () -> self
+  # <!--
+  #   - closed?
+  # -->
+  def closed?: () -> bool
+  # <!--
+  #   - empty?
+  # -->
+  def empty?: () -> bool
+  # <!--
+  #   - length
+  #   - size
+  # -->
+  def length: () -> Integer
+  # <!--
+  #   - pop(non_block=false, timeout: nil)
+  # -->
+  def pop: (?boolish non_block, ?timeout: _ToF?) -> Elem?
+  # <!--
+  #   - push(object)
+  #   - enq(object)
+  #   - <<(object)
+  # -->
+  def push: (Elem obj) -> void
+  alias size length
+end
+class Thread::SizedQueue[Elem = untyped] < Thread::Queue[Elem]
+  # <!--
+  #   - new(max)
+  # -->
+  def initialize: (Integer max) -> void
+end
+class ConditionVariable = Thread::ConditionVariable
+class Mutex = Thread::Mutex
+class Queue = Thread::Queue
+class SizedQueue = Thread::SizedQueue
+class Time < Object
+  include Comparable
+  # <!--
+  #   - at(time, subsec = false, unit = :microsecond, in: nil)
+  # -->
+  def self.at: (Time, ?in: String | Integer | nil) -> Time
+             | (Numeric, ?in: String | Integer | nil) -> Time
+             | (Integer sec_i, Numeric msec, subsec_unit msec, ?in: String | Integer | nil) -> Time
+  def self.gm: (Integer year, ?Integer | String month, ?Integer day, ?Integer hour, ?Integer min, ?Numeric sec, ?Numeric usec_with_frac) -> Time
+  # <!--
+  #   - Time.local(year, month = 1, mday = 1, hour = 0, min = 0, sec = 0, usec = 0) -> new_time
+  #   - Time.local(sec, min, hour, mday, month, year, dummy, dummy, dummy, dummy) -> new_time
+  # -->
+  def self.local: (Integer year, ?Integer | String month, ?Integer day, ?Integer hour, ?Integer min, ?Numeric sec, ?Numeric usec_with_frac) -> Time
+  # <!--
+  #   - now(in: nil)
+  # -->
+  def self.now: (?in: String | Integer | nil) -> Time
+  # <!--
+  #   - Time.utc(year, month = 1, mday = 1, hour = 0, min = 0, sec = 0, usec = 0) -> new_time
+  #   - Time.utc(sec, min, hour, mday, month, year, dummy, dummy, dummy, dummy) -> new_time
+  # -->
+  def self.utc: (Integer year, ?Integer | String month, ?Integer day, ?Integer hour, ?Integer min, ?Numeric sec, ?Numeric usec_with_frac) -> Time
+  # <!--
+  #   - self + numeric -> new_time
+  # -->
+  def +: (Numeric arg0) -> Time
+  # <!--
+  #   - self - numeric -> new_time
+  #   - self - other_time -> float
+  # -->
+  def -: (Time arg0) -> Float
+       | (Numeric arg0) -> Time
+  def day: () -> Integer
+  # <!--
+  #   - getlocal(zone = nil) -> new_time
+  # -->
+  def getlocal: (?Integer utc_offset) -> Time
+  # <!--
+  #   - hour -> integer
+  # -->
+  def hour: () -> Integer
+  # <!--
+  #   - Time.new(year = nil, mon = nil, mday = nil, hour = nil, min = nil, sec = nil, zone = nil, in: nil, precision: 9)
+  # -->
+  def initialize: (?Integer year, ?Integer? month, ?Integer? day, ?Integer? hour, ?Integer? min, ?Numeric? sec, ?String | Integer | nil) -> void
+                | (?Integer year, ?Integer? month, ?Integer? day, ?Integer? hour, ?Integer? min, ?Numeric? sec, in: String | Integer | nil) -> void
+                | (String, ?in: string | int | nil, ?precision: int) -> void
+  # <!--
+  #   - localtime -> self or new_time
+  #   - localtime(zone) -> new_time
+  # -->
+  def localtime: (?String utc_offset) -> Time
+  # <!--
+  #   - min -> integer
+  # -->
+  def min: () -> Integer
+  def nsec: () -> Integer
+  # <!--
+  #   - sec -> integer
+  # -->
+  def sec: () -> Integer
+  # <!--
+  #   - strftime(format_string) -> string
+  # -->
+  def strftime: (String arg0) -> String
+  # <!--
+  #   - to_f -> float
+  # -->
+  def to_f: () -> Float
+  # <!--
+  #   - to_i -> integer
+  # -->
+  def to_i: () -> Integer
+  # <!--
+  #   - to_r -> rational
+  # -->
+  def to_r: () -> Rational
+  # <!--
+  #   - to_s    -> string
+  # -->
+  def to_s: () -> String
+  def usec: () -> Integer
+  def utc: () -> Time
+  # <!--
+  #   - utc? -> true or false
+  # -->
+  def utc?: () -> bool
+  # <!--
+  #   - wday -> integer
+  # -->
+  def wday: () -> Integer
+  # <!--
+  #   - yday -> integer
+  # -->
+  def yday: () -> Integer
+  # <!--
+  #   - year -> integer
+  # -->
+  def year: () -> Integer
+  # <!--
+  #   - time.zone -> string or timezone
+  # -->
+  def zone: () -> String?
+  def self.mktime: (Integer year, ?Integer | String month, ?Integer day, ?Integer hour, ?Integer min, ?Numeric sec, ?Numeric usec_with_frac) -> Time
+  def month: () -> Integer
+end
+class TrueClass
+end
+class UnboundMethod
+  # <!--
+  #   - meth.arity    -> integer
+  # -->
+  def arity: () -> Integer
+  # <!--
+  #   - umeth.bind(obj) -> method
+  # -->
+  def bind: (untyped obj) -> Method
+  # <!--
+  #   - meth.name    -> symbol
+  # -->
+  def name: () -> Symbol
+  # <!--
+  #   - meth.owner    -> class_or_module
+  # -->
+  def owner: () -> (Class | Module)
+  # <!--
+  #   - meth.source_location  -> [String, Integer]
+  # -->
+  def source_location: () -> [String, Integer]?
+end
+module Warning
+  # <!--
+  #   - warn(msg, category: nil)  -> nil
+  # -->
+  def self?.warn: (String message, ?category: category?) -> nil
+end

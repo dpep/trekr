@@ -4097,6 +4097,11 @@ only when they differ.
 would need the extension to serve it, and an agent reading `--json` could not
 open it).
 
+*Superseded in part by DEC-240:* `core.rb` is gone. The one source is now
+the app's Ruby's own rbs gem, read at index time into a stub stored with
+its stdlib; the per-owner serving, the multi-line `def`s and `Object.rb` are
+as above, under a directory per Ruby's signatures (`core/rbs-3.8.0-<key>/`).
+
 ## DEC-079 — A schema change is one immediate transaction, and every write re-checks it
 
 **Decided.** `Store::init` sets `busy_timeout` before any other statement,
@@ -7339,6 +7344,12 @@ site sampled (24, across eight queries) is right: `@mutex = Monitor.new`,
 *Reverses if:* a gold set shows a stub `sig` making an answer confidently
 wrong, or a Ruby whose RBS disagrees with 3.8.0's on a method both type.
 
+*Superseded by DEC-240:* the stubs are no longer checked in, generated once
+for every Ruby, or checked against a running Ruby. They are read at index
+time from the rbs gem the app's Ruby carries, with this entry's rules, and
+which methods are compiled is inferred from the index. The lazy
+`corelib::cut` stays, and now serves core too.
+
 ## DEC-210 — The app's own checkout is the last layer, whatever the insert order
 
 **Decided.** A tree's rows are layered by checkout kind — the Ruby's stdlib,
@@ -7882,3 +7893,198 @@ the same shape, a module deep). Clicks: one fewer unsure of 21,154. Rails
 more arguments than `time.rb`'s `parse(date, now)` takes (possible 109 →
 106); `Time#iso8601` and `Time#xmlschema` exclude their five and one sites
 on another owner rather than as `no_such_method`. `--dead` unchanged.
+
+## DEC-240 — Core and the stdlib's signatures are the app's Ruby's own, read at index time
+
+Supersedes DEC-078's "`core.rb` stays the one source" and DEC-220's
+"checked in, one version for every Ruby".
+
+**Decided.** Core and the stdlib's stubs are no longer checked in and built
+into the binary. When an index reads a Ruby's stdlib (DEC-180) it also
+finds the `rbs` gem that Ruby carries — bundled with it
+(`<prefix>/lib/ruby/gems/<abi>/gems/rbs-*`), or installed for it
+(`~/.gem/ruby/<abi>`, rvm's gem directories for that install, Homebrew's for
+a Homebrew Ruby, `$GEM_HOME` when it is this Ruby's) — at the highest
+version with a `core/`, and writes from its signatures the three stubs the
+generators wrote: **core**, the stdlib's **compiled half**, and the
+**returns lent** to its Ruby half. They are stored beside the stdlib's
+checkout (`rbs`, `rbs_use`), keyed by stdlib, gem and reader, so every app
+on one Ruby shares one row and a reinstall or a newer rbs is read again.
+The tree serves them as it served the checked-in ones — one file per
+top-level owner, under a directory per Ruby's signatures
+(`<core>/rbs-3.8.0-<key>/String.rb`), each `def` cut out and extracted when
+its name is first asked (`corelib::cut`), core's included, and a namespace
+assembled from core's files with their `def`s blanked. `--index` and
+`--status` name the gem, or say the Ruby carries none.
+
+- *The reader* (`src/rbs/parse.rs`) is hand-written: declarations, ancestry,
+  constants, class aliases, `def`s with their overloads, `self.`/`self?.`,
+  `attr_*`, `alias`, visibility; types only as far as telling one class
+  from anything else. A member it cannot read is skipped, not the file.
+  Names resolve through the scopes they are written in; generics are
+  erased; RBS's unnamed modules and classes (`Random::Formatter`'s methods,
+  `Random < RBS::Unnamed::Random_Base`) are their includer's; an alias
+  takes the method it names, through a module's self type
+  (`Kernel#object_id` is `BasicObject#__id__`).
+- *The rules are DEC-077's and DEC-220's, unchanged*: a `sig` per call shape
+  only where every covering overload agrees; none for a union, an optional,
+  `bool`, `self` or an element type; returns written from the top; never a
+  module, `Class`, or a class RBS subclasses (Enumerator excepted). The
+  generators' parameter logic — call-seq names, RBS arity — is ported
+  whole.
+- *Compiled-ness is inferred, not asked.* A stdlib method RBS describes that
+  the indexed Ruby defines lends its return. One it does not define is
+  compiled — declared by the stub — when its library has a file a compiled
+  extension backs (DEC-181), unless a file the index leaves out writes it
+  with `def` (`json/add/`'s `Time#to_json`) or a Ruby maker on its class
+  spells its shape (`Ripper::SexpBuilder`'s `on_*`). A class is declared
+  only where no Ruby file declares it and its library compiles. Owners come
+  from a tree of the stdlib alone (`Tree::alone`).
+- *No rbs, no core.* A checkout with no Ruby (DEC-180's rule: it resolves no
+  gems and names no Ruby), or on a Ruby with no rbs gem, is served no
+  stubs: `puts` and `"x".upcase` are residue, as anything unindexed is. There
+  is no checked-in fallback.
+- *No version gate.* Whatever the Ruby's rbs describes is used: this
+  machine's Ruby 3.4.9 is served rbs 4.2.0's, which describes Ruby 4.0
+  (Pathname is core there). A stub method on an owner the tree does not
+  know is dropped, as before.
+
+**Why.** The checked-in stubs were one Ruby's (3.4, rbs 3.8.0) for every
+app, 187 KB in the binary plus two generators that needed that Ruby to run,
+and a `core.rb` whose method list was curated by hand — with its drift:
+`String#join`, `Math.pow`, `File.exists?` and `Enumerable#with_index` do not
+exist, `Time#iso8601` was missing (DEC-220). Every Ruby 3.x installs rbs.
+
+**Why hand-written, not `ruby-rbs`.** The bindings (0.3.0) wrap one rbs
+version's C parser and refuse a file for one member of another version's
+syntax; the files here come from whatever rbs the app's Ruby has. They also
+add a C build and bindgen to CI. The subset trekr reads is small: this
+reader parses every file of rbs 3.5.1, 3.8.0 and 4.2.0 — `core/`,
+`stdlib/` and rbs's own `sig/` — with none skipped.
+
+**Equivalence**, with the reader pointed at the rbs the checked-in stubs came
+from (3.8.0, Ruby 3.4.9), stub against stub:
+
+- *Core*: 792 methods → 2,236 (2,307 from rbs 4.2.0), 303 classes from 106;
+  615 of the new methods carry a `sig`. Of core.rb's 792, 714 are the same
+  owner's, 50 are now found on the ancestor RBS writes them on with the same
+  return (`Array#freeze` on Kernel, `File.read` on IO, `Hash#group_by` on
+  Enumerable, `Mutex#synchronize` on `Thread::Mutex`), 5 differ
+  (`Time.new`, `Thread.new`, `Fiber.new` lose a hand `sig` that "Foo.new is
+  a Foo" already gives; `Thread::Queue#size` and `#length` gain Integer),
+  and 23 are gone: the stdlib's, answered by its Ruby when indexed
+  (`FileUtils.*`, `Time.parse`, `Dir.tmpdir`), and ones RBS has not
+  (`String#join`, `Math.pow`, `File.exists?`, `Enumerable#each` and
+  `#with_index`, `Kernel#instance_variable_names`, `Numeric#to_i`/`to_f`/
+  `to_r`/`*`/`**`/`/`, `Object#=~`). Of the 714, six returns differ:
+  `Kernel#__dir__` (RBS says `String?`; core.rb's `String` was edited by
+  hand), `Thread.current`, `Thread.main` and `Thread#join` (RBS's
+  `Process::Waiter < Thread` makes Thread subclassed), and `Enumerable#lazy`
+  → `Enumerator::Lazy` and `File.stat` → `File::Stat`, which the old
+  generator could not return because it read only top-level class names.
+  27 `initialize`s and the module function `Kernel#__dir__` are private, as
+  in Ruby. 82 parameter lists differ, in names (`Hash#[]=(arg1, arg2)` for
+  `key, value`) or in RBS's exact arity (`Array#[](start, length = nil)` for
+  `*args`); `new` is always `*args`, and RBS's `(?)` is `*args`. The class
+  tree is the same but for `Mutex`, `Queue`, `SizedQueue` and
+  `ConditionVariable`, now `Thread::`'s with top-level aliases, as Ruby has.
+- *The compiled half*: 1,140 declarations → 1,609; the 1,123 both write have
+  the same returns. 17 are no longer declared: 10 a C extension replaces
+  at runtime over a Ruby `def` (`CGI::Util#escape_html`,
+  `ERB::Util.html_escape`, `IPSocket.getaddress`), which now lend their
+  return to that `def`, and 7 Ruby aliases (`Monitor#mon_enter`). 486 are
+  new: Ripper's 455 `on_*`, which Ruby makes with `alias_method` over an
+  interpolated name no marker spells, and `CGI::QueryExtension`'s 28, from a
+  `define_method` over a list; per-subclass copies of what Ruby defines on
+  the superclass (`OpenSSL::ASN1::*#value`, `PKey::RSA#to_text`); json's
+  C `to_json` on `Object`, `Integer` and friends, which Ruby mixes in; and
+  what this Ruby lacks though RBS describes it — `Psych::DBM`, `Psych::Store`
+  and their 26 methods, `OpenSSL::Engine`'s 15, `OpenSSL::Config#[]=`,
+  `Pathname#taint`, Digest's `bubblebabble` (until required). Of classes
+  only the stub declares, none of 111 is lost and 10 are gained that this
+  Ruby lacks: `JSON::Pure` and its three (json 2.9.1 dropped them),
+  `OpenSSL::Engine` and its error, `OpenSSL::ExtConfig`, `Psych::DBM`,
+  `Psych::Store`; `JSON::State` and `JSON::UnparserError` are constants here.
+- *The lent returns*: 792 → 552. 535 are identical and 251 now come from the
+  core stub instead, borrowed as DEC-182 borrows (`Random::Formatter#hex`,
+  `Set`'s); 2 differ (`Benchmark.bm`'s block parameter's name, and
+  `Thread#run` for the Thread reason above); 4 are gone — `Array.new`,
+  `String.new`, `Regexp.compile`, which "Foo.new is a Foo" covers, and
+  `OptionParser::Arguable#options`, since `optparse/ac.rb` subclasses
+  OptionParser and the runtime probe never loaded it — and 16 are new: the
+  10 above, `Net::HTTP.newobj`, `Psych::Store`'s four (via `yaml/store.rb`),
+  and `SecureRandom.alphanumeric`.
+
+**Measured** against main (3ce6096), each build on its own store: rbs 4.2.0
+(the default here) and 3.8.0 pinned, which agree but where noted.
+
+| | main | rbs 3.8.0 | rbs 4.2.0 |
+| --- | ---: | ---: | ---: |
+| confidently wrong, every gold set | same | same | same |
+| widget_shop gem code correct | 1,618 | 1,619 | 1,620 |
+| clicks: definition empty / unsure | 1,863 / 3,193 | 1,835 / 3,190 | 1,835 / 3,187 |
+| clicks: hover unsure | 3,589 | 3,558 | 3,555 |
+| `--refs Array#join` confirmed / possible | 312 / 372 | 220 / 464 | 219 / 465 |
+| `--refs String#downcase` confirmed | 26 | 31 | 38 |
+| `--refs Array#first` confirmed | 153 | 172 | 172 |
+| `--refs Logger#info` confirmed | 6 | 12 | 12 |
+| `--refs Time#iso8601` confirmed | 4 | 8 | 8 |
+
+Every other gold verdict is the same but flipper's `proxy_class?` (DEC-241)
+and widget_shop's: `underscore` and one more residue → correct, and four
+residues whose truth falls out of the eight candidates shown (`quote`,
+`infinite?`: `Regexp.quote` and `Float#infinite?` are among them now).
+Clicks "defined nowhere indexed" 386 → 358, "typed, with competitors" 247 →
+222. Of the rails `--refs` set's 68 queries, 24 move; the rest of the
+exclusions are receivers now typed (`excluded_no_such_method` → another
+owner, 23 of `Pathname#to_s`'s 29) or RBS's exact arity (`Time.parse`,
+`Digest::Class.hexdigest`: three `Digest::MD5.file(p).hexdigest` sites
+excluded, rightly). `--dead` on rails: `AbstractController::Base#
+method_added` is an override of `Module#method_added`, and
+`Mapper::Resources#resource_method_scope?` a single caller once
+`@scope.resource_method_scope?` is `Scope`'s.
+
+**Fixed on the way**, each a resolver assumption a fuller core broke, each
+with a testbed case that fails without it: `class << Time` inside
+`class Time` (DEC-241, case 240); a receiver-name guess disqualified by a
+*private* method of the enclosing scope, which an explicit receiver cannot
+call — core's `Kernel#autoload?` against zeitwerk's `cref.autoload?`,
+four gold sites correct → residue until fixed (case 242); and a local
+assigned through a second name for a class — `lock = Mutex.new` typed as
+the constant `Mutex`, 50 `synchronize` sites `no_such_method` until
+fixed (case 243).
+
+**Timings**, Ruby 3.4.9 and rbs 4.2.0, load 5–13 from other work. The first
+index on a Ruby reads its signatures in ~125 ms (one-file app: 290–335 → 411–
+421 ms); a second app on that Ruby, 175–214 → 173–205 ms, unchanged. The
+store grows by the stubs, ~260 KB per Ruby. Queries are no slower and
+often faster, since core is cut and extracted by name rather than parsed
+whole on every tree build (DEC-220's cut, now core's too), 21 interleaved
+rounds, medians: an app method 12.2 → 12.2 ms, `"x".upcase` 15.2 → 11.8,
+a stdlib stub's `read` 14.2 → 13.0; rails `--ancestors ActiveRecord::Base`
+15.4 → 11.2, a `--def` into core 20.7 → 18.6, `--refs String#downcase`
+115 → 112.
+
+**The named costs.**
+
+- *More definitions, more competitors.* `Enumerator::Lazy#map` returns a
+  Lazy, and is now returnable (nested classes were not), so `x.map { }`
+  on an untyped `x` has no agreed return: `Array#join` loses 92 confirmed
+  sites to possible, none wrong. Residue lists fill further.
+- *No Ruby, no core.* A directory with no Gemfile and no `.ruby-version` —
+  the `aronly` corpus is one — knows no `Object`: 13 of its `--dead` tiers
+  move (`ActiveRecord::Enum#extended` no longer overrides
+  `Module#extended`).
+- *RBS is not the Ruby.* What it describes that this Ruby lacks is declared
+  (above), and what Ruby makes at runtime where no maker spells it is taken
+  for compiled.
+
+**Turned down.** Asking a Ruby at index time, as the generator did: the
+engine runs no Ruby (PLAN §4). Keeping core.rb as a fallback for a Ruby
+without rbs: a checked-in core is what this removes, and every Ruby 3.x has
+rbs. Reading signatures at tree time: every query would pay the parse.
+
+Tests are hermetic: `tests/fixtures/rbs/` is rbs 3.8.0's core trimmed to what
+core.rb stubbed (with each method's call-seq), and every testbed case,
+`cli_e2e` and `lsp_e2e` checkout runs on a fake Ruby 9.8.7 carrying it; a case's
+`rbs/` adds its libraries' signatures.

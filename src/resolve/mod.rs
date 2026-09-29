@@ -1808,10 +1808,15 @@ fn from_receiver_name(tree: &Tree, call: &Call, path: &str) -> Option<Receiver> 
     }
     // (2) it has to actually answer the call.
     tree.lookup(&fqn, false, &call.name)?;
-    // (3) a competing reading in the enclosing scope disqualifies the guess.
+    // (3) a competing reading in the enclosing scope disqualifies the guess —
+    // one the receiver could be, which a private method is not: an explicit
+    // receiver cannot call it. Core's `Kernel#autoload?` is no reading of
+    // `cref.autoload?` (DEC-240).
     if let Some(scope) = tree.scope_fqn(&call.nesting)
         && scope != fqn
-        && tree.lookup(&scope, false, &call.name).is_some()
+        && tree
+            .lookup(&scope, false, &call.name)
+            .is_some_and(|method| method.visibility != "private")
     {
         return None;
     }
@@ -1921,7 +1926,7 @@ fn from_assignments(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver>
         // A custom `new` whose paths make different classes is one write
         // with each type, as `rescue A, B => e` is (DEC-165).
         if let ValueShape::New(name) = &assign.value
-            && let Some(class) = tree.resolve(name, &assign.nesting).fqn
+            && let Some(class) = class_named(tree, name, &assign.nesting)
         {
             let made = made_by_new_all(tree, &class);
             if made.len() > 1 {
@@ -1970,6 +1975,12 @@ fn from_assignments(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver>
         rivals,
         bound,
     })
+}
+
+/// The class or module a constant written here names, through a second
+/// name for it: `Mutex` is `Thread::Mutex` (DEC-240).
+fn class_named(tree: &Tree, name: &str, nesting: &[String]) -> Option<String> {
+    tree.namespace_named(&tree.resolve(name, nesting).fqn?)
 }
 
 /// Does a value typed this way conform to its type rather than being made
@@ -2029,14 +2040,14 @@ fn type_of(
     }
     match value {
         ValueShape::New(name) => {
-            let class = tree.resolve(name, nesting).fqn?;
+            let class = class_named(tree, name, nesting)?;
             Some((made_by_new(tree, &class)?, false, "local:new"))
         }
         ValueShape::Rescued(name) => {
-            Some((tree.resolve(name, nesting).fqn?, false, "local:rescue"))
+            Some((class_named(tree, name, nesting)?, false, "local:rescue"))
         }
         // `x = Foo` holds the class itself, so `x.bar` is a class method.
-        ValueShape::Const(name) => Some((tree.resolve(name, nesting).fqn?, true, "local:const")),
+        ValueShape::Const(name) => Some((class_named(tree, name, nesting)?, true, "local:const")),
         ValueShape::Same(other) => {
             let next = last_write_before(facts, other, at)?;
             type_of(
@@ -2583,7 +2594,11 @@ mod tests {
             let found = answer(source, name);
             assert_eq!(found.status, Status::Resolved, "{name}");
             assert_eq!(found.owner.as_deref(), Some("Kernel"), "{name}");
-            assert_eq!(found.sites[0].path, "<core>/Kernel.rb");
+            let path = &found.sites[0].path;
+            assert!(
+                crate::tree::is_core(path) && path.ends_with("/Kernel.rb"),
+                "{path}"
+            );
         }
     }
 

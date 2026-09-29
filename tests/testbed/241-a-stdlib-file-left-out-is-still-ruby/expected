@@ -1,0 +1,8 @@
+# Which stdlib methods are compiled is inferred, not asked of a Ruby: one RBS
+# declares that no Ruby file defines, in a library an extension backs, is
+# declared by the stub (DEC-240). `json/add/time.rb` is Ruby the index leaves
+# out, since an app has to require it: its `Time#to_json` is neither
+# compiled nor there.
+def app.rb:3:25 status=resolved owner=String via=chain
+def app.rb:4:10 status=resolved owner=JSON kind=declaration defined_via=rbs
+card Time#to_json status=no_such_method

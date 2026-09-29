@@ -22,7 +22,35 @@ fn scratch(label: &str) -> (PathBuf, PathBuf) {
     // reuses the process id would read them as its own.
     let _ = fs::remove_file(db.with_extension("usage.db"));
     fs::create_dir_all(&dir).unwrap();
+    fs::write(dir.join(".ruby-version"), "9.8.7\n").unwrap();
     (dir, db)
+}
+
+const SUITE: &str = "e2e";
+
+/// A home holding one Ruby, 9.8.7, installed as rvm installs one, with an
+/// empty stdlib and the rbs fixture as its signatures: what core is served
+/// from (DEC-240), whatever Ruby the machine running the suite has. Every
+/// scratch checkout names it.
+fn fixture_home() -> PathBuf {
+    static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    HOME.get_or_init(|| {
+        let home = std::env::temp_dir().join(format!("trekr-{SUITE}-ruby-{}", std::process::id()));
+        let lib = home.join(".rvm/rubies/ruby-9.8.7/lib/ruby");
+        fs::create_dir_all(lib.join("9.8.0")).unwrap();
+        fs::create_dir_all(lib.join("gems/9.8.0/specifications/default")).unwrap();
+        fs::create_dir_all(lib.join("gems/9.8.0/gems")).unwrap();
+        let rbs = lib.join("gems/9.8.0/gems/rbs-9.9.9");
+        if !rbs.exists() {
+            std::os::unix::fs::symlink(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rbs"),
+                rbs,
+            )
+            .unwrap();
+        }
+        home
+    })
+    .clone()
 }
 
 fn git(dir: &Path, args: &[&str]) {
@@ -77,14 +105,15 @@ fn trekr(db: &Path, cwd: &Path, args: &[&str]) -> Output {
 /// agent, CI — sets variables `--usage` reads to name the caller, and the
 /// usage tests assert on that name.
 ///
-/// And on no Ruby in particular: with `git` the only program on `PATH` and no
-/// `$GEM_HOME`, a checkout with a bundle finds no stdlib to index (DEC-180),
-/// whatever Ruby the machine running the suite has. A test about the stdlib
-/// stages one.
+/// And on no Ruby in particular: with `git` the only program on `PATH`, no
+/// `$GEM_HOME` and the fixture's home, a checkout runs on the fixture's Ruby
+/// (DEC-180), whatever Ruby the machine running the suite has. A test about
+/// another Ruby stages one, under a home of its own.
 fn neutral(mut command: Command) -> Command {
     command
         .env_remove("GEM_HOME")
         .env_remove("GEM_PATH")
+        .env("HOME", fixture_home())
         .env("PATH", git_only());
     for var in [
         "CLAUDECODE",
@@ -333,7 +362,13 @@ fn a_second_worktree_of_the_same_content_costs_no_parsing() {
         "identical bytes are identical blobs, wherever they are checked out"
     );
     let status = json(&trekr(&db, &dir, &["--status", "--all", "--json"]));
-    assert_eq!(status["checkouts"].as_array().unwrap().len(), 2);
+    let repos = status["checkouts"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|c| c["kind"] == "repo")
+        .count();
+    assert_eq!(repos, 2, "and the Ruby's stdlib they share: {status}");
     assert_eq!(
         status["totals"]["blobs"], 1,
         "two checkouts, one copy of the facts"
@@ -383,6 +418,7 @@ fn profile_reports_on_stderr_so_stdout_stays_the_answer() {
             "file-map",
             "commit",
             "gem-scan",
+            "rbs",
             "analyze",
             "tree"
         ],
@@ -1022,7 +1058,11 @@ fn a_core_definition_is_a_file_that_exists() {
     let stub = fs::read_to_string(Path::new(root).join("String.rb")).unwrap();
     assert!(stub.contains("def upcase"), "{stub}");
     let text = stdout(&trekr(&db, &dir, &["--def", "use.rb:1:5"]));
-    assert!(text.contains("core/String.rb:"), "{text}");
+    assert!(
+        root.contains("/core/rbs-"),
+        "one directory per Ruby's signatures: {root}"
+    );
+    assert!(text.contains("/String.rb:"), "{text}");
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -3265,6 +3305,14 @@ fn fake_ruby(
     }
     let specs = lib.join("gems").join(&abi).join("specifications/default");
     fs::create_dir_all(&specs).unwrap();
+    // It carries the fixture's signatures, as a real Ruby carries rbs.
+    let gems = lib.join("gems").join(&abi).join("gems");
+    fs::create_dir_all(&gems).unwrap();
+    std::os::unix::fs::symlink(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rbs"),
+        gems.join("rbs-9.9.9"),
+    )
+    .unwrap();
     for (name, version, owned) in defaults {
         let listed: Vec<String> = owned.iter().map(|f| format!("{f:?}.freeze")).collect();
         fs::write(
@@ -3404,6 +3452,60 @@ fn a_bundled_default_gem_hides_the_stdlibs_copy_for_that_app_only() {
     assert_eq!(owners(&plain), [stdlib]);
 
     for dir in [&plain, &bundling, &home] {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+/// Core is read from the rbs gem the checkout's Ruby carries, once per Ruby,
+/// and the index says which; a Ruby with none has no core, and says that
+/// too (DEC-240).
+#[test]
+fn core_comes_from_the_rubys_rbs_and_a_ruby_without_one_has_none() {
+    let (dir, db) = scratch("rbs-core");
+    repo(&dir);
+    fs::write(dir.join("use.rb"), "\"a\".upcase\n").unwrap();
+    let index = json(&trekr(&db, &dir, &["--index", "--json"]));
+    let rbs = &index["gems"]["stdlib"]["rbs"];
+    assert_eq!(rbs["version"], "9.9.9", "{index}");
+    assert!(
+        rbs["path"].as_str().unwrap().ends_with("rbs-9.9.9"),
+        "{index}"
+    );
+    assert_eq!(rbs["read"], true, "{index}");
+    let again = json(&trekr(&db, &dir, &["--index", "--json"]));
+    assert_eq!(
+        again["gems"]["stdlib"]["rbs"]["read"], false,
+        "read once: {again}"
+    );
+    let status = json(&trekr(&db, &dir, &["--status", "--json"]));
+    assert_eq!(
+        status["checkouts"][0]["stdlib"]["rbs"]["version"], "9.9.9",
+        "{status}"
+    );
+    let upcase = trekr(&db, &dir, &["--def", "use.rb:1:5", "--json"]);
+    assert_eq!(json(&upcase)["owner"], "String");
+
+    // The same checkout on a Ruby that carries no rbs gem.
+    let (bare, bare_db) = scratch("rbs-none");
+    repo(&bare);
+    fs::write(bare.join("use.rb"), "\"a\".upcase\n").unwrap();
+    let (home, _) = scratch("rbs-none-home");
+    let lib = home.join(".rvm/rubies/ruby-9.8.7/lib/ruby");
+    fs::create_dir_all(lib.join("9.8.0")).unwrap();
+    fs::create_dir_all(lib.join("gems/9.8.0/specifications/default")).unwrap();
+    let env = [("HOME", home.to_str().unwrap())];
+    let index = json(&trekr_env(&bare_db, &bare, &["--index", "--json"], &env));
+    assert!(index["gems"]["stdlib"]["root"].is_string(), "{index}");
+    assert!(index["gems"]["stdlib"]["rbs"].is_null(), "{index}");
+    let text = stdout(&trekr_env(&bare_db, &bare, &["--index"], &env));
+    assert!(text.contains("carries no rbs gem"), "{text}");
+    let status = stdout(&trekr_env(&bare_db, &bare, &["--status"], &env));
+    assert!(status.contains("no signatures"), "{status}");
+    let upcase = trekr_env(&bare_db, &bare, &["--def", "use.rb:1:5", "--json"], &env);
+    assert_eq!(upcase.status.code(), Some(1), "nothing is known of core");
+    assert_eq!(json(&upcase)["status"], "residue");
+
+    for dir in [&dir, &bare, &home] {
         let _ = fs::remove_dir_all(dir);
     }
 }

@@ -61,22 +61,33 @@ fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
     }
     fs::create_dir_all(&dir).unwrap();
 
-    // A case's `ruby/` is the stdlib of the Ruby it runs on, installed as
-    // rvm installs one under a home of its own, which every command is run
-    // with (DEC-180).
+    // Every case runs on a Ruby installed as rvm installs one, under a home
+    // of its own, which every command is run with (DEC-180): its core
+    // described by the rbs fixture it carries (DEC-240). A case's `ruby/` is
+    // that Ruby's stdlib, and its `rbs/` is laid over the rbs gem: its
+    // libraries' signatures in `rbs/stdlib/`, more of core's in `rbs/core/`.
     let home = home_of(&dir);
     let _ = fs::remove_dir_all(&home);
+    let lib = home.join(".rvm/rubies/ruby-9.8.7/lib/ruby");
+    fs::create_dir_all(lib.join("9.8.0")).unwrap();
     if case.join("ruby").is_dir() {
-        let lib = home.join(".rvm/rubies/ruby-9.8.7/lib/ruby");
         copy_tree(&case.join("ruby"), &lib.join("9.8.0"));
-        fs::create_dir_all(lib.join("gems/9.8.0/specifications/default")).unwrap();
-        fs::write(dir.join(".ruby-version"), "9.8.7\n").unwrap();
     }
+    fs::create_dir_all(lib.join("gems/9.8.0/specifications/default")).unwrap();
+    let rbs = lib.join("gems/9.8.0/gems/rbs-9.9.9");
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rbs"),
+        &rbs,
+    );
+    if case.join("rbs").is_dir() {
+        copy_tree(&case.join("rbs"), &rbs);
+    }
+    fs::write(dir.join(".ruby-version"), "9.8.7\n").unwrap();
 
     // Everything but the expectations file is source.
     for entry in fs::read_dir(case).unwrap().flatten() {
         let name = entry.file_name();
-        if name == "expected" || name == "README.md" || name == "ruby" {
+        if name == "expected" || name == "README.md" || name == "ruby" || name == "rbs" {
             continue;
         }
         let target = dir.join(&name);

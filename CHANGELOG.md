@@ -6,6 +6,12 @@
   once per checkout. The first index on each Ruby also reads its standard
   library once — 179 files for Ruby 3.4 — and its `rbs` gem's signatures,
   shared by every app on that Ruby.
+- **Core now needs the `rbs` gem**, which every Ruby 3.x installs with
+  itself: trekr reads Ruby core's classes, methods and return types from the
+  signatures of the app's own Ruby, where they were built into the binary.
+  A checkout that names no Ruby (no `.ruby-version`, no Gemfile) or runs on
+  one without rbs knows nothing of core — `puts`, `String#upcase` and
+  friends answer residue — and `--index` says so.
 
 ### Added
 
@@ -41,6 +47,19 @@
   `Set#add` — as core's do (DEC-220).
 
 ### Changed
+
+- **Core and the stdlib's signatures come from the app's own Ruby.** They are
+  read from the `rbs` gem that Ruby carries — the highest installed for it —
+  when its stdlib is indexed, instead of being generated once from Ruby 3.4
+  and built in, so a Ruby 3.3 or 3.5 app is answered from its own. Core now
+  covers every class and method RBS writes — rbs 3.8.0's 2,236 methods,
+  where the built-in stub had 792 — so `File.stat(p).size`, `x.lazy.map` and
+  the whole `Errno` family are known. `Mutex` is `Thread::Mutex`, as Ruby
+  has it. Which stdlib methods are compiled is inferred from the index
+  rather than asked of a Ruby. `--index` reports the gem as
+  `gems.stdlib.rbs` (`version`, `path`, `read`), `null` with none, and
+  `--status` per checkout; core's files are written under
+  `<db dir>/core/rbs-<version>-<key>/` (DEC-240).
 
 - **A definition or reference inside a module answers two to three times
   faster.** A lookup that finds nothing no longer works out every string

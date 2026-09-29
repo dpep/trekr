@@ -346,6 +346,9 @@ pub(crate) struct Tree {
     root: String,
     /// The Ruby's stdlib the checkout runs on, when it indexed one (DEC-180).
     stdlib: Option<String>,
+    /// Core and the stdlib's compiled half, from that Ruby's signatures
+    /// (DEC-240). None without them: then nothing is known of core.
+    stubs: Option<std::sync::Arc<corelib::Stubs>>,
     /// What the stdlib's Ruby methods return, from RBS, by (owner, singleton,
     /// name), as each is first asked: lent to the real definitions, never a
     /// location (DEC-220).
@@ -742,11 +745,6 @@ fn qualify(scope: &str, name: &str) -> String {
 impl Tree {
     /// Assemble a checkout's namespace from its blob facts.
     pub(crate) fn build(store: &Store, root: &str) -> anyhow::Result<Tree> {
-        // Core goes in first, so that a checkout reopening `class Object` adds
-        // to it rather than being shadowed by it, and so that every class ends
-        // up with an Object/Kernel/BasicObject tail.
-        let (decls, edges, mut methods) = core_rows();
-
         // Gems sit before the checkout so a gem may reopen core and the
         // checkout may reopen a gem — which is what Rails actually does. The
         // ordering is carried by `checkout.id`, which rises with insert order,
@@ -759,6 +757,9 @@ impl Tree {
         // the index silently lost every gem. The index already worked this out
         // and wrote it down (DEC-029).
         let roots = roots(store, root)?;
+        // Core and the stdlib's compiled half, from the Ruby's signatures
+        // the index stored (DEC-240).
+        let stubs = stubs(store, &roots)?;
 
         let mut phases = Phases::default();
         // The namespace is read from the checkout's snapshot when one answers
@@ -775,7 +776,7 @@ impl Tree {
                         // How often a query pays for the assembly — what
                         // decides whether building it earlier would pay.
                         crate::usage::flag("tree-built");
-                        let names = Tree::namespace(store, &roots, decls, edges, &mut phases)?;
+                        let names = Tree::namespace(store, &roots, stubs.as_deref(), &mut phases)?;
                         let bytes = snapshot::encode(&names, &key)?;
                         phases.mark("snapshot-encode");
                         // Freeing a namespace's worth of strings is a third
@@ -788,12 +789,20 @@ impl Tree {
                 }
             }
             // An in-memory store has nowhere to keep one.
-            None => freeze(&Tree::namespace(store, &roots, decls, edges, &mut phases)?)?,
+            None => freeze(&Tree::namespace(
+                store,
+                &roots,
+                stubs.as_deref(),
+                &mut phases,
+            )?)?,
         };
         let mut tree = Tree::over(snapshot, root.to_string());
         tree.stdlib = roots.stdlib.clone();
-        // The RSpec stub's methods, after core's and before the index's, so a
-        // method rspec defines itself wins over the stub's (DEC-087).
+        tree.stubs = stubs;
+        // The RSpec stub's methods, before the index's, so a method rspec
+        // defines itself wins over the stub's (DEC-087). Core's are loaded
+        // by name, first, as the index's are (DEC-240).
+        let mut methods = Vec::new();
         if tree.kind_of(crate::core::rspec::EXAMPLE_GROUP) == Some("class") {
             methods.extend(rspec_rows().1);
         }
@@ -808,9 +817,8 @@ impl Tree {
                 let table_names =
                     phases.time("table-names", || store.methods_named(&roots, "table_name"))?;
                 tree.carriers = tree.carriers_from(&table_names);
-                // And Ruby core, which comes from the vendored stub rather
-                // than from SQL — a per-name load would never find it. It goes
-                // in first, so a checkout reopening `class Object` adds to it.
+                // And the RSpec stub's, which a per-name load would never
+                // find.
                 phases.methods = methods.len();
                 tree.index_rows(methods);
                 tree.index_rows(table_names);
@@ -822,10 +830,9 @@ impl Tree {
             // load from later: take everything now and stay eager.
             None => {
                 tree.dynamic_rows = RefCell::new(Some(store.dynamic_markers(&roots)?));
-                if tree.stdlib.is_some() {
-                    let stubs = corelib::stdlib_defs().values().flatten();
-                    methods.extend(stubs.flat_map(|def| tree.stub_rows(def)));
-                }
+                let mut rows = tree.all_stub_rows();
+                rows.append(&mut methods);
+                methods = rows;
                 methods.extend(store.methods(&roots)?);
                 phases.methods = methods.len();
                 tree.add_methods(methods);
@@ -844,13 +851,7 @@ impl Tree {
             list: vec![root.to_string()],
             ..Roots::default()
         };
-        let names = Tree::namespace(
-            store,
-            &roots,
-            Vec::new(),
-            Vec::new(),
-            &mut Phases::default(),
-        )?;
+        let names = Tree::namespace(store, &roots, None, &mut Phases::default())?;
         Ok(Tree::over(freeze(&names)?, root.to_string()))
     }
 
@@ -873,9 +874,9 @@ impl Tree {
         if dir.join(files::name(root, &key)).exists() {
             return Ok(false);
         }
-        let (decls, edges, _) = core_rows();
+        let stubs = stubs(store, &roots)?;
         let mut phases = Phases::default();
-        let names = Tree::namespace(store, &roots, decls, edges, &mut phases)?;
+        let names = Tree::namespace(store, &roots, stubs.as_deref(), &mut phases)?;
         let bytes = snapshot::encode(&names, &key)?;
         // The process ends soon after; freeing the namespace string by string
         // buys nothing (DEC-054).
@@ -893,18 +894,21 @@ impl Tree {
         files::stamp(store, &roots(store, root)?)
     }
 
-    /// Core's declarations and edges plus the store's, assembled.
+    /// Core's declarations and edges plus the store's, assembled. Core goes
+    /// in first, so that a checkout reopening `class Object` adds to it rather
+    /// than being shadowed by it, and so that every class ends up with an
+    /// Object/Kernel/BasicObject tail.
     fn namespace(
         store: &Store,
         roots: &Roots,
-        mut decls: Vec<DeclRow>,
-        mut edges: Vec<EdgeRow>,
+        stubs: Option<&corelib::Stubs>,
         phases: &mut Phases,
     ) -> anyhow::Result<HashMap<String, Entry>> {
+        let (mut decls, mut edges) = stubs.map(core_rows).unwrap_or_default();
         decls.extend(phases.time("declarations", || store.declarations(roots))?);
         edges.extend(phases.time("ancestry", || store.ancestry(roots))?);
-        if roots.stdlib.is_some() {
-            let (stub_decls, stub_edges) = compiled_classes(&decls);
+        if let Some(stubs) = stubs {
+            let (stub_decls, stub_edges) = compiled_classes(stubs, &decls);
             decls.extend(stub_decls);
             edges.extend(stub_edges);
         }
@@ -939,6 +943,7 @@ impl Tree {
         Tree {
             root,
             stdlib: None,
+            stubs: None,
             stdlib_sigs: RefCell::new(HashMap::new()),
             linearizing: RefCell::new(Vec::new()),
             names,
@@ -1926,12 +1931,35 @@ fn split_path(written: &str) -> (&str, Vec<&str>) {
 /// Ruby source in, assembled namespace out — through the real extractor, so
 /// tests written against this are conformance tests for the pair, not for the
 /// tree alone.
+/// The stubs tests are served: core, from the rbs fixture a test Ruby
+/// carries (DEC-240).
+#[cfg(test)]
+pub(crate) fn test_stubs() -> std::sync::Arc<corelib::Stubs> {
+    static STUBS: std::sync::OnceLock<std::sync::Arc<corelib::Stubs>> = std::sync::OnceLock::new();
+    STUBS
+        .get_or_init(|| {
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rbs");
+            let stubs = crate::rbs::core_only(&dir);
+            corelib::Stubs::from_row(crate::store::Rbs {
+                key: "testfixture".into(),
+                version: "9.9.9".into(),
+                dir: dir.to_string_lossy().into_owned(),
+                core: stubs.core,
+                stdlib: stubs.stdlib,
+                sigs: stubs.sigs,
+            })
+        })
+        .clone()
+}
+
 /// Ruby source in, assembled namespace out — through the real extractor and
-/// with the real core stub, so tests written against this exercise the same
-/// path `Tree::build` takes.
+/// with core stubbed from the test Ruby's signatures, so tests written
+/// against this exercise the same path `Tree::build` takes.
 #[cfg(test)]
 pub(crate) fn for_test(sources: &[(&str, &str)]) -> Tree {
-    let (mut decls, mut edges, mut methods) = core_rows();
+    let stubs = test_stubs();
+    let (mut decls, mut edges) = core_rows(&stubs);
+    let mut methods = Vec::new();
     for (path, source) in sources {
         let (d, e, m) = rows_from(path, source);
         assert!(
@@ -1955,7 +1983,11 @@ pub(crate) fn for_test(sources: &[(&str, &str)]) -> Tree {
         .collect();
     let mut tree = Tree::from_rows(decls, edges, &[]);
     tree.dynamic_rows = RefCell::new(Some(markers));
-    tree.add_methods(methods);
+    tree.stubs = Some(stubs);
+    // Core's methods first, as a per-name load puts them.
+    let mut rows = tree.all_stub_rows();
+    rows.append(&mut methods);
+    tree.add_methods(rows);
     tree
 }
 
@@ -2045,10 +2077,11 @@ mod tests {
         }
         store.write("/repo", &files, facts, 0).unwrap();
 
+        // The store's tree has no Ruby, so no core: the checkout's own.
         let listed = |tree: &Tree| {
             let mut all = Vec::new();
             tree.each_method(|owner, singleton, m| {
-                if !m.is_definition() {
+                if !m.is_definition() || is_core(&m.site.path) {
                     return;
                 }
                 let file = m.site.path.rsplit('/').next().unwrap().to_string();
@@ -2765,16 +2798,37 @@ impl Tree {
         if !self.loaded.borrow_mut().insert(name.to_string()) {
             return;
         }
-        // The stdlib's compiled methods of this name go in first, so a class
-        // the app or a gem reopens answers with its own (DEC-220).
-        if self.stdlib.is_some()
-            && let Some(stubs) = corelib::stdlib_defs().get(name)
-        {
-            self.index_rows(stubs.iter().flat_map(|def| self.stub_rows(def)).collect());
+        // Core's methods of this name go in first, then the stdlib's
+        // compiled ones, so a class the app or a gem reopens answers with its
+        // own (DEC-220, DEC-240).
+        if let Some(stubs) = self.stubs.clone() {
+            for defs in [stubs.core_defs().get(name), stubs.stdlib_defs().get(name)]
+                .into_iter()
+                .flatten()
+            {
+                self.index_rows(defs.iter().flat_map(|def| self.stub_rows(def)).collect());
+            }
         }
         if let Ok(rows) = loader.store.methods_named(&loader.roots, name) {
             self.index_rows(rows);
         }
+    }
+
+    /// Every method of the stubs, core's first: for a tree that loads
+    /// everything at once.
+    fn all_stub_rows(&self) -> Vec<MethodRow> {
+        let Some(stubs) = &self.stubs else {
+            return Vec::new();
+        };
+        let mut defs: Vec<&corelib::StubDef> = Vec::new();
+        for by_name in [stubs.core_defs(), stubs.stdlib_defs()] {
+            let mut names: Vec<&String> = by_name.keys().collect();
+            names.sort();
+            defs.extend(names.into_iter().flat_map(|name| &by_name[name]));
+        }
+        defs.into_iter()
+            .flat_map(|def| self.stub_rows(def))
+            .collect()
     }
 
     /// A stub's method as rows, sited in its own file — none when the tree
@@ -3225,10 +3279,11 @@ impl Tree {
     fn stdlib_signature(&self, key: &(String, bool, String)) -> Option<MethodDef> {
         // Lent only where the stdlib they describe is indexed.
         self.stdlib.as_ref()?;
+        let stubs = self.stubs.as_ref()?;
         if let Some(memo) = self.stdlib_sigs.borrow().get(key) {
             return memo.clone();
         }
-        let method = corelib::stdlib_sig_defs().get(key).and_then(|def| {
+        let method = stubs.sig_defs().get(key).and_then(|def| {
             let (_, _, rows) = rows_from(&def.path, &def.source);
             rows.into_iter().next().map(|row| self.method_def(row))
         });
@@ -3813,6 +3868,22 @@ impl Tree {
         }
         let Some(loader) = &self.loader else { return };
         let loaded = self.loaded.borrow();
+        // The stubs' methods not yet loaded, core's first, as a per-name load
+        // would index them.
+        if let Some(stubs) = &self.stubs {
+            for by_name in [stubs.core_defs(), stubs.stdlib_defs()] {
+                for def in by_name
+                    .iter()
+                    .filter(|(name, _)| !loaded.contains(*name))
+                    .flat_map(|(_, defs)| defs)
+                {
+                    for row in self.stub_rows(def) {
+                        let method = self.method_def(row);
+                        visit(&method.owner.clone(), method.singleton, &method);
+                    }
+                }
+            }
+        }
         let _ = loader.store.each_method(&loader.roots, |row| {
             // A loaded name was visited above, from the table.
             if loaded.contains(&row.name) {
@@ -4056,7 +4127,7 @@ mod singleton_tests {
 }
 
 pub(crate) use corelib::{
-    CORE_PATH, files as core_files, is_core, is_rspec_stub, is_stdlib_stub,
+    file_of as core_file_of, is_core, is_rspec_stub, is_stdlib_stub,
     materialize as materialize_core,
 };
 
@@ -4167,27 +4238,34 @@ fn freeze(names: &HashMap<String, Entry>) -> anyhow::Result<snapshot::Snapshot> 
 /// The implicit superclass of every class that does not name one.
 const OBJECT: &str = "Object";
 
-/// Ruby's core library as rows, read from its per-owner files through the
-/// ordinary extractor.
-///
-/// Reparsed on every tree build. It is ~1 ms against a ~120 ms build, and a
-/// cache would have to be invalidated by the same rule DEC-013 exists for.
-fn core_rows() -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<MethodRow>) {
-    let (mut decls, mut edges, mut methods) = (Vec::new(), Vec::new(), Vec::new());
-    for file in core_files() {
-        let (d, e, m) = rows_from(&file.site_path(), &file.text);
+/// The stubs a tree for these roots is served: its Ruby's, when the index
+/// read an rbs gem for it (DEC-240).
+fn stubs(store: &Store, roots: &Roots) -> anyhow::Result<Option<std::sync::Arc<corelib::Stubs>>> {
+    let Some(stdlib) = &roots.stdlib else {
+        return Ok(None);
+    };
+    Ok(store.rbs(stdlib)?.map(corelib::Stubs::from_row))
+}
+
+/// Ruby core's classes, modules and constants as rows, from its per-owner
+/// files with their methods left out: those are loaded by name, as the
+/// index's are (DEC-240).
+fn core_rows(stubs: &corelib::Stubs) -> (Vec<DeclRow>, Vec<EdgeRow>) {
+    let (mut decls, mut edges) = (Vec::new(), Vec::new());
+    for file in stubs.core_files() {
+        let skeleton = corelib::Stubs::skeleton(file);
+        let (d, e, _) = rows_from(&stubs.site_path(file), &skeleton);
         decls.extend(d);
         edges.extend(e);
-        methods.extend(m);
     }
-    (decls, edges, methods)
+    (decls, edges)
 }
 
 /// The stdlib's compiled half (DEC-220), as rows.
-fn stdlib_rows() -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<MethodRow>) {
+fn stdlib_rows(stubs: &corelib::Stubs) -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<MethodRow>) {
     let (mut decls, mut edges, mut methods) = (Vec::new(), Vec::new(), Vec::new());
-    for file in corelib::stdlib_files() {
-        let (d, e, m) = rows_from(&file.site_path(), &file.text);
+    for file in stubs.stdlib_files() {
+        let (d, e, m) = rows_from(&stubs.site_path(file), &file.text);
         decls.extend(d);
         edges.extend(e);
         methods.extend(m);
@@ -4198,7 +4276,7 @@ fn stdlib_rows() -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<MethodRow>) {
 /// The classes only the stdlib's compiled half declares (`Digest::SHA256`),
 /// with their edges. A class some Ruby file declares keeps its own sites and
 /// ancestry: the stub does not add a second place it is written.
-fn compiled_classes(decls: &[DeclRow]) -> (Vec<DeclRow>, Vec<EdgeRow>) {
+fn compiled_classes(stubs: &corelib::Stubs, decls: &[DeclRow]) -> (Vec<DeclRow>, Vec<EdgeRow>) {
     let written = |nesting: &[String], name: Option<&str>| {
         let mut parts: Vec<&str> = nesting.iter().rev().map(String::as_str).collect();
         parts.extend(name);
@@ -4208,7 +4286,7 @@ fn compiled_classes(decls: &[DeclRow]) -> (Vec<DeclRow>, Vec<EdgeRow>) {
         .iter()
         .map(|decl| written(&decl.nesting, Some(&decl.name)))
         .collect();
-    let (stub_decls, stub_edges, _) = stdlib_rows();
+    let (stub_decls, stub_edges, _) = stdlib_rows(stubs);
     let own: Vec<DeclRow> = stub_decls
         .into_iter()
         .filter(|decl| !declared.contains(&written(&decl.nesting, Some(&decl.name))))
@@ -4319,45 +4397,61 @@ mod stdlib_stub_tests {
         )
     }
 
-    /// Loading the stub a name at a time must read every method exactly as
-    /// parsing it whole does, or a query would see a different stdlib than
-    /// the one served.
+    fn cut_rows<'a>(defs: impl Iterator<Item = &'a corelib::StubDef>) -> Vec<String> {
+        let mut cut: Vec<String> = defs
+            .flat_map(|def| {
+                let (_, _, mut rows) = rows_from(&def.path, &def.source);
+                for row in &mut rows {
+                    row.line += def.shift;
+                }
+                rows
+            })
+            .map(|row| said(&row))
+            .collect();
+        cut.sort();
+        cut
+    }
+
+    /// Loading a stub a name at a time must read every method exactly as
+    /// parsing it whole does, or a query would see a different core or
+    /// stdlib than the one served.
     #[test]
     fn a_cut_def_extracts_as_the_whole_file_does() {
-        let mut whole: Vec<String> = stdlib_rows().2.iter().map(said).collect();
-        let mut cut: Vec<String> = corelib::stdlib_defs()
-            .values()
-            .flatten()
-            .flat_map(|def| {
-                let (_, _, mut rows) = rows_from(&def.path, &def.source);
-                for row in &mut rows {
-                    row.line += def.shift;
-                }
-                rows
-            })
+        let core = test_stubs();
+        let mut whole: Vec<String> = core
+            .core_files()
+            .iter()
+            .flat_map(|file| rows_from(&core.site_path(file), &file.text).2)
             .map(|row| said(&row))
             .collect();
         whole.sort();
-        cut.sort();
-        assert!(!whole.is_empty());
-        assert_eq!(whole, cut);
+        assert!(whole.len() > 500, "the fixture's core is read");
+        assert_eq!(whole, cut_rows(core.core_defs().values().flatten()));
 
-        let (_, _, rows) = rows_from(corelib::STDLIB_SIGS, include_str!("stdlib_sigs.rb"));
-        let mut whole: Vec<String> = rows.iter().map(said).collect();
-        let mut cut: Vec<String> = corelib::stdlib_sig_defs()
-            .values()
-            .flat_map(|def| {
-                let (_, _, mut rows) = rows_from(&def.path, &def.source);
-                for row in &mut rows {
-                    row.line += def.shift;
-                }
-                rows
-            })
-            .map(|row| said(&row))
-            .collect();
+        // The stdlib's halves, in the shape the generator writes them.
+        let stubs = corelib::Stubs::from_row(crate::store::Rbs {
+            key: "cut-test".into(),
+            version: "9.9.9".into(),
+            dir: String::new(),
+            core: String::new(),
+            stdlib: "class Gauge\n  sig { returns(::String) }\n  def self.read(path)\n  end\n\n  \
+                     private\n\n  def reset\n  end\n\n  class Dial < ::Gauge\n    def turn(by = nil)\n    \
+                     end\n  end\nend\n"
+                .into(),
+            sigs: "module Meter\n  class Tick\n    sig { params(block: NilClass).returns(::Enumerator) }\n    \
+                   sig { params(block: T.proc.void).returns(::Array) }\n    def each(&block)\n    end\n  \
+                   end\nend\n"
+                .into(),
+        });
+        let mut whole: Vec<String> = stdlib_rows(&stubs).2.iter().map(said).collect();
         whole.sort();
-        cut.sort();
-        assert_eq!(whole, cut);
+        assert_eq!(whole.len(), 3);
+        assert_eq!(whole, cut_rows(stubs.stdlib_defs().values().flatten()));
+
+        let (path, text) = stubs.sigs_text();
+        let mut whole: Vec<String> = rows_from(&path, text).2.iter().map(said).collect();
+        whole.sort();
+        assert_eq!(whole, cut_rows(stubs.sig_defs().values()));
     }
 }
 

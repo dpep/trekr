@@ -1,3 +1,4 @@
 # Core's `first` returns an Array only when given a count. The stub once said
-# Array for every call, so the element's `size` resolved to Array#size.
-def app.rb:3:17 status=residue candidate1=String
+# Array for every call, so the element's `size` resolved to Array#size. Which
+# `size` is offered first is only core's file order, so it is not pinned.
+def app.rb:3:17 status=residue

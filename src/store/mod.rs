@@ -113,13 +113,14 @@ pub(crate) fn default_path() -> anyhow::Result<std::path::PathBuf> {
 }
 
 /// Ruby core, written out beside the database as real readable files — one
-/// per owner, `core/String.rb` — and the directory they are in.
+/// per owner, `core/rbs-3.8.0-…/String.rb` — and the directory they are in.
 ///
-/// The stub is compiled into the binary, so a definition in it had no location
-/// to point at and every `require` or `Array#each` answered nothing — worse
-/// than ruby-lsp, which at least sends you to an RBS declaration. Writing it
-/// out means "go to definition" lands on a signature a person can read, in a
-/// file whose name says whose it is.
+/// The stubs live in the store, so a definition in one had no location to
+/// point at and every `require` or `Array#each` answered nothing — worse than
+/// ruby-lsp, which at least sends you to an RBS declaration. Writing them out
+/// means "go to definition" lands on a signature a person can read, in a file
+/// whose name says whose it is. Each Ruby's go in a directory of their own
+/// (DEC-240).
 pub(crate) fn core_dir() -> anyhow::Result<std::path::PathBuf> {
     let beside = default_path()?
         .parent()
@@ -1207,6 +1208,34 @@ impl Store {
             }
         }
         tx.commit()
+    }
+
+    /// The signatures a stdlib checkout is served with (DEC-240).
+    pub(crate) fn rbs(&self, stdlib: &str) -> Result<Option<Rbs>> {
+        self.conn
+            .query_row(
+                "SELECT r.key, r.version, r.dir, r.core, r.stdlib, r.sigs
+                   FROM rbs r
+                   JOIN rbs_use u ON u.rbs_id = r.id
+                   JOIN checkout c ON c.id = u.checkout_id
+                  WHERE c.root = ?1",
+                params![stdlib],
+                |r| {
+                    Ok(Rbs {
+                        key: r.get(0)?,
+                        version: r.get(1)?,
+                        dir: r.get(2)?,
+                        core: r.get(3)?,
+                        stdlib: r.get(4)?,
+                        sigs: r.get(5)?,
+                    })
+                },
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })
     }
 
     /// Which signatures a stdlib checkout is served with — key, rbs

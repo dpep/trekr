@@ -1,0 +1,5 @@
+class Pathname
+  def initialize: (String | Pathname p) -> void
+  def join: (*String | Pathname args) -> Pathname
+  def read: (?Integer length, ?Integer offset) -> String
+end

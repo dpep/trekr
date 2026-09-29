@@ -330,6 +330,12 @@ fn runtime_param(i: usize, param: &crate::core::Param) -> Option<params::Param> 
     Some(params::Param::new(kind, name))
 }
 
+/// The stubs for this rbs directory with no stdlib indexed: core alone.
+#[cfg(test)]
+pub(crate) fn core_only(dir: &Path) -> stubs::Stubs {
+    stubs::generate(&read(dir), None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

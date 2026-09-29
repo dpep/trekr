@@ -1,0 +1,5 @@
+# RBS declares `Thread::Mutex` and makes `Mutex` a second name for it. A local
+# assigned `Mutex.new` was typed as the constant `Mutex`, which declares no
+# method, where the same call in a chain found `Thread::Mutex` (DEC-240).
+def app.rb:4:10 status=resolved owner=Thread::Mutex via=local:new
+def app.rb:6:12 status=resolved owner=Thread::Mutex

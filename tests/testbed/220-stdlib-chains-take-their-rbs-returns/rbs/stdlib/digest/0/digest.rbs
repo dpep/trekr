@@ -1,0 +1,11 @@
+module Digest
+  class Class
+    def self.hexdigest: (String) -> String
+  end
+
+  class Base < Digest::Class
+  end
+
+  class SHA256 < Digest::Base
+  end
+end
