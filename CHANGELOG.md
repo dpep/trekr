@@ -12,7 +12,7 @@
   and a dev build can both be used without rebuilding each other's index. A
   language server whose store another trekr rebuilds or sets aside moves to its
   own and reindexes, where it used to stop answering until restarted.
-- **Upgrading drops and rebuilds the index** (store v51): run `trekr --index`
+- **Upgrading drops and rebuilds the index** (store v52): run `trekr --index`
   once per checkout. The first index on each Ruby also reads its standard
   library once — 179 files for Ruby 3.4 — and its `rbs` gem's signatures,
   shared by every app on that Ruby.
