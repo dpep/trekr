@@ -74,6 +74,12 @@
   Ruby's signatures once no checkout runs on it, with its core files
   (`signatures`, `core_files` in `--json`).
 
+- **Requirements that conflict are said to.** Without a lockfile, a gem
+  whose requirements from the Gemfile, a gemspec and a picked gem's
+  dependencies no installed version meets together is listed in
+  `gems.unlocated`, naming where each was written, rather than "not
+  installed" under a merged requirement no version can meet (DEC-276).
+
 - **An editor says when trekr is reindexing after an upgrade.** Until the
   background index refills the store an upgrade emptied, each hover says so
   and how long it has run, and the progress reads "reindexing after an

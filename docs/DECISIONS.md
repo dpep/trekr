@@ -8432,3 +8432,21 @@ the code, where the truth was about the index.
 phases — the checkout, the stdlib, the signatures, the gems — have totals
 known only as each starts; a number that jumps backwards between them would
 be worse than the elapsed time.
+
+## DEC-276 — Requirements that conflict are said to, with where each was written
+
+Amends DEC-134's report of a gem not found.
+
+**Decided.** Without a lockfile, a gem no installed version satisfies was
+reported "not installed" under its merged requirements. When those
+requirements come from more than one place — the Gemfile, a gemspec, a
+picked gem's own runtime dependency — and some installed version meets one
+place's, the gem is listed in `gems.unlocated` instead, its `why` naming each
+place: "requirements that conflict, which no installed version meets
+together: ~> 0.90.0 (Gemfile); >= 1.89.0, < 2.0 (rubocop-rails 2.30.0)".
+One place's requirement unmet, or nothing installed at all, is still "not
+installed".
+
+**Why.** The hunt's "not installed: rubocop ~> 0.90.0, >= 1.89.0, < 2.0"
+named a version no one could install, and hid that the Gemfile's pin and a
+plugin's dependency disagreed — which is the fix.

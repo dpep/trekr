@@ -88,6 +88,9 @@ pub(crate) enum Absence {
     /// A default gem at the version its Ruby ships: the directory is empty
     /// and the code is that Ruby's stdlib, here.
     DefaultGem(PathBuf),
+    /// Without a lockfile, requirements from several places that no
+    /// installed version meets together, in words naming each place.
+    Conflict(String),
 }
 
 impl Absence {
@@ -111,6 +114,7 @@ impl Absence {
                     at(stdlib)
                 )
             }
+            Absence::Conflict(said) => said.clone(),
         }
     }
 }

@@ -1053,7 +1053,10 @@ fn index_gems(
     let mut used: Vec<(String, String)> = Vec::new();
     let mut fresh: Vec<PathBuf> = Vec::new();
     for entry in located {
-        let named = format!("{} {}", entry.gem.name, entry.gem.version);
+        let named = match entry.gem.version.as_str() {
+            "" => entry.gem.name.clone(),
+            version => format!("{} {version}", entry.gem.name),
+        };
         if !entry.unread.is_empty() {
             report.unread.push(Unread {
                 gem: named.clone(),

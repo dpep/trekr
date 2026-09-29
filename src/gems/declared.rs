@@ -27,6 +27,9 @@ struct Dependency {
     /// installed, and that is said rather than passed off as a reading.
     unread: Vec<String>,
     development: bool,
+    /// Where each part of `requirements` was written, once merged: the file
+    /// (`Gemfile`, `widget.gemspec`) and what it asks.
+    from: Vec<(String, Vec<String>)>,
 }
 
 /// How many times the picks are revised as the picked gems' own
@@ -59,7 +62,11 @@ pub(super) fn resolve(repo: &Path, roots: &[PathBuf]) -> Option<Vec<Located>> {
         if is_gemspec && let Some(stem) = path.file_stem() {
             own.insert(stem.to_string_lossy().into_owned());
         }
-        declared.extend(dependencies(&source));
+        let file = path.file_name().unwrap_or_default().to_string_lossy();
+        declared.extend(dependencies(&source).into_iter().map(|mut dependency| {
+            dependency.from = vec![(file.to_string(), dependency.requirements.clone())];
+            dependency
+        }));
     }
     if !any {
         return None;
@@ -77,6 +84,7 @@ pub(super) fn resolve(repo: &Path, roots: &[PathBuf]) -> Option<Vec<Located>> {
             Some(merged) => {
                 merged.requirements.extend(dependency.requirements);
                 merged.unread.extend(dependency.unread);
+                merged.from.extend(dependency.from);
             }
             None => {
                 direct.insert(dependency.name.clone(), dependency);
@@ -135,6 +143,7 @@ pub(super) fn resolve(repo: &Path, roots: &[PathBuf]) -> Option<Vec<Located>> {
         picks = next;
     }
 
+    let picks_final: Vec<&Copy> = picks.values().flatten().copied().collect();
     let located = picks
         .into_iter()
         .map(|(name, copy)| {
@@ -154,17 +163,21 @@ pub(super) fn resolve(repo: &Path, roots: &[PathBuf]) -> Option<Vec<Located>> {
                 },
                 None => {
                     let requirements = wanted.remove(&name).unwrap_or_default();
-                    let version = match requirements.is_empty() {
-                        true => "*".to_string(),
-                        false => requirements.join(", "),
-                    };
+                    let (version, absence) =
+                        match conflict(&name, &direct, &picks_final, &needs, &installed) {
+                            Some(said) => (String::new(), Absence::Conflict(said)),
+                            None if requirements.is_empty() => {
+                                ("*".to_string(), Absence::NotInstalled)
+                            }
+                            None => (requirements.join(", "), Absence::NotInstalled),
+                        };
                     Located {
                         gem: Gem {
                             name,
                             version,
                             source: Source::Registry,
                         },
-                        place: Place::Missing(Absence::NotInstalled),
+                        place: Place::Missing(absence),
                         unread,
                     }
                 }
@@ -172,6 +185,43 @@ pub(super) fn resolve(repo: &Path, roots: &[PathBuf]) -> Option<Vec<Located>> {
         })
         .collect();
     Some(located)
+}
+
+/// Why nothing installed meets a name's requirements, when they come from
+/// more than one place and some installed copy meets one place's: the places
+/// conflict, which "not installed" would misstate — `rubocop ~> 0.90.0, >=
+/// 1.89.0, < 2.0` reads as a version to install that cannot exist.
+fn conflict(
+    name: &str,
+    direct: &BTreeMap<String, Dependency>,
+    picks: &[&Copy],
+    needs: &Needs,
+    installed: &Installed,
+) -> Option<String> {
+    let mut places: Vec<(String, Vec<String>)> =
+        direct.get(name).map(|d| d.from.clone()).unwrap_or_default();
+    for copy in picks {
+        for dependency in needs.of(copy).iter().filter(|d| d.name == name) {
+            places.push((
+                format!("{} {}", copy.name, copy.written),
+                dependency.requirements.clone(),
+            ));
+        }
+    }
+    places.retain(|(_, requirements)| !requirements.is_empty());
+    let met = places
+        .iter()
+        .any(|(_, requirements)| installed.best(name, requirements, |_| true).is_some());
+    (places.len() > 1 && met).then(|| {
+        let said: Vec<String> = places
+            .iter()
+            .map(|(place, requirements)| format!("{} ({place})", requirements.join(", ")))
+            .collect();
+        format!(
+            "requirements that conflict, which no installed version meets together: {}",
+            said.join("; ")
+        )
+    })
 }
 
 /// Each installed copy's runtime dependencies, read once however often a
@@ -312,6 +362,7 @@ impl Collector {
             requirements,
             unread,
             development,
+            from: Vec::new(),
         })
     }
 
@@ -776,6 +827,46 @@ gem "gamma", "~> #{ENV['GAMMA']}"
             .map(|l| (l.gem.name.as_str(), l.gem.version.as_str()))
             .collect();
         assert_eq!(versions, [("frame", "7.2.0"), ("model", "7.2.0")]);
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// Requirements from two places that no installed version meets together
+    /// are said to conflict, each with its place; one place's alone is still
+    /// "not installed".
+    #[test]
+    fn requirements_no_installed_version_meets_together_name_their_places() {
+        let base =
+            std::env::temp_dir().join(format!("trekr-declared-conflict-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let gems = base.join("gems");
+        for dir in ["linter-1.89.1", "linter-ext-2.30.0"] {
+            std::fs::create_dir_all(gems.join(dir)).unwrap();
+        }
+        std::fs::create_dir_all(base.join("specifications")).unwrap();
+        std::fs::write(
+            base.join("specifications/linter-ext-2.30.0.gemspec"),
+            "s.add_runtime_dependency(%q<linter>.freeze, [\">= 1.89.0\".freeze, \"< 2.0\".freeze])\n",
+        )
+        .unwrap();
+        let repo = base.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(
+            repo.join("Gemfile"),
+            "gem 'linter', '~> 0.90.0'\ngem 'linter-ext'\ngem 'absent', '~> 1.0'\n",
+        )
+        .unwrap();
+
+        let located = resolve(&repo, std::slice::from_ref(&gems)).unwrap();
+        let place = |name: &str| &located.iter().find(|l| l.gem.name == name).unwrap().place;
+        let Place::Missing(Absence::Conflict(said)) = place("linter") else {
+            panic!("{:?}", place("linter"));
+        };
+        assert!(
+            said.contains("~> 0.90.0 (Gemfile)")
+                && said.contains(">= 1.89.0, < 2.0 (linter-ext 2.30.0)"),
+            "{said}"
+        );
+        assert_eq!(place("absent"), &Place::Missing(Absence::NotInstalled));
         let _ = std::fs::remove_dir_all(&base);
     }
 
