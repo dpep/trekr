@@ -1,0 +1,9 @@
+# A stdlib library written only in C — StringIO, Zlib, Etc, StringScanner —
+# has no Ruby file, so nothing indexed declared it and every use was "no
+# indexed constant". Its extension is there, and RBS describes it: the stub
+# declares its classes and methods, as for a library compiled in part
+# (DEC-220, DEC-262).
+def app.rb:3:5 status=resolved
+def app.rb:3:20 status=resolved owner=CStr kind=declaration defined_via=rbs
+def app.rb:3:28 status=resolved owner=String via=chain
+def app.rb:4:10 status=resolved owner=CStr kind=declaration

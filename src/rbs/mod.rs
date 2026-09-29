@@ -242,6 +242,7 @@ fn ruby(store: &Store, root: &Path, signatures: &stubs::Signatures) -> anyhow::R
     };
     let mut ruby = stubs::Ruby {
         files: crate::gems::stdlib::files(root).into_keys().collect(),
+        compiled_features: crate::gems::stdlib::compiled_features(root),
         ..stubs::Ruby::default()
     };
     // Owners and superclasses as a tree resolves them: `class << Time`
@@ -306,7 +307,7 @@ fn ruby(store: &Store, root: &Path, signatures: &stubs::Signatures) -> anyhow::R
                 .push(maker);
         }
     }
-    let libraries = stubs::libraries_of(signatures, &ruby.files);
+    let libraries = stubs::libraries_of(signatures, &ruby);
     let unindexed = crate::scan::walk(root, "")
         .into_keys()
         .filter(|path| crate::gems::stdlib::skipped(path))

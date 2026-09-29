@@ -8553,3 +8553,49 @@ false candidates — rails 8 (`SchemaStatements#bulk_change_table`,
 activerecord 2, mastodon 19 (`Vite::Tagger`'s strategies' `vite_*_tag`,
 which its specs reach through the tagger) — and two move to single-caller.
 The gold sets, the 40-query set and the clicks are unchanged.
+
+## DEC-262 — A stdlib library written only in C is declared by its RBS
+
+**Decided.** DEC-220's stub declares the compiled half of a library whose
+Ruby file the stdlib holds. A library with no Ruby file at all — StringIO,
+Zlib, Etc, StringScanner, PTY — is now one the stdlib has when its compiled
+extension is there (`stringio.bundle` beside `rbconfig.rb`, by the feature
+`require` names it with), and it is compiled whole: the stub declares every
+class and method its RBS writes, `defined_via: "rbs"`, as it does
+`Digest::SHA256`.
+
+**Why.** The 0.8.1 hunt: `StringIO.new(s).read` was "no indexed constant",
+though the Ruby has the extension and its rbs gem describes it. Nothing
+indexed declared these classes, since the stub admitted a library only by
+its `.rb`.
+
+**Measured**, against the build before it. Rails' 51-query set: 236 sites
+of `ActiveRecord::Base.new` move possible → excluded — `StringIO.new` and
+`Zlib::GzipWriter.new` were untyped receivers and are now StringIO's and
+Zlib's — and 7 of `ActiveRecord::Core#inspect` the same way (a
+`StringIO#string`); one `String#strip` possible → confirmed. The gold sets
+move three residues to a declaration offered (polyid 1, flipper 2), none
+the other way; the clicks lose 2 empty and 4 "unindexed ancestor or
+constant" answers. The 40-query set and `--dead` on all three corpora are
+unchanged.
+
+## DEC-263 — An inherited method on a class RBS sketches stays confident, for now
+
+**Decided: not changed.** RBS declares `Enumerator::Lazy` with one method of
+its own (`compact`, in rbs 3.8 through 4.2), though Ruby's Lazy overrides
+`map`, `select`, `reject`, `zip` and the rest to stay lazy. Since core comes
+from RBS (DEC-240), `[3].lazy.map { }` answers `Enumerable#map` at 1.0,
+returning an Array, where 0.8.0 knew no Lazy and said residue.
+
+**Why not a rule.** Nothing RBS writes tells a sketch from a class that
+really inherits: `File` inherits `Enumerable#map` through `IO` exactly as
+Lazy appears to, and is right to. The rules considered each misfire:
+hedging every inherited module method on a core subclass costs `File`,
+`ArithmeticSequence` and friends a correct answer; hedging a class whose
+own declaration is small is a threshold, not evidence; hedging what a
+module's method returns when it lands back in that module (`Enumerable#lazy`
+→ Lazy → `Enumerable#map`) holds for Lazy and `Enumerable#chain` alone and
+names them in all but name. Two classes do not earn a mechanism.
+
+**Reverses if** a second sketch turns up in the gold sets or the clicks, or
+the rbs gem declares Lazy's overrides — then the answer is simply right.

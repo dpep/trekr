@@ -521,7 +521,9 @@ location (DEC-182).
 
 What the stdlib's source cannot say comes from the same rbs gem's
 signatures for the libraries the stdlib has — an rbs library whose file
-`require` loads is indexed — written with core's at index time into two more
+`require` loads is indexed, or whose compiled extension is there, which makes
+a library written only in C (`stringio`) compiled whole (DEC-262) — written
+with core's at index time into two more
 stubs, read only when the checkout's stdlib is indexed (DEC-220, DEC-240).
 The *stdlib* stub declares the compiled half — `Pathname#read`,
 `Digest::Class.hexdigest`, and every class no Ruby file declares

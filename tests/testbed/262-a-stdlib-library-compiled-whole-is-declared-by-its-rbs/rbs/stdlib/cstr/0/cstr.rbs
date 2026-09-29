@@ -1,0 +1,5 @@
+class CStr
+  def initialize: (String text) -> void
+  def peek: (Integer len) -> String
+  def self.open: (String text) -> CStr
+end

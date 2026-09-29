@@ -608,7 +608,7 @@ pub(crate) fn compiled(root: &Path, files: &scan::Files) -> Vec<(String, String)
 
 /// Every compiled extension in the stdlib's architecture directory, the one
 /// holding `rbconfig.rb`, by the feature `require` names it with.
-fn compiled_features(root: &Path) -> HashSet<String> {
+pub(crate) fn compiled_features(root: &Path) -> HashSet<String> {
     let Some(arch) = std::fs::read_dir(root)
         .into_iter()
         .flatten()

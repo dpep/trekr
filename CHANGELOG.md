@@ -273,6 +273,12 @@
 
 ### Fixed
 
+- **StringIO, Zlib, Etc and StringScanner are known.** A stdlib library
+  written only in C, with no Ruby file, is declared from its RBS signatures
+  when its extension is there, as a partly compiled one already was:
+  `StringIO.new(s).read` resolves where it was "no indexed constant"
+  (DEC-262).
+
 - **A default gem the app bundles hides the stdlib's stub classes too.** A
   class only the stdlib's RBS stub declares — `JSON::Pure`, which json 2.x
   no longer has — no longer resolves in an app that bundles its own json

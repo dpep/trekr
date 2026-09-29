@@ -44,6 +44,9 @@ pub(crate) struct Ruby {
     pub(crate) superclasses: HashSet<String>,
     /// Its indexed files, relative to its root: which libraries it has.
     pub(crate) files: HashSet<String>,
+    /// Its compiled extensions, by the feature `require` names them with:
+    /// a library written only in C has one and no Ruby file (DEC-262).
+    pub(crate) compiled_features: HashSet<String>,
 }
 
 /// Is this stdlib path one of this rbs library's files (`net-http` →
@@ -341,18 +344,25 @@ fn render_owner(fqn: &str, owners: &BTreeMap<String, Owner>, depth: usize, out: 
 }
 
 /// The libraries a stdlib has: an rbs library whose file `require` loads
-/// is among the indexed stdlib's (`net-http` → `net/http.rb`).
-pub(crate) fn libraries_of(signatures: &Signatures, files: &HashSet<String>) -> BTreeSet<String> {
+/// is among the indexed stdlib's (`net-http` → `net/http.rb`), or is a
+/// compiled extension of its own (`stringio`, DEC-262).
+pub(crate) fn libraries_of(signatures: &Signatures, ruby: &Ruby) -> BTreeSet<String> {
     signatures
         .libraries
         .keys()
         .filter(|library| {
-            [library.to_string(), library.replace('-', "/")]
-                .iter()
-                .any(|feature| files.contains(&format!("{feature}.rb")))
+            features(library).iter().any(|feature| {
+                ruby.files.contains(&format!("{feature}.rb"))
+                    || ruby.compiled_features.contains(feature)
+            })
         })
         .cloned()
         .collect()
+}
+
+/// The features `require` may name a library by: `net-http` → `net/http`.
+fn features(library: &str) -> [String; 2] {
+    [library.to_string(), library.replace('-', "/")]
 }
 
 fn stdlib(
@@ -362,7 +372,7 @@ fn stdlib(
     core_known: &HashSet<String>,
     stubs: &mut Stubs,
 ) {
-    let libraries = libraries_of(signatures, &ruby.files);
+    let libraries = libraries_of(signatures, ruby);
     // A library's dependencies are loaded to resolve its names, and are not
     // themselves described: nothing indexed would own their stubs.
     let mut loaded: BTreeSet<String> = BTreeSet::new();
@@ -388,12 +398,16 @@ fn stdlib(
     let described = |library: &Library| library.as_ref().is_some_and(|l| libraries.contains(l));
     // A library compiles part of itself when an extension backs one of its
     // files. Only such a library's RBS can describe what no Ruby writes.
+    // One written only in C is its extension (DEC-262).
     let extended: HashSet<&String> = libraries
         .iter()
         .filter(|library| {
             ruby.compiled_files
                 .iter()
                 .any(|path| belongs(path, library))
+                || features(library)
+                    .iter()
+                    .any(|feature| ruby.compiled_features.contains(feature))
         })
         .collect();
     let compiles = |library: &Library| library.as_ref().is_some_and(|l| extended.contains(l));

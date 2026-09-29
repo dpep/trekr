@@ -1,0 +1,2 @@
+module RbConfig
+end
