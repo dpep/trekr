@@ -21,12 +21,91 @@ pub(crate) struct Stdlib {
     pub(crate) root: PathBuf,
     /// Which Ruby, and how it was chosen, in words.
     pub(crate) ruby: String,
+    /// How it was chosen, for a script.
+    pub(crate) how: How,
     /// Each default gem it ships, `(name, version)`, from its specs' names.
     ships: HashSet<(String, String)>,
 }
 
+/// How a checkout's Ruby was chosen (DEC-271): the one it names, the
+/// environment's (`$GEM_HOME`'s, the `ruby` on `$PATH`, the only one
+/// installed), or the one its last index chose, kept.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum How {
+    Named,
+    GemHome,
+    Path,
+    Only,
+    Kept,
+}
+
+/// A checkout's Ruby as `--index` and `--status` report it (DEC-292).
+#[derive(Clone, Debug, PartialEq, serde::Serialize)]
+pub(crate) struct About {
+    /// `3.4.10`, from its `rbconfig.rb`, else its install's name; `null`
+    /// when neither says.
+    pub(crate) version: Option<String>,
+    /// Its stdlib's root, `<prefix>/lib/ruby/<abi>`: the checkout it is
+    /// indexed as, the same as `gems.stdlib.root`.
+    pub(crate) root: String,
+    /// `null` in `--status` when this environment would choose another:
+    /// the next `--index` moves it.
+    pub(crate) how: Option<How>,
+}
+
+/// A stdlib at `root`, about the Ruby it belongs to.
+pub(crate) fn about(root: &Path, how: Option<How>) -> About {
+    About {
+        version: version_of(root),
+        root: root.to_string_lossy().into_owned(),
+        how,
+    }
+}
+
+/// The Ruby version of the stdlib at `root`: `rbconfig.rb`'s `MAJOR`,
+/// `MINOR` and `TEENY`, else the install directory's name.
+fn version_of(root: &Path) -> Option<String> {
+    let rbconfig = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path().join("rbconfig.rb"))
+        .find(|path| path.is_file())
+        .and_then(|path| std::fs::read_to_string(path).ok());
+    let from_config = rbconfig.and_then(|text| {
+        let part = |key: &str| {
+            let prefix = format!("CONFIG[\"{key}\"] = \"");
+            text.lines().find_map(|line| {
+                let value = line.trim().strip_prefix(&prefix)?.strip_suffix('"')?;
+                value
+                    .chars()
+                    .all(|c| c.is_ascii_digit())
+                    .then(|| value.to_string())
+            })
+        };
+        Some(format!(
+            "{}.{}.{}",
+            part("MAJOR")?,
+            part("MINOR")?,
+            part("TEENY")?
+        ))
+    });
+    from_config.or_else(|| {
+        let prefix = root.ancestors().nth(3)?.file_name()?.to_string_lossy();
+        let name = prefix.strip_prefix("ruby-").unwrap_or(&prefix);
+        let version = name.split(['_', '@']).next()?;
+        Version::parse(version).map(|_| version.to_string())
+    })
+}
+
 impl Stdlib {
-    fn at(root: PathBuf, ruby: String) -> Stdlib {
+    /// `--index`'s `ruby` object.
+    pub(crate) fn about(&self) -> About {
+        about(&self.root, Some(self.how))
+    }
+
+    fn at(root: PathBuf, ruby: String, how: How) -> Stdlib {
         let ships = specifications(&root)
             .and_then(|dir| std::fs::read_dir(dir).ok())
             .into_iter()
@@ -38,7 +117,12 @@ impl Stdlib {
                 Some((name.to_string(), version.to_string()))
             })
             .collect();
-        Stdlib { root, ruby, ships }
+        Stdlib {
+            root,
+            ruby,
+            how,
+            ships,
+        }
     }
 
     /// Is this gem, at this version, one this stdlib ships? Then its code is
@@ -415,7 +499,7 @@ pub(crate) fn for_checkout(repo: &Path, last: Option<&Path>) -> Option<Stdlib> {
                 install_name(last)
             ));
         }
-        return Some(Stdlib::at(root, ruby));
+        return Some(Stdlib::at(root, ruby, How::Named));
     }
     let found = from_environment();
     let Some(kept) = last.filter(|root| has_default_gems(root)) else {
@@ -432,6 +516,7 @@ pub(crate) fn for_checkout(repo: &Path, last: Option<&Path>) -> Option<Stdlib> {
             "the {}, kept from the last index ({why})",
             install_name(kept)
         ),
+        How::Kept,
     ))
 }
 
@@ -447,6 +532,7 @@ fn from_environment() -> Option<Stdlib> {
                 "the Ruby $GEM_HOME names ({})",
                 crate::core::paths::pretty(&home)
             ),
+            How::GemHome,
         ));
     }
     if let Some(ruby) = super::path_ruby()
@@ -458,6 +544,7 @@ fn from_environment() -> Option<Stdlib> {
                 "the ruby on $PATH ({})",
                 crate::core::paths::pretty(&ruby.to_string_lossy())
             ),
+            How::Path,
         ));
     }
     let mut roots: Vec<PathBuf> = installs().iter().filter_map(|p| stdlib_in(p)).collect();
@@ -470,6 +557,7 @@ fn from_environment() -> Option<Stdlib> {
                 "the only Ruby installed ({})",
                 crate::core::paths::pretty(&root.to_string_lossy())
             ),
+            How::Only,
         )),
         _ => None,
     }
@@ -911,6 +999,7 @@ end
         let stdlib_at = Stdlib {
             root: stdlib.clone(),
             ruby: String::new(),
+            how: How::Named,
             ships: HashSet::new(),
         };
         let picked = || {

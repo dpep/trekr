@@ -4199,6 +4199,7 @@ command that reports it, and a command that reports the fact uses that name:
 | `unresolved_ancestors` | ancestors that could not be seen, top level and per variant |
 | `path`, `root`, `line`, `col` | every located object has all four (DEC-076) |
 | `repo` | a checkout's identity (`--index`, `--drop`, `--status`, `not_indexed`) |
+| `ruby` | a checkout's Ruby: at a checkout's level in `--index` and `--status`, an object (`version`, `root`, `how`); inside `gems` and `gems.stdlib`, the same choice as a sentence (DEC-292) |
 | `answer`, `rows` | `--ndjson`'s last line of a row set: the rest of the `--json` answer, and how many rows came before it (DEC-290) |
 
 **Before**, each command named a fact as it was written: `--ancestors` said
@@ -8795,3 +8796,29 @@ missing checkouts are reported under 3.4.10's `bundler/gems`.
 a `bundle install` run from the other shell, and the same version's Ruby
 code; not indexing it would turn every call into it into residue. It is
 said, and a lockfile's exact version keeps it honest.
+
+## DEC-292 — The checkout's Ruby is an object in `--index` and `--status`
+
+**Decided.** `--index --json` has a top-level `ruby` beside `repo`, and each
+checkout row of `--status --json` one beside `stdlib`: `{"version", "root",
+"how"}`. `version` is the Ruby's own (`rbconfig.rb`'s `MAJOR.MINOR.TEENY`,
+else the install directory's name), `root` its stdlib's root — the checkout
+it is indexed as, as `gems.stdlib.root` — and `how` one of `named` (the
+checkout names it), `gem_home`, `path`, `only` (the environment's, DEC-242),
+or `kept` (the last index's, DEC-271). `null` when no Ruby was chosen: none
+found, or `--no-gems`. The sentences (`gems.stdlib.ruby`, and `gems.ruby`
+without a lockfile) stay, for text and for a person reading JSON.
+
+**Why.** A script that wanted to know which Ruby answered had to parse "the
+Ruby at ~/.rbenv/versions/3.4.10, kept from the last index (this environment
+would pick …)". The facts were known as a value and printed only as words.
+
+**`--status` asks this environment.** The store keeps which stdlib a
+checkout's last index chose, not how. `--status` runs the same choice now,
+with that stdlib as the last one, and reports its `how` when it lands on
+the same Ruby; `null` when it would land elsewhere, which the next `--index`
+does. Keeping the index's own reason would be a column, and a store version,
+for a field whose only use is "why is this the Ruby".
+
+**Not done.** `prefix` — the install directory — is `root` less
+`lib/ruby/<abi>`, and nobody asked for it.

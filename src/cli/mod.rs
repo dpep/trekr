@@ -1076,6 +1076,7 @@ fn index_gems(
         resolved_from: resolved_from.as_ref().map(crate::gems::Resolved::as_str),
         ruby,
         ruby_not_found: crate::gems::stdlib::named_missing(repo),
+        about: stdlib.as_ref().map(crate::gems::stdlib::Stdlib::about),
         ..GemReport::default()
     };
     if let Some(stdlib) = &stdlib {
@@ -1383,6 +1384,10 @@ struct GemReport {
     /// or its Ruby's stdlib was not found.
     #[serde(skip_serializing_if = "Option::is_none")]
     stdlib: Option<StdlibReport>,
+    /// The Ruby the checkout runs on, as `--index`'s top-level `ruby`
+    /// reports it rather than here (DEC-292).
+    #[serde(skip)]
+    about: Option<crate::gems::stdlib::About>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1493,7 +1498,12 @@ fn cmd_index(
         ),
         _ => emit_json(
             out,
-            &serde_json::json!({ "repo": root_str, "indexed": counts, "gems": gems }),
+            &serde_json::json!({
+                "repo": root_str,
+                "indexed": counts,
+                "gems": gems,
+                "ruby": gems.about,
+            }),
         )?,
     }
     // Part of the report, beside the gems line it replaces: JSON has
@@ -1727,6 +1737,7 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
             if let Some(version) = crate::gems::stdlib::named_missing(Path::new(&checkout.repo)) {
                 row["ruby_not_found"] = version.into();
             }
+            row["ruby"] = serde_json::to_value(status_ruby(&checkout.repo, stdlib.as_deref()))?;
             if let Some(stdlib) = stdlib {
                 let rbs = store.rbs_about(&stdlib)?.map(|about| {
                     serde_json::json!({
@@ -1852,6 +1863,16 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
         totals.blobs, totals.defs, totals.const_refs, totals.calls
     );
     Ok(ExitCode::SUCCESS)
+}
+
+/// The Ruby a checkout's last index chose, and how — asked of this
+/// environment, since the store keeps only which: `how` is `null` when a
+/// reindex from here would choose another (DEC-292).
+fn status_ruby(repo: &str, stdlib: Option<&str>) -> Option<crate::gems::stdlib::About> {
+    let root = Path::new(stdlib?);
+    let now = crate::gems::stdlib::for_checkout(Path::new(repo), Some(root));
+    let how = now.filter(|now| now.root == root).map(|now| now.how);
+    Some(crate::gems::stdlib::about(root, how))
 }
 
 /// The checkout `--status` reports on from `dir`: its git repository, as a

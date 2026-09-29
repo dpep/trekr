@@ -4207,6 +4207,58 @@ end
     let _ = fs::remove_dir_all(&home);
 }
 
+/// `--index` and `--status` name the checkout's Ruby as an object — its
+/// version, its stdlib's root, and how it was chosen — beside the sentence
+/// (DEC-292).
+#[test]
+fn the_rubys_choice_is_structured_in_index_and_status() {
+    let (dir, db) = scratch("ruby-object");
+    repo(&dir);
+    let (home, _) = scratch("ruby-object-home");
+    let first = fake_ruby(&home, "9.8.7", &[], &[]);
+    let second = fake_ruby(&home, "9.7.1", &[], &[]);
+    let gem_home = format!("{}/.rvm/gems/ruby-9.8.7", home.display());
+    let env = [
+        ("HOME", home.to_str().unwrap()),
+        ("GEM_HOME", gem_home.as_str()),
+    ];
+    let ruby = |db: &Path, args: &[&str]| json(&trekr_env(db, &dir, args, &env));
+
+    fs::write(dir.join(".ruby-version"), "9.7.1\n").unwrap();
+    let index = ruby(&db, &["--index", "--json"]);
+    assert_eq!(
+        index["ruby"],
+        serde_json::json!({ "version": "9.7.1", "root": second, "how": "named" }),
+        "{index}"
+    );
+    assert!(
+        index["gems"]["stdlib"]["ruby"].is_string(),
+        "the sentence stays"
+    );
+
+    // Named no longer, and `$GEM_HOME` names another: the last one is kept.
+    fs::remove_file(dir.join(".ruby-version")).unwrap();
+    let index = ruby(&db, &["--index", "--json"]);
+    assert_eq!(index["ruby"]["how"], "kept", "{index}");
+    assert_eq!(index["ruby"]["root"], second.as_str(), "{index}");
+    let status = ruby(&db, &["--status", "--json"]);
+    assert_eq!(status["checkouts"][0]["ruby"], index["ruby"], "{status}");
+
+    // A store of its own: `$GEM_HOME`'s.
+    let fresh = db.with_extension("fresh.db");
+    let index = ruby(&fresh, &["--index", "--json"]);
+    assert_eq!(
+        index["ruby"],
+        serde_json::json!({ "version": "9.8.7", "root": first, "how": "gem_home" }),
+        "{index}"
+    );
+    let skipped = ruby(&fresh, &["--index", "--no-gems", "--json"]);
+    assert!(skipped["ruby"].is_null(), "{skipped}");
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&home);
+}
+
 /// A stdlib method the core stub also writes keeps the stub's return type:
 /// `Set#size` is real source in a Ruby where `Set` is not core (DEC-182).
 #[test]

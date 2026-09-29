@@ -19,6 +19,12 @@
 
 ### Added
 
+- **`--index` and `--status` name the Ruby as an object.** `--index
+  --json` has a top-level `ruby`, and each `--status --json` checkout one:
+  `version`, `root` (its stdlib's) and `how` it was chosen — `named`,
+  `gem_home`, `path`, `only` or `kept`; `null` when none was. The sentence
+  in `gems.stdlib.ruby` stays (DEC-292).
+
 - **A method card and `--refs` name the method a query resolves to.**
   `resolves_to` is it in Ruby's notation, and `inherited` says the owner
   inherits it rather than defining it; text output adds "resolves to

@@ -346,6 +346,10 @@ tiers the site `possible`.
   requirements trekr could not read (the highest installed was taken).
   Gems are looked for in the checkout's own Ruby's directories first;
   `gems.other_ruby` lists the ones found only for another Ruby.
+* `ruby` (top level of `--index`, per checkout in `--status`) is the Ruby the
+  checkout runs on: `version`, `root` (its stdlib's) and `how` it was chosen —
+  `named` by `.ruby-version`/Gemfile, `gem_home`, `path`, `only`, or `kept`
+  from the last index; `null` when none was found.
 * `gems.stdlib` is the Ruby standard library indexed with the checkout —
   `root`, the `ruby` it belongs to and how it was chosen, and `hidden`: the
   default gems (json, logger, uri…) the bundle has its own copy of, whose
