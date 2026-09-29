@@ -25,6 +25,38 @@ pub(crate) struct Store {
     path: Option<std::path::PathBuf>,
 }
 
+/// The checkouts a tree is assembled from, in the order it layers them —
+/// the Ruby's stdlib, the bundle's gems, the checkout itself — and the stdlib
+/// files this app does not see (DEC-180).
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Roots {
+    pub(crate) list: Vec<String>,
+    /// Absolute paths of stdlib files a default gem owns that the app bundles
+    /// its own copy of. Its copy answers; the stdlib's would be a second one.
+    pub(crate) hidden: HashSet<String>,
+    /// The Ruby's stdlib among `list`, when the app runs on one it indexed.
+    pub(crate) stdlib: Option<String>,
+}
+
+impl Roots {
+    /// Just these roots, hiding nothing.
+    #[cfg(test)]
+    pub(crate) fn of(list: Vec<String>) -> Roots {
+        Roots {
+            list,
+            ..Roots::default()
+        }
+    }
+
+    fn shows(&self, path: &str) -> bool {
+        !self.hidden.contains(path)
+    }
+}
+
+/// Layering order for rows from several checkouts: a Ruby's stdlib first,
+/// since the gems and the app reopen it, then insert order.
+const LAYERED: &str = "c.kind <> 'stdlib', c.id";
+
 /// What one indexing pass did. Every count is honest about *work*, not about
 /// contents: `parsed` is the only expensive number in it.
 #[derive(Debug, Default, serde::Serialize)]
@@ -570,22 +602,22 @@ impl Store {
     /// meaning anything the moment it leaves this query, and a caller that
     /// joined one onto the repo it happened to be asking about fabricated
     /// files that do not exist.
-    pub(crate) fn declarations(&self, roots: &[String]) -> Result<Vec<DeclRow>> {
+    pub(crate) fn declarations(&self, roots: &Roots) -> Result<Vec<DeclRow>> {
         // Ordered here rather than by `ORDER BY c.id, f.path, d.line, d.col`:
         // SQLite's sorter carried every row's absolute path through a temp
         // b-tree and was a third of this query. Same keys, same byte order.
         let mut stmt = self.conn.prepare(&format!(
             "SELECT d.name, d.kind, d.nesting, d.target, c.root || '/' || f.path, d.line, d.col,
-                    c.id
+                    c.kind <> 'stdlib', c.id
                FROM def d
                JOIN file f ON f.blob_id = d.blob_id
                JOIN checkout c ON c.id = f.checkout_id
               WHERE c.root IN ({}) AND d.kind IN ('class','module','constant')",
-            placeholders(roots.len())
+            placeholders(roots.list.len())
         ))?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(roots), |r| {
+        let rows = stmt.query_map(rusqlite::params_from_iter(&roots.list), |r| {
             Ok((
-                r.get::<_, i64>(7)?,
+                (r.get::<_, bool>(7)?, r.get::<_, i64>(8)?),
                 DeclRow {
                     name: r.get(0)?,
                     kind: r.get(1)?,
@@ -598,6 +630,7 @@ impl Store {
             ))
         })?;
         let mut rows = rows.collect::<Result<Vec<_>>>()?;
+        rows.retain(|(_, row)| roots.shows(&row.path));
         // Within one checkout the root is a shared prefix, so comparing the
         // absolute path orders exactly as the relative one would.
         rows.sort_by(|(a_id, a), (b_id, b)| {
@@ -610,7 +643,7 @@ impl Store {
     ///
     /// Deferred in session 2 because nothing read it; the method ladder is the
     /// consumer that earns it.
-    pub(crate) fn methods(&self, roots: &[String]) -> Result<Vec<MethodRow>> {
+    pub(crate) fn methods(&self, roots: &Roots) -> Result<Vec<MethodRow>> {
         self.method_rows(roots, None)
     }
 
@@ -619,17 +652,17 @@ impl Store {
     /// The whole point of the demand-loading design: nothing needs all 84,052
     /// of rails' methods, and `def(name)` is indexed, so one name is a few rows
     /// instead of a table scan and 137 ms of indexing.
-    pub(crate) fn methods_named(&self, roots: &[String], name: &str) -> Result<Vec<MethodRow>> {
+    pub(crate) fn methods_named(&self, roots: &Roots, name: &str) -> Result<Vec<MethodRow>> {
         self.method_rows(roots, Some(name))
     }
 
     /// Every method, in `methods`' order, handed over one row at a time
     /// rather than collected — for a caller that keeps only part of each.
-    pub(crate) fn each_method(&self, roots: &[String], visit: impl FnMut(MethodRow)) -> Result<()> {
+    pub(crate) fn each_method(&self, roots: &Roots, visit: impl FnMut(MethodRow)) -> Result<()> {
         self.visit_method_rows(roots, None, visit)
     }
 
-    fn method_rows(&self, roots: &[String], name: Option<&str>) -> Result<Vec<MethodRow>> {
+    fn method_rows(&self, roots: &Roots, name: Option<&str>) -> Result<Vec<MethodRow>> {
         let mut rows = Vec::new();
         self.visit_method_rows(roots, name, |row| rows.push(row))?;
         Ok(rows)
@@ -637,7 +670,7 @@ impl Store {
 
     fn visit_method_rows(
         &self,
-        roots: &[String],
+        roots: &Roots,
         name: Option<&str>,
         mut visit: impl FnMut(MethodRow),
     ) -> Result<()> {
@@ -652,16 +685,23 @@ impl Store {
                JOIN file f ON f.blob_id = d.blob_id
                JOIN checkout c ON c.id = f.checkout_id
               WHERE c.root IN ({}) AND d.kind = 'method' {filter}
-              ORDER BY c.id, f.path, d.line, d.col",
-            placeholders(roots.len())
+              ORDER BY {LAYERED}, f.path, d.line, d.col",
+            placeholders(roots.list.len())
         ))?;
-        let mut values: Vec<&dyn rusqlite::ToSql> =
-            roots.iter().map(|r| r as &dyn rusqlite::ToSql).collect();
+        let mut values: Vec<&dyn rusqlite::ToSql> = roots
+            .list
+            .iter()
+            .map(|r| r as &dyn rusqlite::ToSql)
+            .collect();
         if let Some(name) = name.as_ref() {
             values.push(name as &dyn rusqlite::ToSql);
         }
         let mut rows = stmt.query(values.as_slice())?;
         while let Some(r) = rows.next()? {
+            let path: String = r.get(8)?;
+            if !roots.shows(&path) {
+                continue;
+            }
             let params: String = r.get(4)?;
             visit(MethodRow {
                 name: r.get(0)?,
@@ -673,7 +713,7 @@ impl Store {
                 target: r.get(6)?,
                 sig_returns: r.get(7)?,
                 sig_overloads: Vec::new(),
-                path: r.get(8)?,
+                path,
                 line: r.get(9)?,
                 col: r.get(10)?,
                 target_pos: match (r.get::<_, Option<u32>>(11)?, r.get::<_, Option<u32>>(12)?) {
@@ -687,64 +727,76 @@ impl Store {
 
     /// Every ancestry edge in a checkout, in source order — which is the order
     /// Ruby applies them in, and therefore the order linearization reverses.
-    pub(crate) fn ancestry(&self, roots: &[String]) -> Result<Vec<EdgeRow>> {
+    pub(crate) fn ancestry(&self, roots: &Roots) -> Result<Vec<EdgeRow>> {
         let mut stmt = self.conn.prepare(&format!(
             "SELECT a.owner, a.relation, a.target, c.root || '/' || f.path, a.line
                FROM ancestry a
                JOIN file f ON f.blob_id = a.blob_id
                JOIN checkout c ON c.id = f.checkout_id
               WHERE c.root IN ({}) AND a.relation != 'dynamic'
-              ORDER BY c.id, f.path, a.line, a.col",
-            placeholders(roots.len())
+              ORDER BY {LAYERED}, f.path, a.line, a.col",
+            placeholders(roots.list.len())
         ))?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(roots), edge_row)?;
-        rows.collect()
+        let rows = stmt.query_map(rusqlite::params_from_iter(&roots.list), edge_row)?;
+        shown(roots, rows)
     }
 
     /// The scopes that define methods the source does not name (DEC-130):
     /// few, and read only when an answer is about to say a method is absent.
-    pub(crate) fn dynamic_markers(&self, roots: &[String]) -> Result<Vec<EdgeRow>> {
+    pub(crate) fn dynamic_markers(&self, roots: &Roots) -> Result<Vec<EdgeRow>> {
         let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT a.owner, a.relation, a.target, c.root || '/' || f.path, a.line
                FROM ancestry a
                JOIN file f ON f.blob_id = a.blob_id
                JOIN checkout c ON c.id = f.checkout_id
               WHERE c.root IN ({}) AND a.relation = 'dynamic'
-              ORDER BY c.id, f.path, a.line, a.col",
-            placeholders(roots.len())
+              ORDER BY {LAYERED}, f.path, a.line, a.col",
+            placeholders(roots.list.len())
         ))?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(roots), edge_row)?;
-        rows.collect()
+        let rows = stmt.query_map(rusqlite::params_from_iter(&roots.list), edge_row)?;
+        shown(roots, rows)
     }
 
     /// Where a class or module body calls `name` on itself, outside any
     /// method: the classes a macro of that name runs on (DEC-162), by the
     /// scope stack each call is written in, with the literal names it is
     /// handed.
-    pub(crate) fn body_calls(&self, roots: &[String], name: &str) -> Result<Vec<BodyCallRow>> {
+    pub(crate) fn body_calls(&self, roots: &Roots, name: &str) -> Result<Vec<BodyCallRow>> {
         let mut stmt = self.conn.prepare_cached(&format!(
-            "SELECT DISTINCT c.nesting, c.args
+            "SELECT DISTINCT c.nesting, c.args, k.root || '/' || f.path
                FROM body_call c
                JOIN file f ON f.blob_id = c.blob_id
                JOIN checkout k ON k.id = f.checkout_id
               WHERE c.name = ?1 AND k.root IN ({})",
-            (2..roots.len() + 2)
+            (2..roots.list.len() + 2)
                 .map(|i| format!("?{i}"))
                 .collect::<Vec<_>>()
                 .join(", ")
         ))?;
-        let params = std::iter::once(name.to_string()).chain(roots.iter().cloned());
+        let params = std::iter::once(name.to_string()).chain(roots.list.iter().cloned());
         let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| {
-            let args: String = r.get(1)?;
-            Ok(BodyCallRow {
-                nesting: split_nesting(&r.get::<_, String>(0)?),
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        let mut seen: HashSet<(String, String)> = HashSet::new();
+        let mut found = Vec::new();
+        for row in rows {
+            let (nesting, args, path) = row?;
+            if !roots.shows(&path) || !seen.insert((nesting.clone(), args.clone())) {
+                continue;
+            }
+            found.push(BodyCallRow {
+                nesting: split_nesting(&nesting),
                 args: args
                     .split('\t')
                     .map(|arg| (!arg.is_empty()).then(|| arg.to_string()))
                     .collect(),
-            })
-        })?;
-        rows.collect()
+            });
+        }
+        Ok(found)
     }
 
     /// Files in a checkout that call a method of this name.
@@ -917,16 +969,16 @@ impl Store {
     /// Where each program in these checkouts starts: every root, and every
     /// directory in them holding a `.gemspec` — rails' `activemodel/` is a
     /// gem of its own inside the rails checkout (DEC-075). Absolute.
-    pub(crate) fn program_roots(&self, roots: &[String]) -> Result<Vec<String>> {
+    pub(crate) fn program_roots(&self, roots: &Roots) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(&format!(
             "SELECT c.root, f.path FROM file f JOIN checkout c ON c.id = f.checkout_id
               WHERE c.root IN ({}) AND f.path LIKE '%.gemspec'",
-            placeholders(roots.len())
+            placeholders(roots.list.len())
         ))?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(roots), |r| {
+        let rows = stmt.query_map(rusqlite::params_from_iter(&roots.list), |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
         })?;
-        let mut found = roots.to_vec();
+        let mut found = roots.list.clone();
         for row in rows {
             let (root, path) = row?;
             if let Some((dir, _)) = path.rsplit_once('/') {
@@ -965,15 +1017,22 @@ impl Store {
         rows.collect()
     }
 
-    /// Record that this checkout's bundle resolves these gems.
+    /// Record that this checkout's bundle resolves these gems, each
+    /// `(root, name)`, and that it runs on this stdlib.
     ///
     /// Rewritten wholesale on every index, so a gem dropped
     /// from a Gemfile.lock stops being claimed.
     ///
     /// Also where a checkout becomes a gem, and where a gem is last seen: each
-    /// one named is stamped `kind = 'gem'` and its `indexed_at` moved to now,
-    /// inside the index's own transaction, so `--gc` costs a query nothing.
-    pub(crate) fn set_gems_used(&mut self, root: &str, gem_roots: &[String]) -> Result<()> {
+    /// one named is stamped `kind = 'gem'` (the stdlib `'stdlib'`) and its
+    /// `indexed_at` moved to now, inside the index's own transaction, so
+    /// `--gc` costs a query nothing.
+    pub(crate) fn set_gems_used(
+        &mut self,
+        root: &str,
+        gems: &[(String, String)],
+        stdlib: Option<&str>,
+    ) -> Result<()> {
         let tx = self.conn.savepoint()?;
         let id: i64 = tx.query_row(
             "SELECT id FROM checkout WHERE root = ?1",
@@ -982,17 +1041,110 @@ impl Store {
         )?;
         tx.execute("DELETE FROM gem_use WHERE checkout_id = ?1", params![id])?;
         {
-            let mut insert = tx
-                .prepare("INSERT OR IGNORE INTO gem_use (checkout_id, gem_root) VALUES (?1, ?2)")?;
-            let mut seen = tx.prepare(
-                "UPDATE checkout SET kind = 'gem', indexed_at = unixepoch() WHERE root = ?1",
+            let mut insert = tx.prepare(
+                "INSERT OR IGNORE INTO gem_use (checkout_id, gem_root, name) VALUES (?1, ?2, ?3)",
             )?;
-            for gem in gem_roots {
-                insert.execute(params![id, gem])?;
-                seen.execute(params![gem])?;
+            let mut seen = tx.prepare(
+                "UPDATE checkout SET kind = ?2, indexed_at = unixepoch() WHERE root = ?1",
+            )?;
+            for (gem, name) in gems {
+                insert.execute(params![id, gem, name])?;
+                seen.execute(params![gem, "gem"])?;
+            }
+            if let Some(stdlib) = stdlib {
+                insert.execute(params![id, stdlib, None::<String>])?;
+                seen.execute(params![stdlib, "stdlib"])?;
             }
         }
         tx.commit()
+    }
+
+    /// Record which of a stdlib checkout's files each default gem owns,
+    /// as `(name, version, path)` (DEC-180). Written once, with the stdlib's
+    /// files: a Ruby's install does not change under it.
+    pub(crate) fn set_default_gems<'a>(
+        &mut self,
+        root: &str,
+        owned: impl IntoIterator<Item = (&'a str, &'a str, &'a str)>,
+    ) -> Result<()> {
+        let tx = self.conn.savepoint()?;
+        let id: i64 = tx.query_row(
+            "SELECT id FROM checkout WHERE root = ?1",
+            params![root],
+            |r| r.get(0),
+        )?;
+        tx.execute(
+            "DELETE FROM default_gem WHERE checkout_id = ?1",
+            params![id],
+        )?;
+        {
+            let mut insert = tx.prepare(
+                "INSERT OR IGNORE INTO default_gem (checkout_id, name, version, path)
+                 VALUES (?1, ?2, ?3, ?4)",
+            )?;
+            for (name, version, path) in owned {
+                insert.execute(params![id, name, version, path])?;
+            }
+        }
+        tx.commit()
+    }
+
+    /// The checkouts a tree for `root` is assembled from, in layering order,
+    /// and the stdlib files it does not see: those of each default gem the
+    /// app bundles a copy of by name (DEC-180). Read from what the app's own
+    /// index recorded, so no other app's index can change it.
+    pub(crate) fn tree_roots(&self, root: &str) -> Result<Roots> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT g.gem_root, g.name IS NULL FROM gem_use g
+               JOIN checkout c ON c.id = g.checkout_id
+              WHERE c.root = ?1
+              ORDER BY g.name IS NOT NULL, g.gem_root",
+        )?;
+        let used = stmt
+            .query_map(params![root], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?))
+            })?
+            .collect::<Result<Vec<_>>>()?;
+        let stdlib = used
+            .iter()
+            .find(|(_, stdlib)| *stdlib)
+            .map(|(root, _)| root.clone());
+        let mut list: Vec<String> = used.into_iter().map(|(root, _)| root).collect();
+        list.push(root.to_string());
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT s.root || '/' || d.path
+               FROM checkout c
+               JOIN gem_use u ON u.checkout_id = c.id
+               JOIN checkout s ON s.root = u.gem_root AND s.kind = 'stdlib'
+               JOIN default_gem d ON d.checkout_id = s.id
+              WHERE c.root = ?1
+                AND d.name IN (SELECT name FROM gem_use
+                                WHERE checkout_id = c.id AND name IS NOT NULL)",
+        )?;
+        let hidden = stmt
+            .query_map(params![root], |r| r.get(0))?
+            .collect::<Result<HashSet<String>>>()?;
+        Ok(Roots {
+            list,
+            hidden,
+            stdlib,
+        })
+    }
+
+    /// The default gems an app sees hidden in its stdlib, by name.
+    pub(crate) fn hidden_default_gems(&self, root: &str) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT d.name
+               FROM checkout c
+               JOIN gem_use u ON u.checkout_id = c.id
+               JOIN checkout s ON s.root = u.gem_root AND s.kind = 'stdlib'
+               JOIN default_gem d ON d.checkout_id = s.id
+              WHERE c.root = ?1
+                AND d.name IN (SELECT name FROM gem_use
+                                WHERE checkout_id = c.id AND name IS NOT NULL)
+              ORDER BY d.name",
+        )?;
+        stmt.query_map(params![root], |r| r.get(0))?.collect()
     }
 
     /// The gem roots this checkout's bundle resolves, in a stable order.
@@ -1060,7 +1212,8 @@ impl Store {
     }
 
     /// The gem holding this path: the deepest indexed checkout containing it,
-    /// when that checkout is a gem.
+    /// when that checkout is a gem — or a Ruby's stdlib, which answers from
+    /// an app that runs on it as a gem does (DEC-180).
     ///
     /// Asked before git is: bundler's checkout of a git gem is a clone with a
     /// `.git` of its own, so git's toplevel for a file in it is the clone —
@@ -1074,7 +1227,7 @@ impl Store {
             params![root],
             |r| r.get(0),
         )?;
-        Ok((kind == "gem").then_some(root))
+        Ok((kind == "gem" || kind == "stdlib").then_some(root))
     }
 
     /// Has this root been indexed before?
@@ -1379,7 +1532,8 @@ pub(crate) fn is_busy(error: &rusqlite::Error) -> bool {
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct Checkout {
     pub(crate) repo: String,
-    /// `repo`, or `gem` for a checkout some repo's bundle resolves.
+    /// `repo`, `gem` for a checkout some repo's bundle resolves, or `stdlib`
+    /// for a Ruby's standard library some repo runs on (DEC-180).
     pub(crate) kind: String,
     pub(crate) indexed_at: i64,
     pub(crate) files: i64,
@@ -1542,6 +1696,18 @@ pub(crate) struct Symbol {
 
 /// `?,?,?` for an `IN` clause. Zero roots would be a syntax error, so it
 /// degenerates to a literal that matches nothing.
+/// The edges whose file the app sees.
+fn shown(roots: &Roots, rows: impl Iterator<Item = Result<EdgeRow>>) -> Result<Vec<EdgeRow>> {
+    let mut kept = Vec::new();
+    for row in rows {
+        let row = row?;
+        if roots.shows(&row.path) {
+            kept.push(row);
+        }
+    }
+    Ok(kept)
+}
+
 fn placeholders(count: usize) -> String {
     if count == 0 {
         return "NULL".to_string();
@@ -2106,7 +2272,7 @@ mod tests {
         indexed(&mut store, "/app", "lib/job.rb", "class Job\nend\n");
         indexed(&mut store, "/gem", "lib/helper.rb", "class Helper\nend\n");
 
-        let roots = vec!["/gem".to_string(), "/app".to_string()];
+        let roots = Roots::of(vec!["/gem".to_string(), "/app".to_string()]);
         let paths: Vec<String> = store
             .declarations(&roots)
             .unwrap()

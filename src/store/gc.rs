@@ -29,7 +29,7 @@ pub(crate) struct Garbage {
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct Collected {
     pub(crate) repo: String,
-    /// `repo` or `gem`.
+    /// `repo`, `gem` or `stdlib`.
     pub(crate) kind: String,
     /// `vanished`: the root is gone from disk. `unclaimed`: it is there, but no
     /// surviving checkout's bundle names it — a gem version every project has
@@ -91,7 +91,7 @@ impl Store {
         // Repos first: whether a gem survives depends on which repos do.
         let kept_repos: HashSet<i64> = rows
             .iter()
-            .filter(|row| row.kind != "gem" && (present.contains(&row.id) || recent(row)))
+            .filter(|row| row.kind == "repo" && (present.contains(&row.id) || recent(row)))
             .map(|row| row.id)
             .collect();
         let claimed: HashSet<&str> = uses
@@ -102,7 +102,7 @@ impl Store {
         let doomed: Vec<&Row> = rows
             .iter()
             .filter(|row| {
-                let live = if row.kind == "gem" {
+                let live = if row.kind != "repo" {
                     present.contains(&row.id) && claimed.contains(row.root.as_str())
                 } else {
                     kept_repos.contains(&row.id)
@@ -227,8 +227,12 @@ mod tests {
         ] {
             checkout(store, gem, &[("shared.rb", shared), ("own.rb", own)]);
         }
-        store.set_gems_used("/app", &["/gem-1".into()]).unwrap();
-        store.set_gems_used("/app", &["/gem-2".into()]).unwrap();
+        store
+            .set_gems_used("/app", &[("/gem-1".into(), "gem".into())], None)
+            .unwrap();
+        store
+            .set_gems_used("/app", &[("/gem-2".into(), "gem".into())], None)
+            .unwrap();
         // Last seen long ago, as if the switch to gem-2 were old news.
         store
             .conn
@@ -286,13 +290,38 @@ mod tests {
     }
 
     #[test]
+    fn a_stdlib_lives_as_long_as_an_app_runs_on_it() {
+        let mut store = Store::open_in_memory().unwrap();
+        indexed(&mut store, "/app", "app.rb", "class App\nend\n");
+        for ruby in ["/ruby-1", "/ruby-2"] {
+            checkout(&mut store, ruby, &[("set.rb", "class Set\nend\n")]);
+        }
+        store.set_gems_used("/app", &[], Some("/ruby-1")).unwrap();
+        store.set_gems_used("/app", &[], Some("/ruby-2")).unwrap();
+        store
+            .conn
+            .execute(
+                "UPDATE checkout SET indexed_at = 0 WHERE root = '/ruby-1'",
+                [],
+            )
+            .unwrap();
+        let garbage = store.collect(now() - 60, |_| true, false).unwrap();
+        assert_eq!(roots(&garbage), ["/ruby-1"]);
+        assert_eq!(garbage.checkouts[0].kind, "stdlib");
+    }
+
+    #[test]
     fn a_gem_a_bundle_named_recently_is_spared_however_old_its_index() {
         // Its clock is the last bundle that named it, not its first parse:
         // gem-1 was parsed long ago, named again just now, then dropped.
         let mut store = Store::open_in_memory().unwrap();
         bundle(&mut store);
-        store.set_gems_used("/app", &["/gem-1".into()]).unwrap();
-        store.set_gems_used("/app", &["/gem-2".into()]).unwrap();
+        store
+            .set_gems_used("/app", &[("/gem-1".into(), "gem".into())], None)
+            .unwrap();
+        store
+            .set_gems_used("/app", &[("/gem-2".into(), "gem".into())], None)
+            .unwrap();
         let garbage = store.collect(now() - 60, |_| true, false).unwrap();
         assert!(garbage.checkouts.is_empty(), "{:?}", roots(&garbage));
     }

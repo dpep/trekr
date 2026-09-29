@@ -16,6 +16,7 @@
 use std::path::{Path, PathBuf};
 
 mod declared;
+pub(crate) mod stdlib;
 
 /// Where a lockfile says a gem comes from. It decides where to look, and
 /// whether to look at all.

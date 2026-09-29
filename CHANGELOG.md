@@ -2,8 +2,26 @@
 
 ## Unreleased
 
-- **Upgrading drops and rebuilds the index** (store v45): run `trekr --index`
-  once per checkout.
+- **Upgrading drops and rebuilds the index** (store v46): run `trekr --index`
+  once per checkout. The first index on each Ruby also reads its standard
+  library once — 179 files for Ruby 3.4 — shared by every app on that Ruby.
+
+### Added
+
+- **Ruby's standard library is indexed.** `Set`, `Pathname`, `URI`,
+  `Logger`, `Tempfile`, `FileUtils`, `Shellwords`, `SecureRandom`, `Open3`,
+  `OptionParser`, `Gem::Version` and the rest answer from the Ruby the app
+  runs on — the one `.ruby-version` or the Gemfile names, else `$GEM_HOME`'s,
+  else the `ruby` on `$PATH` — where they were residue, or "no such method"
+  on a class a gem reopens (`Pathname#join`, `URI.parse`, `Time#iso8601`).
+  Tooling an app does not call (bundler's and rubygems' internals, irb,
+  rdoc, reline, did_you_mean, prism…) and opt-in core extensions
+  (`json/add/*`) are left out. An app that bundles its own copy of a default
+  gem (json, logger, uri…) sees only its copy. `--index` reports it as
+  `gems.stdlib` (`root`, `ruby`, `files`, `hidden`), and a lockfile naming a
+  default gem at the version its Ruby ships counts it in `gems.from_stdlib`
+  rather than `missing`; `--status` shows it per checkout.
+  (DEC-180).
 
 ### Changed
 

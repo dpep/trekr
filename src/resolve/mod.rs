@@ -679,8 +679,8 @@ fn yields_to_its_caller(tree: &Tree, facts: &Facts, owner: &Call, path: &str) ->
                     .lookup(rspec::EXAMPLE_GROUP, owner.singleton, &owner.name)
                     .is_some()
         }
-        // Ruby's own: a class core declares, sending a method core defines or
-        // no one indexed does (`Dir.mktmpdir` is the standard library's).
+        // Ruby's own: a class core or the stdlib declares, sending a method
+        // one of them defines or no one indexed does (DEC-180).
         RecvShape::Const => {
             let Some(class) = owner
                 .recv_text
@@ -690,11 +690,13 @@ fn yields_to_its_caller(tree: &Tree, facts: &Facts, owner: &Call, path: &str) ->
             else {
                 return false;
             };
-            let core = |site: &crate::tree::Site| crate::tree::is_core(&site.path);
-            tree.sites(&class).iter().any(core)
+            let rubys = |site: &crate::tree::Site| {
+                crate::tree::is_core(&site.path) || tree.in_stdlib(&site.path)
+            };
+            tree.sites(&class).iter().any(rubys)
                 && tree
                     .lookup(&class, true, &owner.name)
-                    .is_none_or(|method| core(&method.site))
+                    .is_none_or(|method| rubys(&method.site))
         }
         RecvShape::Symbol | RecvShape::Super => false,
     }

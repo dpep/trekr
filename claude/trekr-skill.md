@@ -62,7 +62,7 @@ one of them on a delay.
 and there is no automatic first run:
 
 ```sh
-trekr --index          # the checkout you are in, plus its gems
+trekr --index          # the checkout you are in, plus its gems and its Ruby's stdlib
 ```
 
 A reindex with nothing changed parses nothing (~60 ms on a 3k-file repo), and a
@@ -80,9 +80,9 @@ second worktree of the same repo costs nothing — facts are keyed by git blob.
 | exit 64–74, `{"error", "kind", "code"}` | the call failed: `usage` (fix the command), `not_found`/`not_a_repo` (fix the path), `git`, `database`/`io`, `internal`. Not an answer about the code. |
 
 `trekr --status` shows the checkout you are in, its gems counted (`gems:
-{count, indexed, files}`), and how many other checkouts are indexed
-(`others`); `--status --all` lists every checkout, each with `kind` (`repo`
-or `gem`). A checkout nobody indexed is `status: not_indexed`, exit 2, as
+{count, indexed, files}`), its Ruby's stdlib (`stdlib: {root, files,
+hidden}`), and how many other checkouts are indexed (`others`); `--status
+--all` lists every checkout, each with `kind` (`repo`, `gem` or `stdlib`). A checkout nobody indexed is `status: not_indexed`, exit 2, as
 a query from it is — `checkouts` is empty and `others` counts the rest.
 `--context DIR` asks about another checkout; outside any checkout the repos
 are listed.
@@ -328,3 +328,9 @@ tiers the site `possible`.
   `gems.picked` lists each gem found as `name version`; without a lockfile,
   `gems.ruby` says whose Ruby the picks came from and `gems.unread` the
   requirements trekr could not read (the highest installed was taken).
+* `gems.stdlib` is the Ruby standard library indexed with the checkout —
+  `root`, the `ruby` it belongs to and how it was chosen, and `hidden`: the
+  default gems (json, logger, uri…) the bundle has its own copy of, whose
+  stdlib files this app does not see. Absent when the checkout names no gem
+  and no Ruby. Dev tooling (irb, rdoc, bundler's internals) is not indexed,
+  so a question about it is residue.

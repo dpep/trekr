@@ -889,10 +889,15 @@ fn index_gems(
         ruby,
         ..GemReport::default()
     };
+    // The Ruby's stdlib before the gems, which reopen it (DEC-180).
+    let stdlib = crate::gems::stdlib::for_checkout(repo, resolved_from.is_some());
+    if let Some(stdlib) = &stdlib {
+        report.stdlib = Some(index_stdlib(store, stdlib, known, pool, profile)?);
+    }
     // Which gems this bundle resolves, whether or not they needed indexing —
     // an already-known gem still belongs to this app, and that is what makes a
     // position inside it answerable from here (DEC-029).
-    let mut used: Vec<String> = Vec::new();
+    let mut used: Vec<(String, String)> = Vec::new();
     for entry in located {
         let named = format!("{} {}", entry.gem.name, entry.gem.version);
         if !entry.unread.is_empty() {
@@ -905,6 +910,19 @@ fn index_gems(
             crate::gems::Place::Dir(root) => root,
             crate::gems::Place::InCheckout => {
                 report.from_path += 1;
+                continue;
+            }
+            // A default gem at the version the stdlib ships: its code is the
+            // stdlib just indexed, found wherever rubygems left its directory.
+            crate::gems::Place::Missing(
+                crate::gems::Absence::NotInstalled | crate::gems::Absence::DefaultGem(_),
+            ) if stdlib
+                .as_ref()
+                .is_some_and(|s| s.ships(&entry.gem.name, &entry.gem.version)) =>
+            {
+                report.found += 1;
+                report.from_stdlib += 1;
+                report.picked.push(named);
                 continue;
             }
             crate::gems::Place::Missing(crate::gems::Absence::NotInstalled) => {
@@ -928,7 +946,7 @@ fn index_gems(
         // ever asks for (DEC-024).
         let gem_root = std::fs::canonicalize(&gem_root).unwrap_or(gem_root);
         let root_str = gem_root.to_string_lossy().into_owned();
-        used.push(root_str.clone());
+        used.push((root_str.clone(), entry.gem.name.clone()));
         if store.has_checkout(&root_str)? {
             report.already_indexed += 1;
             continue;
@@ -943,8 +961,65 @@ fn index_gems(
         report.indexed += 1;
         report.files += counts.files;
     }
-    store.set_gems_used(&repo.to_string_lossy(), &used)?;
+    let repo = repo.to_string_lossy();
+    let stdlib_root = report.stdlib.as_ref().map(|s| s.root.as_str());
+    store.set_gems_used(&repo, &used, stdlib_root)?;
+    if let Some(stdlib) = report.stdlib.as_mut() {
+        stdlib.hidden = store.hidden_default_gems(&repo)?;
+    }
     Ok(report)
+}
+
+/// Index a Ruby's stdlib once per machine, with the files its default gems
+/// own (DEC-180). Its bytes are the Ruby's install, which does not change.
+fn index_stdlib(
+    store: &mut Store,
+    stdlib: &crate::gems::stdlib::Stdlib,
+    known: &mut Option<HashSet<Oid>>,
+    pool: &rayon::ThreadPool,
+    profile: &mut Option<profile::Profile>,
+) -> anyhow::Result<StdlibReport> {
+    let root = stdlib.root.to_string_lossy().into_owned();
+    let mut report = StdlibReport {
+        root: root.clone(),
+        ruby: stdlib.ruby.clone(),
+        indexed: false,
+        files: 0,
+        hidden: Vec::new(),
+    };
+    if store.has_checkout(&root)? {
+        return Ok(report);
+    }
+    let files = crate::gems::stdlib::files(&stdlib.root);
+    let counts = index_files(store, &stdlib.root, &files, 0, known, pool, profile)?;
+    let gems = crate::gems::stdlib::default_gems(&stdlib.root);
+    store.set_default_gems(
+        &root,
+        gems.iter().flat_map(|gem| {
+            gem.files
+                .iter()
+                .filter(|path| files.contains_key(*path))
+                .map(|path| (gem.name.as_str(), gem.version.as_str(), path.as_str()))
+        }),
+    )?;
+    report.indexed = true;
+    report.files = counts.files;
+    Ok(report)
+}
+
+/// The Ruby's stdlib, as an index saw it.
+#[derive(Debug, serde::Serialize)]
+struct StdlibReport {
+    /// `<prefix>/lib/ruby/<abi>`.
+    root: String,
+    /// Which Ruby, and how it was chosen.
+    ruby: String,
+    /// Read for the first time on this machine by this index.
+    indexed: bool,
+    files: usize,
+    /// Default gems this app bundles a copy of, whose stdlib files it does
+    /// not see.
+    hidden: Vec<String>,
 }
 
 #[derive(Debug, Default, serde::Serialize)]
@@ -967,6 +1042,8 @@ struct GemReport {
     from_git: usize,
     /// Path gems whose source is inside this checkout, indexed with it.
     from_path: usize,
+    /// Default gems at the version the stdlib ships, whose code is the stdlib.
+    from_stdlib: usize,
     /// Read for the first time on this machine.
     indexed: usize,
     /// Already known — the shared case, and the reason this is cheap.
@@ -987,6 +1064,10 @@ struct GemReport {
     /// running it; the highest installed was taken instead.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     unread: Vec<Unread>,
+    /// The Ruby's stdlib, absent when the checkout names no gem and no Ruby,
+    /// or its Ruby's stdlib was not found.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stdlib: Option<StdlibReport>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1169,6 +1250,25 @@ fn cmd_index(
             );
         }
     }
+    if out == Output::Text
+        && let Some(stdlib) = &gems.stdlib
+    {
+        let read = match stdlib.indexed {
+            true => format!("{} files newly indexed", stdlib.files),
+            false => "already known".to_string(),
+        };
+        println!(
+            "stdlib — {}, {read}: {}",
+            stdlib.ruby,
+            paths::pretty(&stdlib.root)
+        );
+        if !stdlib.hidden.is_empty() {
+            println!(
+                "  the bundle's own copy answers for: {}",
+                abridged(&stdlib.hidden)
+            );
+        }
+    }
     // The LSP's own index prepares the tree its next request would otherwise
     // assemble on the request thread. A run someone is waiting on does not:
     // the cost is the same wherever it lands, and they may never query
@@ -1246,7 +1346,7 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
         .filter(|c| {
             all || here
                 .as_ref()
-                .map_or(c.kind != "gem", |root| c.repo == *root)
+                .map_or(c.kind == "repo", |root| c.repo == *root)
         })
         .collect();
     let indexed_files: HashMap<&str, i64> = checkouts
@@ -1258,9 +1358,22 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
     let mut counted: HashSet<String> = HashSet::new();
     for checkout in &shown {
         let mut row = serde_json::to_value(checkout)?;
-        if !all && checkout.kind != "gem" {
-            let used = store.gems_used(&checkout.repo)?;
+        if !all && checkout.kind == "repo" {
+            let stdlib = store.tree_roots(&checkout.repo)?.stdlib;
+            let used: Vec<String> = store
+                .gems_used(&checkout.repo)?
+                .into_iter()
+                .filter(|gem| Some(gem) != stdlib.as_ref())
+                .collect();
             counted.extend(used.iter().cloned());
+            if let Some(stdlib) = stdlib {
+                row["stdlib"] = serde_json::json!({
+                    "root": stdlib,
+                    "files": indexed_files.get(stdlib.as_str()).copied().unwrap_or(0),
+                    "hidden": store.hidden_default_gems(&checkout.repo)?,
+                });
+                counted.insert(stdlib);
+            }
             let indexed: Vec<i64> = used
                 .iter()
                 .filter_map(|gem| indexed_files.get(gem.as_str()).copied())
@@ -1277,7 +1390,7 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
     let hidden = |kind: &str| {
         checkouts
             .iter()
-            .filter(|c| (c.kind == "gem") == (kind == "gem"))
+            .filter(|c| (c.kind == "repo") == (kind == "repo"))
             .filter(|c| !shown.iter().any(|s| s.repo == c.repo) && !counted.contains(&c.repo))
             .count()
     };
@@ -1308,6 +1421,14 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
             row["blobs"].as_i64().unwrap_or(0),
             paths::pretty(row["repo"].as_str().unwrap_or_default())
         );
+        if let Some(stdlib) = row["stdlib"]["root"].as_str() {
+            println!(
+                "{:>32}+ stdlib, {} files: {}",
+                "",
+                row["stdlib"]["files"].as_i64().unwrap_or(0),
+                paths::pretty(stdlib)
+            );
+        }
         let gems = &row["gems"];
         let (Some(count), Some(indexed)) = (gems["count"].as_u64(), gems["indexed"].as_u64())
         else {
@@ -1371,7 +1492,7 @@ fn status_not_indexed(
     let count = |gem: bool| {
         checkouts
             .iter()
-            .filter(|c| (c.kind == "gem") == gem)
+            .filter(|c| (c.kind != "repo") == gem)
             .count()
     };
     let (repos, gems) = (count(false), count(true));

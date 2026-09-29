@@ -6513,3 +6513,82 @@ and hover on `def #{n}_x` showed `W#alpha_x` alone.
 answers are untouched: only the editor's variable answers read the strings);
 the extension's e2e suite passes against this build.
 
+
+## DEC-180 — The stdlib is a checkout per Ruby, and an app's own copy of a default gem hides the stdlib's
+
+Supersedes DEC-153's "not indexed, yet".
+
+**Decided.** A checkout that resolves gems or names a Ruby indexes that
+Ruby's standard library, `<prefix>/lib/ruby/<abi>/`, as a checkout of kind
+`stdlib`, once per machine and shared like a gem version. The Ruby is chosen
+as DEC-152 chooses one: the version `.ruby-version` or the Gemfile names,
+matched to an rvm, rbenv, asdf or Homebrew install (`3.4` meaning the highest
+3.4); the Ruby `$GEM_HOME` belongs to; the `ruby` on `$PATH`. A lockfile
+does not change the choice: it pins gems, not the Ruby.
+
+*A subset.* Left out (`gems::stdlib::SKIPPED`): bundler's and rubygems'
+internals, keeping `bundler.rb` (`Bundler.require`) and `Gem::Version`,
+`Gem::Requirement` and `Gem::Specification`; irb, rdoc, reline, readline,
+did_you_mean, error_highlight, syntax_suggest, prism, `ruby_vm/`,
+`bundled_gems.rb`; files of top-level `def`s (`un.rb`'s `cp`, `mkmf.rb`'s
+`have_header`), which would read as private methods of every object;
+opt-in core extensions (`json/add/*`, `psych/y.rb`, `objspace/trace.rb`),
+which would tell every app that `Time#to_json` exists; and
+`unicode_normalize/tables.rb`, which is data. Ruby 3.4.9: 179 of 981 files.
+
+*Default gems.* Each default gem's files are read from the gemspec rubygems
+wrote in `specifications/default/` (`s.files`, with Prism) into
+`default_gem`, and each bundled gem's name into `gem_use.name`. When the
+tree is built, the stdlib files of every default gem the app bundles by name
+are hidden (`Store::tree_roots`), so an app bundling json 2.21.2 answers from
+its json and never from 2.9.1's. A default gem the lockfile names at the
+version the stdlib ships is found there (`gems.from_stdlib`), where it was
+"not installed" or DEC-153's "not indexed".
+
+*Layering.* core → stdlib → gems → checkout, the stdlib first by kind rather
+than insert order, so a gem indexed before the stdlib still reopens it.
+
+*Ruby's own.* A block handed to a stdlib method runs where it is written, as
+one handed to core does (DEC-084's rule): `Dir.mktmpdir do … expect … end`
+answered `expect` while `mktmpdir` was unknown, and stopped once the stdlib
+defined it — two of graph_weaver's gold sites went correct → residue until
+the rule counted the stdlib.
+
+**Why the hiding is per app, at tree time.** DEC-153 turned down one
+checkout holding every default gem because two JSONs would be a confidently
+wrong answer, and filtering the checkout's file set would make it depend on
+who indexed last. The file set here never changes; what an app sees is
+decided from its own `gem_use` when its tree is built, and folded into the
+snapshot key. A default gem's own files are the unit, so the stdlib code it
+uses but does not own (`random/formatter.rb` for securerandom) stays.
+
+**Measured** (against main at the dyn merge, with DEC-181 and DEC-182; Ruby
+3.4.9). Confidently wrong is unchanged in every gold set (graph_weaver 3,
+accord 0, polyid 0, flipper 7, widget_shop 1 app / 19 gem). Correct rises in
+each: graph_weaver app 444 → 449 and gem code 132 → 153, accord gem 125 →
+138, polyid app 361 → 363 and gem 151 → 157, flipper app 351 → 353 and gem
+156 → 177, widget_shop gem 1,595 → 1,621 — calls into `FileUtils`, `Set`,
+`OptionParser`, `Psych`, `Dir.mktmpdir` that were "nothing known". Ambiguous
+answers that name the wrong owner first rise by three (flipper gem 2 → 3,
+widget_shop gem 79 → 81). Clicks over the 13 dogfood repos: 1,917 → 1,873
+empty and 3,177 → 3,186 unsure of 21,154; of the misses, "defined nowhere
+indexed" 427 → 389, "unindexed ancestor" 171 → 166, "known type, method not
+found" 221 → 212, while "untyped local" (+9) and "symbol argument" (+12) grow
+as calls that stopped at an unknown class now stop one step later. A sweep of
+50 stdlib methods' `--refs` on rails: 33 move from residue or `no_such_method`
+— confidently wrong for `Pathname#join`, `URI.parse`, `SecureRandom.hex`,
+`Time#iso8601`, `Net::HTTP#request`, which a gem reopening the class had
+made "known" — to resolved with sites (`Pathname#join` 12 confirmed, 489
+possible); none moves the other way. The existing 40 rails `--refs` queries
+are unchanged but `Time.parse`, whose 45 `JSON.parse` sites are now excluded
+as another owner's. `--dead`: rails and activerecord unchanged (one method
+unreferenced → override), mastodon gains one single-caller. mastodon cold
+index 4.6–5.2 s either way (page cache dominates), warm 0.33 s, store +2.7 MB
+(136 → 139 MB); the stdlib alone indexes in 0.19 s into 2.8 MB.
+
+**Not done.** `RUBY VERSION` in a lockfile is not read; rbenv's shims give no
+prefix, as in DEC-152. A default gem whose lockfile version is another
+Ruby's default (json 2.7.2 on Ruby 3.4) shows the chosen Ruby's copy. A
+compiled extension's methods are hedged, not known (DEC-181); the `rbs`
+gem's stdlib signatures would type them.
+

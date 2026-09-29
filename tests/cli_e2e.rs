@@ -76,7 +76,16 @@ fn trekr(db: &Path, cwd: &Path, args: &[&str]) -> Output {
 /// A command whose caller is nobody in particular. Whoever runs the suite — an
 /// agent, CI — sets variables `--usage` reads to name the caller, and the
 /// usage tests assert on that name.
+///
+/// And on no Ruby in particular: with `git` the only program on `PATH` and no
+/// `$GEM_HOME`, a checkout with a bundle finds no stdlib to index (DEC-180),
+/// whatever Ruby the machine running the suite has. A test about the stdlib
+/// stages one.
 fn neutral(mut command: Command) -> Command {
+    command
+        .env_remove("GEM_HOME")
+        .env_remove("GEM_PATH")
+        .env("PATH", git_only());
     for var in [
         "CLAUDECODE",
         "CLAUDE_CODE_ENTRYPOINT",
@@ -90,6 +99,25 @@ fn neutral(mut command: Command) -> Command {
         command.env_remove(var);
     }
     command
+}
+
+/// A directory holding only `git`, for a `PATH` that finds no `ruby`.
+fn git_only() -> PathBuf {
+    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+    DIR.get_or_init(|| {
+        let git = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
+            .map(|dir| dir.join("git"))
+            .find(|git| git.is_file())
+            .expect("git on PATH");
+        let dir = std::env::temp_dir().join(format!("trekr-e2e-git-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let link = dir.join("git");
+        if !link.exists() {
+            std::os::unix::fs::symlink(git, link).unwrap();
+        }
+        dir
+    })
+    .clone()
 }
 
 fn stdout(out: &Output) -> String {
@@ -3149,4 +3177,281 @@ fn drop_forgets_the_checkouts_tree_snapshots() {
     assert!(trekr(&db, &dir, &["--drop"]).status.success());
     assert_eq!(snapshots(), 0);
     let _ = fs::remove_dir_all(&dir);
+}
+
+/// A Ruby installed as rvm installs one, under `home`: its stdlib holding
+/// `files`, and a default gem spec for each `(name, version, files)`.
+/// Returns the stdlib's root, canonical as trekr stores it.
+fn fake_ruby(
+    home: &Path,
+    version: &str,
+    files: &[(&str, &str)],
+    defaults: &[(&str, &str, &[&str])],
+) -> String {
+    let abi = {
+        let mut parts = version.split('.');
+        format!("{}.{}.0", parts.next().unwrap(), parts.next().unwrap())
+    };
+    let lib = home.join(format!(".rvm/rubies/ruby-{version}/lib/ruby"));
+    let stdlib = lib.join(&abi);
+    for (path, source) in files {
+        let path = stdlib.join(path);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, source).unwrap();
+    }
+    let specs = lib.join("gems").join(&abi).join("specifications/default");
+    fs::create_dir_all(&specs).unwrap();
+    for (name, version, owned) in defaults {
+        let listed: Vec<String> = owned.iter().map(|f| format!("{f:?}.freeze")).collect();
+        fs::write(
+            specs.join(format!("{name}-{version}.gemspec")),
+            format!(
+                "Gem::Specification.new do |s|\n  s.name = {name:?}.freeze\n  \
+                 s.files = [{}]\nend\n",
+                listed.join(", ")
+            ),
+        )
+        .unwrap();
+    }
+    fs::canonicalize(stdlib)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned()
+}
+
+/// An app on Ruby `version`, with a lockfile naming `specs` (`name (version)`
+/// lines), and a vendored gem for each of `vendored`.
+fn ruby_app(dir: &Path, version: &str, specs: &[&str], vendored: &[(&str, &str, &str)]) {
+    repo(dir);
+    fs::write(dir.join(".ruby-version"), format!("{version}\n")).unwrap();
+    let mut lock = String::from("GEM\n  remote: https://rubygems.org/\n  specs:\n");
+    for spec in specs {
+        lock.push_str(&format!("    {spec}\n"));
+    }
+    lock.push_str("\nDEPENDENCIES\n");
+    fs::write(dir.join("Gemfile.lock"), lock).unwrap();
+    for (gem, path, source) in vendored {
+        let file = dir.join(format!("vendor/bundle/ruby/9.8.0/gems/{gem}/lib/{path}"));
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, source).unwrap();
+    }
+}
+
+fn definition_roots(answer: &serde_json::Value) -> Vec<String> {
+    answer["definition"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{answer}"))
+        .iter()
+        .map(|site| site["root"].as_str().unwrap_or_default().to_string())
+        .collect()
+}
+
+/// A checkout runs on a Ruby, and that Ruby's stdlib is indexed once, as a
+/// checkout of its own, with its tooling left out (DEC-180).
+#[test]
+fn the_stdlib_of_the_apps_ruby_answers_its_calls() {
+    let (dir, db) = scratch("stdlib");
+    let (home, _) = scratch("stdlib-home");
+    let stdlib = fake_ruby(
+        &home,
+        "9.8.7",
+        &[
+            ("stash.rb", "class Stash\n  def put(item)\n  end\nend\n"),
+            ("irb.rb", "class Binding\n  def irb\n  end\nend\n"),
+        ],
+        &[],
+    );
+    ruby_app(&dir, "9.8.7", &[], &[]);
+    let env = [("HOME", home.to_str().unwrap())];
+
+    let first = json(&trekr_env(&db, &dir, &["--index", "--json"], &env));
+    let reported = &first["gems"]["stdlib"];
+    assert_eq!(reported["root"], stdlib.as_str(), "{first}");
+    assert_eq!(reported["indexed"], true, "{first}");
+    assert_eq!(reported["files"], 1, "irb is tooling, not indexed: {first}");
+    assert!(
+        reported["ruby"].as_str().unwrap().contains("9.8.7"),
+        "{first}"
+    );
+
+    let answer = json(&trekr_env(&db, &dir, &["Stash#put", "--json"], &env));
+    assert_eq!(definition_roots(&answer), [stdlib.as_str()], "{answer}");
+
+    // Shared, as a gem is: a second index reads nothing again.
+    let again = json(&trekr_env(&db, &dir, &["--index", "--json"], &env));
+    assert_eq!(again["gems"]["stdlib"]["indexed"], false, "{again}");
+
+    let status = json(&trekr_env(&db, &dir, &["--status", "--json"], &env));
+    let rows = status["checkouts"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "the stdlib is not a repo: {status}");
+    assert_eq!(rows[0]["stdlib"]["root"], stdlib.as_str(), "{status}");
+    assert_eq!(rows[0]["gems"]["count"], 0, "nor a gem: {status}");
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&home);
+}
+
+/// An app that bundles its own copy of a default gem sees only that copy; an
+/// app that does not sees the stdlib's — whichever indexed last (DEC-180).
+#[test]
+fn a_bundled_default_gem_hides_the_stdlibs_copy_for_that_app_only() {
+    let (plain, db) = scratch("stdlib-plain");
+    let (bundling, _) = scratch("stdlib-bundling");
+    let (home, _) = scratch("stdlib-shadow-home");
+    let jsonish = "module Jsonish\n  def self.parse(text)\n  end\nend\n";
+    let stdlib = fake_ruby(
+        &home,
+        "9.8.7",
+        &[("jsonish.rb", jsonish)],
+        &[("jsonish", "1.0.0", &["README.md", "jsonish.rb"])],
+    );
+    ruby_app(&plain, "9.8.7", &[], &[]);
+    ruby_app(
+        &bundling,
+        "9.8.7",
+        &["jsonish (2.0.0)"],
+        &[("jsonish-2.0.0", "jsonish.rb", jsonish)],
+    );
+    let env = [("HOME", home.to_str().unwrap())];
+    let owners = |app: &Path| {
+        // Every place the module is written: a copy the app does not load
+        // would be one more.
+        let answer = json(&trekr_env(&db, app, &["Jsonish", "--json"], &env));
+        let mut roots = definition_roots(&answer);
+        roots.dedup();
+        roots
+    };
+
+    trekr_env(&db, &plain, &["--index"], &env);
+    let index = json(&trekr_env(&db, &bundling, &["--index", "--json"], &env));
+    assert_eq!(
+        index["gems"]["stdlib"]["hidden"],
+        serde_json::json!(["jsonish"]),
+        "{index}"
+    );
+    let gem = owners(&bundling);
+    assert_eq!(gem.len(), 1, "one copy of Jsonish, not two: {gem:?}");
+    assert!(gem[0].ends_with("jsonish-2.0.0"), "{gem:?}");
+    assert_eq!(owners(&plain), [stdlib.as_str()]);
+
+    // The other order: who indexed last changes neither answer.
+    trekr_env(&db, &plain, &["--index"], &env);
+    assert_eq!(owners(&bundling), gem);
+    assert_eq!(owners(&plain), [stdlib]);
+
+    for dir in [&plain, &bundling, &home] {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+/// A lockfile naming a default gem at the version its Ruby ships names the
+/// stdlib's copy: found, not missing (DEC-180).
+#[test]
+fn a_default_gem_at_the_rubys_own_version_is_found_in_the_stdlib() {
+    let (dir, db) = scratch("stdlib-default");
+    let (home, _) = scratch("stdlib-default-home");
+    fake_ruby(
+        &home,
+        "9.8.7",
+        &[("jsonish.rb", "module Jsonish\nend\n")],
+        &[("jsonish", "1.0.0", &["jsonish.rb"])],
+    );
+    ruby_app(&dir, "9.8.7", &["jsonish (1.0.0)"], &[]);
+    let env = [("HOME", home.to_str().unwrap())];
+    let gems = json(&trekr_env(&db, &dir, &["--index", "--json"], &env))["gems"].clone();
+    assert_eq!(gems["from_stdlib"], 1, "{gems}");
+    assert!(gems.get("missing").is_none(), "{gems}");
+    assert_eq!(gems["stdlib"]["hidden"], serde_json::json!([]), "{gems}");
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&home);
+}
+
+/// A gem reopening a stdlib class runs after it, so its method answers —
+/// even when the stdlib was indexed after the gem (DEC-180).
+#[test]
+fn a_gem_reopening_the_stdlib_answers_over_it_whatever_the_index_order() {
+    let (dir, db) = scratch("stdlib-layer");
+    let (home, _) = scratch("stdlib-layer-home");
+    fake_ruby(
+        &home,
+        "9.8.7",
+        &[("stash.rb", "class Stash\n  def put(item)\n  end\nend\n")],
+        &[],
+    );
+    ruby_app(
+        &dir,
+        "9.8.7",
+        &["patcher (1.0.0)"],
+        &[(
+            "patcher-1.0.0",
+            "patcher.rb",
+            "class Stash\n  def put(item)\n    super\n  end\nend\n",
+        )],
+    );
+    // No Ruby named yet: the gem is indexed first.
+    fs::remove_file(dir.join(".ruby-version")).unwrap();
+    let env = [("HOME", home.to_str().unwrap())];
+    trekr_env(&db, &dir, &["--index"], &env);
+    fs::write(dir.join(".ruby-version"), "9.8.7\n").unwrap();
+    let index = json(&trekr_env(&db, &dir, &["--index", "--json"], &env));
+    assert_eq!(index["gems"]["stdlib"]["indexed"], true, "{index}");
+
+    let answer = json(&trekr_env(&db, &dir, &["Stash#put", "--json"], &env));
+    let roots = definition_roots(&answer);
+    assert!(
+        roots.len() == 1 && roots[0].ends_with("patcher-1.0.0"),
+        "{answer}"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&home);
+}
+
+/// A block handed to a stdlib method runs where it is written, as one handed
+/// to core does: `Dir.mktmpdir do … end` in an example still runs `expect` on
+/// the example (DEC-180).
+#[test]
+fn a_block_handed_to_a_stdlib_method_runs_on_the_example() {
+    let (dir, db) = scratch("stdlib-block");
+    let (home, _) = scratch("stdlib-block-home");
+    fake_ruby(
+        &home,
+        "9.8.7",
+        &[(
+            "tmpdir.rb",
+            "class Dir\n  def self.mktmpdir(prefix = nil)\n    yield prefix\n  end\nend\n",
+        )],
+        &[],
+    );
+    ruby_app(&dir, "9.8.7", &[], &[]);
+    let group = dir.join("rspec-core/lib/rspec/core/example_group.rb");
+    fs::create_dir_all(group.parent().unwrap()).unwrap();
+    fs::write(
+        group,
+        "module RSpec\n  module Core\n    class ExampleGroup\n      def expect(value)\n      \
+         end\n    end\n  end\nend\n",
+    )
+    .unwrap();
+    fs::create_dir_all(dir.join("spec")).unwrap();
+    fs::write(
+        dir.join("spec/widget_spec.rb"),
+        "RSpec.describe \"Widget\" do\n  it \"works\" do\n    Dir.mktmpdir do |path|\n      \
+         expect(path)\n    end\n  end\nend\n",
+    )
+    .unwrap();
+    let env = [("HOME", home.to_str().unwrap())];
+    trekr_env(&db, &dir, &["--index"], &env);
+
+    let answer = json(&trekr_env(
+        &db,
+        &dir,
+        &["--def", "spec/widget_spec.rb:4:7", "--json"],
+        &env,
+    ));
+    assert_eq!(answer["status"], "resolved", "{answer}");
+    assert_eq!(answer["owner"], "RSpec::Core::ExampleGroup", "{answer}");
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&home);
 }

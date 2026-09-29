@@ -451,7 +451,7 @@ fn frozen_receiver<'pr>(node: &Node<'pr>) -> Option<Node<'pr>> {
     (call.name().as_slice() == b"freeze").then(|| call.receiver())?
 }
 
-fn string(node: &Node<'_>) -> Option<String> {
+pub(super) fn string(node: &Node<'_>) -> Option<String> {
     if let Some(inner) = frozen_receiver(node) {
         return string(&inner);
     }
@@ -467,7 +467,7 @@ fn symbol(node: &Node<'_>) -> Option<String> {
 /// A version as rubygems orders them: numeric segments by value, and a
 /// segment with a letter — a prerelease — below any number.
 #[derive(Clone, Debug, PartialEq, Eq)]
-struct Version(Vec<Segment>);
+pub(super) struct Version(Vec<Segment>);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum Segment {
@@ -476,7 +476,7 @@ enum Segment {
 }
 
 impl Version {
-    fn parse(text: &str) -> Option<Version> {
+    pub(super) fn parse(text: &str) -> Option<Version> {
         let text = text.trim();
         if !text.starts_with(|c: char| c.is_ascii_digit()) {
             return None;
@@ -489,6 +489,11 @@ impl Version {
             })
             .collect();
         Some(Version(segments))
+    }
+
+    /// The first `depth` segments: `3.4.9` to two is `3.4`.
+    pub(super) fn truncated(&self, depth: usize) -> Version {
+        Version(self.0.iter().take(depth).cloned().collect())
     }
 
     fn is_prerelease(&self) -> bool {
@@ -639,7 +644,7 @@ impl Installed {
 /// `rspec-core-3.13.0` → (`rspec-core`, `3.13.0`); a platform stays with the
 /// version (`nokogiri-1.16.0-arm64-darwin`). The name ends at the first `-`
 /// a digit follows.
-fn split_dir(dir: &str) -> Option<(&str, &str)> {
+pub(super) fn split_dir(dir: &str) -> Option<(&str, &str)> {
     let at = dir
         .char_indices()
         .find(|(i, c)| *c == '-' && dir[i + 1..].starts_with(|d: char| d.is_ascii_digit()))?

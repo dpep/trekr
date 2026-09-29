@@ -13,7 +13,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 45;
+pub(crate) const VERSION: i64 = 46;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -118,9 +118,10 @@ CREATE TABLE checkout (
   -- index (a no-op included), or — for a gem — a bundle naming it. `--gc`
   -- reads it as "last seen" (DEC-049).
   indexed_at  INTEGER NOT NULL,
-  -- repo | gem. They are kept alive by different evidence (DEC-049): a repo by
-  -- its root being on disk, a gem by a surviving repo's bundle naming it. Not
-  -- inferable from disk — bundler's git gems carry a `.git` of their own.
+  -- repo | gem | stdlib. They are kept alive by different evidence (DEC-049):
+  -- a repo by its root being on disk, a gem or a Ruby's stdlib by a surviving
+  -- repo's bundle naming it. Not inferable from disk — bundler's git gems
+  -- carry a `.git` of their own.
   kind        TEXT    NOT NULL DEFAULT 'repo',
   -- The file map's whole surface, folded into one number at index time: the
   -- sum over files of hash(path) ^ blob.surface. A resident front checks
@@ -148,8 +149,23 @@ CREATE TABLE checkout (
 CREATE TABLE gem_use (
   checkout_id INTEGER NOT NULL REFERENCES checkout(id) ON DELETE CASCADE,
   gem_root    TEXT    NOT NULL,           -- the gem's own checkout root
+  -- The gem's name, as the bundle resolved it; NULL for the Ruby's stdlib,
+  -- which the app runs on rather than bundles. A default gem the app bundles
+  -- by name hides the stdlib's copy (DEC-180).
+  name        TEXT,
   PRIMARY KEY (checkout_id, gem_root)
 );
+
+-- The files of a stdlib checkout that belong to a default gem, from the
+-- gemspec rubygems wrote for it (DEC-180). An app bundling its own copy of the
+-- gem sees these hidden, so it answers from one json, not two.
+CREATE TABLE default_gem (
+  checkout_id INTEGER NOT NULL REFERENCES checkout(id) ON DELETE CASCADE,
+  name        TEXT    NOT NULL,
+  version     TEXT    NOT NULL,
+  path        TEXT    NOT NULL,           -- relative to the stdlib root
+  PRIMARY KEY (checkout_id, name, path)
+) WITHOUT ROWID;
 
 CREATE TABLE file (
   checkout_id INTEGER NOT NULL REFERENCES checkout(id) ON DELETE CASCADE,
@@ -212,8 +228,9 @@ pub(crate) const BULK_INDEXES: [(&str, &str); 8] = [
 
 /// Every table, newest first, so dropping respects nothing (foreign keys are
 /// off during the drop anyway).
-pub(crate) const TABLES: [&str; 10] = [
+pub(crate) const TABLES: [&str; 11] = [
     "upgrade",
+    "default_gem",
     "gem_use",
     "file",
     "checkout",

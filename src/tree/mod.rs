@@ -29,7 +29,7 @@ pub(crate) use files::forget as forget_snapshots;
 pub(crate) use files::sweep as sweep_snapshots;
 
 use crate::core::{Param, runtime};
-use crate::store::{DeclRow, EdgeRow, MethodRow, Store};
+use crate::store::{DeclRow, EdgeRow, MethodRow, Roots, Store};
 use serde::Serialize;
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
@@ -336,6 +336,8 @@ pub(crate) struct Tree {
     /// gem or from core, which is a ranking signal: code in the repo you are
     /// standing in is likelier to be what you meant than a dependency's.
     root: String,
+    /// The Ruby's stdlib the checkout runs on, when it indexed one (DEC-180).
+    stdlib: Option<String>,
     names: Names,
     /// Where methods come from when the tree does not already have them.
     /// `None` for a tree built from rows in hand (fixtures), which is fully
@@ -604,6 +606,7 @@ impl Tree {
             None => freeze(&Tree::namespace(store, &roots, decls, edges, &mut phases)?)?,
         };
         let mut tree = Tree::over(snapshot, root.to_string());
+        tree.stdlib = roots.stdlib.clone();
         // The RSpec stub's methods, after core's and before the index's, so a
         // method rspec defines itself wins over the stub's (DEC-087).
         if tree.kind_of(crate::core::rspec::EXAMPLE_GROUP) == Some("class") {
@@ -654,7 +657,7 @@ impl Tree {
     /// Core's declarations and edges plus the store's, assembled.
     fn namespace(
         store: &Store,
-        roots: &[String],
+        roots: &Roots,
         mut decls: Vec<DeclRow>,
         mut edges: Vec<EdgeRow>,
         phases: &mut Phases,
@@ -691,6 +694,7 @@ impl Tree {
     fn with_names(names: Names, root: String) -> Tree {
         Tree {
             root,
+            stdlib: None,
             in_flight: RefCell::new(HashSet::new()),
             names,
             methods: RefCell::new(Vec::new()),
@@ -2646,6 +2650,13 @@ impl Tree {
         }
     }
 
+    /// Is this site in the Ruby's stdlib the checkout runs on (DEC-180)?
+    pub(crate) fn in_stdlib(&self, site_path: &str) -> bool {
+        self.stdlib
+            .as_deref()
+            .is_some_and(|stdlib| crate::core::paths::under(stdlib, site_path))
+    }
+
     /// Is this site inside the checkout, rather than a gem or core?
     ///
     /// Exact rather than a guess at the path shape: site paths are absolute and
@@ -3206,7 +3217,7 @@ pub(crate) const DSL_RBI: &str = "sorbet/rbi/dsl/";
 /// across queries by a resident session, could not do.
 struct Loader {
     store: Store,
-    roots: Vec<String>,
+    roots: Roots,
 }
 
 /// Where a tree build spent its time, when anyone asked.
@@ -3281,11 +3292,10 @@ impl Phases {
 }
 
 /// The checkouts a tree is built from, in the order it layers them: the
-/// bundle's gems, then the checkout itself.
-fn roots(store: &Store, root: &str) -> rusqlite::Result<Vec<String>> {
-    let mut roots = store.gems_used(root)?;
-    roots.push(root.to_string());
-    Ok(roots)
+/// Ruby's stdlib, the bundle's gems, then the checkout itself — and the
+/// stdlib files the bundle's own copies hide (DEC-180).
+fn roots(store: &Store, root: &str) -> rusqlite::Result<Roots> {
+    store.tree_roots(root)
 }
 
 /// A namespace laid out flat, held on the heap.

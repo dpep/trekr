@@ -3,7 +3,7 @@
 The design contract. [PLAN.md](PLAN.md) says *why*; this says *what is built*.
 Change them in the same commit as the code, per [CLAUDE.md](../CLAUDE.md).
 
-Status: **All three layers built.** Ruby core and the checkout's gems are
+Status: **All three layers built.** Ruby core, its stdlib and the checkout's gems are
 indexed. Not started: Rails DSL modeling, Tapioca `sorbet/rbi/` ingestion, the
 LSP front, and `--refs` narrowed by receiver.
 
@@ -420,8 +420,34 @@ indexed, as `gems.unlocated`, with the reason. It is a hole in every answer that
 would have come from it, and a silent hole is indistinguishable from a method
 that does not exist.
 
-The layering is core → gems → checkout, so a gem may reopen core and the
-checkout may reopen a gem, which is what Rails actually does.
+**The stdlib** of the Ruby the checkout runs on is a checkout of its own,
+kind `stdlib`, rooted at `<prefix>/lib/ruby/<abi>` and shared by every app on
+that Ruby as a gem version is (DEC-180). The Ruby is chosen as a lockfile-less
+checkout's gems are (DEC-152): the version `.ruby-version` or the Gemfile
+names, matched to an rvm, rbenv, asdf or Homebrew install; the Ruby
+`$GEM_HOME` belongs to; the `ruby` on `$PATH`. Only a checkout that resolves
+gems or names a Ruby gets one. Tooling nobody calls from an app is left out —
+bundler's and rubygems' internals (`bundler.rb` and `Gem::Version`'s files
+stay), irb, rdoc, reline, did_you_mean, error_highlight, syntax_suggest,
+prism, the VM's compiler — and so are files that define methods on every
+object only when an app opts in (`json/add/*`, `psych/y.rb`,
+`objspace/trace.rb`) or at all (`un.rb`, `mkmf.rb`): the list is
+`gems::stdlib::SKIPPED`. Ruby 3.4's is 179 of 981 files.
+
+Part of the stdlib belongs to default gems — json 2.9.1 is `json.rb` and
+`json/**` — and an app may bundle its own copy of one. The index reads each
+default gem's `s.files` from the gemspec rubygems wrote for it into
+`default_gem`, and records each bundled gem's name in `gem_use`. The tree
+hides, per app, the stdlib files of every default gem that app bundles by
+name (`Store::tree_roots`), so it sees one `JSON`: its own. Deciding it at
+tree time from the app's own `gem_use` is what keeps it independent of which
+app indexed the stdlib, or indexed last. A lockfile naming a default gem at
+the version the stdlib ships finds it there (`gems.from_stdlib`).
+
+The layering is core → stdlib → gems → checkout, so a gem may reopen core
+and the stdlib and the checkout may reopen a gem, which is what Rails
+actually does. The stdlib is layered by kind, not insert order, so a gem
+indexed before the stdlib still reopens it.
 
 **The resident front holds the tree.** `Tree::build(store, root)` is the whole
 seam: it takes a store and a checkout root and returns a value with no borrowed
@@ -483,7 +509,11 @@ blob(id, oid UNIQUE, lines, parse_errors, surface, written_by)
   body_call(blob_id, name, nesting, args, line)  ← a body's call on itself (DEC-162)
 
 checkout(id, root UNIQUE, indexed_at, kind, surface_key, map_key, git_state)
-  gem_use(checkout_id, gem_root)            ← which bundles name which gem
+  gem_use(checkout_id, gem_root, name)      ← which bundles name which gem;
+                                              name NULL for the stdlib
+  default_gem(checkout_id, name, version, path)
+                                            ← a stdlib's files each default
+                                              gem owns (DEC-180)
   file(checkout_id, path, blob_id)          ← the only table naming a path
 
 upgrade(from_version, at)                   ← a rebuild that dropped an older index

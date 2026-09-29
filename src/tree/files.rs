@@ -9,7 +9,7 @@
 //! LSP already did for its trees.
 
 use super::snapshot::{self, Bytes, Invalid, Key, Snapshot};
-use crate::store::Store;
+use crate::store::{Roots, Store};
 use sha1::{Digest, Sha1};
 use std::collections::HashSet;
 use std::io::Write;
@@ -30,11 +30,12 @@ pub(super) fn dir(store: &Store) -> Option<PathBuf> {
 /// Everything a tree is assembled from, folded into one key.
 ///
 /// Each root's surface key, in tree order, is what the store contributes;
-/// the paths themselves, because sites are absolute; and the code that
+/// the paths themselves, because sites are absolute; the stdlib files the app
+/// does not see (DEC-180); and the code that
 /// assembles and encodes, by its own source text. The last is what keeps a
 /// rebuilt binary — a release, or a dev build between two — from reading a
 /// namespace an older assembly produced under the same format number.
-pub(super) fn key(store: &Store, roots: &[String]) -> anyhow::Result<Key> {
+pub(super) fn key(store: &Store, roots: &Roots) -> anyhow::Result<Key> {
     let mut hash = Sha1::new();
     let mut eat = |bytes: &[u8]| {
         hash.update((bytes.len() as u64).to_le_bytes());
@@ -42,9 +43,14 @@ pub(super) fn key(store: &Store, roots: &[String]) -> anyhow::Result<Key> {
     };
     eat(code());
     eat(&store.schema_version()?.to_le_bytes());
-    for (root, surface) in roots.iter().zip(store.surface_keys(roots)?) {
+    for (root, surface) in roots.list.iter().zip(store.surface_keys(&roots.list)?) {
         eat(root.as_bytes());
         eat(&surface.to_le_bytes());
+    }
+    let mut hidden: Vec<&String> = roots.hidden.iter().collect();
+    hidden.sort();
+    for path in hidden {
+        eat(path.as_bytes());
     }
     Ok(hash.finalize().into())
 }
@@ -292,7 +298,7 @@ mod tests {
     }
 
     fn current(store: &Store) -> PathBuf {
-        let key = key(store, &[ROOT.to_string()]).unwrap();
+        let key = key(store, &Roots::of(vec![ROOT.to_string()])).unwrap();
         dir(store).unwrap().join(name(ROOT, &key))
     }
 
@@ -314,7 +320,10 @@ mod tests {
         let built = Tree::build(&store, ROOT).unwrap();
         assert_eq!(
             snapshots(&store),
-            [name(ROOT, &key(&store, &[ROOT.into()]).unwrap())]
+            [name(
+                ROOT,
+                &key(&store, &Roots::of(vec![ROOT.into()])).unwrap()
+            )]
         );
         let written = std::fs::read(current(&store)).unwrap();
         let loaded = Tree::build(&store, ROOT).unwrap();
@@ -438,7 +447,7 @@ mod tests {
         };
         let store = Store::open(Path::new(&db)).unwrap();
         if std::env::var("TREKR_TEST_SNAPSHOT_REWRITE").is_ok() {
-            let key = key(&store, &[ROOT.to_string()]).unwrap();
+            let key = key(&store, &Roots::of(vec![ROOT.to_string()])).unwrap();
             let bytes = std::fs::read(current(&store)).unwrap();
             save(&dir(&store).unwrap(), ROOT, &key, bytes);
         } else {
