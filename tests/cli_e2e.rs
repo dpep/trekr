@@ -3817,6 +3817,16 @@ fn the_bundled_rbs_survives_gem_maintenance() {
         "gem pristine rbs"
     );
 
+    // Reinstalled at the same version and path: read again.
+    let again = |db: &Path| {
+        json(&trekr_env(db, &dir, &["--index", "--json"], &env))["gems"]["stdlib"]["rbs"]["read"]
+            .clone()
+    };
+    again(&db);
+    assert_eq!(again(&db), false, "already known");
+    touch(&base.join("specifications/rbs-9.9.9.gemspec"), 9_700_000);
+    assert_eq!(again(&db), true, "a reinstall is read again");
+
     let _ = fs::remove_dir_all(&dir);
     let _ = fs::remove_dir_all(&home);
 }

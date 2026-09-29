@@ -8363,3 +8363,18 @@ rule.
 **Not done.** A `gem install rbs` within an hour of installing the Ruby
 (a provisioning script) is still told apart only by being further from the
 install than the bundled one.
+
+## DEC-273 — A Ruby's signatures are keyed by when their gem was written
+
+Amends DEC-240's key.
+
+**Decided.** The `rbs` row's key folds, beside the stdlib, the gem's path
+and version and the reader's code, the write times of the gem's directory,
+its `core/` and its gemspec. Three `stat`s per index.
+
+**Why.** A reinstall at the same version and path (`gem install rbs
+--force`, a Ruby rebuilt in place) kept the stubs read from the old files.
+Hashing the files' content would be exact but reads a thousand files on
+every index, a no-op one included; a reinstall rewrites all three of these.
+`gem pristine` rewrites the gemspec too, so it costs one re-read (~130 ms),
+which is the right answer anyway.

@@ -113,13 +113,33 @@ fn kept(about: &crate::store::RbsAbout, found: Option<&RbsGem>) -> Option<Report
 }
 
 /// What the stubs are a function of: the stdlib they describe, the gem
-/// they are read from, and the code that reads it.
+/// they are read from, and the code that reads it. The gem is its path and
+/// version, and when its directory, `core/` and gemspec were written: a
+/// reinstall at the same version and path is read again.
 fn key(gem: &RbsGem, stdlib: &str) -> String {
     let mut hash = Sha1::new();
+    let written = |path: &Path| {
+        std::fs::metadata(path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|at| at.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |at| at.as_nanos())
+    };
+    let spec = gem.dir.parent().and_then(Path::parent).map(|base| {
+        let name = gem.dir.file_name().unwrap_or_default().to_string_lossy();
+        base.join(format!("specifications/{name}.gemspec"))
+    });
+    let written = format!(
+        "{} {} {}",
+        written(&gem.dir),
+        written(&gem.dir.join("core")),
+        spec.as_deref().map_or(0, written)
+    );
     for part in [
         stdlib,
         &gem.dir.to_string_lossy(),
         &gem.version,
+        &written,
         include_str!("mod.rs"),
         include_str!("env.rs"),
         include_str!("params.rs"),
