@@ -2622,6 +2622,9 @@ impl Tree {
                 .resolve_lexical(target, &scopes)
                 .map(|fqn| self.namespace_of(&fqn))
                 .unwrap_or_else(|| target.clone()),
+            // Only a singleton method can be in `class << X`, and a module's
+            // sites are not free to ask of every row.
+            _ if row.singleton => self.opened(&row.nesting, &scopes).unwrap_or_default(),
             _ => scopes.first().cloned().unwrap_or_default(),
         }
     }
@@ -3605,7 +3608,33 @@ impl Tree {
 
     /// The fully-qualified name of the scope a fact was written in.
     pub(crate) fn scope_fqn(&self, written_nesting: &[String]) -> Option<String> {
-        self.scopes(written_nesting).into_iter().next()
+        self.opened(written_nesting, &self.scopes(written_nesting))
+    }
+
+    /// The innermost of `scopes`, placed from `written`, as the class it
+    /// opens. `class << Time` inside `class Time` opens the Time that name
+    /// finds, not a `Time::Time` the placing would make: a scope that is no
+    /// declared class or module — a constant in its body implies it as a
+    /// module with no site — is looked up instead (DEC-241).
+    fn opened(&self, written: &[String], scopes: &[String]) -> Option<String> {
+        let innermost = scopes.first()?.clone();
+        let declared = |fqn: &str| match self.kind_of(fqn) {
+            None => false,
+            Some("module") => !self.sites(fqn).is_empty(),
+            Some(_) => true,
+        };
+        if declared(&innermost) {
+            return Some(innermost);
+        }
+        let name = written.first().map_or("", String::as_str);
+        let found = scopes[1..]
+            .iter()
+            .map(String::as_str)
+            .chain([""])
+            .map(|scope| qualify(scope, name.trim_start_matches("::")))
+            .find(|candidate| declared(candidate))
+            .map(|fqn| self.namespace_of(&fqn));
+        Some(found.unwrap_or(innermost))
     }
 
     /// The classes that mix in this module, directly or through another module.
@@ -3818,6 +3847,33 @@ mod singleton_tests {
             "an instance method is not on the class"
         );
         assert_eq!(find(&tree, "W", false, "instance").as_deref(), Some("W"));
+    }
+
+    #[test]
+    fn a_singleton_class_opened_by_name_inside_that_class_is_its_own() {
+        // A constant in the body makes the tree place a `Stamp::Stamp` scope.
+        let tree = one(
+            "class Stamp\n  class << Stamp\n    FORMAT = 1\n    def parse(text)\n    end\n    \
+             alias strict parse\n  end\nend\nmodule Outer\n  class Inner\n  end\n  \
+             class << Inner\n    def build\n    end\n  end\nend\n",
+        );
+        assert_eq!(
+            find(&tree, "Stamp", true, "parse").as_deref(),
+            Some("Stamp")
+        );
+        assert_eq!(
+            find(&tree, "Stamp", true, "strict").as_deref(),
+            Some("Stamp")
+        );
+        assert_eq!(
+            find(&tree, "Outer::Inner", true, "build").as_deref(),
+            Some("Outer::Inner")
+        );
+        assert_eq!(
+            tree.scope_fqn(&["Stamp".into(), "Stamp".into()]).as_deref(),
+            Some("Stamp"),
+            "a call in the body is typed as its methods are placed"
+        );
     }
 
     #[test]

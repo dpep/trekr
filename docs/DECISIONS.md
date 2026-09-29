@@ -7857,3 +7857,28 @@ since fewer callers are found at the first miss, a class-side lookup of a
 macro's own name may now be asked first outside that window. It answers
 differently only if a string macro in another file makes the macro itself.
 
+## DEC-241 — `class << Time` inside `class Time` opens Time
+
+**Decided.** A method written in `class << Name`, and a call written there,
+belong to the class `Name` looks up to when the tree placed the scope
+somewhere nothing declares: a constant in the body (`ZoneOffset = {…}`)
+made the tree imply a `Time::Time` module with no site, and `Time.parse`,
+`Time.httpdate` and every other method of Ruby's own `time.rb` landed on it.
+`Tree::opened` looks such a scope up lexically instead, skipping another
+site-less one; `owner_of` asks it only for a singleton method, since only
+those can be in `class << X` and a module's sites are not free to ask of
+every row, and `scope_fqn` for every call, so a call in the body is typed
+by the class its methods land on.
+
+**Why now.** Core's stub wrote `Time.parse` by hand, and hid it: the call
+found the stub's and never looked for `time.rb`'s. Read from RBS (DEC-240),
+core has no `Time.parse` — it is the stdlib's — and the call found nothing.
+
+**Measured** against main (3ce6096), each build on its own store. Gold sets:
+every verdict the same but one of flipper's stdlib sites, residue → correct
+(`net/http.rb`'s `proxy_class?`, in `class << HTTP` inside `Net::HTTP` —
+the same shape, a module deep). Clicks: one fewer unsure of 21,154. Rails
+`--refs`: `Time.parse` excludes three `parser.parse`-style calls that pass
+more arguments than `time.rb`'s `parse(date, now)` takes (possible 109 →
+106); `Time#iso8601` and `Time#xmlschema` exclude their five and one sites
+on another owner rather than as `no_such_method`. `--dead` unchanged.

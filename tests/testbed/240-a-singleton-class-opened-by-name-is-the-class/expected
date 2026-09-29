@@ -1,0 +1,7 @@
+# `class << Stamp` inside `class Stamp` opens Stamp's singleton class. A
+# constant in its body made the tree place a `Stamp::Stamp` scope, and the
+# methods went there: `Stamp.parse` found nothing. Ruby's own `time.rb` writes
+# `Time.parse` this way, which the core stub used to hide (DEC-241). A call
+# in the body is typed by the same class its methods land on.
+def app.rb:16:11 status=resolved owner=Stamp
+def app.rb:6:7 status=resolved owner=Stamp

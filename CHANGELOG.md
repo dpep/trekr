@@ -211,6 +211,10 @@
 
 ### Fixed
 
+- **A method in `class << Time` inside `class Time` is `Time`'s.** A
+  constant in that body made the method land on a `Time::Time` nothing
+  declares, so `Time.parse` from Ruby's own `time.rb` was not found (DEC-241).
+
 - **A call in an `ActiveSupport.on_load` block runs on the hooked class.** A
   bare call in `on_load(:active_record) do … end` is `ActiveRecord::Base`'s
   class method, and one in a `def` there its instance method, for `--def`,
