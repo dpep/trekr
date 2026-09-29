@@ -195,12 +195,20 @@ separately:
   is a call whose method's return type is declared (`x.strip.downcase` with
   `x` typed); `chain:name` that its receiver was untyped, so every definition
   of that name was asked — `ambiguous` when some declare no return type.
-  Ruby core carries Ruby 3.4's return types, so `x.gsub(a, b).downcase` is
-  `String#downcase`.
+  Ruby core's return types come from the RBS signatures of the checkout's own
+  Ruby, so `x.gsub(a, b).downcase` is `String#downcase`.
+
+Core is the checkout's Ruby's: the one `.ruby-version` or the Gemfile names,
+else `$GEM_HOME`'s, the `ruby` on `PATH`, or the only one installed, read from
+the `rbs` gem bundled with it. **No Ruby found, or one without rbs, means no
+core**: `puts` and `"x".upcase` are `residue` whose reason says Ruby core is
+not indexed for this checkout. `trekr --index` and `--status` name the Ruby
+and rbs used, and a named Ruby that is not installed (`ruby_not_found`).
 
 A core site is the owner's stub, written beside the database: `path:
-"String.rb"` with `root` the `core/` directory next to `trekr.db`, so it opens
-like any other site.
+"String.rb"` with `root` a directory per Ruby's signatures,
+`trekr.core/rbs-<version>-<key>/` next to `trekr.db`, so it opens like any
+other site.
 
 **`super` is followed.** `--def` on a `super` answers the method it runs: the
 next definition after the method's owner in the ancestors (prepends, the

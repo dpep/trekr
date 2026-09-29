@@ -28,6 +28,7 @@ import collections, json, os, re, subprocess, sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BIN = os.environ.get("TREKR_BIN") or os.path.join(ROOT, "target/release/trekr")
 SAMPLE = int(os.environ.get("SAMPLE", "0"))
+CORE_STUB = re.compile(r"\.core/rbs-[^/]+/")
 
 # Lines that define a method without a `def`. Subdividing `not-extracted` by
 # what the definition *looks like* is what turns it from a number into work.
@@ -125,7 +126,10 @@ def why_not_reached(answer):
 
 def classify(site, roots, answer):
     definition = site["def_file"]
-    if "/<core>" in definition or definition.endswith("core.rb"):
+    # trekr's core stubs: `<core>/…`, or the files written beside the store,
+    # one directory per Ruby's signatures (`trekr.core/rbs-3.8.0-<key>/String.rb`).
+    # Not any `core.rb`: activesupport has one of its own.
+    if "/<core>" in definition or CORE_STUB.search(definition):
         return "core-stub", ""
     if not any(under(root, definition) for root in roots):
         # Which family of unindexed thing is it?
