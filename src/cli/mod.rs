@@ -2912,7 +2912,7 @@ fn dead_in(
 
     let root_str = root.to_string_lossy().into_owned();
     let files = ruby_files(paths);
-    let mut defined: Vec<(String, crate::core::Def, String)> = Vec::new();
+    let mut defined: Vec<(String, crate::core::Def, String, Vec<String>)> = Vec::new();
     for file in &files {
         let Ok(source) = std::fs::read(file) else {
             continue;
@@ -2937,7 +2937,21 @@ fn dead_in(
         }
         let at = file.to_string_lossy().into_owned();
         let unread_calls = facts.unread_calls;
-        for def in facts.defs {
+        // A call of an alias runs its target's body (DEC-316).
+        let aliases_of = |def: &crate::core::Def| -> Vec<String> {
+            facts
+                .defs
+                .iter()
+                .filter(|alias| {
+                    matches!(alias.via.as_deref(), Some("alias" | "alias_method"))
+                        && alias.target.as_deref() == Some(def.name.as_str())
+                        && alias.nesting == def.nesting
+                        && alias.singleton == def.singleton
+                })
+                .map(|alias| alias.name.clone())
+                .collect()
+        };
+        for def in &facts.defs {
             if def.kind != crate::core::Kind::Method {
                 continue;
             }
@@ -2960,11 +2974,12 @@ fn dead_in(
                 }
                 caveat.push_str(&format!("a string of code calls `{shape}`"));
             }
-            defined.push((at.clone(), def, caveat));
+            let aliases = aliases_of(def);
+            defined.push((at.clone(), def.clone(), caveat, aliases));
         }
     }
 
-    let names: Vec<String> = defined.iter().map(|(_, d, _)| d.name.clone()).collect();
+    let names: Vec<String> = defined.iter().map(|(_, d, _, _)| d.name.clone()).collect();
     // More written calls than this and a name is plainly used.
     const PLAINLY_USED: i64 = 8;
     let written_calls = store.written_calls(&root_str, &names, PLAINLY_USED + 1)?;
@@ -2973,7 +2988,7 @@ fn dead_in(
     let tree = build_tree(store, &root_str)?;
     let views = views::Views::read(root);
     let mut parsed = Parsed::new();
-    for (file, def, risky) in &defined {
+    for (file, def, risky, aliases) in &defined {
         let written = written_calls.get(&def.name).copied().unwrap_or(0);
         if written > PLAINLY_USED {
             continue; // not worth a narrowed search
@@ -2989,7 +3004,7 @@ fn dead_in(
             singleton: def.singleton,
             name: def.name.clone(),
         };
-        let (found, counts) = gather_refs(
+        let (mut found, mut counts) = gather_refs(
             &tree,
             store,
             root,
@@ -3001,6 +3016,27 @@ fn dead_in(
             None,
         )
         .unwrap_or_default();
+        for alias in aliases {
+            let query = refs::Query {
+                owner: query.owner.clone(),
+                singleton: query.singleton,
+                name: alias.clone(),
+            };
+            let (more, tally) = gather_refs(
+                &tree,
+                store,
+                root,
+                &root_str,
+                &query,
+                Some(&owner),
+                false,
+                Some(&mut parsed),
+                None,
+            )
+            .unwrap_or_default();
+            found.extend(more);
+            counts.add(&tally);
+        }
         let live = refs::liveness(&found, &counts);
         let Some(tier) = live.tier else { continue };
         // Whoever calls the method this overrides may run it instead, and

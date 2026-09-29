@@ -1,0 +1,6 @@
+# A call of an alias runs its target's body: `array?` is `array`. `--dead`
+# weighed `array` by the calls that name it alone, so a method reached only
+# through `alias :array? :array` was unreferenced with clear confidence (a
+# hash key `opts[:array]` had hidden it, until DEC-312 stopped counting
+# operator operands).
+dead app.rb Column#array=none Column#plain=unreferenced

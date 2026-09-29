@@ -9162,3 +9162,19 @@ activerecord/lib activemodel/lib actionpack/lib` gains 21 (actionpack's test
 fixtures are templates), activerecord alone none. Protocol hooks: rails 38
 rows, activerecord 49, mastodon 12, once-campfire 7. Tiers are unchanged;
 `clear` falls on mastodon 2,837 → 2,525 and once-campfire 330 → 258.
+
+## DEC-316 — `--dead` counts an alias's calls as its target's
+
+**Decided.** A call of `array?`, where `alias :array? :array` (or
+`alias_method`) is written beside `def array` in the same scope and side,
+runs `array`'s body. `--dead` tiers the alias's call sites against the
+owner as it does the method's own and adds them to its evidence.
+
+**Why.** Exposed by DEC-312. activerecord's `PostgreSQL::Column#array` is
+reached only as `array?`, and had been `convention-only` because
+`opts[:array]`, a hash key, counted as a symbol reference; once an
+operator's operand stopped counting it became `unreferenced`, clear. The
+alias was never evidence before, and the hash key was the wrong evidence.
+
+**Not done.** An alias written in another file, or in a reopened class's
+other body, is not found: the aliases are read from the candidate's own file.

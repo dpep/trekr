@@ -328,6 +328,10 @@
 
 ### Fixed
 
+- **`--dead` counts calls of a method's alias.** A method reached only as
+  `array?`, through `alias :array? :array`, was `unreferenced`; its alias's
+  callers are now its callers (DEC-316).
+
 - **Kernel's methods answer inside a module no class is seen including.**
   `Pathname(path)`, `Integer(x)` or `raise` in a Rails helper module was
   residue; a call on `self` there runs on some object, so where no
