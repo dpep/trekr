@@ -75,6 +75,12 @@
   copy any Ruby on the machine has. `--index` says which in the text and as
   `gems.ruby` (DEC-152).
 
+- **A default gem says where its code is.** One at the version its Ruby
+  ships (json 2.9.1, logger, uri, psych…) has an empty gem directory and its
+  code in the stdlib; it was counted resolved with 0 files read. It is now
+  listed in `gems.unlocated` as a default gem, with the stdlib directory
+  (DEC-153).
+
 ## 0.8.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v39): run `trekr --index`

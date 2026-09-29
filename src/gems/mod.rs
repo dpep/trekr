@@ -84,6 +84,9 @@ pub(crate) enum Absence {
     /// its own, so it is neither a pinned gem nor part of this checkout.
     OutsidePath(PathBuf),
     NoPath(PathBuf),
+    /// A default gem at the version its Ruby ships: the directory is empty
+    /// and the code is that Ruby's stdlib, here.
+    DefaultGem(PathBuf),
 }
 
 impl Absence {
@@ -101,6 +104,12 @@ impl Absence {
                 )
             }
             Absence::NoPath(path) => format!("path source, not found at {}", at(path)),
+            Absence::DefaultGem(stdlib) => {
+                format!(
+                    "default gem, its code is Ruby's stdlib in {}, not indexed",
+                    at(stdlib)
+                )
+            }
         }
     }
 }
@@ -563,7 +572,7 @@ impl Resolved {
 /// An absent `Gemfile.lock` is not an error: most gems commit none, and their
 /// gemspec says the same thing less exactly.
 pub(crate) fn for_checkout(repo: &Path) -> (Vec<Located>, Option<Resolved>) {
-    let (located, resolved) = match std::fs::read_to_string(repo.join("Gemfile.lock")) {
+    let (mut located, resolved) = match std::fs::read_to_string(repo.join("Gemfile.lock")) {
         Ok(text) => (
             locate(repo, parse_lockfile(&text)),
             Some(Resolved::Lockfile),
@@ -576,7 +585,32 @@ pub(crate) fn for_checkout(repo: &Path) -> (Vec<Located>, Option<Resolved>) {
             }
         }
     };
+    for entry in &mut located {
+        if let Place::Dir(dir) = &entry.place
+            && let Some(stdlib) = default_gem_stdlib(dir)
+        {
+            entry.place = Place::Missing(Absence::DefaultGem(stdlib));
+        }
+    }
     (located, resolved)
+}
+
+/// Where a default gem's code is, when `dir` is one: rubygems gives it an
+/// empty `gems/<name>-<version>/` and a spec in `specifications/default/`,
+/// and its files live in the Ruby's stdlib, `lib/ruby/<abi>/`.
+fn default_gem_stdlib(dir: &Path) -> Option<PathBuf> {
+    if dir.join("lib").is_dir() {
+        return None;
+    }
+    let dir = std::fs::canonicalize(dir).ok()?;
+    let base = dir.parent()?.parent()?;
+    let spec = base
+        .join("specifications/default")
+        .join(format!("{}.gemspec", dir.file_name()?.to_string_lossy()));
+    if !spec.is_file() {
+        return None;
+    }
+    Some(base.parent()?.parent()?.join(base.file_name()?))
 }
 
 #[cfg(test)]
@@ -817,6 +851,24 @@ BUNDLED WITH
         assert_eq!(gemspec_dir(&dir, "widget", true), Some(dir.clone()));
         assert_eq!(gemspec_dir(&dir, "widget", false), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_default_gem_says_its_code_is_the_stdlib() {
+        let prefix = scratch("default-gem");
+        let base = prefix.join("lib/ruby/gems/3.4.0");
+        let empty = base.join("gems/widget-2.9.1");
+        let installed = base.join("gems/widget-2.10.0/lib");
+        std::fs::create_dir_all(&empty).unwrap();
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::create_dir_all(base.join("specifications/default")).unwrap();
+        std::fs::write(base.join("specifications/default/widget-2.9.1.gemspec"), "").unwrap();
+        let stdlib = std::fs::canonicalize(&prefix)
+            .unwrap()
+            .join("lib/ruby/3.4.0");
+        assert_eq!(default_gem_stdlib(&empty), Some(stdlib));
+        assert_eq!(default_gem_stdlib(installed.parent().unwrap()), None);
+        let _ = std::fs::remove_dir_all(&prefix);
     }
 
     #[test]

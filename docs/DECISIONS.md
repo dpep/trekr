@@ -6194,3 +6194,25 @@ rspec-support 3.12.1 from rvm's 3.4.9; flipper resolves entirely from
 no `.ruby-version` the `$PATH` step finds nothing and every Ruby is
 searched — said as such. `ruby file: ".ruby-version"` in a Gemfile is not
 followed, and neither is `.tool-versions`.
+
+## DEC-153 — A default gem says its code is the stdlib; indexing it waits on a checkout of part of a directory
+
+**Decided.** A gem located at an empty `gems/<name>-<version>/` with a
+spec in `specifications/default/` is a default gem at the version its Ruby
+ships, and its code is that Ruby's stdlib, `lib/ruby/<abi>/`. It is listed
+in `gems.unlocated` — "default gem, its code is Ruby's stdlib in …, not
+indexed" — rather than counted found with nothing read.
+
+**Why.** json 2.9.1 in a lockfile or picked without one reported "1
+resolved, 0 newly indexed (0 files)" and answered nothing, with no reason;
+58 default gems do this, lockfile or not (logger, uri, set, psych, prism,
+openssl…).
+
+**Not indexed, yet.** A checkout is a directory (DEC-017), and every default
+gem's files share one: the stdlib. Indexing the stdlib as one checkout per
+Ruby would be shareable and immutable, but it holds every default gem's
+files, so an app that bundles json 2.21.2 and any default gem would see
+two `JSON`s — a confidently wrong answer where there is residue now.
+Filtering it per app makes its file set depend on who indexed last. The
+fix is a checkout that owns part of a directory (a gem's `s.files` under
+the stdlib), which is a store change, decided separately.
