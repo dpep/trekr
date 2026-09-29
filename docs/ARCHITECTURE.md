@@ -1246,6 +1246,15 @@ app's single write. Writing a bundle's gems as one transaction took the cold
 index from **12.7 s to 7.6 s** (store-write 10.1 → 5.3 s, median of five,
 interleaved) and rails' from 2.7 s to 1.6 s. Same rows, byte for byte.
 
+**A statement that may delete opens a journal** (DEC-191). The file map was
+written with `INSERT OR REPLACE`, and inside a transaction SQLite gives any
+statement that may delete as well as insert its own statement journal, whose
+release costs in proportion to what the transaction already wrote. Nothing
+on a fresh store; 1.8 ms a file after a 50k-file write, which made the map
+181 s of a 245 s index. A new path is an `INSERT` and an edited one an
+`UPDATE` now, and neither opens one. `--index --profile` shows the map, the
+index rebuild and the commit as phases of their own for this reason.
+
 **The query planner needs statistics, and this is not optional.** Without them
 SQLite plans `--refs` as a nested scan of the checkout's files: `--refs new` on
 rails took **90 seconds** for 13,684 rows. With `ANALYZE` run, the planner

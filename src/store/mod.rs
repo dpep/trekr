@@ -443,20 +443,29 @@ impl Store {
         {
             let mut ids: HashMap<&Oid, (i64, i64)> = HashMap::new();
             let mut lookup = tx.prepare("SELECT id, surface FROM blob WHERE oid = ?1")?;
-            let mut upsert = tx.prepare(
-                "INSERT OR REPLACE INTO file (checkout_id, path, blob_id) VALUES (?1, ?2, ?3)",
-            )?;
+            // An insert for a new path and an update for an edited one, not
+            // `INSERT OR REPLACE`: a statement that may delete as well as
+            // insert opens a statement journal inside the savepoint, and its
+            // cost grows with everything the transaction already wrote (DEC-191).
+            let mut insert =
+                tx.prepare("INSERT INTO file (checkout_id, path, blob_id) VALUES (?1, ?2, ?3)")?;
+            let mut update =
+                tx.prepare("UPDATE file SET blob_id = ?3 WHERE checkout_id = ?1 AND path = ?2")?;
             for (path, oid) in files {
                 let (id, surface) = match stored.remove(path) {
                     Some((id, known, surface)) if known == oid.0 => (id, surface),
-                    _ => {
+                    was => {
                         let found = match ids.get(oid) {
                             Some(found) => *found,
                             None => lookup.query_row(params![oid.0], |r| {
                                 Ok((r.get::<_, i64>(0)?, r.get::<_, i64>(1)?))
                             })?,
                         };
-                        upsert.execute(params![checkout_id, path, found.0])?;
+                        let row = params![checkout_id, path, found.0];
+                        match was {
+                            Some(_) => update.execute(row)?,
+                            None => insert.execute(row)?,
+                        };
                         found
                     }
                 };

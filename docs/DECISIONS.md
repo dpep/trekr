@@ -6701,3 +6701,52 @@ no-migration open would save 1–2 ms and stop an outline from rebuilding a
 store of another schema version. Every other command rebuilds it the same
 way, so an outline is not the place to change that, and the milliseconds are
 inside the noise of a process spawn.
+
+## DEC-191 — The file map inserts and updates; it never replaces
+
+**Decided.** `Store::write` writes a new path with `INSERT` and an edited
+one with `UPDATE`, where it used `INSERT OR REPLACE` for both (DEC-048's
+delta is otherwise unchanged). `--index --profile` now names the parts of the
+write that follow the rows — `index-rebuild` (DEC-057's sort), `file-map`,
+`commit` (where the WAL is written and checkpointed, the app's and the
+bundle's) — and `gem-walk`, reading and hashing each gem's `lib/`, so the
+phases sum to the wall time; `store-write` is what is left, the rows.
+
+**Why, measured.** The user's report: `--index` of a 100k-file repository took
+about ten minutes. A cold index of 100k distinct real files (below) takes
+40 s, so the ten minutes was not the cold path. It was the one DEC-057 does
+not take: a load that does not double the store — a large repository indexed
+into a store that already holds other checkouts, or a second worktree of a
+monorepo far from the first. Loading 50k new files (the other 50k known) into
+a store of 50k, timed inside the write: **the file map 181 s of a 218 s
+index**, the rows 28 s. The profile could not see it: `store-write` was one
+number, and the bundle's commit sat outside every phase — 0.6–2.2 s of a
+rails, discourse or mastodon index was unattributed.
+
+Sampled, the time was `sqlite3PagerSavepoint`, reached from closing a
+statement. `INSERT OR REPLACE` may delete a row as well as insert one, so
+inside a transaction SQLite opens a statement journal for it, and releasing
+that journal costs in proportion to what the transaction has already written
+— nothing on a fresh store, ~1.8 ms a file after a 50k-file write. A plain
+`INSERT` or single-row `UPDATE` opens none. The write already knew which
+paths were new: it reads the stored map to diff it.
+
+A 50k-file load (c100k below, its other 50k already known) into a store of
+50k, a clone of the same store per run, two interleaved rounds, load 7:
+
+| | wall | of which file map |
+| --- | ---: | ---: |
+| `INSERT OR REPLACE` | 245 s (262) | 181 s |
+| **`INSERT` / `UPDATE`** | **72 s** (77) | 1.6 s |
+
+The after column also carries DEC-192's tree (3.8 s). A first index paid it
+too, less: timed inside the write before the change, discourse's map, written
+after rails' into one store, was 1.2 s and mastodon's, after both, 0.53 s,
+where 50k files into a fresh store took 0.3 s. After it, a cold discourse
+index's maps, its gems' included, take 0.11 s. Store size is unchanged
+(1,579.5 MB both).
+
+**Correctness is DEC-048's test**: a map written, then one with a deletion,
+an edit, a rename and an addition, must equal a fresh write of the second
+map, surface key included. It covers both statements. The gold sets, the
+`--refs` differential, `--dead` and the clicks are unchanged (DEC-192).

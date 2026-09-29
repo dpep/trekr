@@ -44,6 +44,11 @@
   `store-write` is now the rows alone; a script graphing it sees it shrink by
   what moved out (DEC-191).
 
+- **Indexing a large repository into a store that already holds a lot is
+  minutes faster.** Writing the file map opened a statement journal per file
+  whose cost grew with everything already written: 50k new files indexed
+  beside 50k known took 245 s, 181 s of it the map, and take 72 s (DEC-191).
+
 - **`--status` in a checkout nobody indexed exits `2` with `status:
   not_indexed`**, the answer a query from there gives, where it listed
   another checkout as `checkouts[0]` and exited `0`. `checkouts` is `[]`;
