@@ -35,23 +35,46 @@ fn dump_linearizations() {
         names.reverse();
     }
     let started = std::time::Instant::now();
-    let mut rows: Vec<String> = names
-        .iter()
-        .map(|fqn| {
-            let ancestry = tree.ancestors(fqn);
-            let singleton: Vec<String> = tree
-                .lookup_chain(fqn, true)
-                .into_iter()
-                .map(|(owner, s)| if s { format!("{owner}.") } else { owner })
-                .collect();
-            format!(
-                "{fqn}\t{}\t{}\t{}",
-                ancestry.chain.join(","),
-                ancestry.unresolved.join(","),
-                singleton.join(",")
-            )
-        })
-        .collect();
+    let row = |fqn: &String| {
+        let ancestry = tree.ancestors(fqn);
+        let singleton: Vec<String> = tree
+            .lookup_chain(fqn, true)
+            .into_iter()
+            .map(|(owner, s)| if s { format!("{owner}.") } else { owner })
+            .collect();
+        format!(
+            "{fqn}\t{}\t{}\t{}",
+            ancestry.chain.join(","),
+            ancestry.unresolved.join(","),
+            singleton.join(",")
+        )
+    };
+    // `TREKR_LIN_THREADS=n` asks from n threads at once, sharing the tree,
+    // each taking every nth name: a chain must not depend on which thread
+    // asked it first either (DEC-250).
+    let threads: usize = std::env::var("TREKR_LIN_THREADS")
+        .ok()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or(1);
+    let mut rows: Vec<String> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|at| {
+                let (names, row) = (&names, &row);
+                scope.spawn(move || {
+                    names
+                        .iter()
+                        .skip(at)
+                        .step_by(threads)
+                        .map(row)
+                        .collect::<Vec<_>>()
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect()
+    });
     let memo = tree.ancestors.values();
     eprintln!(
         "{} names linearized in {} ms; {} chains memoized, {} of them closing a cycle",

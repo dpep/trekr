@@ -21,8 +21,6 @@ mod corelib;
 #[cfg(test)]
 mod dump;
 mod files;
-// Its users arrive over the next commits.
-#[allow(dead_code)]
 mod memo;
 mod snapshot;
 mod variants;
@@ -39,8 +37,7 @@ use memo::{Memo, Once};
 use serde::Serialize;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
-use std::rc::Rc;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// A name's declaration site — the answer to "where is this?".
 #[derive(Clone, Debug, Serialize)]
@@ -344,6 +341,17 @@ impl MethodDef {
     }
 }
 
+/// Shared by every thread that asks it: apart from its build, a tree only
+/// fills memos and loads names, and each of those is a function of the tree
+/// and its key (DEC-200), so it does not matter which thread fills it first
+/// (DEC-250). A field added here is one of three kinds, and says which:
+///
+/// - **set at build** and read-only after — a plain field;
+/// - **a memo** — a `Memo`, or a `OnceLock` for one value; computed with no
+///   lock held and the first value stored wins;
+/// - **per call in flight** (the linearization stack, `placing`) — a
+///   thread-local, never a field, since another thread's call is not this
+///   one's.
 pub(crate) struct Tree {
     /// Tells this tree's frames from another's on a thread's stack.
     id: u64,
@@ -359,7 +367,7 @@ pub(crate) struct Tree {
     /// What the stdlib's Ruby methods return, from RBS, by (owner, singleton,
     /// name), as each is first asked: lent to the real definitions, never a
     /// location (DEC-220).
-    stdlib_sigs: RefCell<HashMap<(String, bool, String), Option<MethodDef>>>,
+    stdlib_sigs: Memo<(String, bool, String), Option<MethodDef>>,
     names: Names,
     /// Where methods come from when the tree does not already have them.
     /// `None` for a tree built from rows in hand (fixtures), which is fully
@@ -372,17 +380,16 @@ pub(crate) struct Tree {
     /// is per *name*, because that is what every caller keys on: a lookup, a
     /// residue candidate list and an override search all ask about one name
     /// (DEC-025). A name is complete once loaded — nothing else adds a
-    /// definition of it — so its table never changes (DEC-202, DEC-252).
+    /// definition of it — so its table never changes (DEC-202).
     defs: Once<String, Arc<Defs>>,
     /// Class-side lookup chains by (fqn, as_self): every lookup on a class
     /// walks the same one, and building it resolves each level's extends
     /// (DEC-203). An instance's chain is its memoized ancestry.
-    singleton_chains: RefCell<HashMap<(String, bool), Pairs>>,
+    singleton_chains: Memo<(String, bool), Pairs>,
     /// Lookups by (fqn, singleton, name, as_self, placing), final once the
-    /// name is loaded, as `named` is (DEC-203). A lookup made while placing
-    /// does not look for string macros, so it is a different question
-    /// (DEC-251).
-    lookups: RefCell<HashMap<LookupKey, Option<Landing>>>,
+    /// name is loaded (DEC-203). A lookup made while placing does not look
+    /// for string macros, so it is a different question.
+    lookups: Memo<LookupKey, Option<Landing>>,
     /// A model that overrides `self.table_name` wants the columns of a table
     /// whose conventional class it is not, so that carrier's methods are keyed
     /// onto the model as well. Built once at build time from the `table_name`
@@ -391,37 +398,42 @@ pub(crate) struct Tree {
     /// Classes that have each module in their ancestor chain. Built lazily,
     /// because the common path never asks: it costs a pass over every name and
     /// only a call inside a module needs it.
-    includers: RefCell<Option<Includers>>,
+    includers: OnceLock<Includers>,
     /// Module → the names that `include` or `prepend` it by name. Resolving
     /// every mixin edge once is far cheaper than linearizing every class,
     /// which is what `includers` pays.
-    mixers: RefCell<Option<HashMap<String, Vec<String>>>>,
+    mixers: OnceLock<HashMap<String, Vec<String>>>,
     /// Every name's chain, as it is when that name is the one asked (DEC-200).
     ancestors: Memo<String, Memoized>,
     /// `agreed_return`, per (name, argc, block): a pure function of the
     /// tree, asked once per call site (DEC-201).
-    agreed_returns: RefCell<HashMap<ReturnKey, Option<Rc<AgreedReturn>>>>,
+    agreed_returns: Memo<ReturnKey, Option<Arc<AgreedReturn>>>,
     /// The markers of scopes that define methods the source does not name
-    /// (DEC-130), as read: loaded on first need from the store, or handed
-    /// over whole by a tree that loads nothing.
-    dynamic_rows: RefCell<Option<Vec<EdgeRow>>>,
-    /// The same, by the scope's fully-qualified name.
-    dynamic: RefCell<Option<HashMap<String, Vec<Dynamic>>>>,
-    /// Every marker, by the file that writes it (DEC-162).
-    dynamic_files: RefCell<HashMap<String, Vec<Dynamic>>>,
+    /// (DEC-130), when handed over whole by a tree that loads nothing;
+    /// otherwise read from the store on first need.
+    dynamic_rows: Mutex<Option<Vec<EdgeRow>>>,
+    /// The markers placed: by the scope's fully-qualified name, and by the
+    /// file that writes them (DEC-162).
+    dynamic: OnceLock<Placed>,
     /// Every marker with its owner resolved, in the store's order: what
     /// placing reads, and what `made_for` reads without placing (DEC-235).
-    markers: RefCell<Option<Markers>>,
+    markers: OnceLock<Markers>,
     /// The classes whose body runs each macro, with the names each hands
     /// it and its file, by (owner, macro).
-    callers: RefCell<HashMap<(String, String), Callers>>,
+    callers: Memo<(String, String), Callers>,
     /// The methods a string macro in another file makes on the classes that
     /// hand it literal names (DEC-212): by name, then class, then side,
     /// worked out per name as a lookup misses it (DEC-235).
-    made: RefCell<HashMap<String, Rc<Made>>>,
+    made: Memo<String, Arc<Made>>,
     /// Hook name → the classes that run it (DEC-098), read on first need.
-    hooks: RefCell<Option<HashMap<String, Vec<String>>>>,
+    hooks: OnceLock<HashMap<String, Vec<String>>>,
 }
+
+// Every tiering worker asks the one tree (DEC-250).
+const _: fn() = || {
+    fn shared<T: Send + Sync>() {}
+    shared::<Tree>();
+};
 
 /// One name's definitions, in the order they were loaded: core's, the
 /// stdlib's, then the store's.
@@ -452,6 +464,12 @@ fn land(defs: &Defs, landing: &Landing) -> MethodDef {
     method
 }
 
+/// The markers placed, by owner and by file.
+struct Placed {
+    by_owner: HashMap<String, Vec<Dynamic>>,
+    by_file: HashMap<String, Vec<Dynamic>>,
+}
+
 /// Every tree's `id`.
 static TREES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
@@ -469,13 +487,13 @@ thread_local! {
 }
 
 /// Every marker with the class or module it marks.
-type Markers = Rc<[(String, Dynamic)]>;
+type Markers = Arc<[(String, Dynamic)]>;
 
 /// A class whose body calls a macro: the class, the literal names the call
 /// hands it, and the file it is written in.
 type Caller = (String, Vec<Option<String>>, String);
 
-type Callers = Rc<[Caller]>;
+type Callers = Arc<[Caller]>;
 
 /// A name's string-macro methods by class, instance side then singleton.
 type Made = HashMap<String, [Option<Dynamic>; 2]>;
@@ -562,7 +580,7 @@ struct Includers {
 }
 
 /// `(owner, singleton)` pairs, in the order a lookup walks them.
-type Pairs = Rc<[(String, bool)]>;
+type Pairs = Arc<[(String, bool)]>;
 
 /// The `(owner, singleton)` pairs a method lookup walks, in order: an
 /// instance's ancestry as it is memoized, or a class side's own walk.
@@ -881,13 +899,13 @@ impl Tree {
                 rows.extend(table_names);
                 tree.defs
                     .set("table_name".to_string(), Arc::new(tree.defs_of(rows)));
-                tree.loader = Some(Loader { store: own, roots });
+                tree.loader = Some(Loader::new(own, roots));
                 phases.mark("core-and-table-names");
             }
             // An in-memory store cannot be reopened, so there is nothing to
             // load from later: take everything now and stay eager.
             None => {
-                tree.dynamic_rows = RefCell::new(Some(store.dynamic_markers(&roots)?));
+                tree.dynamic_rows = Mutex::new(Some(store.dynamic_markers(&roots)?));
                 let mut rows = tree.all_stub_rows();
                 rows.append(&mut methods);
                 methods = rows;
@@ -1003,25 +1021,24 @@ impl Tree {
             root,
             stdlib: None,
             stubs: None,
-            stdlib_sigs: RefCell::new(HashMap::new()),
+            stdlib_sigs: Memo::new(),
             names,
             base: HashMap::new(),
             defs: Once::new(),
-            singleton_chains: RefCell::new(HashMap::new()),
-            lookups: RefCell::new(HashMap::new()),
+            singleton_chains: Memo::new(),
+            lookups: Memo::new(),
             loader: None,
             carriers: HashMap::new(),
-            includers: RefCell::new(None),
-            mixers: RefCell::new(None),
+            includers: OnceLock::new(),
+            mixers: OnceLock::new(),
             ancestors: Memo::new(),
-            agreed_returns: RefCell::new(HashMap::new()),
-            dynamic_rows: RefCell::new(None),
-            dynamic: RefCell::new(None),
-            dynamic_files: RefCell::new(HashMap::new()),
-            markers: RefCell::new(None),
-            callers: RefCell::new(HashMap::new()),
-            made: RefCell::new(HashMap::new()),
-            hooks: RefCell::new(None),
+            agreed_returns: Memo::new(),
+            dynamic_rows: Mutex::new(None),
+            dynamic: OnceLock::new(),
+            markers: OnceLock::new(),
+            callers: Memo::new(),
+            made: Memo::new(),
+            hooks: OnceLock::new(),
         }
     }
 
@@ -2042,7 +2059,7 @@ pub(crate) fn for_test(sources: &[(&str, &str)]) -> Tree {
         })
         .collect();
     let mut tree = Tree::from_rows(decls, edges, &[]);
-    tree.dynamic_rows = RefCell::new(Some(markers));
+    tree.dynamic_rows = Mutex::new(Some(markers));
     tree.stubs = Some(stubs);
     // Core's methods first, as a per-name load puts them.
     let mut rows = tree.all_stub_rows();
@@ -2094,17 +2111,17 @@ mod tests {
         let tree = Tree::build(&store, "/repo").unwrap();
 
         assert!(tree.lookup("Widget", false, "zz_nope").is_none());
-        assert!(tree.dynamic.borrow().is_none(), "no marker placed");
-        assert!(tree.callers.borrow().is_empty(), "no macro's callers found");
+        assert!(tree.dynamic.get().is_none(), "no marker placed");
+        assert!(tree.callers.values().is_empty(), "no macro's callers found");
 
         let made = tree.lookup("Widget", false, "color_helper").expect("made");
         assert_eq!(
             (made.owner.as_str(), made.site.path.as_str()),
             ("Widget", "/repo/macros.rb")
         );
-        assert_eq!(tree.callers.borrow().len(), 1, "add_helper's alone");
+        assert_eq!(tree.callers.values().len(), 1, "add_helper's alone");
         assert!(tree.lookup("Widget", false, "active?").is_some());
-        assert!(tree.dynamic.borrow().is_none(), "still none placed");
+        assert!(tree.dynamic.get().is_none(), "still none placed");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -2491,6 +2508,22 @@ mod tests {
                     );
                 }
             }
+            // Threads asking one tree at once, each in its own order, answer
+            // as a fresh tree does (DEC-250): a cycle's frames are per thread.
+            for _ in 0..20 {
+                let tree = one(source);
+                std::thread::scope(|scope| {
+                    for start in 0..8 {
+                        let (tree, names, first) = (&tree, &names, &first);
+                        scope.spawn(move || {
+                            for step in 0..names.len() {
+                                let at = (start + step) % names.len();
+                                assert_eq!(tree.ancestors(names[at]).chain, first[at]);
+                            }
+                        });
+                    }
+                });
+            }
         }
     }
 
@@ -2857,7 +2890,10 @@ impl Tree {
         }
     }
 
-    /// Every method with this name, fetched once.
+    /// Every method with this name, fetched once: a thread that asks while
+    /// another fetches it waits for that one's answer. Fetching asks the
+    /// store and the namespace, never for another name's methods, so no two
+    /// fetches wait on each other.
     ///
     /// A tree with no loader was built from rows in hand and already has
     /// everything it will ever have.
@@ -2876,7 +2912,7 @@ impl Tree {
                         rows.extend(defs.iter().flat_map(|def| self.stub_rows(def)));
                     }
                 }
-                if let Ok(more) = loader.store.methods_named(&loader.roots, name) {
+                if let Some(more) = loader.methods_named(name) {
                     rows.extend(more);
                 }
             }
@@ -2972,6 +3008,14 @@ impl Tree {
         PLACING.get() == self.id
     }
 
+    /// Run `work` as placing, and put back what was.
+    fn as_placing<T>(&self, work: impl FnOnce() -> T) -> T {
+        let was = PLACING.replace(self.id);
+        let done = work();
+        PLACING.set(was);
+        done
+    }
+
     /// Load every method at once — for a tree built from rows rather than from
     /// a store.
     fn add_methods(&mut self, rows: Vec<MethodRow>) {
@@ -3002,14 +3046,11 @@ impl Tree {
             return Chain::Instance(self.ancestors(fqn));
         }
         let key = (fqn.to_string(), as_self);
-        if let Some(chain) = self.singleton_chains.borrow().get(&key) {
-            return Chain::Singleton(chain.clone());
+        if let Some(chain) = self.singleton_chains.get(&key) {
+            return Chain::Singleton(chain);
         }
         let chain: Pairs = self.class_side(fqn, as_self).into();
-        self.singleton_chains
-            .borrow_mut()
-            .insert(key, chain.clone());
-        Chain::Singleton(chain)
+        Chain::Singleton(self.singleton_chains.publish(key, chain))
     }
 
     fn class_side(&self, fqn: &str, as_self: bool) -> Vec<(String, bool)> {
@@ -3174,12 +3215,11 @@ impl Tree {
             as_self,
             self.placing(),
         );
-        if let Some(found) = self.lookups.borrow().get(&key) {
-            return found.clone();
+        if let Some(found) = self.lookups.get(&key) {
+            return found;
         }
         let found = self.look_along(&defs, fqn, singleton, name, as_self);
-        self.lookups.borrow_mut().insert(key, found.clone());
-        found
+        self.lookups.publish(key, found)
     }
 
     fn look_along(
@@ -3378,17 +3418,14 @@ impl Tree {
         // Lent only where the stdlib they describe is indexed.
         self.stdlib.as_ref()?;
         let stubs = self.stubs.as_ref()?;
-        if let Some(memo) = self.stdlib_sigs.borrow().get(key) {
-            return memo.clone();
+        if let Some(memo) = self.stdlib_sigs.get(key) {
+            return memo;
         }
         let method = stubs.sig_defs().get(key).and_then(|def| {
             let (_, _, rows) = rows_from(&def.path, &def.source);
             rows.into_iter().next().map(|row| self.method_def(row))
         });
-        self.stdlib_sigs
-            .borrow_mut()
-            .insert(key.clone(), method.clone());
-        method
+        self.stdlib_sigs.publish(key.clone(), method)
     }
 
     /// The class a call to `name` returns whatever its receiver, when every
@@ -3407,14 +3444,13 @@ impl Tree {
         name: &str,
         argc: Option<u32>,
         block: bool,
-    ) -> Option<Rc<AgreedReturn>> {
+    ) -> Option<Arc<AgreedReturn>> {
         let key = (name.to_string(), argc, block);
-        if let Some(memo) = self.agreed_returns.borrow().get(&key) {
-            return memo.clone();
+        if let Some(memo) = self.agreed_returns.get(&key) {
+            return memo;
         }
-        let agreed = self.vote_on_return(name, argc, block).map(Rc::new);
-        self.agreed_returns.borrow_mut().insert(key, agreed.clone());
-        agreed
+        let agreed = self.vote_on_return(name, argc, block).map(Arc::new);
+        self.agreed_returns.publish(key, agreed)
     }
 
     fn vote_on_return(&self, name: &str, argc: Option<u32>, block: bool) -> Option<AgreedReturn> {
@@ -3505,9 +3541,7 @@ impl Tree {
         singleton: bool,
         name: &str,
     ) -> Option<(String, Vec<Dynamic>)> {
-        self.place_dynamic();
-        let placed = self.dynamic.borrow();
-        let placed = placed.as_ref()?;
+        let placed = &self.placed().by_owner;
         if placed.is_empty() {
             return None;
         }
@@ -3528,10 +3562,9 @@ impl Tree {
     /// that may have made `name`, on either side: the likelier maker of a
     /// name defined nowhere than a gem (DEC-162).
     pub(crate) fn dynamic_in_file(&self, path: &str, name: &str) -> Vec<Dynamic> {
-        self.place_dynamic();
         let at = format!("{}/{path}", self.root);
-        self.dynamic_files
-            .borrow()
+        self.placed()
+            .by_file
             .get(&at)
             .map(|makers| {
                 makers
@@ -3567,18 +3600,20 @@ impl Tree {
             .join("; ")
     }
 
-    fn place_dynamic(&self) {
-        if self.dynamic.borrow().is_some() {
-            return;
-        }
+    /// Every marker placed, once: a thread that asks meanwhile waits.
+    fn placed(&self) -> &Placed {
+        self.dynamic
+            .get_or_init(|| self.as_placing(|| self.place_dynamic()))
+    }
+
+    fn place_dynamic(&self) -> Placed {
         let markers = self.markers();
-        let was = PLACING.replace(self.id);
         let mut placed: HashMap<String, Vec<Dynamic>> = HashMap::new();
+        let mut by_file: HashMap<String, Vec<Dynamic>> = HashMap::new();
         let mut macros: Vec<&(String, Dynamic)> = Vec::new();
         for marker in markers.iter() {
             let (owner, how) = marker;
-            self.dynamic_files
-                .borrow_mut()
+            by_file
                 .entry(how.path.clone())
                 .or_default()
                 .push(how.clone());
@@ -3616,20 +3651,26 @@ impl Tree {
                 }
             }
         }
-        *self.dynamic.borrow_mut() = Some(placed);
-        PLACING.set(was);
+        Placed {
+            by_owner: placed,
+            by_file,
+        }
     }
 
     /// The methods string macros in other files make named `name`, by class
     /// and side (DEC-212). Only the macros whose shape could spell the name
     /// have their callers found, so a miss on a name no macro makes costs a
     /// pass over the markers and no lookup (DEC-235).
-    fn made_for(&self, name: &str) -> Rc<Made> {
-        if let Some(made) = self.made.borrow().get(name) {
-            return made.clone();
+    fn made_for(&self, name: &str) -> Arc<Made> {
+        if let Some(made) = self.made.get(name) {
+            return made;
         }
+        let made = self.as_placing(|| self.make_for(name));
+        self.made.publish(name.to_string(), Arc::new(made))
+    }
+
+    fn make_for(&self, name: &str) -> Made {
         let markers = self.markers();
-        let was = PLACING.replace(self.id);
         let mut made = Made::new();
         for (owner, how) in markers.iter() {
             if !may_expand_to(&how.maker, name) {
@@ -3652,25 +3693,30 @@ impl Tree {
                 }
             }
         }
-        PLACING.set(was);
-        let made = Rc::new(made);
-        self.made
-            .borrow_mut()
-            .insert(name.to_string(), made.clone());
         made
     }
 
     /// Every marker, read once, with the class or module it marks.
     fn markers(&self) -> Markers {
-        if let Some(markers) = self.markers.borrow().as_ref() {
-            return markers.clone();
-        }
-        let rows = match self.dynamic_rows.borrow_mut().take() {
+        self.markers.get_or_init(|| self.read_markers()).clone()
+    }
+
+    fn read_markers(&self) -> Markers {
+        let handed = self
+            .dynamic_rows
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        let rows = match handed {
             Some(rows) => rows,
             None => self
                 .loader
                 .as_ref()
-                .and_then(|loader| loader.store.dynamic_markers(&loader.roots).ok())
+                .and_then(|loader| {
+                    loader
+                        .with(|store, roots| store.dynamic_markers(roots))
+                        .ok()
+                })
                 .unwrap_or_default(),
         };
         let mut markers = Vec::new();
@@ -3697,9 +3743,7 @@ impl Tree {
             }
             markers.push((owner, how));
         }
-        let markers: Markers = markers.into();
-        *self.markers.borrow_mut() = Some(markers.clone());
-        markers
+        markers.into()
     }
 
     /// The classes whose body calls the macro `name`, an instance method of
@@ -3708,12 +3752,11 @@ impl Tree {
     /// Each with the literal names that call hands it.
     fn macro_callers(&self, owner: &str, name: &str) -> Callers {
         let key = (owner.to_string(), name.to_string());
-        if let Some(callers) = self.callers.borrow().get(&key) {
-            return callers.clone();
+        if let Some(callers) = self.callers.get(&key) {
+            return callers;
         }
         let callers: Callers = self.find_macro_callers(owner, name).into();
-        self.callers.borrow_mut().insert(key, callers.clone());
-        callers
+        self.callers.publish(key, callers)
     }
 
     fn find_macro_callers(&self, owner: &str, name: &str) -> Vec<Caller> {
@@ -3721,8 +3764,7 @@ impl Tree {
             return Vec::new();
         };
         let calls = loader
-            .store
-            .body_calls(&loader.roots, name)
+            .with(|store, roots| store.body_calls(roots, name))
             .unwrap_or_default();
         let mut reached: HashMap<String, bool> = HashMap::new();
         let mut callers = Vec::new();
@@ -3746,11 +3788,11 @@ impl Tree {
     /// The classes that run the `on_load` hook `name`, in the order the
     /// index layers them (DEC-214).
     pub(crate) fn hooked(&self, name: &str) -> Vec<String> {
-        if self.hooks.borrow().is_none() {
+        let hooks = self.hooks.get_or_init(|| {
             let rows = self
                 .loader
                 .as_ref()
-                .and_then(|loader| loader.store.load_hooks(&loader.roots).ok())
+                .and_then(|loader| loader.with(|store, roots| store.load_hooks(roots)).ok())
                 .unwrap_or_default();
             let mut hooks: HashMap<String, Vec<String>> = HashMap::new();
             for row in rows {
@@ -3761,13 +3803,9 @@ impl Tree {
                     }
                 }
             }
-            *self.hooks.borrow_mut() = Some(hooks);
-        }
-        self.hooks
-            .borrow()
-            .as_ref()
-            .and_then(|hooks| hooks.get(name).cloned())
-            .unwrap_or_default()
+            hooks
+        });
+        hooks.get(name).cloned().unwrap_or_default()
     }
 
     /// The fully-qualified name of the scope a fact was written in.
@@ -3807,7 +3845,7 @@ impl Tree {
     /// includes it is. When the index knows exactly which class that is, the
     /// call has a determinate receiver after all, and this is how to find it.
     pub(crate) fn includers_of(&self, module: &str) -> Vec<String> {
-        if self.includers.borrow().is_none() {
+        let includers = self.includers.get_or_init(|| {
             // Only classes: resolving a module receiver to another module
             // would just move the problem.
             let mut classes: Vec<String> = Vec::new();
@@ -3836,15 +3874,11 @@ impl Tree {
             for includers in by_ancestor.values_mut() {
                 includers.dedup();
             }
-            *self.includers.borrow_mut() = Some(Includers {
+            Includers {
                 classes,
                 by_ancestor,
-            });
-        }
-        let includers = self.includers.borrow();
-        let Some(includers) = includers.as_ref() else {
-            return Vec::new();
-        };
+            }
+        });
         includers
             .by_ancestor
             .get(module)
@@ -3864,7 +3898,7 @@ impl Tree {
     /// the module is its parent's, unless it mixes the module in again — and
     /// then it is on this list itself.
     pub(crate) fn mixers_of(&self, module: &str) -> Vec<String> {
-        if self.mixers.borrow().is_none() {
+        let map = self.mixers.get_or_init(|| {
             let mut map: HashMap<String, Vec<String>> = HashMap::new();
             self.names.for_each(|fqn, entry| {
                 for (_, target) in entry.mixins() {
@@ -3875,12 +3909,8 @@ impl Tree {
                     }
                 }
             });
-            *self.mixers.borrow_mut() = Some(map);
-        }
-        let mixers = self.mixers.borrow();
-        let Some(map) = mixers.as_ref() else {
-            return Vec::new();
-        };
+            map
+        });
         let mut classes: Vec<String> = Vec::new();
         let mut seen: HashSet<String> = HashSet::new();
         let mut pending: Vec<String> = vec![module.to_string()];
@@ -3970,19 +4000,21 @@ impl Tree {
                 }
             }
         }
-        let _ = loader.store.each_method(&loader.roots, |row| {
-            // A loaded name was visited above, from the table.
-            if loaded.contains(&row.name) {
-                return;
-            }
-            let owners = self.owners_of(&row);
-            let method = self.method_def(row);
-            for owner in &owners {
-                visit(owner, method.singleton, &method);
-                for model in self.carriers.get(owner).into_iter().flatten() {
-                    visit(model, method.singleton, &method);
+        let _ = loader.with(|store, roots| {
+            store.each_method(roots, |row| {
+                // A loaded name was visited above, from the table.
+                if loaded.contains(&row.name) {
+                    return;
                 }
-            }
+                let owners = self.owners_of(&row);
+                let method = self.method_def(row);
+                for owner in &owners {
+                    visit(owner, method.singleton, &method);
+                    for model in self.carriers.get(owner).into_iter().flatten() {
+                        visit(model, method.singleton, &method);
+                    }
+                }
+            })
         });
     }
 }
@@ -4228,9 +4260,62 @@ pub(crate) const DSL_RBI: &str = "sorbet/rbi/dsl/";
 /// Its own connection, so the tree owns everything it needs rather than
 /// borrowing the caller's store for its lifetime — which a cached tree, held
 /// across queries by a resident session, could not do.
+///
+/// Any thread may load, each on a connection of its own: a connection is
+/// taken from the idle ones, or opened when none is, and put back after.
+/// A connection cannot be shared between threads, and one behind a lock
+/// would make every load wait on every other.
 struct Loader {
-    store: Store,
+    idle: Mutex<Vec<Store>>,
+    /// Where another connection opens.
+    path: Option<std::path::PathBuf>,
     roots: Roots,
+}
+
+impl Loader {
+    fn new(store: Store, roots: Roots) -> Loader {
+        Loader {
+            path: store.path().map(std::path::Path::to_path_buf),
+            idle: Mutex::new(vec![store]),
+            roots,
+        }
+    }
+
+    /// Run `work` on a connection no other thread is using.
+    fn with<T>(
+        &self,
+        work: impl FnOnce(&Store, &Roots) -> rusqlite::Result<T>,
+    ) -> anyhow::Result<T> {
+        let idle = |pool: &Mutex<Vec<Store>>| {
+            pool.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .pop()
+        };
+        let store = match idle(&self.idle) {
+            Some(store) => store,
+            None => self.open()?,
+        };
+        let done = work(&store, &self.roots);
+        self.idle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(store);
+        Ok(done?)
+    }
+
+    /// Another connection to the store the first one reads.
+    fn open(&self) -> anyhow::Result<Store> {
+        match &self.path {
+            Some(path) => Ok(Store::open(path)?),
+            None => anyhow::bail!("an in-memory store has no second connection"),
+        }
+    }
+
+    /// Every method named `name`, `None` when the store could not say.
+    fn methods_named(&self, name: &str) -> Option<Vec<MethodRow>> {
+        self.with(|store, roots| store.methods_named(roots, name))
+            .ok()
+    }
 }
 
 /// Where a tree build spent its time, when anyone asked.
