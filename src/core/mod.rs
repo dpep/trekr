@@ -167,6 +167,11 @@ pub(crate) struct Facts {
     /// the line, and the module it names, so a click on it is a click on the
     /// group (DEC-124). Resolve-time, never stored.
     pub(crate) shared_names: Vec<(Pos, u32, String)>,
+    /// The shapes of calls a string of code makes with a name it
+    /// interpolates from a value no literal states (`helper_*`), which are
+    /// therefore not calls here: why `--dead` hedges on a method of that
+    /// shape (DEC-163). Never stored.
+    pub(crate) unread_calls: Vec<String>,
     /// Prism reported syntax errors; the facts above are what survived.
     pub(crate) parse_errors: usize,
     pub(crate) lines: usize,

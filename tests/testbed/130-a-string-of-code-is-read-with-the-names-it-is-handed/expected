@@ -1,0 +1,14 @@
+# A string of code whose names come from its method's parameters was read
+# nowhere: `add_helper :color` in a class body made `color_helper`, and
+# `make :fast` made `go_fast`, but both were "no such method", and a call
+# the string names by interpolation (`run_#{name}`, `helper_#{n}`) was
+# dropped, so `--dead` called `helper_beta` unreferenced. Where a class
+# body in the same file hands the method literal names, the string is read
+# there as that class's code, and a loop's values name its calls as they
+# name its `def`s.
+def app.rb:25:5 status=resolved owner=Widget site=app.rb:9
+refs Widget#run_color confirmed=1
+card Maker#go_fast status=resolved
+refs Maker#run_fast confirmed=1
+refs Loops#helper_beta confirmed=1
+dead app.rb Loops#helper_beta=single-caller

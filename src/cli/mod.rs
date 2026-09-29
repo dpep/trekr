@@ -2302,6 +2302,7 @@ fn dead_in(
             risky.push_str("class_eval string");
         }
         let at = file.to_string_lossy().into_owned();
+        let unread_calls = facts.unread_calls;
         for def in facts.defs {
             if def.kind != crate::core::Kind::Method {
                 continue;
@@ -2313,7 +2314,19 @@ fn dead_in(
             if def.via.is_some() {
                 continue;
             }
-            defined.push((at.clone(), def, risky.clone()));
+            // A string of code calls a name of its shape that it spells only
+            // in part, which no call site records (DEC-163).
+            let mut caveat = risky.clone();
+            if let Some(shape) = unread_calls
+                .iter()
+                .find(|shape| crate::core::shape_matches(shape, &def.name))
+            {
+                if !caveat.is_empty() {
+                    caveat.push_str(", ");
+                }
+                caveat.push_str(&format!("a string of code calls `{shape}`"));
+            }
+            defined.push((at.clone(), def, caveat));
         }
     }
 

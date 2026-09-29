@@ -10,5 +10,5 @@ card Widget.zz_nope status=no_such_method
 card Widget#zz_nope status=no_such_method
 card Widget#hidden? status=residue reason=add_flags
 card Bystander#helper_made status=no_such_method
-card Gadget#macro_made status=residue reason=my_macro
+card Gadget#macro_gadget status=residue reason=my_macro
 def app.rb:56:1 status=residue reason=orphan_made

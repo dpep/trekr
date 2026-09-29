@@ -222,6 +222,12 @@ struct Extractor<'a> {
     /// `mod.singleton_class.instance_eval do` — whose `define_method` is
     /// not this scope's.
     foreign_evals: usize,
+    /// Strings of code written in methods that interpolate only the
+    /// method's positional parameters, by the method's name: read again
+    /// where a class body in this file calls it with literal names (DEC-163).
+    string_macros: HashMap<String, Vec<StringMacro>>,
+    /// Methods read from such strings so far in this file (DEC-163).
+    expanded: usize,
     /// Block variables iterating a macro's splat (`attrs.each do |name|`):
     /// each is one of the names the caller hands it (DEC-162).
     handed_loops: Vec<(String, String)>,
@@ -259,6 +265,7 @@ impl Eval {
 
 /// A piece of a string of code: bytes of the file, or an interpolation of a
 /// local, maybe through one method that renders a name simply.
+#[derive(Clone)]
 enum Piece {
     Text {
         start: usize,
@@ -392,6 +399,8 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         loop_frames: Vec::new(),
         foreign_evals: 0,
         handed_loops: Vec::new(),
+        string_macros: HashMap::new(),
+        expanded: 0,
         string_methods: HashMap::new(),
         pending_shapes: Vec::new(),
     };
@@ -1400,6 +1409,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         // single largest miss on real Rails app code, where the class body is
         // most of the surface.
         self.record_call(node);
+        self.expand_macro(node);
         if consumed {
             return;
         }
@@ -2517,6 +2527,13 @@ impl<'pr> Extractor<'_> {
             }
             match spelled_code(arg) {
                 Some(code) => {
+                    if !class_side
+                        && self.evals.is_empty()
+                        && let Some(pieces) = code_pieces(&code)
+                        && let Some(handed) = self.handed_locals(&pieces)
+                    {
+                        self.keep_macro(&name, pieces, handed, None);
+                    }
                     let handed = self.handed();
                     let src = self.evals.last().map_or(self.src, |eval| &eval.src[..]);
                     for (singleton, shape) in string_defs(&code, src, &handed) {
@@ -2553,7 +2570,15 @@ impl<'pr> Extractor<'_> {
             }
             Some(r) => match const_name(&r) {
                 Some(written) => (self.sent_owner(&written), false),
-                None => return,
+                // Some other object's: nothing to mark, but the calls its
+                // text names by interpolation are not read either (DEC-163).
+                None => {
+                    if let Some(code) = spelled_code(arg) {
+                        let src = self.evals.last().map_or(self.src, |eval| &eval.src[..]);
+                        self.facts.unread_calls.extend(string_calls(&code, src));
+                    }
+                    return;
+                }
             },
             _ => return,
         };
@@ -2580,37 +2605,156 @@ impl<'pr> Extractor<'_> {
             self.mark_string(&unread, &first, at);
             return;
         };
-        let mut locals: Vec<&[u8]> = pieces
-            .iter()
-            .filter_map(|piece| match piece {
-                Piece::Local { name, .. } => Some(name.as_slice()),
-                Piece::Text { .. } => None,
-            })
-            .collect();
-        locals.dedup();
-        let Some(unstated) = self.read_code(&name, &pieces, UNSTATED, None) else {
+        let Some(mentions) = self.read_code(&name, &pieces, &[], None) else {
             self.mark_string(&unread, &first, at);
             return;
         };
-        if unstated.is_empty() {
+        if mentions.defs.is_empty() && mentions.calls.is_empty() {
             return;
         }
+        // A class method's string of its own parameters is a macro: read
+        // again where this file's class bodies call it (DEC-163).
+        if self.in_method_body()
+            && let Some(handed) = self.handed_locals(&pieces)
+        {
+            self.keep_macro(&name, pieces.clone(), handed, Some(mentions.clone()));
+        }
+        let locals = locals_of(&pieces);
         let values = match locals.as_slice() {
             [local] => self
                 .loop_values
                 .iter()
                 .rev()
-                .find(|(bound, _)| bound.as_bytes() == *local)
+                .find(|(bound, _)| bound.as_bytes() == local.as_slice())
                 .map(|(_, values)| values.clone()),
             _ => None,
         };
         let Some(values) = values else {
-            self.mark_string(&name, &first, at);
+            if !mentions.defs.is_empty() {
+                self.mark_string(&name, &first, at);
+            }
+            self.facts.unread_calls.extend(mentions.call_shapes);
             return;
         };
-        for value in values {
-            self.read_code(&name, &pieces, &value, Some(&unstated));
+        // A bound on what one string makes, so a loop of hundreds of names
+        // over hundreds of `def`s is marked rather than written out (DEC-164).
+        let making = values.len() * mentions.defs.len();
+        if making > EXPANDED_PER_STRING || self.expanded + making > EXPANDED_PER_FILE {
+            let by = format!("{name} of {making} methods, too many to read");
+            self.mark_string(&by, &first, at);
+            self.facts.unread_calls.extend(mentions.call_shapes);
+            return;
         }
+        self.expanded += making;
+        let local = locals[0].clone();
+        for value in values {
+            self.read_code(&name, &pieces, &[(local.clone(), value)], Some(&mentions));
+        }
+    }
+
+    /// Each local a string of code interpolates, as the positional parameter
+    /// of the method it is written in that hands it: `None` unless every one
+    /// is such a parameter (DEC-163).
+    fn handed_locals(&self, pieces: &[Piece]) -> Option<Vec<(Vec<u8>, usize)>> {
+        let frame = self.frames.last()?;
+        frame.method.as_ref()?;
+        locals_of(pieces)
+            .into_iter()
+            .map(|local| {
+                let template = &frame.handed.iter().find(|(p, _)| p.as_bytes() == local)?.1;
+                let k = template
+                    .strip_prefix('{')?
+                    .strip_suffix('}')?
+                    .parse()
+                    .ok()?;
+                Some((local, k))
+            })
+            .collect()
+    }
+
+    /// Keep a method's string of code to read at its callers (DEC-163).
+    fn keep_macro(
+        &mut self,
+        by: &str,
+        pieces: Vec<Piece>,
+        handed: Vec<(Vec<u8>, usize)>,
+        named: Option<Mentions>,
+    ) {
+        let Some(method) = self.frames.last().and_then(|f| f.method.clone()) else {
+            return;
+        };
+        self.string_macros
+            .entry(method)
+            .or_default()
+            .push(StringMacro {
+                by: by.to_string(),
+                pieces,
+                handed,
+                named,
+                scope: self.nesting.clone(),
+            });
+    }
+
+    /// A class body's call of a method this file keeps a string of code for,
+    /// handed literal names: the string read here, with them (DEC-163). A
+    /// class method is its own class's; a macro is reached from a class that
+    /// mixes in a module around it, or from `Module` and `Class`, which
+    /// every class is.
+    fn expand_macro(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        if !on_self(call) || !self.self_is_the_scope() || !self.evals.is_empty() {
+            return;
+        }
+        let Some(name) = method_name(call) else {
+            return;
+        };
+        let Some(macros) = self.string_macros.get(&name).cloned() else {
+            return;
+        };
+        let args: Vec<Option<String>> = arg_nodes(call)
+            .iter()
+            .filter(|arg| arg.as_keyword_hash_node().is_none())
+            .map(literal_name)
+            .collect();
+        for kept in macros {
+            let reached = match &kept.named {
+                Some(_) => kept.scope == self.nesting,
+                None => self.mixes_in_around(&kept.scope),
+            };
+            if !reached {
+                continue;
+            }
+            let bound: Option<Vec<(Vec<u8>, String)>> = kept
+                .handed
+                .iter()
+                .map(|(local, k)| Some((local.clone(), args.get(*k).cloned().flatten()?)))
+                .collect();
+            let Some(bound) = bound else {
+                continue;
+            };
+            let making = kept.named.as_ref().map_or(1, |named| named.defs.len());
+            if self.expanded + making > EXPANDED_PER_FILE {
+                return;
+            }
+            self.expanded += making;
+            self.read_code(&kept.by, &kept.pieces, &bound, kept.named.as_ref());
+        }
+    }
+
+    /// Does this scope mix in, in this file, a module around `scope` — or
+    /// is `scope` `Module` or `Class`, whose methods every class has?
+    fn mixes_in_around(&self, scope: &[String]) -> bool {
+        if matches!(scope, [only] if matches!(only.trim_start_matches("::"), "Module" | "Class")) {
+            return true;
+        }
+        self.facts.ancestry.iter().any(|edge| {
+            matches!(edge.relation, Relation::Include | Relation::Extend)
+                && edge.owner == self.nesting
+                && edge
+                    .target
+                    .rsplit("::")
+                    .next()
+                    .is_some_and(|last| scope.iter().any(|s| s.trim_start_matches("::") == last))
+        })
     }
 
     /// Mark a scope for a string of code it could not read whole: once per
@@ -2634,6 +2778,7 @@ impl<'pr> Extractor<'_> {
         via: Option<&str>,
     ) {
         let src = self.evals.last().map_or(self.src, |eval| &eval.src[..]);
+        self.facts.unread_calls.extend(string_calls(code, src));
         for (singleton, shape) in string_defs(code, src, &[]) {
             let maker = Maker {
                 by: by.to_string(),
@@ -2645,19 +2790,19 @@ impl<'pr> Extractor<'_> {
         }
     }
 
-    /// Read a string of code with `value` for every interpolation, in a
-    /// scope frame, keeping what it adds. With no `named`, that is whatever
-    /// does not mention the value, and the answer is where the `def`s it
-    /// named were; with `named`, only the `def`s at those places. `None` when
-    /// the rendered code does not parse cleanly.
+    /// Read a string of code with each local's value (the stand-in for any
+    /// not `bound`), in a scope frame, keeping what it adds. With no `named`,
+    /// that is whatever does not mention the stand-in, and the answer is where
+    /// what does is; with `named`, only the `def`s and calls at those places:
+    /// a value's own. `None` when the rendered code does not parse cleanly.
     fn read_code(
         &mut self,
         evaluator: &str,
         pieces: &[Piece],
-        value: &str,
-        named: Option<&HashSet<Pos>>,
-    ) -> Option<HashSet<Pos>> {
-        let eval = render(pieces, value, self.src);
+        bound: &[(Vec<u8>, String)],
+        named: Option<&Mentions>,
+    ) -> Option<Mentions> {
+        let eval = render(pieces, &Values { bound }, self.src);
         // Parsed from its own copy: the nodes borrow it while `eval`, with
         // the offsets they report, sits on the stack.
         let code = eval.src.clone();
@@ -2671,6 +2816,7 @@ impl<'pr> Extractor<'_> {
             self.facts.const_refs.len(),
             self.facts.assigns.len(),
             self.facts.ancestry.len(),
+            self.facts.body_calls.len(),
         );
         self.evals.push(eval);
         self.enter(None, Opens::Scope);
@@ -2679,7 +2825,8 @@ impl<'pr> Extractor<'_> {
         self.evals.pop();
 
         let facts = &mut self.facts;
-        let mut unstated = HashSet::new();
+        let mut mentions = Mentions::default();
+        facts.body_calls.truncate(before.5);
         let added = facts.defs.split_off(before.0);
         for mut def in added {
             // Its body is here, written in a string: the string's evaluator
@@ -2687,46 +2834,57 @@ impl<'pr> Extractor<'_> {
             if def.kind == Kind::Method && def.via.is_none() {
                 def.via = Some(evaluator.to_string());
             }
-            let spelled = mentions(&def.name, UNSTATED);
+            let spelled = mentions_unstated(&def.name);
             if spelled {
-                unstated.insert(def.pos);
+                mentions.defs.insert(def.pos);
             }
             let keep = match named {
                 None => !spelled,
-                Some(named) => named.contains(&def.pos),
+                Some(named) => named.defs.contains(&def.pos),
             };
             if keep {
                 facts.defs.push(def);
             }
         }
+        let tail = facts.calls.split_off(before.1);
+        for call in tail {
+            let spelled = mentions_unstated(&call.name)
+                || call.recv_text.as_deref().is_some_and(mentions_unstated);
+            if spelled {
+                mentions.calls.insert(call.pos);
+                let shape = unstated_shape(&call.name);
+                if spells_enough(&shape) {
+                    mentions.call_shapes.push(shape);
+                }
+            }
+            let keep = match named {
+                None => !spelled,
+                // A call a value names, with its name spelled now (DEC-163).
+                Some(named) => named.calls.contains(&call.pos) && !spelled,
+            };
+            if keep {
+                facts.calls.push(call);
+            }
+        }
         if named.is_some() {
-            facts.calls.truncate(before.1);
             facts.const_refs.truncate(before.2);
             facts.assigns.truncate(before.3);
             facts.ancestry.truncate(before.4);
-            return Some(unstated);
+            return Some(mentions);
         }
-        let tail = facts.calls.split_off(before.1);
-        facts.calls.extend(tail.into_iter().filter(|call| {
-            !mentions(&call.name, UNSTATED)
-                && !call
-                    .recv_text
-                    .as_deref()
-                    .is_some_and(|text| mentions(text, UNSTATED))
-        }));
         let tail = facts.const_refs.split_off(before.2);
         facts
             .const_refs
-            .extend(tail.into_iter().filter(|r| !mentions(&r.name, UNSTATED)));
+            .extend(tail.into_iter().filter(|r| !mentions_unstated(&r.name)));
         let tail = facts.assigns.split_off(before.3);
         facts
             .assigns
-            .extend(tail.into_iter().filter(|a| !mentions(&a.target, UNSTATED)));
+            .extend(tail.into_iter().filter(|a| !mentions_unstated(&a.target)));
         let tail = facts.ancestry.split_off(before.4);
         facts
             .ancestry
-            .extend(tail.into_iter().filter(|a| !mentions(&a.target, UNSTATED)));
-        Some(unstated)
+            .extend(tail.into_iter().filter(|a| !mentions_unstated(&a.target)));
+        Some(mentions)
     }
 
     /// Say that this scope defines methods whose names the source does not
@@ -4704,6 +4862,64 @@ fn spelled_code(arg: Node<'_>) -> Option<Node<'_>> {
         .then_some(inner)
 }
 
+/// A string of code's text, with `*` for each interpolation.
+fn starred_text(code: &Node<'_>, src: &[u8]) -> String {
+    let raw = |at: ruby_prism::Location<'_>| {
+        String::from_utf8_lossy(&src[at.start_offset()..at.end_offset().min(src.len())])
+            .into_owned()
+    };
+    let mut text = String::new();
+    if let Some(string) = code.as_string_node() {
+        text = raw(string.content_loc());
+    } else if let Some(string) = code.as_interpolated_string_node() {
+        for part in string.parts().iter() {
+            match part.as_string_node() {
+                Some(_) => text.push_str(&raw(part.location())),
+                None => text.push('*'),
+            }
+        }
+    }
+    text
+}
+
+/// The names a string of code calls that an interpolation spells part of —
+/// `assign_nested_attributes_for_*_association` — as shapes: not `def`s,
+/// symbols or variables (DEC-163).
+fn string_calls(code: &Node<'_>, src: &[u8]) -> Vec<String> {
+    let text = starred_text(code, src);
+    let bytes = text.as_bytes();
+    let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b == b'*';
+    let mut shapes: Vec<String> = Vec::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        if !word(bytes[at]) {
+            at += 1;
+            continue;
+        }
+        let start = at;
+        while at < bytes.len() && word(bytes[at]) {
+            at += 1;
+        }
+        if at < bytes.len() && matches!(bytes[at], b'?' | b'!') {
+            at += 1;
+        }
+        let token = &text[start..at];
+        let before = text[..start].trim_end();
+        let named = token.contains('*')
+            && spells_enough(token)
+            && !token.starts_with(|c: char| c.is_ascii_digit() || c.is_ascii_uppercase())
+            && !before.ends_with("def")
+            && !before.ends_with("def self.")
+            && !before.ends_with(':')
+            && !before.ends_with('@')
+            && !before.ends_with('$');
+        if named && !shapes.iter().any(|s| s == token) {
+            shapes.push(token.to_string());
+        }
+    }
+    shapes
+}
+
 /// What a string of code defines, by its text with `*` for each
 /// interpolation: the side and shape of each `def`. One unshaped entry for
 /// either side when the text may make methods some other way, or spells no
@@ -4774,8 +4990,70 @@ fn string_defs(
     if defs.is_empty() { anything } else { defs }
 }
 
-/// The code a string of pieces evaluates, with `value` for each local.
-fn render(pieces: &[Piece], value: &str, file: &[u8]) -> Eval {
+/// What each local of a string of code is while it is read: a name for some,
+/// and the stand-in for the rest.
+struct Values<'v> {
+    bound: &'v [(Vec<u8>, String)],
+}
+
+impl Values<'_> {
+    fn of(&self, local: &[u8]) -> &str {
+        self.bound
+            .iter()
+            .find(|(name, _)| name == local)
+            .map_or(UNSTATED, |(_, value)| value.as_str())
+    }
+}
+
+/// A string of code a method evaluates on `self`, kept to be read where a
+/// class body in the same file calls the method with literal names (DEC-163).
+#[derive(Clone)]
+struct StringMacro {
+    by: String,
+    pieces: Vec<Piece>,
+    /// Each local the string interpolates, and which positional argument
+    /// hands it.
+    handed: Vec<(Vec<u8>, usize)>,
+    /// What depends on the values, from the read where it is written: a
+    /// class method's string has been read there, and only this is read
+    /// again. `None` for a macro's, read whole at each caller.
+    named: Option<Mentions>,
+    /// The scope the method is written in.
+    scope: Vec<String>,
+}
+
+/// How many methods one string of code may make, over all the values it is
+/// read with, before it is marked instead (DEC-164).
+const EXPANDED_PER_STRING: usize = 2_000;
+
+/// How many methods strings of code may make in one file (DEC-164).
+const EXPANDED_PER_FILE: usize = 20_000;
+
+/// Where a read of a string of code found what depends on its values: the
+/// `def`s and the calls that mention one, read again per value (DEC-132,
+/// DEC-163), and the shapes of those calls' names.
+#[derive(Clone, Default)]
+struct Mentions {
+    defs: HashSet<Pos>,
+    calls: HashSet<Pos>,
+    call_shapes: Vec<String>,
+}
+
+/// The locals a string of code interpolates, each once.
+fn locals_of(pieces: &[Piece]) -> Vec<Vec<u8>> {
+    let mut locals: Vec<Vec<u8>> = Vec::new();
+    for piece in pieces {
+        if let Piece::Local { name, .. } = piece
+            && !locals.contains(name)
+        {
+            locals.push(name.clone());
+        }
+    }
+    locals
+}
+
+/// The code a string of pieces evaluates, with each local's value.
+fn render(pieces: &[Piece], values: &Values, file: &[u8]) -> Eval {
     let mut eval = Eval {
         src: Vec::new(),
         pieces: Vec::new(),
@@ -4787,8 +5065,9 @@ fn render(pieces: &[Piece], value: &str, file: &[u8]) -> Eval {
                 eval.pieces.push((start, *from, true));
                 eval.src.extend_from_slice(&file[*from..*end]);
             }
-            Piece::Local { render, at, .. } => {
+            Piece::Local { name, render, at } => {
                 eval.pieces.push((start, *at, false));
+                let value = values.of(name);
                 let shown = match render.as_deref() {
                     Some("upcase") => value.to_uppercase(),
                     Some("downcase") => value.to_lowercase(),
@@ -4822,8 +5101,33 @@ fn made_by_new(body: &Node<'_>) -> Option<String> {
 }
 
 /// Does a name or text a string of code produced spell the stand-in?
-fn mentions(text: &str, unstated: &str) -> bool {
-    text.to_ascii_lowercase().contains(unstated)
+fn mentions_unstated(text: &str) -> bool {
+    text.to_ascii_lowercase().contains(UNSTATED)
+}
+
+/// Does a shape spell enough of a name to pick out a few methods? `*` or
+/// `*!` would caveat every method in a file.
+fn spells_enough(shape: &str) -> bool {
+    shape
+        .chars()
+        .filter(|c| c.is_alphanumeric() || *c == '_')
+        .count()
+        >= 3
+}
+
+/// A name with the stand-in, in any case, as `*`: the shape of a call a
+/// value names.
+fn unstated_shape(name: &str) -> String {
+    let lower = name.to_ascii_lowercase();
+    let mut shape = String::new();
+    let mut rest = 0;
+    while let Some(at) = lower[rest..].find(UNSTATED) {
+        shape.push_str(&name[rest..rest + at]);
+        shape.push('*');
+        rest += at + UNSTATED.len();
+    }
+    shape.push_str(&name[rest..]);
+    shape
 }
 
 /// The name of a block's one required parameter, when that is all it takes.
@@ -5541,6 +5845,25 @@ mod macro_call_tests {
             .filter(|edge| edge.relation == Relation::Dynamic)
             .map(|edge| edge.target.as_str())
             .collect()
+    }
+
+    /// A loop that would write out more methods than a string may make is
+    /// marked instead, saying how many (DEC-164).
+    #[test]
+    fn a_string_that_would_make_too_many_methods_is_marked() {
+        let names: Vec<String> = (0..50).map(|i| format!(":n{i}")).collect();
+        let defs: String = (0..50).map(|i| format!("def #{{n}}_{i}; end\n")).collect();
+        let source = format!(
+            "class C\n  [{}].each do |n|\n    class_eval <<~RUBY\n{defs}    RUBY\n  end\nend\n",
+            names.join(", ")
+        );
+        let facts = extract(source.as_bytes());
+        assert!(facts.defs.iter().all(|d| d.kind != Kind::Method));
+        assert!(
+            marks(&facts)
+                .iter()
+                .any(|m| m.starts_with("class_eval of 2500 methods, too many to read"))
+        );
     }
 
     /// A local built from a loop's variable names each value too, and a

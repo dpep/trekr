@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Upgrading drops and rebuilds the index** (store v42): run `trekr --index`
+- **Upgrading drops and rebuilds the index** (store v43): run `trekr --index`
   once per checkout.
 
 ### Changed
@@ -44,6 +44,19 @@
   is now marked for the names its call hands the macro (`add_reader :color`
   hedges `color`), and a name defined nowhere that the call's own file may
   make says so (DEC-162).
+
+- **A string of code is read with the names it is handed.** Where a class
+  body calls, with literal names, a method in the same file whose
+  `class_eval` string interpolates its parameters (`add_helper :color`,
+  `make :fast`), the string is read there: `Widget#color_helper` is a method
+  of `Widget`. A call the string names by interpolating a loop's value
+  (`helper_#{n}`) is a call of each value's name, so `--refs` and `--dead`
+  count it; one no value fills gives `--dead` a caveat on the methods of
+  its shape (DEC-163).
+
+- **A string of code that would make more than 2,000 methods is marked
+  instead of written out** (20,000 per file), and the reason says how many:
+  300 names over 1,000 `def`s took 7 s to index (DEC-164).
 
 - **`--refs` counts a call whose receiver is typed as an ancestor.** A
   `sig`'s parameter or return, a finder's result, a `rescue`'s class, or the

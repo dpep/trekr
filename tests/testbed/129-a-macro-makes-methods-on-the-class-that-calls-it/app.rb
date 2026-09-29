@@ -45,7 +45,7 @@ end
 
 class Module
   def my_macro
-    module_eval "def macro_made; end"
+    module_eval "def macro_#{name.downcase}; end"
   end
 end
 

@@ -6349,3 +6349,70 @@ class method is not a body call. Reading the macro's string at each caller,
 with the names substituted, is DEC-163's, and only where both are in one
 file.
 
+## DEC-163 — A string of code is read with the names it is handed, and its calls with them
+
+**Decided.** Two readings of DEC-132 widen.
+
+- **A value names calls as it names `def`s.** A call in a `class_eval`
+  string whose name or receiver interpolates the loop's value
+  (`helper_#{n}`, `run_#{kind}`) is read once per value, as the `def`s that
+  interpolate it are: it is that value's call. What mentions no value is
+  still read once.
+- **A method's string is read where a class body hands it names.** A string
+  of code in a method that interpolates only the method's positional
+  parameters, or none, is kept; where a class or module body in the same
+  file calls the method on itself with literal names, the string is read
+  there as that class's code, with the names in place. A class method's is
+  its own class's (`make :fast` in the class that defines `self.make`),
+  whose value-free code was already read where it is written, so only what
+  depends on the names is read again. A macro's (DEC-162) is read whole, in
+  a class that includes or extends, in this file, a module around the
+  macro, or anywhere when the macro is `Module`'s or `Class`'s.
+- **What stays unread says so.** A call named by an interpolation no value
+  fills — a string no caller in the file hands names, one sent to another
+  object (`generated_association_methods.module_eval`), one that cannot be
+  read — is recorded by its shape (`assign_nested_attributes_for_*_association`),
+  and `--dead` gives each method of that shape in the file the caveat "a
+  string of code calls `…`".
+
+**Why.** The 0.8.0 hunt: `--refs V#helper_alpha` resolved with no sites, and
+`--dead` called it unreferenced without a caveat, where `%w[alpha beta].each
+{ |n| class_eval "def #{n}_x; helper_#{n}; end" }` calls it. And Rails' macro
+shape, `add_helper :color` over `class_eval <<~RUBY def #{name}_helper`, left
+`Widget#color_helper` unread when both are in one file.
+
+**Measured.** Every gold verdict, the 21,154 clicks and both card sweeps
+unchanged. The rails `--refs` queries gain three sites, each a call a loop's
+value names: activesupport's `SafeBuffer` writes `to_str.#{unsafe_method}`
+per method, now a confirmed `String#downcase` and `String#strip`, and a
+`CommandRecorder` string's `execute` symbol is possible. `--dead`:
+`Relation#insert!` and `#upsert` move from unreferenced to super-only in
+rails and activerecord, reached by `super` from the `def #{method}` that
+`AssociationRelation` writes per name; `assign_nested_attributes_for_one_to_one_association`
+and `…_collection_association` keep their tier and gain the caveat. A
+shape must spell three name characters: `*` alone, as `to_str.#{m}` leaves
+where no value fills it, caveated 51 activerecord methods.
+
+**Not done.** A macro in another file is marked (DEC-162), not read: its
+string would have to be stored, and rendered by the tree. A subclass calling
+its parent's class method, and a call in `included do`, are not read here.
+
+## DEC-164 — One string makes at most 2,000 methods, a file 20,000
+
+**Decided.** Before a string of code is read once per value, the methods it
+would make — values times the `def`s that name one — are counted. Over 2,000
+for the string, or past 20,000 for the file with what was read before it,
+the string is not written out: its scope is marked (DEC-130) with the count,
+`class_eval of 300000 methods, too many to read`, shaped by its `def`s
+(DEC-160), and its value-free code is still read once. A macro read at its
+callers (DEC-163) counts toward the file's bound.
+
+**Why.** The hunt's stress case, 300 names over a string of 1,000 `def`s,
+wrote 300,001 methods: 7.3 s to index and 5–6 s hovers, for a shape no real
+codebase needs spelled out, and the answer about any one of them is the
+same hedge.
+
+**Measured.** The stress case (300 × 1,000 `def`s each calling `helper`)
+indexes and answers three queries in 0.56 s, from 1.34 s; `Huge#n5_7` is
+residue naming the marker, `--refs Huge#helper` still finds the 1,000 calls.
+
