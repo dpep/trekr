@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Upgrading drops and rebuilds the index** (store v50): run `trekr --index`
+- **Upgrading drops and rebuilds the index** (store v51): run `trekr --index`
   once per checkout. The first index on each Ruby also reads its standard
   library once — 179 files for Ruby 3.4 — and its `rbs` gem's signatures,
   shared by every app on that Ruby.
