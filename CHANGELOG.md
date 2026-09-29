@@ -310,6 +310,11 @@
 
 ### Fixed
 
+- **Text output says a little more.** A gem list cut short in `--index`
+  ends "(--json lists all)"; `--index` says how many files repeat another's
+  bytes when there are fewer blobs than files; and `--refs Owner#method
+  --include-excluded` always prints its tally, "0 excluded" included.
+
 - **A Gemfile's git gem is no longer dropped without a lockfile.** `gem
   "rack", github: "rack/rack"` in a checkout with no `Gemfile.lock` was in
   none of `missing`, `unlocated` or `picked`. It is now the one checkout of

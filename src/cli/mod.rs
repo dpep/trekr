@@ -1487,10 +1487,22 @@ fn cmd_index(
         .unwrap_or_default();
     match out {
         Output::Text => println!(
-            "indexed {within}{} — {} files, {} blobs, {} parsed ({} defs, {} refs, {} calls)",
+            "indexed {within}{} — {} files, {} blobs{}, {} parsed ({} defs, {} refs, {} calls)",
             paths::pretty(&root_str),
             counts.files,
             counts.blobs,
+            // A blob is content: files with the same bytes share one.
+            match counts.files.saturating_sub(counts.blobs) {
+                0 => String::new(),
+                n => format!(
+                    " ({n} {} another's bytes)",
+                    if n == 1 {
+                        "file repeats"
+                    } else {
+                        "files repeat"
+                    }
+                ),
+            },
             counts.parsed,
             counts.defs,
             counts.refs,
@@ -1682,7 +1694,7 @@ fn abridged(gems: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     if let Some(more) = gems.len().checked_sub(SHOWN).filter(|n| *n > 0) {
-        out.push_str(&format!(", and {more} more"));
+        out.push_str(&format!(", and {more} more (--json lists all)"));
     }
     out
 }
@@ -2531,7 +2543,7 @@ fn cmd_refs(
     // The number a grep cannot produce, said out loud — a zero included,
     // since "nothing ruled out" is a finding too. An answer that lists no
     // site has already said why.
-    if !found.is_empty() || reason.is_none() {
+    if !found.is_empty() || reason.is_none() || include_excluded {
         println!(
             "\n{} confirmed, {} possible, {} excluded of {} same-name call sites",
             counts.confirmed,
@@ -4337,6 +4349,13 @@ mod tests {
             let want = serde_json::to_string_pretty(&serde_json::to_value(rows).unwrap()).unwrap();
             assert_eq!(String::from_utf8(got).unwrap(), format!("{want}\n"));
         }
+    }
+
+    #[test]
+    fn a_cut_list_says_where_the_rest_is() {
+        let gems: Vec<String> = (0..8).map(|i| format!("g{i} 1.0")).collect();
+        assert!(abridged(&gems).ends_with("and 2 more (--json lists all)"));
+        assert!(!abridged(&gems[..6]).contains("more"));
     }
 
     #[test]

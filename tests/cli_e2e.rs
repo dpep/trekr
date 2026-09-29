@@ -177,6 +177,16 @@ fn indexes_reports_and_outlines_through_the_cli() {
     );
     let whole = stdout(&trekr(&db, &dir, &["--index", "--no-gems"]));
     assert!(!whole.contains("containing"), "{whole}");
+    assert!(!whole.contains("repeat"), "{whole}");
+    // Two files with the same bytes are one blob, and text says why.
+    fs::copy(dir.join("widget.rb"), dir.join("copy.rb")).unwrap();
+    let copied = stdout(&trekr(&db, &dir, &["--index", "--no-gems"]));
+    assert!(
+        copied.contains("2 files, 1 blobs (1 file repeats another's bytes)"),
+        "{copied}"
+    );
+    fs::remove_file(dir.join("copy.rb")).unwrap();
+    trekr(&db, &dir, &["--index", "--no-gems"]);
 
     let status = json(&trekr(&db, &dir, &["--status", "--json"]));
     assert_eq!(status["checkouts"][0]["files"], 1);
