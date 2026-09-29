@@ -8378,3 +8378,35 @@ Hashing the files' content would be exact but reads a thousand files on
 every index, a no-op one included; a reinstall rewrites all three of these.
 `gem pristine` rewrites the gemspec too, so it costs one re-read (~130 ms),
 which is the right answer anyway.
+
+## DEC-274 — Core's files are the store's own, and go when its signatures do
+
+Amends DEC-240's "beside the database".
+
+**Decided.** Each Ruby's core files are written under a directory of the
+store's own — `trekr.db` → `trekr.core/rbs-3.8.0-<key>/` — as its tree
+snapshots are (`trekr.trees/`), rather than a `core/` shared by every store
+in the directory. What goes:
+
+- *A Ruby's signatures* once no stdlib is served with them: `--gc` drops the
+  `rbs` rows no `rbs_use` names — a collected stdlib's, whose `rbs_use` went
+  with its checkout — and reports them as `signatures`.
+- *Their files*: `--gc` removes each `rbs-*` directory under the store's own
+  whose signatures the store no longer holds (`core_files`: files and
+  bytes, dry run included), and so does the first open after an upgrade,
+  which drops every row.
+- *What earlier builds left beside the store*: 0.8.0's flat `core/String.rb`…,
+  a dev build's `core/stdlib/` and `core/rbs-*`, `core/RSpec.rb`, and
+  `core.rb`, on upgrade and by `--gc` — only in a `core/` whose `RSpec.rb` is
+  trekr's, and a `core.rb` that is trekr's old stub, since a store may sit
+  beside anything named `core`.
+
+**Why.** The hunt: 0.8.0's flat files were never removed on upgrade (only
+`core.rb` was), and neither `rbs-*` directories nor `rbs` rows were ever
+collected. A shared `core/` makes collecting them unsafe: which directories
+are live is one store's answer, and a second store beside it — every e2e
+test's, in the temp directory — would have its live files swept. The
+directory per store is what makes "not in this store" mean "garbage".
+
+**Cost.** A path in answers moves (`<db dir>/core/rbs-…` → `trekr.core/rbs-…`);
+it never shipped, since 0.8.0 wrote the flat layout.

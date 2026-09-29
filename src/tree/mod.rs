@@ -4245,8 +4245,8 @@ mod singleton_tests {
 }
 
 pub(crate) use corelib::{
-    file_of as core_file_of, is_core, is_rspec_stub, is_stdlib_stub,
-    materialize as materialize_core,
+    dir_name as core_dir_name, file_of as core_file_of, is_core, is_rspec_stub, is_stdlib_stub,
+    materialize as materialize_core, sweep as sweep_core, sweep_legacy as sweep_legacy_core,
 };
 
 /// Tapioca writes one `.rbi` per model describing the methods Rails generates

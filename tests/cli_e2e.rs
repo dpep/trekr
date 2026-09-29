@@ -8,22 +8,18 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 /// A scratch repo and database for one test, cleaned before use so a crashed
-/// prior run cannot poison this one.
+/// prior run cannot poison this one. The database is in a directory of its
+/// own: what is written beside a store — its tree snapshots, core's files,
+/// usage counts, an earlier build's leftovers — is that store's alone.
 fn scratch(label: &str) -> (PathBuf, PathBuf) {
     let base = std::env::temp_dir();
     let dir = base.join(format!("trekr-e2e-{}-{label}", std::process::id()));
-    let db = base.join(format!("trekr-e2e-{}-{label}.db", std::process::id()));
+    let store = base.join(format!("trekr-e2e-{}-{label}.store", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
-    for suffix in ["", "-wal", "-shm"] {
-        let _ = fs::remove_file(format!("{}{suffix}", db.display()));
-    }
-    let _ = fs::remove_dir_all(db.with_extension("trees"));
-    // The usage counts beside the store outlive a run, and a later run that
-    // reuses the process id would read them as its own.
-    let _ = fs::remove_file(db.with_extension("usage.db"));
+    let _ = fs::remove_dir_all(&store);
     fs::create_dir_all(&dir).unwrap();
     fs::write(dir.join(".ruby-version"), "9.8.7\n").unwrap();
-    (dir, db)
+    (dir, store.join("trekr.db"))
 }
 
 const SUITE: &str = "e2e";
@@ -1063,7 +1059,7 @@ fn a_core_definition_is_a_file_that_exists() {
     assert!(stub.contains("def upcase"), "{stub}");
     let text = stdout(&trekr(&db, &dir, &["--def", "use.rb:1:5"]));
     assert!(
-        root.contains("/core/rbs-"),
+        root.contains(".core/rbs-"),
         "one directory per Ruby's signatures: {root}"
     );
     assert!(text.contains("/String.rb:"), "{text}");
@@ -3063,12 +3059,121 @@ fn count(db: &Path, sql: &str) -> i64 {
 /// A store an older trekr left: a schema this one does not speak.
 fn old_store(db: &Path) {
     reset(db);
+    fs::create_dir_all(db.parent().unwrap()).unwrap();
     rusqlite::Connection::open(db)
         .unwrap()
         .execute_batch(
             "PRAGMA journal_mode=WAL; CREATE TABLE checkout (x); PRAGMA user_version = 1;",
         )
         .unwrap();
+}
+
+/// An upgrade drops every Ruby's signatures, so their core files go with
+/// them, and so does what a build before a core directory per store wrote
+/// beside it — but only a `core/` trekr wrote (DEC-274).
+#[test]
+fn an_upgrade_removes_the_core_files_earlier_builds_left() {
+    let (dir, _) = scratch("core-upgrade");
+    repo(&dir);
+    let (store, _) = scratch("core-upgrade-store");
+    let db = store.join("trekr.db");
+    let rspec = include_str!("../src/tree/rspec.rb");
+    let legacy = store.join("core");
+    for (path, text) in [
+        ("RSpec.rb", rspec),
+        ("String.rb", "class String\nend\n"),
+        ("stdlib/Pathname.rb", "class Pathname\nend\n"),
+        ("rbs-9.9.9-deadbeef/String.rb", "class String\nend\n"),
+    ] {
+        fs::create_dir_all(legacy.join(path).parent().unwrap()).unwrap();
+        fs::write(legacy.join(path), text).unwrap();
+    }
+    let stale = store.join("trekr.core/rbs-9.9.9-0badcafe/String.rb");
+    fs::create_dir_all(stale.parent().unwrap()).unwrap();
+    fs::write(&stale, "class String\nend\n").unwrap();
+    // Someone else's `core/`, beside a store of its own: never trekr's.
+    let (other, _) = scratch("core-upgrade-other");
+    let theirs = other.join("core/String.rb");
+    fs::create_dir_all(theirs.parent().unwrap()).unwrap();
+    fs::write(&theirs, "class String\nend\n").unwrap();
+
+    for db in [&db, &other.join("trekr.db")] {
+        old_store(db);
+        assert!(trekr(db, &dir, &["--status"]).status.code().is_some());
+    }
+    assert!(!legacy.exists(), "0.8.0's flat core directory is gone");
+    assert!(!stale.exists(), "a Ruby's files the upgrade dropped");
+    assert!(theirs.exists(), "a core/ trekr did not write stays");
+
+    for dir in [&dir, &store, &other] {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+/// `--gc` drops the signatures of a stdlib it collects, and each Ruby's core
+/// files no signatures in the store are served from (DEC-274).
+#[test]
+fn gc_collects_a_rubys_signatures_and_core_files() {
+    let (dir, db) = scratch("gc-core");
+    repo(&dir);
+    fs::write(dir.join("use.rb"), "\"a\".upcase\n").unwrap();
+    let (home, _) = scratch("gc-core-home");
+    fake_ruby(&home, "9.8.7", &[], &[]);
+    fake_ruby(&home, "9.7.1", &[], &[]);
+    let env = [("HOME", home.to_str().unwrap())];
+    let core_dirs = || {
+        let mut names: Vec<String> = fs::read_dir(db.with_extension("core"))
+            .map(|d| {
+                d.flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .filter(|n| n.starts_with("rbs-"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        names.sort();
+        names
+    };
+    for version in ["9.8.7", "9.7.1"] {
+        fs::write(dir.join(".ruby-version"), format!("{version}\n")).unwrap();
+        trekr_env(&db, &dir, &["--index"], &env);
+        trekr_env(&db, &dir, &["--def", "use.rb:1:5"], &env);
+    }
+    assert_eq!(core_dirs().len(), 2, "one per Ruby read: {:?}", core_dirs());
+
+    let dry = json(&trekr_env(
+        &db,
+        &dir,
+        &["--gc", "--older-than", "0", "--dry-run", "--json"],
+        &env,
+    ));
+    assert_eq!(dry["signatures"], 1, "{dry}");
+    assert!(dry["core_files"]["files"].as_u64().unwrap() > 0, "{dry}");
+    assert_eq!(core_dirs().len(), 2, "a dry run removes nothing");
+    let done = json(&trekr_env(
+        &db,
+        &dir,
+        &["--gc", "--older-than", "0", "--json"],
+        &env,
+    ));
+    assert_eq!(done["signatures"], 1, "{done}");
+    assert_eq!(core_dirs().len(), 1, "{done}");
+    let upcase = json(&trekr_env(
+        &db,
+        &dir,
+        &["--def", "use.rb:1:5", "--json"],
+        &env,
+    ));
+    assert_eq!(upcase["owner"], "String", "the Ruby in use keeps its core");
+    let again = trekr_env(&db, &dir, &["--gc", "--older-than", "0", "--json"], &env);
+    assert_eq!(
+        again.status.code(),
+        Some(1),
+        "nothing left: {}",
+        stdout(&again)
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&home);
 }
 
 #[test]

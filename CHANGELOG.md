@@ -69,7 +69,10 @@
   `gems.stdlib.rbs` (`version`, `path`, `chosen` — `bundled`, `installed` or
   `other` — and `read`), `null` with none, and
   `--status` per checkout; core's files are written under
-  `<db dir>/core/rbs-<version>-<key>/` (DEC-240).
+  `trekr.core/rbs-<version>-<key>/` beside the database (DEC-240, DEC-274).
+  The upgrade removes 0.8.0's `core/` directory there, and `--gc` removes a
+  Ruby's signatures once no checkout runs on it, with its core files
+  (`signatures`, `core_files` in `--json`).
 
 - **The rbs bundled with a Ruby stays its choice after gem maintenance.**
   `gem update --system` or `gem pristine rbs` no longer flips it to a later

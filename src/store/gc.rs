@@ -24,6 +24,12 @@ pub(crate) struct Garbage {
     /// Pages the deletion returned to SQLite's free list, which later writes
     /// reuse. The file itself shrinks only on `--vacuum`.
     pub(crate) reclaimed_bytes: i64,
+    /// A Ruby's signatures no surviving stdlib is served with (DEC-274).
+    pub(crate) signatures: usize,
+    /// The core directories the surviving signatures are written under, for
+    /// the sweep of the files beside the store.
+    #[serde(skip)]
+    pub(crate) core_dirs: HashSet<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -113,6 +119,12 @@ impl Store {
 
         let mut garbage = Garbage::default();
         if doomed.is_empty() {
+            garbage.signatures = unserved_signatures(&tx)?;
+            garbage.core_dirs = core_dirs(&tx)?;
+            match dry_run {
+                true => tx.rollback()?,
+                false => tx.commit()?,
+            }
             return Ok(garbage);
         }
 
@@ -152,6 +164,8 @@ impl Store {
         }
         garbage.blobs = tx.execute("DELETE FROM blob WHERE id IN (SELECT id FROM gc_blob)", [])?;
         tx.execute_batch("DROP TABLE gc_blob")?;
+        garbage.signatures = unserved_signatures(&tx)?;
+        garbage.core_dirs = core_dirs(&tx)?;
         let free_after: i64 = tx.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
         garbage.reclaimed_bytes = (free_after - free_before).max(0) * page_size;
 
@@ -192,6 +206,26 @@ impl Store {
             |r| r.get(0),
         )
     }
+}
+
+/// Drop the signatures no stdlib is served with any more: a collected
+/// stdlib's, whose `rbs_use` went with it.
+fn unserved_signatures(tx: &rusqlite::Transaction) -> Result<usize> {
+    tx.execute(
+        "DELETE FROM rbs WHERE id NOT IN (SELECT rbs_id FROM rbs_use)",
+        [],
+    )
+}
+
+fn core_dirs(tx: &rusqlite::Transaction) -> Result<HashSet<String>> {
+    let mut stmt = tx.prepare("SELECT version, key FROM rbs")?;
+    stmt.query_map([], |r| {
+        Ok(crate::tree::core_dir_name(
+            &r.get::<_, String>(0)?,
+            &r.get::<_, String>(1)?,
+        ))
+    })?
+    .collect()
 }
 
 #[cfg(test)]

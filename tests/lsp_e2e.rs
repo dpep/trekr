@@ -8,18 +8,18 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
+/// A scratch repo, and a database in a directory of its own: what is written
+/// beside a store is that store's alone.
 fn scratch(label: &str) -> (PathBuf, PathBuf) {
     let base = std::env::temp_dir();
     let dir = base.join(format!("trekr-lsp-{}-{label}", std::process::id()));
-    let db = base.join(format!("trekr-lsp-{}-{label}.db", std::process::id()));
+    let store = base.join(format!("trekr-lsp-{}-{label}.store", std::process::id()));
     let _ = fs::remove_dir_all(&dir);
-    for suffix in ["", "-wal", "-shm"] {
-        let _ = fs::remove_file(format!("{}{suffix}", db.display()));
-    }
-    let _ = fs::remove_dir_all(db.with_extension("trees"));
+    let _ = fs::remove_dir_all(&store);
     fs::create_dir_all(&dir).unwrap();
+    fs::create_dir_all(&store).unwrap();
     fs::write(dir.join(".ruby-version"), "9.8.7\n").unwrap();
-    (dir, db)
+    (dir, store.join("trekr.db"))
 }
 
 const SUITE: &str = "lsp";
@@ -678,7 +678,7 @@ fn a_core_method_lands_on_a_readable_stub_rather_than_nothing() {
     let uri = locations[0]["uri"].as_str().unwrap();
     // A file named for the owner, so a peek list says whose method it is.
     assert!(
-        uri.contains("/core/rbs-") && uri.ends_with("/Kernel.rb"),
+        uri.contains(".core/rbs-") && uri.ends_with("/Kernel.rb"),
         "lands in Kernel's stub: {uri}"
     );
     let path = uri.strip_prefix("file://").unwrap();
@@ -2160,7 +2160,9 @@ fn the_binary() -> Vec<u8> {
 
 /// The database `scratch(label)` hands out, for a helper that kept it.
 fn scratch_db(label: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("trekr-lsp-{}-{label}.db", std::process::id()))
+    std::env::temp_dir()
+        .join(format!("trekr-lsp-{}-{label}.store", std::process::id()))
+        .join("trekr.db")
 }
 
 /// The first logged `event`, waiting for it to appear. An idle server looks at
@@ -3497,7 +3499,7 @@ fn a_core_directory_that_cannot_be_written_is_logged() {
     let home = dir.with_extension("store");
     let _ = fs::remove_dir_all(&home);
     fs::create_dir_all(&home).unwrap();
-    fs::write(home.join("core"), "not a directory").unwrap();
+    fs::write(home.join("t.core"), "not a directory").unwrap();
     let db = home.join("t.db");
     ruby_repo(&dir, &db, "class Widget\nend\n");
     let mut session = Session::start(&db, &dir);

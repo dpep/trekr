@@ -77,6 +77,97 @@ pub(crate) struct Stubs {
     sig_defs: OnceLock<HashMap<(String, bool, String), StubDef>>,
 }
 
+/// `rbs-3.8.0-1a2b3c4d`: the directory one Ruby's stubs are written under.
+pub(crate) fn dir_name(version: &str, key: &str) -> String {
+    format!("rbs-{version}-{}", &key[..key.len().min(8)])
+}
+
+/// Remove from a store's core directory each Ruby's directory whose
+/// signatures the store no longer holds (`live` names those it does).
+pub(crate) fn sweep(
+    dir: &Path,
+    live: &std::collections::HashSet<String>,
+    dry_run: bool,
+) -> super::files::Swept {
+    let mut swept = super::files::Swept::default();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if name.starts_with("rbs-")
+            && entry.file_type().is_ok_and(|t| t.is_dir())
+            && !live.contains(name)
+        {
+            remove(&entry.path(), &mut swept, dry_run);
+        }
+    }
+    swept
+}
+
+/// Remove what builds before a core directory per store wrote beside the
+/// store at `beside`: `core.rb`, and in `core/` 0.8.0's flat `String.rb`…,
+/// a later build's `stdlib/` and `rbs-*` directories, and `RSpec.rb` — the
+/// directory itself once empty. Only a `core/` whose `RSpec.rb` is trekr's
+/// is touched: the name is common, and the store may sit beside anything.
+pub(crate) fn sweep_legacy(beside: &Path, dry_run: bool) -> super::files::Swept {
+    let mut swept = super::files::Swept::default();
+    let single = beside.join("core.rb");
+    if std::fs::read_to_string(&single)
+        .is_ok_and(|text| text.starts_with("# Ruby's core library, as far as navigation cares"))
+    {
+        remove(&single, &mut swept, dry_run);
+    }
+    let dir = beside.join("core");
+    let ours = std::fs::read_to_string(dir.join(&rspec_file().name))
+        .is_ok_and(|text| text.lines().next() == rspec_file().text.lines().next());
+    if !ours {
+        return swept;
+    }
+    for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let is_dir = entry.file_type().is_ok_and(|t| t.is_dir());
+        let legacy = match is_dir {
+            true => name == "stdlib" || name.starts_with("rbs-"),
+            false => name.ends_with(".rb"),
+        };
+        if legacy {
+            remove(&entry.path(), &mut swept, dry_run);
+        }
+    }
+    if !dry_run {
+        let _ = std::fs::remove_dir(&dir);
+    }
+    swept
+}
+
+fn remove(path: &Path, swept: &mut super::files::Swept, dry_run: bool) {
+    let (files, bytes) = measure(path);
+    swept.files += files;
+    swept.bytes += bytes;
+    if !dry_run {
+        let _ = match path.is_dir() {
+            true => std::fs::remove_dir_all(path),
+            false => std::fs::remove_file(path),
+        };
+    }
+}
+
+/// Files and bytes under `path`.
+fn measure(path: &Path) -> (usize, u64) {
+    let Ok(meta) = std::fs::symlink_metadata(path) else {
+        return (0, 0);
+    };
+    if !meta.is_dir() {
+        return (1, meta.len());
+    }
+    std::fs::read_dir(path)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| measure(&entry.path()))
+        .fold((0, 0), |(f, b), (f2, b2)| (f + f2, b + b2))
+}
+
 /// Every set of stubs this process has served, by id, so a path handed out
 /// can be written to disk when something opens it.
 fn served() -> &'static Mutex<HashMap<String, Arc<Stubs>>> {
@@ -88,7 +179,7 @@ impl Stubs {
     /// The stubs a store row holds, shared with any tree that already
     /// served them in this process.
     pub(crate) fn from_row(row: crate::store::Rbs) -> Arc<Stubs> {
-        let id = format!("rbs-{}-{}", row.version, &row.key[..row.key.len().min(8)]);
+        let id = dir_name(&row.version, &row.key);
         let mut served = served()
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());

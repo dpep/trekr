@@ -3741,11 +3741,23 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
     )?;
     let gone: Vec<&str> = garbage.checkouts.iter().map(|c| c.repo.as_str()).collect();
     let snapshots = crate::tree::sweep_snapshots(&store, &gone, dry_run)?;
+    // Each Ruby's core files beside the store, and an earlier build's.
+    let db = crate::store::default_path()?;
+    let mut core =
+        crate::tree::sweep_core(&crate::store::core_dir_of(&db), &garbage.core_dirs, dry_run);
+    if let Some(beside) = db.parent() {
+        let legacy = crate::tree::sweep_legacy_core(beside, dry_run);
+        core.files += legacy.files;
+        core.bytes += legacy.bytes;
+    }
     if vacuum {
         store.vacuum()?;
     }
     let db_bytes = store.db_bytes()?;
-    let found = !garbage.checkouts.is_empty() || snapshots.files > 0;
+    let found = !garbage.checkouts.is_empty()
+        || snapshots.files > 0
+        || garbage.signatures > 0
+        || core.files > 0;
 
     if out != Output::Text {
         emit_json(
@@ -3759,6 +3771,8 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
                 "facts": garbage.facts,
                 "reclaimed_bytes": garbage.reclaimed_bytes,
                 "snapshots": snapshots,
+                "signatures": garbage.signatures,
+                "core_files": core,
                 "vacuumed": vacuum,
                 "db_bytes": db_bytes,
             }),
@@ -3798,6 +3812,15 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
             "{verb} {} tree snapshots no checkout's index names any more: {:.1} MB",
             snapshots.files,
             mb(snapshots.bytes as i64)
+        );
+    }
+    if garbage.signatures > 0 || core.files > 0 {
+        println!(
+            "{verb} {} Ruby signature sets no stdlib is served with, and {} core files beside \
+             the store: {:.1} MB of files",
+            garbage.signatures,
+            core.files,
+            mb(core.bytes as i64)
         );
     }
     if vacuum {

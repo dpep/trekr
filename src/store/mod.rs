@@ -113,24 +113,38 @@ pub(crate) fn default_path() -> anyhow::Result<std::path::PathBuf> {
 }
 
 /// Ruby core, written out beside the database as real readable files — one
-/// per owner, `core/rbs-3.8.0-…/String.rb` — and the directory they are in.
+/// per owner, `trekr.core/rbs-3.8.0-…/String.rb` — and the directory they
+/// are in.
 ///
 /// The stubs live in the store, so a definition in one had no location to
 /// point at and every `require` or `Array#each` answered nothing — worse than
 /// ruby-lsp, which at least sends you to an RBS declaration. Writing them out
 /// means "go to definition" lands on a signature a person can read, in a file
 /// whose name says whose it is. Each Ruby's go in a directory of their own
-/// (DEC-240).
+/// (DEC-240), in a directory of the store's own, as its tree snapshots are:
+/// which of them are stale is that store's to say (DEC-274).
 pub(crate) fn core_dir() -> anyhow::Result<std::path::PathBuf> {
-    let beside = default_path()?
-        .parent()
-        .unwrap_or(std::path::Path::new("."))
-        .to_path_buf();
-    let dir = beside.join("core");
+    let dir = core_dir_of(&default_path()?);
     crate::tree::materialize_core(&dir)?;
-    // The single file earlier builds wrote, which nothing points into now.
-    let _ = std::fs::remove_file(beside.join("core.rb"));
     Ok(dir)
+}
+
+/// `trekr.db` keeps its core files in `trekr.core/`.
+pub(crate) fn core_dir_of(db: &Path) -> std::path::PathBuf {
+    db.with_extension("core")
+}
+
+/// After an upgrade drops every signature row, each Ruby's directory of
+/// core files is stale, and so is whatever a build before a directory per
+/// store wrote beside it.
+fn sweep_core_after_upgrade(db: &Path, store: &Store) {
+    let Ok(live) = store.core_dir_names() else {
+        return;
+    };
+    crate::tree::sweep_core(&core_dir_of(db), &live, false);
+    if let Some(beside) = db.parent() {
+        crate::tree::sweep_legacy_core(beside, false);
+    }
 }
 
 /// The database every command uses.
@@ -177,7 +191,10 @@ pub(crate) fn untracked_memory() {
 
 impl Store {
     pub(crate) fn open(path: &Path) -> Result<Store> {
-        let mut store = Store::init(Connection::open(path)?)?;
+        let (mut store, upgraded) = Store::init(Connection::open(path)?)?;
+        if upgraded {
+            sweep_core_after_upgrade(path, &store);
+        }
         store.path = Some(path.to_path_buf());
         Ok(store)
     }
@@ -201,10 +218,11 @@ impl Store {
 
     #[cfg(test)]
     pub(crate) fn open_in_memory() -> Result<Store> {
-        Store::init(Connection::open_in_memory()?)
+        Ok(Store::init(Connection::open_in_memory()?)?.0)
     }
 
-    fn init(conn: Connection) -> Result<Store> {
+    /// The store, and whether this call rebuilt it from an older schema.
+    fn init(conn: Connection) -> Result<(Store, bool)> {
         // Before any other statement: switching to WAL and the migration below
         // both take locks, and without a handler a second process opening the
         // store at the same moment fails at once instead of waiting its turn.
@@ -224,10 +242,8 @@ impl Store {
             path: None,
             timing: WriteTiming::default(),
         };
-        if schema_version(&store.conn)? != schema::VERSION {
-            store.migrate()?;
-        }
-        Ok(store)
+        let upgraded = schema_version(&store.conn)? != schema::VERSION && store.migrate()?;
+        Ok((store, upgraded))
     }
 
     /// Bring the schema to this binary's, as one transaction (DEC-079).
@@ -236,7 +252,9 @@ impl Store {
     /// have rebuilt the store between the unlocked check and here, and a
     /// second drop-and-create interleaved with the first is what left tables
     /// from two generations side by side.
-    fn migrate(&mut self) -> Result<()> {
+    /// Whether it dropped an older store — not a fresh one, and not one
+    /// another process had already rebuilt.
+    fn migrate(&mut self) -> Result<bool> {
         // A no-op inside a transaction, so it is set around one. Off, the
         // drops are plain drops rather than a cascading delete of every fact.
         self.conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
@@ -257,7 +275,7 @@ impl Store {
                 )));
             }
             if version == schema::VERSION {
-                return Ok(());
+                return Ok(false);
             }
             // No migration, by design: see schema::VERSION. Reindexing costs
             // seconds and cannot leave the store half-converted.
@@ -272,7 +290,8 @@ impl Store {
                 )?;
             }
             tx.pragma_update(None, "user_version", schema::VERSION)?;
-            tx.commit()
+            tx.commit()?;
+            Ok(version != 0)
         })();
         self.conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         rebuilt.map_err(terse)
@@ -1274,6 +1293,19 @@ impl Store {
                 rusqlite::Error::QueryReturnedNoRows => Ok(None),
                 other => Err(other),
             })
+    }
+
+    /// The directory each stored set of signatures is written under
+    /// (`rbs-3.8.0-1a2b3c4d`).
+    pub(crate) fn core_dir_names(&self) -> Result<HashSet<String>> {
+        let mut stmt = self.conn.prepare("SELECT version, key FROM rbs")?;
+        stmt.query_map([], |r| {
+            Ok(crate::tree::core_dir_name(
+                &r.get::<_, String>(0)?,
+                &r.get::<_, String>(1)?,
+            ))
+        })?
+        .collect()
     }
 
     /// Whether signatures under this key are already stored.

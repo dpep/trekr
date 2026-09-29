@@ -410,8 +410,11 @@ each extracted as its own file: a core site is
 `<core>/rbs-3.8.0-<key>/String.rb` at a line of that file, a directory per
 Ruby's signatures so two Rubies' `String.rb` never collide. When a location
 has to be opened — by the editor, or in a CLI answer, where the site becomes
-`path: "String.rb"` under `root: <db dir>/core/rbs-3.8.0-<key>` — the files
-are written beside the database, rewritten only when they differ, and an
+`path: "String.rb"` under `root: trekr.core/rbs-3.8.0-<key>` — the files
+are written beside the database, in a directory of its own as its tree
+snapshots are (`trekr.db` → `trekr.core/`), rewritten only when they differ;
+`--gc` and an upgrade remove each Ruby's directory the store no longer holds
+signatures for (DEC-274), and an
 editor's peek list reads `String.rb  def downcase(*options)`. Each `def` is
 multi-line so its first line is the signature. Code outside a block (the
 top-level constants) goes to `Object.rb`; a class is declared once, since one

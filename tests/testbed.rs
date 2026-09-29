@@ -59,6 +59,8 @@ fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
     for suffix in ["", "-wal", "-shm"] {
         let _ = fs::remove_file(format!("{}{suffix}", db.display()));
     }
+    let _ = fs::remove_dir_all(db.with_extension("trees"));
+    let _ = fs::remove_dir_all(db.with_extension("core"));
     fs::create_dir_all(&dir).unwrap();
 
     // Every case runs on a Ruby installed as rvm installs one, under a home
