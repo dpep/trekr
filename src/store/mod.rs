@@ -1238,17 +1238,24 @@ impl Store {
             })
     }
 
-    /// Which signatures a stdlib checkout is served with — key, rbs
-    /// version and directory — without reading them.
-    pub(crate) fn rbs_about(&self, stdlib: &str) -> Result<Option<(String, String, String)>> {
+    /// Which signatures a stdlib checkout is served with, and why that
+    /// gem, without reading them.
+    pub(crate) fn rbs_about(&self, stdlib: &str) -> Result<Option<RbsAbout>> {
         self.conn
             .query_row(
-                "SELECT r.key, r.version, r.dir FROM rbs r
+                "SELECT r.key, r.version, r.dir, u.chosen FROM rbs r
                    JOIN rbs_use u ON u.rbs_id = r.id
                    JOIN checkout c ON c.id = u.checkout_id
                   WHERE c.root = ?1",
                 params![stdlib],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+                |r| {
+                    Ok(RbsAbout {
+                        key: r.get(0)?,
+                        version: r.get(1)?,
+                        dir: r.get(2)?,
+                        chosen: r.get(3)?,
+                    })
+                },
             )
             .map(Some)
             .or_else(|e| match e {
@@ -1272,7 +1279,7 @@ impl Store {
     pub(crate) fn set_rbs(
         &mut self,
         stdlib: &str,
-        key: Option<&str>,
+        key: Option<(&str, &str)>,
         new: Option<&Rbs>,
     ) -> Result<()> {
         let tx = self.conn.savepoint()?;
@@ -1296,10 +1303,11 @@ impl Store {
             )?;
         }
         tx.execute("DELETE FROM rbs_use WHERE checkout_id = ?1", params![id])?;
-        if let Some(key) = key {
+        if let Some((key, chosen)) = key {
             tx.execute(
-                "INSERT INTO rbs_use (checkout_id, rbs_id) SELECT ?1, id FROM rbs WHERE key = ?2",
-                params![id, key],
+                "INSERT INTO rbs_use (checkout_id, rbs_id, chosen)
+                 SELECT ?1, id, ?3 FROM rbs WHERE key = ?2",
+                params![id, key, chosen],
             )?;
         }
         tx.execute(
@@ -1788,6 +1796,16 @@ pub(crate) struct Totals {
     pub(crate) defs: i64,
     pub(crate) const_refs: i64,
     pub(crate) calls: i64,
+}
+
+/// Which signatures a stdlib is served with (DEC-240), and why that gem:
+/// `bundled`, `installed` or `other` (DEC-242).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RbsAbout {
+    pub(crate) key: String,
+    pub(crate) version: String,
+    pub(crate) dir: String,
+    pub(crate) chosen: String,
 }
 
 /// A Ruby's signatures, as stubs (DEC-240).

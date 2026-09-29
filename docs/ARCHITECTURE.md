@@ -375,15 +375,19 @@ Two of the three reasons a lookup failed were "the thing is not in the index".
 Both are now addressable without a Ruby toolchain.
 
 **Core** is the app's Ruby's own: the signatures of the `rbs` gem that Ruby
-carries — bundled with it since Ruby 3.0, or installed for it; the highest
-version with a `core/` — read when the Ruby's stdlib is indexed and written
+carries — the one bundled with it since Ruby 3.0, whose version is that
+Ruby's; else the highest installed for it; else another Ruby's (DEC-242) —
+read when the Ruby's stdlib is indexed and written
 as ordinary Ruby with empty bodies, which the tree reads through the same
 `extract()` a checkout goes through (DEC-015, DEC-240). The ancestry is what
 earns it — every class gets its implicit `< Object`, and a singleton chain
 continues into `Class → Module → Object`, which is what makes `puts`,
 `raise`, `Foo.new`, and a class body's `prepend` resolve at all. A checkout
-with no Ruby, or on a Ruby with no rbs gem, has no core: a call into it is
-residue, and `--index` says why.
+for which no Ruby is found, or on a Ruby with no rbs gem, has no core: a
+call into it is residue, and `--index` says why. rubygems keeps no mark of
+which installed rbs is the bundled one, so it is the one in the Ruby's own
+gem directory whose gemspec was written within an hour of its default
+gems' — a later `gem install rbs` lands in the same directory.
 
 `src/rbs/` reads RBS by hand (`parse.rs`): declarations and their ancestry,
 and each method's overloads down to its parameters' shape and the one type
@@ -471,8 +475,9 @@ kind `stdlib`, rooted at `<prefix>/lib/ruby/<abi>` and shared by every app on
 that Ruby as a gem version is (DEC-180). The Ruby is chosen as a lockfile-less
 checkout's gems are (DEC-152): the version `.ruby-version` or the Gemfile
 names, matched to an rvm, rbenv, asdf or Homebrew install; the Ruby
-`$GEM_HOME` belongs to; the `ruby` on `$PATH`. Only a checkout that resolves
-gems or names a Ruby gets one. Tooling nobody calls from an app is left out —
+`$GEM_HOME` belongs to; the `ruby` on `$PATH`; the only Ruby installed,
+when there is one (DEC-242). A checkout that names no Ruby runs on one
+too. Tooling nobody calls from an app is left out —
 bundler's and rubygems' internals (`bundler.rb` and `Gem::Version`'s files
 stay), irb, rdoc, reline, did_you_mean, error_highlight, syntax_suggest,
 prism, the VM's compiler — and so are files that define methods on every
@@ -1445,11 +1450,12 @@ Deliberate, and cheap to close when they earn it:
 - A `define_method` or `class_eval` string looped over a list another file
   assigns names nothing: its scope is marked (DEC-130), so a missing name
   there is residue, and the string's calls are still read (DEC-132).
-- A chain through a core method is typed from the Ruby's own RBS — the
-  highest rbs gem it carries, which may describe a newer Ruby. A subclass
+- A chain through a core method is typed from the Ruby's own RBS — the rbs
+  bundled with it, else one installed later, which may describe a newer
+  Ruby. A subclass
   that overrides the method with another return type (ActiveSupport's
   `SafeBuffer` is a String) is read as the core class.
-- Without a Ruby, or on one with no rbs gem, nothing is known of core
+- Where no Ruby is found, or it has no rbs gem, nothing is known of core
   (DEC-240).
 - Which stdlib methods are compiled is inferred, not asked: a method RBS
   describes that this Ruby lacks (`OpenSSL::Engine` where OpenSSL has none),

@@ -1032,7 +1032,7 @@ fn index_gems(
         ..GemReport::default()
     };
     // The Ruby's stdlib before the gems, which reopen it (DEC-180).
-    let stdlib = crate::gems::stdlib::for_checkout(repo, resolved_from.is_some());
+    let stdlib = crate::gems::stdlib::for_checkout(repo);
     if let Some(stdlib) = &stdlib {
         let mut indexed = index_stdlib(store, stdlib, known, pool, profile)?;
         // Its Ruby's signatures, which core and the stdlib's compiled half
@@ -1528,8 +1528,9 @@ fn cmd_index(
         }
         match &stdlib.rbs {
             Some(rbs) => println!(
-                "  signatures — rbs {}, {}: {}",
+                "  signatures — rbs {}, {}, {}: {}",
                 rbs.version,
+                rbs.chosen.why(),
                 if rbs.read { "read" } else { "already known" },
                 paths::pretty(&rbs.path)
             ),
@@ -1633,9 +1634,13 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
                 .collect();
             counted.extend(used.iter().cloned());
             if let Some(stdlib) = stdlib {
-                let rbs = store.rbs_about(&stdlib)?.map(
-                    |(_, version, path)| serde_json::json!({ "version": version, "path": path }),
-                );
+                let rbs = store.rbs_about(&stdlib)?.map(|about| {
+                    serde_json::json!({
+                        "version": about.version,
+                        "path": about.dir,
+                        "chosen": about.chosen,
+                    })
+                });
                 row["stdlib"] = serde_json::json!({
                     "root": stdlib,
                     "files": indexed_files.get(stdlib.as_str()).copied().unwrap_or(0),
@@ -1700,8 +1705,9 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
             );
             match row["stdlib"]["rbs"]["version"].as_str() {
                 Some(version) => println!(
-                    "{:>32}+ signatures, rbs {version}: {}",
+                    "{:>32}+ signatures, rbs {version} ({}): {}",
                     "",
+                    row["stdlib"]["rbs"]["chosen"].as_str().unwrap_or_default(),
                     paths::pretty(row["stdlib"]["rbs"]["path"].as_str().unwrap_or_default())
                 ),
                 None => println!("{:>32}+ no signatures: its Ruby carries no rbs gem", ""),

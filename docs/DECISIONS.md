@@ -6599,6 +6599,10 @@ Ruby's default (json 2.7.2 on Ruby 3.4) shows the chosen Ruby's copy. A
 compiled extension's methods are hedged, not known (DEC-181); the `rbs`
 gem's stdlib signatures would type them.
 
+
+*Amended by DEC-242:* every checkout gets a Ruby — the one it names,
+`$GEM_HOME`'s, the `ruby` on `$PATH`, else the only one installed — since
+its core is that Ruby's (DEC-240).
 ## DEC-181 — A stdlib class that is partly compiled hedges a name its Ruby lacks
 
 **Decided.** Indexing a stdlib lists its compiled extensions (the `.so`,
@@ -7901,11 +7905,9 @@ Supersedes DEC-078's "`core.rb` stays the one source" and DEC-220's
 
 **Decided.** Core and the stdlib's stubs are no longer checked in and built
 into the binary. When an index reads a Ruby's stdlib (DEC-180) it also
-finds the `rbs` gem that Ruby carries — bundled with it
-(`<prefix>/lib/ruby/gems/<abi>/gems/rbs-*`), or installed for it
-(`~/.gem/ruby/<abi>`, rvm's gem directories for that install, Homebrew's for
-a Homebrew Ruby, `$GEM_HOME` when it is this Ruby's) — at the highest
-version with a `core/`, and writes from its signatures the three stubs the
+finds the `rbs` gem that Ruby carries — the one bundled with it, else the
+highest installed for it, else another Ruby's (DEC-242) — and writes from
+its signatures the three stubs the
 generators wrote: **core**, the stdlib's **compiled half**, and the
 **returns lent** to its Ruby half. They are stored beside the stdlib's
 checkout (`rbs`, `rbs_use`), keyed by stdlib, gem and reader, so every app
@@ -7915,7 +7917,8 @@ top-level owner, under a directory per Ruby's signatures
 (`<core>/rbs-3.8.0-<key>/String.rb`), each `def` cut out and extracted when
 its name is first asked (`corelib::cut`), core's included, and a namespace
 assembled from core's files with their `def`s blanked. `--index` and
-`--status` name the gem, or say the Ruby carries none.
+`--status` name the gem and why it was chosen, or say the Ruby carries
+none.
 
 - *The reader* (`src/rbs/parse.rs`) is hand-written: declarations, ancestry,
   constants, class aliases, `def`s with their overloads, `self.`/`self?.`,
@@ -7940,14 +7943,11 @@ assembled from core's files with their `def`s blanked. `--index` and
   spells its shape (`Ripper::SexpBuilder`'s `on_*`). A class is declared
   only where no Ruby file declares it and its library compiles. Owners come
   from a tree of the stdlib alone (`Tree::alone`).
-- *No rbs, no core.* A checkout with no Ruby (DEC-180's rule: it resolves no
-  gems and names no Ruby), or on a Ruby with no rbs gem, is served no
-  stubs: `puts` and `"x".upcase` are residue, as anything unindexed is. There
-  is no checked-in fallback.
-- *No version gate.* Whatever the Ruby's rbs describes is used: this
-  machine's Ruby 3.4.9 is served rbs 4.2.0's, which describes Ruby 4.0
-  (Pathname is core there). A stub method on an owner the tree does not
-  know is dropped, as before.
+- *No rbs, no core.* A checkout for which no Ruby is found, or on a Ruby with
+  no rbs gem anywhere, is served no stubs: `puts` and `"x".upcase` are
+  residue, as anything unindexed is. There is no checked-in fallback.
+- *No version gate.* Whatever the chosen rbs describes is used; a stub
+  method on an owner the tree does not know is dropped, as before.
 
 **Why.** The checked-in stubs were one Ruby's (3.4, rbs 3.8.0) for every
 app, 187 KB in the binary plus two generators that needed that Ruby to run,
@@ -8015,34 +8015,37 @@ from (3.8.0, Ruby 3.4.9), stub against stub:
   10 above, `Net::HTTP.newobj`, `Psych::Store`'s four (via `yaml/store.rb`),
   and `SecureRandom.alphanumeric`.
 
-**Measured** against main (3ce6096), each build on its own store: rbs 4.2.0
-(the default here) and 3.8.0 pinned, which agree but where noted.
+**Measured** against main (3ce6096), each build on its own store, served
+the rbs bundled with Ruby 3.4.9 (3.8.0, DEC-242). rbs 4.2.0, installed later,
+measured the same but where noted (`String#downcase` 38, `Array#join` 219).
 
-| | main | rbs 3.8.0 | rbs 4.2.0 |
-| --- | ---: | ---: | ---: |
-| confidently wrong, every gold set | same | same | same |
-| widget_shop gem code correct | 1,618 | 1,619 | 1,620 |
-| clicks: definition empty / unsure | 1,863 / 3,193 | 1,835 / 3,190 | 1,835 / 3,187 |
-| clicks: hover unsure | 3,589 | 3,558 | 3,555 |
-| `--refs Array#join` confirmed / possible | 312 / 372 | 220 / 464 | 219 / 465 |
-| `--refs String#downcase` confirmed | 26 | 31 | 38 |
-| `--refs Array#first` confirmed | 153 | 172 | 172 |
-| `--refs Logger#info` confirmed | 6 | 12 | 12 |
-| `--refs Time#iso8601` confirmed | 4 | 8 | 8 |
+| | main | this |
+| --- | ---: | ---: |
+| confidently wrong, every gold set | same | same |
+| widget_shop gem code correct | 1,618 | 1,619 |
+| clicks: definition empty / unsure | 1,863 / 3,193 | 1,835 / 3,190 |
+| clicks: hover unsure | 3,589 | 3,558 |
+| `--refs Array#join` confirmed / possible | 312 / 372 | 220 / 464 |
+| `--refs String#downcase` confirmed | 26 | 31 |
+| `--refs Array#first` confirmed | 153 | 172 |
+| `--refs Logger#info` confirmed | 6 | 12 |
+| `--refs Time#iso8601` confirmed | 4 | 8 |
 
 Every other gold verdict is the same but flipper's `proxy_class?` (DEC-241)
-and widget_shop's: `underscore` and one more residue → correct, and four
-residues whose truth falls out of the eight candidates shown (`quote`,
-`infinite?`: `Regexp.quote` and `Float#infinite?` are among them now).
-Clicks "defined nowhere indexed" 386 → 358, "typed, with competitors" 247 →
-222. Of the rails `--refs` set's 68 queries, 24 move; the rest of the
-exclusions are receivers now typed (`excluded_no_such_method` → another
-owner, 23 of `Pathname#to_s`'s 29) or RBS's exact arity (`Time.parse`,
+and widget_shop's: `underscore` residue → correct, and four residues whose
+truth falls out of the eight candidates shown (`quote`, `infinite?`:
+`Regexp.quote` and `Float#infinite?` are among them now). Clicks "defined
+nowhere indexed" 386 → 358, "typed, with competitors" 247 → 224. Of the
+rails `--refs` set's 68 queries, 24 move; the rest of the exclusions are
+receivers now typed (`excluded_no_such_method` → another owner, 23 of
+`Pathname#to_s`'s 29) or RBS's exact arity (`Time.parse`,
 `Digest::Class.hexdigest`: three `Digest::MD5.file(p).hexdigest` sites
 excluded, rightly). `--dead` on rails: `AbstractController::Base#
 method_added` is an override of `Module#method_added`, and
 `Mapper::Resources#resource_method_scope?` a single caller once
-`@scope.resource_method_scope?` is `Scope`'s.
+`@scope.resource_method_scope?` is `Scope`'s. `--dead` on activerecord alone
+(no Gemfile, no `.ruby-version`) is unchanged, run on the Ruby it finds
+(DEC-242).
 
 **Fixed on the way**, each a resolver assumption a fuller core broke, each
 with a testbed case that fails without it: `class << Time` inside
@@ -8054,16 +8057,16 @@ assigned through a second name for a class — `lock = Mutex.new` typed as
 the constant `Mutex`, 50 `synchronize` sites `no_such_method` until
 fixed (case 243).
 
-**Timings**, Ruby 3.4.9 and rbs 4.2.0, load 5–13 from other work. The first
-index on a Ruby reads its signatures in ~125 ms (one-file app: 290–335 → 411–
-421 ms); a second app on that Ruby, 175–214 → 173–205 ms, unchanged. The
-store grows by the stubs, ~260 KB per Ruby. Queries are no slower and
-often faster, since core is cut and extracted by name rather than parsed
-whole on every tree build (DEC-220's cut, now core's too), 21 interleaved
-rounds, medians: an app method 12.2 → 12.2 ms, `"x".upcase` 15.2 → 11.8,
-a stdlib stub's `read` 14.2 → 13.0; rails `--ancestors ActiveRecord::Base`
-15.4 → 11.2, a `--def` into core 20.7 → 18.6, `--refs String#downcase`
-115 → 112.
+**Timings**, Ruby 3.4.9 and its bundled rbs 3.8.0, load 8–13 from other
+work, interleaved. The first index on a Ruby reads its signatures in
+~130 ms (one-file app: 296–354 → 437–467 ms); a second app on that Ruby,
+173–184 ms, as before. The store grows by the stubs, ~260 KB per Ruby.
+Queries are no slower and often faster, since core is cut and extracted by
+name rather than parsed whole on every tree build (DEC-220's cut, now
+core's too), 21 interleaved rounds, medians: an app method 10.9 → 11.0 ms,
+`"x".upcase` 12.6 → 11.0, a stdlib stub's `read` 13.5 → 12.6; rails
+`--ancestors ActiveRecord::Base` 15.4 → 11.2, a `--def` into core 20.7 →
+18.6, `--refs String#downcase` 115 → 112 (those three with rbs 4.2.0).
 
 **The named costs.**
 
@@ -8071,10 +8074,9 @@ a stdlib stub's `read` 14.2 → 13.0; rails `--ancestors ActiveRecord::Base`
   Lazy, and is now returnable (nested classes were not), so `x.map { }`
   on an untyped `x` has no agreed return: `Array#join` loses 92 confirmed
   sites to possible, none wrong. Residue lists fill further.
-- *No Ruby, no core.* A directory with no Gemfile and no `.ruby-version` —
-  the `aronly` corpus is one — knows no `Object`: 13 of its `--dead` tiers
-  move (`ActiveRecord::Enum#extended` no longer overrides
-  `Module#extended`).
+- *No Ruby, no core.* Where no Ruby is found at all, nothing knows
+  `Object`: an `--dead` override of `Module#extended` reads as
+  unreferenced. DEC-242 finds a Ruby wherever there is one.
 - *RBS is not the Ruby.* What it describes that this Ruby lacks is declared
   (above), and what Ruby makes at runtime where no maker spells it is taken
   for compiled.
@@ -8088,3 +8090,42 @@ Tests are hermetic: `tests/fixtures/rbs/` is rbs 3.8.0's core trimmed to what
 core.rb stubbed (with each method's call-seq), and every testbed case,
 `cli_e2e` and `lsp_e2e` checkout runs on a fake Ruby 9.8.7 carrying it; a case's
 `rbs/` adds its libraries' signatures.
+
+## DEC-242 — A checkout that names no Ruby runs on the one it finds, and a Ruby's rbs is the one bundled with it
+
+Amends DEC-180's gate and DEC-240's choice of rbs.
+
+**Decided.** Two changes to which signatures a checkout's core comes from.
+
+- *Every checkout gets a Ruby.* DEC-180 gave a stdlib only to a checkout
+  that resolves gems or names a Ruby, which kept a test's scratch
+  repository hermetic. Once core is the Ruby's (DEC-240), that gate took core
+  from every directory of scripts. A checkout now runs on the Ruby DEC-152's
+  chain finds — the version it names, `$GEM_HOME`'s, the `ruby` on `$PATH` —
+  and, failing those, the only Ruby installed, when there is one; with none,
+  or several and nothing to choose between them, no core, as before. Tests
+  stay hermetic by what they put on `PATH` (only `git`) and in `HOME` (the
+  fixture's Ruby, staged).
+- *A Ruby's rbs is its bundled one.* DEC-240 took the highest rbs installed
+  for the Ruby: this machine's Ruby 3.4.9 was served rbs 4.2.0's core, which
+  describes Ruby 4.0 (Pathname is core there). A bundled gem's version is
+  that Ruby's, so it comes first; then the highest installed for that Ruby;
+  then the highest another installed Ruby has. rubygems keeps no mark of which
+  installed rbs is the bundled one, and a later `gem install rbs` lands in
+  the same directory, so the bundled one is the rbs in the Ruby's own gem
+  directory whose gemspec was written within an hour of its default gems'
+  (3.8.0's 5 s after, 4.2.0's five months). `--index` and `--status` say
+  which (`gems.stdlib.rbs.chosen`: `bundled`, `installed`, `other`) and why,
+  in words.
+
+**Measured** against the DEC-240 build (rbs 3.8.0 pinned), each on its own
+store: gold sets, clicks and the 68 rails `--refs` queries identical;
+`--dead` on activerecord alone — a directory with no Gemfile — now runs on
+the Ruby `$GEM_HOME` names and its 13 tier moves go back to main's
+(`ActiveRecord::Enum#extended` overrides `Module#extended` again). The stubs
+the bundled rbs yields are byte-identical to the pinned run's, so DEC-240's
+equivalence stands as written.
+
+**Not done.** Several Rubies installed, none named, none on `$PATH` and no
+`$GEM_HOME`: no Ruby, rather than a guess. A Homebrew Ruby's bundled rbs is
+found by the same rule, in its Cellar prefix.

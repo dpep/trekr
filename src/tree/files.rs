@@ -57,9 +57,9 @@ pub(super) fn key(store: &Store, roots: &Roots) -> anyhow::Result<Key> {
     }
     // Core's classes come from the Ruby's signatures (DEC-240).
     if let Some(stdlib) = &roots.stdlib
-        && let Some((rbs, _, _)) = store.rbs_about(stdlib)?
+        && let Some(rbs) = store.rbs_about(stdlib)?
     {
-        eat(rbs.as_bytes());
+        eat(rbs.key.as_bytes());
     }
     Ok(hash.finalize().into())
 }

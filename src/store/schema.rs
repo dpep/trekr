@@ -196,7 +196,8 @@ CREATE TABLE rbs (
 -- carries no rbs gem: then there are no stubs at all.
 CREATE TABLE rbs_use (
   checkout_id INTEGER PRIMARY KEY REFERENCES checkout(id) ON DELETE CASCADE,
-  rbs_id      INTEGER NOT NULL REFERENCES rbs(id)
+  rbs_id      INTEGER NOT NULL REFERENCES rbs(id),
+  chosen      TEXT    NOT NULL            -- bundled | installed | other (DEC-242)
 );
 
 CREATE TABLE file (

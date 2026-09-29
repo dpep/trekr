@@ -48,11 +48,32 @@ impl Stdlib {
             .contains(&(name.to_string(), version.to_string()))
     }
 
-    /// The rbs gem this Ruby carries, whose signatures describe its core and
-    /// stdlib (DEC-240): the one bundled with it, or one installed for it,
-    /// at the highest version with a `core/` to read.
+    /// The rbs gem whose signatures describe this Ruby's core and stdlib
+    /// (DEC-240, DEC-242): the one bundled with it, whose version is that
+    /// Ruby's; else the highest installed for it; else the highest any
+    /// installed Ruby has. Each must have a `core/` to read.
     pub(crate) fn rbs(&self) -> Option<RbsGem> {
-        rbs_in(&rbs_dirs(&self.root))
+        if let Some(dir) = bundled_dir(&self.root)
+            && let Some(gem) = bundled_rbs(&dir, &specifications(&self.root)?)
+        {
+            return Some(gem);
+        }
+        if let Some(gem) = rbs_in(&rbs_dirs(&self.root)) {
+            return Some(RbsGem {
+                chosen: Chosen::Installed,
+                ..gem
+            });
+        }
+        let others: Vec<PathBuf> = installs()
+            .iter()
+            .filter_map(|prefix| stdlib_in(prefix))
+            .filter(|root| *root != self.root)
+            .filter_map(|root| bundled_dir(&root))
+            .collect();
+        rbs_in(&others).map(|gem| RbsGem {
+            chosen: Chosen::Other,
+            ..gem
+        })
     }
 }
 
@@ -62,6 +83,79 @@ pub(crate) struct RbsGem {
     pub(crate) version: String,
     /// The gem's own directory, holding `core/` and `stdlib/`.
     pub(crate) dir: PathBuf,
+    pub(crate) chosen: Chosen,
+}
+
+/// Why an rbs gem was the one read.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(crate) enum Chosen {
+    /// Installed with the Ruby: its version is that Ruby's.
+    Bundled,
+    /// The highest installed for this Ruby since.
+    Installed,
+    /// Another Ruby's, since this one has none: it may describe that Ruby.
+    Other,
+}
+
+impl Chosen {
+    /// In words, for `--index` and `--status`.
+    pub(crate) fn why(self) -> &'static str {
+        match self {
+            Chosen::Bundled => "bundled with this Ruby",
+            Chosen::Installed => "the highest installed for this Ruby; none was bundled with it",
+            Chosen::Other => "another Ruby's, since this Ruby has none",
+        }
+    }
+}
+
+/// `<prefix>/lib/ruby/gems/<abi>/gems`: where a Ruby installs its bundled
+/// gems, beside `<prefix>/lib/ruby/<abi>`.
+fn bundled_dir(root: &Path) -> Option<PathBuf> {
+    Some(
+        root.parent()?
+            .join("gems")
+            .join(root.file_name()?)
+            .join("gems"),
+    )
+}
+
+/// A Ruby installs its bundled gems as it installs itself, so the bundled
+/// rbs is the one in its own gem directory whose gemspec was written within
+/// an hour of its default gems' — rubygems keeps no other mark of it, and a
+/// later `gem install rbs` lands in the same directory.
+fn bundled_rbs(gems: &Path, defaults: &Path) -> Option<RbsGem> {
+    let written = |path: &Path| std::fs::metadata(path).and_then(|m| m.modified()).ok();
+    let installed = std::fs::read_dir(defaults)
+        .ok()?
+        .flatten()
+        .filter_map(|entry| written(&entry.path()))
+        .max()?;
+    let specs = gems.parent()?.join("specifications");
+    std::fs::read_dir(gems)
+        .ok()?
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let (gem, version) = split_dir(&name)?;
+            let dir = entry.path();
+            if gem != "rbs" || !dir.join("core").is_dir() {
+                return None;
+            }
+            let at = written(&specs.join(format!("{name}.gemspec")))?;
+            let apart = at
+                .duration_since(installed)
+                .or_else(|e| Ok::<_, ()>(e.duration()))
+                .ok()?;
+            (apart <= std::time::Duration::from_secs(3600))
+                .then(|| (apart, version.to_string(), dir))
+        })
+        .min_by_key(|(apart, _, _)| *apart)
+        .map(|(_, version, dir)| RbsGem {
+            version,
+            dir,
+            chosen: Chosen::Bundled,
+        })
 }
 
 /// Where a Ruby's gems are installed, for the stdlib at `root`
@@ -117,7 +211,11 @@ fn rbs_in(dirs: &[PathBuf]) -> Option<RbsGem> {
                 .then(|| Some((Version::parse(version)?, version.to_string(), dir)))?
         })
         .max_by(|(a, _, _), (b, _, _)| a.cmp(b))
-        .map(|(_, version, dir)| RbsGem { version, dir })
+        .map(|(_, version, dir)| RbsGem {
+            version,
+            dir,
+            chosen: Chosen::Installed,
+        })
 }
 
 /// Dev tooling nobody navigates into from an app, internals an app reaches
@@ -191,16 +289,14 @@ pub(crate) fn files(root: &Path) -> scan::Files {
 
 /// The stdlib of the Ruby this checkout runs on, chosen as its gems are
 /// (DEC-152): the version `.ruby-version` or the Gemfile names, the Ruby
-/// `$GEM_HOME` belongs to, the `ruby` on `$PATH`.
+/// `$GEM_HOME` belongs to, the `ruby` on `$PATH`; failing those, the one
+/// Ruby installed, when there is only one.
 ///
-/// Only for a checkout that says it is a Ruby project — it resolves gems
-/// (`bundled`), or names a Ruby. A directory of scripts with neither has no
-/// Ruby to speak of, and a test's scratch repository stays hermetic.
-pub(crate) fn for_checkout(repo: &Path, bundled: bool) -> Option<Stdlib> {
+/// A directory of scripts that names no Ruby still runs on one, and its core
+/// is that Ruby's (DEC-242). A test stays hermetic by what it puts on `PATH`
+/// and in `HOME`.
+pub(crate) fn for_checkout(repo: &Path) -> Option<Stdlib> {
     let version = super::project_ruby(repo);
-    if !bundled && version.is_none() {
-        return None;
-    }
     if let Some(version) = version
         && let Some(root) = named(&version)
     {
@@ -221,15 +317,30 @@ pub(crate) fn for_checkout(repo: &Path, bundled: bool) -> Option<Stdlib> {
             ),
         ));
     }
-    let ruby = super::path_ruby()?;
-    let root = stdlib_in(ruby.parent()?.parent()?)?;
-    Some(Stdlib::at(
-        root,
-        format!(
-            "the ruby on $PATH ({})",
-            crate::core::paths::pretty(&ruby.to_string_lossy())
-        ),
-    ))
+    if let Some(ruby) = super::path_ruby()
+        && let Some(root) = ruby.parent().and_then(Path::parent).and_then(stdlib_in)
+    {
+        return Some(Stdlib::at(
+            root,
+            format!(
+                "the ruby on $PATH ({})",
+                crate::core::paths::pretty(&ruby.to_string_lossy())
+            ),
+        ));
+    }
+    let mut roots: Vec<PathBuf> = installs().iter().filter_map(|p| stdlib_in(p)).collect();
+    roots.sort();
+    roots.dedup();
+    match roots.as_slice() {
+        [root] => Some(Stdlib::at(
+            root.clone(),
+            format!(
+                "the only Ruby installed ({})",
+                crate::core::paths::pretty(&root.to_string_lossy())
+            ),
+        )),
+        _ => None,
+    }
 }
 
 /// Every Ruby installed by a version manager or Homebrew, by its prefix.
@@ -612,6 +723,56 @@ end
         assert_eq!(picked.version, "3.10.1");
         assert_eq!(picked.dir, installed.join("rbs-3.10.1"));
         assert_eq!(rbs_in(&[root.join("none")]), None);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_rbs_installed_with_the_ruby_is_its_own_not_a_later_higher_one() {
+        let root = std::env::temp_dir().join(format!("trekr-rbs-bundled-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let lib = root.join("lib/ruby");
+        let stdlib = lib.join("9.8.0");
+        let gems = lib.join("gems/9.8.0");
+        std::fs::create_dir_all(&stdlib).unwrap();
+        std::fs::create_dir_all(gems.join("specifications/default")).unwrap();
+        let when = |secs: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+        let touch = |path: &Path, secs: u64| {
+            std::fs::write(path, "").unwrap();
+            std::fs::File::options()
+                .write(true)
+                .open(path)
+                .unwrap()
+                .set_modified(when(secs))
+                .unwrap();
+        };
+        touch(
+            &gems.join("specifications/default/json-2.9.1.gemspec"),
+            1_000_000,
+        );
+        for (gem, secs) in [("rbs-3.8.0", 1_000_005), ("rbs-4.2.0", 9_000_000)] {
+            std::fs::create_dir_all(gems.join("gems").join(gem).join("core")).unwrap();
+            touch(
+                &gems.join("specifications").join(format!("{gem}.gemspec")),
+                secs,
+            );
+        }
+        let stdlib_at = Stdlib {
+            root: stdlib.clone(),
+            ruby: String::new(),
+            ships: HashSet::new(),
+        };
+        let picked = stdlib_at.rbs().unwrap();
+        assert_eq!(
+            (picked.version.as_str(), picked.chosen),
+            ("3.8.0", Chosen::Bundled)
+        );
+        // With no gemspec written beside the Ruby's own, the highest installed.
+        std::fs::remove_file(gems.join("specifications/rbs-3.8.0.gemspec")).unwrap();
+        let picked = stdlib_at.rbs().unwrap();
+        assert_eq!(
+            (picked.version.as_str(), picked.chosen),
+            ("4.2.0", Chosen::Installed)
+        );
         let _ = std::fs::remove_dir_all(&root);
     }
 

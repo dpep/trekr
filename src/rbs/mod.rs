@@ -26,6 +26,9 @@ pub(crate) struct Report {
     pub(crate) version: String,
     /// Where it was read.
     pub(crate) path: String,
+    /// Why this gem: `bundled` with the Ruby, the highest `installed` for
+    /// it, or `other`, another Ruby's (DEC-242).
+    pub(crate) chosen: crate::gems::stdlib::Chosen,
     /// Read by this index, rather than already known.
     pub(crate) read: bool,
 }
@@ -42,16 +45,19 @@ pub(crate) fn prepare(store: &mut Store, stdlib: &Stdlib) -> anyhow::Result<Opti
     let mut report = Report {
         version: gem.version.clone(),
         path: gem.dir.to_string_lossy().into_owned(),
+        chosen: gem.chosen,
         read: false,
     };
+    let chosen = serde_json::to_value(gem.chosen)?;
+    let chosen = chosen.as_str().unwrap_or_default();
     if store
         .rbs_about(&root)?
-        .is_some_and(|(stored, _, _)| stored == key)
+        .is_some_and(|about| about.key == key && about.chosen == chosen)
     {
         return Ok(Some(report));
     }
     if store.has_rbs(&key)? {
-        store.set_rbs(&root, Some(&key), None)?;
+        store.set_rbs(&root, Some((&key, chosen)), None)?;
         return Ok(Some(report));
     }
     let signatures = read(&gem.dir);
@@ -65,7 +71,7 @@ pub(crate) fn prepare(store: &mut Store, stdlib: &Stdlib) -> anyhow::Result<Opti
         stdlib: stubs.stdlib,
         sigs: stubs.sigs,
     };
-    store.set_rbs(&root, Some(&key), Some(&row))?;
+    store.set_rbs(&root, Some((&key, chosen)), Some(&row))?;
     report.read = true;
     Ok(Some(report))
 }

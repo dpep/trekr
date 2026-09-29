@@ -3472,6 +3472,10 @@ fn core_comes_from_the_rubys_rbs_and_a_ruby_without_one_has_none() {
         "{index}"
     );
     assert_eq!(rbs["read"], true, "{index}");
+    assert_eq!(
+        rbs["chosen"], "installed",
+        "no gemspec beside the Ruby's own: {index}"
+    );
     let again = json(&trekr(&db, &dir, &["--index", "--json"]));
     assert_eq!(
         again["gems"]["stdlib"]["rbs"]["read"], false,
@@ -3506,6 +3510,67 @@ fn core_comes_from_the_rubys_rbs_and_a_ruby_without_one_has_none() {
     assert_eq!(json(&upcase)["status"], "residue");
 
     for dir in [&dir, &bare, &home] {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+/// A checkout that names no Ruby still runs on one — the `ruby` on `PATH`,
+/// else the only Ruby installed — and its core is that Ruby's; with none of
+/// them, nothing is known of core (DEC-242).
+#[test]
+fn a_checkout_naming_no_ruby_runs_on_the_one_it_finds() {
+    let (dir, db) = scratch("rbs-unnamed");
+    fs::remove_file(dir.join(".ruby-version")).unwrap();
+    repo(&dir);
+    fs::write(dir.join("use.rb"), "\"a\".upcase\n").unwrap();
+    let (empty, _) = scratch("rbs-unnamed-home");
+
+    // No Ruby named, none on `PATH`, none installed: none.
+    let none = [("HOME", empty.to_str().unwrap())];
+    let index = json(&trekr_env(&db, &dir, &["--index", "--json"], &none));
+    assert!(index["gems"].get("stdlib").is_none(), "{index}");
+    let text = stdout(&trekr_env(&db, &dir, &["--index"], &none));
+    assert!(text.contains("no Ruby found"), "{text}");
+    let upcase = trekr_env(&db, &dir, &["--def", "use.rb:1:5", "--json"], &none);
+    assert_eq!(json(&upcase)["status"], "residue");
+
+    // The `ruby` on `PATH`, resolved to its prefix.
+    let (prefix, _) = scratch("rbs-unnamed-prefix");
+    let lib = prefix.join("lib/ruby");
+    fs::create_dir_all(lib.join("9.7.0")).unwrap();
+    fs::create_dir_all(lib.join("gems/9.7.0/specifications/default")).unwrap();
+    fs::create_dir_all(lib.join("gems/9.7.0/gems")).unwrap();
+    std::os::unix::fs::symlink(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rbs"),
+        lib.join("gems/9.7.0/gems/rbs-9.9.9"),
+    )
+    .unwrap();
+    fs::create_dir_all(prefix.join("bin")).unwrap();
+    fs::write(prefix.join("bin/ruby"), "").unwrap();
+    let path = format!("{}:{}", git_only().display(), prefix.join("bin").display());
+    let on_path = [("HOME", empty.to_str().unwrap()), ("PATH", path.as_str())];
+    let index = json(&trekr_env(&db, &dir, &["--index", "--json"], &on_path));
+    let stdlib = &index["gems"]["stdlib"];
+    assert!(
+        stdlib["ruby"].as_str().unwrap().contains("$PATH"),
+        "{index}"
+    );
+    assert_eq!(stdlib["rbs"]["version"], "9.9.9", "{index}");
+    let upcase = trekr_env(&db, &dir, &["--def", "use.rb:1:5", "--json"], &on_path);
+    assert_eq!(json(&upcase)["owner"], "String");
+
+    // Nothing on `PATH`, one Ruby installed: that one.
+    let (db2, _) = (db.with_extension("two.db"), ());
+    let index = json(&trekr(&db2, &dir, &["--index", "--json"]));
+    assert!(
+        index["gems"]["stdlib"]["ruby"]
+            .as_str()
+            .unwrap()
+            .contains("the only Ruby installed"),
+        "{index}"
+    );
+
+    for dir in [&dir, &empty, &prefix] {
         let _ = fs::remove_dir_all(dir);
     }
 }
@@ -3604,10 +3669,16 @@ fn a_gem_reopening_the_stdlib_answers_over_it_whatever_the_index_order() {
             "class Stash\n  def put(item)\n    super\n  end\nend\n",
         )],
     );
-    // No Ruby named yet: the gem is indexed first.
+    // No Ruby to be found yet: the gem is indexed first.
     fs::remove_file(dir.join(".ruby-version")).unwrap();
+    let (nowhere, _) = scratch("stdlib-layer-nowhere");
+    trekr_env(
+        &db,
+        &dir,
+        &["--index"],
+        &[("HOME", nowhere.to_str().unwrap())],
+    );
     let env = [("HOME", home.to_str().unwrap())];
-    trekr_env(&db, &dir, &["--index"], &env);
     fs::write(dir.join(".ruby-version"), "9.8.7\n").unwrap();
     let index = json(&trekr_env(&db, &dir, &["--index", "--json"], &env));
     assert_eq!(index["gems"]["stdlib"]["indexed"], true, "{index}");
