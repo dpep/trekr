@@ -641,6 +641,10 @@ definition lives in; `root` is `null` for Ruby core (DEC-076). Text writes a
 path in the asked-about checkout relative to it, and any other absolute with
 `~`.
 
+A long answer's rows — `--refs`'s references, a listing's rows — are written
+one at a time, each rooted as it goes, rather than built into one JSON value
+and rendered to one string first; the bytes are the same (DEC-230).
+
 | command | answers |
 |---|---|
 | `--index [PATH]` | scan a checkout and store what is new |

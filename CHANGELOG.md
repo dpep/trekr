@@ -41,6 +41,12 @@
 
 ### Changed
 
+- **A long `--refs` answer in `--json` or `--ndjson` takes half the
+  memory.** Its references, and a bare-name listing's rows, are written as
+  they are rendered rather than built whole first; the output is
+  byte-identical. `--refs 'Hash#[]' --json` over a 100k-file checkout's 441k
+  sites peaked at 1.7 GB and peaks at 0.6 (DEC-230).
+
 - **Queries find their checkout without starting git.** The checkout a query
   or an outline is about is read off the disk — the nearest `.git` that is
   recognisably a repository — and git is still asked whenever its answer

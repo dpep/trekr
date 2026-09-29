@@ -7571,3 +7571,39 @@ answer ambiguous-correct, their hook run by both `ActionController::Base`
 and `::API`. Confidently wrong unchanged in every set. The rails `--refs`
 sets move one site, excluded → confirmed: the railtie's
 `establish_connection`. `--dead` and the 21,154 clicks unchanged.
+
+## DEC-230 — A long answer is written row by row
+
+**Decided.** `--refs`'s JSON answer and every row listing (`emit_rows`: the
+bare-name listing, `--symbols`, the usage and miss logs) write their rows
+one at a time through a buffered stdout, each converted to a `Value` and
+rooted (`rooted`) on its own. `emit_listing` writes an answer's object in its
+keys' sorted order — the order a `serde_json::Map` has — with one key's
+value streamed from the rows. The bytes are the ones `emit_json` printed.
+
+**Why.** `emit_json` serialized the answer to a `Value`, which for `--refs`
+already held every reference as a `Value` (the `json!` that built it), then
+copied it (`to_value` of a `Value`), rooted the copy, rendered it to one
+`String`, and printed that. Four forms of the same answer at once, the
+last two each the size of the output: `--refs 'Hash#[]' --json` over the
+100k-file corpus (DEC-195) prints 175 MB.
+
+**Measured.** That query, `--include-excluded`, each build on its own store,
+interleaved, load 12–20 from other work:
+
+| | peak footprint | peak RSS | CPU (user + sys) |
+| --- | ---: | ---: | ---: |
+| `--json`, main | 1,729 MB | 2,134 MB | 46 s |
+| `--json`, this | **603 MB** | **1,174 MB** | 48 s |
+| `--ndjson`, main → this | | 2,190 → **1,076 MB** | |
+| bare `--refs new --json`, main → this | | 1,769 → **1,076 MB** | |
+
+What remains is the tiering's own: the tree, its memos, and the 441k
+references held to be sorted. At load 12–40 the wall times were noise; the
+CPU times say the rendering costs what it did.
+
+**Checked.** Byte-identical to main on the memo lane's verify set (the gold
+sets, the rails `--refs` 40- and 51-query sets, `--dead` on three corpora,
+the probe, the clicks) and on the 100k `Hash#[]` in `--json`, `--ndjson` and
+text. A unit test renders a listing and a row set both ways, empty
+included, and requires the same bytes.

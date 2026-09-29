@@ -20,6 +20,7 @@ use clap::{CommandFactory, Parser};
 use clap_complete::Shell;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -723,24 +724,116 @@ fn emit_json<T: serde::Serialize>(out: Output, value: &T) -> anyhow::Result<()> 
     Ok(())
 }
 
+/// `emit_json` for an answer holding one long list: `answer[key]` is written
+/// from `rows` one row at a time, where the answer would otherwise be built
+/// whole as a `Value`, copied, and rendered to one string before a byte of
+/// it is printed. The bytes are the same.
+fn emit_listing<T: serde::Serialize>(
+    out: Output,
+    answer: serde_json::Value,
+    key: &str,
+    rows: &[T],
+) -> anyhow::Result<()> {
+    let mut w = std::io::BufWriter::new(std::io::stdout().lock());
+    render_listing(out, answer, key, rows, &mut w)?;
+    w.flush()?;
+    Ok(())
+}
+
+fn render_listing<T: serde::Serialize>(
+    out: Output,
+    mut answer: serde_json::Value,
+    key: &str,
+    rows: &[T],
+    w: &mut impl Write,
+) -> anyhow::Result<()> {
+    rooted(&mut answer);
+    let Some(head) = answer.as_object() else {
+        anyhow::bail!("an answer with a listing is an object");
+    };
+    render_json(out, &Listing { head, key, rows }, w)
+}
+
 /// Print a row set. `None` means it was handled; `Some` hands text mode back
 /// to the caller.
 fn emit_rows<T: serde::Serialize>(out: Output, rows: &[T]) -> anyhow::Result<bool> {
-    if out == Output::Text {
-        return Ok(false);
-    }
-    let mut rows = serde_json::to_value(rows)?;
-    rooted(&mut rows);
-    let rows = rows.as_array().cloned().unwrap_or_default();
     match out {
-        Output::Json => println!("{}", serde_json::to_string_pretty(&rows)?),
-        _ => {
-            for row in &rows {
-                println!("{}", serde_json::to_string(row)?);
+        Output::Text => return Ok(false),
+        Output::Json => {
+            let mut w = std::io::BufWriter::new(std::io::stdout().lock());
+            render_json(out, &Rows(rows), &mut w)?;
+            w.flush()?;
+        }
+        Output::Ndjson => {
+            let mut w = std::io::BufWriter::new(std::io::stdout().lock());
+            for row in rows {
+                serde_json::to_writer(&mut w, &Rows::rooted(row)?)?;
+                writeln!(w)?;
             }
+            w.flush()?;
         }
     }
     Ok(true)
+}
+
+/// One JSON document and its newline, as `println!` of the rendered string
+/// would print it, without the string.
+fn render_json(
+    out: Output,
+    value: &impl serde::Serialize,
+    w: &mut impl Write,
+) -> anyhow::Result<()> {
+    match out {
+        Output::Json => serde_json::to_writer_pretty(&mut *w, value)?,
+        _ => serde_json::to_writer(&mut *w, value)?,
+    }
+    writeln!(w)?;
+    Ok(())
+}
+
+/// An answer's object with `key` written from `rows`, in the key order the
+/// whole `Value` would have had.
+struct Listing<'a, T> {
+    head: &'a serde_json::Map<String, serde_json::Value>,
+    key: &'a str,
+    rows: &'a [T],
+}
+
+impl<T: serde::Serialize> serde::Serialize for Listing<'_, T> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeMap;
+        let mut map = s.serialize_map(Some(self.head.len()))?;
+        for (k, v) in self.head {
+            match k == self.key {
+                true => map.serialize_entry(k, &Rows(self.rows))?,
+                false => map.serialize_entry(k, v)?,
+            }
+        }
+        map.end()
+    }
+}
+
+/// Rows written as the array a `Value` of them would be, each rooted as it
+/// goes (`rooted`).
+struct Rows<'a, T>(&'a [T]);
+
+impl<T: serde::Serialize> Rows<'_, T> {
+    fn rooted(row: &T) -> serde_json::Result<serde_json::Value> {
+        let mut value = serde_json::to_value(row)?;
+        rooted(&mut value);
+        Ok(value)
+    }
+}
+
+impl<T: serde::Serialize> serde::Serialize for Rows<'_, T> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::{Error, SerializeSeq};
+        let mut seq = s.serialize_seq(Some(self.0.len()))?;
+        for row in self.0 {
+            seq.serialize_element(&Rows::rooted(row).map_err(S::Error::custom)?)?;
+        }
+        seq.end()
+    }
 }
 
 /// Worker threads for the parse phase.
@@ -2053,7 +2146,8 @@ fn cmd_refs(
         "singleton": query.singleton,
         "definition": definition,
         "counts": counts,
-        "references": found,
+        // Written row by row from `found` (`emit_listing`).
+        "references": null,
     });
     if let Some(reason) = &reason {
         answer["reason"] = reason.as_str().into();
@@ -2064,7 +2158,7 @@ fn cmd_refs(
         crate::usage::outcome(Outcome::Uncertain);
     }
     if out != Output::Text {
-        emit_json(out, &answer)?;
+        emit_listing(out, answer, "references", &found)?;
         return Ok(exit_on(!found.is_empty()));
     }
 
@@ -3818,6 +3912,49 @@ mod tests {
             "receiver": "local", "receiver_type": "Item",
         });
         assert!(explanation(&by_sig).contains("a call → Item, by the return type"));
+    }
+
+    /// A listing written row by row is the answer `emit_json` would print
+    /// whole: its key in the sorted place, every row as its `Value`.
+    #[test]
+    fn a_listing_prints_the_bytes_of_the_whole_answer() {
+        #[derive(serde::Serialize)]
+        struct Row {
+            path: String,
+            line: u32,
+            why: Option<&'static str>,
+            nested: Vec<(u8, &'static str)>,
+        }
+        let rows: Vec<Row> = (0..3)
+            .map(|i| Row {
+                path: format!("lib/f{i}.rb"),
+                line: i,
+                why: (i == 1).then_some("because"),
+                nested: vec![(i as u8, "x")],
+            })
+            .collect();
+        for rows in [&rows[..], &[]] {
+            let answer = serde_json::json!({
+                "zeta": 1, "alpha": {"path": "a.rb"}, "method": "save", "counts": {"b": 1, "a": 2},
+            });
+            let mut whole = answer.clone();
+            whole["references"] = serde_json::to_value(rows).unwrap();
+            rooted(&mut whole);
+            for (out, want) in [
+                (Output::Json, serde_json::to_string_pretty(&whole).unwrap()),
+                (Output::Ndjson, serde_json::to_string(&whole).unwrap()),
+            ] {
+                let mut listed = answer.clone();
+                listed["references"] = serde_json::Value::Null;
+                let mut got = Vec::new();
+                render_listing(out, listed, "references", rows, &mut got).unwrap();
+                assert_eq!(String::from_utf8(got).unwrap(), format!("{want}\n"));
+            }
+            let mut got = Vec::new();
+            render_json(Output::Json, &Rows(rows), &mut got).unwrap();
+            let want = serde_json::to_string_pretty(&serde_json::to_value(rows).unwrap()).unwrap();
+            assert_eq!(String::from_utf8(got).unwrap(), format!("{want}\n"));
+        }
     }
 
     #[test]
