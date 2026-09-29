@@ -6629,3 +6629,15 @@ their sites (51 and 26 possible) rather than `no_such_method`, and cards on
 Pathname, Digest, Ripper, Socket, Psych and `OpenSSL::*` hedge; gold verdicts
 and click totals are the build's without it.
 
+## DEC-182 — A stdlib method the core stub also writes takes the stub's return
+
+**Decided.** A method in the stdlib with no return type of its own takes
+the core stub's `sig` for the same owner and name (`Tree::declared_returns`,
+as it does an `.rbi`'s). The location stays the stdlib's.
+
+**Why.** `core.rb` stubs `Set` (core in Ruby 3.5) and a few methods the 3.4
+stdlib also writes — 19 in all: `Set`'s 16, `Kernel#pp`,
+`Enumerable#to_set`, `Dir.tmpdir`. The stdlib's definition wins the lookup,
+as real source should, and without this `set.size.even?` lost the
+`Integer` the stub had given `size`. A gem's override of a core method does
+not borrow: it may return something else.

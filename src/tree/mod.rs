@@ -2622,6 +2622,11 @@ impl Tree {
     /// Sorbet reads an `.rbi`'s `sig` as the real method's, and so does this.
     /// The declaration comes back with the type, since a type is looked up
     /// where it is written.
+    ///
+    /// A stdlib method the core stub also writes — `Set#size` is stubbed for
+    /// a Ruby where `Set` is core — takes the stub's return, since both
+    /// describe the one method (DEC-182). A gem's override of a core method
+    /// does not: it may return something else.
     pub(crate) fn declared_returns(
         &self,
         method: &MethodDef,
@@ -2631,9 +2636,13 @@ impl Tree {
         let by_owner = self.by_owner.borrow();
         let methods = self.methods.borrow();
         let key = (method.owner.clone(), method.singleton, method.name.clone());
+        let in_stdlib = self.in_stdlib(&method.site.path);
         by_owner.get(&key)?.iter().rev().find_map(|i| {
             let declared = &methods[*i];
-            if !(declared.site.is_rbi() || is_rspec_stub(&declared.site.path)) {
+            let describes = declared.site.is_rbi()
+                || is_rspec_stub(&declared.site.path)
+                || (in_stdlib && corelib::is_core(&declared.site.path));
+            if !describes {
                 return None;
             }
             let returns = declared.returns_for(argc, block)?.to_string();

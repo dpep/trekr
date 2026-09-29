@@ -3367,6 +3367,55 @@ fn a_default_gem_at_the_rubys_own_version_is_found_in_the_stdlib() {
     let _ = fs::remove_dir_all(&home);
 }
 
+/// A stdlib method the core stub also writes keeps the stub's return type:
+/// `Set#size` is real source in a Ruby where `Set` is not core (DEC-182).
+#[test]
+fn a_stdlib_method_the_core_stub_types_keeps_its_return() {
+    let (dir, db) = scratch("stdlib-sig");
+    let (home, _) = scratch("stdlib-sig-home");
+    fake_ruby(
+        &home,
+        "9.8.7",
+        &[(
+            "set.rb",
+            "class Set\n  def size\n    @hash.size\n  end\nend\n",
+        )],
+        &[],
+    );
+    ruby_app(&dir, "9.8.7", &[], &[]);
+    fs::write(
+        dir.join("job.rb"),
+        "class Job\n  def run\n    Set.new.size.even?\n  end\nend\n",
+    )
+    .unwrap();
+    let env = [("HOME", home.to_str().unwrap())];
+    trekr_env(&db, &dir, &["--index"], &env);
+
+    let size = json(&trekr_env(
+        &db,
+        &dir,
+        &["--def", "job.rb:3:13", "--json"],
+        &env,
+    ));
+    assert!(
+        size["definition"][0]["path"]
+            .as_str()
+            .is_some_and(|p| p.ends_with("set.rb")),
+        "the real source is the location: {size}"
+    );
+    let even = json(&trekr_env(
+        &db,
+        &dir,
+        &["--def", "job.rb:3:18", "--json"],
+        &env,
+    ));
+    assert_eq!(even["status"], "resolved", "{even}");
+    assert_eq!(even["owner"], "Integer", "{even}");
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&home);
+}
+
 /// A gem reopening a stdlib class runs after it, so its method answers —
 /// even when the stdlib was indexed after the gem (DEC-180).
 #[test]

@@ -451,7 +451,9 @@ file of an extension's family — it loads the extension, lives under its
 directory, or loads a loader that does (DEC-181). `Store::dynamic_markers`
 gives every class such a file opens a `compiled extension <feature>` marker,
 so a name its Ruby lacks hedges as DEC-130's markers do; a class core
-declares is never marked.
+declares is never marked. And a stdlib method the core stub also writes
+(`Set#size`) takes the stub's return type while keeping the stdlib's
+location (DEC-182).
 
 The layering is core → stdlib → gems → checkout, so a gem may reopen core
 and the stdlib and the checkout may reopen a gem, which is what Rails
