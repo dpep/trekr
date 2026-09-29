@@ -3447,18 +3447,25 @@ fn cmd_def(
     let answer = match under {
         // The cursor is on the declaration itself. Ruby has no indirection to
         // follow here, so the honest answer is "you are already there".
-        position::Under::Definition(def) => serde_json::json!({
-            "query": query,
-            "under": "definition",
-            "name": def.name,
-            "status": "resolved",
-            "confidence": 1.0,
-            "resolved_via": "definition",
-            "definition": [{
-                "path": file, "line": def.pos.line,
-                "col": def.pos.col, "kind": def.kind.as_str(),
-            }],
-        }),
+        position::Under::Definition(def) => {
+            let mut answer = serde_json::json!({
+                "query": query,
+                "under": "definition",
+                "name": def.name,
+                "status": "resolved",
+                "confidence": 1.0,
+                "resolved_via": "definition",
+                "definition": [{
+                    "path": file, "line": def.pos.line,
+                    "col": def.pos.col, "kind": def.kind.as_str(),
+                }],
+            });
+            // A top-level def is Object's (DEC-311).
+            if def.kind == crate::core::Kind::Method {
+                answer["owner"] = def.nesting.first().map_or("Object", String::as_str).into();
+            }
+            answer
+        }
         position::Under::Constant(reference) => {
             let (root, mut store) = checkout_for_query(Path::new(&spec.path), pinned)?;
             if !store.has_checkout(&root.to_string_lossy())? {

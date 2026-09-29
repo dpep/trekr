@@ -90,6 +90,9 @@
   owner defines itself answers as before, and `--dead` is unchanged
   (DEC-280).
 
+- **`--def` on a method's own name carries `owner`**, as every other
+  method answer does; a top-level def's is `Object`.
+
 - **`--ndjson` streams row sets one row per line.** `--refs Owner#method`
   and `--dead` printed their whole answer on one line, rows as a nested
   array; now each reference or candidate is a line of its own, exactly as

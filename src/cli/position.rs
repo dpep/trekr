@@ -95,6 +95,12 @@ fn name_pos(def: &Def) -> Pos {
     }
 }
 
+/// How many columns from `name_pos` the definition's name spans. A macro's
+/// def is recorded at its symbol, so the `:` comes first.
+fn name_len(def: &Def) -> usize {
+    tail(&def.name) + usize::from(def.via.is_some())
+}
+
 /// On the `A` of a compact `class A::B`: the namespace it is opened in,
 /// answered as the reference it is. The extractor records the path whole, so
 /// the segment is read back out of the definition's name.
@@ -302,7 +308,7 @@ pub(crate) fn at_facts(facts: &crate::core::Facts, line: u32, col: u32) -> Optio
     if let Some(def) = facts
         .defs
         .iter()
-        .find(|d| covers(name_pos(d), tail(&d.name), line, col) && d.kind != Kind::Constant)
+        .find(|d| covers(name_pos(d), name_len(d), line, col) && d.kind != Kind::Constant)
     {
         return Some(Under::Definition(def.clone()));
     }
@@ -334,7 +340,7 @@ pub(crate) fn at_facts(facts: &crate::core::Facts, line: u32, col: u32) -> Optio
     if let Some(def) = facts
         .defs
         .iter()
-        .find(|d| covers(name_pos(d), tail(&d.name), line, col))
+        .find(|d| covers(name_pos(d), name_len(d), line, col))
     {
         return Some(Under::Definition(def.clone()));
     }
@@ -395,6 +401,17 @@ mod tests {
             panic!("expected a definition");
         };
         assert_eq!(def.name, "Widget");
+    }
+
+    #[test]
+    fn a_macros_symbol_reads_as_the_definition_it_makes() {
+        let source = b"class W\n  attr_reader :count\n  alias_method :size?, :count\nend\n";
+        for (line, col, name) in [(2, 15, "count"), (2, 20, "count"), (3, 19, "size?")] {
+            let Some(Under::Definition(def)) = at(source, line, col) else {
+                panic!("expected a definition at {line}:{col}");
+            };
+            assert_eq!(def.name, name);
+        }
     }
 
     #[test]

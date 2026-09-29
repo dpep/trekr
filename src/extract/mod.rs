@@ -4400,6 +4400,8 @@ impl<'pr> Extractor<'_> {
         };
         let loc = call.location();
         let mut def = self.def(new, Kind::Method, loc.start_offset(), loc.end_offset());
+        // At its symbol, as attr_* records it, so a click on the name lands.
+        def.pos = self.pos(args[0].location().start_offset());
         def.singleton = self.in_singleton();
         def.via = Some("alias_method".into());
         self.bind_alias(&mut def, &old);
