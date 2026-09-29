@@ -3627,7 +3627,9 @@ fn a_named_ruby_is_found_wherever_a_version_manager_put_it() {
         assert!(index["gems"].get("ruby_not_found").is_none(), "{index}");
     }
 
-    // Named, not installed: another Ruby answers, and that is said.
+    // Named, not installed: another Ruby answers, and that is said. A store
+    // of its own, or the last index's Ruby would be kept (DEC-271).
+    let db = db.with_extension("missing.db");
     fs::write(dir.join(".ruby-version"), "9.2\n").unwrap();
     let gem_home = format!("{}/lib/ruby/gems/9.6.0", installs[0].1.display());
     let env = [
@@ -3659,6 +3661,121 @@ fn a_named_ruby_is_found_wherever_a_version_manager_put_it() {
     for dir in [&dir, &home, &system] {
         let _ = fs::remove_dir_all(dir);
     }
+}
+
+/// A reindex in a poorer environment — an editor launched from the Dock, the
+/// language server's background index — keeps the Ruby and signatures the
+/// last one chose; only the checkout naming another Ruby moves them (DEC-271).
+#[test]
+fn a_reindex_in_a_poorer_environment_keeps_the_rubys_core() {
+    let (dir, db) = scratch("ruby-kept");
+    fs::remove_file(dir.join(".ruby-version")).unwrap();
+    repo(&dir);
+    fs::write(dir.join("use.rb"), "\"a\".upcase\n").unwrap();
+    let (home, _) = scratch("ruby-kept-home");
+    let first = fake_ruby(&home, "9.8.7", &[], &[]);
+    let second = fake_ruby(&home, "9.7.1", &[], &[]);
+    let gem_home = format!("{}/.rvm/gems/ruby-9.8.7", home.display());
+    let rich = [
+        ("HOME", home.to_str().unwrap()),
+        ("GEM_HOME", gem_home.as_str()),
+    ];
+    // Two Rubies, none named, none on `PATH`, no `$GEM_HOME`: none to choose.
+    let bare = [("HOME", home.to_str().unwrap())];
+
+    let index = json(&trekr_env(&db, &dir, &["--index", "--json"], &rich));
+    assert_eq!(index["gems"]["stdlib"]["root"], first.as_str(), "{index}");
+    let index = json(&trekr_env(&db, &dir, &["--index", "--json"], &bare));
+    let stdlib = &index["gems"]["stdlib"];
+    assert_eq!(stdlib["root"], first.as_str(), "{index}");
+    assert!(
+        stdlib["ruby"]
+            .as_str()
+            .unwrap()
+            .contains("kept from the last index"),
+        "{index}"
+    );
+    assert_eq!(stdlib["rbs"]["version"], "9.9.9", "{index}");
+    let upcase = trekr_env(&db, &dir, &["--def", "use.rb:1:5", "--json"], &bare);
+    assert_eq!(json(&upcase)["owner"], "String", "core is still known");
+
+    // The checkout names another Ruby: that one, and it is said.
+    fs::write(dir.join(".ruby-version"), "9.7.1\n").unwrap();
+    let index = json(&trekr_env(&db, &dir, &["--index", "--json"], &bare));
+    let stdlib = &index["gems"]["stdlib"];
+    assert_eq!(stdlib["root"], second.as_str(), "{index}");
+    assert!(
+        stdlib["ruby"].as_str().unwrap().contains("in place of"),
+        "{index}"
+    );
+
+    // Signatures found only through one `$HOME` are kept under another.
+    let (system, _) = scratch("ruby-kept-system");
+    let (rbs_home, _) = scratch("ruby-kept-rbs-home");
+    let (empty, _) = scratch("ruby-kept-empty");
+    let prefix = system.join("opt/rubies/ruby-9.6.1");
+    let lib = prefix.join("lib/ruby");
+    fs::create_dir_all(lib.join("9.6.0")).unwrap();
+    fs::create_dir_all(lib.join("gems/9.6.0/specifications/default")).unwrap();
+    fs::create_dir_all(rbs_home.join(".gem/ruby/9.6.0/gems")).unwrap();
+    std::os::unix::fs::symlink(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rbs"),
+        rbs_home.join(".gem/ruby/9.6.0/gems/rbs-9.9.9"),
+    )
+    .unwrap();
+    fs::write(dir.join(".ruby-version"), "9.6.1\n").unwrap();
+    let with = |home: &Path| {
+        let index = trekr_env(
+            &db,
+            &dir,
+            &["--index", "--json"],
+            &[
+                ("HOME", home.to_str().unwrap()),
+                ("TREKR_TEST_SYSTEM", system.to_str().unwrap()),
+            ],
+        );
+        json(&index)["gems"]["stdlib"]["rbs"].clone()
+    };
+    let rbs = with(&rbs_home);
+    assert_eq!(
+        (rbs["version"].as_str(), rbs["chosen"].as_str()),
+        (Some("9.9.9"), Some("installed")),
+        "{rbs}"
+    );
+    let rbs = with(&empty);
+    assert_eq!(rbs["version"], "9.9.9", "{rbs}");
+    assert_eq!(rbs["kept"], true, "{rbs}");
+
+    for dir in [&dir, &home, &system, &rbs_home, &empty] {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+/// With no Ruby, a name nothing defines says core was never looked in, rather
+/// than claiming core lacks it.
+#[test]
+fn a_miss_without_core_says_core_is_not_indexed() {
+    let (dir, db) = scratch("no-core-reason");
+    fs::remove_file(dir.join(".ruby-version")).unwrap();
+    repo(&dir);
+    fs::write(dir.join("use.rb"), "\"a\".upcase\n").unwrap();
+    let (empty, _) = scratch("no-core-reason-home");
+    let none = [("HOME", empty.to_str().unwrap())];
+    trekr_env(&db, &dir, &["--index"], &none);
+    let upcase = json(&trekr_env(
+        &db,
+        &dir,
+        &["--def", "use.rb:1:5", "--json"],
+        &none,
+    ));
+    let reason = upcase["reason"].as_str().unwrap();
+    assert!(
+        reason.contains("Ruby core is not indexed for this checkout"),
+        "{upcase}"
+    );
+    assert!(!reason.contains("its gems or Ruby core"), "{upcase}");
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&empty);
 }
 
 /// A lockfile naming a default gem at the version its Ruby ships names the

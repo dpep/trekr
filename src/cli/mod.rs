@@ -1033,8 +1033,13 @@ fn index_gems(
         ruby_not_found: crate::gems::stdlib::named_missing(repo),
         ..GemReport::default()
     };
-    // The Ruby's stdlib before the gems, which reopen it (DEC-180).
-    let stdlib = crate::gems::stdlib::for_checkout(repo);
+    // The Ruby's stdlib before the gems, which reopen it (DEC-180); the one
+    // the last index chose stands unless the checkout names another (DEC-271).
+    let last = store
+        .tree_roots(&repo.to_string_lossy())?
+        .stdlib
+        .map(PathBuf::from);
+    let stdlib = crate::gems::stdlib::for_checkout(repo, last.as_deref());
     if let Some(stdlib) = &stdlib {
         let mut indexed = index_stdlib(store, stdlib, known, pool, profile)?;
         // Its Ruby's signatures, which core and the stdlib's compiled half
@@ -1550,7 +1555,11 @@ fn cmd_index(
                 "  signatures — rbs {}, {}, {}: {}",
                 rbs.version,
                 rbs.chosen.why(),
-                if rbs.read { "read" } else { "already known" },
+                match (rbs.read, rbs.kept) {
+                    (true, _) => "read",
+                    (false, false) => "already known",
+                    (false, true) => "kept from the last index, as none as good is found now",
+                },
                 paths::pretty(&rbs.path)
             ),
             None => println!(

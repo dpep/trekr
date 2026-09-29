@@ -8280,3 +8280,46 @@ would see whatever the machine running it has installed — this one has two
 Homebrew Rubies, which turned DEC-242's "the only Ruby installed" into none.
 `TREKR_TEST_SYSTEM` stands in for `/` when looking for those, and the e2e
 harness points it at the fixture's home.
+
+## DEC-271 — A reindex keeps the Ruby and signatures the last one chose, unless the checkout names another
+
+Amends DEC-180's and DEC-242's choice of Ruby and DEC-240's choice of rbs.
+
+**Decided.** A checkout's Ruby is the one it names, when that is installed
+(DEC-270); failing that, the one its last index chose, while that Ruby is
+still on disk; failing that, DEC-242's chain — `$GEM_HOME`'s, the `ruby` on
+`$PATH`, the only one installed. The environment can pick a Ruby for a
+checkout that has none, and never takes one away or swaps it. When the
+checkout names a Ruby other than the one it ran on, the new one is taken
+and `gems.stdlib.ruby` says what it replaced ("in place of the Ruby at …");
+when the last choice is kept over a poorer environment, it says that ("kept
+from the last index (this environment finds no Ruby)").
+
+A Ruby's signatures follow the same rule. Which rbs gem is found depends on
+`$HOME` — `~/.gem`, rvm's gem directories, another Ruby's install — so the
+gem a stdlib is served with stays unless the one found now is at least as
+good: bundled with the Ruby (always taken), or of the same kind and no
+older. A kept gem shows as `gems.stdlib.rbs.kept`.
+
+A name nothing defines, in a checkout with no core, says "Ruby core is not
+indexed for this checkout (no Ruby found for it, or its Ruby carries no rbs
+gem …)" rather than claiming core was looked in.
+
+**Why.** The hunt's repro: a checkout indexed from a shell, then reindexed
+by an editor launched from the Dock — no `.ruby-version`, several Rubies
+installed, no `$GEM_HOME`, no `ruby` on `PATH`. DEC-242's chain found
+nothing, the reindex wrote a checkout with no stdlib, and `"x".upcase`
+became "nothing trekr indexed defines this name anywhere — not this
+checkout, its gems or Ruby core", for the CLI too, until someone reindexed
+from a shell. The language server's background index inherits the editor's
+environment, so this is every Dock-launched editor, after every branch
+switch. 0.8.0's built-in core could not be lost this way.
+
+**The cost.** A checkout that names no Ruby does not follow `rvm use` or a
+new `$GEM_HOME`: it stays on the Ruby it was first indexed on. Naming the
+Ruby (`.ruby-version`) moves it, and `trekr --drop` forgets the choice.
+That is the trade: an explicit choice moves it, an ambient one cannot.
+
+**Not done.** Without a lockfile, the gems' Ruby (DEC-152) is still the
+environment's, and a poorer one searches every Ruby's gems, as before; the
+picks stay installed versions, where the stdlib went to nothing.

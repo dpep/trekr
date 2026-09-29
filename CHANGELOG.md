@@ -11,7 +11,11 @@
   signatures of the app's own Ruby, where they were built into the binary.
   Where no Ruby is found for a checkout, or it has no rbs, nothing is known
   of core — `puts`, `String#upcase` and friends answer residue — and
-  `--index` says so.
+  `--index` says so. Once found, a checkout's Ruby and signatures are kept
+  by every later reindex, whatever that reindex's environment (an editor
+  launched from the Dock, the language server's background index); only
+  the checkout naming another Ruby in `.ruby-version` or its Gemfile moves
+  it, and `trekr --drop` forgets it (DEC-271).
 
 ### Added
 

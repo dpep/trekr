@@ -31,13 +31,22 @@ pub(crate) struct Report {
     pub(crate) chosen: crate::gems::stdlib::Chosen,
     /// Read by this index, rather than already known.
     pub(crate) read: bool,
+    /// Kept from an earlier index, since the gem found now is a worse
+    /// choice (DEC-271).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) kept: bool,
 }
 
 /// Serve the stdlib's checkout with its Ruby's signatures, reading them
 /// when no index has yet. `None` when the Ruby carries no rbs gem.
 pub(crate) fn prepare(store: &mut Store, stdlib: &Stdlib) -> anyhow::Result<Option<Report>> {
     let root = stdlib.root.to_string_lossy().into_owned();
-    let Some(gem) = stdlib.rbs() else {
+    let about = store.rbs_about(&root)?;
+    let gem = stdlib.rbs();
+    if let Some(kept) = about.as_ref().and_then(|about| kept(about, gem.as_ref())) {
+        return Ok(Some(kept));
+    }
+    let Some(gem) = gem else {
         store.set_rbs(&root, None, None)?;
         return Ok(None);
     };
@@ -47,13 +56,10 @@ pub(crate) fn prepare(store: &mut Store, stdlib: &Stdlib) -> anyhow::Result<Opti
         path: gem.dir.to_string_lossy().into_owned(),
         chosen: gem.chosen,
         read: false,
+        kept: false,
     };
-    let chosen = serde_json::to_value(gem.chosen)?;
-    let chosen = chosen.as_str().unwrap_or_default();
-    if store
-        .rbs_about(&root)?
-        .is_some_and(|about| about.key == key && about.chosen == chosen)
-    {
+    let chosen = gem.chosen.name();
+    if about.is_some_and(|about| about.key == key && about.chosen == chosen) {
         return Ok(Some(report));
     }
     if store.has_rbs(&key)? {
@@ -74,6 +80,36 @@ pub(crate) fn prepare(store: &mut Store, stdlib: &Stdlib) -> anyhow::Result<Opti
     store.set_rbs(&root, Some((&key, chosen)), Some(&row))?;
     report.read = true;
     Ok(Some(report))
+}
+
+/// The signatures a stdlib is already served with, when the gem found now
+/// is a worse choice and they are still on disk. Which rbs is found depends
+/// on `$HOME` and `$GEM_HOME` — an installed one's directory, another
+/// Ruby's — and a poorer environment must not take a Ruby's core away
+/// (DEC-271). A gem bundled with the Ruby is always taken: nothing about
+/// the environment decides that.
+fn kept(about: &crate::store::RbsAbout, found: Option<&RbsGem>) -> Option<Report> {
+    use crate::gems::stdlib::Chosen;
+    let was = Chosen::named(&about.chosen)?;
+    if !Path::new(&about.dir).join("core").is_dir() {
+        return None;
+    }
+    let worse = match found {
+        None => true,
+        Some(gem) if gem.chosen == Chosen::Bundled => false,
+        Some(gem) => gem
+            .chosen
+            .cmp(&was)
+            .then_with(|| crate::gems::stdlib::version_order(&gem.version, &about.version))
+            .is_lt(),
+    };
+    worse.then(|| Report {
+        version: about.version.clone(),
+        path: about.dir.clone(),
+        chosen: was,
+        read: false,
+        kept: true,
+    })
 }
 
 /// What the stubs are a function of: the stdlib they describe, the gem

@@ -333,10 +333,18 @@ const NOWHERE: &str = "nothing trekr indexed defines this name anywhere — not 
      its gems or Ruby core; a gem may generate it at runtime (Devise's \
      `authenticate_user!` is one), or define it in a gem that is not installed";
 
+/// The same, where no core is loaded: then the claim cannot cover core.
+const NOWHERE_NO_CORE: &str = "nothing trekr indexed defines this name — not this checkout or \
+     its gems — and Ruby core is not indexed for this checkout (no Ruby found for it, or its \
+     Ruby carries no rbs gem; see `trekr --status`), so a core method is not known either";
+
 /// Why a name defined nowhere is residue: the file's own marker that may
 /// make it, ahead of a gem (DEC-162).
 fn nowhere(tree: &Tree, call: &Call, path: &str) -> String {
     let makers = tree.dynamic_in_file(path, &call.name);
+    if makers.is_empty() && !tree.has_core() {
+        return NOWHERE_NO_CORE.to_string();
+    }
     if makers.is_empty() {
         return NOWHERE.to_string();
     }

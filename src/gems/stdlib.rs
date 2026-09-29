@@ -86,19 +86,39 @@ pub(crate) struct RbsGem {
     pub(crate) chosen: Chosen,
 }
 
-/// Why an rbs gem was the one read.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+/// Why an rbs gem was the one read, worst first.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub(crate) enum Chosen {
-    /// Installed with the Ruby: its version is that Ruby's.
-    Bundled,
-    /// The highest installed for this Ruby since.
-    Installed,
     /// Another Ruby's, since this one has none: it may describe that Ruby.
     Other,
+    /// The highest installed for this Ruby since.
+    Installed,
+    /// Installed with the Ruby: its version is that Ruby's.
+    Bundled,
+}
+
+/// Two gem versions in rubygems' order; one that does not parse is lowest.
+pub(crate) fn version_order(a: &str, b: &str) -> std::cmp::Ordering {
+    Version::parse(a).cmp(&Version::parse(b))
 }
 
 impl Chosen {
+    /// As the store writes it: `bundled`, `installed`, `other`.
+    pub(crate) fn named(name: &str) -> Option<Chosen> {
+        [Chosen::Bundled, Chosen::Installed, Chosen::Other]
+            .into_iter()
+            .find(|chosen| chosen.name() == name)
+    }
+
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Chosen::Bundled => "bundled",
+            Chosen::Installed => "installed",
+            Chosen::Other => "other",
+        }
+    }
+
     /// In words, for `--index` and `--status`.
     pub(crate) fn why(self) -> &'static str {
         match self {
@@ -295,16 +315,44 @@ pub(crate) fn files(root: &Path) -> scan::Files {
 /// A directory of scripts that names no Ruby still runs on one, and its core
 /// is that Ruby's (DEC-242). A test stays hermetic by what it puts on `PATH`
 /// and in `HOME`.
-pub(crate) fn for_checkout(repo: &Path) -> Option<Stdlib> {
-    let version = super::project_ruby(repo);
-    if let Some(version) = version
+///
+/// `last` is the stdlib the checkout's last index chose. Only the checkout
+/// naming an installed Ruby moves it: an editor launched from the Dock, or
+/// the language server's background reindex, sees a poorer environment
+/// than the shell that indexed, and must not take core away (DEC-271).
+pub(crate) fn for_checkout(repo: &Path, last: Option<&Path>) -> Option<Stdlib> {
+    if let Some(version) = super::project_ruby(repo)
         && let Some(root) = named(&version)
     {
-        return Some(Stdlib::at(
-            root,
-            format!("Ruby {version}, which the checkout names"),
-        ));
+        let mut ruby = format!("Ruby {version}, which the checkout names");
+        if let Some(last) = last.filter(|last| *last != root) {
+            ruby.push_str(&format!(
+                ", in place of the {} the last index ran on",
+                install_name(last)
+            ));
+        }
+        return Some(Stdlib::at(root, ruby));
     }
+    let found = from_environment();
+    let Some(kept) = last.filter(|root| has_default_gems(root)) else {
+        return found;
+    };
+    let why = match &found {
+        Some(found) if found.root == kept => return Some(found.clone()),
+        Some(found) => format!("this environment would pick {}", found.ruby),
+        None => "this environment finds no Ruby".to_string(),
+    };
+    Some(Stdlib::at(
+        kept.to_path_buf(),
+        format!(
+            "the {}, kept from the last index ({why})",
+            install_name(kept)
+        ),
+    ))
+}
+
+/// The Ruby the environment names, when the checkout names none installed.
+fn from_environment() -> Option<Stdlib> {
     if let Ok(home) = std::env::var("GEM_HOME")
         && !home.is_empty()
         && let Some(root) = of_gem_home(Path::new(&home))
@@ -343,6 +391,16 @@ pub(crate) fn for_checkout(repo: &Path) -> Option<Stdlib> {
     }
 }
 
+/// `Ruby at ~/.rvm/rubies/ruby-3.4.9`, for the stdlib at `root`
+/// (`<prefix>/lib/ruby/<abi>`).
+fn install_name(root: &Path) -> String {
+    let prefix = root.ancestors().nth(3).unwrap_or(root);
+    format!(
+        "Ruby at {}",
+        crate::core::paths::pretty(&prefix.to_string_lossy())
+    )
+}
+
 /// The Ruby version the checkout names when no install of it is found: the
 /// checkout then runs on another Ruby, and `--index` and `--status` say so.
 pub(crate) fn named_missing(repo: &Path) -> Option<String> {
@@ -372,8 +430,11 @@ fn install_version(prefix: &Path) -> Option<Version> {
 fn named(version: &str) -> Option<PathBuf> {
     let wanted = Version::parse(version)?;
     let depth = version.split('.').count();
+    // Reversed, so of two installs of one version the version manager's,
+    // listed before Homebrew's, wins.
     installs()
         .into_iter()
+        .rev()
         .filter_map(|prefix| Some((install_version(&prefix)?, prefix)))
         .filter(|(have, _)| have.truncated(depth) == wanted)
         .max_by(|(a, _), (b, _)| a.cmp(b))

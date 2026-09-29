@@ -4406,6 +4406,14 @@ fn freeze(names: &HashMap<String, Entry>) -> anyhow::Result<snapshot::Snapshot> 
     )
 }
 
+impl Tree {
+    /// Is Ruby core loaded — did the index find a Ruby, and signatures for
+    /// it (DEC-240)? Without it, "defined nowhere" cannot speak for core.
+    pub(crate) fn has_core(&self) -> bool {
+        self.stubs.is_some()
+    }
+}
+
 /// The implicit superclass of every class that does not name one.
 const OBJECT: &str = "Object";
 
