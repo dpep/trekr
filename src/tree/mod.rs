@@ -35,12 +35,12 @@ pub(crate) use files::sweep as sweep_snapshots;
 
 use crate::core::{Param, runtime};
 use crate::store::{DeclRow, EdgeRow, MethodRow, Roots, Store};
-use memo::Memo;
+use memo::{Memo, Once};
 use serde::Serialize;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 /// A name's declaration site — the answer to "where is this?".
 #[derive(Clone, Debug, Serialize)]
@@ -365,19 +365,15 @@ pub(crate) struct Tree {
     /// `None` for a tree built from rows in hand (fixtures), which is fully
     /// eager and never loads anything.
     loader: Option<Loader>,
-    /// Method names already fetched. Demand-loading is per *name*, because
-    /// that is what every caller keys on: a lookup, a residue candidate list
-    /// and an override search all ask about one name (DEC-025).
-    loaded: RefCell<HashSet<String>>,
-    methods: RefCell<Vec<MethodDef>>,
-    /// name → owner → definitions, instance side then singleton. A reopened
-    /// class gives several. By name first, so walking a chain for one name
-    /// probes by the owner's `&str` and builds no key (DEC-231).
-    by_owner: RefCell<HashMap<String, Owners>>,
-    /// name → every definition anywhere, for ranked residue.
-    by_name: RefCell<HashMap<String, Vec<usize>>>,
-    /// `named`'s answers, which are final once a name is loaded.
-    named: RefCell<HashMap<String, Rc<[MethodDef]>>>,
+    /// The rows a name has before anything is loaded: the RSpec stub's,
+    /// and — for a tree that loads nothing — every row it has.
+    base: HashMap<String, Vec<MethodRow>>,
+    /// Each name's definitions, loaded whole on first need. Demand-loading
+    /// is per *name*, because that is what every caller keys on: a lookup, a
+    /// residue candidate list and an override search all ask about one name
+    /// (DEC-025). A name is complete once loaded — nothing else adds a
+    /// definition of it — so its table never changes (DEC-202, DEC-252).
+    defs: Once<String, Arc<Defs>>,
     /// Class-side lookup chains by (fqn, as_self): every lookup on a class
     /// walks the same one, and building it resolves each level's extends
     /// (DEC-203). An instance's chain is its memoized ancestry.
@@ -425,6 +421,35 @@ pub(crate) struct Tree {
     made: RefCell<HashMap<String, Rc<Made>>>,
     /// Hook name → the classes that run it (DEC-098), read on first need.
     hooks: RefCell<Option<HashMap<String, Vec<String>>>>,
+}
+
+/// One name's definitions, in the order they were loaded: core's, the
+/// stdlib's, then the store's.
+struct Defs {
+    methods: Vec<MethodDef>,
+    /// owner → definitions, instance side then singleton. A reopened class
+    /// gives several. Walking a chain probes by the owner's `&str` and builds
+    /// no key (DEC-231).
+    by_owner: Owners,
+    /// `named`'s answer, built when first asked.
+    named: OnceLock<Arc<[MethodDef]>>,
+}
+
+impl Defs {
+    /// The definition a landing names.
+    fn at<'a>(&'a self, landing: &'a Landing) -> &'a MethodDef {
+        match &landing.at {
+            At::Def(at) => &self.methods[*at],
+            At::Made(made) => made,
+        }
+    }
+}
+
+/// The definition a landing names, with the owner it was found through.
+fn land(defs: &Defs, landing: &Landing) -> MethodDef {
+    let mut method = defs.at(landing).clone();
+    method.owner = landing.owner.clone();
+    method
 }
 
 /// Every tree's `id`.
@@ -634,13 +659,21 @@ pub(crate) enum Via {
 /// model that took its table.
 #[derive(Clone)]
 struct Landing {
-    at: usize,
+    at: At,
     owner: String,
+}
+
+/// A definition a lookup landed on: one of the name's loaded ones, by its
+/// index in the name's `Defs`, or one a string macro made (DEC-212).
+#[derive(Clone)]
+enum At {
+    Def(usize),
+    Made(Arc<MethodDef>),
 }
 
 fn landed(at: usize, owner: &str) -> Landing {
     Landing {
-        at,
+        at: At::Def(at),
         owner: public_name(owner).to_string(),
     }
 }
@@ -842,9 +875,12 @@ impl Tree {
                 // And the RSpec stub's, which a per-name load would never
                 // find.
                 phases.methods = methods.len();
-                tree.index_rows(methods);
-                tree.index_rows(table_names);
-                tree.loaded.borrow_mut().insert("table_name".to_string());
+                tree.add_base(methods);
+                // Loaded here, and never from the store again.
+                let mut rows = tree.base.get("table_name").cloned().unwrap_or_default();
+                rows.extend(table_names);
+                tree.defs
+                    .set("table_name".to_string(), Arc::new(tree.defs_of(rows)));
                 tree.loader = Some(Loader { store: own, roots });
                 phases.mark("core-and-table-names");
             }
@@ -969,14 +1005,11 @@ impl Tree {
             stubs: None,
             stdlib_sigs: RefCell::new(HashMap::new()),
             names,
-            methods: RefCell::new(Vec::new()),
-            by_owner: RefCell::new(HashMap::new()),
-            by_name: RefCell::new(HashMap::new()),
-            named: RefCell::new(HashMap::new()),
+            base: HashMap::new(),
+            defs: Once::new(),
             singleton_chains: RefCell::new(HashMap::new()),
             lookups: RefCell::new(HashMap::new()),
             loader: None,
-            loaded: RefCell::new(HashSet::new()),
             carriers: HashMap::new(),
             includers: RefCell::new(None),
             mixers: RefCell::new(None),
@@ -2744,30 +2777,38 @@ impl Tree {
         }
     }
 
-    /// Index rows into the method tables. Safe to call repeatedly, once per
-    /// name, which is what demand-loading does.
-    fn index_rows(&self, rows: Vec<MethodRow>) {
-        let mut methods = self.methods.borrow_mut();
-        let mut by_owner = self.by_owner.borrow_mut();
-        let mut by_name = self.by_name.borrow_mut();
+    /// Rows every name starts from before anything is loaded, by name.
+    fn add_base(&mut self, rows: Vec<MethodRow>) {
+        for row in rows {
+            self.base.entry(row.name.clone()).or_default().push(row);
+        }
+    }
+
+    /// One name's rows as its definitions, keyed by owner.
+    fn defs_of(&self, rows: Vec<MethodRow>) -> Defs {
+        let mut methods = Vec::with_capacity(rows.len());
+        let mut by_owner: Owners = HashMap::new();
         for row in rows {
             let owners = self.owners_of(&row);
             let method = self.method_def(row);
             let index = methods.len();
             let side = usize::from(method.singleton);
-            let named = by_owner.entry(method.name.clone()).or_default();
             for owner in owners {
-                named.entry(owner.clone()).or_default()[side].push(index);
+                by_owner.entry(owner.clone()).or_default()[side].push(index);
                 // The carrier owns the schema's methods but is never *declared*,
                 // so it cannot be an ancestor — an include edge to it would not
                 // resolve. The columns are keyed onto the model instead, and
                 // nothing phantom enters the constant namespace.
                 for model in self.carriers.get(&owner).into_iter().flatten() {
-                    named.entry(model.clone()).or_default()[side].push(index);
+                    by_owner.entry(model.clone()).or_default()[side].push(index);
                 }
             }
-            by_name.entry(method.name.clone()).or_default().push(index);
             methods.push(method);
+        }
+        Defs {
+            methods,
+            by_owner,
+            named: OnceLock::new(),
         }
     }
 
@@ -2820,24 +2861,38 @@ impl Tree {
     ///
     /// A tree with no loader was built from rows in hand and already has
     /// everything it will ever have.
-    fn ensure(&self, name: &str) {
-        let Some(loader) = &self.loader else { return };
-        if !self.loaded.borrow_mut().insert(name.to_string()) {
-            return;
-        }
-        // Core's methods of this name go in first, then the stdlib's
-        // compiled ones, so a class the app or a gem reopens answers with its
-        // own (DEC-220, DEC-240).
-        if let Some(stubs) = self.stubs.clone() {
-            for defs in [stubs.core_defs().get(name), stubs.stdlib_defs().get(name)]
-                .into_iter()
-                .flatten()
-            {
-                self.index_rows(defs.iter().flat_map(|def| self.stub_rows(def)).collect());
+    fn ensure(&self, name: &str) -> Arc<Defs> {
+        self.defs.get_or_init(name, || {
+            let mut rows = self.base.get(name).cloned().unwrap_or_default();
+            if let Some(loader) = &self.loader {
+                // Core's methods of this name go in first, then the stdlib's
+                // compiled ones, so a class the app or a gem reopens answers
+                // with its own (DEC-220, DEC-240).
+                if let Some(stubs) = &self.stubs {
+                    for defs in [stubs.core_defs().get(name), stubs.stdlib_defs().get(name)]
+                        .into_iter()
+                        .flatten()
+                    {
+                        rows.extend(defs.iter().flat_map(|def| self.stub_rows(def)));
+                    }
+                }
+                if let Ok(more) = loader.store.methods_named(&loader.roots, name) {
+                    rows.extend(more);
+                }
             }
-        }
-        if let Ok(rows) = loader.store.methods_named(&loader.roots, name) {
-            self.index_rows(rows);
+            Arc::new(self.defs_of(rows))
+        })
+    }
+
+    /// The name's definitions as far as they are known without loading it:
+    /// what the tree holds once it is loaded, and its base rows before. For
+    /// a listing only; an answer asks `ensure`, which does not depend on
+    /// what was asked before it.
+    fn peek(&self, name: &str) -> Arc<Defs> {
+        match self.defs.peek(name) {
+            Some(defs) => defs,
+            None if self.loader.is_none() => self.ensure(name),
+            None => Arc::new(self.defs_of(self.base.get(name).cloned().unwrap_or_default())),
         }
     }
 
@@ -2885,8 +2940,7 @@ impl Tree {
             let how = made.get(owner)?[usize::from(side)].as_ref()?;
             Some((owner.to_string(), side, how.clone()))
         })?;
-        let mut methods = self.methods.borrow_mut();
-        methods.push(MethodDef {
+        let made = MethodDef {
             name: name.to_string(),
             owner: owner.clone(),
             singleton,
@@ -2906,8 +2960,11 @@ impl Tree {
             body_elsewhere: false,
             forwards_to: None,
             bound: false,
-        });
-        Some(landed(methods.len() - 1, &owner))
+        };
+        Some(Landing {
+            at: At::Made(Arc::new(made)),
+            owner: public_name(&owner).to_string(),
+        })
     }
 
     /// Whether this thread is placing markers for this tree.
@@ -2919,7 +2976,7 @@ impl Tree {
     /// a store.
     fn add_methods(&mut self, rows: Vec<MethodRow>) {
         self.carriers = self.carriers_from(&rows);
-        self.index_rows(rows);
+        self.add_base(rows);
     }
 
     /// The chain of `(owner, singleton)` pairs Ruby searches for a method.
@@ -3103,19 +3160,13 @@ impl Tree {
         name: &str,
         as_self: bool,
     ) -> Option<MethodDef> {
+        let defs = self.ensure(name);
         self.landing(fqn, singleton, name, as_self)
-            .map(|landing| self.land(&landing))
-    }
-
-    /// The definition a landing names, with the owner it was found through.
-    fn land(&self, landing: &Landing) -> MethodDef {
-        let mut method = self.methods.borrow()[landing.at].clone();
-        method.owner = landing.owner.clone();
-        method
+            .map(|landing| land(&defs, &landing))
     }
 
     fn landing(&self, fqn: &str, singleton: bool, name: &str, as_self: bool) -> Option<Landing> {
-        self.ensure(name);
+        let defs = self.ensure(name);
         let key = (
             fqn.to_string(),
             singleton,
@@ -3126,12 +3177,19 @@ impl Tree {
         if let Some(found) = self.lookups.borrow().get(&key) {
             return found.clone();
         }
-        let found = self.look_along(fqn, singleton, name, as_self);
+        let found = self.look_along(&defs, fqn, singleton, name, as_self);
         self.lookups.borrow_mut().insert(key, found.clone());
         found
     }
 
-    fn look_along(&self, fqn: &str, singleton: bool, name: &str, as_self: bool) -> Option<Landing> {
+    fn look_along(
+        &self,
+        defs: &Defs,
+        fqn: &str,
+        singleton: bool,
+        name: &str,
+        as_self: bool,
+    ) -> Option<Landing> {
         // A split name asked about as itself runs whichever variant is loaded,
         // so it has an answer only when every variant gives the same one.
         let variants = self.variants_of(fqn);
@@ -3141,11 +3199,10 @@ impl Tree {
                 .map(|variant| self.landing(variant, singleton, name, as_self))
                 .collect();
             let first = found.first()?.as_ref()?;
-            let methods = self.methods.borrow();
-            let site = &methods[first.at].site;
+            let site = &defs.at(first).site;
             let agree = found.iter().all(|other| {
                 other.as_ref().is_some_and(|l| {
-                    let other = &methods[l.at].site;
+                    let other = &defs.at(l).site;
                     other.path == site.path && other.line == site.line
                 })
             });
@@ -3165,8 +3222,8 @@ impl Tree {
         // now loses to a real definition further down the chain. Measured, the
         // shadow case dominates that one, and residue candidates still
         // disclose the alternative.
-        self.first_in_chain(&chain, 0, name, true)
-            .or_else(|| self.first_in_chain(&chain, 0, name, false))
+        self.first_in_chain(defs, &chain, 0, true)
+            .or_else(|| self.first_in_chain(defs, &chain, 0, false))
             .or_else(|| self.made_along(&chain, name))
     }
 
@@ -3182,7 +3239,7 @@ impl Tree {
         owner: &str,
         name: &str,
     ) -> Option<Option<MethodDef>> {
-        self.ensure(name);
+        let defs = self.ensure(name);
         let chain = self.chain_for(fqn, singleton, false);
         // A `def self.x` sits in `lookup_chain` as `(class, true)`, a `def x`
         // as `(owner, false)` — so both halves have to match.
@@ -3190,9 +3247,9 @@ impl Tree {
             .iter()
             .position(|(o, s)| o == owner && s == singleton)?;
         Some(
-            self.first_in_chain(&chain, at + 1, name, true)
-                .or_else(|| self.first_in_chain(&chain, at + 1, name, false))
-                .map(|landing| self.land(&landing)),
+            self.first_in_chain(&defs, &chain, at + 1, true)
+                .or_else(|| self.first_in_chain(&defs, &chain, at + 1, false))
+                .map(|landing| land(&defs, &landing)),
         )
     }
 
@@ -3204,28 +3261,30 @@ impl Tree {
         found: &MethodDef,
         name: &str,
     ) -> Option<MethodDef> {
-        self.ensure(name);
+        let defs = self.ensure(name);
         let chain = self.chain_for(fqn, true, false);
         let at = chain
             .iter()
             .position(|(o, s)| o == found.owner && s == found.singleton)?;
-        self.first_in_chain(&chain, at + 1, name, true)
-            .or_else(|| self.first_in_chain(&chain, at + 1, name, false))
-            .map(|landing| self.land(&landing))
+        self.first_in_chain(&defs, &chain, at + 1, true)
+            .or_else(|| self.first_in_chain(&defs, &chain, at + 1, false))
+            .map(|landing| land(&defs, &landing))
     }
 
     /// The first definition of `name` along `chain` from `from` on;
     /// `real_only` skips `.rbi` declarations entirely.
     fn first_in_chain(
         &self,
+        defs: &Defs,
         chain: &Chain,
         from: usize,
-        name: &str,
         real_only: bool,
     ) -> Option<Landing> {
-        let by_owner = self.by_owner.borrow();
-        let owners = by_owner.get(name)?;
-        let methods = self.methods.borrow();
+        let owners = &defs.by_owner;
+        if owners.is_empty() {
+            return None;
+        }
+        let methods = &defs.methods;
         // What Rails generates into a module the class includes as it is
         // made — a column, an `enum`, an association — sits behind the class
         // and every module it includes later, so it is held until the chain
@@ -3281,12 +3340,13 @@ impl Tree {
         argc: Option<u32>,
         block: bool,
     ) -> Option<(MethodDef, String)> {
-        let by_owner = self.by_owner.borrow();
-        let methods = self.methods.borrow();
+        // Loaded already, by the lookup that found `method`.
+        let defs = self.ensure(&method.name);
+        let methods = &defs.methods;
         let in_stdlib = self.in_stdlib(&method.site.path);
-        let hits = by_owner
-            .get(&method.name)
-            .and_then(|owners| owners.get(&method.owner))
+        let hits = defs
+            .by_owner
+            .get(&method.owner)
             .map(|sides| &sides[usize::from(method.singleton)]);
         let stub = hits.and_then(|hits| {
             hits.iter().rev().find_map(|i| {
@@ -3421,29 +3481,17 @@ impl Tree {
     /// Shared rather than cloned per call: a call site asks for its name's
     /// pool, and `[]` has thousands of definitions in a large checkout. A name
     /// is complete once `ensure` has loaded it, so the list never goes stale.
-    pub(crate) fn named(&self, name: &str) -> Rc<[MethodDef]> {
-        if let Some(named) = self.named.borrow().get(name) {
-            return named.clone();
-        }
-        self.ensure(name);
-        let named: Rc<[MethodDef]> = {
-            let by_name = self.by_name.borrow();
-            let methods = self.methods.borrow();
-            by_name
-                .get(name)
-                .map(|hits| {
-                    hits.iter()
-                        .map(|i| &methods[*i])
-                        .filter(|m| m.is_definition())
-                        .cloned()
-                        .collect()
-                })
-                .unwrap_or_default()
-        };
-        self.named
-            .borrow_mut()
-            .insert(name.to_string(), named.clone());
-        named
+    pub(crate) fn named(&self, name: &str) -> Arc<[MethodDef]> {
+        let defs = self.ensure(name);
+        defs.named
+            .get_or_init(|| {
+                defs.methods
+                    .iter()
+                    .filter(|m| m.is_definition())
+                    .cloned()
+                    .collect()
+            })
+            .clone()
     }
 
     /// The first scope in `fqn`'s lookup chain that defines methods its source
@@ -3893,19 +3941,19 @@ impl Tree {
     /// **not** kept: loading them all into the tree was most of an LSP
     /// session's memory, and only the listing ever needs them all at once.
     pub(crate) fn each_method(&self, mut visit: impl FnMut(&str, bool, &MethodDef)) {
-        {
-            let by_owner = self.by_owner.borrow();
-            let methods = self.methods.borrow();
-            for (owner, sides) in by_owner.values().flatten() {
+        let loaded: HashSet<String> = self.defs.done().into_iter().collect();
+        let unloaded = self.base.keys().filter(|name| !loaded.contains(*name));
+        for name in loaded.iter().chain(unloaded) {
+            let defs = self.peek(name);
+            for (owner, sides) in &defs.by_owner {
                 for (side, hits) in sides.iter().enumerate() {
-                    for method in hits.iter().map(|i| &methods[*i]) {
+                    for method in hits.iter().map(|i| &defs.methods[*i]) {
                         visit(owner, side == 1, method);
                     }
                 }
             }
         }
         let Some(loader) = &self.loader else { return };
-        let loaded = self.loaded.borrow();
         // The stubs' methods not yet loaded, core's first, as a per-name load
         // would index them.
         if let Some(stubs) = &self.stubs {

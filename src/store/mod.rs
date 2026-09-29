@@ -1832,7 +1832,7 @@ pub(crate) struct DeclRow {
     pub(crate) col: u32,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct MethodRow {
     pub(crate) name: String,
     pub(crate) nesting: Vec<String>,
