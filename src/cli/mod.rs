@@ -890,6 +890,12 @@ fn index_gems(
     let mut used: Vec<String> = Vec::new();
     for entry in located {
         let named = format!("{} {}", entry.gem.name, entry.gem.version);
+        if !entry.unread.is_empty() {
+            report.unread.push(Unread {
+                gem: named.clone(),
+                requirements: entry.unread.clone(),
+            });
+        }
         let gem_root = match entry.place {
             crate::gems::Place::Dir(root) => root,
             crate::gems::Place::InCheckout => {
@@ -907,6 +913,7 @@ fn index_gems(
             }
         };
         report.found += 1;
+        report.picked.push(named);
         if matches!(entry.gem.source, crate::gems::Source::Git { .. }) {
             report.from_git += 1;
         }
@@ -964,6 +971,20 @@ struct GemReport {
     /// nobody installed.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     unlocated: Vec<Unlocated>,
+    /// Each gem found, `name version`: exact from a lockfile, trekr's pick
+    /// without one.
+    picked: Vec<String>,
+    /// Picks whose requirement, as written, trekr could not read without
+    /// running it; the highest installed was taken instead.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unread: Vec<Unread>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct Unread {
+    gem: String,
+    /// The requirements as written: `version`, `"~> #{ENV['V']}"`.
+    requirements: Vec<String>,
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -1078,7 +1099,7 @@ fn cmd_index(
         ),
         Some(crate::gems::Resolved::Lockfile) => {}
     }
-    let holes = !gems.missing.is_empty() || !gems.unlocated.is_empty();
+    let holes = !gems.missing.is_empty() || !gems.unlocated.is_empty() || !gems.unread.is_empty();
     if out == Output::Text && (gems.found > 0 || holes) {
         let from_git = match gems.from_git {
             0 => String::new(),
@@ -1099,6 +1120,22 @@ fn cmd_index(
                 "  {} named by {named_by} but not installed: {}",
                 gems.missing.len(),
                 abridged(&gems.missing)
+            );
+        }
+        // Without a lockfile, which version is trekr's choice, so it is said.
+        if gems.resolved_from == Some(crate::gems::Resolved::Declared) && !gems.picked.is_empty() {
+            println!("  picked: {}", abridged(&gems.picked));
+        }
+        if !gems.unread.is_empty() {
+            let unread: Vec<String> = gems
+                .unread
+                .iter()
+                .map(|u| format!("{} ({})", u.gem, u.requirements.join(", ")))
+                .collect();
+            println!(
+                "  {} with a requirement trekr cannot read, at the highest installed: {}",
+                unread.len(),
+                abridged(&unread)
             );
         }
         // One line per reason: a monorepo's gems share one checkout.

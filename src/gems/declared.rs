@@ -16,14 +16,23 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// A dependency as a gemspec or Gemfile writes it.
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 struct Dependency {
     name: String,
-    /// Each as written (`"~> 3.0"`); empty for any version. A requirement
-    /// that interpolates is dropped, which widens it to any.
+    /// Each as written (`"~> 3.0"`), a literal constant's or local's value
+    /// included; empty for any version.
     requirements: Vec<String>,
+    /// The source of a requirement that is not a literal — `version`, an
+    /// interpolation. It binds nothing, so the pick is the highest
+    /// installed, and that is said rather than passed off as a reading.
+    unread: Vec<String>,
     development: bool,
 }
+
+/// How many times the picks are revised as the picked gems' own
+/// requirements join in. Two or three settle every checkout measured; the
+/// cap only stops two picks that keep excluding each other.
+const ROUNDS: usize = 8;
 
 /// The gems a checkout declares, resolved against what is installed, or
 /// `None` when it declares nothing — no gemspec and no Gemfile.
@@ -59,48 +68,97 @@ pub(super) fn resolve(repo: &Path, roots: &[PathBuf]) -> Option<Vec<Located>> {
     let installed = Installed::scan(roots);
     // Every requirement written for a name, merged, before any is resolved:
     // the gemspec's `< 2` and the Gemfile's `~> 1.0` both bind.
-    let mut wanted: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    let mut direct: BTreeMap<String, Dependency> = BTreeMap::new();
     for dependency in declared {
-        wanted
-            .entry(dependency.name)
-            .or_default()
-            .extend(dependency.requirements);
-    }
-    let mut queue: Vec<(String, Vec<String>)> = wanted.into_iter().collect();
-    queue.reverse();
-    let mut seen: HashSet<String> = HashSet::new();
-    let mut located = Vec::new();
-    while let Some((name, requirements)) = queue.pop() {
-        if own.contains(&name) || !seen.insert(name.clone()) {
+        if own.contains(&dependency.name) {
             continue;
         }
-        let Some(found) = installed.best(&name, &requirements) else {
-            let version = match requirements.is_empty() {
-                true => "*".to_string(),
-                false => requirements.join(", "),
-            };
-            located.push(Located {
-                gem: Gem {
-                    name,
-                    version,
-                    source: Source::Registry,
+        match direct.get_mut(&dependency.name) {
+            Some(merged) => {
+                merged.requirements.extend(dependency.requirements);
+                merged.unread.extend(dependency.unread);
+            }
+            None => {
+                direct.insert(dependency.name.clone(), dependency);
+            }
+        }
+    }
+
+    // Every requirement on a name binds at once — the checkout's own and each
+    // picked gem's runtime dependencies — so a transitive `>= 0` cannot pick
+    // past a direct `~> 5.25`. A pick can change what its dependents need,
+    // so the picks are revised until they hold still.
+    let mut needs: HashMap<PathBuf, Vec<Dependency>> = HashMap::new();
+    let mut picks: BTreeMap<String, Option<&Copy>> = BTreeMap::new();
+    let mut wanted: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    for _ in 0..ROUNDS {
+        wanted = direct
+            .iter()
+            .map(|(name, d)| (name.clone(), d.requirements.clone()))
+            .collect();
+        for (name, copy) in &picks {
+            let Some(copy) = copy else { continue };
+            let runtime = needs
+                .entry(copy.path.clone())
+                .or_insert_with(|| runtime_dependencies(&copy.path, name, &copy.written));
+            for dependency in runtime.iter().filter(|d| !own.contains(&d.name)) {
+                wanted
+                    .entry(dependency.name.clone())
+                    .or_default()
+                    .extend(dependency.requirements.iter().cloned());
+            }
+        }
+        let next: BTreeMap<String, Option<&Copy>> = wanted
+            .iter()
+            .map(|(name, requirements)| (name.clone(), installed.best(name, requirements)))
+            .collect();
+        if next.len() == picks.len()
+            && next
+                .iter()
+                .zip(&picks)
+                .all(|((a, x), (b, y))| a == b && x.map(|c| &c.path) == y.map(|c| &c.path))
+        {
+            break;
+        }
+        picks = next;
+    }
+
+    let located = picks
+        .into_iter()
+        .map(|(name, copy)| {
+            let unread = direct
+                .get(&name)
+                .map(|d| d.unread.clone())
+                .unwrap_or_default();
+            match copy {
+                Some(copy) => Located {
+                    gem: Gem {
+                        name,
+                        version: copy.written.clone(),
+                        source: Source::Registry,
+                    },
+                    place: Place::Dir(copy.path.clone()),
+                    unread,
                 },
-                place: Place::Missing(Absence::NotInstalled),
-            });
-            continue;
-        };
-        for dependency in runtime_dependencies(&found.path, &name, &found.written) {
-            queue.push((dependency.name, dependency.requirements));
-        }
-        located.push(Located {
-            gem: Gem {
-                name,
-                version: found.written.clone(),
-                source: Source::Registry,
-            },
-            place: Place::Dir(found.path.clone()),
-        });
-    }
+                None => {
+                    let requirements = wanted.remove(&name).unwrap_or_default();
+                    let version = match requirements.is_empty() {
+                        true => "*".to_string(),
+                        false => requirements.join(", "),
+                    };
+                    Located {
+                        gem: Gem {
+                            name,
+                            version,
+                            source: Source::Registry,
+                        },
+                        place: Place::Missing(Absence::NotInstalled),
+                        unread,
+                    }
+                }
+            }
+        })
+        .collect();
     Some(located)
 }
 
@@ -128,62 +186,194 @@ fn runtime_dependencies(dir: &Path, name: &str, version: &str) -> Vec<Dependency
 /// release and is left out.
 fn dependencies(source: &[u8]) -> Vec<Dependency> {
     let parsed = ruby_prism::parse(source);
-    let mut found = Collector(Vec::new());
+    let mut found = Collector::default();
     found.visit(&parsed.node());
-    found.0
+    found.found
 }
 
-struct Collector(Vec<Dependency>);
+/// Reads dependencies in source order, with what the file binds by then: a
+/// constant or local holding a literal, and a block parameter over a
+/// literal list.
+#[derive(Default)]
+struct Collector {
+    found: Vec<Dependency>,
+    bound: HashMap<String, Vec<String>>,
+}
+
+impl Collector {
+    /// A literal's strings, or what a name bound to one holds; `None` for
+    /// anything else.
+    fn values(&self, node: &Node<'_>) -> Option<Vec<String>> {
+        if let Some(inner) = frozen_receiver(node) {
+            return self.values(&inner);
+        }
+        if let Some(array) = node.as_array_node() {
+            let mut out = Vec::new();
+            for element in array.elements().iter() {
+                out.extend(self.values(&element)?);
+            }
+            return Some(out);
+        }
+        let bound = |name: &[u8]| self.bound.get(&*String::from_utf8_lossy(name)).cloned();
+        if let Some(constant) = node.as_constant_read_node() {
+            return bound(constant.name().as_slice());
+        }
+        if let Some(local) = node.as_local_variable_read_node() {
+            return bound(local.name().as_slice());
+        }
+        string(node).map(|s| vec![s])
+    }
+
+    fn bind(&mut self, name: &[u8], value: &Node<'_>) {
+        let name = String::from_utf8_lossy(name).into_owned();
+        match self.values(value) {
+            Some(values) => self.bound.insert(name, values),
+            None => self.bound.remove(&name),
+        };
+    }
+
+    fn dependency(&self, call: &ruby_prism::CallNode<'_>, development: bool) -> Option<Dependency> {
+        let gemfile = call.name().as_slice() == b"gem";
+        let args: Vec<Node<'_>> = call.arguments()?.arguments().iter().collect();
+        let (first, rest) = args.split_first()?;
+        let [name] = self.values(first)?.try_into().ok()?;
+        let mut requirements = Vec::new();
+        let mut unread = Vec::new();
+        for arg in rest {
+            if let Some(options) = arg.as_keyword_hash_node() {
+                let elsewhere = options.elements().iter().any(|element| {
+                    let key = element
+                        .as_assoc_node()
+                        .and_then(|assoc| symbol(&assoc.key()));
+                    matches!(
+                        key.as_deref(),
+                        Some("path" | "git" | "github" | "platforms" | "platform")
+                    )
+                });
+                if gemfile && elsewhere {
+                    return None;
+                }
+                continue;
+            }
+            match self.values(arg) {
+                Some(values) => requirements.extend(values),
+                None => {
+                    unread.push(String::from_utf8_lossy(arg.location().as_slice()).into_owned())
+                }
+            }
+        }
+        Some(Dependency {
+            name,
+            requirements,
+            unread,
+            development,
+        })
+    }
+
+    /// What one branch of a conditional declares, apart from the rest.
+    fn branch(&mut self, node: Option<Node<'_>>) -> Vec<Dependency> {
+        let outer = std::mem::take(&mut self.found);
+        if let Some(node) = node {
+            self.visit(&node);
+        }
+        std::mem::replace(&mut self.found, outer)
+    }
+
+    /// Two branches that may each declare a gem are alternatives, not one
+    /// requirement: `if ENV[…]` / `else` pins `~> 1.19` or `~> 1.16.0`,
+    /// never both. A name both declare takes the branch that runs when
+    /// nothing is set — `else`, or an `unless` body.
+    fn alternatives(&mut self, taken: Vec<Dependency>, other: Vec<Dependency>) {
+        let names: HashSet<String> = taken.iter().map(|d| d.name.clone()).collect();
+        self.found.extend(taken);
+        self.found
+            .extend(other.into_iter().filter(|d| !names.contains(&d.name)));
+    }
+}
 
 impl<'pr> Visit<'pr> for Collector {
+    fn visit_constant_write_node(&mut self, node: &ruby_prism::ConstantWriteNode<'pr>) {
+        self.bind(node.name().as_slice(), &node.value());
+        ruby_prism::visit_constant_write_node(self, node);
+    }
+
+    fn visit_local_variable_write_node(&mut self, node: &ruby_prism::LocalVariableWriteNode<'pr>) {
+        self.bind(node.name().as_slice(), &node.value());
+        ruby_prism::visit_local_variable_write_node(self, node);
+    }
+
+    fn visit_if_node(&mut self, node: &ruby_prism::IfNode<'pr>) {
+        self.visit(&node.predicate());
+        let then = self.branch(node.statements().map(|s| s.as_node()));
+        match node.subsequent() {
+            Some(otherwise) => {
+                let otherwise = self.branch(Some(otherwise));
+                self.alternatives(otherwise, then);
+            }
+            None => self.found.extend(then),
+        }
+    }
+
+    fn visit_unless_node(&mut self, node: &ruby_prism::UnlessNode<'pr>) {
+        self.visit(&node.predicate());
+        let then = self.branch(node.statements().map(|s| s.as_node()));
+        let otherwise = self.branch(node.else_clause().map(|e| e.as_node()));
+        self.alternatives(then, otherwise);
+    }
+
     fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
-        let method = String::from_utf8_lossy(node.name().as_slice()).into_owned();
-        let development = match method.as_str() {
-            "add_dependency" | "add_runtime_dependency" | "gem" => Some(false),
-            "add_development_dependency" => Some(true),
+        // `%w[a b].each { |g| s.add_dependency g }`: the body once per name.
+        if let Some((param, items, body)) = self.each_over_literals(node) {
+            for item in items {
+                self.bound.insert(param.clone(), vec![item]);
+                if let Some(body) = &body {
+                    self.visit(body);
+                }
+            }
+            self.bound.remove(&param);
+            return;
+        }
+        let development = match node.name().as_slice() {
+            b"add_dependency" | b"add_runtime_dependency" | b"gem" => Some(false),
+            b"add_development_dependency" => Some(true),
             _ => None,
         };
         if let Some(development) = development
-            && let Some(dependency) = dependency(node, development, method == "gem")
+            && let Some(dependency) = self.dependency(node, development)
         {
-            self.0.push(dependency);
+            self.found.push(dependency);
         }
         ruby_prism::visit_call_node(self, node);
     }
 }
 
-fn dependency(
-    call: &ruby_prism::CallNode<'_>,
-    development: bool,
-    gemfile: bool,
-) -> Option<Dependency> {
-    let args: Vec<Node<'_>> = call.arguments()?.arguments().iter().collect();
-    let (first, rest) = args.split_first()?;
-    let name = string(first)?;
-    let mut requirements = Vec::new();
-    for arg in rest {
-        if let Some(options) = arg.as_keyword_hash_node() {
-            let elsewhere = options.elements().iter().any(|element| {
-                let key = element
-                    .as_assoc_node()
-                    .and_then(|assoc| symbol(&assoc.key()));
-                matches!(
-                    key.as_deref(),
-                    Some("path" | "git" | "github" | "platforms" | "platform")
-                )
-            });
-            if gemfile && elsewhere {
-                return None;
-            }
-            continue;
+impl Collector {
+    /// `<literal list>.each { |one| body }`: the parameter, the names, the body.
+    fn each_over_literals<'pr>(
+        &self,
+        call: &ruby_prism::CallNode<'pr>,
+    ) -> Option<(String, Vec<String>, Option<Node<'pr>>)> {
+        if call.name().as_slice() != b"each" {
+            return None;
         }
-        requirements.extend(strings(arg));
+        let receiver = call.receiver()?;
+        receiver.as_array_node()?;
+        let items = self.values(&receiver)?;
+        let block = call.block()?.as_block_node()?;
+        let params = block
+            .parameters()?
+            .as_block_parameters_node()?
+            .parameters()?;
+        let [param] = params
+            .requireds()
+            .iter()
+            .collect::<Vec<_>>()
+            .try_into()
+            .ok()?;
+        let param = param.as_required_parameter_node()?;
+        let name = String::from_utf8_lossy(param.name().as_slice()).into_owned();
+        Some((name, items, block.body()))
     }
-    Some(Dependency {
-        name,
-        requirements,
-        development,
-    })
 }
 
 /// `x.freeze` is `x`; `None` when it is neither.
@@ -198,16 +388,6 @@ fn string(node: &Node<'_>) -> Option<String> {
     }
     let string = node.as_string_node()?;
     String::from_utf8(string.unescaped().to_vec()).ok()
-}
-
-fn strings(node: &Node<'_>) -> Vec<String> {
-    if let Some(inner) = frozen_receiver(node) {
-        return strings(&inner);
-    }
-    match node.as_array_node() {
-        Some(array) => array.elements().iter().filter_map(|e| string(&e)).collect(),
-        None => string(node).into_iter().collect(),
-    }
 }
 
 fn symbol(node: &Node<'_>) -> Option<String> {
@@ -416,9 +596,95 @@ gem 'jruby-openssl', platforms: :jruby
         let names: Vec<&str> = found.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(names, ["rspec", "sqlite3"]);
         assert!(
-            found[1].requirements.is_empty(),
-            "an interpolated requirement is any"
+            found[1].requirements.is_empty() && found[1].unread.len() == 1,
+            "an interpolated requirement binds nothing, and is said to: {found:?}"
         );
+    }
+
+    #[test]
+    fn a_requirement_held_in_a_constant_or_a_loop_is_read() {
+        let gemspec = br#"version = File.read("VERSION").strip
+REQ = "~> 2.9.0".freeze
+Gem::Specification.new do |s|
+  s.add_dependency "alpha", REQ
+  s.add_dependency "beta", version
+  %w[gamma delta].each { |g| s.add_dependency g, "< 3" }
+end
+"#;
+        let found = dependencies(gemspec);
+        let by = |name: &str| found.iter().find(|d| d.name == name).unwrap();
+        assert_eq!(by("alpha").requirements, ["~> 2.9.0"]);
+        assert_eq!(by("beta").unread, ["version"], "{found:?}");
+        assert_eq!(by("delta").requirements, ["< 3"]);
+    }
+
+    #[test]
+    fn a_gem_in_both_branches_of_a_conditional_takes_the_default_one() {
+        let gemfile = br#"if ENV["MODERN"]
+  gem "alpha", "~> 1.19"
+  gem "beta"
+else
+  gem "alpha", "~> 1.16.0"
+end
+unless ENV["CI"]
+  gem "gamma", "~> 2.0"
+else
+  gem "gamma", "~> 3.0"
+end
+"#;
+        let found = dependencies(gemfile);
+        let by = |name: &str| found.iter().find(|d| d.name == name).unwrap();
+        assert_eq!(by("alpha").requirements, ["~> 1.16.0"], "{found:?}");
+        assert_eq!(by("gamma").requirements, ["~> 2.0"], "{found:?}");
+        assert!(
+            found.iter().any(|d| d.name == "beta"),
+            "only one branch names it"
+        );
+        assert_eq!(found.len(), 3, "{found:?}");
+    }
+
+    /// An installed gem's `>= 0` on a name the checkout pins itself must not
+    /// pick past the pin, whichever is declared first.
+    #[test]
+    fn every_requirement_on_a_gem_binds_its_pick_direct_and_transitive() {
+        for order in [["alpha", "beta"], ["beta", "alpha"]] {
+            let base = std::env::temp_dir().join(format!(
+                "trekr-declared-both-{}-{}",
+                order[0],
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&base);
+            let gems = base.join("gems");
+            for dir in ["alpha-1.0.0", "beta-5.26.0", "beta-6.0.0"] {
+                std::fs::create_dir_all(gems.join(dir)).unwrap();
+            }
+            std::fs::create_dir_all(base.join("specifications")).unwrap();
+            std::fs::write(
+                base.join("specifications/alpha-1.0.0.gemspec"),
+                "s.add_runtime_dependency(%q<beta>.freeze, [\">= 5.1\".freeze])\n",
+            )
+            .unwrap();
+            let repo = base.join("repo");
+            std::fs::create_dir_all(&repo).unwrap();
+            let requirement = |name: &str| match name {
+                "beta" => "  s.add_dependency 'beta', '~> 5.25'\n",
+                _ => "  s.add_dependency 'alpha'\n",
+            };
+            std::fs::write(
+                repo.join("widget.gemspec"),
+                format!(
+                    "Gem::Specification.new do |s|\n{}{}end\n",
+                    requirement(order[0]),
+                    requirement(order[1])
+                ),
+            )
+            .unwrap();
+
+            let located = resolve(&repo, std::slice::from_ref(&gems)).unwrap();
+            let beta = located.iter().find(|l| l.gem.name == "beta").unwrap();
+            assert_eq!(beta.gem.version, "5.26.0", "declared {order:?}");
+            let _ = std::fs::remove_dir_all(&base);
+        }
     }
 
     #[test]

@@ -59,6 +59,15 @@
   its own that was never indexed. `--index` on one now says it is a gem, as
   for any gem (DEC-150).
 
+- **Without a lockfile, a gem's pick meets every requirement on it.** A
+  dependency's own `>= 0` no longer picks past the gemspec's `~> 5.25`
+  (minitest 6 instead of 5.26); a requirement held in a constant, or a gem
+  named in a `%w[…].each` loop, is read; a Gemfile's `if`/`else` takes the
+  default branch instead of merging both. A requirement trekr cannot read
+  (`version`, an interpolation) is listed in `gems.unread` rather than
+  silently taken as any. `gems.picked` lists the version of every gem found,
+  and the text says the picks when there is no lockfile (DEC-151).
+
 ## 0.8.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v39): run `trekr --index`

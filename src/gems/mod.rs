@@ -54,6 +54,9 @@ impl Gem {
 pub(crate) struct Located {
     pub(crate) gem: Gem,
     pub(crate) place: Place,
+    /// Requirements as written that could not be read without running
+    /// them (`version`, an interpolation): the pick ignored them.
+    pub(crate) unread: Vec<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -340,7 +343,11 @@ pub(crate) fn locate(repo: &Path, gems: Vec<Gem>) -> Vec<Located> {
         .collect();
     gems.into_iter()
         .zip(places)
-        .map(|(gem, place)| Located { gem, place })
+        .map(|(gem, place)| Located {
+            gem,
+            place,
+            unread: Vec::new(),
+        })
         .collect()
 }
 

@@ -6116,3 +6116,38 @@ version, a revision. `path: "../shared"` pins nothing and is usually a
 repository someone edits; indexing it as a gem would skip it once seen and
 stamp it `kind = 'gem'`, turning that repository's own `--index` into "is a
 gem". It needs a third kind of checkout, not a gem with an exception.
+
+## DEC-151 — Without a lockfile, every requirement on a gem binds its pick, and one trekr cannot read is said
+
+Amends DEC-134.
+
+**Decided.** A name's requirements — the checkout's own and every picked
+gem's runtime dependencies — are intersected before a version is picked,
+and the picks are revised until they hold still (capped at eight rounds).
+A requirement is read when it is a literal, or a constant or local the
+file bound to one before the call, or a block parameter over a literal
+list (`%w[a b].each { |g| s.add_dependency g }`). Anything else —
+`version` read from a file, an interpolation, `ENV.fetch` — binds nothing
+and is listed in `gems.unread` with its source. A name declared in both
+branches of a conditional takes the branch that runs when nothing is set:
+`else`, or an `unless` body. `gems.picked` lists every gem found as `name
+version`, and without a lockfile the text says the picks.
+
+**Why.** Three silent wrong picks from the 0.8.0 hunt. A transitive `>=
+5.1` from activesupport's gemspec picked minitest 6.0.6 past the gemspec's
+own `~> 5.25`, in either declaration order: the first requirement to reach
+a name was the only one, so `json "< 3"` also lost to activesupport's `json
+>= 0` and gave 3.0.2. `JREQ = "~> 2.9.0"` and a version read from
+`VERSION` were each "any", so the newest installed was taken with nothing
+said. And a Gemfile's `if ENV["MODERN"] … else …` merged both branches'
+`nokogiri` pins into one requirement nothing meets, reporting a gem that
+is installed as not installed.
+
+**Measured.** The hunt's repros: minitest 5.26.0 (`!= 5.27.0` binding),
+json 2.21.2 under `>= 2.9, < 3`, json 2.9.1 under a `~> 2.9.0` constant and
+under a loop; `activesupport` beside `version` and `rake` beside
+`ENV.fetch(…)` now listed as unread.
+
+**Not done.** Still per name, not a solver: two requirements no single
+installed version meets leave the name missing with both written, rather
+than backtracking into a parent's other version.

@@ -503,8 +503,14 @@ fn with_no_lockfile_the_gemspecs_dependencies_are_resolved() {
     assert_eq!(answer["gems"]["resolved_from"], "declared");
     assert_eq!(answer["gems"]["found"], 1, "the highest below 1: 0.2.0");
     assert_eq!(answer["gems"]["missing"], serde_json::json!(["absent *"]));
+    assert_eq!(
+        answer["gems"]["picked"],
+        serde_json::json!(["widget 0.2.0"]),
+        "what trekr chose is listed"
+    );
     let text = stdout(&trekr(&db, &dir, &["--index"]));
     assert!(text.contains("highest installed version"), "{text}");
+    assert!(text.contains("picked: widget 0.2.0"), "{text}");
 
     let _ = fs::remove_dir_all(&dir);
 }
