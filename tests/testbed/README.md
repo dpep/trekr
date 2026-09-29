@@ -15,6 +15,12 @@ tests/testbed/011-your-case/
 Each case is staged as a real git checkout with its own database and indexed,
 so it exercises the whole path: extract → store → tree → resolve → CLI.
 
+A case that holds a `ruby/` directory runs on a Ruby whose standard library
+is that directory: it is installed as rvm installs Ruby 9.8.7, under a home
+of the case's own, and the checkout names it in `.ruby-version` (DEC-180).
+The stdlib is not a second checkout of the case's making — every app runs on
+one — so it belongs here, where a gem does not.
+
 ## The `expected` format
 
 ```text

@@ -61,10 +61,22 @@ fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
     }
     fs::create_dir_all(&dir).unwrap();
 
+    // A case's `ruby/` is the stdlib of the Ruby it runs on, installed as
+    // rvm installs one under a home of its own, which every command is run
+    // with (DEC-180).
+    let home = home_of(&dir);
+    let _ = fs::remove_dir_all(&home);
+    if case.join("ruby").is_dir() {
+        let lib = home.join(".rvm/rubies/ruby-9.8.7/lib/ruby");
+        copy_tree(&case.join("ruby"), &lib.join("9.8.0"));
+        fs::create_dir_all(lib.join("gems/9.8.0/specifications/default")).unwrap();
+        fs::write(dir.join(".ruby-version"), "9.8.7\n").unwrap();
+    }
+
     // Everything but the expectations file is source.
     for entry in fs::read_dir(case).unwrap().flatten() {
         let name = entry.file_name();
-        if name == "expected" || name == "README.md" {
+        if name == "expected" || name == "README.md" || name == "ruby" {
             continue;
         }
         let target = dir.join(&name);
@@ -89,9 +101,8 @@ fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
             "case",
         ],
     );
-    let indexed = Command::new(env!("CARGO_BIN_EXE_trekr"))
+    let indexed = trekr_in(&dir)
         .args(["--index"])
-        .current_dir(&dir)
         .env("TREKR_DB", &db)
         .output()
         .expect("index the case");
@@ -101,6 +112,21 @@ fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
         String::from_utf8_lossy(&indexed.stderr)
     );
     (dir, db)
+}
+
+/// Where a staged case's Ruby is installed, when it has one.
+fn home_of(dir: &Path) -> PathBuf {
+    dir.with_extension("home")
+}
+
+/// The binary, run in a staged case: with its own home when it stages a Ruby.
+fn trekr_in(dir: &Path) -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_trekr"));
+    command.current_dir(dir);
+    if home_of(dir).is_dir() {
+        command.env("HOME", home_of(dir));
+    }
+    command
 }
 
 fn copy_tree(from: &Path, to: &Path) {
@@ -129,9 +155,8 @@ fn hover_text(db: &Path, dir: &Path, target: &str) -> String {
     let uri = format!("file://{}", path.display());
     let text = fs::read_to_string(&path).unwrap_or_default();
 
-    let mut child = Command::new(env!("CARGO_BIN_EXE_trekr"))
+    let mut child = trekr_in(dir)
         .arg("--lsp")
-        .current_dir(dir)
         .env("TREKR_DB", db)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -215,9 +240,8 @@ fn hover_text(db: &Path, dir: &Path, target: &str) -> String {
 }
 
 fn trekr(db: &Path, dir: &Path, args: &[&str]) -> (serde_json::Value, i32) {
-    let out = Command::new(env!("CARGO_BIN_EXE_trekr"))
+    let out = trekr_in(dir)
         .args(args)
-        .current_dir(dir)
         .env("TREKR_DB", db)
         .output()
         .expect("run trekr");
@@ -482,6 +506,7 @@ fn every_testbed_case_answers_as_recorded() {
             }
         }
         let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(home_of(&dir));
     }
 
     assert!(
