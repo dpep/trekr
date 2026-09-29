@@ -6,3 +6,7 @@
 # operator's symbol operand (`kind == :ordered`) is a value, not a name.
 refs Widget.ordered confirmed=1 possible=0
 refs Connection#url_prefix confirmed=0 possible=1
+# Only a macro that always defines the name: an ActiveModel::Serializer's
+# `attribute :reblogged` names the method the serializer calls, so it is
+# still that method's reference.
+dead app.rb StatusSerializer#reblogged=convention-only

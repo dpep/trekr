@@ -26,3 +26,15 @@ class Connection
     kind == :ordered
   end
 end
+
+class Serializer
+  def self.attribute(name, **options); end
+end
+
+class StatusSerializer < Serializer
+  attribute :reblogged
+
+  def reblogged
+    true
+  end
+end

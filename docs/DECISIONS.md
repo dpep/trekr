@@ -9024,12 +9024,17 @@ all. `--dead` only needs to know a call may reach the method, which
 possible call of that name, receiver unknown. Two kinds are not:
 
 - **A defining macro's names**, sent to `self`: every argument of
-  `attr_reader`/`attr_writer`/`attr_accessor`/`attr` and of each macro
-  DEC-111's table models (`scope`, `has_many`, `belongs_to`,
-  `class_attribute`, `mattr_*`, `attribute`, `has_secure_token`, …), and
-  the first of `alias_method`, `alias_attribute`, `define_method` and
+  `attr_reader`/`attr_writer`/`attr_accessor`/`attr`, `class_attribute`
+  and the `mattr_*`/`cattr_*`/`thread_*` family, and the first of `scope`,
+  `alias_method`, `alias_attribute`, `define_method` and
   `define_singleton_method`. The macro declares the method (DEC-111), which
   is where `--refs` lists it; the symbol is not also a caller of it.
+- **Only a macro that always defines.** `has_many`, `belongs_to` and
+  `attribute` define in ActiveRecord but *name* in an ActiveModel::Serializer
+  — `attribute :reblogged` is how the serializer reaches `def reblogged`.
+  Taking every macro DEC-111 models, as first written, moved 42 of
+  mastodon's serializer methods from `convention-only` to `unreferenced`,
+  clear; they stay references.
 - **An operator's operand**: `object.type == :ordered`, `opts[:limit]`.
   An operator takes a value, never a method's name.
 

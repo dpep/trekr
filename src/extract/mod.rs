@@ -4939,16 +4939,34 @@ impl<'pr> Extractor<'_> {
 
 /// Is a macro's `index`th argument the name of a method it defines, rather
 /// than one it calls — `scope :recent`, `attr_reader :name`, `alias_method
-/// :new, :old`'s first (DEC-312)? `delegate`'s names are the target's
-/// methods, which the delegation calls.
+/// :new, :old`'s first (DEC-312)? Only a macro that always defines: an
+/// ActiveModel::Serializer's `attribute :x` and `has_many :x` name the
+/// methods it calls, so ActiveRecord's macros of those names are not here.
 fn names_what_it_defines(macro_name: &str, index: usize) -> bool {
     match macro_name {
-        "attr_reader" | "attr_writer" | "attr_accessor" | "attr" => true,
-        "alias_method" | "alias_attribute" | "define_method" | "define_singleton_method" => {
-            index == 0
-        }
-        "delegate" | "accepts_nested_attributes_for" => false,
-        _ => !macros::generated(macro_name, "x").is_empty(),
+        "attr_reader"
+        | "attr_writer"
+        | "attr_accessor"
+        | "attr"
+        | "class_attribute"
+        | "mattr_reader"
+        | "mattr_writer"
+        | "mattr_accessor"
+        | "cattr_reader"
+        | "cattr_writer"
+        | "cattr_accessor"
+        | "thread_mattr_reader"
+        | "thread_mattr_writer"
+        | "thread_mattr_accessor"
+        | "thread_cattr_reader"
+        | "thread_cattr_writer"
+        | "thread_cattr_accessor" => true,
+        "scope"
+        | "alias_method"
+        | "alias_attribute"
+        | "define_method"
+        | "define_singleton_method" => index == 0,
+        _ => false,
     }
 }
 
