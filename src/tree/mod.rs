@@ -356,9 +356,10 @@ pub(crate) struct Tree {
     by_name: RefCell<HashMap<String, Vec<usize>>>,
     /// `named`'s answers, which are final once a name is loaded.
     named: RefCell<HashMap<String, Rc<[MethodDef]>>>,
-    /// Lookup chains by (fqn, singleton, as_self): every lookup on a type
-    /// walks the same one (DEC-203).
-    chains: RefCell<HashMap<(String, bool, bool), Chain>>,
+    /// Class-side lookup chains by (fqn, as_self): every lookup on a class
+    /// walks the same one, and building it resolves each level's extends
+    /// (DEC-203). An instance's chain is its memoized ancestry.
+    singleton_chains: RefCell<HashMap<(String, bool), Pairs>>,
     /// Lookups by (fqn, singleton, name, as_self), final once the name is
     /// loaded, as `named` is (DEC-203).
     lookups: RefCell<HashMap<LookupKey, Option<MethodDef>>>,
@@ -426,8 +427,29 @@ pub(crate) struct AgreedReturn {
     pub(crate) total: usize,
 }
 
-/// The `(owner, singleton)` pairs a method lookup walks, in order.
-pub(crate) type Chain = Rc<[(String, bool)]>;
+/// `(owner, singleton)` pairs, in the order a lookup walks them.
+type Pairs = Rc<[(String, bool)]>;
+
+/// The `(owner, singleton)` pairs a method lookup walks, in order: an
+/// instance's ancestry as it is memoized, or a class side's own walk.
+#[derive(Clone)]
+pub(crate) enum Chain {
+    Instance(Rc<Ancestry>),
+    Singleton(Pairs),
+}
+
+impl Chain {
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, bool)> {
+        let len = match self {
+            Chain::Instance(ancestry) => ancestry.chain.len(),
+            Chain::Singleton(pairs) => pairs.len(),
+        };
+        (0..len).map(move |at| match self {
+            Chain::Instance(ancestry) => (ancestry.chain[at].as_str(), false),
+            Chain::Singleton(pairs) => (pairs[at].0.as_str(), pairs[at].1),
+        })
+    }
+}
 
 /// A lookup, as `lookup_along` keys it: (fqn, singleton, name, as_self).
 type LookupKey = (String, bool, String, bool);
@@ -789,7 +811,7 @@ impl Tree {
             by_owner: RefCell::new(HashMap::new()),
             by_name: RefCell::new(HashMap::new()),
             named: RefCell::new(HashMap::new()),
-            chains: RefCell::new(HashMap::new()),
+            singleton_chains: RefCell::new(HashMap::new()),
             lookups: RefCell::new(HashMap::new()),
             loader: None,
             loaded: RefCell::new(HashSet::new()),
@@ -2543,8 +2565,11 @@ impl Tree {
     /// method it is a **different** walk: up the *superclass* chain only —
     /// included modules contribute no class methods — inserting at each level
     /// the level's own singleton methods and then whatever it `extend`s.
-    pub(crate) fn lookup_chain(&self, fqn: &str, singleton: bool) -> Chain {
+    pub(crate) fn lookup_chain(&self, fqn: &str, singleton: bool) -> Vec<(String, bool)> {
         self.chain_for(fqn, singleton, false)
+            .iter()
+            .map(|(owner, side)| (owner.to_string(), side))
+            .collect()
     }
 
     /// `as_self`: the chain a call on `self` written in `fqn`'s body walks.
@@ -2553,24 +2578,21 @@ impl Tree {
     /// class that included it, which has the concern's `ClassMethods`
     /// (DEC-105).
     fn chain_for(&self, fqn: &str, singleton: bool, as_self: bool) -> Chain {
-        let key = (fqn.to_string(), singleton, as_self);
-        if let Some(chain) = self.chains.borrow().get(&key) {
-            return chain.clone();
+        if !singleton {
+            return Chain::Instance(self.ancestors(fqn));
         }
-        let chain: Chain = self.walk_for(fqn, singleton, as_self).into();
-        self.chains.borrow_mut().insert(key, chain.clone());
-        chain
+        let key = (fqn.to_string(), as_self);
+        if let Some(chain) = self.singleton_chains.borrow().get(&key) {
+            return Chain::Singleton(chain.clone());
+        }
+        let chain: Pairs = self.class_side(fqn, as_self).into();
+        self.singleton_chains
+            .borrow_mut()
+            .insert(key, chain.clone());
+        Chain::Singleton(chain)
     }
 
-    fn walk_for(&self, fqn: &str, singleton: bool, as_self: bool) -> Vec<(String, bool)> {
-        if !singleton {
-            return self
-                .ancestors(fqn)
-                .chain
-                .iter()
-                .map(|owner| (owner.clone(), false))
-                .collect();
-        }
+    fn class_side(&self, fqn: &str, as_self: bool) -> Vec<(String, bool)> {
         let mut chain = Vec::new();
         let mut seen = HashSet::new();
         for class in self.superclass_chain(fqn) {
@@ -2765,8 +2787,8 @@ impl Tree {
         // now loses to a real definition further down the chain. Measured, the
         // shadow case dominates that one, and residue candidates still
         // disclose the alternative.
-        self.first_in_chain(&chain, name, true)
-            .or_else(|| self.first_in_chain(&chain, name, false))
+        self.first_in_chain(&chain, 0, name, true)
+            .or_else(|| self.first_in_chain(&chain, 0, name, false))
     }
 
     /// What `super` in `owner`'s `name` runs, for a receiver of type `fqn`:
@@ -2782,16 +2804,15 @@ impl Tree {
         name: &str,
     ) -> Option<Option<MethodDef>> {
         self.ensure(name);
-        let chain = self.lookup_chain(fqn, singleton);
+        let chain = self.chain_for(fqn, singleton, false);
         // A `def self.x` sits in `lookup_chain` as `(class, true)`, a `def x`
         // as `(owner, false)` — so both halves have to match.
         let at = chain
             .iter()
-            .position(|(o, s)| o == owner && *s == singleton)?;
-        let rest = &chain[at + 1..];
+            .position(|(o, s)| o == owner && s == singleton)?;
         Some(
-            self.first_in_chain(rest, name, true)
-                .or_else(|| self.first_in_chain(rest, name, false)),
+            self.first_in_chain(&chain, at + 1, name, true)
+                .or_else(|| self.first_in_chain(&chain, at + 1, name, false)),
         )
     }
 
@@ -2804,20 +2825,20 @@ impl Tree {
         name: &str,
     ) -> Option<MethodDef> {
         self.ensure(name);
-        let chain = self.lookup_chain(fqn, true);
+        let chain = self.chain_for(fqn, true, false);
         let at = chain
             .iter()
-            .position(|(o, s)| *o == found.owner && *s == found.singleton)?;
-        let rest = &chain[at + 1..];
-        self.first_in_chain(rest, name, true)
-            .or_else(|| self.first_in_chain(rest, name, false))
+            .position(|(o, s)| o == found.owner && s == found.singleton)?;
+        self.first_in_chain(&chain, at + 1, name, true)
+            .or_else(|| self.first_in_chain(&chain, at + 1, name, false))
     }
 
-    /// The first definition of `name` along `chain`; `real_only` skips `.rbi`
-    /// declarations entirely.
+    /// The first definition of `name` along `chain` from `from` on;
+    /// `real_only` skips `.rbi` declarations entirely.
     fn first_in_chain(
         &self,
-        chain: &[(String, bool)],
+        chain: &Chain,
+        from: usize,
         name: &str,
         real_only: bool,
     ) -> Option<MethodDef> {
@@ -2828,12 +2849,12 @@ impl Tree {
         // and every module it includes later, so it is held until the chain
         // reaches the next class (DEC-138). Among those, the model's
         // declaration redefines the column's, as Rails' attribute API does.
-        let mut generated: Option<(usize, &String)> = None;
-        for (at, (owner, owner_singleton)) in chain.iter().enumerate() {
+        let mut generated: Option<(usize, &str)> = None;
+        for (at, (owner, owner_singleton)) in chain.iter().skip(from).enumerate() {
             if at > 0 && self.kind_of(owner) == Some("class") && generated.is_some() {
                 break;
             }
-            let key = (owner.clone(), *owner_singleton, name.to_string());
+            let key = (owner.to_string(), owner_singleton, name.to_string());
             let Some(hits) = by_owner.get(&key) else {
                 continue;
             };
@@ -2841,7 +2862,7 @@ impl Tree {
                 let method = &methods[**i];
                 method.is_definition() && !(real_only && method.site.is_rbi())
             };
-            let in_module = |i: &&usize| !*owner_singleton && into_generated_module(&methods[**i]);
+            let in_module = |i: &&usize| !owner_singleton && into_generated_module(&methods[**i]);
             if let Some(own) = hits.iter().rev().find(|i| usable(i) && !in_module(i)) {
                 return Some(landed(&methods[*own], owner));
             }
@@ -3026,10 +3047,9 @@ impl Tree {
         if placed.is_empty() {
             return None;
         }
-        self.lookup_chain(fqn, singleton)
+        self.chain_for(fqn, singleton, false)
             .iter()
             .find_map(|(owner, side)| {
-                let side = *side;
                 let makers: Vec<Dynamic> = placed
                     .get(owner)?
                     .iter()
