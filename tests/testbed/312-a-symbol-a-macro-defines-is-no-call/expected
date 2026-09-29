@@ -1,0 +1,8 @@
+# A symbol a macro is handed to define a method — `scope :ordered`,
+# `attr_reader :url_prefix`, `alias_method`'s new name — names what the
+# macro makes, not a method it calls. `--refs` counted each as a possible
+# call: Gadget's own `scope :ordered` for `Widget.ordered`, and
+# `attr_reader :url_prefix` as a caller of the reader it declares. An
+# operator's symbol operand (`kind == :ordered`) is a value, not a name.
+refs Widget.ordered confirmed=1 possible=0
+refs Connection#url_prefix confirmed=0 possible=1

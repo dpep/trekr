@@ -9017,3 +9017,29 @@ all. `--dead` only needs to know a call may reach the method, which
 
 **Measured.** `--dead spec/support lib/tasks` on mastodon: 27 candidates →
 26, `mock_omniauth` no longer listed.
+
+## DEC-312 — A symbol a macro defines by is no call
+
+**Decided.** DEC-037 records every bare symbol handed to a call as a
+possible call of that name, receiver unknown. Two kinds are not:
+
+- **A defining macro's names**, sent to `self`: every argument of
+  `attr_reader`/`attr_writer`/`attr_accessor`/`attr` and of each macro
+  DEC-111's table models (`scope`, `has_many`, `belongs_to`,
+  `class_attribute`, `mattr_*`, `attribute`, `has_secure_token`, …), and
+  the first of `alias_method`, `alias_attribute`, `define_method` and
+  `define_singleton_method`. The macro declares the method (DEC-111), which
+  is where `--refs` lists it; the symbol is not also a caller of it.
+- **An operator's operand**: `object.type == :ordered`, `opts[:limit]`.
+  An operator takes a value, never a method's name.
+
+`delegate`'s names stay references: each is the target's method, which
+the delegation calls, and `--dead` weighs the target's methods by them.
+`alias_method`'s second argument, `accepts_nested_attributes_for`, a
+callback (`before_save :x`), `helper_method` and `private :x` are
+unchanged.
+
+**Why.** The 0.8.1 testers: `--refs 'User.ordered'` listed four other
+models' own `scope :ordered` declarations as possible references, and
+faraday's `attr_reader :url_prefix` (connection.rb:28) was a possible
+caller of the reader it declares.

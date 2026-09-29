@@ -346,6 +346,12 @@
   wherever `--json` sits on the line. The README's usage-error row no
   longer reads as if a flag before `--json` were itself an error.
 
+- **A macro's own names are no longer its callers.** `--refs` counted the
+  symbol in `scope :ordered`, `attr_reader :url_prefix` or `alias_method
+  :new, :old` as a possible call of that name, so another model's
+  `scope :ordered` was listed under `User.ordered`; and a symbol compared
+  with `==` or used as a hash key counted too. Neither does now (DEC-312).
+
 - **`--dead` counts the callers of a top-level `def`.** A spec/support
   helper defined outside any class was `unreferenced` with clear confidence
   while `--refs` listed its callers; an implicit call that finds no other

@@ -4839,7 +4839,18 @@ impl<'pr> Extractor<'_> {
     /// uses this". Err toward recording, and tier it as `possible` so the
     /// weakness is disclosed rather than hidden.
     fn record_symbol_arguments(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        let Some(macro_name) = method_name(call) else {
+            return;
+        };
+        // An operator's operand is a value: `kind == :ordered` (DEC-312).
+        if !macro_name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_') {
+            return;
+        }
+        let on_self = call.receiver().is_none_or(|r| r.as_self_node().is_some());
         for (index, arg) in arg_nodes(call).into_iter().enumerate() {
+            if on_self && names_what_it_defines(&macro_name, index) {
+                continue;
+            }
             // Only a bare symbol. A hash's *keys* are options, not methods, and
             // its values are visited on their own as ordinary arguments.
             let Some(symbol) = arg.as_symbol_node() else {
@@ -4876,6 +4887,21 @@ impl<'pr> Extractor<'_> {
                 stands_for,
             });
         }
+    }
+}
+
+/// Is a macro's `index`th argument the name of a method it defines, rather
+/// than one it calls — `scope :recent`, `attr_reader :name`, `alias_method
+/// :new, :old`'s first (DEC-312)? `delegate`'s names are the target's
+/// methods, which the delegation calls.
+fn names_what_it_defines(macro_name: &str, index: usize) -> bool {
+    match macro_name {
+        "attr_reader" | "attr_writer" | "attr_accessor" | "attr" => true,
+        "alias_method" | "alias_attribute" | "define_method" | "define_singleton_method" => {
+            index == 0
+        }
+        "delegate" | "accepts_nested_attributes_for" => false,
+        _ => !macros::generated(macro_name, "x").is_empty(),
     }
 }
 
