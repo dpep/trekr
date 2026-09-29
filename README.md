@@ -95,7 +95,7 @@ remedy, the same as [rq](https://github.com/dpep/rq)'s:
 
 | `kind` | Exit | Meaning |
 | --- | --- | --- |
-| `usage` | 64 | The command line is wrong: an unknown flag, a bad value, an input whose shape trekr cannot tell, nothing asked — including flags before `--json`. It will not succeed on retry. |
+| `usage` | 64 | The command line is wrong: an unknown flag, a bad value, an input whose shape trekr cannot tell, nothing asked. It is JSON under `--json` wherever the flag sits: `trekr --bogus --json` as much as `trekr --json --bogus`. It will not succeed on retry. |
 | `not_found`, `not_a_repo` | 66 | A path the command names does not exist, or no git checkout contains it. |
 | `git` | 69 | git could not be run. |
 | `internal` | 70 | trekr failed at something that should always work — a bug. |

@@ -304,6 +304,11 @@
 
 ### Fixed
 
+- **`--help` explains `--dead`'s tiers and confidence**, says `--json`
+  carries more than the text summary, and says a usage error is JSON
+  wherever `--json` sits on the line. The README's usage-error row no
+  longer reads as if a flag before `--json` were itself an error.
+
 - **StringIO, Zlib, Etc and StringScanner are known.** A stdlib library
   written only in C, with no Ruby file, is declared from its RBS signatures
   when its extension is there, as a partly compiled one already was:

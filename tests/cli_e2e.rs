@@ -1694,9 +1694,10 @@ fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
     );
 
     // The mode is read off argv before clap parses it: a flag in front of
-    // the bad one, or inside a cluster, still asks for JSON.
+    // the bad one or behind it, or inside a cluster, still asks for JSON.
     for args in [
         &["-j", "--no-such-flag"][..],
+        &["--no-such-flag", "--json"],
         &["-jJ"],
         &["--json", "--no-such-flag", "--"],
     ] {

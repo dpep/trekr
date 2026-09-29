@@ -43,7 +43,8 @@ use std::process::ExitCode;
         70  internal: a bug\n  \
         74  database, io: the index or a file could not be read or written\n\n\
         Under --json/--ndjson an error is one {\"error\", \"kind\", \"code\"} object on \
-        stdout; the message is on stderr either way.\n\n\
+        stdout — a usage error too, wherever on the line --json is — and the message \
+        is on stderr either way.\n\n\
         ENVIRONMENT\n  \
         TREKR_DB     the index (default ~/.local/share/trekr/trekr.db); its tree snapshots\n               \
         and Ruby core's files are kept beside it\n  \
@@ -66,8 +67,16 @@ struct Cli {
 
     /// Find definitions in these files or directories that nothing appears to
     /// use — candidates for deletion or inlining, graded, never asserted.
-    /// One pass: a method whose only caller is itself a candidate is
-    /// `single-caller`, and its reason says so.
+    /// Each is in one tier, from the least evidence of use to the most:
+    /// `unreferenced` (no call, symbol or `super` names it), `override` (none
+    /// does, but it overrides an ancestor's method, so a call of that may run
+    /// it), `convention-only` (named only by a symbol handed to a macro),
+    /// `super-only` (reached only by `super` from its overrides), and
+    /// `single-caller` (one call: the inlining candidate). Each is `clear`, or
+    /// `lower` confidence when the file sends names dynamically, the one
+    /// caller's receiver is untyped, or it overrides a method. One pass: a
+    /// method whose only caller is itself a candidate is `single-caller`, and
+    /// its reason says so.
     #[arg(long, value_name = "PATH", num_args = 1..)]
     dead: Vec<PathBuf>,
 
@@ -193,7 +202,9 @@ struct Cli {
     #[arg(long)]
     explain: bool,
 
-    /// Emit results as JSON — a pretty object, or an array for row sets.
+    /// Emit results as JSON — a pretty object, or an array for row sets. It
+    /// carries more than the text, which is a summary: every gem picked or
+    /// missing where text lists a few, each row's counts and reasons.
     #[arg(short = 'j', long)]
     json: bool,
 
