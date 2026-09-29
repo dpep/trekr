@@ -362,7 +362,7 @@ pub(crate) struct Tree {
     singleton_chains: RefCell<HashMap<(String, bool), Pairs>>,
     /// Lookups by (fqn, singleton, name, as_self), final once the name is
     /// loaded, as `named` is (DEC-203).
-    lookups: RefCell<HashMap<LookupKey, Option<MethodDef>>>,
+    lookups: RefCell<HashMap<LookupKey, Option<Landing>>>,
     /// A model that overrides `self.table_name` wants the columns of a table
     /// whose conventional class it is not, so that carrier's methods are keyed
     /// onto the model as well. Built once at build time from the `table_name`
@@ -512,10 +512,20 @@ pub(crate) enum Via {
 /// where the stored owner is the carrier class the convention invented — a
 /// name no code declares and an agent cannot look up (DEC-022). A split
 /// name's variant is its name.
-fn landed(method: &MethodDef, owner: &str) -> MethodDef {
-    let mut method = method.clone();
-    method.owner = public_name(owner).to_string();
-    method
+/// Where a lookup lands: a definition, by its index in the tree's methods,
+/// and the owner it was found through — a carrier's column lands on the
+/// model that took its table.
+#[derive(Clone)]
+struct Landing {
+    at: usize,
+    owner: String,
+}
+
+fn landed(at: usize, owner: &str) -> Landing {
+    Landing {
+        at,
+        owner: public_name(owner).to_string(),
+    }
 }
 
 /// Rails writes these into a module the model includes when it is made
@@ -2740,6 +2750,18 @@ impl Tree {
         name: &str,
         as_self: bool,
     ) -> Option<MethodDef> {
+        self.landing(fqn, singleton, name, as_self)
+            .map(|landing| self.land(&landing))
+    }
+
+    /// The definition a landing names, with the owner it was found through.
+    fn land(&self, landing: &Landing) -> MethodDef {
+        let mut method = self.methods.borrow()[landing.at].clone();
+        method.owner = landing.owner.clone();
+        method
+    }
+
+    fn landing(&self, fqn: &str, singleton: bool, name: &str, as_self: bool) -> Option<Landing> {
         self.ensure(name);
         let key = (fqn.to_string(), singleton, name.to_string(), as_self);
         if let Some(found) = self.lookups.borrow().get(&key) {
@@ -2750,25 +2772,22 @@ impl Tree {
         found
     }
 
-    fn look_along(
-        &self,
-        fqn: &str,
-        singleton: bool,
-        name: &str,
-        as_self: bool,
-    ) -> Option<MethodDef> {
+    fn look_along(&self, fqn: &str, singleton: bool, name: &str, as_self: bool) -> Option<Landing> {
         // A split name asked about as itself runs whichever variant is loaded,
         // so it has an answer only when every variant gives the same one.
         let variants = self.variants_of(fqn);
         if !variants.is_empty() {
-            let found: Vec<Option<MethodDef>> = variants
+            let found: Vec<Option<Landing>> = variants
                 .iter()
-                .map(|variant| self.lookup_along(variant, singleton, name, as_self))
+                .map(|variant| self.landing(variant, singleton, name, as_self))
                 .collect();
             let first = found.first()?.as_ref()?;
+            let methods = self.methods.borrow();
+            let site = &methods[first.at].site;
             let agree = found.iter().all(|other| {
-                other.as_ref().is_some_and(|m| {
-                    m.site.path == first.site.path && m.site.line == first.site.line
+                other.as_ref().is_some_and(|l| {
+                    let other = &methods[l.at].site;
+                    other.path == site.path && other.line == site.line
                 })
             });
             return agree.then(|| first.clone());
@@ -2812,7 +2831,8 @@ impl Tree {
             .position(|(o, s)| o == owner && s == singleton)?;
         Some(
             self.first_in_chain(&chain, at + 1, name, true)
-                .or_else(|| self.first_in_chain(&chain, at + 1, name, false)),
+                .or_else(|| self.first_in_chain(&chain, at + 1, name, false))
+                .map(|landing| self.land(&landing)),
         )
     }
 
@@ -2831,6 +2851,7 @@ impl Tree {
             .position(|(o, s)| o == found.owner && s == found.singleton)?;
         self.first_in_chain(&chain, at + 1, name, true)
             .or_else(|| self.first_in_chain(&chain, at + 1, name, false))
+            .map(|landing| self.land(&landing))
     }
 
     /// The first definition of `name` along `chain` from `from` on;
@@ -2841,7 +2862,7 @@ impl Tree {
         from: usize,
         name: &str,
         real_only: bool,
-    ) -> Option<MethodDef> {
+    ) -> Option<Landing> {
         let by_owner = self.by_owner.borrow();
         let methods = self.methods.borrow();
         // What Rails generates into a module the class includes as it is
@@ -2864,7 +2885,7 @@ impl Tree {
             };
             let in_module = |i: &&usize| !owner_singleton && into_generated_module(&methods[**i]);
             if let Some(own) = hits.iter().rev().find(|i| usable(i) && !in_module(i)) {
-                return Some(landed(&methods[*own], owner));
+                return Some(landed(*own, owner));
             }
             let from_model = |i: &&usize| methods[**i].via.as_deref() != Some("schema");
             let best = hits
@@ -2879,7 +2900,7 @@ impl Tree {
                 generated = Some((*best, owner));
             }
         }
-        generated.map(|(index, owner)| landed(&methods[index], owner))
+        generated.map(|(index, owner)| landed(index, owner))
     }
 
     /// What a method that declares no return returns, from a declaration of
