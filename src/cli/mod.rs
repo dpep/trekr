@@ -1639,6 +1639,10 @@ fn gather_refs(
                 let facts = std::fs::read(root.join(path))
                     .ok()
                     .map(|bytes| extract::extract(&bytes));
+                // The flow analysis reparses the file; here it runs in parallel.
+                if let Some(facts) = &facts {
+                    crate::resolve::prepare_flow(facts, &query.name);
+                }
                 (path.clone(), facts)
             })
             .collect();

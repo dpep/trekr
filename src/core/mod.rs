@@ -204,6 +204,17 @@ impl Facts {
             .map(Vec::as_slice)
     }
 
+    /// Run the flow analysis now — on a parse worker, say — so that a later
+    /// `reaching` finds it done.
+    pub(crate) fn prepare_flow(
+        &self,
+        analyze: impl FnOnce(&[u8]) -> std::collections::HashMap<Pos, Vec<Pos>>,
+    ) {
+        if let Some(source) = self.source.as_ref() {
+            self.flow.get_or_init(|| analyze(source));
+        }
+    }
+
     /// A digest of everything about this blob that the **tree layer** reads:
     /// its definitions and its ancestry edges. Calls, constant references and
     /// assignments are resolve-time facts and are deliberately excluded.
