@@ -150,6 +150,11 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                 return predicate_answer(tree, facts, call, predicate, path);
             }
             match lookup_on(tree, call, &receiver) {
+                Some(found)
+                    if let Some(answer) = through_delegate(tree, call, &receiver, &found) =>
+                {
+                    answer
+                }
                 Some(found) => {
                     // A method Tapioca generated has no source of its own. Send
                     // the caller to the class that generates it rather than to
@@ -421,6 +426,72 @@ fn to_the_model(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<MethodA
         unresolved_ancestors: Vec::new(),
         candidates: Vec::new(),
         reason: None,
+    })
+}
+
+/// A call that lands on a `delegate … to: :x`: the method `x`'s type runs,
+/// as `--refs` counts it (DEC-166), with the delegate kept as the second
+/// site. The type is a bound (DEC-140), so a subclass of it that overrides
+/// the name makes the answer ambiguous, naming each (DEC-211). `None` when
+/// the delegate's target has no known type, or its type lacks the name: the
+/// delegate is then the answer.
+fn through_delegate(
+    tree: &Tree,
+    call: &Call,
+    receiver: &Receiver,
+    landed: &crate::tree::MethodDef,
+) -> Option<MethodAnswer> {
+    let refs::Delegated::To { fqn, bound } = refs::delegated(tree, receiver, landed)? else {
+        return None;
+    };
+    let found = tree.lookup(&fqn, false, &call.name)?;
+    let target = Receiver {
+        fqn: fqn.clone(),
+        singleton: false,
+        via: "delegate",
+        bound,
+        agreeing: receiver.agreeing,
+        total: receiver.total,
+        ambiguous: receiver.ambiguous,
+        rivals: Vec::new(),
+    };
+    let overrides: Vec<Candidate> = if bound {
+        overrides_of(
+            tree,
+            &target,
+            &call.name,
+            &found,
+            "a subclass overrides it, and the delegate's target may be one",
+        )
+    } else {
+        Vec::new()
+    };
+    let holder = crate::tree::public_name(&landed.owner);
+    let to = landed.forwards_to.as_deref().unwrap_or_default();
+    Some(MethodAnswer {
+        status: if receiver.ambiguous || !overrides.is_empty() {
+            Status::Ambiguous
+        } else {
+            Status::Resolved
+        },
+        confidence: match overrides.len() {
+            0 => share(receiver.agreeing, receiver.total),
+            n => share(1, n + 1),
+        },
+        resolved_via: Some("delegate".to_string()),
+        receiver: call.recv.as_str(),
+        receiver_kind: tree.kind_of(&fqn).map(str::to_string),
+        receiver_type: Some(fqn.clone()),
+        owner: Some(found.owner.clone()),
+        kind: Some(found.kind()),
+        defined_via: found.declared_via(),
+        sites: vec![found.site.clone(), landed.site.clone()],
+        agreement: agreement(receiver),
+        unresolved_ancestors: Vec::new(),
+        candidates: overrides.into_iter().take(MAX_CANDIDATES).collect(),
+        reason: Some(format!(
+            "sent on by the `delegate` in {holder} to `{to}`, typed {fqn}"
+        )),
     })
 }
 
@@ -855,6 +926,24 @@ fn self_overrides(
     name: &str,
     found: &crate::tree::MethodDef,
 ) -> Vec<Candidate> {
+    overrides_of(
+        tree,
+        receiver,
+        name,
+        found,
+        "a subclass overrides it, and `self` may be one",
+    )
+}
+
+/// The definitions of `name` a receiver of `receiver`'s type may run in
+/// place of `found`: a subclass's, or a module's a subclass mixes in.
+fn overrides_of(
+    tree: &Tree,
+    receiver: &Receiver,
+    name: &str,
+    found: &crate::tree::MethodDef,
+    why: &'static str,
+) -> Vec<Candidate> {
     // Every definition of the name, not every subclass: the name's list is
     // short, and a class with thousands of descendants is not.
     tree.named(name)
@@ -867,7 +956,7 @@ fn self_overrides(
         .map(|method| Candidate {
             owner: method.owner.clone(),
             singleton: method.singleton,
-            why: "a subclass overrides it, and `self` may be one",
+            why,
             kind: method.kind(),
             site: method.site.clone(),
         })

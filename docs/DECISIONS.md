@@ -7380,3 +7380,44 @@ corpora has a gem and an app defining one method.
 *Reverses if:* gems' order among themselves is ever read from the Gemfile or
 a require graph; that is still insert order, which a lockfile lists
 alphabetically.
+
+## DEC-211 — `--def` on a call that lands on a `delegate` follows it
+
+**Decided.** When a call's lookup lands on a `delegate … to: :x` whose `x`
+has a known type — the reader's declared return, or a model's relation for
+`all`/`unscoped` (DEC-166's `delegated`) — and that type's lookup finds the
+name, `--def` answers the method that type runs: its owner, its kind, and
+two sites, the target's first and the delegate second. `resolved_via` is
+`delegate`, `receiver_type` the target's type, and `reason` says which
+delegate sent it where. The target type is a bound (DEC-140), so where an
+indexed subclass of it — or a module a subclass of it mixes in — overrides
+the name, the answer is `ambiguous`, lists each override as a candidate, and
+its confidence is the share, as DEC-081 does for `self`; with none indexed it
+is `resolved`. A delegate to a value of no known type is still the
+declaration it was. Hover says the call was sent on by the delegate, and
+go-to-definition offers both sites.
+
+**Why.** Person.delete_by stopped at `Querying`'s `delegate … to: :all`: the
+line a reader clicks through, but not the code that runs, which `--refs`
+already counted (DEC-166). DEC-166 left it open.
+
+**Two sites, not one.** A TracePoint gold set records the delegate: Active
+Support writes the delegating method with the delegate's own file and line.
+Answering the relation's method alone would score every such site wrong;
+keeping the delegate as the second site keeps it correct, and an editor's
+peek shows the declaration beside the code it sends to.
+
+**Ambiguous only with a named override.** Every delegate target trekr can
+type today is a bound — a `sig`'s return, or the relation `all` returns,
+which is the model's own subclass of `Relation` and, inside `scoping` on an
+association, an `AssociationRelation`. Calling each one ambiguous without a
+rival to name would withhold confidence from `Person.where`, which has none;
+the override search is what makes the bound matter.
+
+**Measured** (against DEC-210). Every gold verdict unchanged; 9 of polyid's
+sites (`User.where`, `.joins`) now answer through the delegate, still
+correct, `resolved_via` `const` → `delegate`. The clicks, both rails `--refs`
+sets and `--dead` are unchanged: they do not read `--def`'s answer. On rails,
+`Book.where` answers `QueryMethods#where` resolved, and `Book.insert_all`
+answers `Relation#insert_all` ambiguous at 0.5, naming
+`AssociationRelation#insert_all`.

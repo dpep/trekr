@@ -1411,6 +1411,21 @@ fn hover_call(
         .find(|m| m.site.path == site.path && m.site.line == site.line)
         .map(|m| m.singleton);
     let caveat = match answer.status {
+        // Where the call really lands is the delegate; say so (DEC-211).
+        _ if answer.resolved_via.as_deref() == Some("delegate") => {
+            let reason = answer
+                .reason
+                .as_deref()
+                .unwrap_or("sent on by a `delegate`");
+            let mut words = format!("{}{}.", reason[..1].to_uppercase(), &reason[1..]);
+            if answer.status == Status::Ambiguous {
+                words.push_str(&format!(
+                    " It may be a subclass that overrides `{name}`: {}.",
+                    count(answer.candidates.len(), "other definition")
+                ));
+            }
+            Some(words)
+        }
         Status::Ambiguous => Some(match named.len().saturating_sub(1) {
             0 => "Best guess — the receiver's type is inferred, not declared.".to_string(),
             n => format!(

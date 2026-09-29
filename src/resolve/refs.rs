@@ -443,7 +443,7 @@ fn tier(
 }
 
 /// Where a delegate sends its name (DEC-166).
-enum Delegated {
+pub(super) enum Delegated {
     /// A value of this type; `bound` when it may be a subclass.
     To {
         fqn: String,
@@ -455,7 +455,7 @@ enum Delegated {
 /// What a `delegate … to: :x` the call landed on sends the name to: the type
 /// `x`'s reader declares, or for `all`/`unscoped` on a model's class side,
 /// its relation. `None` for a method that is no delegate.
-fn delegated(
+pub(super) fn delegated(
     tree: &Tree,
     receiver: &super::Receiver,
     landed: &crate::tree::MethodDef,

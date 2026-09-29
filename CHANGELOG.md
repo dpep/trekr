@@ -179,6 +179,14 @@
 
 ### Fixed
 
+- **`--def` on `Person.delete_by` reaches `Relation#delete_by`.** A call that
+  lands on a `delegate … to: :all` (or any `to:` whose reader declares a type)
+  answers the method that type runs, with the delegate as the second site;
+  `resolved_via` is `delegate`, and `reason` names the delegate. Where a
+  subclass of the target type overrides the name, the answer is `ambiguous`
+  and names it. Hover says the call was sent on, and go-to-definition offers
+  both lines (DEC-211).
+
 - **The app's own method wins over a gem's that reopens the same class.**
   The app was layered before its gems, because it is indexed first, so where
   both define one method a card, `--def` and `--refs` answered the gem's.

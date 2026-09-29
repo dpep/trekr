@@ -1,0 +1,12 @@
+# `Person.delete_by` lands on `Querying`'s `delegate … to: :all`, and `--def`
+# stopped there: a click never reached the method that runs. DEC-166 already
+# counted such a call toward the relation's method in `--refs`. `--def`
+# follows the delegate too, and keeps the delegate as the second site. The
+# relation `all` returns is a bound, so where a subclass of it overrides the
+# name the answer is ambiguous and names it. A delegate to a value of no
+# known type is still the declaration.
+def app.rb:16:8 status=resolved owner=ActiveRecord::Relation via=delegate kind=definition site=active_record.rb:3
+def app.rb:17:8 status=ambiguous owner=ActiveRecord::Relation candidates=1 candidate1=ActiveRecord::AssociationRelation site=active_record.rb:4
+def app.rb:18:12 status=resolved owner=Garage kind=declaration defined_via=delegate
+hover app.rb:16:8 ActiveRecord::Relation
+hover app.rb:16:8 Sent on by the `delegate` in ActiveRecord::Querying
