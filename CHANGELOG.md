@@ -74,6 +74,12 @@
   Ruby's signatures once no checkout runs on it, with its core files
   (`signatures`, `core_files` in `--json`).
 
+- **An editor says when trekr is reindexing after an upgrade.** Until the
+  background index refills the store an upgrade emptied, each hover says so
+  and how long it has run, and the progress reads "reindexing after an
+  upgrade", where every answer read "nothing trekr has indexed defines"
+  (DEC-275).
+
 - **The rbs bundled with a Ruby stays its choice after gem maintenance.**
   `gem update --system` or `gem pristine rbs` no longer flips it to a later
   `gem install`'s with a false "none was bundled"; Ruby's own

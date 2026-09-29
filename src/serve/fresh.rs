@@ -101,6 +101,8 @@ struct Job {
     child: Child,
     token: String,
     started: std::time::Instant,
+    /// Refilling a checkout an upgrade's rebuild of the store dropped.
+    after_upgrade: bool,
 }
 
 impl Indexer {
@@ -134,6 +136,15 @@ impl Indexer {
             return;
         }
         self.queue.push_back(root);
+    }
+
+    /// The checkout being refilled after an upgrade dropped the store, and
+    /// since when.
+    pub(crate) fn after_upgrade(&self) -> Option<(PathBuf, std::time::Instant)> {
+        self.running
+            .as_ref()
+            .filter(|job| job.after_upgrade)
+            .map(|job| (job.root.clone(), job.started))
     }
 
     /// Work still in flight: an index running or queued, or a refresh that
@@ -187,7 +198,7 @@ impl Indexer {
 
     /// Reap a finished run and start the next. Returns the messages to send —
     /// progress, and nothing else.
-    pub(crate) fn poll(&mut self, log: &Log) -> Vec<Message> {
+    pub(crate) fn poll(&mut self, log: &Log, session: &Session) -> Vec<Message> {
         let mut out = Vec::new();
         if let Some(why) = self.unlogged.take() {
             log.event("refresh_refused", serde_json::json!({ "error": why }));
@@ -231,13 +242,21 @@ impl Indexer {
             }
         }
         while let Some(root) = self.queue.pop_front() {
+            // Asked before the child writes its first row: an empty store an
+            // upgrade emptied, as the CLI tells it (`not_indexed_reason`).
+            let store = session.store();
+            let after_upgrade = store.roots().is_ok_and(|roots| roots.is_empty())
+                && store.upgraded_from().ok().flatten().is_some();
             match spawn(&root) {
                 Ok(child) => {
                     self.jobs += 1;
                     let token = format!("trekr-index-{}", self.jobs);
                     log.event(
                         "index_start",
-                        serde_json::json!({ "root": root.to_string_lossy() }),
+                        serde_json::json!({
+                            "root": root.to_string_lossy(),
+                            "after_upgrade": after_upgrade,
+                        }),
                     );
                     if self.progress {
                         out.push(Message::Request(Request::new(
@@ -250,7 +269,11 @@ impl Indexer {
                             serde_json::json!({
                                 "kind": "begin",
                                 "title": "trekr",
-                                "message": format!("indexing {}", crate::core::paths::pretty(&root.to_string_lossy())),
+                                "message": format!(
+                                    "{} {}",
+                                    if after_upgrade { "reindexing after an upgrade:" } else { "indexing" },
+                                    crate::core::paths::pretty(&root.to_string_lossy())
+                                ),
                                 "cancellable": false,
                             }),
                         ));
@@ -260,6 +283,7 @@ impl Indexer {
                         child,
                         token,
                         started: std::time::Instant::now(),
+                        after_upgrade,
                     });
                     break;
                 }

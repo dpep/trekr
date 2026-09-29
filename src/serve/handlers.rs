@@ -1225,8 +1225,20 @@ pub(crate) fn hover(session: &mut Session, params: HoverParams) -> anyhow::Resul
     let mut text = card.markdown();
     // Said where the answer is read: an unindexed checkout answers from core
     // and gems alone, and a residue there is a gap in the index, not a
-    // finding about the code.
-    if !session.indexed(&located.root) {
+    // finding about the code. After an upgrade dropped the store, not even
+    // those are there until the background index refills it.
+    if let Some((_, since)) = session
+        .reindexing
+        .as_ref()
+        .filter(|(root, _)| *root == located.root)
+    {
+        text.push_str(&format!(
+            "\n\n_trekr is reindexing this checkout after an upgrade (started {} s ago). \
+             Until it finishes, answers are partial — this checkout's code, its gems and Ruby \
+             core may not be read yet._",
+            since.elapsed().as_secs()
+        ));
+    } else if !session.indexed(&located.root) {
         text.push_str(
             "\n\n_This checkout is not indexed yet, so answers come from core and gems alone. trekr indexes it in the background; `trekr --index` does it now._",
         );

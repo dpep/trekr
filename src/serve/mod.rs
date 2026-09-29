@@ -284,11 +284,12 @@ fn serve(
     loop {
         session.collect_members(None);
         indexer.retry(&mut session);
-        for message in indexer.poll(log) {
+        for message in indexer.poll(log, &session) {
             // A finished index moves the tree; warm it again when quiet.
             warm = Warm::Cold;
             writer.send(message)?;
         }
+        session.reindexing = indexer.after_upgrade();
         if !moved_said && let Some(message) = store_moved(&session, log) {
             moved_said = true;
             writer.send(message)?;

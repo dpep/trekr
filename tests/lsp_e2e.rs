@@ -3071,6 +3071,82 @@ fn an_unindexed_project_is_indexed_in_the_background_with_progress() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// After an upgrade emptied the store, the background index refilling it is
+/// said — in its progress, and in every hover until it ends — rather than
+/// each answer reading as "nothing trekr has indexed defines" (DEC-275).
+#[test]
+fn a_hover_while_the_index_refills_after_an_upgrade_says_so() {
+    let (dir, db) = scratch("upgrade-window");
+    git(&dir, &["init", "-q"]);
+    fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
+    fs::write(
+        dir.join("app.rb"),
+        "class Widget\n  def save\n  end\nend\nWidget.new.save\n",
+    )
+    .unwrap();
+    commit_all(&dir);
+    // An older trekr's store, which this one rebuilds, and so empties.
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute_batch(
+            "PRAGMA journal_mode=WAL; CREATE TABLE checkout (x); PRAGMA user_version = 1;",
+        )
+        .unwrap();
+    trekr()
+        .args(["--status"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+    // Someone else writing: the index waits, and the window stays open.
+    let writer = rusqlite::Connection::open(&db).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize_with(
+        &dir,
+        serde_json::json!({"window": {"workDoneProgress": true}}),
+    );
+    let progress = |session: &mut Session, kind: &str| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        loop {
+            assert!(std::time::Instant::now() < deadline, "no progress {kind}");
+            let message = session.read();
+            if message["method"] == "$/progress" && message["params"]["value"]["kind"] == kind {
+                return message["params"]["value"].clone();
+            }
+        }
+    };
+    let begun = progress(&mut session, "begin");
+    assert!(
+        begun["message"]
+            .as_str()
+            .unwrap()
+            .contains("after an upgrade"),
+        "{begun}"
+    );
+    let hover = |session: &mut Session| {
+        let answer = ask(session, &dir, "textDocument/hover", "app.rb", 4, 12);
+        answer["result"]["contents"]["value"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    };
+    let during = hover(&mut session);
+    assert!(
+        during.contains("reindexing this checkout after an upgrade"),
+        "{during}"
+    );
+
+    drop(writer);
+    progress(&mut session, "end");
+    let after = hover(&mut session);
+    assert!(!after.contains("after an upgrade"), "{after}");
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// The background index steps out of the editor's way — lower CPU and disk
 /// priority — and a `trekr --index` run by hand does not.
 #[test]

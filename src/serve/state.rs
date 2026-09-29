@@ -56,6 +56,10 @@ pub(crate) struct Session {
     pub(crate) definition_links: bool,
     /// How many references an answer keeps (`initializationOptions.referenceLimit`).
     pub(crate) reference_limit: usize,
+    /// The checkout a background index is refilling after an upgrade
+    /// dropped the store, and since when: until it ends, answers there are
+    /// partial, and a hover says so.
+    pub(crate) reindexing: Option<(PathBuf, std::time::Instant)>,
 }
 
 /// Members in the making, and the tree state they are being listed from.
@@ -194,6 +198,7 @@ impl Session {
             load_paths: HashMap::new(),
             definition_links: false,
             reference_limit: super::gather::DEFAULT_LIMIT,
+            reindexing: None,
         }
     }
 

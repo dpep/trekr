@@ -8410,3 +8410,25 @@ directory per store is what makes "not in this store" mean "garbage".
 
 **Cost.** A path in answers moves (`<db dir>/core/rbs-…` → `trekr.core/rbs-…`);
 it never shipped, since 0.8.0 wrote the flat layout.
+
+## DEC-275 — While the index refills after an upgrade, the editor says so
+
+**Decided.** A background index the language server starts on an empty
+store that an upgrade emptied — the CLI's own test for "nothing has been
+indexed since" — is marked as a refill. Its `$/progress` begins "reindexing
+after an upgrade: <root>", its `index_start` log event carries
+`after_upgrade`, and until it ends every hover in that checkout closes with
+"trekr is reindexing this checkout after an upgrade (started N s ago). Until
+it finishes, answers are partial — this checkout's code, its gems and Ruby
+core may not be read yet." — in place of "not indexed yet, so answers come
+from core and gems alone", which after an upgrade is false twice over.
+
+**Why.** The hunt's `lsp2.py`: an editor on 0.8.0 hot-reloads the new build,
+whose store rebuild drops the index; for the seconds the refill takes,
+every hover read "nothing trekr has indexed defines `upcase`" — a claim about
+the code, where the truth was about the index.
+
+**Not done.** A percentage. The refill is a `trekr --index` child whose
+phases — the checkout, the stdlib, the signatures, the gems — have totals
+known only as each starts; a number that jumps backwards between them would
+be worse than the elapsed time.
