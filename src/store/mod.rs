@@ -733,6 +733,36 @@ impl Store {
         Ok(rows.into_iter().map(|(_, row)| row).collect())
     }
 
+    /// The classes and modules the stdlib files this app does not see
+    /// declare: what the stdlib's copy of a default gem the app bundles
+    /// opens (DEC-180).
+    pub(crate) fn hidden_declarations(&self, roots: &Roots) -> Result<Vec<DeclRow>> {
+        let Some(stdlib) = roots.stdlib.as_deref().filter(|_| !roots.hidden.is_empty()) else {
+            return Ok(Vec::new());
+        };
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT d.name, d.kind, d.nesting, d.target, c.root || '/' || f.path, d.line, d.col
+               FROM def d
+               JOIN file f ON f.blob_id = d.blob_id
+               JOIN checkout c ON c.id = f.checkout_id
+              WHERE c.root = ?1 AND d.kind IN ('class','module')",
+        )?;
+        let rows = stmt.query_map(params![stdlib], |r| {
+            Ok(DeclRow {
+                name: r.get(0)?,
+                kind: r.get(1)?,
+                nesting: split_nesting(&r.get::<_, String>(2)?),
+                target: r.get(3)?,
+                path: r.get(4)?,
+                line: r.get(5)?,
+                col: r.get(6)?,
+            })
+        })?;
+        let mut rows = rows.collect::<Result<Vec<_>>>()?;
+        rows.retain(|row| !roots.shows(&row.path));
+        Ok(rows)
+    }
+
     /// Every method a checkout defines, in a stable order.
     ///
     /// Deferred in session 2 because nothing read it; the method ladder is the

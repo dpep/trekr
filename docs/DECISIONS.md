@@ -6607,6 +6607,15 @@ its core is that Ruby's (DEC-240).
 *Amended:* the opt-in extensions (`json/add/`) are left out of a bundled
 gem's `lib/` as they are out of the stdlib: an app that bundles json was
 told `Time#to_json` is `json/add/time.rb`'s, which it never requires.
+The stdlib's stubs are its copy too (DEC-220): a class only the stub
+declares, in a namespace only the hidden files open, is left out for an app
+that bundles the gem, which declares its own. A bundled json 2.21 showed
+`JSON::Pure`, which json 2.x no longer has. The stub's compiled methods
+stay: the gem's copy compiles the same extension, and the Ruby's RBS is the
+nearest word on it. The namespace is the unit, so a stub class another
+library declares in that namespace goes too: the stub does not record which
+library wrote each class.
+
 ## DEC-181 — A stdlib class that is partly compiled hedges a name its Ruby lacks
 
 **Decided.** Indexing a stdlib lists its compiled extensions (the `.so`,

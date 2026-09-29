@@ -984,10 +984,19 @@ impl Tree {
         phases: &mut Phases,
     ) -> anyhow::Result<HashMap<String, Entry>> {
         let (mut decls, mut edges) = stubs.map(core_rows).unwrap_or_default();
+        let core: HashSet<String> = decls.iter().map(top_level).collect();
         decls.extend(phases.time("declarations", || store.declarations(roots))?);
         edges.extend(phases.time("ancestry", || store.ancestry(roots))?);
         if let Some(stubs) = stubs {
-            let (stub_decls, stub_edges) = compiled_classes(stubs, &decls);
+            // The stdlib's stubs of a default gem the app bundles are the
+            // stdlib's copy, which it does not see (DEC-180).
+            let hidden: HashSet<String> = store
+                .hidden_declarations(roots)?
+                .iter()
+                .map(top_level)
+                .filter(|name| !core.contains(name))
+                .collect();
+            let (stub_decls, stub_edges) = compiled_classes(stubs, &decls, &hidden);
             decls.extend(stub_decls);
             edges.extend(stub_edges);
         }
@@ -4509,10 +4518,26 @@ fn stdlib_rows(stubs: &corelib::Stubs) -> (Vec<DeclRow>, Vec<EdgeRow>, Vec<Metho
     (decls, edges, methods)
 }
 
+/// The outermost namespace a declaration is written in, or itself.
+fn top_level(decl: &DeclRow) -> String {
+    let outermost = decl.nesting.last().unwrap_or(&decl.name);
+    let outermost = outermost.trim_start_matches("::");
+    outermost
+        .split("::")
+        .next()
+        .unwrap_or(outermost)
+        .to_string()
+}
+
 /// The classes only the stdlib's compiled half declares (`Digest::SHA256`),
 /// with their edges. A class some Ruby file declares keeps its own sites and
-/// ancestry: the stub does not add a second place it is written.
-fn compiled_classes(stubs: &corelib::Stubs, decls: &[DeclRow]) -> (Vec<DeclRow>, Vec<EdgeRow>) {
+/// ancestry: the stub does not add a second place it is written. One in a
+/// namespace only the stdlib files this app hides open is theirs (`hidden`).
+fn compiled_classes(
+    stubs: &corelib::Stubs,
+    decls: &[DeclRow],
+    hidden: &HashSet<String>,
+) -> (Vec<DeclRow>, Vec<EdgeRow>) {
     let written = |nesting: &[String], name: Option<&str>| {
         let mut parts: Vec<&str> = nesting.iter().rev().map(String::as_str).collect();
         parts.extend(name);
@@ -4526,6 +4551,7 @@ fn compiled_classes(stubs: &corelib::Stubs, decls: &[DeclRow]) -> (Vec<DeclRow>,
     let own: Vec<DeclRow> = stub_decls
         .into_iter()
         .filter(|decl| !declared.contains(&written(&decl.nesting, Some(&decl.name))))
+        .filter(|decl| !hidden.contains(&top_level(decl)))
         .collect();
     let owners: HashSet<String> = own
         .iter()
