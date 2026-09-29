@@ -2091,6 +2091,66 @@ fn a_position_in_a_git_gem_answers_from_the_app() {
     let _ = fs::remove_dir_all(&gems);
 }
 
+/// A gem's opt-in core extensions are left out, as the stdlib's copy of them
+/// is: the json gem's `json/add/` gives every object `to_json` only in an app
+/// that requires it, and bundling json showed it to every app.
+#[test]
+fn a_bundled_json_gems_opt_in_extensions_are_left_out() {
+    let (app, db) = scratch("json-add-app");
+    let (gems, _) = scratch("json-add-gems");
+    let lib = gems.join("gems/json-9.9.9/lib");
+    fs::create_dir_all(lib.join("json/add")).unwrap();
+    fs::write(
+        lib.join("json.rb"),
+        "module JSON\n  def self.generate(obj)\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        lib.join("json/add/widget.rb"),
+        "class Widget\n  def to_json(*)\n  end\nend\n",
+    )
+    .unwrap();
+    git(&app, &["init", "-q"]);
+    fs::write(
+        app.join("app.rb"),
+        "class Widget\nend\nWidget.new.to_json\nJSON.generate(1)\n",
+    )
+    .unwrap();
+    fs::write(
+        app.join("Gemfile.lock"),
+        "GEM\n  remote: https://rubygems.org/\n  specs:\n    json (9.9.9)\n\
+         \nPLATFORMS\n  ruby\n\nDEPENDENCIES\n  json\n",
+    )
+    .unwrap();
+    git(&app, &["add", "-A"]);
+    git(
+        &app,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    let env = [("GEM_HOME", gems.to_str().unwrap())];
+    let index = json(&trekr_env(&db, &app, &["--index", "--json"], &env));
+    assert_eq!(index["gems"]["files"], 1, "{index}");
+
+    let generate = json(&trekr(&db, &app, &["--def", "app.rb:4:6", "--json"]));
+    assert_eq!(
+        generate["status"], "resolved",
+        "the gem is indexed: {generate}"
+    );
+    let to_json = json(&trekr(&db, &app, &["--def", "app.rb:3:12", "--json"]));
+    assert_ne!(to_json["status"], "resolved", "{to_json}");
+
+    let _ = fs::remove_dir_all(&app);
+    let _ = fs::remove_dir_all(&gems);
+}
+
 /// A gem on its own is a tree of one gem plus core, so a method it gets from a
 /// sibling gem is unreachable by construction (DEC-029). The fix answers from
 /// an app that resolves the gem — which needs two checkouts, and so lives here

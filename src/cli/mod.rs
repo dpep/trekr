@@ -1147,7 +1147,15 @@ fn index_bundle(
     let walked: Vec<(&PathBuf, scan::Files)> = profile::timed(profile, "gem-walk", || {
         pool.install(|| {
             gems.par_iter()
-                .map(|gem| (gem, scan::walk(gem, "lib")))
+                .map(|gem| {
+                    let mut files = scan::walk(gem, "lib");
+                    files.retain(|path, _| {
+                        !path
+                            .strip_prefix("lib/")
+                            .is_some_and(crate::gems::stdlib::opt_in)
+                    });
+                    (gem, files)
+                })
                 .filter(|(_, files)| !files.is_empty())
                 .collect()
         })

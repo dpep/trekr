@@ -332,10 +332,21 @@ const SKIPPED: &[&str] = &[
     "bundled_gems.rb",
     // Tables, not code.
     "unicode_normalize/tables.rb",
+];
+
+/// Opt-in extensions that reopen core for every object once required,
+/// relative to a require root: the stdlib's, or a gem's `lib/`, since an app
+/// may bundle its own copy of a default gem (DEC-180).
+const OPT_IN: &[&str] = &[
     // `require "json/add/core"` gives Time, Range, Struct … `to_json` and
     // `json_create`; an app that has not required it would be told they exist.
     "json/add/",
 ];
+
+/// Is this path, relative to a require root, an opt-in extension?
+pub(crate) fn opt_in(path: &str) -> bool {
+    OPT_IN.iter().any(|dir| path.starts_with(dir))
+}
 
 /// Under a skipped directory, and kept: what apps call.
 const KEPT: &[&str] = &[
@@ -350,10 +361,11 @@ pub(crate) fn skipped(path: &str) -> bool {
     if KEPT.contains(&path) {
         return false;
     }
-    SKIPPED.iter().any(|skip| match skip.strip_suffix('/') {
-        Some(dir) => path.starts_with(skip) || path == dir,
-        None => path == *skip,
-    })
+    opt_in(path)
+        || SKIPPED.iter().any(|skip| match skip.strip_suffix('/') {
+            Some(dir) => path.starts_with(skip) || path == dir,
+            None => path == *skip,
+        })
 }
 
 /// The stdlib's Ruby files that are indexed.

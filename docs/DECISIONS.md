@@ -6603,6 +6603,10 @@ gem's stdlib signatures would type them.
 *Amended by DEC-242:* every checkout gets a Ruby — the one it names,
 `$GEM_HOME`'s, the `ruby` on `$PATH`, else the only one installed — since
 its core is that Ruby's (DEC-240).
+
+*Amended:* the opt-in extensions (`json/add/`) are left out of a bundled
+gem's `lib/` as they are out of the stdlib: an app that bundles json was
+told `Time#to_json` is `json/add/time.rb`'s, which it never requires.
 ## DEC-181 — A stdlib class that is partly compiled hedges a name its Ruby lacks
 
 **Decided.** Indexing a stdlib lists its compiled extensions (the `.so`,

@@ -273,6 +273,11 @@
 
 ### Fixed
 
+- **A bundled json gem no longer gives every object `to_json` from
+  `json/add/`.** The opt-in extensions the stdlib's copy leaves out are left
+  out of the gem too, so `Time.now.to_json` no longer lands on
+  `json/add/time.rb` in an app that never requires it (DEC-180).
+
 - **A call through a `SimpleDelegator` may run the delegated method.** A
   `method_missing` that sends the name on to another object — `Delegator`'s,
   a proxy's, `ActiveRecord::Migration`'s — makes `--refs` count a call its
