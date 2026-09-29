@@ -1,0 +1,14 @@
+# A block handed to a class-level macro that passes its `&block` on to
+# `define_method` is the body of an instance method: its implicit-self calls
+# are the instance's, through an iterator's, a helper's or a class's block
+# too. They were read on the class side, excluded as "no such method", and
+# `--dead` called the helper unreferenced. A macro that `class_exec`s or
+# yields the block leaves it on the class.
+def app.rb:37:5 status=resolved owner=Base
+def app.rb:41:20 status=resolved owner=Base
+def app.rb:45:5 status=resolved owner=Base
+def app.rb:46:5 status=residue reason=nothing
+def app.rb:54:12 status=resolved owner=Base
+def app.rb:55:18 status=resolved owner=Base
+refs Base#helper confirmed=4 possible=0 excluded=2
+dead app.rb Base#helper=none

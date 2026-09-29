@@ -186,7 +186,10 @@ a mark sent to a constant is that constant's (DEC-160).
 A mark written in an instance method carries the method (`via`): a macro,
 whose methods land on each class whose body calls it (`body_call`) and whose
 class-side lookup of the name lands on it; `{k}` in its shape is the `k`th
-name that call hands it, `{k*}` each from the `k`th on (DEC-162). A string
+name that call hands it, `{k*}` each from the `k`th on (DEC-162). A macro
+that hands its own `&block` to `define_method` says so (`|&`), and a call in
+a block a class body hands that macro runs on the side the made method does
+(`Tree::block_side`, DEC-260). A string
 macro's `def` whose name a caller in another file spells whole is a method
 of that caller, at the macro's `class_eval`, where the caller's chain
 otherwise finds nothing (`Tree::made_along`, DEC-212), worked out per name

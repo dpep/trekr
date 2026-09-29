@@ -1368,9 +1368,10 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
                 });
             }
             let fqn = tree.scope_fqn(&call.nesting)?;
+            let singleton = call.singleton && made_side(tree, facts, call).unwrap_or(true);
             tree.is_known(&fqn).then_some(Receiver {
                 fqn,
-                singleton: call.singleton,
+                singleton,
                 via: "self",
                 bound: true,
                 agreeing: 1,
@@ -1457,6 +1458,50 @@ pub(crate) fn on_load_receiver(tree: &Tree, facts: &Facts, call: &Call) -> Optio
         ambiguous: !rest.is_empty(),
         rivals: rest.iter().map(|base| (base.clone(), singleton)).collect(),
     })
+}
+
+/// The side a call on the class runs on when it is written in a block a
+/// class-level macro makes a method of (DEC-260): `test "x" do … end`, where
+/// `test` hands its `&block` to `define_method`, runs on an instance. A block
+/// in between handed to anything but Ruby's ways of changing `self` is taken
+/// to yield to it, as a block in a class body is read everywhere else.
+fn made_side(tree: &Tree, facts: &Facts, call: &Call) -> Option<bool> {
+    let mut current = call;
+    // Each step goes to an enclosing block, which is earlier in the file.
+    for _ in 0..facts.calls.len() {
+        let at = current.block_owner?;
+        let owner = facts
+            .calls
+            .iter()
+            .find(|c| c.pos == at && c.recv != RecvShape::Symbol)?;
+        if evaluates_its_block(owner) {
+            return None;
+        }
+        match owner.recv {
+            RecvShape::Implicit | RecvShape::SelfRecv if owner.singleton => {
+                if let Some(side) = macro_side(tree, owner) {
+                    return Some(side);
+                }
+            }
+            RecvShape::Implicit | RecvShape::SelfRecv => return None,
+            _ => {}
+        }
+        current = owner;
+    }
+    None
+}
+
+/// The side a block handed to this call on the class runs on, when the
+/// method it lands on is a macro that makes a method of the block.
+fn macro_side(tree: &Tree, macro_call: &Call) -> Option<bool> {
+    let class = tree.scope_fqn(&macro_call.nesting)?;
+    let found = tree.lookup(&class, true, &macro_call.name)?;
+    // A macro is an instance method run on the class: a module the class
+    // extends, or `Module`'s own.
+    if found.singleton {
+        return None;
+    }
+    tree.block_side(&found.owner, &macro_call.name)
 }
 
 /// A receiver that is a value: a literal is its class, and a call returns

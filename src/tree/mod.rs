@@ -427,6 +427,9 @@ pub(crate) struct Tree {
     made: Memo<String, Arc<Made>>,
     /// Hook name → the classes that run it (DEC-098), read on first need.
     hooks: OnceLock<HashMap<String, Vec<String>>>,
+    /// (owner, macro) → the side of the method each macro makes from the
+    /// block its caller hands it (DEC-260), read from the markers once.
+    block_macros: OnceLock<HashMap<(String, String), bool>>,
 }
 
 // Every tiering worker asks the one tree (DEC-250).
@@ -1039,6 +1042,7 @@ impl Tree {
             callers: Memo::new(),
             made: Memo::new(),
             hooks: OnceLock::new(),
+            block_macros: OnceLock::new(),
         }
     }
 
@@ -3783,6 +3787,36 @@ impl Tree {
             }
         }
         callers
+    }
+
+    /// The side a block handed to `owner`'s macro `name` runs on, when the
+    /// macro makes a method of it — `define_method(…, &block)` an instance
+    /// method, `define_singleton_method` a class method (DEC-260). `None`
+    /// when the macro makes no method of its block.
+    pub(crate) fn block_side(&self, owner: &str, name: &str) -> Option<bool> {
+        let sides = self.block_macros.get_or_init(|| {
+            let mut sides = HashMap::new();
+            for (owner, how) in self.markers().iter() {
+                let (Some(via), true) = (&how.maker.via, how.maker.block) else {
+                    continue;
+                };
+                // Several makers that disagree leave the side unknown.
+                let side = how.maker.singleton;
+                sides
+                    .entry((owner.clone(), via.clone()))
+                    .and_modify(|known| {
+                        if *known != side {
+                            *known = None;
+                        }
+                    })
+                    .or_insert(side);
+            }
+            sides
+                .into_iter()
+                .filter_map(|(key, side)| Some((key, side?)))
+                .collect()
+        });
+        sides.get(&(owner.to_string(), name.to_string())).copied()
     }
 
     /// The classes that run the `on_load` hook `name`, in the order the

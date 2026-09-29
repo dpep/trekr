@@ -8450,3 +8450,49 @@ installed".
 **Why.** The hunt's "not installed: rubocop ~> 0.90.0, >= 1.89.0, < 2.0"
 named a version no one could install, and hid that the Gemfile's pin and a
 plugin's dependency disagreed — which is the fix.
+
+## DEC-260 — A block a macro makes a method of runs where the method does
+
+**Decided.** A macro — an instance method a class body runs on itself
+(DEC-162), usually a module the class `extend`s — that hands its own
+`&block` (or an anonymous `&`) to `define_method` says so in its marker
+(`core::Maker::block`, stored as a trailing `|&`). A call on `self` written
+in a block a class body hands such a macro runs on the side of the method
+it makes: `test "x" do helper end` is an instance's `helper`, and
+`define_singleton_method` would make it a class method. Between the call
+and the macro, a block handed to anything but Ruby's ways of changing
+`self` (`instance_eval` and kin, `Class.new`) is taken to yield to it —
+`[1].each`, `assert_nothing_raised`, `Dir.chdir` — as a block in a class
+body is read everywhere else. A macro that yields, `class_exec`s or
+`instance_exec`s its block leaves it on the class, as before.
+
+The macro is found from its body, not a list of names:
+`ActiveSupport::Testing::Declarative#test` and Minitest's `DSL#it` are the
+shape, and so is an app's own.
+
+**Why.** The 0.8.1 hunt: a call in a `test "…" do` block was read on the
+class side, found nothing there, and `--refs` excluded it as
+`no_such_method`; `--dead` called a helper only tests call unreferenced.
+0.8.0 hid it behind Minitest's unshaped `define_method :mu_pp` marker, which
+DEC-160 rightly narrowed to the one name it makes.
+
+**Measured** on rails, against main. `--refs 'Minitest::Assertions#assert_equal'`
+17,629 confirmed, 1,156 possible, 5,761 no such method → 23,485, 919, 142.
+The 51-query set's `ActiveSupport::TestCase#assert_equal` moves 5,619 of its
+5,761 `no_such_method` exclusions to "different owner": they now land on
+`Minitest::Assertions`, the definition that query prints, which `--refs`
+counts as another owner's because the query asks through the class that
+inherits it — as `ActiveRecord::Base.establish_connection` gets 0 confirmed.
+Its counts 0/1,156/23,390 → 0/919/23,627: 255 sites the class side called
+"ancestors not fully indexed" resolve, and 18 in a module's `test` block are
+possible through its includers. Elsewhere in the set, one `require` in such
+a block moves confirmed → possible (it runs on the includer's instance) and
+one `self.class.name` possible → confirmed. `--dead` on rails loses one
+false candidate, `PageDumpHelper#save_and_open_page`, whose three callers
+are all in `test` blocks. The gold sets, the 40-query set, `--dead` on
+activerecord and mastodon, and the 21,154 clicks are unchanged.
+
+**Not done.** A block handed on by a macro to something trekr does not read
+— minitest's `describe`, which `class_eval`s it into a class it builds;
+`setup`, which hands it to `set_callback` — stays on the class: Arel's
+`describe … it` specs are most of the 142 left.

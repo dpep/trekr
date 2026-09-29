@@ -652,6 +652,10 @@ pub(crate) struct Maker {
     /// class — a macro: the methods are made on each class whose body calls
     /// it, not on the scope it is written in (DEC-162).
     pub(crate) via: Option<String>,
+    /// The body is the block the macro's caller hands it: `def test(name,
+    /// &block) define_method(…, &block)`. A call in that block runs on what
+    /// the made method runs on (DEC-260).
+    pub(crate) block: bool,
 }
 
 /// The maker of a partly compiled stdlib class's methods (DEC-181), before
@@ -664,7 +668,8 @@ impl Maker {
         self.by.starts_with(COMPILED)
     }
 
-    /// As stored: the bare maker, or `by|side|shape[|via]` when it says more.
+    /// As stored: the bare maker, or `by|side|shape[|via[|&]]` when it says
+    /// more.
     pub(crate) fn encode(&self) -> String {
         if self.singleton.is_none() && self.shape.is_none() && self.via.is_none() {
             return self.by.clone();
@@ -675,14 +680,15 @@ impl Maker {
             None => "",
         };
         let shape = self.shape.as_deref().unwrap_or("");
+        let block = if self.block { "|&" } else { "" };
         match &self.via {
-            Some(via) => format!("{}|{side}|{shape}|{via}", self.by),
+            Some(via) => format!("{}|{side}|{shape}|{via}{block}", self.by),
             None => format!("{}|{side}|{shape}", self.by),
         }
     }
 
     pub(crate) fn parse(target: &str) -> Maker {
-        let mut parts = target.splitn(4, '|');
+        let mut parts = target.splitn(5, '|');
         let by = parts.next().unwrap_or_default().to_string();
         let singleton = match parts.next() {
             Some("singleton") => Some(true),
@@ -691,11 +697,13 @@ impl Maker {
         };
         let shape = parts.next().filter(|s| !s.is_empty()).map(str::to_string);
         let via = parts.next().filter(|s| !s.is_empty()).map(str::to_string);
+        let block = parts.next() == Some("&");
         Maker {
             by,
             singleton,
             shape,
             via,
+            block,
         }
     }
 
@@ -1367,8 +1375,14 @@ mod surface_tests {
             singleton: Some(true),
             shape: Some("x_*".into()),
             via: Some("make".into()),
+            block: true,
         };
         assert_eq!(Maker::parse(&full.encode()), full);
+        let unblocked = Maker {
+            block: false,
+            ..full.clone()
+        };
+        assert_eq!(Maker::parse(&unblocked.encode()), unblocked);
         assert!(full.may_make("x_a", true));
         assert!(!full.may_make("x_a", false));
     }

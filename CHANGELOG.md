@@ -273,6 +273,15 @@
 
 ### Fixed
 
+- **A call in a `test "…" do` block runs on the test, not its class.** A
+  block a class body hands a macro that makes a method of it —
+  `ActiveSupport::Testing::Declarative#test`, Minitest's `it`, an app's own
+  `define_method(name, &block)` macro — is that method's body, so its calls
+  on `self` are the instance's. They were read on the class side, and
+  `--refs` excluded them as "no such method": rails' `assert_equal` lost
+  5,619 such sites, and `--dead` called a helper only tests call
+  unreferenced (DEC-260).
+
 - **A method in `class << Time` inside `class Time` is `Time`'s.** A
   constant in that body made the method land on a `Time::Time` nothing
   declares, so `Time.parse` from Ruby's own `time.rb` was not found (DEC-241).

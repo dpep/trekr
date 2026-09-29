@@ -95,6 +95,8 @@ struct Frame {
     /// macro's call hands it (DEC-162): the `k`th positional is `{k}`, a
     /// splat after them `{k*}`.
     handed: Vec<(String, String)>,
+    /// In a method's body, its block parameter's name, `&` when anonymous.
+    block_param: Option<String>,
     /// A module's `included`/`extended`/`prepended` hook, or a `base.class_eval`
     /// body inside one: code that runs on whatever mixes the module in
     /// (DEC-102).
@@ -134,6 +136,7 @@ impl Frame {
             definer: None,
             const_defaults: Vec::new(),
             handed: Vec::new(),
+            block_param: None,
             mixed: None,
         }
     }
@@ -382,6 +385,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             definer: None,
             const_defaults: Vec::new(),
             handed: Vec::new(),
+            block_param: None,
             mixed: None,
         }],
         pending_sigs: Vec::new(),
@@ -1334,7 +1338,12 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.frame().method = owner_is_scope.then_some(name);
         self.frame().definer = definer;
         self.frame().const_defaults = const_defaults(node);
-        self.frame().handed = handed_params(&params_of(node.parameters()));
+        let params = params_of(node.parameters());
+        self.frame().handed = handed_params(&params);
+        self.frame().block_param = params
+            .into_iter()
+            .find(|p| p.kind == ParamKind::Block)
+            .map(|p| p.name);
         if let Some(params) = node.parameters() {
             self.visit_parameters_node(&params);
         }
@@ -2447,6 +2456,7 @@ impl<'pr> Extractor<'_> {
                     singleton: Some(singleton),
                     shape,
                     via: None,
+                    block: false,
                 };
                 self.mark_dynamic_on(owner.clone(), maker, at);
             }
@@ -2468,8 +2478,16 @@ impl<'pr> Extractor<'_> {
                 Some(names) => names.into_iter().map(Some).collect(),
                 None => vec![handed_shape(first, &handed)],
             };
+            let block = self.forwards_own_block(call);
             for shape in shapes {
-                self.mark_dynamic_shaped(&name, singleton, shape, first, at, Some(&via));
+                let maker = Maker {
+                    by: name.clone(),
+                    singleton: Some(singleton),
+                    shape,
+                    via: Some(via.clone()),
+                    block,
+                };
+                self.mark_dynamic_shaped(maker, first, at);
             }
             return;
         }
@@ -2478,7 +2496,13 @@ impl<'pr> Extractor<'_> {
             Some(names) if definable => names,
             computed => {
                 for shape in self.shapes(computed, first) {
-                    self.mark_dynamic_shaped(&name, singleton, shape, first, at, None);
+                    let maker = Maker {
+                        by: name.clone(),
+                        singleton: Some(singleton),
+                        shape,
+                        ..Maker::default()
+                    };
+                    self.mark_dynamic_shaped(maker, first, at);
                 }
                 return;
             }
@@ -2566,6 +2590,7 @@ impl<'pr> Extractor<'_> {
                             singleton: if class_side { Some(true) } else { singleton },
                             shape,
                             via: Some(via.clone()),
+                            block: false,
                         };
                         self.mark_dynamic_on(self.nesting.clone(), maker, at);
                     }
@@ -2809,6 +2834,7 @@ impl<'pr> Extractor<'_> {
                 singleton: if class_side { Some(true) } else { singleton },
                 shape,
                 via: via.map(str::to_string),
+                block: false,
             };
             self.mark_dynamic_on(owner.clone(), maker, at);
         }
@@ -2952,21 +2978,7 @@ impl<'pr> Extractor<'_> {
     /// A `define_method` whose name the source does not spell, marked with
     /// the part it does: `"_render_with_#{key}"`, or a method of this scope
     /// that returns such a string, which may be written below (DEC-160).
-    fn mark_dynamic_shaped(
-        &mut self,
-        by: &str,
-        singleton: bool,
-        shape: Option<String>,
-        name: &Node<'pr>,
-        at: usize,
-        via: Option<&str>,
-    ) {
-        let maker = Maker {
-            by: by.to_string(),
-            singleton: Some(singleton),
-            shape,
-            via: via.map(str::to_string),
-        };
+    fn mark_dynamic_shaped(&mut self, maker: Maker, name: &Node<'pr>, at: usize) {
         let unshaped = maker.shape.is_none();
         let Some(edge) = self.mark_dynamic_as(maker, at) else {
             return;
@@ -2974,6 +2986,23 @@ impl<'pr> Extractor<'_> {
         if unshaped && let Some(method) = shaping_call(name) {
             self.pending_shapes
                 .push((edge, self.nesting.clone(), method));
+        }
+    }
+
+    /// Is the block handed to `call` the enclosing method's own block
+    /// parameter, `&block` or an anonymous `&`?
+    fn forwards_own_block(&self, call: &ruby_prism::CallNode<'pr>) -> bool {
+        let Some(own) = self.frames.last().and_then(|f| f.block_param.as_deref()) else {
+            return false;
+        };
+        let Some(passed) = call.block().and_then(|b| b.as_block_argument_node()) else {
+            return false;
+        };
+        match passed.expression() {
+            None => own == "&",
+            Some(expr) => expr
+                .as_local_variable_read_node()
+                .is_some_and(|read| read.name().as_slice() == own.as_bytes()),
         }
     }
 
