@@ -8129,3 +8129,128 @@ equivalence stands as written.
 **Not done.** Several Rubies installed, none named, none on `$PATH` and no
 `$GEM_HOME`: no Ruby, rather than a guess. A Homebrew Ruby's bundled rbs is
 found by the same rule, in its Cellar prefix.
+
+## DEC-250 — One tree, shared by every worker: `--refs` tiers on all of them (DEC-233 revisited)
+
+**Decided.** The tree is `Send + Sync` and every pool worker tiers against
+it: `gather_refs` hands each file to the pool, which parses and tiers it
+there, and the files come back in the order they were listed. DEC-233 grew a
+tree per worker from a seed and paid every worker's warm-up; here the
+warm-up — a name's rows, the markers' placement, `agreed_return`'s vote, the
+chains — is paid once, by whichever worker asks first.
+
+**Why it is sound.** Apart from its build, a tree only fills memos and
+loads names, and each is a function of the tree and its key (DEC-200): it
+does not matter which thread fills one first. Each field is one of three
+kinds, and a new one says which:
+
+- **set at build**, read-only after — a plain field;
+- **a memo** — `tree::memo::Memo`, a sharded map filled by whoever misses
+  first, computed with no lock held, the first value stored kept; or a
+  `OnceLock` for one whole-tree value (the markers, their placement, the
+  includers, the mixers, the hooks); or `Once` for a value costly to repeat
+  that asks for no other of its kind (a name's rows, below): the threads
+  that ask meanwhile wait;
+- **per call in flight** — the linearization stack and `placing` — a
+  thread-local tagged with the tree, never a field.
+
+A memo that recurses (a lookup linearizes; a linearization resolves a path
+through ancestors, which linearizes) must not hold a lock or a one-time
+initializer while it computes: that is the lazy-init deadlock, across two
+threads or on one. `Memo` hands out clones, never a guard. What a `RefCell`
+or `Rc` field would break fails to compile (`Tree: Send + Sync` is
+asserted), which is what a seed that forgot a field did silently.
+
+The loader keeps a connection per concurrent load, reopened on demand; a
+connection cannot cross threads, and one behind a lock serializes every
+load. SQLite's memory statistics are off (`SQLITE_CONFIG_MEMSTATUS`, before
+the first connection): they take one process-wide mutex per allocation.
+
+**Measured**, on 4e88526, each build on its own store, interleaved, medians
+(p90), load 3–7 from other work; `par` is DEC-233's branch as built
+(1af6d57, on 99a11f7):
+
+| | main | `par` | this | rounds |
+| --- | ---: | ---: | ---: | --- |
+| 100k `--refs 'Hash#[]' --json` | 14.3 (14.5) s, 613 MB | 8.1 (8.1) s, 2,912 MB | **7.4** (7.7) s, **729 MB** | 3 |
+| its CPU | 37.7 s | 46.4 s | 39.9 s | |
+| rails, the 51-query `--refs` set | 7.24 s | 5.91 s | **4.99** s | 5 |
+| rails `Persistence#save` | 74 (75) ms, 39 MB | 72 (82) ms, 27 MB | **49** (50) ms, 25 MB | 11 |
+| rails `QueryMethods#where` | 173 (178) ms, 83 MB | 143 (146) ms, 100 MB | **107** (111) ms, 57 MB | 11 |
+
+Megabytes are peak footprint. The same `Hash#[]` at load 6.5–7: 16.5, 10.9
+and 9.6 s. Threads (`RAYON_NUM_THREADS`, one run each, load 3): 1 → 26.1 s,
+2 → 14.2, 4 → 8.3, 8 → 6.3; CPU 26.1 → 39.0 s, the rise mostly the four
+efficiency cores. Placing the markers is the serial part (0.5–0.6 s), with
+building the tree and writing 175 MB of answer. On 74c5998, one run at
+load 7.5: 13.8 → 7.8 s.
+
+What a single thread asks barely moves: `respond_to?` in
+`ActiveSupport::Tryable` (DEC-200's `--def`) 53 → 53 ms on rails, 73 → 73 ms
+on mastodon, 323 (326) → 334 (339) ms at 100k files (11, 11 and 7 rounds);
+every chain of the 100k corpus linearized 2,917 → 2,910 ms (5 rounds); an
+LSP session clicking every name in 9 rails files (5,117 requests) 0.36 →
+0.35 ms median, p99 3.88 → 3.45, and 12 mastodon files 6.34 → 6.24 ms.
+
+Racing costs little: at eight threads against one, lookups computed rise
+3 %, macro callers 11 %, string-macro names 0.2 %, chains 0.6 % — two
+workers missing one key at once both compute it. Shared memos keep one key
+hashed once: hashing it for the shard and again for the table cost the
+linearization 3 %.
+
+**Checked.** Every commit of the change, on 74c5998, is byte-identical to
+main, as the prototype was on 4e88526, on the verify set (108 files: the gold
+sets, widget_shop, the rails `--refs` 40- and 51-query sets, `--dead` on
+three corpora, the probe, the clicks), on the 100k `Hash#[]`, and on the
+linearization dump of rails, mastodon and the 100k corpus — asked from one
+thread, and, once the tree can be shared, from eight threads sharing it,
+forward and reverse. Unit tests: eight threads asking a cycle's names in
+rotated orders answer as a fresh tree; `gather_refs` on one thread and on
+eight, facts kept or not, give one answer; `Once` computes once under eight
+askers.
+
+**What it costs to keep.** The three kinds above, and two rules the
+compiler cannot check: a memo whose answer depends on a call's context keys
+on that context (DEC-251), and the tree never hands work to the pool while a
+linearization frame is open (a stolen job would see the frame). DEC-204's
+head start on the flow analysis is gone: each file's worker works out what
+it needs.
+
+**Rejected.**
+- **A lock per memo, one map each.** Every hit takes the same lock's cache
+  line; a sharded map is the standard answer and the shards cost nothing.
+- **`dashmap`.** The same structure; its guards can be held across a
+  computation that touches the same shard, and a wrapper hiding them was
+  needed either way. Thirty lines of std and `hashbrown`'s `HashTable`.
+- **A one-time initializer per key for the recursive memos.** A chain asks
+  for chains, a lookup for lookups; a thread holding one key's initializer
+  while it waits on another's deadlocks against a thread doing the reverse.
+- **Seeding a tree per worker** (DEC-233): four times the memory and a field
+  list to keep in step.
+- **Precomputing the placement or the votes at `--index`.** Every query
+  would pay for a few `--refs` queries' warm-up.
+
+## DEC-251 — A lookup made while placing is its own question
+
+**Decided.** The lookup memo's key carries whether the lookup was made
+while placing markers, where DEC-235 left a lookup made then answering later
+asks. A lookup made while placing does not look for string macros; one made
+outside does. They are different questions, and sharing a memo entry made
+the answer depend on which was asked first — with several threads, on
+timing.
+
+**Measured.** No answer moves: every check of DEC-250's list is identical.
+
+## DEC-252 — A name's definitions are one table, loaded whole
+
+**Decided.** The tree's methods were one arena that every load appended to,
+indexed by name and by name-owner-side. They are now a table per name —
+its definitions in load order, by owner and side, and `named`'s answer —
+built whole on the name's first load and never changed after, which is what
+DEC-202 already said of a name: complete once loaded. A lookup lands on an
+index into its name's table, or carries the method a string macro made.
+
+**Why.** The name is the unit a load publishes, so it is the unit a
+concurrent reader can take whole without a lock: one map probe, then no
+more locking for the walk. A shared arena needs its indexes locked for
+every walk, and ties indices across names to load order.

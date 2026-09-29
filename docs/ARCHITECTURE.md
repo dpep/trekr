@@ -589,10 +589,9 @@ index's only job here is to say which files are worth opening, so it keeps
 a posting list — which names each blob calls, and how often — and no call
 site at all (DEC-193).
 
-Files are parsed on the pool and tiered on one thread, because the tree is a
-`RefCell`. The next chunk parses while this one is tiered (DEC-205), and a
-file whose calls may need a local's flow gets that analysis beside its parse
-(DEC-204). What tiering asks the tree per site — what a name's definitions
+Each file is parsed and tiered on the pool worker that takes it, against the
+one tree they all share (DEC-250), and the files come back in the order they
+were listed. What tiering asks the tree per site — what a name's definitions
 return, the definitions themselves, a lookup, a class side's chain — is
 memoized on the tree, each a function of it once the name is loaded
 (DEC-201–203).
@@ -968,7 +967,8 @@ it is retried every 250 ms until it lands, answers meanwhile coming from what
 is committed (DEC-066). The child scanned before the save, so its own write
 would not carry the edit.
 
-**Threads.** Requests are answered on one thread; the tree is not shared. Two
+**Threads.** Requests are answered on one thread; the tree could be shared
+(DEC-250) but a request asks too little to split. Two
 things leave it: a file scan's reading and parsing fans out on rayon and
 returns facts, with tiering kept on the main thread; and completion's member
 listing is built by a worker on its own connection and tree, which hands back

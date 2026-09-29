@@ -48,6 +48,11 @@
 
 ### Changed
 
+- **`--refs` tiers on every core.** The workers share one tree, so its
+  warm-up is paid once: a name with hundreds of thousands of call sites
+  answers about twice as fast, and a rails query a third faster, for a
+  fifth more memory at the largest.
+
 - **Core and the stdlib's signatures come from the app's own Ruby.** They are
   read from the `rbs` gem bundled with that Ruby — else the highest installed
   for it — when its stdlib is indexed, instead of being generated once from Ruby 3.4
