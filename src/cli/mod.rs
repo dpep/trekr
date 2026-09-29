@@ -80,7 +80,7 @@ struct Cli {
     status: bool,
 
     /// With `--status`: list every checkout on the machine, gems included
-    #[arg(long, requires = "status")]
+    #[arg(long, requires = "status", conflicts_with = "context")]
     all: bool,
 
     /// Which commands and editor features have been used, by whom (an agent,
@@ -120,7 +120,8 @@ struct Cli {
     /// is in otherwise. For a position, the one the path belongs to, which
     /// matters inside a **gem**: it is otherwise answered from whichever app
     /// most recently indexed it, a pick that is deterministic but moves as you
-    /// work (DEC-029). Pin it when a measurement has to be reproducible.
+    /// work (DEC-029). Pin it when a measurement has to be reproducible. For
+    /// `--status`, the checkout to report on.
     #[arg(long, value_name = "CHECKOUT")]
     context: Option<PathBuf>,
 
@@ -251,12 +252,17 @@ pub fn run() -> ExitCode {
     let named = cli.refs.is_some() || cli.ancestors.is_some() || cli.input.is_some();
     for (on, flag, applies) in [
         (cli.explain, "--explain", position),
-        (cli.context.is_some(), "--context", position || named),
+        (
+            cli.context.is_some(),
+            "--context",
+            position || named || cli.status,
+        ),
     ] {
         if on && !applies {
             let message = match flag {
                 "--context" => "--context applies to a query: a position, a name \
-                                (`trekr Widget#save --context DIR`), --refs or --ancestors"
+                                (`trekr Widget#save --context DIR`), --refs, --ancestors \
+                                or --status"
                     .to_string(),
                 _ => format!(
                     "{flag} applies to a position: `trekr {flag} FILE:LINE:COL`, or with --def"
@@ -311,7 +317,10 @@ pub fn run() -> ExitCode {
             cmd_gc(out, cli.older_than, cli.dry_run, cli.vacuum),
         )
     } else if cli.status {
-        (Some("status"), cmd_status(out, cli.all))
+        (
+            Some("status"),
+            cmd_status(out, cli.all, cli.context.as_deref()),
+        )
     } else if cli.usage {
         let days = cli.days;
         (
@@ -1052,11 +1061,12 @@ fn cmd_index(
     Ok(ExitCode::SUCCESS)
 }
 
-/// What is indexed. By default the checkout this is run in, with its gems
-/// counted rather than listed — a Rails app's bundle is hundreds of them —
-/// and a count of the rest; `--all` lists every checkout. Outside any
-/// checkout, the repos are listed and the gems counted.
-fn cmd_status(out: Output, all: bool) -> anyhow::Result<ExitCode> {
+/// What is indexed. By default the checkout this is run in (or `--context`
+/// names), with its gems counted rather than listed — a Rails app's bundle is
+/// hundreds of them — and a count of the rest; `--all` lists every checkout.
+/// Outside any checkout, the repos are listed and the gems counted. A checkout
+/// nobody indexed is `not_indexed`, exit 2, as a query from it would be.
+fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<ExitCode> {
     let store = open_store()?;
     let checkouts = store.status()?;
     let totals = store.totals()?;
@@ -1069,18 +1079,24 @@ fn cmd_status(out: Output, all: bool) -> anyhow::Result<ExitCode> {
         }),
         false => None,
     };
-    let here = match all {
-        true => None,
-        false => std::env::current_dir()
-            .ok()
-            .and_then(|dir| std::fs::canonicalize(dir).ok())
-            .and_then(|dir| {
-                store
-                    .checkout_containing(&dir.to_string_lossy())
-                    .ok()
-                    .flatten()
-            }),
+    let asked = match (all, context) {
+        (true, _) => None,
+        (false, Some(dir)) => {
+            if !dir.exists() {
+                return Err(Failure::NotFound.error(format!("no such path: {}", dir.display())));
+            }
+            Some(status_checkout(&store, dir)?)
+        }
+        // Outside any checkout there is no "this checkout" to answer for.
+        (false, None) => status_checkout(&store, Path::new(".")).ok(),
     };
+    let asked = asked.map(|root| root.to_string_lossy().into_owned());
+    if let Some(root) = &asked
+        && !store.has_checkout(root)?
+    {
+        return status_not_indexed(out, Path::new(root), &store, &checkouts, &totals);
+    }
+    let here = asked;
     let shown: Vec<&crate::store::Checkout> = checkouts
         .iter()
         .filter(|c| {
@@ -1182,6 +1198,70 @@ fn cmd_status(out: Output, all: bool) -> anyhow::Result<ExitCode> {
         totals.blobs, totals.defs, totals.const_refs, totals.calls
     );
     Ok(ExitCode::SUCCESS)
+}
+
+/// The checkout `--status` reports on from `dir`: its git repository, as a
+/// query's, else the indexed gem it is in — the gem itself, not the app a
+/// query would answer a gem's position from.
+fn status_checkout(store: &Store, dir: &Path) -> anyhow::Result<PathBuf> {
+    match scan::repo_root(dir) {
+        Ok(root) => Ok(root),
+        Err(error) => gem_holding(store, dir).map(PathBuf::from).ok_or(error),
+    }
+}
+
+/// `--status` from a checkout nobody indexed: the same `not_indexed` a query
+/// from it answers, with the store's other contents summarized beside it, so
+/// no other checkout's row can be read as this one's.
+fn status_not_indexed(
+    out: Output,
+    root: &Path,
+    store: &Store,
+    checkouts: &[crate::store::Checkout],
+    totals: &crate::store::Totals,
+) -> anyhow::Result<ExitCode> {
+    crate::usage::outcome(Outcome::NotIndexed);
+    let root = root.to_string_lossy().into_owned();
+    let hint = format!("trekr --index {}", paths::pretty(&root));
+    let (reason, upgraded) = not_indexed_reason(store)?;
+    let count = |gem: bool| {
+        checkouts
+            .iter()
+            .filter(|c| (c.kind == "gem") == gem)
+            .count()
+    };
+    let (repos, gems) = (count(false), count(true));
+    if out != Output::Text {
+        emit_json(
+            out,
+            &serde_json::json!({
+                "status": "not_indexed",
+                "repo": root,
+                "reason": reason,
+                "hint": hint,
+                "checkouts": [],
+                "others": { "repos": repos, "gems": gems },
+                "totals": totals,
+            }),
+        )?;
+        return Ok(ExitCode::from(2));
+    }
+    match upgraded {
+        true => println!(
+            "{} is not indexed — {reason}. Run: {hint}",
+            paths::pretty(&root)
+        ),
+        false => println!("{} is not indexed — run: {hint}", paths::pretty(&root)),
+    }
+    if repos + gems > 0 {
+        let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
+        println!(
+            "\nalso indexed: {}, {} — `trekr --status --all` lists them",
+            plural(repos, "other repo"),
+            plural(gems, "gem")
+        );
+    }
+    Ok(ExitCode::from(2))
 }
 
 /// Outline one file, by reading it.
@@ -2321,6 +2401,27 @@ fn upgrade_reason(from: i64) -> String {
     )
 }
 
+/// Why a checkout is not indexed, and whether an upgrade is the reason.
+///
+/// A store rebuilt for a new schema looks exactly like one never used, and
+/// "never indexed" to someone who indexed yesterday reads as a bug. Only until
+/// the first index after it: from then on "not indexed" is about this
+/// checkout, not the upgrade, and a checkout nobody ever indexed would be told
+/// an index of it was dropped.
+fn not_indexed_reason(store: &Store) -> anyhow::Result<(String, bool)> {
+    let upgraded = match store.roots()?.is_empty() {
+        true => store.upgraded_from()?,
+        false => None,
+    };
+    Ok(match upgraded {
+        Some(from) => (upgrade_reason(from), true),
+        None => (
+            "this checkout has never been indexed, so there is nothing to answer from".into(),
+            false,
+        ),
+    })
+}
+
 /// A checkout nobody has indexed, when a query needs one.
 ///
 /// Worth its own answer because the alternative is a lie by omission: an empty
@@ -2332,21 +2433,9 @@ fn not_indexed(out: Output, root: &Path, store: &Store) -> anyhow::Result<ExitCo
     crate::usage::outcome(Outcome::NotIndexed);
     let root = root.to_string_lossy().to_string();
     let hint = format!("trekr --index {}", paths::pretty(&root));
-    // A store rebuilt for a new schema looks exactly like one never used, and
-    // "never indexed" to someone who indexed yesterday reads as a bug.
-    // Only until the first index after it: from then on "not indexed" is
-    // about this checkout, not the upgrade, and a checkout nobody ever
-    // indexed would be told an index of it was dropped.
-    let upgraded = match store.roots()?.is_empty() {
-        true => store.upgraded_from()?,
-        false => None,
-    };
-    let reason = match upgraded {
-        Some(from) => upgrade_reason(from),
-        None => "this checkout has never been indexed, so there is nothing to answer from".into(),
-    };
+    let (reason, upgraded) = not_indexed_reason(store)?;
     match out {
-        Output::Text if upgraded.is_some() => eprintln!(
+        Output::Text if upgraded => eprintln!(
             "trekr: {} is not indexed — {reason}. Run: {hint}",
             paths::pretty(&root)
         ),

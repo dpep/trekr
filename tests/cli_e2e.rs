@@ -304,7 +304,7 @@ fn a_second_worktree_of_the_same_content_costs_no_parsing() {
         second["indexed"]["parsed"], 0,
         "identical bytes are identical blobs, wherever they are checked out"
     );
-    let status = json(&trekr(&db, &dir, &["--status", "--json"]));
+    let status = json(&trekr(&db, &dir, &["--status", "--all", "--json"]));
     assert_eq!(status["checkouts"].as_array().unwrap().len(), 2);
     assert_eq!(
         status["totals"]["blobs"], 1,
@@ -1303,8 +1303,8 @@ fn nothing_to_report_is_an_exit_code_not_an_error() {
     let (dir, db) = scratch("empty");
     repo(&dir);
 
-    // Never indexed: a definitive "no", distinct from a failure to serve.
-    assert_eq!(trekr(&db, &dir, &["--status"]).status.code(), Some(1));
+    // Never indexed: no answer yet, as a query says (DEC-170).
+    assert_eq!(trekr(&db, &dir, &["--status"]).status.code(), Some(2));
     // An outline is parsed, not looked up, so it answers before any index
     // exists. Exit 1 is reserved for a file that really defines nothing.
     assert_eq!(
@@ -2780,7 +2780,7 @@ fn a_checkout_missing_after_an_upgrade_says_so() {
     assert!(reason.contains("v1"), "{reason}");
     // `--status` says why it is empty too, rather than looking never used.
     let out = trekr(&db, &dir, &["--status", "--json"]);
-    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(out.status.code(), Some(2));
     let reason = json(&out)["reason"].as_str().unwrap().to_string();
     assert!(reason.contains("v1"), "{reason}");
 
@@ -2793,6 +2793,56 @@ fn a_checkout_missing_after_an_upgrade_says_so() {
     assert!(!reason.contains("format changed"), "{reason}");
     let _ = fs::remove_dir_all(&dir);
     let _ = fs::remove_dir_all(&other);
+}
+
+/// `--status` answers for the checkout it is asked from, as a query does: one
+/// nobody indexed is `not_indexed`, exit 2 — never another checkout's row.
+#[test]
+fn status_in_an_unindexed_checkout_says_so_rather_than_showing_another() {
+    let (dir, db) = scratch("status-here");
+    repo(&dir);
+    let (other, _) = scratch("status-here-other");
+    repo(&other);
+    assert!(trekr(&db, &other, &["--index"]).status.success());
+
+    let query = trekr(&db, &dir, &["--refs", "Widget#resize", "--json"]);
+    let out = trekr(&db, &dir, &["--status", "--json"]);
+    assert_eq!(out.status.code(), Some(2), "{}", stdout(&out));
+    assert_eq!(out.status.code(), query.status.code());
+    let answer = json(&out);
+    assert_eq!(answer["status"], "not_indexed", "{answer}");
+    assert_eq!(answer["repo"], json(&query)["repo"], "{answer}");
+    assert!(answer["reason"].is_string(), "{answer}");
+    assert!(answer["hint"].is_string(), "{answer}");
+    assert_eq!(answer["checkouts"], serde_json::json!([]), "{answer}");
+    assert_eq!(answer["others"]["repos"], 1, "the rest is summarized apart");
+
+    let text = trekr(&db, &dir, &["--status"]);
+    assert_eq!(text.status.code(), Some(2));
+    let printed = stdout(&text);
+    assert!(printed.contains("is not indexed"), "{printed}");
+    assert!(printed.contains("1 other repo"), "{printed}");
+
+    // `--context` asks about a checkout from anywhere.
+    let other_arg = other.to_str().unwrap();
+    let pinned = trekr(&db, &dir, &["--status", "--json", "--context", other_arg]);
+    assert_eq!(pinned.status.code(), Some(0), "{}", stdout(&pinned));
+    let from_there = json(&trekr(&db, &other, &["--status", "--json"]));
+    assert_eq!(json(&pinned)["checkouts"], from_there["checkouts"]);
+    let dir_arg = dir.to_str().unwrap();
+    let unindexed = trekr(&db, &other, &["--status", "--context", dir_arg]);
+    assert_eq!(unindexed.status.code(), Some(2));
+    let missing = trekr(&db, &dir, &["--status", "--context", "no/such/dir"]);
+    assert_eq!(missing.status.code(), Some(66));
+
+    // Outside any checkout there is no "this checkout": the repos are listed.
+    let (nowhere, _) = scratch("status-nowhere");
+    let listed = trekr(&db, &nowhere, &["--status", "--json"]);
+    assert_eq!(listed.status.code(), Some(0));
+    assert_eq!(json(&listed)["checkouts"], from_there["checkouts"]);
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&other);
+    let _ = fs::remove_dir_all(&nowhere);
 }
 
 #[test]

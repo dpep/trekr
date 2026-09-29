@@ -82,8 +82,10 @@ second worktree of the same repo costs nothing — facts are keyed by git blob.
 `trekr --status` shows the checkout you are in, its gems counted (`gems:
 {count, indexed, files}`), and how many other checkouts are indexed
 (`others`); `--status --all` lists every checkout, each with `kind` (`repo`
-or `gem`). An empty store carries a `reason`, which names an upgrade that
-dropped the index.
+or `gem`). A checkout nobody indexed is `status: not_indexed`, exit 2, as
+a query from it is — `checkouts` is empty and `others` counts the rest.
+`--context DIR` asks about another checkout; outside any checkout the repos
+are listed.
 
 ## References to a *method*, not a name
 

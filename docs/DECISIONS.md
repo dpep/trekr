@@ -5949,3 +5949,36 @@ a module's includers.
 
 *Reverses if:* a guard — `case node when Scalar`, `is_a?` — ever narrows a
 receiver per site, which would tighten the bound there.
+
+## DEC-170 — `--status` answers `not_indexed` for a checkout nobody indexed
+
+**Decided.** `--status` asks about one checkout — the one the working
+directory is in, or `--context DIR`'s — found as a query finds it: its git
+repository, else the indexed gem the path is in. When that checkout is not
+in the store, the answer is the one a query from there gives: `status:
+not_indexed`, `repo`, `reason`, `hint`, exit `2`. Beside it, `checkouts: []`,
+and `others`/`totals` summarize everything else. Outside any checkout
+(without `--context`) nothing changed: the repos are listed, exit `0`.
+`--context` naming a path outside every checkout is `not_a_repo`, 66, as for
+a query; `--all` and `--context` conflict.
+
+**Before**, a checkout indexed nowhere fell through to the outside-any-
+checkout listing, so `--status --json` showed *another* checkout as
+`checkouts[0]` and exited `0`, while `--refs` from the same directory said
+`not_indexed`, exit `2` (hunt 2). The same fall-through hid a second bug:
+the lookup matched the working directory as a path *inside* a root, so run
+from a checkout's own top directory — the usual place — `--status` found no
+checkout there and listed every repo too. A script checking "is this checkout
+indexed" got yes, about the wrong repo. That is the silent-wrong DEC-125 set
+out to end: `--status` is about the checkout you are in, and a row that is
+not that checkout cannot be the first thing it shows. An empty store in a
+checkout was exit `1`; it is `2` now, for the same reason — `1` is
+"looked, found nothing" (DEC-080), and nobody has looked.
+
+**Why `checkouts: []` rather than leaving it out.** A consumer that reads
+`checkouts[0]` must get nothing, not a key error it papers over; and the
+field keeps one meaning — rows for the checkout asked about.
+
+*Reverses if:* a caller needs `--status` to mean "is anything indexed at
+all". That is `--status --all`'s exit code.
+

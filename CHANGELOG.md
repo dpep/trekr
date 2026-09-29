@@ -4,6 +4,17 @@
 
 ### Changed
 
+- **`--status` in a checkout nobody indexed exits `2` with `status:
+  not_indexed`**, the answer a query from there gives, where it listed
+  another checkout as `checkouts[0]` and exited `0`. `checkouts` is `[]`;
+  `others` and `totals` still summarize the store. A script that read exit `1`
+  from `--status` as "nothing indexed here" should read `2` (DEC-170).
+  Run from a checkout's top directory, `--status` also listed every indexed
+  repo rather than that checkout; it shows the one checkout now.
+
+- **`--status --context DIR`** reports on that checkout, from anywhere; it
+  was a usage error (DEC-170).
+
 - **`--refs` counts a call whose receiver is typed as an ancestor.** A
   `sig`'s parameter or return, a finder's result, a `rescue`'s class, or the
   type a variable's name suggests is a type the object conforms to, and it
