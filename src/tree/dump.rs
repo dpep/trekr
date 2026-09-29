@@ -41,8 +41,14 @@ fn dump_linearizations() {
             let ancestry = tree.ancestors(fqn);
             let singleton: Vec<String> = tree
                 .lookup_chain(fqn, true)
-                .into_iter()
-                .map(|(owner, s)| if s { format!("{owner}.") } else { owner })
+                .iter()
+                .map(|(owner, s)| {
+                    if *s {
+                        format!("{owner}.")
+                    } else {
+                        owner.clone()
+                    }
+                })
                 .collect();
             format!(
                 "{fqn}\t{}\t{}\t{}",

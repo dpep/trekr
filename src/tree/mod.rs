@@ -356,6 +356,12 @@ pub(crate) struct Tree {
     by_name: RefCell<HashMap<String, Vec<usize>>>,
     /// `named`'s answers, which are final once a name is loaded.
     named: RefCell<HashMap<String, Rc<[MethodDef]>>>,
+    /// Lookup chains by (fqn, singleton, as_self): every lookup on a type
+    /// walks the same one (DEC-203).
+    chains: RefCell<HashMap<(String, bool, bool), Chain>>,
+    /// Lookups by (fqn, singleton, name, as_self), final once the name is
+    /// loaded, as `named` is (DEC-203).
+    lookups: RefCell<HashMap<LookupKey, Option<MethodDef>>>,
     /// A model that overrides `self.table_name` wants the columns of a table
     /// whose conventional class it is not, so that carrier's methods are keyed
     /// onto the model as well. Built once at build time from the `table_name`
@@ -419,6 +425,12 @@ pub(crate) struct AgreedReturn {
     /// How many owners define the name as an instance method.
     pub(crate) total: usize,
 }
+
+/// The `(owner, singleton)` pairs a method lookup walks, in order.
+pub(crate) type Chain = Rc<[(String, bool)]>;
+
+/// A lookup, as `lookup_along` keys it: (fqn, singleton, name, as_self).
+type LookupKey = (String, bool, String, bool);
 
 /// A call to a name, as `agreed_return` keys it: (name, argc, block).
 type ReturnKey = (String, Option<u32>, bool);
@@ -777,6 +789,8 @@ impl Tree {
             by_owner: RefCell::new(HashMap::new()),
             by_name: RefCell::new(HashMap::new()),
             named: RefCell::new(HashMap::new()),
+            chains: RefCell::new(HashMap::new()),
+            lookups: RefCell::new(HashMap::new()),
             loader: None,
             loaded: RefCell::new(HashSet::new()),
             carriers: HashMap::new(),
@@ -2529,7 +2543,7 @@ impl Tree {
     /// method it is a **different** walk: up the *superclass* chain only —
     /// included modules contribute no class methods — inserting at each level
     /// the level's own singleton methods and then whatever it `extend`s.
-    pub(crate) fn lookup_chain(&self, fqn: &str, singleton: bool) -> Vec<(String, bool)> {
+    pub(crate) fn lookup_chain(&self, fqn: &str, singleton: bool) -> Chain {
         self.chain_for(fqn, singleton, false)
     }
 
@@ -2538,7 +2552,17 @@ impl Tree {
     /// code there that reaches the class side runs in `included do`, on the
     /// class that included it, which has the concern's `ClassMethods`
     /// (DEC-105).
-    fn chain_for(&self, fqn: &str, singleton: bool, as_self: bool) -> Vec<(String, bool)> {
+    fn chain_for(&self, fqn: &str, singleton: bool, as_self: bool) -> Chain {
+        let key = (fqn.to_string(), singleton, as_self);
+        if let Some(chain) = self.chains.borrow().get(&key) {
+            return chain.clone();
+        }
+        let chain: Chain = self.walk_for(fqn, singleton, as_self).into();
+        self.chains.borrow_mut().insert(key, chain.clone());
+        chain
+    }
+
+    fn walk_for(&self, fqn: &str, singleton: bool, as_self: bool) -> Vec<(String, bool)> {
         if !singleton {
             return self
                 .ancestors(fqn)
@@ -2695,6 +2719,22 @@ impl Tree {
         as_self: bool,
     ) -> Option<MethodDef> {
         self.ensure(name);
+        let key = (fqn.to_string(), singleton, name.to_string(), as_self);
+        if let Some(found) = self.lookups.borrow().get(&key) {
+            return found.clone();
+        }
+        let found = self.look_along(fqn, singleton, name, as_self);
+        self.lookups.borrow_mut().insert(key, found.clone());
+        found
+    }
+
+    fn look_along(
+        &self,
+        fqn: &str,
+        singleton: bool,
+        name: &str,
+        as_self: bool,
+    ) -> Option<MethodDef> {
         // A split name asked about as itself runs whichever variant is loaded,
         // so it has an answer only when every variant gives the same one.
         let variants = self.variants_of(fqn);
@@ -2987,15 +3027,16 @@ impl Tree {
             return None;
         }
         self.lookup_chain(fqn, singleton)
-            .into_iter()
+            .iter()
             .find_map(|(owner, side)| {
+                let side = *side;
                 let makers: Vec<Dynamic> = placed
-                    .get(&owner)?
+                    .get(owner)?
                     .iter()
                     .filter(|how| how.maker.may_make(name, side))
                     .cloned()
                     .collect();
-                (!makers.is_empty()).then(|| (variants::public_name(&owner).to_string(), makers))
+                (!makers.is_empty()).then(|| (variants::public_name(owner).to_string(), makers))
             })
     }
 
