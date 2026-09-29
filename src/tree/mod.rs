@@ -354,6 +354,8 @@ pub(crate) struct Tree {
     by_owner: RefCell<HashMap<(String, bool, String), Vec<usize>>>,
     /// name → every definition anywhere, for ranked residue.
     by_name: RefCell<HashMap<String, Vec<usize>>>,
+    /// `named`'s answers, which are final once a name is loaded.
+    named: RefCell<HashMap<String, Rc<[MethodDef]>>>,
     /// A model that overrides `self.table_name` wants the columns of a table
     /// whose conventional class it is not, so that carrier's methods are keyed
     /// onto the model as well. Built once at build time from the `table_name`
@@ -774,6 +776,7 @@ impl Tree {
             methods: RefCell::new(Vec::new()),
             by_owner: RefCell::new(HashMap::new()),
             by_name: RefCell::new(HashMap::new()),
+            named: RefCell::new(HashMap::new()),
             loader: None,
             loaded: RefCell::new(HashSet::new()),
             carriers: HashMap::new(),
@@ -2937,20 +2940,33 @@ impl Tree {
     }
 
     /// Every method with this name, anywhere. The candidate pool for residue.
-    pub(crate) fn named(&self, name: &str) -> Vec<MethodDef> {
+    ///
+    /// Shared rather than cloned per call: a call site asks for its name's
+    /// pool, and `[]` has thousands of definitions in a large checkout. A name
+    /// is complete once `ensure` has loaded it, so the list never goes stale.
+    pub(crate) fn named(&self, name: &str) -> Rc<[MethodDef]> {
+        if let Some(named) = self.named.borrow().get(name) {
+            return named.clone();
+        }
         self.ensure(name);
-        let by_name = self.by_name.borrow();
-        let methods = self.methods.borrow();
-        by_name
-            .get(name)
-            .map(|hits| {
-                hits.iter()
-                    .map(|i| &methods[*i])
-                    .filter(|m| m.is_definition())
-                    .cloned()
-                    .collect()
-            })
-            .unwrap_or_default()
+        let named: Rc<[MethodDef]> = {
+            let by_name = self.by_name.borrow();
+            let methods = self.methods.borrow();
+            by_name
+                .get(name)
+                .map(|hits| {
+                    hits.iter()
+                        .map(|i| &methods[*i])
+                        .filter(|m| m.is_definition())
+                        .cloned()
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        self.named
+            .borrow_mut()
+            .insert(name.to_string(), named.clone());
+        named
     }
 
     /// The first scope in `fqn`'s lookup chain that defines methods its source

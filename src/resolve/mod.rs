@@ -858,7 +858,7 @@ fn self_overrides(
     // Every definition of the name, not every subclass: the name's list is
     // short, and a class with thousands of descendants is not.
     tree.named(name)
-        .into_iter()
+        .iter()
         .filter(|method| {
             method.singleton == receiver.singleton
                 && method.owner != found.owner
@@ -1676,7 +1676,7 @@ fn from_receiver_name(tree: &Tree, call: &Call, path: &str) -> Option<Receiver> 
     }
     let others = tree
         .named(&call.name)
-        .into_iter()
+        .iter()
         .filter(|method| method.owner != fqn)
         .map(|method| method.owner.clone())
         .collect::<std::collections::HashSet<_>>()
@@ -2065,7 +2065,7 @@ fn competitors(tree: &Tree, name: &str, winner: &str, via: &str) -> Vec<Candidat
     };
     let mut ranked: Vec<(bool, Candidate)> = tree
         .named(name)
-        .into_iter()
+        .iter()
         .filter(|method| method.owner != winner)
         .map(|method| {
             (
@@ -2250,7 +2250,7 @@ fn residue(
     };
     let mut ranked: Vec<(u8, bool, i32, Candidate)> = tree
         .named(&call.name)
-        .into_iter()
+        .iter()
         .filter(|method| !own(method))
         .map(|method| {
             let fits = method.accepts(call.argc);
