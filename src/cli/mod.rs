@@ -1002,6 +1002,7 @@ fn index_stdlib(
                 .map(|path| (gem.name.as_str(), gem.version.as_str(), path.as_str()))
         }),
     )?;
+    store.set_compiled(&root, &crate::gems::stdlib::compiled(&stdlib.root, &files))?;
     report.indexed = true;
     report.files = counts.files;
     Ok(report)

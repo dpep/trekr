@@ -2779,6 +2779,17 @@ impl Tree {
                 path: row.path,
                 line: row.line,
             };
+            // A core class the stdlib reopens (`Object` in psych's core_ext)
+            // is compiled into Ruby itself, and the core stub says what it
+            // has: the extension adds nothing to hedge (DEC-181).
+            if how.maker.is_compiled()
+                && self
+                    .sites(&owner)
+                    .iter()
+                    .any(|site| corelib::is_core(&site.path))
+            {
+                continue;
+            }
             self.dynamic_files
                 .borrow_mut()
                 .entry(how.path.clone())

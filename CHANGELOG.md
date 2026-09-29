@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Upgrading drops and rebuilds the index** (store v46): run `trekr --index`
+- **Upgrading drops and rebuilds the index** (store v47): run `trekr --index`
   once per checkout. The first index on each Ruby also reads its standard
   library once — 179 files for Ruby 3.4 — shared by every app on that Ruby.
 
@@ -22,6 +22,11 @@
   default gem at the version its Ruby ships counts it in `gems.from_stdlib`
   rather than `missing`; `--status` shows it per checkout.
   (DEC-180).
+
+- **A stdlib class that is partly compiled hedges a name its Ruby lacks.**
+  `Monitor#synchronize`, `Pathname#exist?` and `OpenSSL::Cipher#encrypt` are
+  C; a card or `--def` on one is residue naming the extension, not "no such
+  method" (DEC-181).
 
 ### Changed
 

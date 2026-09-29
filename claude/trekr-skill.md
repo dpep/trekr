@@ -333,4 +333,6 @@ tiers the site `possible`.
   default gems (json, logger, uri…) the bundle has its own copy of, whose
   stdlib files this app does not see. Absent when the checkout names no gem
   and no Ruby. Dev tooling (irb, rdoc, bundler's internals) is not indexed,
-  so a question about it is residue.
+  so a question about it is residue. A stdlib class that is partly C
+  (`Pathname`, `Monitor`, `OpenSSL::*`) answers residue naming its compiled
+  extension for a method its Ruby lacks, rather than "no such method".

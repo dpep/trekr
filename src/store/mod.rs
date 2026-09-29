@@ -749,11 +749,24 @@ impl Store {
                FROM ancestry a
                JOIN file f ON f.blob_id = a.blob_id
                JOIN checkout c ON c.id = f.checkout_id
-              WHERE c.root IN ({}) AND a.relation = 'dynamic'
-              ORDER BY {LAYERED}, f.path, a.line, a.col",
+              WHERE c.root IN ({0}) AND a.relation = 'dynamic'
+             UNION ALL
+             -- Each class a partly compiled stdlib file opens makes methods
+             -- no Ruby names: its extension's (DEC-181).
+             SELECT CASE d.nesting WHEN '' THEN d.name ELSE d.name || ';' || d.nesting END,
+                    'dynamic', '{COMPILED} ' || x.feature,
+                    c.root || '/' || f.path, MIN(d.line)
+               FROM compiled x
+               JOIN checkout c ON c.id = x.checkout_id
+               JOIN file f ON f.checkout_id = c.id AND f.path = x.path
+               JOIN def d ON d.blob_id = f.blob_id AND d.kind IN ('class', 'module')
+              WHERE c.root IN ({0})
+              GROUP BY 1, 4
+              ORDER BY 4, 5",
             placeholders(roots.list.len())
         ))?;
-        let rows = stmt.query_map(rusqlite::params_from_iter(&roots.list), edge_row)?;
+        let doubled: Vec<&String> = roots.list.iter().chain(&roots.list).collect();
+        let rows = stmt.query_map(rusqlite::params_from_iter(doubled), edge_row)?;
         shown(roots, rows)
     }
 
@@ -1084,6 +1097,27 @@ impl Store {
             )?;
             for (name, version, path) in owned {
                 insert.execute(params![id, name, version, path])?;
+            }
+        }
+        tx.commit()
+    }
+
+    /// Record which of a stdlib checkout's files are partly compiled, as
+    /// `(path, feature)` (DEC-181).
+    pub(crate) fn set_compiled(&mut self, root: &str, files: &[(String, String)]) -> Result<()> {
+        let tx = self.conn.savepoint()?;
+        let id: i64 = tx.query_row(
+            "SELECT id FROM checkout WHERE root = ?1",
+            params![root],
+            |r| r.get(0),
+        )?;
+        tx.execute("DELETE FROM compiled WHERE checkout_id = ?1", params![id])?;
+        {
+            let mut insert = tx.prepare(
+                "INSERT OR IGNORE INTO compiled (checkout_id, path, feature) VALUES (?1, ?2, ?3)",
+            )?;
+            for (path, feature) in files {
+                insert.execute(params![id, path, feature])?;
             }
         }
         tx.commit()

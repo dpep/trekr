@@ -618,7 +618,16 @@ pub(crate) struct Maker {
     pub(crate) via: Option<String>,
 }
 
+/// The maker of a partly compiled stdlib class's methods (DEC-181), before
+/// the extension's name.
+pub(crate) const COMPILED: &str = "compiled extension";
+
 impl Maker {
+    /// A compiled extension, rather than Ruby that makes methods.
+    pub(crate) fn is_compiled(&self) -> bool {
+        self.by.starts_with(COMPILED)
+    }
+
     /// As stored: the bare maker, or `by|side|shape[|via]` when it says more.
     pub(crate) fn encode(&self) -> String {
         if self.singleton.is_none() && self.shape.is_none() && self.via.is_none() {

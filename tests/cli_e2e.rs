@@ -3408,6 +3408,51 @@ fn a_gem_reopening_the_stdlib_answers_over_it_whatever_the_index_order() {
     let _ = fs::remove_dir_all(&home);
 }
 
+/// A stdlib class whose Ruby loads a compiled extension has methods no Ruby
+/// defines, so a name its Ruby lacks is residue there, and certain only for
+/// a class that is all Ruby (DEC-181).
+#[test]
+fn a_stdlib_class_backed_by_a_compiled_extension_hedges_what_its_ruby_lacks() {
+    let (dir, db) = scratch("stdlib-compiled");
+    let (home, _) = scratch("stdlib-compiled-home");
+    fake_ruby(
+        &home,
+        "9.8.7",
+        &[
+            (
+                "gadget.rb",
+                "require 'gadget.so'\nclass Gadget\n  def polish\n  end\nend\n",
+            ),
+            ("plain.rb", "class Plain\n  def polish\n  end\nend\n"),
+            // Under the extension's directory, reopening core: `Object` is
+            // compiled into Ruby, not into the extension.
+            (
+                "gadget/core_ext.rb",
+                "class Object\n  def to_gadget\n  end\nend\n",
+            ),
+            ("arm64-test/rbconfig.rb", "module RbConfig\nend\n"),
+            ("arm64-test/gadget.bundle", ""),
+        ],
+        &[],
+    );
+    ruby_app(&dir, "9.8.7", &[], &[]);
+    let env = [("HOME", home.to_str().unwrap())];
+    trekr_env(&db, &dir, &["--index"], &env);
+
+    let compiled = json(&trekr_env(&db, &dir, &["Gadget#spin", "--json"], &env));
+    assert_eq!(compiled["status"], "residue", "{compiled}");
+    assert!(
+        compiled["reason"].as_str().unwrap().contains("gadget"),
+        "{compiled}"
+    );
+    // Plain's chain holds Object, which the extension's directory reopens.
+    let plain = json(&trekr_env(&db, &dir, &["Plain#spin", "--json"], &env));
+    assert_eq!(plain["status"], "no_such_method", "{plain}");
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&home);
+}
+
 /// A block handed to a stdlib method runs where it is written, as one handed
 /// to core does: `Dir.mktmpdir do … end` in an example still runs `expect` on
 /// the example (DEC-180).

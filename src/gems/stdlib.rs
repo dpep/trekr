@@ -11,7 +11,7 @@
 use super::declared::{Version, split_dir, string};
 use crate::scan;
 use ruby_prism::Visit;
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// The stdlib an app runs on.
@@ -232,6 +232,144 @@ fn specifications(root: &Path) -> Option<PathBuf> {
     )
 }
 
+/// The stdlib files whose classes are partly compiled, each with the
+/// compiled extension it answers to (DEC-181): `monitor.rb` loads
+/// `monitor.so`, so `Monitor#synchronize` is real though no Ruby defines it.
+///
+/// A file is when it requires a compiled feature of its own family — the
+/// feature's first part begins with the file's (`date.rb` loads `date_core`,
+/// `erb/util.rb` loads `erb/escape`) — when it is under a feature's
+/// directory (`openssl/`, `json/ext/generator/`), or when it requires a
+/// loader that only does the first (`digest.rb` through `digest/loader`).
+/// Loading another family's extension is using it: `pp.rb` requires
+/// `io/console` for the terminal's width, and `PP` is all Ruby.
+pub(crate) fn compiled(root: &Path, files: &scan::Files) -> Vec<(String, String)> {
+    let features = compiled_features(root);
+    if features.is_empty() {
+        return Vec::new();
+    }
+    let read: BTreeMap<&String, Loads> = files
+        .keys()
+        .filter_map(|path| Some((path, loads(&std::fs::read(root.join(path)).ok()?))))
+        .collect();
+    let mut backed: BTreeMap<String, String> = BTreeMap::new();
+    for (path, loads) in &read {
+        let direct = loads.requires.iter().find_map(|feature| {
+            let (bare, explicit) = match feature
+                .strip_suffix(".so")
+                .or_else(|| feature.strip_suffix(".bundle"))
+            {
+                Some(bare) => (bare, true),
+                None => (feature.as_str(), false),
+            };
+            let compiled = explicit || !files.contains_key(&format!("{bare}.rb"));
+            let family = |feature: &str| feature.split('/').next().unwrap_or_default().to_string();
+            let own = family(bare).starts_with(&family(path.trim_end_matches(".rb")));
+            (compiled && own && features.contains(bare)).then(|| bare.to_string())
+        });
+        let under = features
+            .iter()
+            .filter(|feature| path.starts_with(&format!("{feature}/")))
+            .max_by_key(|feature| feature.len())
+            .cloned();
+        if let Some(feature) = direct.or(under) {
+            backed.insert(path.to_string(), feature);
+        }
+    }
+    let through_loaders: Vec<(String, String)> = read
+        .iter()
+        .filter(|(path, _)| !backed.contains_key(path.as_str()))
+        .filter_map(|(path, loads)| {
+            let feature = loads.requires.iter().find_map(|required| {
+                let file = format!("{required}.rb");
+                let loader = read.get(&file)?;
+                (!loader.declares).then(|| backed.get(&file).cloned())?
+            })?;
+            Some((path.to_string(), feature))
+        })
+        .collect();
+    backed.extend(through_loaders);
+    backed.into_iter().collect()
+}
+
+/// Every compiled extension in the stdlib's architecture directory, the one
+/// holding `rbconfig.rb`, by the feature `require` names it with.
+fn compiled_features(root: &Path) -> HashSet<String> {
+    let Some(arch) = std::fs::read_dir(root)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .find(|dir| dir.join("rbconfig.rb").is_file())
+    else {
+        return HashSet::new();
+    };
+    let mut features = HashSet::new();
+    let mut stack = vec![arch.clone()];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir).into_iter().flatten().flatten() {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                // A `.dSYM` is debug symbols, named like the extension.
+                if !name.ends_with(".dSYM") {
+                    stack.push(path);
+                }
+                continue;
+            }
+            let Some(stem) = [".so", ".bundle", ".dll"]
+                .iter()
+                .find_map(|ext| name.strip_suffix(ext))
+            else {
+                continue;
+            };
+            if let Ok(dir) = dir.strip_prefix(&arch) {
+                features.insert(dir.join(stem).to_string_lossy().into_owned());
+            }
+        }
+    }
+    features
+}
+
+/// What a file requires by a literal name, and whether it opens a class or
+/// module at all — a loader that only requires opens none.
+#[derive(Default)]
+struct Loads {
+    requires: Vec<String>,
+    declares: bool,
+}
+
+impl<'pr> Visit<'pr> for Loads {
+    fn visit_call_node(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        if call.name().as_slice() == b"require"
+            && call.receiver().is_none()
+            && let Some(args) = call.arguments()
+            && let Some(feature) = args.arguments().iter().next()
+            && let Some(feature) = string(&feature)
+        {
+            self.requires.push(feature);
+        }
+        ruby_prism::visit_call_node(self, call);
+    }
+
+    fn visit_class_node(&mut self, node: &ruby_prism::ClassNode<'pr>) {
+        self.declares = true;
+        ruby_prism::visit_class_node(self, node);
+    }
+
+    fn visit_module_node(&mut self, node: &ruby_prism::ModuleNode<'pr>) {
+        self.declares = true;
+        ruby_prism::visit_module_node(self, node);
+    }
+}
+
+fn loads(source: &[u8]) -> Loads {
+    let parsed = ruby_prism::parse(source);
+    let mut found = Loads::default();
+    found.visit(&parsed.node());
+    found
+}
+
 /// A gem Ruby ships inside its stdlib, and the stdlib files that are its.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DefaultGem {
@@ -337,6 +475,47 @@ end
                 "widget/core.rb"
             ]
         );
+    }
+
+    #[test]
+    fn a_file_is_compiled_when_it_loads_an_extension_or_lives_under_one() {
+        let root = std::env::temp_dir().join(format!("trekr-compiled-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let arch = root.join("arm64-darwin");
+        std::fs::create_dir_all(arch.join("widget")).unwrap();
+        std::fs::create_dir_all(arch.join("gadget.bundle.dSYM")).unwrap();
+        std::fs::write(arch.join("rbconfig.rb"), "").unwrap();
+        for ext in ["gadget.bundle", "widget/core.so"] {
+            std::fs::write(arch.join(ext), "").unwrap();
+        }
+        let sources = [
+            ("gadget.rb", "require 'gadget.so'\nclass Gadget\nend\n"),
+            ("gadget/loader.rb", "require 'gadget.so'\n"),
+            ("gizmo.rb", "require 'gadget/loader'\nmodule Gizmo\nend\n"),
+            ("widget/core/extra.rb", "class Widget\nend\n"),
+            ("plain.rb", "require 'set'\nclass Plain\nend\n"),
+            ("printer.rb", "require 'gadget.so'\nclass Printer\nend\n"),
+        ];
+        let mut files = scan::Files::new();
+        for (path, source) in sources {
+            let at = root.join(path);
+            std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+            std::fs::write(&at, source).unwrap();
+            files.insert(path.to_string(), scan::hash_blob(source.as_bytes()));
+        }
+        assert_eq!(
+            compiled(&root, &files),
+            [
+                ("gadget.rb".to_string(), "gadget".to_string()),
+                ("gadget/loader.rb".to_string(), "gadget".to_string()),
+                ("gizmo.rb".to_string(), "gadget".to_string()),
+                (
+                    "widget/core/extra.rb".to_string(),
+                    "widget/core".to_string()
+                ),
+            ]
+        );
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

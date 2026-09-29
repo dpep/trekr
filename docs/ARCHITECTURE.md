@@ -444,6 +444,15 @@ tree time from the app's own `gem_use` is what keeps it independent of which
 app indexed the stdlib, or indexed last. A lockfile naming a default gem at
 the version the stdlib ships finds it there (`gems.from_stdlib`).
 
+Much of the stdlib is C with a Ruby half: `pathname.rb` loads
+`pathname.so`, and `Pathname#exist?` is in no Ruby file. Indexing lists the
+compiled extensions beside `rbconfig.rb` and records in `compiled` each Ruby
+file of an extension's family — it loads the extension, lives under its
+directory, or loads a loader that does (DEC-181). `Store::dynamic_markers`
+gives every class such a file opens a `compiled extension <feature>` marker,
+so a name its Ruby lacks hedges as DEC-130's markers do; a class core
+declares is never marked.
+
 The layering is core → stdlib → gems → checkout, so a gem may reopen core
 and the stdlib and the checkout may reopen a gem, which is what Rails
 actually does. The stdlib is layered by kind, not insert order, so a gem
@@ -514,6 +523,8 @@ checkout(id, root UNIQUE, indexed_at, kind, surface_key, map_key, git_state)
   default_gem(checkout_id, name, version, path)
                                             ← a stdlib's files each default
                                               gem owns (DEC-180)
+  compiled(checkout_id, path, feature)      ← a stdlib's partly compiled
+                                              files (DEC-181)
   file(checkout_id, path, blob_id)          ← the only table naming a path
 
 upgrade(from_version, at)                   ← a rebuild that dropped an older index

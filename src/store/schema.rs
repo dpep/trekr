@@ -13,7 +13,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 46;
+pub(crate) const VERSION: i64 = 47;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -167,6 +167,16 @@ CREATE TABLE default_gem (
   PRIMARY KEY (checkout_id, name, path)
 ) WITHOUT ROWID;
 
+-- The files of a stdlib checkout whose classes are partly compiled, with the
+-- extension each answers to (DEC-181). A method absent from their Ruby may be
+-- in C, so its absence hedges, as a `dynamic` marker's does.
+CREATE TABLE compiled (
+  checkout_id INTEGER NOT NULL REFERENCES checkout(id) ON DELETE CASCADE,
+  path        TEXT    NOT NULL,           -- relative to the stdlib root
+  feature     TEXT    NOT NULL,           -- as `require` names it: `monitor`
+  PRIMARY KEY (checkout_id, path)
+) WITHOUT ROWID;
+
 CREATE TABLE file (
   checkout_id INTEGER NOT NULL REFERENCES checkout(id) ON DELETE CASCADE,
   path        TEXT    NOT NULL,           -- relative to the checkout root
@@ -228,8 +238,9 @@ pub(crate) const BULK_INDEXES: [(&str, &str); 8] = [
 
 /// Every table, newest first, so dropping respects nothing (foreign keys are
 /// off during the drop anyway).
-pub(crate) const TABLES: [&str; 11] = [
+pub(crate) const TABLES: [&str; 12] = [
     "upgrade",
+    "compiled",
     "default_gem",
     "gem_use",
     "file",

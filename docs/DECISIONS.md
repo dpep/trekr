@@ -6592,3 +6592,40 @@ Ruby's default (json 2.7.2 on Ruby 3.4) shows the chosen Ruby's copy. A
 compiled extension's methods are hedged, not known (DEC-181); the `rbs`
 gem's stdlib signatures would type them.
 
+## DEC-181 — A stdlib class that is partly compiled hedges a name its Ruby lacks
+
+**Decided.** Indexing a stdlib lists its compiled extensions (the `.so`,
+`.bundle` or `.dll` files under the directory holding `rbconfig.rb`, by the
+feature `require` names them with) and records, in `compiled`, each Ruby
+file whose classes are partly compiled: one that requires an extension of
+its own family — the feature's first part begins with the file's
+(`monitor.rb` → `monitor.so`, `date.rb` → `date_core`, `erb/util.rb` →
+`erb/escape`) — one under an extension's directory (`openssl/*`,
+`psych/*`, `json/ext/generator/*`), or one that requires a loader that only
+does the first (`digest.rb` through `digest/loader`). Every class and module
+such a file opens gets a `dynamic` marker (DEC-130) whose maker is `compiled
+extension <feature>`, so a name its Ruby lacks is residue naming the
+extension — "Monitor defines methods its source does not name (compiled
+extension monitor, …/monitor.rb:258)" — where it was "no such method". A
+class core declares is never marked: `psych/core_ext.rb` reopens `Object`,
+whose C half is Ruby itself and whose stub says what it has.
+
+**Why.** Indexing the stdlib's Ruby turned residue into a confident "no such
+method" for C methods: `Monitor#synchronize` and
+`Digest::Instance#hexdigest` in the rails `--refs` sweep, and every card on
+Monitor, Psych, Ripper, Socket and `OpenSSL::Cipher`. The same was already
+true of `Pathname#exist?` wherever a gem reopens Pathname.
+
+**Family, not any require.** Counting every require of an extension marked
+`PP::ObjectMixin`, because `pp.rb` requires `io/console` for the terminal's
+width; `Object` includes it, so every card on every class hedged (rails: 31
+cards no_such_method → residue). The family rule leaves 81 files of Ruby
+3.4.9's 179 marked, most of them psych's and openssl's, whose pure-Ruby
+classes (`Psych::Visitors::*`) hedge more than they need to.
+
+**Measured.** With the hedge, the rails `--refs` sweep's
+`Monitor#synchronize` and `Digest::Instance#hexdigest` answer residue with
+their sites (51 and 26 possible) rather than `no_such_method`, and cards on
+Pathname, Digest, Ripper, Socket, Psych and `OpenSSL::*` hedge; gold verdicts
+and click totals are the build's without it.
+
