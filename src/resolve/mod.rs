@@ -227,7 +227,8 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                     match via_includers(tree, call, &receiver) {
                         Some(answer) => answer,
                         None if defined_nowhere(tree, call) => {
-                            residue(tree, call, path, Some(receiver), NOWHERE)
+                            let reason = nowhere(tree, call, path);
+                            residue(tree, call, path, Some(receiver), &reason)
                         }
                         None => {
                             let reason = unmixed_reason(tree, call, &receiver.fqn);
@@ -266,7 +267,8 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                     residue(tree, call, path, Some(receiver), &reason)
                 }
                 None if defined_nowhere(tree, call) => {
-                    residue(tree, call, path, Some(receiver), NOWHERE)
+                    let reason = nowhere(tree, call, path);
+                    residue(tree, call, path, Some(receiver), &reason)
                 }
                 // The type is settled and Ruby would still not find the method
                 // in what is indexed. Say what was checked, never why: the
@@ -281,7 +283,10 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
             None,
             "the call is in a block handed to a method that may run it on another object",
         ),
-        None if defined_nowhere(tree, call) => residue(tree, call, path, None, NOWHERE),
+        None if defined_nowhere(tree, call) => {
+            let reason = nowhere(tree, call, path);
+            residue(tree, call, path, None, &reason)
+        }
         None => residue(
             tree,
             call,
@@ -321,6 +326,20 @@ const CHECKED: &str =
 const NOWHERE: &str = "nothing trekr indexed defines this name anywhere — not this checkout, \
      its gems or Ruby core; a gem may generate it at runtime (Devise's \
      `authenticate_user!` is one), or define it in a gem that is not installed";
+
+/// Why a name defined nowhere is residue: the file's own marker that may
+/// make it, ahead of a gem (DEC-162).
+fn nowhere(tree: &Tree, call: &Call, path: &str) -> String {
+    let makers = tree.dynamic_in_file(path, &call.name);
+    if makers.is_empty() {
+        return NOWHERE.to_string();
+    }
+    format!(
+        "nothing trekr indexed defines this name, but this file makes methods its \
+         source does not name ({}), which may include it",
+        tree.dynamic_note(&makers)
+    )
+}
 
 /// Does no indexed definition, anywhere, carry this call's name?
 fn defined_nowhere(tree: &Tree, call: &Call) -> bool {

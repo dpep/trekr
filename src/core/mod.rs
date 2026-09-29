@@ -146,6 +146,9 @@ pub(crate) struct Facts {
     pub(crate) ancestry: Vec<Ancestry>,
     pub(crate) const_refs: Vec<ConstRef>,
     pub(crate) calls: Vec<Call>,
+    /// Calls a class or module body makes on itself, outside any method:
+    /// what a macro written elsewhere runs on (DEC-162).
+    pub(crate) body_calls: Vec<BodyCall>,
     /// Local and instance variable assignments. Extracted but **not stored**:
     /// what a local holds is a question about one file, and `--def` already
     /// reparses that file. Keeping it out of the schema keeps 2 M rows out of
@@ -599,12 +602,16 @@ pub(crate) struct Maker {
     /// The name with every part the source does not spell as `*`:
     /// `_render_with_renderer_*`. `None` when nothing is spelled.
     pub(crate) shape: Option<String>,
+    /// The method that does it, when that is an instance method run on a
+    /// class — a macro: the methods are made on each class whose body calls
+    /// it, not on the scope it is written in (DEC-162).
+    pub(crate) via: Option<String>,
 }
 
 impl Maker {
-    /// As stored: the bare maker, or `by|side|shape` when it says more.
+    /// As stored: the bare maker, or `by|side|shape[|via]` when it says more.
     pub(crate) fn encode(&self) -> String {
-        if self.singleton.is_none() && self.shape.is_none() {
+        if self.singleton.is_none() && self.shape.is_none() && self.via.is_none() {
             return self.by.clone();
         }
         let side = match self.singleton {
@@ -612,11 +619,15 @@ impl Maker {
             Some(false) => "instance",
             None => "",
         };
-        format!("{}|{side}|{}", self.by, self.shape.as_deref().unwrap_or(""))
+        let shape = self.shape.as_deref().unwrap_or("");
+        match &self.via {
+            Some(via) => format!("{}|{side}|{shape}|{via}", self.by),
+            None => format!("{}|{side}|{shape}", self.by),
+        }
     }
 
     pub(crate) fn parse(target: &str) -> Maker {
-        let mut parts = target.splitn(3, '|');
+        let mut parts = target.splitn(4, '|');
         let by = parts.next().unwrap_or_default().to_string();
         let singleton = match parts.next() {
             Some("singleton") => Some(true),
@@ -624,21 +635,65 @@ impl Maker {
             _ => None,
         };
         let shape = parts.next().filter(|s| !s.is_empty()).map(str::to_string);
+        let via = parts.next().filter(|s| !s.is_empty()).map(str::to_string);
         Maker {
             by,
             singleton,
             shape,
+            via,
         }
     }
 
-    /// Could this maker have made `name`, on this side?
+    /// Could this maker have made `name`, on this side? A macro's `{0}`,
+    /// the name it is handed, is any name until a caller says (DEC-162).
     pub(crate) fn may_make(&self, name: &str, singleton: bool) -> bool {
         self.singleton.is_none_or(|side| side == singleton)
-            && self
-                .shape
-                .as_deref()
-                .is_none_or(|shape| shape_matches(shape, name))
+            && self.shape.as_deref().is_none_or(|shape| {
+                let any = handed(shape, &[None]).pop().unwrap_or_default();
+                shape_matches(&any, name)
+            })
     }
+}
+
+/// A macro's shape with the names a call hands it (DEC-162): `{k}` is the
+/// call's `k`th argument, `{k*}` each argument from the `k`th on (a splat
+/// the macro iterates), and one that is not a literal name is `*`.
+pub(crate) fn handed(shape: &str, args: &[Option<String>]) -> Vec<String> {
+    let Some(open) = shape.find('{') else {
+        return vec![shape.to_string()];
+    };
+    let Some(close) = shape[open..].find('}').map(|at| open + at) else {
+        return vec![shape.to_string()];
+    };
+    let token = &shape[open + 1..close];
+    let (index, splat) = match token.strip_suffix('*') {
+        Some(index) => (index.parse::<usize>().ok(), true),
+        None => (token.parse::<usize>().ok(), false),
+    };
+    let values: Vec<String> = match index {
+        Some(k) if splat => args
+            .get(k..)
+            .unwrap_or_default()
+            .iter()
+            .map(|arg| arg.clone().unwrap_or_else(|| "*".to_string()))
+            .collect(),
+        Some(k) => vec![
+            args.get(k)
+                .cloned()
+                .flatten()
+                .unwrap_or_else(|| "*".to_string()),
+        ],
+        None => vec!["*".to_string()],
+    };
+    let (before, after) = (&shape[..open], &shape[close + 1..]);
+    values
+        .iter()
+        .flat_map(|value| {
+            handed(after, args)
+                .into_iter()
+                .map(move |rest| format!("{before}{value}{rest}"))
+        })
+        .collect()
 }
 
 /// `*` is any run of characters, everything else itself.
@@ -659,6 +714,16 @@ pub(crate) fn shape_matches(shape: &str, name: &str) -> bool {
         }
     }
     rest.ends_with(last)
+}
+
+/// `add_helper :color` in a class body: a call on the class itself, with the
+/// literal names it is handed, positionally (DEC-162).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub(crate) struct BodyCall {
+    pub(crate) name: String,
+    pub(crate) nesting: Vec<String>,
+    pub(crate) args: Vec<Option<String>>,
+    pub(crate) line: u32,
 }
 
 /// A constant mentioned, with the lexical nesting that will resolve it.
@@ -1136,6 +1201,16 @@ mod surface_tests {
     }
 
     #[test]
+    fn a_macro_shape_takes_the_names_its_caller_hands_it() {
+        use super::handed;
+        let args = [Some("a".to_string()), None, Some("c".to_string())];
+        assert_eq!(handed("{0}_x", &args), ["a_x"]);
+        assert_eq!(handed("{1}?", &args), ["*?"]);
+        assert_eq!(handed("{1*}=", &args), ["*=", "c="]);
+        assert!(handed("{3*}", &args).is_empty());
+    }
+
+    #[test]
     fn a_maker_round_trips_what_it_says() {
         use super::Maker;
         assert_eq!(
@@ -1150,6 +1225,7 @@ mod surface_tests {
             by: "define_method".into(),
             singleton: Some(true),
             shape: Some("x_*".into()),
+            via: Some("make".into()),
         };
         assert_eq!(Maker::parse(&full.encode()), full);
         assert!(full.may_make("x_a", true));

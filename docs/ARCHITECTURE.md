@@ -170,6 +170,10 @@ The target is the maker, and when the source says more, the side it makes
 methods on and the shape of their names (`define_method|instance|_render_*`,
 `core::Maker`); a mark counts only for a name of its shape on its side, and
 a mark sent to a constant is that constant's (DEC-160).
+A mark written in an instance method carries the method (`via`): a macro,
+whose methods land on each class whose body calls it (`body_call`) and whose
+class-side lookup of the name lands on it; `{k}` in its shape is the `k`th
+name that call hands it, `{k*}` each from the `k`th on (DEC-162).
 
 **A name declared with two superclasses is split** (DEC-072). Ruby raises
 "superclass mismatch" when both load, so a checkout holding `class Post <
@@ -473,6 +477,7 @@ blob(id, oid UNIQUE, lines, parse_errors, surface, written_by)
   ancestry(blob_id, nesting, relation, target, line, col)
   const_ref(blob_id, name, nesting, line, col)
   call_site(blob_id, name, recv, recv_text, nesting, argc, block, line, col)
+  body_call(blob_id, name, nesting, args, line)  ← a body's call on itself (DEC-162)
 
 checkout(id, root UNIQUE, indexed_at, kind, surface_key, map_key, git_state)
   gem_use(checkout_id, gem_root)            ← which bundles name which gem

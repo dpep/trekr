@@ -6300,3 +6300,52 @@ queries and `--dead` on rails, activerecord and mastodon unchanged. The card
 sweep gains five rails residues, each a string that does make methods there:
 actionview's `LookupContext::Accessors` (`module_eval <<-METHOD` of a
 computed name), `RouteSet::MountedHelpers`, and a test's `PostsController`.
+
+## DEC-162 — A macro's methods are marked on the class whose body calls it
+
+**Decided.** A `class_eval` of a string, or a `define_method`, written in an
+instance method runs on whatever that method is sent to. When a class body
+calls the method on itself — `add_helper` in `class Widget`, where
+`include Macros` extends `Macros::ClassMethods`, or a method `class Module`
+defines — `self` is that class, and so is where the methods land. The
+extractor marks the method's scope with the method's name (`via`, the
+fourth field of `core::Maker`), and records every call a class or module
+body makes on itself outside any method, with the literal names it is
+handed (`body_call`). The tree places each such mark on every class that
+calls the macro, where that class's class-side lookup of the name lands on
+the macro's own definition.
+
+- **The names are the caller's.** In the macro, an interpolation of its
+  `k`th positional parameter is `{k}` in the shape, and a block variable
+  over its splat (`attrs.each do |name|`) is `{k*}`. At each caller they
+  become the names handed: `add_reader :color` marks `color`, `add_flags
+  :active, :hidden` marks `active?` and `hidden?`; one that is not a literal
+  is `*`.
+- **A Rails macro trekr declares is not a macro call here.** `class_attribute`,
+  `mattr_*`, `delegate` and the rest of DEC-111's list already declare each
+  name they make; recording their calls would mark every class that calls
+  them for a string of code that builds its `def`s with `join`, which hedges
+  every name. Measured before the filter: mastodon's card sweep went from
+  399 residue to 1,419, 602 of them `class_attribute` on
+  `ActionController::Metal`.
+- **`--def` blames the file before a gem.** A name defined nowhere, called
+  in a file whose own marker may make it, says so rather than DEC-126's
+  "a gem may generate it".
+
+**Why.** The 0.8.0 hunt's largest under-hedge: Rails' macro shape, a
+`ClassMethods` method `class_eval`ing `def helper_made` into its caller.
+Nothing marked it, so `Widget#helper_made` was "no such method", exit 1,
+and `--def` on a call of it blamed a gem.
+
+**Measured.** Every gold verdict, the 21,154 clicks, the rails `--refs`
+queries, `--dead` on rails, activerecord and mastodon, and both card sweeps
+unchanged. Rails' index holds 129 macro marks and 21,601 body calls (the
+database 3% larger); `Minitest::Expectations#must_be_empty`, which
+minitest's `infect_an_assertion` writes in a string, is now residue naming
+it where it was "no such method".
+
+**Not done.** A macro called from `included do`, from a block, or from a
+class method is not a body call. Reading the macro's string at each caller,
+with the names substituted, is DEC-163's, and only where both are in one
+file.
+

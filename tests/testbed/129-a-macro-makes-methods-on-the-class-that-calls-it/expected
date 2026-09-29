@@ -1,0 +1,14 @@
+# Rails' macro shape: a `ClassMethods` method (or any method a class body
+# calls on itself) whose body `class_eval`s a string or runs `define_method`
+# makes the methods on the calling class. Written in an instance method,
+# nothing was marked, and `Widget#helper_made` was "no such method", exit 1,
+# with `--def` blaming a gem. The class whose body calls the macro, where its
+# class side reaches it, is marked; one that only includes the module is not.
+# A name defined nowhere that the call's own file may make says so.
+card Widget#color status=residue reason=add_reader
+card Widget.zz_nope status=no_such_method
+card Widget#zz_nope status=no_such_method
+card Widget#hidden? status=residue reason=add_flags
+card Bystander#helper_made status=no_such_method
+card Gadget#macro_made status=residue reason=my_macro
+def app.rb:56:1 status=residue reason=orphan_made

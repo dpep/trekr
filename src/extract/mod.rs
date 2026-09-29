@@ -91,6 +91,10 @@ struct Frame {
     definer: Option<String>,
     /// In a method's body, its parameters that default to a constant.
     const_defaults: Vec<(String, String)>,
+    /// In a method's body, what each of its parameters is of the names a
+    /// macro's call hands it (DEC-162): the `k`th positional is `{k}`, a
+    /// splat after them `{k*}`.
+    handed: Vec<(String, String)>,
     /// A module's `included`/`extended`/`prepended` hook, or a `base.class_eval`
     /// body inside one: code that runs on whatever mixes the module in
     /// (DEC-102).
@@ -129,6 +133,7 @@ impl Frame {
             example: false,
             definer: None,
             const_defaults: Vec::new(),
+            handed: Vec::new(),
             mixed: None,
         }
     }
@@ -217,6 +222,9 @@ struct Extractor<'a> {
     /// `mod.singleton_class.instance_eval do` — whose `define_method` is
     /// not this scope's.
     foreign_evals: usize,
+    /// Block variables iterating a macro's splat (`attrs.each do |name|`):
+    /// each is one of the names the caller hands it (DEC-162).
+    handed_loops: Vec<(String, String)>,
     /// Methods of each scope whose body is a string, as the shape of the
     /// names it spells (DEC-160).
     string_methods: HashMap<(Vec<String>, String), String>,
@@ -354,6 +362,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             example: false,
             definer: None,
             const_defaults: Vec::new(),
+            handed: Vec::new(),
             mixed: None,
         }],
         pending_sigs: Vec::new(),
@@ -382,6 +391,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         evals: Vec::new(),
         loop_frames: Vec::new(),
         foreign_evals: 0,
+        handed_loops: Vec::new(),
         string_methods: HashMap::new(),
         pending_shapes: Vec::new(),
     };
@@ -815,6 +825,79 @@ fn shaping_call(node: &Node<'_>) -> Option<String> {
     on_self(&call).then(|| method_name(&call)).flatten()
 }
 
+/// What each parameter of a method is of the names its caller hands it:
+/// `{k}` for the `k`th positional, `{k*}` for a splat after `k` of them.
+fn handed_params(params: &[Param]) -> Vec<(String, String)> {
+    let mut handed = Vec::new();
+    let mut k = 0;
+    for param in params {
+        match param.kind {
+            ParamKind::Req | ParamKind::Opt => {
+                handed.push((param.name.clone(), format!("{{{k}}}")));
+                k += 1;
+            }
+            ParamKind::Rest => {
+                handed.push((param.name.clone(), format!("{{{k}*}}")));
+                break;
+            }
+            _ => break,
+        }
+    }
+    handed
+}
+
+/// An interpolation in a macro's string: `{k}` when it is the macro's `k`th
+/// positional parameter (through a method that renders a name simply),
+/// `*` otherwise.
+fn handed_part(part: &Node<'_>, handed: &[(String, String)]) -> String {
+    let local = part
+        .as_embedded_statements_node()
+        .and_then(|e| e.statements())
+        .and_then(|s| {
+            let body: Vec<Node<'_>> = s.body().iter().collect();
+            let [only] = body.as_slice() else { return None };
+            match only.as_call_node() {
+                Some(call)
+                    if method_name(&call).is_some_and(|m| RENDERS.contains(&m.as_str()))
+                        && call.arguments().is_none() =>
+                {
+                    call.receiver()?.as_local_variable_read_node()
+                }
+                Some(_) => None,
+                None => only.as_local_variable_read_node(),
+            }
+            .map(|read| read.name().as_slice().to_vec())
+        });
+    local
+        .and_then(|name| handed.iter().rev().find(|(p, _)| p.as_bytes() == name))
+        .map_or_else(|| "*".to_string(), |(_, template)| template.clone())
+}
+
+/// A macro's name argument as a shape: its `k`th parameter is `{k}`,
+/// an interpolation of one `{k}` in the spelled text (DEC-162).
+fn handed_shape(node: &Node<'_>, handed: &[(String, String)]) -> Option<String> {
+    if let Some(read) = node.as_local_variable_read_node() {
+        return handed
+            .iter()
+            .rev()
+            .find(|(p, _)| p.as_bytes() == read.name().as_slice())
+            .map(|(_, template)| template.clone());
+    }
+    let parts: Vec<Node<'_>> = if let Some(string) = node.as_interpolated_string_node() {
+        string.parts().iter().collect()
+    } else {
+        node.as_interpolated_symbol_node()?.parts().iter().collect()
+    };
+    let mut shape = String::new();
+    for part in &parts {
+        match part.as_string_node() {
+            Some(text) => shape.push_str(std::str::from_utf8(text.unescaped()).ok()?),
+            None => shape.push_str(&handed_part(part, handed)),
+        }
+    }
+    shape.chars().any(|c| c != '*').then_some(shape)
+}
+
 /// A method body that is one string, as the shape of the names it spells.
 fn string_shape(body: &Node<'_>) -> Option<String> {
     let statements = body.as_statements_node()?;
@@ -1230,6 +1313,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.frame().method = owner_is_scope.then_some(name);
         self.frame().definer = definer;
         self.frame().const_defaults = const_defaults(node);
+        self.frame().handed = handed_params(&params_of(node.parameters()));
         if let Some(params) = node.parameters() {
             self.visit_parameters_node(&params);
         }
@@ -1336,6 +1420,10 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             });
             if bound.is_some() {
                 self.loop_frames.push(self.frames.len());
+            }
+            let handed_depth = self.handed_loops.len();
+            if let Some(iterated) = self.splat_each(node) {
+                self.handed_loops.push(iterated);
             }
             let iterates = self.constant_each(node).inspect(|binding| {
                 self.constant_loops.push(binding.clone());
@@ -1517,6 +1605,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             }
             // With the locals the loop's body built from its values.
             self.loop_values.truncate(loop_depth);
+            self.handed_loops.truncate(handed_depth);
             if bound.is_some() {
                 self.loop_frames.pop();
             }
@@ -2323,6 +2412,7 @@ impl<'pr> Extractor<'_> {
                     by: name.clone(),
                     singleton: Some(singleton),
                     shape,
+                    via: None,
                 };
                 self.mark_dynamic_on(owner.clone(), maker, at);
             }
@@ -2333,7 +2423,20 @@ impl<'pr> Extractor<'_> {
         // class, so a name the source spells is the class's method once the
         // method runs (DEC-160), unless a block in between may run elsewhere,
         // which marks the name instead. Any other name is marked, by its shape.
+        // In an instance method `self` is whatever it runs on: a macro's
+        // class, when a class body calls it (DEC-162).
         if self.in_method_body() && !self.self_is_class() {
+            let Some(via) = self.frames.last().and_then(|f| f.method.clone()) else {
+                return;
+            };
+            let handed = self.handed();
+            let shapes = match computed {
+                Some(names) => names.into_iter().map(Some).collect(),
+                None => vec![handed_shape(first, &handed)],
+            };
+            for shape in shapes {
+                self.mark_dynamic_shaped(&name, singleton, shape, first, at, Some(&via));
+            }
             return;
         }
         let definable = !self.in_method_body() || self.blocks_are_loops();
@@ -2341,7 +2444,7 @@ impl<'pr> Extractor<'_> {
             Some(names) if definable => names,
             computed => {
                 for shape in self.shapes(computed, first) {
-                    self.mark_dynamic_shaped(&name, singleton, shape, first, at);
+                    self.mark_dynamic_shaped(&name, singleton, shape, first, at, None);
                 }
                 return;
             }
@@ -2402,6 +2505,41 @@ impl<'pr> Extractor<'_> {
         let at = call.location().start_offset();
         // Not read at all: its calls are missing too, which `--dead` says.
         let unread = format!("{name} string");
+        // In an instance method, `self` is whatever runs it: a macro's class,
+        // when a class body calls it (DEC-162).
+        let on_self_here = call.receiver().is_none_or(|r| r.as_self_node().is_some());
+        if on_self_here && self.in_method_body() && !self.self_is_class() {
+            let Some(via) = self.frames.last().and_then(|f| f.method.clone()) else {
+                return;
+            };
+            if self.nesting.is_empty() || self.in_group_body() {
+                return;
+            }
+            match spelled_code(arg) {
+                Some(code) => {
+                    let handed = self.handed();
+                    let src = self.evals.last().map_or(self.src, |eval| &eval.src[..]);
+                    for (singleton, shape) in string_defs(&code, src, &handed) {
+                        let maker = Maker {
+                            by: name.clone(),
+                            singleton: if class_side { Some(true) } else { singleton },
+                            shape,
+                            via: Some(via.clone()),
+                        };
+                        self.mark_dynamic_on(self.nesting.clone(), maker, at);
+                    }
+                }
+                None => {
+                    let maker = Maker {
+                        by: unread,
+                        via: Some(via),
+                        ..Maker::default()
+                    };
+                    self.mark_dynamic_on(self.nesting.clone(), maker, at);
+                }
+            }
+            return;
+        }
         // Whose methods it makes, and whether it is read: only a string
         // evaluated in the scope it is written in is (DEC-132). Another
         // class's is marked on it, as is this class's from an instance's
@@ -2435,7 +2573,7 @@ impl<'pr> Extractor<'_> {
         // A string inside a string is offsets into the outer one's text, not
         // the file's; not worth composing the maps for.
         if !self.evals.is_empty() || !readable {
-            self.mark_string_on(owner, &unread, &first, class_side, at);
+            self.mark_string_on(owner, &unread, &first, class_side, at, None);
             return;
         }
         let Some(pieces) = code_pieces(&first) else {
@@ -2481,7 +2619,7 @@ impl<'pr> Extractor<'_> {
         if self.nesting.is_empty() || self.in_group_body() {
             return;
         }
-        self.mark_string_on(self.nesting.clone(), by, code, false, at);
+        self.mark_string_on(self.nesting.clone(), by, code, false, at, None);
     }
 
     /// The same, on `owner`; `class_side` when every `def` there is a
@@ -2493,13 +2631,15 @@ impl<'pr> Extractor<'_> {
         code: &Node<'pr>,
         class_side: bool,
         at: usize,
+        via: Option<&str>,
     ) {
         let src = self.evals.last().map_or(self.src, |eval| &eval.src[..]);
-        for (singleton, shape) in string_defs(code, src) {
+        for (singleton, shape) in string_defs(code, src, &[]) {
             let maker = Maker {
                 by: by.to_string(),
                 singleton: if class_side { Some(true) } else { singleton },
                 shape,
+                via: via.map(str::to_string),
             };
             self.mark_dynamic_on(owner.clone(), maker, at);
         }
@@ -2629,11 +2769,13 @@ impl<'pr> Extractor<'_> {
         shape: Option<String>,
         name: &Node<'pr>,
         at: usize,
+        via: Option<&str>,
     ) {
         let maker = Maker {
             by: by.to_string(),
             singleton: Some(singleton),
             shape,
+            via: via.map(str::to_string),
         };
         let unshaped = maker.shape.is_none();
         let Some(edge) = self.mark_dynamic_as(maker, at) else {
@@ -2663,6 +2805,18 @@ impl<'pr> Extractor<'_> {
             Some(names) => names.into_iter().map(Some).collect(),
             None => vec![self.name_shape(name)],
         }
+    }
+
+    /// What each local here is of the names a macro's caller hands it: the
+    /// method's parameters, and a block variable iterating its splat.
+    fn handed(&self) -> Vec<(String, String)> {
+        let mut handed = self
+            .frames
+            .last()
+            .map(|f| f.handed.clone())
+            .unwrap_or_default();
+        handed.extend(self.handed_loops.iter().cloned());
+        handed
     }
 
     /// Does a block around here leave `self` alone? Only a literal list's
@@ -2731,6 +2885,24 @@ impl<'pr> Extractor<'_> {
             None => self.name_array(&const_name(&receiver)?)?,
         };
         Some((sole_block_param(call)?, values))
+    }
+
+    /// `attrs.each do |name|` over a method's splat: the block variable,
+    /// and the names the splat is handed (DEC-162).
+    fn splat_each(&self, call: &ruby_prism::CallNode<'pr>) -> Option<(String, String)> {
+        if method_name(call)?.as_str() != "each" {
+            return None;
+        }
+        let read = call.receiver()?.as_local_variable_read_node()?;
+        let template = self
+            .frames
+            .last()?
+            .handed
+            .iter()
+            .find(|(p, t)| p.as_bytes() == read.name().as_slice() && t.ends_with("*}"))?
+            .1
+            .clone();
+        Some((sole_block_param(call)?, template))
     }
 
     /// The literal list a constant read here names, looked up lexically
@@ -4000,6 +4172,36 @@ impl<'pr> Extractor<'_> {
         });
         self.record_symbol_arguments(call);
         self.record_block_pass(call);
+        self.record_body_call(call);
+    }
+
+    /// A class or module body's call on itself, outside any method, with
+    /// the literal names it is handed: what a macro written in another file
+    /// runs on (DEC-162).
+    fn record_body_call(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        if !on_self(call) || !self.self_is_the_scope() || !self.evals.is_empty() {
+            return;
+        }
+        let Some(name) = method_name(call) else {
+            return;
+        };
+        // A Rails macro trekr declares by name already says what it makes
+        // (DEC-111); its string of code would only hedge those names.
+        if !macros::generated(&name, "x").is_empty() {
+            return;
+        }
+        let args = arg_nodes(call)
+            .iter()
+            .filter(|arg| arg.as_keyword_hash_node().is_none())
+            .map(literal_name)
+            .collect();
+        let line = self.pos(call.location().start_offset()).line;
+        self.facts.body_calls.push(BodyCall {
+            name,
+            nesting: self.nesting.clone(),
+            args,
+            line,
+        });
     }
 
     /// `parts.reject(&:empty?)` calls `empty?` on each element the block is
@@ -4506,7 +4708,14 @@ fn spelled_code(arg: Node<'_>) -> Option<Node<'_>> {
 /// interpolation: the side and shape of each `def`. One unshaped entry for
 /// either side when the text may make methods some other way, or spells no
 /// `def` at all.
-fn string_defs(code: &Node<'_>, src: &[u8]) -> Vec<(Option<bool>, Option<String>)> {
+///
+/// `handed` are a macro's positional parameters: an interpolation of the
+/// `k`th is `{k}`, the name its caller hands it (DEC-162).
+fn string_defs(
+    code: &Node<'_>,
+    src: &[u8],
+    handed: &[(String, String)],
+) -> Vec<(Option<bool>, Option<String>)> {
     let raw = |at: ruby_prism::Location<'_>| {
         String::from_utf8_lossy(&src[at.start_offset()..at.end_offset().min(src.len())])
             .into_owned()
@@ -4518,7 +4727,7 @@ fn string_defs(code: &Node<'_>, src: &[u8]) -> Vec<(Option<bool>, Option<String>
         for part in string.parts().iter() {
             match part.as_string_node() {
                 Some(_) => text.push_str(&raw(part.location())),
-                None => text.push('*'),
+                None => text.push_str(&handed_part(&part, handed)),
             }
         }
     }
@@ -4552,7 +4761,9 @@ fn string_defs(code: &Node<'_>, src: &[u8]) -> Vec<(Option<bool>, Option<String>
         };
         let name: String = rest
             .chars()
-            .take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '*' | '?' | '!' | '='))
+            .take_while(|c| {
+                c.is_alphanumeric() || matches!(c, '_' | '*' | '?' | '!' | '=' | '{' | '}')
+            })
             .collect();
         let shape = name.chars().any(|c| c != '*').then_some(name);
         let def = (Some(singleton), shape);
@@ -5345,6 +5556,18 @@ mod macro_call_tests {
             b"class C\n  def self.a(k)\n    define_singleton_method(\"#{k}_x\") {}\n  end\nend\n",
         );
         assert_eq!(marks(&shaped), ["define_singleton_method|singleton|*_x"]);
+        let handed = extract(
+            b"module M\n  def flags(*names)\n    names.each { |n| class_eval \"def #{n}?; end\" }\n  end\nend\n",
+        );
+        assert_eq!(marks(&handed), ["class_eval|instance|{0*}?|flags"]);
+        let body = extract(b"class C\n  flags :a, other, if: 1\n  def x; flags :b; end\nend\n");
+        let calls: Vec<_> = body
+            .body_calls
+            .iter()
+            .filter(|c| c.name == "flags")
+            .map(|c| (c.name.as_str(), c.args.clone()))
+            .collect();
+        assert_eq!(calls, [("flags", vec![Some("a".to_string()), None])]);
         let sent = extract(b"class C\n  [:a].each { |m| Other.send(:define_method, m) {} }\nend\n");
         assert_eq!(marks(&sent), ["define_method|instance|a"]);
     }

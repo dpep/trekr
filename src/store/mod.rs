@@ -717,6 +717,36 @@ impl Store {
         rows.collect()
     }
 
+    /// Where a class or module body calls `name` on itself, outside any
+    /// method: the classes a macro of that name runs on (DEC-162), by the
+    /// scope stack each call is written in, with the literal names it is
+    /// handed.
+    pub(crate) fn body_calls(&self, roots: &[String], name: &str) -> Result<Vec<BodyCallRow>> {
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT DISTINCT c.nesting, c.args
+               FROM body_call c
+               JOIN file f ON f.blob_id = c.blob_id
+               JOIN checkout k ON k.id = f.checkout_id
+              WHERE c.name = ?1 AND k.root IN ({})",
+            (2..roots.len() + 2)
+                .map(|i| format!("?{i}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))?;
+        let params = std::iter::once(name.to_string()).chain(roots.iter().cloned());
+        let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| {
+            let args: String = r.get(1)?;
+            Ok(BodyCallRow {
+                nesting: split_nesting(&r.get::<_, String>(0)?),
+                args: args
+                    .split('\t')
+                    .map(|arg| (!arg.is_empty()).then(|| arg.to_string()))
+                    .collect(),
+            })
+        })?;
+        rows.collect()
+    }
+
     /// Files in a checkout that call a method of this name.
     ///
     /// The tiering reparses each of these rather than reading the stored call
@@ -1406,6 +1436,14 @@ fn edge_row(r: &rusqlite::Row<'_>) -> Result<EdgeRow> {
     })
 }
 
+/// A body's call on itself, as `body_calls` reads it.
+#[derive(Debug)]
+pub(crate) struct BodyCallRow {
+    pub(crate) nesting: Vec<String>,
+    /// Each positional argument's literal name, or `None`.
+    pub(crate) args: Vec<Option<String>>,
+}
+
 #[derive(Debug)]
 pub(crate) struct EdgeRow {
     /// Scope stack including the receiving class or module, innermost first.
@@ -1631,6 +1669,20 @@ fn insert_facts(tx: &Connection, oid: &Oid, facts: &Facts) -> Result<()> {
             join_nesting(&r.nesting),
             r.pos.line,
             r.pos.col,
+        ])?;
+    }
+
+    let mut body_call = tx.prepare_cached(
+        "INSERT INTO body_call (blob_id, name, nesting, args, line) VALUES (?1,?2,?3,?4,?5)",
+    )?;
+    for c in &facts.body_calls {
+        let args: Vec<&str> = c.args.iter().map(|a| a.as_deref().unwrap_or("")).collect();
+        body_call.execute(params![
+            blob_id,
+            c.name,
+            join_nesting(&c.nesting),
+            args.join("\t"),
+            c.line,
         ])?;
     }
 

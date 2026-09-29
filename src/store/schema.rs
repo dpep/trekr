@@ -13,7 +13,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 41;
+pub(crate) const VERSION: i64 = 42;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -98,6 +98,17 @@ CREATE TABLE call_site (
   col       INTEGER NOT NULL
 );
 
+-- A class or module body's call on itself, outside any method, with its
+-- positional arguments where each is a literal name ('' otherwise), joined by
+-- tabs: the classes a macro runs on, and the names it is handed (DEC-162).
+CREATE TABLE body_call (
+  blob_id INTEGER NOT NULL REFERENCES blob(id) ON DELETE CASCADE,
+  name    TEXT    NOT NULL,
+  nesting TEXT    NOT NULL,
+  args    TEXT    NOT NULL,
+  line    INTEGER NOT NULL
+);
+
 -- ── The path→blob map: the only place a path appears ─────────────────────
 
 CREATE TABLE checkout (
@@ -164,12 +175,13 @@ CREATE INDEX const_ref_name ON const_ref(name);
 CREATE INDEX const_ref_blob ON const_ref(blob_id);
 CREATE INDEX call_site_name ON call_site(name);
 CREATE INDEX call_site_blob ON call_site(blob_id);
+CREATE INDEX body_call_name ON body_call(name);
 CREATE INDEX file_blob      ON file(blob_id);
 "#;
 
 /// The fact tables' secondary indexes: what a bulk load drops and rebuilds
 /// (DEC-057). Each statement is also in `SCHEMA`, and a test holds them equal.
-pub(crate) const BULK_INDEXES: [(&str, &str); 7] = [
+pub(crate) const BULK_INDEXES: [(&str, &str); 8] = [
     ("def_name", "CREATE INDEX def_name       ON def(name);"),
     ("def_blob", "CREATE INDEX def_blob       ON def(blob_id);"),
     (
@@ -192,15 +204,20 @@ pub(crate) const BULK_INDEXES: [(&str, &str); 7] = [
         "call_site_blob",
         "CREATE INDEX call_site_blob ON call_site(blob_id);",
     ),
+    (
+        "body_call_name",
+        "CREATE INDEX body_call_name ON body_call(name);",
+    ),
 ];
 
 /// Every table, newest first, so dropping respects nothing (foreign keys are
 /// off during the drop anyway).
-pub(crate) const TABLES: [&str; 9] = [
+pub(crate) const TABLES: [&str; 10] = [
     "upgrade",
     "gem_use",
     "file",
     "checkout",
+    "body_call",
     "call_site",
     "const_ref",
     "ancestry",

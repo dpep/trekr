@@ -380,6 +380,8 @@ pub(crate) struct Tree {
     dynamic_rows: RefCell<Option<Vec<EdgeRow>>>,
     /// The same, by the scope's fully-qualified name.
     dynamic: RefCell<Option<HashMap<String, Vec<Dynamic>>>>,
+    /// Every marker, by the file that writes it (DEC-162).
+    dynamic_files: RefCell<HashMap<String, Vec<Dynamic>>>,
 }
 
 /// Where a scope defines methods its source does not name: a
@@ -702,6 +704,7 @@ impl Tree {
             ancestors: RefCell::new(HashMap::new()),
             dynamic_rows: RefCell::new(None),
             dynamic: RefCell::new(None),
+            dynamic_files: RefCell::new(HashMap::new()),
         }
     }
 
@@ -2678,6 +2681,25 @@ impl Tree {
             })
     }
 
+    /// The markers written in the file at `path` (relative to the checkout)
+    /// that may have made `name`, on either side: the likelier maker of a
+    /// name defined nowhere than a gem (DEC-162).
+    pub(crate) fn dynamic_in_file(&self, path: &str, name: &str) -> Vec<Dynamic> {
+        self.place_dynamic();
+        let at = format!("{}/{path}", self.root);
+        self.dynamic_files
+            .borrow()
+            .get(&at)
+            .map(|makers| {
+                makers
+                    .iter()
+                    .filter(|how| how.maker.may_make(name, false) || how.maker.may_make(name, true))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
     /// Markers as a reason says them: each method that does it, the shape
     /// of the names when it is known, and where.
     pub(crate) fn dynamic_note(&self, makers: &[Dynamic]) -> String {
@@ -2688,10 +2710,15 @@ impl Tree {
                     true => how.path[self.root.len() + 1..].to_string(),
                     false => crate::core::paths::pretty(&how.path),
                 };
-                match &how.maker.shape {
-                    Some(shape) => format!("{} `{shape}`, {path}:{}", how.maker.by, how.line),
-                    None => format!("{}, {path}:{}", how.maker.by, how.line),
-                }
+                let shape = match &how.maker.shape {
+                    Some(shape) => format!(" `{shape}`"),
+                    None => String::new(),
+                };
+                let via = match &how.maker.via {
+                    Some(via) => format!(" in `{via}`"),
+                    None => String::new(),
+                };
+                format!("{}{shape}{via}, {path}:{}", how.maker.by, how.line)
             })
             .collect::<Vec<_>>()
             .join("; ")
@@ -2710,18 +2737,84 @@ impl Tree {
                 .unwrap_or_default(),
         };
         let mut placed: HashMap<String, Vec<Dynamic>> = HashMap::new();
+        let mut macros: Vec<(String, Dynamic)> = Vec::new();
         for row in rows {
             // A marker sent to a constant is that class's (DEC-160).
             let Some((owner, _)) = self.edge_owner(&row.owner) else {
                 continue;
             };
-            placed.entry(owner).or_default().push(Dynamic {
+            let how = Dynamic {
                 maker: crate::core::Maker::parse(&row.target),
                 path: row.path,
                 line: row.line,
-            });
+            };
+            self.dynamic_files
+                .borrow_mut()
+                .entry(how.path.clone())
+                .or_default()
+                .push(how.clone());
+            match how.maker.via.is_some() {
+                true => macros.push((owner, how)),
+                false => placed.entry(owner).or_default().push(how),
+            }
+        }
+        for (owner, how) in macros {
+            let name = how.maker.via.clone().unwrap_or_default();
+            for (caller, args) in self.macro_callers(&owner, &name) {
+                // The names this call hands the macro are the names it makes.
+                let shapes = match how.maker.shape.as_deref() {
+                    Some(shape) => crate::core::handed(shape, &args)
+                        .into_iter()
+                        .map(Some)
+                        .collect(),
+                    None => vec![None],
+                };
+                let makers = placed.entry(caller).or_default();
+                for shape in shapes {
+                    let mut made = how.clone();
+                    made.maker.shape = shape;
+                    if !makers.iter().any(|known| {
+                        known.maker == made.maker
+                            && known.path == made.path
+                            && known.line == made.line
+                    }) {
+                        makers.push(made);
+                    }
+                }
+            }
         }
         *self.dynamic.borrow_mut() = Some(placed);
+    }
+
+    /// The classes whose body calls the macro `name`, an instance method of
+    /// `owner`, and so run it on themselves (DEC-162): a body's call on
+    /// itself outside any method, where the class side reaches `owner`.
+    /// Each with the literal names that call hands it.
+    fn macro_callers(&self, owner: &str, name: &str) -> Vec<(String, Vec<Option<String>>)> {
+        let Some(loader) = self.loader.as_ref() else {
+            return Vec::new();
+        };
+        let calls = loader
+            .store
+            .body_calls(&loader.roots, name)
+            .unwrap_or_default();
+        let mut reached: HashMap<String, bool> = HashMap::new();
+        let mut callers = Vec::new();
+        for call in calls {
+            let Some(caller) = self.scope_fqn(&call.nesting) else {
+                continue;
+            };
+            // The call runs this macro only where the class side's lookup
+            // of the name lands on it.
+            let reaches = *reached.entry(caller.clone()).or_insert_with(|| {
+                self.lookup(&caller, true, name)
+                    .is_some_and(|found| found.owner == owner && !found.singleton)
+            });
+            if reaches {
+                callers.push((caller, call.args));
+            }
+        }
+        callers
     }
 
     /// The fully-qualified name of the scope a fact was written in.

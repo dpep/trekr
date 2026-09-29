@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Upgrading drops and rebuilds the index** (store v41): run `trekr --index`
+- **Upgrading drops and rebuilds the index** (store v42): run `trekr --index`
   once per checkout.
 
 ### Changed
@@ -36,6 +36,14 @@
   called absent, exit 1. They now hedge like any other marker, `eval` in a
   class body and a heredoc through `.strip` are read as code, and
   `instance_eval` hedges class methods only (DEC-161).
+
+- **A macro's methods hedge the classes that call it.** A `class_eval`
+  string or `define_method` in a `ClassMethods` method (or any method a
+  class body calls on itself) makes methods on the calling class; the card
+  said "no such method", exit 1, and `--def` blamed a gem. The calling class
+  is now marked for the names its call hands the macro (`add_reader :color`
+  hedges `color`), and a name defined nowhere that the call's own file may
+  make says so (DEC-162).
 
 - **`--refs` counts a call whose receiver is typed as an ancestor.** A
   `sig`'s parameter or return, a finder's result, a `rescue`'s class, or the
