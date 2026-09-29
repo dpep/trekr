@@ -320,6 +320,12 @@
 
 ### Fixed
 
+- **Kernel's methods answer inside a module no class is seen including.**
+  `Pathname(path)`, `Integer(x)` or `raise` in a Rails helper module was
+  residue; a call on `self` there runs on some object, so where no
+  includer answers, `Object`'s chain does (`resolved_via: "object"`,
+  DEC-314).
+
 - **A class macro's `include` reaches the class that calls it.** draper's
   `delegate_all`, a class method whose body is `include
   Draper::AutomaticDelegation`, left `--ancestors CommentDecorator` without

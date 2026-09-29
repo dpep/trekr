@@ -9074,3 +9074,25 @@ among them in its chain.
 include Draper::AutomaticDelegation; end`, called in each decorator's body.
 `--ancestors CommentDecorator` lacked `AutomaticDelegation`, so every call the
 decorator delegates to its object was "no such method".
+
+## DEC-314 — A module's own call that no includer answers runs on an Object
+
+**Decided.** A call on `self` in a module's instance method runs on
+whatever mixes the module in. When the index knows no class that does, or
+none that answers the name, the lookup continues along `Object`'s chain:
+every object a module is mixed into is an `Object`, so `Kernel#Pathname`,
+`Integer()`, `Array()`, `String()`, `raise` and `format` are what it runs.
+`--def` answers `resolved`, `resolved_via: "object"`; `--refs` tiers the site
+against that method as for any typed receiver. An includer that has the
+name still answers first (`via_includers`), so a module's `to_s` is its
+includer's own where the index sees one.
+
+**Why.** The 0.8.1 testers: `Pathname(path)` in a Rails helper module was
+residue, "no class the index knows of mixes it in", with `Kernel#Pathname`
+its first candidate. Rails mixes helpers into the view context by name at
+runtime, so no includer is ever written; the same held for `raise` and
+every other Kernel method in such a module.
+
+**Not `BasicObject`.** A module mixed only into a `BasicObject` subclass
+(a proxy) has no `Kernel`; that is rare enough, and says itself by
+`method_missing`, that the fallback takes `Object`.

@@ -1,0 +1,12 @@
+# A call on `self` in a module's instance method runs on whatever mixes the
+# module in, and that is an Object: `Pathname(path)` in a Rails helper no
+# class is seen including was residue, with `Kernel#Pathname` its first
+# candidate. Where no includer answers, Object's chain does. An includer
+# that does answer still wins: `to_s` in `Shown` is `Host#to_s`.
+def app.rb:3:5 status=resolved owner=Kernel
+def app.rb:7:5 status=resolved owner=Kernel
+def app.rb:7:22 status=resolved owner=Kernel
+def app.rb:7:43 status=resolved owner=Kernel
+def app.rb:11:5 status=residue
+def app.rb:29:5 status=resolved owner=Host
+refs Kernel#Pathname confirmed=1

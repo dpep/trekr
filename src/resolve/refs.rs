@@ -290,7 +290,13 @@ fn tier(
             None,
         );
     }
-    let found = super::lookup_on(tree, call, &receiver);
+    // A module's own call that no includer answers runs on an Object (DEC-314).
+    let found = super::lookup_on(tree, call, &receiver).or_else(|| {
+        tree.includers_of(&receiver.fqn)
+            .is_empty()
+            .then(|| super::on_any_object(tree, &call.name, &receiver))
+            .flatten()
+    });
     let matches = found.as_ref().is_some_and(|found| {
         target.is_none_or(|target| {
             runs_asked(

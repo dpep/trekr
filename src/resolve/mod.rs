@@ -232,6 +232,9 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                 None if tree.kind_of(&receiver.fqn) == Some("module") => {
                     match via_includers(tree, call, &receiver) {
                         Some(answer) => answer,
+                        None if let Some(found) = on_any_object(tree, &call.name, &receiver) => {
+                            object_answer(tree, call, &receiver, found)
+                        }
                         None if defined_nowhere(tree, call) => {
                             let reason = nowhere(tree, call, path);
                             residue(tree, call, path, Some(receiver), &reason)
@@ -1003,6 +1006,46 @@ fn overrides_for_self(tree: &Tree, receiver: &Receiver, method: &crate::tree::Me
 /// Confidence is the share of mixing-in classes that agree on one definition —
 /// a count, as ever. One includer that defines the name is certain *within the
 /// index*; three includers of which one defines it is `1/3`, and says so.
+/// A call on `self` in a module's instance method runs on whatever mixes
+/// the module in, and every such object is an Object: when no includer
+/// answers, what Object's chain has — `Kernel#Pathname`, `Integer()` — is
+/// what it runs (DEC-314).
+pub(crate) fn on_any_object(
+    tree: &Tree,
+    name: &str,
+    receiver: &Receiver,
+) -> Option<crate::tree::MethodDef> {
+    if receiver.singleton || receiver.via != "self" || tree.kind_of(&receiver.fqn) != Some("module")
+    {
+        return None;
+    }
+    tree.lookup("Object", false, name)
+}
+
+fn object_answer(
+    tree: &Tree,
+    call: &Call,
+    receiver: &Receiver,
+    found: crate::tree::MethodDef,
+) -> MethodAnswer {
+    MethodAnswer {
+        status: Status::Resolved,
+        confidence: share(1, 1),
+        resolved_via: Some("object".to_string()),
+        receiver: call.recv.as_str(),
+        receiver_kind: tree.kind_of(&receiver.fqn).map(str::to_string),
+        receiver_type: Some(receiver.fqn.clone()),
+        owner: Some(found.owner.clone()),
+        kind: Some(found.kind()),
+        defined_via: found.declared_via(),
+        sites: vec![found.site.clone()],
+        agreement: None,
+        unresolved_ancestors: Vec::new(),
+        candidates: Vec::new(),
+        reason: None,
+    }
+}
+
 fn via_includers(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<MethodAnswer> {
     let includers = tree.includers_of(&receiver.fqn);
     if includers.is_empty() {
