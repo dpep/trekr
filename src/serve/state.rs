@@ -210,6 +210,14 @@ impl Session {
         &mut self.store
     }
 
+    /// Answer from `store` in place of one that was replaced underneath the
+    /// session (DEC-300). Every tree was assembled from the old one.
+    pub(crate) fn replace_store(&mut self, store: Store) {
+        self.store = store;
+        self.checkouts.clear();
+        self.listing = None;
+    }
+
     /// Checkouts found unindexed since the last call.
     pub(crate) fn take_unindexed(&mut self) -> Vec<PathBuf> {
         std::mem::take(&mut self.unindexed)

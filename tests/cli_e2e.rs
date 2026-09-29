@@ -1810,35 +1810,147 @@ fn a_position_resolves_against_its_own_repo_not_the_current_directory() {
 /// Two trekrs on one machine must not take turns wiping each other's index.
 ///
 /// A version mismatch drops and reindexes (DEC-009), which is right when the
-/// binary is *newer* than the database. The other direction — an older binary
-/// meeting a newer database — is a stale install about to destroy work, and it
-/// looked exactly like "trekr has never been run here".
+/// binary is *newer* than the database. An older binary meeting a newer
+/// database keeps a store of its own beside it instead (DEC-300): refusing
+/// failed every command until someone upgraded, and dropping would ping-pong.
 #[test]
-fn an_older_binary_refuses_a_newer_database_rather_than_dropping_it() {
+fn an_older_binary_keeps_its_own_store_beside_a_newer_one() {
     let (dir, db) = scratch("newerdb");
     repo(&dir);
     trekr(&db, &dir, &["--index"]);
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute_batch(
+            "PRAGMA user_version = 9999; \
+             INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_by', '9.9.9');",
+        )
+        .unwrap();
+    let newer = fs::read(&db).unwrap();
 
-    // Forge a database from the future.
-    let out = Command::new("sqlite3")
-        .arg(&db)
-        .arg("PRAGMA user_version = 9999;")
-        .output()
-        .expect("sqlite3 available");
-    assert!(out.status.success());
-
-    let refused = trekr(&db, &dir, &["--status"]);
-    assert_eq!(
-        refused.status.code(),
-        Some(74),
-        "the store cannot be read: an error, not an empty answer"
-    );
-    let message = String::from_utf8_lossy(&refused.stderr);
+    let status = trekr(&db, &dir, &["--status", "--json"]);
+    let said = String::from_utf8_lossy(&status.stderr);
+    assert!(said.contains("written by a newer trekr (9.9.9)"), "{said}");
+    let json: serde_json::Value = serde_json::from_slice(&status.stdout).expect("JSON");
+    assert_eq!(json["status"], "not_indexed", "its own store starts empty");
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    let def = trekr(&db, &dir, &["--def", "widget.rb:7:5", "--json"]);
+    assert!(def.status.success(), "{def:?}");
     assert!(
-        message.contains("upgrade trekr"),
-        "and it says what to do: {message}"
+        !String::from_utf8_lossy(&def.stderr).contains("newer"),
+        "said once"
     );
+    assert_eq!(
+        fs::read(&db).unwrap(),
+        newer,
+        "the newer store is untouched"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
 
+/// Files in the store's directory whose names contain `part`.
+fn beside(db: &Path, part: &str) -> Vec<String> {
+    fs::read_dir(db.parent().unwrap())
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.contains(part) && !n.ends_with("-wal") && !n.ends_with("-shm"))
+        .collect()
+}
+
+/// A store trekr can't use is set aside and rebuilt, and the command answers
+/// as it would on a first run (DEC-300).
+fn rebuilt_on_status(db: &Path, dir: &Path, said: &str) {
+    let status = trekr(db, dir, &["--status", "--json"]);
+    let err = String::from_utf8_lossy(&status.stderr);
+    assert_eq!(err.matches(said).count(), 1, "{err}");
+    assert!(
+        err.contains("trekr.db.broken-"),
+        "names the old file: {err}"
+    );
+    let json: serde_json::Value = serde_json::from_slice(&status.stdout).expect("JSON");
+    assert_eq!(json["status"], "not_indexed", "{json}");
+    assert_eq!(beside(db, ".broken-").len(), 1);
+    assert!(trekr(db, dir, &["--index"]).status.success());
+    let def = trekr(db, dir, &["--def", "widget.rb:7:5", "--json"]);
+    assert!(def.status.success(), "{def:?}");
+}
+
+#[test]
+fn a_store_that_is_not_a_database_is_rebuilt() {
+    let (dir, db) = scratch("garbage");
+    repo(&dir);
+    fs::create_dir_all(db.parent().unwrap()).unwrap();
+    fs::write(&db, "not a database ".repeat(1000)).unwrap();
+    rebuilt_on_status(&db, &dir, "couldn't be read");
+    let status = trekr(&db, &dir, &["--status", "--json"]);
+    let json: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert!(
+        json["status"] != "not_indexed",
+        "rebuilt and indexed: {json}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_truncated_store_is_rebuilt() {
+    let (dir, db) = scratch("truncated");
+    repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+    let len = fs::metadata(&db).unwrap().len();
+    fs::File::options()
+        .write(true)
+        .open(&db)
+        .unwrap()
+        .set_len(len / 2)
+        .unwrap();
+    rebuilt_on_status(&db, &dir, "couldn't be read");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_rebuild_that_fails_is_set_aside_and_rebuilt() {
+    let (dir, db) = scratch("failedrebuild");
+    repo(&dir);
+    fs::create_dir_all(db.parent().unwrap()).unwrap();
+    // an old store whose drop fails midway: a view where a table was
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute_batch(
+            "CREATE TABLE def (x); CREATE VIEW checkout AS SELECT 1; PRAGMA user_version = 3;",
+        )
+        .unwrap();
+    rebuilt_on_status(&db, &dir, "couldn't be upgraded (from v3");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn concurrent_commands_on_a_broken_store_rebuild_it_once() {
+    let (dir, db) = scratch("concurrent");
+    repo(&dir);
+    fs::create_dir_all(db.parent().unwrap()).unwrap();
+    fs::write(&db, "not a database ".repeat(1000)).unwrap();
+    let children: Vec<_> = (0..6)
+        .map(|_| {
+            neutral(Command::new(env!("CARGO_BIN_EXE_trekr")))
+                .args(["--status", "--json"])
+                .current_dir(&dir)
+                .env("TREKR_DB", &db)
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    let mut told = 0;
+    for child in children {
+        let out = child.wait_with_output().unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&out.stdout).expect("JSON");
+        assert_eq!(json["status"], "not_indexed", "{json}");
+        told += String::from_utf8_lossy(&out.stderr)
+            .matches("couldn't be read")
+            .count();
+    }
+    assert_eq!(told, 1, "one process set it aside and said so");
+    assert_eq!(beside(&db, ".broken-").len(), 1);
     let _ = fs::remove_dir_all(&dir);
 }
 

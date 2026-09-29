@@ -103,6 +103,11 @@ remedy, the same as [rq](https://github.com/dpep/rq)'s:
 
 `trekr --help` lists the same table.
 
+A damaged index, or one whose upgrade fails, is not an error: trekr moves it
+aside (`trekr.db.broken-<time>`), says where on stderr, and rebuilds it. An
+older trekr that finds a newer one's index keeps a separate one beside it
+(`trekr.v51.db`). Either file is safe to delete.
+
 ### On rails
 
 A bare name lists every mention — definitions, and calls with the owner they

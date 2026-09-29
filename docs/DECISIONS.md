@@ -8858,3 +8858,85 @@ checkout time is not the commit's — so it is said rather than guessed.
 `Gemfile.lock`: the lockfile is what is read, and a Gemfile edit counts
 only once `bundle install` relocks. A `path:` gem without a lockfile is
 still left out; it is DEC-150's third kind of checkout.
+
+## DEC-300 — A store trekr can't use is set aside and rebuilt, or kept for a newer trekr
+
+**Decided.** rq's D51, in trekr's terms: `src/store/recover.rs`, its tests, and
+`tests/cli_e2e.rs` and `tests/lsp_e2e.rs` for the binary and the server.
+
+**The problem.** The store is a cache (DEC-009), but one trekr couldn't use left
+every command failing until someone deleted it by hand: a file that isn't a
+database, a truncated one, or a rebuild that errors all came back as exit 74, every
+run. An older trekr meeting a newer store refused it ("upgrade trekr") — no worse
+than an error, but two installed versions, a brew release and a dev build, meant
+one of them always failed. And a language server whose store another trekr rebuilt
+said "answers stop here" and waited for a restart.
+
+**What.** `Store::open` sorts every way an open fails into one of three:
+- **Broken** — SQLite says the file is corrupt or not a database, at any statement
+  of the open (including the schema read that ends it, which is where truncation
+  shows: SQLite compares the header's page count with the file's size on the first
+  read); the drop-and-create fails for a reason other than the environment; or a
+  table the schema needs is missing. The file and its WAL move to
+  `<name>.broken-<unix time>`, the newest such copy the only one kept, and a fresh
+  store is built. One stderr line says so and where the old file is. The rebuild is
+  recorded in `upgrade` — the old version for a failed rebuild, this version for
+  damage — so `--status`/queries say `not_indexed` with the reason and the editor's
+  refill says it is one (DEC-275). A failed rebuild rolls back, so the copy kept is
+  the store as the older trekr left it.
+- **Newer** — the version is above this trekr's. The file is never written. This
+  trekr uses `<stem>.v<its version>.db` beside it, says so once when it creates it,
+  and works normally; core's files follow it (`trekr.v51.core/`), so a sweep of the
+  main store's core directory never takes the side store's files.
+- **Failed** — busy, locked, disk full, I/O, permissions, read-only. A new file would
+  fail the same way, so it stays an error.
+
+**Concurrency.** A `<store>.lock` flock, shared while opening and exclusive while
+setting a store aside, plus the (device, inode) the opener saw before opening: the
+one that still sees the file it failed on moves it; any other opens what is there
+now. The eight-thread test fails without the re-check (a second move loses the
+first rebuild's writes) and the six-process test says the line once. The WAL moves
+before the store, so a new store never adopts the old WAL; a process still holding
+the old file finds out on its next write (`SQLITE_READONLY_DBMOVED`) or, for the
+server, sooner.
+
+**The language server** asks between messages whether its store was replaced — the
+path's inode is no longer the one it opened, or its `user_version` is no longer this
+build's — and reopens through the same `Store::open`: onto the rebuilt file, or onto
+its own store beside a newer trekr's. It drops its trees, re-enables refreshes,
+reindexes the workspace root, and tells the person once (`showMessage`, info). When
+the binary at the launch path changed, it leaves the store to the hot reload
+(DEC-050) instead, since the new build opens its own. At most three reopens
+per session, so a store that reads as replaced straight after reopening can't turn
+the loop into a reopen per message.
+
+**The stamp without a version bump.** `meta(key, value)` holds `schema_by`, written in
+the rebuild's transaction, and the side-store message quotes it ("written by a newer
+trekr (0.9.0)"). It is in `SCHEMA` and `TABLES` but also in `schema::OPTIONAL`: a v51
+store an older trekr built lacks it, and nothing needs it to answer, so a missing
+`meta` is not a broken store and it did not earn a bump — which would have dropped
+every user's index for a line of text. An older trekr ignores the table and never
+drops it (it isn't in its `TABLES`), which costs nothing: the next rebuild by this
+code drops and recreates it. Rejected: a last-opener stamp, a write on the read path
+whenever the binary changes, for nothing that needs it.
+
+**Side stores, not refusal or rebuild.** Refusing fails every command of one
+installed version; rebuilding would ping-pong, each version wiping the other's index.
+A side store costs a second index and a cold first run. When this trekr lays down a
+schema at the main path it deletes its own version's side store (the main path is its
+own again) and an older version's unused for 30 days, probed by name rather than by
+listing the directory. Rejected: adopting an older trekr's side store — it is a cache
+at an older schema some older trekr may still be writing.
+
+**Not done.** No `PRAGMA quick_check` on open: it reads every page, 20–30 ms on rq's
+12 MB rails index, and WAL gives no unclean-shutdown signal to reserve it for; damage
+deeper than the open reads still fails the command that reaches it. `--status` does
+not list side stores or the kept copy (the stderr line names them), and `--gc` does
+not delete them; both are one-line follow-ups outside the store.
+
+**Reach.** trekr 0.8.0 and older still refuse a newer store with "upgrade trekr" (no
+ping-pong, but no side store either); the first store bump after this release is the
+first an older trekr steps around.
+
+**Reverses if** side stores pile up in practice — then refusing with a clear message
+is the simpler shape.

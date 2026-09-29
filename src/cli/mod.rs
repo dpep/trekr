@@ -3188,6 +3188,11 @@ fn dynamic_markers(source: &[u8]) -> String {
 
 /// Why the store holds nothing, when an upgrade emptied it.
 fn upgrade_reason(from: i64) -> String {
+    if from == crate::store::VERSION {
+        return "trekr's index couldn't be read and was rebuilt (DEC-300), which dropped \
+                any earlier index; nothing has been indexed since"
+            .into();
+    }
     format!(
         "trekr's index format changed (store v{from} to v{}), which dropped any \
          earlier index; nothing has been indexed since",
@@ -3876,8 +3881,8 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
     let snapshots = crate::tree::sweep_snapshots(&store, &gone, dry_run)?;
     // Each Ruby's core files beside the store, and an earlier build's.
     let db = crate::store::default_path()?;
-    let mut core =
-        crate::tree::sweep_core(&crate::store::core_dir_of(&db), &garbage.core_dirs, dry_run);
+    let beside_store = crate::store::core_dir_of(&crate::store::in_use(&db));
+    let mut core = crate::tree::sweep_core(&beside_store, &garbage.core_dirs, dry_run);
     if let Some(beside) = db.parent() {
         let legacy = crate::tree::sweep_legacy_core(beside, dry_run);
         core.files += legacy.files;

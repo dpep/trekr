@@ -168,6 +168,13 @@ impl Indexer {
         }
     }
 
+    /// The server reopened its store (DEC-300): writing is safe again, and
+    /// every root is to be indexed afresh.
+    pub(crate) fn reopened(&mut self) {
+        self.refused = false;
+        self.done.clear();
+    }
+
     fn refuse(&mut self, why: String) {
         self.refused = true;
         self.unlogged = Some(why);

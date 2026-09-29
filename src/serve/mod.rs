@@ -280,7 +280,9 @@ fn serve(
     }
     let mut warm = Warm::Cold;
 
-    let mut moved_said = false;
+    // Reopens this session, bounded: a store that reads as replaced straight
+    // after reopening must not be reopened at every message.
+    let mut reopens = 0;
     loop {
         session.collect_members(None);
         indexer.retry(&mut session);
@@ -290,9 +292,20 @@ fn serve(
             writer.send(message)?;
         }
         session.reindexing = indexer.after_upgrade();
-        if !moved_said && let Some(message) = store_moved(&session, log) {
-            moved_said = true;
-            writer.send(message)?;
+        // A new binary at the launch path is about to take over, with the
+        // store it opens; reopening here would only make this one's.
+        let replacing = launched.as_ref().is_some_and(|w| w.changed().is_some());
+        if reopens < REOPENS
+            && !replacing
+            && let Some(why) = session.store().replaced()
+        {
+            reopens += 1;
+            if let Some(message) = reopen(&mut session, &why, log) {
+                indexer.reopened();
+                indexer.want(root.clone(), true);
+                warm = Warm::Cold;
+                writer.send(message)?;
+            }
         }
         // The one safe moment to become another program: nothing read and
         // unanswered, and no index child whose progress the successor could
@@ -605,29 +618,43 @@ fn swap(launched: &mut reload::Launched, stamp: reload::Stamp, now: Current, log
     failed(launched, error.to_string(), busy)
 }
 
-/// Said once: another trekr rebuilt the store under this server for another
-/// schema. Every answer from then on is empty or an error, and a log line was
-/// the only sign; the person at the editor is the one who can fix it. One
-/// PRAGMA on an open connection, so it is checked every turn of the loop.
-fn store_moved(session: &Session, log: &Log) -> Option<Message> {
-    let theirs = session.store().schema_version().ok()?;
-    if theirs == crate::store::VERSION {
-        return None;
-    }
+/// How many times one session reopens a replaced store.
+const REOPENS: u32 = 3;
+
+/// Reopen the store after another process replaced it: set it aside as
+/// damaged, or rebuilt it for another schema (DEC-300). Opening lands on the
+/// rebuilt file, or on this version's own store beside a newer trekr's, and
+/// the caller refills it. The person at the editor is told once per reopen;
+/// a reopen that fails is logged and answers go on from the old store.
+fn reopen(session: &mut Session, why: &str, log: &Log) -> Option<Message> {
+    let store = match crate::store::open_default() {
+        Ok(store) => store,
+        Err(error) => {
+            log.event(
+                "store_reopen_failed",
+                serde_json::json!({ "why": why, "error": format!("{error:#}") }),
+            );
+            return None;
+        }
+    };
+    let file = store
+        .path()
+        .and_then(|p| p.file_name())
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
     log.event(
-        "store_moved",
-        serde_json::json!({ "store": theirs, "server": crate::store::VERSION }),
+        "store_reopened",
+        serde_json::json!({ "why": why, "store": file }),
     );
+    session.replace_store(store);
     let message = format!(
-        "trekr: another trekr rebuilt the index in another format (store v{theirs}, this \
-         server v{}), so answers stop here. Use one trekr version for editor and command \
-         line, then restart the language server.",
-        crate::store::VERSION
+        "trekr: the index was replaced underneath this server ({why}); it now reads {file} \
+         and is reindexing, so answers are partial until that finishes."
     );
     Some(
         Notification::new(
             "window/showMessage".to_string(),
-            serde_json::json!({ "type": 1, "message": message }),
+            serde_json::json!({ "type": 3, "message": message }),
         )
         .into(),
     )

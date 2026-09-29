@@ -2937,57 +2937,27 @@ fn a_save_during_someone_elses_write_lands_once_the_lock_is_free() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// A store another trekr has rebuilt for a newer schema is not written by
-/// this one: its facts would be in the wrong format, and nothing would ever
-/// replace them. The server stops refreshing and says why in its log.
-#[test]
-fn a_save_after_another_trekr_rebuilt_the_store_is_refused_and_logged() {
-    let (dir, db) = scratch("save-rebuilt");
+/// A server started, warmed, and then left to find its store replaced by
+/// `replace`. It must keep answering, say so once, and refill a store of its
+/// own (DEC-300) — not stop answering, and not exit into a restart loop.
+fn a_server_recovers_when(label: &str, replace: impl FnOnce(&Path)) -> (PathBuf, PathBuf) {
+    let (dir, db) = scratch(label);
     ruby_repo(&dir, &db, "class Widget\n  def save\n  end\nend\n");
-    trekr()
-        .args(["--index"])
-        .current_dir(&dir)
-        .env("TREKR_DB", &db)
-        .output()
-        .unwrap();
-
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
-    // Warm: the tree is built and its members listed, so nothing but the save
-    // reaches for the store afterwards.
     for _ in 0..2 {
         session.request(
             "textDocument/definition",
             serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}, "position": {"line": 0, "character": 7}}),
         );
     }
-    let store = rusqlite::Connection::open(&db).unwrap();
-    let version: i64 = store
-        .pragma_query_value(None, "user_version", |r| r.get(0))
-        .unwrap();
-    store
-        .pragma_update(None, "user_version", version + 1)
-        .unwrap();
-    let blobs = || -> i64 {
-        store
-            .query_row("SELECT COUNT(*) FROM blob", [], |r| r.get(0))
-            .unwrap()
-    };
-    let before = blobs();
-
-    fs::write(
-        dir.join("app.rb"),
-        "class Widget\n  def save\n  end\n  def polish\n  end\nend\n",
-    )
-    .unwrap();
-    session.notify(
-        "textDocument/didSave",
-        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
-    );
-    // Any request: the log is written between messages. The person at the
-    // editor is told once, on screen, not only in the log.
+    replace(&db);
     let mut shown = Vec::new();
-    for id in [100, 101] {
+    let mut refilled = false;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut id = 100;
+    while !refilled && std::time::Instant::now() < deadline {
+        id += 1;
         session.send(serde_json::json!({
             "jsonrpc": "2.0", "id": id, "method": "textDocument/documentSymbol",
             "params": {"textDocument": {"uri": uri_of(&dir, "app.rb")}},
@@ -2998,23 +2968,81 @@ fn a_save_after_another_trekr_rebuilt_the_store_is_refused_and_logged() {
                 shown.push(message["params"]["message"].as_str().unwrap().to_string());
             }
             if message["id"] == id {
+                assert!(message["result"].is_array(), "still answering: {message}");
                 break;
             }
         }
+        refilled = logged_events(&db, "index").iter().any(|e| e["ok"] == true);
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
     session.stop();
-    assert_eq!(shown.len(), 1, "once: {shown:?}");
-    assert!(shown[0].contains("rebuilt the index"), "{shown:?}");
+    assert!(refilled, "the server refilled its store");
+    assert_eq!(shown.len(), 1, "told once: {shown:?}");
+    assert!(shown[0].contains("reindexing"), "{shown:?}");
+    assert_eq!(logged_events(&db, "store_reopened").len(), 1);
+    (dir, db)
+}
 
-    assert_eq!(blobs(), before, "nothing written into the rebuilt store");
-    let refused = log_lines(&db)
+fn logged_events(db: &Path, event: &str) -> Vec<serde_json::Value> {
+    log_lines(db)
         .into_iter()
-        .find(|l| l["event"] == "refresh_refused")
-        .expect("the refusal is logged");
-    assert!(
-        refused["error"].as_str().unwrap().contains("schema"),
-        "{refused}"
+        .filter(|l| l["event"] == event)
+        .collect()
+}
+
+fn blobs(db: &Path) -> i64 {
+    rusqlite::Connection::open(db)
+        .unwrap()
+        .query_row("SELECT COUNT(*) FROM blob", [], |r| r.get(0))
+        .unwrap()
+}
+
+/// Another trekr rebuilt the store for a newer schema under a running server.
+/// Writing into it would put this build's facts in the wrong format, so the
+/// server moves to a store of its own beside it and refills that.
+#[test]
+fn a_server_whose_store_a_newer_trekr_rebuilt_keeps_its_own() {
+    let before = std::cell::Cell::new(0);
+    let (dir, db) = a_server_recovers_when("store-newer", |db| {
+        let store = rusqlite::Connection::open(db).unwrap();
+        let version: i64 = store
+            .pragma_query_value(None, "user_version", |r| r.get(0))
+            .unwrap();
+        store
+            .pragma_update(None, "user_version", version + 1)
+            .unwrap();
+        before.set(blobs(db));
+    });
+    assert_eq!(
+        blobs(&db),
+        before.get(),
+        "nothing written into the newer store"
     );
+    let own = fs::read_dir(db.parent().unwrap())
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .find(|n| n.starts_with("trekr.v") && n.ends_with(".db"))
+        .expect("a store of its own");
+    assert!(blobs(&db.with_file_name(own)) > 0, "refilled");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// The store was set aside as damaged (by another process) under a running
+/// server: it reopens the rebuilt one and refills it.
+#[test]
+fn a_server_whose_store_was_set_aside_reopens_the_rebuilt_one() {
+    let (dir, db) = a_server_recovers_when("store-damaged", |db| {
+        let garbage = db.with_file_name("garbage");
+        fs::write(&garbage, "not a database ".repeat(1000)).unwrap();
+        fs::rename(&garbage, db).unwrap();
+    });
+    assert!(blobs(&db) > 0, "the rebuilt store was refilled");
+    let broken = fs::read_dir(db.parent().unwrap())
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.contains(".broken-") && !n.ends_with("-wal"))
+        .count();
+    assert_eq!(broken, 1);
     let _ = fs::remove_dir_all(&dir);
 }
 

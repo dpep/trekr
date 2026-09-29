@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **A damaged index, or an upgrade that fails, is rebuilt instead of failing
+  every command.** Nothing to do: trekr moves the old file aside
+  (`trekr.db.broken-<time>`, only the newest kept), says so in one line on
+  stderr, and the next index refills it; `--json` answers `not_indexed` with
+  the reason, as after an upgrade (DEC-300).
+- **An older trekr no longer refuses a newer trekr's index.** It leaves that
+  file alone and keeps its own beside it (`trekr.v51.db`), so a brew install
+  and a dev build can both be used without rebuilding each other's index. A
+  language server whose store another trekr rebuilds or sets aside moves to its
+  own and reindexes, where it used to stop answering until restarted.
 - **Upgrading drops and rebuilds the index** (store v51): run `trekr --index`
   once per checkout. The first index on each Ruby also reads its standard
   library once — 179 files for Ruby 3.4 — and its `rbs` gem's signatures,

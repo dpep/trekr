@@ -8,8 +8,10 @@
 //! follow rq's `src/store/`.
 
 mod gc;
+mod recover;
 mod schema;
 
+pub(crate) use recover::in_use;
 pub(crate) use schema::VERSION;
 
 use crate::core::*;
@@ -23,6 +25,8 @@ pub(crate) struct Store {
     /// Where this store lives, so a second connection to it can be opened.
     /// `None` for an in-memory store, which cannot be reached twice.
     path: Option<std::path::PathBuf>,
+    /// The file `path` named when this store opened it, to notice it moved.
+    file: Option<(u64, u64)>,
     /// Where the writes since the last `take_timing` spent their time, for
     /// `--index --profile`.
     timing: WriteTiming,
@@ -124,7 +128,7 @@ pub(crate) fn default_path() -> anyhow::Result<std::path::PathBuf> {
 /// (DEC-240), in a directory of the store's own, as its tree snapshots are:
 /// which of them are stale is that store's to say (DEC-274).
 pub(crate) fn core_dir() -> anyhow::Result<std::path::PathBuf> {
-    let dir = core_dir_of(&default_path()?);
+    let dir = core_dir_of(&recover::in_use(&default_path()?));
     crate::tree::materialize_core(&dir)?;
     Ok(dir)
 }
@@ -190,13 +194,10 @@ pub(crate) fn untracked_memory() {
 }
 
 impl Store {
+    /// Open the store at `path`. One this trekr can't use is set aside and
+    /// rebuilt, or left to the newer trekr that wrote it (see [`recover`]).
     pub(crate) fn open(path: &Path) -> Result<Store> {
-        let (mut store, upgraded) = Store::init(Connection::open(path)?)?;
-        if upgraded {
-            sweep_core_after_upgrade(path, &store);
-        }
-        store.path = Some(path.to_path_buf());
-        Ok(store)
+        recover::open(path, &schema::LAYOUT)
     }
 
     /// A second connection to the same database.
@@ -218,11 +219,19 @@ impl Store {
 
     #[cfg(test)]
     pub(crate) fn open_in_memory() -> Result<Store> {
-        Ok(Store::init(Connection::open_in_memory()?)?.0)
+        match Store::init(Connection::open_in_memory()?, &schema::LAYOUT) {
+            Ok((store, _)) => Ok(store),
+            Err(recover::Refusal::Failed(error)) => Err(error),
+            Err(_) => unreachable!("a new in-memory database is always usable"),
+        }
     }
 
-    /// The store, and whether this call rebuilt it from an older schema.
-    fn init(conn: Connection) -> Result<(Store, bool)> {
+    /// The store, and the version whose index this call dropped (`Some(0)`
+    /// for a fresh file).
+    fn init(
+        conn: Connection,
+        layout: &schema::Layout,
+    ) -> std::result::Result<(Store, Option<i64>), recover::Refusal> {
         // Before any other statement: switching to WAL and the migration below
         // both take locks, and without a handler a second process opening the
         // store at the same moment fails at once instead of waiting its turn.
@@ -240,21 +249,41 @@ impl Store {
         let mut store = Store {
             conn,
             path: None,
+            file: None,
             timing: WriteTiming::default(),
         };
-        let upgraded = schema_version(&store.conn)? != schema::VERSION && store.migrate()?;
-        Ok((store, upgraded))
+        let version = schema_version(&store.conn)?;
+        if version > layout.version {
+            return Err(recover::Refusal::Newer(version));
+        }
+        let dropped = match version == layout.version {
+            true => None,
+            false => store.migrate(layout)?,
+        };
+        // Also the first read of the schema, where a damaged or truncated
+        // file shows itself.
+        if let Some(table) = store.missing_table(layout)? {
+            return Err(recover::Refusal::Broken {
+                from: None,
+                reason: format!("no {table} table"),
+            });
+        }
+        Ok((store, dropped))
     }
 
-    /// Bring the schema to this binary's, as one transaction (DEC-079).
+    /// Bring the schema to `layout`'s, as one transaction (DEC-079).
     ///
     /// The version is read again under the write lock: another process may
     /// have rebuilt the store between the unlocked check and here, and a
     /// second drop-and-create interleaved with the first is what left tables
     /// from two generations side by side.
-    /// Whether it dropped an older store — not a fresh one, and not one
-    /// another process had already rebuilt.
-    fn migrate(&mut self) -> Result<bool> {
+    /// The version it dropped — `Some(0)` for a fresh file — and `None` when
+    /// another process had already rebuilt it.
+    fn migrate(
+        &mut self,
+        layout: &schema::Layout,
+    ) -> std::result::Result<Option<i64>, recover::Refusal> {
+        use recover::Refusal;
         // A no-op inside a transaction, so it is set around one. Off, the
         // drops are plain drops rather than a cascading delete of every fact.
         self.conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
@@ -265,36 +294,82 @@ impl Store {
             let version = schema_version(&tx)?;
             // An *older* binary must not drop a newer database. Two trekrs on
             // one machine — one installed, one freshly built — would otherwise
-            // take turns wiping each other's index, and each would look like
-            // it had simply never been run.
-            if version > schema::VERSION {
-                return Err(schema_mismatch(format!(
-                    "database is schema v{version} but this trekr speaks v{}; \
-                     upgrade trekr, or point $TREKR_DB elsewhere",
-                    schema::VERSION
-                )));
+            // take turns wiping each other's index (DEC-300).
+            if version > layout.version {
+                return Err(Refusal::Newer(version));
             }
-            if version == schema::VERSION {
-                return Ok(false);
+            if version == layout.version {
+                return Ok(None);
             }
             // No migration, by design: see schema::VERSION. Reindexing costs
             // seconds and cannot leave the store half-converted.
-            for table in schema::TABLES.iter().chain(&schema::RETIRED) {
-                tx.execute_batch(&format!("DROP TABLE IF EXISTS {table};"))?;
-            }
-            tx.execute_batch(schema::SCHEMA)?;
-            if version != 0 {
+            let rebuild = || -> Result<()> {
+                for table in layout.tables.iter().chain(&schema::RETIRED) {
+                    tx.execute_batch(&format!("DROP TABLE IF EXISTS {table};"))?;
+                }
+                tx.execute_batch(layout.sql)?;
+                if version != 0 {
+                    tx.execute(
+                        "INSERT INTO upgrade (from_version, at) VALUES (?1, unixepoch())",
+                        params![version],
+                    )?;
+                }
                 tx.execute(
-                    "INSERT INTO upgrade (from_version, at) VALUES (?1, unixepoch())",
-                    params![version],
+                    "INSERT INTO meta (key, value) VALUES ('schema_by', ?1)",
+                    params![env!("CARGO_PKG_VERSION")],
                 )?;
-            }
-            tx.pragma_update(None, "user_version", schema::VERSION)?;
+                tx.pragma_update(None, "user_version", layout.version)
+            };
+            rebuild().map_err(|e| Refusal::upgrade(version, terse(e)))?;
             tx.commit()?;
-            Ok(version != 0)
+            Ok(Some(version))
         })();
         self.conn.execute_batch("PRAGMA foreign_keys=ON;")?;
-        rebuilt.map_err(terse)
+        rebuilt
+    }
+
+    /// A table `layout` needs that the store doesn't have.
+    fn missing_table(&self, layout: &schema::Layout) -> Result<Option<String>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")?;
+        let have = stmt
+            .query_map([], |r| r.get::<_, String>(0))?
+            .collect::<Result<HashSet<_>>>()?;
+        Ok(layout
+            .tables
+            .iter()
+            .find(|t| !have.contains(**t) && !schema::OPTIONAL.contains(t))
+            .map(|t| t.to_string()))
+    }
+
+    /// Record that the store was rebuilt from `from`, so "not indexed" and
+    /// the editor's refill say why (DEC-275). A rebuild after damage records
+    /// this version: the format didn't change, the file did.
+    fn record_rebuild(&self, from: i64) -> Result<()> {
+        self.conn
+            .execute(
+                "INSERT INTO upgrade (from_version, at) VALUES (?1, unixepoch())",
+                params![from],
+            )
+            .map(drop)
+    }
+
+    /// Why this store is no longer the one at its path, if it isn't: the file
+    /// was set aside and replaced, or another trekr rebuilt it for another
+    /// schema. A long-lived reader (the language server) reopens on this.
+    pub(crate) fn replaced(&self) -> Option<String> {
+        let path = self.path.as_ref()?;
+        if recover::identity(path) != self.file {
+            return Some(format!("{} was replaced", path.display()));
+        }
+        match schema_version(&self.conn) {
+            Ok(v) if v != schema::VERSION => Some(format!(
+                "the store was rebuilt as v{v}; this trekr is v{}",
+                schema::VERSION
+            )),
+            _ => None,
+        }
     }
 
     /// Refuse to write into a store another binary has since rebuilt for a
@@ -307,7 +382,7 @@ impl Store {
         }
         Err(schema_mismatch(format!(
             "the store is now schema v{version} and this trekr writes v{}; \
-             it was rebuilt by another trekr, so this one must restart",
+             it was rebuilt by another trekr, so this one must reopen it",
             schema::VERSION
         )))
     }

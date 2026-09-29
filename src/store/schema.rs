@@ -13,6 +13,9 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
+///
+/// The one exception is a table in [`OPTIONAL`]: nothing reads it to answer, so
+/// a store without it is still this version's (DEC-300).
 pub(crate) const VERSION: i64 = 51;
 
 /// The current schema, applied whole to a fresh database. Migrations below
@@ -216,6 +219,13 @@ CREATE TABLE upgrade (
   at           INTEGER NOT NULL           -- unix seconds
 );
 
+-- Which trekr laid this schema down (`schema_by`), so another can name it
+-- (DEC-300). Optional: a store an older trekr built at this version lacks it.
+CREATE TABLE meta (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
+
 CREATE INDEX gem_use_gem    ON gem_use(gem_root);
 CREATE INDEX def_name       ON def(name);
 CREATE INDEX def_blob       ON def(blob_id);
@@ -264,7 +274,8 @@ pub(crate) const RETIRED: [&str; 1] = ["call_site"];
 
 /// Every table, newest first, so dropping respects nothing (foreign keys are
 /// off during the drop anyway).
-pub(crate) const TABLES: [&str; 14] = [
+pub(crate) const TABLES: [&str; 15] = [
+    "meta",
     "upgrade",
     "rbs_use",
     "rbs",
@@ -280,3 +291,21 @@ pub(crate) const TABLES: [&str; 14] = [
     "def",
     "blob",
 ];
+
+/// Tables a store at its version may lack: added without a version bump,
+/// because nothing needs them to answer (DEC-300).
+pub(crate) const OPTIONAL: [&str; 1] = ["meta"];
+
+/// A schema as a rebuild lays it down: this trekr's, or in tests another's.
+pub(crate) struct Layout {
+    pub(crate) version: i64,
+    pub(crate) sql: &'static str,
+    pub(crate) tables: &'static [&'static str],
+}
+
+/// This trekr's schema.
+pub(crate) const LAYOUT: Layout = Layout {
+    version: VERSION,
+    sql: SCHEMA,
+    tables: &TABLES,
+};

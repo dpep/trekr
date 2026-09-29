@@ -650,6 +650,8 @@ rbs(id, key UNIQUE, version, dir, core, stdlib, sigs)
                                               stdlib, rbs gem and reader
 
 upgrade(from_version, at)                   ← a rebuild that dropped an older index
+meta(key, value)                            ← `schema_by`: the trekr that built it
+                                              (DEC-300; optional, no bump)
 ```
 
 **No table under `blob` may mention a path, a checkout, or a repository.**
@@ -684,6 +686,20 @@ the lock, so two processes opening an old store rebuild it once. An index
 write and must be able to wait. Every write checks `user_version` inside its
 transaction and refuses a store another binary has since rebuilt, so a
 long-running process cannot put an old schema's facts into a new one.
+
+**A store trekr can't use is set aside or stepped around, never an error
+state** (DEC-300). Opening sorts failures three ways. Damaged (not a database,
+malformed, truncated), a rebuild that fails, or a missing table: the file and
+its WAL move to `<name>.broken-<time>` (the newest one kept), a fresh store is
+built, and one stderr line says where the old one went; the rebuild is recorded
+in `upgrade`, so "not indexed" and the editor's refill say why (DEC-275). A
+newer trekr's store is never written: this trekr uses `<stem>.v<version>.db`
+beside it, and its core files beside that. Busy, disk full and permissions stay
+errors. A `<store>.lock` flock, shared while opening and exclusive while
+moving, plus an inode re-check, makes exactly one process move a broken file.
+The language server checks between messages whether its store was replaced (the
+file moved, or its version changed) and reopens, refilling with a background
+index rather than answering from, or writing into, a store that isn't its own.
 
 ## CLI
 
