@@ -382,8 +382,10 @@ pub(crate) struct Tree {
     /// walks the same one, and building it resolves each level's extends
     /// (DEC-203). An instance's chain is its memoized ancestry.
     singleton_chains: RefCell<HashMap<(String, bool), Pairs>>,
-    /// Lookups by (fqn, singleton, name, as_self), final once the name is
-    /// loaded, as `named` is (DEC-203).
+    /// Lookups by (fqn, singleton, name, as_self, placing), final once the
+    /// name is loaded, as `named` is (DEC-203). A lookup made while placing
+    /// does not look for string macros, so it is a different question
+    /// (DEC-251).
     lookups: RefCell<HashMap<LookupKey, Option<Landing>>>,
     /// A model that overrides `self.table_name` wants the columns of a table
     /// whose conventional class it is not, so that carrier's methods are keyed
@@ -562,8 +564,9 @@ impl Chain {
 /// then singleton.
 type Owners = HashMap<String, [Vec<usize>; 2]>;
 
-/// A lookup, as `lookup_along` keys it: (fqn, singleton, name, as_self).
-type LookupKey = (String, bool, String, bool);
+/// A lookup, as `lookup_along` keys it: (fqn, singleton, name, as_self,
+/// placing).
+type LookupKey = (String, bool, String, bool, bool);
 
 /// A call to a name, as `agreed_return` keys it: (name, argc, block).
 type ReturnKey = (String, Option<u32>, bool);
@@ -3113,7 +3116,13 @@ impl Tree {
 
     fn landing(&self, fqn: &str, singleton: bool, name: &str, as_self: bool) -> Option<Landing> {
         self.ensure(name);
-        let key = (fqn.to_string(), singleton, name.to_string(), as_self);
+        let key = (
+            fqn.to_string(),
+            singleton,
+            name.to_string(),
+            as_self,
+            self.placing(),
+        );
         if let Some(found) = self.lookups.borrow().get(&key) {
             return found.clone();
         }
