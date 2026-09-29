@@ -884,10 +884,12 @@ fn index_files(
         profile.skipped += wanted.len() - to_parse.len();
     }
 
-    // A load that more than doubles the store rebuilds the fact indexes by
-    // sorting rather than inserting into them (DEC-057). Never inside a
-    // batch: a gem's rows are few, and the bundle's transaction is shared.
-    let bulk = store.autocommit() && known.as_ref().is_some_and(|k| to_parse.len() > k.len());
+    // Never inside a batch: a gem's rows are few, and the bundle's
+    // transaction is shared.
+    let bulk = store.autocommit()
+        && known
+            .as_ref()
+            .is_some_and(|k| bulk_load(to_parse.len(), k.len()));
     // Parsing fans out on the pool while this thread writes what has already
     // been parsed: the write is single-threaded and most of the cost, so the
     // parse hides behind it instead of running before it.
@@ -920,6 +922,13 @@ fn index_files(
     let counts = counts?;
     received.finish(store, profile, known, parse_done);
     Ok(counts)
+}
+
+/// Whether a load of `new` blobs into a store of `known` rebuilds the fact
+/// indexes by sorting rather than inserting into them (DEC-057): from half
+/// the store up, where the rebuild costs less than the inserts (DEC-234).
+fn bulk_load(new: usize, known: usize) -> bool {
+    new > 0 && new * 2 >= known
 }
 
 /// A file read and parsed for the writer, timed for `--profile`.
@@ -4086,6 +4095,15 @@ mod tests {
             let want = serde_json::to_string_pretty(&serde_json::to_value(rows).unwrap()).unwrap();
             assert_eq!(String::from_utf8(got).unwrap(), format!("{want}\n"));
         }
+    }
+
+    #[test]
+    fn a_load_of_half_the_store_rebuilds_its_indexes() {
+        assert!(bulk_load(1, 0), "a fresh store");
+        assert!(bulk_load(50_000, 50_000));
+        assert!(bulk_load(25_000, 50_000));
+        assert!(!bulk_load(12_500, 50_000), "a quarter inserts");
+        assert!(!bulk_load(0, 0), "nothing to load");
     }
 
     #[test]

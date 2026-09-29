@@ -7684,3 +7684,34 @@ all index a bundle. An e2e case puts a gem with no `lib/` and one whose only
 file another gem already parsed between two gems, and requires three gems
 indexed and the shared blob parsed once.
 
+## DEC-234 — A load of half the store rebuilds its indexes (DEC-057 revisited)
+
+**Decided.** A write that brings in at least half as many new blobs as the
+store already holds drops the fact indexes and rebuilds them by sorting
+(`bulk_load`), where DEC-057 did that only for a load larger than the store.
+
+**Why.** DEC-195 left it inconclusive: lowering the line to a quarter
+measured 83 → 68 s with a p90 of 115 s, the machine shared. Re-measured
+here at the quietest this machine got (load 3–5): a store of 50k files
+(DEC-195's c50k), then a checkout of new files indexed into a copy of it,
+alternating builds, four rounds each:
+
+| new files into 50k | inserting (DEC-057) | rebuilding |
+| --- | ---: | ---: |
+| 12.5k (a quarter) | **4.6** s (4.5–4.9) | 6.0 s (5.5–7.9) |
+| 25k (a half) | 8.0 s (7.8–12.9) | **7.8** s (7.3–8.3) |
+| 50k (all of c100k's other half) | 20.3 s (19.5–20.9) | **14.5** s (13.9–15.3) |
+
+The rebuild costs about what the store holds, the inserts what the load
+holds, into indexes that outgrew the cache; they cross near a half. At a
+quarter the rebuild loses by a quarter, which is why the line is not there.
+At 1:1 the profile says where: the rows and their inserts 11.5 s against
+4.5 s of rows and 4.7 s of rebuild, and what follows reads a compact index —
+the tree snapshot 3.3 → 1.4 s, `ANALYZE` 2.0 → 0.8 s — in a store 3.5 %
+smaller (630 → 608 MB).
+
+**Checked.** The same rows either way: the index's answer is identical at
+1:1, and `--refs 'Hash#[]'` and the module `--def` over the 100k checkout
+are byte-identical from a store loaded each way. The verify set (DEC-230)
+is unchanged. A unit test pins the line.
+

@@ -41,6 +41,11 @@
 
 ### Changed
 
+- **Indexing a checkout half the size of the store or more is faster.** Such
+  a load now rebuilds the store's indexes rather than inserting into them,
+  as only a load bigger than the store did: 50k new files into a store of
+  50k 20 → 14.5 s (DEC-234).
+
 - **A cold `--index` of an app with a bundle is 6–12 % faster.** The
   bundle's gems are walked, parsed and written as one stream rather than one
   gem at a time: discourse 4.75 → 4.25 s, mastodon 3.31 → 3.12 s (DEC-232).
