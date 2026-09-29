@@ -1,0 +1,9 @@
+# The naming rung typed a variable called `object` as `Object`, so
+# `object.inspect` answered Kernel's `inspect` by receiver_name, and
+# counted as its reference. Every object is an `Object`: the name narrows
+# nothing, and the call is as untyped as any other.
+def app.rb:9:12 status=residue
+refs Kernel#inspect confirmed=0 possible=1
+refs Widget#inspect confirmed=0 possible=1 excluded=0
+# A name that does narrow still types its receiver, core class or not.
+def app.rb:13:10 status=resolved owner=Hash via=receiver_name

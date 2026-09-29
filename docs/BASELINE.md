@@ -2805,3 +2805,30 @@ PostgreSQL `Column`s (`column.has_default?` in the schema dumper),
 `MismatchedForeignKey#set_query` (`rescue StatementInvalid => ex`) and
 `DecorationRegistration#matches?`. `--dead` on rails takes as long as
 before, 1.5 s either way.
+
+## A name every object answers to (2026-09-28)
+
+DEC-172 against the `cli` branch before it (main 3179a0a plus DEC-170/171),
+one build with the rule switchable, on stores indexed once: the four gold
+sets and widget_shop's trace, filtered to the 545 sites whose line has a
+receiver spelled like a core class (the only sites the rule can move),
+scored whole; rails' 40 `--refs` queries plus a sweep of the 264 rails
+`inspect`, `to_s`, `respond_to?`, `==`, `hash` and `to_h` definitions and 11
+core ones; graph_weaver's 684 of the same; `script/clicks.py` over the 13
+repositories.
+
+| | before | Object's chain | all of core |
+| --- | ---: | ---: | ---: |
+| gold verdicts moved (545 sites) | | **0** | 1 right-owner → residue |
+| rails 40 queries, sites moved | | 3 excluded → possible | |
+| rails sweep: confirmed → possible | | **15** | 164 |
+| rails sweep: excluded → possible | | **88** | 2,036 |
+| graph_weaver sweep: confirmed / excluded → possible | | **11 / 203** | |
+| clicks, empty / unsure | | unchanged | |
+
+Every rails move is one of 15 `object.…` call sites (`message_pack`'s
+extensions, `debug_helper`, `abstract_renderer`, `request_forgery_protection`),
+graph_weaver's one of 14. The all-of-core rule was the report's suggestion;
+it is the column that lost money's `set.add` and moved `hash[…]` off
+`Hash#[]`.
+

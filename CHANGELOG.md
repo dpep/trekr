@@ -28,6 +28,13 @@
 
 ### Fixed
 
+- **A variable named `object` no longer types its receiver.** The naming
+  rung read `object` as class `Object`, so `object.inspect` was a confirmed
+  reference to `Kernel#inspect` and excluded from a module's own `inspect`.
+  A class every object is (`Object`, `Kernel`, `BasicObject`) narrows
+  nothing, and the call is now untyped: `possible` for every `inspect`
+  (DEC-172).
+
 - **A queued `--index`, `--drop` or `--gc` says what it is waiting for.**
   Behind another writer it waited up to ten minutes with no output; after a
   second it now prints "waiting for another trekr writer …" on stderr, then

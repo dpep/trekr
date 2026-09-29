@@ -6012,3 +6012,49 @@ wrong pid is worse than none, since the obvious use of one is `kill`.
 *Reverses if:* the store gains a record of the lock holder that is right —
 then the notice names it.
 
+## DEC-172 — The naming rung never types a receiver as a class every object is
+
+**Decided.** The naming rung (`from_receiver_name`) maps a variable's name
+to the class of that name. It no longer fires when that class is one every
+object already is: `Object`, or anything in `Object`'s ancestor chain —
+`Kernel`, `BasicObject`, and a module mixed into `Object`. Every other
+class still counts, from core or not: `hash` is still `Hash`, `set` still
+`Set`.
+
+**Before**, a variable called `object` was typed `Object`, so
+`object.inspect` answered `Kernel#inspect` by `receiver_name` and was a
+*confirmed* reference to it, and `--refs` for a module's `inspect` (which
+DEC-140's bound does not reach) excluded the site. Found by the downcast
+lane. The name is a word, not a type: every object answers `inspect`, so
+the "corroboration" that the class answers the call is no corroboration at
+all.
+
+**Considered: only classes app or gem code defines.** The rule the report
+suggested — skip every class Ruby core defines — also covers `data` →
+`Data`. Measured, it cost a right answer: money's `set.add` inside
+`each_with_object(Set.new) { |k, set| … }` went right-owner → residue, and it
+turned 164 rails sites confirmed → possible and 2,036 excluded → possible
+across 228 of the sweep's queries, most of them `hash[…]` read as `Hash#[]`,
+which is what those sites are. It is also not what it says: a core class an
+app reopens (ActiveSupport reopens `Object` and `Hash`) has app sites too.
+`data` → `Data` stays; it is `ambiguous`, never `resolved`, since `Data`
+shares every method it has with other classes.
+
+**Measured** (BASELINE, "A name every object answers to"): every gold
+verdict unchanged, on the sites where a receiver is spelled like a core
+class (545 across the four gold sets and widget_shop — TracePoint cannot see
+a C method, so the gold holds none of the `Kernel` calls this moves);
+rails' 40 `--refs` queries: 3 sites excluded → possible, all
+`ActiveRecord::Core#inspect`; with a sweep of 275 more — `inspect`, `to_s`,
+`respond_to?`, `==`, `hash`, `to_h` — 15 call sites move in all, 88
+excluded → possible and 15 confirmed → possible (`Kernel#inspect`,
+`Kernel#respond_to?`); graph_weaver's sweep of 684: 14 call sites, 203
+excluded → possible, 11 confirmed → possible. Nothing moved to confirmed or
+to excluded. The click replay over the 13 repositories: empty and unsure
+unchanged in every repo (5,094 definition misses either way); 10 misses
+move from "typed, with competitors" and "known type, method not found" to
+"untyped local or parameter", which is what they are.
+
+*Reverses if:* a codebase names variables after `Object`'s mixins on
+purpose — then the chain test narrows to `Object`, `Kernel`, `BasicObject`.
+

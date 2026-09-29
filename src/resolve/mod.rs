@@ -1629,7 +1629,9 @@ fn by_return_types(tree: &Tree, previous: &Call) -> Option<Receiver> {
 /// this promotes it to a typing rung, but only with all three corroborations,
 /// because a naming habit is weaker evidence than anything else on the ladder:
 ///
-/// 1. the name resolves to a constant the tree actually knows;
+/// 1. the name resolves to a constant the tree actually knows, and not one
+///    every object already is — `object` is `Object`, `Kernel` or
+///    `BasicObject` only by coincidence of spelling;
 /// 2. that constant defines or inherits the method being called;
 /// 3. **nothing in the enclosing scope's own chain defines it too** — if it
 ///    does, there is a competing reading and the name is not decisive.
@@ -1645,6 +1647,10 @@ fn by_return_types(tree: &Tree, previous: &Call) -> Option<Receiver> {
 fn from_receiver_name(tree: &Tree, call: &Call, path: &str) -> Option<Receiver> {
     let named = receiver_names_a_class(call.recv_text.as_deref()?)?;
     let fqn = tree.resolve_at(&named, &call.nesting, path).fqn?;
+    // (1) continued: a type every object has narrows nothing (DEC-172).
+    if fqn == "Object" || tree.inherits("Object", &fqn) {
+        return None;
+    }
     // (2) it has to actually answer the call.
     tree.lookup(&fqn, false, &call.name)?;
     // (3) a competing reading in the enclosing scope disqualifies the guess.
