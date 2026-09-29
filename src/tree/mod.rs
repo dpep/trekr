@@ -3271,6 +3271,21 @@ impl Tree {
             .or_else(|| self.made_along(&chain, name))
     }
 
+    /// The method `fqn` has by `name` as its owner: its own definition, or
+    /// the one it inherits — the first from its own place in its chain on. A
+    /// module prepended to it runs ahead of it, but is neither.
+    pub(crate) fn lookup_owned(&self, fqn: &str, singleton: bool, name: &str) -> Option<MethodDef> {
+        let chain = self.chain_for(fqn, singleton, false);
+        let at = chain.iter().position(|(o, s)| o == fqn && s == singleton);
+        let Some(at) = at.filter(|at| *at > 0) else {
+            return self.lookup(fqn, singleton, name);
+        };
+        let defs = self.ensure(name);
+        self.first_in_chain(&defs, &chain, at, true)
+            .or_else(|| self.first_in_chain(&defs, &chain, at, false))
+            .map(|landing| land(&defs, &landing))
+    }
+
     /// What `super` in `owner`'s `name` runs, for a receiver of type `fqn`:
     /// the first definition *after* `owner` in `fqn`'s lookup chain.
     ///

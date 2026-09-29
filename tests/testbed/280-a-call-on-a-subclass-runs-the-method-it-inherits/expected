@@ -1,0 +1,7 @@
+# A method the owner inherits is named where it is defined: `Child#save` is
+# `Base#save`, and a class method from a module the superclass `extend`s is
+# that module's instance method.
+refs Child#save resolves_to=Base#save
+refs Base#save resolves_to=Base#save
+refs Child.connect resolves_to=Connecting#connect
+card Child#save status=resolved owner=Child resolves_to=Base#save site=app.rb:9

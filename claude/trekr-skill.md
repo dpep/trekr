@@ -99,6 +99,7 @@ trekr --refs 'ActiveRecord::ConnectionHandling#lease_connection' --json
 { "status": "resolved", "owner": "ActiveRecord::ConnectionHandling", "method": "lease_connection",
   "definition": [{"path": "activerecord/lib/active_record/connection_handling.rb", "line": 269,
                   "root": "/…/rails"}],
+  "resolves_to": "ActiveRecord::ConnectionHandling#lease_connection", "inherited": false,
   "counts": {"confirmed": 1024, "possible": 84, "excluded": 87,
              "excluded_different_owner": 56, "excluded_no_such_method": 31,
              "excluded_arity": 0},

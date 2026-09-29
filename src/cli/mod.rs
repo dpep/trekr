@@ -2129,7 +2129,12 @@ fn cmd_card(out: Output, text: &str, context: Option<&Path>) -> anyhow::Result<E
         true => format!("{owner}.{}", query.name),
         false => format!("{owner}#{}", query.name),
     };
+    let resolved = refs::resolves_to(&tree, &owner, &query);
     let mut text_out = card_text(&shown, &definition, &[], Some(&counts));
+    if let Some(line) = inherited_line(resolved.as_ref()) {
+        text_out.push_str(&format!("\n  {line}"));
+    }
+    let (resolves_to, inherited) = resolved.unzip();
     let mut answer = serde_json::json!({
         "query": text,
         "status": status,
@@ -2138,6 +2143,8 @@ fn cmd_card(out: Output, text: &str, context: Option<&Path>) -> anyhow::Result<E
         "singleton": query.singleton,
         "kind": kind,
         "definition": definition,
+        "resolves_to": resolves_to,
+        "inherited": inherited.unwrap_or(false),
         "counts": counts,
     });
     if let Some(reason) = reason {
@@ -2145,6 +2152,14 @@ fn cmd_card(out: Output, text: &str, context: Option<&Path>) -> anyhow::Result<E
         answer["reason"] = reason.into();
     }
     report(out, answer, !definition.is_empty(), &text_out)
+}
+
+/// "resolves to Base#save, inherited", for a method the owner does not define.
+fn inherited_line(resolved: Option<&(String, bool)>) -> Option<String> {
+    match resolved {
+        Some((method, true)) => Some(format!("resolves to {method}, inherited")),
+        _ => None,
+    }
 }
 
 /// Refuse a method query no Ruby could mean: the owner is a constant path
@@ -2345,6 +2360,8 @@ fn cmd_refs(
                     "method": query.name,
                     "singleton": query.singleton,
                     "definition": definition,
+                    "resolves_to": null,
+                    "inherited": false,
                     "counts": refs::Counts::default(),
                     "references": [],
                     "reason": reason,
@@ -2371,6 +2388,11 @@ fn cmd_refs(
         None,
         None,
     )?;
+    let resolved = owner
+        .as_deref()
+        .and_then(|owner| refs::resolves_to(&tree, owner, &query));
+    let inherited = inherited_line(resolved.as_ref());
+    let (resolves_to, is_inherited) = resolved.unzip();
     let mut answer = serde_json::json!({
         "query": text,
         "status": status,
@@ -2378,6 +2400,8 @@ fn cmd_refs(
         "method": query.name,
         "singleton": query.singleton,
         "definition": definition,
+        "resolves_to": resolves_to,
+        "inherited": is_inherited.unwrap_or(false),
         "counts": counts,
         // Written row by row from `found` (`emit_listing`).
         "references": null,
@@ -2397,6 +2421,9 @@ fn cmd_refs(
 
     if let Some(reason) = &reason {
         println!("{reason}");
+    }
+    if let Some(line) = &inherited {
+        println!("{line}");
     }
     for site in &definition {
         println!(

@@ -19,6 +19,11 @@
 
 ### Added
 
+- **A method card and `--refs` name the method a query resolves to.**
+  `resolves_to` is it in Ruby's notation, and `inherited` says the owner
+  inherits it rather than defining it; text output adds "resolves to
+  Minitest::Assertions#assert_equal, inherited" for such a method.
+
 - **Ruby's standard library is indexed.** `Set`, `Pathname`, `URI`,
   `Logger`, `Tempfile`, `FileUtils`, `Shellwords`, `SecureRandom`, `Open3`,
   `OptionParser`, `Gem::Version` and the rest answer from the Ruby the app

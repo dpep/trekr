@@ -28,9 +28,9 @@
 //! Keys for `def` are fields of `--def --json`: `status`, `owner`, `via`
 //! (`resolved_via`), `name`, `confidence`, `candidates` (a count), `site`
 //! (`path:line`, matched on the path's tail), and `candidate1` (the top
-//! candidate's owner). Keys for `refs` are the `counts` object. Unknown keys
-//! fail loudly rather than passing silently — a typo in an expectation is a
-//! test that proves nothing.
+//! candidate's owner). Keys for `refs` are the `counts` object, `status` and
+//! `resolves_to`. Unknown keys fail loudly rather than passing silently — a
+//! typo in an expectation is a test that proves nothing.
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -313,6 +313,10 @@ fn check_def(
                 .unwrap_or("<none>")
                 .to_string(),
             "reason" => answer["reason"].as_str().unwrap_or("<none>").to_string(),
+            "resolves_to" => answer["resolves_to"]
+                .as_str()
+                .unwrap_or("<none>")
+                .to_string(),
             "site" => {
                 let site = &answer["definition"][0];
                 format!(
@@ -346,6 +350,10 @@ fn check_refs(case: &str, line: &str, answer: &serde_json::Value, failures: &mut
     for (key, want) in pairs(line) {
         let got = match key.as_str() {
             "status" => answer["status"].as_str().unwrap_or("<none>").to_string(),
+            "resolves_to" => answer["resolves_to"]
+                .as_str()
+                .unwrap_or("<none>")
+                .to_string(),
             _ => answer["counts"][&key]
                 .as_i64()
                 .map(|n| n.to_string())

@@ -851,6 +851,18 @@ pub(crate) fn order(reference: &Reference) -> (u8, u8, String, u32) {
     )
 }
 
+/// The method a query about `owner` lands on, in Ruby's notation, and
+/// whether the owner inherits it rather than defining it.
+pub(crate) fn resolves_to(tree: &Tree, owner: &str, query: &Query) -> Option<(String, bool)> {
+    let method = tree.lookup_owned(owner, query.singleton, &query.name)?;
+    let defined_by = crate::tree::public_name(&method.owner);
+    let mark = if method.singleton { '.' } else { '#' };
+    Some((
+        format!("{defined_by}{mark}{}", query.name),
+        defined_by != crate::tree::public_name(owner),
+    ))
+}
+
 /// Where the queried method is defined, if the owner resolves.
 pub(crate) fn definition_of(tree: &Tree, query: &Query) -> (Option<String>, Vec<Site>) {
     let Some(written) = &query.owner else {
