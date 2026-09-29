@@ -346,6 +346,11 @@
   wherever `--json` sits on the line. The README's usage-error row no
   longer reads as if a flag before `--json` were itself an error.
 
+- **`--dead` counts the callers of a top-level `def`.** A spec/support
+  helper defined outside any class was `unreferenced` with clear confidence
+  while `--refs` listed its callers; an implicit call that finds no other
+  method of the name now counts as a possible caller (DEC-311).
+
 - **A development tool's patch on `Object` no longer hedges every missing
   method.** minitest's `infect_an_assertion` and pry's `__binding__` made
   every `no_such_method` on every class residue — "Object defines methods

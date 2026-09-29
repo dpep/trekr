@@ -8987,3 +8987,33 @@ module the checkout defines): flipper 430 residue of 476 → 73 (357 back to
 marker's reason had hidden), faraday 135 of 176 → 14 (121 back). Mastodon
 and once-campfire unchanged; rails 4,331 of 13,550 → 4,329, the two strings
 above that make no method on the class they are evaluated in.
+
+## DEC-311 — A top-level `def` is reached by an implicit call that finds nothing else
+
+**Decided.** A method defined at the top level — a spec/support helper, a
+script's — is Ruby's private method of `Object`. `--dead` asks about it with
+the top level as its owner, and a site is tiered against it by its receiver:
+
+- an implicit or `self.` call whose receiver's lookup finds no method of
+  the name is `possible` ("a method defined at the top level is every
+  object's");
+- one whose receiver has a method of its own by the name is excluded,
+  `different_owner`;
+- an explicit receiver is excluded: the method is private.
+
+**Why.** The 0.8.1 testers: mastodon's `mock_omniauth`
+(`spec/support/omniauth_mocks.rb:5`) was `unreferenced`, clear, while
+`--refs mock_omniauth` listed its two callers in
+`spec/requests/omniauth_callbacks_spec.rb`. The query named an owner of `""`,
+which no call's lookup ever lands on, so every site was excluded.
+
+**Not placed on `Object`.** The tree still gives no class a top-level
+method, and `--def` on such a call stays residue. Placing them would make a
+script's `def run` answer every implicit `run` in the checkout that finds
+nothing else — right when the script is loaded, a confident wrong answer
+when it is not — and `main`, where top-level calls run, is not typed at
+all. `--dead` only needs to know a call may reach the method, which
+`possible` says.
+
+**Measured.** `--dead spec/support lib/tasks` on mastodon: 27 candidates →
+26, `mock_omniauth` no longer listed.

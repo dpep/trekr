@@ -202,6 +202,47 @@ fn tier(
         return tier_super(tree, call, path, query, target);
     }
 
+    // A `def` at the top level is Object's, and private (DEC-311). trekr
+    // places it on no class, so an implicit call whose receiver has no
+    // method of the name is the one that may run it.
+    if target == Some("") {
+        let explicit = !matches!(
+            call.recv,
+            crate::core::RecvShape::Implicit | crate::core::RecvShape::SelfRecv
+        );
+        let receiver = super::receiver_of(tree, facts, call, path);
+        let found = receiver
+            .as_ref()
+            .and_then(|receiver| super::lookup_on(tree, call, receiver));
+        let receiver_type = receiver.map(|receiver| receiver.fqn);
+        return match found {
+            _ if explicit => here(
+                Tier::Excluded,
+                receiver_type,
+                None,
+                "a top-level method is private: an explicit receiver cannot call it",
+                0,
+                Some(Ruling::DifferentOwner),
+            ),
+            Some(found) => here(
+                Tier::Excluded,
+                receiver_type,
+                Some(found.owner),
+                "the receiver's type has a method of its own by this name",
+                0,
+                Some(Ruling::DifferentOwner),
+            ),
+            None => here(
+                Tier::Possible,
+                receiver_type,
+                None,
+                "a method defined at the top level is every object's",
+                1,
+                None,
+            ),
+        };
+    }
+
     // A group's own method, found through the group as `--def` finds it:
     // a `let`, a `def` in the group, a shared group's (DEC-113).
     if let Some(member) = super::example_member(tree, facts, call, path) {

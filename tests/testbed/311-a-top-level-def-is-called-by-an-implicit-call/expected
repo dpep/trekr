@@ -1,0 +1,6 @@
+# A top-level `def` — a spec/support helper — is a private method of Object:
+# any implicit call whose receiver has no method of that name may run it.
+# `--dead` asked about the top level as an owner no call could name, so a
+# helper two specs call was "unreferenced" with clear confidence. An explicit
+# receiver cannot call a private method, so it is still no caller.
+dead spec/support/helpers.rb #mock_widget=none #stub_label=unreferenced #unused_helper=unreferenced
