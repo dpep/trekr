@@ -153,6 +153,9 @@ pub(crate) fn repo_root(path: &Path) -> Result<PathBuf> {
             crate::core::paths::pretty(&dir.to_string_lossy())
         ))
     };
+    if let Some(root) = discover(dir) {
+        return Ok(root);
+    }
     let out = match git(dir, &["rev-parse", "--show-toplevel"]) {
         Err(e)
             if e.downcast_ref::<GitError>()
@@ -167,6 +170,102 @@ pub(crate) fn repo_root(path: &Path) -> Result<PathBuf> {
         return Err(not_a_repo().into());
     }
     Ok(PathBuf::from(path))
+}
+
+/// `git rev-parse --show-toplevel` without running git, for the plain case:
+/// the nearest ancestor holding a `.git` that is recognisably a repository,
+/// on the same filesystem, owned by us. Every query asks this, and the spawn
+/// was most of a fast one. `None` whenever git might answer differently —
+/// discovery steered by the environment, a `.git` it would not accept, a
+/// configured work tree, `safe.directory`'s ownership rule — and git decides.
+fn discover(dir: &Path) -> Option<PathBuf> {
+    use std::os::unix::fs::MetadataExt;
+    const STEERING: [&str; 4] = [
+        "GIT_DIR",
+        "GIT_WORK_TREE",
+        "GIT_DISCOVERY_ACROSS_FILESYSTEM",
+        "GIT_COMMON_DIR",
+    ];
+    if STEERING.iter().any(|var| std::env::var_os(var).is_some()) {
+        return None;
+    }
+    let start = std::fs::canonicalize(dir).ok()?;
+    // Inside a gitdir git refuses `--show-toplevel`; a walk would not.
+    if start.components().any(|c| c.as_os_str() == ".git") {
+        return None;
+    }
+    // Git never climbs into the nearest ceiling above where it starts.
+    let ceiling = std::env::var("GIT_CEILING_DIRECTORIES")
+        .unwrap_or_default()
+        .split(':')
+        .filter(|entry| !entry.is_empty())
+        .map(|entry| std::fs::canonicalize(entry).unwrap_or_else(|_| PathBuf::from(entry)))
+        .filter(|entry| *entry != start && start.starts_with(entry))
+        .max_by_key(|entry| entry.as_os_str().len());
+    let device = std::fs::metadata(&start).ok()?.dev();
+    let uid = unsafe { libc::geteuid() };
+    for candidate in start.ancestors() {
+        if ceiling.as_ref().is_some_and(|c| c.starts_with(candidate)) {
+            return None;
+        }
+        let meta = std::fs::metadata(candidate).ok()?;
+        // Git stops at a filesystem boundary unless told otherwise.
+        if meta.dev() != device {
+            return None;
+        }
+        let dot_git = candidate.join(".git");
+        let Ok(git_meta) = std::fs::symlink_metadata(&dot_git) else {
+            continue;
+        };
+        let gitdir = if git_meta.is_dir() {
+            dot_git
+        } else if git_meta.is_file() {
+            // A worktree's or submodule's `.git` names its gitdir.
+            let text = std::fs::read_to_string(&dot_git).ok()?;
+            let named = PathBuf::from(text.strip_prefix("gitdir:")?.trim());
+            candidate.join(named)
+        } else {
+            return None;
+        };
+        let common = match std::fs::read_to_string(gitdir.join("commondir")) {
+            Ok(text) => gitdir.join(text.trim()),
+            Err(_) => gitdir.clone(),
+        };
+        let recognised = gitdir.join("HEAD").is_file()
+            && common.join("objects").is_dir()
+            && common.join("refs").is_dir();
+        // `core.worktree`, `core.bare`, per-worktree config: git's to read.
+        let config = std::fs::read_to_string(common.join("config"))
+            .ok()?
+            .to_ascii_lowercase();
+        let plain = !config.contains("worktree") && !config.contains("bare = true");
+        let ours = uid != 0 && meta.uid() == uid && std::fs::metadata(&gitdir).ok()?.uid() == uid;
+        if !recognised || !plain || !ours {
+            return None;
+        }
+        return true_case(candidate);
+    }
+    None
+}
+
+/// The path as the filesystem spells it. `canonicalize` keeps a
+/// case-insensitive volume's typed case; git's answer, from `getcwd`, does not.
+#[cfg(target_os = "macos")]
+fn true_case(dir: &Path) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStrExt;
+    let file = std::fs::File::open(dir).ok()?;
+    let mut buf = vec![0u8; libc::PATH_MAX as usize];
+    let fd = std::os::unix::io::AsRawFd::as_raw_fd(&file);
+    if unsafe { libc::fcntl(fd, libc::F_GETPATH, buf.as_mut_ptr()) } == -1 {
+        return None;
+    }
+    let len = buf.iter().position(|b| *b == 0)?;
+    Some(PathBuf::from(std::ffi::OsStr::from_bytes(&buf[..len])))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn true_case(dir: &Path) -> Option<PathBuf> {
+    Some(dir.to_path_buf())
 }
 
 /// A cheap fingerprint of git's own view of the checkout (DEC-035).
@@ -346,6 +445,99 @@ mod tests {
             "recursive, Ruby only, and scoped to the subdirectory asked for"
         );
         assert_eq!(files["lib/a.rb"], hash_blob(b"class A; end\n"));
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn finds_the_root_git_would_name_or_leaves_it_to_git() {
+        let temp = std::env::temp_dir().join(format!("trekr-discover-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        let git = |dir: &Path, args: &[&str]| {
+            let ok = Command::new("git")
+                .args(args)
+                .current_dir(dir)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .output()
+                .unwrap()
+                .status
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        let main = temp.join("main");
+        std::fs::create_dir_all(main.join("lib/deep")).unwrap();
+        std::fs::create_dir_all(main.join("inner/sub")).unwrap();
+        std::fs::write(main.join("lib/a.rb"), "class A; end\n").unwrap();
+        git(&main, &["init", "-q"]);
+        git(
+            &main,
+            &[
+                "-c",
+                "user.name=x",
+                "-c",
+                "user.email=x@x",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "x",
+            ],
+        );
+        git(&main.join("inner"), &["init", "-q"]);
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "--detach",
+                temp.join("wt").to_str().unwrap(),
+            ],
+        );
+        std::fs::create_dir_all(temp.join("wt/lib")).unwrap();
+        let toplevel = |dir: &Path| {
+            let out = Command::new("git")
+                .args(["rev-parse", "--show-toplevel"])
+                .current_dir(dir)
+                .output()
+                .unwrap();
+            PathBuf::from(String::from_utf8(out.stdout).unwrap().trim())
+        };
+
+        for dir in [
+            main.clone(),
+            main.join("lib/deep"),
+            main.join("inner/sub"),
+            temp.join("wt/lib"),
+        ] {
+            assert_eq!(discover(&dir), Some(toplevel(&dir)), "{}", dir.display());
+            assert_eq!(repo_root(&dir.join("x.rb")).unwrap(), toplevel(&dir));
+        }
+        // On a case-insensitive volume, the case git reports, not the typed one.
+        let shouted = temp.join("MAIN/lib");
+        if shouted.is_dir() {
+            assert_eq!(discover(&shouted), Some(toplevel(&main)));
+        }
+        // A ceiling between the start and the repository hides it, from both.
+        let before = std::env::var_os("GIT_CEILING_DIRECTORIES");
+        unsafe { std::env::set_var("GIT_CEILING_DIRECTORIES", &main) };
+        assert_eq!(discover(&main.join("lib/deep")), None);
+        assert!(repo_root(&main.join("lib/deep")).is_err());
+        assert_eq!(
+            discover(&main),
+            Some(toplevel(&main)),
+            "the start itself is looked at"
+        );
+        match before {
+            Some(value) => unsafe { std::env::set_var("GIT_CEILING_DIRECTORIES", value) },
+            None => unsafe { std::env::remove_var("GIT_CEILING_DIRECTORIES") },
+        }
+        // A gitdir itself is git's call, and git says no.
+        assert_eq!(discover(&main.join(".git/objects")), None);
+        // A `.git` git would not accept: leave it to git, which refuses it.
+        let fake = temp.join("fake");
+        std::fs::create_dir_all(fake.join(".git")).unwrap();
+        assert_eq!(discover(&fake), None);
+        assert!(repo_root(&fake).is_err());
         let _ = std::fs::remove_dir_all(&temp);
     }
 

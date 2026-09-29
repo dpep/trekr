@@ -31,6 +31,13 @@
 
 ### Changed
 
+- **Queries find their checkout without starting git.** The checkout a query
+  or an outline is about is read off the disk — the nearest `.git` that is
+  recognisably a repository — and git is still asked whenever its answer
+  could differ (`GIT_DIR` and friends set, a configured work tree, another
+  user's directory, a filesystem boundary). That fork was most of a fast
+  answer: `--symbols --json` 22 → 14 ms, level with rq's (DEC-190).
+
 - **`--status` in a checkout nobody indexed exits `2` with `status:
   not_indexed`**, the answer a query from there gives, where it listed
   another checkout as `checkouts[0]` and exited `0`. `checkouts` is `[]`;

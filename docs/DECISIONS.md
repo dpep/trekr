@@ -6641,3 +6641,63 @@ stdlib also writes — 19 in all: `Set`'s 16, `Kernel#pp`,
 as real source should, and without this `set.size.even?` lost the
 `Integer` the stub had given `size`. A gem's override of a core method does
 not borrow: it may return something else.
+
+## DEC-190 — A checkout's root is read off the disk, not asked of git
+
+**Decided.** `scan::repo_root` walks up from the path to the nearest `.git`
+it recognises — a directory with `HEAD`, `objects` and `refs`, or a
+worktree's `gitdir:` file pointing at one — and returns that directory as the
+filesystem spells it (`F_GETPATH` on macOS, since `canonicalize` keeps a typed
+case where git's `getcwd` does not). It hands the question to `git rev-parse
+--show-toplevel`, as before, whenever git might answer differently: `GIT_DIR`,
+`GIT_WORK_TREE`, `GIT_COMMON_DIR` or `GIT_DISCOVERY_ACROSS_FILESYSTEM` set; a
+`.git` it would not accept; a config naming a work tree, a bare repository or
+per-worktree config; a directory owned by someone else (`safe.directory`); a
+filesystem boundary crossed; a path inside the gitdir itself; or no `.git`
+found at all, so every refusal is still git's own. `GIT_CEILING_DIRECTORIES`
+is honoured rather than deferred: the walk stops below the nearest ceiling
+above the start, which is git's rule, and this machine's shell sets one.
+
+**Why, measured.** The user's report: `--symbols` was "surprisingly slow per
+unit of output and much slower than rq's". It already parsed the file fresh
+rather than reading the store, so "just parse fresh" was already the design. Timed inside the process on rails'
+`associations.rb`: parse 0.9–2.2 ms, emit 0.1–0.2 ms, store open and roots
+1–4 ms, and **`git rev-parse` 16–23 ms**. The text outline never asked git and
+was already rq's speed; `--json` asks where the file sits, and the fork was
+most of its answer. Every other query asks the same question for its
+checkout, so each paid it too.
+
+Rails, a store holding rails, discourse and mastodon with their gems, each
+build answering from its own store, 21 interleaved rounds, medians (p90), load
+6–7 from other work:
+
+| | before | after | rq 0.59 |
+| --- | ---: | ---: | ---: |
+| `--symbols associations.rb --json` | 21.8 ms (25.4) | **13.7 ms** (16.3) | 12.1 ms (15.2) |
+| `--symbols associations.rb` (text) | 11.4 ms (12.2) | 11.3 ms (11.7) | 12.4 ms (13.1) |
+| `--ancestors ActiveRecord::Base` | 38.7 ms (47.4) | **30.6 ms** (35.6) | |
+| `--def base.rb:300:5` | 57.0 ms (65.9) | **40.9 ms** (47.4) | |
+| `--refs ActiveRecord::Persistence#save` | 290 ms (371) | 283 ms (358) | |
+
+Each store's snapshot was warm, so the `--ancestors` and `--def` rows differ
+by the fork alone. What is left of an outline is the process: a `true`
+spawned the same way takes 7–9 ms.
+
+**Checked.** The root is part of every JSON answer (`root`), so equivalence is
+the claim: `--symbols` byte-identical to the previous build in 1,104
+comparisons (184 files across rails, discourse, two installed gems and a file
+in no repository; `--json`, `--ndjson` and text; from inside the checkout and
+from `/tmp`). A unit test holds the walk equal to `git rev-parse` on a plain
+repository and a nested directory, a repository nested inside another, a
+linked worktree, and a typed-in wrong case on a case-insensitive volume, and
+requires `None` — git decides — for a gitdir, an unrecognisable `.git`, and a
+ceiling between the start and the repository. The gold sets, the rails
+`--refs` differential, `--dead` and the click replay are unchanged (DEC-192
+lists them).
+
+**Rejected: opening the store read-only for `--symbols`.** An outline opens
+the store only to learn which indexed checkout holds the file; a read-only,
+no-migration open would save 1–2 ms and stop an outline from rebuilding a
+store of another schema version. Every other command rebuilds it the same
+way, so an outline is not the place to change that, and the milliseconds are
+inside the noise of a process spawn.
