@@ -5945,7 +5945,7 @@ caller is now counted.
 DEC-081's amendment made a `self` call with overrides `ambiguous`, and doing
 so for a bound is its own decision, with gold verdicts to move. A module a
 subclass of the bound includes is not counted, as DEC-081's amendment counts
-a module's includers.
+a module's includers. *DEC-213 counts it.*
 
 *Reverses if:* a guard — `case node when Scalar`, `is_a?` — ever narrows a
 receiver per site, which would tighten the bound there.
@@ -6347,7 +6347,7 @@ it where it was "no such method".
 **Not done.** A macro called from `included do`, from a block, or from a
 class method is not a body call. Reading the macro's string at each caller,
 with the names substituted, is DEC-163's, and only where both are in one
-file.
+file. *DEC-212 makes a string macro's methods at a caller in another file.*
 
 ## DEC-163 — A string of code is read with the names it is handed, and its calls with them
 
@@ -6396,6 +6396,8 @@ where no value fills it, caveated 51 activerecord methods.
 **Not done.** A macro in another file is marked (DEC-162), not read: its
 string would have to be stored, and rendered by the tree. A subclass calling
 its parent's class method, and a call in `included do`, are not read here.
+*DEC-212 makes its `def`s from the marker's shapes; its calls still need the
+string.*
 
 ## DEC-164 — One string makes at most 2,000 methods, a file 20,000
 
@@ -6490,7 +6492,7 @@ convention-only or unreferenced to single-caller. mastodon unchanged.
 
 **Not done.** `--def` on `Person.delete_by` still answers the delegate, which
 is the declaration a reader clicks through; it could name the relation's
-method as well. `to: :class` and a `to:` constant are untyped.
+method as well. *DEC-211 does.* `to: :class` and a `to:` constant are untyped.
 
 ## DEC-167 — An editor answers inside a string of code trekr reads
 
@@ -7365,7 +7367,9 @@ verdicts (5 correct → wrong, e.g. `Event.new` answering sorbet's
 `ClassOverride#new`; 6 correct → residue, `synchronize`, `Map#delete`) and
 graph_weaver's 2, confidently wrong 19 → 24 and 2 → 3. With it, none.
 
-**Measured** (against main 92b9622). Every gold verdict unchanged in all five
+**Measured** (against main 92b9622; the same moves again on 99a11f7, with
+DEC-220's stubs, where widget_shop's gem ranking goes #1 8.7 % → 12.8 % on
+716 → 720 offered). Every gold verdict unchanged in all five
 sets; one widget_shop gem site's confidence moves 0.25 → 0.33. What moves is
 residue and ambiguous candidates' order where two share an owner: the gem's
 real `def` now lists ahead of the app's tapioca `.rbi` stub of it, as it
