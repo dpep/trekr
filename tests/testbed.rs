@@ -391,14 +391,31 @@ fn check_dead(case: &str, line: &str, answer: &serde_json::Value, failures: &mut
     }
     for (method, want) in pairs(line) {
         let (owner, name) = method.rsplit_once('#').unwrap_or(("", &method));
-        let got = rows
+        // `tier~word`: the row's caveat must also contain `word`, `tier~` that
+        // it has none.
+        let (want, caveat) = match want.split_once('~') {
+            Some((tier, word)) => (tier.to_string(), Some(word.to_string())),
+            None => (want.clone(), None),
+        };
+        let row = rows
             .iter()
-            .find(|row| row["owner"] == owner && row["name"] == name)
-            .and_then(|row| row["tier"].as_str())
-            .unwrap_or("none");
+            .find(|row| row["owner"] == owner && row["name"] == name);
+        let got = row.and_then(|row| row["tier"].as_str()).unwrap_or("none");
         if got != want {
             failures.push(format!(
                 "{case}: {line}\n      {method}: expected `{want}`, got `{got}`"
+            ));
+        }
+        let said = row.and_then(|row| row["caveat"].as_str()).unwrap_or("");
+        let fits = match caveat.as_deref() {
+            None => true,
+            Some("") => said.is_empty(),
+            Some(word) => said.contains(word),
+        };
+        if !fits {
+            failures.push(format!(
+                "{case}: {line}\n      {method}: expected a caveat with `{}`, got `{said}`",
+                caveat.unwrap_or_default()
             ));
         }
     }

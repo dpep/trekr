@@ -979,6 +979,78 @@ pub(crate) fn liveness(found: &[Reference], counts: &Counts) -> Liveness {
     }
 }
 
+/// Who calls a protocol hook by its name, which no call site writes: Ruby
+/// core's conversions and hooks, the stdlib's serializers, and Rails'
+/// helpers (DEC-315). `None` for the side it is not a hook on.
+pub(crate) fn protocol_hook(name: &str, singleton: bool) -> Option<&'static str> {
+    const INSTANCE: &[(&str, &str)] = &[
+        ("marshal_dump", "Marshal"),
+        ("marshal_load", "Marshal"),
+        ("_dump", "Marshal"),
+        ("init_with", "YAML (Psych)"),
+        ("encode_with", "YAML (Psych)"),
+        ("to_s", "string interpolation"),
+        ("inspect", "`p` and `inspect`"),
+        ("pretty_print", "`pp`"),
+        ("pretty_print_cycle", "`pp`"),
+        ("hash", "Hash, for a key"),
+        ("eql?", "Hash, for a key"),
+        ("==", "`==` and `!=`"),
+        ("<=>", "Comparable and `sort`"),
+        ("===", "`case`"),
+        ("=~", "`case` and `!~`"),
+        ("each", "Enumerable"),
+        ("call", "`.()` and anything handed a callable"),
+        ("to_proc", "`&`"),
+        ("coerce", "Numeric arithmetic"),
+        ("to_str", "an implicit String conversion"),
+        ("to_ary", "an implicit Array conversion"),
+        ("to_hash", "an implicit Hash conversion and `**`"),
+        ("to_int", "an implicit Integer conversion"),
+        ("to_io", "IO"),
+        ("to_path", "File and Pathname"),
+        ("respond_to_missing?", "`respond_to?`"),
+        ("method_missing", "Ruby's dispatch"),
+        ("initialize_copy", "`dup` and `clone`"),
+        ("initialize_dup", "`dup`"),
+        ("initialize_clone", "`clone`"),
+        ("to_param", "Rails' URL helpers"),
+        ("to_partial_path", "`render`"),
+        ("to_model", "Rails' form and URL helpers"),
+        ("to_key", "Rails' `dom_id`"),
+        ("model_name", "Rails' form, URL and i18n helpers"),
+        ("persisted?", "Rails' form and URL helpers"),
+        ("to_attachable_partial_path", "Action Text"),
+        ("as_json", "`to_json` and `render json:`"),
+        ("to_json", "`render json:`"),
+        ("serializable_hash", "ActiveModel serialization"),
+        ("cache_key", "Rails' cache helpers"),
+        ("cache_key_with_version", "Rails' cache helpers"),
+        ("cache_version", "Rails' cache helpers"),
+        (
+            "read_attribute_for_serialization",
+            "ActiveModel serializers",
+        ),
+        ("read_attribute_for_validation", "ActiveModel validations"),
+        ("perform", "a job runner (`perform_later`, Sidekiq)"),
+    ];
+    const SINGLETON: &[(&str, &str)] = &[
+        ("_load", "Marshal"),
+        ("inherited", "Ruby, when it is subclassed"),
+        ("included", "`include`"),
+        ("extended", "`extend`"),
+        ("prepended", "`prepend`"),
+        ("method_added", "Ruby, when a method is defined"),
+        ("const_missing", "constant lookup"),
+        ("model_name", "Rails' form, URL and i18n helpers"),
+    ];
+    let table = if singleton { SINGLETON } else { INSTANCE };
+    table
+        .iter()
+        .find(|(hook, _)| *hook == name)
+        .map(|(_, caller)| *caller)
+}
+
 /// Sort key: tier, then proximity within it, then source order.
 pub(crate) fn order(reference: &Reference) -> (u8, u8, String, u32) {
     (

@@ -189,8 +189,12 @@ it; a candidate in another tier that overrides one is graded `lower`.
 Every row says which, in words, and the last line counts them (`summary` in
 JSON). It is one pass and does not cascade: a method
 whose only caller is itself a candidate is `single-caller`, not
-`unreferenced`, and its reason says so. trekr does not read ERB, so a method
-used only from a view looks unreferenced.
+`unreferenced`, and its reason says so. Two callers it cannot see are named
+on the row, in `caveat`, and grade it `lower`: a view template, which trekr
+does not read ("named in a view (app/views/…), which is not read", when a
+template's Ruby writes the name), and Ruby or Rails calling a protocol hook
+by name ("a hook Marshal calls by name": `marshal_load`, `to_partial_path`,
+`each`, `perform`, … — DEC-315).
 
 The bare forms are sugar: a position is `--def`, and `Owner#method` or a
 `Constant` is a **card** — a summary with the definition and, for a method,

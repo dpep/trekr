@@ -1,0 +1,6 @@
+# `--dead` cannot see two kinds of caller, and said so only in the README:
+# a view template, which it does not read, and Ruby or Rails calling a
+# protocol hook by name (`Marshal` calls `marshal_load`, `render` calls
+# `to_partial_path`). Each row now says which it may be. A name only in a
+# template's markup or an ERB comment is no evidence.
+dead app/models/widget.rb Widget#display_title=single-caller~view Widget#marshal_load=unreferenced~Marshal Widget#to_partial_path=unreferenced~render Widget#each=unreferenced~Enumerable Widget#lonely=unreferenced~ Widget#quiet=unreferenced~

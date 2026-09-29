@@ -73,6 +73,14 @@
 
 ### Changed
 
+- **`--dead` says on the row when a view or a protocol hook may call a
+  method.** A candidate whose name a view template's Ruby writes (ERB,
+  Haml, Slim, Jbuilder) says "named in a view (…), which is not read", and
+  one Ruby or Rails calls by name — `marshal_load`, `to_partial_path`,
+  `each`, a job's `perform` — says "a hook … calls by name". Both grade it
+  `lower`; the tier is unchanged. ndjson rows carry them in `caveat`
+  (DEC-315).
+
 - **`--refs` counts a call of a method the owner inherits.** Asked about
   `Child#save` where only `Base` defines `save`, a call on a `Child` or a
   subclass is `confirmed` where it was excluded as `different_owner`; a

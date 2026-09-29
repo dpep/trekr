@@ -8,6 +8,7 @@
 mod failure;
 pub(crate) mod position;
 mod profile;
+mod views;
 
 use failure::{Failure, Tag};
 
@@ -2970,6 +2971,7 @@ fn dead_in(
 
     // The expensive pass, only for names the cheap one could not clear.
     let tree = build_tree(store, &root_str)?;
+    let views = views::Views::read(root);
     let mut parsed = Parsed::new();
     for (file, def, risky) in &defined {
         let written = written_calls.get(&def.name).copied().unwrap_or(0);
@@ -3036,6 +3038,19 @@ fn dead_in(
                 risky.push_str(", ");
             }
             risky.push_str(&format!("overrides {}", overrides.join(", ")));
+        }
+        // Callers `--dead` cannot see, named where it can say which (DEC-315).
+        if let Some(caller) = refs::protocol_hook(&def.name, def.singleton) {
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            risky.push_str(&format!("a hook {caller} calls by name"));
+        }
+        if let Some(template) = views.naming(&def.name) {
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            risky.push_str(&format!("named in a view ({template}), which is not read"));
         }
         let reason = match (tier, &caller) {
             ("unreferenced", _) => "no call, symbol or `super` names it".to_string(),

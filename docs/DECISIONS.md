@@ -9096,3 +9096,64 @@ every other Kernel method in such a module.
 **Not `BasicObject`.** A module mixed only into a `BasicObject` subclass
 (a proxy) has no `Kernel`; that is rare enough, and says itself by
 `method_missing`, that the fallback takes `Object`.
+
+## DEC-315 — `--dead` names the callers it cannot see, per row
+
+**Decided.** Two blind spots the README stated are now said on each row they
+touch, in `caveat`, which grades the row `lower`:
+
+- **A view template.** trekr reads no templates. `--dead` lists the
+  checkout's `*.erb`, `*.haml`, `*.slim`, `*.jbuilder`, `*.rabl` and
+  `*.builder` files (`git ls-files`) and takes the identifiers of the Ruby
+  they run: an ERB tag's inside, less `<%#` comments; a Haml or Slim line
+  that starts with `-`/`=`, what follows a tag's `=`, `{` or `(`, and every
+  `#{…}`; a Jbuilder file whole. A string's text is not a name (`t(".edit")`
+  is an i18n key), its `#{…}` is. A candidate whose name is among them says
+  "named in a view (app/views/…), which is not read", naming the first
+  template. It is evidence of a name, not of a caller: no receiver is typed,
+  so the tier stays.
+- **A protocol hook.** A method Ruby or Rails calls by its name, which no
+  call site writes, says "a hook *caller* calls by name"
+  (`resolve::refs::protocol_hook`). The list, with who calls each:
+  - Marshal: `marshal_dump`, `marshal_load`, `_dump`, `self._load`;
+    YAML (Psych): `init_with`, `encode_with`; `pp`: `pretty_print`,
+    `pretty_print_cycle`.
+  - Ruby's operators and conversions: `to_s` (interpolation), `inspect`
+    (`p`), `hash` and `eql?` (a Hash key), `==`, `<=>` (Comparable, `sort`),
+    `===` and `=~` (`case`), `each` (Enumerable), `call` (`.()`, anything
+    handed a callable), `to_proc` (`&`), `coerce` (Numeric arithmetic), the
+    implicit conversions `to_str`, `to_ary`, `to_hash`, `to_int`, `to_io`,
+    `to_path`.
+  - Ruby's dispatch and hooks: `method_missing`, `respond_to_missing?`,
+    `initialize_copy`/`_dup`/`_clone`, and on the class side `inherited`,
+    `included`, `extended`, `prepended`, `method_added`, `const_missing`.
+  - Rails: `to_param` (URL helpers), `to_partial_path` (`render`),
+    `to_model`, `persisted?` and `model_name` (form, URL and i18n helpers),
+    `to_key` (`dom_id`), `to_attachable_partial_path` (Action Text),
+    `as_json` and `to_json` (`render json:`), `serializable_hash`,
+    `cache_key`, `cache_key_with_version`, `cache_version` (cache helpers),
+    `read_attribute_for_serialization`, `read_attribute_for_validation`,
+    and a job's `perform` (`perform_later`, Sidekiq).
+
+  The sources are each caller's own contract: Ruby's `Marshal`, `Psych`,
+  `PP`, `Comparable`, `Enumerable`, `Numeric#coerce` and the implicit
+  conversion protocol (`doc/implicit_conversion.rdoc`); ActiveModel's
+  `Conversion`, `Naming` and `Serialization`; ActionText's `Attachable`;
+  ActiveSupport's JSON encoding and `ActiveSupport::Cache`'s key expansion;
+  ActiveJob's `perform_now`. Many of these are already `override` where
+  core's or ActiveSupport's own definition is indexed (DEC-121); the caveat
+  is for the rest.
+
+**Measured, and why not a blanket caveat.** The first idea was to caveat
+every method in `app/models`, `app/helpers` and presenters of an app with
+`app/views`: mastodon 754 rows, once-campfire 189. Reading the templates
+names 397 and 69, and a sample of each is a helper, a predicate or an
+attribute the template does call (`FlashesHelper#user_facing_flashes`,
+`ApplicationHelper#render_initial_state`, `ApplicationPlatform#chrome?`,
+`MessagesHelper#message_timestamp`). What it cannot tell apart is a
+controller action whose name a template also writes (`edit`, `disable`),
+which is already `convention-only` or `super-only`. Rails' `--dead
+activerecord/lib activemodel/lib actionpack/lib` gains 21 (actionpack's test
+fixtures are templates), activerecord alone none. Protocol hooks: rails 38
+rows, activerecord 49, mastodon 12, once-campfire 7. Tiers are unchanged;
+`clear` falls on mastodon 2,837 → 2,525 and once-campfire 330 → 258.

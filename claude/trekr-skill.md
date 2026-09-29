@@ -282,9 +282,12 @@ break: a private candidate's evidence is complete, a public one's is not.
 discourse's history, `unreferenced` candidates were deleted 19.8 % of the time
 against a 19.0 % base rate — no lift. Treat a candidate as *"nothing was found,
 here is what was checked"*, weigh `confidence` (`clear`, or `lower` when the
-file uses `send`, `method_missing` and the like — `caveat` names them), and
-remember trekr does not read ERB templates, so a method called
-only from a view looks unreferenced.
+file uses `send`, `method_missing` and the like — `caveat` names them). trekr
+does not read view templates: a row whose name a template's Ruby writes says
+"named in a view (…), which is not read", and a protocol hook Ruby or Rails
+calls by name (`marshal_load`, `to_partial_path`, `each`, a job's `perform`)
+says "a hook … calls by name". A method called only from a view whose
+template does not spell it still looks unreferenced.
 
 ## Two more
 
