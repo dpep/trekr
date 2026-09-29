@@ -6607,14 +6607,6 @@ its core is that Ruby's (DEC-240).
 *Amended:* the opt-in extensions (`json/add/`) are left out of a bundled
 gem's `lib/` as they are out of the stdlib: an app that bundles json was
 told `Time#to_json` is `json/add/time.rb`'s, which it never requires.
-The stdlib's stubs are its copy too (DEC-220): a class only the stub
-declares, in a namespace only the hidden files open, is left out for an app
-that bundles the gem, which declares its own. A bundled json 2.21 showed
-`JSON::Pure`, which json 2.x no longer has. The stub's compiled methods
-stay: the gem's copy compiles the same extension, and the Ruby's RBS is the
-nearest word on it. The namespace is the unit, so a stub class another
-library declares in that namespace goes too: the stub does not record which
-library wrote each class.
 
 ## DEC-181 — A stdlib class that is partly compiled hedges a name its Ruby lacks
 
@@ -8621,3 +8613,31 @@ medians (max): `Persistence#save` 93 (100) → 44 (46) ms, `Validations#valid?`
 106 (108) → 66 (68), `QueryMethods#where` 126 (140) → 70 (74),
 `FinderMethods#find` 112 (119) → 60 (62), `Cache::Store#fetch` 64 (66) → 38
 (40), `Callbacks#run_callbacks` 6.5 → 5.5. Every answer is identical.
+
+## DEC-265 — A bundled default gem does not hide the stdlib's stub classes
+
+**Rejected.** The 0.8.1 hunt found `JSON::Pure` resolving from the stdlib
+stub in an app that bundles json 2.21, which has no such class, and asked
+DEC-180's shadowing to cover the stubs. Built and measured: a stub-only
+class was left out when its outermost namespace is opened only by stdlib
+files the app hides. It fixed `JSON::Pure` and took 110 classes from
+mastodon's tree, 104 of them ones its bundled copies really have — every
+`OpenSSL::*` class the extension or `const_set` makes
+(`OpenSSL::Cipher::AES`, `OpenSSL::Digest::SHA256`, `OpenSSL::PKey::PKey`),
+because mastodon bundles openssl, and `Socket::AncillaryData` and friends,
+because bundled `ipaddr.rb` reopens `Socket`.
+
+**Why it cannot be done this way.** `JSON::Pure` is not the bundled copy's
+problem: rbs 3.8's json signatures still declare it, and Ruby 3.4's own json
+2.9 has no `JSON::Pure` either, so every app on that Ruby resolves it. A
+stub class the RBS declares and no Ruby file does is either made in C, made
+at runtime (`const_set("AES#{keylen}", …)`), or stale in the RBS, and
+nothing the index reads tells the three apart: the extension binary names
+`State` and `Parser` but not `AES128`, and the Ruby spells `AES` only
+inside an interpolation. Hiding by namespace trades one stale class for a
+hundred real ones.
+
+**Reverses if** the stub records which library each class comes from and
+there is evidence a class is stale — the rbs gem marking deprecations, or a
+Ruby run once at index time to list what an extension defines.
+

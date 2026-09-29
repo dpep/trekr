@@ -492,8 +492,7 @@ stay), irb, rdoc, reline, did_you_mean, error_highlight, syntax_suggest,
 prism, the VM's compiler — and so are files that define methods on every
 object only when an app opts in (`json/add/*`, `psych/y.rb`,
 `objspace/trace.rb`) or at all (`un.rb`, `mkmf.rb`): the list is
-`gems::stdlib::SKIPPED`. Ruby 3.4's is 179 of 981 files. The opt-in
-extensions are left out of a bundled gem's `lib/` too (`stdlib::opt_in`).
+`gems::stdlib::SKIPPED`. Ruby 3.4's is 179 of 981 files.
 
 Part of the stdlib belongs to default gems — json 2.9.1 is `json.rb` and
 `json/**` — and an app may bundle its own copy of one. The index reads each
@@ -502,11 +501,8 @@ default gem's `s.files` from the gemspec rubygems wrote for it into
 hides, per app, the stdlib files of every default gem that app bundles by
 name (`Store::tree_roots`), so it sees one `JSON`: its own. Deciding it at
 tree time from the app's own `gem_use` is what keeps it independent of which
-app indexed the stdlib, or indexed last. The stub classes in a namespace
-only those hidden files open are hidden with them
-(`Store::hidden_declarations`): `JSON::Pure` is the stdlib's copy's. A
-lockfile naming a default gem at the version the stdlib ships finds it
-there (`gems.from_stdlib`).
+app indexed the stdlib, or indexed last. A lockfile naming a default gem at
+the version the stdlib ships finds it there (`gems.from_stdlib`).
 
 Much of the stdlib is C with a Ruby half: `pathname.rb` loads
 `pathname.so`, and `Pathname#exist?` is in no Ruby file. Indexing lists the

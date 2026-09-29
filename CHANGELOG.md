@@ -284,11 +284,6 @@
   `StringIO.new(s).read` resolves where it was "no indexed constant"
   (DEC-262).
 
-- **A default gem the app bundles hides the stdlib's stub classes too.** A
-  class only the stdlib's RBS stub declares — `JSON::Pure`, which json 2.x
-  no longer has — no longer resolves in an app that bundles its own json
-  (DEC-180).
-
 - **A bundled json gem no longer gives every object `to_json` from
   `json/add/`.** The opt-in extensions the stdlib's copy leaves out are left
   out of the gem too, so `Time.now.to_json` no longer lands on
