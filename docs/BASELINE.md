@@ -2774,3 +2774,34 @@ nothing untyped. accord lost 35 correct answers, widget_shop's floor 21, and
 529 rails `--refs` sites went excluded → possible; DEC-137 first typed
 `self.class` in a module too, and widget_shop's floor gained three
 confidently wrong answers. Both are narrowed as their decisions say.
+
+## A declared type is a bound (2026-09-28)
+
+DEC-140 against main at 9289bd0 (0.8.0), each build on stores it indexed
+itself: the four gold sets (`APP_SAMPLE=600 SAMPLE=300 SEED=12`),
+widget_shop's 2,987-site trace, rails' 40 `--refs` queries, `--dead` on
+rails (activerecord, activemodel, actionpack `lib`) and on an
+activerecord-only store, `script/clicks.py` over the same 13 repositories
+— and, because none of those exercises a bound much, a `--refs` sweep: every
+rails method under a `lib/` whose owner has a superclass and whose name
+another owner defines (3,478 queries), and every method graph_weaver
+defines (2,090).
+
+| | main | DEC-140 |
+| --- | ---: | ---: |
+| gold sets, widget_shop, clicks (21,154) | | unchanged |
+| rails `--refs`, 40 queries | | unchanged |
+| rails sweep, sites excluded → possible | | **1,007** in 122 queries |
+| graph_weaver sweep, sites excluded → possible | | **281** in 82 queries |
+| rails `--dead` candidates / `override` | 2,281 / 70 | **2,279 / 67** |
+| activerecord-only `--dead` candidates / `override` | 1,613 / 38 | **1,611 / 34** |
+
+No site moved from or to confirmed. By the bound's type, rails' moves are
+`Hash` 422, `String` 180, `Exception` 109, `Object` 74,
+`ActiveModel::Attribute` 41, `Array` 40, and a tail of app classes;
+`HashWithIndifferentAccess#[]`, the query that moves most, goes 8,337 →
+8,457 possible. The `--dead` moves are `has_default?` on the SQLite3 and
+PostgreSQL `Column`s (`column.has_default?` in the schema dumper),
+`MismatchedForeignKey#set_query` (`rescue StatementInvalid => ex`) and
+`DecorationRegistration#matches?`. `--dead` on rails takes as long as
+before, 1.5 s either way.
