@@ -523,6 +523,14 @@ index's only job here is to say which files are worth opening, so it keeps
 a posting list — which names each blob calls, and how often — and no call
 site at all (DEC-193).
 
+Files are parsed on the pool and tiered on one thread, because the tree is a
+`RefCell`. The next chunk parses while this one is tiered (DEC-205), and a
+file whose calls may need a local's flow gets that analysis beside its parse
+(DEC-204). What tiering asks the tree per site — what a name's definitions
+return, the definitions themselves, a lookup, a class side's chain — is
+memoized on the tree, each a function of it once the name is loaded
+(DEC-201–203).
+
 ### `store/` — SQLite, WAL, no cleverness
 
 Schema in [`src/store/schema.rs`](../src/store/schema.rs); it is the authority

@@ -70,11 +70,20 @@
   answer after such a save maps the snapshot instead of reassembling it
   (DEC-194).
 
-- **A question about a call inside a module is faster in a large repo.**
-  Finding which classes mix a module in linearized every class's whole
-  ancestry afresh; each chain is now built once. `--def` on `respond_to?`
-  inside `ActiveSupport::Tryable`: rails 0.40 → 0.18 s, mastodon 0.46 →
-  0.28 s, and minutes to seconds on a 100k-file checkout (DEC-200).
+- **A question about a call inside a module is faster, most of all in a
+  large repo.** Finding which classes mix a module in linearized every
+  class's whole ancestry afresh; each chain is now built once. `--def` on
+  `respond_to?` inside `ActiveSupport::Tryable`: rails 0.30 → 0.06 s,
+  mastodon 0.27 → 0.08 s, a 100k-file checkout ten minutes → 0.5 s
+  (DEC-200).
+
+- **`--refs` on a much-called method is faster.** What a name's
+  definitions return, each name's definitions, method lookups and class-side
+  lookup chains are worked out once per query rather than at every call
+  site, the local flow analysis runs on the parse workers, and the next
+  files are parsed while the last are tiered. rails' 51-query `--refs` set
+  21.9 → 10.6 s; `--refs 'Hash#[]'` over a 100k-file checkout's 441k
+  call sites 460 → 15 s (DEC-201–205).
 
 - **`--status` in a checkout nobody indexed exits `2` with `status:
   not_indexed`**, the answer a query from there gives, where it listed

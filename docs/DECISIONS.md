@@ -7016,25 +7016,38 @@ names in both orders and failed before (a chain cached from inside another
 name's walk answered for later askers).
 
 **Measured.** Every class's and module's chain, instance and singleton, in
-one tree (`src/tree/dump.rs`), forward and reverse order, against the build
-before — release, one run each, load 7–15 on 8 cores:
+one tree (`src/tree/dump.rs`), forward and reverse order, against main
+(DEC-195's build) — release, one run each, load 7–23 from other work:
 
 | corpus | names | before | after | differ |
 | --- | ---: | ---: | ---: | ---: |
-| rails | 9,699 | 437 ms | 210–291 ms | 0 |
-| mastodon | 16,825 | 543 ms | 229–331 ms | 0 |
-| c100k (100k files, no gems) | 72,176 | 479 s | 2.8–4.1 s | 1 |
+| rails | 9,699 | 2.7 s | 0.3–1.1 s | 0 |
+| mastodon | 16,825 | 2.0 s | 0.3–1.4 s | 0 |
+| 100k files (DEC-195's corpus, no gems) | 72,176 | 649 s | 3.6–4.5 s | 1 |
 
 The one is `Kramdown::Parser::Kramdown`, above. Forward and reverse orders
 give identical dumps. 9 of rails' 9,715 memoized chains close a cycle,
-10 of mastodon's, 42 of c100k's.
+10 of mastodon's, 42 of the 100k corpus's.
 
-The pass that finds a module's includers linearizes every class; a `--def`
-inside a module pays it (`respond_to?` in `ActiveSupport::Tryable`, 7
-interleaved rounds, load 7–7.7): rails 0.40 → 0.18 s median (p90 0.42 →
-0.19), mastodon 0.46 → 0.28 s (p90 0.46 → 0.28). Outputs byte-identical, as
-are every gold set, the rails `--refs` 40- and 51-query sets, `--dead` on
-rails, activerecord and mastodon, and `make clicks`.
+The pass that finds a module's includers linearizes every class, and a
+`--def` inside a module pays it: `respond_to?` in `ActiveSupport::Tryable`,
+each build on its own store (DEC-192), medians (p90) of interleaved rounds:
+
+| | main | this, with DEC-201–205 | rounds, load |
+| --- | ---: | ---: | --- |
+| rails | 0.30 (0.30) s, 52 MB | **0.064** (0.065) s, 42 MB | 11, 4 |
+| mastodon | 0.27 (0.29) s, 56 MB | **0.080** (0.086) s, 45 MB | 11, 4 |
+| 100k files | 598 s, 403 MB (one run) | **0.51** (0.52) s, 307 MB | 7, 4–6 |
+
+The includers map is also slimmer: it held every (ancestor, class) pair as
+two cloned names, 2 M of them at 100k files, and now holds each ancestor's
+includers as indices into the classes sorted once — 100k-file `--def`
+0.78 → 0.58 s and 435 → 307 MB on its own, rails 56 → 42 MB.
+
+Byte-identical to main on every gold set and widget_shop's verdicts, the
+rails `--refs` 40- and 51-query sets, `--dead` on rails, activerecord and
+mastodon, the flipper/faraday probe and `make clicks` (108 outputs, each
+build indexing its own stores), and on the 100k `--def` above.
 
 **Rejected.**
 - **Caching sub-chains and skipping the cache when a cycle guard fired**
@@ -7052,6 +7065,137 @@ rails, activerecord and mastodon, and `make clicks`.
   answers with no second pass, and so few chains close a cycle that
   recomputing them nested costs nothing measurable.
 
-**Not done: the includers map in the snapshot.** It would make the pass free
-per query (~0.8 MB on rails, ~8 MB on c100k), but it changes the snapshot's
-format, which another lane is changing.
+- **The includers map in the snapshot** (~0.8 MB on rails, ~8 MB at 100k
+  files, a v50 snapshot keyed as DEC-194 keys it). Sampled at 1 ms, the
+  100k `--def` spends 0.5 s: 44 % in the includers pass, three quarters of
+  that linearizing classes, and 52 % looking `respond_to?` up along each
+  includer's chain — which linearizes the same classes if the pass does
+  not. A stored map would save the map's own building, ~0.06 s, and put
+  linearizing every class into every `--index` (seconds at 100k files) for
+  the few queries inside a module. The answer is already half a second
+  there and 64 ms on rails. The larger lever is the lookup's own walk:
+  `first_in_chain` allocates a `(owner, singleton, name)` key per chain
+  element to probe `by_owner`, 42 % of that query.
+
+## DEC-201 — What every definition of a name returns is memoized per tree
+
+**Decided.** The `chain:name` rung — a call on an untyped receiver takes the
+class every definition of its name agrees on returning — moves into the
+tree as `Tree::agreed_return(name, argc, block)`, memoized there. The rung
+keeps the identity rule and builds the receiver.
+
+**Why.** The vote is a function of the tree and the three keys alone, and
+it ran per call site that reached the rung: every definition of the name
+cloned (`Tree::named`), owners deduplicated with `Vec::contains`, each
+declared return resolved to a class — for `h[:a]` in a 100k-file checkout,
+a vote over every `[]` in it, at most of 441k sites.
+
+**Where.** On the tree, not keyed by the tree's address in a
+`thread_local!` (the algorithm lane's prototype): the tree is immutable
+for its lifetime and the memo is freed with it, where an address can be
+reused by the next tree a resident session builds. Not a resolve-layer
+`Receiver` stored in the tree either: the tree holds tree facts (a class
+and two counts), and resolve makes the receiver.
+
+**Measured.** `--refs 'Hash#[]' --include-excluded` on DEC-195's 100k-file
+corpus, each build on its own store, two interleaved rounds, load 5–11:
+DEC-200 alone 92 s → with this 43 s. Byte-identical to main, as are the
+gold sets, the rails `--refs` sets, `--dead` and the clicks (DEC-200's
+list).
+
+## DEC-202 — Every definition of a name is shared, not cloned per call site
+
+**Decided.** `Tree::named` returns `Rc<[MethodDef]>`, built once per name
+and kept: a name is complete once `ensure` has loaded it (a demand load is
+per name, and nothing else adds a definition of that name), so the list
+never goes stale. Counting a name's other owners for the receiver-name rung
+borrows their names instead of cloning each.
+
+**Why.** Sampled on the 100k `Hash#[]` query after DEC-201, cloning and
+freeing `named`'s definitions was 17 % of the tiering thread: the
+receiver-name rung asks for the name's pool at every site to count its
+competitors.
+
+**Measured.** Same query and conditions as DEC-201's, three interleaved
+rounds, load 6–9: 43.0 → 34.5 s. Identical output.
+
+## DEC-203 — Method lookups and class-side chains are memoized per tree
+
+**Decided.** A lookup — `(fqn, singleton, name, as_self)` — is memoized as
+where it landed: the definition's index in the tree's methods and the
+owner it was found through, from which the method is built when asked. A
+class side's lookup chain — the superclass walk with each level's
+extends, prepends and concern `ClassMethods` resolved — is memoized per
+`(fqn, as_self)`. An instance's chain is not copied at all: it walks the
+memoized `Rc<Ancestry>`.
+
+**Why.** After DEC-202, `lookup_along` was 55 % of the 100k `Hash#[]`
+tiering thread, two thirds of it rebuilding the chain it was about to walk
+— a copy of the ancestors per instance lookup, the whole class-side walk
+per class lookup. Both are functions of the tree once the name is loaded,
+as `named` is.
+
+**Measured.** The 100k `Hash#[]`, three interleaved rounds, load 6–9:
+34.5 → 24.5 s with the first cut. That cut memoized every chain as a list of
+pairs and every lookup as a cloned method; a `--def` in a module, where
+nearly every lookup is asked once, paid for it — rails 53 → 81 MB, the
+100k corpus 413 → 642 MB, and no faster. Sharing the ancestry for instance
+chains and keeping landings instead of methods brought those to 55 and
+434 MB, and without a lookup memo at all to 52 and 412 MB — but the memo
+is worth 21.7 → 18.7 s on `Hash#[]`, where a site's receiver types repeat.
+
+## DEC-204 — A file's local flow is worked out on the parse workers
+
+**Decided.** `--refs` (and everything that gathers references) parses a
+chunk of files on the pool and tiers them on one thread. A file whose calls
+to the name have a local or another call as receiver now has its local
+flow analysis — which reparses the file with Prism — run beside its parse,
+on the pool. A file the predicate misses still works it out when asked, so
+no answer can change; it is a head start, not a new path.
+
+**Why.** After DEC-203 the flow analysis was 38 % of the tiering thread on
+the 100k `Hash#[]`. Of that query's 44,867 files, 23,836 needed it; the
+predicate picks 33,431, all 23,836 among them. Picking only files whose own
+call has a local receiver picks 21,695, all needed but 9 % short; picking
+every file with any local receiver picks 35,639.
+
+**Measured.** 24.5 → 19.8 s, same conditions.
+
+## DEC-205 — `--refs` parses the next chunk while it tiers this one
+
+**Decided.** The tiering thread waited for each chunk's parallel parse
+before starting on it. The next chunk's parse now runs on a scoped thread,
+through the same pool, while this chunk is tiered. A single query still
+keeps only the chunk being tiered (and the one being parsed).
+
+**Why.** After DEC-204, 42 % of the tiering thread's samples were waiting on
+the pool.
+
+**Measured.** 19.8 → 16.8 s, same conditions; the thread now waits 8 % of
+its time.
+
+**All of DEC-200–205 together**, against main, each build on its own store:
+
+| | main | now | rounds, load |
+| --- | ---: | ---: | --- |
+| 100k `--refs 'Hash#[]'` (441k sites) | 460 s, 2.1 GB (one run) | **15** (p90 19) s, 2.2 GB | 3, 6–8 |
+| rails, the 51-query `--refs` set, whole set | 21.9 s | **10.6** s | 5, 6–13 |
+| rails `--def` in a module | 0.30 s, 52 MB | 0.064 s, 42 MB | 11, 4 |
+| 100k `--def` in a module | 598 s, 403 MB (one run) | 0.51 s, 307 MB | 7, 4–6 |
+
+Every output byte-identical to main's (DEC-200's list, plus the two 100k
+answers).
+
+**Not done, and the next levers.**
+- **Tiering on every worker.** The tiering thread is now the whole wall.
+  With DEC-200's memos every answer is a function of the tree alone, so
+  each worker could tier its own files against a tree of its own over the
+  shared snapshot (`Tree` is a `RefCell`, so one per thread); the cost is a
+  tree build and a method table per worker, and a `gather_refs` that takes
+  a way to make trees rather than a tree. Not clean enough for this change.
+- **Memory.** The 100k `Hash#[]` peaks at 2.4 GB RSS: `--json` builds the
+  whole answer as a `serde_json::Value` (with `rooted` rewriting it) before
+  printing — 1.6 GB without `--json` — and 441k references are held to be
+  sorted. Streaming the array would take most of the difference.
+- **`first_in_chain`'s key** (DEC-200's list): a `(owner, singleton, name)`
+  string key per chain element to probe `by_owner`.
