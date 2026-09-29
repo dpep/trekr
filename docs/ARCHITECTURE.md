@@ -184,7 +184,11 @@ a mark sent to a constant is that constant's (DEC-160).
 A mark written in an instance method carries the method (`via`): a macro,
 whose methods land on each class whose body calls it (`body_call`) and whose
 class-side lookup of the name lands on it; `{k}` in its shape is the `k`th
-name that call hands it, `{k*}` each from the `k`th on (DEC-162).
+name that call hands it, `{k*}` each from the `k`th on (DEC-162). A string
+macro's `def` whose name a caller in another file spells whole is a method
+of that caller, at the macro's `class_eval`, where the caller's chain
+otherwise finds nothing (`Tree::made_along`, DEC-212); the string itself is
+not stored, so its calls are read only at a caller in its own file (DEC-163).
 Each string read keeps its rendered text and a byte map to the file
 (`Facts::strings`, resolve-time only), which the LSP's variable answers parse
 as part of the file (DEC-167).
@@ -279,6 +283,7 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | `chain` | `a.b.c` — `b`'s receiver typed, `b` found, its `sig` read | the receiver's |
 | `chain:name` | `x.gsub(a, b).downcase` with `x` untyped — every `gsub` that declares a return agrees | declaring / definitions |
 | `delegate_missing_to` | the receiver's type has no such method, and its class's `delegate_missing_to :t` sends it to `t`, typed by `t`'s reader (DEC-112) | the receiver's |
+| `delegate` | the lookup lands on a `delegate … to: :x` whose `x` is typed (DEC-166): that type's method, the delegate kept as the second site; a subclass of the type that overrides it makes the answer ambiguous (DEC-211) | the receiver's, or 1 / (1 + overrides) |
 | `rbi_dsl` | resolved, then redirected from a Tapioca `.rbi` to the model | |
 
 `sig:param` exists because half of graph_weaver's untyped local receivers turned
@@ -519,6 +524,11 @@ already knows.
 | **confirmed** | the receiver's type resolves and Ruby's lookup from it lands on the queried method | yes |
 | **possible** | the receiver is untyped and nothing rules the site out — ranked by proximity | yes |
 | **excluded** | the receiver resolves elsewhere, or the arity does not fit | **counted**, and listable with `--include-excluded` |
+
+A receiver typed as `self` or by a bound (a `sig`, a finder, a name) may be
+any subclass, so a site whose lookup lands elsewhere is still possible for a
+method a subclass defines (DEC-081, DEC-140), or runs from a module a
+subclass mixes in (DEC-213).
 
 A `super` site is confirmed when every class that can run it lands on the
 queried method, possible when only some do or an ancestor after its owner is
