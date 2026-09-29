@@ -1319,6 +1319,9 @@ rows took 10.1 s of store-write at 280k rows/s, against 750k rows/s for the
 app's single write. Writing a bundle's gems as one transaction took the cold
 index from **12.7 s to 7.6 s** (store-write 10.1 → 5.3 s, median of five,
 interleaved) and rails' from 2.7 s to 1.6 s. Same rows, byte for byte.
+The new gems are also walked together on the pool and parsed as one
+stream, in gem order, each written as its files arrive — one gem at a time
+left the pool idle between small gems (DEC-232).
 
 **A statement that may delete opens a journal** (DEC-191). The file map was
 written with `INSERT OR REPLACE`, and inside a transaction SQLite gives any

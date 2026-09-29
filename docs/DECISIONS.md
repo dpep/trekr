@@ -6971,7 +6971,7 @@ constant references.
   load of at least a quarter of the store): a 50k load into 50k, 83 → 68 s
   median over four rounds with a p90 of 115 s, the other lanes running. Worth
   measuring again on a quiet machine now that the rows are fewer; not
-  changed on that evidence.
+  changed on that evidence. *DEC-234 re-measured it: from half the store.*
 - **An outline that opens the store read-only** (DEC-190): 1–2 ms.
 
 **Not measured, and the next levers:**
@@ -6979,7 +6979,7 @@ constant references.
   turn, ~36 files apiece on discourse, so the pool idles between gems and the
   walk (`gem-walk`, 0.37 s of discourse's 6.7 s) runs on one thread. Parsing
   the bundle as one stream while the writer takes gems in order would hide
-  both.
+  both. *DEC-232 does.*
 - **The rows.** Definitions and constant references are now most of the
   writer's work; DEC-061's interning of `nesting` and `name` is the sized
   slimming for them.
@@ -7081,7 +7081,7 @@ build indexing its own stores), and on the 100k `--def` above.
   the few queries inside a module. The answer is already half a second
   there and 64 ms on rails. The larger lever is the lookup's own walk:
   `first_in_chain` allocates a `(owner, singleton, name)` key per chain
-  element to probe `by_owner`, 42 % of that query.
+  element to probe `by_owner`, 42 % of that query. *DEC-231 removes it.*
 
 ## DEC-201 — What every definition of a name returns is memoized per tree
 
@@ -7199,12 +7199,14 @@ answers).
   shared snapshot (`Tree` is a `RefCell`, so one per thread); the cost is a
   tree build and a method table per worker, and a `gather_refs` that takes
   a way to make trees rather than a tree. Not clean enough for this change.
+  *DEC-233 measured it: not taken.*
 - **Memory.** The 100k `Hash#[]` peaks at 2.4 GB RSS: `--json` builds the
   whole answer as a `serde_json::Value` (with `rooted` rewriting it) before
   printing — 1.6 GB without `--json` — and 441k references are held to be
-  sorted. Streaming the array would take most of the difference.
+  sorted. Streaming the array would take most of the difference. *DEC-230
+  streams it.*
 - **`first_in_chain`'s key** (DEC-200's list): a `(owner, singleton, name)`
-  string key per chain element to probe `by_owner`.
+  string key per chain element to probe `by_owner`. *DEC-231.*
 
 ## DEC-220 — The stdlib's RBS signatures type its chains, and declare its compiled half
 
@@ -7588,19 +7590,24 @@ copied it (`to_value` of a `Value`), rooted the copy, rendered it to one
 last two each the size of the output: `--refs 'Hash#[]' --json` over the
 100k-file corpus (DEC-195) prints 175 MB.
 
-**Measured.** That query, `--include-excluded`, each build on its own store,
-interleaved, load 12–20 from other work:
+**Measured.** On da7cc69 against this lane's head, each build on its own
+store, interleaved, medians (p90), load 4–8 from other work; the 100k
+queries are `--include-excluded`:
 
-| | peak footprint | peak RSS | CPU (user + sys) |
-| --- | ---: | ---: | ---: |
-| `--json`, main | 1,729 MB | 2,134 MB | 46 s |
-| `--json`, this | **603 MB** | **1,174 MB** | 48 s |
-| `--ndjson`, main → this | | 2,190 → **1,076 MB** | |
-| bare `--refs new --json`, main → this | | 1,769 → **1,076 MB** | |
+| | main | this | rounds |
+| --- | ---: | ---: | --- |
+| 100k `Hash#[] --json` | 13.9 (19.2) s, 1,655 MB | 14.0 (24.8) s, **618 MB** | 5 |
+| the same, `--ndjson` | 12.3 (15.1) s, 1,616 MB | 12.9 (13.0) s, **614 MB** | 3 |
+| the same, text | 12.3 (12.6) s, 989 MB | 12.4 (13.0) s, **644 MB** | 3 |
+| 100k bare `--refs new --json` | 7.2 (7.7) s, 1,315 MB | 6.9 (7.1) s, **617 MB** | 5 |
+| rails `Persistence#save --json` | 126 (129) ms, 51 MB | 123 (124) ms, 51 MB | 11 |
 
-What remains is the tiering's own: the tree, its memos, and the 441k
-references held to be sorted. At load 12–40 the wall times were noise; the
-CPU times say the rendering costs what it did.
+Megabytes are peak footprint (peak RSS 2,228 → 1,186 MB for the first
+row). CPU time is unchanged (38.6 → 39.6 s, 37.8 → 37.2 s); the walls are
+the same within the noise. Text output falls too: `cmd_refs` built the
+answer's `Value`, every reference in it, before it looked at the output
+mode. What remains is the tiering's own — the tree, its memos, and the
+441k references held to be sorted.
 
 **Checked.** Byte-identical to main on the memo lane's verify set (the gold
 sets, the rails `--refs` 40- and 51-query sets, `--dead` on three corpora,
@@ -7625,15 +7632,23 @@ and a snapshot lookup of the element's kind (~40 %) that answered a question
 only asked once a generated method was held, which it almost never is.
 
 `respond_to?` in `ActiveSupport::Tryable` (DEC-200's query), each build on
-its own store, interleaved, medians (p90), load 7–8 from other work:
+its own store, interleaved, medians (p90), on two mains:
 
-| | main | this | rounds |
+| | 99a11f7 → this, load 7–8 | da7cc69 → this, load 4–5 | rounds |
 | --- | ---: | ---: | --- |
-| rails | 65 (66) ms | **49** (50) ms | 11 |
-| mastodon | 81 (82) ms | **63** (65) ms | 11 |
-| 100k files | 467 (468) ms | **296** (297) ms | 7 |
+| rails | 65 (66) → **49** (50) ms | 119 (122) → **102** (104) ms | 11 |
+| mastodon | 81 (82) → **63** (65) ms | 132 (133) → **116** (118) ms | 11 |
+| 100k files | 467 (468) → **296** (297) ms | 1,031 (1,042) → **861** (864) ms | 7 |
 
-Peak footprint unchanged (31, 35 and 239 MB).
+Peak footprint unchanged (42, 39 and 300 MB on da7cc69).
+
+**The next lever.** Between the two mains the query doubled: DEC-212's
+`made_along` places every dynamic marker (`place_dynamic`) on a lookup's
+first miss, to see whether a string macro made the name. Sampled on
+da7cc69 with this change, placing is 75 % of the 100k `--def`. Placing only
+the markers `made` needs, or keeping `made` beside the snapshot, would take
+most of it back; `made_along` also still builds an `(owner, singleton,
+name)` key per chain element, the pattern this entry removes.
 
 **Checked.** The table holds the same indices in the same order for every
 (owner, side, name); a lookup on the side a name was never defined on finds
@@ -7667,6 +7682,11 @@ each build its own, interleaved, medians (p90), load 4–6 from other work:
 | discourse + its gems | 4.75 (5.87) s | 4.76 (5.05) s | **4.25** (4.44) s | 5 |
 | 100k files + mastodon's bundle | 20.6 (29.5) s | 18.7 (19.4) s | **18.1** (25.6) s | 3 |
 
+On the final build, at load 4–5: rails 1.22 (1.31) → **1.17** (1.19) s in
+11 rounds, mastodon 3.42 (3.62) → **3.14** (3.36) s and discourse 4.26 (5.22)
+→ **3.83** (4.02) s in 7; and before DEC-234, which leaves a first index
+alone, the 100k checkout 20.7 → 19.5 s in 3, and an app with no bundle (the
+100k corpus) 18.9 → 18.7 s, unchanged.
 `gem-walk` falls 1,522 → 266 ms on the last, 347 → 127 on discourse. CPU is
 0.1–0.6 s more, and peak footprint 5–25 MB more on the three apps across two
 campaigns (47 MB less at 100k files). Walking in parallel
@@ -7683,6 +7703,66 @@ identical, and so is every answer on the verify set (DEC-230), whose stores
 all index a bundle. An e2e case puts a gem with no `lib/` and one whose only
 file another gem already parsed between two gems, and requires three gems
 indexed and the shared blob parsed once.
+
+## DEC-233 — Tiering on every worker, measured and not taken
+
+**Not done.** DEC-205's next lever: tier `--refs` on every worker, each
+against a tree of its own over the shared snapshot, since every answer is a
+function of the tree alone (DEC-200). Built and measured on DEC-230–232
+over main 99a11f7 (branch `perf2-par`, commit `1af6d57`): `Tree::seed`
+copies what a tree has loaded — the namespace shared by an `Arc` over the
+mapped bytes, the methods loaded so far, the carriers — and each worker
+grows a tree from a seed on its own thread, reopens the store, takes chunks
+of 16 files in turn, parses and tiers them, and the chunks go back in
+order. The workers read each name's rows from the store once between them
+(a cache in the loader) and place the dynamic markers once (a
+`OnceLock`). Every answer stayed byte-identical (the verify set, the 100k
+`Hash#[]`), and a unit test held workers to one thread's answer on a
+fixture. It does not pay.
+
+**Measured**, each build on its own store, interleaved, load 5–8 from other
+work:
+
+| | DEC-230–232 | on every worker | |
+| --- | ---: | ---: | --- |
+| 100k `--refs 'Hash#[]' --json` | 14.4 (p90 21.9) s, 613 MB | 11.9 (14.7) s, 2,901 MB | 3 rounds |
+| the same, again | 12.9 (13.8) s, 610 MB | 9.0 (9.2) s, 2,909 MB | 3 rounds |
+| rails, the 51-query `--refs` set | 7.24 s | 6.06 s | 5 rounds |
+| rails `QueryMethods#where` | 186 (251) ms, 81 MB | 163 (196) ms, 100 MB | 11 rounds |
+| rails `Persistence#save` | 74 (86) ms | 82 (89) ms | 11 rounds |
+
+Megabytes are peak footprint. At 100k: 1.1–1.4× for 4.7× the memory, and
+CPU 38 → 48 s; on rails a sixth off a set of queries, and slower on the
+small one.
+
+**Why so little.** Much of one tree's tiering is its warm-up, and every
+worker repeats it. On the 100k `Hash#[]`, one tree tiers its first 800 of
+44,867 files in 13 % of its time; eight workers each spent 2.5–7.5 s on
+their first 800. Sampled, the first five seconds of one tree's tiering are
+loading each name's methods from the store (39 %), placing the dynamic
+markers (20 %), `agreed_return`'s vote (13 %) and linearizing (12 %) — work
+each of eight trees does again for its eighth of the files. Sharing the
+rows and the placement took CPU only 52 → 50 s (at load 20). Having the
+query's own tree tier the first 1 or 8 chunks before the others grew from
+it measured no better (100k 9.0 and 9.4 s; rails set 6.7 and 9.1 s). Eight
+SQLite connections also contend on SQLite's global memory-statistics mutex:
+`sys` 12 → 5 s with `SQLITE_CONFIG_MEMSTATUS` off, and the wall barely
+moved.
+
+**What it would cost to keep.** A seed has to carry every field a tree sets
+at build time and none of its memos. The resolve lane added three fields to
+the tree in the same week (DEC-212's `made`, `placing`, `hooks`), and one a
+seed forgets makes the workers answer differently from each other — silently,
+unless a fixture happens to exercise that field. That is a tax on the most
+edited module, for a query shape (hundreds of thousands of sites) an agent
+rarely asks.
+
+**What would clear the bar.** One tree shared by the workers — memos behind
+locks or sharded maps, `Rc` → `Arc`, a linearization stack per thread — so
+the warm-up is paid once. Or tiering that asks the tree less per site. Not
+attempted: the first is a rewrite of the tree's interior, and the budget
+this would buy is the pathological query's; the 51-query rails set is
+7.2 s for 51 processes, most of each its start and its tree.
 
 ## DEC-234 — A load of half the store rebuilds its indexes (DEC-057 revisited)
 

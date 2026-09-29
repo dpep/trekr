@@ -46,20 +46,20 @@
   as only a load bigger than the store did: 50k new files into a store of
   50k 20 → 14.5 s (DEC-234).
 
-- **A cold `--index` of an app with a bundle is 6–12 % faster.** The
+- **A cold `--index` of an app with a bundle is 4–10 % faster.** The
   bundle's gems are walked, parsed and written as one stream rather than one
-  gem at a time: discourse 4.75 → 4.25 s, mastodon 3.31 → 3.12 s (DEC-232).
+  gem at a time: discourse 4.26 → 3.83 s, mastodon 3.42 → 3.14 s (DEC-232).
 
 - **A definition or reference inside a module answers faster again.** A
   method lookup no longer allocates a key per step of the chain it walks:
-  `--def` on `respond_to?` in `ActiveSupport::Tryable` on rails 65 → 49 ms,
-  on a 100k-file checkout 0.47 → 0.30 s (DEC-231).
+  `--def` on `respond_to?` in `ActiveSupport::Tryable` on rails 119 → 102 ms,
+  on a 100k-file checkout 1.03 → 0.86 s (DEC-231).
 
-- **A long `--refs` answer in `--json` or `--ndjson` takes half the
-  memory.** Its references, and a bare-name listing's rows, are written as
-  they are rendered rather than built whole first; the output is
-  byte-identical. `--refs 'Hash#[]' --json` over a 100k-file checkout's 441k
-  sites peaked at 1.7 GB and peaks at 0.6 (DEC-230).
+- **A long `--refs` answer takes a third of the memory.** Its references,
+  and a bare-name listing's rows, are written as they are rendered rather
+  than built whole first; the output is byte-identical. `--refs 'Hash#[]'
+  --json` over a 100k-file checkout's 441k sites peaked at 1.7 GB and peaks
+  at 0.6, and the text answer at 0.64 GB where it took 0.99 (DEC-230).
 
 - **Queries find their checkout without starting git.** The checkout a query
   or an outline is about is read off the disk — the nearest `.git` that is
