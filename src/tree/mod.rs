@@ -374,6 +374,9 @@ pub(crate) struct Tree {
     linearizing: RefCell<Vec<Frame>>,
     /// Every name's chain, as it is when that name is the one asked (DEC-200).
     ancestors: RefCell<HashMap<String, Memo>>,
+    /// `agreed_return`, per (name, argc, block): a pure function of the
+    /// tree, asked once per call site (DEC-201).
+    agreed_returns: RefCell<HashMap<ReturnKey, Option<Rc<AgreedReturn>>>>,
     /// The markers of scopes that define methods the source does not name
     /// (DEC-130), as read: loaded on first need from the store, or handed
     /// over whole by a tree that loads nothing.
@@ -405,6 +408,18 @@ pub(crate) struct Ancestry {
     /// trustworthy as this list is short, so it travels with the answer.
     pub(crate) unresolved: Vec<String>,
 }
+
+/// The class every definition of a name that declares a return agrees on.
+pub(crate) struct AgreedReturn {
+    pub(crate) fqn: String,
+    /// How many owners' definitions declared it.
+    pub(crate) agreeing: usize,
+    /// How many owners define the name as an instance method.
+    pub(crate) total: usize,
+}
+
+/// A call to a name, as `agreed_return` keys it: (name, argc, block).
+type ReturnKey = (String, Option<u32>, bool);
 
 /// One linearization in progress: the chain so far, and whether a cycle
 /// under it makes the answer depend on who asked (DEC-200).
@@ -765,6 +780,7 @@ impl Tree {
             includers: RefCell::new(None),
             mixers: RefCell::new(None),
             ancestors: RefCell::new(HashMap::new()),
+            agreed_returns: RefCell::new(HashMap::new()),
             dynamic_rows: RefCell::new(None),
             dynamic: RefCell::new(None),
             dynamic_files: RefCell::new(HashMap::new()),
@@ -2832,6 +2848,67 @@ impl Tree {
             }
             let returns = declared.returns_for(argc, block)?.to_string();
             Some((declared.clone(), returns))
+        })
+    }
+
+    /// The class a call to `name` returns whatever its receiver, when every
+    /// definition that says agrees: `something.gsub(/x/, "")` could be any
+    /// `gsub`, and the index holds only String's. A definition that declares
+    /// nothing counts in `total` and not in `agreeing`; two that declare
+    /// different classes leave no answer.
+    ///
+    /// An untyped receiver is taken to be an instance, since a class mostly
+    /// arrives as a constant and is typed: `Dir.[]` alone says nothing of
+    /// `h[:a]`. But `self.class.build` and `factory.build` are classes that
+    /// arrived another way, so a class method declaring something else
+    /// objects to the instance methods' answer, though it never makes one.
+    pub(crate) fn agreed_return(
+        &self,
+        name: &str,
+        argc: Option<u32>,
+        block: bool,
+    ) -> Option<Rc<AgreedReturn>> {
+        let key = (name.to_string(), argc, block);
+        if let Some(memo) = self.agreed_returns.borrow().get(&key) {
+            return memo.clone();
+        }
+        let agreed = self.vote_on_return(name, argc, block).map(Rc::new);
+        self.agreed_returns.borrow_mut().insert(key, agreed.clone());
+        agreed
+    }
+
+    fn vote_on_return(&self, name: &str, argc: Option<u32>, block: bool) -> Option<AgreedReturn> {
+        let returned = |method: &MethodDef| match method.returns_for(argc, block) {
+            Some(returns) => self.returned_class(method, returns),
+            None => self
+                .declared_returns(method, argc, block)
+                .and_then(|(declarer, returns)| self.returned_class(&declarer, &returns)),
+        };
+        let named = self.named(name);
+        let (singletons, instances): (Vec<_>, Vec<_>) = named.iter().partition(|m| m.singleton);
+        let mut owners: HashSet<String> = HashSet::new();
+        let mut votes: Vec<Option<String>> = Vec::new();
+        for method in instances {
+            if owners.insert(method.owner.clone()) {
+                votes.push(returned(method));
+            }
+        }
+        let mut declared = votes.iter().flatten();
+        let fqn = declared.next()?.clone();
+        if declared.any(|other| *other != fqn) {
+            return None;
+        }
+        if singletons
+            .into_iter()
+            .filter_map(returned)
+            .any(|other| other != fqn)
+        {
+            return None;
+        }
+        Some(AgreedReturn {
+            agreeing: votes.iter().flatten().count(),
+            total: votes.len(),
+            fqn,
         })
     }
 

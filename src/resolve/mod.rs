@@ -1616,63 +1616,22 @@ fn returned_by(
 }
 
 /// A call whose receiver has no type returns what every definition of its
-/// name that says so agrees on.
-///
-/// `something.gsub(/x/, "")` could be any `gsub`, and the index holds only
-/// String's, which returns a String. A definition that declares no return
-/// type is a competitor: it counts against the answer and makes it
-/// `ambiguous`. Two that declare different ones leave the call untyped.
+/// name that says so agrees on (`Tree::agreed_return`); one that declares
+/// nothing makes the answer `ambiguous`.
 fn by_return_types(tree: &Tree, previous: &Call) -> Option<Receiver> {
     // Returns its receiver, which is exactly what is unknown here.
     if crate::core::IDENTITY.contains(&previous.name.as_str()) {
         return None;
     }
-    let returned =
-        |method: &crate::tree::MethodDef| match method.returns_for(previous.argc, previous.block) {
-            Some(returns) => tree.returned_class(method, returns),
-            None => tree
-                .declared_returns(method, previous.argc, previous.block)
-                .and_then(|(declarer, returns)| tree.returned_class(&declarer, &returns)),
-        };
-    // An untyped receiver is taken to be an instance, since a class mostly
-    // arrives as a constant and is typed: `Dir.[]` alone says nothing of
-    // `h[:a]`. But `self.class.build` and `factory.build` are classes that
-    // arrived another way, so a class method declaring something else
-    // objects to the instance methods' answer, though it never makes one.
-    let (singletons, instances): (Vec<_>, Vec<_>) = tree
-        .named(&previous.name)
-        .into_iter()
-        .partition(|m| m.singleton);
-    let mut owners: Vec<String> = Vec::new();
-    let mut votes: Vec<Option<String>> = Vec::new();
-    for method in instances {
-        if owners.contains(&method.owner) {
-            continue;
-        }
-        owners.push(method.owner.clone());
-        votes.push(returned(&method));
-    }
-    let mut declared = votes.iter().flatten();
-    let fqn = declared.next()?.clone();
-    if declared.any(|other| *other != fqn) {
-        return None;
-    }
-    if singletons
-        .iter()
-        .filter_map(returned)
-        .any(|other| other != fqn)
-    {
-        return None;
-    }
-    let agreeing = votes.iter().flatten().count();
+    let agreed = tree.agreed_return(&previous.name, previous.argc, previous.block)?;
     Some(Receiver {
-        fqn,
+        fqn: agreed.fqn.clone(),
         singleton: false,
         via: "chain:name",
         bound: true,
-        agreeing,
-        total: votes.len(),
-        ambiguous: agreeing < votes.len(),
+        agreeing: agreed.agreeing,
+        total: agreed.total,
+        ambiguous: agreed.agreeing < agreed.total,
         rivals: Vec::new(),
     })
 }
