@@ -88,7 +88,7 @@ pub(super) fn resolve(repo: &Path, roots: &[PathBuf]) -> Option<Vec<Located>> {
     // picked gem's runtime dependencies — so a transitive `>= 0` cannot pick
     // past a direct `~> 5.25`. A pick can change what its dependents need,
     // so the picks are revised until they hold still.
-    let mut needs: HashMap<PathBuf, Vec<Dependency>> = HashMap::new();
+    let needs = Needs::default();
     let mut picks: BTreeMap<String, Option<&Copy>> = BTreeMap::new();
     let mut wanted: BTreeMap<String, Vec<String>> = BTreeMap::new();
     for _ in 0..ROUNDS {
@@ -96,21 +96,33 @@ pub(super) fn resolve(repo: &Path, roots: &[PathBuf]) -> Option<Vec<Located>> {
             .iter()
             .map(|(name, d)| (name.clone(), d.requirements.clone()))
             .collect();
-        for (name, copy) in &picks {
-            let Some(copy) = copy else { continue };
-            let runtime = needs
-                .entry(copy.path.clone())
-                .or_insert_with(|| runtime_dependencies(&copy.path, name, &copy.written));
-            for dependency in runtime.iter().filter(|d| !own.contains(&d.name)) {
+        for copy in picks.values().flatten() {
+            for dependency in needs.of(copy).iter().filter(|d| !own.contains(&d.name)) {
                 wanted
                     .entry(dependency.name.clone())
                     .or_default()
                     .extend(dependency.requirements.iter().cloned());
             }
         }
+        // A pick whose own requirement on a name the checkout pins meets no
+        // installed version would make that name a false "not installed":
+        // rails 8.1 wanting activerecord 8.1 beside a gemspec's `< 8`.
+        let fits = |copy: &Copy| {
+            needs.of(copy).iter().all(|dependency| {
+                let Some(pinned) = direct.get(&dependency.name) else {
+                    return true;
+                };
+                let mut both = pinned.requirements.clone();
+                both.extend(dependency.requirements.iter().cloned());
+                installed.best(&dependency.name, &both, |_| true).is_some()
+                    || installed
+                        .best(&dependency.name, &pinned.requirements, |_| true)
+                        .is_none()
+            })
+        };
         let next: BTreeMap<String, Option<&Copy>> = wanted
             .iter()
-            .map(|(name, requirements)| (name.clone(), installed.best(name, requirements)))
+            .map(|(name, requirements)| (name.clone(), installed.best(name, requirements, fits)))
             .collect();
         if next.len() == picks.len()
             && next
@@ -160,6 +172,21 @@ pub(super) fn resolve(repo: &Path, roots: &[PathBuf]) -> Option<Vec<Located>> {
         })
         .collect();
     Some(located)
+}
+
+/// Each installed copy's runtime dependencies, read once however often a
+/// round asks.
+#[derive(Default)]
+struct Needs(std::cell::RefCell<HashMap<PathBuf, std::rc::Rc<Vec<Dependency>>>>);
+
+impl Needs {
+    fn of(&self, copy: &Copy) -> std::rc::Rc<Vec<Dependency>> {
+        self.0
+            .borrow_mut()
+            .entry(copy.path.clone())
+            .or_insert_with(|| runtime_dependencies(&copy.path, &copy.name, &copy.written).into())
+            .clone()
+    }
 }
 
 /// An installed gem's runtime dependencies, from the gemspec rubygems wrote
@@ -213,6 +240,24 @@ impl Collector {
                 out.extend(self.values(&element)?);
             }
             return Some(out);
+        }
+        if let Some(default) = env_default(node) {
+            return Some(vec![default]);
+        }
+        if let Some(interpolated) = node.as_interpolated_string_node() {
+            let mut out = String::new();
+            for part in interpolated.parts().iter() {
+                out.push_str(&match part.as_embedded_statements_node() {
+                    Some(embedded) => {
+                        let body: Vec<Node<'_>> = embedded.statements()?.body().iter().collect();
+                        let [only] = body.try_into().ok()?;
+                        let [value] = self.values(&only)?.try_into().ok()?;
+                        value
+                    }
+                    None => string(&part)?,
+                });
+            }
+            return Some(vec![out]);
         }
         let bound = |name: &[u8]| self.bound.get(&*String::from_utf8_lossy(name)).cloned();
         if let Some(constant) = node.as_constant_read_node() {
@@ -376,6 +421,30 @@ impl Collector {
     }
 }
 
+/// What `ENV["X"] || "1.4"` or `ENV.fetch("X", "1.4")` is with nothing set:
+/// the default, as a conditional's `else` is (DEC-151).
+fn env_default(node: &Node<'_>) -> Option<String> {
+    let is_env = |receiver: Option<Node<'_>>| {
+        receiver
+            .and_then(|r| r.as_constant_read_node())
+            .is_some_and(|c| c.name().as_slice() == b"ENV")
+    };
+    if let Some(or) = node.as_or_node() {
+        let lookup = or.left().as_call_node()?;
+        return (lookup.name().as_slice() == b"[]" && is_env(lookup.receiver()))
+            .then(|| string(&or.right()))?;
+    }
+    let call = node.as_call_node()?;
+    if call.name().as_slice() != b"fetch" || !is_env(call.receiver()) {
+        return None;
+    }
+    let args: Vec<Node<'_>> = call.arguments()?.arguments().iter().collect();
+    match args.as_slice() {
+        [_, default] => string(default),
+        _ => None,
+    }
+}
+
 /// `x.freeze` is `x`; `None` when it is neither.
 fn frozen_receiver<'pr>(node: &Node<'pr>) -> Option<Node<'pr>> {
     let call = node.as_call_node()?;
@@ -497,6 +566,7 @@ fn meets(version: &Version, requirement: &str) -> bool {
 
 /// One installed copy of a gem.
 struct Copy {
+    name: String,
     version: Version,
     /// The version as its directory writes it, platform and all.
     written: String,
@@ -528,6 +598,7 @@ impl Installed {
                     continue;
                 }
                 copies.push(Copy {
+                    name: name.to_string(),
                     version,
                     written: written.to_string(),
                     path: entry.path(),
@@ -538,14 +609,23 @@ impl Installed {
     }
 
     /// The highest installed version meeting every requirement, a release
-    /// before any prerelease.
-    fn best(&self, name: &str, requirements: &[String]) -> Option<&Copy> {
+    /// before any prerelease, and among those one whose own runtime
+    /// requirements `fits` accepts.
+    fn best(
+        &self,
+        name: &str,
+        requirements: &[String],
+        fits: impl Fn(&Copy) -> bool,
+    ) -> Option<&Copy> {
         let meeting: Vec<&Copy> = self
             .0
             .get(name)?
             .iter()
             .filter(|copy| requirements.iter().all(|r| meets(&copy.version, r)))
             .collect();
+        // Look one step ahead, but never at the cost of the name itself.
+        let fitting: Vec<&Copy> = meeting.iter().copied().filter(|c| fits(c)).collect();
+        let meeting = if fitting.is_empty() { meeting } else { fitting };
         let release = meeting
             .iter()
             .filter(|copy| !copy.version.is_prerelease())
@@ -595,9 +675,10 @@ gem 'jruby-openssl', platforms: :jruby
         let found = dependencies(gemfile);
         let names: Vec<&str> = found.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(names, ["rspec", "sqlite3"]);
-        assert!(
-            found[1].requirements.is_empty() && found[1].unread.len() == 1,
-            "an interpolated requirement binds nothing, and is said to: {found:?}"
+        assert_eq!(
+            found[1].requirements,
+            ["~> 1.4"],
+            "an environment lookup reads as its default"
         );
     }
 
@@ -641,6 +722,56 @@ end
             "only one branch names it"
         );
         assert_eq!(found.len(), 3, "{found:?}");
+    }
+
+    #[test]
+    fn an_environment_lookup_reads_as_its_default() {
+        let gemfile = br#"gem "alpha", "~> #{ENV['ALPHA_VERSION'] || '7.1'}"
+gem "beta", ENV.fetch("BETA_VERSION", "~> 13.3.0")
+gem "gamma", "~> #{ENV['GAMMA']}"
+"#;
+        let found = dependencies(gemfile);
+        let by = |name: &str| found.iter().find(|d| d.name == name).unwrap();
+        assert_eq!(by("alpha").requirements, ["~> 7.1"]);
+        assert_eq!(by("beta").requirements, ["~> 13.3.0"]);
+        assert_eq!(by("gamma").unread.len(), 1, "no default to read");
+    }
+
+    /// A pick whose own requirement leaves a name the checkout pins with no
+    /// installed version gives way to one that does not.
+    #[test]
+    fn a_pick_gives_way_to_what_the_checkout_pins() {
+        let base =
+            std::env::temp_dir().join(format!("trekr-declared-ahead-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let gems = base.join("gems");
+        for dir in ["frame-7.2.0", "frame-8.1.0", "model-7.2.0", "model-8.1.0"] {
+            std::fs::create_dir_all(gems.join(dir)).unwrap();
+        }
+        std::fs::create_dir_all(base.join("specifications")).unwrap();
+        for version in ["7.2.0", "8.1.0"] {
+            std::fs::write(
+                base.join(format!("specifications/frame-{version}.gemspec")),
+                format!("s.add_runtime_dependency(%q<model>.freeze, [\"= {version}\".freeze])\n"),
+            )
+            .unwrap();
+        }
+        let repo = base.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::write(
+            repo.join("widget.gemspec"),
+            "Gem::Specification.new do |s|\n  s.add_dependency 'model', '< 8'\nend\n",
+        )
+        .unwrap();
+        std::fs::write(repo.join("Gemfile"), "gemspec\ngem 'frame'\n").unwrap();
+
+        let located = resolve(&repo, std::slice::from_ref(&gems)).unwrap();
+        let versions: Vec<(&str, &str)> = located
+            .iter()
+            .map(|l| (l.gem.name.as_str(), l.gem.version.as_str()))
+            .collect();
+        assert_eq!(versions, [("frame", "7.2.0"), ("model", "7.2.0")]);
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     /// An installed gem's `>= 0` on a name the checkout pins itself must not

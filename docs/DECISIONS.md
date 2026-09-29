@@ -6126,9 +6126,15 @@ gem's runtime dependencies — are intersected before a version is picked,
 and the picks are revised until they hold still (capped at eight rounds).
 A requirement is read when it is a literal, or a constant or local the
 file bound to one before the call, or a block parameter over a literal
-list (`%w[a b].each { |g| s.add_dependency g }`). Anything else —
-`version` read from a file, an interpolation, `ENV.fetch` — binds nothing
-and is listed in `gems.unread` with its source. A name declared in both
+list (`%w[a b].each { |g| s.add_dependency g }`), and an environment
+lookup (`ENV["V"] || "7.1"`, `ENV.fetch("V", "7.1")`, interpolated or not)
+reads as its default — what runs when nothing is set, the same rule as a
+conditional's. Anything else — `version` read from a file, a lookup with
+no default — binds nothing and is listed in `gems.unread` with its source.
+A pick is also looked one step ahead: among the versions that meet a
+name's requirements, one whose own runtime requirement on a name the
+checkout pins leaves that name no installed version is passed over, if
+another is not. A name declared in both
 branches of a conditional takes the branch that runs when nothing is set:
 `else`, or an `unless` body. `gems.picked` lists every gem found as `name
 version`, and without a lockfile the text says the picks.
@@ -6145,8 +6151,15 @@ is installed as not installed.
 
 **Measured.** The hunt's repros: minitest 5.26.0 (`!= 5.27.0` binding),
 json 2.21.2 under `>= 2.9, < 3`, json 2.9.1 under a `~> 2.9.0` constant and
-under a loop; `activesupport` beside `version` and `rake` beside
-`ENV.fetch(…)` now listed as unread.
+under a loop, rake 13.3.1 under `ENV.fetch("RAKE_VERSION", "~> 13.3.0")`;
+`activesupport` beside `version` listed as unread. flipper, the one
+dogfood checkout without a lockfile: rails `"~> #{ENV['RAILS_VERSION'] ||
+'7.1'}"` was any and picked 8.1.4, whose `activerecord = 8.1.4` the
+gemspecs' `< 8` cannot meet; it now reads `~> 7.1` and picks 7.2.3.1, the
+activerecord the gemspecs allow. Its `sqlite3 ~> 1.4.1` default is not
+installed and says so, where 2.9.6 was taken as any: 90 found → 89.
+Without the lookahead the intersection alone reported activerecord and
+activesupport "not installed" — both are.
 
 **Not done.** Still per name, not a solver: two requirements no single
 installed version meets leave the name missing with both written, rather
