@@ -371,7 +371,7 @@ pub(crate) struct Tree {
     /// Classes that have each module in their ancestor chain. Built lazily,
     /// because the common path never asks: it costs a pass over every name and
     /// only a call inside a module needs it.
-    includers: RefCell<Option<HashMap<String, Vec<String>>>>,
+    includers: RefCell<Option<Includers>>,
     /// Module → the names that `include` or `prepend` it by name. Resolving
     /// every mixin edge once is far cheaper than linearizing every class,
     /// which is what `includers` pays.
@@ -425,6 +425,13 @@ pub(crate) struct AgreedReturn {
     pub(crate) agreeing: usize,
     /// How many owners define the name as an instance method.
     pub(crate) total: usize,
+}
+
+/// Every class with an ancestor, by that ancestor: `classes` sorted by
+/// name, and each ancestor's includers as indices into it, ascending.
+struct Includers {
+    classes: Vec<String>,
+    by_ancestor: HashMap<String, Vec<u32>>,
 }
 
 /// `(owner, singleton)` pairs, in the order a lookup walks them.
@@ -3240,7 +3247,6 @@ impl Tree {
     /// call has a determinate receiver after all, and this is how to find it.
     pub(crate) fn includers_of(&self, module: &str) -> Vec<String> {
         if self.includers.borrow().is_none() {
-            let mut map: HashMap<String, Vec<String>> = HashMap::new();
             // Only classes: resolving a module receiver to another module
             // would just move the problem.
             let mut classes: Vec<String> = Vec::new();
@@ -3249,23 +3255,43 @@ impl Tree {
                     classes.push(fqn.to_string());
                 }
             });
-            for class in classes {
-                for ancestor in &self.ancestors(&class).chain {
-                    if ancestor != &class {
-                        map.entry(ancestor.clone()).or_default().push(class.clone());
+            classes.sort();
+            let mut by_ancestor: HashMap<String, Vec<u32>> = HashMap::new();
+            for (at, class) in classes.iter().enumerate() {
+                for ancestor in &self.ancestors(class).chain {
+                    if ancestor == class {
+                        continue;
+                    }
+                    match by_ancestor.get_mut(ancestor) {
+                        Some(includers) => includers.push(at as u32),
+                        None => {
+                            by_ancestor.insert(ancestor.clone(), vec![at as u32]);
+                        }
                     }
                 }
             }
-            for names in map.values_mut() {
-                names.sort();
-                names.dedup();
+            // In class order already; a module both included and prepended
+            // is in a chain twice.
+            for includers in by_ancestor.values_mut() {
+                includers.dedup();
             }
-            *self.includers.borrow_mut() = Some(map);
+            *self.includers.borrow_mut() = Some(Includers {
+                classes,
+                by_ancestor,
+            });
         }
-        self.includers
-            .borrow()
-            .as_ref()
-            .and_then(|map| map.get(module).cloned())
+        let includers = self.includers.borrow();
+        let Some(includers) = includers.as_ref() else {
+            return Vec::new();
+        };
+        includers
+            .by_ancestor
+            .get(module)
+            .map(|ids| {
+                ids.iter()
+                    .map(|&at| includers.classes[at as usize].clone())
+                    .collect()
+            })
             .unwrap_or_default()
     }
 
