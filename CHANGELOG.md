@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.1 — 2026-09-29
 
 - **A damaged index, or an upgrade that fails, is rebuilt instead of failing
   every command.** Nothing to do: trekr moves the old file aside
