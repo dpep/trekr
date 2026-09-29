@@ -6058,3 +6058,50 @@ move from "typed, with competitors" and "known type, method not found" to
 *Reverses if:* a codebase names variables after `Object`'s mixins on
 purpose — then the chain test narrows to `Object`, `Kernel`, `BasicObject`.
 
+## DEC-150 — A git gem is found at its locked revision, in its own gemspec's directory
+
+**Decided.** A lockfile's `GIT` section is found where bundler checks it
+out: `bundler/gems/<repo>-<revision[0,12]>/` beside each `gems/` directory
+searched, the repo name being the remote's basename less `.git`
+(`Bundler::Source::Git#base_name`, `#shortref_for_path`). Within the
+checkout, each gem the section names is the directory holding
+`<name>.gemspec`, searched as bundler globs, `{,*,*/*}.gemspec`, shallowest
+first; a section naming one gem takes the checkout's one gemspec whatever
+it is called. `BUNDLE_PATH` is searched before anything else — the app's
+`.bundle/config` (or `$BUNDLE_APP_CONFIG`'s), the environment, then
+`~/.bundle/config`, as bundler ranks them, under `ruby/*/`. A `PATH` gem
+inside the checkout is part of it, as before. `--index` counts git gems
+(`gems.from_git`) and in-checkout path gems (`gems.from_path`); a git or
+path gem it did not index goes in `gems.unlocated` with why — a checkout
+not where bundler would have put it (naming that path), no gemspec by the
+gem's name in it, a path outside the checkout — never under `missing`,
+which stays "not installed".
+
+**Why.** An app pinning Rails from git (`gem "rails", github: …`) had 59
+gems reported "not installed", and everything from Rails answered from
+Sorbet's RBI or as residue: the checkout is named for the repository, not
+the gem, and a monorepo's gems are its subdirectories. The old lookup
+matched `bundler/gems/<gem name>-<hex>`, which finds a single-gem repo
+named like its gem and nothing else, and took whichever revision `read_dir`
+listed first — graph_weaver has two on this machine.
+
+**Measured.** No change for a lockfile without `GIT`: the 13 dogfood gems,
+widget_shop, flipper and discourse locate the same gems before and after.
+mastodon's `webpush` (a git gem) resolves to the same directory, now by its
+revision. rails' three git gems move from "not installed" to "git source,
+checkout not found at ~/.rvm/gems/ruby-3.4.9/bundler/gems/httpclient-d57cc6d5ffee"
+— true: they are not installed here.
+
+**Not asking bundler.** `bundle list --paths` would be the fallback; it
+needs the project's Ruby and a resolvable bundle, which DEC-016 turned down
+as the product's first edge, and with the checkout named from the lockfile
+alone there is nothing left for it to find. `bundle config local.<gem>`
+overrides (a git gem served from a working copy) and a `glob:` other than
+the default are not read.
+
+**Path gems outside the checkout are reported, not indexed.** A gem's
+identity rests on a directory whose name pins its bytes (DEC-017) — a
+version, a revision. `path: "../shared"` pins nothing and is usually a
+repository someone edits; indexing it as a gem would skip it once seen and
+stamp it `kind = 'gem'`, turning that repository's own `--index` into "is a
+gem". It needs a third kind of checkout, not a gem with an exception.

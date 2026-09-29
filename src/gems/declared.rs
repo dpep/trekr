@@ -9,7 +9,7 @@
 //! install` would have locked, approximated by what is on disk. Read with
 //! Prism, never run.
 
-use super::{Gem, Located, Source};
+use super::{Absence, Gem, Located, Place, Source};
 use ruby_prism::{Node, Visit};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, HashMap, HashSet};
@@ -85,7 +85,7 @@ pub(super) fn resolve(repo: &Path, roots: &[PathBuf]) -> Option<Vec<Located>> {
                     version,
                     source: Source::Registry,
                 },
-                root: None,
+                place: Place::Missing(Absence::NotInstalled),
             });
             continue;
         };
@@ -98,7 +98,7 @@ pub(super) fn resolve(repo: &Path, roots: &[PathBuf]) -> Option<Vec<Located>> {
                 version: found.written.clone(),
                 source: Source::Registry,
             },
-            root: Some(found.path.clone()),
+            place: Place::Dir(found.path.clone()),
         });
     }
     Some(located)
@@ -489,7 +489,7 @@ gem 'jruby-openssl', platforms: :jruby
                 (
                     l.gem.name.as_str(),
                     l.gem.version.as_str(),
-                    l.root.is_some(),
+                    matches!(l.place, Place::Dir(_)),
                 )
             })
             .collect();

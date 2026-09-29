@@ -42,6 +42,18 @@
   unchanged: a `--json` caller still gets one answer when the write lands
   (DEC-171).
 
+- **Gems from git are indexed.** A lockfile's `GIT` sources are found where
+  bundler checks them out, `bundler/gems/<repo>-<sha>/` — the locked revision,
+  not whichever one is on disk — and a monorepo's gems (`gem "rails",
+  github: …`) each from their own subdirectory's gemspec. They were reported
+  "not installed", and everything from them answered from RBI stubs or as
+  residue. `BUNDLE_PATH` (`.bundle/config`, the environment, `~/.bundle/config`)
+  is searched first. `--index` counts them (`gems.from_git`, and
+  `gems.from_path` for path gems inside the checkout), and a git or path gem
+  that is not indexed is listed in `gems.unlocated` with the reason — a
+  checkout not where bundler puts it, or a path outside the checkout — rather
+  than as not installed (DEC-150).
+
 ## 0.8.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v39): run `trekr --index`

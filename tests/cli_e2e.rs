@@ -1798,6 +1798,119 @@ fn explain_renders_the_disclosure_the_json_already_carries() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A gem pinned to git is checked out once per revision under
+/// `bundler/gems/<repo>-<sha>/`, and a monorepo's gems are subdirectories
+/// of that checkout, each with its gemspec (DEC-150).
+fn git_monorepo_app(label: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let (app, db) = scratch(label);
+    let (gems, _) = scratch(&format!("{label}-gems"));
+    let checkout = gems.join("bundler/gems/kit-abc123def456");
+    for (gem, file, body) in [
+        (
+            "kit_core",
+            "kit_core/helpers.rb",
+            "module KitCore\n  module Helpers\n    def core_help\n    end\n  end\nend\n",
+        ),
+        (
+            "kit_web",
+            "kit_web/base.rb",
+            "module KitWeb\n  class Base\n    include KitCore::Helpers\n\n    def render_it\n      core_help\n    end\n  end\nend\n",
+        ),
+    ] {
+        let lib = checkout.join(gem).join("lib");
+        fs::create_dir_all(lib.join(gem)).unwrap();
+        fs::write(checkout.join(gem).join(format!("{gem}.gemspec")), "").unwrap();
+        fs::write(lib.join(file), body).unwrap();
+    }
+    // Bundler's checkout is a clone: it has a `.git` of its own.
+    git(&checkout, &["init", "-q"]);
+
+    git(&app, &["init", "-q"]);
+    fs::create_dir_all(app.join("engines/billing")).unwrap();
+    fs::write(
+        app.join("page.rb"),
+        "class Page < KitWeb::Base\n  def show\n    render_it\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        app.join("Gemfile.lock"),
+        concat!(
+            "GIT\n",
+            "  remote: https://github.com/example/kit.git\n",
+            "  revision: abc123def4567890abc123def4567890abc12345\n",
+            "  specs:\n",
+            "    kit_core (0.1.0)\n",
+            "    kit_web (0.1.0)\n",
+            "      kit_core\n",
+            "\n",
+            "GIT\n",
+            "  remote: https://github.com/example/gone.git\n",
+            "  revision: 0000000000000000000000000000000000000000\n",
+            "  specs:\n",
+            "    gone (1.0.0)\n",
+            "\n",
+            "PATH\n",
+            "  remote: engines/billing\n",
+            "  specs:\n",
+            "    billing (1.0.0)\n",
+            "\n",
+            "DEPENDENCIES\n",
+            "  kit_web!\n",
+        ),
+    )
+    .unwrap();
+    git(&app, &["add", "-A"]);
+    git(
+        &app,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    (app, db, gems)
+}
+
+#[test]
+fn a_git_monorepos_gems_are_indexed_from_their_checkout() {
+    let (app, db, gems) = git_monorepo_app("gitgems");
+    let env = [("GEM_HOME", gems.to_str().unwrap())];
+
+    let index = json(&trekr_env(&db, &app, &["--index", "--json"], &env));
+    let report = &index["gems"];
+    assert_eq!(report["found"], 2, "{index}");
+    assert_eq!(report["from_git"], 2, "{index}");
+    assert_eq!(report["from_path"], 1, "{index}");
+    assert!(report.get("missing").is_none(), "{index}");
+    let why = report["unlocated"][0]["why"].as_str().unwrap();
+    assert!(
+        why.contains("checkout not found") && why.contains("gone-000000000000"),
+        "a revision nobody checked out says where it looked: {index}"
+    );
+
+    let text = stdout(&trekr_env(&db, &app, &["--index"], &env));
+    assert!(text.contains("2 from git"), "{text}");
+    assert!(!text.contains("not installed"), "{text}");
+
+    // A call in the app lands in the gem's subdirectory, not the checkout.
+    let answer = json(&trekr(&db, &app, &["--def", "page.rb:3:5", "--json"]));
+    assert_eq!(answer["status"], "resolved", "{answer}");
+    assert!(
+        answer["definition"][0]["root"]
+            .as_str()
+            .unwrap()
+            .ends_with("kit-abc123def456/kit_web"),
+        "{answer}"
+    );
+
+    let _ = fs::remove_dir_all(&app);
+    let _ = fs::remove_dir_all(&gems);
+}
+
 /// A gem on its own is a tree of one gem plus core, so a method it gets from a
 /// sibling gem is unreachable by construction (DEC-029). The fix answers from
 /// an app that resolves the gem — which needs two checkouts, and so lives here

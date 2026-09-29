@@ -320,6 +320,8 @@ tiers the site `possible`.
   ```
 * `gems.missing` in `--index` output names gems the lockfile wants and disk
   lacks — a hole in every answer that would have come from them.
-  `gems.resolved_from` is `lockfile`, or `declared` when there was no
+  `gems.unlocated` lists git and path gems that were not indexed, each with
+  its `why` (a git checkout not where bundler puts it, a path outside the
+  checkout). `gems.resolved_from` is `lockfile`, or `declared` when there was no
   `Gemfile.lock` and the gemspecs' and Gemfile's dependencies were resolved to
   the highest installed versions instead; absent, no gem was indexed at all.

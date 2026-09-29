@@ -370,10 +370,15 @@ type takes one from the stub, or from an `.rbi` declaring the same method.
 
 **Gems** come from reading, never from running (DEC-016): `Gemfile.lock`
 parsed directly, sources found by convention across `vendor/bundle`,
-`$GEM_HOME`, `$GEM_PATH`, rbenv, rvm, asdf, Homebrew and system paths. Each gem
-is its own checkout rooted at its unpacked directory — which already encodes
-`name-version` — so two projects resolving the same version share one index and
-the second pays nothing (DEC-017). Only `lib/` is walked.
+`$GEM_HOME`, `$GEM_PATH`, rbenv, rvm, asdf, Homebrew and system paths, with
+`BUNDLE_PATH` first. Each gem is its own checkout rooted at its unpacked
+directory — which already encodes `name-version` — so two projects resolving
+the same version share one index and the second pays nothing (DEC-017). Only
+`lib/` is walked. A `GIT` gem is at its locked revision's checkout,
+`bundler/gems/<repo>-<sha12>/`, in the directory of its own gemspec, so a
+monorepo's gems are separate checkouts nested in one clone (DEC-150). A
+`PATH` gem inside the checkout is part of it; one outside is reported, not
+indexed.
 
 **No `Gemfile.lock`** — most gems commit none — and the list is what the
 checkout's gemspecs and Gemfile declare (`add_dependency`,
@@ -396,7 +401,8 @@ lockfile naming a gem the store lacks indexes it, collected or never seen
 (DEC-049).
 
 A gem the lockfile names and disk does not have is **reported**, in the text
-output and as `gems.missing` in `--json`. It is a hole in every answer that
+output and as `gems.missing` in `--json`; a git or path gem that was not
+indexed, as `gems.unlocated`, with the reason. It is a hole in every answer that
 would have come from it, and a silent hole is indistinguishable from a method
 that does not exist.
 

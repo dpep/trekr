@@ -1,12 +1,14 @@
 //! Which gems does this checkout use, and where are they on disk?
 //!
 //! Without running Ruby. `Gemfile.lock` is a plain text file with a documented
-//! shape, and every gem manager on earth unpacks into `.../gems/<name>-<version>/`,
+//! shape, every gem manager on earth unpacks into `.../gems/<name>-<version>/`,
+//! and bundler checks a git source out into `.../bundler/gems/<repo>-<sha>/`,
 //! so both halves are answerable by reading. Shelling out to `bundle` would
 //! need the project's Ruby and its bundle to be installed and working — the
 //! exact dependency PLAN §1 says is the product's first edge.
 //!
-//! A gem is keyed by its directory, which already encodes `(name, version)`, so
+//! A gem is keyed by its directory, which already encodes `(name, version)`
+//! or the git revision, so
 //! two projects on one machine that use `activesupport 7.1.0` share one index.
 //! A gem's bytes never change, which makes this the best case the blob store
 //! has.
@@ -17,15 +19,19 @@ mod declared;
 
 /// Where a lockfile says a gem comes from. It decides where to look, and
 /// whether to look at all.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum Source {
     /// A packaged gem, unpacked into `.../gems/<name>-<version>/`.
     Registry,
-    /// A git dependency, checked out under `bundler/gems/<name>-<sha>/`.
-    Git,
-    /// A path dependency — its code lives inside the checkout, so it is
-    /// already indexed and must not be reported as a hole.
-    Path,
+    /// A git dependency. Bundler checks each revision out once, into
+    /// `bundler/gems/<checkout>/`, and that one checkout may hold several
+    /// gems — a monorepo's, each in its own subdirectory.
+    Git {
+        /// `<repo name>-<first 12 of the revision>`, as bundler names it.
+        checkout: String,
+    },
+    /// A path dependency: `remote:` as written, relative to the Gemfile.
+    Path { remote: String },
 }
 
 /// A gem the lockfile names.
@@ -43,54 +49,101 @@ impl Gem {
     }
 }
 
-/// A gem that was named and found, or named and not.
+/// A gem that was named, and where it turned out to be.
 #[derive(Debug)]
 pub(crate) struct Located {
     pub(crate) gem: Gem,
-    /// `None` when nothing on disk matches. Reported, never silently dropped —
-    /// a missing gem is a hole in every answer that would have come from it.
-    pub(crate) root: Option<PathBuf>,
+    pub(crate) place: Place,
 }
 
-impl Located {
-    /// Is this a hole in the index worth telling someone about?
-    ///
-    /// A path gem is not: its source is inside the checkout, which is already
-    /// indexed. Counting it as missing would make a healthy monorepo look
-    /// broken — rails' own lockfile names 12 of them.
-    pub(crate) fn is_hole(&self) -> bool {
-        self.root.is_none() && self.gem.source != Source::Path
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Place {
+    /// Its own directory, indexed as a gem.
+    Dir(PathBuf),
+    /// A path gem whose source is inside the checkout, and so already
+    /// indexed with it. Not a hole: rails' own lockfile names 12 of them.
+    InCheckout,
+    /// Not indexed. Reported, never silently dropped — a hole in every
+    /// answer that would have come from it — and with the reason, because
+    /// each has a different fix.
+    Missing(Absence),
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum Absence {
+    NotInstalled,
+    /// A git gem whose revision is checked out in no `bundler/gems/`; the
+    /// path is where bundler would have put it.
+    NoCheckout(PathBuf),
+    /// The checkout is there and holds no gemspec by this gem's name.
+    NoGemspec(PathBuf),
+    /// A path gem outside the checkout. Live source, often a repository of
+    /// its own, so it is neither a pinned gem nor part of this checkout.
+    OutsidePath(PathBuf),
+    NoPath(PathBuf),
+}
+
+impl Absence {
+    /// Why, in words a person can act on.
+    pub(crate) fn why(&self, name: &str) -> String {
+        let at = |path: &Path| crate::core::paths::pretty(&path.to_string_lossy());
+        match self {
+            Absence::NotInstalled => "not installed".into(),
+            Absence::NoCheckout(path) => format!("git source, checkout not found at {}", at(path)),
+            Absence::NoGemspec(path) => format!("git source, no {name}.gemspec in {}", at(path)),
+            Absence::OutsidePath(path) => {
+                format!(
+                    "path source outside this checkout, not indexed: {}",
+                    at(path)
+                )
+            }
+            Absence::NoPath(path) => format!("path source, not found at {}", at(path)),
+        }
     }
 }
 
-/// Parse the `specs:` blocks of a `Gemfile.lock`.
+/// Parse the `specs:` blocks of a `Gemfile.lock`, each gem with its source.
 ///
 /// A gem is a line indented exactly four spaces reading `name (version)`; its
 /// own dependencies are indented six and are already listed elsewhere, so they
-/// are skipped rather than deduplicated later. `GIT`, `PATH`, and `GEM`
-/// sections all use the same shape, which is why the section header does not
-/// need parsing at all.
+/// are skipped rather than deduplicated later. A section's header lines —
+/// `remote:`, `revision:` — are indented two and come before its `specs:`.
 pub(crate) fn parse_lockfile(text: &str) -> Vec<Gem> {
     let mut gems = Vec::new();
     let mut in_specs = false;
+    let mut section = "";
+    let mut remote = "";
+    let mut revision = "";
     let mut source = Source::Registry;
     for line in text.lines() {
         let trimmed = line.trim_end();
         if trimmed.trim_start() == "specs:" {
             in_specs = true;
+            source = match section {
+                "GIT" => Source::Git {
+                    checkout: git_checkout_name(remote, revision),
+                },
+                "PATH" => Source::Path {
+                    remote: remote.to_string(),
+                },
+                _ => Source::Registry,
+            };
             continue;
         }
         // A non-indented, non-empty line ends the section and names the next.
         if !trimmed.is_empty() && !trimmed.starts_with(' ') {
             in_specs = false;
-            source = match trimmed {
-                "GIT" => Source::Git,
-                "PATH" => Source::Path,
-                _ => Source::Registry,
-            };
+            section = trimmed;
+            remote = "";
+            revision = "";
             continue;
         }
         if !in_specs {
+            if let Some(value) = trimmed.strip_prefix("  remote: ") {
+                remote = value;
+            } else if let Some(value) = trimmed.strip_prefix("  revision: ") {
+                revision = value;
+            }
             continue;
         }
         let indent = trimmed.len() - trimmed.trim_start().len();
@@ -112,12 +165,26 @@ pub(crate) fn parse_lockfile(text: &str) -> Vec<Gem> {
         gems.push(Gem {
             name: name.to_string(),
             version: version.to_string(),
-            source,
+            source: source.clone(),
         });
     }
     gems.sort();
     gems.dedup();
     gems
+}
+
+/// The directory bundler checks a git source out into: the repository's
+/// name, then the revision's first 12 characters. Mirrors
+/// `Bundler::Source::Git#base_name` and `#shortref_for_path`.
+fn git_checkout_name(remote: &str, revision: &str) -> String {
+    let base = remote
+        .trim_end_matches('/')
+        .rsplit(['/', ':'])
+        .next()
+        .unwrap_or_default();
+    let base = base.strip_suffix(".git").unwrap_or(base);
+    let short: String = revision.chars().take(12).collect();
+    format!("{base}-{short}")
 }
 
 /// Directory patterns gems are unpacked into, most specific first. A single
@@ -126,7 +193,12 @@ fn search_roots(repo: &Path) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     let mut push = |path: PathBuf| roots.push(path);
 
-    // Vendored into the project wins: it is what the project actually resolves.
+    // Bundler's configured path, when there is one, is where it installed.
+    if let Some(path) = bundle_path(repo) {
+        push(path.join("ruby/*/gems"));
+    }
+    // Vendored into the project wins over the machine's: it is what the
+    // project actually resolves.
     push(repo.join("vendor/bundle/ruby/*/gems"));
     push(repo.join(".bundle/ruby/*/gems"));
 
@@ -185,68 +257,116 @@ fn expand(pattern: &Path) -> Vec<PathBuf> {
     current
 }
 
+/// `BUNDLE_PATH`, as bundler reads it: the app's `.bundle/config` (or
+/// `$BUNDLE_APP_CONFIG`'s), then the environment, then `~/.bundle/config`.
+/// Relative to the app. Gems go under its `ruby/<version>/`.
+fn bundle_path(repo: &Path) -> Option<PathBuf> {
+    let read = |dir: PathBuf| {
+        let text = std::fs::read_to_string(dir.join("config")).ok()?;
+        config_value(&text, "BUNDLE_PATH")
+    };
+    let local = std::env::var_os("BUNDLE_APP_CONFIG")
+        .map_or_else(|| repo.join(".bundle"), |dir| repo.join(dir));
+    let path = read(local)
+        .or_else(|| std::env::var("BUNDLE_PATH").ok().filter(|p| !p.is_empty()))
+        .or_else(|| read(PathBuf::from(std::env::var_os("HOME")?).join(".bundle")))?;
+    Some(repo.join(path))
+}
+
+/// One key of a bundler config file — flat YAML, `KEY: "value"`.
+fn config_value(text: &str, key: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let value = line.strip_prefix(key)?.strip_prefix(':')?.trim();
+        let value = value.trim_matches(|c| c == '"' || c == '\'');
+        (!value.is_empty()).then(|| value.to_string())
+    })
+}
+
 /// Every directory gems are unpacked into, in search-root order. Expanded
 /// once, not once per gem: there are ~100 gems and a handful of roots.
 fn gem_dirs(repo: &Path) -> Vec<PathBuf> {
     search_roots(repo).iter().flat_map(|p| expand(p)).collect()
 }
 
-/// Find each gem's unpacked source, in search-root order.
+/// Find each gem's source, in search-root order.
 pub(crate) fn locate(repo: &Path, gems: Vec<Gem>) -> Vec<Located> {
     let roots = gem_dirs(repo);
-    // A git dependency is checked out under a sibling directory, named with
-    // the revision rather than the version, so it needs a prefix search.
+    // Bundler checks git sources out beside `gems/`, in `bundler/gems/`.
     let git_roots: Vec<PathBuf> = roots
         .iter()
         .filter_map(|root| root.parent().map(|p| p.join("bundler/gems")))
         .collect();
+    let checkout = std::fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
+    // A source naming one gem owns its one gemspec, whatever the file is called.
+    let sole = |source: &Source| gems.iter().filter(|g| g.source == *source).count() == 1;
 
-    gems.into_iter()
-        .map(|gem| {
-            let root = match gem.source {
-                // Its code is in the checkout, which is indexed already.
-                Source::Path => None,
-                Source::Registry => {
-                    let dir = gem.dir_name();
-                    roots
-                        .iter()
-                        .map(|root| root.join(&dir))
-                        .find(|candidate| candidate.is_dir())
-                }
-                Source::Git => git_roots
+    let places: Vec<Place> = gems
+        .iter()
+        .map(|gem| match &gem.source {
+            Source::Registry => {
+                let dir = gem.dir_name();
+                roots
                     .iter()
-                    .find_map(|root| find_git_checkout(root, &gem.name)),
-            };
-            Located { gem, root }
+                    .map(|root| root.join(&dir))
+                    .find(|candidate| candidate.is_dir())
+                    .map_or(Place::Missing(Absence::NotInstalled), Place::Dir)
+            }
+            Source::Git { checkout: name } => {
+                let Some(found) = git_roots.iter().map(|r| r.join(name)).find(|c| c.is_dir())
+                else {
+                    // Where bundler would have put it: the first that exists.
+                    let expected = git_roots
+                        .iter()
+                        .find(|r| r.is_dir())
+                        .or(git_roots.first())
+                        .map_or_else(|| Path::new("bundler/gems").join(name), |r| r.join(name));
+                    return Place::Missing(Absence::NoCheckout(expected));
+                };
+                gemspec_dir(&found, &gem.name, sole(&gem.source))
+                    .map_or(Place::Missing(Absence::NoGemspec(found)), Place::Dir)
+            }
+            Source::Path { remote } => {
+                let Ok(dir) = std::fs::canonicalize(checkout.join(remote)) else {
+                    return Place::Missing(Absence::NoPath(checkout.join(remote)));
+                };
+                match dir.starts_with(&checkout) {
+                    true => Place::InCheckout,
+                    false => Place::Missing(Absence::OutsidePath(
+                        gemspec_dir(&dir, &gem.name, sole(&gem.source)).unwrap_or(dir),
+                    )),
+                }
+            }
         })
+        .collect();
+    gems.into_iter()
+        .zip(places)
+        .map(|(gem, place)| Located { gem, place })
         .collect()
 }
 
-/// `bundler/gems/<name>-<revision>` — the version is not in the name, so match
-/// on the prefix.
-///
-/// The remainder has to be the revision and nothing else: a bare prefix test
-/// makes `rails` claim `rails-html-sanitizer-abc123def456`, and every gem whose
-/// name extends another's is the same trap.
-fn find_git_checkout(root: &Path, name: &str) -> Option<PathBuf> {
-    std::fs::read_dir(root)
-        .ok()?
-        .flatten()
-        .find(|entry| {
-            let dir = entry.file_name().to_string_lossy().into_owned();
-            is_checkout_of(&dir, name) && entry.file_type().is_ok_and(|t| t.is_dir())
+/// The directory of `name`'s gemspec within a source, searched where bundler
+/// searches (`{,*,*/*}.gemspec`), shallowest first. A monorepo keeps each gem
+/// in its own subdirectory: rails' `actionpack/actionpack.gemspec`.
+fn gemspec_dir(source: &Path, name: &str, sole: bool) -> Option<PathBuf> {
+    let levels = [source.to_path_buf(), source.join("*"), source.join("*/*")];
+    let named = format!("{name}.gemspec");
+    let found = levels
+        .iter()
+        .flat_map(|level| expand(level))
+        .find(|dir| dir.join(&named).is_file());
+    if found.is_some() || !sole {
+        return found;
+    }
+    // A gem whose gemspec is named for something else, alone in its source.
+    let mut specs = levels.iter().flat_map(|level| expand(level)).filter(|dir| {
+        std::fs::read_dir(dir).is_ok_and(|entries| {
+            entries
+                .flatten()
+                .any(|e| e.path().extension().is_some_and(|x| x == "gemspec"))
         })
-        .map(|entry| entry.path())
-}
-
-/// Is `dir` bundler's checkout of `name`, rather than of a gem whose name
-/// merely begins the same way?
-fn is_checkout_of(dir: &str, name: &str) -> bool {
-    dir.strip_prefix(name)
-        .and_then(|rest| rest.strip_prefix('-'))
-        .is_some_and(|revision| {
-            !revision.is_empty() && revision.chars().all(|c| c.is_ascii_hexdigit())
-        })
+    });
+    let only = specs.next()?;
+    specs.next().is_none().then_some(only)
 }
 
 /// Where a checkout's gem list came from.
@@ -354,96 +474,184 @@ BUNDLED WITH
     #[test]
     fn each_gem_remembers_which_section_named_it() {
         let gems = parse_lockfile(LOCKFILE);
-        let by = |name: &str| gems.iter().find(|g| g.name == name).unwrap().source;
-        assert_eq!(by("widget"), Source::Git);
-        assert_eq!(by("billing"), Source::Path);
+        let by = |name: &str| gems.iter().find(|g| g.name == name).unwrap().source.clone();
+        assert_eq!(
+            by("widget"),
+            Source::Git {
+                checkout: "widget-abc123".into()
+            }
+        );
+        assert_eq!(
+            by("billing"),
+            Source::Path {
+                remote: "engines/billing".into()
+            }
+        );
         assert_eq!(by("activesupport"), Source::Registry);
     }
 
     #[test]
-    fn a_path_gem_is_not_a_hole_because_its_code_is_in_the_checkout() {
-        let temp = std::env::temp_dir().join(format!("trekr-path-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&temp);
-        let located = locate(
-            &temp,
-            vec![
-                Gem {
-                    name: "billing".into(),
-                    version: "1.0.0".into(),
-                    source: Source::Path,
-                },
-                Gem {
-                    name: "absent".into(),
-                    version: "1.0.0".into(),
-                    source: Source::Registry,
-                },
-            ],
-        );
-        assert!(!located[0].is_hole(), "a path gem is already indexed");
-        assert!(located[1].is_hole());
-        let _ = std::fs::remove_dir_all(&temp);
+    fn a_git_checkout_is_named_as_bundler_names_it() {
+        let sha = "0123456789abcdef0123456789abcdef01234567";
+        for remote in [
+            "https://github.com/example/widget.git",
+            "https://github.com/example/widget",
+            "git@github.com:example/widget.git",
+            "git@host:widget.git",
+            "/srv/repos/widget/",
+        ] {
+            assert_eq!(
+                git_checkout_name(remote, sha),
+                "widget-0123456789ab",
+                "{remote}"
+            );
+        }
+    }
+
+    /// A scratch directory for one test, emptied first.
+    fn scratch(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("trekr-{label}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn gem(name: &str, source: Source) -> Gem {
+        Gem {
+            name: name.into(),
+            version: "1.0.0".into(),
+            source,
+        }
     }
 
     #[test]
-    fn a_lockfile_with_nothing_in_it_yields_nothing() {
-        assert!(parse_lockfile("").is_empty());
-        assert!(parse_lockfile("GEM\n  remote: x\n  specs:\n").is_empty());
+    fn a_path_gem_inside_the_checkout_is_not_a_hole() {
+        let repo = scratch("path-in");
+        std::fs::create_dir_all(repo.join("engines/billing")).unwrap();
+        let located = locate(
+            &repo,
+            vec![gem(
+                "billing",
+                Source::Path {
+                    remote: "engines/billing".into(),
+                },
+            )],
+        );
+        assert_eq!(located[0].place, Place::InCheckout);
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn a_path_gem_outside_the_checkout_says_it_was_not_indexed() {
+        let base = scratch("path-out");
+        let repo = base.join("app");
+        let shared = base.join("shared");
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&shared).unwrap();
+        let path = |remote: &str| {
+            gem(
+                "shared",
+                Source::Path {
+                    remote: remote.into(),
+                },
+            )
+        };
+        let located = locate(&repo, vec![path("../shared"), path("../gone")]);
+        let why: Vec<String> = located
+            .iter()
+            .map(|l| match &l.place {
+                Place::Missing(absence) => absence.why("shared"),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert!(why[0].contains("outside this checkout"), "{why:?}");
+        assert!(why[1].contains("not found"), "{why:?}");
+        let _ = std::fs::remove_dir_all(&base);
     }
 
     #[test]
     fn a_gem_that_is_not_on_disk_is_reported_rather_than_dropped() {
-        let temp = std::env::temp_dir().join(format!("trekr-gems-{}", std::process::id()));
-        let _ = std::fs::create_dir_all(&temp);
+        let repo = scratch("gems");
         let located = locate(
-            &temp,
-            vec![Gem {
-                name: "definitely-not-installed".into(),
-                version: "9.9.9".into(),
-                source: Source::Registry,
-            }],
+            &repo,
+            vec![gem("definitely-not-installed", Source::Registry)],
         );
-        assert_eq!(located.len(), 1);
-        assert!(
-            located[0].root.is_none(),
-            "a hole in the index has to be visible"
-        );
-        let _ = std::fs::remove_dir_all(&temp);
+        assert_eq!(located[0].place, Place::Missing(Absence::NotInstalled));
+        let _ = std::fs::remove_dir_all(&repo);
     }
 
     #[test]
     fn finds_a_gem_vendored_into_the_project() {
-        let temp = std::env::temp_dir().join(format!("trekr-vendor-{}", std::process::id()));
-        let gem_dir = temp.join("vendor/bundle/ruby/3.3.0/gems/widget-0.1.0");
+        let repo = scratch("vendor");
+        let gem_dir = repo.join("vendor/bundle/ruby/3.3.0/gems/widget-1.0.0");
         std::fs::create_dir_all(&gem_dir).unwrap();
-        let located = locate(
-            &temp,
-            vec![Gem {
-                name: "widget".into(),
-                version: "0.1.0".into(),
-                source: Source::Registry,
-            }],
-        );
-        assert_eq!(located[0].root.as_deref(), Some(gem_dir.as_path()));
-        let _ = std::fs::remove_dir_all(&temp);
+        let located = locate(&repo, vec![gem("widget", Source::Registry)]);
+        assert_eq!(located[0].place, Place::Dir(gem_dir));
+        let _ = std::fs::remove_dir_all(&repo);
     }
-}
 
-#[cfg(test)]
-mod git_checkout_name_tests {
-    use super::is_checkout_of;
+    /// A monorepo's git checkout holds each gem in a subdirectory; the gem
+    /// is that subdirectory, and a revision nobody checked out is said so.
+    #[test]
+    fn finds_each_gem_of_a_git_monorepo_in_its_own_subdirectory() {
+        let repo = scratch("git-mono");
+        std::fs::create_dir_all(repo.join(".bundle")).unwrap();
+        std::fs::write(repo.join(".bundle/config"), "---\nBUNDLE_PATH: \"store\"\n").unwrap();
+        let checkout = repo.join("store/ruby/3.4.0/bundler/gems/kit-abc123def456");
+        std::fs::create_dir_all(repo.join("store/ruby/3.4.0/gems")).unwrap();
+        for dir in ["", "kit_core", "kit_web"] {
+            std::fs::create_dir_all(checkout.join(dir)).unwrap();
+            let name = if dir.is_empty() { "kit" } else { dir };
+            std::fs::write(checkout.join(dir).join(format!("{name}.gemspec")), "").unwrap();
+        }
+        let git = |checkout: &str| Source::Git {
+            checkout: checkout.into(),
+        };
+        let located = locate(
+            &repo,
+            vec![
+                gem("kit", git("kit-abc123def456")),
+                gem("kit_core", git("kit-abc123def456")),
+                gem("kit_web", git("kit-abc123def456")),
+                gem("kit_absent", git("kit-abc123def456")),
+                gem("kit", git("kit-000000000000")),
+            ],
+        );
+        let places: Vec<&Place> = located.iter().map(|l| &l.place).collect();
+        assert_eq!(places[0], &Place::Dir(checkout.clone()));
+        assert_eq!(places[1], &Place::Dir(checkout.join("kit_core")));
+        assert_eq!(places[2], &Place::Dir(checkout.join("kit_web")));
+        assert_eq!(places[3], &Place::Missing(Absence::NoGemspec(checkout)));
+        assert!(
+            matches!(places[4], Place::Missing(Absence::NoCheckout(path)) if path.ends_with("bundler/gems/kit-000000000000")),
+            "another revision's checkout is not this one: {places:?}"
+        );
+        let _ = std::fs::remove_dir_all(&repo);
+    }
 
     #[test]
-    fn a_gem_does_not_claim_a_checkout_of_a_longer_named_gem() {
-        assert!(is_checkout_of("rails-abc123def456", "rails"));
-        assert!(is_checkout_of(
-            "rails-html-sanitizer-abc123",
-            "rails-html-sanitizer"
-        ));
-        assert!(
-            !is_checkout_of("rails-html-sanitizer-abc123", "rails"),
-            "the remainder must be a revision, not another name segment"
+    fn a_lone_git_gem_owns_a_gemspec_named_otherwise() {
+        let dir = scratch("git-sole");
+        std::fs::write(dir.join("other.gemspec"), "").unwrap();
+        assert_eq!(gemspec_dir(&dir, "widget", true), Some(dir.clone()));
+        assert_eq!(gemspec_dir(&dir, "widget", false), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reads_a_bundler_config_value_quoted_or_not() {
+        let config = "---\nBUNDLE_JOBS: \"4\"\nBUNDLE_PATH: \"vendor/bundle\"\n";
+        assert_eq!(
+            config_value(config, "BUNDLE_PATH").as_deref(),
+            Some("vendor/bundle")
         );
-        assert!(!is_checkout_of("rails", "rails"), "no revision at all");
-        assert!(!is_checkout_of("railsy-abc123", "rails"));
+        assert_eq!(
+            config_value("BUNDLE_PATH: x\n", "BUNDLE_PATH").as_deref(),
+            Some("x")
+        );
+        assert_eq!(
+            config_value("BUNDLE_PATH__SYSTEM: true\n", "BUNDLE_PATH"),
+            None
+        );
     }
 }

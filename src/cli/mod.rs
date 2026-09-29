@@ -888,15 +888,27 @@ fn index_gems(
     // position inside it answerable from here (DEC-029).
     let mut used: Vec<String> = Vec::new();
     for entry in located {
-        let Some(gem_root) = entry.root else {
-            if entry.is_hole() {
-                report
-                    .missing
-                    .push(format!("{} {}", entry.gem.name, entry.gem.version));
+        let named = format!("{} {}", entry.gem.name, entry.gem.version);
+        let gem_root = match entry.place {
+            crate::gems::Place::Dir(root) => root,
+            crate::gems::Place::InCheckout => {
+                report.from_path += 1;
+                continue;
             }
-            continue;
+            crate::gems::Place::Missing(crate::gems::Absence::NotInstalled) => {
+                report.missing.push(named);
+                continue;
+            }
+            crate::gems::Place::Missing(absence) => {
+                let why = absence.why(&entry.gem.name);
+                report.unlocated.push(Unlocated { gem: named, why });
+                continue;
+            }
         };
         report.found += 1;
+        if matches!(entry.gem.source, crate::gems::Source::Git { .. }) {
+            report.from_git += 1;
+        }
         // Canonical, like every other checkout root the store keys on: a query
         // canonicalizes the path it is given, and a gem located through a
         // symlinked GEM_HOME would otherwise be stored under a name no query
@@ -934,6 +946,10 @@ struct GemReport {
     resolved_from: Option<crate::gems::Resolved>,
     /// Named by the lockfile and present on disk.
     found: usize,
+    /// Of those, checked out from git (`bundler/gems/`).
+    from_git: usize,
+    /// Path gems whose source is inside this checkout, indexed with it.
+    from_path: usize,
     /// Read for the first time on this machine.
     indexed: usize,
     /// Already known — the shared case, and the reason this is cheap.
@@ -942,6 +958,18 @@ struct GemReport {
     /// Named by the lockfile and not found. A visible hole, not an absence.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     missing: Vec<String>,
+    /// Git and path gems not indexed, each with the reason: a checkout
+    /// that is not where bundler puts it is not the same hole as a gem
+    /// nobody installed.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    unlocated: Vec<Unlocated>,
+}
+
+#[derive(Debug, serde::Serialize)]
+struct Unlocated {
+    /// `name version`, as `missing` writes it.
+    gem: String,
+    why: String,
 }
 
 fn cmd_index(
@@ -1053,32 +1081,47 @@ fn cmd_index(
         ),
         Some(crate::gems::Resolved::Lockfile) => {}
     }
-    if out == Output::Text && (gems.found > 0 || !gems.missing.is_empty()) {
+    let holes = !gems.missing.is_empty() || !gems.unlocated.is_empty();
+    if out == Output::Text && (gems.found > 0 || holes) {
+        let from_git = match gems.from_git {
+            0 => String::new(),
+            n => format!(" ({n} from git)"),
+        };
         println!(
-            "gems — {} resolved, {} newly indexed ({} files), {} already known",
+            "gems — {} resolved{from_git}, {} newly indexed ({} files), {} already known",
             gems.found, gems.indexed, gems.files, gems.already_indexed
         );
+        // A hole in the index, said out loud: every answer that would have
+        // come from these gems is a residue with no reason attached.
+        let named_by = match gems.resolved_from {
+            Some(crate::gems::Resolved::Declared) => "the gemspec or Gemfile",
+            _ => "Gemfile.lock",
+        };
         if !gems.missing.is_empty() {
-            // A hole in the index, said out loud: every answer that would have
-            // come from these gems is a residue with no reason attached. The
-            // full list is in `--json`; a lockfile naming every optional
-            // adapter would otherwise bury the report.
-            const SHOWN: usize = 6;
-            let shown = gems.missing.iter().take(SHOWN).cloned().collect::<Vec<_>>();
-            let more = gems.missing.len().saturating_sub(shown.len());
-            let named_by = match gems.resolved_from {
-                Some(crate::gems::Resolved::Declared) => "the gemspec or Gemfile",
-                _ => "Gemfile.lock",
-            };
             println!(
-                "  {} named by {named_by} but not installed: {}{}",
+                "  {} named by {named_by} but not installed: {}",
                 gems.missing.len(),
-                shown.join(", "),
-                if more > 0 {
-                    format!(", and {more} more")
-                } else {
-                    String::new()
-                }
+                abridged(&gems.missing)
+            );
+        }
+        // One line per reason: a monorepo's gems share one checkout.
+        let mut reasons: Vec<&str> = Vec::new();
+        for unlocated in &gems.unlocated {
+            if !reasons.contains(&unlocated.why.as_str()) {
+                reasons.push(&unlocated.why);
+            }
+        }
+        for why in reasons {
+            let named: Vec<String> = gems
+                .unlocated
+                .iter()
+                .filter(|u| u.why == why)
+                .map(|u| u.gem.clone())
+                .collect();
+            println!(
+                "  {} named by {named_by} — {why}: {}",
+                named.len(),
+                abridged(&named)
             );
         }
     }
@@ -1100,6 +1143,22 @@ fn cmd_index(
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// A list of gems, cut short. The full list is in `--json`; a lockfile
+/// naming every optional adapter would otherwise bury the report.
+fn abridged(gems: &[String]) -> String {
+    const SHOWN: usize = 6;
+    let mut out = gems
+        .iter()
+        .take(SHOWN)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if let Some(more) = gems.len().checked_sub(SHOWN).filter(|n| *n > 0) {
+        out.push_str(&format!(", and {more} more"));
+    }
+    out
 }
 
 /// What is indexed. By default the checkout this is run in (or `--context`
