@@ -58,7 +58,19 @@ trekr --gc --dry-run             # what old gem versions and deleted worktrees w
 ```
 
 Every command honors `--json` and `--ndjson`, because the intended caller is an
-agent. Exit codes mean something, and each means one thing:
+agent. Under `--ndjson` a row set — `--refs`, `--dead`, `--symbols`, `--usage`
+— streams one row per line, exactly as the `--json` array holds it, and ends
+with one `{"answer": {…}}` line: the rest of the `--json` answer (`counts`,
+`summary`, `status`…) and `rows`, how many lines came before it. That last line
+is always written, an empty set included, so a reader can tell a finished
+stream from a broken one:
+
+```sh
+trekr --refs 'Post#publish' -J | jq -c 'select(.answer | not)'   # the sites
+trekr --refs 'Post#publish' -J | tail -1 | jq .answer.counts      # the tally
+```
+
+Exit codes mean something, and each means one thing:
 
 | Exit | Meaning |
 | --- | --- |

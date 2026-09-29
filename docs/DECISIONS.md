@@ -4199,6 +4199,7 @@ command that reports it, and a command that reports the fact uses that name:
 | `unresolved_ancestors` | ancestors that could not be seen, top level and per variant |
 | `path`, `root`, `line`, `col` | every located object has all four (DEC-076) |
 | `repo` | a checkout's identity (`--index`, `--drop`, `--status`, `not_indexed`) |
+| `answer`, `rows` | `--ndjson`'s last line of a row set: the rest of the `--json` answer, and how many rows came before it (DEC-290) |
 
 **Before**, each command named a fact as it was written: `--ancestors` said
 `name` and `unresolved` where the card said `query` and
@@ -8715,3 +8716,38 @@ says so (107).
 
 *Reverses if:* the naming rung stops guessing among equals, when a guess
 could confirm an inherited method as it does an owned one.
+
+## DEC-290 — Under `--ndjson`, a row set streams its rows and ends with the rest of the answer
+
+**Decided.** Every row-set command — `--refs` both ways, `--dead`,
+`--symbols`, `--usage` and `--usage --misses` — writes one row per line
+under `--ndjson`, each exactly the element its `--json` array holds, then
+one last line, `{"answer": {…}}`: the `--json` answer without its row array,
+plus `rows`, the number of lines before it. A command whose `--json` is a
+bare array ends with `{"answer": {"rows": N}}`. The last line is always
+written, an empty set and `--refs`' `no_such_method` included. `--json` is
+unchanged. It is `ndjson_rows`, beside DEC-230's streaming writer, and both
+`emit_listing` and `emit_rows` end in it.
+
+**Why.** `--help` promised "one compact object per line", and `--refs
+Owner#m` and `--dead` printed one line holding the whole answer, its rows a
+nested array — `--json` without the whitespace. A streaming reader got
+nothing until the end and then everything at once. The bare-name `--refs`
+and `--symbols` did stream, with no end: an empty set printed nothing, which
+reads the same as a crash, and the count lived nowhere.
+
+**Why a wrapper key.** A reader has to tell the last line from a row as it
+reads, before it knows the line is last. The rows have no field in common
+to switch on, and adding one would make an `--ndjson` row differ from its
+`--json` element. So the tail is one key no row has. Not `summary`: `--dead`
+already has one, a tally of its candidates, and `{"summary": {"summary":
+…}}` would make that name mean two things (DEC-080). `answer` is what it
+holds.
+
+**Why last.** `--refs`' `counts` and `--dead`'s `summary` are totals of the
+rows, known once they are; and a last line is the reader's proof the stream
+finished.
+
+*Reverses if* rows start being written before they are all gathered, and a
+reader needs the head (`definition`, `status`) first. Then the head goes
+first as its own line, and the tail keeps `rows`.

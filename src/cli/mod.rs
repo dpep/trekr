@@ -197,7 +197,10 @@ struct Cli {
     #[arg(short = 'j', long)]
     json: bool,
 
-    /// Emit newline-delimited JSON, one compact object per line.
+    /// Emit newline-delimited JSON, one compact object per line. A row set
+    /// (`--refs`, `--dead`, `--symbols`, `--usage`) streams each row on its
+    /// own line, then ends with one `{"answer": …}` line: the rest of the
+    /// `--json` answer, and `rows`, how many came before it.
     #[arg(short = 'J', long, conflicts_with = "json")]
     ndjson: bool,
 
@@ -727,7 +730,8 @@ fn emit_json<T: serde::Serialize>(out: Output, value: &T) -> anyhow::Result<()> 
 /// `emit_json` for an answer holding one long list: `answer[key]` is written
 /// from `rows` one row at a time, where the answer would otherwise be built
 /// whole as a `Value`, copied, and rendered to one string before a byte of
-/// it is printed. The bytes are the same.
+/// it is printed. The bytes are the same. Under `--ndjson` the rows stream,
+/// one per line, and the rest of the answer follows them (`ndjson_rows`).
 fn emit_listing<T: serde::Serialize>(
     out: Output,
     answer: serde_json::Value,
@@ -748,10 +752,33 @@ fn render_listing<T: serde::Serialize>(
     w: &mut impl Write,
 ) -> anyhow::Result<()> {
     rooted(&mut answer);
-    let Some(head) = answer.as_object() else {
+    let Some(head) = answer.as_object_mut() else {
         anyhow::bail!("an answer with a listing is an object");
     };
+    if out == Output::Ndjson {
+        head.remove(key);
+        return ndjson_rows(rows, head.clone(), w);
+    }
     render_json(out, &Listing { head, key, rows }, w)
+}
+
+/// A row set under `--ndjson` (DEC-290): each row on its own line, as the
+/// `--json` array holds it, then one `{"answer": …}` line — the rest of the
+/// `--json` answer, and `rows`, how many lines came before it. Always last,
+/// and always written, so a reader knows the stream ended rather than broke.
+fn ndjson_rows<T: serde::Serialize>(
+    rows: &[T],
+    mut head: serde_json::Map<String, serde_json::Value>,
+    w: &mut impl Write,
+) -> anyhow::Result<()> {
+    for row in rows {
+        serde_json::to_writer(&mut *w, &Rows::rooted(row)?)?;
+        writeln!(w)?;
+    }
+    head.insert("rows".into(), rows.len().into());
+    serde_json::to_writer(&mut *w, &serde_json::json!({ "answer": head }))?;
+    writeln!(w)?;
+    Ok(())
 }
 
 /// Print a row set. `None` means it was handled; `Some` hands text mode back
@@ -766,10 +793,7 @@ fn emit_rows<T: serde::Serialize>(out: Output, rows: &[T]) -> anyhow::Result<boo
         }
         Output::Ndjson => {
             let mut w = std::io::BufWriter::new(std::io::stdout().lock());
-            for row in rows {
-                serde_json::to_writer(&mut w, &Rows::rooted(row)?)?;
-                writeln!(w)?;
-            }
+            ndjson_rows(rows, serde_json::Map::new(), &mut w)?;
             w.flush()?;
         }
     }
@@ -2351,23 +2375,21 @@ fn cmd_refs(
         let reason = reason.unwrap_or_default();
         let hint = format!("trekr --refs {}", query.name);
         if out != Output::Text {
-            emit_json(
-                out,
-                &serde_json::json!({
-                    "query": text,
-                    "status": status,
-                    "owner": owner,
-                    "method": query.name,
-                    "singleton": query.singleton,
-                    "definition": definition,
-                    "resolves_to": null,
-                    "inherited": false,
-                    "counts": refs::Counts::default(),
-                    "references": [],
-                    "reason": reason,
-                    "hint": hint,
-                }),
-            )?;
+            let answer = serde_json::json!({
+                "query": text,
+                "status": status,
+                "owner": owner,
+                "method": query.name,
+                "singleton": query.singleton,
+                "definition": definition,
+                "resolves_to": null,
+                "inherited": false,
+                "counts": refs::Counts::default(),
+                "references": null,
+                "reason": reason,
+                "hint": hint,
+            });
+            emit_listing(out, answer, "references", &[] as &[refs::Reference])?;
         } else {
             println!(
                 "{reason}\n  every call site of {} by name: {hint}",
@@ -2726,10 +2748,8 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
     let found = !rows.is_empty();
     let summary = dead_summary(&rows);
     if out != Output::Text {
-        emit_json(
-            out,
-            &serde_json::json!({ "scope": scope, "summary": summary, "candidates": rows }),
-        )?;
+        let answer = serde_json::json!({ "scope": scope, "summary": summary, "candidates": null });
+        emit_listing(out, answer, "candidates", &rows)?;
         return Ok(exit_on(found));
     }
     for row in &rows {
@@ -4223,15 +4243,31 @@ mod tests {
             let mut whole = answer.clone();
             whole["references"] = serde_json::to_value(rows).unwrap();
             rooted(&mut whole);
+            // Under `--ndjson`, each row of it and then the rest (DEC-290).
+            let mut streamed = String::new();
+            for row in whole["references"].as_array().unwrap() {
+                streamed.push_str(&format!("{}\n", serde_json::to_string(row).unwrap()));
+            }
+            let mut head = whole.clone();
+            head.as_object_mut().unwrap().remove("references");
+            head["rows"] = rows.len().into();
+            let answer_line = serde_json::json!({ "answer": head });
+            streamed.push_str(&format!(
+                "{}\n",
+                serde_json::to_string(&answer_line).unwrap()
+            ));
             for (out, want) in [
-                (Output::Json, serde_json::to_string_pretty(&whole).unwrap()),
-                (Output::Ndjson, serde_json::to_string(&whole).unwrap()),
+                (
+                    Output::Json,
+                    format!("{}\n", serde_json::to_string_pretty(&whole).unwrap()),
+                ),
+                (Output::Ndjson, streamed),
             ] {
                 let mut listed = answer.clone();
                 listed["references"] = serde_json::Value::Null;
                 let mut got = Vec::new();
                 render_listing(out, listed, "references", rows, &mut got).unwrap();
-                assert_eq!(String::from_utf8(got).unwrap(), format!("{want}\n"));
+                assert_eq!(String::from_utf8(got).unwrap(), want);
             }
             let mut got = Vec::new();
             render_json(Output::Json, &Rows(rows), &mut got).unwrap();

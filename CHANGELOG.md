@@ -66,6 +66,18 @@
   owner defines itself answers as before, and `--dead` is unchanged
   (DEC-280).
 
+- **`--ndjson` streams row sets one row per line.** `--refs Owner#method`
+  and `--dead` printed their whole answer on one line, rows as a nested
+  array; now each reference or candidate is a line of its own, exactly as
+  the `--json` array holds it, and a last line `{"answer": {…}}` carries the
+  rest (`counts`, `definition`, `status`; `scope`, `summary`) with `rows`,
+  the count. Bare-name `--refs`, `--symbols` and `--usage` already streamed
+  their rows and now end with `{"answer": {"rows": N}}` too, written even
+  when there are none. A script reading `--ndjson` should skip the line with
+  an `answer` key (`jq 'select(.answer | not)'`) or read its tally from it;
+  one that parsed `--refs`/`--dead` `--ndjson` as a single object should
+  switch to `--json`, which is unchanged (DEC-290).
+
 - **An editor's references answer about twice as fast.** The LSP tiers a
   scan's call sites on every core, as `--refs` does: on rails,
   `Persistence#save` 93 → 44 ms and `QueryMethods#where` 126 → 70 ms for the

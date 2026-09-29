@@ -794,6 +794,61 @@ fn every_command_speaks_ndjson_as_well_as_json() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A row set streams under `--ndjson`: each row on its own line, as `--json`
+/// holds it, then one `{"answer": …}` line — the `--json` answer without its
+/// rows, and how many there were.
+#[test]
+fn ndjson_streams_a_row_set_one_row_per_line_then_the_answer() {
+    let (dir, db) = scratch("ndjson-rows");
+    repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+
+    let lines = |args: &[&str]| -> Vec<serde_json::Value> {
+        stdout(&trekr(&db, &dir, args))
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap_or_else(|e| panic!("{line}: {e}")))
+            .collect()
+    };
+    // (ndjson args, the --json answer's row key, or `None` for a bare array)
+    let cases: [(&[&str], Option<&str>); 5] = [
+        (&["--refs", "Widget#helper"], Some("references")),
+        (&["--refs", "Widget#nothing"], Some("references")),
+        (&["--dead", "widget.rb"], Some("candidates")),
+        (&["--refs", "helper"], None),
+        (&["--symbols", "widget.rb"], None),
+    ];
+    for (args, key) in cases {
+        let whole = json(&trekr(&db, &dir, &[args, &["--json"]].concat()));
+        let streamed = lines(&[args, &["--ndjson"]].concat());
+        let (last, rows) = streamed.split_last().unwrap_or_else(|| panic!("{args:?}"));
+        let want_rows = match key {
+            Some(key) => whole[key].clone(),
+            None => whole.clone(),
+        };
+        assert_eq!(
+            serde_json::Value::from(rows.to_vec()),
+            want_rows,
+            "{args:?}: the rows, as --json holds them"
+        );
+        assert!(
+            rows.iter().all(|row| row.get("answer").is_none()),
+            "{args:?}"
+        );
+        let mut head = match key {
+            Some(key) => {
+                let mut head = whole.clone();
+                head.as_object_mut().unwrap().remove(key);
+                head
+            }
+            None => serde_json::json!({}),
+        };
+        head["rows"] = rows.len().into();
+        assert_eq!(last, &serde_json::json!({ "answer": head }), "{args:?}");
+    }
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn refs_disclose_the_receiver_rather_than_guessing_at_it() {
     let (dir, db) = scratch("refs");
@@ -1831,7 +1886,11 @@ fn usage_counts_each_command_by_caller_and_outcome() {
     assert!(summary.contains("command line"), "{summary}");
     assert!(summary.contains("claude-code"), "{summary}");
     let ndjson = stdout(&trekr(&db, &dir, &["--usage", "--ndjson", "--days", "1"]));
-    assert_eq!(ndjson.lines().count(), rows.len(), "today holds every row");
+    assert_eq!(
+        ndjson.lines().count(),
+        rows.len() + 1,
+        "today holds every row, then the answer"
+    );
 
     let _ = fs::remove_dir_all(&dir);
 }

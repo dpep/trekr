@@ -695,7 +695,9 @@ path in the asked-about checkout relative to it, and any other absolute with
 
 A long answer's rows — `--refs`'s references, a listing's rows — are written
 one at a time, each rooted as it goes, rather than built into one JSON value
-and rendered to one string first; the bytes are the same (DEC-230).
+and rendered to one string first; the bytes are the same (DEC-230). Under
+`--ndjson` a row set is one row per line, then a last `{"answer": {…}}` line
+holding the rest of the `--json` answer and `rows`, the count (DEC-290).
 
 | command | answers |
 |---|---|

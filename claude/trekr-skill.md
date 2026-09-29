@@ -305,7 +305,11 @@ tiers the site `possible`.
 
 ## Reading the output
 
-* `--json` everywhere; `--ndjson` for streaming.
+* `--json` everywhere; `--ndjson` for streaming. Under `--ndjson` a row set
+  (`--refs`, `--dead`, `--symbols`) is one row per line, as the `--json` array
+  holds it, then a last `{"answer": {…}}` line: the rest of the `--json`
+  answer (`counts`, `summary`, `status`…) and `rows`, the count. Filter rows
+  with `select(.answer | not)`.
 * One name per fact across commands: `query` is what you typed, `fqn` what
   it resolved to, `definition` where it is defined (always present, `[]` when
   unknown), `receiver`/`receiver_text`/`receiver_type` for a call's receiver,
