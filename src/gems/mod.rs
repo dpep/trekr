@@ -58,6 +58,9 @@ pub(crate) struct Located {
     /// Requirements as written that could not be read without running
     /// them (`version`, an interpolation): the pick ignored them.
     pub(crate) unread: Vec<String>,
+    /// Found only in another Ruby's gem directories than the checkout's
+    /// own: that Ruby has no copy that would do (DEC-291).
+    pub(crate) elsewhere: bool,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -359,33 +362,52 @@ fn machine_roots() -> Vec<(PathBuf, Named)> {
 /// `$PATH`; with none of them, every Ruby, and that is said.
 fn active_ruby_dirs(repo: &Path) -> (Vec<PathBuf>, String) {
     let mut dirs: Vec<PathBuf> = project_roots(repo).iter().flat_map(|p| expand(p)).collect();
-    let machine: Vec<(PathBuf, Named)> = machine_roots()
+    let machine = machine_dirs();
+    let (found, how) =
+        named_ruby_dirs(repo, &machine).unwrap_or_else(|| environment_ruby_dirs(machine));
+    dirs.extend(found);
+    (dirs, how)
+}
+
+fn machine_dirs() -> Vec<(PathBuf, Named)> {
+    machine_roots()
         .into_iter()
         .flat_map(|(pattern, named)| expand(&pattern).into_iter().map(move |dir| (dir, named)))
+        .collect()
+}
+
+/// The gem directories of the version `.ruby-version` or the Gemfile's
+/// `ruby` names, when any is installed.
+fn named_ruby_dirs(repo: &Path, machine: &[(PathBuf, Named)]) -> Option<(Vec<PathBuf>, String)> {
+    let version = project_ruby(repo)?;
+    let abi = abi_of(&version);
+    let matching: Vec<PathBuf> = machine
+        .iter()
+        .filter(|(dir, named)| match named {
+            Named::Install => dir.components().any(|c| {
+                let c = c.as_os_str().to_string_lossy();
+                let c = c.strip_prefix("ruby-").unwrap_or(&c);
+                c == version
+                    || c.starts_with(&format!("{version}."))
+                    || c.starts_with(&format!("{version}@"))
+            }),
+            Named::Abi => abi.as_deref().is_some_and(|abi| has_component(dir, abi)),
+        })
+        .map(|(dir, _)| dir.clone())
         .collect();
+    (!matching.is_empty()).then(|| {
+        (
+            matching,
+            format!("Ruby {version}, which the checkout names"),
+        )
+    })
+}
 
-    if let Some(version) = project_ruby(repo) {
-        let abi = abi_of(&version);
-        let matching: Vec<PathBuf> = machine
-            .iter()
-            .filter(|(dir, named)| match named {
-                Named::Install => dir.components().any(|c| {
-                    let c = c.as_os_str().to_string_lossy();
-                    let c = c.strip_prefix("ruby-").unwrap_or(&c);
-                    c == version
-                        || c.starts_with(&format!("{version}."))
-                        || c.starts_with(&format!("{version}@"))
-                }),
-                Named::Abi => abi.as_deref().is_some_and(|abi| has_component(dir, abi)),
-            })
-            .map(|(dir, _)| dir.clone())
-            .collect();
-        if !matching.is_empty() {
-            dirs.extend(matching);
-            return (dirs, format!("Ruby {version}, which the checkout names"));
-        }
-    }
-
+/// The gem directories of the Ruby the environment makes current —
+/// `$GEM_HOME`/`$GEM_PATH`, else the `ruby` on `$PATH` — or, with neither,
+/// every Ruby's, and how that was chosen.
+fn environment_ruby_dirs(machine: Vec<(PathBuf, Named)>) -> (Vec<PathBuf>, String) {
+    let mut dirs = Vec::new();
     let environment: Vec<PathBuf> = environment_roots().iter().flat_map(|p| expand(p)).collect();
     if !environment.is_empty() {
         dirs.extend(environment);
@@ -538,62 +560,106 @@ fn gem_dirs(repo: &Path) -> Vec<PathBuf> {
     search_roots(repo).iter().flat_map(|p| expand(p)).collect()
 }
 
-/// Find each gem's source, in search-root order.
-pub(crate) fn locate(repo: &Path, gems: Vec<Gem>) -> Vec<Located> {
-    let roots = gem_dirs(repo);
+/// Find each gem's source, in search-root order: the project's own, then
+/// the checkout's Ruby's, then every other (DEC-291). A gem found only past
+/// the Ruby's is `elsewhere` — unless the Ruby ships that version as a
+/// default gem, whose code is its stdlib.
+pub(crate) fn locate(repo: &Path, gems: Vec<Gem>, ruby: Option<&stdlib::Stdlib>) -> Vec<Located> {
+    let mut roots: Vec<PathBuf> = project_roots(repo).iter().flat_map(|p| expand(p)).collect();
+    let project = roots.len();
+    roots.extend(ruby.map(|ruby| ruby.gem_dirs()).unwrap_or_default());
+    // Past this index is another Ruby's; with no Ruby chosen, there is none.
+    let own = match ruby {
+        Some(_) => roots.len(),
+        None => usize::MAX,
+    };
+    for dir in gem_dirs(repo) {
+        if !roots.contains(&dir) {
+            roots.push(dir);
+        }
+    }
     // Bundler checks git sources out beside `gems/`, in `bundler/gems/`.
     let git_roots: Vec<PathBuf> = roots
         .iter()
-        .filter_map(|root| root.parent().map(|p| p.join("bundler/gems")))
+        .map(|root| root.parent().unwrap_or(root).join("bundler/gems"))
         .collect();
+    // Where bundler on the checkout's Ruby would check one out.
+    let rubys_git = match ruby {
+        Some(_) => &git_roots[project..own],
+        None => &[],
+    };
     let checkout = std::fs::canonicalize(repo).unwrap_or_else(|_| repo.to_path_buf());
     // A source naming one gem owns its one gemspec, whatever the file is called.
     let sole = |source: &Source| gems.iter().filter(|g| g.source == *source).count() == 1;
 
-    let places: Vec<Place> = gems
+    let places: Vec<(Place, bool)> = gems
         .iter()
         .map(|gem| match &gem.source {
             Source::Registry => {
                 let dir = gem.dir_name();
-                roots
+                let Some((at, found)) = roots
                     .iter()
                     .map(|root| root.join(&dir))
-                    .find(|candidate| candidate.is_dir())
-                    .map_or(Place::Missing(Absence::NotInstalled), Place::Dir)
+                    .enumerate()
+                    .find(|(_, candidate)| candidate.is_dir())
+                else {
+                    return (Place::Missing(Absence::NotInstalled), false);
+                };
+                match ruby {
+                    Some(ruby) if at >= own && ruby.ships(&gem.name, &gem.version) => (
+                        Place::Missing(Absence::DefaultGem(ruby.root.clone())),
+                        false,
+                    ),
+                    _ => (Place::Dir(found), at >= own),
+                }
             }
             Source::Git { checkout: name } => {
-                let Some(found) = git_roots.iter().map(|r| r.join(name)).find(|c| c.is_dir())
+                let Some((at, found)) = git_roots
+                    .iter()
+                    .map(|r| r.join(name))
+                    .enumerate()
+                    .find(|(_, c)| c.is_dir())
                 else {
-                    // Where bundler would have put it: the first that exists.
-                    let expected = git_roots
+                    // Where bundler would have put it: the first that exists,
+                    // the checkout's Ruby's before any other's.
+                    let expected = rubys_git
                         .iter()
                         .find(|r| r.is_dir())
+                        .or(rubys_git.first())
+                        .or_else(|| git_roots.iter().find(|r| r.is_dir()))
                         .or(git_roots.first())
                         .map_or_else(|| Path::new("bundler/gems").join(name), |r| r.join(name));
-                    return Place::Missing(Absence::NoCheckout(expected));
+                    return (Place::Missing(Absence::NoCheckout(expected)), false);
                 };
-                gemspec_dir(&found, &gem.name, sole(&gem.source))
-                    .map_or(Place::Missing(Absence::NoGemspec(found)), Place::Dir)
+                match gemspec_dir(&found, &gem.name, sole(&gem.source)) {
+                    Some(dir) => (Place::Dir(dir), at >= own),
+                    None => (Place::Missing(Absence::NoGemspec(found)), false),
+                }
             }
             Source::Path { remote } => {
                 let Ok(dir) = std::fs::canonicalize(checkout.join(remote)) else {
-                    return Place::Missing(Absence::NoPath(checkout.join(remote)));
+                    return (
+                        Place::Missing(Absence::NoPath(checkout.join(remote))),
+                        false,
+                    );
                 };
-                match dir.starts_with(&checkout) {
+                let place = match dir.starts_with(&checkout) {
                     true => Place::InCheckout,
                     false => Place::Missing(Absence::OutsidePath(
                         gemspec_dir(&dir, &gem.name, sole(&gem.source)).unwrap_or(dir),
                     )),
-                }
+                };
+                (place, false)
             }
         })
         .collect();
     gems.into_iter()
         .zip(places)
-        .map(|(gem, place)| Located {
+        .map(|(gem, (place, elsewhere))| Located {
             gem,
             place,
             unread: Vec::new(),
+            elsewhere,
         })
         .collect()
 }
@@ -645,19 +711,40 @@ impl Resolved {
 }
 
 /// The gems a checkout depends on, located on disk, and where the list came
-/// from; `None` when nothing names any.
+/// from; `None` when nothing names any. `ruby` is the Ruby the checkout runs
+/// on (DEC-271), whose gems are looked for first (DEC-291).
 ///
 /// An absent `Gemfile.lock` is not an error: most gems commit none, and their
 /// gemspec says the same thing less exactly.
-pub(crate) fn for_checkout(repo: &Path) -> (Vec<Located>, Option<Resolved>) {
+pub(crate) fn for_checkout(
+    repo: &Path,
+    ruby: Option<&stdlib::Stdlib>,
+) -> (Vec<Located>, Option<Resolved>) {
     let (mut located, resolved) = match std::fs::read_to_string(repo.join("Gemfile.lock")) {
         Ok(text) => (
-            locate(repo, parse_lockfile(&text)),
+            locate(repo, parse_lockfile(&text), ruby),
             Some(Resolved::Lockfile),
         ),
         Err(_) => {
-            let (dirs, how) = active_ruby_dirs(repo);
-            match declared::resolve(repo, &dirs) {
+            // The checkout's Ruby's gems, then — for a name that Ruby has
+            // none of — the environment's Ruby's, whose `bundle install` it
+            // would have been. With no Ruby chosen, DEC-152's choice alone.
+            let (dirs, fallback, how) = match ruby {
+                Some(ruby) => {
+                    let mut dirs: Vec<PathBuf> =
+                        project_roots(repo).iter().flat_map(|p| expand(p)).collect();
+                    dirs.extend(ruby.gem_dirs());
+                    let (shell, _) = environment_ruby_dirs(machine_dirs());
+                    let fallback: Vec<PathBuf> =
+                        shell.into_iter().filter(|d| !dirs.contains(d)).collect();
+                    (dirs, fallback, ruby.ruby.clone())
+                }
+                None => {
+                    let (dirs, how) = active_ruby_dirs(repo);
+                    (dirs, Vec::new(), how)
+                }
+            };
+            match declared::resolve(repo, &dirs, &fallback) {
                 Some(located) => (located, Some(Resolved::Declared { ruby: how })),
                 None => (Vec::new(), None),
             }
@@ -829,6 +916,7 @@ BUNDLED WITH
                     remote: "engines/billing".into(),
                 },
             )],
+            None,
         );
         assert_eq!(located[0].place, Place::InCheckout);
         let _ = std::fs::remove_dir_all(&repo);
@@ -849,7 +937,7 @@ BUNDLED WITH
                 },
             )
         };
-        let located = locate(&repo, vec![path("../shared"), path("../gone")]);
+        let located = locate(&repo, vec![path("../shared"), path("../gone")], None);
         let why: Vec<String> = located
             .iter()
             .map(|l| match &l.place {
@@ -868,6 +956,7 @@ BUNDLED WITH
         let located = locate(
             &repo,
             vec![gem("definitely-not-installed", Source::Registry)],
+            None,
         );
         assert_eq!(located[0].place, Place::Missing(Absence::NotInstalled));
         let _ = std::fs::remove_dir_all(&repo);
@@ -878,7 +967,7 @@ BUNDLED WITH
         let repo = scratch("vendor");
         let gem_dir = repo.join("vendor/bundle/ruby/3.3.0/gems/widget-1.0.0");
         std::fs::create_dir_all(&gem_dir).unwrap();
-        let located = locate(&repo, vec![gem("widget", Source::Registry)]);
+        let located = locate(&repo, vec![gem("widget", Source::Registry)], None);
         assert_eq!(located[0].place, Place::Dir(gem_dir));
         let _ = std::fs::remove_dir_all(&repo);
     }
@@ -909,6 +998,7 @@ BUNDLED WITH
                 gem("kit_absent", git("kit-abc123def456")),
                 gem("kit", git("kit-000000000000")),
             ],
+            None,
         );
         let places: Vec<&Place> = located.iter().map(|l| &l.place).collect();
         assert_eq!(places[0], &Place::Dir(checkout.clone()));

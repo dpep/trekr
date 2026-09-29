@@ -48,6 +48,12 @@ impl Stdlib {
             .contains(&(name.to_string(), version.to_string()))
     }
 
+    /// The directories this Ruby's gems are installed in, where its
+    /// checkout's gems are looked for first (DEC-291).
+    pub(crate) fn gem_dirs(&self) -> Vec<PathBuf> {
+        gem_dirs_of(&self.root)
+    }
+
     /// The rbs gem whose signatures describe this Ruby's core and stdlib
     /// (DEC-240, DEC-242): the one bundled with it, whose version is that
     /// Ruby's; else the highest installed for it; else the highest any
@@ -56,7 +62,7 @@ impl Stdlib {
         if let Some(gem) = bundled_rbs(&self.root) {
             return Some(gem);
         }
-        if let Some(gem) = rbs_in(&rbs_dirs(&self.root)) {
+        if let Some(gem) = rbs_in(&gem_dirs_of(&self.root)) {
             return Some(RbsGem {
                 chosen: Chosen::Installed,
                 ..gem
@@ -237,8 +243,9 @@ fn install_time(root: &Path) -> Option<std::time::SystemTime> {
 /// Where a Ruby's gems are installed, for the stdlib at `root`
 /// (`<prefix>/lib/ruby/<abi>`): beside it, where Ruby bundles its own;
 /// `~/.gem/ruby/<abi>`; rvm's gem directories for that install; Homebrew's
-/// shared one for a Homebrew Ruby; and `$GEM_HOME` when it is this Ruby's.
-fn rbs_dirs(root: &Path) -> Vec<PathBuf> {
+/// shared one for a Homebrew Ruby; and `$GEM_HOME` and `$GEM_PATH` when
+/// they are this Ruby's.
+fn gem_dirs_of(root: &Path) -> Vec<PathBuf> {
     let Some(abi) = root.file_name() else {
         return Vec::new();
     };
@@ -270,7 +277,16 @@ fn rbs_dirs(root: &Path) -> Vec<PathBuf> {
         && of_gem_home(Path::new(&home)).as_deref() == Some(root)
     {
         dirs.push(Path::new(&home).join("gems"));
+        if let Ok(paths) = std::env::var("GEM_PATH") {
+            dirs.extend(
+                paths
+                    .split(':')
+                    .filter(|p| !p.is_empty())
+                    .map(|p| Path::new(p).join("gems")),
+            );
+        }
     }
+    dirs.dedup();
     dirs
 }
 

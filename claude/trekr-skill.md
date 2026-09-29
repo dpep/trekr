@@ -344,6 +344,8 @@ tiers the site `possible`.
   `gems.picked` lists each gem found as `name version`; without a lockfile,
   `gems.ruby` says whose Ruby the picks came from and `gems.unread` the
   requirements trekr could not read (the highest installed was taken).
+  Gems are looked for in the checkout's own Ruby's directories first;
+  `gems.other_ruby` lists the ones found only for another Ruby.
 * `gems.stdlib` is the Ruby standard library indexed with the checkout —
   `root`, the `ruby` it belongs to and how it was chosen, and `hidden`: the
   default gems (json, logger, uri…) the bundle has its own copy of, whose

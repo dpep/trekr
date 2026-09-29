@@ -1053,10 +1053,20 @@ fn index_gems(
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
 ) -> anyhow::Result<GemReport> {
+    // The Ruby first: its stdlib is indexed before the gems, which reopen it
+    // (DEC-180), and its gem directories are searched before any other's
+    // (DEC-291). The one the last index chose stands unless the checkout
+    // names another (DEC-271).
+    let last = store
+        .tree_roots(&repo.to_string_lossy())?
+        .stdlib
+        .map(PathBuf::from);
+    let stdlib = crate::gems::stdlib::for_checkout(repo, last.as_deref());
     // Reading the lockfile and stat-ing ~200 conventional paths. Small, but it
     // happens on every index including a no-op, so it is worth naming.
-    let (located, resolved_from) =
-        profile::timed(profile, "gem-scan", || crate::gems::for_checkout(repo));
+    let (located, resolved_from) = profile::timed(profile, "gem-scan", || {
+        crate::gems::for_checkout(repo, stdlib.as_ref())
+    });
     let ruby = match &resolved_from {
         Some(crate::gems::Resolved::Declared { ruby }) => Some(ruby.clone()),
         _ => None,
@@ -1068,13 +1078,6 @@ fn index_gems(
         ruby_not_found: crate::gems::stdlib::named_missing(repo),
         ..GemReport::default()
     };
-    // The Ruby's stdlib before the gems, which reopen it (DEC-180); the one
-    // the last index chose stands unless the checkout names another (DEC-271).
-    let last = store
-        .tree_roots(&repo.to_string_lossy())?
-        .stdlib
-        .map(PathBuf::from);
-    let stdlib = crate::gems::stdlib::for_checkout(repo, last.as_deref());
     if let Some(stdlib) = &stdlib {
         let mut indexed = index_stdlib(store, stdlib, known, pool, profile)?;
         // Its Ruby's signatures, which core and the stdlib's compiled half
@@ -1128,6 +1131,9 @@ fn index_gems(
             }
         };
         report.found += 1;
+        if entry.elsewhere {
+            report.other_ruby.push(named.clone());
+        }
         report.picked.push(named);
         if matches!(entry.gem.source, crate::gems::Source::Git { .. }) {
             report.from_git += 1;
@@ -1365,6 +1371,10 @@ struct GemReport {
     /// Each gem found, `name version`: exact from a lockfile, trekr's pick
     /// without one.
     picked: Vec<String>,
+    /// Of those, found only in another Ruby's gem directories: the
+    /// checkout's Ruby has no copy that would do (DEC-291).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    other_ruby: Vec<String>,
     /// Picks whose requirement, as written, trekr could not read without
     /// running it; the highest installed was taken instead.
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -1527,6 +1537,13 @@ fn cmd_index(
         // Without a lockfile, which version is trekr's choice, so it is said.
         if gems.resolved_from == Some("declared") && !gems.picked.is_empty() {
             println!("  picked: {}", abridged(&gems.picked));
+        }
+        if !gems.other_ruby.is_empty() {
+            println!(
+                "  {} found only in another Ruby's gems, not the checkout's Ruby's: {}",
+                gems.other_ruby.len(),
+                abridged(&gems.other_ruby)
+            );
         }
         if !gems.unread.is_empty() {
             let unread: Vec<String> = gems

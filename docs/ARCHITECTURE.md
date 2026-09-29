@@ -479,6 +479,10 @@ indexed, as `gems.unlocated`, with the reason. It is a hole in every answer that
 would have come from it, and a silent hole is indistinguishable from a method
 that does not exist.
 
+Gems are looked for in the project's own directories, then the directories of
+the Ruby the checkout runs on (the stdlib's, below), then every other Ruby's;
+one found only in another Ruby's is `gems.other_ruby` (DEC-291).
+
 **The stdlib** of the Ruby the checkout runs on is a checkout of its own,
 kind `stdlib`, rooted at `<prefix>/lib/ruby/<abi>` and shared by every app on
 that Ruby as a gem version is (DEC-180). The Ruby is chosen as a lockfile-less

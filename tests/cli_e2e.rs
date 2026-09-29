@@ -567,11 +567,14 @@ fn with_no_lockfile_only_the_active_rubys_gems_are_picked() {
         "Gem::Specification.new do |s|\n  s.add_dependency \"widget\"\nend\n",
     )
     .unwrap();
+    // No `ruby` on `PATH`, so no Ruby's stdlib is chosen to search first
+    // (DEC-291): a system Ruby in `/usr/bin` would be, on some machines.
+    let path = git_only();
     let pick = |vars: &[(&str, &str)]| {
         let mut env = vec![
             ("HOME", home.to_str().unwrap()),
             ("GEM_PATH", ""),
-            ("PATH", "/usr/bin:/bin"),
+            ("PATH", path.to_str().unwrap()),
         ];
         env.extend_from_slice(vars);
         json(&trekr_env(&db, &dir, &["--index", "--json"], &env))["gems"].clone()
@@ -4101,6 +4104,104 @@ fn a_default_gem_at_the_rubys_own_version_is_found_in_the_stdlib() {
     assert_eq!(gems["from_stdlib"], 1, "{gems}");
     assert!(gems.get("missing").is_none(), "{gems}");
     assert_eq!(gems["stdlib"]["hidden"], serde_json::json!([]), "{gems}");
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&home);
+}
+
+/// The checkout's Ruby is where its gems are looked for first, lockfile or
+/// not: a default gem it ships answers from its stdlib, and another Ruby's
+/// copy is taken only for a gem it lacks, which is said (DEC-291).
+#[test]
+fn gems_come_from_the_checkouts_ruby_before_the_shells() {
+    let (dir, db) = scratch("gems-ruby");
+    let (home, _) = scratch("gems-ruby-home");
+    let prefix = home.join(".rbenv/versions/9.7.1");
+    let stdlib = fake_ruby_at(
+        &prefix,
+        "9.7.1",
+        &[(
+            "securely.rb",
+            "module Securely
+  def self.hex
+  end
+end
+",
+        )],
+        &[("securely", "0.4.1", &["securely.rb"])],
+    );
+    let own = prefix.join("lib/ruby/gems/9.7.0/gems");
+    let shell = home.join(".rvm/gems/ruby-9.6.1");
+    for (gems, gem, file, module) in [
+        (&own, "widget-1.0.0", "widget.rb", "Widget"),
+        (&shell.join("gems"), "widget-1.0.0", "widget.rb", "Widget"),
+        (
+            &shell.join("gems"),
+            "securely-0.4.1",
+            "securely.rb",
+            "Securely",
+        ),
+        (&shell.join("gems"), "other-2.0.0", "other.rb", "Other"),
+    ] {
+        let lib = gems.join(gem).join("lib");
+        fs::create_dir_all(&lib).unwrap();
+        fs::write(lib.join(file), format!("module {module}\nend\n")).unwrap();
+    }
+    ruby_app(
+        &dir,
+        "9.7.1",
+        &["other (2.0.0)", "securely (0.4.1)", "widget (1.0.0)"],
+        &[],
+    );
+    fs::write(dir.join("use.rb"), "Widget\nSecurely\nOther\n").unwrap();
+    let env = [
+        ("HOME", home.to_str().unwrap()),
+        ("GEM_HOME", shell.to_str().unwrap()),
+    ];
+    let root_of = |line: u32| {
+        let at = format!("use.rb:{line}:1");
+        let answer = json(&trekr_env(&db, &dir, &["--def", &at, "--json"], &env));
+        answer["definition"][0]["root"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{answer}"))
+            .to_string()
+    };
+    let own_widget = fs::canonicalize(own.join("widget-1.0.0")).unwrap();
+
+    let gems = json(&trekr_env(&db, &dir, &["--index", "--json"], &env))["gems"].clone();
+    assert_eq!(gems["from_stdlib"], 1, "{gems}");
+    assert_eq!(
+        gems["other_ruby"],
+        serde_json::json!(["other 2.0.0"]),
+        "{gems}"
+    );
+    assert_eq!(root_of(1), own_widget.to_str().unwrap());
+    assert_eq!(root_of(2), stdlib, "its Ruby ships it");
+    let text = stdout(&trekr_env(&db, &dir, &["--index"], &env));
+    assert!(
+        text.contains("another Ruby") && text.contains("other 2.0.0"),
+        "{text}"
+    );
+
+    // Without a lockfile, the picks are that Ruby's too; one it lacks comes
+    // from the shell's, and is said.
+    fs::remove_file(dir.join("Gemfile.lock")).unwrap();
+    fs::write(
+        dir.join("app.gemspec"),
+        "Gem::Specification.new do |s|\n  s.add_dependency \"widget\"\n  \
+         s.add_dependency \"other\"\nend\n",
+    )
+    .unwrap();
+    let gems = json(&trekr_env(&db, &dir, &["--index", "--json"], &env))["gems"].clone();
+    assert_eq!(gems["resolved_from"], "declared", "{gems}");
+    assert!(gems["ruby"].as_str().unwrap().contains("9.7.1"), "{gems}");
+    assert!(gems.get("missing").is_none(), "{gems}");
+    assert_eq!(
+        gems["other_ruby"],
+        serde_json::json!(["other 2.0.0"]),
+        "{gems}"
+    );
+    assert_eq!(root_of(1), own_widget.to_str().unwrap());
 
     let _ = fs::remove_dir_all(&dir);
     let _ = fs::remove_dir_all(&home);

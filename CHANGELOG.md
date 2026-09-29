@@ -304,6 +304,14 @@
 
 ### Fixed
 
+- **Gems come from the checkout's Ruby.** A checkout naming a Ruby in
+  `.ruby-version` (or kept from its last index) had its stdlib from that
+  Ruby and its gems from the shell's `$GEM_HOME`, another Ruby's:
+  `SecureRandom.hex` answered from rvm's 3.4.9 in an app on rbenv's 3.4.10.
+  That Ruby's gem directories are now searched first, lockfile or not. A gem
+  found only for another Ruby is still indexed and is listed in
+  `gems.other_ruby`, and `--index` says so (DEC-291).
+
 - **`--help` explains `--dead`'s tiers and confidence**, says `--json`
   carries more than the text summary, and says a usage error is JSON
   wherever `--json` sits on the line. The README's usage-error row no

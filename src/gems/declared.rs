@@ -38,8 +38,14 @@ struct Dependency {
 const ROUNDS: usize = 8;
 
 /// The gems a checkout declares, resolved against what is installed, or
-/// `None` when it declares nothing — no gemspec and no Gemfile.
-pub(super) fn resolve(repo: &Path, roots: &[PathBuf]) -> Option<Vec<Located>> {
+/// `None` when it declares nothing — no gemspec and no Gemfile. A name is
+/// picked from `roots` when any version there meets it, and from
+/// `fallback` only when none does (DEC-291).
+pub(super) fn resolve(
+    repo: &Path,
+    roots: &[PathBuf],
+    fallback: &[PathBuf],
+) -> Option<Vec<Located>> {
     let mut own: HashSet<String> = HashSet::new();
     let mut declared: Vec<Dependency> = Vec::new();
     let mut any = false;
@@ -72,7 +78,7 @@ pub(super) fn resolve(repo: &Path, roots: &[PathBuf]) -> Option<Vec<Located>> {
         return None;
     }
 
-    let installed = Installed::scan(roots);
+    let installed = Installed::scan(&[roots, fallback]);
     // Every requirement written for a name, merged, before any is resolved:
     // the gemspec's `< 2` and the Gemfile's `~> 1.0` both bind.
     let mut direct: BTreeMap<String, Dependency> = BTreeMap::new();
@@ -160,6 +166,7 @@ pub(super) fn resolve(repo: &Path, roots: &[PathBuf]) -> Option<Vec<Located>> {
                     },
                     place: Place::Dir(copy.path.clone()),
                     unread,
+                    elsewhere: copy.tier > 0,
                 },
                 None => {
                     let requirements = wanted.remove(&name).unwrap_or_default();
@@ -179,6 +186,7 @@ pub(super) fn resolve(repo: &Path, roots: &[PathBuf]) -> Option<Vec<Located>> {
                         },
                         place: Place::Missing(absence),
                         unread,
+                        elsewhere: false,
                     }
                 }
             }
@@ -627,6 +635,9 @@ struct Copy {
     /// The version as its directory writes it, platform and all.
     written: String,
     path: PathBuf,
+    /// Which list of roots it was found in: `0` the checkout's Ruby's,
+    /// anything else a fallback.
+    tier: usize,
 }
 
 /// Every gem installed under the search roots, by name. The first root to
@@ -634,9 +645,13 @@ struct Copy {
 struct Installed(HashMap<String, Vec<Copy>>);
 
 impl Installed {
-    fn scan(roots: &[PathBuf]) -> Installed {
+    fn scan(tiers: &[&[PathBuf]]) -> Installed {
         let mut by_name: HashMap<String, Vec<Copy>> = HashMap::new();
-        for root in roots {
+        let roots = tiers
+            .iter()
+            .enumerate()
+            .flat_map(|(tier, roots)| roots.iter().map(move |root| (tier, root)));
+        for (tier, root) in roots {
             let Ok(entries) = std::fs::read_dir(root) else {
                 continue;
             };
@@ -658,6 +673,7 @@ impl Installed {
                     version,
                     written: written.to_string(),
                     path: entry.path(),
+                    tier,
                 });
             }
         }
@@ -666,19 +682,22 @@ impl Installed {
 
     /// The highest installed version meeting every requirement, a release
     /// before any prerelease, and among those one whose own runtime
-    /// requirements `fits` accepts.
+    /// requirements `fits` accepts — from the first tier with one that meets
+    /// them, however much newer a later tier's is.
     fn best(
         &self,
         name: &str,
         requirements: &[String],
         fits: impl Fn(&Copy) -> bool,
     ) -> Option<&Copy> {
-        let meeting: Vec<&Copy> = self
+        let mut meeting: Vec<&Copy> = self
             .0
             .get(name)?
             .iter()
             .filter(|copy| requirements.iter().all(|r| meets(&copy.version, r)))
             .collect();
+        let tier = meeting.iter().map(|copy| copy.tier).min()?;
+        meeting.retain(|copy| copy.tier == tier);
         // Look one step ahead, but never at the cost of the name itself.
         let fitting: Vec<&Copy> = meeting.iter().copied().filter(|c| fits(c)).collect();
         let meeting = if fitting.is_empty() { meeting } else { fitting };
@@ -821,7 +840,7 @@ gem "gamma", "~> #{ENV['GAMMA']}"
         .unwrap();
         std::fs::write(repo.join("Gemfile"), "gemspec\ngem 'frame'\n").unwrap();
 
-        let located = resolve(&repo, std::slice::from_ref(&gems)).unwrap();
+        let located = resolve(&repo, std::slice::from_ref(&gems), &[]).unwrap();
         let versions: Vec<(&str, &str)> = located
             .iter()
             .map(|l| (l.gem.name.as_str(), l.gem.version.as_str()))
@@ -856,7 +875,7 @@ gem "gamma", "~> #{ENV['GAMMA']}"
         )
         .unwrap();
 
-        let located = resolve(&repo, std::slice::from_ref(&gems)).unwrap();
+        let located = resolve(&repo, std::slice::from_ref(&gems), &[]).unwrap();
         let place = |name: &str| &located.iter().find(|l| l.gem.name == name).unwrap().place;
         let Place::Missing(Absence::Conflict(said)) = place("linter") else {
             panic!("{:?}", place("linter"));
@@ -907,7 +926,7 @@ gem "gamma", "~> #{ENV['GAMMA']}"
             )
             .unwrap();
 
-            let located = resolve(&repo, std::slice::from_ref(&gems)).unwrap();
+            let located = resolve(&repo, std::slice::from_ref(&gems), &[]).unwrap();
             let beta = located.iter().find(|l| l.gem.name == "beta").unwrap();
             assert_eq!(beta.gem.version, "5.26.0", "declared {order:?}");
             let _ = std::fs::remove_dir_all(&base);
@@ -975,7 +994,7 @@ gem "gamma", "~> #{ENV['GAMMA']}"
         )
         .unwrap();
 
-        let located = resolve(&repo, std::slice::from_ref(&gems)).unwrap();
+        let located = resolve(&repo, std::slice::from_ref(&gems), &[]).unwrap();
         let got: Vec<(&str, &str, bool)> = located
             .iter()
             .map(|l| {
@@ -994,7 +1013,7 @@ gem "gamma", "~> #{ENV['GAMMA']}"
                 ("beta", "0.3.0", true)
             ]
         );
-        assert!(resolve(&gems.join("beta-0.3.0"), std::slice::from_ref(&gems)).is_none());
+        assert!(resolve(&gems.join("beta-0.3.0"), std::slice::from_ref(&gems), &[]).is_none());
         let _ = std::fs::remove_dir_all(&base);
     }
 }

@@ -6185,7 +6185,8 @@ rvm, rbenv or asdf install of it or to the directories for its ABI
 With none of them, every Ruby, as before, and that is said. `--index` has
 `gems.ruby`, the choice in words, and the text names it. A lockfile still
 searches every Ruby: it names exact versions, and any copy of one is the
-same bytes.
+same bytes. (Amended by DEC-291: the checkout's Ruby's first, and
+a gem found only in another's is said.)
 
 **Why.** "The highest installed" depends on which Ruby: the hunt's gem
 resolved `rspec-core ~> 3.12.0` to 3.12.3 from Homebrew's Ruby 3.3 while
@@ -8328,7 +8329,8 @@ That is the trade: an explicit choice moves it, an ambient one cannot.
 
 **Not done.** Without a lockfile, the gems' Ruby (DEC-152) is still the
 environment's, and a poorer one searches every Ruby's gems, as before; the
-picks stay installed versions, where the stdlib went to nothing.
+picks stay installed versions, where the stdlib went to nothing. *Done
+in DEC-291:* the gems are looked for in this Ruby's directories first.
 
 ## DEC-272 — A Ruby's bundled rbs is the one its list names, else the one written with it
 
@@ -8751,3 +8753,45 @@ finished.
 *Reverses if* rows start being written before they are all gathered, and a
 reader needs the head (`definition`, `status`) first. Then the head goes
 first as its own line, and the tail keeps `rows`.
+
+## DEC-291 — A checkout's gems are looked for in its Ruby's directories first
+
+Amends DEC-152, and closes DEC-271's "Not done".
+
+**Decided.** The Ruby a checkout runs on (DEC-271: the one it names, else
+the one its last index chose, else the environment's) is chosen before its
+gems, and its gem directories — beside its stdlib, `~/.gem/ruby/<abi>`,
+rvm's for that install and its `@global`, Homebrew's for a Homebrew Ruby,
+and `$GEM_HOME`/`$GEM_PATH` when they are this Ruby's — are searched right
+after the project's own (`BUNDLE_PATH`, `vendor/bundle`).
+
+- *With a lockfile*, every other Ruby's directories follow, as before. A gem
+  found only there is still indexed and is listed in `gems.other_ruby`
+  (text: "found only in another Ruby's gems"), except a version the
+  checkout's Ruby ships as a default gem, which is its stdlib
+  (`from_stdlib`). A git checkout not found is reported where bundler on
+  that Ruby would put it.
+- *Without one*, a name is picked from the Ruby's directories when any
+  version there meets it, and otherwise from the environment's Ruby —
+  `$GEM_HOME`/`$GEM_PATH`, the `ruby` on `$PATH`, or every Ruby — and is
+  listed in `gems.other_ruby`. `gems.ruby` is the Ruby's own sentence,
+  the stdlib's. With no Ruby chosen, DEC-152's chain alone, as before.
+
+**Why.** The 0.8.1 first-time tester's repro: once-campfire names Ruby
+3.4.10 (rbenv), and the shell's `$GEM_HOME` is rvm's 3.4.9. The stdlib came
+from 3.4.10, and every gem from 3.4.9's directories, because they were
+searched first: `SecureRandom.hex` answered from
+`~/.rvm/gems/ruby-3.4.9/gems/securerandom-0.4.1`. Exact versions are the same
+Ruby code, but a compiled extension is built for one Ruby, and the answer
+named a Ruby the checkout does not run on. Without a lockfile the gems came
+from the environment's Ruby even when the stdlib was a kept one.
+
+**Measured.** once-campfire: `SecureRandom` answers from
+`~/.rbenv/versions/3.4.10/.../securerandom-0.4.1`; 25 of its 77 gems are
+found only in rvm's 3.4.9 and are said, where none were. The git gems'
+missing checkouts are reported under 3.4.10's `bundler/gems`.
+
+**Why fall back at all.** A gem installed only for another Ruby is usually
+a `bundle install` run from the other shell, and the same version's Ruby
+code; not indexing it would turn every call into it into residue. It is
+said, and a lockfile's exact version keeps it honest.
