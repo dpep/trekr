@@ -71,6 +71,11 @@
   `--status` per checkout; core's files are written under
   `<db dir>/core/rbs-<version>-<key>/` (DEC-240).
 
+- **The rbs bundled with a Ruby stays its choice after gem maintenance.**
+  `gem update --system` or `gem pristine rbs` no longer flips it to a later
+  `gem install`'s with a false "none was bundled"; Ruby's own
+  `gems/bundled_gems` list is read where an install keeps it (DEC-272).
+
 - **A named Ruby is found wherever a version manager put it.** chruby's
   (`~/.rubies`, `/opt/rubies`), mise's and Homebrew's versioned kegs
   (`Cellar/ruby@3.3`) join rvm, rbenv and asdf, so a `.ruby-version` of

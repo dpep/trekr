@@ -53,9 +53,7 @@ impl Stdlib {
     /// Ruby's; else the highest installed for it; else the highest any
     /// installed Ruby has. Each must have a `core/` to read.
     pub(crate) fn rbs(&self) -> Option<RbsGem> {
-        if let Some(dir) = bundled_dir(&self.root)
-            && let Some(gem) = bundled_rbs(&dir, &specifications(&self.root)?)
-        {
+        if let Some(gem) = bundled_rbs(&self.root) {
             return Some(gem);
         }
         if let Some(gem) = rbs_in(&rbs_dirs(&self.root)) {
@@ -140,42 +138,100 @@ fn bundled_dir(root: &Path) -> Option<PathBuf> {
     )
 }
 
-/// A Ruby installs its bundled gems as it installs itself, so the bundled
-/// rbs is the one in its own gem directory whose gemspec was written within
-/// an hour of its default gems' — rubygems keeps no other mark of it, and a
-/// later `gem install rbs` lands in the same directory.
-fn bundled_rbs(gems: &Path, defaults: &Path) -> Option<RbsGem> {
-    let written = |path: &Path| std::fs::metadata(path).and_then(|m| m.modified()).ok();
-    let installed = std::fs::read_dir(defaults)
-        .ok()?
-        .flatten()
-        .filter_map(|entry| written(&entry.path()))
-        .max()?;
-    let specs = gems.parent()?.join("specifications");
-    std::fs::read_dir(gems)
+/// The rbs bundled with the Ruby whose stdlib is at `root`
+/// (`<prefix>/lib/ruby/<abi>`), with a `core/` to read.
+///
+/// Ruby records the version in `gems/bundled_gems`, which some installs
+/// keep; that is taken when there is one. Otherwise rubygems keeps no mark
+/// of it, and a later `gem install rbs` lands in the same directory, so the
+/// bundled one is told by when it was written: within an hour of the Ruby's
+/// install — its gemspec, or its cached `.gem`, which `gem pristine` reads
+/// and never rewrites and which a Ruby's install may date from its tarball.
+/// The install is dated by the median of its default gems' specs, which
+/// `gem update --system` rewrites a few of, else by `bin/ruby` (DEC-272).
+fn bundled_rbs(root: &Path) -> Option<RbsGem> {
+    let gems = bundled_dir(root)?;
+    let at = |version: &str| {
+        let dir = gems.join(format!("rbs-{version}"));
+        dir.join("core").is_dir().then(|| RbsGem {
+            version: version.to_string(),
+            dir,
+            chosen: Chosen::Bundled,
+        })
+    };
+    if let Some(version) = recorded_rbs(root) {
+        return at(&version);
+    }
+    let installed = install_time(root)?;
+    let base = gems.parent()?;
+    let hour = std::time::Duration::from_secs(3600);
+    std::fs::read_dir(&gems)
         .ok()?
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name().to_string_lossy().into_owned();
             let (gem, version) = split_dir(&name)?;
-            let dir = entry.path();
-            if gem != "rbs" || !dir.join("core").is_dir() {
+            if gem != "rbs" {
                 return None;
             }
-            let at = written(&specs.join(format!("{name}.gemspec")))?;
-            let apart = at
-                .duration_since(installed)
-                .or_else(|e| Ok::<_, ()>(e.duration()))
-                .ok()?;
-            (apart <= std::time::Duration::from_secs(3600))
-                .then(|| (apart, version.to_string(), dir))
+            // How far from the install each was written; a cached `.gem`
+            // older than the install came with it.
+            let spec = written(&base.join(format!("specifications/{name}.gemspec")))
+                .map(|at| distance(at, installed));
+            let cached = written(&base.join(format!("cache/{name}.gem")))
+                .map(|at| at.duration_since(installed).unwrap_or_default());
+            let apart = spec.into_iter().chain(cached).min()?;
+            (apart <= hour).then(|| (apart, version.to_string()))
         })
-        .min_by_key(|(apart, _, _)| *apart)
-        .map(|(_, version, dir)| RbsGem {
-            version,
-            dir,
-            chosen: Chosen::Bundled,
+        .min()
+        .and_then(|(_, version)| at(&version))
+}
+
+fn written(path: &Path) -> Option<std::time::SystemTime> {
+    std::fs::metadata(path).and_then(|m| m.modified()).ok()
+}
+
+fn distance(a: std::time::SystemTime, b: std::time::SystemTime) -> std::time::Duration {
+    a.duration_since(b)
+        .or_else(|_| b.duration_since(a))
+        .unwrap_or_default()
+}
+
+/// The rbs version a Ruby's own list of its bundled gems names:
+/// `gems/bundled_gems`, lines of `name version [repository [revision]]`.
+fn recorded_rbs(root: &Path) -> Option<String> {
+    let lib = root.parent()?;
+    let prefix = lib.parent()?.parent()?;
+    let abi = root.file_name()?;
+    let places = [
+        prefix.join("gems/bundled_gems"),
+        root.join("bundled_gems"),
+        lib.join("gems").join(abi).join("bundled_gems"),
+    ];
+    places.iter().find_map(|path| {
+        let text = std::fs::read_to_string(path).ok()?;
+        text.lines().find_map(|line| {
+            let mut fields = line.split_whitespace();
+            (fields.next()? == "rbs").then(|| fields.next().map(str::to_string))?
         })
+    })
+}
+
+/// When the Ruby at `root` was installed: the median of its default gems'
+/// spec times, else its `bin/ruby`'s.
+fn install_time(root: &Path) -> Option<std::time::SystemTime> {
+    let mut times: Vec<std::time::SystemTime> = specifications(root)
+        .and_then(|dir| std::fs::read_dir(dir).ok())
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|entry| written(&entry.path()))
+        .collect();
+    times.sort();
+    if let Some(median) = times.get(times.len() / 2) {
+        return Some(*median);
+    }
+    written(&root.ancestors().nth(3)?.join("bin/ruby"))
 }
 
 /// Where a Ruby's gems are installed, for the stdlib at `root`
@@ -809,34 +865,59 @@ end
                 .set_modified(when(secs))
                 .unwrap();
         };
-        touch(
-            &gems.join("specifications/default/json-2.9.1.gemspec"),
-            1_000_000,
-        );
+        for spec in ["json-2.9.1", "set-1.1.1", "uri-1.0.3"] {
+            touch(
+                &gems.join(format!("specifications/default/{spec}.gemspec")),
+                1_000_000,
+            );
+        }
+        std::fs::create_dir_all(gems.join("cache")).unwrap();
         for (gem, secs) in [("rbs-3.8.0", 1_000_005), ("rbs-4.2.0", 9_000_000)] {
             std::fs::create_dir_all(gems.join("gems").join(gem).join("core")).unwrap();
             touch(
                 &gems.join("specifications").join(format!("{gem}.gemspec")),
                 secs,
             );
+            touch(&gems.join("cache").join(format!("{gem}.gem")), secs);
         }
         let stdlib_at = Stdlib {
             root: stdlib.clone(),
             ruby: String::new(),
             ships: HashSet::new(),
         };
-        let picked = stdlib_at.rbs().unwrap();
-        assert_eq!(
-            (picked.version.as_str(), picked.chosen),
-            ("3.8.0", Chosen::Bundled)
-        );
-        // With no gemspec written beside the Ruby's own, the highest installed.
+        let picked = || {
+            let gem = stdlib_at.rbs().unwrap();
+            (gem.version, gem.chosen)
+        };
+        let bundled = ("3.8.0".to_string(), Chosen::Bundled);
+        assert_eq!(picked(), bundled);
+        // `gem update --system` writes a newer default spec or two.
+        for spec in ["rubygems-update-4.0.0", "bundler-4.0.0"] {
+            touch(
+                &gems.join(format!("specifications/default/{spec}.gemspec")),
+                9_500_000,
+            );
+        }
+        assert_eq!(picked(), bundled, "after gem update --system");
+        // `gem pristine rbs` rewrites its gemspec; its cached `.gem`, dated
+        // from Ruby's tarball, is only read.
+        touch(&gems.join("specifications/rbs-3.8.0.gemspec"), 9_600_000);
+        touch(&gems.join("cache/rbs-3.8.0.gem"), 900_000);
+        assert_eq!(picked(), bundled, "after gem pristine rbs");
+        // Ruby's own list of what it bundled comes first.
+        std::fs::create_dir_all(root.join("gems")).unwrap();
+        std::fs::write(
+            root.join("gems/bundled_gems"),
+            "# gem-name version repository\nminitest 5.25.4 https://github.com/minitest/minitest\n\
+             rbs 4.2.0 https://github.com/ruby/rbs\n",
+        )
+        .unwrap();
+        assert_eq!(picked(), ("4.2.0".to_string(), Chosen::Bundled));
+        std::fs::remove_file(root.join("gems/bundled_gems")).unwrap();
+        // With nothing written near the Ruby's install, the highest installed.
         std::fs::remove_file(gems.join("specifications/rbs-3.8.0.gemspec")).unwrap();
-        let picked = stdlib_at.rbs().unwrap();
-        assert_eq!(
-            (picked.version.as_str(), picked.chosen),
-            ("4.2.0", Chosen::Installed)
-        );
+        std::fs::remove_file(gems.join("cache/rbs-3.8.0.gem")).unwrap();
+        assert_eq!(picked(), ("4.2.0".to_string(), Chosen::Installed));
         let _ = std::fs::remove_dir_all(&root);
     }
 

@@ -8323,3 +8323,43 @@ That is the trade: an explicit choice moves it, an ambient one cannot.
 **Not done.** Without a lockfile, the gems' Ruby (DEC-152) is still the
 environment's, and a poorer one searches every Ruby's gems, as before; the
 picks stay installed versions, where the stdlib went to nothing.
+
+## DEC-272 — A Ruby's bundled rbs is the one its list names, else the one written with it
+
+Amends DEC-242's test for the bundled rbs.
+
+**Decided.** The rbs bundled with a Ruby is, in order:
+
+1. the version Ruby's own list of its bundled gems names — `gems/bundled_gems`
+   (`rbs 3.8.0 https://github.com/ruby/rbs`), looked for at
+   `<prefix>/gems/bundled_gems`, `<prefix>/lib/ruby/<abi>/bundled_gems` and
+   `<prefix>/lib/ruby/gems/<abi>/bundled_gems`, where an install keeps it;
+2. else the `rbs-*` in the Ruby's own gem directory written within an hour
+   of the Ruby's install — by its gemspec, or by its cached `.gem`, which
+   counts as written at the install when it is older than it. The install is
+   dated by the **median** of its default gems' spec times, else by
+   `bin/ruby`'s.
+
+Of several, the nearest; with none, DEC-242's "the highest installed".
+
+**Why.** DEC-242 dated the install by the newest default spec, and the rbs
+by its gemspec alone. Routine gem maintenance moves both:
+`gem update --system` writes a newer default spec (rubygems-update,
+bundler), so the install looked months later than the rbs; `gem pristine
+rbs` rewrites the rbs gemspec. Either way rbs 4.2.0 was chosen, with "none
+was bundled with it" — false. The median moves only when half the default
+specs are rewritten. `gem pristine` reads the cached `.gem` and never writes
+it, and a Ruby's install writes it with the tarball's time (rvm's 3.4.9:
+cached March 11, installed April 10) or its own (Homebrew's: both March 11),
+while `gem install` writes it when downloading.
+
+**Measured**, this machine: rvm 3.4.9 → 3.8.0, Homebrew 3.3.11 → 3.4.0,
+rbenv 3.4.10 → 3.8.0 (of 3.8.0, 4.0.2, 4.0.3, 4.2.0), rbenv 4.0.6 → 3.10.0,
+each `bundled` — the same as DEC-242 gave before any maintenance. None of
+these installs keeps a `bundled_gems` list; step 1 is for those that do.
+Both maintenance scenarios are tests (unit and e2e), and fail on DEC-242's
+rule.
+
+**Not done.** A `gem install rbs` within an hour of installing the Ruby
+(a provisioning script) is still told apart only by being further from the
+install than the bundled one.

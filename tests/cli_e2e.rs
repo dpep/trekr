@@ -3751,6 +3751,76 @@ fn a_reindex_in_a_poorer_environment_keeps_the_rubys_core() {
     }
 }
 
+/// The rbs bundled with a Ruby stays its choice through routine gem
+/// maintenance: `gem update --system` writes a newer default spec, and `gem
+/// pristine rbs` rewrites the gem's own (DEC-272).
+#[test]
+fn the_bundled_rbs_survives_gem_maintenance() {
+    let (dir, db) = scratch("rbs-maintenance");
+    repo(&dir);
+    let (home, _) = scratch("rbs-maintenance-home");
+    fake_ruby(&home, "9.8.7", &[], &[]);
+    let base = home.join(".rvm/rubies/ruby-9.8.7/lib/ruby/gems/9.8.0");
+    let touch = |path: &Path, secs: u64| {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, "").unwrap();
+        fs::File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+            .unwrap();
+    };
+    // Installed with its default gems and its rbs 9.9.9; 9.10.0 came later.
+    for spec in ["json-2.9.1", "set-1.1.1", "uri-1.0.3"] {
+        touch(
+            &base.join(format!("specifications/default/{spec}.gemspec")),
+            1_000_000,
+        );
+    }
+    touch(&base.join("specifications/rbs-9.9.9.gemspec"), 1_000_004);
+    touch(&base.join("cache/rbs-9.9.9.gem"), 900_000);
+    std::os::unix::fs::symlink(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rbs"),
+        base.join("gems/rbs-9.10.0"),
+    )
+    .unwrap();
+    touch(&base.join("specifications/rbs-9.10.0.gemspec"), 9_000_000);
+    touch(&base.join("cache/rbs-9.10.0.gem"), 9_000_000);
+    let env = [("HOME", home.to_str().unwrap())];
+    let chosen = |db: &Path| {
+        let index = json(&trekr_env(db, &dir, &["--index", "--json"], &env));
+        let rbs = &index["gems"]["stdlib"]["rbs"];
+        (
+            rbs["version"].as_str().unwrap_or_default().to_string(),
+            rbs["chosen"].as_str().unwrap_or_default().to_string(),
+        )
+    };
+    let bundled = ("9.9.9".to_string(), "bundled".to_string());
+    assert_eq!(chosen(&db), bundled);
+
+    for spec in ["rubygems-update-9.0.0", "bundler-9.0.0"] {
+        touch(
+            &base.join(format!("specifications/default/{spec}.gemspec")),
+            9_500_000,
+        );
+    }
+    assert_eq!(
+        chosen(&db.with_extension("update.db")),
+        bundled,
+        "gem update --system"
+    );
+    touch(&base.join("specifications/rbs-9.9.9.gemspec"), 9_600_000);
+    assert_eq!(
+        chosen(&db.with_extension("pristine.db")),
+        bundled,
+        "gem pristine rbs"
+    );
+
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&home);
+}
+
 /// With no Ruby, a name nothing defines says core was never looked in, rather
 /// than claiming core lacks it.
 #[test]
