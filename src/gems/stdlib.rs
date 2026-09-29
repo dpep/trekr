@@ -47,6 +47,77 @@ impl Stdlib {
         self.ships
             .contains(&(name.to_string(), version.to_string()))
     }
+
+    /// The rbs gem this Ruby carries, whose signatures describe its core and
+    /// stdlib (DEC-240): the one bundled with it, or one installed for it,
+    /// at the highest version with a `core/` to read.
+    pub(crate) fn rbs(&self) -> Option<RbsGem> {
+        rbs_in(&rbs_dirs(&self.root))
+    }
+}
+
+/// An rbs gem on disk.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct RbsGem {
+    pub(crate) version: String,
+    /// The gem's own directory, holding `core/` and `stdlib/`.
+    pub(crate) dir: PathBuf,
+}
+
+/// Where a Ruby's gems are installed, for the stdlib at `root`
+/// (`<prefix>/lib/ruby/<abi>`): beside it, where Ruby bundles its own;
+/// `~/.gem/ruby/<abi>`; rvm's gem directories for that install; Homebrew's
+/// shared one for a Homebrew Ruby; and `$GEM_HOME` when it is this Ruby's.
+fn rbs_dirs(root: &Path) -> Vec<PathBuf> {
+    let Some(abi) = root.file_name() else {
+        return Vec::new();
+    };
+    let Some(lib) = root.parent() else {
+        return Vec::new();
+    };
+    let mut dirs = vec![lib.join("gems").join(abi).join("gems")];
+    let prefix = lib.parent().and_then(Path::parent);
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        dirs.push(home.join(".gem/ruby").join(abi).join("gems"));
+        if let Some(install) = prefix.and_then(Path::file_name) {
+            let install = install.to_string_lossy();
+            dirs.push(home.join(".rvm/gems").join(install.as_ref()).join("gems"));
+            dirs.push(
+                home.join(".rvm/gems")
+                    .join(format!("{install}@global"))
+                    .join("gems"),
+            );
+        }
+    }
+    for brew in ["/opt/homebrew", "/usr/local"] {
+        if prefix.is_some_and(|p| p.starts_with(brew)) {
+            dirs.push(Path::new(brew).join("lib/ruby/gems").join(abi).join("gems"));
+        }
+    }
+    if let Ok(home) = std::env::var("GEM_HOME")
+        && !home.is_empty()
+        && of_gem_home(Path::new(&home)).as_deref() == Some(root)
+    {
+        dirs.push(Path::new(&home).join("gems"));
+    }
+    dirs
+}
+
+/// The highest `rbs-<version>` among these gem directories that has a
+/// `core/` to read.
+fn rbs_in(dirs: &[PathBuf]) -> Option<RbsGem> {
+    dirs.iter()
+        .flat_map(|dir| std::fs::read_dir(dir).into_iter().flatten().flatten())
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let (gem, version) = split_dir(&name)?;
+            let dir = entry.path();
+            (gem == "rbs" && dir.join("core").is_dir())
+                .then(|| Some((Version::parse(version)?, version.to_string(), dir)))?
+        })
+        .max_by(|(a, _, _), (b, _, _)| a.cmp(b))
+        .map(|(_, version, dir)| RbsGem { version, dir })
 }
 
 /// Dev tooling nobody navigates into from an app, internals an app reaches
@@ -515,6 +586,32 @@ end
                 ),
             ]
         );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn the_highest_rbs_with_signatures_to_read_is_picked() {
+        let root = std::env::temp_dir().join(format!("trekr-rbs-pick-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (bundled, installed) = (root.join("bundled"), root.join("installed"));
+        for (dir, gem) in [
+            (&bundled, "rbs-3.8.0"),
+            (&installed, "rbs-3.10.1"),
+            (&installed, "rbs-4.0.0"),
+            (&installed, "rbs-inline-9.0.0"),
+        ] {
+            let core = dir.join(gem).join("core");
+            // 4.0.0 is a directory left with nothing to read.
+            if gem != "rbs-4.0.0" {
+                std::fs::create_dir_all(&core).unwrap();
+            } else {
+                std::fs::create_dir_all(dir.join(gem)).unwrap();
+            }
+        }
+        let picked = rbs_in(&[bundled.clone(), installed.clone()]).unwrap();
+        assert_eq!(picked.version, "3.10.1");
+        assert_eq!(picked.dir, installed.join("rbs-3.10.1"));
+        assert_eq!(rbs_in(&[root.join("none")]), None);
         let _ = std::fs::remove_dir_all(&root);
     }
 

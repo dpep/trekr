@@ -1209,6 +1209,77 @@ impl Store {
         tx.commit()
     }
 
+    /// Which signatures a stdlib checkout is served with — key, rbs
+    /// version and directory — without reading them.
+    pub(crate) fn rbs_about(&self, stdlib: &str) -> Result<Option<(String, String, String)>> {
+        self.conn
+            .query_row(
+                "SELECT r.key, r.version, r.dir FROM rbs r
+                   JOIN rbs_use u ON u.rbs_id = r.id
+                   JOIN checkout c ON c.id = u.checkout_id
+                  WHERE c.root = ?1",
+                params![stdlib],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .map(Some)
+            .or_else(|e| match e {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                other => Err(other),
+            })
+    }
+
+    /// Whether signatures under this key are already stored.
+    pub(crate) fn has_rbs(&self, key: &str) -> Result<bool> {
+        self.conn.query_row(
+            "SELECT EXISTS (SELECT 1 FROM rbs WHERE key = ?1)",
+            params![key],
+            |r| r.get(0),
+        )
+    }
+
+    /// Serve a stdlib checkout with the signatures under `key` — stored
+    /// first when `new` holds them — or with none. Signatures no checkout
+    /// is served with any more are dropped.
+    pub(crate) fn set_rbs(
+        &mut self,
+        stdlib: &str,
+        key: Option<&str>,
+        new: Option<&Rbs>,
+    ) -> Result<()> {
+        let tx = self.conn.savepoint()?;
+        let id: i64 = tx.query_row(
+            "SELECT id FROM checkout WHERE root = ?1",
+            params![stdlib],
+            |r| r.get(0),
+        )?;
+        if let Some(rbs) = new {
+            tx.execute(
+                "INSERT INTO rbs (key, version, dir, core, stdlib, sigs)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT (key) DO NOTHING",
+                params![
+                    rbs.key,
+                    rbs.version,
+                    rbs.dir,
+                    rbs.core,
+                    rbs.stdlib,
+                    rbs.sigs
+                ],
+            )?;
+        }
+        tx.execute("DELETE FROM rbs_use WHERE checkout_id = ?1", params![id])?;
+        if let Some(key) = key {
+            tx.execute(
+                "INSERT INTO rbs_use (checkout_id, rbs_id) SELECT ?1, id FROM rbs WHERE key = ?2",
+                params![id, key],
+            )?;
+        }
+        tx.execute(
+            "DELETE FROM rbs WHERE id NOT IN (SELECT rbs_id FROM rbs_use)",
+            [],
+        )?;
+        tx.commit()
+    }
+
     /// Record which of a stdlib checkout's files are partly compiled, as
     /// `(path, feature)` (DEC-181).
     pub(crate) fn set_compiled(&mut self, root: &str, files: &[(String, String)]) -> Result<()> {
@@ -1688,6 +1759,17 @@ pub(crate) struct Totals {
     pub(crate) defs: i64,
     pub(crate) const_refs: i64,
     pub(crate) calls: i64,
+}
+
+/// A Ruby's signatures, as stubs (DEC-240).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Rbs {
+    pub(crate) key: String,
+    pub(crate) version: String,
+    pub(crate) dir: String,
+    pub(crate) core: String,
+    pub(crate) stdlib: String,
+    pub(crate) sigs: String,
 }
 
 /// A class, module, or constant declaration, as the blob layer recorded it —

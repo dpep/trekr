@@ -13,7 +13,7 @@
 /// the database is a **cache of a pure function**, not a system of record. A
 /// version mismatch drops it and reindexes — which costs seconds and removes an
 /// entire class of migration bug.
-pub(crate) const VERSION: i64 = 49;
+pub(crate) const VERSION: i64 = 50;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -178,6 +178,27 @@ CREATE TABLE compiled (
   PRIMARY KEY (checkout_id, path)
 ) WITHOUT ROWID;
 
+-- A Ruby's signatures, read from the rbs gem it carries and written as the
+-- Ruby stubs core and the stdlib are served from (DEC-240). Content-
+-- addressed, so every app on one Ruby shares one row: the key folds the
+-- stdlib, the rbs gem and the code that reads it.
+CREATE TABLE rbs (
+  id      INTEGER PRIMARY KEY,
+  key     TEXT    NOT NULL UNIQUE,
+  version TEXT    NOT NULL,               -- the rbs gem's
+  dir     TEXT    NOT NULL,               -- where it was read
+  core    TEXT    NOT NULL,               -- every core class and method
+  stdlib  TEXT    NOT NULL,               -- the stdlib's compiled half
+  sigs    TEXT    NOT NULL                -- returns lent to its Ruby half
+);
+
+-- Which signatures a stdlib checkout is served with. None when its Ruby
+-- carries no rbs gem: then there are no stubs at all.
+CREATE TABLE rbs_use (
+  checkout_id INTEGER PRIMARY KEY REFERENCES checkout(id) ON DELETE CASCADE,
+  rbs_id      INTEGER NOT NULL REFERENCES rbs(id)
+);
+
 CREATE TABLE file (
   checkout_id INTEGER NOT NULL REFERENCES checkout(id) ON DELETE CASCADE,
   path        TEXT    NOT NULL,           -- relative to the checkout root
@@ -242,8 +263,10 @@ pub(crate) const RETIRED: [&str; 1] = ["call_site"];
 
 /// Every table, newest first, so dropping respects nothing (foreign keys are
 /// off during the drop anyway).
-pub(crate) const TABLES: [&str; 12] = [
+pub(crate) const TABLES: [&str; 14] = [
     "upgrade",
+    "rbs_use",
+    "rbs",
     "compiled",
     "default_gem",
     "gem_use",

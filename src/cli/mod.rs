@@ -1035,7 +1035,11 @@ fn index_gems(
     // The Ruby's stdlib before the gems, which reopen it (DEC-180).
     let stdlib = crate::gems::stdlib::for_checkout(repo, resolved_from.is_some());
     if let Some(stdlib) = &stdlib {
-        report.stdlib = Some(index_stdlib(store, stdlib, known, pool, profile)?);
+        let mut indexed = index_stdlib(store, stdlib, known, pool, profile)?;
+        // Its Ruby's signatures, which core and the stdlib's compiled half
+        // are served from, read once per Ruby (DEC-240).
+        indexed.rbs = profile::timed(profile, "rbs", || crate::rbs::prepare(store, stdlib))?;
+        report.stdlib = Some(indexed);
     }
     // Which gems this bundle resolves, whether or not they needed indexing —
     // an already-known gem still belongs to this app, and that is what makes a
@@ -1226,6 +1230,7 @@ fn index_stdlib(
         indexed: false,
         files: 0,
         hidden: Vec::new(),
+        rbs: None,
     };
     if store.has_checkout(&root)? {
         return Ok(report);
@@ -1261,6 +1266,9 @@ struct StdlibReport {
     /// Default gems this app bundles a copy of, whose stdlib files it does
     /// not see.
     hidden: Vec<String>,
+    /// The rbs gem whose signatures core and the stdlib are served from;
+    /// `null` when the Ruby carries none, and then nothing is (DEC-240).
+    rbs: Option<crate::rbs::Report>,
 }
 
 #[derive(Debug, Default, serde::Serialize)]
@@ -1497,6 +1505,10 @@ fn cmd_index(
             );
         }
     }
+    if out == Output::Text && with_gems && gems.stdlib.is_none() {
+        // Core is its Ruby's: with none, nothing describes it (DEC-240).
+        println!("stdlib — none: no Ruby found for this checkout, so nothing is known of core");
+    }
     if out == Output::Text
         && let Some(stdlib) = &gems.stdlib
     {
@@ -1514,6 +1526,17 @@ fn cmd_index(
                 "  the bundle's own copy answers for: {}",
                 abridged(&stdlib.hidden)
             );
+        }
+        match &stdlib.rbs {
+            Some(rbs) => println!(
+                "  signatures — rbs {}, {}: {}",
+                rbs.version,
+                if rbs.read { "read" } else { "already known" },
+                paths::pretty(&rbs.path)
+            ),
+            None => println!(
+                "  signatures — none: this Ruby carries no rbs gem, so nothing is known of core"
+            ),
         }
     }
     // Every index prepares the tree snapshot the next query would otherwise
@@ -1611,10 +1634,14 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
                 .collect();
             counted.extend(used.iter().cloned());
             if let Some(stdlib) = stdlib {
+                let rbs = store.rbs_about(&stdlib)?.map(
+                    |(_, version, path)| serde_json::json!({ "version": version, "path": path }),
+                );
                 row["stdlib"] = serde_json::json!({
                     "root": stdlib,
                     "files": indexed_files.get(stdlib.as_str()).copied().unwrap_or(0),
                     "hidden": store.hidden_default_gems(&checkout.repo)?,
+                    "rbs": rbs,
                 });
                 counted.insert(stdlib);
             }
@@ -1672,6 +1699,14 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
                 row["stdlib"]["files"].as_i64().unwrap_or(0),
                 paths::pretty(stdlib)
             );
+            match row["stdlib"]["rbs"]["version"].as_str() {
+                Some(version) => println!(
+                    "{:>32}+ signatures, rbs {version}: {}",
+                    "",
+                    paths::pretty(row["stdlib"]["rbs"]["path"].as_str().unwrap_or_default())
+                ),
+                None => println!("{:>32}+ no signatures: its Ruby carries no rbs gem", ""),
+            }
         }
         let gems = &row["gems"];
         let (Some(count), Some(indexed)) = (gems["count"].as_u64(), gems["indexed"].as_u64())

@@ -836,6 +836,29 @@ impl Tree {
         Ok(tree)
     }
 
+    /// One checkout's namespace alone — no core, no gems, nothing to load
+    /// later — for reading its facts as a tree reads them: the stdlib's, when
+    /// its signatures are generated (DEC-240).
+    pub(crate) fn alone(store: &Store, root: &str) -> anyhow::Result<Tree> {
+        let roots = Roots {
+            list: vec![root.to_string()],
+            ..Roots::default()
+        };
+        let names = Tree::namespace(
+            store,
+            &roots,
+            Vec::new(),
+            Vec::new(),
+            &mut Phases::default(),
+        )?;
+        Ok(Tree::over(freeze(&names)?, root.to_string()))
+    }
+
+    /// The class or module a method row defines its method on.
+    pub(crate) fn owner(&self, row: &MethodRow) -> String {
+        self.owner_of(row)
+    }
+
     /// Write this checkout's snapshot if none answers to what the store holds
     /// now, so the first query after an index maps it rather than assembling
     /// it (DEC-192). Whether it built one. A file under the right name is

@@ -592,7 +592,13 @@ checkout(id, root UNIQUE, indexed_at, kind, surface_key, namespace_key,
                                               gem owns (DEC-180)
   compiled(checkout_id, path, feature)      ← a stdlib's partly compiled
                                               files (DEC-181)
+  rbs_use(checkout_id, rbs_id)              ← the signatures a stdlib's Ruby
+                                              is served (DEC-240)
   file(checkout_id, path, blob_id)          ← the only table naming a path
+
+rbs(id, key UNIQUE, version, dir, core, stdlib, sigs)
+                                            ← a Ruby's stubs, one row per
+                                              stdlib, rbs gem and reader
 
 upgrade(from_version, at)                   ← a rebuild that dropped an older index
 ```
