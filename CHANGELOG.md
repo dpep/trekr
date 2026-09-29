@@ -273,6 +273,14 @@
 
 ### Fixed
 
+- **A call through a `SimpleDelegator` may run the delegated method.** A
+  `method_missing` that sends the name on to another object — `Delegator`'s,
+  a proxy's, `ActiveRecord::Migration`'s — makes `--refs` count a call its
+  class lacks as possible for a method of any class, and `--def` say so,
+  where both called it "no such method" and `--dead` called the method
+  unreferenced. ActiveModel's `method_missing`, which sends nothing on, still
+  excludes (DEC-261).
+
 - **A call in a `test "…" do` block runs on the test, not its class.** A
   block a class body hands a macro that makes a method of it —
   `ActiveSupport::Testing::Declarative#test`, Minitest's `it`, an app's own

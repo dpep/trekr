@@ -3562,9 +3562,31 @@ impl Tree {
             })
     }
 
+    /// The first `method_missing` in the chain that sends a name it lacks on
+    /// to another object (DEC-261), with the class that defines it.
+    pub(crate) fn forwarder_in_chain(
+        &self,
+        fqn: &str,
+        singleton: bool,
+    ) -> Option<(String, Dynamic)> {
+        let placed = &self.placed().by_owner;
+        if placed.is_empty() {
+            return None;
+        }
+        self.chain_for(fqn, singleton, false)
+            .iter()
+            .find_map(|(owner, side)| {
+                let how = placed.get(owner)?.iter().find(|how| {
+                    how.maker.forwards() && how.maker.singleton.is_none_or(|s| s == side)
+                })?;
+                Some((variants::public_name(owner).to_string(), how.clone()))
+            })
+    }
+
     /// The markers written in the file at `path` (relative to the checkout)
     /// that may have made `name`, on either side: the likelier maker of a
-    /// name defined nowhere than a gem (DEC-162).
+    /// name defined nowhere than a gem (DEC-162). A `method_missing` that
+    /// sends names on makes none (DEC-261).
     pub(crate) fn dynamic_in_file(&self, path: &str, name: &str) -> Vec<Dynamic> {
         let at = format!("{}/{path}", self.root);
         self.placed()
@@ -3573,6 +3595,7 @@ impl Tree {
             .map(|makers| {
                 makers
                     .iter()
+                    .filter(|how| !how.maker.forwards())
                     .filter(|how| how.maker.may_make(name, false) || how.maker.may_make(name, true))
                     .cloned()
                     .collect()

@@ -266,8 +266,12 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                 None if let Some((maker, how)) =
                     tree.dynamic_in_chain(&receiver.fqn, receiver.singleton, &call.name) =>
                 {
+                    let does = match how.iter().all(|how| how.maker.forwards()) {
+                        true => "sends a name it lacks on to another object",
+                        false => "defines methods its source does not name",
+                    };
                     let reason = format!(
-                        "{CHECKED}, but {maker} defines methods its source does not name ({})",
+                        "{CHECKED}, but {maker} {does} ({})",
                         tree.dynamic_note(&how)
                     );
                     residue(tree, call, path, Some(receiver), &reason)

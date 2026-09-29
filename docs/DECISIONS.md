@@ -8496,3 +8496,47 @@ activerecord and mastodon, and the 21,154 clicks are unchanged.
 — minitest's `describe`, which `class_eval`s it into a class it builds;
 `setup`, which hands it to `set_callback` — stays on the class: Arel's
 `describe … it` specs are most of the 142 left.
+
+## DEC-261 — A `method_missing` that sends a name on may run any class's method
+
+**Decided.** A `method_missing` whose body sends the name it is handed to
+another object — `target.__send__(name, …)`, `@obj.public_send(...)`,
+through `send`, `__send__` or `public_send` to any receiver but `self` — is
+marked on its class and side as a maker of every name, by
+`method_missing` (`core::FORWARDER`). Where Ruby's lookup on a receiver
+finds nothing and such a marker is in its chain:
+
+- `--refs` counts the site `possible` ("the receiver's class sends a name it
+  lacks on to another object"), for a queried method of **any** class: the
+  object it is sent to is not typed. DEC-130's markers reach only the
+  queried owner and its subclasses, since they make that class's methods.
+- `--def` answers residue naming it: "Delegator sends a name it lacks on to
+  another object (method_missing, …/delegate.rb:82)".
+- It makes nothing in its own file, so a name defined nowhere is not blamed
+  on it.
+
+**Why.** The 0.8.1 hunt: indexing the stdlib completed `SimpleDelegator`'s
+chain, so a call through a delegator (`LoudEngine.new(engine).start`) was
+excluded as `no_such_method` and `--dead` called `Engine#start`
+unreferenced. The chain had been cut short at `Delegator` before, which
+hedged it.
+
+**Only a `method_missing` that sends the name on.** DEC-112 turned down
+every hand-written `method_missing`: ActiveModel::AttributeMethods defines
+one, so every model's `no_such_method` exclusion would become `possible`.
+That one answers attribute patterns itself and sends nothing, and so is no
+forwarder; neither is any in `ActiveRecord::Base`'s chain.
+
+**Measured**, against DEC-260's build. The index marks 44 forwarders in
+rails and 76 in mastodon with its bundle (`Delegator`, `Vite::Tagger`,
+`ActiveRecord::Migration`, `ActionDispatch::Integration::Runner`,
+`ActionView::TestCase::Behavior`, `ActiveSupport::Duration`, …). The 51-query
+set moves 237 sites excluded → possible and none the other way: 232 of them
+`resources` in a `routes.draw do` block of a test, which Ruby runs on the
+mapper and trekr reads on the test, whose `RoutingAssertions` forwards;
+`ActiveRecord::Base.new` moves 3 of its 12,869 exclusions. `--dead` loses
+false candidates — rails 8 (`SchemaStatements#bulk_change_table`,
+`recreate_database`, which migrations reach through `connection`),
+activerecord 2, mastodon 19 (`Vite::Tagger`'s strategies' `vite_*_tag`,
+which its specs reach through the tagger) — and two move to single-caller.
+The gold sets, the 40-query set and the clicks are unchanged.

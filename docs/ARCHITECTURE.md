@@ -182,7 +182,10 @@ lacks a method (`Tree::dynamic_in_chain`), and that answer hedges instead.
 The target is the maker, and when the source says more, the side it makes
 methods on and the shape of their names (`define_method|instance|_render_*`,
 `core::Maker`); a mark counts only for a name of its shape on its side, and
-a mark sent to a constant is that constant's (DEC-160).
+a mark sent to a constant is that constant's (DEC-160). A `method_missing`
+that sends its name on to another object is a mark by `method_missing`
+(`core::FORWARDER`) of every name on its side, which `--refs` lets reach a
+method of any class (`Tree::forwarder_in_chain`, DEC-261).
 A mark written in an instance method carries the method (`via`): a macro,
 whose methods land on each class whose body calls it (`body_call`) and whose
 class-side lookup of the name lands on it; `{k}` in its shape is the `k`th

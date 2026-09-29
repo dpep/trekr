@@ -1,0 +1,14 @@
+# A `method_missing` that sends the name it is handed on to another object —
+# `Delegator`'s, a proxy's, a class that forwards to its instance — may run
+# any method, of any class, that its own chain lacks. With the stdlib indexed
+# `SimpleDelegator`'s chain was complete, so a call through a delegator was
+# excluded as "no such method", and `--dead` called the delegated method
+# unreferenced. A `method_missing` that answers names itself, as
+# ActiveModel's does, still excludes: it cannot run another class's method.
+def app.rb:43:25 status=residue reason=method_missing
+refs Engine#start confirmed=0 possible=1 excluded=0
+refs Engine#stop confirmed=0 possible=1 excluded=0
+refs Engine#idle confirmed=0 possible=0 excluded=1
+dead app.rb Engine#start=single-caller Engine#stop=single-caller Engine#idle=unreferenced
+card Wrapper#zz_nope status=residue reason=method_missing
+card Record#zz_nope status=residue reason=method_missing

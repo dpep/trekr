@@ -423,6 +423,21 @@ fn tier(
                 ),
             }
         }
+        // Nothing indexed defines it, and the receiver's `method_missing`
+        // sends it on to an object of any class (DEC-261).
+        None if tree
+            .forwarder_in_chain(&receiver.fqn, receiver.singleton)
+            .is_some() =>
+        {
+            here(
+                Tier::Possible,
+                Some(receiver.fqn.clone()),
+                None,
+                "the receiver's class sends a name it lacks on to another object",
+                1,
+                None,
+            )
+        }
         // Nothing indexed defines it, but the queried owner defines methods
         // its source does not name, and this receiver is one of it (DEC-130).
         None if unnamed_reach(tree, &receiver, query, target) => here(

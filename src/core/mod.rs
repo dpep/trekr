@@ -658,6 +658,10 @@ pub(crate) struct Maker {
     pub(crate) block: bool,
 }
 
+/// The maker a `method_missing` that sends names on is marked with: it may
+/// run any class's method, not only its own class's (DEC-261).
+pub(crate) const FORWARDER: &str = "method_missing";
+
 /// The maker of a partly compiled stdlib class's methods (DEC-181), before
 /// the extension's name.
 pub(crate) const COMPILED: &str = "compiled extension";
@@ -666,6 +670,12 @@ impl Maker {
     /// A compiled extension, rather than Ruby that makes methods.
     pub(crate) fn is_compiled(&self) -> bool {
         self.by.starts_with(COMPILED)
+    }
+
+    /// A `method_missing` that hands a name it lacks to another object,
+    /// rather than Ruby that makes methods (DEC-261).
+    pub(crate) fn forwards(&self) -> bool {
+        self.by == FORWARDER
     }
 
     /// As stored: the bare maker, or `by|side|shape[|via[|&]]` when it says

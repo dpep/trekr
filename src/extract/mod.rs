@@ -924,6 +924,57 @@ fn handed_shape(node: &Node<'_>, handed: &[(String, String)]) -> Option<String> 
 }
 
 /// A method body that is one string, as the shape of the names it spells.
+/// Does this `method_missing` send the name it is handed to another object —
+/// `target.__send__(name, …)`, `@obj.public_send(...)` — rather than answer
+/// it itself?
+fn forwards_missing(def: &ruby_prism::DefNode<'_>) -> bool {
+    let params = params_of(def.parameters());
+    let name = match params.first() {
+        Some(first) if matches!(first.kind, ParamKind::Req | ParamKind::Opt) => {
+            Some(first.name.clone())
+        }
+        Some(first) if first.name == "..." => None,
+        _ => return false,
+    };
+    let Some(body) = def.body() else {
+        return false;
+    };
+    let mut finder = SendsOn { name, found: false };
+    finder.visit(&body);
+    finder.found
+}
+
+/// Finds a send of a `method_missing`'s name to some object other than
+/// `self`: its first parameter, or `...` when that is all it takes.
+struct SendsOn {
+    name: Option<String>,
+    found: bool,
+}
+
+impl<'pr> Visit<'pr> for SendsOn {
+    fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+        let sends = matches!(
+            node.name().as_slice(),
+            b"__send__" | b"send" | b"public_send"
+        );
+        let elsewhere = node.receiver().is_some_and(|r| r.as_self_node().is_none());
+        let first = node
+            .arguments()
+            .and_then(|args| args.arguments().iter().next());
+        let names_it = first.is_some_and(|arg| match &self.name {
+            Some(name) => arg
+                .as_local_variable_read_node()
+                .is_some_and(|read| read.name().as_slice() == name.as_bytes()),
+            None => arg.as_forwarding_arguments_node().is_some(),
+        });
+        if sends && elsewhere && names_it {
+            self.found = true;
+            return;
+        }
+        ruby_prism::visit_call_node(self, node);
+    }
+}
+
 fn string_shape(body: &Node<'_>) -> Option<String> {
     let statements = body.as_statements_node()?;
     let mut statements = statements.body().iter();
@@ -1329,6 +1380,16 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                         conditional: self.conditional,
                     })
                 });
+        // A `method_missing` that sends the name on may run another object's
+        // method of any name (DEC-261).
+        if name == "method_missing" && forwards_missing(node) {
+            let maker = Maker {
+                by: FORWARDER.to_string(),
+                singleton: Some(singleton),
+                ..Maker::default()
+            };
+            self.mark_dynamic_as(maker, name_start);
+        }
         if let Some(shape) = node.body().and_then(|body| string_shape(&body)) {
             self.string_methods
                 .insert((self.nesting.clone(), name.clone()), shape);
