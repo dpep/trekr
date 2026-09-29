@@ -1678,7 +1678,7 @@ fn from_receiver_name(tree: &Tree, call: &Call, path: &str) -> Option<Receiver> 
         .named(&call.name)
         .iter()
         .filter(|method| method.owner != fqn)
-        .map(|method| method.owner.clone())
+        .map(|method| method.owner.as_str())
         .collect::<std::collections::HashSet<_>>()
         .len();
     Some(Receiver {
