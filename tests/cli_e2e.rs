@@ -1911,6 +1911,39 @@ fn a_git_monorepos_gems_are_indexed_from_their_checkout() {
     let _ = fs::remove_dir_all(&gems);
 }
 
+/// Bundler's checkout of a git gem has a `.git`, which made git's toplevel —
+/// the whole clone, never indexed — the context for any position in it.
+/// It is a gem of the app that bundles it, like any other (DEC-150).
+#[test]
+fn a_position_in_a_git_gem_answers_from_the_app() {
+    let (app, db, gems) = git_monorepo_app("gitgem-pos");
+    let env = [("GEM_HOME", gems.to_str().unwrap())];
+    assert!(trekr_env(&db, &app, &["--index"], &env).status.success());
+
+    let web = gems.join("bundler/gems/kit-abc123def456/kit_web");
+    let spec = format!("{}:6:7", web.join("lib/kit_web/base.rb").display());
+    let answer = json(&trekr(&db, &gems, &["--def", &spec, "--json"]));
+    assert_eq!(
+        answer["status"], "resolved",
+        "the sibling gem's method is reachable: {answer}"
+    );
+    assert_eq!(
+        answer["context"].as_str(),
+        app.canonicalize().unwrap().to_str(),
+        "{answer}"
+    );
+
+    let out = trekr(&db, &app, &["--index", web.to_str().unwrap()]);
+    assert_eq!(
+        out.status.code(),
+        Some(66),
+        "a git gem is refreshed through its app, like any gem: {out:?}"
+    );
+
+    let _ = fs::remove_dir_all(&app);
+    let _ = fs::remove_dir_all(&gems);
+}
+
 /// A gem on its own is a tree of one gem plus core, so a method it gets from a
 /// sibling gem is unreachable by construction (DEC-029). The fix answers from
 /// an app that resolves the gem — which needs two checkouts, and so lives here

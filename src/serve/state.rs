@@ -248,22 +248,28 @@ impl Session {
         let root = match self.enclosing.get(&directory) {
             Some(cached) => cached.clone(),
             None => {
-                let found = match crate::scan::repo_root(&absolute) {
-                    Ok(root) => Some(std::fs::canonicalize(&root).unwrap_or(root)),
-                    // A gem is an indexed checkout but not a git repository,
-                    // and following a definition into gem source and asking
-                    // again is the next thing an agent does.
+                let gem = self
+                    .store
+                    .gem_containing(&absolute.to_string_lossy())
+                    .ok()
+                    .flatten();
+                let found = match gem {
                     // A gem on its own is a tree of one gem plus core, so a
                     // position inside it is answered from an app whose bundle
-                    // has the rest (DEC-029). Without such an app the gem is
-                    // still its own context.
-                    Err(_) => self
-                        .store
-                        .checkout_containing(&absolute.to_string_lossy())
-                        .ok()
-                        .flatten()
-                        .map(|gem| self.app_for_gem(gem))
-                        .map(PathBuf::from),
+                    // has the rest (DEC-029). Asked before git: a git gem's
+                    // checkout is a clone of its own (DEC-150).
+                    Some(gem) => Some(PathBuf::from(self.app_for_gem(gem))),
+                    None => match crate::scan::repo_root(&absolute) {
+                        Ok(root) => Some(std::fs::canonicalize(&root).unwrap_or(root)),
+                        // Indexed, not a git repository, and not a gem: its
+                        // own context.
+                        Err(_) => self
+                            .store
+                            .checkout_containing(&absolute.to_string_lossy())
+                            .ok()
+                            .flatten()
+                            .map(PathBuf::from),
+                    },
                 };
                 self.enclosing.insert(directory, found.clone());
                 found

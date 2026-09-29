@@ -567,13 +567,14 @@ fn writer_waiting(waited: std::time::Duration) {
     }
 }
 
-/// The indexed gem a path outside any git checkout belongs to, if any: gems
-/// are indexed per directory from an app's bundle, not as repositories.
+/// The indexed gem a path belongs to, if any: gems are indexed per
+/// directory from an app's bundle, not as repositories — a git gem's
+/// checkout included, though it has a `.git` (DEC-150).
 fn gem_holding(store: &Store, path: &Path) -> Option<String> {
     let absolute = std::fs::canonicalize(path).ok()?;
     // The trailing `/` lets the gem's own root match, not only files in it.
     store
-        .checkout_containing(&format!("{}/", absolute.to_string_lossy()))
+        .gem_containing(&format!("{}/", absolute.to_string_lossy()))
         .ok()
         .flatten()
 }
@@ -987,22 +988,19 @@ fn cmd_index(
         profile.jobs = jobs;
     }
 
-    let root = match named_checkout(path) {
-        Err(e) if Failure::of(&e) == Failure::NotARepo => {
-            let store = open_store()?;
-            let Some(gem) = gem_holding(&store, path) else {
-                return Err(e);
-            };
-            let app = store.app_for_gem(&gem)?;
-            let app = app.as_deref().map_or("<the app>".into(), paths::pretty);
-            return Err(Failure::NotARepo.error(format!(
-                "{} is a gem, indexed from an app's bundle rather than as a checkout; \
-                 to pick up an edit to it: trekr --drop {0} && trekr --index {app}",
-                paths::pretty(&gem)
-            )));
-        }
-        root => root?,
-    };
+    // A gem is refreshed through its app, a git gem's clone included, though
+    // git would call it a checkout (DEC-150).
+    let mut store = open_store()?;
+    if let Some(gem) = gem_holding(&store, path) {
+        let app = store.app_for_gem(&gem)?;
+        let app = app.as_deref().map_or("<the app>".into(), paths::pretty);
+        return Err(Failure::NotARepo.error(format!(
+            "{} is a gem, indexed from an app's bundle rather than as a checkout; \
+             to pick up an edit to it: trekr --drop {0} && trekr --index {app}",
+            paths::pretty(&gem)
+        )));
+    }
+    let root = named_checkout(path)?;
     let root_str = root.to_string_lossy().into_owned();
     // Sampled *before* the scan, deliberately. A fingerprint taken afterwards
     // would cover edits this index never saw and the next query would call them
@@ -1011,7 +1009,6 @@ fn cmd_index(
     let git_state = scan::git_fingerprint(&root).unwrap_or(0);
     let files = profile::timed(&mut profile, "scan", || scan::scan(&root))?;
 
-    let mut store = open_store()?;
     store.wait_as_writer(writer_waiting)?;
     let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
     let mut known = None;
@@ -2569,10 +2566,14 @@ fn not_indexed(out: Output, root: &Path, store: &Store) -> anyhow::Result<ExitCo
 /// position an agent reaches one step after following a definition — could
 /// not be answered at all.
 fn checkout_for(store: &Store, path: &Path) -> anyhow::Result<PathBuf> {
+    let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    // Before git: a git gem's checkout is a clone of its own (DEC-150).
+    if let Some(gem) = store.gem_containing(&absolute.to_string_lossy())? {
+        return Ok(PathBuf::from(store.app_for_gem(&gem)?.unwrap_or(gem)));
+    }
     if let Ok(root) = scan::repo_root(path) {
         return Ok(root);
     }
-    let absolute = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     match store.checkout_containing(&absolute.to_string_lossy())? {
         // A gem, and a gem on its own is a tree of one gem plus core — so
         // answer from an app whose bundle has the rest of it (DEC-029). With

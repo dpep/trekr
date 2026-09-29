@@ -1593,16 +1593,9 @@ pub(super) fn defined_in(
     let uri = format!("{}#L{line}", path_to_uri(&absolute));
     let gem = Path::new(path)
         .is_absolute()
-        .then(|| session.store().checkout_containing(path).ok().flatten())
-        .flatten()
-        // A gem is unpacked into a `gems/` directory under its `name-version`;
-        // any other checkout an answer points into is just a path.
-        .filter(|gem| {
-            Path::new(gem)
-                .parent()
-                .and_then(Path::file_name)
-                .is_some_and(|dir| dir == "gems")
-        });
+        // Any other checkout an answer points into is just a path.
+        .then(|| session.store().gem_containing(path).ok().flatten())
+        .flatten();
     match gem {
         Some(gem) => {
             let within = path.get(gem.len() + 1..).unwrap_or(path);

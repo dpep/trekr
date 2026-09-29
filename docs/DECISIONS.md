@@ -6092,6 +6092,17 @@ revision. rails' three git gems move from "not installed" to "git source,
 checkout not found at ~/.rvm/gems/ruby-3.4.9/bundler/gems/httpclient-d57cc6d5ffee"
 — true: they are not installed here.
 
+**A git gem's clone is a gem, not a checkout.** Bundler's checkout has a
+`.git`, so git's toplevel for a file in it is the clone — never indexed, and
+for a monorepo not even the gem — and a position there answered "never
+indexed" (C5). The store's deepest checkout containing the path is now asked
+first, by `--def`/`--refs`, `--index` and the LSP alike: when it is a gem,
+the answer comes from the app that bundles it (DEC-029), and `--index` on it
+says how to refresh it, as for any gem. When it is a repo, or there is none,
+git decides as before, so a submodule an outer repo contains is still its own.
+The LSP's hover labels a gem by the same test instead of a parent directory
+named `gems`.
+
 **Not asking bundler.** `bundle list --paths` would be the fallback; it
 needs the project's Ruby and a resolvable bundle, which DEC-016 turned down
 as the product's first edge, and with the checkout named from the lockfile

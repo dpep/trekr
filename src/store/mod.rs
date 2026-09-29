@@ -1029,6 +1029,24 @@ impl Store {
             })
     }
 
+    /// The gem holding this path: the deepest indexed checkout containing it,
+    /// when that checkout is a gem.
+    ///
+    /// Asked before git is: bundler's checkout of a git gem is a clone with a
+    /// `.git` of its own, so git's toplevel for a file in it is the clone —
+    /// never indexed, and for a monorepo not even the gem (DEC-150).
+    pub(crate) fn gem_containing(&self, path: &str) -> Result<Option<String>> {
+        let Some(root) = self.checkout_containing(path)? else {
+            return Ok(None);
+        };
+        let kind: String = self.conn.query_row(
+            "SELECT kind FROM checkout WHERE root = ?1",
+            params![root],
+            |r| r.get(0),
+        )?;
+        Ok((kind == "gem").then_some(root))
+    }
+
     /// Has this root been indexed before?
     ///
     /// For a gem this is the whole incremental story: a gem's bytes never

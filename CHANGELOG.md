@@ -54,6 +54,11 @@
   checkout not where bundler puts it, or a path outside the checkout — rather
   than as not installed (DEC-150).
 
+- **A position inside a git gem answers from the app**, in the CLI and the
+  editor. Bundler's checkout has a `.git`, so it was taken for a checkout of
+  its own that was never indexed. `--index` on one now says it is a gem, as
+  for any gem (DEC-150).
+
 ## 0.8.0 — 2026-09-28
 
 - **Upgrading drops and rebuilds the index** (store v39): run `trekr --index`
