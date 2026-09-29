@@ -7421,3 +7421,59 @@ sets and `--dead` are unchanged: they do not read `--def`'s answer. On rails,
 `Book.where` answers `QueryMethods#where` resolved, and `Book.insert_all`
 answers `Relation#insert_all` ambiguous at 0.5, naming
 `AssociationRelation#insert_all`.
+
+## DEC-212 — A string macro in another file defines what its callers name
+
+**Decided.** When a class body in one file calls a macro written in another
+— an instance method whose body `class_eval`s (or `module_eval`s) a string
+that interpolates its parameters, marked by DEC-162 — and hands it literal
+names, each `def` in the string whose name those names spell is a method of
+the calling class: owner the caller, on the side the `def` says, its site the
+macro's `class_eval` line, `kind` definition, any arity. The tree builds it
+from what the store already has: the marker's shape (`{0}_helper`,
+`_run_{0*}_callbacks`) and the `body_call` row's literal arguments. It is
+consulted only where Ruby's lookup along the chain finds nothing (`made_along`),
+so it never reorders what the chain's own source defines. A name a caller
+does not spell (`add_helper some_name`), or a `define_method` macro, stays a
+marker as before; a caller in the macro's own file is DEC-163's.
+
+**Why.** DEC-162 marked these methods and DEC-163 read the string only when
+the macro and its caller share a file. Across files — Rails' shape, a
+concern's `ClassMethods` in one file and the models that call it in others —
+`Widget#color_helper` was residue naming the macro though `add_helper :color`
+states it, and `--def` on a call of it offered guesses.
+
+**Only on a miss.** Built eagerly, with the methods of each name as it is
+loaded, a warm `--def` on rails went 42 → 147 ms and 19 → 42 MB: placing the
+macros resolves every caller's class side. On a miss it is the same pass the
+residue path already made (DEC-162's markers), and the `--def` is 40 → 38 ms
+(15 rounds, load 27). The cost is a macro-made method that overrides one the
+class inherits: the inherited one still answers, as it did before.
+
+**What the store does not have.** The macro's string is not stored — only
+each `def`'s name shape and side (`core::Maker`) — so:
+- the calls in the string are not read at the caller (`run_#{name}` in the
+  testbed case has no caller), which would take the string's templated facts,
+  its calls and `def`s with `{k}` in place of the names, stored per macro, and
+  a `--refs` posting list that can name the macro's file for a call whose name
+  only a caller's arguments spell;
+- the site is the `class_eval` line, not the `def`'s: `define_callbacks`
+  writes four methods from lines 911–923 and all answer 910. The `def`'s own
+  line would take the marker to carry it — an extractor change, so a store
+  bump;
+- the arity is any.
+
+**Measured** (against DEC-211). One gold verdict moves, polyid's gem site
+`_run_checkout_callbacks` (`define_callbacks :checkout` in `AbstractAdapter`,
+the macro in activesupport's `callbacks.rb`): residue → correct. None other in
+any set; the clicks, both rails `--refs` sets and `--dead` on rails,
+activerecord and mastodon unchanged. The names such macros can make, read off
+each store (a class body's literal arguments against another file's
+macro shape): on rails 174 cards, 152 residue → resolved, 21 still residue (`has_rich_text`,
+which Action Text mixes in from an `on_load` hook and a `class_methods` block:
+the caller's class side does not find the macro itself), 1 already resolved; on mastodon (with its
+gems) 630, 195 residue → resolved, and the rest unchanged (341 already
+resolved by the caller's own definition, 86 `no_such_method` and 8 residue
+whose caller does not reach the macro). Most are `define_callbacks`'
+`_run_*_callbacks` and `_*_callbacks` across every class that declares a
+callback chain.

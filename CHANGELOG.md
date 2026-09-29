@@ -179,6 +179,14 @@
 
 ### Fixed
 
+- **A macro in another file defines the methods its callers name.** A class
+  body's `add_helper :color`, where `add_helper` (in another file) writes
+  `def #{name}_helper` in a `class_eval` string, makes `color_helper` a method
+  of the class, at the macro's `class_eval`: `--def`, cards and `--refs`
+  resolve it where they answered residue — every `define_callbacks :save`'s
+  `_run_save_callbacks`, for one. The calls inside the string are still not
+  read there (DEC-212).
+
 - **`--def` on `Person.delete_by` reaches `Relation#delete_by`.** A call that
   lands on a `delegate … to: :all` (or any `to:` whose reader declares a type)
   answers the method that type runs, with the delegate as the second site;

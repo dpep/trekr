@@ -873,6 +873,7 @@ impl Store {
                     .split('\t')
                     .map(|arg| (!arg.is_empty()).then(|| arg.to_string()))
                     .collect(),
+                path,
             });
         }
         Ok(found)
@@ -1719,6 +1720,8 @@ pub(crate) struct BodyCallRow {
     pub(crate) nesting: Vec<String>,
     /// Each positional argument's literal name, or `None`.
     pub(crate) args: Vec<Option<String>>,
+    /// The file the call is written in, absolute.
+    pub(crate) path: String,
 }
 
 #[derive(Debug)]

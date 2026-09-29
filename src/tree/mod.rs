@@ -404,6 +404,29 @@ pub(crate) struct Tree {
     dynamic: RefCell<Option<HashMap<String, Vec<Dynamic>>>>,
     /// Every marker, by the file that writes it (DEC-162).
     dynamic_files: RefCell<HashMap<String, Vec<Dynamic>>>,
+    /// The methods a string macro in another file makes on the classes that
+    /// hand it literal names, by (class, singleton, name) (DEC-212).
+    made: RefCell<HashMap<(String, bool, String), Dynamic>>,
+    /// `place_dynamic` is running, and its own lookups must not wait on it.
+    placing: std::cell::Cell<bool>,
+}
+
+/// The side and name of the one method a string macro's `def` makes at a
+/// caller in another file, when the caller hands it every name the `def`
+/// spells (DEC-212). The same file's caller had the string read with the
+/// names at extraction (DEC-163), where it could be.
+fn expanded(made: &Dynamic, called_in: &str) -> Option<(bool, String)> {
+    let maker = &made.maker;
+    let string = matches!(
+        maker.by.as_str(),
+        "class_eval" | "module_eval" | "instance_eval" | "eval"
+    );
+    let name = maker.shape.as_deref()?;
+    let spelled = !name.contains(['*', '{']);
+    if !string || !spelled || called_in == made.path {
+        return None;
+    }
+    Some((maker.singleton?, name.to_string()))
 }
 
 /// Where a scope defines methods its source does not name: a
@@ -860,6 +883,8 @@ impl Tree {
             dynamic_rows: RefCell::new(None),
             dynamic: RefCell::new(None),
             dynamic_files: RefCell::new(HashMap::new()),
+            made: RefCell::new(HashMap::new()),
+            placing: std::cell::Cell::new(false),
         }
     }
 
@@ -2643,6 +2668,47 @@ impl Tree {
         rows
     }
 
+    /// Where Ruby's lookup along `chain` finds nothing, the first class in
+    /// it that a string macro in another file made `name` on (DEC-212): the
+    /// method is that class's, and its site the macro's `class_eval`. Only
+    /// on a miss, so what the chain's own source defines is never reordered.
+    fn made_along(&self, chain: &Chain, name: &str) -> Option<Landing> {
+        if self.placing.get() {
+            return None;
+        }
+        self.place_dynamic();
+        let (owner, singleton, how) = chain.iter().find_map(|(owner, side)| {
+            let key = (owner.to_string(), side, name.to_string());
+            self.made
+                .borrow()
+                .get(&key)
+                .map(|how| (key.0, side, how.clone()))
+        })?;
+        let mut methods = self.methods.borrow_mut();
+        methods.push(MethodDef {
+            name: name.to_string(),
+            owner: owner.clone(),
+            singleton,
+            visibility: "public".to_string(),
+            via: Some(how.maker.by.clone()),
+            sig_returns: None,
+            sig_overloads: Vec::new(),
+            nesting: Vec::new(),
+            // The string's parameters are not stored.
+            arity: (0, true),
+            site: Site {
+                path: how.path,
+                line: how.line,
+                col: 1,
+                kind: "method".into(),
+            },
+            body_elsewhere: false,
+            forwards_to: None,
+            bound: false,
+        });
+        Some(landed(methods.len() - 1, &owner))
+    }
+
     /// Load every method at once — for a tree built from rows rather than from
     /// a store.
     fn add_methods(&mut self, rows: Vec<MethodRow>) {
@@ -2889,6 +2955,7 @@ impl Tree {
         // disclose the alternative.
         self.first_in_chain(&chain, 0, name, true)
             .or_else(|| self.first_in_chain(&chain, 0, name, false))
+            .or_else(|| self.made_along(&chain, name))
     }
 
     /// What `super` in `owner`'s `name` runs, for a receiver of type `fqn`:
@@ -3238,6 +3305,7 @@ impl Tree {
         if self.dynamic.borrow().is_some() {
             return;
         }
+        self.placing.set(true);
         let rows = match self.dynamic_rows.borrow_mut().take() {
             Some(rows) => rows,
             None => self
@@ -3279,9 +3347,10 @@ impl Tree {
                 false => placed.entry(owner).or_default().push(how),
             }
         }
+        let mut made: HashMap<(String, bool, String), Dynamic> = HashMap::new();
         for (owner, how) in macros {
             let name = how.maker.via.clone().unwrap_or_default();
-            for (caller, args) in self.macro_callers(&owner, &name) {
+            for (caller, args, called_in) in self.macro_callers(&owner, &name) {
                 // The names this call hands the macro are the names it makes.
                 let shapes = match how.maker.shape.as_deref() {
                     Some(shape) => crate::core::handed(shape, &args)
@@ -3290,10 +3359,15 @@ impl Tree {
                         .collect(),
                     None => vec![None],
                 };
-                let makers = placed.entry(caller).or_default();
+                let makers = placed.entry(caller.clone()).or_default();
                 for shape in shapes {
-                    let mut made = how.clone();
-                    made.maker.shape = shape;
+                    let mut maker = how.clone();
+                    maker.maker.shape = shape;
+                    if let Some((singleton, name)) = expanded(&maker, &called_in) {
+                        made.insert((caller.clone(), singleton, name), maker);
+                        continue;
+                    }
+                    let made = maker;
                     if !makers.iter().any(|known| {
                         known.maker == made.maker
                             && known.path == made.path
@@ -3305,13 +3379,15 @@ impl Tree {
             }
         }
         *self.dynamic.borrow_mut() = Some(placed);
+        *self.made.borrow_mut() = made;
+        self.placing.set(false);
     }
 
     /// The classes whose body calls the macro `name`, an instance method of
     /// `owner`, and so run it on themselves (DEC-162): a body's call on
     /// itself outside any method, where the class side reaches `owner`.
     /// Each with the literal names that call hands it.
-    fn macro_callers(&self, owner: &str, name: &str) -> Vec<(String, Vec<Option<String>>)> {
+    fn macro_callers(&self, owner: &str, name: &str) -> Vec<(String, Vec<Option<String>>, String)> {
         let Some(loader) = self.loader.as_ref() else {
             return Vec::new();
         };
@@ -3332,7 +3408,7 @@ impl Tree {
                     .is_some_and(|found| found.owner == owner && !found.singleton)
             });
             if reaches {
-                callers.push((caller, call.args));
+                callers.push((caller, call.args, call.path));
             }
         }
         callers

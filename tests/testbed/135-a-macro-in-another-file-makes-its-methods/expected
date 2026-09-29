@@ -1,0 +1,15 @@
+# DEC-162 marked a macro's methods on the class that calls it, and DEC-163
+# read the macro's string with the caller's names only when both are in one
+# file. Called from another file, `Widget#color_helper` was residue naming
+# the macro, though `add_helper :color` states the name. The tree expands a
+# string macro at each caller that hands it literal names: the method is
+# the caller's, at the macro's `class_eval`. Its string is not stored, so
+# the calls in it are still unread (`run_color` has no caller), and a name
+# that is not a literal stays a marker.
+def widget.rb:10:5 status=resolved owner=Widget kind=definition site=macros.rb:8
+def widget.rb:11:5 status=resolved owner=Widget site=macros.rb:17
+card Widget#color_helper status=resolved
+card Widget#active? status=resolved
+card Widget#zz_nope status=no_such_method
+card Gadget#color_helper status=residue reason=add_helper
+refs Widget#run_color confirmed=0
