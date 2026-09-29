@@ -6270,3 +6270,33 @@ could not have made the name.
 **Not done.** A hash's `each |name, value|` (actiondispatch's `DIRECTIVES`),
 `each_with_index`, and a list a method returns (`keys.each`) are not literal
 loops, and their `define_method` stays an unshaped mark.
+
+## DEC-161 — Every string of code marks the class it makes methods on
+
+**Decided.** DEC-130 marked only `class_eval`/`module_eval` on `self` handed
+a string literal. Now:
+
+- A `class_eval` handed anything else — a local, `[…].join`, `format(…)`, a
+  heredoc through `.gsub(…)` — marks its scope, with no shape: the source
+  does not spell the code. A heredoc through a method that leaves code as it
+  is (`.strip`, `.chomp`, `.squish`, `.freeze`, `.dup`) is the heredoc, read
+  as DEC-132 reads one.
+- `eval` of a string in a class body or class method is read as
+  `class_eval` is: it runs there, with the class as `self`.
+- `instance_eval` of a string on a class marks the class side only, since
+  every `def` in it makes a class method.
+- A string sent to a constant (`Target.class_eval "def x; end"`), and
+  `self.class.class_eval` in an instance method, mark that class, shaped
+  by the `def`s the text spells (DEC-160). Neither is read: the first is
+  written in another class's file, and the second runs when the method
+  does.
+
+**Why.** The 0.8.0 hunt's probes: each of these left a real method "no such
+method", exit 1, where the source says plainly that a string of code makes
+methods there.
+
+**Measured.** Every gold verdict, the 21,154 clicks, the rails `--refs`
+queries and `--dead` on rails, activerecord and mastodon unchanged. The card
+sweep gains five rails residues, each a string that does make methods there:
+actionview's `LookupContext::Accessors` (`module_eval <<-METHOD` of a
+computed name), `RouteSet::MountedHelpers`, and a test's `PostsController`.

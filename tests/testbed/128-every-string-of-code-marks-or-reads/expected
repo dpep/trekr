@@ -1,0 +1,18 @@
+# A `class_eval` handed code the source does not spell as a literal — a
+# local, `[…].join`, `format`, a heredoc through `.gsub` — was not a string
+# to DEC-130, so nothing was marked and the card said "no such method" of
+# a real method, exit 1. So did `instance_eval` and `eval` of a string,
+# `Target.class_eval "…"`, and `self.class.class_eval` in an instance
+# method. Each marks the class it makes methods on, by the `def`s its text
+# spells; `<<~CODE.strip` and `eval` in a body are read as code.
+card FromLocal#from_var status=residue reason=class_eval
+card FromJoin#from_join status=residue reason=class_eval
+card FromFormat#from_fmt status=residue reason=class_eval
+def app.rb:49:15 status=resolved owner=FromStrip site=app.rb:16
+card FromGsub#from_made status=residue reason=class_eval
+card FromInstanceEval.from_ie status=residue reason=instance_eval
+card FromInstanceEval#from_ie status=no_such_method
+card FromEval#from_eval status=resolved
+card Target#from_sent status=residue reason=from_sent
+card Target#zz_nope status=no_such_method
+card Plain#from_inst status=residue reason=from_inst

@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Upgrading drops and rebuilds the index** (store v40): run `trekr --index`
+- **Upgrading drops and rebuilds the index** (store v41): run `trekr --index`
   once per checkout.
 
 ### Changed
@@ -28,6 +28,14 @@
   hedges only names of that shape. The reason names every marker in the
   scope with its shape. On mastodon, cards for a name no class has went from
   819 residue to 399 (0.7.0: 380) (DEC-160).
+
+- **Every string of code marks the class it makes methods on.** A
+  `class_eval` handed a local, `[…].join`, `format(…)` or a heredoc through
+  `.gsub`, `instance_eval` and `eval` of a string, `Target.class_eval "…"`,
+  and `self.class.class_eval` in an instance method made methods the card
+  called absent, exit 1. They now hedge like any other marker, `eval` in a
+  class body and a heredoc through `.strip` are read as code, and
+  `instance_eval` hedges class methods only (DEC-161).
 
 - **`--refs` counts a call whose receiver is typed as an ancestor.** A
   `sig`'s parameter or return, a finder's result, a `rescue`'s class, or the

@@ -2388,25 +2388,54 @@ impl<'pr> Extractor<'_> {
         let Some(name) = method_name(call) else {
             return;
         };
-        if !matches!(name.as_str(), "class_eval" | "module_eval")
-            || !on_self(call)
-            || !self.self_is_class()
-        {
-            return;
-        }
-        let Some(first) = arg_nodes(call).into_iter().next() else {
+        // `instance_eval` on a class makes class methods, whatever its `def`s
+        // say; `eval` in a body runs there, as `class_eval` does.
+        let class_side = match name.as_str() {
+            "class_eval" | "module_eval" => false,
+            "eval" if call.receiver().is_none() => false,
+            "instance_eval" => true,
+            _ => return,
+        };
+        let Some(arg) = arg_nodes(call).into_iter().next() else {
             return;
         };
-        if first.as_string_node().is_none() && first.as_interpolated_string_node().is_none() {
-            return;
-        }
         let at = call.location().start_offset();
         // Not read at all: its calls are missing too, which `--dead` says.
         let unread = format!("{name} string");
+        // Whose methods it makes, and whether it is read: only a string
+        // evaluated in the scope it is written in is (DEC-132). Another
+        // class's is marked on it, as is this class's from an instance's
+        // `self.class` (DEC-161).
+        let own = self.nesting.clone();
+        let (owner, readable) = match call.receiver() {
+            None if self.self_is_class() => (own, !class_side),
+            Some(r) if r.as_self_node().is_some() && self.self_is_class() => (own, !class_side),
+            Some(r) if is_self_class(&r) && self.in_method_body() && !self.self_is_class() => {
+                (own, false)
+            }
+            Some(r) => match const_name(&r) {
+                Some(written) => (self.sent_owner(&written), false),
+                None => return,
+            },
+            _ => return,
+        };
+        if owner.is_empty() || self.in_group_body() {
+            return;
+        }
+        // `<<~RUBY.strip` is the heredoc's code; `.gsub(…)`, a local,
+        // `[…].join` or `format(…)` is code the source does not spell.
+        let Some(first) = spelled_code(arg) else {
+            let maker = Maker {
+                by: unread,
+                ..Maker::default()
+            };
+            self.mark_dynamic_on(owner, maker, at);
+            return;
+        };
         // A string inside a string is offsets into the outer one's text, not
         // the file's; not worth composing the maps for.
-        if !self.evals.is_empty() {
-            self.mark_string(&unread, &first, at);
+        if !self.evals.is_empty() || !readable {
+            self.mark_string_on(owner, &unread, &first, class_side, at);
             return;
         }
         let Some(pieces) = code_pieces(&first) else {
@@ -2449,14 +2478,30 @@ impl<'pr> Extractor<'_> {
     /// Mark a scope for a string of code it could not read whole: once per
     /// `def` the text spells, by that name's shape and side (DEC-160).
     fn mark_string(&mut self, by: &str, code: &Node<'pr>, at: usize) {
+        if self.nesting.is_empty() || self.in_group_body() {
+            return;
+        }
+        self.mark_string_on(self.nesting.clone(), by, code, false, at);
+    }
+
+    /// The same, on `owner`; `class_side` when every `def` there is a
+    /// class method, as in `instance_eval`.
+    fn mark_string_on(
+        &mut self,
+        owner: Vec<String>,
+        by: &str,
+        code: &Node<'pr>,
+        class_side: bool,
+        at: usize,
+    ) {
         let src = self.evals.last().map_or(self.src, |eval| &eval.src[..]);
         for (singleton, shape) in string_defs(code, src) {
             let maker = Maker {
                 by: by.to_string(),
-                singleton,
+                singleton: if class_side { Some(true) } else { singleton },
                 shape,
             };
-            self.mark_dynamic_as(maker, at);
+            self.mark_dynamic_on(owner.clone(), maker, at);
         }
     }
 
@@ -4428,6 +4473,33 @@ fn code_pieces(node: &Node<'_>) -> Option<Vec<Piece>> {
         });
     }
     Some(pieces)
+}
+
+/// `self.class`.
+fn is_self_class(node: &Node<'_>) -> bool {
+    node.as_call_node().is_some_and(|call| {
+        method_name(&call).as_deref() == Some("class")
+            && call.receiver().is_some_and(|r| r.as_self_node().is_some())
+    })
+}
+
+/// The string an evaluator is handed, when the source spells it: a string,
+/// or one through a method that leaves code as it is (`<<~RUBY.strip`).
+fn spelled_code(arg: Node<'_>) -> Option<Node<'_>> {
+    if arg.as_string_node().is_some() || arg.as_interpolated_string_node().is_some() {
+        return Some(arg);
+    }
+    let call = arg.as_call_node()?;
+    let keeps = matches!(
+        method_name(&call)?.as_str(),
+        "strip" | "lstrip" | "rstrip" | "chomp" | "squish" | "freeze" | "dup" | "to_s"
+    );
+    if !keeps || call.arguments().is_some() || call.block().is_some() {
+        return None;
+    }
+    let inner = call.receiver()?;
+    (inner.as_string_node().is_some() || inner.as_interpolated_string_node().is_some())
+        .then_some(inner)
 }
 
 /// What a string of code defines, by its text with `*` for each
