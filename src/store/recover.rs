@@ -278,6 +278,81 @@ fn sweep_side_stores(path: &Path, version: i64) {
     }
 }
 
+/// A file kept beside the store: another version's own store, or a damaged
+/// one set aside. Nothing removes these on its own sooner than a month idle,
+/// so `--status` lists them and `--gc` removes them.
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct Kept {
+    pub(crate) path: String,
+    /// `side` (with the schema `version` it holds) or `broken`.
+    pub(crate) kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) version: Option<i64>,
+    pub(crate) bytes: u64,
+    /// Seconds since it was last written.
+    pub(crate) idle: u64,
+    /// The store this trekr reads: listed, never removed.
+    pub(crate) in_use: bool,
+}
+
+/// What sits beside `path`. Side stores are probed by name, as the sweep does.
+pub(crate) fn kept(path: &Path, version: i64) -> Vec<Kept> {
+    let using = in_use(path);
+    let mut kept: Vec<Kept> = (1..=version + 64)
+        .map(|v| (side_path(path, v), v))
+        .filter(|(side, _)| side.exists())
+        .map(|(side, v)| Kept {
+            in_use: side == using,
+            ..describe(&side, "side", Some(v))
+        })
+        .collect();
+    let prefix = format!("{}.broken-", file_name(path));
+    kept.extend(
+        siblings(path)
+            .into_iter()
+            .filter(|p| {
+                let name = file_name(p);
+                name.starts_with(&prefix) && !name.ends_with("-wal") && !name.ends_with("-shm")
+            })
+            .map(|p| describe(&p, "broken", None)),
+    );
+    kept
+}
+
+fn describe(path: &Path, kind: &'static str, version: Option<i64>) -> Kept {
+    let files = [path.to_path_buf(), with_suffix(path, "-wal")];
+    let meta: Vec<std::fs::Metadata> = files
+        .iter()
+        .filter_map(|f| std::fs::metadata(f).ok())
+        .collect();
+    let idle = meta
+        .iter()
+        .filter_map(|m| m.modified().ok())
+        .max()
+        .and_then(|t| t.elapsed().ok())
+        .map_or(0, |d| d.as_secs());
+    Kept {
+        path: path.to_string_lossy().into_owned(),
+        kind,
+        version,
+        bytes: meta.iter().map(|m| m.len()).sum(),
+        idle,
+        in_use: false,
+    }
+}
+
+/// Remove a kept file with its WAL, lock and, for a side store, the core
+/// files beside it.
+pub(crate) fn remove_kept(kept: &Kept) {
+    let path = Path::new(&kept.path);
+    for suffix in ["", "-wal", "-shm", ".lock"] {
+        let _ = std::fs::remove_file(with_suffix(path, suffix));
+    }
+    if kept.kind == "side" {
+        let _ = std::fs::remove_dir_all(super::core_dir_of(path));
+    }
+}
+
 fn siblings(path: &Path) -> Vec<PathBuf> {
     let dir = match path.parent() {
         Some(d) if !d.as_os_str().is_empty() => d,
@@ -387,6 +462,28 @@ mod tests {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
         }
+    }
+
+    #[test]
+    fn kept_lists_side_stores_and_broken_copies_and_removes_them() {
+        let dir = Dir::new("kept");
+        let db = dir.db();
+        let side = side_path(&db, 7);
+        std::fs::write(&side, b"x").unwrap();
+        std::fs::write(with_suffix(&side, "-wal"), b"yy").unwrap();
+        let broken = db.with_file_name("trekr.db.broken-100");
+        std::fs::write(&broken, b"z").unwrap();
+        std::fs::write(with_suffix(&broken, "-wal"), b"z").unwrap();
+
+        let kept = kept(&db, schema::VERSION);
+        let found: Vec<(&str, Option<i64>, u64)> =
+            kept.iter().map(|k| (k.kind, k.version, k.bytes)).collect();
+        assert_eq!(found, [("side", Some(7), 3), ("broken", None, 2)]);
+        assert!(kept.iter().all(|k| !k.in_use));
+
+        kept.iter().for_each(remove_kept);
+        assert!(super::kept(&db, schema::VERSION).is_empty());
+        assert!(!with_suffix(&side, "-wal").exists());
     }
 
     /// The trekr after this one: its schema adds a table.

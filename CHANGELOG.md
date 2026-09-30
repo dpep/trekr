@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **`--status` lists what is kept beside the index, and `--gc` removes it**:
+  an index set aside as unusable (`trekr.db.broken-<time>`), at once, and an
+  older or newer trekr's own index (`trekr.v51.db`), once it has been idle for
+  `--older-than`. Never the index this trekr is using. `--json` carries them
+  as `kept` on both.
+
 ## 0.8.1 — 2026-09-29
 
 - **A damaged index, or an upgrade that fails, is rebuilt instead of failing

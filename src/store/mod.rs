@@ -11,7 +11,7 @@ mod gc;
 mod recover;
 mod schema;
 
-pub(crate) use recover::in_use;
+pub(crate) use recover::{Kept, in_use, kept, remove_kept};
 pub(crate) use schema::VERSION;
 
 use crate::core::*;

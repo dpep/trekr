@@ -147,7 +147,9 @@ struct Cli {
 
     /// Remove checkouts nothing will ask about again: gem versions no
     /// surviving project's bundle names, and projects whose root is gone.
-    /// Their blobs go too, unless another checkout still maps them.
+    /// Their blobs go too, unless another checkout still maps them. Also
+    /// removes an index set aside as unusable, and another trekr's own index
+    /// once it is idle.
     #[arg(long, conflicts_with_all = ["index", "status", "symbols", "refs", "def", "ancestors", "drop", "lsp"])]
     gc: bool,
 
@@ -1802,6 +1804,7 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
             .count()
     };
     let others = serde_json::json!({ "repos": hidden("repo"), "gems": hidden("gem") });
+    let kept = crate::store::kept(&crate::store::default_path()?, crate::store::VERSION);
 
     if out != Output::Text {
         // One object, because the totals are the point: they are what N
@@ -1810,6 +1813,7 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
             "checkouts": rows,
             "others": others,
             "totals": totals,
+            "kept": kept,
         });
         if let Some(reason) = &reason {
             answer["reason"] = reason.as_str().into();
@@ -1889,7 +1893,32 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
         "\nshared: {} blobs, {} defs, {} const refs, {} calls",
         totals.blobs, totals.defs, totals.const_refs, totals.calls
     );
+    print_kept(&kept);
     Ok(ExitCode::SUCCESS)
+}
+
+/// The files kept beside the store, one line each.
+fn print_kept(kept: &[crate::store::Kept]) {
+    for k in kept {
+        let what = match (k.kind, k.version, k.in_use) {
+            (_, _, true) => {
+                "this trekr's own store: the default one is a newer trekr's".to_string()
+            }
+            ("side", Some(v), _) => format!("store v{v}, another trekr's own"),
+            _ => "set aside when it couldn't be used".to_string(),
+        };
+        println!(
+            "kept: {}  {what}, {:.1} MB, idle {}d{}",
+            paths::pretty(&k.path),
+            k.bytes as f64 / 1e6,
+            k.idle / 86_400,
+            if k.in_use {
+                ""
+            } else {
+                " (`trekr --gc` removes it)"
+            }
+        );
+    }
 }
 
 /// The Ruby a checkout's last index chose, and how — asked of this
@@ -3946,6 +3975,15 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
         core.files += legacy.files;
         core.bytes += legacy.bytes;
     }
+    // Another trekr's store once idle as long as a checkout would be; a
+    // set-aside copy is only evidence, so any age.
+    let kept: Vec<crate::store::Kept> = crate::store::kept(&db, crate::store::VERSION)
+        .into_iter()
+        .filter(|k| !k.in_use && (k.kind == "broken" || k.idle >= older_than))
+        .collect();
+    if !dry_run {
+        kept.iter().for_each(crate::store::remove_kept);
+    }
     if vacuum {
         store.vacuum()?;
     }
@@ -3953,7 +3991,8 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
     let found = !garbage.checkouts.is_empty()
         || snapshots.files > 0
         || garbage.signatures > 0
-        || core.files > 0;
+        || core.files > 0
+        || !kept.is_empty();
 
     if out != Output::Text {
         emit_json(
@@ -3969,6 +4008,7 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
                 "snapshots": snapshots,
                 "signatures": garbage.signatures,
                 "core_files": core,
+                "kept": kept,
                 "vacuumed": vacuum,
                 "db_bytes": db_bytes,
             }),
@@ -4017,6 +4057,13 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
             garbage.signatures,
             core.files,
             mb(core.bytes as i64)
+        );
+    }
+    for k in &kept {
+        println!(
+            "{verb} {}: {:.1} MB",
+            paths::pretty(&k.path),
+            mb(k.bytes as i64)
         );
     }
     if vacuum {

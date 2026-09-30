@@ -106,7 +106,9 @@ remedy, the same as [rq](https://github.com/dpep/rq)'s:
 A damaged index, or one whose upgrade fails, is not an error: trekr moves it
 aside (`trekr.db.broken-<time>`), says where on stderr, and rebuilds it. An
 older trekr that finds a newer one's index keeps a separate one beside it
-(`trekr.v51.db`). Either file is safe to delete.
+(`trekr.v51.db`). `trekr --status` lists both, and `trekr --gc` removes
+them: a set-aside copy at once, another trekr's index once it is idle for
+`--older-than`.
 
 ### On rails
 

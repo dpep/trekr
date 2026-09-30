@@ -3184,6 +3184,50 @@ fn gc_removes_tree_snapshots_no_checkouts_index_names() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// What an older trekr or a recovery left beside the store is listed by
+/// `--status`; `--gc` removes a set-aside copy at once and another trekr's
+/// store once it has been idle as long as `--older-than`.
+#[test]
+fn status_lists_and_gc_removes_what_is_kept_beside_the_store() {
+    let (dir, db) = scratch("gc-kept");
+    repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+    let stem = db.file_stem().unwrap().to_str().unwrap();
+    let side = db.with_file_name(format!("{stem}.v3.db"));
+    let broken = db.with_file_name(format!(
+        "{}.broken-100",
+        db.file_name().unwrap().to_str().unwrap()
+    ));
+    fs::write(&side, b"old").unwrap();
+    fs::write(&broken, b"bad").unwrap();
+
+    let status = json(&trekr(&db, &dir, &["--status", "--json"]));
+    let kinds: Vec<&str> = status["kept"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|k| k["kind"].as_str().unwrap())
+        .collect();
+    assert_eq!(kinds, ["side", "broken"], "{status}");
+    let text = stdout(&trekr(&db, &dir, &["--status"]));
+    assert!(text.contains("store v3"), "{text}");
+
+    let gc = trekr(&db, &dir, &["--gc", "--json"]);
+    assert_eq!(gc.status.code(), Some(0));
+    assert_eq!(json(&gc)["kept"].as_array().unwrap().len(), 1);
+    assert!(!broken.exists(), "a set-aside copy goes at any age");
+    assert!(side.exists(), "a recently used store stays");
+
+    trekr(&db, &dir, &["--gc", "--older-than", "0"]);
+    assert!(!side.exists());
+    assert_eq!(
+        trekr(&db, &dir, &["--ancestors", "Widget"]).status.code(),
+        Some(0),
+        "and the store in use still answers"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// An app moves from one gem version to the next. The old version is kept while
 /// it is recent, collected once it is not — along with the file only it had,
 /// never the one both versions ship — and rebuilt the moment a lockfile names
