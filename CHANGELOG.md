@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.2 — 2026-09-29
 
 - **`--status` lists what is kept beside the index, and `--gc` removes it**:
   an index set aside as unusable (`trekr.db.broken-<time>`), at once, and an
