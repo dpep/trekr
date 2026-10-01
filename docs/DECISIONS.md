@@ -10194,6 +10194,24 @@ become `convention-only`, `unreferenced`, clear 16 → 7; discourse 1. `--dead
 app` unchanged on both. The mastodon `lib` numbers after this rule are no
 longer held out.
 
+**Addendum, before release.** Thor makes a command in `method_added`,
+which fires for a method its class defines: `no_commands do`/`no_tasks
+do` turn it off, and a plain module's method a Thor class includes is
+defined on the module, so Thor never sees it — and its `DynamicCommand`
+refuses to run a name the instance already responds to. So:
+
+- a `def` under `no_commands` or `no_tasks` is no command;
+- a module's public method is one only when written in its `included do`,
+  which defines it on the including class, and that class is a Thor's.
+  mastodon's CLI concerns are this shape (`Federation#self_destruct`).
+  "Any includer is a Thor" was the rule; "all includers are" would have
+  been as wrong, since what decides is where the `def` lands.
+
+The hunt's two probes — a helper under `no_commands`, and a module included
+by a Thor class and a plain one — were each "a Thor command" (testbed 385;
+371's module moved into `included do`). Measured, `--dead lib` against
+main: mastodon and discourse unchanged.
+
 ## DEC-372 — `clear` on an unreferenced row is calibrated against hand-checked rows
 
 **Decided.** `clear` stays a word, not a number, and keeps its rule: no

@@ -1,7 +1,11 @@
 module Cli
   module Pruning
-    def sweep
-      :swept
+    extend ActiveSupport::Concern
+
+    included do
+      def sweep
+        :swept
+      end
     end
   end
 end

@@ -111,25 +111,106 @@ pub(super) fn assigned_writer(tree: &Tree, owner: &str, name: &str, public: bool
                 .any(|class| tree.inherits(class, ASSIGNMENT)))
 }
 
-/// Whether Thor runs this public method by its name: a `Thor` subclass's
-/// public methods are its commands (`desc "prune"`, then `cli prune`), and
-/// a `Thor::Group`'s — every Rails generator's — are run in turn, as are a
-/// module's that such a class mixes in (DEC-371).
-pub(super) fn thor_command(tree: &Tree, owner: &str, public: bool) -> Option<Convention> {
+/// The line spans of a file's blocks that decide whether Thor makes a
+/// command of a `def` in them, read once per file.
+#[derive(Default)]
+pub(super) struct ThorBlocks {
+    by_path: HashMap<String, Spans>,
+}
+
+#[derive(Default)]
+struct Spans {
+    /// `no_commands do` and `no_tasks do`: Thor makes no command of these.
+    hidden: Vec<(u32, u32)>,
+    /// A concern's `included do`, whose `def`s land on the includer.
+    included: Vec<(u32, u32)>,
+}
+
+impl ThorBlocks {
+    fn of(&mut self, path: &str) -> &Spans {
+        self.by_path.entry(path.to_string()).or_insert_with(|| {
+            let mut spans = Spans::default();
+            let Ok(source) = std::fs::read(path) else {
+                return spans;
+            };
+            let parsed = ruby_prism::parse(&source);
+            let lines = crate::extract::line_index::LineIndex::new(&source);
+            let mut reader = SpanReader {
+                spans: &mut spans,
+                lines: &lines,
+            };
+            ruby_prism::Visit::visit(&mut reader, &parsed.node());
+            spans
+        })
+    }
+}
+
+struct SpanReader<'a> {
+    spans: &'a mut Spans,
+    lines: &'a crate::extract::line_index::LineIndex,
+}
+
+impl<'pr> ruby_prism::Visit<'pr> for SpanReader<'_> {
+    fn visit_call_node(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        if call.receiver().is_none()
+            && let Some(block) = call.block().and_then(|b| b.as_block_node())
+        {
+            let at = block.location();
+            let span = (
+                self.lines.pos(at.start_offset()).line,
+                self.lines.pos(at.end_offset()).line,
+            );
+            match call.name().as_slice() {
+                b"no_commands" | b"no_tasks" => self.spans.hidden.push(span),
+                b"included" => self.spans.included.push(span),
+                _ => {}
+            }
+        }
+        ruby_prism::visit_call_node(self, call);
+    }
+}
+
+/// Whether Thor runs this public method, `def`'d at `path:line`, by its
+/// name: Thor's `method_added` makes a command of each public method a
+/// `Thor` subclass defines (`desc "prune"`, then `cli prune`) and a step of
+/// a `Thor::Group`'s — every Rails generator's — less those under
+/// `no_commands`. A module's method is the module's, which `method_added`
+/// never sees, unless a concern defines it in `included do` on a Thor class
+/// that includes it (DEC-371).
+pub(super) fn thor_command(
+    tree: &Tree,
+    owner: &str,
+    public: bool,
+    (path, line): (&str, u32),
+    blocks: &mut ThorBlocks,
+) -> Option<Convention> {
     if !public {
         return None;
     }
-    let mut classes = vec![owner.to_string()];
-    if !tree.inherits(owner, "Thor") && !tree.inherits(owner, "Thor::Group") {
-        classes = tree.includers_of(owner);
+    let group = |class: &str| tree.inherits(class, "Thor::Group");
+    let thor = |class: &str| tree.inherits(class, "Thor") || group(class);
+    let classes: Vec<String> = if thor(owner) {
+        vec![owner.to_string()]
+    } else {
+        tree.includers_of(owner)
+            .into_iter()
+            .filter(|class| thor(class))
+            .collect()
+    };
+    if classes.is_empty() {
+        return None;
     }
-    let group = classes.iter().any(|c| tree.inherits(c, "Thor::Group"));
-    if !group && !classes.iter().any(|c| tree.inherits(c, "Thor")) {
+    let spans = blocks.of(path);
+    let within = |(from, to): &(u32, u32)| (*from..=*to).contains(&line);
+    if spans.hidden.iter().any(within) {
+        return None;
+    }
+    if classes[0] != owner && !spans.included.iter().any(within) {
         return None;
     }
     Some(Convention {
         by: "Thor",
-        reason: if group {
+        reason: if classes.iter().any(|c| group(c)) {
             "a Thor::Group's public method, which Thor runs in turn".to_string()
         } else {
             "a Thor command, which Thor runs by its name".to_string()

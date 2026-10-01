@@ -1,0 +1,8 @@
+# Thor makes a command of a public method as its class defines it
+# (`method_added`), except under `no_commands`/`no_tasks`. A plain module's
+# method a Thor class includes is defined on the module, so Thor never sees
+# it, and runs no command its instance already responds to (a concern's
+# `included do` def is the class's: case 371). Each helper here was "a Thor
+# command".
+dead lib/cli/tool.rb Cli::Tool#go=convention-only Cli::Tool#unused_helper=unreferenced Cli::Tool#unused_task_helper=unreferenced
+dead lib/cli/shared.rb Cli::Shared#unused_shared=unreferenced

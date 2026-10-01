@@ -25,8 +25,10 @@
   rows are now `lower` or `convention-only`, each saying why. On a CLI or a
   library, less (DEC-372).
 - **`--dead` knows Thor runs a command by its name.** A public method of a
-  `Thor` or `Thor::Group` subclass (every Rails generator), or of a module
-  one includes, is `convention-only` with `convention: {by: "Thor"}`.
+  `Thor` or `Thor::Group` subclass (every Rails generator), or one a concern
+  defines in its `included do` for such a class, is `convention-only` with
+  `convention: {by: "Thor"}`. A method under `no_commands`, and a plain
+  module's, are not: Thor never runs them.
 - **`--dead` counts `Mailer.action(…)` as a call of the mailer's action.**
   Action Mailer runs the action through its class's `method_missing`, so
   such actions were `unreferenced`.

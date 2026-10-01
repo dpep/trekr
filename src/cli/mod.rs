@@ -3759,6 +3759,7 @@ fn dead_in(
     let routes = routes::Routes::read(root);
     let routed = routed_actions(&tree, &routes);
     let mut symbols = conventions::Symbols::default();
+    let mut thor_blocks = conventions::ThorBlocks::default();
     let mut parsed = Parsed::new();
     for Defined {
         file,
@@ -3876,8 +3877,12 @@ fn dead_in(
         // A library that calls it by a name it builds (DEC-362, DEC-371).
         let convention = (matches!(tier, "unreferenced" | "override") && !def.singleton)
             .then(|| {
-                conventions::serializer_include(&tree, &owner, &def.name, &mut symbols)
-                    .or_else(|| conventions::thor_command(&tree, &owner, public))
+                conventions::serializer_include(&tree, &owner, &def.name, &mut symbols).or_else(
+                    || {
+                        let at = (file.as_str(), def.pos.line);
+                        conventions::thor_command(&tree, &owner, public, at, &mut thor_blocks)
+                    },
+                )
             })
             .flatten();
         let tier = match tier {
