@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **A command no longer fails with `database is locked` while another trekr
+  upgrades the index.** After `brew upgrade`, a running language server
+  switches to the new build and rebuilds the index in one long transaction; a
+  command started meanwhile now waits for it, saying so on stderr, instead of
+  giving up after five seconds.
+
 ## 0.8.2 — 2026-09-29
 
 - **`--status` lists what is kept beside the index, and `--gc` removes it**:

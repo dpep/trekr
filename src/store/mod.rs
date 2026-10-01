@@ -287,6 +287,9 @@ impl Store {
         // A no-op inside a transaction, so it is set around one. Off, the
         // drops are plain drops rather than a cascading delete of every fact.
         self.conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+        // Another trekr may be mid-upgrade: a language server hot-reloaded
+        // into this build drops the old index in one long transaction.
+        self.conn.busy_handler(Some(upgrade_busy))?;
         let rebuilt = (|| {
             let tx = self
                 .conn
@@ -324,6 +327,7 @@ impl Store {
             tx.commit()?;
             Ok(Some(version))
         })();
+        self.conn.busy_timeout(BUSY)?;
         self.conn.execute_batch("PRAGMA foreign_keys=ON;")?;
         rebuilt
     }
@@ -1824,7 +1828,7 @@ impl Drop for Store {
 }
 
 /// How long a connection waits for another's lock before giving up.
-const BUSY: std::time::Duration = std::time::Duration::from_secs(5);
+pub(super) const BUSY: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// How long an index, a drop or a collection waits for another writer: one
 /// cold bundle's gems are one transaction and take far longer than `BUSY`
@@ -1850,6 +1854,28 @@ fn writer_busy(attempt: i32) -> bool {
     };
     if let Some(notice) = WAIT_NOTICE.get() {
         notice(waited);
+    }
+    std::thread::sleep(pause);
+    true
+}
+
+/// An upgrade's busy handler: as long as a writer waits, and said once, since
+/// nothing else tells the person at the prompt why the command stalls.
+fn upgrade_busy(attempt: i32) -> bool {
+    thread_local!(static STARTED: std::cell::Cell<(std::time::Instant, bool)> =
+        std::cell::Cell::new((std::time::Instant::now(), false)));
+    if attempt == 0 {
+        STARTED.set((std::time::Instant::now(), false));
+    }
+    let (started, told) = STARTED.get();
+    let waited = started.elapsed();
+    let Some(pause) = writer_pause(attempt, waited) else {
+        return false;
+    };
+    // Processes opening the store together collide briefly; that is no news.
+    if !told && waited > std::time::Duration::from_secs(1) {
+        eprintln!("trekr: waiting for another trekr writing to the index (often one upgrading it)");
+        STARTED.set((started, true));
     }
     std::thread::sleep(pause);
     true

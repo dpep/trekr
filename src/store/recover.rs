@@ -624,6 +624,25 @@ mod tests {
         assert!(dir.broken().is_empty());
     }
 
+    /// A language server hot-reloaded into the new build upgrades the store
+    /// in one long transaction; a command opening it meanwhile waits for that
+    /// rather than failing with "database is locked".
+    #[test]
+    fn an_upgrade_waits_out_another_processs_write() {
+        let dir = Dir::new("upgrade-waits");
+        drop(Store::open(&dir.db()).unwrap());
+        let holder = Connection::open(dir.db()).unwrap();
+        holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+        let release = std::thread::spawn(move || {
+            std::thread::sleep(crate::store::BUSY + Duration::from_millis(500));
+            holder.execute_batch("COMMIT").unwrap();
+        });
+        let store = open(&dir.db(), &newer()).expect("waits, then upgrades");
+        assert_eq!(version(&dir.db()), schema::VERSION + 1);
+        drop(store);
+        release.join().unwrap();
+    }
+
     #[test]
     fn a_newer_store_is_left_alone_and_this_trekr_keeps_its_own() {
         let dir = Dir::new("newer");
