@@ -7,30 +7,28 @@ references**. Built for legacy Rails monorepos with many worktrees, where the
 incumbents cost gigabytes per workspace and answer "the first ten methods with
 that name."
 
-> **Early, and working.** The three engine layers are built — blob facts, a
-> per-checkout namespace, receiver resolution — plus an LSP front and enough
-> Rails DSL modelling to follow `belongs_to`, `enum`, `delegate`, and Tapioca's
-> generated RBIs. Ruby core and the checkout's gems are indexed. See
-> [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for what exists and what it
-> measures, and [docs/PLAN.md](docs/PLAN.md) for where it goes.
+> **Pre-1.0, and shipping.** The three engine layers are built — blob facts, a
+> per-checkout namespace, receiver resolution — plus a language server and
+> enough Rails DSL modelling to follow `belongs_to`, `enum`, `delegate`, and
+> Tapioca's generated RBIs. Ruby core, the standard library and the checkout's
+> gems are indexed. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) says what
+> exists and what it measures; [docs/PLAN.md](docs/PLAN.md) says where it goes.
 
 ## Install
 
 ```sh
-brew install dpep/tools/trekr
+brew install dpep/tools/trekr    # or: cargo install trekr
 ```
 
-No Homebrew:
+VS Code: install [trekr from the Marketplace](https://marketplace.visualstudio.com/items?itemName=dpep.trekr) ([more below](#in-vs-code)).
 
-```sh
-cargo install trekr
-```
+No `bundle install`, no bootable app. Prism parses, SQLite
+remembers, and trekr reads the app's Ruby and gems off disk without running
+them — core and the standard library come from that Ruby's own files and its
+`rbs` signatures.
 
-No Ruby toolchain, no `bundle install`, no bootable app — not to install it, and
-not to run it. Prism parses; SQLite remembers.
-
-Homebrew wires up tab completion on install; `trekr --completions bash` (or
-`zsh`, `fish`, …) prints the script for anyone who needs it elsewhere.
+Homebrew wires up tab completion; `trekr --completions bash` (or `zsh`,
+`fish`, …) prints the script for anywhere else.
 
 ## The idea
 
@@ -38,10 +36,10 @@ Homebrew wires up tab completion on install; `trekr --completions bash` (or
 
 Facts are keyed by git blob OID, so every worktree of a repo shares one index, a
 branch switch reparses only what is genuinely new, and a reindex with no edits
-parses nothing at all. Measured on rails: 1.5 s cold, **61 ms** to reindex with
+parses nothing. On rails: 1.9 s cold with its gems, **36 ms** to reindex with
 nothing changed, **~0.2 s and zero parses** for a second worktree. Rubydex —
-Shopify's Rust indexer, and the closest peer — pays 177 ms for that same no-op,
-and pays it again on every process boot because it never writes anything down.
+Shopify's Rust indexer, and the closest peer — keeps nothing on disk, so it
+pays its 177 ms for that same no-op again on every process boot.
 
 ## Try it
 
@@ -59,58 +57,61 @@ trekr --dead app/models          # methods nothing appears to call, graded
 trekr --gc --dry-run             # what old gem versions and deleted worktrees would free
 ```
 
+The bare forms are sugar: a position is `--def`, and `Owner#method` or a
+`Constant` is a **card** — the definition and, for a method, the reference
+counts by tier (`--refs` lists the sites).
+
 Every command honors `--json` and `--ndjson`, because the intended caller is an
-agent. Under `--ndjson` a row set — `--refs`, `--dead`, `--symbols`, `--usage`
-— streams one row per line, exactly as the `--json` array holds it, and ends
-with one `{"answer": {…}}` line: the rest of the `--json` answer (`counts`,
-`summary`, `status`…) and `rows`, how many lines came before it. That last line
-is always written, an empty set included, so a reader can tell a finished
-stream from a broken one:
+agent. Under `--ndjson` a row set (`--refs`, `--dead`, `--symbols`, `--usage`)
+streams one row per line, then ends with one `{"answer": {…}}` line: the rest
+of the `--json` answer (`counts`, `summary`, `status`…) plus `rows`, how many
+lines came before it. That line is always written, even for an empty set, so a
+reader can tell a finished stream from a broken one:
 
 ```sh
 trekr --refs 'Post#publish' -J | jq -c 'select(.answer | not)'   # the sites
 trekr --refs 'Post#publish' -J | tail -1 | jq .answer.counts      # the tally
 ```
 
-Exit codes mean something, and each means one thing:
+Exit codes mean one thing each:
 
 | Exit | Meaning |
 | --- | --- |
 | `0` | An answer: something matched, was indexed, or was collected. |
-| `1` | Nothing found: trekr looked, and did not find it. `status` says how sure: `no_such_method` is certain, `residue` names what it could not see (an unindexed ancestor, an untyped receiver). |
-| `2` | No answer yet: this checkout is not indexed. Run the `hint` (`trekr --index …`), then ask again. |
+| `1` | Nothing found. `status` says how sure: `no_such_method` is certain, `residue` names what it could not see (an unindexed ancestor, an untyped receiver). |
+| `2` | No answer yet: the checkout is not indexed, or its first index is still running and the miss may not hold. Run the `hint` (`trekr --index …`), then ask again. |
 | `64`–`74` | An error, below. |
+
+An answer given while a first index is still running carries `warming` in
+JSON, claims nothing certain, and `--dead` lists nothing until it ends.
 
 ### Errors
 
-When a run fails under `--json`/`--ndjson` — a bad flag, a file that does not
-exist, a directory outside any checkout, a store that cannot be opened — stdout
-carries one object instead of an answer:
+When a run fails under `--json`/`--ndjson`, stdout carries one object instead
+of an answer:
 
 ```json
 { "error": "cannot read app/gone.rb: No such file or directory (os error 2)", "kind": "not_found", "code": 66 }
 ```
 
-`kind` is stable, and `code` is the exit code. The message also goes to stderr;
-in text mode stdout stays empty. The codes come from `sysexits(3)`, one per
-remedy, the same as [rq](https://github.com/dpep/rq)'s:
+`kind` is stable and `code` is the exit code. The message also goes to stderr;
+in text mode stdout stays empty. Codes come from `sysexits(3)`, one per remedy,
+as in [rq](https://github.com/dpep/rq):
 
 | `kind` | Exit | Meaning |
 | --- | --- | --- |
-| `usage` | 64 | The command line is wrong: an unknown flag, a bad value, an input whose shape trekr cannot tell, nothing asked. It is JSON under `--json` wherever the flag sits: `trekr --bogus --json` as much as `trekr --json --bogus`. It will not succeed on retry. |
+| `usage` | 64 | The command line is wrong: an unknown flag, a bad value, an input whose shape trekr cannot tell, nothing asked. JSON under `--json` wherever the flag sits. Retrying won't help. |
 | `not_found`, `not_a_repo` | 66 | A path the command names does not exist, or no git checkout contains it. |
 | `git` | 69 | git could not be run. |
 | `internal` | 70 | trekr failed at something that should always work — a bug. |
 | `database`, `io` | 74 | The index, or a file it reads, could not be opened, read or written. |
 
-`trekr --help` lists the same table.
-
 A damaged index, or one whose upgrade fails, is not an error: trekr moves it
-aside (`trekr.db.broken-<time>`), says where on stderr, and rebuilds it. An
-older trekr that finds a newer one's index keeps a separate one beside it
-(`trekr.v51.db`). `trekr --status` lists both, and `trekr --gc` removes
-them: a set-aside copy at once, another trekr's index once it is idle for
-`--older-than`.
+aside (`trekr.db.broken-<time>`), says where on stderr, and rebuilds it. A
+trekr that finds a newer trekr's index leaves it alone and keeps its own
+beside it (`trekr.v52.db`). `trekr --status` lists both, and `trekr --gc`
+removes them: a set-aside copy at once, another trekr's index once it has been
+idle for `--older-than`.
 
 ### On rails
 
@@ -133,33 +134,32 @@ Name the owner and the same sites come back tiered by whether they can reach
 ```console
 $ trekr --refs 'ActiveRecord::Batches#find_each'
 activerecord/lib/active_record/relation/batches.rb:85:9  definition
-activerecord/test/cases/batches_test.rb:948:13  confirmed  the receiver's type resolves here
-activerecord/lib/active_record/destroy_association_async_job.rb:28:82  possible   untyped receiver, enclosing class shares a namespace with the owner
-activerecord/test/cases/batches_test.rb:562:33  possible   untyped receiver, nothing rules it out
+activerecord/test/cases/batches_test.rb:20:12  confirmed  the receiver's class delegates this to a value whose type runs it
 ...
-1 confirmed, 13 possible, 12 excluded of 26 same-name call sites
-  excluded: 12 resolve to a different owner, 0 define no such name, 0 wrong arity
+activerecord/lib/active_record/destroy_association_async_job.rb:28:82  possible   untyped receiver, enclosing class shares a namespace with the owner
+...
+13 confirmed, 13 possible, 0 excluded of 26 same-name call sites
 ```
 
-`--def` is where the tree layer shows: it reparses the one file with Prism, then
-walks Ruby's own constant-lookup ladder — enclosing lexical scopes, then the
-innermost scope's ancestors, then the top level.
+`--def` reparses the one file with Prism, then walks Ruby's own
+constant-lookup ladder — enclosing lexical scopes, then the innermost scope's
+ancestors, then the top level:
 
 ```console
 $ trekr --def activerecord/lib/active_record/relation.rb:68:70
 activerecord/lib/active_record/relation/batches.rb:7:10  ActiveRecord::Batches
 
 $ trekr --ancestors ActiveRecord::Relation | head -3
+ActiveRecord::Relation::RecordFetchWarning
 ActiveRecord::Relation
 ActiveRecord::TokenFor::RelationMethods
-ActiveRecord::SignedId::RelationMethods
 ```
 
-A column that is on no name — whitespace, punctuation, most strings — answers
-for the nearest name on that line and says so under the answer, `snapped_to`
-in JSON; `FILE:LINE` takes the line's first name. The exception is a shared
-group's name: the string in `it_behaves_like "a widget"` answers the
-`shared_examples "a widget"` it includes.
+A column on no name — whitespace, punctuation, most strings — answers for the
+nearest name on that line and says so (`snapped_to` in JSON); `FILE:LINE`
+takes the line's first name. The exception: the string in
+`it_behaves_like "a widget"` answers the `shared_examples "a widget"` it
+includes.
 
 **98 % of rails constant references resolve** (91 % discourse) with core and
 the gems indexed; rails' remainder is one optional adapter that is not
@@ -173,62 +173,53 @@ never a silent guess. Every answer carries `status`, `confidence`, and
 
 ```console
 $ trekr --dead activerecord/lib/active_record/associations
-override         activerecord/lib/active_record/associations/collection_proxy.rb:1123  ActiveRecord::Associations::CollectionProxy#pretty_print  — no call names it, but it overrides ActiveRecord::Relation#pretty_print, so a call of that may run it
+override         activerecord/lib/active_record/associations/collection_proxy.rb:1123  ActiveRecord::Associations::CollectionProxy#pretty_print  — no call names it, but it overrides ActiveRecord::Relation#pretty_print, so a call of that may run it   (lower confidence: a hook `pp` calls by name)
 single-caller    activerecord/lib/active_record/associations/preloader/association.rb:32  ActiveRecord::Associations::Preloader::Association::LoaderQuery#load_records_in_batch  — one possible call, at activerecord/lib/active_record/associations/preloader/batch.rb:42: its receiver is untyped; its caller, group_and_load_similar, is itself a candidate   (lower confidence: untyped caller)
-convention-only  activerecord/lib/active_record/associations/association.rb:198  ActiveRecord::Associations::Association#marshal_dump  — named only by a symbol handed to a macro (3)   (lower confidence: send)
+convention-only  activerecord/lib/active_record/associations/association.rb:198  ActiveRecord::Associations::Association#marshal_dump  — named only by a symbol handed to a macro (3)   (lower confidence: send, a hook Marshal calls by name)
 super-only       activerecord/lib/active_record/associations/belongs_to_association.rb:76  ActiveRecord::Associations::BelongsToAssociation#target_changed?  — reached only by `super` from ActiveRecord::Associations::BelongsToPolymorphicAssociation   (lower confidence: send, public_send)
 …
 
-141 candidates in 33 file(s): 6 unreferenced, 7 override, 7 convention-only, 3 super-only, 118 single-caller (52 clear, 89 lower)
+136 candidates in 33 file(s): 6 unreferenced, 3 override, 7 convention-only, 2 super-only, 118 single-caller (53 clear, 83 lower)
 ```
 
-`unreferenced` means nothing was found, `single-caller` is one reference (an
-inlining candidate; `caller` in JSON says where, and whether it certainly
-reaches the method or is an untyped receiver that may be another's),
-`convention-only` is reached only by a symbol handed to a macro, and
-`super-only` only by `super` from its overrides — live exactly when they are.
-`override` has no reference, but overrides a method an ancestor defines, so
-whatever calls that one — often the framework, never by this name — may run
-it; a candidate in another tier that overrides one is graded `lower`.
-Every row says which, in words, and the last line counts them (`summary` in
-JSON). It is one pass and does not cascade: a method
-whose only caller is itself a candidate is `single-caller`, not
-`unreferenced`, and its reason says so. Two callers it cannot see are named
-on the row, in `caveat`, and grade it `lower`: a view template, which trekr
-does not read ("named in a view (app/views/…), which is not read", when a
-template's Ruby writes the name), and Ruby or Rails calling a protocol hook
-by name ("a hook Marshal calls by name": `marshal_load`, `to_partial_path`,
-`each`, `perform`, … — DEC-315).
+The tiers, from least evidence of use to most:
 
-The bare forms are sugar: a position is `--def`, and `Owner#method` or a
-`Constant` is a **card** — a summary with the definition and, for a method,
-the reference counts by tier (`--refs` lists the sites themselves). `--usage`
-counts them as `def` and `card`.
+- `unreferenced` — nothing names it.
+- `override` — nothing names it, but it overrides an ancestor's method, so
+  whatever calls that one (often the framework) may run it.
+- `convention-only` — named only by a symbol handed to a macro.
+- `super-only` — reached only by `super` from its overrides.
+- `single-caller` — one reference: an inlining candidate. `caller` in JSON
+  says where, and whether it certainly reaches the method.
+
+Each row is `clear` or `lower` confidence, and says why in words. It is one
+pass and does not cascade: a method whose only caller is itself a candidate
+is `single-caller`, and its reason says so. Two callers trekr cannot see grade
+a row `lower` and are named in `caveat`: a view template that writes the name
+(trekr does not read views), and Ruby or Rails calling a protocol hook by name
+— `marshal_load`, `to_partial_path`, `each`, `perform`, … (DEC-315).
 
 ### Where it keeps things
 
 The index is `~/.local/share/trekr/trekr.db`. `TREKR_DB=/some/path.db` points
 every command at another one — a throwaway for CI, or one per project. Beside
-it: the tree snapshots (`trekr.trees/`), Ruby core's stubs as readable files
-(`core/String.rb`, where a core definition lands), and the usage counts
-(`trekr.usage.db`, moved or switched off by `TREKR_USAGE`, below).
+it: tree snapshots (`trekr.trees/`), Ruby core as readable stub files
+(`trekr.core/rbs-<version>-<key>/String.rb`, where a core definition lands),
+the language server's `lsp.log`, and the usage counts (`trekr.usage.db`).
 `trekr --help` lists the variables.
 
 ### Usage counts
 
 `trekr --usage` shows which commands and editor features get used, by whom (an
 agent, a person, an editor), how often they come back empty, and how slow. It
-counts locally — no queries, paths or repository names — in `trekr.usage.db`
-beside the index. `TREKR_USAGE=off` stops the counting: nothing is recorded,
-the file is never opened, and `--usage` says so and exits `1`. A path in
-`TREKR_USAGE` moves the file instead.
+counts locally — no queries, paths or repository names — in `trekr.usage.db`.
+`TREKR_USAGE=off` stops the counting entirely (`--usage` then says so and
+exits `1`); a path in `TREKR_USAGE` moves the file.
 
-`trekr --usage --misses` lists *which* editor clicks those were: every
-definition or hover that came back empty or unsure, with its file, line,
-column, the token under the cursor and trekr's one-line reason. They are read
-from `lsp.log` beside the index — the same local file that already records each
-request's file and line — so `TREKR_LOG=off` turns them off too. `--days N`
-narrows the window; `--json` gives one object per miss.
+`trekr --usage --misses` lists *which* editor clicks came back empty or
+unsure: file, line, column, the token under the cursor and trekr's one-line
+reason. They are read from `lsp.log`, so `TREKR_LOG=off` turns them off too.
+`--days N` narrows the window; `--json` gives one object per miss.
 
 ### In a very large repo
 
@@ -237,9 +228,9 @@ narrows the window; `--json` gives one object per miss.
   Windows). Every `--index` starts with a `git status`; on a synthetic
   336k-file monorepo the two take it from 2.7 s to 0.09 s.
 - A first `--index` needs free disk of about **twice the store's final size**
-  while it runs: it is one transaction, and the WAL holds all of it until the
-  commit. At 336k files the store is 4.4 GB and the first index takes about
-  four minutes.
+  while it runs: the checkout's files land in one transaction, and the WAL
+  holds all of it until the commit. At 336k files the store is 4.4 GB and the
+  first index takes about four minutes.
 
 ## References to a *method*, not a name
 
@@ -254,16 +245,17 @@ actioncable/test/subscription_adapter/postgresql_test.rb:71:38  confirmed  the r
 ...
 activerecord/lib/active_record/connection_handling.rb:270:23  possible   untyped receiver, but the enclosing class inherits from the owner
 ...
-1024 confirmed, 84 possible, 87 excluded of 1195 same-name call sites
+1027 confirmed, 81 possible, 87 excluded of 1195 same-name call sites
   excluded: 56 resolve to a different owner, 31 define no such name, 0 wrong arity
 ```
 
-**Confirmed** means the receiver's type resolves and Ruby's own lookup from it
-lands here — for a method the owner inherits, from the owner or a subclass. **Possible** means the receiver is untyped and nothing rules the
-site out — ranked by proximity, never dropped. **Excluded** sites are not
-listed but are counted, because that count is the difference between this and a
-grep; `--include-excluded` lists them with their reason so the claim is
-auditable rather than asserted.
+- **Confirmed**: the receiver's type resolves, and Ruby's own lookup from it
+  lands here — for a method the owner inherits, from the owner or a subclass.
+- **Possible**: the receiver is untyped and nothing rules the site out. Ranked
+  by proximity, never dropped.
+- **Excluded**: not listed, but counted, because that count is the difference
+  between this and a grep. `--include-excluded` lists them with their reason,
+  so the claim is auditable rather than asserted.
 
 `rg -w lease_connection` returns 1,237 lines in rails — the 1,195 call sites
 plus the comments — with no way to tell them apart. `Widget.save` and
@@ -276,31 +268,32 @@ workspace symbols, implementation, call hierarchy, `require` strings as links,
 and Prism syntax diagnostics. It answers on methods and constants, and on
 locals, parameters and instance variables — whose other mentions it also
 highlights. It keeps the index current as files are saved, and indexes an
-unindexed checkout in the background.
+unindexed checkout in the background, the files you have open first.
 
 [claude/INSTALL.md](claude/INSTALL.md) wires up the skill and the server.
 
 ## In VS Code
 
-The same server, plus receiver-aware completion, through the extension in
-[editors/vscode](editors/vscode/README.md). It is not published to the Marketplace;
-build and install it from this repo:
+The same server, plus receiver-aware completion. Install
+[trekr from the Marketplace](https://marketplace.visualstudio.com/items?itemName=dpep.trekr)
+— search "trekr" in the Extensions view, or:
 
 ```sh
-npm --prefix editors/vscode ci
-npm --prefix editors/vscode run package              # writes editors/vscode/trekr-<version>.vsix
-code --install-extension editors/vscode/trekr-*.vsix  # or Extensions view → ⋯ → Install from VSIX
+code --install-extension dpep.trekr
 ```
+
+It finds the `trekr` binary on your `PATH`. To build the extension from
+source, see [its README](editors/vscode/README.md).
 
 It is meant to *replace* Ruby LSP and Sorbet as the Ruby language server, not
 run beside them — two servers answer every request twice. What you gain:
 definitions and references that follow the receiver instead of the bare name,
 completion from the receiver's real ancestors, one index shared by every
-worktree, and nothing to boot — no project Ruby, no `bundle install`. What you
-give up: rename, formatting, semantic highlighting, signature help, inlay
-hints, test code lenses, Sorbet's type errors and ruby-lsp-rails' routes. Most
-have a standalone extension; [the extension's
-README](editors/vscode/README.md#replacing-ruby-lsp-and-sorbet) says which.
+worktree, and nothing to boot. What you give up: rename, formatting, semantic
+highlighting, signature help, inlay hints, test code lenses, Sorbet's type
+errors and ruby-lsp-rails' routes. Most have a standalone extension;
+[the extension's README](editors/vscode/README.md#replacing-ruby-lsp-and-sorbet)
+says which.
 
 ## Known limits
 
@@ -316,12 +309,12 @@ to surprise you:
 - An `@ivar` receiver is typed by a vote of every write to it in that class
   *in that file* — not only the writes that reach the read, and not the
   class's other files.
-- Core is read from the `rbs` gem the app's Ruby carries (bundled since Ruby
-  3.0), so a `super` that lands in Ruby core is only as right as those
-  signatures are complete, and a chain typed through a core method
-  (`x.gsub(a, b).downcase`) takes their documented return type, even where a
-  subclass such as ActiveSupport's `SafeBuffer` returns its own. Where no
-  Ruby is found for a checkout, or it has no rbs, nothing is known of core.
+- Core comes from the `rbs` gem the app's Ruby carries (bundled since Ruby
+  3.0). A `super` that lands in core is only as right as those signatures are
+  complete, and a chain through a core method (`x.gsub(a, b).downcase`) takes
+  their documented return type, even where a subclass such as ActiveSupport's
+  `SafeBuffer` returns its own. No Ruby found for a checkout, or no rbs, means
+  nothing is known of core, and `--index` says so.
 - A method defined in a loop over a list *another file* assigns
   (`METHODS_WITH_QUERY.each { class_eval "def #{m}…" }`) is not named. Its
   class answers `residue` for such a name, never "no such method", and the
@@ -338,10 +331,9 @@ make dogfood REPO=/path/to/rails Q=find_each
 
 `make bench` and `make dogfood` read corpora from `CORPORA`/`REPO`, which
 default to this author's checkout layout — point them at your own clones of
-rails, discourse, mastodon, and CRuby.
-
-`make dogfood` is not optional ceremony: running `--refs` on real Rails keeps
-finding defects no fixture-sized test can reach.
+rails, discourse, mastodon, and CRuby. `make dogfood` is not optional
+ceremony: running `--refs` on real Rails keeps finding defects no
+fixture-sized test can reach.
 
 Conventions are in [CLAUDE.md](CLAUDE.md); decisions already made and turned
 down are in [docs/DECISIONS.md](docs/DECISIONS.md) — check it before proposing
@@ -353,9 +345,10 @@ Ruby semantics are lifted, with attribution, from
 [Shopify's Rubydex](https://github.com/Shopify/rubydex) (MIT) — its
 `docs/ruby-behaviors.md` is the conformance spec this extractor is written
 against, and a block of resolution cases in `src/tree/mod.rs` is ported from its
-test suite. trekr does not depend on the crate; the reasons are in PLAN §8.
-Parsing is [Prism](https://github.com/ruby/prism). Store and CLI conventions
-come from [rq](https://github.com/dpep/rq), Prism patterns from
+test suite. trekr does not depend on the crate; the reasons are in
+[PLAN §8](docs/PLAN.md#8-rubydex-spike-2026-08-23). Parsing is
+[Prism](https://github.com/ruby/prism). Store and CLI conventions come from
+[rq](https://github.com/dpep/rq), Prism patterns from
 [rwr](https://github.com/dpep/rwr).
 
 ## License
