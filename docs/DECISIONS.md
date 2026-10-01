@@ -10106,3 +10106,22 @@ mailer actions move toward use — 14 leave the candidates, 6 become
 `single-caller` (3 from `unreferenced`) — and none away. mastodon
 unchanged: its mailers are called through `.with(…)`, whose result is not
 typed.
+
+## DEC-370 — A module whose methods are listed at runtime says so
+
+**Decided.** DEC-363's read of the checkout's Ruby also finds
+`Const.instance_methods` and `Const.public_instance_methods`: a caller
+listing a module's methods to call or hand out by name. A candidate of that
+constant, either side, says "its module's methods are listed at runtime
+(Helpers.instance_methods at app/services/x.rb:212)", graded `lower`.
+
+**Why.** discourse's `ThemeSettingsMigrationsRunner::Helpers` methods
+(`is_valid_url`, `get_category_id_by_slug`) are attached to a JavaScript
+context by `Helpers.instance_methods.each { … Helpers.method(name) }`, so
+nothing calls them by name: 2 of the 100 hand-checked `unreferenced`, clear
+rows.
+
+**Measured**, `--dead app`, against the build before it: discourse
+`unreferenced`, clear 45 → 42; 20 rows carry the caveat (17 of them
+`PostRevisionSerializer`'s, whose method list `lib/post_revisor.rb`
+checks for a `#{field}_changes` to call). mastodon unchanged.

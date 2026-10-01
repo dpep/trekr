@@ -43,8 +43,8 @@
 - **`--dead` says where a method's name is built at runtime.** A method
   whose name has the shape of an interpolated symbol the checkout writes
   (`:"report_#{type}"`), or whose class a computed name is sent to
-  (`Mailer.public_send(type, …)`), says so in its caveat and is graded
-  `lower`. Specs, tests and migrations are not read for this.
+  (`Mailer.public_send(type, …)`), or whose module's methods it lists
+  (`Tools.instance_methods`), says so in its caveat and is graded `lower`. Specs, tests and migrations are not read for this.
 - **`--dead` knows ActiveModel::Serializers' `include_<attr>?` hooks.**
   With AMS 0.8/0.9 indexed, a serializer's (or its mixin's) `include_x?`
   whose `:x` the serializer or an ancestor declares is `convention-only`,

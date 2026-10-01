@@ -1,0 +1,5 @@
+# A module whose methods are listed at runtime (`Tools.instance_methods.each`,
+# then handed out by name) has no call site for any of them: discourse's
+# theme-migration helpers, exposed to JavaScript that way, were unreferenced,
+# clear. Each says its module's methods are listed; another module's do not.
+dead lib/tools.rb Tools#valid_url=unreferenced~listed Spare#lonely=unreferenced~

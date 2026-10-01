@@ -4,7 +4,8 @@
 //!
 //! Read from the checkout's Ruby as text, like the views (DEC-315): an
 //! interpolated symbol `:"report_#{type}"` is a name of the shape `report_*`,
-//! and `Mailer.public_send(type, …)` sends a computed name to `Mailer`.
+//! `Mailer.public_send(type, …)` sends a computed name to `Mailer`, and
+//! `Tools.instance_methods` lists `Tools`' methods to call by name (DEC-370).
 //! Evidence of a way in, never of a caller, so a row it touches keeps its
 //! tier and is graded `lower`.
 
@@ -20,7 +21,13 @@ pub(super) struct Built {
     shapes: Vec<(String, At)>,
     /// Each constant a computed name is sent to, where first sent.
     sent_to: Vec<(String, At)>,
+    /// Each constant whose methods are listed, by the listing call, where
+    /// first listed.
+    listed: Vec<(String, String, At)>,
 }
+
+/// The calls that list a module's methods, for a caller to call by name.
+const LISTS: [&str; 2] = ["public_instance_methods", "instance_methods"];
 
 /// The calls that send the name they are handed.
 const SENDS: [&str; 3] = ["public_send", "__send__", "send"];
@@ -44,7 +51,10 @@ impl Built {
                 continue;
             };
             let text = String::from_utf8_lossy(&bytes);
-            if !text.contains("#{") && !SENDS.iter().any(|s| text.contains(s)) {
+            if !text.contains("#{")
+                && !SENDS.iter().any(|s| text.contains(s))
+                && !text.contains("instance_methods")
+            {
                 continue;
             }
             built.read_file(&path, &text);
@@ -65,6 +75,11 @@ impl Built {
                     self.sent_to.push((constant, at.clone()));
                 }
             }
+            for (constant, call) in listings(line) {
+                if !self.listed.iter().any(|(known, _, _)| *known == constant) {
+                    self.listed.push((constant, call, at.clone()));
+                }
+            }
         }
     }
 
@@ -80,12 +95,15 @@ impl Built {
                 "a name of its shape is built at runtime (`{shape}` at {path}:{line})"
             ));
         }
-        let (constant, (path, line)) = self
-            .sent_to
-            .iter()
-            .find(|(constant, _)| owner == constant || owner.ends_with(&format!("::{constant}")))?;
+        let names = |constant: &str| owner == constant || owner.ends_with(&format!("::{constant}"));
+        if let Some((constant, (path, line))) = self.sent_to.iter().find(|(c, _)| names(c)) {
+            return Some(format!(
+                "a name computed at runtime is sent to {constant} at {path}:{line}"
+            ));
+        }
+        let (constant, call, (path, line)) = self.listed.iter().find(|(c, _, _)| names(c))?;
         Some(format!(
-            "a name computed at runtime is sent to {constant} at {path}:{line}"
+            "its module's methods are listed at runtime ({constant}.{call} at {path}:{line})"
         ))
     }
 }
@@ -178,6 +196,24 @@ fn computed_sends(line: &str) -> Vec<String> {
     found
 }
 
+/// The constants a line lists the instance methods of: `Tools.instance_methods`.
+fn listings(line: &str) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    let mut rest = line;
+    while let Some(dot) = rest.find('.') {
+        let after = &rest[dot + 1..];
+        let call = LISTS.iter().find(|call| {
+            after.starts_with(*call)
+                && !after[call.len()..].starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')
+        });
+        if let (Some(call), Some(constant)) = (call, constant_before(&rest[..dot])) {
+            found.push((constant, call.to_string()));
+        }
+        rest = after;
+    }
+    found
+}
+
 /// The constant path that ends `text`, if it ends in one: `Mailers::Notifier`.
 fn constant_before(text: &str) -> Option<String> {
     let start = text
@@ -215,7 +251,17 @@ mod tests {
         );
         assert!(computed_sends("Notifier.public_send(:welcome, user)").is_empty());
         assert!(computed_sends("record.send(name)").is_empty());
-        assert_eq!(computed_sends("# ―Notifier.send(type)"), ["Notifier"]);
+    }
+
+    #[test]
+    fn a_listing_of_a_constants_methods_names_the_constant() {
+        assert_eq!(
+            listings("Helpers.instance_methods.each do |name|"),
+            [("Helpers".to_string(), "instance_methods".to_string())]
+        );
+        assert!(listings("klass.instance_methods(false)").is_empty());
+        assert!(listings("# ―Tools.instance_methods").len() == 1);
+        assert!(listings("Tools.instance_methods_of(x)").is_empty());
     }
 
     #[test]
