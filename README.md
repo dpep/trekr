@@ -2,17 +2,8 @@
 
 # trekr
 
-Ruby code intelligence for agents: **position → meaning**, **definition →
-references**. Built for legacy Rails monorepos with many worktrees, where the
-incumbents cost gigabytes per workspace and answer "the first ten methods with
-that name."
-
-> **Pre-1.0, and shipping.** The three engine layers are built — blob facts, a
-> per-checkout namespace, receiver resolution — plus a language server and
-> enough Rails DSL modelling to follow `belongs_to`, `enum`, `delegate`, and
-> Tapioca's generated RBIs. Ruby core, the standard library and the checkout's
-> gems are indexed. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) says what
-> exists and what it measures; [docs/PLAN.md](docs/PLAN.md) says where it goes.
+Ruby code intelligence: turning **position → meaning**, **definition →
+references**. Supports Rails, RSpec, RBIs, gems, worktrees, and scale.
 
 ## Install
 
@@ -20,28 +11,9 @@ that name."
 brew install dpep/tools/trekr    # or: cargo install trekr
 ```
 
-VS Code: install [trekr from the Marketplace](https://marketplace.visualstudio.com/items?itemName=dpep.trekr) ([more below](#in-vs-code)).
+VS Code Extension: [trekr from the Marketplace](https://marketplace.visualstudio.com/items?itemName=dpep.trekr) ([more below](#in-vs-code)).
 
-No `bundle install`, no bootable app. Prism parses, SQLite
-remembers, and trekr reads the app's Ruby and gems off disk without running
-them — core and the standard library come from that Ruby's own files and its
-`rbs` signatures.
-
-Homebrew wires up tab completion; `trekr --completions bash` (or `zsh`,
-`fish`, …) prints the script for anywhere else.
-
-## The idea
-
-**A blob's facts are a pure function of its bytes.**
-
-Facts are keyed by git blob OID, so every worktree of a repo shares one index, a
-branch switch reparses only what is genuinely new, and a reindex with no edits
-parses nothing. On rails: 1.9 s cold with its gems, **36 ms** to reindex with
-nothing changed, **~0.2 s and zero parses** for a second worktree. Rubydex —
-Shopify's Rust indexer, and the closest peer — keeps nothing on disk, so it
-pays its 177 ms for that same no-op again on every process boot.
-
-## Try it
+## Usage
 
 ```sh
 trekr --index                    # index the checkout you are standing in
@@ -224,8 +196,7 @@ reason. They are read from `lsp.log`, so `TREKR_LOG=off` turns them off too.
 ### In a very large repo
 
 - Turn on git's own caches: `git config core.untrackedCache true` and
-  `git config core.fsmonitor true` (the built-in fsmonitor runs on macOS and
-  Windows). Every `--index` starts with a `git status`; on a synthetic
+  `git config core.fsmonitor true`. Every `--index` starts with a `git status`; on a synthetic
   336k-file monorepo the two take it from 2.7 s to 0.09 s.
 - A first `--index` needs free disk of about **twice the store's final size**
   while it runs: the checkout's files land in one transaction, and the WAL
