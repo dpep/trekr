@@ -31,7 +31,8 @@
   `*_method_name: :x` now count, as `before_action :x` always did: `--def`
   on the symbol answers with the method (it used to answer for the nearest
   other name on the line), `--refs` lists it, and `--dead` tiers the method
-  `convention-only` instead of `unreferenced`. `only:`, `except:` and `on:`
+  `convention-only` instead of `unreferenced` — on a macro written on the
+  class, in its body or a `with_options` block. `only:`, `except:` and `on:`
   name actions and events, not calls, and still do not count. Reindex to
   pick it up (`trekr --index`).
 - **No editor request waits on the index for more than about a second.** While

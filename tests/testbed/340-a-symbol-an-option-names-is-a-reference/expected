@@ -6,10 +6,16 @@
 # `unless:`, `with:`, the `to:` a delegation calls, a `*_method_name:` — is
 # a reference as a positional symbol is.
 dead app.rb WidgetsController#respond_failed=convention-only WidgetsController#should_load?=convention-only WidgetsController#skip_name?=convention-only WidgetsController#publishable?=convention-only WidgetsController#ready?=convention-only WidgetsController#env_params=convention-only WidgetsController#render_throttled=convention-only
-def app.rb:11:37 status=resolved owner=WidgetsController site=app.rb:22
-def app.rb:12:36 status=resolved owner=WidgetsController site=app.rb:24
-def app.rb:14:60 status=resolved owner=WidgetsController site=app.rb:28
+def app.rb:11:37 status=resolved owner=WidgetsController site=app.rb:25
+def app.rb:12:36 status=resolved owner=WidgetsController site=app.rb:27
+def app.rb:14:60 status=resolved owner=WidgetsController site=app.rb:31
 refs WidgetsController#should_load? confirmed=0 possible=1
 # An option that names a value is not a method: `only:` names an action the
 # filter applies to, `on:` an event. They call nothing.
 dead app.rb WidgetsController#show=unreferenced WidgetsController#create=unreferenced
+# Only a macro's option, written on the class — its body, or a
+# `with_options` block in it. In a method, `to: :first_box` is a value
+# handed to a call (a mailbox, a route), and counting it made every method
+# named `first` a possible target of `to: :first`.
+dead app.rb WidgetsController#signed_in?=convention-only WidgetsController#paginated?=convention-only Router#first_box=unreferenced
+def app.rb:18:38 status=resolved owner=WidgetsController site=app.rb:36

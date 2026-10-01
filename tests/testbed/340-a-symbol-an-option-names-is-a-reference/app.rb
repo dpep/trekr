@@ -14,6 +14,9 @@ class WidgetsController < Base
   after_commit :publish, on: :create, if: [:publishable?, :ready?]
   delegate :token, to: :env_params
   rate_limit! :refresh, response_method_name: :render_throttled
+  with_options unless: :signed_in? do
+    before_action :load_widget, if: :paginated?
+  end
 
   def show; end
 
@@ -29,4 +32,16 @@ class WidgetsController < Base
   def env_params; end
   def render_throttled; end
   def create; end
+  def signed_in?; end
+  def paginated?; end
+end
+
+class Router
+  def add(route, to:); end
+
+  def wire
+    add :inbox, to: :first_box
+  end
+
+  def first_box; end
 end

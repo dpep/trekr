@@ -80,6 +80,9 @@ struct Frame {
     /// `class_eval do`, RSpec's `describe do` — lands on whatever the block is
     /// run against, which the source does not say.
     blocks: usize,
+    /// Of those, the `with_options` blocks of this body, whose macros are
+    /// still its own (DEC-340).
+    merged: usize,
     /// The body of an RSpec example group (DEC-084).
     group: bool,
     /// The block of an example (`it`, `specify`), which runs in its own group
@@ -131,6 +134,7 @@ impl Frame {
             module_function: false,
             method: None,
             blocks: 0,
+            merged: 0,
             group: false,
             example: false,
             definer: None,
@@ -250,6 +254,8 @@ struct Extractor<'a> {
     /// The scope whose instance an `if:`/`unless:` lambda we are in runs
     /// on, innermost last: Rails `instance_exec`s it (DEC-342).
     instance_lambdas: Vec<Vec<String>>,
+    /// Where each `with_options` block of a class body opens (DEC-340).
+    merging: std::collections::HashSet<usize>,
     /// Constants this file assigns a string of code, or a list whose first
     /// element is one (`[<<-RUBY, __FILE__, __LINE__ + 1]`), as the `def`s
     /// its text spells: what `class_eval(*IMPL)` evaluates (DEC-310).
@@ -426,6 +432,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             module_function: false,
             method: None,
             blocks: 0,
+            merged: 0,
             group: false,
             example: false,
             definer: None,
@@ -467,6 +474,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         pending_shapes: Vec::new(),
         in_defined: 0,
         instance_lambdas: Vec::new(),
+        merging: std::collections::HashSet::new(),
         code_constants: HashMap::new(),
     };
     ex.visit(&parsed.node());
@@ -1538,6 +1546,14 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
     }
 
     fn visit_call_node(&mut self, node: &ruby_prism::CallNode<'pr>) {
+        // `with_options if: :x do … end` hands its block's macros to the
+        // class with the options merged: they are the body's own.
+        if method_name(node).as_deref() == Some("with_options")
+            && self.class_level(node)
+            && let Some(block) = node.block().and_then(|b| b.as_block_node())
+        {
+            self.merging.insert(block.location().start_offset());
+        }
         // Side effects, not consumptions: these are still ordinary calls, they
         // just also say something about the model.
         self.handle_create_table(node);
@@ -1897,8 +1913,11 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
     }
 
     fn visit_block_node(&mut self, node: &ruby_prism::BlockNode<'pr>) {
+        let merged = usize::from(self.merging.contains(&node.location().start_offset()));
         self.frame().blocks += 1;
+        self.frame().merged += merged;
         ruby_prism::visit_block_node(self, node);
+        self.frame().merged -= merged;
         self.frame().blocks -= 1;
     }
 
@@ -4807,7 +4826,7 @@ impl<'pr> Extractor<'_> {
             && !self.in_method_body()
             && !self.nesting.is_empty()
             && !rspec::in_group(&self.nesting)
-            && (self.frames.last().is_some_and(|f| f.blocks == 0) || self.in_includer_body())
+            && (self.frames.last().is_some_and(|f| f.blocks == f.merged) || self.in_includer_body())
     }
 
     /// A receiver worth typing that is not a name: the call before this one in
@@ -5012,6 +5031,9 @@ impl<'pr> Extractor<'_> {
         call: &ruby_prism::CallNode<'pr>,
         options: &ruby_prism::KeywordHashNode<'pr>,
     ) {
+        if !self.class_level(call) {
+            return;
+        }
         for element in options.elements().iter() {
             let Some(assoc) = element.as_assoc_node() else {
                 continue;

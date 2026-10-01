@@ -9382,6 +9382,17 @@ each symbol in it (`if: [:a?, :b?]`). The options:
 - any key ending `_method` or `_method_name` — an app's own macro saying so
   (`rate_limit! :x, response_method_name: :render_throttled`).
 
+**Only on a macro written on the class**: its body, an includer body
+(`included do`), or a `with_options` block in either, whose macros are the
+body's own with the options merged (`with_options unless: :signed_in? do
+before_action :x, if: :y? end`). In a method an option's value is a value
+handed to a call: rails' `@router.add_route Address.new, to: :first` names
+a mailbox, and counting it, as first written, made it a possible caller of
+every `first` (8 sites across the 40 `--refs` queries). The class-level
+reading lost no row on mastodon or discourse once `with_options` was read
+(without it, 2 mastodon rows in a `with_options` block went back to
+`unreferenced`).
+
 **Not** `only:`/`except:`, which name the actions a filter applies to and
 call none of them, nor `on:`, an event. A list of keys, not every option:
 a value such as `dependent: :destroy` or `inverse_of: :owner` is no method of
