@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Upgrading drops and rebuilds the index** (store v53): trekr reindexes on
+  its own; run `trekr --index` to do it up front.
 - **`--dead` reads the routes.** A controller's public action that
   `config/routes.rb` (or a file it `draw`s, or an engine's) reaches —
   `to: 'c#a'`, `resources` and their default actions, `member`/`collection`,
