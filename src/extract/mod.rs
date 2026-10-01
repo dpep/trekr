@@ -247,6 +247,9 @@ struct Extractor<'a> {
     /// How many `defined?(…)`s we are inside: a name there is asked about,
     /// not called.
     in_defined: usize,
+    /// The scope whose instance an `if:`/`unless:` lambda we are in runs
+    /// on, innermost last: Rails `instance_exec`s it (DEC-342).
+    instance_lambdas: Vec<Vec<String>>,
     /// Constants this file assigns a string of code, or a list whose first
     /// element is one (`[<<-RUBY, __FILE__, __LINE__ + 1]`), as the `def`s
     /// its text spells: what `class_eval(*IMPL)` evaluates (DEC-310).
@@ -431,6 +434,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         string_methods: HashMap::new(),
         pending_shapes: Vec::new(),
         in_defined: 0,
+        instance_lambdas: Vec::new(),
         code_constants: HashMap::new(),
     };
     ex.visit(&parsed.node());
@@ -484,6 +488,20 @@ impl<'a> Extractor<'a> {
         self.frames.push(Frame::new(pushed, opens));
         // A frame's `self` is known, whatever block it sits in.
         self.open_blocks.push(None);
+    }
+
+    /// The scope whose instances are the class `self` is here: the class
+    /// itself in its body or a `def self.`, and in a concern's
+    /// `ClassMethods` the concern, whose includers' class methods they are.
+    fn instance_side(&self) -> Option<Vec<String>> {
+        if self.nesting.is_empty() {
+            return None;
+        }
+        if self.self_is_class() {
+            return Some(self.nesting.clone());
+        }
+        (self.in_method_body() && self.nesting.len() > 1 && self.nesting[0] == "ClassMethods")
+            .then(|| self.nesting[1..].to_vec())
     }
 
     /// What `self` is for a call written here.
@@ -1856,6 +1874,35 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.frame().blocks += 1;
         ruby_prism::visit_lambda_node(self, node);
         self.frame().blocks -= 1;
+    }
+
+    /// `if: -> { ready? }`, `unless: [-> { skip? }, :other?]`: a condition
+    /// Rails runs on the instance, wherever the option is written (DEC-342).
+    fn visit_assoc_node(&mut self, node: &ruby_prism::AssocNode<'pr>) {
+        let condition = node
+            .key()
+            .as_symbol_node()
+            .is_some_and(|k| matches!(k.unescaped(), b"if" | b"unless"));
+        let instance = self.instance_side().filter(|_| condition);
+        let Some(instance) = instance else {
+            ruby_prism::visit_assoc_node(self, node);
+            return;
+        };
+        self.visit(&node.key());
+        let value = node.value();
+        let values: Vec<Node<'pr>> = match value.as_array_node() {
+            Some(list) => list.elements().iter().collect(),
+            None => vec![value],
+        };
+        for value in values {
+            if !is_lambda(&value) {
+                self.visit(&value);
+                continue;
+            }
+            self.instance_lambdas.push(instance.clone());
+            self.visit(&value);
+            self.instance_lambdas.pop();
+        }
     }
 
     fn visit_super_node(&mut self, node: &ruby_prism::SuperNode<'pr>) {
@@ -4550,6 +4597,13 @@ impl<'pr> Extractor<'_> {
         // method", which is a different question. A bare call in a class body
         // dispatches on the class even though a `def` there does not.
         let singleton = self.self_is_class();
+        // A call on `self` in a condition Rails runs on the instance.
+        let (nesting, singleton) = match self.instance_lambdas.last() {
+            Some(instance) if matches!(recv, RecvShape::Implicit | RecvShape::SelfRecv) => {
+                (instance.clone(), false)
+            }
+            _ => (self.nesting.clone(), singleton),
+        };
         let block_owner = self.open_blocks.last().copied().flatten();
         let block = call.block().is_some();
         let stands_for = (recv == RecvShape::Implicit && rspec::in_group(&self.nesting))
@@ -4566,7 +4620,7 @@ impl<'pr> Extractor<'_> {
             name,
             recv,
             recv_text,
-            nesting: self.nesting.clone(),
+            nesting,
             singleton,
             recv_pos,
             recv_value,

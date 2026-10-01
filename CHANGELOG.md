@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Calls in a callback's block, a `rescue_from` block and an `if:`/`unless:`
+  lambda run on the instance**, as Rails runs them. `after_save do
+  normalize end`, `rescue_from E do |e| respond(e) end` and `if: -> {
+  ready? }` were read on the class, so `--def` found nothing, `--refs`
+  ruled the call out, and `--dead` called `normalize` unreferenced. Reindex
+  to pick up the lambdas (`trekr --index`).
 - **A call with keywords is no longer ruled out of a method that takes
   them.** `thing.refresh(name: "a")` counted its keywords as a positional
   argument, so `--refs Widget#refresh` excluded it, "the argument count does

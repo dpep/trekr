@@ -9433,3 +9433,37 @@ mastodon one row leaves the candidates (`Notification::Groups::ClassMethods
 #paginate_groups`, `unreferenced`); discourse 13 rows gain references — two
 `unreferenced` and seven `single-caller` rows leave, three `convention-only`
 and one `unreferenced` become `single-caller` — and none loses one.
+
+## DEC-342 — A block or condition Rails runs on the instance calls the instance
+
+**Decided.** Two shapes Rails `instance_exec`s on the instance, which trekr
+read on the class:
+
+- **A block handed to a class-level callback**, `validate` or
+  `rescue_from`: `after_save do … end`, `before_action do … end`,
+  `rescue_from Error do |e| … end`. A call on `self` in it runs on the
+  instance (`resolve::made_side`, beside DEC-260's macros). A callback is
+  known by its name — `before_`, `after_` or `around_` and more — since
+  ActiveSupport::Callbacks builds the call at runtime and no body says so;
+  that covers an app's own `define_model_callbacks` too. In a concern's
+  `included do` it is the includers' instance.
+- **A lambda that is an `if:` or `unless:` value**, alone or in a list,
+  wherever the option is written — `before_action :x, if: -> { ready? }`,
+  `options.merge(if: [-> { !token? }])`. Its calls on `self` are recorded on
+  the instance side of the class `self` is where the lambda is written: the
+  class in its body or a `def self.`, and in a concern's `ClassMethods` (or
+  `class_methods do`) the concern, whose includers' class methods they are.
+  Elsewhere — a module's instance method, an instance's own method — the
+  call is recorded as before.
+
+**Why.** The 0.8.2 report: `uses_app_token?`, called only as `if: [-> {
+uses_app_token? }, *conds]` in a concern's class method, and a method
+called only in `rescue_from … do |error|` inside `included do`, were each
+`unreferenced`, clear. `--refs` excluded both calls as "no such method"
+on the class side.
+
+**Measured**, `--dead app`, against the build before it, each on a store it
+indexed: mastodon 4 rows move, all toward use (two `single-caller` rows
+leave, two `convention-only` become `single-caller`); discourse 19 —
+`unreferenced` 1,075 → 1,067 (`Topic#ensure_topic_has_a_category`,
+`ApplicationController#is_feed_request?`, …), every move toward use.

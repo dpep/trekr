@@ -1,0 +1,11 @@
+# Rails runs a callback's block, a `rescue_from` block and an `if:`/`unless:`
+# lambda on the instance (`instance_exec`), wherever it is written. A call
+# in one was read on the class — `--refs` excluded it as "no such method",
+# and `--dead` called its target unreferenced — in a class body, a
+# `def self.`, a concern's `included do` and its `class_methods`.
+dead app.rb Guarded#uses_token?=single-caller Guarded#respond_error=single-caller WidgetsController#skipped?=single-caller WidgetsController#allowed?=single-caller WidgetsController#respond_missing=single-caller
+def app.rb:14:7 status=resolved owner=Guarded site=app.rb:28
+def app.rb:20:56 status=resolved owner=Guarded site=app.rb:24
+def app.rb:35:45 status=resolved owner=WidgetsController site=app.rb:48
+def app.rb:41:43 status=resolved owner=WidgetsController site=app.rb:49
+def app.rb:37:5 status=resolved owner=WidgetsController site=app.rb:50

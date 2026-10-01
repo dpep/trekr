@@ -1525,6 +1525,11 @@ fn made_side(tree: &Tree, facts: &Facts, call: &Call) -> Option<bool> {
             return None;
         }
         match owner.recv {
+            RecvShape::Implicit | RecvShape::SelfRecv
+                if owner.singleton && runs_its_block_on_an_instance(&owner.name) =>
+            {
+                return Some(false);
+            }
             RecvShape::Implicit | RecvShape::SelfRecv if owner.singleton => {
                 if let Some(side) = macro_side(tree, owner) {
                     return Some(side);
@@ -1536,6 +1541,18 @@ fn made_side(tree: &Tree, facts: &Facts, call: &Call) -> Option<bool> {
         current = owner;
     }
     None
+}
+
+/// A class-level Rails macro that `instance_exec`s its block on the
+/// instance (DEC-342): a callback — `before_action`, `after_commit`,
+/// `around_perform`, a model's own `define_model_callbacks` — `validate`,
+/// and `rescue_from`. Its body is ActiveSupport's, which builds the call at
+/// runtime, so the macro is known by its name rather than read.
+fn runs_its_block_on_an_instance(name: &str) -> bool {
+    matches!(name, "validate" | "rescue_from")
+        || ["before_", "after_", "around_"]
+            .iter()
+            .any(|prefix| name.len() > prefix.len() && name.starts_with(prefix))
 }
 
 /// The side a block handed to this call on the class runs on, when the
