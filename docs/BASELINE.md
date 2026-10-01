@@ -2832,3 +2832,41 @@ graph_weaver's one of 14. The all-of-core rule was the report's suggestion;
 it is the column that lost money's `set.add` and moved `hash[…]` off
 `Hash#[]`.
 
+
+## What `--dead` could not see (2026-09-30)
+
+DEC-340 to DEC-344, against main at 2c04019, each build on stores it indexed
+itself: `--dead app` on mastodon and discourse, a hand check of 20
+`unreferenced`, clear rows sampled from each (one seed, `rg` for every
+mention of the name), rails' 40 `--refs` queries, and widget_shop's
+2,987-site trace scored whole with context pinned.
+
+| | main | after |
+| --- | ---: | ---: |
+| mastodon `unreferenced` (clear) | 237 (150) | 162 (77) |
+| mastodon sampled precision, unreferenced clear | 3 / 20 | 5 / 20 |
+| discourse `unreferenced` (clear) | 1,093 (746) | 781 (569) |
+| discourse sampled precision, unreferenced clear | 1 / 20 | 2 / 20 |
+| discourse controllers among unreferenced clear | 157 | 1 |
+| rails 40 queries, sites moved | | 3 |
+| widget_shop trace, verdicts moved | | 1 residue → right owner |
+
+A row is precise when nothing in the checkout reaches the method. Before,
+mastodon's 17 misses were 11 `if:`/`with:` options and helpers, view calls
+and attribute writers; after, the 15 left are gem hooks trekr does not index
+(Devise's `after_sign_in_path_for`, Doorkeeper's
+`doorkeeper_unauthorized_render_options`, devise_pam's `pam_conflict?`, the
+http gem's `reset_counter`), Active Record attribute writers reached by mass
+assignment, and helpers a view calls. Discourse's misses before were 12
+`include_*?` serializer predicates, 5 routed actions and two naming
+conventions; after, 15 are `include_*?` predicates and 3 Discourse service
+`fetch_*` steps. Of discourse's 569 rows left, 361 are `include_<attr>?`
+(ActiveModel::Serializers 0.8 calls it for each attribute) and 53 are a
+service's `fetch_<model>` (`model :topic`): the next two conventions to read.
+
+The three rails sites are DEC-342's: `update` in an `after_create do` block
+is now confirmed (comment.rb:103), and two calls in callback blocks
+(`self.class.find`, a `save!`) now land on the model class's methods.
+The widget_shop site is `has_encrypted_attributes?` in Active Record's
+`validate …, if: -> { has_encrypted_attributes? && … }`, now answered on
+`EncryptableRecord`, the owner Ruby ran.

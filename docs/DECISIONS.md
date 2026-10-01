@@ -9477,7 +9477,13 @@ on the class side.
 indexed: mastodon 4 rows move, all toward use (two `single-caller` rows
 leave, two `convention-only` become `single-caller`); discourse 19 —
 `unreferenced` 1,075 → 1,067 (`Topic#ensure_topic_has_a_category`,
-`ApplicationController#is_feed_request?`, …), every move toward use.
+`ApplicationController#is_feed_request?`, …), every move toward use. rails'
+40 `--refs` queries: 3 sites move, each a call in a callback block —
+`update` in `after_create do` (comment.rb:103) possible-or-excluded →
+confirmed, and two that now land on the model class's own methods. The
+widget_shop trace: one site moves, residue → Active Record's
+`EncryptableRecord`, `has_encrypted_attributes?` in a `validate …, if: ->`
+lambda — the owner Ruby ran.
 
 ## DEC-343 — A symbol trekr does not read is said to be there
 
