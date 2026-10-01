@@ -9817,3 +9817,31 @@ the list, the move pushes real stdlib answers off it: `Rails.root.join`'s
 widget_shop's `Singleton#instance` and `ConditionVariable#signal` (2
 `residue-hit` → `residue-truth-absent`). That is +2 correct@1 against −4
 found, so it is held back.
+## DEC-360 — A Haml template is read line by line, its comments skipped and its commas followed
+
+**Decided.** DEC-315's reading of a Haml or Slim template changes three ways:
+
+- **Each line's Ruby is read on its own.** The template's Ruby was read as
+  one run of text, so a quote one line left open — an apostrophe in a `-#`
+  comment ("on it's own `<style>` tag") — opened a string that ran on until
+  the next quote, and every name in between was string text. A line's
+  slip now ends with the line.
+- **A `-#` line is a comment**, and is not read at all.
+- **A Ruby line ending in a comma continues** on the next line, as Haml
+  reads it: `= f.input :x,` then `hint: hint_text,` on the line under it.
+  The continuation was not Ruby to the reader, so `hint_text` was not a
+  name in a view.
+
+**Why.** The 0.8.2 report's lane found `ThemeHelper#custom_stylesheet`
+`unreferenced`, clear, with `= custom_stylesheet` in mastodon's
+`app/views/layouts/application.html.haml:41`. Thirty lines above it, `-#
+Needed for the wicg-inert polyfill. It needs to be on it's own <style>
+tag` opened the string. A hand-check of all 77 of mastodon's `unreferenced`,
+clear rows (`--dead app`) found 12 helpers a template calls, most on a
+comma's continuation line (`label_method: ->(x) { privilege_label(x) }`,
+`hint: discovery_hint_text,`).
+
+**Measured**, `--dead app`, against the build before it: mastodon clear
+2,359 → 2,340; of the 77 hand-checked rows, the 12 view callers and one
+helper a view also calls become `lower`, and none of the 22 true candidates
+moves. discourse unchanged (its templates are ERB).

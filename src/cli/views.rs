@@ -43,7 +43,9 @@ impl Views {
             } else {
                 text.into_owned()
             };
-            for name in words(&ruby) {
+            // Line by line: a quote a line leaves open is a slip of the
+            // reading, and must not swallow the template after it.
+            for name in ruby.lines().flat_map(words) {
                 views.names.entry(name).or_insert_with(|| path.clone());
             }
         }
@@ -76,11 +78,22 @@ fn erb_ruby(text: &str) -> String {
 }
 
 /// The Ruby a Haml or Slim template runs: a line that starts with `-` or
-/// `=`, what follows a tag's `=`, `{` or `(`, and every `#{…}`.
+/// `=`, what follows a tag's `=`, `{` or `(`, every `#{…}`, and the lines a
+/// Ruby line ending in a comma continues onto. Not a `-#` comment.
 fn indented_ruby(text: &str) -> String {
     let mut ruby = String::new();
+    let mut continued = false;
     for line in text.lines() {
         let line = line.trim_start();
+        if std::mem::take(&mut continued) {
+            ruby.push_str(line);
+            ruby.push('\n');
+            continued = line.trim_end().ends_with(',');
+            continue;
+        }
+        if line.starts_with("-#") {
+            continue;
+        }
         let mut rest = line;
         while let Some(open) = rest.find("#{") {
             let inner = &rest[open + 2..];
@@ -92,6 +105,7 @@ fn indented_ruby(text: &str) -> String {
         if line.starts_with(['-', '=', '~', '!', '&']) {
             ruby.push_str(line);
             ruby.push('\n');
+            continued = line.trim_end().ends_with(',');
             continue;
         }
         let tag = line
@@ -101,6 +115,7 @@ fn indented_ruby(text: &str) -> String {
         if tag > 0 && after.starts_with(['=', '{', '(', '[']) {
             ruby.push_str(after);
             ruby.push('\n');
+            continued = after.trim_end().ends_with(',');
         }
     }
     ruby
