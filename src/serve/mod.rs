@@ -910,6 +910,15 @@ fn route(
     cancel: &dyn Fn() -> bool,
 ) -> anyhow::Result<serde_json::Value> {
     use lsp_types::request as req;
+    // Neither has a field to say an answer is partial (DEC-331).
+    if matches!(
+        request.method.as_str(),
+        req::GotoDefinition::METHOD | req::References::METHOD | req::GotoImplementation::METHOD
+    ) && let (Some(uri), _) = asked_about(&request.params)
+        && let Some(path) = document_path(&uri)
+    {
+        handlers::tell_warming(session, &path, out)?;
+    }
     match request.method.as_str() {
         req::GotoDefinition::METHOD => run_handler(request, |p| handlers::definition(session, p)),
         req::References::METHOD => {

@@ -4517,8 +4517,9 @@ fn an_ivar_in_a_module_mixed_into_several_classes_goes_nowhere() {
 }
 
 /// While a checkout's first index is still filling the store (DEC-320), a
-/// hover says how much is read, completion is marked incomplete, and
-/// references rule nothing out — then, once it ends, none of that.
+/// hover says how much is read, a definition is told once (DEC-331),
+/// completion is marked incomplete, and references rule nothing out — then,
+/// once it ends, none of that.
 #[test]
 fn answers_from_a_partial_index_say_so_and_rule_nothing_out() {
     let (dir, db) = scratch("warming");
@@ -4591,6 +4592,21 @@ fn answers_from_a_partial_index_say_so_and_rule_nothing_out() {
             .filter(|line| *line > 8)
             .collect()
     };
+
+    // A definition has no field to say it, so the server says it once.
+    let define = serde_json::json!({
+        "textDocument": {"uri": uri_of(&dir, "app.rb")},
+        "position": {"line": 11, "character": 7},
+    });
+    let (_, notes) = request_with_notes(&mut session, "textDocument/definition", define.clone());
+    let said = shown_messages(&notes);
+    assert_eq!(said.len(), 1, "{notes:?}");
+    assert!(
+        said[0].contains("still indexing this checkout (1 of 4 files read)"),
+        "{said:?}"
+    );
+    let (_, notes) = request_with_notes(&mut session, "textDocument/definition", define);
+    assert!(shown_messages(&notes).is_empty(), "said once: {notes:?}");
 
     let hover = hover_at(&mut session, &dir, 11, 9);
     assert!(

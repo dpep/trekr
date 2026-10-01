@@ -1061,7 +1061,10 @@ tree rather than loading them into it (DEC-045), so the session's tree stays
 demand-loaded. While a first index fills the store, a tree built from it
 keeps answering while its successor is built on another thread, and a
 request waits at most 400 ms for that, or for completion's listing — then
-answers from what it has, said to be partial or incomplete (DEC-323).
+answers from what it has, said to be partial or incomplete (DEC-323). The
+first definition, references or implementation asked meanwhile in a
+checkout says so once, as a `window/showMessage` (DEC-331): those answers
+have no field for it.
 Background indexing is a child process, not a thread (DEC-039).
 Its stdin is a pipe the server writes open files to, which a first index
 reads ahead of the rest (DEC-322).

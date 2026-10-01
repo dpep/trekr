@@ -9216,7 +9216,8 @@ write. While the mark stands:
   checkout (N of M files read), so this answer may change", completion is
   `isIncomplete`, and references rule nothing out. A definition has no field
   to say it in; the `$/progress` the index already reports is the editor's
-  disclosure there.
+  disclosure there. (*Amended by DEC-331:* the first definition or references
+  asked says so once, as a `window/showMessage`.)
 
 A mark whose pid is no longer running is `interrupted: true`, and its hint
 is the index that fixes it; the language server starts that index itself.
@@ -9379,7 +9380,7 @@ first index only. A completion asked in the seconds after the index ends at
 for it.
 
 **Not done.** A definition from a partial tree has no field to say so;
-the editor's progress is its disclosure. References on the 100k corpus can
+the editor's progress is its disclosure (*amended by DEC-331*). References on the 100k corpus can
 take 0.85 s mid-index, scanning files the store holds then.
 
 ## DEC-330 — A first index reads the gems its open files name before anything else beyond the checkout
@@ -9413,6 +9414,39 @@ hash the same table by table, after an LSP-driven index and after
 `--index`.
 
 **The cost.** None in work: every gem is still read once, later for most.
+
+## DEC-331 — Definition and references say once that the index is partial
+
+**Decided.** The first time a definition, references or implementation is
+asked in a checkout while its first index fills the store (DEC-320), the
+language server sends one `window/showMessage` (info): trekr is still
+indexing this checkout, N of M files read, and until it finishes go to
+definition and references answer from what is read so far, and may miss or
+change. Once per checkout for the life of the session, and only when one of
+those is asked — the person who never navigates mid-index never sees it.
+A cut-short index says so instead, as its hover does.
+
+**Why.** A hover says it in its text and completion with `isIncomplete`
+(DEC-320); a definition is a list of locations, and references are too, so
+neither had a way to say it, and the progress bar was the only sign. It is
+not one a person connects with "this jump may be wrong". In a traced run on
+the 100k corpus, a definition in a file opened mid-index went to a gem's
+`local?` for 17 s, with nothing said.
+
+**Considered.**
+- *`window/showMessage` per answer:* a toast per keypress.
+- *`window/logMessage`:* the Output panel, which nobody reads while
+  navigating.
+- *A work-done progress on the request itself:* VS Code sends no
+  `workDoneToken` for definition or references, and the index already
+  reports `$/progress`.
+- *A notification only trekr's extension understands:* an LSP-native message
+  reaches every client that shows one; the extension needs nothing.
+
+The precedent is DEC-056's: references already says it cut with one
+`showMessage`. The same limit applies — a client that shows no
+`showMessage` (Claude Code's LSP tool) sees nothing, and the CLI's `warming`
+field is how an agent learns it.
 
 ## DEC-340 — A symbol an option names a method by is a reference
 

@@ -60,6 +60,9 @@ pub(crate) struct Session {
     /// dropped the store, and since when: until it ends, answers there are
     /// partial, and a hover says so.
     pub(crate) reindexing: Option<(PathBuf, std::time::Instant)>,
+    /// Checkouts told their navigation answers are partial (DEC-331): once
+    /// each, for the life of the session.
+    pub(crate) told_warming: std::collections::HashSet<PathBuf>,
 }
 
 /// A tree being built aside, from the store as it was at `stamp`.
@@ -215,6 +218,7 @@ impl Session {
             definition_links: false,
             reference_limit: super::gather::DEFAULT_LIMIT,
             reindexing: None,
+            told_warming: std::collections::HashSet::new(),
         }
     }
 

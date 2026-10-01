@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Go to definition and references say when they answer from a partial
+  index.** The first time either is asked while a checkout's first index is
+  running, the editor shows one message saying how much is read and that
+  those answers may miss or change until it finishes; hovers already said
+  so. Once per checkout per session.
 - **A definition into a gem answers sooner while a checkout is first
   indexed.** The index reads the gems the open file names before any other
   gem, and Ruby's signatures just after: on a 100,000-file checkout the

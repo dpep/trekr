@@ -166,6 +166,45 @@ pub(crate) fn definition(
     Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)))
 }
 
+/// Say once per checkout, the first time a definition, references or
+/// implementation is asked there while its first index fills the store, that
+/// those answers come from what is read so far (DEC-331). A hover says it in
+/// its text and completion with `isIncomplete`; these have no field for it.
+pub(crate) fn tell_warming(
+    session: &mut Session,
+    path: &std::path::Path,
+    out: &super::Outbound,
+) -> anyhow::Result<()> {
+    let Some(located) = session.locate_query(path) else {
+        return Ok(());
+    };
+    if session.told_warming.contains(&located.root) {
+        return Ok(());
+    }
+    let Some(warming) = session.warming(&located.root) else {
+        return Ok(());
+    };
+    session.told_warming.insert(located.root);
+    let message = match warming.interrupted {
+        false => format!(
+            "trekr is still indexing this checkout ({} of {} files read). Until it finishes, \
+             go to definition and references answer from what is read so far, and may miss \
+             or change.",
+            warming.read, warming.of
+        ),
+        true => format!(
+            "trekr's index of this checkout was cut short ({} of {} files read). Until it \
+             is indexed again, go to definition and references answer from what was read, \
+             and may miss or change.",
+            warming.read, warming.of
+        ),
+    };
+    out.notify(
+        "window/showMessage",
+        serde_json::json!({ "type": 3, "message": message }),
+    )
+}
+
 /// A `require` string under the cursor, and the files it names.
 struct Required {
     /// The whole string literal: where the cursor is inside it does not
