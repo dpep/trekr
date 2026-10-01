@@ -1,3 +1,5 @@
+<p align="center"><img src="editors/vscode/images/icon.svg" alt="trekr logo" width="128"></p>
+
 # trekr
 
 Ruby code intelligence for agents: **position → meaning**, **definition →
