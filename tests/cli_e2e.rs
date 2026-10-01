@@ -3184,9 +3184,11 @@ fn gc_removes_tree_snapshots_no_checkouts_index_names() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// What an older trekr or a recovery left beside the store is listed by
-/// `--status`; `--gc` removes a set-aside copy at once and another trekr's
-/// store once it has been idle as long as `--older-than`.
+/// What an older trekr, a recovery or a dead index left beside the store is
+/// listed by `--status`; `--gc` removes a set-aside copy and a dead index's
+/// early store at once, and another trekr's store once it has been idle as
+/// long as `--older-than`. A running index's early store is not kept: it is
+/// in use.
 #[test]
 fn status_lists_and_gc_removes_what_is_kept_beside_the_store() {
     let (dir, db) = scratch("gc-kept");
@@ -3200,6 +3202,15 @@ fn status_lists_and_gc_removes_what_is_kept_beside_the_store() {
     ));
     fs::write(&side, b"old").unwrap();
     fs::write(&broken, b"bad").unwrap();
+    let name = db.file_name().unwrap().to_str().unwrap();
+    let early = |pid: u32| {
+        let early = db.with_file_name(format!("{name}.early-{pid}"));
+        fs::create_dir_all(&early).unwrap();
+        fs::write(early.join(name), b"copy").unwrap();
+        early
+    };
+    let dead = early(i32::MAX as u32);
+    let running = early(std::process::id());
 
     let status = json(&trekr(&db, &dir, &["--status", "--json"]));
     let kinds: Vec<&str> = status["kept"]
@@ -3208,14 +3219,17 @@ fn status_lists_and_gc_removes_what_is_kept_beside_the_store() {
         .iter()
         .map(|k| k["kind"].as_str().unwrap())
         .collect();
-    assert_eq!(kinds, ["side", "broken"], "{status}");
+    assert_eq!(kinds, ["side", "broken", "early"], "{status}");
     let text = stdout(&trekr(&db, &dir, &["--status"]));
     assert!(text.contains("store v3"), "{text}");
+    assert!(text.contains("early store"), "{text}");
 
     let gc = trekr(&db, &dir, &["--gc", "--json"]);
     assert_eq!(gc.status.code(), Some(0));
-    assert_eq!(json(&gc)["kept"].as_array().unwrap().len(), 1);
+    assert_eq!(json(&gc)["kept"].as_array().unwrap().len(), 2);
     assert!(!broken.exists(), "a set-aside copy goes at any age");
+    assert!(!dead.exists(), "so does a dead index's early store");
+    assert!(running.exists(), "a running index's is its own");
     assert!(side.exists(), "a recently used store stays");
 
     trekr(&db, &dir, &["--gc", "--older-than", "0"]);

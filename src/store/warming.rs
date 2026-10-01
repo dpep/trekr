@@ -30,6 +30,13 @@ pub(crate) struct Warming {
 }
 
 impl Warming {
+    /// As of now: the index that was running when this was read may have
+    /// died since, and a tree keeps what it was built with for its life.
+    pub(crate) fn now(mut self) -> Warming {
+        self.interrupted |= !alive(u64::from(self.pid));
+        self
+    }
+
     /// The share of the tree read, two places: what scales an answer's
     /// confidence while the rest is unread.
     pub(crate) fn coverage(&self) -> f64 {
@@ -143,6 +150,19 @@ mod tests {
         // and says why.
         let gone = parse(&format!("{} 1 3", i32::MAX)).unwrap();
         assert!(gone.interrupted);
+    }
+
+    #[test]
+    fn a_marker_read_while_its_writer_ran_says_so_once_it_has_died() {
+        let mut writer = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
+        let read = parse(&format!("{} 1 3", writer.id())).unwrap();
+        assert!(!read.clone().now().interrupted);
+        writer.kill().unwrap();
+        writer.wait().unwrap();
+        assert!(read.now().interrupted);
     }
 
     #[test]

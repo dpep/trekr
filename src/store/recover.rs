@@ -319,7 +319,8 @@ fn sweep_side_stores(path: &Path, version: i64) {
 #[derive(Debug, serde::Serialize)]
 pub(crate) struct Kept {
     pub(crate) path: String,
-    /// `side` (with the schema `version` it holds) or `broken`.
+    /// `side` (with the schema `version` it holds), `broken`, or `early`: a
+    /// directory an index that is no longer running wrote (DEC-332).
     pub(crate) kind: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) version: Option<i64>,
@@ -351,11 +352,19 @@ pub(crate) fn kept(path: &Path, version: i64) -> Vec<Kept> {
             })
             .map(|p| describe(&p, "broken", None)),
     );
+    kept.extend(
+        super::early::stale(path)
+            .iter()
+            .map(|dir| describe(dir, "early", None)),
+    );
     kept
 }
 
 fn describe(path: &Path, kind: &'static str, version: Option<i64>) -> Kept {
-    let files = [path.to_path_buf(), with_suffix(path, "-wal")];
+    let files: Vec<PathBuf> = match std::fs::read_dir(path) {
+        Ok(entries) => entries.flatten().map(|e| e.path()).collect(),
+        Err(_) => vec![path.to_path_buf(), with_suffix(path, "-wal")],
+    };
     let meta: Vec<std::fs::Metadata> = files
         .iter()
         .filter_map(|f| std::fs::metadata(f).ok())
@@ -380,6 +389,9 @@ fn describe(path: &Path, kind: &'static str, version: Option<i64>) -> Kept {
 /// files beside it.
 pub(crate) fn remove_kept(kept: &Kept) {
     let path = Path::new(&kept.path);
+    if kept.kind == "early" {
+        return super::early::remove(path);
+    }
     for suffix in ["", "-wal", "-shm", ".lock"] {
         let _ = std::fs::remove_file(with_suffix(path, suffix));
     }

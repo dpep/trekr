@@ -95,6 +95,9 @@ pub(crate) struct Indexer {
     refused: bool,
     /// Why, until `poll` logs it — once, not per save.
     unlogged: Option<String>,
+    /// Roots whose first index died mid-session and was started again: once
+    /// each, so an index that dies every time is not run forever.
+    resumed: HashSet<PathBuf>,
 }
 
 struct Job {
@@ -121,6 +124,7 @@ impl Indexer {
             jobs: 0,
             refused: false,
             unlogged: None,
+            resumed: HashSet::new(),
         }
     }
 
@@ -139,6 +143,14 @@ impl Indexer {
             return;
         }
         self.queue.push_back(root);
+    }
+
+    /// A checkout's first index died before it finished: run it again, as the
+    /// server does for one found cut short at start (DEC-320), once a session.
+    pub(crate) fn resume(&mut self, root: PathBuf) {
+        if self.resumed.insert(root.clone()) {
+            self.want(root, true);
+        }
     }
 
     /// The editor opened a file: if an index of its checkout is running,
@@ -257,7 +269,16 @@ impl Indexer {
                             }),
                         ));
                     }
-                    self.done.insert(job.root);
+                    let cut_short = session
+                        .main_store()
+                        .warming(&job.root.to_string_lossy())
+                        .ok()
+                        .flatten()
+                        .is_some_and(|w| w.interrupted);
+                    self.done.insert(job.root.clone());
+                    if cut_short {
+                        self.resume(job.root);
+                    }
                 }
             }
         }

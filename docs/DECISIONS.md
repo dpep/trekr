@@ -9521,6 +9521,20 @@ early store's end less tidy than its start:
   second index and one of the three reopens spent, on every idle run. It
   asks the store itself now; `follow_early` notices the early store gone and
   keeps every tree answering until its successor is built aside.
+- *An index that dies leaves no early store in use.* The server checked only
+  that the early store's file was there, and nothing removes the file of an
+  index killed mid-write: the session read that copy for its life — a class
+  saved since was "not defined anywhere" — and a hover said "still indexing"
+  because a tree's `partial` kept the `interrupted` it was built with. Now
+  `follow_early` also asks whether the index's pid runs, and when it does
+  not, reads the store again, sweeps the early store, and runs the index
+  again, as the server does for a checkout found cut short at start
+  (DEC-320); so does an index child of the server's own that exits with its
+  checkout still marked. Once a checkout a session, so an index that dies
+  every time is not run forever. `Warming::now` asks the pid at each read.
+  An early store an index left is listed by `--status` as `kept` (`kind:
+  early`) and removed by `--gc` at any age, as a set-aside copy is — the
+  one-line follow-up DEC-300 left.
 
 ## DEC-333 — A warm request reads the store's roots only once the store has moved
 

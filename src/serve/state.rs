@@ -69,6 +69,9 @@ pub(crate) struct Session {
     /// a request re-reads the store's roots only once something has
     /// committed since (DEC-333).
     stamps: HashMap<PathBuf, (i64, Stamp)>,
+    /// Checkouts whose first index died with its early store in use: to be
+    /// indexed again, as one found cut short at start is (DEC-320).
+    resume: Vec<PathBuf>,
 }
 
 /// The early store being read in place of the store, and the store, kept for
@@ -76,6 +79,9 @@ pub(crate) struct Session {
 struct Early {
     path: PathBuf,
     main: Store,
+    /// The checkout it was found for, and its index as found.
+    root: PathBuf,
+    writer: crate::store::Warming,
 }
 
 /// A tree being built aside, from the store as it was at `stamp`.
@@ -234,6 +240,7 @@ impl Session {
             told_warming: std::collections::HashSet::new(),
             early: None,
             stamps: HashMap::new(),
+            resume: Vec::new(),
         }
     }
 
@@ -271,6 +278,11 @@ impl Session {
         self.listing = None;
     }
 
+    /// Checkouts whose first index died mid-session, since the last call.
+    pub(crate) fn take_resume(&mut self) -> Vec<PathBuf> {
+        std::mem::take(&mut self.resume)
+    }
+
     /// Checkouts found unindexed since the last call.
     pub(crate) fn take_unindexed(&mut self) -> Vec<PathBuf> {
         std::mem::take(&mut self.unindexed)
@@ -280,10 +292,11 @@ impl Session {
     /// (DEC-320): answers from it are partial, and say so. Asked of the tree
     /// that answers when there is one, which may be older than the store.
     pub(crate) fn warming(&self, root: &Path) -> Option<crate::store::Warming> {
-        match self.checkouts.get(root) {
+        let warming = match self.checkouts.get(root) {
             Some(checkout) if checkout.tree.is_some() => checkout.partial.clone(),
             _ => self.store.warming(&root.to_string_lossy()).ok().flatten(),
-        }
+        };
+        warming.map(crate::store::Warming::now)
     }
 
     /// Is this checkout in the store at all?
@@ -471,16 +484,35 @@ impl Session {
     }
 
     /// Read a first index's early store while it is there, and the store once
-    /// the index has removed it (DEC-332). A tree built from either keeps
-    /// answering until its successor is built aside, as for any partial tree.
+    /// the index has removed it (DEC-332) — or has died, when nothing will
+    /// remove it and the store holds what was saved since. A tree built from
+    /// either keeps answering until its successor is built aside, as for any
+    /// partial tree.
     fn follow_early(&mut self, root: &Path) {
         if let Some(early) = &self.early {
-            if early.path.exists() {
+            let running = !early.writer.clone().now().interrupted;
+            if running && early.path.exists() {
                 return;
             }
             let early = self.early.take().expect("checked above");
             self.store = early.main;
             self.stamps.clear();
+            if running {
+                return;
+            }
+            if let Some(main) = self.store.path() {
+                crate::store::early::sweep(main);
+            }
+            // An index that ended has cleared its mark; one that died has not.
+            let cut_short = self
+                .store
+                .warming(&early.root.to_string_lossy())
+                .ok()
+                .flatten()
+                .is_some_and(|warming| warming.interrupted);
+            if cut_short {
+                self.resume.push(early.root);
+            }
             return;
         }
         let whole = self
@@ -501,7 +533,12 @@ impl Session {
             return;
         };
         let main = std::mem::replace(&mut self.store, early);
-        self.early = Some(Early { path, main });
+        self.early = Some(Early {
+            path,
+            main,
+            root: root.to_path_buf(),
+            writer: warming,
+        });
         self.stamps.clear();
     }
 

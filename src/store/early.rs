@@ -53,28 +53,35 @@ pub(crate) fn remove(dir: &Path) {
 /// The suffix of an early store being removed.
 const GONE: &str = ".gone";
 
-/// Remove early stores left by indexes that are no longer running.
-pub(crate) fn sweep(main: &Path) {
+/// Early stores left by indexes that are no longer running — and ones
+/// being removed, which their index may not have finished.
+pub(crate) fn stale(main: &Path) -> Vec<PathBuf> {
     let (Some(dir), Some(name)) = (main.parent(), main.file_name()) else {
-        return;
+        return Vec::new();
     };
     let prefix = format!("{}.early-", name.to_string_lossy());
     let Ok(entries) = std::fs::read_dir(dir) else {
-        return;
+        return Vec::new();
     };
-    for entry in entries.flatten() {
-        let file = entry.file_name().to_string_lossy().into_owned();
-        let Some(pid) = file.strip_prefix(&prefix) else {
-            continue;
-        };
-        let digits = pid.find(|c: char| !c.is_ascii_digit()).unwrap_or(pid.len());
-        let Ok(pid) = pid[..digits].parse::<u64>() else {
-            continue;
-        };
-        if !super::warming::alive(pid) {
-            remove(&entry.path());
-        }
-    }
+    entries
+        .flatten()
+        .filter(|entry| {
+            let file = entry.file_name().to_string_lossy().into_owned();
+            let Some(pid) = file.strip_prefix(&prefix) else {
+                return false;
+            };
+            let digits = pid.find(|c: char| !c.is_ascii_digit()).unwrap_or(pid.len());
+            pid[..digits]
+                .parse::<u64>()
+                .is_ok_and(|pid| !super::warming::alive(pid))
+        })
+        .map(|entry| entry.path())
+        .collect()
+}
+
+/// Remove early stores left by indexes that are no longer running.
+pub(crate) fn sweep(main: &Path) {
+    stale(main).iter().for_each(|dir| remove(dir));
 }
 
 /// Copy the store at `main`, as of its last commit, to `to`; `false` when

@@ -154,8 +154,8 @@ struct Cli {
     /// Remove checkouts nothing will ask about again: gem versions no
     /// surviving project's bundle names, and projects whose root is gone.
     /// Their blobs go too, unless another checkout still maps them. Also
-    /// removes an index set aside as unusable, and another trekr's own index
-    /// once it is idle.
+    /// removes an index set aside as unusable, an early copy a stopped index
+    /// left, and another trekr's own index once it is idle.
     #[arg(long, conflicts_with_all = ["index", "status", "symbols", "refs", "def", "ancestors", "drop", "lsp"])]
     gc: bool,
 
@@ -2511,6 +2511,7 @@ fn print_kept(kept: &[crate::store::Kept]) {
                 "this trekr's own store: the default one is a newer trekr's".to_string()
             }
             ("side", Some(v), _) => format!("store v{v}, another trekr's own"),
+            ("early", _, _) => "an early store an index left when it stopped".to_string(),
             _ => "set aside when it couldn't be used".to_string(),
         };
         println!(
@@ -5002,10 +5003,11 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
         core.bytes += legacy.bytes;
     }
     // Another trekr's store once idle as long as a checkout would be; a
-    // set-aside copy is only evidence, so any age.
+    // set-aside copy is only evidence, and a dead index's early store is
+    // read by nothing, so any age.
     let kept: Vec<crate::store::Kept> = crate::store::kept(&db, crate::store::VERSION)
         .into_iter()
-        .filter(|k| !k.in_use && (k.kind == "broken" || k.idle >= older_than))
+        .filter(|k| !k.in_use && (k.kind != "side" || k.idle >= older_than))
         .collect();
     if !dry_run {
         kept.iter().for_each(crate::store::remove_kept);

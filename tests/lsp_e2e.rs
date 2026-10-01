@@ -4516,12 +4516,12 @@ fn an_ivar_in_a_module_mixed_into_several_classes_goes_nowhere() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// A file the editor opens while the first index's bulk write holds the
-/// store is answered from the early store that index writes (DEC-332), and
-/// from the store again once the index removes the early store.
-#[test]
-fn an_early_store_answers_until_its_index_removes_it() {
-    let (dir, db) = scratch("early");
+/// A session reading an early store (DEC-332) written by the index running
+/// as `writer`: the store has `app.rb`, the early store `widget.rb` too, and
+/// `app.rb`'s `Widget` is answered from the early store. The checkout, the
+/// store, the early store's directory, and the session.
+fn early_session(label: &str, writer: u32) -> (PathBuf, PathBuf, PathBuf, Session) {
+    let (dir, db) = scratch(label);
     git(&dir, &["init", "-q"]);
     let source = "class Job\n  def run\n    Widget.new\n  end\nend\n";
     fs::write(dir.join("app.rb"), source).unwrap();
@@ -4552,7 +4552,7 @@ fn an_early_store_answers_until_its_index_removes_it() {
     index(&db);
     // The early store: what the index has written there, Widget's file among it.
     let mut name = db.file_name().unwrap().to_os_string();
-    name.push(format!(".early-{}", std::process::id()));
+    name.push(format!(".early-{writer}"));
     let beside = db.with_file_name(name);
     fs::create_dir_all(&beside).unwrap();
     let early = beside.join(db.file_name().unwrap());
@@ -4568,7 +4568,7 @@ fn an_early_store_answers_until_its_index_removes_it() {
             .unwrap()
             .execute(
                 "INSERT INTO meta (key, value) VALUES (?1, ?2)",
-                [key.clone(), format!("{} 1 2", std::process::id())],
+                [key.clone(), format!("{writer} 1 2")],
             )
             .unwrap();
     }
@@ -4590,6 +4590,16 @@ fn an_early_store_answers_until_its_index_removes_it() {
         6,
     );
     assert_eq!(sites_in(&answer).len(), 1, "from the early store: {answer}");
+    (dir, db, beside, session)
+}
+
+/// A file the editor opens while the first index's bulk write holds the
+/// store is answered from the early store that index writes (DEC-332), and
+/// from the store again once the index removes the early store.
+#[test]
+fn an_early_store_answers_until_its_index_removes_it() {
+    let mut writer = Command::new("sleep").arg("60").spawn().unwrap();
+    let (dir, db, beside, mut session) = early_session("early", writer.id());
 
     // Once the server is idle, so nothing reads a tree before the loop's
     // next look at its store.
@@ -4602,6 +4612,13 @@ fn an_early_store_answers_until_its_index_removes_it() {
     gone.push(".gone");
     fs::rename(&beside, &gone).unwrap();
     fs::remove_dir_all(&gone).unwrap();
+    // And ends: its mark cleared, its process gone.
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute("DELETE FROM meta WHERE key LIKE 'warming %'", [])
+        .unwrap();
+    writer.kill().unwrap();
+    writer.wait().unwrap();
     // A message that reads no tree: the loop looks for a replaced store
     // before anything follows the early store back to the store.
     session.notify("$/setTrace", serde_json::json!({"value": "off"}));
@@ -4624,6 +4641,64 @@ fn an_early_store_answers_until_its_index_removes_it() {
         logged_events(&db, "store_reopened"),
         Vec::<serde_json::Value>::new(),
         "an early store's removal is the index's own cleanup, not a replaced store"
+    );
+    assert_eq!(
+        logged_events(&db, "index_start"),
+        Vec::<serde_json::Value>::new(),
+        "nor is an index that ended one cut short"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// An early store whose index died is not read on: the server goes back to
+/// the store, removes the early store, and finishes the index that was cut
+/// short, as it does for one found cut short at start (DEC-320).
+#[test]
+fn an_early_store_whose_index_died_is_left_and_the_index_finished() {
+    let mut writer = Command::new("sleep").arg("60").spawn().unwrap();
+    let (dir, db, beside, mut session) = early_session("early-dead", writer.id());
+    writer.kill().unwrap();
+    writer.wait().unwrap();
+
+    // Written and saved since: the store has it, the early store never will.
+    let probe = "class Probe\nend\nProbe\n";
+    fs::write(dir.join("probe.rb"), probe).unwrap();
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "probe.rb"), "languageId": "ruby", "version": 1, "text": probe
+        }}),
+    );
+    session.notify(
+        "textDocument/didSave",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "probe.rb")}}),
+    );
+    let asked = std::time::Instant::now();
+    let found = loop {
+        let answer = ask(
+            &mut session,
+            &dir,
+            "textDocument/definition",
+            "probe.rb",
+            2,
+            1,
+        );
+        if !sites_in(&answer).is_empty() || asked.elapsed().as_secs() >= 10 {
+            break sites_in(&answer);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    assert_eq!(
+        found.len(),
+        1,
+        "answered from the store, not the dead early store"
+    );
+    assert!(!beside.exists(), "a dead index's early store is removed");
+
+    session.stop();
+    assert!(
+        !logged_events(&db, "index_start").is_empty(),
+        "the index that was cut short is run again"
     );
     let _ = fs::remove_dir_all(&dir);
 }

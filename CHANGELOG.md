@@ -9,7 +9,9 @@
   second, too.** It used to wait for the whole checkout to be written — up to
   17 s on a 100,000-file checkout. The index now writes it and the files it
   names to a copy of the index beside it (`trekr.db.early-<pid>/`), which the
-  editor reads until the index finishes and removes it.
+  editor reads until the index finishes and removes it. An index stopped
+  before it finishes leaves the copy for `--status` to list and `--gc` to
+  remove; the editor goes back to the index and runs the index again.
 - **Go to definition and references say when they answer from a partial
   index.** The first time either is asked while a checkout's first index is
   running, the editor shows one message saying how much is read and that

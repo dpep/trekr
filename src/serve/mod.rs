@@ -453,6 +453,9 @@ fn serve(
         for root in session.take_unindexed() {
             indexer.want(root, false);
         }
+        for root in session.take_resume() {
+            indexer.resume(root);
+        }
     }
     // The pipe closed: the client went away without a shutdown request.
     Ok(())
