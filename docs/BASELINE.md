@@ -2893,7 +2893,10 @@ above: they were traced against `~/.rvm/gems/ruby-3.4.9`, and this store
 read the same gem versions from that Ruby's own gem directory (DEC-291), so
 `gold.py`, which compares paths, scores most gem answers
 `right-owner-wrong-site` in both builds. Their verdict moves are what this
-table reports.
+table reports. DEC-351's widget_shop-trace move is 33 sites, each
+`declaration-offered` → `residue-truth-absent`: the definition now ranks
+before the declaration that had been offered, and the traced owner is in
+neither (counted by the pre-release hunt).
 
 **Against the August build**, 13 of the 500 had lost correct@1. DEC-350
 fixed `id` (2); DEC-351 fixed `update_all`, `joins` and a fabricator's

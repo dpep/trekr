@@ -9,6 +9,7 @@
 //! Evidence of a way in, never of a caller, so a row it touches keeps its
 //! tier and is graded `lower`.
 
+use rayon::prelude::*;
 use std::path::Path;
 use std::process::Command;
 
@@ -41,29 +42,63 @@ impl Built {
         let Ok(out) = Command::new("git").arg("-C").arg(root).args(args).output() else {
             return Built::default();
         };
+        let paths: Vec<String> = out
+            .stdout
+            .split(|b| *b == 0)
+            .filter(|p| !p.is_empty())
+            .map(|path| String::from_utf8_lossy(path).into_owned())
+            .filter(|path| !is_test(path))
+            .collect();
+        // Each file on its own worker; merged in path order, so what is
+        // "first written" does not depend on which worker finished first.
+        let parts: Vec<Built> = paths
+            .par_iter()
+            .filter_map(|path| {
+                let bytes = std::fs::read(root.join(path)).ok()?;
+                let text = String::from_utf8_lossy(&bytes);
+                if !text.contains("#{")
+                    && !SENDS.iter().any(|s| text.contains(s))
+                    && !text.contains("instance_methods")
+                {
+                    return None;
+                }
+                let mut part = Built::default();
+                part.read_file(path, &text);
+                Some(part)
+            })
+            .collect();
         let mut built = Built::default();
-        for path in out.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
-            let path = String::from_utf8_lossy(path).into_owned();
-            if is_test(&path) {
-                continue;
-            }
-            let Ok(bytes) = std::fs::read(root.join(&path)) else {
-                continue;
-            };
-            let text = String::from_utf8_lossy(&bytes);
-            if !text.contains("#{")
-                && !SENDS.iter().any(|s| text.contains(s))
-                && !text.contains("instance_methods")
-            {
-                continue;
-            }
-            built.read_file(&path, &text);
+        for part in parts {
+            built.absorb(part);
         }
         built
     }
 
+    /// Another file's finds, keeping each name where it was first written.
+    fn absorb(&mut self, part: Built) {
+        for (shape, at) in part.shapes {
+            if !self.shapes.iter().any(|(known, _)| *known == shape) {
+                self.shapes.push((shape, at));
+            }
+        }
+        for (constant, at) in part.sent_to {
+            if !self.sent_to.iter().any(|(known, _)| *known == constant) {
+                self.sent_to.push((constant, at));
+            }
+        }
+        for (constant, call, at) in part.listed {
+            if !self.listed.iter().any(|(known, _, _)| *known == constant) {
+                self.listed.push((constant, call, at));
+            }
+        }
+    }
+
     fn read_file(&mut self, path: &str, text: &str) {
         for (at, line) in text.lines().enumerate() {
+            // A comment's example is no name the code builds.
+            if line.trim_start().starts_with('#') {
+                continue;
+            }
             let at = (path.to_string(), at as u32 + 1);
             for shape in interpolated_symbols(line) {
                 if !self.shapes.iter().any(|(known, _)| *known == shape) {
@@ -262,6 +297,16 @@ mod tests {
         assert!(listings("klass.instance_methods(false)").is_empty());
         assert!(listings("# ―Tools.instance_methods").len() == 1);
         assert!(listings("Tools.instance_methods_of(x)").is_empty());
+    }
+
+    #[test]
+    fn a_comment_builds_no_name() {
+        let mut built = Built::default();
+        built.read_file(
+            "app/x.rb",
+            "# Mailer.public_send(type)\n  # :\"report_#{type}\"\n",
+        );
+        assert!(built.reaching("Mailer", "report_daily").is_none());
     }
 
     #[test]

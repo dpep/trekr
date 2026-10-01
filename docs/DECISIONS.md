@@ -9912,6 +9912,10 @@ called only as `Module.method` (`app/lib/text_formatter.rb:30`,
 `unreferenced` 162 → 160, and 3 more rows leave or move toward use
 (`Extractor`'s other module functions, a helper's). discourse unchanged.
 
+**Known gap, before release.** `--refs` excludes a call through the
+module (`Extractor.extract_urls(…)`) that `--dead` counts here: the two
+disagree on the singleton copy until `--refs` reads it too.
+
 ## DEC-362 — ActiveModel::Serializers calls `include_<attr>?` for the attributes a serializer declares
 
 **Decided.** ActiveModel::Serializers 0.8 and 0.9 build `include_#{name}?`
@@ -9949,6 +9953,10 @@ use. The 9 rows left `unreferenced` were each read and none is declared.
 `override`. Of the 39 sampled rows, 38 move and the 39th is
 `include_user_id?`, which on reading is dead. mastodon unchanged (no AMS
 0.8).
+
+**Known gap, before release.** Any `:x` in the serializer's or an
+ancestor's file counts, not only one `attributes` or an association takes
+(see "Not" above); a pre-release hunt confirmed it as accepted.
 
 ## DEC-363 — `--dead` says where the checkout builds a method's name at runtime
 
@@ -9998,6 +10006,16 @@ it, 42 of 47 false ones become `lower` and 1 of 15 true ones. mastodon
 `unreferenced`, clear unchanged (63); 11 other rows gain the caveat. The
 read's cost is inside the noise of `--dead app` on discourse (three
 interleaved runs each way, 10–20 s, on a loaded machine).
+
+**Addendum, before release.** A comment line is no longer read for a
+shape, a send or a listing: discourse's `fetch_*` was cited at a comment
+(`lib/service/base.rb:6`) and is now cited at the code that builds it; no
+row's tier or confidence moved. The read is parallel across files, merged
+in path order (discourse `--dead app` 3.0 → 2.7 s, three interleaved runs
+each). **Known gap:** a shape still lowers every method of its shape in the
+checkout, not the builder's class — the pre-release hunt counted 161 of
+discourse's 305 `unreferenced` app rows lowered by one, and 221 of rails'
+`visit_*` rows. Scoping a shape to the class that builds it is open.
 
 ## DEC-364 — A public writer of a class that assigns attributes is reached by name
 
@@ -10289,6 +10307,11 @@ steps, engine hooks), and a blanket "private is reached" rule would lower
 the private dead method a reader most wants found. A score fitted to two
 apps' accidents would be a guess wearing a measurement's clothes; a named
 caveat says what it saw.
+
+**Addendum, before release: a known gap.** `--dead` weighs files added
+since the last `--index` against an index that has not read them, so their
+calls are not counted (pre-existing). The other gaps the pre-release hunt
+logged are under DEC-361, DEC-362, DEC-363 and DEC-344's "Not done".
 
 ## DEC-380 — A call ruled out on a module nothing includes says its `self` is unknown
 
