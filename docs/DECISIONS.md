@@ -9975,3 +9975,41 @@ columns, not as methods to override. A caveat is the evidence there is.
 hand-checked writers become `lower`, no true candidate moves; `unreferenced`,
 clear mastodon 63 → 53, discourse 56 → 51. 19 and 13 rows carry the
 caveat, across tiers.
+
+## DEC-365 — An unreferenced method under an ancestor trekr has not indexed says so
+
+**Decided.** An `unreferenced` row gains a caveat, graded `lower`, when:
+
+- **its owner's chain has an ancestor the tree cannot resolve** and does not
+  know by that name — "an ancestor trekr has not indexed
+  (Devise::RegistrationsController) may call it". A gem's `app/` is not
+  read (DEC-017), so an engine's controllers are such ancestors, and a hook
+  the engine calls (`after_sign_up_path_for`) has no caller in the index;
+- **its body calls `super`** and no overridden method was found — "it calls
+  `super`, so it overrides a method trekr has not indexed". A method that
+  calls `super` has something above it by definition.
+
+**Why.** 12 of mastodon's 77 hand-checked `unreferenced`, clear rows were
+Devise and Doorkeeper controller hooks (`after_update_path_for`,
+`build_resource`, `can_authorize_response?`), and one an Active Record
+class method a concern's `ClassMethods` overrides with `super`
+(`Status::SafeReblogInsert::ClassMethods#_insert_record`, which DEC-121's
+`override` misses for a module the concern extends).
+
+**Not a known name.** discourse's `User` has a second declaration, `User =
+Data.define(…)` in a benchmark script, and its chain then lists
+`ActiveRecord::Base` and `Data` as unresolved; both are indexed, and the
+first cut caveated 3 `User` rows (one hand-checked true candidate) with
+them. A name the tree knows is not an unseen ancestor.
+
+**Not done.** Reading an engine gem's `app/` would make these `override`,
+naming the method — DEC-017's reverses-if. It changes what a gem's index
+holds and when it is read (the first index's parts, DEC-322), so it is left
+for a change of its own. Doorkeeper's `Helpers`, which its engine `include`s
+from an `on_load` in an `initializer` block (DEC-098 reads only a hook
+registered as the file loads), is not caught: 2 mastodon rows.
+
+**Measured**, `--dead app`, against the build before it: mastodon
+`unreferenced`, clear 53 → 40, the 12 engine hooks and the `super` row
+among the hand-checked; no true candidate moves. discourse unchanged in
+clear; 3 writers that call `super` gain the second caveat.

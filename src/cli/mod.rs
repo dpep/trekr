@@ -3619,6 +3619,8 @@ struct Defined {
     /// The first line of its file with a symbol of its name that no rule
     /// reads as a call of it (DEC-343).
     unread_symbol: Option<u32>,
+    /// Whether its body calls `super`: it overrides something (DEC-365).
+    calls_super: bool,
 }
 
 /// `--dead` over the scopes in one checkout, weighed against that checkout:
@@ -3723,12 +3725,17 @@ fn dead_in(
                 .iter()
                 .find(|(name, line)| *name == def.name && !own.contains(line))
                 .map(|(_, line)| *line);
+            let calls_super = facts
+                .calls
+                .iter()
+                .any(|c| c.recv == crate::core::RecvShape::Super && own.contains(&c.pos.line));
             defined.push(Defined {
                 file: at.clone(),
                 def: def.clone(),
                 caveat,
                 aliases,
                 unread_symbol,
+                calls_super,
             });
         }
     }
@@ -3752,6 +3759,7 @@ fn dead_in(
         caveat: risky,
         aliases,
         unread_symbol,
+        calls_super,
     } in &defined
     {
         let written = written_calls.get(&def.name).copied().unwrap_or(0);
@@ -3857,6 +3865,35 @@ fn dead_in(
                 risky.push_str(", ");
             }
             risky.push_str(&format!("overrides {}", overrides.join(", ")));
+        }
+        // An ancestor not indexed may call it, and a `super` says one is
+        // there (DEC-365).
+        if tier == "unreferenced" {
+            // A name the tree knows is no unseen ancestor: two declarations
+            // of the owner (`User = Data.define` in a script) leave the
+            // other's superclass unresolved, though it is indexed.
+            let unseen: Vec<String> = tree
+                .ancestors(&owner)
+                .unresolved
+                .iter()
+                .filter(|name| !tree.is_known(name))
+                .cloned()
+                .collect();
+            if !unseen.is_empty() {
+                if !risky.is_empty() {
+                    risky.push_str(", ");
+                }
+                risky.push_str(&format!(
+                    "an ancestor trekr has not indexed ({}) may call it",
+                    unseen.join(", ")
+                ));
+            }
+            if *calls_super {
+                if !risky.is_empty() {
+                    risky.push_str(", ");
+                }
+                risky.push_str("it calls `super`, so it overrides a method trekr has not indexed");
+            }
         }
         // Callers `--dead` cannot see, named where it can say which (DEC-315).
         if let Some(caller) = refs::protocol_hook(&def.name, def.singleton) {

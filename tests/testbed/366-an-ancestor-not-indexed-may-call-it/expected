@@ -1,0 +1,9 @@
+# An ancestor the index cannot resolve — a gem's controller from its `app/`,
+# which is not read (DEC-017), or a module built at runtime — may call any
+# method its subclass defines: mastodon's Devise and Doorkeeper controller
+# hooks (`after_sign_up_path_for`, `build_resource`) were 12 of its 77
+# hand-checked unreferenced, clear rows. Each row now names the ancestor;
+# a method that calls `super` says it overrides one trekr has not indexed.
+dead app/controllers/registrations_controller.rb RegistrationsController#after_sign_up_path_for=unreferenced~Vendor::RegistrationsController
+dead app/models/widget.rb Widget#build_resource=unreferenced~super Widget#lonely=unreferenced~Vendor::Trackable
+dead app/models/gadget.rb Gadget#lonely=unreferenced~
