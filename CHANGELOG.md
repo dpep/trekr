@@ -1,5 +1,29 @@
 # Changelog
 
+## Unreleased
+
+- **The index format changed: trekr reindexes each checkout once** after
+  upgrading.
+- **A call on a memoized or `attr_reader` accessor is typed.**
+  `url_builder.verify(…)` with `def url_builder; @url_builder ||=
+  UrlBuilder.new; end` is now confirmed for `UrlBuilder#verify` and ruled
+  out for other classes' `verify`; so is a reader of an `@x` every write of
+  which (in its file) is `X.new`, and one whose body is `X.new`. Not when
+  writes disagree, an `attr_accessor` lets anyone set it, or a subclass
+  overrides the reader.
+- **A callback or `rescue_from` block in a concern's class method runs on
+  the includer's instance**: `rescue_from Error do … respond_error(e) end`
+  inside `module ClassMethods` (or `class_methods do`) now counts as a call
+  of the concern's `respond_error`, so `--dead` no longer calls it
+  unreferenced.
+- **A call inside a block handed to a DSL is never ruled out as "no such
+  method".** A block passed to anything but Ruby's own methods may run on
+  another object (`draw do`, a `scope` proc, a gem's configure block), so
+  `--refs` lists such a call as `possible` and `--dead` counts it, instead
+  of treating its target as unreferenced.
+- `x = Class.new(Base)` no longer types `x` as an instance of `Class`, which
+  ruled out the class methods sent to it.
+
 ## 0.8.3 — 2026-10-01
 
 - **Every editor request is faster once the index is warm**: a definition on

@@ -1,0 +1,10 @@
+# A callback or `rescue_from` block written in a concern's class method —
+# `module ClassMethods` or `class_methods do` — runs on an instance of the
+# class the method is called on: the concern's includer. Its calls were read
+# on `ClassMethods`, excluded as "no such method", and `--dead` called the
+# concern's own methods unreferenced.
+def app.rb:15:37 status=resolved owner=Rescuing site=app.rb:20
+def app.rb:15:9 status=resolved owner=WidgetsController
+def app.rb:29:9 status=resolved owner=Limited site=app.rb:34
+refs Rescuing#respond_duplicate confirmed=1 possible=0 excluded=0
+dead app.rb Rescuing#respond_duplicate=single-caller Limited#limiter=single-caller

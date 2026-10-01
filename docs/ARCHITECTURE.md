@@ -205,9 +205,13 @@ name that call hands it, `{k*}` each from the `k`th on (DEC-162). A macro
 that hands its own `&block` to `define_method` says so (`|&`), and a call in
 a block a class body hands that macro runs on the side the made method does
 (`Tree::block_side`, DEC-260); so does one in a block handed to a
-callback, `validate` or `rescue_from`, which Rails runs on the instance, and
-a call in an `if:`/`unless:` lambda is recorded on the instance side
-(DEC-342). A string
+callback, `validate` or `rescue_from`, which Rails runs on the instance —
+written in a concern's `ClassMethods`, its includers' instance (DEC-390) —
+and a call in an `if:`/`unless:` lambda is recorded on the instance side
+(DEC-342). A block handed to anything but Ruby's own methods may run on
+another object, so a call on `self` in it that the scope lacks is
+`possible` in `--refs`, never ruled out (`resolve::self_unsettled`,
+DEC-391). A string
 macro's `def` whose name a caller in another file spells whole is a method
 of that caller, at the macro's `class_eval`, where the caller's chain
 otherwise finds nothing (`Tree::made_along`, DEC-212), worked out per name
@@ -306,7 +310,7 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | `sig` | an inline Sorbet `sig` on the method the value came from | agreeing / total |
 | `sig:param` | the parameter's declared class, from `params(...)` | 1.0 |
 | `sig:step` | one call on an already-typed local, via that method's `sig` | agreeing / total |
-| `chain` | `a.b.c` — `b`'s receiver typed, `b` found, its `sig` read | the receiver's |
+| `chain` | `a.b.c` — `b`'s receiver typed, `b` found, its `sig` read; a reader with no `sig` returns what its one expression makes or holds — `X.new`, `@x ||= X.new`, `@x` or an `attr_reader` whose every write in its file is `X.new` — unless a subclass of `self` overrides it to return something else (DEC-392) | the receiver's |
 | `chain:name` | `x.gsub(a, b).downcase` with `x` untyped — every `gsub` that declares a return agrees | declaring / definitions |
 | `delegate_missing_to` | the receiver's type has no such method, and its class's `delegate_missing_to :t` sends it to `t`, typed by `t`'s reader (DEC-112) | the receiver's |
 | `delegate` | the lookup lands on a `delegate … to: :x` whose `x` is typed (DEC-166): that type's method, the delegate kept as the second site; a subclass of the type that overrides it makes the answer ambiguous (DEC-211) | the receiver's, or 1 / (1 + overrides) |
@@ -322,7 +326,9 @@ another method, or one a later write replaced, has no vote; a write that
 cannot be typed (a parameter, `x = compute`) counts against the answer; and
 writes that type it differently make it `ambiguous`, with the other types'
 landings as candidates (DEC-071). An instance variable spans methods, so every
-assignment to it in the file still votes.
+assignment to it in the file still votes, a memo's `@x ||= X.new` among them
+(DEC-392). `Class.new(Base)`, `Module.new` and `Struct.new` make a class,
+not an instance of `Class`, and type nothing.
 
 **`super` is its own rung**, recorded at extraction as a call of the
 enclosing method's name with receiver shape `super`. Ruby looks the name up

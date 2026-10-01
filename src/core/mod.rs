@@ -934,6 +934,9 @@ pub(crate) struct Assign {
     pub(crate) target: String,
     pub(crate) value: ValueShape,
     pub(crate) nesting: Vec<String>,
+    /// Written where `self` is the class: a class-level instance variable,
+    /// not its instances'.
+    pub(crate) singleton: bool,
     pub(crate) pos: Pos,
 }
 

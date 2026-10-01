@@ -9,7 +9,7 @@ class Garage
   delegate :delete_by, to: :engine
 
   def engine
-    Engine.new
+    @engine
   end
 end
 

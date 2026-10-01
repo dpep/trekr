@@ -553,6 +553,16 @@ fn tier(
             1,
             None,
         ),
+        // `self` is the written scope only if the block it is in runs as it
+        // stands, which a method that is not Ruby's own does not promise.
+        None if receiver.via == "self" && super::self_unsettled(tree, facts, call, path) => here(
+            Tier::Possible,
+            Some(receiver.fqn.clone()),
+            None,
+            "the call is in a block whose `self` the method it is handed to may change",
+            1,
+            None,
+        ),
         // The type is settled and Ruby finds nothing — unless the chain was cut
         // short, in which case the missing ancestor could be the target.
         None if tree.ancestors(&receiver.fqn).unresolved.is_empty() => here(

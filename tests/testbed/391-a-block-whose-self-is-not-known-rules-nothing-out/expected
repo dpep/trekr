@@ -1,0 +1,8 @@
+# A block handed to a method that is not Ruby's own may run on another
+# object (a DSL's `instance_exec`), and nothing trekr reads says whether it
+# does. A call on `self` there was ruled out as "no such method" on the
+# written scope, and `--dead` called its target unreferenced. It is now
+# `possible`. A block Ruby's own method yields — `tap`, an iterator on a
+# value, typed or not — still runs on the written scope and stays ruled out.
+refs Widget#setup_widget confirmed=0 possible=2 excluded=3
+dead app.rb Widget#setup_widget=none

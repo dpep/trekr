@@ -10398,3 +10398,136 @@ method; DEC-342's gap); discourse `Guardian#is_ignoring_user?` and
 `#is_muting_user?`, called from `Chat::GuardianExtensions`, which a plugin
 prepends to `Guardian` at runtime (both live). Five mastodon helper rows
 change only their reason.
+
+## DEC-390 — A callback block in a concern's class method runs on its includers' instances
+
+**Decided.** A block handed to a callback, `validate` or `rescue_from`
+(DEC-342's macros) inside a method of a concern's `ClassMethods` — the
+module, or `class_methods do` — runs on an instance of whatever includes the
+concern: the method runs on the includer's class, and Rails `instance_exec`s
+the block on its instances. A call on `self` there is read on the concern's
+instance side (`resolve::Made::IncludersInstance`), so the concern's own
+methods answer it and its includers' answer the rest, as in `included do`.
+
+**Why.** The 0.8.3 report: `rescue_from ActiveRecord::RecordNotUnique do
+|error| … respond_duplicate_error(error, …) end` inside
+`ClassMethods#rescue_duplicates` was read on `ClassMethods`, ruled out "no
+such method", and `--dead` called `respond_duplicate_error` unreferenced.
+DEC-342 placed such a block only when the macro is written in a class body,
+`included do` or a `def self.`; DEC-380 named the gap (mastodon's
+`RateLimitable#rate_limiter`, called in `after_create do` in a
+`class_methods do` method). Testbed 390.
+
+**Resolve only**; no extraction change. Measured with DEC-391 and DEC-392
+(their entry has the table): mastodon's `RateLimitable#rate_limiter` leaves
+the candidates; no rails `--refs` site moved by it.
+
+## DEC-391 — A call in a block trekr cannot place is never ruled out as "no such method"
+
+**Decided.** In `--refs` (and so `--dead`), a call on `self` that the
+written scope does not answer is `possible` — "the call is in a block whose
+`self` the method it is handed to may change" — instead of excluded
+`no_such_method`, when it sits in a block whose `self` trekr cannot vouch
+for (`resolve::self_unsettled`). A block is vouched for when every block
+around the call, out to the method body or class body, is handed to:
+
+- a method of Ruby's own (core or the stdlib) that is not one of the ways
+  to change `self` — `tap`, `each`, `map`, `loop`, `Dir.chdir` — found
+  through the call's receiver, or, for an untyped receiver, a name Ruby
+  defines (`items.each`);
+- a concern's `included`/`prepended`, read as the includer's body;
+
+or when a rule already places it: DEC-342/390's callbacks, DEC-260's
+macros that make a method of it. Everything else — a gem's DSL
+(`draw do`, `scope … Proc.new { }`, `default_scope { }`), the checkout's
+own macro, `instance_eval`, `Class.new { }`, `define_method` — may run it on
+another object, and nothing trekr reads says whether it does. `--def` is
+unchanged; a different-owner exclusion is unchanged, since the written
+scope answering the name is evidence the block keeps it.
+
+**Why.** The 0.8.3 report's safety net: an excluded call makes a live
+method look deletable, and excluding it on a guess about `self` is the
+dangerous direction. Testbed 391.
+
+**The cost, named.** trekr does not read whether a checkout macro yields or
+`class_exec`s its block, so testbed 260's two calls in such blocks
+(`configure do`, `later do`), which were ruled out correctly, are now
+`possible`. Reading it is a per-method fact ("runs its block as it stands")
+that would need a stored column; not done here.
+
+**Measured** with DEC-390 and DEC-392 — see DEC-392. rails' 40 `--refs`
+queries: 90 sites excluded → possible by this rule and none in the other
+direction, 46 of them `resources` in a routes `draw do` (live:
+`Mapper#instance_exec`s it), the rest `where` in `scope`/`default_scope`
+procs and statement-cache blocks (live), and `validate`/`execute` in
+`Class.new(…) do` bodies.
+
+## DEC-392 — A reader returns what its one expression makes or holds
+
+**Decided.** A method with no parameters and no `sig`, whose body is one
+expression, returns:
+
+- `X.new(…)` — an `X`;
+- `@x ||= …` or `@x`, and an `attr_reader :x` — an `X` when every write of
+  `@x` in the file, in the same class and on the same side, is `X.new(…)`
+  (`@x = X.new`, `@x ||= X.new`). A `nil` write is the variable not yet set
+  and is skipped. Writes that disagree, a write of anything else, or an
+  `attr_writer`/`attr_accessor` or `def x=` that lets any caller set it,
+  leave it untyped.
+
+It is recorded at extraction as the method's return
+(`Def::sig_returns`, as DEC-133 does for a custom `new`), so it reaches
+every rung that reads one: `chain` (`url_builder.verify_uri`), `sig`
+(`b = url_builder`), a `delegate … to:` target (DEC-166) and `chain:name`.
+On `self`, a subclass that overrides the reader returning something else
+(or nothing trekr knows) leaves the step untyped
+(`resolve::overridden_apart`); a subclass of the returned class is fine.
+
+`@x ||= X.new` is now an assignment the ivar rung reads, as `x ||= X.new`
+already was. `Class.new(Base)`, `Module.new` and `Struct.new` make a class
+rather than an instance of `Class`, so they type nothing — they had typed
+a local as a `Class` instance and ruled out the class methods it was sent.
+
+**Why.** The 0.8.3 report: `url_builder.signup_verify_uri(…)` with
+`def url_builder; @url_builder ||= Oauth::UrlBuilder.new; end` was
+`possible`, receiver untyped; the same for `attr_reader`s set in
+`initialize` and zero-argument service accessors. The ivar itself was
+typed when read directly; the reader was the gap. Testbed 392.
+
+**Bounds.** File-local, as the ivar rung is: a write in another file of
+the class (a reopening, a subclass's `initialize`) is not seen. Only
+`X.new`: `@x ||= X.build(…)` needs the callee's return, a resolve-time
+question; not done.
+
+**Store.** An extraction change: store version 53 → 54 on this branch
+(the lead assigns the number at merge); every store reindexes once.
+
+**Measured** (DEC-390–392 together), against main 5b712fb, each build on
+stores it indexed itself:
+
+| | main | this |
+| --- | ---: | ---: |
+| rails 40 `--refs`: excluded → possible, block `self` (DEC-391) | | 90 |
+| … excluded → possible, `Class.new` local no longer a `Class` | | 89 |
+| … possible → excluded, different owner (typed reader) | | 38 |
+| … possible → confirmed | | 31 |
+| … confirmed → possible (`chain:name` vote now disagrees) | | 6 |
+| … excluded → possible, `chain:name` guess | | 3 |
+| `--dead` rails 5 libs, unreferenced (candidates) | 553 (3,146) | 542 (3,124) |
+| `--dead` discourse `app lib`, unreferenced (candidates) | 526 (5,545) | 524 (5,545) |
+| `--dead` mastodon `app lib`, unreferenced (candidates) | 171 (3,544) | 170 (3,548) |
+| gold, confidently `wrong`, every set | | unchanged |
+| widget_shop trace (3,152), correct | 61 | 67 |
+| discourse gold (900), correct | 559 | 561 |
+| gem gold sets (4 × 900) | | correct +3, residue → right owner +9, one residue → `ambiguous-wrong` (`chain:name`) |
+
+Spot-checked, every newly confirmed rails site (31: `mail.parts.first`,
+`email.parts.size`, `content.attachments.first`, `@case_insensitive_cache
+.fetch`) and the different-owner exclusions sampled
+(`scanner.string.inspect` is String's, `context.find` is
+`LookupContext#find`, `initializers.find` the collection's): each right.
+The six confirmed → possible were `chain:name` guesses of `Array` for
+`children`, `to_a` and `errors` — `children` is Nokogiri's, a `NodeSet` —
+which a reader somewhere returning another class now disputes. mastodon's `Trends::Base#request_review`
+became `unreferenced`: each `Trends.links` reader now types its subclass,
+whose override answers, and the base's raises `NotImplementedError`.

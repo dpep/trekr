@@ -1,0 +1,14 @@
+# A reader whose whole body makes or holds one class — `Builder.new`,
+# `@x ||= Builder.new`, `@x` or an `attr_reader` whose every write here is
+# `X.new` — returns that class, so a call on what it returns is typed. They
+# were untyped, and every call on them `possible`. Not typed: a variable
+# writes disagree on, one an `attr_accessor` lets anyone set, and a reader a
+# subclass overrides to return something else. A `nil` write is the variable
+# not yet set. A memo's variable read directly is typed by its `||=` too;
+# `Class.new(Base)` makes a class, not an instance of `Class`.
+refs Builder#verify_uri confirmed=2 possible=1 excluded=0
+refs Ledger#store confirmed=1 possible=3 excluded=1
+def app.rb:22:13 status=resolved owner=Builder via=chain
+def app.rb:34:12 status=resolved owner=Ledger via=chain
+def app.rb:30:13 status=residue
+def app.rb:46:12 status=resolved owner=Builder via=local:new

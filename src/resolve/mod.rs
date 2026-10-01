@@ -1414,8 +1414,11 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
                     rivals: Vec::new(),
                 });
             }
-            let fqn = tree.scope_fqn(&call.nesting)?;
-            let singleton = call.singleton && made_side(tree, facts, call).unwrap_or(true);
+            let (fqn, singleton) = match made_side(tree, facts, call) {
+                Some(Made::Side(side)) if call.singleton => (tree.scope_fqn(&call.nesting)?, side),
+                Some(Made::IncludersInstance) => (tree.scope_fqn(&call.nesting[1..])?, false),
+                _ => (tree.scope_fqn(&call.nesting)?, call.singleton),
+            };
             tree.is_known(&fqn).then_some(Receiver {
                 fqn,
                 singleton,
@@ -1507,12 +1510,21 @@ pub(crate) fn on_load_receiver(tree: &Tree, facts: &Facts, call: &Call) -> Optio
     })
 }
 
+/// Where a call on `self` in a macro's block runs, when not where it is written.
+enum Made {
+    /// The written scope's class side (`true`) or its instances.
+    Side(bool),
+    /// An instance of whatever includes the concern whose `ClassMethods`
+    /// the block is written in (DEC-390).
+    IncludersInstance,
+}
+
 /// The side a call on the class runs on when it is written in a block a
 /// class-level macro makes a method of (DEC-260): `test "x" do … end`, where
 /// `test` hands its `&block` to `define_method`, runs on an instance. A block
 /// in between handed to anything but Ruby's ways of changing `self` is taken
 /// to yield to it, as a block in a class body is read everywhere else.
-fn made_side(tree: &Tree, facts: &Facts, call: &Call) -> Option<bool> {
+fn made_side(tree: &Tree, facts: &Facts, call: &Call) -> Option<Made> {
     let mut current = call;
     // Each step goes to an enclosing block, which is earlier in the file.
     for _ in 0..facts.calls.len() {
@@ -1528,11 +1540,18 @@ fn made_side(tree: &Tree, facts: &Facts, call: &Call) -> Option<bool> {
             RecvShape::Implicit | RecvShape::SelfRecv
                 if owner.singleton && runs_its_block_on_an_instance(&owner.name) =>
             {
-                return Some(false);
+                return Some(Made::Side(false));
+            }
+            // A concern's class method runs on its includers' class, so a
+            // callback it declares runs on their instances.
+            RecvShape::Implicit | RecvShape::SelfRecv
+                if in_class_methods(owner) && runs_its_block_on_an_instance(&owner.name) =>
+            {
+                return Some(Made::IncludersInstance);
             }
             RecvShape::Implicit | RecvShape::SelfRecv if owner.singleton => {
                 if let Some(side) = macro_side(tree, owner) {
-                    return Some(side);
+                    return Some(Made::Side(side));
                 }
             }
             RecvShape::Implicit | RecvShape::SelfRecv => return None,
@@ -1541,6 +1560,70 @@ fn made_side(tree: &Tree, facts: &Facts, call: &Call) -> Option<bool> {
         current = owner;
     }
     None
+}
+
+/// Is `self` for a call on it unsettled by the blocks around it? A block
+/// handed to a method that is not Ruby's own may be run on another object —
+/// a DSL's `instance_exec` — and no body trekr reads says whether it is
+/// (DEC-391). A block whose `self` a rule already places is settled: a Rails
+/// callback's, a macro's that makes a method of it, a concern's `included`.
+pub(super) fn self_unsettled(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> bool {
+    if call.block_owner.is_none() || made_side(tree, facts, call).is_some() {
+        return false;
+    }
+    let mut current = call;
+    // Each step goes to an enclosing block, which is earlier in the file.
+    for _ in 0..facts.calls.len() {
+        let Some(at) = current.block_owner else {
+            return false;
+        };
+        let Some(owner) = facts
+            .calls
+            .iter()
+            .find(|c| c.pos == at && c.recv != RecvShape::Symbol)
+        else {
+            return true;
+        };
+        if !keeps_self(tree, facts, owner, path) {
+            return true;
+        }
+        current = owner;
+    }
+    true
+}
+
+/// Does the method a block is handed to run it as it stands? Ruby's own
+/// methods do, short of the ones that exist to change `self`, and so does a
+/// concern's `included`, which trekr reads as the includer's class body.
+fn keeps_self(tree: &Tree, facts: &Facts, owner: &Call, path: &str) -> bool {
+    if evaluates_its_block(owner)
+        || matches!(
+            owner.name.as_str(),
+            "define_method" | "define_singleton_method"
+        )
+    {
+        return false;
+    }
+    let on_self = matches!(owner.recv, RecvShape::Implicit | RecvShape::SelfRecv);
+    if on_self && owner.singleton && matches!(owner.name.as_str(), "included" | "prepended") {
+        return true;
+    }
+    let rubys =
+        |site: &crate::tree::Site| crate::tree::is_core(&site.path) || tree.in_stdlib(&site.path);
+    match receiver_of(tree, facts, owner, path) {
+        Some(receiver) => lookup_on(tree, owner, &receiver).is_some_and(|found| rubys(&found.site)),
+        // An untyped value's method: an iterator, when Ruby has one by the name.
+        None => tree
+            .named(&owner.name)
+            .iter()
+            .any(|found| rubys(&found.site)),
+    }
+}
+
+/// A call in a method of a concern's `ClassMethods` (or `class_methods do`),
+/// the extractor's `instance_side` rule: in its body `self` is the module.
+fn in_class_methods(call: &Call) -> bool {
+    !call.singleton && call.nesting.len() > 1 && call.nesting[0] == "ClassMethods"
 }
 
 /// A class-level Rails macro that `instance_exec`s its block on the
@@ -1863,13 +1946,40 @@ fn returned_by(
         Some(returns) => (method.clone(), returns.to_string()),
         None => tree.declared_returns(&method, previous.argc, previous.block)?,
     };
+    let fqn = tree.returned_class(&declarer, &returns)?;
+    // `self` may be a subclass, whose own reader is the one that runs.
+    if receiver.via == "self" && overridden_apart(tree, &receiver, &method, &fqn, previous) {
+        return None;
+    }
     Some(Receiver {
-        fqn: tree.returned_class(&declarer, &returns)?,
+        fqn,
         singleton: false,
         via: "chain",
         rivals: Vec::new(),
         bound: true,
         ..receiver
+    })
+}
+
+/// Does a class below the receiver override the method a chain steps
+/// through, returning something that is not the method's class or below
+/// it — or saying nothing? Then the step's type is the base's, not
+/// necessarily the object's (DEC-392).
+fn overridden_apart(
+    tree: &Tree,
+    receiver: &Receiver,
+    method: &crate::tree::MethodDef,
+    returned: &str,
+    previous: &Call,
+) -> bool {
+    tree.named(&previous.name).iter().any(|other| {
+        other.singleton == method.singleton
+            && other.owner != method.owner
+            && tree.inherits(&other.owner, &receiver.fqn)
+            && other
+                .returns_for(previous.argc, previous.block)
+                .and_then(|returns| tree.returned_class(other, returns))
+                .is_none_or(|class| class != returned && !tree.inherits(&class, returned))
     })
 }
 

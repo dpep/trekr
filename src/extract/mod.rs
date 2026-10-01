@@ -254,6 +254,13 @@ struct Extractor<'a> {
     /// The scope whose instance an `if:`/`unless:` lambda we are in runs
     /// on, innermost last: Rails `instance_exec`s it (DEC-342).
     instance_lambdas: Vec<Vec<String>>,
+    /// Each `def` whose whole body reads an instance variable, by where it
+    /// is named: typed by that variable's writes once the file is read
+    /// (DEC-392).
+    readers: Vec<(Pos, String)>,
+    /// Where an instance variable is written `nil`, which says nothing of
+    /// what it holds otherwise.
+    nil_writes: std::collections::HashSet<Pos>,
     /// Where each `with_options` block of a class body opens (DEC-340).
     merging: std::collections::HashSet<usize>,
     /// Constants this file assigns a string of code, or a list whose first
@@ -474,15 +481,78 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         pending_shapes: Vec::new(),
         in_defined: 0,
         instance_lambdas: Vec::new(),
+        readers: Vec::new(),
+        nil_writes: std::collections::HashSet::new(),
         merging: std::collections::HashSet::new(),
         code_constants: HashMap::new(),
     };
     ex.visit(&parsed.node());
     ex.shape_pending();
+    ex.type_readers();
     ex.facts
 }
 
 impl<'a> Extractor<'a> {
+    /// A reader returns what its instance variable holds: the class every
+    /// write of it in this file makes with `.new`, on the reader's side of
+    /// its class (DEC-392). A write of anything else, or a writer method
+    /// that lets any caller set it, leaves it untyped; `nil` is the
+    /// variable not yet set, and says nothing.
+    fn type_readers(&mut self) {
+        let attrs =
+            self.facts.defs.iter().filter(|def| {
+                def.kind == Kind::Method && def.via.as_deref() == Some("attr_reader")
+            });
+        let readers: Vec<(Pos, String)> = attrs
+            .map(|def| (def.pos, format!("@{}", def.name)))
+            .chain(std::mem::take(&mut self.readers))
+            .collect();
+        for (pos, ivar) in readers {
+            let Some(reader) = self
+                .facts
+                .defs
+                .iter()
+                .find(|def| def.pos == pos && def.kind == Kind::Method)
+            else {
+                continue;
+            };
+            let same_side = |nesting: &Vec<String>, singleton: bool| {
+                *nesting == reader.nesting && singleton == reader.singleton
+            };
+            let writer = format!("{}=", &ivar[1..]);
+            if self
+                .facts
+                .defs
+                .iter()
+                .any(|def| def.name == writer && same_side(&def.nesting, def.singleton))
+            {
+                continue;
+            }
+            let mut made = self
+                .facts
+                .assigns
+                .iter()
+                .filter(|a| a.target == ivar && same_side(&a.nesting, a.singleton))
+                .filter(|a| !self.nil_writes.contains(&a.pos))
+                .map(|a| match &a.value {
+                    ValueShape::New(class) => Some(class),
+                    _ => None,
+                });
+            let Some(Some(first)) = made.next() else {
+                continue;
+            };
+            if !made.all(|class| class == Some(first)) {
+                continue;
+            }
+            let class = first.clone();
+            for def in &mut self.facts.defs {
+                if def.pos == pos && def.kind == Kind::Method && def.sig_returns.is_none() {
+                    def.sig_returns = Some(class.clone());
+                }
+            }
+        }
+    }
+
     /// A marker named by a method of its scope that returns a string gets
     /// that string's shape, now every method is seen (DEC-160).
     fn shape_pending(&mut self) {
@@ -1384,6 +1454,20 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         if name == "new" && def.sig_returns.is_none() && def.sig_overloads.is_empty() {
             def.sig_returns = node.body().and_then(|body| made_by_new(&body));
         }
+        // A reader says what it returns by what its one expression makes or
+        // holds (DEC-392).
+        if def.params.is_empty() && def.sig_returns.is_none() && def.sig_overloads.is_empty() {
+            match node
+                .body()
+                .as_ref()
+                .and_then(sole_expression)
+                .map(|body| read_by(&body))
+            {
+                Some(Some(Read::Made(class))) => def.sig_returns = Some(class),
+                Some(Some(Read::Ivar(ivar))) => self.readers.push((def.pos, ivar)),
+                _ => {}
+            }
+        }
         def.sig_params = std::mem::take(&mut self.pending_sig_params);
         // Visibility modifiers never reach `def self.x` — it is public whatever
         // the enclosing `private` says.
@@ -1832,6 +1916,21 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         node: &ruby_prism::InstanceVariableWriteNode<'pr>,
     ) {
         if let Ok(name) = String::from_utf8(node.name().as_slice().to_vec()) {
+            let offset = node.location().start_offset();
+            if node.value().as_nil_node().is_some() {
+                self.nil_writes.insert(self.pos(offset));
+            }
+            self.record_assign(name, &node.value(), offset);
+        }
+        self.visit(&node.value());
+    }
+
+    /// `@x ||= Foo.new`, a memo, is a write as `x ||= Foo.new` is.
+    fn visit_instance_variable_or_write_node(
+        &mut self,
+        node: &ruby_prism::InstanceVariableOrWriteNode<'pr>,
+    ) {
+        if let Ok(name) = String::from_utf8(node.name().as_slice().to_vec()) {
             self.record_assign(name, &node.value(), node.location().start_offset());
         }
         self.visit(&node.value());
@@ -1868,6 +1967,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                         target: target.clone(),
                         value,
                         nesting: self.nesting.clone(),
+                        singleton: self.self_is_class(),
                         pos,
                     });
                 }
@@ -4603,6 +4703,7 @@ impl<'pr> Extractor<'_> {
             target,
             value: value_shape(value),
             nesting: self.nesting.clone(),
+            singleton: self.self_is_class(),
             pos,
         });
     }
@@ -5609,6 +5710,39 @@ fn made_by_new(body: &Node<'_>) -> Option<String> {
     (!made.is_empty()).then(|| made.join("|"))
 }
 
+/// What a reader's body returns: an instance it makes, or the variable it
+/// reads — bare, or memoized with `||=` (DEC-392).
+enum Read {
+    Made(String),
+    Ivar(String),
+}
+
+fn read_by(body: &Node<'_>) -> Option<Read> {
+    if let Some(ivar) = body.as_instance_variable_read_node() {
+        return String::from_utf8(ivar.name().as_slice().to_vec())
+            .ok()
+            .map(Read::Ivar);
+    }
+    if let Some(memo) = body.as_instance_variable_or_write_node() {
+        return String::from_utf8(memo.name().as_slice().to_vec())
+            .ok()
+            .map(Read::Ivar);
+    }
+    match value_shape(body) {
+        ValueShape::New(class) => Some(Read::Made(class)),
+        _ => None,
+    }
+}
+
+/// A body of one expression, as written: not one a `rescue` or `ensure`
+/// wraps.
+fn sole_expression<'pr>(body: &Node<'pr>) -> Option<Node<'pr>> {
+    let statements = body.as_statements_node()?;
+    let mut all = statements.body().iter();
+    let only = all.next()?;
+    all.next().is_none().then_some(only)
+}
+
 /// `super` or `Other.new(…)`, as `made_by_new` names it.
 fn made_kind(value: &Node<'_>) -> Option<String> {
     if let Some(ret) = value.as_return_node() {
@@ -5745,6 +5879,13 @@ fn value_shape(node: &Node<'_>) -> ValueShape {
                 return value_shape(&receiver);
             }
             if let Some(recv) = const_name(&receiver) {
+                // `Class.new(Base) { … }` makes a class, not an instance of
+                // `Class` whose methods it answers (DEC-392).
+                if name == "new"
+                    && matches!(recv.trim_start_matches("::"), "Class" | "Module" | "Struct")
+                {
+                    return ValueShape::Other;
+                }
                 return if name == "new" {
                     ValueShape::New(recv)
                 } else {
