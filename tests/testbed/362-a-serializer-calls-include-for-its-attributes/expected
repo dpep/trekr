@@ -1,0 +1,10 @@
+# ActiveModel::Serializers 0.8 calls `include_<name>?` for each attribute
+# and association a serializer declares (`define_include_method`), by a name
+# it builds, so no call site writes it: 361 of discourse's 569 unreferenced,
+# clear rows were these. The declaration may be the class's, a superclass's,
+# or an includer's for a mixin. A class that is no serializer, and a
+# serializer method no attribute names, are still unreferenced.
+dead app/serializers/widget_serializer.rb WidgetSerializer#include_title?=convention-only WidgetSerializer#include_owner?=convention-only WidgetSerializer#include_ghost?=unreferenced
+dead app/serializers/gadget_serializer.rb GadgetSerializer#include_id?=convention-only
+dead app/serializers/concerns/stamped.rb Stamped#include_stamp?=convention-only
+dead app/serializers/report.rb Report#include_title?=unreferenced

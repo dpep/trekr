@@ -9862,3 +9862,41 @@ called only as `Module.method` (`app/lib/text_formatter.rb:30`,
 **Measured**, `--dead app`, against the build before it: mastodon
 `unreferenced` 162 → 160, and 3 more rows leave or move toward use
 (`Extractor`'s other module functions, a helper's). discourse unchanged.
+
+## DEC-362 — ActiveModel::Serializers calls `include_<attr>?` for the attributes a serializer declares
+
+**Decided.** ActiveModel::Serializers 0.8 and 0.9 build `include_#{name}?`
+for each attribute and association a serializer declares
+(`define_include_method`) and send it to decide whether the key is
+serialized; no call site writes the name. A method `include_<x>?` is
+`convention-only`, "named only by a symbol ActiveModel::Serializers calls it
+for, at FILE:LINE", with `convention: {by, path, line}` in JSON, when:
+
+- the tree's `ActiveModel::Serializer` has a class method
+  `define_include_method` — the indexed gem has the convention, and 0.10,
+  which takes `if:` instead (DEC-340 reads that), does not;
+- its owner inherits `ActiveModel::Serializer`, or is a module a class that
+  does mixes in (a mixin's hook runs on the serializer);
+- the symbol `:x` is written in that serializer's file or an ancestor's —
+  the mixin's own, a superclass's (`attributes :cooked` in
+  `PostSerializer`, `include_cooked?` in `SearchPostSerializer`).
+
+An `include_x?` no declaration names stays `unreferenced`: AMS never calls
+it. discourse has such rows — `ApiKeySerializer#include_user_id?`
+(its association is `:user`), `CurrentUserSerializer#include_can_localize_content?`
+(its attribute is `:can_localize_content?`, whose hook is `…??`).
+
+**Why.** 361 of discourse's 569 `unreferenced`, clear rows were this
+convention (the last lane's count); in a hand-checked random 70 of them, 39.
+
+**Not** the symbol's macro: any `:x` in those files counts, which is a
+symbol of the name, not proof that `attributes` took it. A file that writes
+`:x` for another reason gives a hook of that name a way in that AMS may not
+use. The 9 rows left `unreferenced` were each read and none is declared.
+
+**Measured**, `--dead app`, against the build before it: discourse
+`unreferenced` 781 → 314 (clear 569 → 210); 481 rows become
+`convention-only`, 359 of them from `unreferenced`, clear, 14 from
+`override`. Of the 39 sampled rows, 38 move and the 39th is
+`include_user_id?`, which on reading is dead. mastodon unchanged (no AMS
+0.8).

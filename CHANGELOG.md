@@ -19,6 +19,10 @@
   indexed.** The index reads the gems the open file names before any other
   gem, and Ruby's signatures just after: on a 100,000-file checkout the
   gem's answer arrives about half a second sooner.
+- **`--dead` knows ActiveModel::Serializers' `include_<attr>?` hooks.**
+  With AMS 0.8/0.9 indexed, a serializer's (or its mixin's) `include_x?`
+  whose `:x` the serializer or an ancestor declares is `convention-only`,
+  with `convention: {by, path, line}` in JSON, instead of `unreferenced`.
 - **`--dead` counts a `module_function`'s calls through its module.**
   `Tally.count(…)` runs `Tally#count`'s body, and the method was
   `unreferenced` when that was its only caller.

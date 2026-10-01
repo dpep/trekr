@@ -1,0 +1,4 @@
+# The `include_<name>?` convention is ActiveModel::Serializers 0.8's and
+# 0.9's: a version whose Serializer defines no `define_include_method` (0.10
+# takes `if:` instead) calls no such method, and the row stays unreferenced.
+dead app/serializers/widget_serializer.rb WidgetSerializer#include_title?=unreferenced

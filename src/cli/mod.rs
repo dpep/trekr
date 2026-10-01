@@ -5,6 +5,7 @@
 //! reserved, and the default action stays free for the query verbs the resolve
 //! layer will add.
 
+mod conventions;
 mod failure;
 pub(crate) mod position;
 mod profile;
@@ -3741,6 +3742,7 @@ fn dead_in(
     let views = views::Views::read(root);
     let routes = routes::Routes::read(root);
     let routed = routed_actions(&tree, &routes);
+    let mut symbols = conventions::Symbols::default();
     let mut parsed = Parsed::new();
     for Defined {
         file,
@@ -3814,8 +3816,15 @@ fn dead_in(
         let route = action
             .then(|| routed.get(&(owner.clone(), def.name.clone())))
             .flatten();
+        // A library that calls it by a name it builds (DEC-362).
+        let convention = matches!(tier, "unreferenced" | "override")
+            .then(|| conventions::serializer_include(&tree, &owner, &def.name, &mut symbols))
+            .flatten()
+            .filter(|_| !def.singleton);
         let tier = match tier {
-            "unreferenced" | "override" if route.is_some() => "convention-only",
+            "unreferenced" | "override" if route.is_some() || convention.is_some() => {
+                "convention-only"
+            }
             tier => tier,
         };
         // The one written call a single caller has: whether it certainly
@@ -3898,6 +3907,13 @@ fn dead_in(
                 "no call names it, but it overrides {}, so a call of that may run it",
                 overrides.join(", ")
             ),
+            ("convention-only", _) if convention.is_some() => {
+                let (path, line) = convention.as_ref().expect("checked");
+                format!(
+                    "named only by a symbol ActiveModel::Serializers calls it for, at {}:{line}",
+                    shown(path)
+                )
+            }
             ("convention-only", _) => match (live.by_symbol, route) {
                 (0, Some((path, line))) => format!("named only by a route, at {path}:{line}"),
                 (n, Some((path, line))) => format!(
@@ -3945,6 +3961,10 @@ fn dead_in(
         }
         if let Some((path, line)) = route {
             row["route"] = serde_json::json!({ "path": path, "line": line });
+        }
+        if let Some((path, line)) = convention {
+            row["convention"] =
+                serde_json::json!({ "by": "ActiveModel::Serializers", "path": path, "line": line });
         }
         rows.push(row);
     }
