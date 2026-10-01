@@ -4611,7 +4611,14 @@ fn an_early_store_answers_until_its_index_removes_it() {
     let mut gone = beside.clone().into_os_string();
     gone.push(".gone");
     fs::rename(&beside, &gone).unwrap();
-    fs::remove_dir_all(&gone).unwrap();
+    // The server may still touch the WAL of the copy it has open, as the
+    // index's own removal allows for; by name, nothing reaches it now.
+    for _ in 0..3 {
+        if fs::remove_dir_all(&gone).is_ok() {
+            break;
+        }
+    }
+    assert!(!Path::new(&gone).exists());
     // And ends: its mark cleared, its process gone.
     rusqlite::Connection::open(&db)
         .unwrap()
