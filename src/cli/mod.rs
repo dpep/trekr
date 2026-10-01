@@ -3866,11 +3866,13 @@ fn dead_in(
         let route = action
             .then(|| routed.get(&(owner.clone(), def.name.clone())))
             .flatten();
-        // A library that calls it by a name it builds (DEC-362).
-        let convention = matches!(tier, "unreferenced" | "override")
-            .then(|| conventions::serializer_include(&tree, &owner, &def.name, &mut symbols))
-            .flatten()
-            .filter(|_| !def.singleton);
+        // A library that calls it by a name it builds (DEC-362, DEC-371).
+        let convention = (matches!(tier, "unreferenced" | "override") && !def.singleton)
+            .then(|| {
+                conventions::serializer_include(&tree, &owner, &def.name, &mut symbols)
+                    .or_else(|| conventions::thor_command(&tree, &owner, public))
+            })
+            .flatten();
         let tier = match tier {
             "unreferenced" | "override" if route.is_some() || convention.is_some() => {
                 "convention-only"
@@ -4048,11 +4050,7 @@ fn dead_in(
                 overrides.join(", ")
             ),
             ("convention-only", _) if convention.is_some() => {
-                let (path, line) = convention.as_ref().expect("checked");
-                format!(
-                    "named only by a symbol ActiveModel::Serializers calls it for, at {}:{line}",
-                    shown(path)
-                )
+                convention.as_ref().expect("checked").reason.clone()
             }
             ("convention-only", _) => match (live.by_symbol, route) {
                 (0, Some((path, line))) => format!("named only by a route, at {path}:{line}"),
@@ -4102,9 +4100,12 @@ fn dead_in(
         if let Some((path, line)) = route {
             row["route"] = serde_json::json!({ "path": path, "line": line });
         }
-        if let Some((path, line)) = convention {
-            row["convention"] =
-                serde_json::json!({ "by": "ActiveModel::Serializers", "path": path, "line": line });
+        if let Some(convention) = convention {
+            row["convention"] = serde_json::json!({ "by": convention.by });
+            if let Some((path, line)) = convention.at {
+                row["convention"]["path"] = path.into();
+                row["convention"]["line"] = line.into();
+            }
         }
         rows.push(row);
     }

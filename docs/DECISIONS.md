@@ -10125,3 +10125,27 @@ rows.
 `unreferenced`, clear 45 → 42; 20 rows carry the caveat (17 of them
 `PostRevisionSerializer`'s, whose method list `lib/post_revisor.rb`
 checks for a `#{field}_changes` to call). mastodon unchanged.
+
+## DEC-371 — Thor runs a command, and a generator's step, by its name
+
+**Decided.** A public instance method of a class inheriting `Thor` is a
+command Thor runs by its name (`desc "prune"`, then `bin/cli prune`); one
+of a class inheriting `Thor::Group` — every Rails generator — is a step
+Thor runs in turn. So is one of a module such a class mixes in (mastodon's
+CLI commands live in concerns `included` into its Thor classes). Such a
+method is `convention-only`, "a Thor command, which Thor runs by its name",
+with `convention: {by: "Thor"}` in JSON. The rule keys on the tree knowing
+the class reaches `Thor`, so an app with no Thor indexed claims nothing.
+A private method is no command and is unchanged.
+
+**Why.** Found on held-out data. The app-scope rules above were fitted to
+hand-checked rows of `--dead app`; checked against `--dead lib` instead,
+mastodon's 21 `unreferenced`, clear rows were 4 true, and 11 of the 17
+false ones were its CLI's commands and generators (`Mastodon::CLI::Accounts
+#prune`, `PostDeploymentMigrationGenerator#create_post_deployment_migration`);
+discourse's random 25 of 91 held one generator.
+
+**Measured**, `--dead lib`, against the build before it: mastodon 12 rows
+become `convention-only`, `unreferenced`, clear 16 → 7; discourse 1. `--dead
+app` unchanged on both. The mastodon `lib` numbers after this rule are no
+longer held out.

@@ -19,6 +19,9 @@
   indexed.** The index reads the gems the open file names before any other
   gem, and Ruby's signatures just after: on a 100,000-file checkout the
   gem's answer arrives about half a second sooner.
+- **`--dead` knows Thor runs a command by its name.** A public method of a
+  `Thor` or `Thor::Group` subclass (every Rails generator), or of a module
+  one includes, is `convention-only` with `convention: {by: "Thor"}`.
 - **`--dead` counts `Mailer.action(…)` as a call of the mailer's action.**
   Action Mailer runs the action through its class's `method_missing`, so
   such actions were `unreferenced`.

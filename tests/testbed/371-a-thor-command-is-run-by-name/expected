@@ -1,0 +1,10 @@
+# Thor runs a public method of its subclass as the command of that name
+# (`desc "prune"`, then `bin/cli prune`), and a Thor::Group — every Rails
+# generator — runs each public method in turn; no call site writes either.
+# Ten of mastodon's 21 unreferenced, clear rows in lib/ were its CLI's
+# commands, and a module a CLI class includes holds them too. A private
+# method is no command, and nor is a plain class's.
+dead lib/cli/widgets.rb Cli::Widgets#prune=convention-only Cli::Widgets#lonely=unreferenced
+dead lib/cli/setup_generator.rb Cli::SetupGenerator#create_files=convention-only
+dead lib/cli/plain.rb Cli::Plain#prune=unreferenced
+dead lib/cli/pruning.rb Cli::Pruning#sweep=convention-only

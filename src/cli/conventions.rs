@@ -32,19 +32,27 @@ impl Symbols {
     }
 }
 
+/// A library that calls a method by a name no call site writes: who, why,
+/// and the line that names it, when one does.
+pub(super) struct Convention {
+    pub(super) by: &'static str,
+    pub(super) reason: String,
+    pub(super) at: Option<(String, u32)>,
+}
+
 const SERIALIZER: &str = "ActiveModel::Serializer";
 
 /// Where `attributes :x` (or `has_one :x`, …) names the attribute that
 /// ActiveModel::Serializers 0.8/0.9 calls `include_x?` for, when `owner` is a
-/// serializer or a module one mixes in: `(path, line)` of the symbol, in the
-/// serializer's own file or an ancestor's. None when the method is no such
-/// hook, or the indexed gem builds no `include_` methods (0.10 does not).
+/// serializer or a module one mixes in: the symbol, in the serializer's own
+/// file or an ancestor's. None when the method is no such hook, or the
+/// indexed gem builds no `include_` methods (0.10 does not).
 pub(super) fn serializer_include(
     tree: &Tree,
     owner: &str,
     name: &str,
     symbols: &mut Symbols,
-) -> Option<(String, u32)> {
+) -> Option<Convention> {
     let attribute = name.strip_prefix("include_")?.strip_suffix('?')?;
     tree.lookup(SERIALIZER, true, "define_include_method")?;
     // A serializer, or a mixin whose includers are: the hook is called on
@@ -66,7 +74,14 @@ pub(super) fn serializer_include(
             for site in tree.sites(ancestor) {
                 let path = tree.site_path(&site.path);
                 if let Some(line) = symbols.line_of(&path, attribute) {
-                    return Some((site.path, line));
+                    return Some(Convention {
+                        by: "ActiveModel::Serializers",
+                        reason: format!(
+                            "named only by a symbol ActiveModel::Serializers calls it for, at {}:{line}",
+                            site.path
+                        ),
+                        at: Some((site.path, line)),
+                    });
                 }
             }
         }
@@ -94,4 +109,31 @@ pub(super) fn assigned_writer(tree: &Tree, owner: &str, name: &str, public: bool
                 .includers_of(owner)
                 .iter()
                 .any(|class| tree.inherits(class, ASSIGNMENT)))
+}
+
+/// Whether Thor runs this public method by its name: a `Thor` subclass's
+/// public methods are its commands (`desc "prune"`, then `cli prune`), and
+/// a `Thor::Group`'s — every Rails generator's — are run in turn, as are a
+/// module's that such a class mixes in (DEC-371).
+pub(super) fn thor_command(tree: &Tree, owner: &str, public: bool) -> Option<Convention> {
+    if !public {
+        return None;
+    }
+    let mut classes = vec![owner.to_string()];
+    if !tree.inherits(owner, "Thor") && !tree.inherits(owner, "Thor::Group") {
+        classes = tree.includers_of(owner);
+    }
+    let group = classes.iter().any(|c| tree.inherits(c, "Thor::Group"));
+    if !group && !classes.iter().any(|c| tree.inherits(c, "Thor")) {
+        return None;
+    }
+    Some(Convention {
+        by: "Thor",
+        reason: if group {
+            "a Thor::Group's public method, which Thor runs in turn".to_string()
+        } else {
+            "a Thor command, which Thor runs by its name".to_string()
+        },
+        at: None,
+    })
 }
