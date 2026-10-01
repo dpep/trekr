@@ -89,7 +89,7 @@ brew unlink trekr   # …verify…   then:   brew link trekr
   ([BASELINE.md](docs/BASELINE.md)) — widget_shop's, and a gem's own suite via
   `make gold-gem GEM=…`; the other engines are scored by `script/compare.py`
   against the same sites over LSP ([COMPARISON.md](docs/COMPARISON.md)), which
-  is an append-only series — add a dated row, never edit one.
+  shows the latest run only — a re-run replaces the tables; git keeps the old.
 
 ## Landing changes
 

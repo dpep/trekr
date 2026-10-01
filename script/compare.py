@@ -30,7 +30,7 @@ it can answer and hiding that in the first-query number would flatter it as
 badly as counting it as latency would condemn it.
 """
 
-import argparse, collections, json, os, random, re, select, shutil, statistics, subprocess, sys, time
+import argparse, collections, json, os, random, re, select, shutil, statistics, subprocess, sys, threading, time
 from urllib.parse import quote, unquote, urlparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -61,10 +61,12 @@ def gem_env(home):
 # Each engine is a command plus what it needs to be told. `setup_is_slow` marks
 # the ones whose `initialize` does real work (bundle composition), so the report
 # says so rather than leaving a 90-second number unexplained.
+TREKR = os.path.expanduser(os.environ.get("TREKR_BIN", os.path.join(ROOT, "target/release/trekr")))
+
 ENGINES = {
     "trekr": {
-        "version": lambda: run_version([os.path.join(ROOT, "target/release/trekr"), "--version"]),
-        "argv": [os.path.join(ROOT, "target/release/trekr"), "--lsp"],
+        "version": lambda: run_version([TREKR, "--version"]),
+        "argv": [TREKR, "--lsp"],
         "env": lambda: dict(os.environ),
         "setup_is_slow": False,
     },
@@ -120,6 +122,8 @@ def ruby_env():
     """
     env = dict(os.environ)
     env.pop("BUNDLE_GEMFILE", None)
+    # Bundler otherwise rewrites a lockfile it would resolve differently.
+    env["BUNDLE_FROZEN"] = "true"
     env["PATH"] = f"{RUBY}:{env['PATH']}"
     return env
 
@@ -152,6 +156,37 @@ class Lsp:
         )
         self.id = 0
         self.timeout = timeout
+        self.settled_on = None
+        self.peak_kb = 0
+        self.sampling = True
+        threading.Thread(target=self._sample_rss, daemon=True).start()
+
+    def _sample_rss(self):
+        """Peak resident memory of the server *and its children*, sampled.
+
+        trekr indexes in a child process and ruby-lsp may shell out to bundler;
+        reading one pid once at the end missed both.
+        """
+        while self.sampling and self.proc.poll() is None:
+            try:
+                rows = subprocess.run(["ps", "-A", "-o", "pid=,ppid=,rss="],
+                                      capture_output=True, text=True).stdout.split("\n")
+            except OSError:
+                break
+            children, rss = collections.defaultdict(list), {}
+            for row in rows:
+                parts = row.split()
+                if len(parts) == 3:
+                    pid, ppid, kb = map(int, parts)
+                    children[ppid].append(pid)
+                    rss[pid] = kb
+            total, todo = 0, [self.proc.pid]
+            while todo:
+                pid = todo.pop()
+                total += rss.get(pid, 0)
+                todo.extend(children[pid])
+            self.peak_kb = max(self.peak_kb, total)
+            time.sleep(0.2)
 
     def send(self, method, params, notify=False):
         message = {"jsonrpc": "2.0", "method": method, "params": params}
@@ -231,22 +266,21 @@ class Lsp:
                 self.answer(message)
             elif message.get("method") == "$/progress":
                 if message.get("params", {}).get("value", {}).get("kind") == "end":
+                    self.settled_on = "progress"
                     break
+        else:
+            self.settled_on = "budget"
+        self.settled_on = self.settled_on or "silence"
         # A server that says nothing was never indexing — it was waiting. Only
-        # the silence *after* it spoke is time it spent preparing; reporting
-        # the quiet timeout as an engine's index time would invent a cost.
-        return round(time.monotonic() - started, 1) if heard else 0.0
+        # time up to its last message is time it spent preparing; counting the
+        # quiet window that confirmed it was done would invent a cost.
+        return round(last - started, 1) if heard else 0.0
 
     def rss_mb(self):
-        try:
-            out = subprocess.run(
-                ["ps", "-o", "rss=", "-p", str(self.proc.pid)], capture_output=True, text=True
-            ).stdout.strip()
-            return round(int(out) / 1024) if out else None
-        except (OSError, ValueError):
-            return None
+        return round(self.peak_kb / 1024) if self.peak_kb else None
 
     def close(self):
+        self.sampling = False
         try:
             self.request("shutdown", {})
             self.send("exit", {}, notify=True)
@@ -283,12 +317,31 @@ def locations(result):
     return out
 
 
+# A file inside one gem version (the last `/gems/<name-version>/`), or inside
+# one Ruby ABI's stdlib (`/lib/ruby/3.4.0/`), named apart from where it lives.
+SHARED_FILE = [re.compile(r".*/gems/([^/]+)/(.+)$"), re.compile(r".*/lib/ruby/(\d+\.\d+\.\d+)/(.+)$")]
+
+
+def same_file(a, b):
+    """One file, or the same gem or stdlib file installed in two places.
+
+    ruby-lsp runs from an isolated gem home built for another patch Ruby, so
+    its answer for `belongs_to` names a copy of the file the traced app
+    loaded. Comparing real paths alone scored that copy as wrong.
+    """
+    a, b = os.path.realpath(a), os.path.realpath(b)
+    if a == b:
+        return True
+    for pattern in SHARED_FILE:
+        ma, mb = pattern.match(a), pattern.match(b)
+        if ma and mb:
+            return ma.groups() == mb.groups()
+    return False
+
+
 def hits(place, site):
     path, line = place
-    try:
-        if os.path.realpath(path) != os.path.realpath(site["def_file"]):
-            return False
-    except OSError:
+    if not same_file(path, site["def_file"]):
         return False
     # Same tolerance the gold scorer uses: Ruby reports the `def` keyword's line
     # for some macro-defined methods, one off from where the definition starts.
@@ -298,7 +351,7 @@ def hits(place, site):
 LANGUAGE = "ruby"
 
 
-def score(engine, sites, root, timeout, warmup, args_budget=900, args_quiet=25):
+def score(engine, sites, root, timeout, warmup, args_budget=900, args_quiet=25, dump=None):
     spec = ENGINES[engine]
     started = time.monotonic()
     client = Lsp(spec["argv"], spec["env"](), root, timeout)
@@ -310,6 +363,9 @@ def score(engine, sites, root, timeout, warmup, args_budget=900, args_quiet=25):
             "rootPath": root,
             "workspaceFolders": [{"uri": uri(root), "name": os.path.basename(root)}],
             "capabilities": {
+                # Without it trekr reports no `$/progress`, so a cold index
+                # cannot be waited for and is scored mid-index.
+                "window": {"workDoneProgress": True},
                 "textDocument": {
                     "definition": {"linkSupport": True},
                     "synchronization": {"didSave": False},
@@ -380,6 +436,8 @@ def score(engine, sites, root, timeout, warmup, args_budget=900, args_quiet=25):
         else:
             latencies.append(elapsed)
         places = locations(answer)
+        if dump:
+            dump.write(json.dumps({"engine": engine, "site": site, "places": places[:5]}) + "\n")
         if not places:
             verdicts["none"] += 1
         elif hits(places[0], site):
@@ -409,6 +467,7 @@ def score(engine, sites, root, timeout, warmup, args_budget=900, args_quiet=25):
         "cold_ms": round(cold, 1) if cold else None,
         "warm_median_ms": round(statistics.median(latencies), 2) if latencies else None,
         "rss_mb": rss,
+        "settled_on": client.settled_on,
     }
 
 
@@ -452,19 +511,17 @@ def load(gold, scope, sample, seed, root):
     return sites
 
 
-ROW = ("| {engine} | {version} | {date} | {corpus} | {scored} | {answered_pct} % | "
-       "{correct_pct} % | {found_pct} % | {wrong_pct} % | {setup} | {cold_ms} ms | "
-       "{warm} | {rss} |")
+ROW = "| {engine} {version} | {answered_pct} % | {correct_pct} % | {wrong_pct} % | {found_pct} % | {ready} | {warm} | {rss} |"
 
 
-def render(result, corpus):
+def render(result):
+    """One row in COMPARISON.md's column order. `ready` is setup + indexing."""
     if result.get("error"):
-        return f"| {result['engine']} | — | — | {corpus} | — | {result['error']} |"
-    setup = f"{result['setup_s']} s + {result['indexing_s']} s index"
-    warm = f"{result['warm_median_ms']} ms" if result["warm_median_ms"] else "—"
-    rss = f"{result['rss_mb']} MB" if result["rss_mb"] else "—"
-    fields = {**result, "corpus": corpus, "setup": setup, "warm": warm, "rss": rss}
-    return ROW.format(**fields)
+        return f"| {result['engine']} | {result['error']} |"
+    ready = f"{result['setup_s'] + result['indexing_s']:.2g} s"
+    warm = f"{result['warm_median_ms']:.2g} ms" if result["warm_median_ms"] else "—"
+    rss = f"{result['rss_mb']:,} MB" if result["rss_mb"] else "—"
+    return ROW.format(**{**result, "ready": ready, "warm": warm, "rss": rss})
 
 
 def main():
@@ -485,6 +542,7 @@ def main():
                         help="seconds of silence that count as finished indexing")
     parser.add_argument("--corpus", default=None, help="label for the corpus column")
     parser.add_argument("--out", default=None, help="append one JSON object per engine here")
+    parser.add_argument("--dump", default=None, help="append each site's answer here, to audit a verdict")
     args = parser.parse_args()
 
     engines = list(ENGINES) if args.all else (args.engine or ["trekr"])
@@ -495,8 +553,11 @@ def main():
     rows = []
     for engine in engines:
         print(f"  {engine} …")
+        dump = open(args.dump, "a") if args.dump else None
         result = score(engine, sites, args.root, args.timeout, not args.no_warmup,
-                       args.settle_budget, args.settle_quiet)
+                       args.settle_budget, args.settle_quiet, dump)
+        if dump:
+            dump.close()
         result["corpus"] = corpus
         result["seed"] = args.seed
         rows.append(result)
@@ -505,11 +566,11 @@ def main():
             with open(args.out, "a") as out:
                 out.write(json.dumps(result) + "\n")
 
-    print("\n| engine | version | date | corpus | sites | answered | correct@1 | found | wrong@1 |"
-          " setup | cold | warm median | RSS |")
-    print("| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
+    print(f"\n{corpus}, {len(sites)} sites, {time.strftime('%Y-%m-%d')}\n")
+    print("| engine | answered | correct@1 | wrong@1 | found | ready | warm | RSS |")
+    print("| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |")
     for result in rows:
-        print(render(result, corpus))
+        print(render(result))
 
 
 if __name__ == "__main__":

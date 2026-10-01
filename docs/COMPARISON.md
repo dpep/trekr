@@ -1,247 +1,121 @@
-# The comparison series
+# How trekr compares
 
-**Are we closing the gap on the other engines, or stalling?** Session 9's head-to-head could not answer that.
-It hand-picked 45 positions and adjudicated the disagreements by eye, which
-answered "who is better today" and could never be run again the same way.
+Each engine is asked `textDocument/definition` over LSP at call sites whose
+answer Ruby itself recorded: the TracePoint gold set
+([BASELINE.md](BASELINE.md)). `script/compare.py` produces every row. Latest
+run: **2026-09-30**.
 
-This file is the replacement: a **dated, append-only series**, one row per
-engine per run, produced by one command. Every engine is driven over the **LSP
-protocol** — the surface an agent actually uses — against the **TracePoint gold
-set**, so the instrument is the same for everyone and the next run is comparable
-to this one.
+**correct@1** means the first location returned is the file and line Ruby ran
+(±1). **wrong@1** means the engine answered and the first location is
+something else. **found** means the truth appears anywhere in the answer.
+**Ready** runs from launch to the end of indexing, either on a checkout the
+engine has never indexed (**cold**) or launched again (**restart**). **Warm**
+is the median latency of one request. **RSS** is peak memory, including child
+processes.
 
-```sh
-script/compare.py --engine trekr --engine ruby-lsp \
-  --root ~/code/lib/ruby/discourse --sample 500 --out /tmp/compare.ndjson
-```
+## discourse — 500 app-code sites, public
 
-Re-run it when ruby-lsp 0.27 ships, when Rubydex grows a call graph, or when
-trekr changes something that should move a column.
+| engine | answered | correct@1 | wrong@1 | found | ready, cold | ready, restart | warm | RSS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| trekr 0.8.2+main 24e3b72 | 96.0 % | **76.6 %** | 19.4 % | **82.4 %** | **8.6 s** | **0.01 s** | 10 ms | **380 MB** |
+| ruby-lsp 0.26.9 | 63.0 % | 51.4 % | **11.6 %** | 56.8 % | 18 s | 18 s | **1.2 ms** | 1,300 MB |
 
-**Each re-run also diffs Rubydex's conformance corpus against ours.** Their
-`ruby-behaviors` spec and their indexer/resolution tests keep growing, and every
-case they add that we have not lifted is a free regression test for behaviour
-somebody else has already thought about (MIT, with attribution — CLAUDE.md's
-lifting rules). Diff their test corpus against `tests/` and `docs/ruby-behaviors.md`
-as part of the run, and record what was taken.
+trekr is right half again as often (76.6 % vs 51.4 %) in under a third of the
+memory. Its index persists, so a restart costs nothing, while ruby-lsp
+re-indexes on every launch. ruby-lsp is wrong less often because it declines
+more: about 80 % of each engine's answers are right. Most of trekr's wrong@1
+(74 of 97 sites) is the first candidate of an answer trekr marks as unresolved
+(`residue`), and the wire has no way to say so. ruby-lsp is faster per request,
+because trekr currently spends most of each request checking whether its tree
+is stale.
 
-## What is scored, and what had to be given up to score it
+## widget_shop — 63 sites, private
 
-The other engines return locations with no status and no confidence: an answer they
-are sure of and a guess look identical on the wire. So the columns are the ones
-every engine can produce.
+| engine | answered | correct@1 | wrong@1 | found | ready, cold | ready, restart | warm | RSS |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| trekr 0.8.2+main 24e3b72 | **100 %** | **62 %** | 38 % | **62 %** | 3.5 s | **0.01 s** | 4.9 ms | 270 MB |
+| ruby-lsp 0.26.11 † | 78 % | 49 % | 29 % | 54 % | 20 s | 20 s | 0.32 ms | 560 MB |
+| ruby-lsp 0.27.0.beta5 (Rubydex) † | 56 % | 35 % | **21 %** | 38 % | 7.2 s | 7.2 s | 0.69 ms | 430 MB |
+| Sorbet 0.6.13439, as configured | 13 % | 0 % | 13 % | 0 % | 1.3 s | 1.3 s | **0.17 ms** | **150 MB** |
+| Sorbet 0.6.13439, `--typed=true` | 59 % | 19 % | 40 % | 19 % | **0.40 s** | 0.40 s | 0.48 ms | **150 MB** |
 
-| column | is |
-| ------ | -- |
-| `answered` | the engine returned at least one location |
-| `correct@1` | its **first** location is the file and line Ruby dispatched to |
-| `wrong@1` | it answered, and its first location is not that |
-| `found` | the truth is anywhere in the locations it returned |
+† Run on a worktree without `sorbet/` and with byte-identical app code. trekr
+scores the same there, except found is 65 %.
 
-**trekr is scored the same way, by its top location**, whether that came from a
-`resolved` answer or the first candidate of a `residue`. That deliberately
-throws away trekr's entire disclosure story — the thing the product is *for* —
-so that one number means one thing across four engines. The status breakdown
-lives in [BASELINE.md](BASELINE.md), and the two files answer different
-questions: this one asks who points at the right line, that one asks who knows
-when they don't.
+Over a third of these sites call Rails-generated methods. trekr answers with
+the macro (`belongs_to :supplier`), and the scorer wants the `define_method`
+inside Rails, so trekr's wrong@1 is high here by construction. The Rubydex-based
+beta answers less often than 0.26 and is also wrong less often. No file in this
+app has a `# typed:` sigil, so Sorbet as configured resolves no method calls.
 
-Read `correct@1` and `wrong@1` together. An engine that answers everything and
-is right half the time scores the same `correct@1` as one that answers half as
-often and is always right, and they are not the same tool.
+## Reading the numbers
 
-## Fairness notes, which matter more than the numbers
+* **Only the first location is scored.** trekr's `status`, `confidence` and
+  `kind` are discarded. A declaration answer, meaning the macro that defined a
+  method, counts as wrong@1. BASELINE.md scores trekr on its own terms.
+* **Ready ends at the engine's own `$/progress` end.** Sorbet reports no
+  progress, so for Sorbet it ends at its last message before 25 s of silence.
+  trekr's cold run starts from an empty store and indexes the app plus 300
+  gems. Before that finishes, it already answers from what it has read and
+  says those answers are partial, at 0.25–0.74 s on discourse (DEC-322). That
+  early window is not counted here. ruby-lsp's bundle was already composed in
+  `.ruby-lsp/`; a first-ever run that must install gems takes minutes.
+* **A gem or stdlib file counts as the same file in any install** of that
+  version, because ruby-lsp runs from its own gem home.
+* **ruby-lsp runs the version the project pins**: 0.26.9 on discourse. The 0.27
+  beta can't run there honestly, because `--beta` re-resolves all 300 gems with
+  pre-releases allowed, which moves the files the gold set points into.
+* **Sorbet runs in the project's own bundle**, frozen.
+* **The machine was busy**: Apple M2, 8 cores, load average 6–19. Each timing
+  is the median of 4 interleaved runs, and single runs varied by up to ±50 %.
+  Compare timings within a table. Accuracy was identical in every run.
 
-* **Setup is timed apart from serving.** ruby-lsp composes a bundle before it
-  can start — it writes a `.ruby-lsp/Gemfile` into the checkout and resolves it.
-  Hiding that in a first-query number would flatter it; counting it as latency
-  would condemn it. The `setup` column is `initialize` round-trip **+** the time
-  the server then spent indexing before it would answer. The **first ever** run
-  against a checkout pays much more than the number here: composing discourse's
-  bundle took **164 s** once, and 1.4 s on every run after.
-* **Every server is allowed to finish indexing.** ruby-lsp returns `initialize`
-  in a second or two and then indexes in the background; Sorbet does the same.
-  An early first draft of this harness asked immediately and recorded **0 %
-  answered for ruby-lsp** — the harness's fault, not the engine's, and exactly
-  the kind of artifact this project exists to catch before publishing.
-* **ruby-lsp runs the version the project pins.** Discourse's own Gemfile names
-  `ruby-lsp`, so the composed bundle runs **0.26.9** there and 0.26.11 where the
-  project pins nothing. The version column reports what the server said about
-  itself in `serverInfo`, not what is installed here.
-* **Sorbet is measured inside the project's own bundle**, because `srb` shells
-  out to `srb-rbi`, which materializes the whole Gemfile. An isolated gem home
-  cannot serve it.
-* **Sorbet gets two rows.** widget_shop carries `sorbet/rbi/` and a
-  `sorbet/config`, but **no file in it has a `# typed:` sigil**, so every file
-  is `typed: false`, where Sorbet does not resolve method calls at all. The
-  second row passes `--typed=true`, which raises the floor for every file
-  without editing one — "Sorbet if the app were annotated" beside "Sorbet as
-  this app configures it". Writing sigils in would have shifted every line by
-  one and invalidated the gold set.
-* **`correct@1` penalizes an answer that is arguably better.** Where Rails
-  generates a method, runtime truth is the `define_method` inside
-  `attribute_methods.rb`; trekr answers with `belongs_to :supplier` or the
-  schema column, which is what a reader wants (BASELINE, session 15). On
-  widget_shop that is 24 of 63 sites, and every one of them scores `wrong@1`
-  here. Sorbet pays the same tax for pointing at an RBI declaration.
-* **`correct@1` cannot see a declaration, and that costs trekr here.** Since
-  session 30 an answer says whether it points at the code or at the macro that
-  declared it, and the gold scorer reads that (BASELINE, DEC-034). This
-  comparison cannot: no peer emits such a field, so scoring on it would compare
-  trekr against itself. Every declaration answer therefore counts as `wrong@1`
-  in the table below, including the ones a reader would rather have. It is the
-  same tax Sorbet pays for pointing at an RBI.
-* **The warm median is one definition request per position across hundreds of
-  distinct files**, each preceded by a `didOpen`. It is not the same figure as
-  DEC-007's 0.2 ms, which repeated one position.
-* **There is no ruby-lsp 0.27 row on discourse, deliberately.** Discourse pins
-  `ruby-lsp` in its own Gemfile, so a composed bundle there runs 0.26.9 whatever
-  is installed alongside. Forcing the beta needs ruby-lsp's `--beta`, which
-  re-resolves the project's **entire** 300-gem bundle with pre-releases allowed
-  and installs the result into a shared gem home. That was started, watched, and
-  **stopped**: mutating a corpus's bundle to flatter a benchmark row is not a
-  trade worth making, and the beta already has a clean row on a corpus that pins
-  nothing. When 0.27 ships stable and a project can pin it honestly, the row
-  fills itself in.
+## Since the 2026-08-25 run
 
-## The series
+* ruby-lsp went from 34.4 % to 51.4 % correct. This came from the scorer, not
+  the engine. The old scorer compared real paths, so a correct answer into
+  ruby-lsp's own copy of a gem counted as wrong. Under the old rule, today's
+  answers score 33.0 %.
+* trekr went from 82.6 % to 76.6 % correct. Most of the drop comes from the
+  gold set, which was retraced under discourse's declared Ruby 3.4.10 and now
+  records `super` sites: the August build scores 77.8 % on today's sites.
+  Against that same build, 0.8.2 is 1.2 points less correct, 2.2 points more
+  wrong, and slower per request (10 ms vs 1.0 ms, measured in the same hour).
+* RSS used to be one pid read once. It now includes child processes: trekr's
+  index process, and the Rails app that ruby-lsp-rails boots.
+* Earlier rows, and session 9's hand-picked comparison, are in git history.
 
-| engine | version | date | corpus | sites | answered | correct@1 | found | wrong@1 | setup | cold | warm median | RSS |
-| --- | --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| trekr | 0.1.0 (session 27) | 2026-08-25 | discourse | 500 | 93.4 % | 79.4 % | 82.0 % | 14.0 % | 0.01 s | 0.3 ms | 0.56 ms | 227 MB |
-| trekr | **0.1.0 (session 28)** | 2026-08-25 | discourse | 500 | **96.6 %** | **82.6 %** | **85.2 %** | **14.0 %** | 0.01 s | 0.2 ms | 0.57 ms | **225 MB** |
-| ruby-lsp | 0.26.9 | 2026-08-25 | discourse | 500 | 65.0 % | 34.4 % | 34.8 % | 30.6 % | 1.4 s + 28.7 s index | 1.1 ms | 0.70 ms | 935 MB |
-| trekr | 0.1.0 (session 27) | 2026-08-25 | widget_shop-nosorbet | 63 | **98.4 %** | **58.7 %** | **61.9 %** | 39.7 % | 0.01 s | 0.2 ms | 0.51 ms | **97 MB** |
-| ruby-lsp | 0.26.11 | 2026-08-25 | widget_shop-nosorbet | 63 | 77.8 % | 20.6 % | 22.2 % | 57.1 % | 26.9 s + 15.5 s index | 0.5 ms | 0.21 ms | 414 MB |
-| ruby-lsp | **0.27.0.beta5** | 2026-08-25 | widget_shop-nosorbet | 63 | 55.6 % | 23.8 % | 23.8 % | **31.7 %** | 4.2 s + 12.9 s index | 0.3 ms | 0.73 ms | 306 MB |
-| trekr | 0.1.0 (session 27) | 2026-08-25 | widget_shop | 63 | **100.0 %** | **58.7 %** | 58.7 % | 41.3 % | 0.01 s | 0.3 ms | 0.49 ms | 114 MB |
-| sorbet (as configured) | 0.6.13439 | 2026-08-25 | widget_shop | 63 | 12.7 % | 0.0 % | 0.0 % | 12.7 % | 0.6 s + 12.3 s index | 0.5 ms | 0.26 ms | 171 MB |
-| sorbet `--typed=true` | 0.6.13439 | 2026-08-25 | widget_shop | 63 | 58.7 % | 19.0 % | 19.0 % | 39.7 % | 0.5 s + 12.2 s index | 0.3 ms | 0.23 ms | 138 MB |
+## Rubydex as a library
 
-All rows: app-scope gold sites, seed 12, Apple M2, quiet machine, warm OS page
-cache. trekr's index was already on disk (that is the product); the peers'
-setup and indexing are reported because they are not.
+It still can't be scored on its own (checked against `rubydex` 0.4.1). A
+`MethodReference` has a name, a location and sometimes a receiver, but no
+declaration it resolves to. The only `REFERENCES` edge in `rdx query` runs from
+a document to a constant. The ruby-lsp add-on needs ruby-lsp ≥ 0.27.0.beta4,
+so Rubydex is measured through that beta.
 
-**The second trekr row is here because `answered` moved.** Computed-name
-extraction (BASELINE, session 28) turned 16 of the 500 positions from *no
-location at all* into a resolved one, so it is visible on the wire and not only
-in the status breakdown: answered 93.4 % → **96.6 %**, correct@1 79.4 % →
-**82.6 %**, `wrong@1` **unchanged at 14.0 %** — the new answers are all correct
-ones, which is what a coverage fix should look like. Against ruby-lsp 0.26.9's
-65.0 % / 34.4 %, the gap on real app code is now 1.5× on answering and **2.4× on
-being right**.
-
-**Sessions 30–33 added no row, deliberately.** Re-measured at 0.1.3 on the same
-500 sites: answered **96.8 %** (unchanged), correct@1 82.6 % → **82.4 %**,
-wrong@1 14.2 % → **14.4 %** — every column within one site of the session-28
-row, which is noise on this sample.
-
-That is not a quiet period; it is the instrument's blind spot, and it is the
-same one the fairness note above describes. Those sessions shipped `kind`
-disclosure, `.rbi` answers reclassified as declarations, and
-`define_model_callbacks` — whose answers are *declarations*, which `correct@1`
-scores as `wrong@1` because no peer emits such a field. The gold scorer, which
-can read trekr's own word, put the same work at `declaration` 1.4 % → 2.0 % and
-`residue` down by the matching amount (BASELINE, session 30).
-
-So the series is measuring coverage and location, and is structurally unable to
-see a change that makes an answer *more honest about what it is*. Worth
-remembering before reading a flat row as a flat quarter.
-
-### What the first series says
-
-**On real app code, trekr answers 1.4× as often, is right 2.3× as often, and is
-wrong less than half as often, in a quarter of the memory.** 79.4 % against
-34.4 % on discourse is the largest gap this project has measured, and most of it
-arrived this week: session 26's two extractor rules moved trekr's own `correct`
-from 42.0 % to 59.2 %.
-
-**ruby-lsp's failure mode is the one PLAN §1 predicted.** It answered 65 % of
-discourse's positions and its first location was wrong on **30.6 %** — nearly
-half of what it answers. Nothing in the response says which half. That is the
-argument for confidence-graded answers, now with 153 wrong locations behind it
-rather than one hand-checked example.
-
-**The Rubydex rewrite is going the right way, and it is not close yet.**
-0.27.0.beta5 against 0.26.11 on the same corpus: answers less often (55.6 % vs
-77.8 %), is right slightly more often (23.8 % vs 20.6 %), and is **wrong far
-less often (31.7 % vs 57.1 %)**, in 26 % less memory and a sixth of the setup
-time. Trading coverage for precision is the trade this project argues for, so
-the direction is a compliment. The level is 23.8 % against trekr's 58.7 % on
-that corpus.
-
-**Sorbet is gated on annotation nobody writes.** As widget_shop configures it —
-Tapioca-generated RBIs committed, not one `# typed:` sigil — Sorbet answers
-12.7 % of positions and gets **none** of them right. Forced to `typed: true` it
-answers 58.7 % and gets 19.0 % right. This is DEC-018's finding from the other
-side: a repo can be full of RBIs describing its *dependencies* and still have
-almost no typed call sites of its own.
-
-**Where trekr is weakest is the corpus built for it.** 58.7 % on widget_shop
-against 79.4 % on discourse, because a third of widget_shop's sites are
-Rails-generated methods where trekr deliberately answers the macro and this
-scoring calls that wrong. The number to watch is discourse's.
-
-## Historical: session 9, a different method
-
-Kept because it is the only "before" this project has, and marked because it is
-**not comparable to the series above** — 45 hand-picked positions, hand
-adjudication, and an "answered" count rather than scoring against runtime truth.
-
-| | trekr (session 9) | ruby-lsp 0.26.11 |
-| --- | ---: | ---: |
-| `initialize` → response, cold | 6 ms | 96 s |
-| warm `goToDefinition` median | 1.0 ms | 9.6 ms |
-| peak RSS after 45 queries | 176 MB | 631 MB |
-| positions answered | 19/45, later 44/45 | 33/45 |
-
-The full account, including the three hand-adjudicated disagreements trekr won
-and the four it lost, is in [BASELINE.md](BASELINE.md).
-
-## Rubydex, as a library: not scorable, and here is why
-
-The `rubydex` gem now ships (0.4.0, prebuilt `arm64-darwin`), which it did not
-when PLAN §8 last read the field. It was examined for a cheap definition API
-and does not have one:
-
-* Its ruby-lsp addon is a **linter and formatter**, and it refuses to load
-  against anything below `ruby-lsp 0.27.0.beta4`.
-* Its `rdx query` Cypher schema has **no call-site node and no call→declaration
-  edge**. `REFERENCES` runs `Document → Declaration` and covers **constants**.
-  There is no way to ask what a method call at a position dispatches to.
-
-So PLAN §8's read — *"Rubydex does not attribute method calls at all"* — is now
-verified against the shipped gem rather than inferred. Rubydex is measured here
-only through ruby-lsp 0.27.0.beta5, which is built on it.
-
-## Reproducing
-
-**The discourse rows are the reproducible ones.** widget_shop is a small Rails
-app written for this evaluation — generic by construction (`Widget`, `Order`,
-`Supplier`) and deliberately Sorbet-annotated so there is *something* for Sorbet
-to score against. It is not published, so the widget_shop rows below can be
-re-derived only against a comparable app of your own. Everything the discourse
-rows measure runs from a public clone.
+## Reproduce
 
 ```sh
-# one-time: an isolated gem home per engine, so no corpus bundle is touched
-GEM_HOME=~/.local/share/trekr-compare/gems      gem install ruby-lsp sorbet sorbet-runtime
-GEM_HOME=~/.local/share/trekr-compare/gems-beta gem install --prerelease ruby-lsp:0.27.0.beta5
+TREKR=~/code/lib/rust/trekr     # this repo
+GEM_HOME=~/.local/share/trekr-compare/gems      gem install ruby-lsp -v 0.26.11
+GEM_HOME=~/.local/share/trekr-compare/gems-beta gem install ruby-lsp -v 0.27.0.beta5
+cargo build --release --manifest-path $TREKR/Cargo.toml
 
-script/compare.py --engine trekr --engine ruby-lsp \
-  --root /path/to/discourse --sample 500 --out /tmp/compare.ndjson
+# Gold: discourse on its own Ruby (3.4.10) and bundle, with Postgres, Redis,
+# and `pnpm install` run under Node ≤ 24.
+cd ~/code/lib/ruby/discourse
+BUNDLE_FROZEN=true TREKR_GOLD=/tmp/gold-discourse.ndjson \
+  TREKR_EXERCISE=$TREKR/script/exercise_discourse.rb \
+  bin/rails runner $TREKR/script/trace_gold.rb
 
-script/compare.py --engine trekr --engine sorbet --engine sorbet-typed \
-  --gold /tmp/trekr-gold-widget.ndjson \
-  --root /path/to/widget_shop --rewrite-root /path/to/widget_shop \
-  --sample 0 --corpus widget_shop
+# A fresh TREKR_DB is a cold start; run again on it for a restart.
+TREKR_DB=/tmp/trekr-compare/store.db $TREKR/script/compare.py \
+  --engine trekr --engine ruby-lsp \
+  --gold /tmp/gold-discourse.ndjson --root ~/code/lib/ruby/discourse --sample 500
 ```
 
-The gold sets come from `script/trace_gold.rb` (see BASELINE.md). `--rewrite-root`
-moves a gold set between **worktrees of one repo** — widget_shop and
-widget_shop-nosorbet differ only by a `sorbet/` directory their app code never
-mentions — and moves a truth with it only when that truth lives in the app.
-
-ruby-lsp writes a `.ruby-lsp/` directory into whatever checkout it is pointed
-at. It is a tool cache, ignored by git and never indexed by trekr (which reads
-`git ls-files`), and deleting it costs the next run a bundle composition.
+widget_shop works the same way: use `script/exercise_widget_shop.rb`,
+`--sample 0`, `--engine sorbet --engine sorbet-typed`, and `--rewrite-root
+<worktree>` for the copy without `sorbet/`. widget_shop isn't published. A
+ruby-lsp run writes a git-ignored `.ruby-lsp/` and, through ruby-lsp-rails,
+bootsnap cache under `tmp/`.
