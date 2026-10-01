@@ -223,6 +223,12 @@ impl Session {
         std::mem::take(&mut self.unindexed)
     }
 
+    /// This checkout's first index, while it is still filling the store
+    /// (DEC-320): answers from it are partial, and say so.
+    pub(crate) fn warming(&self, root: &Path) -> Option<crate::store::Warming> {
+        self.store.warming(&root.to_string_lossy()).ok().flatten()
+    }
+
     /// Is this checkout in the store at all?
     pub(crate) fn indexed(&self, root: &Path) -> bool {
         self.store

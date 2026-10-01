@@ -535,6 +535,7 @@ pub(crate) fn references(
     };
     let overlay = overlay(session, &root);
     let limit = session.reference_limit;
+    let warming = session.warming(&root);
     let (tree, store) = session.tree_and_store(&root)?;
 
     // Which method is being asked about, not just which name. Standing on a
@@ -629,6 +630,7 @@ pub(crate) fn references(
         gather::Policy::Best
     };
     let mut gathered = gather::Gather::new(limit, policy);
+    let partial = warming.is_some();
     let tier = |facts: &crate::core::Facts, call: &crate::core::Call, path: &str| {
         refs::tier_call(tree, facts, call, path, &query, target.as_deref())
     };
@@ -638,7 +640,11 @@ pub(crate) fn references(
                 continue;
             };
             let lines = LineIndex::new(&file.text);
-            for (_, reference) in file.tiered {
+            for (_, mut reference) in file.tiered {
+                // A partial index rules nothing out (DEC-320).
+                if partial {
+                    reference.unrule();
+                }
                 if reference.tier == refs::Tier::Excluded {
                     continue;
                 }
@@ -1234,17 +1240,34 @@ pub(crate) fn hover(session: &mut Session, params: HoverParams) -> anyhow::Resul
     // and gems alone, and a residue there is a gap in the index, not a
     // finding about the code. After an upgrade dropped the store, not even
     // those are there until the background index refills it.
+    let warming = session.warming(&located.root);
+    let read = warming
+        .as_ref()
+        .map(|w| format!(" ({} of {} files read)", w.read, w.of))
+        .unwrap_or_default();
     if let Some((_, since)) = session
         .reindexing
         .as_ref()
         .filter(|(root, _)| *root == located.root)
     {
         text.push_str(&format!(
-            "\n\n_trekr is reindexing this checkout after an upgrade (started {} s ago). \
+            "\n\n_trekr is reindexing this checkout after an upgrade (started {} s ago){read}. \
              Until it finishes, answers are partial — this checkout's code, its gems and Ruby \
              core may not be read yet._",
             since.elapsed().as_secs()
         ));
+    } else if let Some(warming) = &warming {
+        // The checkout's own files may be in and its gems not: an answer
+        // that looks whole and may change (DEC-320).
+        text.push_str(&match warming.interrupted {
+            false => format!(
+                "\n\n_trekr is still indexing this checkout{read}, so this answer may change._"
+            ),
+            true => format!(
+                "\n\n_trekr's index of this checkout was cut short{read}, so answers are \
+                 partial until it is indexed again._"
+            ),
+        });
     } else if !session.indexed(&located.root) {
         text.push_str(
             "\n\n_This checkout is not indexed yet, so answers come from core and gems alone. trekr indexes it in the background; `trekr --index` does it now._",

@@ -171,9 +171,12 @@ pub(crate) fn completion(
     let col = (start - text[..start].rfind('\n').map_or(0, |n| n + 1)) as u32 + 1;
     let under = position::at_facts(&facts, line, col);
 
+    // A partial index lists what it has read: the client asks again as the
+    // word grows, and by then more may be in (DEC-320).
+    let warming = session.warming(&located.root).is_some();
     let (tree, members) = session.members(&located.root)?;
     let mut list = Ranked::new(&prefix, &located.root);
-    let mut incomplete = false;
+    let mut incomplete = warming;
     match (&context, under) {
         (Context::Member, Some(Under::Call(call))) => {
             match crate::resolve::receiver_type(tree, &facts, &call, &located.relative) {
@@ -189,7 +192,7 @@ pub(crate) fn completion(
                         1,
                     );
                     // One reading of several: the client must ask again.
-                    incomplete = receiver.ambiguous;
+                    incomplete |= receiver.ambiguous;
                 }
                 None => {
                     // Untyped: a few names that fit, said to be guesses, and

@@ -318,13 +318,16 @@ tiers the site `possible`.
   unknown), `receiver`/`receiver_text`/`receiver_type` for a call's receiver,
   `unresolved_ancestors` for what could not be seen, and `path` + `root` +
   `line` + `col` on everything located.
+* An answer with `warming` came from a first index still running (`read` of
+  `of` files in): it may change, and claims nothing certain. Ask again when
+  the index ends.
 * Branch on the exit code; never read an error as "nothing found":
 
   | exit | means | do |
   | --- | --- | --- |
   | `0` | an answer (`resolved` or `ambiguous`, something listed) | read it |
   | `1` | nothing found: `no_such_method` (certain), `residue` (it names what it could not see), no mention | read `reason`/`candidates` |
-  | `2` | `status: not_indexed` | run the `hint`, ask again |
+  | `2` | `status: not_indexed`, or a miss while `warming` (an index still running) | run the `hint`, ask again |
   | `64` | `usage`: the command line is wrong | fix the command; a retry won't help |
   | `66` | `not_found`, `not_a_repo`: a path is missing or in no checkout | fix the path |
   | `69` | `git`: git could not be run | |

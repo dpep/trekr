@@ -274,8 +274,10 @@ fn serve(
     // finds more than core and gems. Anywhere else waits to be asked about.
     // A resumed build whose store VERSION moved lands here too: opening the
     // store dropped the index (DEC-009), and answers are partial until this
-    // background run refills it.
-    if root.join("Gemfile").is_file() && !session.indexed(&root) {
+    // background run refills it. So does one an index left unfinished
+    // (DEC-320).
+    let unfinished = session.warming(&root).is_some_and(|w| w.interrupted);
+    if root.join("Gemfile").is_file() && (!session.indexed(&root) || unfinished) {
         indexer.want(root.clone(), false);
     }
     let mut warm = Warm::Cold;

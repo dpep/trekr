@@ -4515,3 +4515,110 @@ fn an_ivar_in_a_module_mixed_into_several_classes_goes_nowhere() {
     session.stop();
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// While a checkout's first index is still filling the store (DEC-320), a
+/// hover says how much is read, completion is marked incomplete, and
+/// references rule nothing out — then, once it ends, none of that.
+#[test]
+fn answers_from_a_partial_index_say_so_and_rule_nothing_out() {
+    let (dir, db) = scratch("warming");
+    git(&dir, &["init", "-q"]);
+    let source = concat!(
+        "class Widget\n",       // 1
+        "  def save\n",         // 2
+        "  end\n",              // 3
+        "end\n",                // 4
+        "class Gadget\n",       // 5
+        "  def save\n",         // 6
+        "  end\n",              // 7
+        "end\n",                // 8
+        "class Job\n",          // 9
+        "  def run\n",          // 10
+        "    w = Widget.new\n", // 11
+        "    w.save\n",         // 12
+        "    g = Gadget.new\n", // 13
+        "    g.save\n",         // 14
+        "  end\n",              // 15
+        "end\n",                // 16
+    );
+    fs::write(dir.join("app.rb"), source).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+    let key = format!(
+        "warming {}",
+        fs::canonicalize(&dir).unwrap().to_string_lossy()
+    );
+    let store = rusqlite::Connection::open(&db).unwrap();
+    store
+        .execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)",
+            [key.clone(), format!("{} 1 4", std::process::id())],
+        )
+        .unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+    let refs = |session: &mut Session| -> Vec<u64> {
+        let answer = ask(session, &dir, "textDocument/references", "app.rb", 5, 6);
+        answer["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| l["range"]["start"]["line"].as_u64().unwrap() + 1)
+            .filter(|line| *line > 8)
+            .collect()
+    };
+
+    let hover = hover_at(&mut session, &dir, 11, 9);
+    assert!(
+        hover.contains("still indexing this checkout (1 of 4 files read)"),
+        "{hover}"
+    );
+    let listed = session.request(
+        "textDocument/completion",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": 11, "character": 6},
+            "context": {"triggerKind": 1},
+        }),
+    );
+    assert_eq!(listed["result"]["isIncomplete"], true, "{listed}");
+    assert_eq!(
+        refs(&mut session),
+        vec![14, 12],
+        "Widget's call is not ruled out against a partial index — listed after Gadget's"
+    );
+
+    store
+        .execute("DELETE FROM meta WHERE key = ?1", [key])
+        .unwrap();
+    let hover = hover_at(&mut session, &dir, 11, 9);
+    assert!(!hover.contains("still indexing"), "{hover}");
+    assert_eq!(refs(&mut session), vec![14]);
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}

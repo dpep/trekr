@@ -658,7 +658,9 @@ rbs(id, key UNIQUE, version, dir, core, stdlib, sigs)
 
 upgrade(from_version, at)                   ← a rebuild that dropped an older index
 meta(key, value)                            ← `schema_by`: the trekr that built it
-                                              (DEC-300; optional, no bump)
+                                              (DEC-300; optional, no bump);
+                                              `warming <root>`: a first index
+                                              still filling it (DEC-320)
 ```
 
 **No table under `blob` may mention a path, a checkout, or a repository.**
@@ -747,7 +749,18 @@ of a guess. Narrowing it is layer 3's job.
 |---|---|
 | 0 | something was indexed, or a query matched |
 | 1 | nothing matched, nothing to do — trekr looked; `status` says whether the nothing is certain or a residue |
-| 2 | the request could not be served (not a repo, unreadable file) |
+| 2 | no answer yet: the checkout is not indexed (`not_indexed`), or a miss from an index still filling it (`warming`) |
+
+Errors exit on sysexits codes (`64` usage, `66` a missing path, `74` the
+store); see DEC-067.
+
+**A partial index says so** (DEC-320). A checkout's first index marks it in
+`meta` until its gems are in, with how many of the tree's files are read. An
+answer meanwhile carries `warming: {read, of, interrupted, hint}`, its
+`confidence` scaled by the share read, and makes no certain claim:
+`no_such_method` is `residue`, a `--refs` site the receiver would rule out is
+`possible`, `--dead` lists nothing, and a miss exits `2`. A mark left by an
+index that died is `interrupted`, until the next index.
 
 `--def` reparses the one file with Prism rather than reading stored spans, so
 it answers correctly on a file edited since the last index. A variable under
@@ -877,6 +890,11 @@ Code's LSP tool sends a `partialResultToken` for references, so the unstreamed
 path is the one editors take today. Claude Code shows no `window/showMessage`
 either: an agent sees a list of exactly `referenceLimit` locations and no
 note that it was cut.
+
+**While a first index fills the store** (DEC-320) a hover ends "trekr is
+still indexing this checkout (N of M files read), so this answer may change",
+completion is `isIncomplete`, and references list every same-name site the
+receiver would rule out, after the rest.
 
 **Hover is for a person reading code** (DEC-052), so it shows what the
 definition is and leaves out how it was found:

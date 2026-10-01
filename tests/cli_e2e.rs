@@ -421,13 +421,13 @@ fn profile_reports_on_stderr_so_stdout_stays_the_answer() {
         phases,
         [
             "scan",
-            "gem-scan",
             "known-diff",
             "parse",
             "store-write",
             "index-rebuild",
             "file-map",
             "commit",
+            "gem-scan",
             "rbs",
             "analyze",
             "tree"
@@ -4744,4 +4744,103 @@ fn a_block_handed_to_a_stdlib_method_runs_on_the_example() {
 
     let _ = fs::remove_dir_all(&dir);
     let _ = fs::remove_dir_all(&home);
+}
+
+/// Mark `dir`'s checkout as an index still filling the store (DEC-320), as
+/// the process `pid` would, with `read` of `of` files in.
+fn mark_warming(db: &Path, dir: &Path, pid: u32, read: u64, of: u64) {
+    let root = fs::canonicalize(dir).unwrap();
+    rusqlite::Connection::open(db)
+        .unwrap()
+        .execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+            [
+                format!("warming {}", root.to_string_lossy()),
+                format!("{pid} {read} {of}"),
+            ],
+        )
+        .unwrap();
+}
+
+/// An answer from an index still being filled says so, and claims nothing
+/// a partial index cannot back: no certain absence, no ruled-out caller, no
+/// dead code. Exit 2 is "no answer yet" for a miss, as for `not_indexed`.
+#[test]
+fn a_partial_index_says_so_and_claims_nothing_certain() {
+    let (dir, db) = scratch("warming");
+    repo(&dir);
+    fs::write(
+        dir.join("user.rb"),
+        "class Gadget\n  def resize(a)\n  end\nend\n\nclass User\n  def go\n    \
+         Widget.new.resize(1, 2)\n    Gadget.new.resize(1)\n  end\nend\n",
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    trekr(&db, &dir, &["--index"]);
+
+    // Whole: the call on a Gadget is ruled out, a missing method is certain.
+    let refs = json(&trekr(&db, &dir, &["--refs", "Widget#resize", "--json"]));
+    assert_eq!(refs["counts"]["excluded"], 1);
+    assert!(refs.get("warming").is_none());
+    let missing = trekr(&db, &dir, &["--refs", "Gadget#nope", "--json"]);
+    assert_eq!(json(&missing)["status"], "no_such_method");
+    assert_eq!(missing.status.code(), Some(1));
+
+    // An index under way, a quarter read.
+    mark_warming(&db, &dir, std::process::id(), 1, 4);
+    let def = trekr(&db, &dir, &["--def", "user.rb:8:5", "--json"]);
+    let answer = json(&def);
+    assert_eq!(answer["status"], "resolved");
+    assert_eq!(answer["warming"]["read"], 1);
+    assert_eq!(answer["warming"]["of"], 4);
+    assert_eq!(answer["warming"]["interrupted"], false);
+    assert_eq!(answer["confidence"], 0.25, "scaled by the share read");
+    assert_eq!(def.status.code(), Some(0), "an answer is still an answer");
+
+    let text = trekr(&db, &dir, &["--def", "user.rb:8:5"]);
+    assert!(String::from_utf8_lossy(&text.stderr).contains("still being indexed — 1 of 4 files"));
+
+    let residue = trekr(&db, &dir, &["--def", "widget.rb:1:17", "--json"]);
+    assert_eq!(json(&residue)["status"], "residue");
+    assert_eq!(residue.status.code(), Some(2), "a miss is no answer yet");
+
+    let refs = json(&trekr(&db, &dir, &["--refs", "Widget#resize", "--json"]));
+    assert_eq!(refs["counts"]["excluded"], 0, "nothing ruled out");
+    let gadget = refs["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["line"] == 9)
+        .expect("the Gadget call is listed, as possible");
+    assert_eq!(gadget["tier"], "possible");
+    assert!(refs["warming"].is_object());
+
+    let missing = trekr(&db, &dir, &["--refs", "Gadget#nope", "--json"]);
+    assert_eq!(
+        json(&missing)["status"],
+        "residue",
+        "absence is not certain"
+    );
+    assert_eq!(missing.status.code(), Some(2));
+
+    let dead = trekr(&db, &dir, &["--dead", ".", "--json"]);
+    assert_eq!(json(&dead)["status"], "warming");
+    assert_eq!(dead.status.code(), Some(2));
+
+    // The index that marked it died: still partial, and says what fixes it.
+    mark_warming(&db, &dir, i32::MAX as u32, 1, 4);
+    let def = json(&trekr(&db, &dir, &["--def", "user.rb:8:5", "--json"]));
+    assert_eq!(def["warming"]["interrupted"], true);
+    assert!(
+        def["warming"]["hint"]
+            .as_str()
+            .unwrap()
+            .contains("trekr --index")
+    );
+
+    // And an index ends it.
+    trekr(&db, &dir, &["--index"]);
+    let def = json(&trekr(&db, &dir, &["--def", "user.rb:8:5", "--json"]));
+    assert!(def.get("warming").is_none());
+    assert_eq!(def["confidence"], 1.0);
 }

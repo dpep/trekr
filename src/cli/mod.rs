@@ -370,6 +370,23 @@ pub fn run() -> ExitCode {
         Ok(code) => *code,
         Err(e) => fail(out, Failure::of(e), &format!("{e:#}")),
     };
+    // JSON carries it as `warming`; text says it once, after the answer.
+    if out == Output::Text
+        && result.is_ok()
+        && let Some((root, warming)) = warming()
+    {
+        let root = paths::pretty(root);
+        match warming.interrupted {
+            false => eprintln!(
+                "trekr: {root} is still being indexed — {} of {} files read, so this answer may change",
+                warming.read, warming.of
+            ),
+            true => eprintln!(
+                "trekr: the index of {root} was cut short at {} of {} files, so answers are partial until: trekr --index {root}",
+                warming.read, warming.of
+            ),
+        }
+    }
     // After the answer is out, never before it (rq DECISIONS D13).
     if let Some(feature) = feature {
         let note = crate::usage::take();
@@ -379,6 +396,7 @@ pub fn run() -> ExitCode {
             (Some(outcome), _) => outcome,
             (None, Ok(code)) if *code == ExitCode::SUCCESS => Outcome::Hit,
             (None, Ok(code)) if *code == ExitCode::from(1) => Outcome::Empty,
+            (None, Ok(_)) if warming().is_some() => Outcome::NotIndexed,
             // Only `not_indexed` exits otherwise, and it names its own outcome.
             (None, Ok(_)) => Outcome::Error(Failure::Internal.as_str()),
             (None, Err(e)) => Outcome::Error(Failure::of(e).as_str()),
@@ -628,12 +646,75 @@ struct Rooting {
 
 static ROOTING: std::sync::OnceLock<Rooting> = std::sync::OnceLock::new();
 
-/// Answer from this checkout: paths in the output are written against it.
+/// Answer from this checkout: paths in the output are written against it,
+/// and an index of it still filling the store is said (DEC-320).
 fn answering_in(store: &Store, root: &str) {
     ROOTING.get_or_init(|| Rooting {
         base: root.to_string(),
         roots: store.roots().unwrap_or_default(),
     });
+    WARMING.get_or_init(|| {
+        store
+            .warming(root)
+            .ok()
+            .flatten()
+            .map(|warming| (root.to_string(), warming))
+    });
+}
+
+static WARMING: std::sync::OnceLock<Option<(String, crate::store::Warming)>> =
+    std::sync::OnceLock::new();
+
+/// The asked checkout's index, while it is not whole yet.
+fn warming() -> Option<&'static (String, crate::store::Warming)> {
+    WARMING.get().and_then(Option::as_ref)
+}
+
+/// What a partial index says beside an answer: how much is in, and what
+/// makes the rest certain.
+fn warming_note(root: &str, warming: &crate::store::Warming) -> serde_json::Value {
+    serde_json::json!({
+        "read": warming.read,
+        "of": warming.of,
+        "interrupted": warming.interrupted,
+        "hint": if warming.interrupted {
+            format!("trekr --index {}", paths::pretty(root))
+        } else {
+            "an index is filling this checkout; ask again when it ends".to_string()
+        },
+    })
+}
+
+/// An answer from a partial index says so, and claims no more than the part
+/// it read (DEC-320): `warming` beside it, its confidence scaled by the share
+/// of the tree read, and a certain absence demoted to a residue — the method
+/// may be in a file not read yet.
+fn disclose(value: &mut serde_json::Value) {
+    let Some((root, warming)) = warming() else {
+        return;
+    };
+    let Some(object) = value.as_object_mut() else {
+        return;
+    };
+    object.insert("warming".into(), warming_note(root, warming));
+    if let Some(confidence) = object.get("confidence").and_then(serde_json::Value::as_f64) {
+        let scaled = (confidence * warming.coverage() * 100.0).floor() / 100.0;
+        object.insert("confidence".into(), scaled.into());
+    }
+    if object.get("status").and_then(serde_json::Value::as_str) == Some("no_such_method") {
+        object.insert("status".into(), "residue".into());
+        let reason = object
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        let reason = format!(
+            "{reason}{}so far: the index has read {} of {} files",
+            if reason.is_empty() { "" } else { " — " },
+            warming.read,
+            warming.of
+        );
+        object.insert("reason".into(), reason.into());
+    }
 }
 
 /// Answer about one file that needs no index (`--symbols`): paths are
@@ -732,6 +813,7 @@ fn shown(path: &str) -> String {
 fn emit_json<T: serde::Serialize>(out: Output, value: &T) -> anyhow::Result<()> {
     let mut value = serde_json::to_value(value)?;
     rooted(&mut value);
+    disclose(&mut value);
     let rendered = if out == Output::Json {
         serde_json::to_string_pretty(&value)?
     } else {
@@ -766,6 +848,7 @@ fn render_listing<T: serde::Serialize>(
     w: &mut impl Write,
 ) -> anyhow::Result<()> {
     rooted(&mut answer);
+    disclose(&mut answer);
     let Some(head) = answer.as_object_mut() else {
         anyhow::bail!("an answer with a listing is an object");
     };
@@ -1056,6 +1139,17 @@ struct GemPlan {
     used: Vec<(String, String)>,
     /// The gems new to the store, walked: each one's `lib/`.
     fresh: Vec<(PathBuf, scan::Files)>,
+    /// Files the tree spans from a stdlib and gems the store already holds.
+    known_files: u64,
+}
+
+impl GemPlan {
+    /// Files of the checkout's tree that are not the checkout's own.
+    fn files(&self) -> u64 {
+        let new = self.stdlib_files.as_ref().map_or(0, |f| f.len())
+            + self.fresh.iter().map(|(_, f)| f.len()).sum::<usize>();
+        self.known_files + new as u64
+    }
 }
 
 /// Locate the stdlib and the gems this checkout resolves, and walk those not
@@ -1095,11 +1189,16 @@ fn plan_gems(
         about: stdlib.as_ref().map(crate::gems::stdlib::Stdlib::about),
         ..GemReport::default()
     };
+    let mut known: Vec<String> = Vec::new();
     let stdlib_files = match &stdlib {
         Some(stdlib) if !store.has_checkout(&stdlib.root.to_string_lossy())? => {
             Some(crate::gems::stdlib::files(&stdlib.root))
         }
-        _ => None,
+        Some(stdlib) => {
+            known.push(stdlib.root.to_string_lossy().into_owned());
+            None
+        }
+        None => None,
     };
     // Which gems this bundle resolves, whether or not they needed indexing —
     // an already-known gem still belongs to this app, and that is what makes a
@@ -1161,8 +1260,15 @@ fn plan_gems(
         let gem_root = std::fs::canonicalize(&gem_root).unwrap_or(gem_root);
         let root_str = gem_root.to_string_lossy().into_owned();
         used.push((root_str.clone(), entry.gem.name.clone()));
-        if store.has_checkout(&root_str)? || fresh.contains(&gem_root) {
+        if fresh.contains(&gem_root) {
             report.already_indexed += 1;
+            continue;
+        }
+        if store.has_checkout(&root_str)? {
+            report.already_indexed += 1;
+            if !known.contains(&root_str) {
+                known.push(root_str);
+            }
             continue;
         }
         fresh.push(gem_root);
@@ -1173,6 +1279,7 @@ fn plan_gems(
         stdlib_files,
         used,
         fresh: walk_gems(&fresh, pool, profile),
+        known_files: store.file_count(&known)?,
     })
 }
 
@@ -1499,10 +1606,15 @@ fn cmd_index(
 
     store.wait_as_writer(writer_waiting)?;
     let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
-    let plan = match with_gems {
-        true => Some(plan_gems(&store, &root, &pool, &mut profile)?),
-        false => None,
-    };
+    // A first index — no map yet, or one an index left unfinished — is
+    // marked while it fills the store, so an answer meanwhile says it is
+    // partial (DEC-320). A reindex replaces a whole map with a whole map.
+    // Nothing is counted read until the gems are counted too: an answer
+    // between the two reads as less certain than it is, never more.
+    let filling = !store.has_checkout(&root_str)? || store.warming(&root_str)?.is_some();
+    if filling {
+        store.set_warming(&root_str, 0, files.len() as u64)?;
+    }
     let mut known = None;
     let counts = index_files(
         &mut store,
@@ -1513,10 +1625,31 @@ fn cmd_index(
         &pool,
         &mut profile,
     )?;
+    // After the checkout's own write, so its first answers are not held up.
+    let plan = match with_gems {
+        true => Some(plan_gems(&store, &root, &pool, &mut profile)?),
+        false => None,
+    };
+    if filling {
+        match &plan {
+            // The checkout's own files are in; its gems are not, yet.
+            Some(plan) => {
+                let read = files.len() as u64;
+                store.set_warming(&root_str, read, read + plan.files())?
+            }
+            None => store.clear_warming(&root_str)?,
+        }
+    }
 
     let gems = if let Some(plan) = plan {
-        let gems =
-            store.batch(|store| index_gems(store, &root, plan, &mut known, &pool, &mut profile))?;
+        let gems = store.batch(|store| {
+            let gems = index_gems(store, &root, plan, &mut known, &pool, &mut profile)?;
+            // In the same commit as the gems: nothing reads them whole first.
+            if filling {
+                store.clear_warming(&root_str)?;
+            }
+            anyhow::Ok(gems)
+        })?;
         if let Some(profile) = profile.as_mut() {
             // The bundle's one commit, outside every gem's own write.
             profile.phase("commit", store.take_timing().commit);
@@ -2133,6 +2266,7 @@ fn gather_refs(
     use crate::resolve::refs;
     let files = store.files_calling(root_str, &query.name)?;
     let listing = sites.is_some();
+    let partial = warming().is_some();
     // Every worker tiers against the one tree, which is shared (DEC-250),
     // and files come back in the order they were listed.
     let tier = |path: &String, facts: &crate::core::Facts| {
@@ -2141,7 +2275,10 @@ fn gather_refs(
             if listing {
                 tiered.sites.push(crate::store::Ref::call(path, call));
             }
-            let reference = refs::tier_call(tree, facts, call, path, query, target);
+            let mut reference = refs::tier_call(tree, facts, call, path, query, target);
+            if partial {
+                reference.unrule();
+            }
             tiered.counts.record(&reference);
             // Excluded sites are counted, not listed: the count is the
             // product, and the list would be the grep we are trying to
@@ -2559,7 +2696,7 @@ fn cmd_refs(
                 query.name
             );
         }
-        return Ok(ExitCode::from(1));
+        return Ok(exit_on(false));
     }
 
     let (found, counts) = gather_refs(
@@ -2890,6 +3027,32 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
     for (root, _) in &checkouts {
         if !store.has_checkout(&root.to_string_lossy())? {
             return not_indexed(out, root, &store);
+        }
+    }
+    // Every candidate is a claim that no caller exists anywhere, and a
+    // partial index cannot make it: wait for the rest (DEC-320).
+    for (root, _) in &checkouts {
+        let root = root.to_string_lossy();
+        if let Some(warming) = store.warming(&root)? {
+            crate::usage::outcome(Outcome::NotIndexed);
+            let reason = format!(
+                "the index has read {} of {} files, and a caller may be in one not read yet",
+                warming.read, warming.of
+            );
+            match out {
+                Output::Text => println!("--dead lists nothing until the index ends: {reason}"),
+                _ => emit_json(
+                    out,
+                    &serde_json::json!({
+                        "status": "warming",
+                        "repo": root,
+                        "reason": reason,
+                        "warming": warming_note(&root, &warming),
+                        "candidates": [],
+                    }),
+                )?,
+            }
+            return Ok(ExitCode::from(2));
         }
     }
     // Across checkouts no one root is "here", so text writes every path
@@ -3947,6 +4110,7 @@ fn report(
     crate::usage::outcome(match value["status"].as_str() {
         // Residue with ranked guesses is not nothing: it is the least certain
         // answer there is, and the LSP counts it the same way.
+        _ if !matched && warming().is_some() => Outcome::NotIndexed,
         _ if !matched && guesses => Outcome::Uncertain,
         _ if !matched => Outcome::Empty,
         Some("ambiguous") => Outcome::Uncertain,
@@ -3974,6 +4138,7 @@ fn cmd_drop(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
     };
     let root_str = root.to_string_lossy().into_owned();
     let dropped = store.drop_checkout(&root_str)?;
+    store.clear_warming(&root_str)?;
     crate::tree::forget_snapshots(&store, &root_str);
 
     match out {
@@ -4131,9 +4296,13 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
 }
 
 /// 0 when something happened, 1 when nothing did — so a script can branch on it.
+/// `0` for an answer, `1` for nothing found — or `2`, "no answer yet", when
+/// the nothing comes from a partial index (DEC-320).
 fn exit_on(happened: bool) -> ExitCode {
     if happened {
         ExitCode::SUCCESS
+    } else if warming().is_some() {
+        ExitCode::from(2)
     } else {
         ExitCode::from(1)
     }

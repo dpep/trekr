@@ -98,6 +98,20 @@ impl Tier {
     }
 }
 
+impl Reference {
+    /// A site ruled out against an index still being filled is not ruled
+    /// out: the definition that would take its call may be in a file not read
+    /// yet (DEC-320). It is listed as possible, last, with the ruling kept.
+    pub(crate) fn unrule(&mut self) {
+        if self.tier == Tier::Excluded {
+            self.tier = Tier::Possible;
+            self.why =
+                "ruled out by a partial index, which may not hold the definition it lands on";
+            self.proximity = u8::MAX;
+        }
+    }
+}
+
 impl Counts {
     pub(crate) fn record(&mut self, reference: &Reference) {
         match reference.tier {

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **An answer given while a checkout's first index is still running says so.**
+  Until its gems are in, an index can look whole and is not: an answer could
+  come back `resolved` and change a second later. Now `--json` carries
+  `warming` (`read`, `of`, `interrupted`, `hint`), `confidence` is scaled by
+  the share read, nothing is called certainly absent (`no_such_method` reads
+  `residue`, `--refs` rules out no caller), `--dead` lists nothing until the
+  index ends, and a miss exits `2` instead of `1` — ask again when the index
+  ends, or run `trekr --index`, which finishes it. In the editor, hovers say
+  how much is read. Nothing to do; scripts that treat `2` as "index, then
+  ask again" already handle it.
 - **A command no longer fails with `database is locked` while another trekr
   upgrades the index.** After `brew upgrade`, a running language server
   switches to the new build and rebuilds the index in one long transaction; a

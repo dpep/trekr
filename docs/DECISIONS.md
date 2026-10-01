@@ -9178,3 +9178,70 @@ alias was never evidence before, and the hash key was the wrong evidence.
 
 **Not done.** An alias written in another file, or in a reopened class's
 other body, is not found: the aliases are read from the candidate's own file.
+
+## DEC-320 — An answer from a partial index says so, and claims nothing it cannot back
+
+**Decided.** A checkout's first index — no map stored yet, or one an index
+left unfinished — marks the checkout in `meta` (`warming <root>` = the
+writer's pid, files read, files the tree will span) before its first row is
+written, and removes the mark in the commit that writes its gems. A reindex
+of a whole map is not marked: it replaces one whole map with another in one
+write. While the mark stands:
+
+- every query answer (`--def`, `--refs`, the card, `--ancestors`) carries
+  `warming: {read, of, interrupted, hint}`;
+- `confidence` is scaled by the share of the tree read, floored to two
+  places, so it never rounds up to whole;
+- a certain absence is not: `no_such_method` becomes `residue`, with the
+  counts in its `reason`, and `--refs` lists a site the receiver would rule
+  out as `possible`, last, with its `ruling` kept, instead of `excluded`;
+- a miss exits `2`, "no answer yet" — the code `not_indexed` already uses,
+  whose fix, `trekr --index`, works here too: it waits for the running
+  writer (DEC-139) and finishes what is left. An answer still exits `0`;
+- `--dead` lists nothing (`status: warming`, exit 2): each of its rows is a
+  claim that no caller exists anywhere;
+- text output adds one stderr line saying how much is read;
+- in the language server, a hover ends "trekr is still indexing this
+  checkout (N of M files read), so this answer may change", completion is
+  `isIncomplete`, and references rule nothing out. A definition has no field
+  to say it in; the `$/progress` the index already reports is the editor's
+  disclosure there.
+
+A mark whose pid is no longer running is `interrupted: true`, and its hint
+is the index that fixes it; the language server starts that index itself.
+
+**Why.** The lead's measurement: polling `--def` on discourse during a
+cold background index answered `not_indexed`, then `resolved` from the app's
+`lib/freedom_patches/` while the gems were unread, then `resolved` from the
+gem — the middle answer confident, different from the final one, and not
+disclosed. The checkout's own rows commit seconds before its gems' (on the
+100k corpus, at 13 s of 19 s), and in that window an answer could not tell
+it was partial: `has_checkout` was the only test, and it was already true.
+
+**Shape.** `warming` is rq's word for an index still being built, and exit
+`2` is trekr's counterpart of rq's `warming` exit (DEC-067). `status` stays
+the verdict, so `resolved` is still `resolved` — a caller that branches on it
+sees the same answer, and `warming` is the field that qualifies it. The
+confidence is the read share because that is what backs the answer: the
+files that could hold a nearer definition that have been read. It is not a
+probability that the answer is final, and a constant's 1-or-0 (DEC-008)
+stays 1 or 0 once the mark is gone.
+
+**Where.** `meta` rather than a column on `checkout`: no reader needs the
+mark to answer, so a store an older trekr built at this version, without
+`meta`, is not rebuilt for it, and no store version moves. The pid check
+means a crash leaves a checkout honestly partial instead of claiming an
+index under way forever; a reused pid reads as running, which keeps the
+checkout partial until its next index — the safe side.
+
+**Measured.** discourse, release build, a fresh store per run, the editor's
+own sequence over `trekr --lsp` (open `app/models/about.rb`, then hover,
+definition, references, completion at fixed positions every 0.2 s until the
+index ends), five interleaved rounds. Hovers that differed from the final
+answer with nothing said: 8–9 per run → 0. Time to each first answer and to
+the index's end unchanged within noise (index end 4.22 → 4.35 s medians).
+The extra query per command is one primary-key read of `meta`.
+
+**Not done.** "N of M" moves at the commits there are: none before the
+checkout's own write, all its files at it, and the rest when the gems land.
+Finer steps come with a first index written in batches (DEC-322).

@@ -10,9 +10,11 @@
 mod gc;
 mod recover;
 mod schema;
+mod warming;
 
 pub(crate) use recover::{Kept, in_use, kept, remove_kept};
 pub(crate) use schema::VERSION;
+pub(crate) use warming::Warming;
 
 use crate::core::*;
 use crate::scan::Files;
@@ -1741,6 +1743,18 @@ impl Store {
             params![root],
             |r| r.get::<_, i64>(0).map(|n| n != 0),
         )
+    }
+
+    /// How many files these checkouts map, together.
+    pub(crate) fn file_count(&self, roots: &[String]) -> Result<u64> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT COUNT(*) FROM file f JOIN checkout c ON c.id = f.checkout_id WHERE c.root = ?1",
+        )?;
+        let mut total = 0;
+        for root in roots {
+            total += stmt.query_row(params![root], |r| r.get::<_, i64>(0))? as u64;
+        }
+        Ok(total)
     }
 
     /// Forget a checkout's file map. Its blobs stay: another worktree may
