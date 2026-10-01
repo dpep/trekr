@@ -10149,3 +10149,76 @@ discourse's random 25 of 91 held one generator.
 become `convention-only`, `unreferenced`, clear 16 → 7; discourse 1. `--dead
 app` unchanged on both. The mastodon `lib` numbers after this rule are no
 longer held out.
+
+## DEC-372 — `clear` on an unreferenced row is calibrated against hand-checked rows
+
+**Decided.** `clear` stays a word, not a number, and keeps its rule: no
+caveat. What changed is what a caveat can see. DEC-360–371 each name one
+way a method is reached that no call site writes, and each was found as a
+cause of a hand-checked false `unreferenced`, clear row. `clear` now means
+none of them was found, and this is what that measured.
+
+**The samples.** `--dead app` on main (ff0ac62): mastodon's 77
+`unreferenced`, clear rows, all of them; discourse's 569, a random 70 and
+30 more that are not `include_*?` (100). Each was read, its name searched
+across the repo and its installed gems, and its cause written down:
+
+| cause of a false row | mastodon (77) | discourse (100) | rule |
+| --- | ---: | ---: | --- |
+| truly dead | 22 | 15 | — |
+| AMS `include_<attr>?` | — | 38 | DEC-362 |
+| name built at runtime / sent to its class | — | 26 | DEC-363 |
+| service step `fetch_*` (`:"fetch_#{name}"`) | — | 16 | DEC-363 |
+| view template caller | 12 | — | DEC-360 |
+| gem engine's `app/` ancestor (Devise, Doorkeeper) | 12 | — | DEC-365 |
+| writer reached by `assign_attributes` | 10 | 2 | DEC-364 |
+| namespace `table_name_prefix` | 5 | — | DEC-366 |
+| gem calls it on a duck / via `on_load` helpers | 4 | — | DEC-367 |
+| gem not installed (devise_pam) | 4 | — | none |
+| helper called by another helper | 3 | — | DEC-368 |
+| `module_function` | 2 | — | DEC-361 |
+| methods listed at runtime | — | 2 | DEC-370 |
+| mailer action called on its class | — | 1 | DEC-369 |
+| concern `ClassMethods` overriding with `super` | 1 | — | DEC-365 |
+| scope lambda in a concern calling `ClassMethods` | 1 | — | none |
+| name in an XPath string | 1 | — | none |
+
+**Precision of `unreferenced`, clear**, main → this build:
+
+| sample | before | after | true rows lost to `lower` |
+| --- | ---: | ---: | ---: |
+| mastodon app, all 77 (fitted) | 22/77 = 29 % | 22/28 = 79 % | 0 of 22 |
+| discourse app, random 70 (fitted) | 8/70 = 11 % | 7/7 | 1 of 8 |
+| discourse app, all 100 (fitted) | 15/100 | 14/14 | 1 of 15 |
+| discourse app, 28 clear rows never sampled (held out) | — | 25/28 = 89 % | — |
+| discourse `lib`, random 25 (held out) | 11/25 = 44 % | 11/18 = 61 % | 0 of 11 |
+| mastodon `lib`, all 21 (held out) | 4/21 = 19 % | 4/16 = 25 % | 0 of 4 |
+
+The one true row lost is `ApiKeySerializer#include_user_id?`, lowered by
+DEC-363's `include_*?` shape that another class builds. Counts,
+`unreferenced`, clear → lower: mastodon app 77 → 29 (lower 85 → 131),
+discourse app 569 → 42 (212 → 263).
+
+**What the held-out rows say.** On app code the rules carry over (89 %).
+On `lib/` they do not reach 80 %: a CLI and a library are reached by other
+conventions. mastodon's `lib` misses were 11 Thor commands, which DEC-371
+then read (4/7 after it, no longer held out), and both corpora's remaining
+`lib` misses are strings sent by name (`public_send("list_#{filter}")`,
+`validate_method = "validate_#{name}"`, then `send`), a guardian's
+`ensure_can_x!` magic, a `%i[…].each { define_method … public_send }`
+forwarder, a callback object's `around_create`, a RuboCop or haml-lint
+visitor hook, a method named in a YAML setting. Those are follow-ups, each
+a rule of its own, and `clear` on a CLI or a library should be read with
+them in mind.
+
+**Not a graded number.** A per-row probability would have to be fitted on
+these ~200 labels, and the features that predicted were the causes above,
+each now a named caveat; the ones the brief suggested did not predict.
+Whether the name appears anywhere at all — any file, any gem, any string —
+split the fitted rows 22 true of 104 (no mention) against 15 of 73
+(mentioned): no signal. Visibility did (0 of 30 private or protected rows
+were dead), but every one of them is now caught by its cause (service
+steps, engine hooks), and a blanket "private is reached" rule would lower
+the private dead method a reader most wants found. A score fitted to two
+apps' accidents would be a guess wearing a measurement's clothes; a named
+caveat says what it saw.

@@ -78,8 +78,10 @@ struct Cli {
     /// it), `convention-only` (named only by a symbol handed to a macro),
     /// `super-only` (reached only by `super` from its overrides), and
     /// `single-caller` (one call: the inlining candidate). Each is `clear`, or
-    /// `lower` confidence when the file sends names dynamically, the one
-    /// caller's receiver is untyped, or it overrides a method. One pass: a
+    /// `lower` confidence when its `caveat` names a caller trekr cannot see —
+    /// the file sends names dynamically, the one caller's receiver is
+    /// untyped, it overrides a method, a view or a gem names it, the checkout
+    /// builds a name of its shape, an ancestor is not indexed. One pass: a
     /// method whose only caller is itself a candidate is `single-caller`, and
     /// its reason says so.
     #[arg(long, value_name = "PATH", num_args = 1..)]

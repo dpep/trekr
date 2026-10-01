@@ -19,6 +19,11 @@
   indexed.** The index reads the gems the open file names before any other
   gem, and Ruby's signatures just after: on a 100,000-file checkout the
   gem's answer arrives about half a second sooner.
+- **`--dead`'s `clear` on an `unreferenced` row now means something
+  measured**: hand-checked on mastodon and discourse app code, 79–100 % of
+  such rows were truly dead where 11–29 % were before; most former `clear`
+  rows are now `lower` or `convention-only`, each saying why. On a CLI or a
+  library, less (DEC-372).
 - **`--dead` knows Thor runs a command by its name.** A public method of a
   `Thor` or `Thor::Group` subclass (every Rails generator), or of a module
   one includes, is `convention-only` with `convention: {by: "Thor"}`.

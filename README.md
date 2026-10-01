@@ -165,8 +165,10 @@ The tiers, from least evidence of use to most:
 - `override` — nothing names it, but it overrides an ancestor's method, so
   whatever calls that one (often the framework) may run it.
 - `convention-only` — named only by a symbol handed to a macro
-  (`before_action :x`, `if: :x`, `with: :x`), or a controller action only a
-  route reaches (`config/routes.rb` is read).
+  (`before_action :x`, `if: :x`, `with: :x`), a controller action only a
+  route reaches (`config/routes.rb` is read), or a method a library calls by
+  a name it builds: ActiveModel::Serializers' `include_<attr>?`, a Thor
+  command (`convention` in JSON says which).
 - `super-only` — reached only by `super` from its overrides.
 - `single-caller` — one reference: an inlining candidate. `caller` in JSON
   says where, and whether it certainly reaches the method.
@@ -179,7 +181,17 @@ a row `lower` and are named in `caveat`: a view template that writes the name
 — `marshal_load`, `to_partial_path`, `each`, `perform`, … (DEC-315). So
 does a symbol in the method's own file that trekr does not read as a call
 (`only: [:archive]`), and a controller action when a route is built at
-runtime (DEC-343, DEC-344).
+runtime (DEC-343, DEC-344). And every other way in the row can name: a name
+of its shape the checkout builds (`:"report_#{type}"`) or sends to its class
+(`Mailer.public_send(type)`), a writer `assign_attributes` reaches, an
+ancestor trekr has not indexed, a gem of the bundle that calls the name, a
+helper another helper calls (DEC-363–368, DEC-370).
+
+`clear` on an `unreferenced` row means none of those was found. Measured by
+hand on mastodon and discourse (DEC-372), such rows were truly dead 79 % and
+100 % of the time where the rules were fitted, and 89 % on discourse rows
+held out; on code unlike an app's (`lib/`), less — read DEC-372 before
+trusting it on a CLI or a library.
 
 ### Where it keeps things
 
