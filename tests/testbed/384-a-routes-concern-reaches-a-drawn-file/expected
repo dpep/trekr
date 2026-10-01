@@ -1,0 +1,5 @@
+# A `concern` is the route set's, not its file's: one defined in routes.rb is
+# used by the files it `draw`s. Each file was read with its own concerns, so
+# `concerns: :batchable` in a drawn file reached nothing.
+# The path is a string: a `:batch` symbol is itself counted (DEC-340).
+dead app/controllers/gadgets_controller.rb GadgetsController#index=convention-only GadgetsController#batch=convention-only

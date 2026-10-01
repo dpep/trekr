@@ -1,0 +1,10 @@
+# A singular resource's controller is its name pluralized by Active Support:
+# `resource :settings` is SettingsController, not `settingses`, and
+# `resource :person` is PeopleController. Spelled by a naive rule, those
+# actions were `unreferenced`, clear, "no ... route names it". When the
+# plural names no controller (an app's own inflection), the name as written
+# is tried.
+dead app/controllers/settings_controller.rb SettingsController#show=convention-only
+dead app/controllers/people_controller.rb PeopleController#show=convention-only
+dead app/controllers/statuses_controller.rb StatusesController#show=convention-only
+dead app/controllers/gadget_controller.rb GadgetController#show=convention-only

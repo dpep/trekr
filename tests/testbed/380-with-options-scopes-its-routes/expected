@@ -1,0 +1,6 @@
+# `with_options` hands its options to every route in its block, as Rails'
+# OptionMerger does: `with_options only: [:index] do resources :gizmos end`
+# routes `index` alone. Read as a plain block, the resource got every default
+# action and its `edit` was "named only by a route" though none reaches it.
+# The path is a string: a `:batch` symbol is itself counted (DEC-340).
+dead app/controllers/gizmos_controller.rb GizmosController#index=convention-only GizmosController#batch=convention-only GizmosController#edit=unreferenced~

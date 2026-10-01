@@ -3587,19 +3587,21 @@ fn routed_actions(
         .collect();
     let mut routed = HashMap::new();
     for route in &routes.routes {
-        let path = format!(
-            "{}controller",
-            route.controller.split('/').collect::<Vec<_>>().join("::")
-        );
-        let engine = route
-            .engine
-            .as_ref()
-            .map(|engine| format!("{engine}::{path}"));
-        let Some(class) = engine
-            .iter()
-            .chain(std::iter::once(&path))
-            .find_map(|name| controllers.get(&plain(name)))
-        else {
+        let class = route.controllers.iter().find_map(|controller| {
+            let path = format!(
+                "{}controller",
+                controller.split('/').collect::<Vec<_>>().join("::")
+            );
+            let engine = route
+                .engine
+                .as_ref()
+                .map(|engine| format!("{engine}::{path}"));
+            engine
+                .iter()
+                .chain(std::iter::once(&path))
+                .find_map(|name| controllers.get(&plain(name)))
+        });
+        let Some(class) = class else {
             continue;
         };
         let Some(method) = tree.lookup(class, false, &route.action) else {
@@ -3862,9 +3864,12 @@ fn dead_in(
             tier => tier,
         };
         // A controller's public action a route reaches is reached by
-        // convention, as a symbol handed to a macro is (DEC-344).
-        let action =
-            !def.singleton && def.visibility.as_str() == "public" && owner.ends_with("Controller");
+        // convention, as a symbol handed to a macro is (DEC-344); so is a
+        // concern's, which is the action of the controllers that include it.
+        let controller = |class: &str| class.ends_with("Controller");
+        let action = !def.singleton
+            && public
+            && (controller(&owner) || tree.includers_of(&owner).iter().any(|c| controller(c)));
         let route = action
             .then(|| routed.get(&(owner.clone(), def.name.clone())))
             .flatten();

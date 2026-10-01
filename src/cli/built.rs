@@ -109,7 +109,7 @@ impl Built {
 }
 
 /// A spec, a test, or a database migration.
-fn is_test(path: &str) -> bool {
+pub(super) fn is_test(path: &str) -> bool {
     path.starts_with("db/")
         || path
             .split('/')

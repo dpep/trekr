@@ -1,0 +1,4 @@
+# A test app's routes (`spec/dummy`, `test/dummy`) are a test's, not the
+# app's: an engine's or gem's dummy app routes to actions the real app may
+# never route. They made `archive` and `purge` "named only by a route".
+dead app/controllers/widgets_controller.rb WidgetsController#index=convention-only WidgetsController#archive=unreferenced~ WidgetsController#purge=unreferenced~

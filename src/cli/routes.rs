@@ -5,8 +5,8 @@
 //! `draw`s, not a run of it: `get 'x', to: 'c#a'`, `'x' => 'c#a'`,
 //! `controller:`/`action:`, a bare path `'c/a'`, `resources`/`resource` with
 //! their default actions less `only:`/`except:`, `member`/`collection`,
-//! `concern`/`concerns`, and the module `namespace` and `scope module:` nest
-//! a controller in. A route it cannot read — a name built at runtime, a
+//! `concern`/`concerns`, `with_options`, and the module `namespace` and
+//! `scope module:` nest a controller in. A route it cannot read — a name built at runtime, a
 //! `:controller` segment — is listed, so a row can say routes were not all
 //! read rather than that none reaches it.
 
@@ -28,10 +28,18 @@ pub(super) struct Routes {
     pub(super) unread: Vec<(At, &'static str)>,
     /// The routes files read.
     pub(super) files: usize,
+    /// Each `concern` of the route set being read, by name: the file it is
+    /// written in, and that file's source up to the block's end with every
+    /// byte before the block blanked, so a re-read keeps its lines. A route
+    /// set's, not a file's: the files it `draw`s use them too.
+    concerns: HashMap<String, (String, Vec<u8>)>,
 }
 
 pub(super) struct Route {
-    pub(super) controller: String,
+    /// The controller's path, and what else it may be, in order: the first
+    /// that names a controller is the one (a singular resource's plural, and
+    /// its name as written for an app's own inflection).
+    pub(super) controllers: Vec<String>,
     pub(super) engine: Option<String>,
     pub(super) action: String,
     pub(super) at: At,
@@ -63,6 +71,11 @@ impl Routes {
         };
         for path in out.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
             let path = String::from_utf8_lossy(path).into_owned();
+            // A dummy app's routes are a test's (`spec/dummy`, `test/dummy`).
+            if super::built::is_test(&path) {
+                continue;
+            }
+            routes.concerns.clear();
             routes.read_file(root, &path, &Scope::default(), 0);
         }
         routes
@@ -88,15 +101,15 @@ impl Routes {
             lines: &lines,
             scopes: vec![scope.clone()],
             depth,
-            concerns: HashMap::new(),
         };
         reader.visit(&parsed.node());
     }
 
-    /// Write the actions of `controller` (a path) in `scope` reached by default.
-    fn push(&mut self, scope: &Scope, controller: String, action: &str, at: &At) {
+    /// Write the action of `controllers` (paths, the first that exists the
+    /// one) in `scope`.
+    fn push(&mut self, scope: &Scope, controllers: Vec<String>, action: &str, at: &At) {
         self.routes.push(Route {
-            controller,
+            controllers,
             engine: scope.engine.clone(),
             action: action.replace('-', "_"),
             at: at.clone(),
@@ -110,10 +123,60 @@ struct Scope {
     /// Module path a controller is nested in: `namespace :api`.
     module: Vec<String>,
     /// The controller a bare action goes to: `controller :x`, `scope
-    /// controller:`, or the resource whose block this is.
-    controller: Option<String>,
+    /// controller:`, or the resource whose block this is — as candidates,
+    /// the first that exists the one.
+    controller: Option<Vec<String>>,
     /// The engine whose `routes.draw` this is (`Billing::Engine`).
     engine: Option<String>,
+    /// The options a `with_options` block hands every route in it, which
+    /// its nested blocks share: their `self` is still its option merger.
+    options: HashMap<String, Value>,
+}
+
+/// An option's value, read once so a scope can carry it.
+#[derive(Clone)]
+enum Value {
+    String(String),
+    Symbol(String),
+    List(Vec<String>),
+    /// Built at runtime, or no name: a lambda, a `redirect(…)`.
+    Unread,
+}
+
+impl Value {
+    fn of(node: &Node<'_>) -> Value {
+        let text = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).ok();
+        if let Some(string) = node.as_string_node() {
+            return text(string.unescaped()).map_or(Value::Unread, Value::String);
+        }
+        if let Some(symbol) = node.as_symbol_node() {
+            return text(symbol.unescaped()).map_or(Value::Unread, Value::Symbol);
+        }
+        let list = node.as_array_node().and_then(|list| {
+            list.elements()
+                .iter()
+                .map(|e| literal(&e))
+                .collect::<Option<Vec<_>>>()
+        });
+        list.map_or(Value::Unread, Value::List)
+    }
+
+    /// A literal name: a symbol's or a string's text.
+    fn literal(&self) -> Option<String> {
+        match self {
+            Value::String(name) | Value::Symbol(name) => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    /// Literal names, one or a list; `None` when not literal.
+    fn literals(&self) -> Option<Vec<String>> {
+        match self {
+            Value::String(name) | Value::Symbol(name) => Some(vec![name.clone()]),
+            Value::List(names) => Some(names.clone()),
+            Value::Unread => None,
+        }
+    }
 }
 
 struct Reader<'r, 'a> {
@@ -124,8 +187,6 @@ struct Reader<'r, 'a> {
     lines: &'a LineIndex,
     scopes: Vec<Scope>,
     depth: usize,
-    /// Each `concern`'s block, as source, read again where it is used.
-    concerns: HashMap<String, Vec<u8>>,
 }
 
 /// A literal name: a symbol's or a string's text.
@@ -159,17 +220,66 @@ fn controller_in(module: &[String], written: &str) -> String {
 }
 
 /// `widgets` for `resource :widget`, as Rails' controller for a singular
-/// resource is plural. The common English rules only.
+/// resource is its name pluralized: Active Support's English inflections,
+/// in its order (irregulars, then the last rule defined first).
 fn plural(name: &str) -> String {
-    if let Some(stem) = name.strip_suffix('y')
-        && !stem.ends_with(['a', 'e', 'i', 'o', 'u'])
-    {
-        return format!("{stem}ies");
+    const UNCOUNTABLE: [&str; 10] = [
+        "equipment",
+        "information",
+        "rice",
+        "money",
+        "species",
+        "series",
+        "fish",
+        "sheep",
+        "jeans",
+        "police",
+    ];
+    const IRREGULAR: [(&str, &str); 6] = [
+        ("person", "people"),
+        ("man", "men"),
+        ("child", "children"),
+        ("sex", "sexes"),
+        ("move", "moves"),
+        ("zombie", "zombies"),
+    ];
+    if UNCOUNTABLE.contains(&name) {
+        return name.to_string();
     }
-    if name.ends_with('s') || name.ends_with('x') || name.ends_with("ch") || name.ends_with("sh") {
-        return format!("{name}es");
+    for (one, many) in IRREGULAR {
+        if let Some(stem) = name.strip_suffix(one) {
+            return format!("{stem}{many}");
+        }
     }
-    format!("{name}s")
+    let ends = |suffixes: &[&str]| suffixes.iter().any(|s| name.ends_with(s));
+    let cut = |n: usize, to: &str| format!("{}{to}", &name[..name.len() - n]);
+    let before = |n: usize| name[..name.len() - n].chars().last();
+    match name {
+        _ if ends(&["quiz"]) => format!("{name}zes"),
+        "ox" => "oxen".to_string(),
+        "oxen" | "mice" | "lice" => name.to_string(),
+        "mouse" | "louse" => cut(4, "ice"),
+        _ if ends(&["matrix", "matrex", "vertix", "vertex", "indix", "index"]) => cut(2, "ices"),
+        _ if ends(&["x", "ch", "ss", "sh"]) => format!("{name}es"),
+        _ if name.ends_with('y')
+            && (name.ends_with("quy") || before(1).is_some_and(|c| !"aeiouy".contains(c))) =>
+        {
+            cut(1, "ies")
+        }
+        _ if ends(&["hive"]) => format!("{name}s"),
+        _ if name.ends_with("fe") && before(2).is_some_and(|c| c != 'f') => cut(2, "ves"),
+        _ if ends(&["lf", "rf"]) => cut(1, "ves"),
+        _ if ends(&["sis"]) => cut(3, "ses"),
+        _ if ends(&["ta", "ia"]) => name.to_string(),
+        _ if ends(&["tum", "ium"]) => cut(2, "a"),
+        _ if ends(&["buffalo", "tomato"]) => format!("{name}es"),
+        _ if ends(&["bus", "alias", "status"]) => format!("{name}es"),
+        _ if ends(&["octopi", "viri"]) => name.to_string(),
+        _ if ends(&["octopus", "virus"]) => cut(2, "i"),
+        "axis" | "testis" => cut(2, "es"),
+        _ if name.ends_with('s') => name.to_string(),
+        _ => format!("{name}s"),
+    }
 }
 
 impl<'pr> Reader<'_, '_> {
@@ -191,13 +301,14 @@ impl<'pr> Reader<'_, '_> {
 
     /// A controller written in this scope: `users` in `namespace :admin` is
     /// `admin/users`; a leading `/` is from the top.
-    fn controller(&self, written: &str) -> String {
-        controller_in(&self.scope().module, written)
+    fn controller(&self, written: &str) -> Vec<String> {
+        vec![controller_in(&self.scope().module, written)]
     }
 
     /// The options a call is handed, by key: `to:`, `only:`, and a hash
-    /// rocket's path key (`'x' => 'c#a'`) as `=>`.
-    fn options(call: &ruby_prism::CallNode<'pr>) -> HashMap<String, Node<'pr>> {
+    /// rocket's path key (`'x' => 'c#a'`) as `=>`; over those of the
+    /// `with_options` it is in.
+    fn options(&self, call: &ruby_prism::CallNode<'pr>) -> HashMap<String, Value> {
         let mut options = HashMap::new();
         let args = call
             .arguments()
@@ -216,10 +327,14 @@ impl<'pr> Reader<'_, '_> {
                     Some(symbol) => String::from_utf8_lossy(symbol.unescaped()).into_owned(),
                     None => "=>".to_string(),
                 };
-                options.entry(name).or_insert(assoc.value());
+                options
+                    .entry(name)
+                    .or_insert_with(|| Value::of(&assoc.value()));
             }
         }
-        options
+        let mut merged = self.scope().options.clone();
+        merged.extend(options);
+        merged
     }
 
     fn positional(call: &ruby_prism::CallNode<'pr>) -> Vec<Node<'pr>> {
@@ -248,20 +363,20 @@ impl<'pr> Reader<'_, '_> {
     /// `get 'path', to: 'c#a'` and its kin.
     fn verb(&mut self, call: &ruby_prism::CallNode<'pr>, node: &Node<'pr>) {
         let at = self.at(node);
-        let options = Self::options(call);
+        let options = self.options(call);
         let first = Self::positional(call).into_iter().next();
         // `root 'home#index'` writes its target where a verb writes its path.
         let root = call.name().as_slice() == b"root";
         let to = options
             .get("to")
             .or(options.get("=>"))
-            .or(first.as_ref().filter(|_| root));
+            .cloned()
+            .or(first.as_ref().filter(|_| root).map(Value::of));
         if let Some(to) = to {
             // A Rack app, a `redirect`, a lambda: no action.
-            let Some(to) = to.as_string_node() else {
+            let Value::String(to) = to else {
                 return;
             };
-            let to = String::from_utf8_lossy(to.unescaped()).into_owned();
             let Some((controller, action)) = to.split_once('#') else {
                 return;
             };
@@ -277,11 +392,11 @@ impl<'pr> Reader<'_, '_> {
         }
         let controller = options
             .get("controller")
-            .and_then(literal)
+            .and_then(Value::literal)
             .map(|c| self.controller(&c))
             .or_else(|| self.scope().controller.clone());
         if let Some(action) = options.get("action") {
-            match (literal(action), controller) {
+            match (action.literal(), controller) {
                 (Some(action), Some(controller)) => {
                     let scope = self.scope().clone();
                     self.routes.push(&scope, controller, &action, &at);
@@ -330,7 +445,7 @@ impl<'pr> Reader<'_, '_> {
     /// `resources :widgets` and `resource :profile`.
     fn resources(&mut self, call: &ruby_prism::CallNode<'pr>, node: &Node<'pr>, plural_form: bool) {
         let at = self.at(node);
-        let options = Self::options(call);
+        let options = self.options(call);
         let mut names: Vec<String> = Vec::new();
         for arg in Self::positional(call) {
             match literal(&arg) {
@@ -344,14 +459,14 @@ impl<'pr> Reader<'_, '_> {
         let defaults: &[&str] = if plural_form { &RESOURCES } else { &RESOURCE };
         let mut actions: Vec<&str> = defaults.to_vec();
         if let Some(only) = options.get("only") {
-            let Some(only) = literals(only) else {
+            let Some(only) = only.literals() else {
                 self.unread(node, "`only:` built at runtime");
                 return;
             };
             actions.retain(|a| only.iter().any(|o| o == a));
         }
         if let Some(except) = options.get("except") {
-            let Some(except) = literals(except) else {
+            let Some(except) = except.literals() else {
                 self.unread(node, "`except:` built at runtime");
                 return;
             };
@@ -359,19 +474,24 @@ impl<'pr> Reader<'_, '_> {
         }
         let concerns = options
             .get("concerns")
-            .and_then(literals)
+            .and_then(Value::literals)
             .unwrap_or_default();
         for name in names {
-            let written = match options.get("controller").and_then(literal) {
-                Some(controller) => controller,
-                None if plural_form => name,
-                None => plural(&name),
+            // An app's own inflection may make the name its own plural.
+            let written = match options.get("controller").and_then(Value::literal) {
+                Some(controller) => vec![controller],
+                None if plural_form => vec![name],
+                None if plural(&name) == name => vec![name],
+                None => vec![plural(&name), name],
             };
             let mut scope = self.scope().clone();
-            if let Some(module) = options.get("module").and_then(literal) {
+            if let Some(module) = options.get("module").and_then(Value::literal) {
                 scope.module.push(module);
             }
-            let controller = controller_in(&scope.module, &written);
+            let controller: Vec<String> = written
+                .iter()
+                .map(|written| controller_in(&scope.module, written))
+                .collect();
             for action in &actions {
                 self.routes.push(&scope, controller.clone(), action, &at);
             }
@@ -386,22 +506,25 @@ impl<'pr> Reader<'_, '_> {
         }
     }
 
-    /// A `concern`'s block, read again in `scope`.
+    /// A `concern`'s block, read again in `scope`, where it is written.
     fn concern(&mut self, name: &str, scope: Scope) {
-        let Some(source) = self.concerns.get(name).cloned() else {
+        let Some((path, source)) = self.routes.concerns.get(name).cloned() else {
             return;
         };
+        // A concern that uses itself.
+        if self.depth > 8 {
+            return;
+        }
         let parsed = ruby_prism::parse(&source);
         let lines = LineIndex::new(&source);
         let mut reader = Reader {
             routes: self.routes,
             root: self.root,
-            path: self.path,
+            path: &path,
             source: &source,
             lines: &lines,
             scopes: vec![scope],
-            depth: self.depth,
-            concerns: self.concerns.clone(),
+            depth: self.depth + 1,
         };
         reader.visit(&parsed.node());
     }
@@ -461,11 +584,11 @@ impl<'pr> Visit<'pr> for Reader<'_, '_> {
             "resources" => self.resources(call, &node, true),
             "resource" => self.resources(call, &node, false),
             "namespace" => {
-                let options = Self::options(call);
+                let options = self.options(call);
                 let mut scope = self.scope().clone();
                 let module = options
                     .get("module")
-                    .and_then(literal)
+                    .and_then(Value::literal)
                     .or_else(|| Self::positional(call).first().and_then(literal));
                 match module {
                     Some(module) => scope.module.push(module),
@@ -474,13 +597,26 @@ impl<'pr> Visit<'pr> for Reader<'_, '_> {
                 self.within(call, scope);
             }
             "scope" => {
-                let options = Self::options(call);
+                let options = self.options(call);
                 let mut scope = self.scope().clone();
-                if let Some(module) = options.get("module").and_then(literal) {
+                if let Some(module) = options.get("module").and_then(Value::literal) {
                     scope.module.push(module);
                 }
-                if let Some(controller) = options.get("controller").and_then(literal) {
+                if let Some(controller) = options.get("controller").and_then(Value::literal) {
                     scope.controller = Some(self.controller(&controller));
+                }
+                self.within(call, scope);
+            }
+            // Its options are every route's in the block, nested ones too.
+            "with_options" => {
+                let mut scope = self.scope().clone();
+                scope.options = self.options(call);
+                let block = call.block().and_then(|b| b.as_block_node());
+                if block.is_some_and(|b| b.parameters().is_some()) {
+                    self.unread(
+                        &node,
+                        "routes written on a `with_options` block's parameter",
+                    );
                 }
                 self.within(call, scope);
             }
@@ -499,8 +635,15 @@ impl<'pr> Visit<'pr> for Reader<'_, '_> {
                     .and_then(|b| b.body());
                 if let (Some(name), Some(body)) = (name, body) {
                     let at = body.location();
-                    let source = self.source[at.start_offset()..at.end_offset()].to_vec();
-                    self.concerns.insert(name, source);
+                    let mut source = self.source[..at.end_offset()].to_vec();
+                    for byte in &mut source[..at.start_offset()] {
+                        if *byte != b'\n' {
+                            *byte = b' ';
+                        }
+                    }
+                    self.routes
+                        .concerns
+                        .insert(name, (self.path.to_string(), source));
                 }
             }
             "concerns" => {
@@ -534,7 +677,7 @@ mod tests {
         routes
             .routes
             .iter()
-            .map(|r| format!("{}#{}", r.controller, r.action))
+            .map(|r| format!("{}#{}", r.controllers.join("|"), r.action))
             .collect()
     }
 
@@ -570,11 +713,11 @@ mod tests {
                 "admin/widgets#index",
                 "admin/widgets#show",
                 "admin/widgets#archive",
-                "admin/profiles#create",
-                "admin/profiles#new",
-                "admin/profiles#edit",
-                "admin/profiles#show",
-                "admin/profiles#update",
+                "admin/profiles|admin/profile#create",
+                "admin/profiles|admin/profile#new",
+                "admin/profiles|admin/profile#edit",
+                "admin/profiles|admin/profile#show",
+                "admin/profiles|admin/profile#update",
             ]
         );
     }
@@ -587,6 +730,65 @@ mod tests {
              controller :health do\n      get :ping\n    end\n  end\nend\n",
         );
         assert_eq!(routes, ["api/posts#pin", "api/health#ping"]);
+    }
+
+    #[test]
+    fn with_options_hands_its_options_to_the_routes_in_its_block() {
+        let routes = read(
+            "Rails.application.routes.draw do\n  with_options only: [:index] do\n    \
+             resources :gizmos\n    resources :gadgets, only: [:show]\n  end\n  \
+             with_options to: 'home#show' do\n    get 'a'\n  end\nend\n",
+        );
+        assert_eq!(routes, ["gizmos#index", "gadgets#show", "home#show"]);
+    }
+
+    #[test]
+    fn a_concerns_routes_are_where_it_is_written() {
+        let mut routes = Routes::default();
+        routes.read_source(
+            Path::new("."),
+            "config/routes.rb",
+            b"Rails.application.routes.draw do\n\n  concern :batch do\n    \
+              collection { post :batch }\n  end\n  resources :gadgets, only: [], \
+              concerns: :batch\nend\n",
+            &Scope::default(),
+            0,
+        );
+        let at: Vec<_> = routes.routes.iter().map(|r| r.at.clone()).collect();
+        assert_eq!(at, [("config/routes.rb".to_string(), 4)]);
+    }
+
+    #[test]
+    fn a_singular_resources_controller_is_its_name_pluralized() {
+        let plurals: Vec<String> = [
+            "settings", "news", "person", "status", "gadget", "category", "box", "wife",
+            "analysis", "medium", "sheep", "quiz", "day",
+        ]
+        .iter()
+        .map(|name| plural(name))
+        .collect();
+        assert_eq!(
+            plurals,
+            [
+                "settings",
+                "news",
+                "people",
+                "statuses",
+                "gadgets",
+                "categories",
+                "boxes",
+                "wives",
+                "analyses",
+                "media",
+                "sheep",
+                "quizzes",
+                "days"
+            ]
+        );
+        assert_eq!(
+            read("Rails.application.routes.draw do\n  resource :profile, only: :show\nend\n"),
+            ["profiles|profile#show"]
+        );
     }
 
     #[test]

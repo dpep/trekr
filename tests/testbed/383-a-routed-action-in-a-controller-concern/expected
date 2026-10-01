@@ -1,0 +1,7 @@
+# An action a controller takes from a concern it includes is still the
+# controller's action: a route to `reports#export` reaches
+# `Exportable#export`. Routes were matched only to methods whose owner is
+# named `…Controller`, so the concern's routed action was `unreferenced`,
+# clear; its unrouted one stays so.
+# The path is a string: a `:export` symbol is itself counted (DEC-340).
+dead app/controllers/concerns/exportable.rb Exportable#export=convention-only Exportable#forgotten_export=unreferenced~

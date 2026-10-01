@@ -9743,6 +9743,50 @@ clear 77 unchanged.
 **Not done.** `--refs` on an action does not list its routes; `--def` on a
 route's string does not answer the action.
 
+**Addendum, before release.** A hunt of the unreleased rules found five
+edges, each one hiding a dead action or misstating a live one:
+
+- **`with_options`** hands its options (`only:`, `except:`, `concerns:`,
+  `controller:`, `module:`, `to:`) to every route in its block, nested
+  blocks too, as Rails' option merger does; a call's own option wins. Read
+  as a plain block, `with_options only: [:index] do resources :gizmos end`
+  routed every default action, and `GizmosController#edit` was "named only
+  by a route" (testbed 380; mastodon `config/routes/admin.rb:196`). A
+  `with_options` whose block takes a parameter (`|r| r.resources …`) is
+  listed as unread: routes written on the parameter are not read.
+- **A test app's routes are not the app's.** `spec/dummy` and `test/dummy`
+  routes files are skipped, as DEC-363 skips tests (rails' Action Mailbox,
+  Action Text and Active Storage; graphql) (382).
+- **A singular resource's controller is its name as Active Support
+  pluralizes it**, by a port of its English inflections: `resource
+  :settings` is `SettingsController`, `:news` `NewsController`, `:person`
+  `PeopleController`, where the naive rule spelled `settingses`. When that
+  plural names no controller — an app's own inflection — the name as
+  written is tried (381).
+- **A concern's method is a controller's action.** A route reaches what the
+  controller's lookup finds, which may be a module it includes; the row
+  checked only owners named `…Controller`, so a routed concern method was
+  `unreferenced`, clear. A public method of a module any controller
+  includes is now weighed as an action (383).
+- **A `concern` is the route set's, and its routes are where it is
+  written.** Its block was re-parsed alone, so its routes reported the
+  block's line within itself (mastodon's `Admin::*Controller#batch` at
+  `admin.rb:1`, written at `:7`), and a file it `draw`s, read with its own
+  concerns, could not use it (384).
+
+**Measured**, `--dead app` and `--dead lib` against main (a71975a) on the
+same store. Tier counts unchanged on mastodon app and discourse app.
+mastodon: 16 rows' route citations change — 10 `batch`/`approve` lines
+corrected (`admin.rb:1` → `:7`, `api.rb:2` → `:309`) and 6 `with_options …
+concerns:` routes now read (`Admin::Trends::*#batch`,
+`Api::V1::Admin::Trends::*#approve`, already `convention-only` by a
+symbol); `RegistrationHelper#terms_agreement_label`, a helper a controller
+includes, is weighed as an action. discourse `lib`: `ExternalUploadHelpers`,
+a concern its upload controllers include, gains its 5 routes (2 rows
+`unreferenced`, lower → `convention-only`), and
+`SecureUploadEndpointHelpers#upload_from_full_url` goes clear → lower under
+the runtime-route caveat — on reading it is dead: one true row lost.
+
 ## DEC-350 — The naming rung reads a split name as the variant its file reaches
 
 **Decided.** When the naming rung (`from_receiver_name`) takes `@user` to
