@@ -370,6 +370,38 @@ pub(crate) fn syntax_errors(src: &[u8]) -> Vec<(u32, u32, String)> {
 }
 
 /// Read every fact a blob's bytes declare.
+/// Every symbol literal in a file whose name could be a method's, with where
+/// its name starts and how long it is: what a reader sees as a name, whether
+/// or not it was recorded as one (DEC-343).
+pub(crate) fn symbol_literals(src: &[u8]) -> Vec<(String, Pos, usize)> {
+    struct Symbols<'a> {
+        lines: &'a LineIndex,
+        found: Vec<(String, Pos, usize)>,
+    }
+    impl<'pr> Visit<'pr> for Symbols<'_> {
+        fn visit_symbol_node(&mut self, node: &ruby_prism::SymbolNode<'pr>) {
+            if let (Some(loc), Ok(name)) = (
+                node.value_loc(),
+                String::from_utf8(node.unescaped().to_vec()),
+            ) && name.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
+            {
+                let len = loc.end_offset() - loc.start_offset();
+                self.found
+                    .push((name, self.lines.pos(loc.start_offset()), len));
+            }
+            ruby_prism::visit_symbol_node(self, node);
+        }
+    }
+    let parsed = ruby_prism::parse(src);
+    let lines = LineIndex::new(src);
+    let mut symbols = Symbols {
+        lines: &lines,
+        found: Vec::new(),
+    };
+    symbols.visit(&parsed.node());
+    symbols.found
+}
+
 pub(crate) fn extract(src: &[u8]) -> Facts {
     let parsed = ruby_prism::parse(src);
     let lines = LineIndex::new(src);

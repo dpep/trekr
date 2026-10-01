@@ -135,7 +135,8 @@ A column on no name — whitespace, punctuation, most strings — answers for th
 nearest name on that line and says so (`snapped_to` in JSON); `FILE:LINE`
 takes the line's first name. The exception: the string in
 `it_behaves_like "a widget"` answers the `shared_examples "a widget"` it
-includes.
+includes, and a symbol that names no method (`on: :create`) is `residue`,
+not a snap to its neighbour.
 
 **98 % of rails constant references resolve** (91 % discourse) with core and
 the gems indexed; rails' remainder is one optional adapter that is not

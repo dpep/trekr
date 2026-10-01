@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **`--dead` no longer says "no call, symbol or `super` names it" of a
+  method its own file names by a symbol it does not read as a call** (`only:
+  [:archive]`, `opts[:limit]`). The row says the symbol is there, at which
+  line, and is graded `lower`. And `--def` on such a symbol answers
+  `residue` (`under: symbol`) instead of answering for the nearest other
+  name on the line.
 - **Calls in a callback's block, a `rescue_from` block and an `if:`/`unless:`
   lambda run on the instance**, as Rails runs them. `after_save do
   normalize end`, `rescue_from E do |e| respond(e) end` and `if: -> {

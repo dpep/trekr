@@ -9467,3 +9467,37 @@ indexed: mastodon 4 rows move, all toward use (two `single-caller` rows
 leave, two `convention-only` become `single-caller`); discourse 19 —
 `unreferenced` 1,075 → 1,067 (`Topic#ensure_topic_has_a_category`,
 `ApplicationController#is_feed_request?`, …), every move toward use.
+
+## DEC-343 — A symbol trekr does not read is said to be there
+
+**Decided.** Two answers claimed what they had not checked:
+
+- **`--dead`'s "no call, symbol or `super` names it".** A symbol in the
+  candidate's own file whose name is the method's, and which no rule reads
+  as a call of it (`only: [:archive]`, `on: :create`, `opts[:limit]`,
+  `kind == :ordered`), was there and was not counted. Such a row now says
+  "no call or `super` names it, nor a symbol trekr reads as a call", and
+  its caveat names the symbol and line ("`:archive` at line 6 is not read
+  as a call"), which grades it `lower`. The tier stays: the symbol is
+  evidence of a name, not of a caller. Read from the file, every symbol
+  literal (`extract::symbol_literals`) less those recorded as calls and
+  those in the method's own body, which it uses as values.
+- **`--def` on such a symbol** snapped to the nearest other name on the line
+  and answered `resolved` for it, `snapped_to` its only disclosure: `--def
+  …:55` on `on: :create` answered `load_widget`. A column on a symbol is a
+  deliberate point at a name, unlike whitespace. It now answers `residue`,
+  `under: symbol`, "a symbol no rule reads as a method's name here: a key or
+  a value", as a variable (DEC-064) and an ownerless `super` already do.
+  A hash's or keyword argument's key is such a symbol: testbed 087 had
+  pointed at `id` in `where(id: featured_ids)` and was answered by a snap to
+  `featured_ids`; its column now points at the name it meant.
+
+**Why.** The 0.8.2 report: 17 of 118 hand-checked `unreferenced`, clear
+rows were named in their own file in ways `--dead` did not count, under a
+reason that said nothing named them. DEC-340 counts the option values that
+name a method; this says the rest.
+
+**Measured**, `--dead app` against the build before it on the same store:
+`unreferenced` and clear, mastodon 82 → 77 and discourse 729 → 655. Most are
+controller actions an `only:` names (discourse's `SessionController#csrf`,
+`#sso_login`); DEC-344 reads the routes that reach them.

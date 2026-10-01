@@ -5,7 +5,7 @@
 # relation's delegation sends it (DEC-116).
 def app.rb:2:22 status=resolved owner=ActiveRecord::QueryMethods via=scope
 def app.rb:3:31 status=resolved owner=Widget via=scope defined_via=scope site=app.rb:2
-def app.rb:4:35 status=resolved owner=Widget via=scope site=app.rb:6
+def app.rb:4:39 status=resolved owner=Widget via=scope site=app.rb:6
 # Outside a scope's body, a class method's `where` is still the class's.
 def app.rb:11:5 status=resolved owner=ActiveRecord::Querying
 # `cheap.where` is a call on what a scope returns, which is not typed.

@@ -1,0 +1,8 @@
+# `--dead` said "no call, symbol or `super` names it" of a method its own
+# file names by a symbol no rule reads as a call (`only: [:archive]`), which
+# was false. It now says the symbol is there and not read, and grades the
+# row lower. And `--def` on such a symbol snapped to the nearest other name
+# on the line, `load_widget`, and answered `resolved` for it.
+dead app.rb WidgetsController#archive=unreferenced~:archive WidgetsController#lonely=unreferenced~
+def app.rb:6:55 status=residue reason=symbol
+def app.rb:6:38 status=residue reason=symbol

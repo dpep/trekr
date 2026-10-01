@@ -3350,6 +3350,19 @@ fn dead_name(row: &serde_json::Value) -> String {
     }
 }
 
+/// A method `--dead` weighs, with what its own file says about it.
+struct Defined {
+    file: String,
+    def: crate::core::Def,
+    /// What lowers confidence in it, file-wide or its own.
+    caveat: String,
+    /// Names an `alias` of it is called by (DEC-316).
+    aliases: Vec<String>,
+    /// The first line of its file with a symbol of its name that no rule
+    /// reads as a call of it (DEC-343).
+    unread_symbol: Option<u32>,
+}
+
 /// `--dead` over the scopes in one checkout, weighed against that checkout:
 /// pushes a row per candidate and returns how many files were in scope.
 fn dead_in(
@@ -3362,7 +3375,7 @@ fn dead_in(
 
     let root_str = root.to_string_lossy().into_owned();
     let files = ruby_files(paths);
-    let mut defined: Vec<(String, crate::core::Def, String, Vec<String>)> = Vec::new();
+    let mut defined: Vec<Defined> = Vec::new();
     for file in &files {
         let Ok(source) = std::fs::read(file) else {
             continue;
@@ -3386,6 +3399,18 @@ fn dead_in(
             risky.push_str("class_eval string");
         }
         let at = file.to_string_lossy().into_owned();
+        // The file's symbols no rule reads as a method's name (DEC-343).
+        let recorded: Vec<crate::core::Pos> = facts
+            .calls
+            .iter()
+            .filter(|c| c.recv == crate::core::RecvShape::Symbol)
+            .map(|c| c.pos)
+            .collect();
+        let unread_symbols: Vec<(String, u32)> = extract::symbol_literals(&source)
+            .into_iter()
+            .filter(|(_, pos, _)| !recorded.contains(pos))
+            .map(|(name, pos, _)| (name, pos.line))
+            .collect();
         let unread_calls = facts.unread_calls;
         // A call of an alias runs its target's body (DEC-316).
         let aliases_of = |def: &crate::core::Def| -> Vec<String> {
@@ -3425,11 +3450,23 @@ fn dead_in(
                 caveat.push_str(&format!("a string of code calls `{shape}`"));
             }
             let aliases = aliases_of(def);
-            defined.push((at.clone(), def.clone(), caveat, aliases));
+            // Its own body's `:name` is a value it uses, not a way in.
+            let own = def.pos.line..=def.end_line;
+            let unread_symbol = unread_symbols
+                .iter()
+                .find(|(name, line)| *name == def.name && !own.contains(line))
+                .map(|(_, line)| *line);
+            defined.push(Defined {
+                file: at.clone(),
+                def: def.clone(),
+                caveat,
+                aliases,
+                unread_symbol,
+            });
         }
     }
 
-    let names: Vec<String> = defined.iter().map(|(_, d, _, _)| d.name.clone()).collect();
+    let names: Vec<String> = defined.iter().map(|d| d.def.name.clone()).collect();
     // More written calls than this and a name is plainly used.
     const PLAINLY_USED: i64 = 8;
     let written_calls = store.written_calls(&root_str, &names, PLAINLY_USED + 1)?;
@@ -3438,7 +3475,14 @@ fn dead_in(
     let tree = build_tree(store, &root_str)?;
     let views = views::Views::read(root);
     let mut parsed = Parsed::new();
-    for (file, def, risky, aliases) in &defined {
+    for Defined {
+        file,
+        def,
+        caveat: risky,
+        aliases,
+        unread_symbol,
+    } in &defined
+    {
         let written = written_calls.get(&def.name).copied().unwrap_or(0);
         if written > PLAINLY_USED {
             continue; // not worth a narrowed search
@@ -3538,7 +3582,22 @@ fn dead_in(
             }
             risky.push_str(&format!("named in a view ({template}), which is not read"));
         }
+        // A symbol in its own file that no rule reads as its name may still
+        // be how it is reached: say so, rather than that no symbol names it.
+        let unread_symbol = unread_symbol.filter(|_| matches!(tier, "unreferenced" | "override"));
+        if let Some(line) = unread_symbol {
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            risky.push_str(&format!(
+                "`:{}` at line {line} is not read as a call",
+                def.name
+            ));
+        }
         let reason = match (tier, &caller) {
+            ("unreferenced", _) if unread_symbol.is_some() => {
+                "no call or `super` names it, nor a symbol trekr reads as a call".to_string()
+            }
             ("unreferenced", _) => "no call, symbol or `super` names it".to_string(),
             ("override", _) => format!(
                 "no call names it, but it overrides {}, so a call of that may run it",
@@ -3843,6 +3902,35 @@ fn cmd_def(
             }),
             false,
             "super  its method's owner is decided at runtime",
+        );
+    }
+    // A symbol no rule reads as a method's name is a value (`on: :create`,
+    // `status: :ok`). Snapping from one answered, resolved, for whatever
+    // other name was nearest on the line (DEC-343).
+    if spec.col > 0
+        && position::at_facts(&facts, spec.line, spec.col).is_none()
+        && let Some((name, _, _)) =
+            crate::extract::symbol_literals(&source)
+                .into_iter()
+                .find(|(_, pos, len)| {
+                    pos.line == spec.line
+                        && pos.col.saturating_sub(1) <= spec.col
+                        && spec.col < pos.col + *len as u32
+                })
+    {
+        return report(
+            out,
+            serde_json::json!({
+                "query": written,
+                "under": "symbol",
+                "name": name,
+                "status": "residue",
+                "confidence": 0.0,
+                "definition": [],
+                "reason": "a symbol no rule reads as a method's name here: a key or a value",
+            }),
+            false,
+            &format!(":{name}  a key or a value here, not a method's name"),
         );
     }
     // A variable is not a call, and snapping from one answered for whatever
