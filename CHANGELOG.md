@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A call with keywords is no longer ruled out of a method that takes
+  them.** `thing.refresh(name: "a")` counted its keywords as a positional
+  argument, so `--refs Widget#refresh` excluded it, "the argument count does
+  not fit", when `refresh` is `def refresh(name: nil)`.
 - **A method named by an option's symbol is a reference.** `rescue_from
   Error, with: :handler`, `before_action :x, if: :ready?`, `validates …,
   unless: :skip?`, `delegate …, to: :target` and an app's own

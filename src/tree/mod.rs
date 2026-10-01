@@ -259,8 +259,10 @@ pub(crate) struct MethodDef {
     /// its `sig` writes is looked up.
     #[serde(skip)]
     pub(crate) nesting: Vec<String>,
-    /// Required positional arity and whether the method takes more than that.
-    pub(crate) arity: (u32, bool),
+    /// Required positional arity, whether the method takes more than that,
+    /// and whether it takes keywords — which a call's keywords then are,
+    /// rather than one more positional Hash.
+    pub(crate) arity: (u32, bool, bool),
     pub(crate) site: Site,
     /// Made here from a body written elsewhere — `define_method(:x,
     /// instance_method(:y))` — so this site is a declaration.
@@ -326,8 +328,9 @@ impl MethodDef {
     /// argc means a splat hid the count, which cannot rule anything out.
     pub(crate) fn accepts(&self, argc: Option<u32>) -> bool {
         let Some(argc) = argc else { return true };
-        let (required, variadic) = self.arity;
-        argc >= required && (variadic || argc == required)
+        let (required, variadic, keywords) = self.arity;
+        // The call's count holds its keywords as one argument.
+        argc >= required && (variadic || argc == required || (keywords && argc == required + 1))
     }
 
     /// A bare `private :foo` asserts visibility about a method that may live in
@@ -2972,7 +2975,7 @@ impl Tree {
             bound: bound.is_some(),
             // A body written elsewhere takes whatever that body takes.
             arity: if body_elsewhere {
-                (0, true)
+                (0, true, false)
             } else {
                 arity_of(&row.params)
             },
@@ -3090,7 +3093,7 @@ impl Tree {
             sig_overloads: Vec::new(),
             nesting: Vec::new(),
             // The string's parameters are not stored.
-            arity: (0, true),
+            arity: (0, true, false),
             site: Site {
                 path: how.path,
                 line: how.line,
@@ -4192,8 +4195,9 @@ impl Tree {
     }
 }
 
-/// Required positional arity, and whether more are accepted.
-fn arity_of(params: &[Param]) -> (u32, bool) {
+/// Required positional arity, whether more are accepted, and whether it
+/// takes keywords.
+fn arity_of(params: &[Param]) -> (u32, bool, bool) {
     use crate::core::ParamKind::*;
     let required = params
         .iter()
@@ -4202,7 +4206,8 @@ fn arity_of(params: &[Param]) -> (u32, bool) {
     let variadic = params
         .iter()
         .any(|p| matches!(p.kind, Opt | Rest | Keyrest | Block));
-    (required, variadic)
+    let keywords = params.iter().any(|p| matches!(p.kind, Key | Keyreq));
+    (required, variadic, keywords)
 }
 
 #[cfg(test)]

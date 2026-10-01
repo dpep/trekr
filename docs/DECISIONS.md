@@ -9405,3 +9405,31 @@ it", which was false.
 from `unreferenced`, 3 from `override` — each named by `if:`, `unless:` or
 `with:` (`current_user?`, `rate_limited_request?`, `internal_server_error`);
 none named only by a value. discourse 1,093 → 1,078 (clear 746 → 735).
+
+## DEC-341 — A call's keywords are the keywords of a method that takes them
+
+**Decided.** A call site's argument count holds its keywords as one
+argument (`refresh(name: "a")` is 1), which is what Ruby passes to a method
+that takes no keywords: one positional Hash. A method that takes keywords
+(`name: nil`, `height:`) takes them as keywords, so it now also fits a call
+of one more argument than it requires. `**opts` already fitted any count.
+
+**Why.** Exposed by DEC-342. An `after_save do` block's calls were read on
+the class, so `theme.theme_modifier_set` there was untyped; once they ran on
+the instance it typed, and discourse's
+`theme.theme_modifier_set.refresh_theme_setting_modifiers(target_setting_name:
+name, target_setting_value: value)` was excluded from
+`ThemeModifierSet#refresh_theme_setting_modifiers`'s references as "the
+argument count does not fit" — `def refresh_theme_setting_modifiers(
+target_setting_name: nil, target_setting_value: nil)` counted as taking
+none. The same held for every untyped call with keywords to such a method.
+
+**Not done.** A braced Hash (`m({a: 1})`) is positional in Ruby 3 and is
+still counted as fitting a method that takes keywords; the count does not
+say which was written.
+
+**Measured**, `--dead app` against the build before it on the same store:
+mastodon one row leaves the candidates (`Notification::Groups::ClassMethods
+#paginate_groups`, `unreferenced`); discourse 13 rows gain references — two
+`unreferenced` and seven `single-caller` rows leave, three `convention-only`
+and one `unreferenced` become `single-caller` — and none loses one.

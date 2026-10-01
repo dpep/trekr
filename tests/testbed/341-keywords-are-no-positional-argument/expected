@@ -1,0 +1,8 @@
+# A call's keywords were counted as one more positional argument, so an
+# untyped `thing.refresh(name: "b")` did not fit `def refresh(name: nil)`
+# and `--refs` excluded it: "the argument count does not fit". Keywords
+# handed to a method that takes keywords are its keywords; to one that takes
+# none they are one positional Hash, as Ruby passes them.
+refs Widget#refresh confirmed=1 possible=1
+refs Widget#resize confirmed=1 possible=1
+refs Widget#label confirmed=1 possible=1
