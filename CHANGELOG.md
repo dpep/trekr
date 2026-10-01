@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.3 — 2026-10-01
 
 - **Every editor request is faster once the index is warm**: a definition on
   discourse takes about half a millisecond, where it took 7 ms re-reading
