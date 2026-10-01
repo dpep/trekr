@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.4 — 2026-10-01
 
 - **The index format changed: trekr reindexes each checkout once** after
   upgrading.
