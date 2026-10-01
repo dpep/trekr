@@ -19,6 +19,9 @@
   indexed.** The index reads the gems the open file names before any other
   gem, and Ruby's signatures just after: on a 100,000-file checkout the
   gem's answer arrives about half a second sooner.
+- **`--dead` counts a `module_function`'s calls through its module.**
+  `Tally.count(…)` runs `Tally#count`'s body, and the method was
+  `unreferenced` when that was its only caller.
 - **`--dead` reads a Haml template's continued lines and skips its
   comments.** A `-#` comment with an apostrophe hid every name after it in
   the template, and a call on the line under a `= f.input :x,` was not read,

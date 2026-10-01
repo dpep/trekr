@@ -1,0 +1,5 @@
+# `module_function` makes a `def` two methods: a private instance one and a
+# public singleton copy. `--dead` weighs the instance one, and the copy's
+# calls (`Tally.count_words`) were not counted, so a module function called
+# only through the module was `unreferenced`, clear.
+dead lib/tally.rb Tally#count_words=single-caller Tally#lonely=unreferenced~

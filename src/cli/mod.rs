@@ -3611,8 +3611,9 @@ struct Defined {
     def: crate::core::Def,
     /// What lowers confidence in it, file-wide or its own.
     caveat: String,
-    /// Names an `alias` of it is called by (DEC-316).
-    aliases: Vec<String>,
+    /// Other names its body is called by, and on which side: an `alias`
+    /// of it (DEC-316), and a `module_function`'s singleton copy (DEC-361).
+    aliases: Vec<(String, bool)>,
     /// The first line of its file with a symbol of its name that no rule
     /// reads as a call of it (DEC-343).
     unread_symbol: Option<u32>,
@@ -3667,18 +3668,27 @@ fn dead_in(
             .map(|(name, pos, _)| (name, pos.line))
             .collect();
         let unread_calls = facts.unread_calls;
-        // A call of an alias runs its target's body (DEC-316).
-        let aliases_of = |def: &crate::core::Def| -> Vec<String> {
+        // A call of an alias runs its target's body (DEC-316), and so does a
+        // call of a `module_function`'s singleton copy (DEC-361).
+        let aliases_of = |def: &crate::core::Def| -> Vec<(String, bool)> {
             facts
                 .defs
                 .iter()
-                .filter(|alias| {
-                    matches!(alias.via.as_deref(), Some("alias" | "alias_method"))
-                        && alias.target.as_deref() == Some(def.name.as_str())
-                        && alias.nesting == def.nesting
-                        && alias.singleton == def.singleton
+                .filter(|other| other.nesting == def.nesting)
+                .filter_map(|other| match other.via.as_deref() {
+                    Some("alias" | "alias_method")
+                        if other.target.as_deref() == Some(def.name.as_str())
+                            && other.singleton == def.singleton =>
+                    {
+                        Some((other.name.clone(), def.singleton))
+                    }
+                    Some("module_function")
+                        if other.name == def.name && other.singleton && !def.singleton =>
+                    {
+                        Some((other.name.clone(), true))
+                    }
+                    _ => None,
                 })
-                .map(|alias| alias.name.clone())
                 .collect()
         };
         for def in &facts.defs {
@@ -3767,10 +3777,10 @@ fn dead_in(
             None,
         )
         .unwrap_or_default();
-        for alias in aliases {
+        for (alias, singleton) in aliases {
             let query = refs::Query {
                 owner: query.owner.clone(),
-                singleton: query.singleton,
+                singleton: *singleton,
                 name: alias.clone(),
             };
             let (more, tally) = gather_refs(

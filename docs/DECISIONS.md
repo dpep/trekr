@@ -9845,3 +9845,20 @@ comma's continuation line (`label_method: ->(x) { privilege_label(x) }`,
 2,359 → 2,340; of the 77 hand-checked rows, the 12 view callers and one
 helper a view also calls become `lower`, and none of the 22 true candidates
 moves. discourse unchanged (its templates are ERB).
+
+## DEC-361 — `--dead` counts a module function's calls through its module
+
+**Decided.** `module_function` makes one `def` two methods (extraction emits
+both): a private instance method and a public singleton copy, `via:
+module_function`. `--dead` weighs the instance one and skips the copy, as it
+skips every macro-made method; the copy's calls (`Extractor.extract_urls(…)`)
+now count toward it, as an alias's do (DEC-316). Both run the same body.
+
+**Why.** mastodon's `Extractor#extract_entities_with_indices` and
+`PrivateAddressCheck#private_address?` were `unreferenced`, clear, each
+called only as `Module.method` (`app/lib/text_formatter.rb:30`,
+`app/lib/request.rb:394`) — 2 of the 77 hand-checked rows.
+
+**Measured**, `--dead app`, against the build before it: mastodon
+`unreferenced` 162 → 160, and 3 more rows leave or move toward use
+(`Extractor`'s other module functions, a helper's). discourse unchanged.
