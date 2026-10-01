@@ -9535,6 +9535,11 @@ early store's end less tidy than its start:
   An early store an index left is listed by `--status` as `kept` (`kind:
   early`) and removed by `--gc` at any age, as a set-aside copy is — the
   one-line follow-up DEC-300 left.
+- *`--status` says a checkout is partial.* After a first index was killed, it
+  showed the 100k checkout as "18 files" and nothing else, while `--def
+  --json` said `warming.interrupted`. Its row now carries the same `warming`
+  as an answer, and the text a line under it: "being indexed: N of M files
+  read so far", or "cut short: … — `trekr --index <root>` finishes it".
 
 ## DEC-333 — A warm request reads the store's roots only once the store has moved
 

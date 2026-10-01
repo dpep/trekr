@@ -4841,6 +4841,11 @@ fn a_partial_index_says_so_and_claims_nothing_certain() {
     assert_eq!(json(&dead)["status"], "warming");
     assert_eq!(dead.status.code(), Some(2));
 
+    let status = json(&trekr(&db, &dir, &["--status", "--json"]));
+    assert_eq!(status["checkouts"][0]["warming"]["read"], 1, "{status}");
+    let text = stdout(&trekr(&db, &dir, &["--status"]));
+    assert!(text.contains("being indexed: 1 of 4 files"), "{text}");
+
     // The index that marked it died: still partial, and says what fixes it.
     mark_warming(&db, &dir, i32::MAX as u32, 1, 4);
     let def = json(&trekr(&db, &dir, &["--def", "user.rb:8:5", "--json"]));
@@ -4851,12 +4856,24 @@ fn a_partial_index_says_so_and_claims_nothing_certain() {
             .unwrap()
             .contains("trekr --index")
     );
+    let status = json(&trekr(&db, &dir, &["--status", "--json"]));
+    assert_eq!(
+        status["checkouts"][0]["warming"], def["warming"],
+        "{status}"
+    );
+    let text = stdout(&trekr(&db, &dir, &["--status"]));
+    assert!(
+        text.contains("cut short: 1 of 4 files read — `trekr --index"),
+        "{text}"
+    );
 
     // And an index ends it.
     trekr(&db, &dir, &["--index"]);
     let def = json(&trekr(&db, &dir, &["--def", "user.rb:8:5", "--json"]));
     assert!(def.get("warming").is_none());
     assert_eq!(def["confidence"], 1.0);
+    let status = json(&trekr(&db, &dir, &["--status", "--json"]));
+    assert!(status["checkouts"][0].get("warming").is_none(), "{status}");
 }
 
 /// An index the language server spawns reads the files it is told are open

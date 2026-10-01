@@ -767,8 +767,9 @@ store); see DEC-067.
 answer meanwhile carries `warming: {read, of, interrupted, hint}`, its
 `confidence` scaled by the share read, and makes no certain claim:
 `no_such_method` is `residue`, a `--refs` site the receiver would rule out is
-`possible`, `--dead` lists nothing, and a miss exits `2`. A mark left by an
-index that died is `interrupted`, until the next index.
+`possible`, `--dead` lists nothing, and a miss exits `2`. `--status` carries
+the same `warming` on the checkout's row. A mark left by an index that died
+is `interrupted`, until the next index.
 
 **A first index is written in the order an editor needs it** (DEC-322),
 each step its own commit: the files the language server says are open (a

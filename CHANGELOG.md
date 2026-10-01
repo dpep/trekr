@@ -144,8 +144,9 @@
   the share read, nothing is called certainly absent (`no_such_method` reads
   `residue`, `--refs` rules out no caller), `--dead` lists nothing until the
   index ends, and a miss exits `2` instead of `1` — ask again when the index
-  ends, or run `trekr --index`, which finishes it. In the editor, hovers say
-  how much is read. Nothing to do; scripts that treat `2` as "index, then
+  ends, or run `trekr --index`, which finishes it. `--status` says so on the
+  checkout's row (`warming` in JSON), and names `trekr --index` when the index
+  was cut short. In the editor, hovers say how much is read. Nothing to do; scripts that treat `2` as "index, then
   ask again" already handle it.
 - **A command no longer fails with `database is locked` while another trekr
   upgrades the index.** After `brew upgrade`, a running language server

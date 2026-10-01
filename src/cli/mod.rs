@@ -2361,6 +2361,10 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
     let mut counted: HashSet<String> = HashSet::new();
     for checkout in &shown {
         let mut row = serde_json::to_value(checkout)?;
+        // Its file count is what is in so far (DEC-320).
+        if let Some(warming) = store.warming(&checkout.repo)? {
+            row["warming"] = warming_note(&checkout.repo, &warming);
+        }
         if !all && checkout.kind == "repo" {
             let stdlib = store.tree_roots(&checkout.repo)?.stdlib;
             let used: Vec<String> = store
@@ -2438,6 +2442,20 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
             row["blobs"].as_i64().unwrap_or(0),
             paths::pretty(row["repo"].as_str().unwrap_or_default())
         );
+        if let Some(warming) = row["warming"].as_object() {
+            let (read, of) = (&warming["read"], &warming["of"]);
+            match warming["interrupted"].as_bool() {
+                Some(true) => println!(
+                    "{:>32}! cut short: {read} of {of} files read — `{}` finishes it",
+                    "",
+                    warming["hint"].as_str().unwrap_or_default()
+                ),
+                _ => println!(
+                    "{:>32}! being indexed: {read} of {of} files read so far",
+                    ""
+                ),
+            }
+        }
         if let Some(stdlib) = row["stdlib"]["root"].as_str() {
             println!(
                 "{:>32}+ stdlib, {} files: {}",
