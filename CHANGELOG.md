@@ -19,6 +19,9 @@
   indexed.** The index reads the gems the open file names before any other
   gem, and Ruby's signatures just after: on a 100,000-file checkout the
   gem's answer arrives about half a second sooner.
+- **`--dead` grades a model's public writer `lower`**: Active Model's
+  `assign_attributes` (`new`, `update`, a form's params) calls `x=` by the
+  key it is handed, which no call site writes.
 - **`--dead` says where a method's name is built at runtime.** A method
   whose name has the shape of an interpolated symbol the checkout writes
   (`:"report_#{type}"`), or whose class a computed name is sent to

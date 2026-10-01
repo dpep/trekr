@@ -3871,6 +3871,13 @@ fn dead_in(
             }
             risky.push_str(&format!("named in a view ({template}), which is not read"));
         }
+        let public = def.visibility.as_str() == "public";
+        if !def.singleton && conventions::assigned_writer(&tree, &owner, &def.name, public) {
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            risky.push_str("a writer Active Model's `assign_attributes` calls by name");
+        }
         if let Some(why) = built.reaching(&owner, &def.name) {
             if !risky.is_empty() {
                 risky.push_str(", ");

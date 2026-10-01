@@ -389,7 +389,13 @@ fn check_dead(case: &str, line: &str, answer: &serde_json::Value, failures: &mut
             ));
         }
     }
-    for (method, want) in pairs(line) {
+    // A writer's name ends in `=` (`Widget#mode==unreferenced`): the tier is
+    // after the last one.
+    let methods = line
+        .split_whitespace()
+        .filter_map(|token| token.rsplit_once('='))
+        .map(|(k, v)| (k.to_string(), v.to_string()));
+    for (method, want) in methods {
         let (owner, name) = method.rsplit_once('#').unwrap_or(("", &method));
         // `tier~word`: the row's caveat must also contain `word`, `tier~` that
         // it has none.

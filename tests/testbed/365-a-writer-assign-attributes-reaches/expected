@@ -1,0 +1,9 @@
+# Active Model's `assign_attributes` (and so `new`, `update` and every form
+# a controller hands params to) calls a writer by the key it is given, so
+# no call site writes `mode=`: 10 of mastodon's 77 hand-checked
+# unreferenced, clear rows were writers a form or an API's params reach.
+# A writer of a class or concern that assigns attributes says so; a plain
+# class's writer, and a method that is no writer, do not.
+dead app/models/widget.rb Widget#mode==unreferenced~assign_attributes Widget#lonely=unreferenced~
+dead app/models/concerns/labelled.rb Labelled#label_text==unreferenced~assign_attributes
+dead app/models/gadget.rb Gadget#mode==unreferenced~

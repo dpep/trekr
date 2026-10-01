@@ -9949,3 +9949,29 @@ it, 42 of 47 false ones become `lower` and 1 of 15 true ones. mastodon
 `unreferenced`, clear unchanged (63); 11 other rows gain the caveat. The
 read's cost is inside the noise of `--dead app` on discourse (three
 interleaved runs each way, 10–20 s, on a loaded machine).
+
+## DEC-364 — A public writer of a class that assigns attributes is reached by name
+
+**Decided.** Active Model's `assign_attributes` — and through it `new`,
+`update`, `assign_attributes` and every form or API handed params — calls
+`public_send("#{key}=", value)` for each key. A public `x=` whose owner's
+chain includes `ActiveModel::AttributeAssignment` (every Active Record model
+and every `ActiveModel::Model`), or a module such a class mixes in, says "a
+writer Active Model's `assign_attributes` calls by name", graded `lower`.
+The tier stays: whether a key `x` is ever handed in is not read.
+
+**Why.** 10 of mastodon's 77 hand-checked `unreferenced`, clear rows, and 2
+of discourse's 100, were such writers: `NotificationPolicy#filter_bots=`
+(`params.permit(…, :filter_bots)`), `Form::Import#mode=` (a form's
+`params.expect(form_import: [:mode])`), `User::HasSettings#settings_attributes=`
+(`update!(settings_attributes: …)`), a column's writer a model overrides
+(`AccountConversation#participant_account_ids=`).
+
+**Not `override`.** A writer that overrides a column's generated writer
+overrides a method no file defines; the schema is read for skipping
+columns, not as methods to override. A caveat is the evidence there is.
+
+**Measured**, `--dead app`, against the build before it: the 12
+hand-checked writers become `lower`, no true candidate moves; `unreferenced`,
+clear mastodon 63 → 53, discourse 56 → 51. 19 and 13 rows carry the
+caveat, across tiers.

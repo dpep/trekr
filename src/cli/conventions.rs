@@ -73,3 +73,25 @@ pub(super) fn serializer_include(
     }
     None
 }
+
+const ASSIGNMENT: &str = "ActiveModel::AttributeAssignment";
+
+/// Whether `name` is a public writer that Active Model's `assign_attributes`
+/// may call by the key it is handed — `new(mode: …)`, `update(…)`, a form's
+/// params — on `owner` or the classes that mix it in (DEC-364).
+pub(super) fn assigned_writer(tree: &Tree, owner: &str, name: &str, public: bool) -> bool {
+    let Some(attribute) = name.strip_suffix('=') else {
+        return false;
+    };
+    let writer = attribute.starts_with(|c: char| c.is_ascii_lowercase() || c == '_')
+        && attribute
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_');
+    public
+        && writer
+        && (tree.inherits(owner, ASSIGNMENT)
+            || tree
+                .includers_of(owner)
+                .iter()
+                .any(|class| tree.inherits(class, ASSIGNMENT)))
+}
