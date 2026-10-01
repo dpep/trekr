@@ -165,7 +165,8 @@ The tiers, from least evidence of use to most:
 - `override` — nothing names it, but it overrides an ancestor's method, so
   whatever calls that one (often the framework) may run it.
 - `convention-only` — named only by a symbol handed to a macro
-  (`before_action :x`, `if: :x`, `with: :x`).
+  (`before_action :x`, `if: :x`, `with: :x`), or a controller action only a
+  route reaches (`config/routes.rb` is read).
 - `super-only` — reached only by `super` from its overrides.
 - `single-caller` — one reference: an inlining candidate. `caller` in JSON
   says where, and whether it certainly reaches the method.
@@ -175,7 +176,10 @@ pass and does not cascade: a method whose only caller is itself a candidate
 is `single-caller`, and its reason says so. Two callers trekr cannot see grade
 a row `lower` and are named in `caveat`: a view template that writes the name
 (trekr does not read views), and Ruby or Rails calling a protocol hook by name
-— `marshal_load`, `to_partial_path`, `each`, `perform`, … (DEC-315).
+— `marshal_load`, `to_partial_path`, `each`, `perform`, … (DEC-315). So
+does a symbol in the method's own file that trekr does not read as a call
+(`only: [:archive]`), and a controller action when a route is built at
+runtime (DEC-343, DEC-344).
 
 ### Where it keeps things
 

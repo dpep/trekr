@@ -9501,3 +9501,60 @@ name a method; this says the rest.
 `unreferenced` and clear, mastodon 82 → 77 and discourse 729 → 655. Most are
 controller actions an `only:` names (discourse's `SessionController#csrf`,
 `#sso_login`); DEC-344 reads the routes that reach them.
+
+## DEC-344 — A route reaches the controller action it names
+
+**Decided.** `--dead` reads the checkout's routes — every `config/routes.rb`
+git knows, the app's and each engine's, and the files they `draw` — and a
+controller's public instance method a route reaches is tiered
+`convention-only`, "named only by a route, at config/routes.rb:N", with
+`route: {path, line}` in JSON. It is evidence of a way in, as a symbol
+handed to a macro is, not a call: a routed action with one written caller
+is still `single-caller`. `cli::routes` reads, without running:
+
+- a verb's target: `get 'x', to: 'c#a'`, `'x' => 'c#a'` (any path key, an
+  interpolated one too), `controller:`/`action:`, `root 'c#a'`, a bare
+  `get 'photos/search'` (`photos#search`), and in a controller's scope
+  `get :preview` or `get 'preview'`;
+- `resources`/`resource` and their default actions (a singular resource's
+  controller is plural), less `only:`/`except:`, with `controller:` and
+  `module:`, their blocks and `member`/`collection`, `concern` and
+  `concerns`;
+- the module `namespace` and `scope module:` nest a controller in, and
+  `controller :x do`/`scope controller:`.
+
+A route's controller is the class its path camelizes to, compared without
+case or underscores (so an acronym inflection — `OAuth` for `oauth` — still
+matches), an engine's (`Billing::Engine.routes.draw`) under its namespace
+first. Its action is what that class's lookup of the name finds, so a route
+to `admin/widgets#index` reaches `Admin::BaseController#index` when the
+widgets controller inherits it.
+
+**What it cannot read is said.** A route whose path or name is built at
+runtime, or whose controller or action is a path segment (`':controller(/
+:action)'`), is listed. Then every public action no read route reaches
+carries "a public action routes may reach (a path built at runtime at
+config/routes.rb:693)", graded `lower`, as does every one in a checkout with
+no routes file (testbed 343's controller, which has none, is now a plain
+`WidgetPanel`). An action no route reaches, in routes read whole, says "no
+call, symbol, `super` or route names it". Not read: a gem's routes
+(Devise's `devise_for`, Doorkeeper's `use_doorkeeper`), `mount`ed apps, and
+`direct`/`resolve`.
+
+**Why.** The 0.8.2 report: most of 69 controller-method candidates were
+public actions `config/routes.rb` maps (`post 'self_serve_token/initiate',
+to: 'self_serve_token#initiate'`), each `unreferenced`, clear.
+
+**Why read rather than caveat every action.** The caveat alone was the
+fallback. Reading the routes moves discourse's 293 unreferenced public
+controller actions to 7 (286 `convention-only`, each naming its route);
+the 7 left are lower, behind the one route discourse builds at runtime. A
+blanket caveat would have left all 293 as candidates. mastodon 4 move;
+its other actions were already named by `only:` symbols.
+
+**Measured**, `--dead app` against the build before it on the same store:
+discourse `unreferenced` 1,067 → 781, clear 655 → 569; mastodon 166 → 162,
+clear 77 unchanged.
+
+**Not done.** `--refs` on an action does not list its routes; `--def` on a
+route's string does not answer the action.

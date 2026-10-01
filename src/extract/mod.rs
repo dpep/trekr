@@ -12,7 +12,7 @@
 //! trees; one-way extraction does not.
 
 mod enums;
-mod line_index;
+pub(crate) mod line_index;
 mod macros;
 
 pub(crate) use macros::{camelize, table_to_class};

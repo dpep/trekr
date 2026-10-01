@@ -1,0 +1,4 @@
+# A route trekr cannot read — a resource named at runtime — may reach any
+# public action, so an action no route it read reaches is not called clear:
+# its caveat says which route was not read. A private method is no action.
+dead app/controllers/widgets_controller.rb WidgetsController#index=unreferenced~routes WidgetsController#helper=unreferenced~

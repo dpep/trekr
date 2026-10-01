@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **`--dead` reads the routes.** A controller's public action that
+  `config/routes.rb` (or a file it `draw`s, or an engine's) reaches —
+  `to: 'c#a'`, `resources` and their default actions, `member`/`collection`,
+  `namespace` and `scope module:` — is `convention-only`, "named only by a
+  route", with `route` in JSON, instead of `unreferenced`. Where a route is
+  built at runtime, an action no read route reaches says so and is graded
+  `lower`.
 - **`--dead` no longer says "no call, symbol or `super` names it" of a
   method its own file names by a symbol it does not read as a call** (`only:
   [:archive]`, `opts[:limit]`). The row says the symbol is there, at which

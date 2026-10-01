@@ -1,0 +1,8 @@
+# A controller's action is reached by a route, which no call site writes:
+# `--dead` called every routed action `unreferenced`, clear. A route names
+# the action of the controller its path camelizes to, inherited or its own;
+# an action no route reaches stays `unreferenced`, and says so.
+dead app/controllers/widgets_controller.rb WidgetsController#initiate=convention-only WidgetsController#forgotten=unreferenced~
+dead app/controllers/api/v1/oauth_controller.rb Api::V1::OauthController#discovery=convention-only
+dead app/controllers/admin/base_controller.rb Admin::BaseController#index=convention-only
+dead app/controllers/admin/gadgets_controller.rb Admin::GadgetsController#show=convention-only Admin::GadgetsController#archive=convention-only Admin::GadgetsController#edit=unreferenced~

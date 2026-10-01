@@ -8,6 +8,7 @@
 mod failure;
 pub(crate) mod position;
 mod profile;
+mod routes;
 mod views;
 
 use failure::{Failure, Tag};
@@ -3350,6 +3351,50 @@ fn dead_name(row: &serde_json::Value) -> String {
     }
 }
 
+/// Each method a route reaches, by its owner and name, with the route's
+/// file and line: a route's controller is the class its path camelizes to,
+/// matched without case or underscores (`api/v1/oauth` is `Api::V1::OAuth
+/// Controller` under an acronym inflection), and an engine's own first; its
+/// action is what that class's lookup of the name finds, which may be a
+/// superclass's (DEC-344).
+fn routed_actions(
+    tree: &crate::tree::Tree,
+    routes: &routes::Routes,
+) -> HashMap<(String, String), routes::At> {
+    let plain = |name: &str| name.replace('_', "").to_lowercase();
+    let controllers: HashMap<String, String> = tree
+        .declared()
+        .into_iter()
+        .filter(|(fqn, kind)| kind == "class" && fqn.ends_with("Controller"))
+        .map(|(fqn, _)| (plain(&fqn), fqn))
+        .collect();
+    let mut routed = HashMap::new();
+    for route in &routes.routes {
+        let path = format!(
+            "{}controller",
+            route.controller.split('/').collect::<Vec<_>>().join("::")
+        );
+        let engine = route
+            .engine
+            .as_ref()
+            .map(|engine| format!("{engine}::{path}"));
+        let Some(class) = engine
+            .iter()
+            .chain(std::iter::once(&path))
+            .find_map(|name| controllers.get(&plain(name)))
+        else {
+            continue;
+        };
+        let Some(method) = tree.lookup(class, false, &route.action) else {
+            continue;
+        };
+        routed
+            .entry((method.owner, route.action.clone()))
+            .or_insert_with(|| route.at.clone());
+    }
+    routed
+}
+
 /// A method `--dead` weighs, with what its own file says about it.
 struct Defined {
     file: String,
@@ -3474,6 +3519,8 @@ fn dead_in(
     // The expensive pass, only for names the cheap one could not clear.
     let tree = build_tree(store, &root_str)?;
     let views = views::Views::read(root);
+    let routes = routes::Routes::read(root);
+    let routed = routed_actions(&tree, &routes);
     let mut parsed = Parsed::new();
     for Defined {
         file,
@@ -3540,6 +3587,17 @@ fn dead_in(
             "unreferenced" if !overrides.is_empty() => "override",
             tier => tier,
         };
+        // A controller's public action a route reaches is reached by
+        // convention, as a symbol handed to a macro is (DEC-344).
+        let action =
+            !def.singleton && def.visibility.as_str() == "public" && owner.ends_with("Controller");
+        let route = action
+            .then(|| routed.get(&(owner.clone(), def.name.clone())))
+            .flatten();
+        let tier = match tier {
+            "unreferenced" | "override" if route.is_some() => "convention-only",
+            tier => tier,
+        };
         // The one written call a single caller has: whether it certainly
         // reaches this method is the difference between inlining it and
         // checking an untyped receiver first.
@@ -3585,6 +3643,20 @@ fn dead_in(
         // A symbol in its own file that no rule reads as its name may still
         // be how it is reached: say so, rather than that no symbol names it.
         let unread_symbol = unread_symbol.filter(|_| matches!(tier, "unreferenced" | "override"));
+        // An action no route read reaches may be reached by one not read.
+        if action && route.is_none() && matches!(tier, "unreferenced" | "override") {
+            let unread = match routes.unread.first() {
+                _ if routes.files == 0 => Some("no routes file read".to_string()),
+                Some(((path, line), why)) => Some(format!("{why} at {path}:{line}")),
+                None => None,
+            };
+            if let Some(unread) = unread {
+                if !risky.is_empty() {
+                    risky.push_str(", ");
+                }
+                risky.push_str(&format!("a public action routes may reach ({unread})"));
+            }
+        }
         if let Some(line) = unread_symbol {
             if !risky.is_empty() {
                 risky.push_str(", ");
@@ -3598,15 +3670,21 @@ fn dead_in(
             ("unreferenced", _) if unread_symbol.is_some() => {
                 "no call or `super` names it, nor a symbol trekr reads as a call".to_string()
             }
+            ("unreferenced", _) if action && routes.files > 0 => {
+                "no call, symbol, `super` or route names it".to_string()
+            }
             ("unreferenced", _) => "no call, symbol or `super` names it".to_string(),
             ("override", _) => format!(
                 "no call names it, but it overrides {}, so a call of that may run it",
                 overrides.join(", ")
             ),
-            ("convention-only", _) => format!(
-                "named only by a symbol handed to a macro ({})",
-                live.by_symbol
-            ),
+            ("convention-only", _) => match (live.by_symbol, route) {
+                (0, Some((path, line))) => format!("named only by a route, at {path}:{line}"),
+                (n, Some((path, line))) => format!(
+                    "named only by a symbol handed to a macro ({n}) and a route, at {path}:{line}"
+                ),
+                (n, None) => format!("named only by a symbol handed to a macro ({n})"),
+            },
             ("super-only", _) => format!(
                 "reached only by `super` from {}",
                 live.super_from.join(", ")
@@ -3644,6 +3722,9 @@ fn dead_in(
         });
         if let Some(caller) = caller {
             row["caller"] = caller;
+        }
+        if let Some((path, line)) = route {
+            row["route"] = serde_json::json!({ "path": path, "line": line });
         }
         rows.push(row);
     }
