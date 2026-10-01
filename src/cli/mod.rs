@@ -1550,13 +1550,13 @@ fn walk_gems(
         pool.install(|| {
             gems.par_iter()
                 .map(|gem| {
-                    let mut files = scan::walk(gem, "lib");
-                    files.retain(|path, _| {
+                    let mut paths = scan::list(gem, "lib");
+                    paths.retain(|path| {
                         !path
                             .strip_prefix("lib/")
                             .is_some_and(crate::gems::stdlib::opt_in)
                     });
-                    (gem.clone(), files)
+                    (gem.clone(), scan::hash(gem, paths))
                 })
                 .filter(|(_, files)| !files.is_empty())
                 .collect()

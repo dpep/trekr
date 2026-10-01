@@ -390,7 +390,12 @@ fn parse_status(out: &[u8]) -> (Vec<String>, Vec<String>) {
 /// because git already knows every OID and re-hashing 100k files to learn what
 /// git could have told us is the cost this design exists to avoid.
 pub(crate) fn walk(root: &Path, subdir: &str) -> Files {
-    let mut files = Files::new();
+    hash(root, list(root, subdir))
+}
+
+/// `walk`'s paths, without reading a file: what is left out is never read.
+pub(crate) fn list(root: &Path, subdir: &str) -> Vec<String> {
+    let mut paths = Vec::new();
     let start = root.join(subdir);
     let mut stack = vec![start];
     while let Some(dir) = stack.pop() {
@@ -412,15 +417,25 @@ pub(crate) fn walk(root: &Path, subdir: &str) -> Files {
             let Some(relative) = path.strip_prefix(root).ok().map(|p| p.to_string_lossy()) else {
                 continue;
             };
-            if !is_ruby(&relative) {
-                continue;
-            }
-            if let Ok(bytes) = std::fs::read(&path) {
-                files.insert(relative.into_owned(), hash_blob(&bytes));
+            if is_ruby(&relative) {
+                paths.push(relative.into_owned());
             }
         }
     }
-    files
+    paths
+}
+
+/// `paths` under `root`, hashed the way git would; one that cannot be read
+/// is left out.
+pub(crate) fn hash(root: &Path, paths: impl IntoIterator<Item = String>) -> Files {
+    paths
+        .into_iter()
+        .filter_map(|path| {
+            let bytes = std::fs::read(root.join(&path)).ok()?;
+            let oid = hash_blob(&bytes);
+            Some((path, oid))
+        })
+        .collect()
 }
 
 #[cfg(test)]

@@ -470,9 +470,14 @@ pub(crate) fn skipped(path: &str) -> bool {
 
 /// The stdlib's Ruby files that are indexed.
 pub(crate) fn files(root: &Path) -> scan::Files {
-    let mut files = scan::walk(root, "");
-    files.retain(|path, _| !skipped(path));
-    files
+    scan::hash(root, paths(root))
+}
+
+/// `files`' paths, none of them read.
+pub(crate) fn paths(root: &Path) -> Vec<String> {
+    let mut paths = scan::list(root, "");
+    paths.retain(|path| !skipped(path));
+    paths
 }
 
 /// The stdlib of the Ruby this checkout runs on, chosen as its gems are

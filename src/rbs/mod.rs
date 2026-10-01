@@ -241,7 +241,7 @@ fn ruby(store: &Store, root: &Path, signatures: &stubs::Signatures) -> anyhow::R
         ..Roots::default()
     };
     let mut ruby = stubs::Ruby {
-        files: crate::gems::stdlib::files(root).into_keys().collect(),
+        files: crate::gems::stdlib::paths(root).into_iter().collect(),
         compiled_features: crate::gems::stdlib::compiled_features(root),
         ..stubs::Ruby::default()
     };

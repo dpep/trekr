@@ -47,6 +47,11 @@
   class, in its body or a `with_options` block. `only:`, `except:` and `on:`
   name actions and events, not calls, and still do not count. Reindex to
   pick it up (`trekr --index`).
+- **The first index on a Ruby reads only the standard-library files it
+  keeps.** It hashed every file under the Ruby's `lib/` — about 980 for Ruby
+  3.4 — to keep 179, and listed them again, hashing them, to read the
+  signatures. Nothing to do; trekr reads the signatures once more after this
+  upgrade, as it does whenever their reader changes.
 - **No editor request waits on the index for more than about a second.** While
   a first index is running, hover, definition and the rest answer from what
   is already read while trekr catches up on another thread, where on a large
