@@ -37,7 +37,8 @@ use std::process::ExitCode;
         0   something was indexed, or a query matched\n  \
         1   nothing found: no match, nothing to collect. `status` says whether that\n      \
         is certain (no_such_method) or a residue that names what it could not see\n  \
-        2   no answer yet: this checkout is not indexed (run --index)\n  \
+        2   no answer yet: this checkout is not indexed (run --index), or a miss\n      \
+        while its first index is still running (`warming`: ask again)\n  \
         64  usage: the command line is wrong\n  \
         66  not_found, not_a_repo: a path it names is missing or not in a checkout\n  \
         69  git: git could not be run\n  \

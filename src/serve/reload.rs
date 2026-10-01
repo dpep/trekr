@@ -113,12 +113,18 @@ fn read_handoff(path: &Path) -> anyhow::Result<Handoff> {
 pub(crate) fn write_handoff(handoff: &Handoff) -> std::io::Result<PathBuf> {
     use std::io::Write;
     use std::os::unix::fs::OpenOptionsExt;
+    // macOS clocks tick in microseconds, so the time alone can repeat
+    // within one process; the counter can't.
+    static WRITTEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let nth = WRITTEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let nanos = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
-    let path =
-        std::env::temp_dir().join(format!("trekr-lsp-{}-{nanos}.handoff", std::process::id()));
+    let path = std::env::temp_dir().join(format!(
+        "trekr-lsp-{}-{nanos}-{nth}.handoff",
+        std::process::id()
+    ));
     // `create_new` refuses a file (or a symlink) already there, so a shared
     // /tmp cannot be used to redirect it.
     let mut file = std::fs::OpenOptions::new()

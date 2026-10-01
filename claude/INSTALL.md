@@ -102,10 +102,11 @@ parameters, `@ivars` and `@@cvars` as well as methods and constants.
 
 Not rename, formatting, or semantic tokens.
 
-**In VS Code**, the client extension is in `editors/vscode/`; the
-[README](../README.md#in-vs-code) says how to build and install the `.vsix`,
-and [the extension's own](../editors/vscode/README.md) covers disabling Ruby
-LSP and Sorbet, what that gives up, and running alongside the rq extension.
+**In VS Code**, install trekr from the
+[Marketplace](https://marketplace.visualstudio.com/items?itemName=dpep.trekr)
+(`code --install-extension dpep.trekr`); [the extension's
+README](../editors/vscode/README.md) covers disabling Ruby LSP and Sorbet, what
+that gives up, and running alongside the rq extension.
 
 ## Reading the answers
 
