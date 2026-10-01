@@ -1160,6 +1160,9 @@ fn index_first(
 ) -> anyhow::Result<(crate::store::Indexed, GemReport)> {
     let root_str = root.to_string_lossy().into_owned();
     let hints = crate::serve::fresh::Hints::listen();
+    if let Some(main) = store.path() {
+        crate::store::early::sweep(main);
+    }
     store.set_warming(&root_str, 0, files.len() as u64)?;
     let mut written: HashSet<String> = HashSet::new();
     let (first, asked) = index_wanted(
@@ -1240,11 +1243,32 @@ fn index_first(
                 pool,
                 profile,
             )?;
+            let read = written.len() as u64 + theirs;
             if more.files > 0 {
-                store.set_warming(&root_str, written.len() as u64 + theirs, of)?;
+                store.set_warming(&root_str, read, of)?;
             }
-            let mut counts =
-                index_files(store, root, files, git_state, false, known, pool, profile)?;
+            // Opened while the rest is written: to an early store (DEC-332).
+            let main = store
+                .path()
+                .filter(|_| hints.listening)
+                .map(Path::to_path_buf);
+            let stop = std::sync::atomic::AtomicBool::new(false);
+            let mut counts = std::thread::scope(|scope| {
+                let early = main.as_deref().map(|main| {
+                    let (hints, written, stop) = (&hints, &written, &stop);
+                    scope.spawn(move || {
+                        write_early(main, root, files, hints, written, (read, of), stop)
+                    })
+                });
+                let counts = {
+                    let _stop = Stop(&stop);
+                    index_files(store, root, files, git_state, false, known, pool, profile)
+                };
+                if let Some(early) = early {
+                    let _ = early.join();
+                }
+                counts
+            })?;
             add_parsed(&mut counts, &more);
             store.set_warming(&root_str, files.len() as u64 + theirs, of)?;
             let rest = hash_gems(
@@ -1322,6 +1346,10 @@ fn wanted(
             Some((path, extract::extract(&bytes)))
         })
         .collect();
+    // Polled while the bulk write runs: nothing asked must cost nothing.
+    if asked.is_empty() {
+        return (asked, scan::Files::new());
+    }
     let near = scan::near::nearby(files, &asked, NEAR);
     let part: scan::Files = asked
         .iter()
@@ -1331,6 +1359,117 @@ fn wanted(
         .filter_map(|path| Some((path.clone(), files.get(path)?.clone())))
         .collect();
     (asked, part)
+}
+
+/// Sets its flag when dropped — unwinding too, or a scope would wait forever
+/// for the thread watching it.
+struct Stop<'a>(&'a std::sync::atomic::AtomicBool);
+
+impl Drop for Stop<'_> {
+    fn drop(&mut self) {
+        self.0.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// How often the early store's writer looks for files opened meanwhile.
+const EARLY_POLL: std::time::Duration = std::time::Duration::from_millis(20);
+
+/// While the checkout's bulk write holds the store, write the files the
+/// language server opens, and their neighbours, to an early store it reads
+/// until that write is in (DEC-332): a copy of the store as the write found
+/// it, plus those files. Removed once `stop` is set, by which time the store
+/// holds them too. The store itself is only read, so it ends as it would
+/// have; an early store that cannot be written leaves its files to the bulk write.
+fn write_early(
+    main: &Path,
+    root: &Path,
+    files: &scan::Files,
+    hints: &crate::serve::fresh::Hints,
+    written: &HashSet<String>,
+    (mut read, of): (u64, u64),
+    stop: &std::sync::atomic::AtomicBool,
+) {
+    let early = crate::store::early::dir(main, std::process::id());
+    let mut written = written.clone();
+    let mut store: Option<Store> = None;
+    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+        let (asked, part) = wanted(root, files, hints, &written);
+        if part.is_empty() {
+            std::thread::sleep(EARLY_POLL);
+            continue;
+        }
+        read += part.len() as u64;
+        if early_part(main, &early, &mut store, root, &part, &asked, (read, of)).is_err() {
+            break;
+        }
+        written.extend(part.into_keys());
+    }
+    drop(store);
+    crate::store::early::remove(&early);
+}
+
+/// Write `part` of the checkout at `root` to its early store in `early`,
+/// copying the store into it first when there is none yet: in another
+/// directory, renamed once whole, so a reader never opens half of one.
+fn early_part(
+    main: &Path,
+    early: &Path,
+    store: &mut Option<Store>,
+    root: &Path,
+    part: &scan::Files,
+    asked: &[(String, crate::core::Facts)],
+    (read, of): (u64, u64),
+) -> anyhow::Result<()> {
+    let write = |store: &mut Store| -> anyhow::Result<()> {
+        let given: HashMap<&str, &crate::core::Facts> = asked
+            .iter()
+            .map(|(path, facts)| (path.as_str(), facts))
+            .collect();
+        let mut facts: HashMap<Oid, crate::core::Facts> = HashMap::new();
+        for (path, oid) in part {
+            if facts.contains_key(oid) || store.has_blob(oid)? {
+                continue;
+            }
+            let parsed = match given.get(path.as_str()) {
+                Some(facts) => (*facts).clone(),
+                None => match std::fs::read(root.join(path)) {
+                    Ok(bytes) => extract::extract(&bytes),
+                    Err(_) => continue,
+                },
+            };
+            facts.insert(oid.clone(), parsed);
+        }
+        let root = root.to_string_lossy();
+        store.batch(|store| {
+            store.write_part(&root, part, facts)?;
+            store.set_warming(&root, read, of)?;
+            anyhow::Ok(())
+        })
+    };
+    if let Some(store) = store.as_mut() {
+        return write(store);
+    }
+    let name = main.file_name().unwrap_or_default();
+    let mut fresh = early.as_os_str().to_os_string();
+    fresh.push(".new");
+    let fresh = PathBuf::from(fresh);
+    crate::store::early::remove(&fresh);
+    std::fs::create_dir_all(&fresh)?;
+    let copied = (|| {
+        if !crate::store::early::copy(main, &fresh.join(name))? {
+            anyhow::bail!("the store could not be copied cleanly");
+        }
+        let mut copy = Store::open(&fresh.join(name))?;
+        write(&mut copy)?;
+        drop(copy);
+        Ok(std::fs::rename(&fresh, early)?)
+    })();
+    if copied.is_err() {
+        crate::store::early::remove(&fresh);
+        return copied;
+    }
+    *store = Some(Store::open(&early.join(name))?);
+    Ok(())
 }
 
 /// The Ruby (when given) and `gems` written in one commit with the bundle
@@ -5036,6 +5175,75 @@ fn ranked(counts: &std::collections::BTreeMap<String, i64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file opened while the checkout's bulk write holds the store goes to
+    /// an early store — a copy of the store with it and its neighbours added —
+    /// and never to the store, and the early store is gone once the write is in
+    /// (DEC-332).
+    #[test]
+    fn a_file_opened_during_the_bulk_write_goes_to_an_early_store_only() {
+        let dir = std::env::temp_dir().join(format!("trekr-early-writer-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("repo/lib")).unwrap();
+        // Canonical, as an index's root is: hints are read against it.
+        let repo = std::fs::canonicalize(dir.join("repo")).unwrap();
+        let sources = [
+            ("open.rb", "class Opened\n  include Kit\nend\n"),
+            ("lib/kit.rb", "module Kit\nend\n"),
+            ("other.rb", "class Other\nend\n"),
+        ];
+        let mut files = scan::Files::new();
+        for (path, source) in sources {
+            std::fs::write(repo.join(path), source).unwrap();
+            files.insert(path.to_string(), scan::hash_blob(source.as_bytes()));
+        }
+        let main = dir.join("t.db");
+        let root = repo.to_string_lossy().into_owned();
+        let mut store = Store::open(&main).unwrap();
+        let other: scan::Files = files
+            .iter()
+            .filter(|(p, _)| *p == "other.rb")
+            .map(|(p, o)| (p.clone(), o.clone()))
+            .collect();
+        let facts = vec![(
+            other["other.rb"].clone(),
+            extract::extract(sources[2].1.as_bytes()),
+        )];
+        store.write_part(&root, &other, facts).unwrap();
+        store.set_warming(&root, 1, 3).unwrap();
+
+        let hints = crate::serve::fresh::Hints::sent(&[repo.join("open.rb")]);
+        let written = HashSet::from(["other.rb".to_string()]);
+        let stop = std::sync::atomic::AtomicBool::new(false);
+        let early = crate::store::early::path(&main, std::process::id());
+        std::thread::scope(|scope| {
+            let writer =
+                scope.spawn(|| write_early(&main, &repo, &files, &hints, &written, (1, 3), &stop));
+            let done = Stop(&stop);
+            let started = std::time::Instant::now();
+            while !early.exists() && started.elapsed() < std::time::Duration::from_secs(10) {
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            assert!(early.exists(), "an early store is written");
+            let copy = Store::open(&early).unwrap();
+            assert_eq!(
+                copy.file_count(std::slice::from_ref(&root)).unwrap(),
+                3,
+                "the opened file and what it names"
+            );
+            assert_eq!(copy.warming(&root).unwrap().map(|w| w.read), Some(3));
+            assert_eq!(
+                store.file_count(std::slice::from_ref(&root)).unwrap(),
+                1,
+                "the store is not written"
+            );
+            drop(copy);
+            drop(done);
+            writer.join().unwrap();
+        });
+        assert!(!early.exists(), "removed once the bulk write is in");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     /// A file opened after a first part read it as another's neighbour still
     /// brings its own neighbours forward (DEC-322).

@@ -24,6 +24,9 @@ pub(crate) struct Warming {
     /// The index that set it is no longer running: the checkout stays
     /// partial until the next one.
     pub(crate) interrupted: bool,
+    /// That index's process: whose early store to read (DEC-332).
+    #[serde(skip)]
+    pub(crate) pid: u32,
 }
 
 impl Warming {
@@ -101,13 +104,14 @@ fn parse(value: &str) -> Option<Warming> {
         read,
         of,
         interrupted: !alive(pid),
+        pid: u32::try_from(pid).ok()?,
     })
 }
 
 /// Is a process with this pid running? A pid reused since reads as running,
 /// which keeps the checkout marked partial until its next index — the safe
 /// side of the mistake.
-fn alive(pid: u64) -> bool {
+pub(super) fn alive(pid: u64) -> bool {
     let Ok(pid) = libc::pid_t::try_from(pid) else {
         return false;
     };
@@ -147,6 +151,7 @@ mod tests {
             read: 999,
             of: 1000,
             interrupted: false,
+            pid: 1,
         };
         assert_eq!(warming.coverage(), 0.99);
     }

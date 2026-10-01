@@ -779,7 +779,10 @@ answer too — the gems are only listed until then, and only those are read
 (DEC-330); the Ruby's signatures; whatever was opened meanwhile; the rest of the checkout, one
 whole write; the rest of the gems. Parts add to the map
 (`Store::write_part`) and the last whole write leaves the store a single
-write would have. A reindex of a whole map is one write, as before.
+write would have. A reindex of a whole map is one write, as before. A
+file opened while the rest of the checkout is written goes to an early store —
+a copy of the store, cloned by file, with that file and its neighbours — which
+the language server reads until the index removes it (DEC-332).
 
 `--def` reparses the one file with Prism rather than reading stored spans, so
 it answers correctly on a file edited since the last index. A variable under

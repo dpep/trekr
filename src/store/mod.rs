@@ -7,6 +7,7 @@
 //! Conventions (pragmas, `user_version` as the migration marker, `$TREKR_DB`)
 //! follow rq's `src/store/`.
 
+pub(crate) mod early;
 mod gc;
 mod recover;
 mod schema;

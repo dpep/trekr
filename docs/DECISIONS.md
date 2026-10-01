@@ -8898,7 +8898,7 @@ said "answers stop here" and waited for a restart.
 - **Newer** — the version is above this trekr's. The file is never written. This
   trekr uses `<stem>.v<its version>.db` beside it, says so once when it creates it,
   and works normally; core's files follow it (`trekr.v51.core/`), so a sweep of the
-  main store's core directory never takes the side store's files.
+  main store's core directory never takes the early store's files.
 - **Failed** — busy, locked, disk full, I/O, permissions, read-only. A new file would
   fail the same way, so it stays an error.
 
@@ -8931,25 +8931,25 @@ drops it (it isn't in its `TABLES`), which costs nothing: the next rebuild by th
 code drops and recreates it. Rejected: a last-opener stamp, a write on the read path
 whenever the binary changes, for nothing that needs it.
 
-**Side stores, not refusal or rebuild.** Refusing fails every command of one
+**Early stores, not refusal or rebuild.** Refusing fails every command of one
 installed version; rebuilding would ping-pong, each version wiping the other's index.
-A side store costs a second index and a cold first run. When this trekr lays down a
-schema at the main path it deletes its own version's side store (the main path is its
+An early store costs a second index and a cold first run. When this trekr lays down a
+schema at the main path it deletes its own version's early store (the main path is its
 own again) and an older version's unused for 30 days, probed by name rather than by
-listing the directory. Rejected: adopting an older trekr's side store — it is a cache
+listing the directory. Rejected: adopting an older trekr's early store — it is a cache
 at an older schema some older trekr may still be writing.
 
 **Not done.** No `PRAGMA quick_check` on open: it reads every page, 20–30 ms on rq's
 12 MB rails index, and WAL gives no unclean-shutdown signal to reserve it for; damage
 deeper than the open reads still fails the command that reaches it. `--status` does
-not list side stores or the kept copy (the stderr line names them), and `--gc` does
+not list early stores or the kept copy (the stderr line names them), and `--gc` does
 not delete them; both are one-line follow-ups outside the store.
 
 **Reach.** trekr 0.8.0 and older still refuse a newer store with "upgrade trekr" (no
-ping-pong, but no side store either); the first store bump after this release is the
+ping-pong, but no early store either); the first store bump after this release is the
 first an older trekr steps around.
 
-**Reverses if** side stores pile up in practice — then refusing with a clear message
+**Reverses if** early stores pile up in practice — then refusing with a clear message
 is the simpler shape.
 
 ## DEC-310 — A string of code on Object hedges only the names it spells
@@ -9341,7 +9341,7 @@ read, so discourse's `user.rb`, a neighbour of `about.rb`, waited for the
 whole checkout for its `Roleable`.
 
 **Not done.** A file opened once step 4 has begun waits for it: at 100k,
-from about 1 s to 17 s in. A `require_relative`'s target is not followed
+from about 1 s to 17 s in. (*Amended by DEC-332:* it is written to an early store.) A `require_relative`'s target is not followed
 (facts keep no strings).
 
 ## DEC-323 — A request is answered within a second while a first index fills the store
@@ -9447,6 +9447,60 @@ The precedent is DEC-056's: references already says it cut with one
 `showMessage`. The same limit applies — a client that shows no
 `showMessage` (Claude Code's LSP tool) sees nothing, and the CLI's `warming`
 field is how an agent learns it.
+
+## DEC-332 — A file opened during a first index's bulk write is written to an early store
+
+**Decided.** While a first index's bulk write of the rest of the checkout
+(DEC-322 step 4) holds the store, the files the language server opens, and
+their neighbours, are written by that index to an *early store*: a copy of
+the store as of its last commit, in a directory beside it named for the
+index's pid (`trekr.db.early-<pid>/`), plus those files, each batch its own
+commit. The language server, finding the early store of the index its
+`warming` mark names, reads it in place of the store — writes still go to
+the store — until the index removes it, which it does once the bulk write is
+in, when the store holds everything the early store does. An early store
+whose index is gone is ignored, and swept by the next first index.
+
+**Why.** The bulk write is one transaction of up to 17 s at 100k (8 s
+parsing, 5 s rebuilding indexes, 1.5 s committing), and nothing else can
+commit to the store meanwhile. A file opened in that window waited for all
+of it: 1–17 s at 100k. Committing the opened files around the bulk write
+means splitting it, and a split gives up the bulk load — DEC-057 measured
+1.5× for parts of 20k files, and the index rebuild alone is 5 s each time.
+Answering from the editor's buffer instead (DEC-321's declined option)
+covers the open file and not the files it names.
+
+**The copy.** By file, after a checkpoint has copied every committed frame
+into it, so on a copy-on-write filesystem (APFS, btrfs) it is a clone in
+milliseconds whatever the store holds — `VACUUM INTO` rewrote every page,
+seconds for a 450 MB store. Nothing else writes the file while no commit
+lands: a checkpoint only copies committed frames, and the bulk write holds
+the write lock. The one commit that can land is the bulk write's own, and a
+copy taken across it — `PRAGMA data_version` moved — is discarded, as the
+early store is no longer needed. A checkpoint held back by a reader is
+retried for half a second, then the early store is given up and the file
+waits as before.
+
+**Measured.** `trekr --lsp`, a second file opened mid-index, five
+interleaved rounds against the build before (medians, time from the open):
+100k, opened 4 s in, at load 15–21 — definition of a constant it names
+61.4 → 0.26 s, hover 61.4 → 0.32, references 60.4 → 0.30, a call to a
+method it defines 60.3 → 0.30; discourse, opened 0.8 s in, at load 7–9 —
+definition 1.57 → 0.31, hover 1.73 → 0.35, references 1.74 → 0.23. The
+index writes an early store of 114 files 0.14 s after the open, copy
+included. Final stores hash the same as without one: the store itself is
+only read. The index child's CPU at 100k, one file open, five runs: 45.0 →
+45.7 s (wall 22.7 → 21.9).
+
+The writer polls for opened files every 20 ms while the bulk write runs,
+and a poll with nothing asked returns at once: a first cut that guessed
+neighbours for an empty ask rebuilt a name map of every path each time, and
+cost 10 s of CPU at 100k.
+
+**The cost.** On a filesystem without clones the copy is a real one, the
+store's size in time and disk, once per first index that has a file opened
+mid-write. An early store holds the other checkouts as of the copy too, so
+for the seconds the server reads it, answers there are that old.
 
 ## DEC-340 — A symbol an option names a method by is a reference
 

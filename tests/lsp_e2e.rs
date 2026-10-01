@@ -4516,6 +4516,100 @@ fn an_ivar_in_a_module_mixed_into_several_classes_goes_nowhere() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A file the editor opens while the first index's bulk write holds the
+/// store is answered from the early store that index writes (DEC-332), and
+/// from the store again once the index removes the early store.
+#[test]
+fn an_early_store_answers_until_its_index_removes_it() {
+    let (dir, db) = scratch("early");
+    git(&dir, &["init", "-q"]);
+    let source = "class Job\n  def run\n    Widget.new\n  end\nend\n";
+    fs::write(dir.join("app.rb"), source).unwrap();
+    let commit = |dir: &Path| {
+        git(dir, &["add", "-A"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.email=t@e.st",
+                "-c",
+                "user.name=test",
+                "commit",
+                "-qm",
+                "c",
+            ],
+        );
+    };
+    let index = |db: &Path| {
+        trekr()
+            .args(["--index"])
+            .current_dir(&dir)
+            .env("TREKR_DB", db)
+            .output()
+            .unwrap();
+    };
+    commit(&dir);
+    index(&db);
+    // The early store: what the index has written there, Widget's file among it.
+    let mut name = db.file_name().unwrap().to_os_string();
+    name.push(format!(".early-{}", std::process::id()));
+    let beside = db.with_file_name(name);
+    fs::create_dir_all(&beside).unwrap();
+    let early = beside.join(db.file_name().unwrap());
+    fs::write(dir.join("widget.rb"), "class Widget\nend\n").unwrap();
+    commit(&dir);
+    index(&early);
+    let key = format!(
+        "warming {}",
+        fs::canonicalize(&dir).unwrap().to_string_lossy()
+    );
+    for store in [&db, &early] {
+        rusqlite::Connection::open(store)
+            .unwrap()
+            .execute(
+                "INSERT INTO meta (key, value) VALUES (?1, ?2)",
+                [key.clone(), format!("{} 1 2", std::process::id())],
+            )
+            .unwrap();
+    }
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+    let answer = ask(
+        &mut session,
+        &dir,
+        "textDocument/definition",
+        "app.rb",
+        2,
+        6,
+    );
+    assert_eq!(sites_in(&answer).len(), 1, "from the early store: {answer}");
+
+    fs::remove_dir_all(&beside).unwrap();
+    let answer = ask(
+        &mut session,
+        &dir,
+        "textDocument/definition",
+        "app.rb",
+        2,
+        6,
+    );
+    assert_eq!(
+        sites_in(&answer),
+        Vec::<String>::new(),
+        "from the store: {answer}"
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// While a checkout's first index is still filling the store (DEC-320), a
 /// hover says how much is read, a definition is told once (DEC-331),
 /// completion is marked incomplete, and references rule nothing out — then,

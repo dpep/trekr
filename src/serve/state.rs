@@ -63,6 +63,15 @@ pub(crate) struct Session {
     /// Checkouts told their navigation answers are partial (DEC-331): once
     /// each, for the life of the session.
     pub(crate) told_warming: std::collections::HashSet<PathBuf>,
+    /// A first index's early store is what `store` reads now (DEC-332).
+    early: Option<Early>,
+}
+
+/// The early store being read in place of the store, and the store, kept for
+/// writes and for when the early store is gone.
+struct Early {
+    path: PathBuf,
+    main: Store,
 }
 
 /// A tree being built aside, from the store as it was at `stamp`.
@@ -219,6 +228,7 @@ impl Session {
             reference_limit: super::gather::DEFAULT_LIMIT,
             reindexing: None,
             told_warming: std::collections::HashSet::new(),
+            early: None,
         }
     }
 
@@ -226,14 +236,19 @@ impl Session {
         &self.store
     }
 
+    /// The store, to write to: never an early store.
     pub(crate) fn store_mut(&mut self) -> &mut Store {
-        &mut self.store
+        match &mut self.early {
+            Some(early) => &mut early.main,
+            None => &mut self.store,
+        }
     }
 
     /// Answer from `store` in place of one that was replaced underneath the
     /// session (DEC-300). Every tree was assembled from the old one.
     pub(crate) fn replace_store(&mut self, store: Store) {
         self.store = store;
+        self.early = None;
         self.checkouts.clear();
         self.listing = None;
     }
@@ -370,6 +385,7 @@ impl Session {
     /// request waits for that at most `ASIDE` (DEC-323): at scale a build is
     /// seconds, and a first index moves the store several times.
     pub(crate) fn tree(&mut self, root: &Path) -> anyhow::Result<&Tree> {
+        self.follow_early(root);
         let key = root.to_string_lossy().into_owned();
         let stamp = Stamp(Tree::stamp(&self.store, &key)?);
         self.collect_tree(root, None);
@@ -420,6 +436,39 @@ impl Session {
             }
         }
         Ok(self.checkouts[root].tree.as_ref().expect("built or kept"))
+    }
+
+    /// Read a first index's early store while it is there, and the store once
+    /// the index has removed it (DEC-332). A tree built from either keeps
+    /// answering until its successor is built aside, as for any partial tree.
+    fn follow_early(&mut self, root: &Path) {
+        if let Some(early) = &self.early {
+            if early.path.exists() {
+                return;
+            }
+            let early = self.early.take().expect("checked above");
+            self.store = early.main;
+            return;
+        }
+        let whole = self
+            .checkouts
+            .get(root)
+            .is_some_and(|checkout| checkout.tree.is_some() && checkout.partial.is_none());
+        let Some(main) = self.store.path().filter(|_| !whole) else {
+            return;
+        };
+        let Ok(Some(warming)) = self.store.warming(&root.to_string_lossy()) else {
+            return;
+        };
+        let path = crate::store::early::path(main, warming.pid);
+        if warming.interrupted || !path.exists() {
+            return;
+        }
+        let Ok(early) = Store::open(&path) else {
+            return;
+        };
+        let main = std::mem::replace(&mut self.store, early);
+        self.early = Some(Early { path, main });
     }
 
     /// Put a tree built aside in place once it is done, waiting up to `wait`

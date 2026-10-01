@@ -377,18 +377,23 @@ pub(crate) fn in_background() -> bool {
 /// a path a line on the index child's stdin, as the editor opens them
 /// (DEC-322). Read on a thread of their own, so the index never waits for one.
 #[derive(Default)]
-pub(crate) struct Hints(std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>>);
+pub(crate) struct Hints {
+    sent: std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>>,
+    /// Someone may send any: this index was spawned by a language server.
+    pub(crate) listening: bool,
+}
 
 impl Hints {
     /// Listen on stdin, in an index the language server spawned. Never a
     /// terminal: a background job reading one would be stopped by the shell.
     pub(crate) fn listen() -> Hints {
-        let hints = Hints::default();
+        let mut hints = Hints::default();
         // SAFETY: asks whether a descriptor is a terminal; nothing is read.
         if !in_background() || unsafe { libc::isatty(0) } == 1 {
             return hints;
         }
-        let sink = hints.0.clone();
+        hints.listening = true;
+        let sink = hints.sent.clone();
         std::thread::spawn(move || {
             use std::io::BufRead;
             for line in std::io::stdin().lock().lines() {
@@ -406,14 +411,17 @@ impl Hints {
     /// Hints as if sent already.
     #[cfg(test)]
     pub(crate) fn sent(paths: &[PathBuf]) -> Hints {
-        let hints = Hints::default();
-        hints.0.lock().unwrap().extend_from_slice(paths);
+        let hints = Hints {
+            listening: true,
+            ..Hints::default()
+        };
+        hints.sent.lock().unwrap().extend_from_slice(paths);
         hints
     }
 
     /// The hints that arrived since the last call, as paths in `root`.
     pub(crate) fn take(&self, root: &Path) -> Vec<String> {
-        let Ok(mut hints) = self.0.lock() else {
+        let Ok(mut hints) = self.sent.lock() else {
             return Vec::new();
         };
         std::mem::take(&mut *hints)

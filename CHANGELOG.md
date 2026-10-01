@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A file you open while a first index is running is answered within a
+  second, too.** It used to wait for the whole checkout to be written — up to
+  17 s on a 100,000-file checkout. The index now writes it and the files it
+  names to a copy of the index beside it (`trekr.db.early-<pid>/`), which the
+  editor reads until the index finishes and removes it.
 - **Go to definition and references say when they answer from a partial
   index.** The first time either is asked while a checkout's first index is
   running, the editor shows one message saying how much is read and that
