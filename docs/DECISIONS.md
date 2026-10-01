@@ -9332,6 +9332,11 @@ early: each part is a commit, and a part of the rest that is not the whole
 rest gives up the bulk load — DEC-057 measured committing every 20k files
 at 1.5× the time.
 
+*Amended:* a file opened after an earlier part read it as another's
+neighbour still brings its own neighbours forward; it was dropped as already
+read, so discourse's `user.rb`, a neighbour of `about.rb`, waited for the
+whole checkout for its `Roleable`.
+
 **Not done.** A file opened once step 4 has begun waits for it: at 100k,
 from about 1 s to 17 s in. A `require_relative`'s target is not followed
 (facts keep no strings).

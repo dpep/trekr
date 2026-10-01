@@ -403,6 +403,14 @@ impl Hints {
         hints
     }
 
+    /// Hints as if sent already.
+    #[cfg(test)]
+    pub(crate) fn sent(paths: &[PathBuf]) -> Hints {
+        let hints = Hints::default();
+        hints.0.lock().unwrap().extend_from_slice(paths);
+        hints
+    }
+
     /// The hints that arrived since the last call, as paths in `root`.
     pub(crate) fn take(&self, root: &Path) -> Vec<String> {
         let Ok(mut hints) = self.0.lock() else {

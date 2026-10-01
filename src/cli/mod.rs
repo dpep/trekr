@@ -1278,10 +1278,28 @@ fn index_wanted(
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
 ) -> anyhow::Result<(crate::store::Indexed, Vec<(String, crate::core::Facts)>)> {
+    let (asked, part) = wanted(root, files, hints, written);
+    if part.is_empty() && store.has_checkout(&root.to_string_lossy())? {
+        return Ok((crate::store::Indexed::default(), asked));
+    }
+    let counts = index_files(store, root, &part, 0, true, known, pool, profile)?;
+    written.extend(part.into_keys());
+    Ok((counts, asked))
+}
+
+/// The files the language server asked for since the last call, with what
+/// each says, and those and the files they most likely need not yet written.
+/// A file written already, as another's neighbour, still brings its own.
+fn wanted(
+    root: &Path,
+    files: &scan::Files,
+    hints: &crate::serve::fresh::Hints,
+    written: &HashSet<String>,
+) -> (Vec<(String, crate::core::Facts)>, scan::Files) {
     let asked: Vec<(String, crate::core::Facts)> = hints
         .take(root)
         .into_iter()
-        .filter(|path| files.contains_key(path) && !written.contains(path))
+        .filter(|path| files.contains_key(path))
         .filter_map(|path| {
             let bytes = std::fs::read(root.join(&path)).ok()?;
             Some((path, extract::extract(&bytes)))
@@ -1295,12 +1313,7 @@ fn index_wanted(
         .filter(|path| !written.contains(*path))
         .filter_map(|path| Some((path.clone(), files.get(path)?.clone())))
         .collect();
-    if part.is_empty() && store.has_checkout(&root.to_string_lossy())? {
-        return Ok((crate::store::Indexed::default(), asked));
-    }
-    let counts = index_files(store, root, &part, 0, true, known, pool, profile)?;
-    written.extend(part.into_keys());
-    Ok((counts, asked))
+    (asked, part)
 }
 
 /// The Ruby (when given) and `gems` written in one commit with the bundle
@@ -4965,6 +4978,31 @@ fn ranked(counts: &std::collections::BTreeMap<String, i64>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file opened after a first part read it as another's neighbour still
+    /// brings its own neighbours forward (DEC-322).
+    #[test]
+    fn a_file_read_as_a_neighbour_still_brings_its_own_when_opened() {
+        let dir = std::env::temp_dir().join(format!("trekr-wanted-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("lib")).unwrap();
+        // Canonical, as an index's root is: hints are read against it.
+        let repo = std::fs::canonicalize(&dir).unwrap();
+        let mut files = scan::Files::new();
+        for (path, source) in [
+            ("open.rb", "class Opened\n  include Kit\nend\n"),
+            ("lib/kit.rb", "module Kit\nend\n"),
+        ] {
+            std::fs::write(repo.join(path), source).unwrap();
+            files.insert(path.to_string(), scan::hash_blob(source.as_bytes()));
+        }
+        let hints = crate::serve::fresh::Hints::sent(&[repo.join("open.rb")]);
+        let written = HashSet::from(["open.rb".to_string()]);
+        let (asked, part) = wanted(&repo, &files, &hints, &written);
+        assert_eq!(asked.len(), 1);
+        assert_eq!(part.keys().collect::<Vec<_>>(), ["lib/kit.rb"]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn the_output_mode_is_read_off_argv_before_clap_parses_it() {
