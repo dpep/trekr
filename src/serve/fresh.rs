@@ -18,8 +18,9 @@ use super::log::Log;
 use super::state::Session;
 use lsp_server::{Message, Notification, Request, RequestId};
 use std::collections::{HashSet, VecDeque};
+use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 
 /// More changed files than this in one batch is an operation — a checkout, a
 /// rebase — and is handed to a full index rather than refreshed one by one.
@@ -99,6 +100,8 @@ pub(crate) struct Indexer {
 struct Job {
     root: PathBuf,
     child: Child,
+    /// Where the files the editor opens are sent, to be read first (DEC-322).
+    hints: Option<ChildStdin>,
     token: String,
     started: std::time::Instant,
     /// Refilling a checkout an upgrade's rebuild of the store dropped.
@@ -136,6 +139,16 @@ impl Indexer {
             return;
         }
         self.queue.push_back(root);
+    }
+
+    /// The editor opened a file: if an index of its checkout is running,
+    /// that index reads it next, if it still can (DEC-322).
+    pub(crate) fn opened(&mut self, path: &Path) {
+        if let Some(job) = &mut self.running
+            && path.starts_with(&job.root)
+        {
+            hint(job, path);
+        }
     }
 
     /// The checkout being refilled after an upgrade dropped the store, and
@@ -255,7 +268,8 @@ impl Indexer {
             let after_upgrade = store.roots().is_ok_and(|roots| roots.is_empty())
                 && store.upgraded_from().ok().flatten().is_some();
             match spawn(&root) {
-                Ok(child) => {
+                Ok(mut child) => {
+                    let hints = child.stdin.take();
                     self.jobs += 1;
                     let token = format!("trekr-index-{}", self.jobs);
                     log.event(
@@ -285,13 +299,21 @@ impl Indexer {
                             }),
                         ));
                     }
-                    self.running = Some(Job {
+                    let mut job = Job {
                         root,
                         child,
+                        hints,
                         token,
                         started: std::time::Instant::now(),
                         after_upgrade,
-                    });
+                    };
+                    // What is open now goes first; what opens later follows.
+                    for path in session.open_paths() {
+                        if path.starts_with(&job.root) {
+                            hint(&mut job, path);
+                        }
+                    }
+                    self.running = Some(job);
                     break;
                 }
                 Err(error) => {
@@ -323,10 +345,22 @@ fn spawn(root: &Path) -> std::io::Result<Child> {
         .arg("--index")
         .arg(root)
         .env(BACKGROUND, "1")
-        .stdin(Stdio::null())
+        .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
+}
+
+/// Send the index child one path to read first. A child that has moved on or
+/// gone just leaves it unread.
+fn hint(job: &mut Job, path: &Path) {
+    let sent = job
+        .hints
+        .as_mut()
+        .map(|pipe| writeln!(pipe, "{}", path.to_string_lossy()));
+    if matches!(sent, Some(Err(_))) {
+        job.hints = None;
+    }
 }
 
 /// Set on the index child: this run is background work, so it lowers its own
@@ -337,6 +371,51 @@ const BACKGROUND: &str = "TREKR_BACKGROUND";
 /// Is this an index run the LSP spawned?
 pub(crate) fn in_background() -> bool {
     std::env::var_os(BACKGROUND).is_some()
+}
+
+/// Files the language server wants read first: the ones open in the editor,
+/// a path a line on the index child's stdin, as the editor opens them
+/// (DEC-322). Read on a thread of their own, so the index never waits for one.
+#[derive(Default)]
+pub(crate) struct Hints(std::sync::Arc<std::sync::Mutex<Vec<PathBuf>>>);
+
+impl Hints {
+    /// Listen on stdin, in an index the language server spawned. Never a
+    /// terminal: a background job reading one would be stopped by the shell.
+    pub(crate) fn listen() -> Hints {
+        let hints = Hints::default();
+        // SAFETY: asks whether a descriptor is a terminal; nothing is read.
+        if !in_background() || unsafe { libc::isatty(0) } == 1 {
+            return hints;
+        }
+        let sink = hints.0.clone();
+        std::thread::spawn(move || {
+            use std::io::BufRead;
+            for line in std::io::stdin().lock().lines() {
+                let Ok(line) = line else {
+                    return;
+                };
+                if let Ok(mut sink) = sink.lock() {
+                    sink.push(PathBuf::from(line));
+                }
+            }
+        });
+        hints
+    }
+
+    /// The hints that arrived since the last call, as paths in `root`.
+    pub(crate) fn take(&self, root: &Path) -> Vec<String> {
+        let Ok(mut hints) = self.0.lock() else {
+            return Vec::new();
+        };
+        std::mem::take(&mut *hints)
+            .into_iter()
+            .filter_map(|path| {
+                let path = std::fs::canonicalize(&path).unwrap_or(path);
+                Some(path.strip_prefix(root).ok()?.to_string_lossy().into_owned())
+            })
+            .collect()
+    }
 }
 
 /// In an index run the LSP spawned: drop CPU priority by 10 and disk I/O to a

@@ -9245,3 +9245,82 @@ The extra query per command is one primary-key read of `meta`.
 **Not done.** "N of M" moves at the commits there are: none before the
 checkout's own write, all its files at it, and the rest when the gems land.
 Finer steps come with a first index written in batches (DEC-322).
+
+## DEC-321 — The open file's own answers wait for the first part, not a tree of the buffer
+
+**Decided.** Nothing answers same-file questions from the editor's buffer
+alone before the index has the file. Outline, locals, variables and syntax
+errors already need no index and answer at once; a call to a method the
+same file defines, or a constant it declares, waits for the first part of a
+first index (DEC-322), which holds the open file.
+
+**Why.** Measured on a never-indexed checkout over `trekr --lsp`, five
+interleaved rounds, medians: same-file definition and hover answered at
+1.7 s on discourse and with the checkout's own files at 13–15 s on the 100k
+corpus before DEC-322; after it, 0.28 s and 0.33 s. A tree assembled from
+the open buffers — an in-memory store per session, rebuilt per edit, swapped
+for the real one when the first part lands — would move that to about zero,
+for a quarter of a second in a window that ends before a person has read the
+file, at the cost of a second source of trees the rest of the server must
+know to distrust.
+
+**Reverses if** the first part takes long enough to see: a scan slower than
+git's (`scan` is 0.4 s of it at 100k files) or a checkout where git is slow.
+
+## DEC-322 — A first index reads what the editor has open first
+
+**Decided.** A first index (DEC-320) writes in parts, each its own commit:
+
+1. the files the language server says are open — a path a line on the
+   child's stdin, sent at spawn and as each opens — and up to 256 files
+   their constants most likely live in, by the autoloader's convention
+   (`scan/near.rs`), each enclosing scope first, at most four files a name;
+2. the Ruby's stdlib, its signatures, and the gems whose `lib/` holds one of
+   those constants' files, with the whole bundle recorded as the checkout's,
+   so a gem already on this machine answers too;
+3. files opened while 2 was read, and their neighbours;
+4. the rest of the checkout, as one whole write — bulk-loaded when it is
+   half the store or more (DEC-234), as before;
+5. the rest of the gems, and the mark cleared.
+
+A part adds paths to the map (`Store::write_part`) and folds the keys over
+what the map then holds; the whole write in 4 diffs against that, so the
+store ends as one write would have left it. Without a language server
+nothing is told, step 1 writes nothing, and the order is stdlib, the
+checkout, the gems. A reindex of a whole map is unchanged.
+
+**Measured.** A never-indexed checkout, `trekr --lsp`, one file open, the
+same requests every 0.2–0.3 s until the index ends; five interleaved rounds,
+medians, the build before this change against this one with DEC-323:
+
+| first useful answer | discourse before | after | 100k before | after |
+| --- | ---: | ---: | ---: | ---: |
+| definition, a constant in another app file | 1.51 s | **0.25** | 15.2 | **0.32** |
+| definition, a constant in a gem | 3.62 | **0.71** | 20.1 | **1.3** † |
+| hover with the definition | 4.27 | **0.74** | 17.9 | **0.35** |
+| references | 1.51 | **0.25** | 20.2 | **0.35** |
+| completion | 1.51 | **0.27** | 20.2 | **0.35** |
+| same-file definition | 1.72 | **0.28** | — | — |
+| the index ends | 4.34 | 4.46 | 20.1 | 19.9 |
+
+† one verbose run; the 0.35 s answer before it is the corpus's own copy of
+the gem, then the gem's, at 1.3 s.
+
+Cold `trekr --index`, five interleaved rounds: discourse 3.86 → 3.82 s,
+mastodon 3.00 → 3.05 s, 100k 16.8 → 16.9 s. Every store hashes the same
+table by table (oids for rowids, timestamps dropped). `--index --json` is
+the same on discourse and mastodon; at 100k `parsed` for the checkout falls
+by 179, the stdlib's files the corpus also holds, which are now read as the
+stdlib's first — the same work, attributed to the stdlib.
+
+**Tried and not taken.** All gems before the checkout: gem answers at 2.2 s
+on discourse instead of 0.7, and the checkout's bulk load then rebuilt its
+indexes over the gems too — 288 → 579 ms, cold index +4.5% on discourse.
+More parts for the rest of the checkout, so a file opened late is read
+early: each part is a commit, and a part of the rest that is not the whole
+rest gives up the bulk load — DEC-057 measured committing every 20k files
+at 1.5× the time.
+
+**Not done.** A file opened once step 4 has begun waits for it: at 100k,
+from about 1 s to 17 s in. A `require_relative`'s target is not followed
+(facts keep no strings).

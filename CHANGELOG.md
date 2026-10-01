@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **The editor answers about the file you opened within a second of the
+  first index starting**, instead of after it ends. A checkout's first index
+  now reads the open files and the files their constants live in first, then
+  Ruby and the gems those files name, then the rest. On a 100,000-file
+  checkout, definition, hover, references and completion on the open file
+  went from 15–20 s to about a third of a second. The finished index is the
+  same; `--index --json`'s `parsed` can be lower by the Ruby files the
+  checkout also holds, now counted to the Ruby read first.
 - **An answer given while a checkout's first index is still running says so.**
   Until its gems are in, an index can look whole and is not: an answer could
   come back `resolved` and change a second later. Now `--json` carries

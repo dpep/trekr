@@ -34,6 +34,17 @@ pub(crate) struct Store {
     timing: WriteTiming,
 }
 
+/// How a write lays a checkout's map down.
+#[derive(Clone, Copy, PartialEq)]
+enum Mode {
+    /// The whole map, replacing what was stored.
+    Whole,
+    /// The whole map, its fact indexes rebuilt by sorting (DEC-057).
+    Bulk,
+    /// Some of the map, added to what is stored (DEC-322).
+    Part,
+}
+
 /// The parts of a write that happen after its rows are in, timed apart so the
 /// profile's phases still sum to the whole.
 #[derive(Debug, Default, Clone, Copy)]
@@ -439,7 +450,20 @@ impl Store {
         facts: impl IntoIterator<Item = (Oid, Facts)>,
         git_state: i64,
     ) -> Result<Indexed> {
-        self.write_with(root, files, facts, git_state, false)
+        self.write_with(root, files, facts, git_state, Mode::Whole)
+    }
+
+    /// `write` for some of a checkout's files, during its first index: these
+    /// paths are added to the map and none are taken out, and the keys fold
+    /// what the map holds after it (DEC-322). The index's last write is a
+    /// whole one, which leaves the store as one whole write would have.
+    pub(crate) fn write_part(
+        &mut self,
+        root: &str,
+        files: &Files,
+        facts: impl IntoIterator<Item = (Oid, Facts)>,
+    ) -> Result<Indexed> {
+        self.write_with(root, files, facts, 0, Mode::Part)
     }
 
     /// `write`, for a load that will more than double the store: the fact
@@ -456,7 +480,7 @@ impl Store {
         facts: impl IntoIterator<Item = (Oid, Facts)>,
         git_state: i64,
     ) -> Result<Indexed> {
-        self.write_with(root, files, facts, git_state, true)
+        self.write_with(root, files, facts, git_state, Mode::Bulk)
     }
 
     fn write_with(
@@ -465,13 +489,15 @@ impl Store {
         files: &Files,
         facts: impl IntoIterator<Item = (Oid, Facts)>,
         git_state: i64,
-        bulk: bool,
+        mode: Mode,
     ) -> Result<Indexed> {
         // On its own, the write is its own immediate transaction: a deferred
         // one that reads first cannot wait for the lock, it fails.
         if self.autocommit() {
-            return self.batch(|store| store.write_with(root, files, facts, git_state, bulk));
+            return self.batch(|store| store.write_with(root, files, facts, git_state, mode));
         }
+        let bulk = mode == Mode::Bulk;
+        let part = mode == Mode::Part;
         let tx = self.conn.savepoint()?;
         Store::check_schema(&tx)?;
         let mut counts = Indexed {
@@ -525,7 +551,7 @@ impl Store {
         // matches what is stored the map is identical and the rewrite below is
         // pure cost — which on a no-op index is the only cost left, and the one
         // that grows with the repo.
-        let map_key = map_key(files);
+        let mut map_key = map_key(files);
         // `EXISTS` rather than `COUNT`: the question is whether the map was
         // ever written, and counting it would put an O(files) scan back into
         // the path this whole change exists to make O(1).
@@ -537,7 +563,7 @@ impl Store {
         )?;
         // A stored key of 0 against a map with no rows is the initial state,
         // not a match — an empty checkout must still be written once.
-        if stored.0 == map_key && stored.1 {
+        if !part && stored.0 == map_key && stored.1 {
             counts.blobs = files.values().collect::<HashSet<&Oid>>().len();
             // Still record git's view. The map did not move, but git's index
             // may have — a commit touching no Ruby file, for instance — and
@@ -612,10 +638,20 @@ impl Store {
                 keys = keys.add(path_hash(path), digests);
             }
             counts.blobs = ids.len();
-            // What is left was stored and is no longer in the checkout.
-            let mut delete = tx.prepare("DELETE FROM file WHERE checkout_id = ?1 AND path = ?2")?;
-            for path in stored.keys() {
-                delete.execute(params![checkout_id, path])?;
+            if part {
+                // Written before, by an earlier part: still in the map.
+                for (path, (_, oid, digests)) in &stored {
+                    let hashed = path_hash(path);
+                    keys = keys.add(hashed, *digests);
+                    map_key = map_key.wrapping_add(hashed ^ path_hash(oid));
+                }
+            } else {
+                // What is left was stored and is no longer in the checkout.
+                let mut delete =
+                    tx.prepare("DELETE FROM file WHERE checkout_id = ?1 AND path = ?2")?;
+                for path in stored.keys() {
+                    delete.execute(params![checkout_id, path])?;
+                }
             }
         }
 
@@ -2648,6 +2684,59 @@ mod tests {
         assert!(outcome.is_err());
         assert_eq!((index_names(&store), store.totals().unwrap().defs), before);
         assert!(index_names(&store).contains(&"call_name_name".to_string()));
+    }
+
+    /// A first index written in parts, then whole, ends as one whole write
+    /// would: the same map, and the same keys a tree is stamped by. Each
+    /// part's keys fold what the map holds after it (DEC-322).
+    #[test]
+    fn parts_then_a_whole_write_leave_what_one_whole_write_does() {
+        let sources = [
+            ("a.rb", "class A\n  def go; end\nend\n"),
+            ("b.rb", "class B < A\nend\n"),
+            ("c.rb", "module C\nend\n"),
+        ];
+        let map = |names: &[&str]| -> (Files, Vec<(Oid, Facts)>) {
+            let mut files = Files::new();
+            let mut facts = Vec::new();
+            for (path, src) in sources.iter().filter(|(p, _)| names.contains(p)) {
+                let oid = crate::scan::hash_blob(src.as_bytes());
+                files.insert(path.to_string(), oid.clone());
+                facts.push((oid, crate::extract::extract(src.as_bytes())));
+            }
+            (files, facts)
+        };
+        let keys = |store: &Store| -> (i64, i64, i64, i64) {
+            store
+                .conn
+                .query_row(
+                    "SELECT surface_key, namespace_key, map_key, COUNT(f.path)
+                       FROM checkout c JOIN file f ON f.checkout_id = c.id GROUP BY c.id",
+                    [],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                )
+                .unwrap()
+        };
+        let mut whole = Store::open_in_memory().unwrap();
+        let (files, facts) = map(&["a.rb", "b.rb", "c.rb"]);
+        whole.write("/r", &files, facts, 0).unwrap();
+
+        let mut parts = Store::open_in_memory().unwrap();
+        let (files, facts) = map(&["b.rb"]);
+        parts.write_part("/r", &files, facts).unwrap();
+        let (files, facts) = map(&["a.rb"]);
+        parts.write_part("/r", &files, facts).unwrap();
+        let (_, _, part_map, _) = keys(&parts);
+        let (two, _) = map(&["a.rb", "b.rb"]);
+        assert_eq!(
+            part_map,
+            map_key(&two),
+            "a part's key folds the map it leaves"
+        );
+        let (files, _) = map(&["a.rb", "b.rb", "c.rb"]);
+        let (_, facts) = map(&["c.rb"]);
+        parts.write("/r", &files, facts, 0).unwrap();
+        assert_eq!(keys(&parts), keys(&whole));
     }
 
     #[test]

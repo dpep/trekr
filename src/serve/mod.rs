@@ -1038,6 +1038,7 @@ fn notify(
                 params.text_document.text,
                 params.text_document.version,
             );
+            indexer.opened(&path);
             handlers::diagnostics(session, &path, params.text_document.uri)
         }
         note::DidChangeTextDocument::METHOD => {

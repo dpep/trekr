@@ -972,11 +972,14 @@ fn worker_count(requested: usize) -> usize {
 ///
 /// Shared by a checkout and a gem: the two differ only in how their file list
 /// was produced, which is the whole point of `scan` owning that question.
+#[allow(clippy::too_many_arguments)]
 fn index_files(
     store: &mut Store,
     root: &Path,
     files: &scan::Files,
     git_state: i64,
+    // Some of the checkout's files, added to its map (`Store::write_part`).
+    part: bool,
     known: &mut Option<HashSet<Oid>>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
@@ -988,7 +991,7 @@ fn index_files(
     // to the stored one has nothing unknown, so the known set — every blob on
     // the machine — is loaded only when there may be.
     let mut to_parse: HashMap<&Oid, PathBuf> = HashMap::new();
-    if !store.map_unchanged(&root.to_string_lossy(), files)? {
+    if part || !store.map_unchanged(&root.to_string_lossy(), files)? {
         if known.is_none() {
             *known = Some(profile::timed(profile, "known-diff", || store.blob_oids())?);
         }
@@ -1007,7 +1010,8 @@ fn index_files(
 
     // Never inside a batch: a gem's rows are few, and the bundle's
     // transaction is shared.
-    let bulk = store.autocommit()
+    let bulk = !part
+        && store.autocommit()
         && known
             .as_ref()
             .is_some_and(|k| bulk_load(to_parse.len(), k.len()));
@@ -1033,7 +1037,9 @@ fn index_files(
             .into_iter()
             .map(|(oid, parsed)| received.take(oid, parsed));
         let root = root.to_string_lossy();
-        let counts = if bulk {
+        let counts = if part {
+            store.write_part(&root, files, facts)
+        } else if bulk {
             store.write_bulk(&root, files, facts, git_state)
         } else {
             store.write(&root, files, facts, git_state)
@@ -1125,6 +1131,217 @@ impl Received {
             known.extend(self.fresh);
         }
     }
+}
+
+/// At most this many files go ahead of the rest for the files someone has
+/// open: enough for what a file's constants name, few enough to parse at once.
+const NEAR: usize = 256;
+
+/// A checkout's first index, in the order someone looking at it needs it
+/// (DEC-322), each step its own commit: the files the language server says
+/// are open and those their constants most likely live in; the Ruby's stdlib
+/// and the gems those files name, with the bundle recorded so gems already
+/// on this machine answer too; whatever was opened meanwhile; the rest of
+/// the checkout; the rest of the gems. Marked as filling until the last
+/// commit (DEC-320). The checkout's rest is one whole write, so the store
+/// ends as one write would have left it.
+#[allow(clippy::too_many_arguments)]
+fn index_first(
+    store: &mut Store,
+    root: &Path,
+    files: &scan::Files,
+    git_state: i64,
+    with_gems: bool,
+    known: &mut Option<HashSet<Oid>>,
+    pool: &rayon::ThreadPool,
+    profile: &mut Option<profile::Profile>,
+) -> anyhow::Result<(crate::store::Indexed, GemReport)> {
+    let root_str = root.to_string_lossy().into_owned();
+    let hints = crate::serve::fresh::Hints::listen();
+    store.set_warming(&root_str, 0, files.len() as u64)?;
+    let mut written: HashSet<String> = HashSet::new();
+    let (first, asked) = index_wanted(
+        store,
+        root,
+        files,
+        &hints,
+        &mut written,
+        known,
+        pool,
+        profile,
+    )?;
+    let plan = match with_gems {
+        true => Some(plan_gems(store, root, pool, profile)?),
+        false => None,
+    };
+    let (mut counts, gems) = match plan {
+        None => {
+            let counts = index_files(store, root, files, git_state, false, known, pool, profile)?;
+            (counts, GemReport::default())
+        }
+        Some(plan) => {
+            let of = files.len() as u64 + plan.files();
+            let GemPlan {
+                mut report,
+                stdlib,
+                stdlib_files,
+                used,
+                fresh,
+                known_files,
+            } = plan;
+            let named = scan::near::gems_named(&fresh, &asked);
+            let (ahead, rest): (Vec<_>, Vec<_>) = fresh
+                .into_iter()
+                .enumerate()
+                .partition(|(at, _)| named.contains(at));
+            let count = |gems: &[(usize, (PathBuf, scan::Files))]| -> u64 {
+                gems.iter().map(|(_, (_, f))| f.len() as u64).sum()
+            };
+            let theirs = known_files + stdlib_files.as_ref().map_or(0, |f| f.len() as u64);
+            let theirs = theirs + count(&ahead);
+            let ruby = stdlib.as_ref().map(|stdlib| (stdlib, stdlib_files));
+            let ahead = ahead.into_iter().map(|(_, gem)| gem).collect();
+            let read = written.len() as u64 + theirs;
+            gem_batch(
+                store,
+                root,
+                &mut report,
+                ruby,
+                ahead,
+                &used,
+                known,
+                pool,
+                profile,
+                |s| s.set_warming(&root_str, read, of),
+            )?;
+            // Opened while those were read: still ahead of the rest.
+            let (more, _) = index_wanted(
+                store,
+                root,
+                files,
+                &hints,
+                &mut written,
+                known,
+                pool,
+                profile,
+            )?;
+            if more.files > 0 {
+                store.set_warming(&root_str, written.len() as u64 + theirs, of)?;
+            }
+            let mut counts =
+                index_files(store, root, files, git_state, false, known, pool, profile)?;
+            add_parsed(&mut counts, &more);
+            store.set_warming(&root_str, files.len() as u64 + theirs, of)?;
+            let rest = rest.into_iter().map(|(_, gem)| gem).collect();
+            gem_batch(
+                store,
+                root,
+                &mut report,
+                None,
+                rest,
+                &used,
+                known,
+                pool,
+                profile,
+                |s| s.clear_warming(&root_str),
+            )?;
+            (counts, report)
+        }
+    };
+    store.clear_warming(&root_str)?;
+    add_parsed(&mut counts, &first);
+    Ok((counts, gems))
+}
+
+/// `part`'s parsing, added to a whole write's report of it.
+fn add_parsed(counts: &mut crate::store::Indexed, part: &crate::store::Indexed) {
+    counts.parsed += part.parsed;
+    counts.defs += part.defs;
+    counts.refs += part.refs;
+    counts.calls += part.calls;
+}
+
+/// Write the files the language server asked for since the last call, and
+/// the files they most likely need, as part of the checkout's map; and hand
+/// back what the asked-for files say, for the gems they name. The first call
+/// writes even nothing, so the checkout exists for its gems to belong to.
+#[allow(clippy::too_many_arguments)]
+fn index_wanted(
+    store: &mut Store,
+    root: &Path,
+    files: &scan::Files,
+    hints: &crate::serve::fresh::Hints,
+    written: &mut HashSet<String>,
+    known: &mut Option<HashSet<Oid>>,
+    pool: &rayon::ThreadPool,
+    profile: &mut Option<profile::Profile>,
+) -> anyhow::Result<(crate::store::Indexed, Vec<(String, crate::core::Facts)>)> {
+    let asked: Vec<(String, crate::core::Facts)> = hints
+        .take(root)
+        .into_iter()
+        .filter(|path| files.contains_key(path) && !written.contains(path))
+        .filter_map(|path| {
+            let bytes = std::fs::read(root.join(&path)).ok()?;
+            Some((path, extract::extract(&bytes)))
+        })
+        .collect();
+    let near = scan::near::nearby(files, &asked, NEAR);
+    let part: scan::Files = asked
+        .iter()
+        .map(|(path, _)| path)
+        .chain(&near)
+        .filter(|path| !written.contains(*path))
+        .filter_map(|path| Some((path.clone(), files.get(path)?.clone())))
+        .collect();
+    if part.is_empty() && store.has_checkout(&root.to_string_lossy())? {
+        return Ok((crate::store::Indexed::default(), asked));
+    }
+    let counts = index_files(store, root, &part, 0, true, known, pool, profile)?;
+    written.extend(part.into_keys());
+    Ok((counts, asked))
+}
+
+/// The Ruby (when given) and `gems` written in one commit with the bundle
+/// recorded as `repo`'s, and `also` — a first index's progress — in it.
+#[allow(clippy::too_many_arguments)]
+fn gem_batch(
+    store: &mut Store,
+    repo: &Path,
+    report: &mut GemReport,
+    ruby: Option<(&crate::gems::stdlib::Stdlib, Option<scan::Files>)>,
+    gems: Vec<(PathBuf, scan::Files)>,
+    used: &[(String, String)],
+    known: &mut Option<HashSet<Oid>>,
+    pool: &rayon::ThreadPool,
+    profile: &mut Option<profile::Profile>,
+    also: impl FnOnce(&Store) -> rusqlite::Result<()>,
+) -> anyhow::Result<()> {
+    store.batch(|store| {
+        if let Some((stdlib, files)) = ruby {
+            let mut indexed = index_stdlib(store, stdlib, files, known, pool, profile)?;
+            // Its Ruby's signatures, which core and the stdlib's compiled
+            // half are served from, read once per Ruby (DEC-240).
+            indexed.rbs = profile::timed(profile, "rbs", || crate::rbs::prepare(store, stdlib))?;
+            report.stdlib = Some(indexed);
+        }
+        for counts in index_bundle(store, gems, known, pool, profile)? {
+            report.indexed += 1;
+            report.files += counts.files;
+        }
+        let repo = repo.to_string_lossy();
+        let stdlib_root = report.stdlib.as_ref().map(|s| s.root.clone());
+        store.set_gems_used(&repo, used, stdlib_root.as_deref())?;
+        if let Some(stdlib) = report.stdlib.as_mut() {
+            stdlib.hidden = store.hidden_default_gems(&repo)?;
+        }
+        also(store)?;
+        anyhow::Ok(())
+    })?;
+    if let Some(profile) = profile.as_mut() {
+        // The bundle's one commit, outside every gem's own write.
+        profile.phase("commit", store.take_timing().commit);
+    }
+    Ok(())
 }
 
 /// What an index reads beyond the checkout — its Ruby's stdlib and the
@@ -1283,8 +1500,8 @@ fn plan_gems(
     })
 }
 
-/// Index what `plan_gems` found: the stdlib, then the gems new to this
-/// machine, and record which ones this checkout uses.
+/// Index what `plan_gems` found — the stdlib, then the gems new to this
+/// machine — in one commit, and record which ones this checkout uses.
 fn index_gems(
     store: &mut Store,
     repo: &Path,
@@ -1301,23 +1518,19 @@ fn index_gems(
         fresh,
         ..
     } = plan;
-    if let Some(stdlib) = &stdlib {
-        let mut indexed = index_stdlib(store, stdlib, stdlib_files, known, pool, profile)?;
-        // Its Ruby's signatures, which core and the stdlib's compiled half
-        // are served from, read once per Ruby (DEC-240).
-        indexed.rbs = profile::timed(profile, "rbs", || crate::rbs::prepare(store, stdlib))?;
-        report.stdlib = Some(indexed);
-    }
-    for counts in index_bundle(store, fresh, known, pool, profile)? {
-        report.indexed += 1;
-        report.files += counts.files;
-    }
-    let repo = repo.to_string_lossy();
-    let stdlib_root = report.stdlib.as_ref().map(|s| s.root.as_str());
-    store.set_gems_used(&repo, &used, stdlib_root)?;
-    if let Some(stdlib) = report.stdlib.as_mut() {
-        stdlib.hidden = store.hidden_default_gems(&repo)?;
-    }
+    let ruby = stdlib.as_ref().map(|stdlib| (stdlib, stdlib_files));
+    gem_batch(
+        store,
+        repo,
+        &mut report,
+        ruby,
+        fresh,
+        &used,
+        known,
+        pool,
+        profile,
+        |_| Ok(()),
+    )?;
     Ok(report)
 }
 
@@ -1459,7 +1672,7 @@ fn index_stdlib(
     let Some(files) = files else {
         return Ok(report);
     };
-    let counts = index_files(store, &stdlib.root, &files, 0, known, pool, profile)?;
+    let counts = index_files(store, &stdlib.root, &files, 0, false, known, pool, profile)?;
     let gems = crate::gems::stdlib::default_gems(&stdlib.root);
     store.set_default_gems(
         &root,
@@ -1608,55 +1821,41 @@ fn cmd_index(
     let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
     // A first index — no map yet, or one an index left unfinished — is
     // marked while it fills the store, so an answer meanwhile says it is
-    // partial (DEC-320). A reindex replaces a whole map with a whole map.
-    // Nothing is counted read until the gems are counted too: an answer
-    // between the two reads as less certain than it is, never more.
+    // partial (DEC-320), and is written in the order someone looking at it
+    // needs it (DEC-322). A reindex replaces a whole map with a whole map.
     let filling = !store.has_checkout(&root_str)? || store.warming(&root_str)?.is_some();
-    if filling {
-        store.set_warming(&root_str, 0, files.len() as u64)?;
-    }
     let mut known = None;
-    let counts = index_files(
-        &mut store,
-        &root,
-        &files,
-        git_state,
-        &mut known,
-        &pool,
-        &mut profile,
-    )?;
-    // After the checkout's own write, so its first answers are not held up.
-    let plan = match with_gems {
-        true => Some(plan_gems(&store, &root, &pool, &mut profile)?),
-        false => None,
-    };
-    if filling {
-        match &plan {
-            // The checkout's own files are in; its gems are not, yet.
-            Some(plan) => {
-                let read = files.len() as u64;
-                store.set_warming(&root_str, read, read + plan.files())?
-            }
-            None => store.clear_warming(&root_str)?,
-        }
-    }
-
-    let gems = if let Some(plan) = plan {
-        let gems = store.batch(|store| {
-            let gems = index_gems(store, &root, plan, &mut known, &pool, &mut profile)?;
-            // In the same commit as the gems: nothing reads them whole first.
-            if filling {
-                store.clear_warming(&root_str)?;
-            }
-            anyhow::Ok(gems)
-        })?;
-        if let Some(profile) = profile.as_mut() {
-            // The bundle's one commit, outside every gem's own write.
-            profile.phase("commit", store.take_timing().commit);
-        }
-        gems
+    let (counts, gems) = if filling {
+        index_first(
+            &mut store,
+            &root,
+            &files,
+            git_state,
+            with_gems,
+            &mut known,
+            &pool,
+            &mut profile,
+        )?
     } else {
-        GemReport::default()
+        let counts = index_files(
+            &mut store,
+            &root,
+            &files,
+            git_state,
+            false,
+            &mut known,
+            &pool,
+            &mut profile,
+        )?;
+        let plan = match with_gems {
+            true => Some(plan_gems(&store, &root, &pool, &mut profile)?),
+            false => None,
+        };
+        let gems = match plan {
+            Some(plan) => index_gems(&mut store, &root, plan, &mut known, &pool, &mut profile)?,
+            None => GemReport::default(),
+        };
+        (counts, gems)
     };
 
     // Only when something was actually read, and then only once the store has

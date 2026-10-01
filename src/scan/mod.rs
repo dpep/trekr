@@ -9,6 +9,8 @@
 //! hashed, and they get hashed *the way git does* so an uncommitted edit keys
 //! the same as it will once committed.
 
+pub(crate) mod near;
+
 use crate::core::Oid;
 use anyhow::Result;
 use sha1::{Digest, Sha1};

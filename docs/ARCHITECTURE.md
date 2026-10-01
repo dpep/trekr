@@ -49,6 +49,11 @@ a commit and a path string, not Ruby.
 **A git repository is required.** Content addressing is the product, and git is
 what makes it nearly free (DEC-001).
 
+`scan/near.rs` guesses which files a few files most likely need — a
+constant's file by the autoloader's convention (`Admin::UserReport` →
+`admin/user_report.rb` under any root, each enclosing scope tried first), and
+the gem whose `lib/` holds it. It only orders a first index (DEC-322).
+
 ### `extract/` — bytes in, facts out
 
 Prism (`ruby-prism`, vendored C, no Ruby toolchain) via the `Visit` trait, with a
@@ -762,6 +767,16 @@ answer meanwhile carries `warming: {read, of, interrupted, hint}`, its
 `possible`, `--dead` lists nothing, and a miss exits `2`. A mark left by an
 index that died is `interrupted`, until the next index.
 
+**A first index is written in the order an editor needs it** (DEC-322),
+each step its own commit: the files the language server says are open (a
+path a line on the child's stdin, as the editor opens them) and up to 256
+files their constants most likely live in; the Ruby's stdlib and the gems
+those files name, with the bundle recorded so gems already on this machine
+answer too; whatever was opened meanwhile; the rest of the checkout, one
+whole write; the rest of the gems. Parts add to the map
+(`Store::write_part`) and the last whole write leaves the store a single
+write would have. A reindex of a whole map is one write, as before.
+
 `--def` reparses the one file with Prism rather than reading stored spans, so
 it answers correctly on a file edited since the last index. A variable under
 the cursor is answered from that file's flow (`serve/vars.rs`, DEC-064) before
@@ -1040,6 +1055,8 @@ listing is built by a worker on its own connection and tree, which hands back
 only the listing (DEC-044). The listing streams every method row past the
 tree rather than loading them into it (DEC-045), so the session's tree stays
 demand-loaded. Background indexing is a child process, not a thread (DEC-039).
+Its stdin is a pipe the server writes open files to, which a first index
+reads ahead of the rest (DEC-322).
 The child is spawned with `TREKR_BACKGROUND=1` and lowers itself before it
 starts a thread — nice +10, disk I/O at macOS `IOPOL_UTILITY` or Linux
 best-effort level 7 — and logs what the kernel then holds as `index_priority`.

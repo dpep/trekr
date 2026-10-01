@@ -474,6 +474,14 @@ impl Session {
             .insert(path, Document::new(text, Origin::Editor { version }));
     }
 
+    /// The files the editor has open.
+    pub(crate) fn open_paths(&self) -> impl Iterator<Item = &Path> {
+        self.open
+            .iter()
+            .filter(|(_, document)| document.version().is_some())
+            .map(|(path, _)| path.as_path())
+    }
+
     pub(crate) fn did_close(&mut self, path: &Path) {
         self.open.remove(path);
     }

@@ -4844,3 +4844,46 @@ fn a_partial_index_says_so_and_claims_nothing_certain() {
     assert!(def.get("warming").is_none());
     assert_eq!(def["confidence"], 1.0);
 }
+
+/// An index the language server spawns reads the files it is told are open
+/// first (DEC-322), and ends with the store and report an index told nothing
+/// leaves, its mark cleared.
+#[test]
+fn a_first_index_told_what_is_open_ends_where_one_told_nothing_does() {
+    use std::io::Write;
+    let (dir, db) = scratch("hinted");
+    repo(&dir);
+    fs::create_dir_all(dir.join("app/models")).unwrap();
+    fs::write(
+        dir.join("app/models/order.rb"),
+        "class Order\n  def go\n    Widget.new.resize(1)\n  end\nend\n",
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    let plain = json(&trekr(&db, &dir, &["--index", "--json"]));
+
+    let (_, hinted_db) = scratch("hinted-told");
+    let mut child = neutral(Command::new(env!("CARGO_BIN_EXE_trekr")))
+        .args(["--index", "--json"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &hinted_db)
+        .env("TREKR_BACKGROUND", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let open = fs::canonicalize(dir.join("app/models/order.rb")).unwrap();
+    writeln!(child.stdin.take().unwrap(), "{}", open.display()).unwrap();
+    let hinted = child.wait_with_output().unwrap();
+    assert!(hinted.status.success());
+    let hinted = json(&hinted);
+    assert_eq!(hinted["indexed"], plain["indexed"]);
+
+    let def = json(&trekr(
+        &hinted_db,
+        &dir,
+        &["--def", "app/models/order.rb:3:5", "--json"],
+    ));
+    assert_eq!(def["status"], "resolved");
+    assert!(def.get("warming").is_none(), "the mark is gone: {def}");
+}
