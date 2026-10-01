@@ -2852,8 +2852,8 @@ mention of the name), rails' 40 `--refs` queries, and widget_shop's
 | widget_shop trace, verdicts moved | | 1 residue → right owner |
 
 A row is precise when nothing in the checkout reaches the method. Before,
-mastodon's 17 misses were 11 `if:`/`with:` options and helpers, view calls
-and attribute writers; after, the 15 left are gem hooks trekr does not index
+mastodon's 17 misses were 8 methods an `if:` option names, 3 attribute
+writers, 3 helpers or views, 2 gem hooks and a `module_function`; after, the 15 left are gem hooks trekr does not index
 (Devise's `after_sign_in_path_for`, Doorkeeper's
 `doorkeeper_unauthorized_render_options`, devise_pam's `pam_conflict?`, the
 http gem's `reset_counter`), Active Record attribute writers reached by mass
