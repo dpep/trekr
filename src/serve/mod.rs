@@ -300,7 +300,7 @@ fn serve(
         let replacing = launched.as_ref().is_some_and(|w| w.changed().is_some());
         if reopens < REOPENS
             && !replacing
-            && let Some(why) = session.store().replaced()
+            && let Some(why) = session.main_store().replaced()
         {
             reopens += 1;
             if let Some(message) = reopen(&mut session, &why, log) {

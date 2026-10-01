@@ -9514,6 +9514,13 @@ early store's end less tidy than its start:
   directory aside (`….gone`) before emptying it, so an open by name from then
   on finds nothing; a reader with it already open may still touch its WAL,
   so the removal is retried, and a sweep takes what is left.
+- *Its removal is not a replaced store.* The serve loop's DEC-300 check
+  asked the store it reads — the early store, in early mode — so the index's
+  own cleanup read as "the index was replaced underneath this server": a
+  message, every tree dropped (5 s of rebuilding at 100k), a redundant
+  second index and one of the three reopens spent, on every idle run. It
+  asks the store itself now; `follow_early` notices the early store gone and
+  keeps every tree answering until its successor is built aside.
 
 ## DEC-333 — A warm request reads the store's roots only once the store has moved
 

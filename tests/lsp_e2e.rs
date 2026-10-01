@@ -4591,11 +4591,20 @@ fn an_early_store_answers_until_its_index_removes_it() {
     );
     assert_eq!(sites_in(&answer).len(), 1, "from the early store: {answer}");
 
+    // Once the server is idle, so nothing reads a tree before the loop's
+    // next look at its store.
+    let idle = std::time::Instant::now();
+    while logged_events(&db, "warm").len() < 2 && idle.elapsed().as_secs() < 10 {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     // As the index removes it: renamed aside, then emptied.
     let mut gone = beside.clone().into_os_string();
     gone.push(".gone");
     fs::rename(&beside, &gone).unwrap();
     fs::remove_dir_all(&gone).unwrap();
+    // A message that reads no tree: the loop looks for a replaced store
+    // before anything follows the early store back to the store.
+    session.notify("$/setTrace", serde_json::json!({"value": "off"}));
     let answer = ask(
         &mut session,
         &dir,
@@ -4611,6 +4620,11 @@ fn an_early_store_answers_until_its_index_removes_it() {
     );
 
     session.stop();
+    assert_eq!(
+        logged_events(&db, "store_reopened"),
+        Vec::<serde_json::Value>::new(),
+        "an early store's removal is the index's own cleanup, not a replaced store"
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 

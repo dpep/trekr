@@ -241,6 +241,16 @@ impl Session {
         &self.store
     }
 
+    /// The store itself, never an early store: the one that can be replaced
+    /// underneath the session (DEC-300). An early store's removal is its
+    /// index's cleanup, and `follow_early` notices it.
+    pub(crate) fn main_store(&self) -> &Store {
+        match &self.early {
+            Some(early) => &early.main,
+            None => &self.store,
+        }
+    }
+
     /// The store, to write to: never an early store. Its own writes do not
     /// move its `data_version`, so every stamp is read again after one.
     pub(crate) fn store_mut(&mut self) -> &mut Store {
