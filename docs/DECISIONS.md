@@ -9575,3 +9575,27 @@ clear 77 unchanged.
 
 **Not done.** `--refs` on an action does not list its routes; `--def` on a
 route's string does not answer the action.
+
+## DEC-350 — The naming rung reads a split name as the variant its file reaches
+
+**Decided.** When the naming rung (`from_receiver_name`) takes `@user` to
+mean `User` and `User` is split (DEC-072), it checks its corroborations
+against the variant nearest the call: that the class answers the call, and
+that the enclosing scope does not. Every other rung's type is mapped to that
+variant too, after it is typed (`receiver_of`); this rung's checks ran before
+the mapping.
+
+**Why.** discourse's benchmark script declares `User = Data.define(:id, …)`
+beside `app/models/user.rb`, which splits `User`. A split name has no chain
+of its own, so the lookup of `id` on it found nothing, the rung gave up, and
+`@user.id` and `user.id` across the app were residue. The residue ranker
+then put the script's `Data` reader first, because its owner is the class
+the receiver is named after. The comparison re-run counted two of its 500
+sites correct → wrong against an August build, which predates the split.
+Every release since 0.2.1 has had this.
+
+**Measured.** discourse's 500 comparison sites (`script/compare.py`, seed
+12): correct@1 76.6 → 77.0 %, wrong@1 19.4 → 19.0 %, found 82.4 → 82.8 %;
+both moves are the `id` sites, now `ambiguous` on
+`AttributeMethods::PrimaryKey#id` as they were before the split. The gold
+sets are in BASELINE.md, "The comparison's regressions".

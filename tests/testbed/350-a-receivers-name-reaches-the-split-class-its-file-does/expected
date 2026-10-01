@@ -1,0 +1,5 @@
+# A benchmark script's `Widget = Data.define` splits the app's `Widget`
+# (DEC-072). The naming rung looked the method up on the split name, which has
+# no chain, so `widget.id` beside the model was residue and its first
+# candidate the script's reader. The name is the variant the file reaches.
+def app/services/remover.rb:3:12 via=receiver_name receiver_type=Widget site=app/models/widget.rb:2

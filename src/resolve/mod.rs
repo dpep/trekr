@@ -1918,7 +1918,9 @@ fn by_return_types(tree: &Tree, previous: &Call) -> Option<Receiver> {
 /// defines the same method. A unique match is 0.5; four competitors is 0.17.
 fn from_receiver_name(tree: &Tree, call: &Call, path: &str) -> Option<Receiver> {
     let named = receiver_names_a_class(call.recv_text.as_deref()?)?;
-    let fqn = tree.resolve_at(&named, &call.nesting, path).fqn?;
+    // A split name has no chain of its own; the variant this file reaches does
+    // (DEC-072), and the corroborations below need one.
+    let fqn = tree.variant_at(&tree.resolve_at(&named, &call.nesting, path).fqn?, path);
     // (1) continued: a type every object has narrows nothing (DEC-172).
     if fqn == "Object" || tree.inherits("Object", &fqn) {
         return None;

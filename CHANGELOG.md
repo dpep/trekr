@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A receiver named after a class that two programs declare is typed again.**
+  With a script's `User = Data.define(…)` beside the app's `User` model,
+  `@user.id` in the app was unresolved, and its first candidate was the
+  script's reader. It now answers the model's method, as it does where the
+  name is declared once.
 - **Upgrading drops and rebuilds the index** (store v53): trekr reindexes on
   its own; run `trekr --index` to do it up front.
 - **`--dead` reads the routes.** A controller's public action that
