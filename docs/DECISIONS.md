@@ -9502,6 +9502,19 @@ store's size in time and disk, once per first index that has a file opened
 mid-write. An early store holds the other checkouts as of the copy too, so
 for the seconds the server reads it, answers there are that old.
 
+**Addendum — teardown.** A pre-release hunt on the 100k corpus found the
+early store's end less tidy than its start:
+
+- *Nothing reopens an early store into being.* The server opens one only as
+  it is (`Store::open_existing`: no `CREATE`, no lock file, no rebuild or
+  set-aside), and so does each second connection it opens from it. An open
+  that landed between the index's unlink of the file and its `rmdir` used to
+  lay down an empty, schema'd store and its lock there: the `rmdir` failed
+  and the server read an empty store as whole. The index renames the
+  directory aside (`….gone`) before emptying it, so an open by name from then
+  on finds nothing; a reader with it already open may still touch its WAL,
+  so the removal is retried, and a sweep takes what is left.
+
 ## DEC-333 — A warm request reads the store's roots only once the store has moved
 
 **Decided.** The language server keeps each checkout's stamp (DEC-065) with

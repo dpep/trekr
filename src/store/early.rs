@@ -28,10 +28,30 @@ pub(crate) fn path(main: &Path, pid: u32) -> PathBuf {
     dir(main, pid).join(main.file_name().unwrap_or_default())
 }
 
-/// Remove an early store's directory, and all of it.
+/// Remove an early store's directory, and all of it. Renamed aside first,
+/// so a reader opening it by name from now on finds nothing, rather than
+/// laying files into a directory being emptied.
 pub(crate) fn remove(dir: &Path) {
-    let _ = std::fs::remove_dir_all(dir);
+    let mut gone = dir.as_os_str().to_os_string();
+    gone.push(GONE);
+    let gone = PathBuf::from(gone);
+    let target = match dir.to_string_lossy().ends_with(GONE) {
+        true => dir.to_path_buf(),
+        false => match std::fs::rename(dir, &gone) {
+            Ok(()) => gone,
+            Err(_) => dir.to_path_buf(),
+        },
+    };
+    // A reader that had it open may still write its WAL there meanwhile.
+    for _ in 0..3 {
+        if std::fs::remove_dir_all(&target).is_ok() || !target.exists() {
+            return;
+        }
+    }
 }
+
+/// The suffix of an early store being removed.
+const GONE: &str = ".gone";
 
 /// Remove early stores left by indexes that are no longer running.
 pub(crate) fn sweep(main: &Path) {
@@ -135,6 +155,39 @@ mod tests {
         assert!(early.exists(), "a running index's early is kept");
         assert!(!dead.exists(), "a dead index's early is removed");
         assert!(main.exists());
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn an_early_store_being_removed_is_never_created_again_by_a_reader() {
+        let scratch = scratch("remove");
+        let main = scratch.join("t.db");
+        drop(Store::open(&main).unwrap());
+        let early = path(&main, std::process::id());
+        std::fs::create_dir_all(early.parent().unwrap()).unwrap();
+        assert!(copy(&main, &early).unwrap());
+        let reader = Store::open_existing(&early).unwrap();
+
+        remove(early.parent().unwrap());
+        assert!(Store::open_existing(&early).is_err());
+        assert!(
+            reader.reopen().is_err(),
+            "a second connection is not a create either"
+        );
+        drop(reader);
+        let left: Vec<_> = std::fs::read_dir(&scratch)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.contains(".early-"))
+            .collect();
+        assert_eq!(left, Vec::<String>::new());
+
+        // Opened between its index's unlink of the store and the directory's
+        // removal: nothing is laid down, so the directory can still go.
+        let emptied = dir(&main, std::process::id());
+        std::fs::create_dir_all(&emptied).unwrap();
+        assert!(Store::open_existing(&emptied.join("t.db")).is_err());
+        assert_eq!(std::fs::read_dir(&emptied).unwrap().count(), 0);
         let _ = std::fs::remove_dir_all(&scratch);
     }
 }

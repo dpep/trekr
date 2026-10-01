@@ -30,6 +30,8 @@ pub(crate) struct Store {
     path: Option<std::path::PathBuf>,
     /// The file `path` named when this store opened it, to notice it moved.
     file: Option<(u64, u64)>,
+    /// Opened only as it was found (`open_existing`), and so reopened.
+    existing: bool,
     /// Where the writes since the last `take_timing` spent their time, for
     /// `--index --profile`.
     timing: WriteTiming,
@@ -214,6 +216,12 @@ impl Store {
         recover::open(path, &schema::LAYOUT)
     }
 
+    /// Open the store at `path` only if it is there, as it is: an early store
+    /// (DEC-332), which its index removes when done.
+    pub(crate) fn open_existing(path: &Path) -> Result<Store> {
+        recover::open_existing(path, &schema::LAYOUT)
+    }
+
     /// A second connection to the same database.
     ///
     /// `None` for an in-memory store: there is no path to reach it by, and a
@@ -221,6 +229,7 @@ impl Store {
     /// through the one it already holds.
     pub(crate) fn reopen(&self) -> Result<Option<Store>> {
         match &self.path {
+            Some(path) if self.existing => Store::open_existing(path).map(Some),
             Some(path) => Store::open(path).map(Some),
             None => Ok(None),
         }
@@ -264,6 +273,7 @@ impl Store {
             conn,
             path: None,
             file: None,
+            existing: false,
             timing: WriteTiming::default(),
         };
         let version = schema_version(&store.conn)?;

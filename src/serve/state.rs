@@ -487,7 +487,7 @@ impl Session {
         if warming.interrupted || !path.exists() {
             return;
         }
-        let Ok(early) = Store::open(&path) else {
+        let Ok(early) = Store::open_existing(&path) else {
             return;
         };
         let main = std::mem::replace(&mut self.store, early);

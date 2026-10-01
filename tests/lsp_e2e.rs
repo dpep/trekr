@@ -4591,7 +4591,11 @@ fn an_early_store_answers_until_its_index_removes_it() {
     );
     assert_eq!(sites_in(&answer).len(), 1, "from the early store: {answer}");
 
-    fs::remove_dir_all(&beside).unwrap();
+    // As the index removes it: renamed aside, then emptied.
+    let mut gone = beside.clone().into_os_string();
+    gone.push(".gone");
+    fs::rename(&beside, &gone).unwrap();
+    fs::remove_dir_all(&gone).unwrap();
     let answer = ask(
         &mut session,
         &dir,

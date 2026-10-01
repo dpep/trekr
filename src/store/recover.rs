@@ -159,6 +159,41 @@ fn open_as(path: &Path, layout: &Layout, main: bool) -> Result<Store> {
     }
 }
 
+/// Open `path` only as it is: never created, rebuilt or set aside, and no
+/// lock file laid beside it. For an early store (DEC-332), whose index may be
+/// removing it — a create there would leave an empty store read as whole, in
+/// a directory its index can no longer remove.
+pub(super) fn open_existing(path: &Path, layout: &Layout) -> Result<Store> {
+    use rusqlite::OpenFlags;
+    let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
+        | OpenFlags::SQLITE_OPEN_URI
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX;
+    let conn = Connection::open_with_flags(path, flags)?;
+    // Before `init`, which would rebuild a store at another version.
+    let version = super::schema_version(&conn)?;
+    if version != layout.version {
+        return Err(super::schema_mismatch(format!(
+            "{} is schema v{version}, not this trekr's v{}",
+            path.display(),
+            layout.version
+        )));
+    }
+    match Store::init(conn, layout) {
+        Ok((mut store, _)) => {
+            store.path = Some(path.to_path_buf());
+            store.file = identity(path);
+            store.existing = true;
+            Ok(store)
+        }
+        Err(Refusal::Failed(e)) => Err(e),
+        Err(Refusal::Newer(v)) => Err(super::schema_mismatch(format!(
+            "{} is schema v{v}",
+            path.display()
+        ))),
+        Err(Refusal::Broken { reason, .. }) => Err(failure(ffi::SQLITE_CORRUPT, reason)),
+    }
+}
+
 /// The side store this process opened in place of a newer trekr's, keyed by
 /// the path it stands in for.
 static SIDE: Mutex<Option<(PathBuf, PathBuf)>> = Mutex::new(None);
