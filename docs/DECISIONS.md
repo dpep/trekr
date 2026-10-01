@@ -9900,3 +9900,52 @@ use. The 9 rows left `unreferenced` were each read and none is declared.
 `override`. Of the 39 sampled rows, 38 move and the 39th is
 `include_user_id?`, which on reading is dead. mastodon unchanged (no AMS
 0.8).
+
+## DEC-363 — `--dead` says where the checkout builds a method's name at runtime
+
+**Decided.** `--dead` reads the checkout's Ruby (`git ls-files *.rb
+*.rake`, less `spec/`, `test/` and `db/`) as text, as it reads the views
+(DEC-315), for two shapes of a name no call site writes (`cli::built`):
+
+- **An interpolated symbol** whose written part starts the name with three
+  name characters or more: `:"report_#{type}"` is the shape `report_*`.
+  A candidate whose name has the shape says "a name of its shape is built
+  at runtime (`report_*` at app/models/report.rb:382)".
+- **A computed name sent to a constant**: `UserNotifications.public_send(type,
+  user)` (`send`, `__send__` too), whose first argument is no literal. A
+  candidate of that constant, either side, says "a name computed at runtime
+  is sent to UserNotifications at app/jobs/regular/user_email.rb:240".
+
+Each is a caveat, graded `lower`, and the tier stays: a shape is evidence a
+name may be built, not that this one is.
+
+**Why.** Of a random 70 of discourse's `unreferenced`, clear rows
+(hand-checked, `--dead app`), 22 were reached this way once AMS's hooks
+(DEC-362) are set aside: reports (`report_*`, sent by `Report.find`),
+reviewable actions (`perform_*`), service steps (`model :x` builds
+`:"fetch_#{name}"`), and mailer actions a job sends a type string to. The
+last lane had proposed special-casing discourse's service `model` step;
+this reads the shape the app itself writes, so it is no one app's rule.
+
+**Not a shape**: one that starts with its interpolation. `:"#{field}_count"`
+and `:"#{period}_score"` are an attribute's derived name far more often
+than a method's; counted, `*_score` from a migration and `*_count` from a
+serializer caveated two of the hand-checked true candidates
+(`spam_silence_score`, `update_distinct_badge_count`) and no false one.
+Nor a string, which is a key or a message more often than a name, except as
+the computed argument of a send. Nor a name built in a spec, a test or a
+migration.
+
+**Over-reach, measured.** A shape caveats every method of its shape in the
+checkout, not the class that sends it: discourse's
+`ExportUserArchive` builds `:"include_#{name}?"` for its own components, and
+that lowers every serializer's `include_*?` too — which DEC-362 already
+calls convention-only — and one hand-checked true candidate
+(`ApiKeySerializer#include_user_id?`).
+
+**Measured**, `--dead app`, against the build before it: discourse
+`unreferenced`, clear 210 → 56; of the hand-checked rows still clear before
+it, 42 of 47 false ones become `lower` and 1 of 15 true ones. mastodon
+`unreferenced`, clear unchanged (63); 11 other rows gain the caveat. The
+read's cost is inside the noise of `--dead app` on discourse (three
+interleaved runs each way, 10–20 s, on a loaded machine).

@@ -1,0 +1,11 @@
+# A method reached by a name built at runtime has no call site: discourse's
+# reports (`:"report_#{type}"`, then `public_send`), its reviewables'
+# `perform_*` actions and its service steps (`:"fetch_#{name}"`) were
+# `unreferenced`, clear, as was every mailer action a job sends a type
+# string to (`UserNotifications.public_send(type, …)`). `--dead` now reads
+# the checkout's interpolated symbols, and its sends of a computed name to a
+# constant, and says so on each method they may reach. A symbol built in a
+# spec is a test's value, not a way in.
+dead app/models/report_totals.rb Report#report_signups=unreferenced~report_* Report#lonely_total=unreferenced~
+dead app/models/notifier.rb Notifier#welcome=unreferenced~Notifier Notifier#farewell=unreferenced~Notifier
+dead lib/stepper.rb Stepper#fetch_widget=unreferenced~fetch_*

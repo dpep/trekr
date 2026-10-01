@@ -19,6 +19,11 @@
   indexed.** The index reads the gems the open file names before any other
   gem, and Ruby's signatures just after: on a 100,000-file checkout the
   gem's answer arrives about half a second sooner.
+- **`--dead` says where a method's name is built at runtime.** A method
+  whose name has the shape of an interpolated symbol the checkout writes
+  (`:"report_#{type}"`), or whose class a computed name is sent to
+  (`Mailer.public_send(type, …)`), says so in its caveat and is graded
+  `lower`. Specs, tests and migrations are not read for this.
 - **`--dead` knows ActiveModel::Serializers' `include_<attr>?` hooks.**
   With AMS 0.8/0.9 indexed, a serializer's (or its mixin's) `include_x?`
   whose `:x` the serializer or an ancestor declares is `convention-only`,

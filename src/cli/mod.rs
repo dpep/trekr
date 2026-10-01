@@ -5,6 +5,7 @@
 //! reserved, and the default action stays free for the query verbs the resolve
 //! layer will add.
 
+mod built;
 mod conventions;
 mod failure;
 pub(crate) mod position;
@@ -3740,6 +3741,7 @@ fn dead_in(
     // The expensive pass, only for names the cheap one could not clear.
     let tree = build_tree(store, &root_str)?;
     let views = views::Views::read(root);
+    let built = built::Built::read(root);
     let routes = routes::Routes::read(root);
     let routed = routed_actions(&tree, &routes);
     let mut symbols = conventions::Symbols::default();
@@ -3868,6 +3870,12 @@ fn dead_in(
                 risky.push_str(", ");
             }
             risky.push_str(&format!("named in a view ({template}), which is not read"));
+        }
+        if let Some(why) = built.reaching(&owner, &def.name) {
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            risky.push_str(&why);
         }
         // A symbol in its own file that no rule reads as its name may still
         // be how it is reached: say so, rather than that no symbol names it.
