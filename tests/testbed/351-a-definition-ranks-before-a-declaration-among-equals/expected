@@ -1,0 +1,4 @@
+# Among candidates that tie on every piece of evidence, a declaration says the
+# code is elsewhere, often in another candidate: `Querying`'s `delegate :order,
+# to: :all` sends to `Relation#order`. The definition comes first (DEC-351).
+def app.rb:3:11 status=residue candidates=2 candidate1=Relation

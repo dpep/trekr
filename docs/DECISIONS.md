@@ -9599,3 +9599,43 @@ Every release since 0.2.1 has had this.
 both moves are the `id` sites, now `ambiguous` on
 `AttributeMethods::PrimaryKey#id` as they were before the split. The gold
 sets are in BASELINE.md, "The comparison's regressions".
+
+## DEC-351 — Among equal residue candidates, a definition before a declaration
+
+**Decided.** The residue ranker's last tiebreak, after tier, checkout-first
+and directory affinity: a candidate whose code is at its site (a `def`)
+before one that only declares the method (a macro, an RBS or `.rbi`
+signature, the RSpec stub).
+
+**Why.** ActiveRecord's `Querying` writes `delegate(*QUERYING_METHODS, to:
+:all)`, which trekr reads as declaring every querying method (DEC-131). An
+untyped `topic_users.update_all`, `scope.joins`, `posts.order` or
+`users.find_each` offered that line first, ahead of the relation method it
+sends to, which is a candidate too. A declaration says the code is
+elsewhere, and often it is in another candidate. In a fabricator,
+ActiveRecord's `define_model_callbacks` declaration of `before_create` came
+ahead of Fabrication's own `def before_create`.
+
+**Measured.** discourse's 500 comparison sites: correct@1 77.0 → 78.0 %,
+found unchanged (82.8 %): `update_all`, `joins`, two `find_each` and the
+fabricator's `before_create` move to the first location, and nothing moves
+away from it. widget_shop's 63 are unchanged. In the gold sets the only
+verdicts that move are `declaration-offered` → `residue-truth-absent`: 33
+sites (polyid 15, accord 16, flipper 1, graph_weaver 1). That verdict means
+some declaration was offered and the truth is generated, and in every one of
+these the declaration that left the list was unrelated to the truth
+(`StringIO`'s RBS `string` for accord's DSL `string`,
+`OpenSSL::OCSP::Response#create` for FactoryBot's). The truth was not
+offered in either build.
+
+**Not done: the stdlib after the gems.** `posts.order` still offers
+`OptionParser#order` first. The stdlib's candidates come before the gems'
+because the stdlib is indexed first, and ordering them after the gems
+fixes those two discourse sites. At app call sites in every gold set a
+gem's method is the truth far more often than the stdlib's (discourse
+4,865 to 30, graph_weaver 18,094 to 541). But in a tie group longer than
+the list, the move pushes real stdlib answers off it: `Rails.root.join`'s
+`Pathname#join` on two of discourse's 500 sites (found −2), and
+widget_shop's `Singleton#instance` and `ConditionVariable#signal` (2
+`residue-hit` → `residue-truth-absent`). That is +2 correct@1 against −4
+found, so it is held back.

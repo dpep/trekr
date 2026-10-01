@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **An unresolved call offers the method before the macro that forwards to
+  it.** With nothing to tell candidates apart, `relation.update_all` listed
+  ActiveRecord's `delegate … to: :all` line first; it now lists
+  `Relation#update_all`, the code the delegate sends to, and the
+  declarations after the definitions.
 - **A receiver named after a class that two programs declare is typed again.**
   With a script's `User = Data.define(…)` beside the app's `User` model,
   `@user.id` in the app was unresolved, and its first candidate was the

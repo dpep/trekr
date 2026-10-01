@@ -2522,7 +2522,7 @@ fn residue(
                 .as_deref()
                 .is_some_and(|here| crate::tree::public_name(here) == method.owner)
     };
-    let mut ranked: Vec<(u8, bool, i32, Candidate)> = tree
+    let mut ranked: Vec<(u8, bool, i32, bool, Candidate)> = tree
         .named(&call.name)
         .iter()
         .filter(|method| !own(method))
@@ -2564,6 +2564,10 @@ fn residue(
                 // Within a tier, this checkout's own code before a dependency's.
                 !tree.in_checkout(&method.site.path),
                 affinity,
+                // Last, among equals: a declaration says the code is elsewhere
+                // — `Querying`'s `delegate :order, to: :all` sends to
+                // `QueryMethods#order`, which is also a candidate.
+                method.kind() == Kind::Declaration,
                 Candidate {
                     owner: method.owner.clone(),
                     singleton: method.singleton,
@@ -2574,13 +2578,15 @@ fn residue(
             )
         })
         .collect();
-    ranked.sort_by_key(|(tier, from_gem, affinity, _)| (*tier, *from_gem, *affinity));
+    ranked.sort_by_key(|(tier, from_gem, affinity, declared, _)| {
+        (*tier, *from_gem, *affinity, *declared)
+    });
 
     let total = ranked.len();
     let candidates: Vec<Candidate> = ranked
         .into_iter()
         .take(MAX_CANDIDATES)
-        .map(|(_, _, _, c)| c)
+        .map(|(_, _, _, _, c)| c)
         .collect();
     let reason = if total > candidates.len() {
         format!(
