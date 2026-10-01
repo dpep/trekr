@@ -1044,18 +1044,31 @@ impl Received {
     }
 }
 
-/// Index the gems this checkout resolves, skipping any already on this machine.
+/// What an index reads beyond the checkout — its Ruby's stdlib and the
+/// bundle's gems — located and walked before anything is written, so the
+/// index knows what it will read before it writes any of it.
+struct GemPlan {
+    report: GemReport,
+    stdlib: Option<crate::gems::stdlib::Stdlib>,
+    /// The stdlib's files, when this machine has not read them yet.
+    stdlib_files: Option<scan::Files>,
+    /// Every gem root the bundle resolves, canonical, with the gem's name.
+    used: Vec<(String, String)>,
+    /// The gems new to the store, walked: each one's `lib/`.
+    fresh: Vec<(PathBuf, scan::Files)>,
+}
+
+/// Locate the stdlib and the gems this checkout resolves, and walk those not
+/// on this machine yet. Writes nothing.
 ///
-/// Returns the gems the lockfile named but disk did not have. A named-but-
-/// unlocated gem is a hole in every answer that would have come from it, so it
-/// is reported rather than silently absent.
-fn index_gems(
-    store: &mut Store,
+/// A named-but-unlocated gem is a hole in every answer that would have come
+/// from it, so it is reported rather than silently absent.
+fn plan_gems(
+    store: &Store,
     repo: &Path,
-    known: &mut Option<HashSet<Oid>>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
-) -> anyhow::Result<GemReport> {
+) -> anyhow::Result<GemPlan> {
     // The Ruby first: its stdlib is indexed before the gems, which reopen it
     // (DEC-180), and its gem directories are searched before any other's
     // (DEC-291). The one the last index chose stands unless the checkout
@@ -1082,13 +1095,12 @@ fn index_gems(
         about: stdlib.as_ref().map(crate::gems::stdlib::Stdlib::about),
         ..GemReport::default()
     };
-    if let Some(stdlib) = &stdlib {
-        let mut indexed = index_stdlib(store, stdlib, known, pool, profile)?;
-        // Its Ruby's signatures, which core and the stdlib's compiled half
-        // are served from, read once per Ruby (DEC-240).
-        indexed.rbs = profile::timed(profile, "rbs", || crate::rbs::prepare(store, stdlib))?;
-        report.stdlib = Some(indexed);
-    }
+    let stdlib_files = match &stdlib {
+        Some(stdlib) if !store.has_checkout(&stdlib.root.to_string_lossy())? => {
+            Some(crate::gems::stdlib::files(&stdlib.root))
+        }
+        _ => None,
+    };
     // Which gems this bundle resolves, whether or not they needed indexing —
     // an already-known gem still belongs to this app, and that is what makes a
     // position inside it answerable from here (DEC-029).
@@ -1155,7 +1167,41 @@ fn index_gems(
         }
         fresh.push(gem_root);
     }
-    for counts in index_bundle(store, &fresh, known, pool, profile)? {
+    Ok(GemPlan {
+        report,
+        stdlib,
+        stdlib_files,
+        used,
+        fresh: walk_gems(&fresh, pool, profile),
+    })
+}
+
+/// Index what `plan_gems` found: the stdlib, then the gems new to this
+/// machine, and record which ones this checkout uses.
+fn index_gems(
+    store: &mut Store,
+    repo: &Path,
+    plan: GemPlan,
+    known: &mut Option<HashSet<Oid>>,
+    pool: &rayon::ThreadPool,
+    profile: &mut Option<profile::Profile>,
+) -> anyhow::Result<GemReport> {
+    let GemPlan {
+        mut report,
+        stdlib,
+        stdlib_files,
+        used,
+        fresh,
+        ..
+    } = plan;
+    if let Some(stdlib) = &stdlib {
+        let mut indexed = index_stdlib(store, stdlib, stdlib_files, known, pool, profile)?;
+        // Its Ruby's signatures, which core and the stdlib's compiled half
+        // are served from, read once per Ruby (DEC-240).
+        indexed.rbs = profile::timed(profile, "rbs", || crate::rbs::prepare(store, stdlib))?;
+        report.stdlib = Some(indexed);
+    }
+    for counts in index_bundle(store, fresh, known, pool, profile)? {
         report.indexed += 1;
         report.files += counts.files;
     }
@@ -1168,28 +1214,17 @@ fn index_gems(
     Ok(report)
 }
 
-/// Files the bundle's stream parses at a time, and holds for the writer: two
-/// chunks' facts are in memory at once.
-const BUNDLE_CHUNK: usize = 128;
-
-/// Index the gems new to the store as one stream (DEC-232): every gem's
-/// `lib/` walked on the pool, every new blob parsed on it across gem
-/// boundaries, and each gem written in turn as its files arrive — where one
-/// gem at a time left the pool idle while each small gem was walked and
-/// written. What each gem indexed, for those with files.
-fn index_bundle(
-    store: &mut Store,
+/// Each gem's `lib/`, walked on the pool: it is where a gem's public code
+/// lives, and a gem's spec/ and test/ trees are large and never navigated to.
+fn walk_gems(
     gems: &[PathBuf],
-    known: &mut Option<HashSet<Oid>>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
-) -> anyhow::Result<Vec<crate::store::Indexed>> {
+) -> Vec<(PathBuf, scan::Files)> {
     if gems.is_empty() {
-        return Ok(Vec::new());
+        return Vec::new();
     }
-    // Only `lib/`: it is where a gem's public code lives, and a gem's
-    // spec/ and test/ trees are large and never navigated to.
-    let walked: Vec<(&PathBuf, scan::Files)> = profile::timed(profile, "gem-walk", || {
+    profile::timed(profile, "gem-walk", || {
         pool.install(|| {
             gems.par_iter()
                 .map(|gem| {
@@ -1199,12 +1234,30 @@ fn index_bundle(
                             .strip_prefix("lib/")
                             .is_some_and(crate::gems::stdlib::opt_in)
                     });
-                    (gem, files)
+                    (gem.clone(), files)
                 })
                 .filter(|(_, files)| !files.is_empty())
                 .collect()
         })
-    });
+    })
+}
+
+/// Files the bundle's stream parses at a time, and holds for the writer: two
+/// chunks' facts are in memory at once.
+const BUNDLE_CHUNK: usize = 128;
+
+/// Index the gems new to the store as one stream (DEC-232): each gem's
+/// `lib/` as `walk_gems` found it, every new blob parsed on the pool across gem
+/// boundaries, and each gem written in turn as its files arrive — where one
+/// gem at a time left the pool idle while each small gem was walked and
+/// written. What each gem indexed, for those with files.
+fn index_bundle(
+    store: &mut Store,
+    walked: Vec<(PathBuf, scan::Files)>,
+    known: &mut Option<HashSet<Oid>>,
+    pool: &rayon::ThreadPool,
+    profile: &mut Option<profile::Profile>,
+) -> anyhow::Result<Vec<crate::store::Indexed>> {
     if walked.is_empty() {
         return Ok(Vec::new());
     }
@@ -1281,6 +1334,8 @@ fn index_bundle(
 fn index_stdlib(
     store: &mut Store,
     stdlib: &crate::gems::stdlib::Stdlib,
+    // `None` when the store holds it already (`plan_gems`).
+    files: Option<scan::Files>,
     known: &mut Option<HashSet<Oid>>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
@@ -1294,10 +1349,9 @@ fn index_stdlib(
         hidden: Vec::new(),
         rbs: None,
     };
-    if store.has_checkout(&root)? {
+    let Some(files) = files else {
         return Ok(report);
-    }
-    let files = crate::gems::stdlib::files(&stdlib.root);
+    };
     let counts = index_files(store, &stdlib.root, &files, 0, known, pool, profile)?;
     let gems = crate::gems::stdlib::default_gems(&stdlib.root);
     store.set_default_gems(
@@ -1445,6 +1499,10 @@ fn cmd_index(
 
     store.wait_as_writer(writer_waiting)?;
     let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
+    let plan = match with_gems {
+        true => Some(plan_gems(&store, &root, &pool, &mut profile)?),
+        false => None,
+    };
     let mut known = None;
     let counts = index_files(
         &mut store,
@@ -1456,9 +1514,9 @@ fn cmd_index(
         &mut profile,
     )?;
 
-    let gems = if with_gems {
+    let gems = if let Some(plan) = plan {
         let gems =
-            store.batch(|store| index_gems(store, &root, &mut known, &pool, &mut profile))?;
+            store.batch(|store| index_gems(store, &root, plan, &mut known, &pool, &mut profile))?;
         if let Some(profile) = profile.as_mut() {
             // The bundle's one commit, outside every gem's own write.
             profile.phase("commit", store.take_timing().commit);
