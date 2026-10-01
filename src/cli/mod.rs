@@ -3895,6 +3895,23 @@ fn dead_in(
                 risky.push_str("it calls `super`, so it overrides a method trekr has not indexed");
             }
         }
+        // A gem of the bundle calls the name on an object it is handed: an
+        // instance's method, since such a call's receiver is a value (DEC-367).
+        if tier == "unreferenced"
+            && !def.singleton
+            && let Some((gem, n)) = store.bundle_calls(&root_str, &def.name)?
+        {
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            let gem = Path::new(&gem)
+                .file_name()
+                .map_or(gem.clone(), |name| name.to_string_lossy().into_owned());
+            risky.push_str(&format!(
+                "a gem in the bundle calls a method of this name ({gem}, {n} {})",
+                if n == 1 { "site" } else { "sites" }
+            ));
+        }
         // Callers `--dead` cannot see, named where it can say which (DEC-315).
         if let Some(caller) = refs::protocol_hook(&def.name, def.singleton) {
             if !risky.is_empty() {

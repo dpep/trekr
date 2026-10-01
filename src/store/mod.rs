@@ -1171,6 +1171,34 @@ impl Store {
         Ok(found)
     }
 
+    /// The gem of `root`'s bundle that writes the most calls of `name`, with
+    /// how many: a name a gem calls on an object it is handed, which
+    /// `--dead` cannot see reach the app (DEC-367). The bundle is what the
+    /// app's own index recorded, so no other app's index changes it.
+    pub(crate) fn bundle_calls(&self, root: &str, name: &str) -> Result<Option<(String, i64)>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT k.root, SUM(s.calls - s.symbols) AS n
+               FROM call_name s INDEXED BY call_name_name
+               CROSS JOIN file f
+               CROSS JOIN checkout k
+              WHERE s.name = ?1
+                AND f.blob_id = s.blob_id
+                AND k.id = f.checkout_id
+                AND k.root IN (SELECT g.gem_root FROM gem_use g
+                                 JOIN checkout c ON c.id = g.checkout_id
+                                WHERE c.root = ?2 AND g.name IS NOT NULL)
+              GROUP BY k.root
+             HAVING n > 0
+              ORDER BY n DESC, k.root
+              LIMIT 1",
+        )?;
+        let mut rows = stmt.query(params![name, root])?;
+        Ok(match rows.next()? {
+            Some(row) => Some((row.get(0)?, row.get(1)?)),
+            None => None,
+        })
+    }
+
     /// Definitions whose name contains `query`, for `workspaceSymbol`.
     ///
     /// Substring, case-insensitive, capped. rq's scorer would rank these

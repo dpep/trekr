@@ -10029,3 +10029,34 @@ models a namespace holds).
 
 **Measured**, `--dead app`, against the build before it: those 5 become
 `lower`; mastodon `unreferenced`, clear 40 → 35; discourse unchanged.
+
+## DEC-367 — An unreferenced instance method whose name a bundled gem calls says so
+
+**Decided.** An `unreferenced` instance method whose name a gem of the
+checkout's bundle writes as a call (`Store::bundle_calls`: the `call_name`
+posting lists of the gems `gem_use` records for the checkout, less symbols)
+says "a gem in the bundle calls a method of this name (simple_form-5.4.1,
+N sites)", naming the gem that writes the most, and is graded `lower`.
+Only an instance's method: a gem's call on an object it was handed is a
+call on a value, and is no evidence for a class method of the same name.
+
+**Why.** mastodon's `UserSettings::Glue#type_for_attribute` (simple_form's
+form builder calls `@object.type_for_attribute`), `PerOperationWithDeadline
+#reset_counter` (http's `@socket.reset_counter if @socket.respond_to?`),
+and Api::BaseController's two `doorkeeper_*_render_options`, which
+Doorkeeper's helpers call on the controller they are mixed into (DEC-365's
+open item) — 4 of the hand-checked `unreferenced`, clear rows, each a hook
+a gem calls on a duck.
+
+**DEC-074 stands.** Its rule is that the *tier* is weighed against the
+checkout, so what else is indexed cannot change it, and its reverses-if
+asked for a named rule over a store-wide name count. This is neither: the
+tier stays, the gems are the checkout's own bundle as its index recorded
+them, and the row says which gem. Two `self.readonly?` class methods, true
+candidates whose name Active Record calls on instances, are why the side
+is checked: counted, they would have been caveated too.
+
+**Measured**, `--dead app`, against the build before it: mastodon
+`unreferenced`, clear 35 → 31, the 4 above; no true candidate moves; 19
+rows carry the caveat. discourse 51 → 50 (`Flag#applies_to?`, a name
+rspec-mocks calls).

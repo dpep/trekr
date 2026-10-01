@@ -19,6 +19,10 @@
   indexed.** The index reads the gems the open file names before any other
   gem, and Ruby's signatures just after: on a 100,000-file checkout the
   gem's answer arrives about half a second sooner.
+- **`--dead` says when a gem in the bundle calls an unreferenced
+  method's name.** A gem calling `object.type_for_attribute` reaches an app's
+  method no app call site writes; the row names the gem and is graded
+  `lower`.
 - **`--dead` knows a namespace's `self.table_name_prefix`** (and
   `table_name_suffix`, `use_relative_model_naming?`) is called by Active
   Record and Active Model by name, and grades it `lower`.

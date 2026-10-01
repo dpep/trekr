@@ -4887,3 +4887,78 @@ fn a_first_index_told_what_is_open_ends_where_one_told_nothing_does() {
     assert_eq!(def["status"], "resolved");
     assert!(def.get("warming").is_none(), "the mark is gone: {def}");
 }
+
+/// A gem calls an app's method by its name on an object it was handed —
+/// simple_form's `@object.type_for_attribute`, http's `@socket.reset_counter`
+/// — and no app call site writes it, so `--dead` called such methods
+/// unreferenced, clear (DEC-367). It needs the app and its gem, so it lives
+/// here rather than in the testbed.
+#[test]
+fn dead_says_a_gem_in_the_bundle_calls_the_name() {
+    let (app, db) = scratch("dead-bundle-app");
+    let (gems, _) = scratch("dead-bundle-gems");
+    let lib = gems.join("gems/former-1.0.0/lib");
+    fs::create_dir_all(&lib).unwrap();
+    fs::write(
+        lib.join("former.rb"),
+        "class Former\n  def kind_of(object, name)\n    \
+         object.type_for_attribute(name) if object.respond_to?(:type_for_attribute)\n  \
+         end\nend\n",
+    )
+    .unwrap();
+    git(&app, &["init", "-q"]);
+    fs::write(
+        app.join("widget.rb"),
+        "class Widget\n  def type_for_attribute(name)\n    name\n  end\n\n  \
+         def self.type_for_attribute(name)\n    name\n  end\n\n  \
+         def lonely\n    :lonely\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        app.join("Gemfile.lock"),
+        "GEM\n  remote: https://rubygems.org/\n  specs:\n    former (1.0.0)\n\
+         \nPLATFORMS\n  ruby\n\nDEPENDENCIES\n  former\n",
+    )
+    .unwrap();
+    git(&app, &["add", "-A"]);
+    git(
+        &app,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    let out = trekr_env(
+        &db,
+        &app,
+        &["--index"],
+        &[("GEM_HOME", gems.to_str().unwrap())],
+    );
+    assert!(out.status.success(), "indexed the app and its gem");
+
+    let dead = json(&trekr(&db, &app, &["--dead", "widget.rb", "--json"]));
+    let row = |name: &str, singleton: bool| {
+        dead["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["name"] == name && r["singleton"] == singleton)
+            .cloned()
+            .unwrap_or_else(|| panic!("{name} listed: {dead}"))
+    };
+    let hooked = row("type_for_attribute", false);
+    assert_eq!(hooked["tier"], "unreferenced", "{hooked}");
+    assert_eq!(hooked["confidence"], "lower", "{hooked}");
+    assert!(
+        hooked["caveat"].as_str().unwrap().contains("former-1.0.0"),
+        "names the gem: {hooked}"
+    );
+    // The gem's call is on an instance: it is no evidence for the class side.
+    assert_eq!(row("type_for_attribute", true)["confidence"], "clear");
+    assert_eq!(row("lonely", false)["confidence"], "clear");
+}
