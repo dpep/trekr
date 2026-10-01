@@ -9890,6 +9890,11 @@ comma's continuation line (`label_method: ->(x) { privilege_label(x) }`,
 helper a view also calls become `lower`, and none of the 22 true candidates
 moves. discourse unchanged (its templates are ERB).
 
+**Addendum, before release.** A file with a template's extension that is
+not UTF-8, or holds a NUL, is no template: a binary `.erb` under
+`app/views` was read as one, and its random bytes "named in a view" any
+method whose name they happened to spell.
+
 ## DEC-361 — `--dead` counts a module function's calls through its module
 
 **Decided.** `module_function` makes one `def` two methods (extraction emits

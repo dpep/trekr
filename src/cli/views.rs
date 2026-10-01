@@ -35,13 +35,15 @@ impl Views {
             let Ok(bytes) = std::fs::read(root.join(&path)) else {
                 continue;
             };
-            let text = String::from_utf8_lossy(&bytes);
+            let Some(text) = template_text(&bytes) else {
+                continue;
+            };
             let ruby = if path.ends_with(".erb") {
-                erb_ruby(&text)
+                erb_ruby(text)
             } else if path.ends_with(".haml") || path.ends_with(".slim") {
-                indented_ruby(&text)
+                indented_ruby(text)
             } else {
-                text.into_owned()
+                text.to_string()
             };
             // Line by line: a quote a line leaves open is a slip of the
             // reading, and must not swallow the template after it.
@@ -56,6 +58,14 @@ impl Views {
     pub(super) fn naming(&self, name: &str) -> Option<&str> {
         self.names.get(name).map(String::as_str)
     }
+}
+
+/// A template's text: none for a file that is not UTF-8 or holds a NUL,
+/// which is no template a view renders but a binary with its extension.
+fn template_text(bytes: &[u8]) -> Option<&str> {
+    std::str::from_utf8(bytes)
+        .ok()
+        .filter(|text| !text.contains('\0'))
 }
 
 /// The Ruby an ERB template runs: the insides of its `<% %>` tags, less the
@@ -200,6 +210,13 @@ mod tests {
         let names = words(r#"t('.edit') + "by #{account.display_name}""#);
         assert!(names.iter().any(|n| n == "display_name"));
         assert!(!names.iter().any(|n| n == "edit" || n == "by"));
+    }
+
+    #[test]
+    fn a_binary_file_is_no_template() {
+        assert!(template_text(b"<%= w.title %>").is_some());
+        assert!(template_text(b"<%= w.\xff\xfe %>").is_none());
+        assert!(template_text(b"<%= w.title %>\0").is_none());
     }
 
     #[test]

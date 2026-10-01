@@ -67,7 +67,8 @@
   comments.** A `-#` comment with an apostrophe hid every name after it in
   the template, and a call on the line under a `= f.input :x,` was not read,
   so helpers a view calls were `unreferenced`, clear. They now say "named in
-  a view" and are graded `lower`.
+  a view" and are graded `lower`. A binary file with a template's extension
+  is no longer read as a template.
 - **An unresolved call offers the method before the macro that forwards to
   it.** With nothing to tell candidates apart, `relation.update_all` listed
   ActiveRecord's `delegate … to: :all` line first; it now lists
