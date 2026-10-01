@@ -9502,6 +9502,35 @@ store's size in time and disk, once per first index that has a file opened
 mid-write. An early store holds the other checkouts as of the copy too, so
 for the seconds the server reads it, answers there are that old.
 
+## DEC-333 — A warm request reads the store's roots only once the store has moved
+
+**Decided.** The language server keeps each checkout's stamp (DEC-065) with
+the store's `PRAGMA data_version` it was read at, and reads it again only
+when that has moved — another connection committed: an index, a refresh by
+another process — or when the server wrote through its own connection,
+which `data_version` does not count, or moved to another store (DEC-300,
+DEC-332).
+
+**Why.** The comparison re-run found a warm definition on discourse taking
+about 7 ms server-side where an August build took 1 ms, whether or not it
+found anything. `sample` put about 70% of each request in
+`Store::tree_roots`, reached from `Session::tree` → `Tree::stamp` on every
+request — two queries, the second building a temporary B-tree for its `IN`,
+and then a key per root for every gem — while resolving took 4%. The stamp
+only moves when the store does, and SQLite already counts that.
+
+**Measured.** A warm definition on discourse (`about.rb`, `StatsCacheable`),
+an already-indexed store, 200 requests after 20 to warm up, client-side
+median per run, five interleaved runs on a loaded machine: 24 ms → 0.51 ms
+(runs 10.7–40.6 → 0.47–0.63); an earlier set, 17 → 0.53 ms. The same
+answer either way.
+
+**What it keeps.** Everything that moved the stamp still does: every
+commit by another process moves `data_version`, and a refresh the server
+writes itself clears what it keeps. DEC-323's partial trees are rebuilt as
+before; the check that a finished index stops a tree calling itself partial
+reads `meta` on its own.
+
 ## DEC-340 — A symbol an option names a method by is a reference
 
 **Decided.** DEC-037 recorded a symbol in an argument's position as a

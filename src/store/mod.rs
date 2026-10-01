@@ -1227,6 +1227,13 @@ impl Store {
         schema_version(&self.conn)
     }
 
+    /// Moves whenever another connection commits to the store, and never
+    /// for this one's own writes: what a resident front checks before it
+    /// re-reads anything it derived from the store (DEC-333).
+    pub(crate) fn data_version(&self) -> Result<i64> {
+        self.conn.query_row("PRAGMA data_version", [], |r| r.get(0))
+    }
+
     /// The checkout's whole file map, folded into one number at index time.
     ///
     /// The other half of a resident front's staleness check, and the reason it
@@ -2685,6 +2692,23 @@ mod tests {
         assert!(outcome.is_err());
         assert_eq!((index_names(&store), store.totals().unwrap().defs), before);
         assert!(index_names(&store).contains(&"call_name_name".to_string()));
+    }
+
+    /// What a resident front keys its stamps on: another connection's
+    /// commit moves it, this connection's own does not (DEC-333).
+    #[test]
+    fn data_version_moves_for_another_connection_s_commit_only() {
+        let dir = std::env::temp_dir().join(format!("trekr-version-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let reader = Store::open(&dir.join("t.db")).unwrap();
+        let writer = reader.reopen().unwrap().unwrap();
+        let before = reader.data_version().unwrap();
+        reader.set_warming("/own", 0, 1).unwrap();
+        assert_eq!(reader.data_version().unwrap(), before);
+        writer.set_warming("/other", 0, 1).unwrap();
+        assert_ne!(reader.data_version().unwrap(), before);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A first index written in parts, then whole, ends as one whole write

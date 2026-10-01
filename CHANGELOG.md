@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **Every editor request is faster once the index is warm**: a definition on
+  discourse takes about half a millisecond, where it took 7 ms re-reading
+  the index's list of gems on every request.
 - **A file you open while a first index is running is answered within a
   second, too.** It used to wait for the whole checkout to be written — up to
   17 s on a 100,000-file checkout. The index now writes it and the files it

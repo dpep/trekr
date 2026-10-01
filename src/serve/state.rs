@@ -65,6 +65,10 @@ pub(crate) struct Session {
     pub(crate) told_warming: std::collections::HashSet<PathBuf>,
     /// A first index's early store is what `store` reads now (DEC-332).
     early: Option<Early>,
+    /// Each checkout's stamp, and the store's `data_version` it was read at:
+    /// a request re-reads the store's roots only once something has
+    /// committed since (DEC-333).
+    stamps: HashMap<PathBuf, (i64, Stamp)>,
 }
 
 /// The early store being read in place of the store, and the store, kept for
@@ -229,6 +233,7 @@ impl Session {
             reindexing: None,
             told_warming: std::collections::HashSet::new(),
             early: None,
+            stamps: HashMap::new(),
         }
     }
 
@@ -236,8 +241,10 @@ impl Session {
         &self.store
     }
 
-    /// The store, to write to: never an early store.
+    /// The store, to write to: never an early store. Its own writes do not
+    /// move its `data_version`, so every stamp is read again after one.
     pub(crate) fn store_mut(&mut self) -> &mut Store {
+        self.stamps.clear();
         match &mut self.early {
             Some(early) => &mut early.main,
             None => &mut self.store,
@@ -249,6 +256,7 @@ impl Session {
     pub(crate) fn replace_store(&mut self, store: Store) {
         self.store = store;
         self.early = None;
+        self.stamps.clear();
         self.checkouts.clear();
         self.listing = None;
     }
@@ -387,7 +395,7 @@ impl Session {
     pub(crate) fn tree(&mut self, root: &Path) -> anyhow::Result<&Tree> {
         self.follow_early(root);
         let key = root.to_string_lossy().into_owned();
-        let stamp = Stamp(Tree::stamp(&self.store, &key)?);
+        let stamp = self.stamp(root)?;
         self.collect_tree(root, None);
         let checkout = self.checkouts.entry(root.to_path_buf()).or_default();
         // An index can end without moving the stamp — a checkout small
@@ -438,6 +446,20 @@ impl Session {
         Ok(self.checkouts[root].tree.as_ref().expect("built or kept"))
     }
 
+    /// The checkout's stamp, read again only when the store has moved since
+    /// it was last read (DEC-333): reading it is most of a warm request.
+    fn stamp(&mut self, root: &Path) -> anyhow::Result<Stamp> {
+        let version = self.store.data_version()?;
+        if let Some((at, stamp)) = self.stamps.get(root)
+            && *at == version
+        {
+            return Ok(*stamp);
+        }
+        let stamp = Stamp(Tree::stamp(&self.store, &root.to_string_lossy())?);
+        self.stamps.insert(root.to_path_buf(), (version, stamp));
+        Ok(stamp)
+    }
+
     /// Read a first index's early store while it is there, and the store once
     /// the index has removed it (DEC-332). A tree built from either keeps
     /// answering until its successor is built aside, as for any partial tree.
@@ -448,6 +470,7 @@ impl Session {
             }
             let early = self.early.take().expect("checked above");
             self.store = early.main;
+            self.stamps.clear();
             return;
         }
         let whole = self
@@ -469,6 +492,7 @@ impl Session {
         };
         let main = std::mem::replace(&mut self.store, early);
         self.early = Some(Early { path, main });
+        self.stamps.clear();
     }
 
     /// Put a tree built aside in place once it is done, waiting up to `wait`
