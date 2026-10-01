@@ -53,6 +53,9 @@ app has a `# typed:` sigil, so Sorbet as configured resolves no method calls.
 * **Only the first location is scored.** trekr's `status`, `confidence` and
   `kind` are discarded. A declaration answer, meaning the macro that defined a
   method, counts as wrong@1. BASELINE.md scores trekr on its own terms.
+* **A call through `delegate` answers the method it sends to first**
+  (DEC-211), and the delegate second. Ruby's trace records the delegate, so
+  `Model.where` scores wrong@1 and found: 6 of discourse's 500 sites.
 * **Ready ends at the engine's own `$/progress` end.** Sorbet reports no
   progress, so for Sorbet it ends at its last message before 25 s of silence.
   trekr's cold run starts from an empty store and indexes the app plus 300
@@ -81,6 +84,11 @@ app has a `# typed:` sigil, so Sorbet as configured resolves no method calls.
   records `super` sites: the August build scores 77.8 % on today's sites.
   Against that same build, 0.8.2 is 1.2 points less correct, 2.2 points more
   wrong, and slower per request (10 ms vs 1.0 ms, measured in the same hour).
+  Six of those sites are the delegate answer above. After this run, DEC-350
+  and DEC-351 fixed seven more (`@user.id` beside a script's `User`, and a
+  `delegate` line ranked ahead of the method it sends to): the same sites
+  then score 78.0 % correct. `posts.order` offering `OptionParser#order`
+  first is still open.
 * RSS used to be one pid read once. It now includes child processes: trekr's
   index process, and the Rails app that ruby-lsp-rails boots.
 * Earlier rows, and session 9's hand-picked comparison, are in git history.

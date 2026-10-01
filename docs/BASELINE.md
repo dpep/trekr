@@ -2870,3 +2870,36 @@ is now confirmed (comment.rb:103), and two calls in callback blocks
 The widget_shop site is `has_encrypted_attributes?` in Active Record's
 `validate …, if: -> { has_encrypted_attributes? && … }`, now answered on
 `EncryptableRecord`, the owner Ruby ran.
+
+## The comparison's regressions (2026-09-30)
+
+DEC-350 and DEC-351 against main at 6f3a4cf (store v53), each build on the
+same stores. Sites from the comparison re-run: discourse's 500
+(`script/compare.py --engine trekr`, seed 12) and widget_shop's 63; the gold
+sets with `APP_SAMPLE=600 SAMPLE=300 SEED=12`, context pinned, widget_shop's
+3,243-site trace whole. The August build (8aef5e5) scored on the same 500
+for the per-site diff.
+
+| | 6f3a4cf | DEC-350 | DEC-351 |
+| --- | ---: | ---: | ---: |
+| discourse 500, correct@1 / wrong@1 / found | 76.6 / 19.4 / 82.4 % | 77.0 / 19.0 / 82.8 % | **78.0 / 18.0 / 82.8 %** |
+| discourse gold, app correct of 9,047 | 5,647 | **5,699** | 5,699 |
+| discourse gold, app confidently wrong | 125 | 125 | 125 |
+| discourse gold, residue-hit app / gem | 1,917 / 1,554 | 1,885 / 1,554 | 1,888 / 1,560 |
+| widget_shop 63, gem gold sets, widget_shop trace | | unchanged | `declaration-offered` only |
+
+The gem gold sets' absolute numbers here are not comparable with the rows
+above: they were traced against `~/.rvm/gems/ruby-3.4.9`, and this store
+read the same gem versions from that Ruby's own gem directory (DEC-291), so
+`gold.py`, which compares paths, scores most gem answers
+`right-owner-wrong-site` in both builds. Their verdict moves are what this
+table reports.
+
+**Against the August build**, 13 of the 500 had lost correct@1. DEC-350
+fixed `id` (2); DEC-351 fixed `update_all`, `joins` and a fabricator's
+`before_create` (3), and also gained two `find_each` the August build
+missed. Six are DEC-211's answer, kept (`Model.where` ×5, `pluck`); two are
+`posts.order` → `OptionParser#order`, still open (DEC-351's "Not done").
+DEC-350's app residue-hits fall because 31 of them became correct.
+Kept gains: `minutes`/`seconds` reach `Numeric` in ActiveSupport (4),
+`initialize` answered (2).

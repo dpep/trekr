@@ -7452,6 +7452,17 @@ sets and `--dead` are unchanged: they do not read `--def`'s answer. On rails,
 answers `Relation#insert_all` ambiguous at 0.5, naming
 `AssociationRelation#insert_all`.
 
+*Kept after the comparison re-run (2026-09-30):* `script/compare.py` scores
+only the first location an editor is handed, so the relation's method first
+counts as wrong@1 there wherever Ruby's trace recorded the delegate: 6 of
+discourse's 500 sites (`Model.where` ×5, `Model.pluck`), which an August
+build that answered the delegate scored correct. The delegate line is
+`delegate(*QUERYING_METHODS, to: :all)`, forty names and no code; the
+method it sends to is what a reader clicking `where` wants, and the delegate
+is still the second location. The comparison reports this as a tax beside
+the declaration's, and `script/gold.py`, which takes either site, is
+unchanged.
+
 ## DEC-212 — A string macro in another file defines what its callers name
 
 **Decided.** When a class body in one file calls a macro written in another
@@ -9597,8 +9608,15 @@ Every release since 0.2.1 has had this.
 **Measured.** discourse's 500 comparison sites (`script/compare.py`, seed
 12): correct@1 76.6 → 77.0 %, wrong@1 19.4 → 19.0 %, found 82.4 → 82.8 %;
 both moves are the `id` sites, now `ambiguous` on
-`AttributeMethods::PrimaryKey#id` as they were before the split. The gold
-sets are in BASELINE.md, "The comparison's regressions".
+`AttributeMethods::PrimaryKey#id` as they were before the split.
+discourse's gold set (`script/gold.py`, 9,047 app sites): correct 5,647 →
+5,699, declaration 288 → 299, confidently wrong 125 unchanged. Of 66 moved
+sites, 64 gain: `user.id`, `user.staff?`, `@user.silenced?` across the
+guardians and services. Two lose: `user.email.present?`, where the chain
+through an untyped `user` had guessed `email` a `String` and the typed
+`User` gives `email`, a column, no type (correct → residue); and one
+`admin?` residue-hit → ambiguous-wrong. The gem gold sets, widget_shop's
+trace and its 63 comparison sites are unchanged.
 
 ## DEC-351 — Among equal residue candidates, a definition before a declaration
 
@@ -9619,9 +9637,13 @@ ahead of Fabrication's own `def before_create`.
 **Measured.** discourse's 500 comparison sites: correct@1 77.0 → 78.0 %,
 found unchanged (82.8 %): `update_all`, `joins`, two `find_each` and the
 fabricator's `before_create` move to the first location, and nothing moves
-away from it. widget_shop's 63 are unchanged. In the gold sets the only
-verdicts that move are `declaration-offered` → `residue-truth-absent`: 33
-sites (polyid 15, accord 16, flipper 1, graph_weaver 1). That verdict means
+away from it. widget_shop's 63 are unchanged. discourse's gold set moves no
+resolved verdict; the truth is offered at 15 more residue sites and 6 fewer
+(app residue-hit 1,885 → 1,888, gem +6), the six being truths that are
+themselves declarations (`where` through `Querying`'s delegate,
+`primary_key`). In the gem gold sets the only verdicts that move are
+`declaration-offered` → `residue-truth-absent`: 33 sites (polyid 15, accord
+16, flipper 1, graph_weaver 1), and 65 more in discourse's. That verdict means
 some declaration was offered and the truth is generated, and in every one of
 these the declaration that left the list was unrelated to the truth
 (`StringIO`'s RBS `string` for accord's DSL `string`,
