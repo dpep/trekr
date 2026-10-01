@@ -62,6 +62,17 @@ pub(crate) struct Session {
     pub(crate) reindexing: Option<(PathBuf, std::time::Instant)>,
 }
 
+/// A tree being built aside, from the store as it was at `stamp`.
+struct Next {
+    stamp: Stamp,
+    done: mpsc::Receiver<anyhow::Result<(Tree, Option<crate::store::Warming>)>>,
+}
+
+/// How long a request waits for something built aside — a partial tree's
+/// successor, completion's member listing — before it answers without it.
+/// A request is answered within a second (DEC-323).
+const ASIDE: std::time::Duration = std::time::Duration::from_millis(400);
+
 /// Members in the making, and the tree state they are being listed from.
 struct Listing {
     root: PathBuf,
@@ -78,6 +89,11 @@ struct Checkout {
     /// What the tree was assembled from. Cheap to re-read, and it moves
     /// exactly when the assembled tree would differ.
     built_from: Option<Stamp>,
+    /// The index was still filling the checkout when the tree was built
+    /// (DEC-320): its answers are partial, and its successor is built aside.
+    partial: Option<crate::store::Warming>,
+    /// That successor, being built on another thread (DEC-323).
+    next: Option<Next>,
     /// The tree's namespaces and method table, listed — what completion
     /// reads. Built on first use and dropped with the tree it came from.
     members: Option<Members>,
@@ -224,9 +240,13 @@ impl Session {
     }
 
     /// This checkout's first index, while it is still filling the store
-    /// (DEC-320): answers from it are partial, and say so.
+    /// (DEC-320): answers from it are partial, and say so. Asked of the tree
+    /// that answers when there is one, which may be older than the store.
     pub(crate) fn warming(&self, root: &Path) -> Option<crate::store::Warming> {
-        self.store.warming(&root.to_string_lossy()).ok().flatten()
+        match self.checkouts.get(root) {
+            Some(checkout) if checkout.tree.is_some() => checkout.partial.clone(),
+            _ => self.store.warming(&root.to_string_lossy()).ok().flatten(),
+        }
     }
 
     /// Is this checkout in the store at all?
@@ -340,21 +360,103 @@ impl Session {
     /// per checkout at index time — with its snapshot's key. A rebuild after
     /// a method edit maps the same snapshot again (DEC-194). The file count
     /// it replaced could not see an edit at all.
+    ///
+    /// A tree built while the index was still filling the checkout keeps
+    /// answering while its successor is built on another thread, and a
+    /// request waits for that at most `ASIDE` (DEC-323): at scale a build is
+    /// seconds, and a first index moves the store several times.
     pub(crate) fn tree(&mut self, root: &Path) -> anyhow::Result<&Tree> {
         let key = root.to_string_lossy().into_owned();
         let stamp = Stamp(Tree::stamp(&self.store, &key)?);
+        self.collect_tree(root, None);
         let checkout = self.checkouts.entry(root.to_path_buf()).or_default();
-        if checkout.built_from != Some(stamp) {
+        // An index can end without moving the stamp — a checkout small
+        // enough to be read whole ahead of the rest — and its tree must stop
+        // calling itself partial.
+        let finished = checkout.partial.is_some() && self.store.warming(&key)?.is_none();
+        if checkout.built_from != Some(stamp) || finished {
             // Partial is normal: answer from core and gems alone, and ask for
             // the index rather than wait for it.
             if !self.store.has_checkout(&key)? && !self.unindexed.iter().any(|r| r == root) {
                 self.unindexed.push(root.to_path_buf());
             }
-            checkout.tree = Some(Tree::build(&self.store, &key)?);
-            checkout.built_from = Some(stamp);
+            let aside = checkout.tree.is_some() && checkout.partial.is_some();
+            let building = checkout
+                .next
+                .as_ref()
+                .is_some_and(|next| next.stamp == stamp);
+            // No second connection — an in-memory store — builds it here.
+            let second = match aside {
+                true => self.store.reopen().ok().flatten(),
+                false => None,
+            };
+            match second {
+                Some(_) if building => self.collect_tree(root, Some(ASIDE)),
+                Some(store) => {
+                    let (send, done) = mpsc::channel();
+                    std::thread::spawn(move || {
+                        let built = Tree::build(&store, &key)
+                            .and_then(|tree| Ok((tree, store.warming(&key)?)));
+                        let _ = send.send(built);
+                    });
+                    let checkout = self.checkouts.get_mut(root).expect("placed above");
+                    checkout.next = Some(Next { stamp, done });
+                    self.collect_tree(root, Some(ASIDE));
+                }
+                None => {
+                    let tree = Tree::build(&self.store, &key)?;
+                    let partial = self.store.warming(&key)?;
+                    let checkout = self.checkouts.get_mut(root).expect("placed above");
+                    checkout.tree = Some(tree);
+                    checkout.built_from = Some(stamp);
+                    checkout.partial = partial;
+                    checkout.members = None;
+                    checkout.next = None;
+                }
+            }
+        }
+        Ok(self.checkouts[root].tree.as_ref().expect("built or kept"))
+    }
+
+    /// Put a tree built aside in place once it is done, waiting up to `wait`
+    /// for it, or not at all.
+    fn collect_tree(&mut self, root: &Path, wait: Option<std::time::Duration>) {
+        let Some(checkout) = self.checkouts.get_mut(root) else {
+            return;
+        };
+        let Some(next) = &checkout.next else {
+            return;
+        };
+        let built = match wait {
+            Some(wait) => next.done.recv_timeout(wait).ok(),
+            None => next.done.try_recv().ok(),
+        };
+        let Some(built) = built else {
+            return;
+        };
+        let next = checkout.next.take().expect("checked above");
+        // A build that failed leaves the tree that answers; the next question
+        // tries again.
+        if let Ok((tree, partial)) = built {
+            checkout.tree = Some(tree);
+            checkout.built_from = Some(next.stamp);
+            checkout.partial = partial;
             checkout.members = None;
         }
-        Ok(checkout.tree.as_ref().expect("just built"))
+    }
+
+    /// Every tree built aside that is done, put in place: the serve loop's
+    /// quiet moments.
+    pub(crate) fn collect_trees(&mut self) {
+        let roots: Vec<PathBuf> = self
+            .checkouts
+            .iter()
+            .filter(|(_, checkout)| checkout.next.is_some())
+            .map(|(root, _)| root.clone())
+            .collect();
+        for root in roots {
+            self.collect_tree(&root, None);
+        }
     }
 
     /// The tree and the store together, for a scan that reads the index as
@@ -393,17 +495,30 @@ impl Session {
         &self.load_paths[root].1
     }
 
-    /// A checkout's tree together with its listed members, for completion.
-    pub(crate) fn members(&mut self, root: &Path) -> anyhow::Result<(&Tree, &Members)> {
+    /// A checkout's tree together with its listed members, for completion —
+    /// `None` for the members while listing them takes longer than `ASIDE`:
+    /// at scale it is seconds, and the client asks again as the word grows
+    /// (DEC-323).
+    pub(crate) fn members(&mut self, root: &Path) -> anyhow::Result<(&Tree, Option<&Members>)> {
         self.tree(root)?;
-        // Being listed already: waiting for it beats starting over.
-        self.collect_members(Some(root));
-        let checkout = self.checkouts.get_mut(root).expect("tree() just placed it");
-        let tree = checkout.tree.as_ref().expect("tree() just built it");
-        if checkout.members.is_none() {
-            checkout.members = Some(Members::of(tree));
+        if self.checkouts[root].members.is_none() {
+            match self.store.path() {
+                // Being listed already: waiting for it beats starting over.
+                Some(_) => {
+                    self.list_members(root)?;
+                    self.collect_members(Some((root, ASIDE)));
+                }
+                // No second connection to list on: here, whatever it takes.
+                None => {
+                    let checkout = self.checkouts.get_mut(root).expect("tree() placed it");
+                    let tree = checkout.tree.as_ref().expect("tree() built it");
+                    checkout.members = Some(Members::of(tree));
+                }
+            }
         }
-        Ok((tree, checkout.members.as_ref().expect("just built")))
+        let checkout = &self.checkouts[root];
+        let tree = checkout.tree.as_ref().expect("tree() built it");
+        Ok((tree, checkout.members.as_ref()))
     }
 
     /// Start listing a checkout's members on another thread, so the idle
@@ -446,12 +561,17 @@ impl Session {
     /// Take a finished listing, if there is one — or wait for it, when it is
     /// the checkout asked about. A listing made from a tree that has since
     /// moved is dropped.
-    pub(crate) fn collect_members(&mut self, waiting_for: Option<&Path>) {
+    pub(crate) fn collect_members(&mut self, waiting_for: Option<(&Path, std::time::Duration)>) {
         let Some(listing) = &self.listing else {
             return;
         };
-        let result = if waiting_for == Some(listing.root.as_path()) {
-            listing.done.recv().ok()
+        let waited = waiting_for.filter(|(root, _)| *root == listing.root.as_path());
+        let result = if let Some((_, wait)) = waited {
+            match listing.done.recv_timeout(wait) {
+                Ok(result) => Some(result),
+                Err(mpsc::RecvTimeoutError::Timeout) => return,
+                Err(mpsc::RecvTimeoutError::Disconnected) => None,
+            }
         } else {
             match listing.done.try_recv() {
                 Ok(result) => Some(result),

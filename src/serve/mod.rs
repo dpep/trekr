@@ -287,6 +287,7 @@ fn serve(
     let mut reopens = 0;
     loop {
         session.collect_members(None);
+        session.collect_trees();
         indexer.retry(&mut session);
         for message in indexer.poll(log, &session) {
             // A finished index moves the tree; warm it again when quiet.

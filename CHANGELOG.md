@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **No editor request waits on the index for more than about a second.** While
+  a first index is running, hover, definition and the rest answer from what
+  is already read while trekr catches up on another thread, where on a large
+  checkout a request could stall for 3–8 s each time the index moved.
+  Completion that would wait seconds for its list answers with what it has,
+  marked incomplete, and fills in as you type.
 - **The editor answers about the file you opened within a second of the
   first index starting**, instead of after it ends. A checkout's first index
   now reads the open files and the files their constants live in first, then

@@ -1054,7 +1054,11 @@ and the cap (DEC-056) are as they were (DEC-264); and completion's member
 listing is built by a worker on its own connection and tree, which hands back
 only the listing (DEC-044). The listing streams every method row past the
 tree rather than loading them into it (DEC-045), so the session's tree stays
-demand-loaded. Background indexing is a child process, not a thread (DEC-039).
+demand-loaded. While a first index fills the store, a tree built from it
+keeps answering while its successor is built on another thread, and a
+request waits at most 400 ms for that, or for completion's listing — then
+answers from what it has, said to be partial or incomplete (DEC-323).
+Background indexing is a child process, not a thread (DEC-039).
 Its stdin is a pipe the server writes open files to, which a first index
 reads ahead of the rest (DEC-322).
 The child is spawned with `TREKR_BACKGROUND=1` and lowers itself before it

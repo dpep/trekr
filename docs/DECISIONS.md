@@ -9324,3 +9324,42 @@ at 1.5× the time.
 **Not done.** A file opened once step 4 has begun waits for it: at 100k,
 from about 1 s to 17 s in. A `require_relative`'s target is not followed
 (facts keep no strings).
+
+## DEC-323 — A request is answered within a second while a first index fills the store
+
+**Decided.** In the language server, a tree built while the checkout's first
+index was still running (DEC-320) is not rebuilt on the request thread when
+the store moves under it. Its successor is built on another thread with its
+own connection, and the request waits for it at most 400 ms (`ASIDE`), then
+answers from the tree it has — which says it is partial, with the counts
+the tree was built at. The serve loop puts finished trees in place at its
+quiet moments. A tree whose index has ended without moving its stamp is
+rebuilt too, so it stops calling itself partial. Completion waits for its
+member listing at most `ASIDE` as well, always, and otherwise answers with
+the locals alone, `isIncomplete`, so the client asks again as the word
+grows. A tree built from a whole index is rebuilt where it was, as before.
+
+**Why.** The lead's bar: from a never-indexed checkout, every request
+answers usefully within about a second, and none waits on the full index.
+After DEC-322 the first answers came at a third of a second on the 100k
+corpus, but each commit moved the stamp and the next request rebuilt the
+tree on the request thread — in one traced run 1.6 s after the gems, 8.6 s after the rest
+(the child's ANALYZE and snapshot competing), and completion's listing
+4.8–7.3 s. Requests queue behind one another, so a stall holds every
+request behind it.
+
+**Measured.** 100k corpus, `trekr --lsp`, five interleaved rounds, medians
+of each run's slowest request, the build before DEC-320 against this one:
+definition 2.71 → 0.55 s, hover 2.29 → 0.41, references 0.02 → 0.85 (it
+now scans while the index writes; before, it had nothing to scan),
+completion 5.43 → 0.41. On discourse every slowest request is 0.41 s or
+less. The index's end is unchanged (20.1 → 19.9 s at 100k).
+
+**The cost.** Up to two trees in memory for the length of a build, during a
+first index only. A completion asked in the seconds after the index ends at
+100k lists locals until the listing lands (about 5 s), where it used to wait
+for it.
+
+**Not done.** A definition from a partial tree has no field to say so;
+the editor's progress is its disclosure. References on the 100k corpus can
+take 0.85 s mid-index, scanning files the store holds then.

@@ -75,6 +75,15 @@ struct Member {
 }
 
 impl Members {
+    /// Nothing listed: what completion offers while the listing is made.
+    fn empty() -> Members {
+        Members {
+            methods: HashMap::new(),
+            children: HashMap::new(),
+            names: Vec::new(),
+        }
+    }
+
     pub(crate) fn of(tree: &Tree) -> Members {
         let mut methods: HashMap<(String, bool), Vec<Member>> = HashMap::new();
         let mut counts: HashMap<String, usize> = HashMap::new();
@@ -174,9 +183,13 @@ pub(crate) fn completion(
     // A partial index lists what it has read: the client asks again as the
     // word grows, and by then more may be in (DEC-320).
     let warming = session.warming(&located.root).is_some();
-    let (tree, members) = session.members(&located.root)?;
+    let (tree, listed) = session.members(&located.root)?;
+    // Not listed yet: what needs no listing — the locals — and the client
+    // asks again (DEC-323).
+    let unlisted = Members::empty();
+    let members = listed.unwrap_or(&unlisted);
     let mut list = Ranked::new(&prefix, &located.root);
-    let mut incomplete = warming;
+    let mut incomplete = warming || listed.is_none();
     match (&context, under) {
         (Context::Member, Some(Under::Call(call))) => {
             match crate::resolve::receiver_type(tree, &facts, &call, &located.relative) {
