@@ -1196,13 +1196,18 @@ fn index_first(
                 .into_iter()
                 .enumerate()
                 .partition(|(at, _)| named.contains(at));
-            let count = |gems: &[(usize, (PathBuf, scan::Files))]| -> u64 {
+            let count = |gems: &[(usize, (PathBuf, Vec<String>))]| -> u64 {
                 gems.iter().map(|(_, (_, f))| f.len() as u64).sum()
             };
             let theirs = known_files + stdlib_files.as_ref().map_or(0, |f| f.len() as u64);
             let theirs = theirs + count(&ahead);
             let ruby = stdlib.as_ref().map(|stdlib| (stdlib, stdlib_files));
-            let ahead = ahead.into_iter().map(|(_, gem)| gem).collect();
+            // Only these gems are read now; the rest wait for their commit.
+            let ahead = hash_gems(
+                ahead.into_iter().map(|(_, gem)| gem).collect(),
+                pool,
+                profile,
+            );
             let read = written.len() as u64 + theirs;
             gem_batch(
                 store,
@@ -1214,8 +1219,16 @@ fn index_first(
                 known,
                 pool,
                 profile,
-                |s| s.set_warming(&root_str, read, of),
+                |s, _| Ok(s.set_warming(&root_str, read, of)?),
             )?;
+            // The Ruby's signatures, a commit of their own: a gem's answers
+            // need none of them (DEC-330).
+            if let Some(stdlib) = &stdlib {
+                let rbs = store.batch(|s| signatures(s, stdlib, profile))?;
+                if let Some(report) = report.stdlib.as_mut() {
+                    report.rbs = rbs;
+                }
+            }
             // Opened while those were read: still ahead of the rest.
             let (more, _) = index_wanted(
                 store,
@@ -1234,7 +1247,11 @@ fn index_first(
                 index_files(store, root, files, git_state, false, known, pool, profile)?;
             add_parsed(&mut counts, &more);
             store.set_warming(&root_str, files.len() as u64 + theirs, of)?;
-            let rest = rest.into_iter().map(|(_, gem)| gem).collect();
+            let rest = hash_gems(
+                rest.into_iter().map(|(_, gem)| gem).collect(),
+                pool,
+                profile,
+            );
             gem_batch(
                 store,
                 root,
@@ -1245,7 +1262,7 @@ fn index_first(
                 known,
                 pool,
                 profile,
-                |s| s.clear_warming(&root_str),
+                |s, _| Ok(s.clear_warming(&root_str)?),
             )?;
             (counts, report)
         }
@@ -1317,7 +1334,8 @@ fn wanted(
 }
 
 /// The Ruby (when given) and `gems` written in one commit with the bundle
-/// recorded as `repo`'s, and `also` — a first index's progress — in it.
+/// recorded as `repo`'s, and `also` — the Ruby's signatures, or a first
+/// index's progress — in it.
 #[allow(clippy::too_many_arguments)]
 fn gem_batch(
     store: &mut Store,
@@ -1329,15 +1347,11 @@ fn gem_batch(
     known: &mut Option<HashSet<Oid>>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
-    also: impl FnOnce(&Store) -> rusqlite::Result<()>,
+    also: impl FnOnce(&mut Store, &mut Option<profile::Profile>) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     store.batch(|store| {
         if let Some((stdlib, files)) = ruby {
-            let mut indexed = index_stdlib(store, stdlib, files, known, pool, profile)?;
-            // Its Ruby's signatures, which core and the stdlib's compiled
-            // half are served from, read once per Ruby (DEC-240).
-            indexed.rbs = profile::timed(profile, "rbs", || crate::rbs::prepare(store, stdlib))?;
-            report.stdlib = Some(indexed);
+            report.stdlib = Some(index_stdlib(store, stdlib, files, known, pool, profile)?);
         }
         for counts in index_bundle(store, gems, known, pool, profile)? {
             report.indexed += 1;
@@ -1349,7 +1363,7 @@ fn gem_batch(
         if let Some(stdlib) = report.stdlib.as_mut() {
             stdlib.hidden = store.hidden_default_gems(&repo)?;
         }
-        also(store)?;
+        also(store, profile)?;
         anyhow::Ok(())
     })?;
     if let Some(profile) = profile.as_mut() {
@@ -1369,8 +1383,8 @@ struct GemPlan {
     stdlib_files: Option<scan::Files>,
     /// Every gem root the bundle resolves, canonical, with the gem's name.
     used: Vec<(String, String)>,
-    /// The gems new to the store, walked: each one's `lib/`.
-    fresh: Vec<(PathBuf, scan::Files)>,
+    /// The gems new to the store, listed: each one's `lib/`, not yet read.
+    fresh: Vec<(PathBuf, Vec<String>)>,
     /// Files the tree spans from a stdlib and gems the store already holds.
     known_files: u64,
 }
@@ -1510,7 +1524,7 @@ fn plan_gems(
         stdlib,
         stdlib_files,
         used,
-        fresh: walk_gems(&fresh, pool, profile),
+        fresh: list_gems(&fresh, pool, profile),
         known_files: store.file_count(&known)?,
     })
 }
@@ -1534,6 +1548,8 @@ fn index_gems(
         ..
     } = plan;
     let ruby = stdlib.as_ref().map(|stdlib| (stdlib, stdlib_files));
+    let fresh = hash_gems(fresh, pool, profile);
+    let mut rbs = None;
     gem_batch(
         store,
         repo,
@@ -1544,18 +1560,38 @@ fn index_gems(
         known,
         pool,
         profile,
-        |_| Ok(()),
+        |s, profile| {
+            if let Some(stdlib) = &stdlib {
+                rbs = signatures(s, stdlib, profile)?;
+            }
+            Ok(())
+        },
     )?;
+    if let Some(report) = report.stdlib.as_mut() {
+        report.rbs = rbs;
+    }
     Ok(report)
 }
 
-/// Each gem's `lib/`, walked on the pool: it is where a gem's public code
+/// Its Ruby's signatures, which core and the stdlib's compiled half are
+/// served from, read once per Ruby (DEC-240).
+fn signatures(
+    store: &mut Store,
+    stdlib: &crate::gems::stdlib::Stdlib,
+    profile: &mut Option<profile::Profile>,
+) -> anyhow::Result<Option<crate::rbs::Report>> {
+    profile::timed(profile, "rbs", || crate::rbs::prepare(store, stdlib))
+}
+
+/// Each gem's `lib/`, listed on the pool: it is where a gem's public code
 /// lives, and a gem's spec/ and test/ trees are large and never navigated to.
-fn walk_gems(
+/// Nothing is read until `hash_gems`, so a first index reads the gems the
+/// open files name before the rest (DEC-330).
+fn list_gems(
     gems: &[PathBuf],
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
-) -> Vec<(PathBuf, scan::Files)> {
+) -> Vec<(PathBuf, Vec<String>)> {
     if gems.is_empty() {
         return Vec::new();
     }
@@ -1569,7 +1605,29 @@ fn walk_gems(
                             .strip_prefix("lib/")
                             .is_some_and(crate::gems::stdlib::opt_in)
                     });
-                    (gem.clone(), scan::hash(gem, paths))
+                    (gem.clone(), paths)
+                })
+                .filter(|(_, paths)| !paths.is_empty())
+                .collect()
+        })
+    })
+}
+
+/// `list_gems`' files, read and hashed on the pool.
+fn hash_gems(
+    gems: Vec<(PathBuf, Vec<String>)>,
+    pool: &rayon::ThreadPool,
+    profile: &mut Option<profile::Profile>,
+) -> Vec<(PathBuf, scan::Files)> {
+    if gems.is_empty() {
+        return Vec::new();
+    }
+    profile::timed(profile, "gem-hash", || {
+        pool.install(|| {
+            gems.into_par_iter()
+                .map(|(gem, paths)| {
+                    let files = scan::hash(&gem, paths);
+                    (gem, files)
                 })
                 .filter(|(_, files)| !files.is_empty())
                 .collect()

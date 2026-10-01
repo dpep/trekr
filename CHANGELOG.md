@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A definition into a gem answers sooner while a checkout is first
+  indexed.** The index reads the gems the open file names before any other
+  gem, and Ruby's signatures just after: on a 100,000-file checkout the
+  gem's answer arrives about half a second sooner.
 - **An unresolved call offers the method before the macro that forwards to
   it.** With nothing to tell candidates apart, `relation.update_all` listed
   ActiveRecord's `delegate … to: :all` line first; it now lists

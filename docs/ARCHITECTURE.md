@@ -775,7 +775,8 @@ each step its own commit: the files the language server says are open (a
 path a line on the child's stdin, as the editor opens them) and up to 256
 files their constants most likely live in; the Ruby's stdlib and the gems
 those files name, with the bundle recorded so gems already on this machine
-answer too; whatever was opened meanwhile; the rest of the checkout, one
+answer too — the gems are only listed until then, and only those are read
+(DEC-330); the Ruby's signatures; whatever was opened meanwhile; the rest of the checkout, one
 whole write; the rest of the gems. Parts add to the map
 (`Store::write_part`) and the last whole write leaves the store a single
 write would have. A reindex of a whole map is one write, as before.

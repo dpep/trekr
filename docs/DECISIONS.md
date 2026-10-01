@@ -9289,6 +9289,8 @@ git's (`scan` is 0.4 s of it at 100k files) or a checkout where git is slow.
 2. the Ruby's stdlib, its signatures, and the gems whose `lib/` holds one of
    those constants' files, with the whole bundle recorded as the checkout's,
    so a gem already on this machine answers too;
+   (*amended by DEC-330:* the signatures follow in a commit of their own,
+   and no other gem is read before this commit;)
 3. files opened while 2 was read, and their neighbours;
 4. the rest of the checkout, as one whole write — bulk-loaded when it is
    half the store or more (DEC-234), as before;
@@ -9379,6 +9381,38 @@ for it.
 **Not done.** A definition from a partial tree has no field to say so;
 the editor's progress is its disclosure. References on the 100k corpus can
 take 0.85 s mid-index, scanning files the store holds then.
+
+## DEC-330 — A first index reads the gems its open files name before anything else beyond the checkout
+
+**Decided.** A first index (DEC-322) lists the bundle's gems and reads none
+of them up front. The gems the open files' constants most likely live in
+(`scan/near.rs`, now from the listing) are read, then written with the
+Ruby's stdlib and the bundle's record in one commit; the Ruby's signatures
+follow in a commit of their own; the rest of the gems are read when their
+own commit comes, after the checkout's. A reindex reads them all before its
+one gem commit, as before, the signatures in it.
+
+**Why.** Traced on the 100k corpus (the child's own timeline, one file
+open): scan 0.25 s, the first part 0.02, locating the gems 0.005, the
+stdlib's listing 0.155 (fixed apart: it hashed ~980 files to keep 179), the
+gem walk 0.29–0.39 — reading and hashing 11,685 files of 304 gems to find
+the 2 the open file names — the stdlib 0.04, its signatures 0.17–0.20, the
+named gems 0.03. The named gems' commit landed at about 1.1 s; most of what
+went before it was gems nobody had asked about. The signatures are core's
+methods and return types (DEC-240): a hover on a core method needs them, a
+definition in a gem does not, and they land a fifth of a second later.
+
+**Measured.** The child's commit of the named gems, 100k corpus, five
+interleaved runs on a loaded machine (load 15–27): 1.32 s → 0.76 s median.
+Over `trekr --lsp`, first definition into the installed gem (medians, five
+interleaved rounds against the build before, every set under some load):
+discourse 1.12 → 0.40 s at load 7–9, the hover with it 1.12 → 0.42; 100k
+1.97 → 1.21 s and 2.55 → 0.64 s at load 15–21. No set was quiet; the
+harness polls every 0.1 s, which bounds how fine any of these is. Stores
+hash the same table by table, after an LSP-driven index and after
+`--index`.
+
+**The cost.** None in work: every gem is still read once, later for most.
 
 ## DEC-340 — A symbol an option names a method by is a reference
 

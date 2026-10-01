@@ -55,23 +55,25 @@ pub(crate) fn nearby(files: &Files, from: &[(String, Facts)], cap: usize) -> Vec
     out
 }
 
-/// Which of `gems` (each with its walked `lib/`) hold a file `from`'s
+/// Which of `gems` (each with its listed `lib/`) hold a file `from`'s
 /// constants most likely live in, by the same convention: the gem whose
 /// `lib/` has `active_support/concern.rb` for `ActiveSupport::Concern`.
 pub(crate) fn gems_named(
-    gems: &[(std::path::PathBuf, Files)],
+    gems: &[(std::path::PathBuf, Vec<String>)],
     from: &[(String, Facts)],
 ) -> HashSet<usize> {
+    let mut holding: HashMap<&str, Vec<usize>> = HashMap::new();
+    for (at, (_, paths)) in gems.iter().enumerate() {
+        for path in paths {
+            holding.entry(path.as_str()).or_default().push(at);
+        }
+    }
     let mut named = HashSet::new();
     for (name, nesting) in from.iter().flat_map(|(_, facts)| written(facts)) {
         for candidate in candidates(name, nesting) {
-            let path = format!("lib/{candidate}");
-            named.extend(
-                gems.iter()
-                    .enumerate()
-                    .filter(|(_, (_, files))| files.contains_key(&path))
-                    .map(|(at, _)| at),
-            );
+            if let Some(gems) = holding.get(format!("lib/{candidate}").as_str()) {
+                named.extend(gems);
+            }
         }
     }
     named
@@ -185,14 +187,15 @@ mod tests {
     #[test]
     fn names_the_gem_whose_lib_holds_a_constants_file() {
         let facts = crate::extract::extract(b"class Widget\n  include Kit::Sorting\nend\n");
+        let listed = |paths: &[&str]| paths.iter().map(|p| p.to_string()).collect();
         let gems = vec![
             (
                 "/gems/other".into(),
-                files(&["lib/other.rb", "lib/sorting.rb"]),
+                listed(&["lib/other.rb", "lib/sorting.rb"]),
             ),
             (
                 "/gems/kit".into(),
-                files(&["lib/kit.rb", "lib/kit/sorting.rb"]),
+                listed(&["lib/kit.rb", "lib/kit/sorting.rb"]),
             ),
         ];
         let named = gems_named(&gems, &[("widget.rb".into(), facts)]);
