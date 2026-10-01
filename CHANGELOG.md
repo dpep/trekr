@@ -33,8 +33,9 @@
   Action Mailer runs the action through its class's `method_missing`, so
   such actions were `unreferenced`.
 - **`--dead` says when another helper calls a helper's method with no
-  receiver**, as Rails' views do with every helper module mixed in; the row
-  names the call and is graded `lower`.
+  receiver**, as Rails' views do with every helper module mixed in, or a
+  module nothing indexed includes does — an `if: -> { ready? }` a module's
+  method hands a macro; the row names the call and is graded `lower`.
 - **`--dead` says when a gem in the bundle calls an unreferenced
   method's name.** A gem calling `object.type_for_attribute` reaches an app's
   method no app call site writes; the row names the gem and is graded

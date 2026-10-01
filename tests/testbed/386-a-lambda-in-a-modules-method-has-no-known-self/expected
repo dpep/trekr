@@ -1,0 +1,6 @@
+# A lambda a module's method hands out as an `if:` runs on whichever
+# instance the macro that takes it belongs to, which the module does not say
+# (`validates :name, **Gated.options(…)`). Its `feature_on?` is ruled out as
+# a call on `Gated`, and `--dead` said "no call, symbol or `super` names it",
+# clear, though one does. It now says where the call is, and is not clear.
+dead app/models/gadget.rb Gadget#feature_on?=unreferenced~module Gadget#lonely=unreferenced~

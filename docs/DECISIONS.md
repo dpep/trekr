@@ -10284,3 +10284,39 @@ steps, engine hooks), and a blanket "private is reached" rule would lower
 the private dead method a reader most wants found. A score fitted to two
 apps' accidents would be a guess wearing a measurement's clothes; a named
 caveat says what it saw.
+
+## DEC-380 — A call ruled out on a module nothing includes says its `self` is unknown
+
+**Decided.** An `unreferenced` instance method for which a call of its name
+with no receiver (or on `self`) is ruled out "no such method" on a module
+trekr knows no includer of, written where `self` is that module's instance,
+says "called with no receiver at FILE:LINE, in a module nothing indexed
+includes, so its `self` is not known", graded `lower`. Such a row's reason,
+and a DEC-368 helper row's, is now "no call trekr can place on it, nor a
+symbol or `super`, names it": a call by its name is written. The site stays
+ruled out in `--refs`.
+
+**Why.** The user's original pattern: `Gated.options` returns
+`kwargs.merge(if: [-> { feature_on? }])`, used as `validates :name,
+**Gated.options(…)` in `Gadget`. DEC-342 records the lambda's call on the
+instance side of `self` where it is written — the module `Gated` — which
+has no `feature_on?` and no includer, so `Gadget#feature_on?` was
+`unreferenced`, clear, "no call, symbol or `super` names it", a false
+reason (testbed 386).
+
+**The ideal not taken.** Counting the call as `possible` for every method of
+the name would reverse DEC-314 (a module's own call that no includer answers
+runs on an Object) for every includer-less module, in `--def` and `--refs`
+too — a resolve change with gold-set reach, not a fix-lane one. This is the
+honest minimum: the reason is true and the row is not `clear`. No
+extraction change.
+
+**Measured**, `--dead app`/`lib` against main, same store: tier and clear
+counts unchanged on both corpora. Rows gaining the caveat:
+mastodon `RateLimitable#rate_limiter`, called in an `after_create do` inside
+a `class_methods do` method, which DEC-342 reads on
+`RateLimitable::ClassMethods` rather than its includers' instances (a live
+method; DEC-342's gap); discourse `Guardian#is_ignoring_user?` and
+`#is_muting_user?`, called from `Chat::GuardianExtensions`, which a plugin
+prepends to `Guardian` at runtime (both live). Five mastodon helper rows
+change only their reason.

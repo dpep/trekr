@@ -3949,10 +3949,14 @@ fn dead_in(
                 risky.push_str("it calls `super`, so it overrides a method trekr has not indexed");
             }
         }
-        // Rails mixes every app/helpers module into one view context, so a
-        // helper's call with no receiver may reach another's (DEC-368).
+        // A call of its name ruled out on a `self` trekr cannot name may be
+        // its: Rails mixes every app/helpers module into one view context, so
+        // a helper's call with no receiver may reach another's (DEC-368), and
+        // in a module nothing indexed includes `self` is whatever instance
+        // runs it — a condition lambda the module hands a macro (DEC-380).
         let helper = |path: &str| path.split('/').any(|dir| dir == "helpers");
-        if tier == "unreferenced" && !def.singleton && helper(file) {
+        let mut unplaced = None;
+        if tier == "unreferenced" && !def.singleton && counts.excluded > 0 {
             let (all, _) = gather_refs(
                 &tree,
                 store,
@@ -3965,21 +3969,55 @@ fn dead_in(
                 None,
             )
             .unwrap_or_default();
-            let caller = all.iter().find(|r| {
-                r.tier == refs::Tier::Excluded
+            let helper_caller = all.iter().find(|r| {
+                helper(file)
+                    && r.tier == refs::Tier::Excluded
                     && r.receiver == "implicit"
                     && r.path.starts_with("app/helpers/")
                     && !file.ends_with(&r.path)
             });
-            if let Some(caller) = caller {
-                if !risky.is_empty() {
-                    risky.push_str(", ");
-                }
-                risky.push_str(&format!(
+            // An instance's `self`: a module's own `def self.` knows its.
+            let on_instance = |r: &refs::Reference| {
+                parsed
+                    .get(&r.path)
+                    .and_then(Option::as_ref)
+                    .and_then(|facts| {
+                        facts
+                            .calls
+                            .iter()
+                            .find(|c| c.pos.line == r.line && c.pos.col == r.col)
+                    })
+                    .is_some_and(|call| !call.singleton)
+            };
+            let unknown_self = || {
+                all.iter().find(|r| {
+                    r.ruling == Some(refs::Ruling::NoSuchMethod)
+                        && matches!(r.receiver, "implicit" | "self")
+                        && r.receiver_type.as_deref().is_some_and(|module| {
+                            tree.kind_of(module) == Some("module")
+                                && tree.includers_of(module).is_empty()
+                        })
+                        && on_instance(r)
+                })
+            };
+            if let Some(caller) = helper_caller {
+                unplaced = Some(format!(
                     "called with no receiver in {}:{}, a helper Rails mixes into the same views",
                     caller.path, caller.line
                 ));
+            } else if let Some(caller) = unknown_self() {
+                unplaced = Some(format!(
+                    "called with no receiver at {}:{}, in a module nothing indexed includes, \
+                     so its `self` is not known",
+                    caller.path, caller.line
+                ));
             }
+        }
+        if let Some(unplaced) = &unplaced {
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            risky.push_str(unplaced);
         }
         // A gem of the bundle calls the name on an object it is handed: an
         // instance's method, since such a call's receiver is a value (DEC-367).
@@ -4050,6 +4088,9 @@ fn dead_in(
             ));
         }
         let reason = match (tier, &caller) {
+            ("unreferenced", _) if unplaced.is_some() => {
+                "no call trekr can place on it, nor a symbol or `super`, names it".to_string()
+            }
             ("unreferenced", _) if unread_symbol.is_some() => {
                 "no call or `super` names it, nor a symbol trekr reads as a call".to_string()
             }
