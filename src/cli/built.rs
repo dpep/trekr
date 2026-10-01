@@ -181,8 +181,9 @@ fn computed_sends(line: &str) -> Vec<String> {
 /// The constant path that ends `text`, if it ends in one: `Mailers::Notifier`.
 fn constant_before(text: &str) -> Option<String> {
     let start = text
-        .rfind(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
-        .map_or(0, |at| at + 1);
+        .char_indices()
+        .rfind(|(_, c)| !(c.is_ascii_alphanumeric() || *c == '_' || *c == ':'))
+        .map_or(0, |(at, c)| at + c.len_utf8());
     let written = text[start..].trim_start_matches("::");
     written
         .split("::")
@@ -214,6 +215,7 @@ mod tests {
         );
         assert!(computed_sends("Notifier.public_send(:welcome, user)").is_empty());
         assert!(computed_sends("record.send(name)").is_empty());
+        assert_eq!(computed_sends("# ―Notifier.send(type)"), ["Notifier"]);
     }
 
     #[test]
