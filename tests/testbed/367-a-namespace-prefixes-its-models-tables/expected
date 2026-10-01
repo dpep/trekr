@@ -1,0 +1,5 @@
+# Active Record asks a model's enclosing module for `table_name_prefix` (and
+# `_suffix`) by name, and Active Model asks it `use_relative_model_naming?`;
+# no call site writes either. Five of mastodon's 77 hand-checked
+# unreferenced, clear rows were namespaces' `self.table_name_prefix`.
+dead app/models/billing.rb Billing#table_name_prefix=unreferenced~Active Billing#use_relative_model_naming?=unreferenced~Active Billing#lonely=unreferenced~

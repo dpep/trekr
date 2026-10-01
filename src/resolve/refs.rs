@@ -1057,6 +1057,18 @@ pub(crate) fn protocol_hook(name: &str, singleton: bool) -> Option<&'static str>
         ("method_added", "Ruby, when a method is defined"),
         ("const_missing", "constant lookup"),
         ("model_name", "Rails' form, URL and i18n helpers"),
+        (
+            "table_name_prefix",
+            "Active Record, for a namespace's models' tables",
+        ),
+        (
+            "table_name_suffix",
+            "Active Record, for a namespace's models' tables",
+        ),
+        (
+            "use_relative_model_naming?",
+            "Active Model naming, for a namespace's models",
+        ),
     ];
     let table = if singleton { SINGLETON } else { INSTANCE };
     table

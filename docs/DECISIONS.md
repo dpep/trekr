@@ -10013,3 +10013,19 @@ registered as the file loads), is not caught: 2 mastodon rows.
 `unreferenced`, clear 53 → 40, the 12 engine hooks and the `super` row
 among the hand-checked; no true candidate moves. discourse unchanged in
 clear; 3 writers that call `super` gain the second caveat.
+
+## DEC-366 — A namespace's `table_name_prefix` is a hook Active Record calls
+
+**Decided.** DEC-315's protocol hooks gain three on the class side, each a
+namespace module's method its models' framework asks by name:
+`table_name_prefix` and `table_name_suffix` (Active Record's
+`full_table_name_prefix` takes the first enclosing module that answers
+them) and `use_relative_model_naming?` (Active Model's `Naming`, for the
+models a namespace holds).
+
+**Why.** 5 of mastodon's 77 hand-checked `unreferenced`, clear rows were
+`Admin.table_name_prefix`, `Trends.…`, `Web.…`, `Fasp.…` and
+`AnnualReport.…`, which Rails' own generator writes for a namespaced model.
+
+**Measured**, `--dead app`, against the build before it: those 5 become
+`lower`; mastodon `unreferenced`, clear 40 → 35; discourse unchanged.

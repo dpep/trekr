@@ -19,6 +19,9 @@
   indexed.** The index reads the gems the open file names before any other
   gem, and Ruby's signatures just after: on a 100,000-file checkout the
   gem's answer arrives about half a second sooner.
+- **`--dead` knows a namespace's `self.table_name_prefix`** (and
+  `table_name_suffix`, `use_relative_model_naming?`) is called by Active
+  Record and Active Model by name, and grades it `lower`.
 - **`--dead` says when an ancestor it has not indexed may call a method.**
   An `unreferenced` method whose class inherits from one trekr cannot
   resolve — a gem engine's controller, such as Devise's — or whose body
