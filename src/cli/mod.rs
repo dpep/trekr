@@ -3528,6 +3528,9 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
     Ok(exit_on(found))
 }
 
+/// The class Action Mailer's mailers inherit, whose class side runs an action.
+const MAILER: &str = "ActionMailer::Base";
+
 /// `--dead`'s tiers, from the least evidence of use to the most.
 const DEAD_TIERS: [&str; 5] = [
     "unreferenced",
@@ -3810,6 +3813,43 @@ fn dead_in(
             found.extend(more);
             counts.add(&tally);
         }
+        // Action Mailer runs an action through its class, whose
+        // `method_missing` the index finds nothing behind (DEC-369).
+        let public = def.visibility.as_str() == "public";
+        if !def.singleton && public && tree.inherits(&owner, MAILER) {
+            let query = refs::Query {
+                owner: query.owner.clone(),
+                singleton: true,
+                name: def.name.clone(),
+            };
+            let (all, _) = gather_refs(
+                &tree,
+                store,
+                root,
+                &root_str,
+                &query,
+                Some(&owner),
+                true,
+                Some(&mut parsed),
+                None,
+            )
+            .unwrap_or_default();
+            for mut call in all
+                .into_iter()
+                .filter(|r| r.ruling == Some(refs::Ruling::NoSuchMethod))
+                .filter(|r| {
+                    r.receiver_type
+                        .as_deref()
+                        .is_some_and(|class| class == owner || tree.inherits(class, &owner))
+                })
+            {
+                call.tier = refs::Tier::Confirmed;
+                call.ruling = None;
+                call.why = "Action Mailer runs the action its class is sent";
+                counts.confirmed += 1;
+                found.push(call);
+            }
+        }
         let live = refs::liveness(&found, &counts);
         let Some(tier) = live.tier else { continue };
         // Whoever calls the method this overrides may run it instead, and
@@ -3957,7 +3997,6 @@ fn dead_in(
             }
             risky.push_str(&format!("named in a view ({template}), which is not read"));
         }
-        let public = def.visibility.as_str() == "public";
         if !def.singleton && conventions::assigned_writer(&tree, &owner, &def.name, public) {
             if !risky.is_empty() {
                 risky.push_str(", ");

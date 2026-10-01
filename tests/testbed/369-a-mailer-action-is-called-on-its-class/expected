@@ -1,0 +1,6 @@
+# Action Mailer runs an action through its class: `InviteMailer.send_instructions(user)`
+# reaches `InviteMailer#send_instructions` by the class's `method_missing`.
+# The class side defines no such method (its `method_missing` builds a
+# MessageDelivery, which DEC-261 does not read as a forwarder), so the call
+# was ruled out and the action was unreferenced, clear.
+dead app/mailers/invite_mailer.rb InviteMailer#send_instructions=single-caller InviteMailer#lonely=unreferenced~

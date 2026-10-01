@@ -19,6 +19,9 @@
   indexed.** The index reads the gems the open file names before any other
   gem, and Ruby's signatures just after: on a 100,000-file checkout the
   gem's answer arrives about half a second sooner.
+- **`--dead` counts `Mailer.action(…)` as a call of the mailer's action.**
+  Action Mailer runs the action through its class's `method_missing`, so
+  such actions were `unreferenced`.
 - **`--dead` says when another helper calls a helper's method with no
   receiver**, as Rails' views do with every helper module mixed in; the row
   names the call and is graded `lower`.

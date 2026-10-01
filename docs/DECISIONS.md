@@ -10082,3 +10082,27 @@ were 3 of its 77 hand-checked `unreferenced`, clear rows.
 `unreferenced`, clear 31 → 29 (the third already had a view caveat); 5
 rows carry the caveat; discourse unchanged. It reads one more pass of a
 helper candidate's call sites, which only `unreferenced` helpers pay.
+
+## DEC-369 — `--dead` counts a mailer's class-side call as its action's
+
+**Decided.** Action Mailer runs an action through its class:
+`InviteMailer.send_password_instructions(user)` reaches
+`InviteMailer#send_password_instructions` by the class's private
+`method_missing`, which returns a `MessageDelivery` for any name in
+`action_methods`. That `method_missing` hands the name to no object, so
+DEC-261 does not read it as a forwarder, and the call is ruled out
+`no_such_method`. For a public instance method of a class inheriting
+`ActionMailer::Base`, `--dead` now counts the class-side calls of its name
+that were ruled out that way, on that class or a subclass, as confirmed
+calls of the action. `--refs` is unchanged.
+
+**Why.** discourse's `InviteMailer#send_password_instructions`, called only
+as `InviteMailer.send_password_instructions(user)` in a job, was
+`unreferenced`, clear — 1 of the 100 hand-checked rows; reading the rest
+of discourse's mailers found 19 more.
+
+**Measured**, `--dead app`, against the build before it: discourse 20
+mailer actions move toward use — 14 leave the candidates, 6 become
+`single-caller` (3 from `unreferenced`) — and none away. mastodon
+unchanged: its mailers are called through `.with(…)`, whose result is not
+typed.
