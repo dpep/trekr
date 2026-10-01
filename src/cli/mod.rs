@@ -3895,6 +3895,38 @@ fn dead_in(
                 risky.push_str("it calls `super`, so it overrides a method trekr has not indexed");
             }
         }
+        // Rails mixes every app/helpers module into one view context, so a
+        // helper's call with no receiver may reach another's (DEC-368).
+        let helper = |path: &str| path.split('/').any(|dir| dir == "helpers");
+        if tier == "unreferenced" && !def.singleton && helper(file) {
+            let (all, _) = gather_refs(
+                &tree,
+                store,
+                root,
+                &root_str,
+                &query,
+                Some(&owner),
+                true,
+                Some(&mut parsed),
+                None,
+            )
+            .unwrap_or_default();
+            let caller = all.iter().find(|r| {
+                r.tier == refs::Tier::Excluded
+                    && r.receiver == "implicit"
+                    && r.path.starts_with("app/helpers/")
+                    && !file.ends_with(&r.path)
+            });
+            if let Some(caller) = caller {
+                if !risky.is_empty() {
+                    risky.push_str(", ");
+                }
+                risky.push_str(&format!(
+                    "called with no receiver in {}:{}, a helper Rails mixes into the same views",
+                    caller.path, caller.line
+                ));
+            }
+        }
         // A gem of the bundle calls the name on an object it is handed: an
         // instance's method, since such a call's receiver is a value (DEC-367).
         if tier == "unreferenced"

@@ -19,6 +19,9 @@
   indexed.** The index reads the gems the open file names before any other
   gem, and Ruby's signatures just after: on a 100,000-file checkout the
   gem's answer arrives about half a second sooner.
+- **`--dead` says when another helper calls a helper's method with no
+  receiver**, as Rails' views do with every helper module mixed in; the row
+  names the call and is graded `lower`.
 - **`--dead` says when a gem in the bundle calls an unreferenced
   method's name.** A gem calling `object.type_for_attribute` reaches an app's
   method no app call site writes; the row names the gem and is graded

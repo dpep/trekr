@@ -10060,3 +10060,25 @@ is checked: counted, they would have been caveated too.
 `unreferenced`, clear 35 → 31, the 4 above; no true candidate moves; 19
 rows carry the caveat. discourse 51 → 50 (`Flag#applies_to?`, a name
 rspec-mocks calls).
+
+## DEC-368 — A helper called with no receiver from another helper says so
+
+**Decided.** Rails mixes every module in `app/helpers` into one view
+context (`include_all_helpers`, on by default), so one helper calls
+another's method with no receiver and no file writes the include. That call
+runs on `Object` for trekr (DEC-314), finds nothing, and is ruled out. An
+`unreferenced` instance method of a module under a `helpers` directory, for
+which such a ruled-out call is written in `app/helpers`, says "called with
+no receiver in app/helpers/x.rb:N, a helper Rails mixes into the same
+views", graded `lower`. The site stays ruled out: whether the two modules
+share a view is not read.
+
+**Why.** mastodon's `StatusesHelper#prefers_autoplay?` (called from
+`ApplicationHelper`), `LanguagesHelper#available_locale_or_nil` (from
+`FormattingHelper`) and `AuthorizedFetchHelper#authorized_fetch_overridden?`
+were 3 of its 77 hand-checked `unreferenced`, clear rows.
+
+**Measured**, `--dead app`, against the build before it: mastodon
+`unreferenced`, clear 31 → 29 (the third already had a view caveat); 5
+rows carry the caveat; discourse unchanged. It reads one more pass of a
+helper candidate's call sites, which only `unreferenced` helpers pay.

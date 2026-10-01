@@ -1,0 +1,6 @@
+# Rails mixes every module in app/helpers into one view context, so a helper
+# calls another module's method with no receiver, and no includer is ever
+# written: the call ran on Object (DEC-314), found nothing, and was ruled out.
+# mastodon's `StatusesHelper#prefers_autoplay?`, called only from
+# `ApplicationHelper`, was unreferenced, clear.
+dead app/helpers/labels_helper.rb LabelsHelper#shared_label=unreferenced~badges_helper.rb LabelsHelper#lonely=unreferenced~
