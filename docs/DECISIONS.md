@@ -9363,3 +9363,45 @@ for it.
 **Not done.** A definition from a partial tree has no field to say so;
 the editor's progress is its disclosure. References on the 100k corpus can
 take 0.85 s mid-index, scanning files the store holds then.
+
+## DEC-340 — A symbol an option names a method by is a reference
+
+**Decided.** DEC-037 recorded a symbol in an argument's position as a
+possible call of its name; a symbol that is an *option's value* was not
+recorded at all. Now the value of an option that takes a method of `self`
+is recorded as a positional symbol is — a `symbol` call site, standing for
+`self`'s instance method where the call is a class-level macro (DEC-093), so
+`--def` on it answers with the method, `--refs` lists it `possible`, and
+`--dead` counts it toward `convention-only`. A value that is a list counts
+each symbol in it (`if: [:a?, :b?]`). The options:
+
+- `if:` and `unless:` — every callback, filter and validation;
+- `with:` — `rescue_from`'s handler;
+- `to:` — the method a delegation calls;
+- `reject_if:` — `accepts_nested_attributes_for`'s, when not `:all_blank`;
+- any key ending `_method` or `_method_name` — an app's own macro saying so
+  (`rate_limit! :x, response_method_name: :render_throttled`).
+
+**Not** `only:`/`except:`, which name the actions a filter applies to and
+call none of them, nor `on:`, an event. A list of keys, not every option:
+a value such as `dependent: :destroy` or `inverse_of: :owner` is no method of
+`self`, and recording it would make `--def` on it answer, confidently, with
+whatever `self` has of that name. The key's name is the rule: an option
+named for a method takes one.
+
+**Not a regression.** The 0.8.2 report suggested DEC-312 had dropped these.
+It had not: since 3edff7c an option's value was "visited on its own", and a
+symbol visited alone records nothing. 0.8.0 answered the same.
+
+**Why.** A 0.8.2 report from a large Rails monorepo: of 118 hand-checked
+`unreferenced`, clear rows, 17 were named in their own file in ways
+`--dead` did not count, most of them this — `rescue_from …, with:
+:respond_rate_limited`, `validates …, if: :validate_limit?`, `delegate …,
+to: :env_params`. The row's reason said "no call, symbol or `super` names
+it", which was false.
+
+**Measured**, `--dead app`, against main: mastodon 237 `unreferenced` →
+167 (clear 150 → 82), all 73 rows that moved now `convention-only` — 70
+from `unreferenced`, 3 from `override` — each named by `if:`, `unless:` or
+`with:` (`current_user?`, `rate_limited_request?`, `internal_server_error`);
+none named only by a value. discourse 1,093 → 1,078 (clear 746 → 735).

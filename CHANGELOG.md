@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **A method named by an option's symbol is a reference.** `rescue_from
+  Error, with: :handler`, `before_action :x, if: :ready?`, `validates …,
+  unless: :skip?`, `delegate …, to: :target` and an app's own
+  `*_method_name: :x` now count, as `before_action :x` always did: `--def`
+  on the symbol answers with the method (it used to answer for the nearest
+  other name on the line), `--refs` lists it, and `--dead` tiers the method
+  `convention-only` instead of `unreferenced`. `only:`, `except:` and `on:`
+  name actions and events, not calls, and still do not count. Reindex to
+  pick it up (`trekr --index`).
 - **No editor request waits on the index for more than about a second.** While
   a first index is running, hover, definition and the rest answer from what
   is already read while trekr catches up on another thread, where on a large

@@ -163,7 +163,8 @@ The tiers, from least evidence of use to most:
 - `unreferenced` — nothing names it.
 - `override` — nothing names it, but it overrides an ancestor's method, so
   whatever calls that one (often the framework) may run it.
-- `convention-only` — named only by a symbol handed to a macro.
+- `convention-only` — named only by a symbol handed to a macro
+  (`before_action :x`, `if: :x`, `with: :x`).
 - `super-only` — reached only by `super` from its overrides.
 - `single-caller` — one reference: an inlining candidate. `caller` in JSON
   says where, and whether it certainly reaches the method.

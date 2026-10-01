@@ -292,7 +292,7 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | `implicit_subject` | `subject` or `is_expected` with no `subject` written in reach: an instance of the class the group describes (DEC-114) | 1.0 |
 | `main` | a bare top-level `describe` in a spec: `main`'s method sends it to `RSpec` (DEC-115) | 1.0 |
 | `on_load` | a call directly in `ActiveSupport.on_load(:x) do`: the class that runs the hook, on its class side; in a `def` there, its instances; two such classes are one's reading and the other's rival (DEC-214) | 1 / classes |
-| `symbol` | `send(:x)`, `obj.respond_to?(:x)`, `before_action :x`, `alias_method :a, :x`: `x` on the receiver of the reflective call, or on `self`'s instances for a class-level macro (DEC-093) | the receiver's |
+| `symbol` | `send(:x)`, `obj.respond_to?(:x)`, `before_action :x`, `alias_method :a, :x`, an option naming a method (`if: :x`, `with: :x`, DEC-340): `x` on the receiver of the reflective call, or on `self`'s instances for a class-level macro (DEC-093) | the receiver's |
 | `predicate_matcher` | `be_empty` / `have_key` in a spec: the subject's `empty?` / `has_key?`, the subject typed by the rest of the ladder (DEC-090) | the subject's |
 | `includer` | a call inside a module, resolved through the classes that mix it in | agreeing / includers |
 | `const` | `Foo.bar` — resolve `Foo`, look up a *class* method | 1.0 |

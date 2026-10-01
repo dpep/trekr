@@ -4701,12 +4701,7 @@ impl<'pr> Extractor<'_> {
                 Some(receiver) => self.subject_of(&receiver),
             });
         }
-        let class_level = call.receiver().is_none()
-            && !self.in_method_body()
-            && !self.nesting.is_empty()
-            && !rspec::in_group(&self.nesting)
-            && (self.frames.last().is_some_and(|f| f.blocks == 0) || self.in_includer_body());
-        if !class_level {
+        if !self.class_level(call) {
             return None;
         }
         match name.as_str() {
@@ -4717,6 +4712,16 @@ impl<'pr> Extractor<'_> {
             }
             _ => Some(Sent::to_self(self.in_singleton())),
         }
+    }
+
+    /// A macro written on the class, in its body or a body its includers run:
+    /// a symbol it is handed names a method of `self`.
+    fn class_level(&self, call: &ruby_prism::CallNode<'pr>) -> bool {
+        call.receiver().is_none()
+            && !self.in_method_body()
+            && !self.nesting.is_empty()
+            && !rspec::in_group(&self.nesting)
+            && (self.frames.last().is_some_and(|f| f.blocks == 0) || self.in_includer_body())
     }
 
     /// A receiver worth typing that is not a name: the call before this one in
@@ -4900,43 +4905,103 @@ impl<'pr> Extractor<'_> {
             if on_self && names_what_it_defines(&macro_name, index) {
                 continue;
             }
-            // Only a bare symbol. A hash's *keys* are options, not methods, and
-            // its values are visited on their own as ordinary arguments.
+            if let Some(options) = arg.as_keyword_hash_node() {
+                self.record_option_symbols(call, &options);
+                continue;
+            }
+            // Only a bare symbol. A hash's *keys* are options, not methods.
             let Some(symbol) = arg.as_symbol_node() else {
                 continue;
             };
-            let Some(name) = String::from_utf8(symbol.unescaped().to_vec()).ok() else {
-                continue;
-            };
-            if !name.starts_with(|c: char| c.is_ascii_lowercase() || c == '_') {
-                continue;
-            }
-            let Some(loc) = symbol.value_loc() else {
-                continue;
-            };
-            let pos = self.pos(loc.start_offset());
-            let stands_for = self
-                .symbol_receiver(call, index)
-                .map(|to| self.sent(name.clone(), to, pos, None, false));
-            self.facts.calls.push(Call {
-                name,
-                recv: RecvShape::Symbol,
-                recv_text: None,
-                nesting: self.nesting.clone(),
-                singleton: false,
-                recv_pos: None,
-                recv_value: None,
-                block_owner: None,
-                in_example: false,
-                in_scope: false,
-                // Unknowable: whatever invokes it decides the arity.
-                argc: None,
-                block: false,
-                pos,
-                stands_for,
-            });
+            let to = self.symbol_receiver(call, index);
+            self.record_symbol(&symbol, to);
         }
     }
+
+    /// `rescue_from Error, with: :handler`, `before_action :x, if: :ready?`:
+    /// an option whose value names a method of `self` (DEC-340). Its symbol
+    /// stands for that method where a positional one would.
+    fn record_option_symbols(
+        &mut self,
+        call: &ruby_prism::CallNode<'pr>,
+        options: &ruby_prism::KeywordHashNode<'pr>,
+    ) {
+        for element in options.elements().iter() {
+            let Some(assoc) = element.as_assoc_node() else {
+                continue;
+            };
+            let Some(key) = assoc
+                .key()
+                .as_symbol_node()
+                .and_then(|k| String::from_utf8(k.unescaped().to_vec()).ok())
+            else {
+                continue;
+            };
+            if !names_a_method(&key) {
+                continue;
+            }
+            let value = assoc.value();
+            let symbols: Vec<ruby_prism::SymbolNode<'pr>> = match value.as_array_node() {
+                Some(list) => list
+                    .elements()
+                    .iter()
+                    .filter_map(|e| e.as_symbol_node())
+                    .collect(),
+                None => value.as_symbol_node().into_iter().collect(),
+            };
+            for symbol in symbols {
+                let to = self
+                    .class_level(call)
+                    .then(|| Sent::to_self(self.in_singleton()));
+                self.record_symbol(&symbol, to);
+            }
+        }
+    }
+
+    /// A symbol that names a method, standing for a call of it on `to` when
+    /// that is a rule rather than a guess.
+    fn record_symbol(&mut self, symbol: &ruby_prism::SymbolNode<'pr>, to: Option<Sent>) {
+        let Some(name) = String::from_utf8(symbol.unescaped().to_vec()).ok() else {
+            return;
+        };
+        if !name.starts_with(|c: char| c.is_ascii_lowercase() || c == '_') {
+            return;
+        }
+        let Some(loc) = symbol.value_loc() else {
+            return;
+        };
+        let pos = self.pos(loc.start_offset());
+        let stands_for = to.map(|to| self.sent(name.clone(), to, pos, None, false));
+        self.facts.calls.push(Call {
+            name,
+            recv: RecvShape::Symbol,
+            recv_text: None,
+            nesting: self.nesting.clone(),
+            singleton: false,
+            recv_pos: None,
+            recv_value: None,
+            block_owner: None,
+            in_example: false,
+            in_scope: false,
+            // Unknowable: whatever invokes it decides the arity.
+            argc: None,
+            block: false,
+            pos,
+            stands_for,
+        });
+    }
+}
+
+/// Does an option of this name take a method of `self` as its value
+/// (DEC-340)? `if:`/`unless:` on a callback or validation, `rescue_from`'s
+/// `with:`, the `to:` a delegation calls, `accepts_nested_attributes_for`'s
+/// `reject_if:`, and an app's own `*_method:`/`*_method_name:`. Not `only:`/
+/// `except:`, which name the actions a filter applies to, nor `on:`, an
+/// event: those call nothing.
+fn names_a_method(key: &str) -> bool {
+    matches!(key, "if" | "unless" | "with" | "to" | "reject_if")
+        || key.ends_with("_method")
+        || key.ends_with("_method_name")
 }
 
 /// Is a macro's `index`th argument the name of a method it defines, rather
