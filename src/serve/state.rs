@@ -119,6 +119,38 @@ struct Checkout {
     /// The tree's namespaces and method table, listed — what completion
     /// reads. Built on first use and dropped with the tree it came from.
     members: Option<Members>,
+    /// The listing of the tree this one replaced, until its own is listed.
+    stale: Option<Members>,
+}
+
+impl Checkout {
+    /// Answer from `tree`, assembled from the store at `stamp`. The old
+    /// tree's listing still serves completion, said to be old, until this
+    /// one's is listed: at scale that is seconds, and the two differ by an
+    /// edit's worth.
+    fn replace(&mut self, tree: Tree, stamp: Stamp, partial: Option<crate::store::Warming>) {
+        self.tree = Some(tree);
+        self.built_from = Some(stamp);
+        self.partial = partial;
+        if let Some(members) = self.members.take() {
+            self.stale = Some(members);
+        }
+    }
+
+    /// The tree's members, listed.
+    fn listed(&mut self, members: Members) {
+        self.members = Some(members);
+        self.stale = None;
+    }
+
+    /// What completion lists from, and whether it is the tree's own listing.
+    fn listing(&self) -> Option<(&Members, bool)> {
+        match (&self.members, &self.stale) {
+            (Some(members), _) => Some((members, true)),
+            (None, Some(stale)) => Some((stale, false)),
+            (None, None) => None,
+        }
+    }
 }
 
 /// A file, placed in the checkout that owns it.
@@ -458,10 +490,7 @@ impl Session {
                     let tree = Tree::build(&self.store, &key)?;
                     let partial = self.store.warming(&key)?;
                     let checkout = self.checkouts.get_mut(root).expect("placed above");
-                    checkout.tree = Some(tree);
-                    checkout.built_from = Some(stamp);
-                    checkout.partial = partial;
-                    checkout.members = None;
+                    checkout.replace(tree, stamp, partial);
                     checkout.next = None;
                 }
             }
@@ -562,10 +591,7 @@ impl Session {
         // A build that failed leaves the tree that answers; the next question
         // tries again.
         if let Ok((tree, partial)) = built {
-            checkout.tree = Some(tree);
-            checkout.built_from = Some(next.stamp);
-            checkout.partial = partial;
-            checkout.members = None;
+            checkout.replace(tree, next.stamp, partial);
         }
     }
 
@@ -619,30 +645,40 @@ impl Session {
         &self.load_paths[root].1
     }
 
-    /// A checkout's tree together with its listed members, for completion —
-    /// `None` for the members while listing them takes longer than `ASIDE`:
-    /// at scale it is seconds, and the client asks again as the word grows
+    /// A checkout's tree together with its listed members, for completion,
+    /// and whether they are this tree's — while listing them takes longer
+    /// than `ASIDE`, the last tree's, or `None` when there were none: at
+    /// scale it is seconds, and the client asks again as the word grows
     /// (DEC-323).
-    pub(crate) fn members(&mut self, root: &Path) -> anyhow::Result<(&Tree, Option<&Members>)> {
+    pub(crate) fn members(
+        &mut self,
+        root: &Path,
+    ) -> anyhow::Result<(&Tree, Option<(&Members, bool)>)> {
         self.tree(root)?;
         if self.checkouts[root].members.is_none() {
             match self.store.path() {
                 // Being listed already: waiting for it beats starting over.
+                // With the last tree's listing to answer from, not at all.
                 Some(_) => {
                     self.list_members(root)?;
-                    self.collect_members(Some((root, ASIDE)));
+                    let wait = match self.checkouts[root].stale {
+                        Some(_) => std::time::Duration::ZERO,
+                        None => ASIDE,
+                    };
+                    self.collect_members(Some((root, wait)));
                 }
                 // No second connection to list on: here, whatever it takes.
                 None => {
                     let checkout = self.checkouts.get_mut(root).expect("tree() placed it");
                     let tree = checkout.tree.as_ref().expect("tree() built it");
-                    checkout.members = Some(Members::of(tree));
+                    let members = Members::of(tree);
+                    checkout.listed(members);
                 }
             }
         }
         let checkout = &self.checkouts[root];
         let tree = checkout.tree.as_ref().expect("tree() built it");
-        Ok((tree, checkout.members.as_ref()))
+        Ok((tree, checkout.listing()))
     }
 
     /// Start listing a checkout's members on another thread, so the idle
@@ -707,7 +743,7 @@ impl Session {
         if let (Some(Ok(members)), Some(checkout)) = (result, self.checkouts.get_mut(&listing.root))
             && checkout.built_from == Some(listing.stamp)
         {
-            checkout.members = Some(members);
+            checkout.listed(members);
         }
     }
 
@@ -802,4 +838,30 @@ impl Session {
 fn disk_stamp(path: &Path) -> Option<(std::time::SystemTime, u64)> {
     let meta = std::fs::metadata(path).ok()?;
     Some((meta.modified().ok()?, meta.len()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_replaced_tree_s_listing_serves_until_its_own_is_listed() {
+        let store = Store::open_in_memory().unwrap();
+        let tree = || Tree::build(&store, "/app").unwrap();
+        let mut checkout = Checkout::default();
+        checkout.replace(tree(), Stamp([0; 20]), None);
+        assert!(checkout.listing().is_none(), "nothing listed yet");
+        let members = Members::of(checkout.tree.as_ref().unwrap());
+        checkout.listed(members);
+        assert!(matches!(checkout.listing(), Some((_, true))));
+
+        checkout.replace(tree(), Stamp([1; 20]), None);
+        assert!(
+            matches!(checkout.listing(), Some((_, false))),
+            "the last tree's listing, said to be the last tree's"
+        );
+        let members = Members::of(checkout.tree.as_ref().unwrap());
+        checkout.listed(members);
+        assert!(matches!(checkout.listing(), Some((_, true))));
+    }
 }

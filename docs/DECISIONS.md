@@ -9377,7 +9377,8 @@ less. The index's end is unchanged (20.1 → 19.9 s at 100k).
 **The cost.** Up to two trees in memory for the length of a build, during a
 first index only. A completion asked in the seconds after the index ends at
 100k lists locals until the listing lands (about 5 s), where it used to wait
-for it.
+for it. (*Amended by DEC-332's addendum:* where the tree it replaced was
+listed, that listing answers meanwhile.)
 
 **Not done.** A definition from a partial tree has no field to say so;
 the editor's progress is its disclosure (*amended by DEC-331*). References on the 100k corpus can
@@ -9540,6 +9541,16 @@ early store's end less tidy than its start:
   --json` said `warming.interrupted`. Its row now carries the same `warming`
   as an answer, and the text a line under it: "being indexed: N of M files
   read so far", or "cut short: … — `trekr --index <root>` finishes it".
+- *Completion keeps the last tree's listing* (DEC-323). A save that changes
+  the tree threw the listing away with it, and on a warm 100k session
+  completion then answered nothing, `isIncomplete`, for 4–8 s, each request
+  waiting `ASIDE` for the new listing. The old listing now answers, marked
+  incomplete, at once, until the new one lands: it differs from the new one
+  by an edit's worth. Measured with the hunt's `compsave.py` (100k, warm,
+  save then complete every 0.1 s for 15 s), two runs each against the build
+  before: empty answers 9 of 98 from 0.8 to 5.0 s → 0 of 133; each request
+  in that window 0.41 s → 0.001 s, the first after the save (the tree's own
+  rebuild) 0.81–0.83 → 0.35–0.36 s.
 
 ## DEC-333 — A warm request reads the store's roots only once the store has moved
 

@@ -184,12 +184,12 @@ pub(crate) fn completion(
     // word grows, and by then more may be in (DEC-320).
     let warming = session.warming(&located.root).is_some();
     let (tree, listed) = session.members(&located.root)?;
-    // Not listed yet: what needs no listing — the locals — and the client
-    // asks again (DEC-323).
+    // Not listed yet: what needs no listing — the locals, or the last tree's
+    // listing — and the client asks again (DEC-323).
     let unlisted = Members::empty();
-    let members = listed.unwrap_or(&unlisted);
+    let members = listed.map_or(&unlisted, |(members, _)| members);
     let mut list = Ranked::new(&prefix, &located.root);
-    let mut incomplete = warming || listed.is_none();
+    let mut incomplete = warming || !listed.is_some_and(|(_, current)| current);
     match (&context, under) {
         (Context::Member, Some(Under::Call(call))) => {
             match crate::resolve::receiver_type(tree, &facts, &call, &located.relative) {
