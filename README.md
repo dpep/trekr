@@ -196,8 +196,9 @@ reason. They are read from `lsp.log`, so `TREKR_LOG=off` turns them off too.
 ### In a very large repo
 
 - Turn on git's own caches: `git config core.untrackedCache true` and
-  `git config core.fsmonitor true`. Every `--index` starts with a `git status`; on a synthetic
-  336k-file monorepo the two take it from 2.7 s to 0.09 s.
+  `git config core.fsmonitor true`. Every `--index` starts with a
+  `git status`; on a synthetic 336k-file monorepo the two take it from 2.7 s
+  to 0.09 s.
 - A first `--index` needs free disk of about **twice the store's final size**
   while it runs: the checkout's files land in one transaction, and the WAL
   holds all of it until the commit. At 336k files the store is 4.4 GB and the
