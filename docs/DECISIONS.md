@@ -10975,3 +10975,51 @@ still counts it wrong@1, because the gold set records a multi-line
 **Measured**: no compare.py site moved in verdict on either corpus, and
 the gem gold sets are unchanged; discourse's one site changed answer to
 the right method, as above.
+
+## DEC-442 — A residue's confidence is how often its first candidate ran, on the gold sets
+
+**Decided.** A residue's `confidence` was a flat 0.0, whatever its first
+candidate rested on: a guess wearing a measurement's clothes, and one that
+could not pick out the residue worth showing. It is now the share of
+gold-set residues resting on the same evidence whose first candidate was the
+method Ruby ran:
+
+| evidence | first candidate ran | confidence |
+| --- | ---: | ---: |
+| the call is on `self` (implicit or explicit) | 77 of 104 | 0.7 |
+| an untyped receiver, and at most 3 definitions of the name | 48 of 67 | 0.7 |
+| an untyped receiver, and more than 3 | 21 of 141 | 0.1 |
+| no definition of the name at all | — | 0.0 |
+
+A call on `self` is ranked by its own class's ancestors and namespace (the
+residue tiers), and a name few classes define leaves little to choose from.
+`agreement` carries the evidence ("6 definitions share the name; 0.1 of
+residues with more than 3 …"), and `--explain` prints it as `evidence`.
+
+**How it was fitted.** Every residue answer with candidates in the 0.8.4
+comparison's samples (discourse 500, mastodon 500, widget_shop 63; 312
+answers after DEC-440/441), scored by whether the first candidate is the
+traced truth. Signals tried: the number of definitions of the name, the
+receiver's shape, whether the receiver was typed, the first candidate's
+tier, and the count tied at that tier. The definitions count and the
+receiver's shape carried it; the rest were noisy or redundant with them.
+
+**Held out.** Fit on discourse, checked on mastodon: self 0.80 → 0.52 held
+out, few 0.75 → 0.70, many 0.08 → 0.19. Fit on a random half of all three,
+checked on the other: self 0.75 → 0.73, few 0.70 → 0.73, many 0.14 → 0.16.
+The order of the classes, and which side of 0.5 each falls on, held every
+way. Brier score on the held-out corpus (lower is better): mastodon 0.400
+flat 0, 0.218 for 1/definitions, 0.204 this; discourse 0.549, 0.311, 0.181.
+
+**Rounded to one decimal**: a class is 67–141 answers, so its rate is good to
+about ±0.05, and the corpora differ by up to 0.3 on the self class. Self and
+few are both 0.7 at that precision, so they are one grade.
+
+**Declined.** `1/definitions` needs no fit and is monotone, but it
+under-calls every shared name (3 definitions: 0.33 predicted, 0.65
+observed), because the ranking carries information it ignores. The first
+candidate's tier was not used: "the enclosing class inherits from its
+owner" was right 8 times in 31 on an explicit receiver — `present?` on
+`ActiveRecord::Core` because a model's own ancestry was asked about another
+object. That is a ranking question, not a confidence one, and is left for
+a decision of its own.

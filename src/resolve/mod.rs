@@ -69,7 +69,9 @@ pub(crate) struct MethodAnswer {
     pub(crate) status: Status,
     /// 1 when the receiver's type is settled and Ruby's lookup finds the method
     /// in it. For the assignment rungs it is the share of assignments that
-    /// agreed — a count, not a calibration (DEC-011).
+    /// agreed — a count, not a calibration (DEC-011). For a residue it is how
+    /// often its first candidate ran, on the gold sets, among residues resting
+    /// on the same evidence (DEC-442).
     pub(crate) confidence: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) resolved_via: Option<String>,
@@ -101,7 +103,9 @@ pub(crate) struct MethodAnswer {
     /// is defined; always present, empty for a residue (DEC-080).
     #[serde(rename = "definition")]
     pub(crate) sites: Vec<Site>,
-    /// Assignments that agreed / were considered, when a rung inferred a type.
+    /// What `confidence` counts: assignments that agreed / were considered,
+    /// when a rung inferred a type; for a residue, the evidence its first
+    /// candidate rests on.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) agreement: Option<String>,
     /// Ancestors of the receiver's type that we could not resolve. A "not
@@ -2707,9 +2711,10 @@ fn residue(
         reason.to_string()
     };
 
+    let (confidence, agreement) = residue_confidence(call, total);
     MethodAnswer {
         status: Status::Residue,
-        confidence: 0.0,
+        confidence,
         resolved_via: None,
         // A residue points at nothing, so there is no location to describe.
         // The candidates carry their own.
@@ -2723,10 +2728,51 @@ fn residue(
         receiver_type: receiver.map(|r| r.fqn),
         owner: None,
         sites: Vec::new(),
-        agreement: None,
+        agreement,
         unresolved_ancestors: truncated,
         candidates,
         reason: Some(reason),
+    }
+}
+
+/// At most this many definitions of a name is "few" (DEC-442).
+const FEW_DEFINITIONS: usize = 3;
+
+/// How often a residue's first candidate is the method Ruby ran, given what
+/// it rests on — counted on the gold sets (DEC-442), not chosen. A call on
+/// `self` is ranked by its own class's ancestors and namespace, and a name
+/// with few definitions leaves little to choose between; either is right
+/// about seven times in ten. A name many classes define, called on a
+/// receiver nothing typed, about once in ten.
+fn residue_confidence(call: &Call, definitions: usize) -> (f64, Option<String>) {
+    let on_self = matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv);
+    let shared = match definitions {
+        1 => "1 definition has the name".to_string(),
+        n => format!("{n} definitions share the name"),
+    };
+    match definitions {
+        0 => (0.0, None),
+        _ if on_self => (
+            0.7,
+            Some(format!(
+                "called on self, so ranked by its own class; {shared}; 0.7 of such \
+                 residues ran the first candidate, on the gold sets"
+            )),
+        ),
+        n if n <= FEW_DEFINITIONS => (
+            0.7,
+            Some(format!(
+                "{shared}; 0.7 of residues with at most {FEW_DEFINITIONS} ran the first \
+                 candidate, on the gold sets"
+            )),
+        ),
+        _ => (
+            0.1,
+            Some(format!(
+                "{shared}; 0.1 of residues with more than {FEW_DEFINITIONS}, on an untyped \
+                 receiver, ran the first candidate, on the gold sets"
+            )),
+        ),
     }
 }
 
@@ -3347,7 +3393,6 @@ mod tests {
                       class W < Near\n  def go\n    thing.save\n  end\nend\n";
         let found = answer(source, "save");
         assert_eq!(found.status, Status::Residue);
-        assert_eq!(found.confidence, 0.0);
         assert_eq!(found.receiver, "other", "the shape is the reason");
         assert_eq!(
             found.candidates[0].owner, "Near",
@@ -3358,6 +3403,38 @@ mod tests {
             found.candidates.last().unwrap().owner,
             "Far",
             "arity rules Far out, so it sinks rather than disappearing"
+        );
+    }
+
+    #[test]
+    fn a_residues_confidence_is_graded_by_what_backs_it() {
+        let defs = |n: usize| -> String {
+            (0..n)
+                .map(|i| format!("class K{i}\n  def save\n  end\nend\n"))
+                .collect()
+        };
+        let untyped =
+            |n: usize| format!("{}class W\n  def go\n    thing.save\n  end\nend\n", defs(n));
+        let few = answer(&untyped(3), "save");
+        let many = answer(&untyped(4), "save");
+        let on_self = answer(
+            &format!("{}class W\n  def go\n    save\n  end\nend\n", defs(4)),
+            "save",
+        );
+        let none = answer("class W\n  def go\n    thing.save\n  end\nend\n", "save");
+        assert_eq!(
+            [
+                few.confidence,
+                many.confidence,
+                on_self.confidence,
+                none.confidence
+            ],
+            [0.7, 0.1, 0.7, 0.0]
+        );
+        assert!(
+            many.agreement
+                .unwrap()
+                .contains("4 definitions share the name")
         );
     }
 

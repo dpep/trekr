@@ -4837,7 +4837,11 @@ fn explanation(answer: &serde_json::Value) -> String {
         out.push(format!("  kind        {kind}{by}"));
     }
     if let Some(agreement) = field("agreement") {
-        out.push(format!("  agreement   {agreement}"));
+        let label = match field("status").as_deref() {
+            Some("residue") => "evidence ",
+            _ => "agreement",
+        };
+        out.push(format!("  {label}   {agreement}"));
     }
     if let Some(unseen) = answer["unresolved_ancestors"].as_array()
         && !unseen.is_empty()

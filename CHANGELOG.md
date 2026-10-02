@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A residue's `confidence` is graded** (`--json`): how often its first
+  candidate ran, on the gold sets, among residues resting on the same
+  evidence — 0.7 for a call on `self` or a name with at most three
+  definitions, 0.1 otherwise, 0.0 with no candidate. It was always 0.0.
+  `agreement` says what backs it, and `--explain` prints it as `evidence`.
 - **A `class_eval` block in a method body no longer replaces the class's
   own method.** `Const.class_eval do def self.x … end end` written inside a
   method reopens the class only if that method is called, so the class's

@@ -194,7 +194,11 @@ separately:
 * **`confidence`** — the share of the evidence that agrees. A local whose
   read three writes can reach — two `Foo.new`, one from an untyped call — is
   `resolved` at 0.67: nothing contradicts `Foo`, but not everything says it.
-  No confidence is low enough to turn `resolved` into `ambiguous`.
+  No confidence is low enough to turn `resolved` into `ambiguous`. A
+  `residue`'s is how often its first candidate ran, on the gold sets, among
+  residues resting on the same evidence — 0.7 for a call on `self` or a name
+  with at most three definitions, 0.1 for a name many classes define on an
+  untyped receiver — and `agreement` says which.
 * **`resolved_via`** — the rung that typed the receiver: `self`, `const`,
   `local:new`, `literal`, `sig`, `sig:param`, `sig:step`, `includer`,
   `rbi_dsl`, `super`, and `flow` for a variable. `chain` means the receiver
