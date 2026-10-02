@@ -66,7 +66,8 @@
 - **`trekr --index` never exits 0 when it could not finish.** Stopped by
   Ctrl-C or a caller's timeout, it now says how far it got ("index
   incomplete: 180 of 144977 files read …; answers from it are partial
-  until: trekr --index …") before exiting as the signal does. Behind
+  until: trekr --index …") before exiting as the signal does — also when
+  the reader of its output (`| tail`) went with the same Ctrl-C. Behind
   another trekr writer for longer than it waits (10 minutes), it says the
   same and **exits 2** where it exited 74, "database is locked"; under
   `--json`, `status: "incomplete"` with `warming` (whose `interrupted` is

@@ -8,7 +8,7 @@
 //! expects. What the report says is read from the store, not from this
 //! process: the commits a reader will see are what the checkout now holds.
 
-use super::{Output, emit_json, paths, store_path, warming_note};
+use super::{Output, json_text, paths, store_path, warming_note};
 use crate::store::Store;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -112,8 +112,15 @@ pub(super) fn report(out: Output, root: &str, why: &str) {
              to index it: {hint}"
         ),
     }
-    if out != Output::Text {
-        let _ = emit_json(
+    use std::io::Write;
+    // On Ctrl-C a reader down the pipe (`| tail`) has often gone already:
+    // the closed pipe is ignored, so the process still dies of the signal
+    // that stopped it, not of SIGPIPE, and a write error is no panic.
+    // SAFETY: replaces SIGPIPE's action; this process is on its way out.
+    unsafe { libc::signal(libc::SIGPIPE, libc::SIG_IGN) };
+    let mut stdout = std::io::stdout();
+    if out != Output::Text
+        && let Ok(rendered) = json_text(
             out,
             &serde_json::json!({
                 "repo": root,
@@ -122,10 +129,11 @@ pub(super) fn report(out: Output, root: &str, why: &str) {
                 "hint": hint,
                 "warming": warming.as_ref().map(|w| warming_note(root, w)),
             }),
-        );
+        )
+    {
+        let _ = writeln!(stdout, "{rendered}");
     }
-    use std::io::Write;
-    let _ = std::io::stdout().flush();
+    let _ = stdout.flush();
 }
 
 fn name(signal: libc::c_int) -> &'static str {

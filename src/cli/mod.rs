@@ -824,16 +824,21 @@ fn shown(path: &str) -> String {
 }
 
 fn emit_json<T: serde::Serialize>(out: Output, value: &T) -> anyhow::Result<()> {
+    println!("{}", json_text(out, value)?);
+    Ok(())
+}
+
+/// What `emit_json` prints, for a caller that must not panic on a closed
+/// pipe.
+fn json_text<T: serde::Serialize>(out: Output, value: &T) -> anyhow::Result<String> {
     let mut value = serde_json::to_value(value)?;
     rooted(&mut value);
     disclose(&mut value);
-    let rendered = if out == Output::Json {
+    Ok(if out == Output::Json {
         serde_json::to_string_pretty(&value)?
     } else {
         serde_json::to_string(&value)?
-    };
-    println!("{rendered}");
-    Ok(())
+    })
 }
 
 /// `emit_json` for an answer holding one long list: `answer[key]` is written
