@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **`--dead` says why a class, module or constant is `lower`** when only
+  the blanket rule graded it: its `caveat` was empty and the text a bare
+  "(lower confidence)".
 - **Relation chains are typed.** `Post.where(…).order(…).pluck(…)`, a
   `scope`'s result and a `has_many` reader's are ActiveRecord relations, so
   each next call resolves to ActiveRecord's `QueryMethods`, `Calculations`

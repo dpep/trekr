@@ -711,7 +711,10 @@ fn dead_reads_what_a_gems_base_class_reaches_by_name() {
     };
     assert!(caveat("title").contains("computes"), "{dead}");
     assert!(caveat("ATTRS").contains("read on a value"), "{dead}");
-    assert_eq!(caveat("STALE"), "", "{dead}");
+    assert!(
+        caveat("STALE").contains("DEC-450"),
+        "only the blanket rule: {dead}"
+    );
     assert!(!caveat("unused").contains("computes"), "{dead}");
     let _ = fs::remove_dir_all(&dir);
 }

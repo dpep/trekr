@@ -3,5 +3,5 @@
 # by a computed name (`Regions.const_get(name)`), and a class whose ancestor
 # constantizes a name it computes: each is reached by no reference, and the
 # row says how it may be reached, graded lower.
-dead app/controllers ListController::PERMITTED=unreferenced~value ListController::STALE=unreferenced~
+dead app/controllers ListController::PERMITTED=unreferenced~value ListController::STALE=unreferenced~DEC-450
 dead lib Levels::LOW=unreferenced~listed Regions::North=unreferenced~computed FetchStep=unreferenced~computes

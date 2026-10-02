@@ -2,5 +2,5 @@
 # class named `…Controller`, so a RuboCop cop was graded lower. Only a
 # class under a `controllers/` directory, or an ActionController::Metal,
 # is one routes may reach.
-dead lib Cops::NoRawController=unreferenced~
+dead lib Cops::NoRawController=unreferenced~DEC-450
 dead app StaleController=unreferenced~routes

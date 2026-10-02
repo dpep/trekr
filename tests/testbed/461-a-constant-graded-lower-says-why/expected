@@ -1,0 +1,4 @@
+# A class or constant nothing names is graded lower by DEC-450's blanket
+# rule, and the row carried an empty caveat: text printed a bare
+# "(lower confidence)" with no reason.
+dead app.rb Lonely=unreferenced~DEC-450 Lonely::LIMIT=unreferenced~DEC-450

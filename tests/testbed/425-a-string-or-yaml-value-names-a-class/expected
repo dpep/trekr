@@ -2,4 +2,4 @@
 # `class_name:` — is looked up by that name. A capitalised word alone is a
 # name only where a class is looked up (`class_name`, `constantize`, …):
 # elsewhere it is a word (`"Welcome"`).
-dead app Jobs::PurgeWidgets=convention-only Spare=convention-only Welcome=unreferenced~
+dead app Jobs::PurgeWidgets=convention-only Spare=convention-only Welcome=unreferenced~DEC-450

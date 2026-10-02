@@ -11434,3 +11434,10 @@ symbol, a serializer block's bare call. Logged.
 
 **`lower` separates**: 2 of 20 lower rows were dead, as on mastodon
 (DEC-422).
+
+**The blanket rule is named.** A row this rule alone grades `lower` carried
+an empty `caveat` (74 on discourse), and text printed a bare "(lower
+confidence)"; it now says "classes, modules and constants are graded lower
+unless a convention names them: a name built at runtime may reach one
+(DEC-450)". A reading's own caveat, when one was found, is still the one
+shown. Testbed 461.

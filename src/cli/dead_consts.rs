@@ -64,6 +64,10 @@ fn within(scope: &str, fqn: &str) -> bool {
 }
 
 /// One declaration `--dead` weighs: its name, kind and first site in scope.
+/// The caveat of a row graded `lower` by DEC-450's blanket rule alone.
+const UNPROVEN: &str = "classes, modules and constants are graded lower unless a convention \
+                        names them: a name built at runtime may reach one (DEC-450)";
+
 struct Declared {
     fqn: String,
     kind: String,
@@ -483,6 +487,9 @@ pub(super) fn dead_constants(
             )
             .into();
             row["confidence"] = "lower".into();
+        }
+        if row["confidence"] == "lower" && row["caveat"] == "" {
+            row["caveat"] = UNPROVEN.into();
         }
         rows.push(row);
     }
