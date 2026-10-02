@@ -259,6 +259,7 @@ fn serve(
     let mut session = Session::open(root.clone(), store);
     session.definition_links = client.definition_links;
     session.reference_limit = client.reference_limit;
+    session.unresolved = client.unresolved;
     for buffer in buffers {
         session.did_open(buffer.path, buffer.text, buffer.version);
     }
@@ -1150,6 +1151,9 @@ struct Client {
     /// `initializationOptions.referenceLimit`: how many references an answer
     /// keeps. A positive integer; anything else keeps the default.
     reference_limit: usize,
+    /// `initializationOptions.unresolved`: `peek`, `best`, `confident` or
+    /// `none`; anything else keeps the default.
+    unresolved: state::Unresolved,
 }
 
 impl Client {
@@ -1167,6 +1171,11 @@ impl Client {
                 .and_then(serde_json::Value::as_u64)
                 .filter(|&n| n > 0)
                 .map_or(gather::DEFAULT_LIMIT, |n| n as usize),
+            unresolved: state::Unresolved::parse(
+                params
+                    .pointer("/initializationOptions/unresolved")
+                    .and_then(serde_json::Value::as_str),
+            ),
         }
     }
 }

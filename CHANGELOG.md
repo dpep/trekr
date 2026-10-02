@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Go to definition no longer jumps to a weak guess.** For a call trekr
+  could not resolve, the editor gets its ranked guesses only when the first
+  is a fair one; set `initializationOptions.unresolved` (VS Code:
+  `trekr.unresolved`) to `peek` for every guess as before, `best` for the
+  first, or `none`. On the comparison corpora this halves wrong jumps for
+  under a point (discourse) and three points (mastodon) of right ones.
 - **A residue's `confidence` is graded** (`--json`): how often its first
   candidate ran, on the gold sets, among residues resting on the same
   evidence — 0.7 for a call on `self` or a name with at most three

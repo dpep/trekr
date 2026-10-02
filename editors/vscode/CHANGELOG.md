@@ -4,6 +4,14 @@ The extension is a thin client: what it answers comes from the `trekr` binary
 it runs, whose own changelog is in the
 [trekr repo](https://github.com/dpep/trekr/blob/main/CHANGELOG.md).
 
+## 0.5.0
+
+- `trekr.unresolved` decides what Go to Definition shows for a call trekr
+  could not resolve: `confident` (the default) shows its guesses only when
+  the first is a fair one, `peek` all of them, `best` the first, `none`
+  nothing. Needs a trekr whose server reads it; an older one keeps showing
+  every guess.
+
 ## 0.4.0
 
 - First Marketplace release, with an icon.

@@ -56,6 +56,9 @@ pub(crate) struct Session {
     pub(crate) definition_links: bool,
     /// How many references an answer keeps (`initializationOptions.referenceLimit`).
     pub(crate) reference_limit: usize,
+    /// What a definition answers when the call is unresolved
+    /// (`initializationOptions.unresolved`).
+    pub(crate) unresolved: Unresolved,
     /// The checkout a background index is refilling after an upgrade
     /// dropped the store, and since when: until it ends, answers there are
     /// partial, and a hover says so.
@@ -268,6 +271,7 @@ impl Session {
             load_paths: HashMap::new(),
             definition_links: false,
             reference_limit: super::gather::DEFAULT_LIMIT,
+            unresolved: Unresolved::default(),
             reindexing: None,
             told_warming: std::collections::HashSet::new(),
             early: None,
@@ -863,5 +867,49 @@ mod tests {
         let members = Members::of(checkout.tree.as_ref().unwrap());
         checkout.listed(members);
         assert!(matches!(checkout.listing(), Some((_, true))));
+    }
+}
+
+/// What go-to-definition returns for a residue — a call trekr could not
+/// resolve, whose ranked candidates it still has (DEC-443). An editor shows
+/// a location the same whether it was resolved or guessed, so this is where
+/// the guess is let through or held back.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum Unresolved {
+    /// Every candidate, best first, as a peek list.
+    Peek,
+    /// The first candidate only.
+    Best,
+    /// The candidates, when the first's confidence is at least
+    /// [`Unresolved::THRESHOLD`]; otherwise nothing.
+    #[default]
+    Confident,
+    /// Nothing.
+    None,
+}
+
+impl Unresolved {
+    /// Between the two grades a residue's first candidate gets (DEC-442).
+    pub(crate) const THRESHOLD: f64 = 0.5;
+
+    /// The setting as the client spells it; anything else is the default.
+    pub(crate) fn parse(value: Option<&str>) -> Unresolved {
+        match value {
+            Some("peek") => Unresolved::Peek,
+            Some("best") => Unresolved::Best,
+            Some("confident") => Unresolved::Confident,
+            Some("none") => Unresolved::None,
+            _ => Unresolved::default(),
+        }
+    }
+
+    /// How many of a residue's candidates to return, given its confidence.
+    pub(crate) fn keep(self, confidence: f64) -> usize {
+        match self {
+            Unresolved::Peek => usize::MAX,
+            Unresolved::Best => 1,
+            Unresolved::Confident if confidence >= Self::THRESHOLD => usize::MAX,
+            Unresolved::Confident | Unresolved::None => 0,
+        }
     }
 }

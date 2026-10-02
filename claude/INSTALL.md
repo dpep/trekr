@@ -115,6 +115,11 @@ resolved answer is the signature, its doc comment, and where it lives — no
 caveat. A guess says so in words ("Best guess — the receiver's type is
 inferred…"), never as a number, and residue says what was checked.
 
+A definition request on a call trekr could not resolve returns its ranked
+guesses only when the first is a fair one: `initializationOptions.unresolved`
+is `confident` (the default), `peek` (every guess), `best` (the first) or
+`none`. VS Code's setting is `trekr.unresolved`.
+
 Hover also says **what kind of location a jump sends you to**: "Defined in"
 when the body is there, "Declared by `belongs_to` in" when a macro, an alias
 or a Sorbet stub made the name and the body runs elsewhere. That has nowhere

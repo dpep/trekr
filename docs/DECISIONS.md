@@ -11023,3 +11023,40 @@ owner" was right 8 times in 31 on an explicit receiver — `present?` on
 `ActiveRecord::Core` because a model's own ancestry was asked about another
 object. That is a ranking question, not a confidence one, and is left for
 a decision of its own.
+
+## DEC-443 — The LSP returns a residue's guesses when the first is a fair one
+
+**Decided.** `initializationOptions.unresolved` (VS Code: `trekr.unresolved`)
+decides what `textDocument/definition` returns for a residue:
+
+- `confident`, the default: its candidates, as `peek` would, when the
+  first's confidence (DEC-442) is at least 0.5; otherwise nothing.
+- `peek`: every candidate, best first, up to five — what it always did.
+- `best`: the first candidate only.
+- `none`: nothing.
+
+An editor shows a location the same whether it was resolved or guessed, so
+the setting is where a guess is let through. Hover still says the call was
+unresolved, and the CLI still returns every candidate.
+
+**Why `confident`.** compare.py over LSP, 500 sites each (after
+DEC-440/441; answered / correct@1 / wrong@1 / found):
+
+| mode | discourse | mastodon |
+| --- | --- | --- |
+| peek | 96.0 / 78.4 / 17.6 / 83.2 | 98.8 / 64.6 / 34.2 / 73.0 |
+| best | 96.0 / 78.4 / 17.6 / 79.6 | 98.8 / 64.6 / 34.2 / 67.0 |
+| **confident** | 86.2 / 77.6 / **8.6** / 79.2 | 81.0 / 61.2 / **19.8** / 65.0 |
+| none | 67.6 / 62.8 / 4.8 / 64.0 | 65.8 / 51.4 / 14.4 / 53.8 |
+| ruby-lsp | 63.0 / 51.4 / 11.6 / 56.8 | 72.6 / 51.2 / 21.4 / 57.0 |
+
+`confident` halves wrong@1 for 0.8 and 3.4 points of correct@1, and puts
+trekr below ruby-lsp's wrong@1 on both corpora while staying 26 and 10
+points ahead on correct@1. Of the answers it gives, 90 % and 76 % are right,
+against 82 % and 65 % for `peek`. `none` gives back most of trekr's lead
+over ruby-lsp to shave four more points. `best` changes nothing scored at
+@1. widget_shop: 100 / 61.9 / 38.1 → 95.2 / 61.9 / 33.3.
+
+**What it costs**: found drops 4 and 8 points — a weak guess's peek list
+was sometimes the way to the truth. An agent or a user who wants it sets
+`peek`.

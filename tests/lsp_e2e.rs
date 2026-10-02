@@ -519,6 +519,101 @@ fn references_narrow_to_the_method_asked_about_not_the_name() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Each `initializationOptions.unresolved` mode, on a residue whose first
+/// candidate is a weak guess (four classes define `run`) and one that is a
+/// fair one (one class defines `only`) — DEC-443.
+#[test]
+fn the_unresolved_setting_decides_which_guesses_reach_the_editor() {
+    let source = concat!(
+        "class A; def run; end; end\n",  // 1
+        "class B; def run; end; end\n",  // 2
+        "class C; def run; end; end\n",  // 3
+        "class D; def run; end; end\n",  // 4
+        "class E; def only; end; end\n", // 5
+        "class Caller\n",                // 6
+        "  def go(thing)\n",             // 7
+        "    thing.run\n",               // 8
+        "    thing.only\n",              // 9
+        "  end\n",                       // 10
+        "end\n",                         // 11
+    );
+    let (dir, db) = scratch("unresolved-modes");
+    git(&dir, &["init", "-q"]);
+    fs::write(dir.join("app.rb"), source).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+
+    let answers = |mode: Option<&str>| -> (usize, usize) {
+        let mut session = Session::start(&db, &dir);
+        let options = match mode {
+            Some(mode) => serde_json::json!({ "index": false, "unresolved": mode }),
+            None => serde_json::json!({ "index": false }),
+        };
+        session.request(
+            "initialize",
+            serde_json::json!({
+                "processId": null,
+                "rootUri": format!("file://{}", dir.display()),
+                "capabilities": {},
+                "initializationOptions": options,
+            }),
+        );
+        session.notify("initialized", serde_json::json!({}));
+        session.notify(
+            "textDocument/didOpen",
+            serde_json::json!({"textDocument": {
+                "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+            }}),
+        );
+        let mut count = |line: u64| {
+            let answer = session.request(
+                "textDocument/definition",
+                serde_json::json!({
+                    "textDocument": {"uri": uri_of(&dir, "app.rb")},
+                    "position": {"line": line, "character": 11},
+                }),
+            );
+            answer["result"].as_array().map_or(0, Vec::len)
+        };
+        let counts = (count(7), count(8));
+        session.stop();
+        counts
+    };
+
+    assert_eq!(
+        answers(None),
+        (0, 1),
+        "confident by default: the weak guess is held back"
+    );
+    assert_eq!(answers(Some("confident")), (0, 1));
+    assert_eq!(answers(Some("peek")), (4, 1), "every candidate");
+    assert_eq!(answers(Some("best")), (1, 1), "the first only");
+    assert_eq!(answers(Some("none")), (0, 0), "no guess at all");
+    assert_eq!(
+        answers(Some("bogus")),
+        (0, 1),
+        "an unknown mode is the default"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn definition_on_an_unresolved_receiver_offers_ranked_guesses() {
     let (dir, db) = scratch("guesses");

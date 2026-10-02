@@ -822,7 +822,10 @@ above is Ruby's own algorithm, so within the indexed set a hit is exact rather
 than ranked. The uncertainty that does exist is reported as evidence —
 `scopes_tried`, `unresolved_ancestors` — rather than smeared into a number that
 would look like a measurement (DEC-008). A method call is `residue` carrying its
-receiver shape, which is where layer 3 will start.
+receiver shape, which is where layer 3 will start. A residue's confidence is
+how often its first candidate ran, on the gold sets, for residues resting on
+the same evidence (DEC-442); the LSP holds the weak ones back from a
+definition answer unless the client asks for them (DEC-443).
 
 `$TREKR_DB` overrides the database path (default
 `~/.local/share/trekr/trekr.db`); the e2e tests use it for isolation. Beside

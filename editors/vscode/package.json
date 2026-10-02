@@ -2,7 +2,7 @@
   "name": "trekr",
   "displayName": "trekr — Ruby code intelligence",
   "description": "A Ruby language server backed by trekr: receiver-aware definitions, references narrowed by receiver, completion, call hierarchy.",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "publisher": "dpep",
   "license": "MIT",
   "icon": "images/icon.png",
@@ -101,6 +101,18 @@
           "default": 1000,
           "minimum": 1,
           "markdownDescription": "Most locations Find All References returns, confirmed callers first. When more exist, trekr says so and names the `trekr --refs` command that lists them all. Restart trekr to apply."
+        },
+        "trekr.unresolved": {
+          "type": "string",
+          "enum": ["confident", "peek", "best", "none"],
+          "enumDescriptions": [
+            "Its guesses, only when the first is a fair one (trekr's confidence at least 0.5).",
+            "Every guess, best first, as a peek list.",
+            "The first guess only.",
+            "Nothing."
+          ],
+          "default": "confident",
+          "markdownDescription": "What Go to Definition shows for a call trekr could not resolve, whose ranked guesses it still has. An editor shows a guess as it shows an answer, so `confident` holds back the weak ones; hover still says the call was unresolved. Restart trekr to apply."
         }
       }
     }

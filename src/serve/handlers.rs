@@ -430,6 +430,7 @@ fn resolve_at(
         return Ok(Vec::new());
     };
     let path = located.relative.clone();
+    let unresolved = session.unresolved;
     let tree = session.tree(&located.root)?;
     Ok(match under {
         Under::Definition(def) => vec![(path, def.pos.line, def.pos.col)],
@@ -455,15 +456,19 @@ fn resolve_at(
                     .map(|site| (site.path, site.line, site.col))
                     .collect()
             } else {
-                // Residue is not "nothing known". The CLI has always returned
-                // ranked candidates here; returning null instead was the LSP
-                // surface throwing away an answer the engine already had.
-                // Order is the disclosure, as it is for references, and `hover`
+                // Residue is not "nothing known": the ranked candidates are an
+                // answer, and order is the disclosure, as it is for references.
+                // But an editor shows a guess as it shows an answer, so how
+                // many get through is the client's setting (DEC-443); `hover`
                 // at the same position says the receiver was never resolved.
+                let keep = unresolved.keep(answer.confidence);
+                if keep == 0 && !answer.candidates.is_empty() {
+                    super::miss::why("an unresolved call below the confidence shown");
+                }
                 answer
                     .candidates
                     .into_iter()
-                    .take(MAX_GUESSES)
+                    .take(MAX_GUESSES.min(keep))
                     .map(|candidate| (candidate.site.path, candidate.site.line, candidate.site.col))
                     .collect()
             }

@@ -39,6 +39,7 @@ async function start() {
     initializationOptions: {
       index: config.get<boolean>("index", true),
       referenceLimit: config.get<number>("referenceLimit", 1000),
+      unresolved: config.get<string>("unresolved", "confident"),
     },
     middleware: middlewareFor(config.get<string[]>("features") ?? []),
   };
