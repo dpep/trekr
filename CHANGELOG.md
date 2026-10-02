@@ -68,7 +68,7 @@
   `Store::KEY`) is used. A constant handed to `enum` or an
   `attr_*` macro counts as a reference (this changes what an index
   records).
-- **Upgrading drops and rebuilds the index** (store v57): trekr reindexes on
+- **Upgrading drops and rebuilds the index** (store v58): trekr reindexes on
   its own; run `trekr --index` to do it up front.
 - **`trekr --index` never exits 0 when it could not finish.** Stopped by
   Ctrl-C or a caller's timeout, it now says how far it got ("index
