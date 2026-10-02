@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- **Upgrading drops and rebuilds the index** (store v55): trekr reindexes on
+  its own; run `trekr --index` to do it up front.
 - **`trekr --index` never exits 0 when it could not finish.** Stopped by
   Ctrl-C or a caller's timeout, it now says how far it got ("index
   incomplete: 180 of 144977 files read …; answers from it are partial
