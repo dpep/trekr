@@ -1,0 +1,7 @@
+# A method named only in a YAML config — a generator resolved with
+# `public_send`, a `Const.method` mapping — has a caller trekr cannot see.
+# `--dead` called each unreferenced, clear. Now each says where it is named
+# and is not clear. A plain word (`summary`) is not a method name, and a
+# locale file's text is not config: neither is said.
+dead app/services/notifier.rb Notifier#pay_schedule_resources=unreferenced~config/notifications.yml:3 Notifier#summary=unreferenced~ Notifier#locale_only_name=unreferenced~ Notifier#lonely=unreferenced~
+dead lib/pkg/foo_sanitizer.rb Pkg::FooSanitizer#sanitize_uid=unreferenced~config/exports.yml:3

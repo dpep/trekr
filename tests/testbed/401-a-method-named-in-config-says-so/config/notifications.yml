@@ -1,0 +1,4 @@
+# Each notification's resources come from the generator it names.
+payroll:
+  generator: pay_schedule_resources # resolved with public_send
+  kind: summary

@@ -10616,5 +10616,61 @@ the store version moves for the change to reach an existing index.
 row: `UserEmail#destroy_email_tokens`, `single-caller` clear (its
 `after_destroy` block) → not a candidate, its `before_save -> {
 destroy_email_tokens(email_was) }` now counted — right.
-Gold, discourse (900 app + 300 gem sites): verdict files byte-identical,
+rails (`--dead` of activerecord, actionpack, activesupport, actionview,
+activemodel) two rows, both Rails' own `before_action -> { … }` in a
+concern's `ClassMethods` calling the concern's instance method:
+`AllowBrowser#allow_browser` (`unreferenced` clear) and
+`RateLimiting#rate_limiting` (`unreferenced` lower) → `single-caller` —
+right. Gold, discourse (900 app + 300 gem sites): verdict files byte-identical,
 9 confidently `wrong` before and after.
+
+## DEC-402 — `--dead` says when a method's name is written in YAML config
+
+**Decided.** A `--dead` row whose method name a tracked `*.yml`/`*.yaml`
+file in the checkout writes as a scalar says "named in config (PATH:LINE),
+which is not read", and is graded `lower`, as DEC-315's view caveat is. The
+tier stays: it is evidence of a way in — a dispatcher's `public_send`, a
+`constantize(…).public_send` — never of a caller. A scalar names a method
+when it is:
+
+- the method of `Const.method` (`sanitizer: Pkg::FooSanitizer.sanitize_uid`),
+  or
+- a bare name shaped as only a method is: snake_case with an underscore
+  inside it, or ending in `?`/`!` (`generator: pay_schedule_resources`).
+
+Not read: a file under a `locales/` directory, and a lockfile
+(`*.lock.yml`, `*-lock.yaml`). A key is never a name — only what it is set
+to.
+
+**Reported:** a notifications config resolved with `public_send`
+(`generator: pay_schedule_resources`) and an export's column → sanitizer
+mapping (`sanitizer: Pkg::FooSanitizer.sanitize_uid`) reach methods `--dead`
+called unreferenced, clear. Testbed 401.
+
+**The noise rules, measured** (discourse, the one corpus here with YAML in
+quantity: 4,452 files; mastodon's bench copy has none; `--dead app lib`,
+clear rows that would be lowered):
+
+| rule | YAML files read | names | clear rows lowered |
+| --- | ---: | ---: | ---: |
+| every scalar of a name's shape | 4,452 | 3,751 | 24 |
+| … less `locales/` and lockfiles | 209 | 802 | 15 |
+| … and a bare name only when snake_case or `?`/`!` (this) | 209 | 487 | 7 |
+
+Locales are 4,243 of discourse's YAML files and every hit in them was
+translated text (`deleted`, `likes`, `timer`). A bare English word matched
+eight candidates beyond the rule kept, none a method reference (`area:
+moderation`, `- likes`). Of the seven the rule lowers: the one
+`unreferenced` row is a true positive — `TopMenu.crawler_homepage_choices`,
+which `config/site_settings.yml` names as `choices:` and discourse evaluates
+— and so is `HighlightJs.languages` (`single-caller`); the other five are
+incidental (`area: "trust_levels"`, the column list in
+`migrations/core/config/intermediate_db.yml`), each on a `single-caller` or
+`convention-only` row. discourse's `unreferenced` clear 98 → 97; mastodon
+unchanged; rails (five libraries) unchanged — its 201 YAML files are test
+fixtures and CI config, none naming a candidate.
+
+**Not done: reading YAML as references.** A scalar has no receiver and no
+dispatch; counting it as a caller would turn a coincidence into
+`single-caller`. *Reverses if:* a convention for config dispatch is common
+enough to model (a key whose value Rails itself sends).

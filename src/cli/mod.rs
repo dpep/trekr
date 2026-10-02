@@ -6,6 +6,7 @@
 //! layer will add.
 
 mod built;
+mod config;
 mod conventions;
 mod failure;
 mod incomplete;
@@ -3801,6 +3802,7 @@ fn dead_in(
     // The expensive pass, only for names the cheap one could not clear.
     let tree = build_tree(store, &root_str)?;
     let views = views::Views::read(root);
+    let config = config::Config::read(root);
     let built = built::Built::read(root);
     let routes = routes::Routes::read(root);
     let routed = routed_actions(&tree, &routes);
@@ -4094,6 +4096,12 @@ fn dead_in(
                 risky.push_str(", ");
             }
             risky.push_str(&format!("named in a view ({template}), which is not read"));
+        }
+        if let Some(at) = config.naming(&def.name) {
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            risky.push_str(&format!("named in config ({at}), which is not read"));
         }
         if !def.singleton && conventions::assigned_writer(&tree, &owner, &def.name, public) {
             if !risky.is_empty() {

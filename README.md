@@ -189,7 +189,9 @@ runtime (DEC-343, DEC-344). And every other way in the row can name: a name
 of its shape the checkout builds (`:"report_#{type}"`) or sends to its class
 (`Mailer.public_send(type)`), a writer `assign_attributes` reaches, an
 ancestor trekr has not indexed, a gem of the bundle that calls the name, a
-helper another helper calls (DEC-363–368, DEC-370).
+helper another helper calls (DEC-363–368, DEC-370), a YAML config that
+writes the name (`generator: pay_schedule_resources`,
+`Pkg::Sanitizer.clean_uid`; locale files aside, DEC-402).
 
 `clear` on an `unreferenced` row means none of those was found. Measured by
 hand on mastodon and discourse (DEC-372), such rows were truly dead 79 % and

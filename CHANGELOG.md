@@ -17,6 +17,12 @@
   controller's instance, as an `if:` lambda's do, so a concern the class
   includes answers them and `--dead` no longer calls such a method
   unreferenced. This changes what an index records.
+- **`--dead` says when a method is named in YAML config.** A row whose
+  name a tracked `.yml`/`.yaml` file writes — as `generator:
+  pay_schedule_resources`, or as the method of `sanitizer:
+  Pkg::FooSanitizer.sanitize_uid` — says "named in config (path:line),
+  which is not read" and is graded `lower`. Locale files and lockfiles are
+  not read, and a plain word (`summary`) is not taken for a method name.
 
 ## 0.8.4 — 2026-10-01
 
