@@ -4,9 +4,11 @@
 # ruled out "no such name", and a Gemfile's `gem` was Kernel's. Rake extends
 # main with Rake::DSL; a Gemfile is Bundler's; a file whose top-level call
 # main does not answer runs on something else; a def in a block is not
-# Object's.
+# Object's. main's own `private`, and a call inside a top-level def, which
+# runs on whatever calls it, say nothing about the file.
 def lib/tasks/build.rake:1:1 status=resolved owner=Rake::DSL via=main
 def lib/tasks/build.rake:3:1 status=resolved owner=Kernel via=main
 def Gemfile:2:1 status=residue
 refs Rake::DSL#task confirmed=1 possible=0 excluded=0
 refs Plugin::Instance#register_asset possible=1 excluded=0
+def script/tool.rb:1:1 status=resolved owner=Kernel via=main

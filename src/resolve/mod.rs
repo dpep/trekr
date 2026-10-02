@@ -2881,19 +2881,33 @@ fn on_main(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiv
         return None;
     }
     let answers = |name: &str| {
-        !top_level_defs(tree, name).is_empty()
+        MAIN_OWN.contains(&name)
+            || !top_level_defs(tree, name).is_empty()
             || tree.lookup("Object", false, name).is_some()
             || rake && tree.lookup(RAKE_DSL, false, name).is_some()
+    };
+    // A top-level `def`'s body is not the file's: it runs on whatever calls it.
+    let in_a_def = |line: u32| {
+        facts.defs.iter().any(|def| {
+            def.kind == crate::core::Kind::Method
+                && def.nesting.is_empty()
+                && (def.pos.line..=def.end_line).contains(&line)
+        })
     };
     let foreign = facts.calls.iter().any(|other| {
         other.nesting.is_empty()
             && other.block_owner.is_none()
+            && !in_a_def(other.pos.line)
             && other.recv == RecvShape::Implicit
             && other.recv_value.is_none()
             && !answers(&other.name)
     });
     (!foreign).then(|| main("Object"))
 }
+
+/// The methods `main` has of its own, on its singleton, which no class
+/// declares: `private def x` at the top of a file is a plain script's.
+const MAIN_OWN: [&str; 5] = ["public", "private", "include", "using", "define_method"];
 
 /// What Rake extends `main` with before it loads a Rakefile or a `.rake`.
 const RAKE_DSL: &str = "Rake::DSL";

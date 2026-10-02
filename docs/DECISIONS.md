@@ -11228,7 +11228,11 @@ possible to 123 excluded; a Gemfile's `gem` was `Kernel#gem` and a
   answers runs on something else — a Discourse `plugin.rb`
   (`register_asset`), a Guardfile, a Capfile with `install_plugin`. No
   further list: a name list would have to know every DSL, and the evidence
-  rule needs none.
+  rule needs none. `main`'s own singleton methods (`private`, `public`,
+  `include`, `using`, `define_method`) answer, and a call inside a top-level
+  `def`'s body is not the file's: the gold set's stdlib `tempfile.rb`
+  (`private def create_anonymous … create_with_filename`) lost its
+  `DelegateClass(File)` to that until both were read so.
 - **A top-level `def` in a block is not Object's**: it is whatever the
   block runs on (`instance_eval do def task`), and exists only if the block
   runs. Such a `def` is recorded `via: "def in a block at the top level"`
