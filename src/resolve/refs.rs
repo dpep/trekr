@@ -500,7 +500,7 @@ fn tier(
         }
         // Ruby finds nothing, and the class's `delegate_missing_to` hands the
         // name on: to the target when its type says so (DEC-112).
-        None if let Some(answer) = super::handed_on(tree, call, path, &receiver) => {
+        None if let Some(answer) = super::handed_on(tree, facts, call, path, &receiver) => {
             match answer.owner {
                 Some(owner) if answer.status != super::Status::Residue => {
                     let (tier, why, ruling) = if target.is_none_or(|target| owner == target) {
@@ -560,6 +560,17 @@ fn tier(
             Some(receiver.fqn.clone()),
             None,
             "the call is in a block whose `self` the method it is handed to may change",
+            1,
+            None,
+        ),
+        // A relation hands a name it lacks to its model's class methods, and
+        // the chain did not say which model, or that model's class methods
+        // are not all indexed (DEC-444).
+        None if !receiver.singleton && super::is_relation(tree, &receiver.fqn) => here(
+            Tier::Possible,
+            Some(receiver.fqn.clone()),
+            None,
+            "a relation hands a name it lacks to its model's class methods",
             1,
             None,
         ),

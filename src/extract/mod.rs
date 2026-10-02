@@ -3857,6 +3857,36 @@ impl<'pr> Extractor<'_> {
         self.facts.defs.push(def);
     }
 
+    /// An assignment's value, with where a call it ends in is, so a
+    /// chain's signatures can type it (DEC-444).
+    fn assigned(&self, value: &Node<'pr>) -> ValueShape {
+        let at = || {
+            let call = value.as_call_node()?;
+            Some(self.pos(call.message_loc()?.start_offset()))
+        };
+        match value_shape(value) {
+            ValueShape::ConstCall { recv, name, .. } => ValueShape::ConstCall {
+                recv,
+                name,
+                at: at(),
+            },
+            ValueShape::LocalCall { recv, name, .. } => ValueShape::LocalCall {
+                recv,
+                name,
+                at: at(),
+            },
+            ValueShape::Other
+                if value
+                    .as_call_node()
+                    .and_then(|call| call.receiver())
+                    .is_some_and(|receiver| receiver.as_call_node().is_some()) =>
+            {
+                at().map_or(ValueShape::Other, ValueShape::Chain)
+            }
+            shape => shape,
+        }
+    }
+
     /// What a `let` block returns, as an assignment's value is read, with
     /// `described_class` as the constant the group describes (DEC-096).
     fn let_value(&self, value: &Node<'pr>) -> ValueShape {
@@ -3879,7 +3909,7 @@ impl<'pr> Extractor<'_> {
                 return ValueShape::New(class);
             }
         }
-        match value_shape(value) {
+        match self.assigned(value) {
             // A local read in the block was written in the block, which the
             // file's assignments do not place.
             ValueShape::Same(_) | ValueShape::LocalCall { .. } => ValueShape::Other,
@@ -4425,6 +4455,12 @@ impl<'pr> Extractor<'_> {
 
         for (literal, pos) in names {
             let associated = macros::associated_class(macro_name, &literal, class_name.as_deref());
+            let collection = macros::collection_class(
+                macro_name,
+                &literal,
+                class_name.as_deref(),
+                keyword_value(args, "source").is_some(),
+            );
 
             for made in macros::generated(macro_name, &literal) {
                 if off("reset_token") && made.name.contains("reset_token") {
@@ -4478,6 +4514,9 @@ impl<'pr> Extractor<'_> {
                     && let Some(class) = &associated
                 {
                     def.sig_returns = Some(class.clone());
+                }
+                if !made.writer && made.name == literal && collection.is_some() {
+                    def.target = collection.clone();
                 }
                 self.push_def(def);
                 any = true;
@@ -4766,9 +4805,10 @@ impl<'pr> Extractor<'_> {
 
     fn record_assign(&mut self, target: String, value: &Node<'pr>, offset: usize) {
         let pos = self.pos(offset);
+        let value = self.assigned(value);
         self.facts.assigns.push(Assign {
             target,
-            value: value_shape(value),
+            value,
             nesting: self.nesting.clone(),
             singleton: self.self_is_class(),
             pos,
@@ -5956,14 +5996,22 @@ fn value_shape(node: &Node<'_>) -> ValueShape {
                 return if name == "new" {
                     ValueShape::New(recv)
                 } else {
-                    ValueShape::ConstCall { recv, name }
+                    ValueShape::ConstCall {
+                        recv,
+                        name,
+                        at: None,
+                    }
                 };
             }
             // `y.build`, and `y&.build` — safe navigation parses as an
             // ordinary call and types the same way.
             match receiver.as_local_variable_read_node() {
                 Some(local) => match String::from_utf8(local.name().as_slice().to_vec()) {
-                    Ok(recv) => ValueShape::LocalCall { recv, name },
+                    Ok(recv) => ValueShape::LocalCall {
+                        recv,
+                        name,
+                        at: None,
+                    },
                     Err(_) => ValueShape::Other,
                 },
                 None => ValueShape::Other,

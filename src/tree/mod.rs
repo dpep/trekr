@@ -270,6 +270,10 @@ pub(crate) struct MethodDef {
     pub(crate) body_elsewhere: bool,
     /// The method a `delegate_missing_to` hands every unknown name to.
     pub(crate) forwards_to: Option<String>,
+    /// A `has_many` reader's records, as written: the model its relation
+    /// hands a name it lacks to (DEC-444).
+    #[serde(skip)]
+    pub(crate) records: Option<String>,
     /// An alias whose `site` is the body it copied, not the alias line.
     #[serde(skip)]
     pub(crate) bound: bool,
@@ -2019,7 +2023,10 @@ impl Tree {
     pub(crate) fn returned_class(&self, method: &MethodDef, written: &str) -> Option<String> {
         // Rails finds an association's class from the model's name
         // (`compute_type`), so `class Admin::Post` still sees `Admin::User`.
-        let nesting = if matches!(method.via.as_deref(), Some("belongs_to" | "has_one")) {
+        let nesting = if matches!(
+            method.via.as_deref(),
+            Some("belongs_to" | "has_one" | "has_many" | "has_and_belongs_to_many")
+        ) {
             let mut prefixes: Vec<String> = Vec::new();
             let mut name = method.owner.as_str();
             loop {
@@ -3007,8 +3014,15 @@ impl Tree {
                 Some("delegate_missing_to") | Some("delegate")
             )
         });
+        let records = row.target.clone().filter(|_| {
+            matches!(
+                row.via.as_deref(),
+                Some("has_many") | Some("has_and_belongs_to_many")
+            )
+        });
         MethodDef {
             forwards_to,
+            records,
             bound: bound.is_some(),
             // A body written elsewhere takes whatever that body takes.
             arity: if body_elsewhere {
@@ -3139,6 +3153,7 @@ impl Tree {
             },
             body_elsewhere: false,
             forwards_to: None,
+            records: None,
             bound: false,
         };
         Some(Landing {

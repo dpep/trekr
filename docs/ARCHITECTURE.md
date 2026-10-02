@@ -307,11 +307,12 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | `local:const` | `x = Foo` — holds the class, so `x.bar` is a class method | agreeing / total |
 | `local:rescue` | `rescue Foo => e` — an instance of each class rescued; `StandardError` bare (DEC-089) | agreeing / total |
 | `literal` | `out = []`, or `"x".upcase` — core knows what a String is | agreeing / total |
-| `sig` | an inline Sorbet `sig` on the method the value came from | agreeing / total |
+| `sig` | an inline Sorbet `sig` on the method the value came from, or what a chain assigned to the variable returns, read as `chain` reads it (`x = Post.where(…).order(:id)`, DEC-444) | agreeing / total |
 | `sig:param` | the parameter's declared class, from `params(...)` | 1.0 |
 | `sig:step` | one call on an already-typed local, via that method's `sig` | agreeing / total |
 | `chain` | `a.b.c` — `b`'s receiver typed, `b` found, its `sig` read; a reader with no `sig` returns what its one expression makes or holds — `X.new`, `@x ||= X.new`, `@x` or an `attr_reader` whose every write in its file is `X.new` — unless a subclass of `self` overrides it to return something else (DEC-392) | the receiver's |
 | `chain:name` | `x.gsub(a, b).downcase` with `x` untyped — every `gsub` that declares a return agrees | declaring / definitions |
+| `relation` | a relation lacks the name, and the chain says its model — the class it starts from (`Post.where(…)`) or the class a `has_many` reader names: the model's class method or scope, which `ActiveRecord::Delegation` hands it to (DEC-444); with no model said, `--refs` counts the site possible | 1.0 |
 | `delegate_missing_to` | the receiver's type has no such method, and its class's `delegate_missing_to :t` sends it to `t`, typed by `t`'s reader (DEC-112) | the receiver's |
 | `delegate` | the lookup lands on a `delegate … to: :x` whose `x` is typed (DEC-166): that type's method, the delegate kept as the second site; a subclass of the type that overrides it makes the answer ambiguous (DEC-211) | the receiver's, or 1 / (1 + overrides) |
 | `rbi_dsl` | resolved, then redirected from a Tapioca `.rbi` to the model | |

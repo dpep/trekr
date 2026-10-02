@@ -5,7 +5,10 @@
 - **Relation chains are typed.** `Post.where(…).order(…).pluck(…)`, a
   `scope`'s result and a `has_many` reader's are ActiveRecord relations, so
   each next call resolves to ActiveRecord's `QueryMethods`, `Calculations`
-  or `CollectionProxy` instead of to any class sharing the name. This
+  or `CollectionProxy` instead of to any class sharing the name. A model's
+  own class method or scope called on a relation (`Post.where(…).popular`,
+  `user.posts.visible`) resolves to the model's, and a variable assigned a
+  chain (`posts = Post.where(…).order(:id)`) is typed as the chain is. This
   changes what an index records.
 - **A call at the top of a file runs on `main`.** A top-level `require`
   resolves to `Kernel#require`, a top-level `def` is Object's and a bare

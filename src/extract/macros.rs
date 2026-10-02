@@ -298,6 +298,25 @@ pub(super) fn associated_class(
         .then(|| class_name.map_or_else(|| camelize(arg), str::to_string))
 }
 
+/// The model a collection association's records are, which its relation
+/// hands a name it lacks to (DEC-444): `class_name:`, else the singular of
+/// its name. `None` when a `source:` names another association's class.
+pub(super) fn collection_class(
+    macro_name: &str,
+    arg: &str,
+    class_name: Option<&str>,
+    source: bool,
+) -> Option<String> {
+    if !matches!(macro_name, "has_many" | "has_and_belongs_to_many") {
+        return None;
+    }
+    match class_name {
+        Some(class) => Some(class.to_string()),
+        None if source => None,
+        None => Some(camelize(&singularize(arg))),
+    }
+}
+
 /// The class a `db/schema.rb` column type produces.
 ///
 /// Only where it is determinate and the class is one core knows. `boolean` is

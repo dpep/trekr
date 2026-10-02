@@ -913,9 +913,12 @@ pub(crate) enum ValueShape {
     /// `helper` — an implicit-self call, whose `sig` may name the type.
     SelfCall(String),
     /// `X.build` — a call on a constant, whose `sig` may name the type.
+    /// `at` is where the call's name is, to find it again among the file's
+    /// calls, when the assignment recorded it.
     ConstCall {
         recv: String,
         name: String,
+        at: Option<Pos>,
     },
     /// `y.build` — a call on another local. One step from a typed `y` and no
     /// further: rwr's D61 found 70 % of returns end in another call, so the
@@ -923,7 +926,12 @@ pub(crate) enum ValueShape {
     LocalCall {
         recv: String,
         name: String,
+        at: Option<Pos>,
     },
+    /// `x.where(…).order(:id)` — a call on another call: the one whose name
+    /// is at this position, found again among the file's calls, which a
+    /// chain types step by step (DEC-444).
+    Chain(Pos),
     /// `[]`, `{}`, `"x"`, `1` — a literal, whose class core now knows.
     Literal(&'static str),
     /// `rescue X => e` — an instance of the class rescued; `StandardError`

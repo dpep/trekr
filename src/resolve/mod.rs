@@ -276,7 +276,7 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                 // Ruby's lookup fails, and a `method_missing` hands the name
                 // on: a relation's to its model (DEC-116), a class's
                 // `delegate_missing_to` to its target (DEC-112).
-                None if let Some(answer) = handed_on(tree, call, path, &receiver) => answer,
+                None if let Some(answer) = handed_on(tree, facts, call, path, &receiver) => answer,
                 // A method made from a name the source does not state may be
                 // this one, whether or not the name is defined elsewhere: the
                 // scope that makes such methods is the specific answer (DEC-130).
@@ -384,11 +384,13 @@ fn defined_nowhere(tree: &Tree, call: &Call) -> bool {
 /// Where a name the receiver lacks goes instead, when its class says.
 pub(super) fn handed_on(
     tree: &Tree,
+    facts: &Facts,
     call: &Call,
     path: &str,
     receiver: &Receiver,
 ) -> Option<MethodAnswer> {
-    to_the_model(tree, call, receiver).or_else(|| forwarded(tree, call, path, receiver))
+    to_the_model(tree, facts, call, path, receiver)
+        .or_else(|| forwarded(tree, call, path, receiver))
 }
 
 /// Ruby's lookup from the receiver, but for a scope's body: the relation
@@ -433,17 +435,26 @@ fn runs_on_a_relation(tree: &Tree, call: &Call, path: &str) -> bool {
 
 /// The relation a scope's body runs on hands a name it lacks to its model's
 /// class methods — another scope, a class method — as
-/// `ActiveRecord::Delegation` does (DEC-116).
-fn to_the_model(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<MethodAnswer> {
-    if receiver.via != "scope" {
-        return None;
-    }
-    let model = tree.scope_fqn(&call.nesting)?;
+/// `ActiveRecord::Delegation` does (DEC-116); so does a relation a chain
+/// returns, of the model the chain started from (DEC-444).
+fn to_the_model(
+    tree: &Tree,
+    facts: &Facts,
+    call: &Call,
+    path: &str,
+    receiver: &Receiver,
+) -> Option<MethodAnswer> {
+    let model = relation_model(tree, facts, call, path, receiver, 0)?;
     let found = tree.lookup(&model, true, &call.name)?;
+    let via = if receiver.via == "scope" {
+        "scope"
+    } else {
+        "relation"
+    };
     Some(MethodAnswer {
         status: Status::Resolved,
         confidence: 1.0,
-        resolved_via: Some("scope".to_string()),
+        resolved_via: Some(via.to_string()),
         receiver: call.recv.as_str(),
         receiver_kind: tree.kind_of(&model).map(str::to_string),
         receiver_type: Some(model),
@@ -456,6 +467,49 @@ fn to_the_model(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<MethodA
         candidates: Vec::new(),
         reason: None,
     })
+}
+
+/// Is `fqn` an ActiveRecord relation — a `has_many` reader's
+/// CollectionProxy as much as a query's Relation?
+pub(super) fn is_relation(tree: &Tree, fqn: &str) -> bool {
+    crate::tree::public_name(fqn) == RELATION || tree.inherits(fqn, RELATION)
+}
+
+/// The model whose class methods a relation receiver of `call` answers
+/// with: the class a scope's body is in, the class a chain starts from
+/// (`Post.where(…)`), or the class a `has_many` reader names. `None` when
+/// the chain does not say — a local, a parameter.
+pub(super) fn relation_model(
+    tree: &Tree,
+    facts: &Facts,
+    call: &Call,
+    path: &str,
+    receiver: &Receiver,
+    depth: usize,
+) -> Option<String> {
+    if receiver.singleton || !is_relation(tree, &receiver.fqn) || depth >= MAX_CHAIN {
+        return None;
+    }
+    if receiver.via == "scope" {
+        return tree.scope_fqn(&call.nesting);
+    }
+    let Some(RecvValue::Call(at)) = &call.recv_value else {
+        return None;
+    };
+    let previous = facts
+        .calls
+        .iter()
+        .find(|c| c.pos == *at && c.recv != RecvShape::Symbol)?;
+    let before = receiver_of(tree, facts, previous, path)?;
+    if before.singleton && tree.inherits(&before.fqn, "ActiveRecord::Base") {
+        return Some(before.fqn);
+    }
+    if let Some(model) = relation_model(tree, facts, previous, path, &before, depth + 1) {
+        return Some(model);
+    }
+    let reader = before.lookup(tree, &previous.name)?;
+    let records = reader.records.as_deref()?;
+    tree.returned_class(&reader, records)
 }
 
 /// A call that lands on a `delegate … to: :x`: the method `x`'s type runs,
@@ -1478,7 +1532,7 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
         }
         // An assignment first, because it is the more specific evidence; a
         // parameter's declared type is the fallback when there is none.
-        RecvShape::Local | RecvShape::Ivar => from_assignments(tree, facts, call)
+        RecvShape::Local | RecvShape::Ivar => from_assignments(tree, facts, call, path, depth)
             .or_else(|| from_sig_params(tree, facts, call, path))
             // Last, because it is the only rung resting on a naming habit
             // rather than on something the code states.
@@ -1749,6 +1803,7 @@ fn let_typed(
             def.value.as_ref()?,
             &def.nesting,
             def.pos,
+            path,
             depth,
             0,
         )
@@ -1969,6 +2024,11 @@ fn returned_by(
             ..receiver
         });
     }
+    returned_from(tree, receiver, previous)
+}
+
+/// What `previous`'s method on `receiver` returns, when a signature says.
+fn returned_from(tree: &Tree, receiver: Receiver, previous: &Call) -> Option<Receiver> {
     let method = tree.lookup(&receiver.fqn, receiver.singleton, &previous.name)?;
     let (declarer, returns) = match method.returns_for(previous.argc, previous.block) {
         Some(returns) => (method.clone(), returns.to_string()),
@@ -2149,7 +2209,13 @@ fn enclosing_method(facts: &Facts, line: u32) -> Option<&crate::core::Def> {
 /// every assignment to it in the file votes, which errs toward lower
 /// confidence. Writes that cannot be typed count against the answer, and
 /// writes that type differently make it `ambiguous` (DEC-071).
-fn from_assignments(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver> {
+fn from_assignments(
+    tree: &Tree,
+    facts: &Facts,
+    call: &Call,
+    path: &str,
+    depth: usize,
+) -> Option<Receiver> {
     let target = call.recv_text.as_ref()?;
     let scope = call.nesting.first();
     let seen = call
@@ -2197,7 +2263,8 @@ fn from_assignments(tree: &Tree, facts: &Facts, call: &Call) -> Option<Receiver>
             &assign.value,
             &assign.nesting,
             assign.pos,
-            0,
+            path,
+            depth,
             0,
         ) {
             votes.push(vote);
@@ -2267,6 +2334,7 @@ fn reaching_writes(source: &[u8]) -> std::collections::HashMap<Pos, Vec<Pos>> {
 }
 
 /// The class a value expression produces, if syntax or a `sig` names one.
+#[allow(clippy::too_many_arguments)]
 fn type_of(
     tree: &Tree,
     facts: &Facts,
@@ -2274,6 +2342,7 @@ fn type_of(
     nesting: &[String],
     // Where the value is written: a local it names was last set before here.
     at: Pos,
+    path: &str,
     depth: usize,
     steps: usize,
 ) -> Option<(String, bool, &'static str)> {
@@ -2299,6 +2368,7 @@ fn type_of(
                 &next.value,
                 &next.nesting,
                 next.pos,
+                path,
                 depth + 1,
                 steps,
             )
@@ -2308,23 +2378,31 @@ fn type_of(
         // One step, and only one: type the receiver from its own assignment,
         // then read the `sig` of the method called on it. Chaining further is
         // what rwr measured drowning.
-        ValueShape::LocalCall { recv, name } => {
+        ValueShape::LocalCall {
+            recv,
+            name,
+            at: called,
+        } => {
             if steps > 0 {
                 return None;
             }
-            let assign = last_write_before(facts, recv, at)?;
-            let (owner, singleton, _) = type_of(
-                tree,
-                facts,
-                &assign.value,
-                &assign.nesting,
-                assign.pos,
-                depth + 1,
-                steps + 1,
-            )?;
-            let method = tree.lookup(&owner, singleton, name)?;
-            let returns = method.sig_returns.as_deref()?;
-            Some((tree.returned_class(&method, returns)?, false, "sig:step"))
+            let stepped = || {
+                let assign = last_write_before(facts, recv, at)?;
+                let (owner, singleton, _) = type_of(
+                    tree,
+                    facts,
+                    &assign.value,
+                    &assign.nesting,
+                    assign.pos,
+                    path,
+                    depth + 1,
+                    steps + 1,
+                )?;
+                let method = tree.lookup(&owner, singleton, name)?;
+                let returns = method.sig_returns.as_deref()?;
+                Some((tree.returned_class(&method, returns)?, false, "sig:step"))
+            };
+            stepped().or_else(|| assigned_chain(tree, facts, (*called)?, path, depth))
         }
         // A `sig` names a usable class for 64 % of signatures against 3.9 %
         // from syntax alone (PLAN §2) — the highest-yield rung on the ladder.
@@ -2339,6 +2417,7 @@ fn type_of(
                     value,
                     &member.nesting,
                     member.pos,
+                    path,
                     depth + 1,
                     steps,
                 )
@@ -2349,7 +2428,7 @@ fn type_of(
             let returns = method.sig_returns.as_deref()?;
             Some((tree.returned_class(&method, returns)?, false, "sig"))
         }
-        ValueShape::ConstCall { recv, name } => {
+        ValueShape::ConstCall { recv, name, at } => {
             let owner = tree.resolve(recv, nesting).fqn?;
             // A declared return type is better evidence than a convention, so
             // it is tried first.
@@ -2360,12 +2439,38 @@ fn type_of(
             }
             // ActiveRecord's finders return an instance of the class they are
             // called on. This is a convention, not a signature — `find` given
-            // an array returns an array — so it is the last rung tried and it
-            // says `finder`, not `sig`.
-            is_finder(name).then_some((owner, false, "finder"))
+            // an array returns an array — so it is tried before what a gem's
+            // signature lends (`where`), and it says `finder`, not `sig`.
+            if is_finder(name) {
+                return Some((owner, false, "finder"));
+            }
+            assigned_chain(tree, facts, (*at)?, path, depth)
         }
+        ValueShape::Chain(at) => assigned_chain(tree, facts, *at, path, depth),
         ValueShape::Other => None,
     }
+}
+
+/// What the call at `at` returns, read as a chain reads it — the receiver
+/// typed, then the method's signature (DEC-444) — for a variable it is
+/// assigned to.
+fn assigned_chain(
+    tree: &Tree,
+    facts: &Facts,
+    at: Pos,
+    path: &str,
+    depth: usize,
+) -> Option<(String, bool, &'static str)> {
+    if depth >= MAX_CHAIN {
+        return None;
+    }
+    let call = facts
+        .calls
+        .iter()
+        .find(|c| c.pos == at && c.recv != RecvShape::Symbol)?;
+    let receiver = typed_at(tree, facts, call, path, depth + 1)?;
+    let returned = returned_from(tree, receiver, call)?;
+    Some((returned.fqn, false, "sig"))
 }
 
 /// The assignment to `name` nearest before `at` — the one a straight-line
@@ -3330,14 +3435,15 @@ mod tests {
     }
 
     #[test]
-    fn a_second_step_is_refused_rather_than_chased() {
-        // rwr measured 70% of returns ending in another call; chaining drowns.
+    fn a_second_step_is_followed_as_a_chain_is() {
+        // Each step rests on a signature, as a chain written out does
+        // (DEC-444); what rwr found drowning was chasing steps none states.
         let source = "class Deep\n  def touch\n  end\nend\n\
                       class Leaf\n  sig { returns(Deep) }\n  def deep\n  end\nend\n\
                       class Box\n  sig { returns(Leaf) }\n  def leaf\n  end\nend\n\
                       class W\n  def go\n    b = Box.new\n    l = b.leaf\n    \
                       d = l.deep\n    d.touch\n  end\nend\n";
-        assert_eq!(answer(source, "touch").status, Status::Residue);
+        assert_eq!(answer(source, "touch").owner.as_deref(), Some("Deep"));
     }
 
     /// The rails miss: `post = Post.first` two lines up, and an earlier

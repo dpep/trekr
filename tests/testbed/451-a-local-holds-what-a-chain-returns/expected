@@ -1,0 +1,8 @@
+# A local assigned from a relation chain was untyped: DEC-444 typed the
+# chain written out (`Widget.where(…).pluck`) but not the same chain held
+# in a local, so `widgets.limit` was a residue among every class's `limit`.
+# The assignment's call is typed as a chain is; a write in a loop that
+# reads the local it writes must not spin.
+def app/use.rb:4:13 status=resolved owner=ActiveRecord::QueryMethods via=sig
+def app/use.rb:6:11 status=resolved owner=ActiveRecord::Calculations via=sig
+def app/use.rb:9:11 status=resolved owner=ActiveRecord::Calculations

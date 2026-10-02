@@ -11211,3 +11211,39 @@ of the two is `resolved`, so mastodon's resolved-wrong count is 54, up one.
 Gem gold sets unchanged.
 
 **Extraction changed** (scope and has_many return types). Testbed 443.
+
+### DEC-444 addendum: a relation hands a name it lacks to its model
+
+**Reported** by the pre-release hunt: a model's class method or scope
+called on a typed relation was ruled out. `Post.where(author_id: 1).popular`
+and `user.posts.visible` were excluded from `--refs Post.popular` ("define
+no such name") and `--dead` called `Post.popular` unreferenced, clear —
+discourse's `Upload.with_no_non_post_relations` went from 3 possible to 3
+excluded, and mastodon's `Tag.find_normalized!` and chatwoot's
+`SortHandler::ClassMethods#sort_on_last_user_message_at` the same way.
+The "not done" line above was the cause: a relation is "of" a model, and
+`ActiveRecord::Delegation` hands a name the relation lacks to that model's
+class, as DEC-116 already did for a scope's own body.
+
+**Decided.** A name a relation (a `Relation` or a `CollectionProxy`) lacks
+is looked up on its model's class side — scopes, class methods, an
+extended `ClassMethods` — `resolved_via: relation`. The model is read back
+along the chain: the class it starts from (`Post.where(…)`), through any
+number of relation steps, or the class a `has_many` reader names
+(`class_name:`, else its singular; a `source:` without `class_name:` names
+none). With no model said — a local, a parameter — or a model that lacks
+the name, `--refs` counts the site `possible`, never excluded; a model that
+has the name from another owner rules it out as any receiver does. The
+`has_many` reader now records its model (an extraction change, within
+v56). Testbed 450.
+
+**A variable assigned a chain is typed as the chain is.** Reported by the
+LSP hunt: `accounts = Account.where(…).order(:id); accounts.limit(3)` was a
+residue among 31 `limit`s, hidden by the editor's `confident` mode, while
+the chain written out resolved. An assignment's value that is a call on a
+call (`a.b.c`), or a call on a constant or a local whose own `sig` says
+nothing, is now typed by the chain rung: the receiver typed, the method's
+signature read, the gem's lent ones included (`via: sig`). A finder
+(`Post.find`) keeps its convention, tried first. A write in a loop that
+reads the variable it writes is bounded by the chain's depth. Testbed 451.
+

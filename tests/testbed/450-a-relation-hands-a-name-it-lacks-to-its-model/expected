@@ -1,0 +1,13 @@
+# A relation hands a name it lacks to its model's class methods, as
+# ActiveRecord::Delegation does. DEC-444 typed relation chains, and a
+# model's class method or scope called on one was then ruled out "no such
+# name" in --refs and unreferenced in --dead. The model is the class the
+# chain starts from or the class a has_many reader names (class_name: too);
+# a relation of no known model may run any of them.
+def app/use.rb:3:25 status=resolved owner=Widget via=relation
+def app/use.rb:4:20 status=resolved owner=Widget via=relation
+def app/use.rb:6:18 status=resolved owner=Part via=relation
+def app/use.rb:7:32 status=resolved owner=Part via=relation
+refs Widget.popular confirmed=2 possible=0 excluded=1
+refs Part.recent confirmed=1 possible=1 excluded=0
+dead app/models Widget.popular=none
