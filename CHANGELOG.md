@@ -31,7 +31,6 @@
   `Options::ClassMethods` its inner include brought, as Ruby does, so
   `sidekiq_options` in a worker resolves to Sidekiq's `Job` method rather
   than the one it overrides.
-- **Upgrading drops and rebuilds the index** (store v56): trekr reindexes on
 - **`--dead` lists unused classes, modules and constants too**, after the
   methods: one no constant reference in the checkout resolves to (views and
   executable scripts read too). Each row carries a new `kind` field —
@@ -44,7 +43,7 @@
   association, a YAML value, a registry — is `convention-only`, and what
   may still reach one (`self.class::LIMIT`, a listed namespace, a factory,
   an STI subclass) grades it `lower`. The index is unchanged.
-- **Upgrading drops and rebuilds the index** (store v55): trekr reindexes on
+- **Upgrading drops and rebuilds the index** (store v56): trekr reindexes on
   its own; run `trekr --index` to do it up front.
 - **`trekr --index` never exits 0 when it could not finish.** Stopped by
   Ctrl-C or a caller's timeout, it now says how far it got ("index
