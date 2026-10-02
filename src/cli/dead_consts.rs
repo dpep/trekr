@@ -264,6 +264,7 @@ pub(super) struct Sources<'a> {
     pub(super) routes: &'a Routes,
     pub(super) views: &'a Views,
     pub(super) config: &'a Config,
+    pub(super) texts: &'a super::built::Texts,
 }
 
 /// Pushes a row per class, module or constant in `files` that no reference
@@ -280,6 +281,7 @@ pub(super) fn dead_constants(
         routes,
         views,
         config,
+        texts,
     } = sources;
     let root_str = root.to_string_lossy().into_owned();
     let files: HashSet<String> = files
@@ -329,7 +331,7 @@ pub(super) fn dead_constants(
             wanted.insert(fqn.clone());
         }
     }
-    let mut named = Named::read(root);
+    let mut named = Named::read(texts);
     // A YAML value spells a constant as a whole string does.
     for (constant, (path, line)) in config.constants() {
         named

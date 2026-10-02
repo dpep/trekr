@@ -6,10 +6,9 @@
 //! Not a parse. Each find is evidence that a name is looked up at runtime,
 //! never a resolved reference.
 
+use super::super::built::{TEMPLATES, Texts};
 use rayon::prelude::*;
 use std::collections::HashMap;
-use std::path::Path;
-use std::process::Command;
 
 /// Where the checkout writes something: the file, relative to the checkout,
 /// and the line.
@@ -58,19 +57,6 @@ pub(super) struct Named {
     pub(super) script_constants: HashMap<String, String>,
 }
 
-/// The files read as Ruby or YAML, by extension.
-const READ: [&str; 4] = [".rb", ".rake", ".gemspec", ".ru"];
-
-/// The templates whose Ruby may read a constant on a value.
-const TEMPLATES: [&str; 6] = [
-    "*.erb",
-    "*.haml",
-    "*.slim",
-    "*.jbuilder",
-    "*.rabl",
-    "*.builder",
-];
-
 /// The calls in a routes file that draw a gem's routes.
 const GEM_ROUTES: [&str; 3] = ["devise_for", "use_doorkeeper", "mount"];
 
@@ -85,35 +71,13 @@ pub(super) fn plain(name: &str) -> String {
 
 impl Named {
     /// The checkout's Ruby, rake, gemspec and template files git knows, and
-    /// its scripts with no extension, less its tests and `db/`.
-    pub(super) fn read(root: &Path) -> Named {
-        let Ok(out) = Command::new("git")
-            .arg("-C")
-            .arg(root)
-            .args(["ls-files", "-z"])
-            .output()
-        else {
-            return Named::default();
-        };
-        let read = |path: &str| {
-            let name = path.rsplit('/').next().unwrap_or(path);
-            !name.contains('.')
-                || READ.iter().any(|ext| name.ends_with(ext))
-                || TEMPLATES.iter().any(|ext| name.ends_with(&ext[1..]))
-        };
-        let paths: Vec<String> = out
-            .stdout
-            .split(|b| *b == 0)
-            .filter(|p| !p.is_empty())
-            .map(|path| String::from_utf8_lossy(path).into_owned())
-            .filter(|path| read(path))
-            .filter(|path| !super::super::built::is_test(path) && !path.contains("/locales/"))
-            .collect();
-        let parts: Vec<Named> = paths
+    /// its scripts with no extension, less its tests and `db/`, as read once
+    /// for `--dead`.
+    pub(super) fn read(texts: &Texts) -> Named {
+        let parts: Vec<Named> = texts
+            .files
             .par_iter()
-            .filter_map(|path| {
-                let bytes = std::fs::read(root.join(path)).ok()?;
-                let text = String::from_utf8_lossy(&bytes);
+            .filter_map(|(path, text)| {
                 let mut part = Named::default();
                 let script = !path
                     .rsplit('/')
@@ -132,12 +96,12 @@ impl Named {
                                 .or_insert_with(|| path.clone());
                         }
                     }
-                } else if TEMPLATES.iter().any(|ext| path.ends_with(&ext[1..])) {
+                } else if TEMPLATES.iter().any(|ext| path.ends_with(ext)) {
                     for (n, line) in text.lines().enumerate() {
                         part.read_dynamic(path, n as u32 + 1, line);
                     }
                 } else {
-                    part.read_ruby(path, &text);
+                    part.read_ruby(path, text);
                     if let Some(line) = part.computed.take() {
                         part.computed_in.insert(path.clone(), line);
                     }

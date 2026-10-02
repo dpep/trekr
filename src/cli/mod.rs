@@ -3841,7 +3841,8 @@ fn dead_in(
     let views = views::Views::read(root);
     let config = config::Config::read(root);
     let generated = generated::Generated::read(root, defined.iter().map(|d| d.file.as_str()));
-    let built = built::Built::read(root);
+    let texts = built::Texts::read(root);
+    let built = built::Built::read(&texts);
     let routes = routes::Routes::read(root);
     let routed = routed_actions(&tree, &routes);
     let mut symbols = conventions::Symbols::default();
@@ -4267,6 +4268,7 @@ fn dead_in(
         routes: &routes,
         views: &views,
         config: &config,
+        texts: &texts,
     };
     dead_consts::dead_constants(&tree, store, root, &files, sources, rows)?;
     Ok(files.len())

@@ -33,29 +33,65 @@ const LISTS: [&str; 2] = ["public_instance_methods", "instance_methods"];
 /// The calls that send the name they are handed.
 const SENDS: [&str; 3] = ["public_send", "__send__", "send"];
 
-impl Built {
-    /// Every Ruby file git knows in the checkout at `root`, less its tests
-    /// and migrations: a name a spec builds is a test's value, and one a
-    /// migration builds is a column's, not a way into the app.
-    pub(super) fn read(root: &Path) -> Built {
-        let args = ["ls-files", "-z", "--", "*.rb", "*.rake"];
-        let Ok(out) = Command::new("git").arg("-C").arg(root).args(args).output() else {
-            return Built::default();
+/// The checkout's text files `--dead` reads beside its index, each read
+/// once for every reader: Ruby, rake, gemspec and rackup files, templates,
+/// and scripts with no extension, less tests and locales.
+pub(super) struct Texts {
+    /// Path relative to the checkout, and contents, in path order.
+    pub(super) files: Vec<(String, String)>,
+}
+
+/// The extensions read as Ruby.
+pub(super) const RUBY: [&str; 4] = [".rb", ".rake", ".gemspec", ".ru"];
+
+/// The templates whose Ruby is read too.
+pub(super) const TEMPLATES: [&str; 6] =
+    [".erb", ".haml", ".slim", ".jbuilder", ".rabl", ".builder"];
+
+impl Texts {
+    pub(super) fn read(root: &Path) -> Texts {
+        let Ok(out) = Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["ls-files", "-z"])
+            .output()
+        else {
+            return Texts { files: Vec::new() };
+        };
+        let wanted = |path: &str| {
+            let name = path.rsplit('/').next().unwrap_or(path);
+            !name.contains('.') || RUBY.iter().chain(&TEMPLATES).any(|ext| name.ends_with(ext))
         };
         let paths: Vec<String> = out
             .stdout
             .split(|b| *b == 0)
             .filter(|p| !p.is_empty())
             .map(|path| String::from_utf8_lossy(path).into_owned())
-            .filter(|path| !is_test(path))
+            .filter(|path| wanted(path) && !is_test(path) && !path.contains("/locales/"))
             .collect();
+        let files = paths
+            .into_par_iter()
+            .filter_map(|path| {
+                let bytes = std::fs::read(root.join(&path)).ok()?;
+                Some((path, String::from_utf8_lossy(&bytes).into_owned()))
+            })
+            .collect();
+        Texts { files }
+    }
+}
+
+impl Built {
+    /// Every Ruby file of the checkout, less its tests and migrations: a
+    /// name a spec builds is a test's value, and one a migration builds is a
+    /// column's, not a way into the app.
+    pub(super) fn read(texts: &Texts) -> Built {
         // Each file on its own worker; merged in path order, so what is
         // "first written" does not depend on which worker finished first.
-        let parts: Vec<Built> = paths
+        let parts: Vec<Built> = texts
+            .files
             .par_iter()
-            .filter_map(|path| {
-                let bytes = std::fs::read(root.join(path)).ok()?;
-                let text = String::from_utf8_lossy(&bytes);
+            .filter(|(path, _)| path.ends_with(".rb") || path.ends_with(".rake"))
+            .filter_map(|(path, text)| {
                 if !text.contains("#{")
                     && !SENDS.iter().any(|s| text.contains(s))
                     && !text.contains("instance_methods")
@@ -63,7 +99,7 @@ impl Built {
                     return None;
                 }
                 let mut part = Built::default();
-                part.read_file(path, &text);
+                part.read_file(path, text);
                 Some(part)
             })
             .collect();
