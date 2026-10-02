@@ -1,0 +1,5 @@
+# --dead read only the spellings of a constant's own name, so one used
+# through a module that includes its namespace (`Store::MAILER_KEY`) or a
+# subclass of it (`Child::LIMIT`) was unreferenced, clear, while --def
+# resolved the reference to it.
+dead lib Keys::MAILER_KEY=none Base::LIMIT=none Keys::STALE_KEY=unreferenced

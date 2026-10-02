@@ -67,7 +67,8 @@
   until: trekr --index …") before exiting as the signal does. Behind
   another trekr writer for longer than it waits (10 minutes), it says the
   same and **exits 2** where it exited 74, "database is locked"; under
-  `--json`, `status: "incomplete"` with `warming`. A script that retried on
+  `--json`, `status: "incomplete"` with `warming` (whose `interrupted` is
+  true only if the writer it waited on is gone). A script that retried on
   74 should retry on 2.
 - **The editor's background index asks again when it waited too long.**
   One that outwaited another trekr writing the index used to give up for

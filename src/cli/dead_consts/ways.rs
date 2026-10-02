@@ -21,6 +21,18 @@ use crate::tree::Tree;
 /// A controller is also known by the name its file spells, as Zeitwerk loads
 /// it: `module Admin; class Users::RolesController` in
 /// `admin/users/roles_controller.rb` is the route's `admin/users/roles`.
+/// A controller's name compared segment by segment, each as `plain` compares
+/// it: `Admin::WidgetsController` is `admin/widgetscontroller`, and is not
+/// `AdminWidgetsController`.
+fn controller_key(name: &str) -> String {
+    name.trim_start_matches("::")
+        .replace("::", "/")
+        .split('/')
+        .map(plain)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 pub(super) fn routed_controllers(
     tree: &Tree,
     all: &[(String, String)],
@@ -37,11 +49,11 @@ pub(super) fn routed_controllers(
                 && let Some(file) = file.strip_suffix(".rb")
             {
                 controllers
-                    .entry(plain(&file.replace('/', "")))
+                    .entry(controller_key(file))
                     .or_insert_with(|| fqn.clone());
             }
         }
-        controllers.insert(plain(fqn), fqn.clone());
+        controllers.insert(controller_key(fqn), fqn.clone());
     }
     let mut routed = HashMap::new();
     for route in &routes.routes {

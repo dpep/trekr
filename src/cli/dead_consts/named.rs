@@ -28,8 +28,8 @@ pub(super) struct Named {
     /// The class an association names by convention, `plain`
     /// (`has_many :line_items` → `lineitem`).
     pub(super) associated: HashMap<String, (String, At)>,
-    /// A routes file's path-like string (`'auth/passwords'`), `plain`, with
-    /// `controller` added: a gem's routes (`devise_for … controllers:`)
+    /// A routes file's path-like string (`'auth/passwords'`), with
+    /// `_controller` added: a gem's routes (`devise_for … controllers:`)
     /// name a controller so.
     pub(super) route_strings: HashMap<String, At>,
     /// A constant whose subclasses are listed at runtime.
@@ -307,7 +307,7 @@ impl Named {
                         }
                     } else if routes && is_route_path(content) {
                         self.route_strings
-                            .entry(format!("{}controller", plain(&content.replace('/', ""))))
+                            .entry(format!("{content}_controller"))
                             .or_insert_with(at);
                     }
                     continue;

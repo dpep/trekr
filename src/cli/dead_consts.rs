@@ -124,11 +124,16 @@ fn declared_in(
 ///
 /// A template's constants, and an extensionless script's, count as
 /// references written at the top level, where each looks them up.
+///
+/// A constant is spelled through anything that has its namespace among its
+/// ancestors, too: `Store::MAILER_KEY` when `Store` includes `Keys`,
+/// `Child::LIMIT` when `Child < Base` — `heirs` is that map.
 fn uses_of(
     tree: &Tree,
     store: &Store,
     root: &str,
     wanted: &HashSet<String>,
+    heirs: &HashMap<String, Vec<String>>,
     unindexed: &[(&str, &str)],
 ) -> anyhow::Result<HashMap<String, Uses>> {
     let mut spelled: HashMap<String, Vec<&str>> = HashMap::new();
