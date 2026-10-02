@@ -753,6 +753,20 @@ holding the rest of the `--json` answer and `rows`, the count (DEC-290).
 | `--drop [PATH]` | forget a checkout's file map |
 | `--gc [--dry-run] [--older-than AGE] [--vacuum]` | remove checkouts nothing can reach again, the blobs only they mapped, and tree snapshots no checkout's index names |
 | `--usage [--days N]` | which commands and editor features get used, by whom, how often empty, how slow (see below) |
+| `--dead PATH…` | methods, then classes, modules and constants, in scope that nothing appears to use, tiered and graded (see below) |
+
+**`--dead` weighs a definition against the whole checkout** (DEC-038,
+DEC-074). Methods (`cli::dead_in`) are tiered by their receiver-narrowed
+references; classes, modules and constants (`cli::dead_consts`, DEC-420) by
+the `const_ref` rows that resolve to them through Ruby's lookup, a namespace
+by what it holds. Around both, readers of what the index does not hold, each
+a module of `cli`: the views (`views`), names the checkout builds (`built`),
+the routes (`routes`), YAML config (`config`), generated files
+(`generated`), and for constants the checkout's Ruby, templates and scripts
+as text (`dead_consts::named`) and the conventions that find a class by its
+name (`dead_consts::ways`, DEC-421). Each is evidence of a way in, never of
+a caller: it moves a row to `convention-only` or grades it `lower`, and the
+row says which.
 
 `--refs` is **name-level, not resolved**: two unrelated `Config` classes both
 answer, and so does every `#save` on every receiver. Each row says what sort of

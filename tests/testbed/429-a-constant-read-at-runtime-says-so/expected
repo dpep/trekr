@@ -1,0 +1,7 @@
+# A constant read where the namespace is a value (`self.class::PERMITTED`),
+# a namespace whose constants are listed (`Levels.constants`) or looked up
+# by a computed name (`Regions.const_get(name)`), and a class whose ancestor
+# constantizes a name it computes: each is reached by no reference, and the
+# row says how it may be reached, graded lower.
+dead app/controllers ListController::PERMITTED=unreferenced~value ListController::STALE=unreferenced~
+dead lib Levels::LOW=unreferenced~listed Regions::North=unreferenced~computed FetchStep=unreferenced~computes

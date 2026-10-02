@@ -40,7 +40,7 @@ trekr --def lib/thing.rb:12:5    # what is this name, and where is it defined
 trekr lib/thing.rb:12:5 --explain  # the same, and why it came out that way
 trekr Widget#save                # a card: where it is defined, how many sites reach it
 trekr --ancestors Widget         # the linearized ancestor chain
-trekr --dead app/models          # methods nothing appears to call, graded
+trekr --dead app/models          # methods and classes nothing appears to use, graded
 trekr --gc --dry-run             # what old gem versions and deleted worktrees would free
 ```
 
@@ -177,6 +177,7 @@ super-only       activerecord/lib/active_record/associations/belongs_to_associat
 The tiers, from least evidence of use to most:
 
 - `unreferenced` — nothing names it.
+- `test-only` — a class, module or constant only specs and tests name.
 - `override` — nothing names it, but it overrides an ancestor's method, so
   whatever calls that one (often the framework) may run it.
 - `convention-only` — named only by a symbol handed to a macro
@@ -211,6 +212,28 @@ hand on mastodon and discourse (DEC-372), such rows were truly dead 79 % and
 100 % of the time where the rules were fitted, and 89 % on discourse rows
 held out; on code unlike an app's (`lib/`), less — read DEC-372 before
 trusting it on a CLI or a library.
+
+**Classes, modules and constants** are listed after the methods, with
+`kind` in JSON (`class`, `module`, `constant`; a method's row says
+`method`), named by kind in text (`class Admin::Widget`). One is a candidate
+when no constant reference in the checkout resolves to it by Ruby's own
+lookup — the views and executable scripts read too. A reference to
+`Admin::Widget` is a use of `Admin`, which holds it; one inside its own body
+is not a use; a reopened core or gem class is no candidate, nor anything
+under `db/`. A class only tests name is `test-only`. One Rails or a library
+finds by name is `convention-only`, `convention.by` saying who: a route, a
+helper, a concern's `ClassMethods`, a Railtie or generator, a policy,
+serializer or validator found by its name, a job built from a symbol
+(`"Jobs::#{name.camelize}".constantize` with `:send_digest`), an
+association, a YAML value or a class-lookup string, a test runner, a
+registry hook (DEC-421). Whatever may still reach it — a constant read on a
+value (`self.class::LIMIT`), a namespace whose constants are listed, a
+factory in an ancestor, an STI subclass, a gem's routes — is a `caveat`, and
+grades it `lower`. Measured by hand (DEC-422), `unreferenced`, clear was
+truly unused on every app row checked once the rules were in, and on
+held-out rows 14 %, 73 % and 31 % as drawn — the misses each a way of
+finding classes by reflection, since read; on a library or a tool, read
+DEC-422 first.
 
 ### Where it keeps things
 

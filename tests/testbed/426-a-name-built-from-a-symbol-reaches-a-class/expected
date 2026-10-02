@@ -1,0 +1,5 @@
+# `"Jobs::#{name.camelize}".constantize` builds a class's name: one whose
+# built part a symbol elsewhere spells (`:send_digest`) is reached by it; one
+# of the shape no symbol spells, or only its own file does (a job enqueuing
+# itself), says a name of its shape is built, graded lower.
+dead app/jobs Jobs::SendDigest=convention-only Jobs::StaleThing=unreferenced~shape Jobs::Retrier=unreferenced~shape

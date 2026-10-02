@@ -1,0 +1,5 @@
+# A class reached without its name: an ancestor's `inherited` or `included`
+# hook that keeps what it is handed, a listing of an ancestor's subclasses,
+# a body that hands the class to another's method as it loads. A hook that
+# only extends its includer registers nothing.
+dead lib TextNode=convention-only WidgetPlugin=convention-only LikesScorer=convention-only Signing=convention-only Plain=unreferenced~

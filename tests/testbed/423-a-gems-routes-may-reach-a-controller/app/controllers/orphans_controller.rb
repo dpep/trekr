@@ -1,0 +1,2 @@
+class OrphansController < ApplicationController
+end

@@ -10713,3 +10713,209 @@ surveyed: discourse's `plurals.rb` and `intermediate_db/*.rb`, a Rails
 (five libraries): no row moves — none of their candidates is in a
 generated file. The rule costs nothing there and catches testbed 402's
 three shapes.
+
+## DEC-420 — `--dead` weighs classes, modules and constants by the references that resolve to them
+
+**Decided.** `--dead PATH` lists, after the methods, every class, module
+and constant (`FOO = …`) declared in scope that no constant reference in the
+checkout resolves to. A row carries `kind: class | module | constant`,
+`name` its last segment and `owner` the namespace holding it (`""` at the
+top level); a method's row now carries `kind: method`. Text names it by kind
+and whole name (`class Admin::Widget`) after the methods, and the summary
+line says how many rows are constants; `summary.kinds` counts each kind.
+`cli::dead_consts` does the work, with no change to what an index records:
+the store gains one query (`const_refs_named`), the store stays v55.
+
+- **A reference is a `const_ref` row, resolved by Ruby's lookup** — the
+  ladder `tree::resolve` runs for `--def` and an editor's references (DEC-008,
+  DEC-082) — so two `Error` classes are told apart. Every spelling of the
+  candidate's name is read (`C`, `B::C`, `A::B::C`, `::A::B::C`) and each row
+  resolved once per `(name, nesting)`. A row that could only add to
+  constants already used is not resolved: `--dead app` on discourse reads
+  66k rows and resolves 3k.
+- **A reference to `A::B` is a use of `A`**, which holds it, and a namespace
+  holding a constant a convention reaches (DEC-421) is used too; a namespace
+  holding only candidates is one.
+- **A reference inside the constant's own body is not a use**: `Gizmo.new`
+  in `class Gizmo`'s method, `Widget::LIMIT` in Widget for Widget.
+- **Not a definition, so never a candidate**: a reopening of a constant a
+  gem or Ruby declares (`class String` in `lib/core_ext`) — deleting the
+  checkout's body would not remove it; anything under a `db/` (an engine's
+  or a plugin's too), which Rails runs by its file; and a shared example
+  group's module (DEC-092), a group RSpec names by a string.
+- **A new tier, `test-only`**: referenced only from files under a `spec`,
+  `test` or `tests` directory. Such a class goes with its tests; the row says
+  how many and where the first is. `summary.tiers` gains `test-only`.
+- **A template's constants and an executable script's are references.** A
+  view's Ruby is read for constant paths (`views::constant_paths`, outside
+  strings, never `x::Y`) and an extensionless file with a Ruby shebang
+  (`bin/cli`, `plugins/x/evals/run`) the same way; each resolves from the
+  top level, where a view or script looks constants up.
+- **A compact class under a namespace Zeitwerk makes from a directory**
+  (`module Billing; class Invoice::Send` in `billing/invoice/send.rb`, with
+  no `Billing::Invoice` declared) is declared by the tree at the top level,
+  so `Billing::Invoice::Send` resolves to nothing. A reference that resolves
+  to nothing is read for such a constant by its own spelling and by the name
+  its file's path gives under `app/<kind>/` or `lib/`. Six of the first
+  held-out sample's 50 rows were this (discourse-workflows' services).
+
+**Why a namespace is used through what it holds.** Ruby resolves `A::B` by
+first resolving `A`; deleting `A` deletes `B`. A namespace referenced only
+as a prefix is the common case — `Admin`, `Api::V1`, every Zeitwerk
+directory — and listing them would put most namespaces of an app on the
+list.
+
+**Why `test-only` is a tier and not a caveat.** A test naming a class is
+evidence, of a kind no rule can upgrade: the class runs in the suite and
+nowhere else. That is not "nothing names it", and it is not use. On the
+hand-checked rows (DEC-422) every `test-only`, clear row was named only by
+tests (mastodon 21 of 21, discourse `app lib` 13 of 13).
+
+**Measured.** `--dead app` with references alone (no DEC-421 rule):
+discourse 224 `unreferenced` and 273 `test-only` constant rows, mastodon 348
+and 115. Timing, `--dead app --json`, five interleaved runs each on a
+loaded machine, against main (dcb0559): discourse 3.21 → 3.59 s (+12 %),
+mastodon 1.97 → 2.07 s (+5 %). The reference query is ~0.1 s of it on
+discourse, the text read of DEC-421 ~0.15 s.
+
+**Not done.** A constant with one reference is no `single-caller`: inlining
+a class is not what that tier is for, and a constant's one reference is its
+use, not a call to fold. `--refs Widget` stays name-level; a resolved
+`--refs` for a constant would reuse this module's query.
+
+## DEC-421 — What reaches a class by its name is read, and what may is said
+
+**Decided.** Rails and the libraries an app runs find many classes by a
+name, not a reference. `cli::dead_consts::ways` reads each way, from the
+tree and, as DEC-315 and DEC-363 read views and built names, from the
+checkout's Ruby and templates as text (`dead_consts::named`) and its YAML
+(`cli::config`, DEC-402, which now also keeps the constants a scalar names).
+A class no reference reaches is `convention-only` when one of these names
+it, with `convention: {by, path?, line?}` in JSON as for a method:
+
+| `by` | reaches |
+| --- | --- |
+| `routes` | a controller a route names, found as DEC-344 finds the action, or by the name its file spells (`admin/users/roles_controller.rb` is `admin/users/roles`); a routes file's string spelling a controller's path (`devise_for … controllers: { sessions: 'users/sessions' }`) |
+| `Rails helpers` | a module under `app/helpers`, mixed into every view |
+| `ActiveSupport::Concern` | a concern's `ClassMethods`, when the concern's class side answers `append_features` from ActiveSupport::Concern |
+| `Active Record` | a model's `ActiveRecord_Relation` (and the two other relation classes), which Active Record makes and reopens by name |
+| `Rails`, `Rails generators`, `Rails migrations`, `Action Cable`, `Action Mailer` | what inherits a Railtie, a generator, a migration, a channel, a mailer preview |
+| `MiniScheduler` | a class whose class side answers `every` from MiniScheduler::Schedule |
+| `ActiveModel::Serializers`, `Pundit`, `Draper` | `XSerializer`, `XPolicy`, `XDecorator` when the library is in the tree and a class `X` is in the checkout (a policy also by a symbol `:x`, Pundit's headless policy) |
+| `ActiveModel validates`, `simple_form` | an `XValidator` (an `ActiveModel::Validator`) or `XInput` whose `x` a symbol or key outside its file writes (`validates :email, email_address: true`) |
+| `constantize` | a name `"Jobs::#{type.camelize}".constantize` builds, whose built part a symbol outside its own file spells (`Jobs.enqueue(:send_digest)`) |
+| `association` | a model an association names by convention (`has_many :line_items`) |
+| `test runner` | a class in a test directory that inherits a test case, or in a `test_*.rb`/`*_test.rb`/`*_spec.rb` file |
+| `subclasses` | a subclass of a checkout class whose subclasses a line lists (`Scorable.subclasses`) |
+| `registration` | an ancestor's `inherited` or `included` hook, written in the checkout, that keeps what it is handed (`<<`, `push`, `add`, `register`); a body that hands the class to another's method as it loads (`HTTP::Options.register_feature(:x, self)`) |
+| `gem namespace` | a class the checkout adds to a gem's namespace whose name a symbol spells (`OmniAuth::Strategies::Patreon`, `:patreon`) |
+| `string` | a whole string spelling it — any string with `::`, a one-word string only where a class is looked up (`class_name:`, `constantize`, …) and only when no other constant of the checkout ends so — or a YAML scalar (`class: Scheduler::Vacuum`, `enum: "LevelSetting"`) |
+
+What a row cannot be sure of is a caveat, graded `lower`, the tier kept:
+a controller when routes are not all read or a gem's routes are drawn
+(`devise_for`, `use_doorkeeper`, `mount`); an ancestor trekr has not
+indexed; a class added to a gem's namespace; a name of its shape built at
+runtime (a constantized string's shape, or an association's built name,
+`has_one :"#{name.underscore}_search_data"` is `*SearchData`); a model's
+subclass, which Active Record instantiates by a `type` column (its parent
+neither `ApplicationRecord` nor abstract); a constant read on a value
+(`self.class::PERMITTED`, `const_get(:LIMIT)`); a namespace whose constants
+are listed (`Levels.constants`, also through a local, `steps = Steps`), or
+looked up by a computed name (`Regions.const_get(name)`), or listed by its
+own code or by the `extended` hook of a module it extends
+(`Migrations::Enum`), or by a sibling's ancestor
+(`self.class.name.deconstantize.constantize.constants`); a class whose
+ancestor constantizes a name it computes (a factory); a file in generated
+code (DEC-403).
+
+**Each rule was found as a cause of a false row** — the routes, concerns,
+helpers, policies, serializers, validators, jobs and schedules while
+listing `--dead app`, the rest in the hand-checked samples of DEC-422 —
+and each has a testbed case (420–435) that fails with the rules removed.
+
+**Not done, and why.**
+
+- *A nested serializer is its parent's lookup.* AMS 0.10 looks for
+  `ParentSerializer::XSerializer` first; taking every serializer nested in
+  one made `ActivityPub::ActorSerializer::AccountIdentityProofSerializer`
+  convention-only though mastodon has no `AccountIdentityProof`. The class
+  `X` is required.
+- *A one-word string anywhere.* `"Application"` (an ActivityPub actor type)
+  named `Mastodon::Application`, and `inflect.acronym 'CLI'` named
+  `Mastodon::CLI`. Restricted to where a class is looked up, and an
+  inflection's line is skipped: discourse `app lib config` string rows 73 →
+  70, mastodon 2 → 1, none of the lost a true use.
+- *An ancestor's listed subclasses for any ancestor.* `AbstractController::Base
+  .descendants` in discourse's `config/application.rb` made `CustomRenderer`
+  convention-only; only an ancestor the checkout declares counts.
+- *A factory in the namespace's files, not only an ancestor's.*
+  `lib/discourse.rb` writes `table.classify.constantize`; the namespace rule
+  would have lowered seven true rows under `Discourse` (`TooManyMatches`,
+  `CSRF`, `VERSION::TINY`, …).
+- *A symbol in the class's own file for `constantize`.* A job that enqueues
+  itself to retry (`Jobs.enqueue(:retrier)` in `Jobs::Retrier`) is reached
+  by nothing else; only a symbol outside the file counts. For a gem's
+  namespace the own file does count: a plugin defines an OmniAuth strategy
+  and registers it by its symbol in one file (`discourse-patreon`).
+
+## DEC-422 — `clear` on an unreferenced constant is calibrated against hand-checked rows
+
+**Decided.** As DEC-372 did for methods: `clear` means no caveat, and what
+that is worth was measured by hand. Each row below was read, its name
+searched across the repo and its installed gems, strings and YAML included,
+and its cause written down; a row is true when nothing in the repo or its
+gems uses it by name, by listing or by convention.
+
+| sample | as drawn | after the rules it found | true rows lost to `lower` |
+| --- | ---: | ---: | ---: |
+| mastodon `app lib config`, all (fitted) | — | 1/1 | 0 of 1 |
+| discourse `app`, all 33 (fitted) | 32/33 = 97 % | 32/32 | 0 of 32 |
+| discourse `lib`, all 37 (fitted) | 29/37 = 78 % | 29/29 | 0 of 29 |
+| discourse `plugins`, random 50 of 291 (held out) | 7/50 = 14 % | 7/7 | 0 of 7 |
+| discourse `plugins`, the 41 clear rows left after those rules (held out when drawn) | 30/41 = 73 % | 30/30 | 0 of 30 |
+| discourse `script migrations`, random 45 of 97 (held out) | 14/45 = 31 % | 14/15 = 93 % | 0 of 14 |
+
+Of the last sample, `script/` was 14 of 15 as drawn and `migrations/`, a
+CLI that discovers its steps and enums by listing constants, 0 of 30.
+
+| cause of a false row | rows | rule |
+| --- | ---: | --- |
+| a test case its runner finds (a vendored gem's `test/`) | 19 | `test runner` |
+| a namespace's constants looked up by a computed name (`Holidays.const_get(region)`) | 16 | caveat |
+| a module extending an enum helper whose `extended` hook lists them | 14 | caveat |
+| steps listed through a sibling's ancestor (`deconstantize.constantize.constants`) | 11 | caveat |
+| a shared example group's module | 10 | not a candidate |
+| a factory in an ancestor (`class_name.constantize` in `Step.for`) | 7 | caveat |
+| a compact class under a Zeitwerk directory namespace | 6 | DEC-420 |
+| steps listed through a local (`steps = Steps; steps.constants`) | 5 | caveat |
+| an extensionless script (`script/x`, `evals/run`) | 2 | DEC-420 |
+| an association whose name is built (`has_one :"#{…}_search_data"`) | 1 | caveat |
+| subclasses listed unqualified (`Scorable.subclasses` in the namespace) | 1 | `subclasses` |
+| a model's relation class reopened (`Query::ActiveRecord_Relation`) | 1 | `Active Record` |
+| a script's entry module, whose body runs the import | 1 | none |
+
+Of the true rows: unused enum-like constants (17 of `WebHookEventType`'s,
+replaced by an `enum` and `TYPES`), exception classes nothing raises,
+version parts, page objects' selectors, a commented-out adapter, deprecated
+shims with no callers (`TopicAssigner`, `BackupRestore::Backuper`), a model
+for a dropped table (`UserOpenId`).
+
+**`lower` separates.** mastodon's 14 `unreferenced`, lower rows were all in
+use (`self.class::PERMITTED_PARAMS`, Devise's controllers, the RuboCop and
+haml-lint cops `.rubocop.yml` loads). `test-only`, clear was right 21 of 21
+on mastodon and 13 of 13 on discourse `app lib`; of mastodon's 21, 17 are
+Sidekiq schedulers that a real checkout's `config/sidekiq.yml` names — the
+bench corpus has no such file; with it the YAML scalar rule makes them
+`convention-only` (testbed 425).
+
+**What the held-out rows say.** On app code — discourse `app`, its plugins'
+apps, mastodon — `clear` held after the rules. On code that finds its parts
+by reflection — a CLI's steps, a vendored library's generated definitions —
+it did not until the rules that sample produced, and the next such code
+will have its own idiom. Read `clear` on a library or a tool with DEC-372's
+warning.
+
+**Counts**, `--dead app lib config`, rebased on dcb0559: mastodon 467
+constant rows (426 `convention-only`, 26 `test-only`, 15 `unreferenced` of
+which 1 clear); discourse 676 (520, 81, 75 of which 61 clear); discourse
+`plugins` 991 (526, 276, 189 of which 37 clear).

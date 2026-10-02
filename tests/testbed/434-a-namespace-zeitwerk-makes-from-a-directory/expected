@@ -1,0 +1,5 @@
+# `module Billing; class Invoice::Send` under a directory Zeitwerk makes
+# `Billing::Invoice` from is declared at the top level, as no `Invoice` is
+# declared, and `Billing::Invoice::Send` resolves to nothing. A reference
+# that resolves to nothing is read by the name its file's path gives.
+dead plugins/billing/app/services Invoice::Send=none Invoice::Void=unreferenced

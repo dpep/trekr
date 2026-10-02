@@ -811,6 +811,43 @@ impl Store {
         rows.collect()
     }
 
+    /// The constant references in one checkout written as any of `names`,
+    /// unresolved: `--dead` resolves each against the tree (DEC-420).
+    pub(crate) fn const_refs_named(
+        &self,
+        root: &str,
+        names: &[String],
+    ) -> Result<Vec<ConstRefRow>> {
+        let mut found = Vec::new();
+        for chunk in names.chunks(500) {
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT f.path, r.name, r.nesting, r.line
+                   FROM const_ref r INDEXED BY const_ref_name
+                   CROSS JOIN file f
+                  WHERE r.name IN ({})
+                    AND f.blob_id = r.blob_id
+                    AND f.checkout_id = (SELECT id FROM checkout WHERE root = ?1)",
+                (0..chunk.len())
+                    .map(|i| format!("?{}", i + 2))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ))?;
+            let params = std::iter::once(root).chain(chunk.iter().map(String::as_str));
+            let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| {
+                Ok(ConstRefRow {
+                    path: r.get(0)?,
+                    name: r.get(1)?,
+                    nesting: split_nesting(&r.get::<_, String>(2)?),
+                    line: r.get(3)?,
+                })
+            })?;
+            for row in rows {
+                found.push(row?);
+            }
+        }
+        Ok(found)
+    }
+
     /// Every class, module, and constant declared in a checkout, in a stable
     /// order (by path, then line) so that reopening a class reads the same way
     /// on every rebuild.
@@ -2151,6 +2188,15 @@ pub(crate) struct EdgeRow {
     /// The file that wrote it, absolute like a site's path: which of two
     /// conflicting declarations of the owner it belongs to (DEC-072).
     pub(crate) path: String,
+    pub(crate) line: u32,
+}
+
+/// A constant reference as written, with the file it is in.
+#[derive(Debug)]
+pub(crate) struct ConstRefRow {
+    pub(crate) path: String,
+    pub(crate) name: String,
+    pub(crate) nesting: Vec<String>,
     pub(crate) line: u32,
 }
 

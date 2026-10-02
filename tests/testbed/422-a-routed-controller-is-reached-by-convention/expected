@@ -1,0 +1,5 @@
+# Rails reaches a controller through its routes, not a reference: one a
+# route names is `convention-only`, found as the route's action is
+# (DEC-344), or by the name its file spells as Zeitwerk loads it — a compact
+# `class Tools::PartsController` in `admin/tools/` is `admin/tools/parts`.
+dead app/controllers WidgetsController=convention-only Admin::GadgetsController=convention-only Tools::PartsController=convention-only OrphansController=unreferenced~ ApplicationController=none

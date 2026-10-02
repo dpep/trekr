@@ -1,0 +1,2 @@
+class LikesScorer < Scorer
+end

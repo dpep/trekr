@@ -1,0 +1,4 @@
+purge:
+  class: Jobs::PurgeWidgets
+  every: 1h
+  title: A Widget

@@ -18,6 +18,10 @@ pub(super) struct Views {
     /// Each name, with the first template (relative to the checkout) that
     /// writes it.
     names: HashMap<String, String>,
+    /// Each constant path a template writes (`Widget::LIMIT`), with the
+    /// first template that writes it: resolved from the top level, where a
+    /// template's constants are looked up, by `--dead`'s constants (DEC-420).
+    constants: HashMap<String, String>,
 }
 
 impl Views {
@@ -50,6 +54,12 @@ impl Views {
             for name in ruby.lines().flat_map(words) {
                 views.names.entry(name).or_insert_with(|| path.clone());
             }
+            for constant in ruby.lines().flat_map(constant_paths) {
+                views
+                    .constants
+                    .entry(constant)
+                    .or_insert_with(|| path.clone());
+            }
         }
         views
     }
@@ -58,6 +68,70 @@ impl Views {
     pub(super) fn naming(&self, name: &str) -> Option<&str> {
         self.names.get(name).map(String::as_str)
     }
+
+    /// Each constant path the templates write, with the first that does.
+    pub(super) fn constants(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.constants
+            .iter()
+            .map(|(constant, path)| (constant.as_str(), path.as_str()))
+    }
+}
+
+/// The constant paths in a line of a template's Ruby, outside its strings:
+/// `Widget`, `Admin::Widget::LIMIT`, `::Widget`.
+pub(super) fn constant_paths(ruby: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let bytes = ruby.as_bytes();
+    let mut quote = None;
+    let mut at = 0;
+    while at < bytes.len() {
+        let b = bytes[at];
+        match quote {
+            Some(q) if b == q => quote = None,
+            Some(_) if b == b'\\' => at += 1,
+            Some(_) => {}
+            None if b == b'"' || b == b'\'' => quote = Some(b),
+            None if b.is_ascii_uppercase()
+                && (at == 0
+                    || !(bytes[at - 1].is_ascii_alphanumeric()
+                        || bytes[at - 1] == b'_'
+                        || bytes[at - 1] == b'.'
+                        || bytes[at - 1] == b'@')) =>
+            {
+                // `x::Widget` is read on a value, not from the top level.
+                let rooted = ruby[..at].ends_with("::");
+                if rooted
+                    && at > 2
+                    && (bytes[at - 3].is_ascii_alphanumeric() || b"_)]".contains(&bytes[at - 3]))
+                {
+                    at += 1;
+                    continue;
+                }
+                let start = if rooted { at - 2 } else { at };
+                let mut end = at;
+                loop {
+                    while end < bytes.len()
+                        && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
+                    {
+                        end += 1;
+                    }
+                    if ruby[end..].starts_with("::")
+                        && bytes.get(end + 2).is_some_and(u8::is_ascii_uppercase)
+                    {
+                        end += 2;
+                        continue;
+                    }
+                    break;
+                }
+                found.push(ruby[start..end].to_string());
+                at = end;
+                continue;
+            }
+            None => {}
+        }
+        at += 1;
+    }
+    found
 }
 
 /// A template's text: none for a file that is not UTF-8 or holds a NUL,
@@ -210,6 +284,13 @@ mod tests {
         let names = words(r#"t('.edit') + "by #{account.display_name}""#);
         assert!(names.iter().any(|n| n == "display_name"));
         assert!(!names.iter().any(|n| n == "edit" || n == "by"));
+    }
+
+    #[test]
+    fn a_template_writes_constant_paths_outside_its_strings() {
+        let found =
+            constant_paths("Widget::LIMIT.each { |x| t('Gadget') } + ::Alpha + w.Beta + w::Gamma");
+        assert_eq!(found, ["Widget::LIMIT", "::Alpha"]);
     }
 
     #[test]

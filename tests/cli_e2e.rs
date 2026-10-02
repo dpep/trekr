@@ -2924,11 +2924,16 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
     // Named as Ruby's documentation names it, so a class method says so.
     assert!(text.contains("  Thing#never_used  "), "{text}");
     // Counted by tier, in text and JSON alike; a tier with none is a zero.
+    // The class nothing names is a candidate too, after the methods.
     assert!(
-        text.contains("6 candidates in 1 file(s): 3 unreferenced, 1 convention-only, 2 single-caller (5 clear, 1 lower)"),
+        text.contains("7 candidates in 1 file(s): 4 unreferenced, 1 convention-only, 2 single-caller (6 clear, 1 lower); 1 of them classes, modules or constants"),
         "{text}"
     );
-    assert_eq!(value["summary"]["candidates"], 6, "{value}");
+    assert!(text.contains("  class Thing  "), "{text}");
+    assert_eq!(by_name["Thing"]["kind"], "class", "{value}");
+    assert_eq!(by_name["never_used"]["kind"], "method", "{value}");
+    assert_eq!(value["summary"]["kinds"]["class"], 1, "{value}");
+    assert_eq!(value["summary"]["candidates"], 7, "{value}");
     assert_eq!(value["summary"]["tiers"]["single-caller"], 2, "{value}");
     assert_eq!(value["summary"]["tiers"]["override"], 0, "{value}");
     assert_eq!(value["summary"]["confidence"]["lower"], 1, "{value}");

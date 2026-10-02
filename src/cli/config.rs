@@ -15,6 +15,10 @@ pub(super) struct Config {
     /// Each name, with the first file (relative to the checkout) and line
     /// that writes it.
     names: HashMap<String, (String, usize)>,
+    /// Each constant a scalar names — `class: Jobs::Purge`, the receiver of
+    /// `Pkg::Sanitizer.clean_uid` — with where it is first written: what
+    /// `--dead`'s constants weigh as named by a string (DEC-421).
+    constants: HashMap<String, (String, usize)>,
 }
 
 impl Config {
@@ -39,15 +43,29 @@ impl Config {
                 continue;
             };
             for (at, line) in text.lines().enumerate() {
-                if let Some(name) = scalar(line).and_then(method_named) {
+                let Some(value) = scalar(line) else { continue };
+                if let Some(name) = method_named(value) {
                     config
                         .names
                         .entry(name.to_string())
                         .or_insert_with(|| (path.clone(), at + 1));
                 }
+                if let Some(constant) = constant_named(value) {
+                    config
+                        .constants
+                        .entry(constant.to_string())
+                        .or_insert_with(|| (path.clone(), at + 1));
+                }
             }
         }
         config
+    }
+
+    /// Each constant a scalar names, with the file and line first writing it.
+    pub(super) fn constants(&self) -> impl Iterator<Item = (&str, (&str, usize))> {
+        self.constants
+            .iter()
+            .map(|(name, (path, line))| (name.as_str(), (path.as_str(), *line)))
     }
 
     /// Where `name` is first written, as `path:line`.
@@ -103,6 +121,20 @@ fn method_named(value: &str) -> Option<&str> {
     (is_method(value) && shaped).then_some(value)
 }
 
+/// The constant a scalar names: the whole of it (`Jobs::Purge`), or the
+/// receiver of `Const.method`.
+fn constant_named(value: &str) -> Option<&str> {
+    let constant = value
+        .rsplit_once('.')
+        .map_or(value, |(receiver, _)| receiver);
+    let constant = constant.trim_start_matches("::");
+    (!constant.is_empty()
+        && constant
+            .split("::")
+            .all(|part| part.starts_with(|c: char| c.is_ascii_uppercase()) && is_word(part)))
+    .then_some(constant)
+}
+
 fn is_method(name: &str) -> bool {
     let core = name.strip_suffix(['?', '!']).unwrap_or(name);
     core.starts_with(|c: char| c.is_ascii_lowercase() || c == '_') && is_word(core)
@@ -133,6 +165,19 @@ mod tests {
         assert_eq!(named("  host: example.com"), None);
         assert_eq!(named("# generator: pay_schedule"), None);
         assert_eq!(named("payroll:"), None);
+    }
+
+    #[test]
+    fn a_scalar_names_a_constant_whole_or_as_a_receiver() {
+        let named = |line| scalar(line).and_then(constant_named);
+        assert_eq!(named("  class: Jobs::Purge"), Some("Jobs::Purge"));
+        assert_eq!(named("  enum: \"LevelSetting\""), Some("LevelSetting"));
+        assert_eq!(
+            named("  sanitizer: Pkg::Foo.sanitize_uid"),
+            Some("Pkg::Foo")
+        );
+        assert_eq!(named("  title: A Widget"), None);
+        assert_eq!(named("  kind: summary"), None);
     }
 
     #[test]

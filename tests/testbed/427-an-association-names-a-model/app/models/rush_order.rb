@@ -1,0 +1,2 @@
+class RushOrder < Order
+end

@@ -8,6 +8,7 @@
 mod built;
 mod config;
 mod conventions;
+mod dead_consts;
 mod failure;
 mod generated;
 mod incomplete;
@@ -74,11 +75,14 @@ struct Cli {
     input: Option<String>,
 
     /// Find definitions in these files or directories that nothing appears to
-    /// use — candidates for deletion or inlining, graded, never asserted.
-    /// Each is in one tier, from the least evidence of use to the most:
-    /// `unreferenced` (no call, symbol or `super` names it), `override` (none
+    /// use — candidates for deletion or inlining, graded, never asserted:
+    /// methods, then classes, modules and constants (`kind`), which no
+    /// constant reference resolves to. Each is in one tier, from the least
+    /// evidence of use to the most: `unreferenced` (no call, symbol or
+    /// `super` names it), `test-only` (a class only tests name), `override` (none
     /// does, but it overrides an ancestor's method, so a call of that may run
-    /// it), `convention-only` (named only by a symbol handed to a macro),
+    /// it), `convention-only` (named only by a symbol handed to a macro, a
+    /// route, or a name Rails or a library looks a class up by),
     /// `super-only` (reached only by `super` from its overrides), and
     /// `single-caller` (one call: the inlining candidate). Each is `clear`, or
     /// `lower` confidence when its `caveat` names a caller trekr cannot see —
@@ -3541,7 +3545,11 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
         emit_listing(out, answer, "candidates", &rows)?;
         return Ok(exit_on(found));
     }
-    for row in &rows {
+    for (at, row) in rows.iter().enumerate() {
+        // Methods first, then the classes, modules and constants, apart.
+        if at > 0 && row["kind"] != "method" && rows[at - 1]["kind"] == "method" {
+            println!();
+        }
         let visibility = match row["visibility"].as_str() {
             Some("public") | None => String::new(),
             Some(other) => format!(" ({other})"),
@@ -3568,12 +3576,17 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
         .filter(|(_, n)| *n > 0)
         .map(|(tier, n)| format!("{n} {tier}"))
         .collect();
+    let constants = rows.len() as u64 - summary["kinds"]["method"].as_u64().unwrap_or(0);
     println!(
-        "\n{} candidates in {scope} file(s): {} ({} clear, {} lower)",
+        "\n{} candidates in {scope} file(s): {} ({} clear, {} lower){}",
         rows.len(),
         tiers.join(", "),
         summary["confidence"]["clear"],
         summary["confidence"]["lower"],
+        match constants {
+            0 => String::new(),
+            n => format!("; {n} of them classes, modules or constants"),
+        },
     );
     Ok(exit_on(found))
 }
@@ -3582,8 +3595,9 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
 const MAILER: &str = "ActionMailer::Base";
 
 /// `--dead`'s tiers, from the least evidence of use to the most.
-const DEAD_TIERS: [&str; 5] = [
+const DEAD_TIERS: [&str; 6] = [
     "unreferenced",
+    "test-only",
     "override",
     "convention-only",
     "super-only",
@@ -3598,17 +3612,30 @@ fn dead_summary(rows: &[serde_json::Value]) -> serde_json::Value {
         .iter()
         .map(|tier| (tier.to_string(), count("tier", tier).into()))
         .collect();
+    let kinds: serde_json::Map<String, serde_json::Value> =
+        ["method", "class", "module", "constant"]
+            .iter()
+            .map(|kind| (kind.to_string(), count("kind", kind).into()))
+            .collect();
     serde_json::json!({
         "candidates": rows.len(),
         "tiers": tiers,
+        "kinds": kinds,
         "confidence": { "clear": count("confidence", "clear"), "lower": count("confidence", "lower") },
     })
 }
 
 /// A candidate as Ruby's documentation names it: `Widget#save`, or
-/// `Widget.build` for a method on the singleton.
+/// `Widget.build` for a method on the singleton; a class, module or constant
+/// by its kind and whole name (`class Admin::Widget`).
 fn dead_name(row: &serde_json::Value) -> String {
     let name = row["name"].as_str().unwrap_or_default();
+    if let Some(kind @ ("class" | "module" | "constant")) = row["kind"].as_str() {
+        return match row["owner"].as_str().unwrap_or_default() {
+            "" => format!("{kind} {name}"),
+            owner => format!("{kind} {owner}::{name}"),
+        };
+    }
     match row["owner"].as_str().unwrap_or_default() {
         "" => name.to_string(),
         owner if row["singleton"] == true => format!("{owner}.{name}"),
@@ -4190,6 +4217,7 @@ fn dead_in(
             _ => String::new(),
         };
         let mut row = serde_json::json!({
+            "kind": "method",
             "name": def.name,
             "owner": owner,
             "singleton": def.singleton,
@@ -4226,6 +4254,12 @@ fn dead_in(
         }
         rows.push(row);
     }
+    let sources = dead_consts::Sources {
+        routes: &routes,
+        views: &views,
+        config: &config,
+    };
+    dead_consts::dead_constants(&tree, store, root, &files, sources, rows)?;
     Ok(files.len())
 }
 

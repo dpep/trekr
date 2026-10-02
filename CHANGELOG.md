@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **`--dead` lists unused classes, modules and constants too**, after the
+  methods: one no constant reference in the checkout resolves to (views and
+  executable scripts read too). Each row carries a new `kind` field —
+  `class`, `module` or `constant`, and `method` on a method's row — and
+  `summary.kinds` counts them; a script that took every row for a method
+  should read `kind`. A new tier, `test-only`, is a class only specs and
+  tests name (`summary.tiers` gains it). A class Rails or a library finds by
+  name — a routed controller, a helper, a concern's `ClassMethods`, a
+  policy, serializer or validator, a job built from a symbol, an
+  association, a YAML value, a registry — is `convention-only`, and what
+  may still reach one (`self.class::LIMIT`, a listed namespace, a factory,
+  an STI subclass) grades it `lower`. The index is unchanged.
 - **Upgrading drops and rebuilds the index** (store v55): trekr reindexes on
   its own; run `trekr --index` to do it up front.
 - **`trekr --index` never exits 0 when it could not finish.** Stopped by

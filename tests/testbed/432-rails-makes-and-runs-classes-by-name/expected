@@ -1,0 +1,4 @@
+# Rails runs a Railtie because it inherits one, and Active Record makes a
+# model's relation class by its name — reopening one the model defines.
+dead app/models Query::ActiveRecord_Relation=convention-only
+dead engines Billing::Engine=convention-only

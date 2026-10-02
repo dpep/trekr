@@ -1,0 +1,5 @@
+# A shared example group is a module trekr makes for a group RSpec names by
+# a string, not a constant anyone wrote; a migration is run by its file.
+dead spec RSpec::SharedExampleGroups::AWidget=none
+dead db CreateWidgets=none
+dead plugins CreateInvoices=none

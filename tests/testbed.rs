@@ -403,9 +403,21 @@ fn check_dead(case: &str, line: &str, answer: &serde_json::Value, failures: &mut
             Some((tier, word)) => (tier.to_string(), Some(word.to_string())),
             None => (want.clone(), None),
         };
-        let row = rows
-            .iter()
-            .find(|row| row["owner"] == owner && row["name"] == name);
+        // A capitalised name with no `#` is a class, module or constant, by
+        // its whole name (`Admin::Widget=unreferenced`).
+        let constant =
+            !method.contains('#') && method.starts_with(|c: char| c.is_ascii_uppercase());
+        let row = rows.iter().find(|row| {
+            if constant {
+                let whole = match row["owner"].as_str().unwrap_or_default() {
+                    "" => row["name"].as_str().unwrap_or_default().to_string(),
+                    owner => format!("{owner}::{}", row["name"].as_str().unwrap_or_default()),
+                };
+                row["kind"] != "method" && whole == method
+            } else {
+                row["owner"] == owner && row["name"] == name && row["kind"] == "method"
+            }
+        });
         let got = row.and_then(|row| row["tier"].as_str()).unwrap_or("none");
         if got != want {
             failures.push(format!(

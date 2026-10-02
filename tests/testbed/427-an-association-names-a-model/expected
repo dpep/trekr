@@ -1,0 +1,5 @@
+# Active Record finds an association's class by its name (`has_many
+# :line_items` is LineItem), and one built at runtime (`has_one
+# :"#{name.underscore}_search_data"`) by its shape; a model's subclass by
+# its `type` column.
+dead app/models LineItem=convention-only OrderSearchData=unreferenced~shape RushOrder=unreferenced~type

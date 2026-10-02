@@ -1,0 +1,5 @@
+# With the library in the tree, a class it finds by a name built from
+# another's: Pundit's `WidgetPolicy` for Widget, ActiveModel::Serializers'
+# `WidgetSerializer`, the validator `validates …, email_address:` names.
+# One no class or written name matches is no library's.
+dead app WidgetPolicy=convention-only GhostPolicy=unreferenced EmailAddressValidator=convention-only UnusedValidator=unreferenced WidgetSerializer=convention-only PhantomSerializer=unreferenced

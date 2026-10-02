@@ -1,0 +1,5 @@
+# A template's Ruby and an executable script with no `.rb` are read for the
+# constants they write, resolved from the top level: each is a reference,
+# though the index does not hold it.
+dead app Widget=none Widget::LIMIT=none
+dead lib Reporter=none Orphan=unreferenced

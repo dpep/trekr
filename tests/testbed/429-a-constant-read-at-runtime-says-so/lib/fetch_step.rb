@@ -1,0 +1,2 @@
+class FetchStep < Step
+end

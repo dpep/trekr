@@ -1,0 +1,6 @@
+# A class, module or constant is a candidate when no constant reference in
+# the checkout resolves to it. A reference inside its own body is not a use
+# (`Gizmo.new` in Gizmo), a reference to `Parts::Bolt` is a use of `Parts`,
+# which holds it, and a namespace holding only candidates is one too
+# (`Tools`). Reopening a class Ruby declares is no definition of it.
+dead app Widget=none Widget::LIMIT=none Widget::UNUSED=unreferenced~ Gizmo=unreferenced Tools::Maker=unreferenced Tools=unreferenced Parts=none Parts::Bolt=none String=none

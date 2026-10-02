@@ -1,0 +1,4 @@
+# A class only specs and tests name is its own tier: a deletion candidate
+# whose tests go with it. A class code outside the tests names is no
+# candidate, however many specs also name it.
+dead app/models Widget=test-only Gadget=none

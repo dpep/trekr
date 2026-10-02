@@ -1,0 +1,5 @@
+# A gem draws routes trekr does not read (`devise_for`), and a string in a
+# routes file spelling a controller's path names that controller: Devise's
+# `controllers: { sessions: 'members/sessions' }`. Any other controller says
+# the gem's routes may reach it.
+dead app/controllers Members::SessionsController=convention-only OrphansController=unreferenced~devise_for

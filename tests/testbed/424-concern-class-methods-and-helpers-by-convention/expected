@@ -1,0 +1,4 @@
+# ActiveSupport::Concern extends its includers with the `ClassMethods` it
+# finds by name, and Rails mixes every helper module into the views: no
+# reference names either. A `ClassMethods` of a plain module is no concern's.
+dead app Sizable::ClassMethods=convention-only WidgetsHelper=convention-only Plain::ClassMethods=unreferenced
