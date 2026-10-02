@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.5 — 2026-10-02
 
 - **Relation chains are typed.** `Post.where(…).order(…).pluck(…)`, a
   `scope`'s result and a `has_many` reader's are ActiveRecord relations, so
