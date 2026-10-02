@@ -34,7 +34,9 @@ import argparse, collections, json, os, random, re, select, shutil, statistics, 
 from urllib.parse import quote, unquote, urlparse
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-GEMS = os.path.expanduser("~/.local/share/trekr-compare")
+# Native extensions are built per Ruby ABI, so an app on another Ruby (mastodon
+# on 4.0) needs gem homes of its own: TREKR_COMPARE_GEMS names their parent.
+GEMS = os.path.expanduser(os.environ.get("TREKR_COMPARE_GEMS", "~/.local/share/trekr-compare"))
 
 # The engines under comparison are Ruby programs, so a Ruby has to be on PATH.
 # TREKR_RUBY_BIN names one explicitly; otherwise take whichever the shell would.
@@ -487,9 +489,25 @@ def checkout_root(files):
     return os.path.commonpath(files)
 
 
-def load(gold, scope, sample, seed, root):
+TEST_DOUBLES = re.compile(r"/gems/(rspec-mocks|webmock)-[^/]+/")
+
+
+def load(gold, scope, sample, seed, root, exclude=()):
     sites = [json.loads(line) for line in open(gold)]
-    sites = [s for s in sites if s.get("def_file", "").endswith(".rb") and s.get("scope") == scope]
+    # A call site in a template (`.haml`, `.erb`) is not a Ruby file any engine
+    # here claims to read.
+    sites = [s for s in sites if s.get("def_file", "").endswith(".rb") and s["file"].endswith(".rb")
+             and s.get("scope") == scope]
+    if exclude:
+        # A suite-driven trace records the specs' own call sites as app code;
+        # `--exclude spec/` keeps the sample to the code under test.
+        base = checkout_root([s["file"] for s in sites])
+        sites = [s for s in sites
+                 if not os.path.relpath(s["file"], base).startswith(tuple(exclude))
+                 and not os.path.relpath(s["def_file"], base).startswith(tuple(exclude))]
+    # Under a test suite some calls land in a stub, not the app: the truth is
+    # then the double's file, which no engine should be asked to find.
+    sites = [s for s in sites if not TEST_DOUBLES.search(s["def_file"])]
     if root:
         # The gold set was traced in one checkout; an engine may be pointed at a
         # **worktree** of it — widget_shop and widget_shop-nosorbet differ only
@@ -532,6 +550,8 @@ def main():
     parser.add_argument("--root", required=True, help="workspace root each engine is pointed at")
     parser.add_argument("--rewrite-root", default=None, help="rewrite gold call-site paths to this root")
     parser.add_argument("--scope", default="app")
+    parser.add_argument("--exclude", action="append", default=[],
+                        help="drop sites called from, or defined under, this checkout-relative prefix (repeatable)")
     parser.add_argument("--sample", type=int, default=500)
     parser.add_argument("--seed", type=int, default=12)
     parser.add_argument("--timeout", type=float, default=90.0)
@@ -546,7 +566,7 @@ def main():
     args = parser.parse_args()
 
     engines = list(ENGINES) if args.all else (args.engine or ["trekr"])
-    sites = load(args.gold, args.scope, args.sample, args.seed, args.rewrite_root)
+    sites = load(args.gold, args.scope, args.sample, args.seed, args.rewrite_root, args.exclude)
     corpus = args.corpus or os.path.basename(args.root.rstrip("/"))
     print(f"{len(sites)} {args.scope} sites, seed {args.seed}, root {args.root}\n")
 
