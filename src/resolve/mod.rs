@@ -1431,6 +1431,46 @@ const MAX_CHAIN: usize = 4;
 
 /// The ladder, `depth` calls into a chain.
 fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -> Option<Receiver> {
+    let _resolving = ChainMemo::enter();
+    ladder(tree, facts, call, path, depth)
+}
+
+/// What `assigned_chain` answered for a call, by the call's file, position
+/// and depth, within one outermost `typed_at`: a read after N conditional
+/// rewrites (`q = q.where(…) if x`) sees every earlier write, and each of
+/// those its own, so following them afresh grew with N to the chain's depth.
+type ChainAnswers =
+    std::collections::HashMap<(usize, String, Pos, usize), Option<(String, bool, &'static str)>>;
+
+thread_local! {
+    /// The memo and how many `typed_at` frames share it; the outermost
+    /// clears it, since the tree and the files may change between answers.
+    static CHAIN_MEMO: std::cell::RefCell<(usize, ChainAnswers)> =
+        std::cell::RefCell::new((0, std::collections::HashMap::new()));
+}
+
+struct ChainMemo;
+
+impl ChainMemo {
+    fn enter() -> Self {
+        CHAIN_MEMO.with(|memo| memo.borrow_mut().0 += 1);
+        ChainMemo
+    }
+}
+
+impl Drop for ChainMemo {
+    fn drop(&mut self) {
+        CHAIN_MEMO.with(|memo| {
+            let mut memo = memo.borrow_mut();
+            memo.0 -= 1;
+            if memo.0 == 0 {
+                memo.1.clear();
+            }
+        });
+    }
+}
+
+fn ladder(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -> Option<Receiver> {
     match call.recv {
         // The enclosing scope is the receiver by language rule. No inference
         // happens, which is why this rung is both the largest and the cheapest.
@@ -2455,13 +2495,26 @@ fn assigned_chain(
     if depth >= MAX_CHAIN {
         return None;
     }
-    let call = facts
-        .calls
-        .iter()
-        .find(|c| c.pos == at && c.recv != RecvShape::Symbol)?;
-    let receiver = typed_at(tree, facts, call, path, depth + 1)?;
-    let returned = returned_from(tree, receiver, call)?;
-    Some((returned.fqn, false, "sig"))
+    let key = (
+        std::ptr::from_ref(facts) as usize,
+        path.to_string(),
+        at,
+        depth,
+    );
+    if let Some(known) = CHAIN_MEMO.with(|memo| memo.borrow().1.get(&key).cloned()) {
+        return known;
+    }
+    let answer = (|| {
+        let call = facts
+            .calls
+            .iter()
+            .find(|c| c.pos == at && c.recv != RecvShape::Symbol)?;
+        let receiver = typed_at(tree, facts, call, path, depth + 1)?;
+        let returned = returned_from(tree, receiver, call)?;
+        Some((returned.fqn, false, "sig"))
+    })();
+    CHAIN_MEMO.with(|memo| memo.borrow_mut().1.insert(key, answer.clone()));
+    answer
 }
 
 /// The assignment to `name` nearest before `at` — the one a straight-line
@@ -3523,6 +3576,22 @@ mod tests {
                       class W\n  def go\n    b = Box.new\n    l = b.leaf\n    \
                       d = l.deep\n    d.touch\n  end\nend\n";
         assert_eq!(answer(source, "touch").owner.as_deref(), Some("Deep"));
+    }
+
+    /// Each conditional write can see every write before it, so following
+    /// each one's chain afresh grew with the fourth power of the writes.
+    #[test]
+    fn conditional_rewrites_of_a_chain_are_typed_in_time() {
+        let writes = "    q = q.narrow(1) if c\n".repeat(60);
+        let source = format!(
+            "class Query\n  sig {{ returns(Query) }}\n  def narrow(x)\n  end\n  \
+             def done\n  end\nend\n\
+             class W\n  def go(c)\n    q = Query.new\n{writes}    q.done\n  end\nend\n"
+        );
+        let started = std::time::Instant::now();
+        assert_eq!(answer(&source, "done").owner.as_deref(), Some("Query"));
+        let took = started.elapsed();
+        assert!(took.as_secs() < 5, "took {took:?}");
     }
 
     /// The rails miss: `post = Post.first` two lines up, and an earlier

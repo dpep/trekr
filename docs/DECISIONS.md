@@ -11334,6 +11334,17 @@ signature read, the gem's lent ones included (`via: sig`). A finder
 (`Post.find`) keeps its convention, tried first. A write in a loop that
 reads the variable it writes is bounded by the chain's depth. Testbed 451.
 
+**Bounded in breadth too.** Reported by the 0.8.5 verification hunt: the
+depth bound left the breadth open. A read after N conditional rewrites
+(`scope = scope.where(…) if p[:x]`) sees all N writes, each write's own read
+the writes before it, and so on to the chain's depth — about N⁴. `--def` on
+the last read took 0.44 s at N = 20, 2.65 s at 40, 18.4 s at 60, and
+`--dead` on such a file 19.7 s. What a chain step answers is now kept by
+file, position and depth for one outermost resolution, so each step is
+followed once: the same answers (the fixture's reads and `--dead` rows
+identical), N = 60 in 0.02 s and its `--dead` 4.3 → 0.06 s on this
+machine. Unit test `conditional_rewrites_of_a_chain_are_typed_in_time`.
+
 **A `has_many`'s model is singularized as Rails does it.** Reported by the
 0.8.5 verification hunt: the singular was a crude suffix strip, so
 `has_many :responses` named `Respons`, `:people` `People` and `:movies`
