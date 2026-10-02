@@ -2402,6 +2402,11 @@ impl<'pr> Extractor<'_> {
         if !on_self(call) {
             return false;
         }
+        // In `Class.new { has_many :x }` the macro is the new class's, which
+        // has no name here — not the class the block is written in.
+        if self.foreign_evals > 0 {
+            return false;
+        }
         let args = arg_nodes(call);
         match name.as_str() {
             "attr_reader" | "attr_writer" | "attr_accessor" | "attr" => {

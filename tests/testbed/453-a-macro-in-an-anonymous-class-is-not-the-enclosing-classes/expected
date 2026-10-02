@@ -1,0 +1,6 @@
+# A `has_many` inside `Class.new { … }` in a test method was credited to
+# the test class, so the fixture accessor `parts(:one)` resolved to the
+# association's reader and `.find` to CollectionProxy at confidence 1. A
+# macro in a block whose `self` is another object is that object's.
+def test/widget_test.rb:10:5 status=residue
+def test/widget_test.rb:11:5 status=residue

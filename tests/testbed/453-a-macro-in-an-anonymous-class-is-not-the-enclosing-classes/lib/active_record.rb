@@ -1,0 +1,52 @@
+module ActiveRecord
+  module QueryMethods
+    def where(*args)
+      spawn
+    end
+
+    def order(*args)
+      spawn
+    end
+  end
+
+  module Calculations
+    def pluck(*names)
+    end
+  end
+
+  class Relation
+    include QueryMethods
+    include Calculations
+  end
+
+  module Associations
+    class CollectionProxy < Relation
+      def find(*args)
+      end
+    end
+  end
+
+  module Querying
+    delegate :where, :order, to: :all
+  end
+
+  class Base
+    extend Querying
+  end
+end
+
+class OptionParser
+  def order(*args)
+  end
+
+  def pluck(*names)
+  end
+
+  def find(*args)
+  end
+end
+
+class Fixtures
+  def method_missing(name, *args)
+  end
+end
