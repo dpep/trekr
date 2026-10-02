@@ -5,9 +5,10 @@
 Ruby code intelligence: turning **position → meaning**, **definition →
 references**. Supports Rails, RSpec, RBIs, gems, worktrees, and scale.
 
-On real Rails code (discourse), trekr puts the right definition first 77% of
-the time to ruby-lsp's 51%, in under a third of the memory, and restarts
-instantly from its saved index ([how it compares](docs/COMPARISON.md)).
+On real Rails code, trekr puts the right definition first 78% of the time on
+discourse and 64% on mastodon, to ruby-lsp's 51% on both, in under half the
+memory, and restarts instantly from its saved index
+([how it compares](docs/COMPARISON.md)).
 
 ## Install
 
