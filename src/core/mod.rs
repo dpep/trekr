@@ -356,6 +356,11 @@ impl Visibility {
 /// definition, but one that exists only once the method has run.
 pub(crate) const DEFERRED_EVAL: &str = "class_eval in a method";
 
+/// The `via` of a `def` in a block at the top of a file: whatever the block
+/// runs on gets it — `main`'s singleton under `instance_eval` — and only if
+/// the block runs, so it is not taken for Object's (DEC-445).
+pub(crate) const TOP_LEVEL_BLOCK: &str = "def in a block at the top level";
+
 /// A definition: a name this blob binds, and everything the tree layer needs
 /// to place it in a namespace without re-reading the source.
 #[derive(Clone, Debug, PartialEq, Serialize)]

@@ -774,7 +774,8 @@ impl Kind {
             | Some("define_singleton_method")
             | Some("class_eval")
             | Some("module_eval")
-            | Some(crate::core::DEFERRED_EVAL) => Kind::Definition,
+            | Some(crate::core::DEFERRED_EVAL)
+            | Some(crate::core::TOP_LEVEL_BLOCK) => Kind::Definition,
             Some(_) => Kind::Declaration,
         }
     }

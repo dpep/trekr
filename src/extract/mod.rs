@@ -1485,6 +1485,9 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         {
             def.target = const_name(r);
         }
+        if self.nesting.is_empty() && self.open_blocks.iter().any(Option::is_some) {
+            def.via = Some(crate::core::TOP_LEVEL_BLOCK.to_string());
+        }
 
         // `def self.x` inside `included do` is the includer's class method,
         // where Concern puts `ClassMethods`' (and the macros above do).

@@ -1483,18 +1483,9 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
                 });
             }
             // A call at the top of a file, in no block, runs on `main`, an
-            // Object (DEC-445).
+            // Object (DEC-445) — in a plain script.
             if call.nesting.is_empty() && call.block_owner.is_none() && tree.is_known("Object") {
-                return Some(Receiver {
-                    fqn: "Object".to_string(),
-                    singleton: false,
-                    via: "main",
-                    bound: false,
-                    agreeing: 1,
-                    total: 1,
-                    ambiguous: false,
-                    rivals: Vec::new(),
-                });
+                return on_main(tree, facts, call, path);
             }
             let (fqn, singleton) = match made_side(tree, facts, call) {
                 Some(Made::Side(side)) if call.singleton => (tree.scope_fqn(&call.nesting)?, side),
@@ -2840,7 +2831,9 @@ fn residue(
         reason.to_string()
     };
 
-    let (confidence, agreement) = residue_confidence(call, total);
+    let typed = receiver.as_ref().is_some_and(|r| r.via != "self");
+    let ranked_by_class = here.is_some();
+    let (confidence, agreement) = residue_confidence(call, total, typed, ranked_by_class);
     MethodAnswer {
         status: Status::Residue,
         confidence,
@@ -2864,11 +2857,74 @@ fn residue(
     }
 }
 
-/// The `def`s written at the top of a file, outside any class: Object's.
+/// What a call at the top of a file runs on. `main`, an Object, in a plain
+/// script; in a Rake file `main` extends `Rake::DSL`, which answers first.
+/// A file evaluated on another object (`instance_eval` of a Gemfile, a
+/// `config.ru`, a plugin's `plugin.rb`) is told by its name, or by a
+/// top-level call `main` does not answer: then `self` is not stated, and the
+/// call is left untyped (DEC-445).
+fn on_main(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiver> {
+    let main = |fqn: &str| Receiver {
+        fqn: fqn.to_string(),
+        singleton: false,
+        via: "main",
+        bound: false,
+        agreeing: 1,
+        total: 1,
+        ambiguous: false,
+        rivals: Vec::new(),
+    };
+    let rake = is_rake_file(path) && tree.is_known(RAKE_DSL);
+    if rake && tree.lookup(RAKE_DSL, false, &call.name).is_some() {
+        return Some(main(RAKE_DSL));
+    }
+    if evaluated_elsewhere(path) {
+        return None;
+    }
+    let answers = |name: &str| {
+        !top_level_defs(tree, name).is_empty()
+            || tree.lookup("Object", false, name).is_some()
+            || rake && tree.lookup(RAKE_DSL, false, name).is_some()
+    };
+    let foreign = facts.calls.iter().any(|other| {
+        other.nesting.is_empty()
+            && other.block_owner.is_none()
+            && other.recv == RecvShape::Implicit
+            && other.recv_value.is_none()
+            && !answers(&other.name)
+    });
+    (!foreign).then(|| main("Object"))
+}
+
+/// What Rake extends `main` with before it loads a Rakefile or a `.rake`.
+const RAKE_DSL: &str = "Rake::DSL";
+
+fn is_rake_file(path: &str) -> bool {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    file.ends_with(".rake") || matches!(file, "Rakefile" | "rakefile" | "Rakefile.rb")
+}
+
+/// A file a library reads and evaluates on an object of its own, whose
+/// methods may share names with Kernel's (`gem` in a Gemfile is Bundler's):
+/// a Gemfile, a Rack `config.ru`, a Jbuilder view.
+fn evaluated_elsewhere(path: &str) -> bool {
+    let file = path.rsplit('/').next().unwrap_or(path);
+    matches!(file, "Gemfile" | "gems.rb")
+        || [".gemfile", ".ru", ".jbuilder"]
+            .iter()
+            .any(|ext| file.ends_with(ext))
+}
+
+/// The `def`s written at the top of a checkout file, outside any class and
+/// any block: Object's. A gem's is Object's only if something requires its
+/// file, which the index does not know (DEC-445).
 fn top_level_defs(tree: &Tree, name: &str) -> Vec<crate::tree::MethodDef> {
     tree.named(name)
         .iter()
         .filter(|method| method.owner.is_empty() && !method.singleton)
+        .filter(|method| method.via.as_deref() != Some(crate::core::TOP_LEVEL_BLOCK))
+        // A relative site is a fixture's, built with no checkout root.
+        .filter(|method| tree.in_checkout(&method.site.path) || !method.site.path.starts_with('/'))
         .cloned()
         .collect()
 }
@@ -2882,14 +2938,31 @@ const FEW_DEFINITIONS: usize = 3;
 /// with few definitions leaves little to choose between; either is right
 /// about seven times in ten. A name many classes define, called on a
 /// receiver nothing typed, about once in six.
-fn residue_confidence(call: &Call, definitions: usize) -> (f64, Option<String>) {
-    let on_self = matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv);
+///
+/// A call on `self` with no class around it — the top of a file another
+/// object evaluates — has no class to be ranked by, and a receiver whose
+/// type is known and lacks the name leaves a guess among other classes:
+/// 3 of 13 such residues ran the first candidate (DEC-442 addendum).
+fn residue_confidence(
+    call: &Call,
+    definitions: usize,
+    typed: bool,
+    ranked_by_class: bool,
+) -> (f64, Option<String>) {
+    let on_self = matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv) && ranked_by_class;
     let shared = match definitions {
         1 => "1 definition has the name".to_string(),
         n => format!("{n} definitions share the name"),
     };
     match definitions {
         0 => (0.0, None),
+        _ if typed && !on_self => (
+            0.2,
+            Some(format!(
+                "the receiver's type is known and lacks the name; {shared}; 0.2 of such \
+                 residues ran the first candidate, on the gold sets"
+            )),
+        ),
         _ if on_self => (
             0.7,
             Some(format!(

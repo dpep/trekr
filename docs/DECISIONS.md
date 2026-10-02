@@ -11247,3 +11247,58 @@ signature read, the gem's lent ones included (`via: sig`). A finder
 (`Post.find`) keeps its convention, tried first. A write in a loop that
 reads the variable it writes is bounded by the chain's depth. Testbed 451.
 
+
+### DEC-445 addendum: `main` only where a plain script runs
+
+**Reported** by the pre-release hunt: every top-level call was typed as
+`main`, also in files Ruby evaluates on another object. On discourse,
+`--refs Rake::DSL#task` went from 256 possible (0.8.4) to 258 excluded,
+and every Rake `task` resolved at 1.0 to a `def task` that thor's
+`rake_compat.rb` writes inside an `instance_eval do` block — a gem file
+discourse never requires; `Plugin::Instance#register_asset` went from 129
+possible to 123 excluded; a Gemfile's `gem` was `Kernel#gem` and a
+`config.ru`'s `map` was "the receiver's type is known".
+
+**Decided.**
+
+- **A Rake file's `main` extends `Rake::DSL`** (a `.rake`, a `Rakefile`):
+  a name the DSL has resolves there, the rest on Object.
+- **A file evaluated on another object is not typed**, as before DEC-445.
+  By name where its DSL shares names with Kernel's: a Gemfile or `gems.rb`
+  or `*.gemfile` (Bundler's `gem` against `Kernel#gem`), a `config.ru`
+  (Rack::Builder), a Jbuilder view. Otherwise by evidence: a file with a
+  top-level call that neither Object nor a checkout's top-level `def`
+  answers runs on something else — a Discourse `plugin.rb`
+  (`register_asset`), a Guardfile, a Capfile with `install_plugin`. No
+  further list: a name list would have to know every DSL, and the evidence
+  rule needs none.
+- **A top-level `def` is Object's only in the checkout, and only outside a
+  block.** A gem's is Object's if something requires its file, which the
+  index does not know; a `def` in a block is whatever the block runs on
+  (`instance_eval do def task`), and exists only if the block runs. Such a
+  `def` is recorded `via: "def in a block at the top level"` (an
+  extraction change, within v56).
+
+**Measured** on discourse, `--refs`: `Rake::DSL#task` 242 confirmed, 14
+possible (tasks in a `namespace` block, untyped as before), 16 excluded
+(specs' own `task` lets) — 256 reach it, as in 0.8.4, and 242 of them now
+confirmed; `Plugin::Instance#register_asset` 3 confirmed, 129 possible, 8
+excluded (a registry's own method). Gemfile `gem` and `config.ru` `map` are
+residue at 0.2 (DEC-442 addendum). Testbed 452.
+
+### DEC-442 addendum: a residue's evidence says what it rests on
+
+**Reported** by the pre-release hunt: the classes were applied by the
+call's shape alone. A typed receiver whose type lacks the name (a
+relation) took "an untyped receiver" classes, and an implicit call in a
+file another object evaluates took the self class, 0.7 — which cleared
+the LSP's 0.5 for `config.ru`'s `map` on a wrong `self`.
+
+**Decided.** The self class needs a class to rank by: an implicit call
+with no class or module around it takes the untyped classes. A receiver
+typed and found lacking — not by `self` — is a class of its own: 3 of 13
+such residues in the 0.8.4 comparison's final samples (discourse and
+mastodon, `c2`) ran the first candidate, **0.2**; the 13 are few, so it is
+the nearer tenth of a rate good to about ±0.1, and on the LSP's side of 0.5
+either way. `agreement` says "the receiver's type is known and lacks the
+name".

@@ -10,10 +10,18 @@
   `user.posts.visible`) resolves to the model's, and a variable assigned a
   chain (`posts = Post.where(…).order(:id)`) is typed as the chain is. This
   changes what an index records.
+- **A macro inside `Class.new { … }` is no longer the enclosing class's.**
+  A `has_many`, `attr_reader` or `include` in a block whose `self` is another
+  object (an anonymous class in a test) made methods on the class the block
+  was written in. This changes what an index records.
 - **A call at the top of a file runs on `main`.** A top-level `require`
   resolves to `Kernel#require`, a top-level `def` is Object's and a bare
   call to it resolves, and a Minitest spec's bare `describe` is minitest's
-  `Kernel#describe`. They were untyped guesses.
+  `Kernel#describe`. They were untyped guesses. In a Rake file `main` has
+  Rake's DSL first, so `task` is `Rake::DSL#task`; a file another object
+  evaluates — a Gemfile, a `config.ru`, a Jbuilder view, or one whose
+  top-level calls `main` does not answer, such as a Discourse `plugin.rb` —
+  is left untyped, as before.
 - **Go to definition no longer jumps to a weak guess.** For a call trekr
   could not resolve, the editor gets its ranked guesses only when the first
   is a fair one; set `initializationOptions.unresolved` (VS Code:
@@ -24,8 +32,9 @@
   `lsp.log`) instead of silently read as `confident`.
 - **A residue's `confidence` is graded** (`--json`): how often its first
   candidate ran, on the gold sets, among residues resting on the same
-  evidence — 0.7 for a call on `self` or a name with at most three
-  definitions, 0.2 otherwise, 0.0 with no candidate. It was always 0.0.
+  evidence — 0.7 for a call on `self` in a class or a name with at most
+  three definitions, 0.2 otherwise or when the receiver's known type lacks
+  the name, 0.0 with no candidate. It was always 0.0.
   `agreement` says what backs it, and `--explain` prints it as `evidence`.
 - **A `class_eval` block in a method body no longer replaces the class's
   own method.** `Const.class_eval do def self.x … end end` written inside a
