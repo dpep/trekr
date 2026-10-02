@@ -763,7 +763,7 @@ of a guess. Narrowing it is layer 3's job.
 |---|---|
 | 0 | something was indexed, or a query matched |
 | 1 | nothing matched, nothing to do — trekr looked; `status` says whether the nothing is certain or a residue |
-| 2 | no answer yet: the checkout is not indexed (`not_indexed`), or a miss from an index still filling it (`warming`) |
+| 2 | no answer yet: the checkout is not indexed (`not_indexed`), or a miss from an index still filling it (`warming`); from `--index`, an index that outwaited the write lock (`incomplete`) |
 
 Errors exit on sysexits codes (`64` usage, `66` a missing path, `74` the
 store); see DEC-067.
@@ -775,7 +775,11 @@ answer meanwhile carries `warming: {read, of, interrupted, hint}`, its
 `no_such_method` is `residue`, a `--refs` site the receiver would rule out is
 `possible`, `--dead` lists nothing, and a miss exits `2`. `--status` carries
 the same `warming` on the checkout's row. A mark left by an index that died
-is `interrupted`, until the next index.
+is `interrupted`, until the next index. An `--index` that stops part-way —
+DEC-139's wait outrun, exit `2`, or a signal, after which it dies of the
+signal — reports `status: incomplete` with the mark as it stands, never
+exit `0` (DEC-400); the language server's progress for a child stopped so
+ends "cut short at N of M files".
 
 **A first index is written in the order an editor needs it** (DEC-322),
 each step its own commit: the files the language server says are open (a

@@ -1931,6 +1931,18 @@ pub(super) const BUSY: std::time::Duration = std::time::Duration::from_secs(5);
 /// (DEC-139). A query never waits at all (DEC-066).
 const WRITER_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
 
+/// `WRITER_WAIT`, or the e2e suite's shorter one: a test of what an index
+/// does once the wait runs out cannot sit through ten minutes.
+fn writer_wait() -> std::time::Duration {
+    static WAIT: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
+    *WAIT.get_or_init(|| {
+        std::env::var("TREKR_TEST_WRITER_WAIT_MS")
+            .ok()
+            .and_then(|ms| ms.parse().ok())
+            .map_or(WRITER_WAIT, std::time::Duration::from_millis)
+    })
+}
+
 /// Told how long a writer has waited so far, each time the lock is still held.
 pub(crate) type WaitNotice = fn(std::time::Duration);
 
@@ -1982,7 +1994,7 @@ fn upgrade_busy(attempt: i32) -> bool {
 fn writer_pause(attempt: i32, waited: std::time::Duration) -> Option<std::time::Duration> {
     const DELAYS_MS: [u64; 12] = [1, 2, 5, 10, 15, 20, 25, 25, 25, 50, 50, 100];
     let delay = DELAYS_MS[attempt.clamp(0, 11) as usize];
-    (waited < WRITER_WAIT).then(|| std::time::Duration::from_millis(delay))
+    (waited < writer_wait()).then(|| std::time::Duration::from_millis(delay))
 }
 
 /// Put the store in WAL mode, which it then stays in.

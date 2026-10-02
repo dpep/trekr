@@ -260,23 +260,37 @@ impl Indexer {
                         Some(job.started.elapsed()),
                         false,
                     );
-                    if self.progress {
-                        out.push(progress(
-                            &job.token,
-                            serde_json::json!({
-                                "kind": "end",
-                                "message": if ok { "indexed" } else { "index failed — see trekr --index" },
-                            }),
-                        ));
-                    }
                     let cut_short = session
                         .main_store()
                         .warming(&job.root.to_string_lossy())
                         .ok()
                         .flatten()
-                        .is_some_and(|w| w.interrupted);
+                        .filter(|w| w.interrupted);
+                    // A child that stopped part-way says how far it got, as
+                    // `trekr --index` does (DEC-400), never just "failed".
+                    let resuming = cut_short.is_some() && !self.resumed.contains(&job.root);
+                    let message = match &cut_short {
+                        Some(w) if resuming => format!(
+                            "index cut short at {} of {} files — reading the rest",
+                            w.read, w.of
+                        ),
+                        Some(w) => format!(
+                            "index cut short at {} of {} files — answers are partial until: trekr --index {}",
+                            w.read,
+                            w.of,
+                            crate::core::paths::pretty(&job.root.to_string_lossy())
+                        ),
+                        None if ok => "indexed".to_string(),
+                        None => "index failed — see trekr --index".to_string(),
+                    };
+                    if self.progress {
+                        out.push(progress(
+                            &job.token,
+                            serde_json::json!({ "kind": "end", "message": message }),
+                        ));
+                    }
                     self.done.insert(job.root.clone());
-                    if cut_short {
+                    if cut_short.is_some() {
                         self.resume(job.root);
                     }
                 }

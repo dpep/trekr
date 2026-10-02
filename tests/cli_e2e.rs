@@ -3623,6 +3623,74 @@ fn a_queued_index_says_what_it_is_waiting_for() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A checkout an earlier index left cut short — the mark of a writer no
+/// longer running — and a connection holding the write lock, so the next
+/// `--index` of it cannot write a row until the holder lets go.
+fn cut_short_behind_a_lock(label: &str) -> (PathBuf, PathBuf, rusqlite::Connection) {
+    let (dir, db) = scratch(label);
+    repo(&dir);
+    let indexed = trekr(&db, &dir, &["--index", "--json", "--no-gems"]);
+    let root = json(&indexed)["repo"].as_str().unwrap().to_string();
+    let holder = rusqlite::Connection::open(&db).unwrap();
+    holder
+        .execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)",
+            [format!("warming {root}"), format!("{} 1 2", i32::MAX)],
+        )
+        .unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+    (dir, db, holder)
+}
+
+/// An index that cannot finish never exits 0: a script that trusts the exit
+/// would answer from an index with most of the checkout missing (DEC-400).
+#[test]
+fn an_index_that_outwaits_the_lock_says_it_is_incomplete() {
+    let (dir, db, holder) = cut_short_behind_a_lock("index-outwaited");
+    let out = neutral(Command::new(env!("CARGO_BIN_EXE_trekr")))
+        .args(["--index", "--json", "--no-gems"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .env("TREKR_TEST_WRITER_WAIT_MS", "1500")
+        .output()
+        .unwrap();
+    holder.execute_batch("ROLLBACK").unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("1 of 2 files"), "{stderr}");
+    assert!(stderr.contains("trekr --index"), "{stderr}");
+    let answer = json(&out);
+    assert_eq!(answer["status"], "incomplete", "{answer}");
+    assert_eq!(answer["warming"]["interrupted"], true, "{answer}");
+
+    let text = neutral(Command::new(env!("CARGO_BIN_EXE_trekr")))
+        .args(["--index", "--no-gems"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+    assert!(text.status.success(), "the lock is free again");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// Stopped by a signal — Ctrl-C, or a caller's timeout — an index says how
+/// far it got before it goes, and dies of the signal, as a shell expects.
+#[test]
+fn an_index_stopped_by_a_signal_says_it_is_incomplete() {
+    use std::os::unix::process::ExitStatusExt;
+    let (dir, db, holder) = cut_short_behind_a_lock("index-stopped");
+    let queued = spawn_trekr(&db, &dir, &["--index", "--json", "--no-gems"]);
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    unsafe { libc::kill(queued.id() as i32, libc::SIGTERM) };
+    let out = queued.wait_with_output().unwrap();
+    holder.execute_batch("ROLLBACK").unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.signal(), Some(libc::SIGTERM), "{stderr}");
+    assert!(stderr.contains("1 of 2 files"), "{stderr}");
+    assert_eq!(json(&out)["status"], "incomplete");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn concurrent_index_runs_over_shared_content_both_land() {
     let (dir, db) = scratch("index-race");

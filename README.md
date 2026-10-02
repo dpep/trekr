@@ -55,11 +55,14 @@ Exit codes mean one thing each:
 | --- | --- |
 | `0` | An answer: something matched, was indexed, or was collected. |
 | `1` | Nothing found. `status` says how sure: `no_such_method` is certain, `residue` names what it could not see (an unindexed ancestor, an untyped receiver). |
-| `2` | No answer yet: the checkout is not indexed, or its first index is still running and the miss may not hold. Run the `hint` (`trekr --index …`), then ask again. |
+| `2` | No answer yet: the checkout is not indexed, or its first index is still running and the miss may not hold. Run the `hint` (`trekr --index …`), then ask again. From `--index`: it could not finish — another trekr writer held the lock longer than an index waits (10 minutes) — and `status: incomplete` says how far it got. |
 | `64`–`74` | An error, below. |
 
 An answer given while a first index is still running carries `warming` in
 JSON, claims nothing certain, and `--dead` lists nothing until it ends.
+An `--index` stopped by a signal (Ctrl-C, a caller's timeout) says how far
+it got on stderr — and under `--json` as `status: incomplete` — before it
+exits as that signal does (130 for Ctrl-C), never `0`.
 
 ### Errors
 

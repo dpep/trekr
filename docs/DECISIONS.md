@@ -10531,3 +10531,56 @@ The six confirmed → possible were `chain:name` guesses of `Array` for
 which a reader somewhere returning another class now disputes. mastodon's `Trends::Base#request_review`
 became `unreferenced`: each `Trends.links` reader now types its subclass,
 whose override answers, and the base's raises `NotImplementedError`.
+
+## DEC-400 — An index that cannot finish says how far it got, and never exits 0
+
+**Decided.** `--index` that stops part-way reports the checkout as the
+store now holds it — "index incomplete: N of M files of ROOT read — why;
+answers from it are partial until: trekr --index ROOT" on stderr, and under
+`--json` `{repo, status: "incomplete", reason, hint, warming}`, `warming`
+being DEC-320's object with `interrupted: true` (null when no mark stands:
+a reindex's earlier map, or nothing written yet). Two ways to stop:
+
+- **The lock outwaited** — DEC-139's ten minutes ran out behind another
+  writer: exit `2`, "no answer yet, ask again". The index is what a query
+  then answers `warming` from, with exit `2` too, and the remedy is the
+  same: run it again. Not `74`: nothing is wrong with the store, and a
+  caller that treats `74` as "the database is broken" would do the wrong
+  thing about a lock that will be released.
+- **A signal** — SIGINT, SIGTERM, SIGHUP: the report, then the process dies
+  of that signal (130 for Ctrl-C), as the default action would have. A
+  shell, `timeout(1)` and an agent's harness read a death by signal
+  correctly; exiting `2` would claim the index chose to stop. The signals
+  are blocked before any thread starts and taken by one thread with
+  `sigwait`, so the report runs as ordinary code, not in a handler.
+  SIGKILL cannot be caught; the next `--status` or query says the index
+  was cut short, as before.
+
+The language server's background index ends its progress "index cut short
+at N of M files — reading the rest" (it resumes once, DEC-320), or "…
+answers are partial until: trekr --index ROOT", where it said "index
+failed".
+
+**Reported** on a ~109k-file monorepo: `trekr --index .` behind a freshly
+spawned `--lsp` first-indexing a second checkout printed "waiting for
+another trekr writer… (60s)" and ended with no summary; `--status` said
+"cut short: 180 of 144977 files read". Reproduced on mastodon (lock held
+from the first commit, then SIGINT): the mark reads 179 of 17,322 — the
+Ruby's stdlib, the commit before the checkout's own write, exactly where
+the report's 180 stands.
+
+**Why it stopped at all.** Not trekr's wait: no path gives up before
+DEC-139's ten minutes, and when one does it fails loudly (`74`, "database
+is locked"). Off a terminal DEC-171's notices come at 1 s, 60 s, 120 s;
+the last one seen being "(60s)" puts the end between 60 and 120 s — where
+a caller's two-minute command timeout (an agent's default) stops a process.
+The exit `0` is not reproducible from trekr: a run that returns ends with
+the summary, and every error is non-zero. A pipeline's status (`trekr
+--index . 2>&1 | tail`) is the last command's. Either way the gap was the
+same — the index stopped and said nothing — and that is what this fixes.
+
+**Not done: a longer wait.** Considered: let `--index` wait without bound,
+saying so. The reported wait was not trekr's limit, so a longer one would
+not have changed it; and past DEC-139's bound for one writer's turn,
+something is stuck, and an index queued forever behind it is a hang. Exit `2` makes "run it again"
+the caller's explicit choice.

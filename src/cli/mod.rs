@@ -8,6 +8,7 @@
 mod built;
 mod conventions;
 mod failure;
+mod incomplete;
 pub(crate) mod position;
 mod profile;
 mod routes;
@@ -1057,6 +1058,57 @@ fn index_files(
     Ok(counts)
 }
 
+/// Write the checkout and its gems: the part of an index that holds the
+/// write lock, and so the part another writer can make it outwait.
+fn index_all(
+    store: &mut Store,
+    root: &Path,
+    files: &scan::Files,
+    git_state: i64,
+    with_gems: bool,
+    jobs: usize,
+    profile: &mut Option<profile::Profile>,
+) -> anyhow::Result<(crate::store::Indexed, GemReport)> {
+    let root_str = root.to_string_lossy().into_owned();
+    store.wait_as_writer(writer_waiting)?;
+    let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
+    // A first index — no map yet, or one an index left unfinished — is
+    // marked while it fills the store, so an answer meanwhile says it is
+    // partial (DEC-320), and is written in the order someone looking at it
+    // needs it (DEC-322). A reindex replaces a whole map with a whole map.
+    let filling = !store.has_checkout(&root_str)? || store.warming(&root_str)?.is_some();
+    let mut known = None;
+    let (counts, gems) = if filling {
+        index_first(
+            store, root, files, git_state, with_gems, &mut known, &pool, profile,
+        )?
+    } else {
+        let counts = index_files(
+            store, root, files, git_state, false, &mut known, &pool, profile,
+        )?;
+        let plan = match with_gems {
+            true => Some(plan_gems(store, root, &pool, profile)?),
+            false => None,
+        };
+        let gems = match plan {
+            Some(plan) => index_gems(store, root, plan, &mut known, &pool, profile)?,
+            None => GemReport::default(),
+        };
+        (counts, gems)
+    };
+
+    // Only when something was actually read, and then only once the store has
+    // outgrown its statistics: a full ANALYZE costs seconds whatever changed.
+    if counts.parsed > 0 || gems.indexed > 0 {
+        profile::timed(profile, "analyze", || {
+            store.analyze_if_outgrown();
+            Ok::<(), anyhow::Error>(())
+        })?;
+    }
+
+    Ok((counts, gems))
+}
+
 /// Whether a load of `new` blobs into a store of `known` rebuilds the fact
 /// indexes by sorting rather than inserting into them (DEC-057): from half
 /// the store up, where the rebuild costs less than the inserts (DEC-234).
@@ -2006,6 +2058,7 @@ fn cmd_index(
 ) -> anyhow::Result<ExitCode> {
     // First, before the scan or the pool starts a thread.
     crate::serve::fresh::yield_if_background();
+    incomplete::watch_signals();
     let mut profile = want_profile.then(profile::Profile::default);
     let jobs = worker_count(jobs);
     if let Some(profile) = profile.as_mut() {
@@ -2033,56 +2086,30 @@ fn cmd_index(
     let git_state = scan::git_fingerprint(&root).unwrap_or(0);
     let files = profile::timed(&mut profile, "scan", || scan::scan(&root))?;
 
-    store.wait_as_writer(writer_waiting)?;
-    let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
-    // A first index — no map yet, or one an index left unfinished — is
-    // marked while it fills the store, so an answer meanwhile says it is
-    // partial (DEC-320), and is written in the order someone looking at it
-    // needs it (DEC-322). A reindex replaces a whole map with a whole map.
-    let filling = !store.has_checkout(&root_str)? || store.warming(&root_str)?.is_some();
-    let mut known = None;
-    let (counts, gems) = if filling {
-        index_first(
-            &mut store,
-            &root,
-            &files,
-            git_state,
-            with_gems,
-            &mut known,
-            &pool,
-            &mut profile,
-        )?
-    } else {
-        let counts = index_files(
-            &mut store,
-            &root,
-            &files,
-            git_state,
-            false,
-            &mut known,
-            &pool,
-            &mut profile,
-        )?;
-        let plan = match with_gems {
-            true => Some(plan_gems(&store, &root, &pool, &mut profile)?),
-            false => None,
-        };
-        let gems = match plan {
-            Some(plan) => index_gems(&mut store, &root, plan, &mut known, &pool, &mut profile)?,
-            None => GemReport::default(),
-        };
-        (counts, gems)
+    incomplete::indexing(&root_str, out);
+    let indexed = index_all(
+        &mut store,
+        &root,
+        &files,
+        git_state,
+        with_gems,
+        jobs,
+        &mut profile,
+    );
+    let (counts, gems) = match indexed {
+        Err(error) if incomplete::outwaited(&error) => {
+            drop(store);
+            incomplete::report(
+                out,
+                &root_str,
+                "another trekr writer kept the write lock longer than an index waits",
+            );
+            crate::usage::outcome(Outcome::Error("incomplete"));
+            return Ok(ExitCode::from(2));
+        }
+        other => other?,
     };
-
-    // Only when something was actually read, and then only once the store has
-    // outgrown its statistics: a full ANALYZE costs seconds whatever changed.
-    if counts.parsed > 0 || gems.indexed > 0 {
-        profile::timed(&mut profile, "analyze", || {
-            store.analyze_if_outgrown();
-            Ok::<(), anyhow::Error>(())
-        })?;
-    }
-
+    incomplete::finished();
     // A path inside a checkout indexes all of it, by design: say which.
     let within = std::fs::canonicalize(path)
         .ok()

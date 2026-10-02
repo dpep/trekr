@@ -164,7 +164,12 @@ struct Session {
 
 impl Session {
     fn start(db: &Path, dir: &Path) -> Session {
+        Session::start_with(db, dir, &[])
+    }
+
+    fn start_with(db: &Path, dir: &Path, env: &[(&str, &str)]) -> Session {
         let mut child = trekr()
+            .envs(env.iter().copied())
             .arg("--lsp")
             .current_dir(dir)
             .env("TREKR_DB", db)
@@ -3043,6 +3048,54 @@ fn a_server_whose_store_was_set_aside_reopens_the_rebuilt_one() {
         .filter(|n| n.contains(".broken-") && !n.ends_with("-wal"))
         .count();
     assert_eq!(broken, 1);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A background index that stops part-way — here, outwaiting another
+/// writer's lock — ends its progress saying how far it got, never just
+/// "failed" (DEC-400).
+#[test]
+fn a_background_index_cut_short_says_how_far_it_got() {
+    let (dir, db) = scratch("outwaited");
+    // A Ruby project: what the server indexes unasked.
+    fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
+    ruby_repo(&dir, &db, "class Widget\nend\n");
+    let holder = rusqlite::Connection::open(&db).unwrap();
+    let root: String = holder
+        .query_row("SELECT root FROM checkout WHERE kind = 'repo'", [], |r| {
+            r.get(0)
+        })
+        .unwrap();
+    holder
+        .execute(
+            "INSERT INTO meta (key, value) VALUES (?1, ?2)",
+            [format!("warming {root}"), format!("{} 1 2", i32::MAX)],
+        )
+        .unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+    let mut session = Session::start_with(&db, &dir, &[("TREKR_TEST_WRITER_WAIT_MS", "1000")]);
+    session.initialize_with(
+        &dir,
+        serde_json::json!({"window": {"workDoneProgress": true}}),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let ended = loop {
+        assert!(std::time::Instant::now() < deadline, "progress never ended");
+        let message = session.read();
+        if message["method"] == "$/progress" && message["params"]["value"]["kind"] == "end" {
+            break message["params"]["value"]["message"].clone();
+        }
+    };
+    holder.execute_batch("ROLLBACK").unwrap();
+    assert!(
+        ended
+            .as_str()
+            .unwrap()
+            .contains("cut short at 1 of 2 files"),
+        "{ended}"
+    );
+    session.stop();
     let _ = fs::remove_dir_all(&dir);
 }
 

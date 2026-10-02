@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **`trekr --index` never exits 0 when it could not finish.** Stopped by
+  Ctrl-C or a caller's timeout, it now says how far it got ("index
+  incomplete: 180 of 144977 files read …; answers from it are partial
+  until: trekr --index …") before exiting as the signal does. Behind
+  another trekr writer for longer than it waits (10 minutes), it says the
+  same and **exits 2** where it exited 74, "database is locked"; under
+  `--json`, `status: "incomplete"` with `warming`. A script that retried on
+  74 should retry on 2. The editor's progress for a background index
+  stopped part-way says "cut short at N of M files" instead of "index
+  failed".
+
 ## 0.8.4 — 2026-10-01
 
 - **The index format changed: trekr reindexes each checkout once** after
