@@ -9,6 +9,7 @@ mod built;
 mod config;
 mod conventions;
 mod failure;
+mod generated;
 mod incomplete;
 pub(crate) mod position;
 mod profile;
@@ -3803,6 +3804,7 @@ fn dead_in(
     let tree = build_tree(store, &root_str)?;
     let views = views::Views::read(root);
     let config = config::Config::read(root);
+    let generated = generated::Generated::read(root, defined.iter().map(|d| d.file.as_str()));
     let built = built::Built::read(root);
     let routes = routes::Routes::read(root);
     let routed = routed_actions(&tree, &routes);
@@ -4102,6 +4104,14 @@ fn dead_in(
                 risky.push_str(", ");
             }
             risky.push_str(&format!("named in config ({at}), which is not read"));
+        }
+        if let Some(how) = generated.why(file) {
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            risky.push_str(&format!(
+                "in generated code ({how}), which its runtime may call generically"
+            ));
         }
         if !def.singleton && conventions::assigned_writer(&tree, &owner, &def.name, public) {
             if !risky.is_empty() {

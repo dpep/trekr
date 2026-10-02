@@ -191,7 +191,9 @@ of its shape the checkout builds (`:"report_#{type}"`) or sends to its class
 ancestor trekr has not indexed, a gem of the bundle that calls the name, a
 helper another helper calls (DEC-363–368, DEC-370), a YAML config that
 writes the name (`generator: pay_schedule_resources`,
-`Pkg::Sanitizer.clean_uid`; locale files aside, DEC-402).
+`Pkg::Sanitizer.clean_uid`; locale files aside, DEC-402), and a file a
+generator wrote (`linguist-generated`, a `generated/` directory, a "DO NOT
+EDIT" header; DEC-403).
 
 `clear` on an `unreferenced` row means none of those was found. Measured by
 hand on mastodon and discourse (DEC-372), such rows were truly dead 79 % and

@@ -1,0 +1,10 @@
+# Generated code implements a contract its runtime calls generically — a
+# GraphQL client's `from_response!`, a protobuf message's accessors — so no
+# call site names the method. `--dead` called each unreferenced, clear. It
+# now says the file is generated and how it knows: `.gitattributes`, a
+# `generated/` directory, a header. A comment that only uses the word is no
+# header.
+dead app/clients/widget_query.rb WidgetQuery#from_response!=unreferenced~linguist-generated
+dead lib/generated/pet_query.rb PetQuery#from_response!=unreferenced~generated/
+dead app/models/gadget_pb.rb GadgetMessage#serial=unreferenced~header
+dead app/models/token.rb Token#rotate=unreferenced~
