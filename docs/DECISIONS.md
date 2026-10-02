@@ -11115,6 +11115,23 @@ over ruby-lsp to shave four more points. `best` changes nothing scored at
 was sometimes the way to the truth. An agent or a user who wants it sets
 `peek`.
 
+**Addendum — agents get `peek`.** `confident` is the default for a person
+in an editor, who reads a jump as an answer. An agent is not that reader: it
+can weigh five candidates against the code, and it has `trekr --def` and
+`--refs` to check one. What it cannot do is learn why a definition came back
+null — Claude Code's LSP tool shows no `window/showMessage` (DEC-331), and a
+definition has no field for a reason — so under `confident` a weak residue
+is the worst answer an agent can get: nothing, and no way to know there was
+something. The trekr plugin's `.lsp.json` therefore sets
+`"initializationOptions": {"unresolved": "peek"}`; Claude Code passes it
+through (the plugins reference lists `initializationOptions`, "Options sent
+in the initialize request", among an `lspServers` entry's fields). The
+hover at the same position still says the call is unresolved.
+
+Declined: defaulting by `clientInfo.name` ("Claude Code"). It would make one
+server answer differently per client with no setting anyone can see, and the
+plugin is the one place Claude Code users get trekr's LSP from.
+
 ## DEC-445 — A call at the top of a file runs on `main`, an Object
 
 **Decided.** An implicit call written at the top level of a file — no class
