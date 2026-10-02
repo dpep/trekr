@@ -32,9 +32,9 @@
   `lsp.log`) instead of silently read as `confident`.
 - **A residue's `confidence` is graded** (`--json`): how often its first
   candidate ran, on the gold sets, among residues resting on the same
-  evidence — 0.7 for a call on `self` in a class or a name with at most
-  three definitions, 0.2 otherwise or when the receiver's known type lacks
-  the name, 0.0 with no candidate. It was always 0.0.
+  evidence — 0.7 for a call on `self` or a name with at most three
+  definitions, 0.2 otherwise or when the receiver's known type lacks the
+  name, 0.0 with no candidate. It was always 0.0.
   `agreement` says what backs it, and `--explain` prints it as `evidence`.
 - **A `class_eval` block in a method body no longer replaces the class's
   own method.** `Const.class_eval do def self.x … end end` written inside a

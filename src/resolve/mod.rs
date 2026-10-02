@@ -2832,8 +2832,7 @@ fn residue(
     };
 
     let typed = receiver.as_ref().is_some_and(|r| r.via != "self");
-    let ranked_by_class = here.is_some();
-    let (confidence, agreement) = residue_confidence(call, total, typed, ranked_by_class);
+    let (confidence, agreement) = residue_confidence(call, total, typed);
     MethodAnswer {
         status: Status::Residue,
         confidence,
@@ -2939,17 +2938,11 @@ const FEW_DEFINITIONS: usize = 3;
 /// about seven times in ten. A name many classes define, called on a
 /// receiver nothing typed, about once in six.
 ///
-/// A call on `self` with no class around it — the top of a file another
-/// object evaluates — has no class to be ranked by, and a receiver whose
-/// type is known and lacks the name leaves a guess among other classes:
-/// 3 of 13 such residues ran the first candidate (DEC-442 addendum).
-fn residue_confidence(
-    call: &Call,
-    definitions: usize,
-    typed: bool,
-    ranked_by_class: bool,
-) -> (f64, Option<String>) {
-    let on_self = matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv) && ranked_by_class;
+/// A receiver whose type is known and lacks the name leaves a guess among
+/// other classes: 3 of 13 such residues ran the first candidate (DEC-442
+/// addendum).
+fn residue_confidence(call: &Call, definitions: usize, typed: bool) -> (f64, Option<String>) {
+    let on_self = matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv);
     let shared = match definitions {
         1 => "1 definition has the name".to_string(),
         n => format!("{n} definitions share the name"),
