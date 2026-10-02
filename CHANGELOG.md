@@ -54,9 +54,16 @@
   another trekr writer for longer than it waits (10 minutes), it says the
   same and **exits 2** where it exited 74, "database is locked"; under
   `--json`, `status: "incomplete"` with `warming`. A script that retried on
-  74 should retry on 2. The editor's progress for a background index
-  stopped part-way says "cut short at N of M files" instead of "index
-  failed".
+  74 should retry on 2.
+- **The editor's background index asks again when it waited too long.**
+  One that outwaited another trekr writing the index used to give up for
+  the session while hovers kept saying it was indexing; it now runs again
+  until it gets its turn, and a hover says only what is under way. An index
+  left partial or failed is said in a message the editor shows ("index cut
+  short (N of M files read …) — answers are partial until: trekr --index
+  …"), where before VS Code showed nothing, and one killed after its last
+  write says "indexed". Hovers, messages and progress give the same,
+  current count, of the checkout's files with its gems' and Ruby's.
 - **A lambda handed to a callback is read on the instance.** In
   `before_action -> { authorize! unless skip_auth? }` the calls run on the
   controller's instance, as an `if:` lambda's do, so a concern the class

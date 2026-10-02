@@ -307,6 +307,7 @@ fn serve(
             writer.send(message)?;
         }
         session.reindexing = indexer.after_upgrade();
+        session.background = indexer.view();
         // A new binary at the launch path is about to take over, with the
         // store it opens; reopening here would only make this one's.
         let replacing = launched.as_ref().is_some_and(|w| w.changed().is_some());
@@ -367,7 +368,7 @@ fn serve(
         // arrived; while an index runs, wake periodically to notice it finish.
         let timeout = if warm < Warm::Done {
             Some(Duration::ZERO)
-        } else if indexer.busy() {
+        } else if indexer.busy() || indexer.waiting() {
             Some(Duration::from_millis(250))
         } else {
             launched.is_some().then_some(RECHECK)

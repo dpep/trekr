@@ -3203,9 +3203,103 @@ fn a_server_whose_store_was_set_aside_reopens_the_rebuilt_one() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// A background index that stops part-way — here, outwaiting another
-/// writer's lock — ends its progress saying how far it got, never just
-/// "failed" (DEC-400).
+/// The progress of one background index, read up to its end: the messages
+/// its `report`s carried, and the one its `end` did. Messages the server sent
+/// meanwhile are kept in `seen`.
+fn progress_until_end(
+    session: &mut Session,
+    seen: &mut Vec<serde_json::Value>,
+) -> (Vec<String>, String) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut reports = Vec::new();
+    loop {
+        assert!(std::time::Instant::now() < deadline, "progress never ended");
+        let message = session.read();
+        if message["method"] == "$/progress" {
+            let value = &message["params"]["value"];
+            let text = value["message"].as_str().unwrap_or_default().to_string();
+            match value["kind"].as_str() {
+                Some("report") => reports.push(text),
+                Some("end") => return (reports, text),
+                _ => {}
+            }
+        } else {
+            seen.push(message);
+        }
+    }
+}
+
+/// A Ruby project's checkout, committed, that the store does not hold, and a
+/// store that exists — holding another checkout — for a test to lock.
+fn unindexed_beside_a_store(label: &str) -> (PathBuf, PathBuf, PathBuf) {
+    let (dir, db) = scratch(label);
+    let other = dir.with_extension("other");
+    let _ = fs::remove_dir_all(&other);
+    fs::create_dir_all(&other).unwrap();
+    ruby_repo(&other, &db, "class Gadget\nend\n");
+    git(&dir, &["init", "-q"]);
+    fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
+    fs::write(
+        dir.join("app.rb"),
+        "class Widget\n  def save\n  end\nend\nWidget.new.save\n",
+    )
+    .unwrap();
+    commit_all(&dir);
+    (dir, other, db)
+}
+
+/// A background index that outwaits another writer's lock has been told "ask
+/// again" (exit 2, DEC-400), so the server does: it says it is waiting where
+/// the editor shows it, a hover promises nothing that is not under way, and
+/// once the lock is free the checkout is indexed after all.
+#[test]
+fn a_background_index_that_outwaits_the_lock_runs_again_once_it_is_free() {
+    let (dir, other, db) = unindexed_beside_a_store("behind");
+    let holder = rusqlite::Connection::open(&db).unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+    let mut session = Session::start_with(&db, &dir, &[("TREKR_TEST_WRITER_WAIT_MS", "1000")]);
+    session.initialize_with(
+        &dir,
+        serde_json::json!({"window": {"workDoneProgress": true}}),
+    );
+    let mut seen = Vec::new();
+    let (reports, ended) = progress_until_end(&mut session, &mut seen);
+    assert!(ended.contains("waiting for another trekr"), "{ended}");
+    // VS Code shows no `end` message: the last `report` is what it shows.
+    assert_eq!(reports.last(), Some(&ended), "{reports:?}");
+
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1,
+            "text": fs::read_to_string(dir.join("app.rb")).unwrap()
+        }}),
+    );
+    let hover = hover_at(&mut session, &dir, 5, 12);
+    assert!(hover.contains("not indexed yet"), "{hover}");
+    assert!(
+        hover.contains("another trekr") || hover.contains("is indexing it"),
+        "says what is under way: {hover}"
+    );
+
+    holder.execute_batch("ROLLBACK").unwrap();
+    let (_, ended) = progress_until_end(&mut session, &mut seen);
+    assert_eq!(ended, "indexed");
+    let answer = definition_eventually(&mut session, &uri_of(&dir, "app.rb"), 4, 12);
+    assert_eq!(
+        answer[0]["range"]["start"]["line"], 1,
+        "Widget#save: {answer}"
+    );
+
+    // Its index has ended, so stopping leaves no child behind.
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&other);
+}
+
+/// A first index cut short and then outwaited is asked again too, and says how
+/// far the store got (DEC-400) — in the counts every other surface uses.
 #[test]
 fn a_background_index_cut_short_says_how_far_it_got() {
     let (dir, db) = scratch("outwaited");
@@ -3231,22 +3325,15 @@ fn a_background_index_cut_short_says_how_far_it_got() {
         &dir,
         serde_json::json!({"window": {"workDoneProgress": true}}),
     );
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-    let ended = loop {
-        assert!(std::time::Instant::now() < deadline, "progress never ended");
-        let message = session.read();
-        if message["method"] == "$/progress" && message["params"]["value"]["kind"] == "end" {
-            break message["params"]["value"]["message"].clone();
-        }
-    };
+    let mut seen = Vec::new();
+    let (_, ended) = progress_until_end(&mut session, &mut seen);
+    assert!(ended.contains("(1 of 2 files read"), "{ended}");
+    assert!(ended.contains("waiting for another trekr"), "{ended}");
+
+    // Reaped, not left reading a deleted directory after the suite.
     holder.execute_batch("ROLLBACK").unwrap();
-    assert!(
-        ended
-            .as_str()
-            .unwrap()
-            .contains("cut short at 1 of 2 files"),
-        "{ended}"
-    );
+    let (_, ended) = progress_until_end(&mut session, &mut seen);
+    assert_eq!(ended, "indexed");
     session.stop();
     let _ = fs::remove_dir_all(&dir);
 }
@@ -3292,7 +3379,7 @@ fn an_unindexed_project_is_indexed_in_the_background_with_progress() {
             );
         }
     }
-    assert_eq!(seen, ["create", "begin", "end"]);
+    assert_eq!(seen, ["create", "begin", "report", "end"]);
 
     let answer = definition_eventually(&mut session, &uri_of(&dir, "app.rb"), 5, 3);
     assert_eq!(
@@ -5001,7 +5088,7 @@ fn answers_from_a_partial_index_say_so_and_rule_nothing_out() {
     let said = shown_messages(&notes);
     assert_eq!(said.len(), 1, "{notes:?}");
     assert!(
-        said[0].contains("still indexing this checkout (1 of 4 files read)"),
+        said[0].contains("still indexing this checkout (1 of 4 files read"),
         "{said:?}"
     );
     let (_, notes) = request_with_notes(&mut session, "textDocument/definition", define);
@@ -5009,9 +5096,19 @@ fn answers_from_a_partial_index_say_so_and_rule_nothing_out() {
 
     let hover = hover_at(&mut session, &dir, 11, 9);
     assert!(
-        hover.contains("still indexing this checkout (1 of 4 files read)"),
+        hover.contains("still indexing this checkout (1 of 4 files read"),
         "{hover}"
     );
+    // The index moves on: a hover says where it is now, not where it was when
+    // the tree answering was built — as the progress and another session do.
+    store
+        .execute(
+            "UPDATE meta SET value = ?2 WHERE key = ?1",
+            [key.clone(), format!("{} 3 4", std::process::id())],
+        )
+        .unwrap();
+    let hover = hover_at(&mut session, &dir, 11, 9);
+    assert!(hover.contains("(3 of 4 files read"), "{hover}");
     let listed = session.request(
         "textDocument/completion",
         serde_json::json!({

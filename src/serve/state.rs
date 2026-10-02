@@ -63,6 +63,8 @@ pub(crate) struct Session {
     /// dropped the store, and since when: until it ends, answers there are
     /// partial, and a hover says so.
     pub(crate) reindexing: Option<(PathBuf, std::time::Instant)>,
+    /// What background indexing is doing, as of the serve loop's last turn.
+    pub(crate) background: super::fresh::View,
     /// Checkouts told their navigation answers are partial (DEC-331): once
     /// each, for the life of the session.
     pub(crate) told_warming: std::collections::HashSet<PathBuf>,
@@ -273,6 +275,7 @@ impl Session {
             reference_limit: super::gather::DEFAULT_LIMIT,
             unresolved: Unresolved::default(),
             reindexing: None,
+            background: super::fresh::View::default(),
             told_warming: std::collections::HashSet::new(),
             early: None,
             stamps: HashMap::new(),
@@ -325,14 +328,28 @@ impl Session {
     }
 
     /// This checkout's first index, while it is still filling the store
-    /// (DEC-320): answers from it are partial, and say so. Asked of the tree
-    /// that answers when there is one, which may be older than the store.
+    /// (DEC-320): answers from it are partial, and say so. Whether they are is
+    /// the answering tree's, which may be older than the store; how far the
+    /// index has got is the store's mark as of now, so every surface — and
+    /// every session — gives the same count. An early store's copy of the
+    /// mark lags the store's, so the store's is read.
     pub(crate) fn warming(&self, root: &Path) -> Option<crate::store::Warming> {
-        let warming = match self.checkouts.get(root) {
-            Some(checkout) if checkout.tree.is_some() => checkout.partial.clone(),
-            _ => self.store.warming(&root.to_string_lossy()).ok().flatten(),
+        let current = || {
+            self.main_store()
+                .warming(&root.to_string_lossy())
+                .ok()
+                .flatten()
         };
-        warming.map(crate::store::Warming::now)
+        let warming = match self.checkouts.get(root) {
+            // The index ended after this tree was built, and its successor is
+            // not in yet: still partial, at the count it was built from.
+            Some(checkout) if checkout.tree.is_some() => {
+                let built = checkout.partial.clone()?;
+                current().unwrap_or(built)
+            }
+            _ => current()?,
+        };
+        Some(warming.now())
     }
 
     /// Is this checkout in the store at all?

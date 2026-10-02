@@ -27,6 +27,11 @@ pub(crate) struct Warming {
     /// That index's process: whose early store to read (DEC-332).
     #[serde(skip)]
     pub(crate) pid: u32,
+    /// Written before the index listed the gems: `of` is the checkout's own
+    /// files alone, not the tree's, so it is no count to show beside a later
+    /// one.
+    #[serde(skip)]
+    pub(crate) uncounted: bool,
 }
 
 impl Warming {
@@ -75,10 +80,21 @@ impl Store {
 
     /// Mark `root` as filling, `read` of `of` files visible, by this process.
     pub(crate) fn set_warming(&self, root: &str, read: u64, of: u64) -> Result<()> {
+        self.mark(root, &format!("{} {read} {of}", std::process::id()))
+    }
+
+    /// Mark `root` as filling before its gems are listed: `own` is the
+    /// checkout's files alone, and the mark says so ([`Warming::uncounted`]).
+    /// A trekr before this one reads the first three fields and ignores the
+    /// rest.
+    pub(crate) fn begin_warming(&self, root: &str, own: u64) -> Result<()> {
+        self.mark(root, &format!("{} 0 {own} own", std::process::id()))
+    }
+
+    fn mark(&self, root: &str, value: &str) -> Result<()> {
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
         )?;
-        let value = format!("{} {read} {of}", std::process::id());
         self.conn.execute(
             "INSERT INTO meta (key, value) VALUES (?1, ?2)
                ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -99,19 +115,18 @@ impl Store {
     }
 }
 
-/// `pid read of`, and whether that pid is still running.
+/// `pid read of`, then `own` while the gems are uncounted, and whether that
+/// pid is still running.
 fn parse(value: &str) -> Option<Warming> {
-    let mut parts = value.split(' ').map(str::parse::<u64>);
-    let (pid, read, of) = (
-        parts.next()?.ok()?,
-        parts.next()?.ok()?,
-        parts.next()?.ok()?,
-    );
+    let mut parts = value.split(' ');
+    let mut number = || parts.next()?.parse::<u64>().ok();
+    let (pid, read, of) = (number()?, number()?, number()?);
     Some(Warming {
         read,
         of,
         interrupted: !alive(pid),
         pid: u32::try_from(pid).ok()?,
+        uncounted: parts.next() == Some("own"),
     })
 }
 
@@ -153,6 +168,16 @@ mod tests {
     }
 
     #[test]
+    fn a_mark_written_before_the_gems_are_listed_says_its_count_is_partial() {
+        let store = Store::open_in_memory().unwrap();
+        store.begin_warming("/app", 40).unwrap();
+        let begun = store.warming("/app").unwrap().unwrap();
+        assert_eq!((begun.read, begun.of, begun.uncounted), (0, 40, true));
+        store.set_warming("/app", 10, 400).unwrap();
+        assert!(!store.warming("/app").unwrap().unwrap().uncounted);
+    }
+
+    #[test]
     fn a_marker_read_while_its_writer_ran_says_so_once_it_has_died() {
         let mut writer = std::process::Command::new("sleep")
             .arg("60")
@@ -172,6 +197,7 @@ mod tests {
             of: 1000,
             interrupted: false,
             pid: 1,
+            uncounted: false,
         };
         assert_eq!(warming.coverage(), 0.99);
     }

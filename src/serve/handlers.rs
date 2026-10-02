@@ -185,18 +185,16 @@ pub(crate) fn tell_warming(
         return Ok(());
     };
     session.told_warming.insert(located.root);
+    let read = super::fresh::how_far(&warming);
     let message = match warming.interrupted {
         false => format!(
-            "trekr is still indexing this checkout ({} of {} files read). Until it finishes, \
-             go to definition and references answer from what is read so far, and may miss \
-             or change.",
-            warming.read, warming.of
+            "trekr is still indexing this checkout ({read}). Until it finishes, go to \
+             definition and references answer from what is read so far, and may miss or change."
         ),
         true => format!(
-            "trekr's index of this checkout was cut short ({} of {} files read). Until it \
-             is indexed again, go to definition and references answer from what was read, \
-             and may miss or change.",
-            warming.read, warming.of
+            "trekr's index of this checkout was cut short ({read}). Until it is indexed \
+             again, go to definition and references answer from what was read, and may miss \
+             or change."
         ),
     };
     out.notify(
@@ -1287,7 +1285,7 @@ pub(crate) fn hover(session: &mut Session, params: HoverParams) -> anyhow::Resul
     let warming = session.warming(&located.root);
     let read = warming
         .as_ref()
-        .map(|w| format!(" ({} of {} files read)", w.read, w.of))
+        .map(|w| format!(" ({})", super::fresh::how_far(w)))
         .unwrap_or_default();
     if let Some((_, since)) = session
         .reindexing
@@ -1313,9 +1311,17 @@ pub(crate) fn hover(session: &mut Session, params: HoverParams) -> anyhow::Resul
             ),
         });
     } else if !session.indexed(&located.root) {
-        text.push_str(
-            "\n\n_This checkout is not indexed yet, so answers come from core and gems alone. trekr indexes it in the background; `trekr --index` does it now._",
-        );
+        use super::fresh::Background;
+        text.push_str(&format!(
+            "\n\n_This checkout is not indexed yet, so answers come from core and gems alone. {}_",
+            match session.background.of(&located.root) {
+                Background::Indexing => "trekr is indexing it in the background.",
+                Background::Waiting =>
+                    "trekr indexes it once another trekr process writing the index is done; \
+                     `trekr --index` waits for that now.",
+                Background::Off => "`trekr --index` indexes it.",
+            }
+        ));
     }
     Ok(Some(Hover {
         contents: HoverContents::Markup(MarkupContent {

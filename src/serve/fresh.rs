@@ -29,6 +29,11 @@ pub(crate) const BULK: usize = 32;
 /// How often a refresh that met a busy index is tried again.
 const RETRY: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// How long after an index outwaited another writer's lock it is run again.
+/// The index itself waits for the lock as long as one writer's turn may take
+/// (DEC-139), so this only spaces the attempts; it is never a tight loop.
+const AGAIN: std::time::Duration = std::time::Duration::from_secs(2);
+
 /// How a refresh ended.
 enum Refreshed {
     /// Written, or nothing to write.
@@ -98,6 +103,44 @@ pub(crate) struct Indexer {
     /// Roots whose first index died mid-session and was started again: once
     /// each, so an index that dies every time is not run forever.
     resumed: HashSet<PathBuf>,
+    /// Roots whose index outwaited another writer, and when to run it again.
+    waiting: Vec<(PathBuf, std::time::Instant)>,
+}
+
+/// What background indexing is doing, as of the serve loop's last turn.
+#[derive(Default)]
+pub(crate) struct View {
+    enabled: bool,
+    waiting: HashSet<PathBuf>,
+    /// Indexed this session, and not to be again unasked. One that succeeded
+    /// is in the store, and never asked about here.
+    failed: HashSet<PathBuf>,
+}
+
+impl View {
+    /// What is under way for `root`, as a hover may say it.
+    pub(crate) fn of(&self, root: &Path) -> Background {
+        if !self.enabled || self.failed.contains(root) {
+            Background::Off
+        } else if self.waiting.contains(root) {
+            Background::Waiting
+        } else {
+            Background::Indexing
+        }
+    }
+}
+
+/// What a background index of a checkout is doing, for a hover to say no
+/// more than is true.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Background {
+    /// Running, queued, or about to be: the request asking found it unindexed.
+    Indexing,
+    /// Outwaited another trekr writing the store; runs again after `AGAIN`.
+    Waiting,
+    /// Not coming: background indexing is off, or this session's index of it
+    /// failed.
+    Off,
 }
 
 struct Job {
@@ -109,6 +152,9 @@ struct Job {
     started: std::time::Instant,
     /// Refilling a checkout an upgrade's rebuild of the store dropped.
     after_upgrade: bool,
+    /// A first index (DEC-320): nothing whole of the checkout stood when it
+    /// started, so a whole one standing at its end is its own.
+    first: bool,
 }
 
 impl Indexer {
@@ -125,6 +171,7 @@ impl Indexer {
             refused: false,
             unlogged: None,
             resumed: HashSet::new(),
+            waiting: Vec::new(),
         }
     }
 
@@ -137,12 +184,37 @@ impl Indexer {
         }
         if again {
             self.done.remove(&root);
+            self.waiting.retain(|(waiting, _)| *waiting != root);
         }
         let busy = self.running.as_ref().is_some_and(|job| job.root == root);
-        if busy && !again || self.done.contains(&root) || self.queue.contains(&root) {
+        let waiting = self.waiting.iter().any(|(waiting, _)| *waiting == root);
+        if busy && !again || waiting || self.done.contains(&root) || self.queue.contains(&root) {
             return;
         }
         self.queue.push_back(root);
+    }
+
+    /// What is under way, for the session to say: a hover is answered
+    /// where the indexer is out of reach.
+    pub(crate) fn view(&self) -> View {
+        let queued = |root: &PathBuf| {
+            self.queue.contains(root) || self.running.as_ref().is_some_and(|job| job.root == *root)
+        };
+        View {
+            enabled: self.enabled,
+            waiting: self.waiting.iter().map(|(root, _)| root.clone()).collect(),
+            failed: self
+                .done
+                .iter()
+                .filter(|root| !queued(root))
+                .cloned()
+                .collect(),
+        }
+    }
+
+    /// An index waits to be run again: the loop has to wake to run it.
+    pub(crate) fn waiting(&self) -> bool {
+        !self.waiting.is_empty()
     }
 
     /// A checkout's first index died before it finished: run it again, as the
@@ -236,65 +308,87 @@ impl Indexer {
             log.event("refresh_refused", serde_json::json!({ "error": why }));
         }
         if let Some(job) = &mut self.running {
-            match job.child.try_wait() {
+            let outcome = match job.child.try_wait() {
                 Ok(None) => return out,
-                outcome => {
-                    let ok = matches!(outcome, Ok(Some(status)) if status.success());
-                    let job = self.running.take().expect("just matched");
-                    log.event(
-                        "index",
-                        serde_json::json!({
-                            "root": job.root.to_string_lossy(),
-                            "ok": ok,
-                            "ms": job.started.elapsed().as_millis() as u64,
-                        }),
-                    );
-                    log.count(
-                        "index",
-                        String::new(),
-                        if ok {
-                            crate::usage::Outcome::Hit
-                        } else {
-                            crate::usage::Outcome::Error("index")
-                        },
-                        Some(job.started.elapsed()),
-                        false,
-                    );
-                    let cut_short = session
-                        .main_store()
-                        .warming(&job.root.to_string_lossy())
-                        .ok()
-                        .flatten()
-                        .filter(|w| w.interrupted);
-                    // A child that stopped part-way says how far it got, as
-                    // `trekr --index` does (DEC-400), never just "failed".
-                    let resuming = cut_short.is_some() && !self.resumed.contains(&job.root);
-                    let message = match &cut_short {
-                        Some(w) if resuming => format!(
-                            "index cut short at {} of {} files — reading the rest",
-                            w.read, w.of
-                        ),
-                        Some(w) => format!(
-                            "index cut short at {} of {} files — answers are partial until: trekr --index {}",
-                            w.read,
-                            w.of,
-                            crate::core::paths::pretty(&job.root.to_string_lossy())
-                        ),
-                        None if ok => "indexed".to_string(),
-                        None => "index failed — see trekr --index".to_string(),
-                    };
-                    if self.progress {
-                        out.push(progress(
-                            &job.token,
-                            serde_json::json!({ "kind": "end", "message": message }),
-                        ));
-                    }
-                    self.done.insert(job.root.clone());
-                    if cut_short.is_some() {
-                        self.resume(job.root);
-                    }
+                Ok(Some(status)) => Exit {
+                    ok: status.success(),
+                    // `trekr --index` exits 2 only when it outwaited the lock:
+                    // "no answer yet, ask again" (DEC-400).
+                    outwaited: status.code() == Some(2),
+                },
+                Err(_) => Exit {
+                    ok: false,
+                    outwaited: false,
+                },
+            };
+            let job = self.running.take().expect("just matched");
+            log.event(
+                "index",
+                serde_json::json!({
+                    "root": job.root.to_string_lossy(),
+                    "ok": outcome.ok,
+                    "outwaited": outcome.outwaited,
+                    "ms": job.started.elapsed().as_millis() as u64,
+                }),
+            );
+            log.count(
+                "index",
+                String::new(),
+                if outcome.ok {
+                    crate::usage::Outcome::Hit
+                } else {
+                    crate::usage::Outcome::Error("index")
+                },
+                Some(job.started.elapsed()),
+                false,
+            );
+            let key = job.root.to_string_lossy();
+            let store = session.main_store();
+            let cut_short = store.warming(&key).ok().flatten().filter(|w| w.interrupted);
+            let ending = ending(
+                outcome,
+                cut_short.as_ref(),
+                job.first && store.has_checkout(&key).unwrap_or(false),
+                self.resumed.contains(&job.root),
+                &crate::core::paths::pretty(&key),
+            );
+            if self.progress {
+                // VS Code shows no `end` message, so the last `report` carries it.
+                for kind in ["report", "end"] {
+                    out.push(progress(
+                        &job.token,
+                        serde_json::json!({ "kind": kind, "message": ending.message }),
+                    ));
                 }
             }
+            if ending.warn {
+                out.push(Message::Notification(Notification::new(
+                    "window/showMessage".into(),
+                    serde_json::json!({ "type": 2, "message": format!("trekr: {}", ending.message) }),
+                )));
+            }
+            match ending.then {
+                Then::Retry => self
+                    .waiting
+                    .push((job.root, std::time::Instant::now() + AGAIN)),
+                Then::Resume => {
+                    self.done.insert(job.root.clone());
+                    self.resume(job.root);
+                }
+                Then::Rest => {
+                    self.done.insert(job.root);
+                }
+            }
+        }
+        let now = std::time::Instant::now();
+        let (due, later): (Vec<_>, Vec<_>) = std::mem::take(&mut self.waiting)
+            .into_iter()
+            .partition(|(_, at)| *at <= now);
+        self.waiting = later;
+        if self.running.is_none() {
+            self.queue.extend(due.into_iter().map(|(root, _)| root));
+        } else {
+            self.waiting.extend(due);
         }
         while let Some(root) = self.queue.pop_front() {
             // Asked before the child writes its first row: an empty store an
@@ -302,6 +396,10 @@ impl Indexer {
             let store = session.store();
             let after_upgrade = store.roots().is_ok_and(|roots| roots.is_empty())
                 && store.upgraded_from().ok().flatten().is_some();
+            let key = root.to_string_lossy();
+            let main = session.main_store();
+            let first = !main.has_checkout(&key).unwrap_or(false)
+                || main.warming(&key).ok().flatten().is_some();
             match spawn(&root) {
                 Ok(mut child) => {
                     let hints = child.stdin.take();
@@ -341,6 +439,7 @@ impl Indexer {
                         token,
                         started: std::time::Instant::now(),
                         after_upgrade,
+                        first,
                     };
                     // What is open now goes first; what opens later follows.
                     for path in session.open_paths() {
@@ -368,6 +467,96 @@ impl Indexer {
             }
         }
         out
+    }
+}
+
+/// How an index child exited.
+#[derive(Clone, Copy)]
+struct Exit {
+    ok: bool,
+    /// It outwaited another writer's lock (exit 2).
+    outwaited: bool,
+}
+
+/// What follows an index's end.
+#[derive(Debug, PartialEq)]
+enum Then {
+    /// Nothing: it is done, or failed for good this session.
+    Rest,
+    /// Run it again once, as a first index found cut short is (DEC-320).
+    Resume,
+    /// Run it again after `AGAIN`, as often as it is outwaited.
+    Retry,
+}
+
+/// What the editor is told when an index ends, and what follows.
+#[derive(Debug, PartialEq)]
+struct Ending {
+    message: String,
+    /// Said where a person sees it, once: the checkout is left partial or
+    /// unindexed, and nothing will change that on its own.
+    warn: bool,
+    then: Then,
+}
+
+/// How an index's end reads. `cut_short` is the checkout's mark when the
+/// index that left it is gone; `whole` that a first index left the checkout
+/// whole — its last commit landed, whatever it died of after.
+fn ending(
+    exit: Exit,
+    cut_short: Option<&crate::store::Warming>,
+    whole: bool,
+    resumed: bool,
+    root: &str,
+) -> Ending {
+    let ending = |message: String, warn, then| Ending {
+        message,
+        warn,
+        then,
+    };
+    match cut_short {
+        _ if exit.outwaited => ending(
+            format!(
+                "waiting for another trekr writing the index{} — trying again once it is done",
+                cut_short
+                    .map(|w| format!(" ({})", how_far(w)))
+                    .unwrap_or_default()
+            ),
+            false,
+            Then::Retry,
+        ),
+        Some(w) if !resumed => ending(
+            format!("index cut short ({}) — reading the rest", how_far(w)),
+            false,
+            Then::Resume,
+        ),
+        Some(w) => ending(
+            format!(
+                "index cut short ({}) — answers are partial until: trekr --index {root}",
+                how_far(w)
+            ),
+            true,
+            Then::Rest,
+        ),
+        None if exit.ok || whole => ending("indexed".into(), false, Then::Rest),
+        None => ending(
+            format!("index failed — see trekr --index {root}"),
+            true,
+            Then::Rest,
+        ),
+    }
+}
+
+/// How far a first index has read, as every surface says it: of the files
+/// the checkout's tree spans — its own, its gems' and its Ruby's — which is
+/// what an answer's confidence is scaled by (DEC-320).
+pub(crate) fn how_far(warming: &crate::store::Warming) -> String {
+    match warming.uncounted {
+        true => "files not counted yet".to_string(),
+        false => format!(
+            "{} of {} files read, counting its gems and Ruby's",
+            warming.read, warming.of
+        ),
     }
 }
 
@@ -551,4 +740,135 @@ fn progress(token: &str, value: serde_json::Value) -> Message {
         "$/progress".into(),
         serde_json::json!({ "token": token, "value": value }),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mark(read: u64, of: u64, uncounted: bool) -> crate::store::Warming {
+        crate::store::Warming {
+            read,
+            of,
+            interrupted: true,
+            pid: 1,
+            uncounted,
+        }
+    }
+
+    #[test]
+    fn an_index_end_reads_as_what_the_store_holds() {
+        let ok = Exit {
+            ok: true,
+            outwaited: false,
+        };
+        let killed = Exit {
+            ok: false,
+            outwaited: false,
+        };
+        let outwaited = Exit {
+            ok: false,
+            outwaited: true,
+        };
+        let part = mark(4091, 17322, false);
+        let begun = mark(0, 3270, true);
+        let at = |exit, mark, whole, resumed| ending(exit, mark, whole, resumed, "~/app");
+        let read = "4091 of 17322 files read, counting its gems and Ruby's";
+        let cases = [
+            (
+                at(ok, None, true, false),
+                "indexed".into(),
+                false,
+                Then::Rest,
+            ),
+            // Killed after its last commit: the store is whole, so no alarm.
+            (
+                at(killed, None, true, true),
+                "indexed".into(),
+                false,
+                Then::Rest,
+            ),
+            (
+                at(killed, None, false, false),
+                "index failed — see trekr --index ~/app".into(),
+                true,
+                Then::Rest,
+            ),
+            (
+                at(outwaited, None, false, false),
+                "waiting for another trekr writing the index — trying again once it is done".into(),
+                false,
+                Then::Retry,
+            ),
+            // Outwaited is "ask again" however often, resumed or not.
+            (
+                at(outwaited, Some(&part), false, true),
+                format!(
+                    "waiting for another trekr writing the index ({read}) — trying again once it is done"
+                ),
+                false,
+                Then::Retry,
+            ),
+            (
+                at(killed, Some(&part), false, false),
+                format!("index cut short ({read}) — reading the rest"),
+                false,
+                Then::Resume,
+            ),
+            (
+                at(killed, Some(&part), false, true),
+                format!(
+                    "index cut short ({read}) — answers are partial until: trekr --index ~/app"
+                ),
+                true,
+                Then::Rest,
+            ),
+            // A count of the checkout's own files is not shown beside the tree's.
+            (
+                at(killed, Some(&begun), false, false),
+                "index cut short (files not counted yet) — reading the rest".into(),
+                false,
+                Then::Resume,
+            ),
+        ];
+        for (got, message, warn, then) in cases {
+            assert_eq!(
+                got,
+                Ending {
+                    message,
+                    warn,
+                    then
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn a_hover_is_told_only_what_is_under_way() {
+        let root = PathBuf::from("/app");
+        let mut indexer = Indexer::new(true, true);
+        assert_eq!(
+            indexer.view().of(&root),
+            Background::Indexing,
+            "about to be asked for"
+        );
+        indexer
+            .waiting
+            .push((root.clone(), std::time::Instant::now() + AGAIN));
+        assert_eq!(indexer.view().of(&root), Background::Waiting);
+        indexer.want(root.clone(), false);
+        assert!(indexer.queue.is_empty(), "a waiting index is not run early");
+        indexer.waiting.clear();
+        indexer.done.insert(root.clone());
+        assert_eq!(
+            indexer.view().of(&root),
+            Background::Off,
+            "failed this session"
+        );
+        assert_eq!(
+            Indexer::new(true, false).view().of(&root),
+            Background::Off,
+            "turned off"
+        );
+    }
 }

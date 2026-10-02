@@ -1225,7 +1225,11 @@ fn index_first(
     if let Some(main) = store.path() {
         crate::store::early::sweep(main);
     }
-    store.set_warming(&root_str, 0, files.len() as u64)?;
+    // With gems, the tree's count waits for their listing (DEC-400 addendum).
+    match with_gems {
+        true => store.begin_warming(&root_str, files.len() as u64)?,
+        false => store.set_warming(&root_str, 0, files.len() as u64)?,
+    }
     let mut written: HashSet<String> = HashSet::new();
     let (first, asked) = index_wanted(
         store,

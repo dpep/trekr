@@ -10585,6 +10585,47 @@ not have changed it; and past DEC-139's bound for one writer's turn,
 something is stuck, and an index queued forever behind it is a hang. Exit `2` makes "run it again"
 the caller's explicit choice.
 
+**Addendum — the language server's side.** An LSP pre-release hunt found
+the background index's end less true than the CLI's:
+
+- *An outwaited child is asked again.* `trekr --index c100k`, then `--lsp`
+  on mastodon with the writer wait at 3 s: the child exited 2 with nothing
+  written, no mark stood, so the server read it as "index failed — see
+  trekr --index" and never indexed again, while every hover said "trekr
+  indexes it in the background". Exit 2 is "ask again", and the server is
+  the caller: it runs the index again two seconds after (`AGAIN`), as often
+  as it is outwaited — never a tight loop, since each child itself waits
+  DEC-139's full turn for the lock. Re-run of the hunt's `behind.py`: two
+  outwaits, then "indexed" at 17.7 s, the definition resolved. A child
+  killed by a signal is still resumed once.
+- *A hover promises only what is under way.* "Not indexed yet" ends "trekr
+  is indexing it in the background" only while an index runs, is queued or
+  is about to be; "trekr indexes it once another trekr process writing the
+  index is done" while one waits; "`trekr --index` indexes it" when indexing
+  is off or this session's index of it failed.
+- *VS Code shows no `end` message* — `vscode-languageclient`'s progress
+  ignores it — so each end is sent as a `report` first. An end that leaves
+  the checkout partial or unindexed for good ("answers are partial until:
+  trekr --index …", "index failed") is also one `window/showMessage`
+  (warning), the one place a person sees it.
+- *One count, now.* Progress said "4091 of 17322" while a hover said "873 of
+  17322" (the count its tree was built at) and another session "0 of 3270".
+  Every surface now reads the store's mark as of the moment it speaks — the
+  tree still decides *whether* an answer is partial — and says what it
+  counts: "N of M files read, counting its gems and Ruby's", the tree the
+  confidence is scaled over. The first mark is written before the gems are
+  listed, so its `of` was the checkout's files alone: that mark now carries
+  `own` (a fourth field older builds ignore) and reads "files not counted
+  yet". The CLI's `warming` is unchanged. Listing the gems first would give
+  that mark a whole count, at the cost of locating and walking the gems (54 ms in one profiled cold index of
+  mastodon)
+  ahead of the first part's answers (DEC-322), which was not worth it for
+  the half-second the mark lasts.
+- *A child killed after its last commit is not a failure.* Killing the
+  resume 1.4–1.6 s in left a whole store and no mark, and the progress said
+  "index failed". A first index — nothing whole stood when it started — that
+  ends with the checkout whole says "indexed", whatever it died of.
+
 ## DEC-401 — A lambda handed to a callback runs on the instance, as an `if:` one does
 
 **Decided.** A lambda that is a positional argument of a callback macro —

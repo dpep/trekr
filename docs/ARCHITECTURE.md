@@ -792,8 +792,16 @@ the same `warming` on the checkout's row. A mark left by an index that died
 is `interrupted`, until the next index. An `--index` that stops part-way —
 DEC-139's wait outrun, exit `2`, or a signal, after which it dies of the
 signal — reports `status: incomplete` with the mark as it stands, never
-exit `0` (DEC-400); the language server's progress for a child stopped so
-ends "cut short at N of M files".
+exit `0` (DEC-400). In the language server, a child that outwaited the lock
+is run again two seconds later, as often as it takes ("waiting for another
+trekr writing the index — trying again once it is done"); one killed is run
+again once ("index cut short (N of M files read, …) — reading the rest"), then
+left partial with a `window/showMessage` saying so. Each end goes out as a
+`report` and then the `end`, since VS Code shows no `end` message. Every
+surface — progress, hover, the showMessage, every session — reads the store's
+mark as of now, counted over the tree (its own files, its gems', its Ruby's);
+a mark written before the gems are listed is `own`, and says "files not
+counted yet" rather than a count of the checkout alone.
 
 **A first index is written in the order an editor needs it** (DEC-322),
 each step its own commit: the files the language server says are open (a
@@ -947,7 +955,7 @@ either: an agent sees a list of exactly `referenceLimit` locations and no
 note that it was cut.
 
 **While a first index fills the store** (DEC-320) a hover ends "trekr is
-still indexing this checkout (N of M files read), so this answer may change",
+still indexing this checkout (N of M files read, counting its gems and Ruby's), so this answer may change",
 completion is `isIncomplete`, and references list every same-name site the
 receiver would rule out, after the rest.
 
