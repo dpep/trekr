@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A call at the top of a file runs on `main`.** A top-level `require`
+  resolves to `Kernel#require`, a top-level `def` is Object's and a bare
+  call to it resolves, and a Minitest spec's bare `describe` is minitest's
+  `Kernel#describe`. They were untyped guesses.
 - **Go to definition no longer jumps to a weak guess.** For a call trekr
   could not resolve, the editor gets its ranked guesses only when the first
   is a fair one; set `initializationOptions.unresolved` (VS Code:

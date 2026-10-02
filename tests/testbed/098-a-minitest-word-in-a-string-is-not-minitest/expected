@@ -4,5 +4,5 @@
 # with it. Only a call counts now.
 def spec/widget_spec.rb:1:1 status=resolved owner=RSpec via=main
 def spec/widget_spec.rb:3:8 status=resolved owner=RSpec::Matchers
-# A Minitest spec still is one.
-def test/gadget_test.rb:1:1 status=residue
+# A Minitest spec still is one: its `describe` is minitest's, on Kernel.
+def test/gadget_test.rb:1:1 status=resolved owner=Kernel via=main

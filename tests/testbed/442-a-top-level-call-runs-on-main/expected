@@ -1,0 +1,7 @@
+# A call at the top of a file runs on `main`, an instance of Object: a
+# top-level `require` is Kernel's, and a top-level `def` is Object's private
+# method, so a bare call to it resolves. It was left untyped, so the ranked
+# candidates put a class's own `require` first. A call in a block keeps
+# whatever self the block was given, which no file says, and is untouched.
+def app.rb:1:1 status=resolved owner=Kernel via=main
+def app.rb:6:1 status=resolved owner=Object via=main

@@ -11060,3 +11060,33 @@ over ruby-lsp to shave four more points. `best` changes nothing scored at
 **What it costs**: found drops 4 and 8 points — a weak guess's peek list
 was sometimes the way to the truth. An agent or a user who wants it sets
 `peek`.
+
+## DEC-445 — A call at the top of a file runs on `main`, an Object
+
+**Decided.** An implicit call written at the top level of a file — no class
+or module around it, and in no block — has `main` for its receiver, an
+instance of `Object`: `resolved_via: main`. A top-level `def` is Object's
+private method and is found first, when only one file writes the name;
+otherwise the lookup is Object's chain, so `require` is `Kernel#require`.
+A call in a block keeps whatever `self` the block was given, which no file
+states, and stays as it was. DEC-115's `describe` sent from `main` to
+`RSpec` still answers first.
+
+**Why.** `self` at the top level is `main`; leaving the call untyped ranked
+any class's own `def require` first — discourse's `script/require_profiler.rb`
+for every `require "base64"`. The earlier view (a unit test) was that `main`
+is not indexed and so residue was the honest answer, but `main` is an
+Object, and Object is.
+
+**Measured** (compare.py, 500 sites each, after DEC-440–443): discourse
+correct@1 77.6 → 79.0 %, wrong@1 8.6 → 7.2 %: seven top-level `require`s
+wrong → correct (Ruby ran zeitwerk's `Kernel#require`, which the index
+layers last), and fourteen `Fabricator(...)` and one `require_dependency`
+residue → resolved, already right. mastodon and widget_shop unchanged.
+Gem gold sets: correct and confidently wrong unchanged; a gem's top-level
+`require` moves from a guess to `right-owner-wrong-site` (26 graph_weaver,
+35 accord, 18 polyid sites) — `Kernel#require`, at the core stub's line,
+where Ruby ran the replacement `bundled_gems.rb` defines at boot.
+
+**Testbed** 442; 086 and 098 now answer a Minitest spec's bare `describe`
+with minitest/spec's `Kernel#describe`, which is what it runs.

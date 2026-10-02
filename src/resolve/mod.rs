@@ -48,6 +48,16 @@ impl Receiver {
     pub(super) fn lookup(&self, tree: &Tree, name: &str) -> Option<crate::tree::MethodDef> {
         match self.via {
             "self" => tree.lookup_self(&self.fqn, self.singleton, name),
+            // A top-level `def` is a private method of Object, ahead of
+            // Kernel — when only one file writes it, since which of several
+            // is loaded is not the index's to say.
+            "main" => match top_level_defs(tree, name).as_slice() {
+                [only] => Some(crate::tree::MethodDef {
+                    owner: "Object".to_string(),
+                    ..only.clone()
+                }),
+                _ => tree.lookup(&self.fqn, self.singleton, name),
+            },
             _ => tree.lookup(&self.fqn, self.singleton, name),
         }
     }
@@ -1418,6 +1428,20 @@ fn typed_at(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -
                     rivals: Vec::new(),
                 });
             }
+            // A call at the top of a file, in no block, runs on `main`, an
+            // Object (DEC-445).
+            if call.nesting.is_empty() && call.block_owner.is_none() && tree.is_known("Object") {
+                return Some(Receiver {
+                    fqn: "Object".to_string(),
+                    singleton: false,
+                    via: "main",
+                    bound: false,
+                    agreeing: 1,
+                    total: 1,
+                    ambiguous: false,
+                    rivals: Vec::new(),
+                });
+            }
             let (fqn, singleton) = match made_side(tree, facts, call) {
                 Some(Made::Side(side)) if call.singleton => (tree.scope_fqn(&call.nesting)?, side),
                 Some(Made::IncludersInstance) => (tree.scope_fqn(&call.nesting[1..])?, false),
@@ -2735,6 +2759,15 @@ fn residue(
     }
 }
 
+/// The `def`s written at the top of a file, outside any class: Object's.
+fn top_level_defs(tree: &Tree, name: &str) -> Vec<crate::tree::MethodDef> {
+    tree.named(name)
+        .iter()
+        .filter(|method| method.owner.is_empty() && !method.singleton)
+        .cloned()
+        .collect()
+}
+
 /// At most this many definitions of a name is "few" (DEC-442).
 const FEW_DEFINITIONS: usize = 3;
 
@@ -2894,11 +2927,13 @@ mod tests {
     }
 
     #[test]
-    fn a_top_level_call_has_no_class_to_dispatch_on() {
-        // `self` at the top level is `main`, an ordinary Object instance —
-        // which is not indexed, so this is residue rather than a wrong answer.
+    fn a_top_level_call_runs_on_main() {
+        // `self` at the top level is `main`, an Object, and a top-level `def`
+        // is Object's (DEC-445).
         let source = "def helper\nend\nhelper\n";
-        assert_eq!(answer(source, "helper").status, Status::Residue);
+        let found = answer(source, "helper");
+        assert_eq!(found.status, Status::Resolved);
+        assert_eq!(found.owner.as_deref(), Some("Object"));
     }
 
     #[test]

@@ -4,5 +4,6 @@
 # `RSpec.describe` does; it was residue, the receiver undetermined.
 def spec/widget_spec.rb:1:1 status=resolved owner=RSpec via=main kind=declaration defined_via=rspec
 def spec/widget_spec.rb:5:1 status=resolved owner=RSpec via=main
-# A Minitest spec's `describe` is not RSpec's (DEC-095), and stays as it was.
-def test/gadget_test.rb:1:1 status=residue
+# A Minitest spec's `describe` is not RSpec's (DEC-095): it is the one
+# minitest/spec defines on Kernel, which `main` reaches (DEC-445).
+def test/gadget_test.rb:1:1 status=resolved owner=Kernel via=main
