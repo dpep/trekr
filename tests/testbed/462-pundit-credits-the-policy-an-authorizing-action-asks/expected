@@ -1,0 +1,10 @@
+# Pundit's `authorize record` asks the record's policy for the action's
+# predicate. A predicate was credited by any controller's action of its name
+# once that controller authorized anywhere: `export?` and `search?` by
+# actions that never authorize, `show?` and `destroy?` by a controller of
+# another model, `UserPolicy#leave?` by an action authorizing an
+# Organization, and a base policy's `index?` though each subclass answers.
+# A before_action lambda handing a class to a method that authorizes asks
+# that class's policy, for the actions it runs for.
+dead app/policies PostPolicy#publish?=convention-only PostPolicy#index?=convention-only WidgetPolicy#index?=convention-only ApplicationPolicy#create?=convention-only PostPolicy#edit?=convention-only OrganizationPolicy#leave?=convention-only WidgetPolicy#archive?=convention-only
+dead app/policies ApplicationPolicy#index?=unreferenced PostPolicy#export?=unreferenced PostPolicy#search?=unreferenced PostPolicy#update?=unreferenced PostPolicy#show?=unreferenced PostPolicy#destroy?=unreferenced UserPolicy#leave?=unreferenced GadgetPolicy#archive?=unreferenced WidgetPolicy#ping?=unreferenced

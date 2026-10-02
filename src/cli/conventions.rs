@@ -243,12 +243,30 @@ pub(super) fn pundit_predicate(
     if !tree.ancestors(owner).chain.iter().any(|a| policy(a)) && !policy(owner) {
         return None;
     }
+    // Pundit asks `"#{record.class}Policy"`: credited when that policy's
+    // predicate is this one, so a base policy's predicate every subclass
+    // overrides is answered by the overrides. A record of no class read may
+    // be any policy's that no subclass's own predicate answers instead.
+    // A module no class mixes in where the tree can see (`prepend_mod_with`)
+    // may be any policy's.
+    let unplaced = tree.kind_of(owner) == Some("module") && tree.includers_of(owner).is_empty();
+    let answers = |record: &Option<String>| match record {
+        _ if unplaced => true,
+        Some(record) => policy_of(tree, record)
+            .and_then(|policy| tree.lookup(&policy, false, name))
+            .is_some_and(|found| found.owner == owner),
+        None => !tree
+            .named(name)
+            .iter()
+            .any(|other| other.owner != owner && tree.inherits(&other.owner, owner)),
+    };
     let site = tree.named(action).iter().find_map(|method| {
         let in_controller = tree.in_checkout(&method.site.path)
             && method.site.path.contains("/controllers/")
             && !method.singleton
             && method.visibility == "public";
-        (in_controller && authorizes_by_action(tree, method, action)).then(|| method.site.clone())
+        (in_controller && records_authorized(tree, method, action).iter().any(answers))
+            .then(|| method.site.clone())
     })?;
     let path = site
         .path
@@ -333,53 +351,375 @@ fn first_computed_send(path: &str) -> Option<u32> {
     })
 }
 
-/// Does the controller action `name` ask Pundit for its own predicate? Its
-/// class or an ancestor calls `authorize` with the record alone — in the
-/// action or a `before_action` — and the action neither names its query
-/// (`authorize x, :edit?`) nor skips authorization.
-fn authorizes_by_action(tree: &Tree, action: &crate::tree::MethodDef, name: &str) -> bool {
-    let facts_of = |path: &str| {
-        std::fs::read(path)
-            .ok()
-            .map(|s| crate::extract::extract(&s))
+/// `Widget` → `WidgetPolicy`, when the checkout has it.
+fn policy_of(tree: &Tree, record: &str) -> Option<String> {
+    tree.resolve(&format!("{record}Policy"), &[]).fqn
+}
+
+/// The classes whose policies a controller action `name` asks Pundit for
+/// its own predicate: each `authorize record` in the action, or in a
+/// `before_action` that runs for it, read for the record's class — `None`
+/// for a record of no class read. Empty when the action names its query
+/// (`authorize x, :edit?`), skips authorization, or authorizes nothing.
+fn records_authorized(
+    tree: &Tree,
+    action: &crate::tree::MethodDef,
+    name: &str,
+) -> Vec<Option<String>> {
+    let Some(own) = Source::read(&action.site.path) else {
+        return Vec::new();
     };
-    let Some(own) = facts_of(&action.site.path) else {
-        return false;
-    };
-    if let Some(def) = own
-        .defs
-        .iter()
-        .find(|def| def.name == name && def.kind == crate::core::Kind::Method && !def.singleton)
-    {
+    let controllers: Vec<String> = std::iter::once(action.owner.clone())
+        .chain(tree.includers_of(&action.owner))
+        .collect();
+    // Each `authorize record`'s classes read, and the class the call that
+    // led to it names (`before_action -> { check(Widget) }`).
+    let mut asks: Vec<(Vec<String>, Option<String>)> = Vec::new();
+    if let Some(def) = own.method(name) {
         let body = def.pos.line..=def.end_line;
-        let elsewhere = own.calls.iter().any(|call| {
-            body.contains(&call.pos.line)
-                && (call.name == "skip_authorization"
-                    || call.name == "authorize" && call.argc.is_some_and(|n| n > 1))
-        });
-        if elsewhere {
-            return false;
-        }
-    }
-    let by_record = |facts: &crate::core::Facts| {
-        facts
+        let calls: Vec<_> = own
+            .facts
             .calls
             .iter()
-            .any(|call| call.name == "authorize" && call.argc == Some(1))
-    };
-    // An action a concern defines is the action of the controllers that
-    // mix it in.
-    let controllers = std::iter::once(action.owner.clone()).chain(tree.includers_of(&action.owner));
-    by_record(&own)
-        || controllers
-            .flat_map(|class| tree.ancestors(&class).chain.clone())
-            .collect::<HashSet<_>>()
+            .filter(|call| body.contains(&call.pos.line))
+            .collect();
+        let elsewhere = calls.iter().any(|call| {
+            call.name == "skip_authorization"
+                || call.name == "authorize" && call.argc.is_some_and(|n| n > 1)
+        });
+        if elsewhere {
+            return Vec::new();
+        }
+        asks.extend(
+            own.authorizing(|line| body.contains(&line))
+                .map(|call| (own.record_classes(tree, call), None)),
+        );
+    }
+    if asks.is_empty() {
+        // A `before_action` the controller or an ancestor declares, which
+        // authorizes in its own method or in a lambda on its line.
+        let files: HashSet<String> = controllers
             .iter()
-            .any(|ancestor| {
-                tree.sites(ancestor)
-                    .iter()
-                    .filter(|site| tree.in_checkout(&site.path))
-                    .filter_map(|site| facts_of(&site.path))
-                    .any(|facts| by_record(&facts))
-            })
+            .flat_map(|class| tree.ancestors(class).chain.clone())
+            .flat_map(|class| tree.sites(&class))
+            .filter(|site| tree.in_checkout(&site.path))
+            .map(|site| site.path)
+            .collect();
+        let sources: Vec<Source> = files.iter().filter_map(|path| Source::read(path)).collect();
+        let filters = sources.iter().flat_map(|source| {
+            source
+                .before_actions()
+                .into_iter()
+                .filter(|filter| filter.runs_for(name))
+                .map(move |filter| (source, filter))
+        });
+        for (declared_in, filter) in filters {
+            let in_filter = |line: u32| filter.lines.contains(&line);
+            let lambda = declared_in.authorizing(in_filter);
+            asks.extend(lambda.map(|call| (declared_in.record_classes(tree, call), None)));
+            // A lambda's own call to a method that authorizes, and the
+            // constant it hands that method.
+            let called = declared_in.facts.calls.iter().filter(|call| {
+                in_filter(call.pos.line)
+                    && call.recv == crate::core::RecvShape::Implicit
+                    && call.name != "authorize"
+            });
+            let callbacks = filter
+                .callbacks
+                .iter()
+                .map(|callback| (callback.clone(), None))
+                .chain(called.map(|call| {
+                    let hint = declared_in.argument(call).and_then(constant_at);
+                    (call.name.clone(), hint)
+                }));
+            for (callback, hint) in callbacks {
+                for source in &sources {
+                    if let Some(def) = source.method(&callback) {
+                        let body = def.pos.line..=def.end_line;
+                        let calls = source.authorizing(|line| body.contains(&line));
+                        asks.extend(
+                            calls.map(|call| (source.record_classes(tree, call), hint.clone())),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    let mut records: Vec<Option<String>> = Vec::new();
+    for (read, hint) in asks {
+        let mut found: Vec<Option<String>> = read.into_iter().map(Some).collect();
+        if found.is_empty() {
+            found.extend(hint.map(Some));
+        }
+        // A record no reading types (`authorize model`) is the controller's
+        // resource, when it has a policy: the controller is named for it.
+        if found.is_empty() {
+            found = controllers
+                .iter()
+                .filter_map(|c| resource_of(c))
+                .filter(|resource| policy_of(tree, resource).is_some())
+                .map(Some)
+                .collect();
+        }
+        if found.is_empty() {
+            found.push(None);
+        }
+        for class in found {
+            if !records.contains(&class) {
+                records.push(class);
+            }
+        }
+    }
+    records
+}
+
+/// `authorize record`, the record alone: Pundit then asks for the action.
+fn by_record(call: &crate::core::Call) -> bool {
+    call.name == "authorize" && call.argc == Some(1) && call.recv != crate::core::RecvShape::Symbol
+}
+
+/// `Admin::WidgetsController` → `Widget`.
+fn resource_of(controller: &str) -> Option<String> {
+    let plain = crate::tree::public_name(controller);
+    let plain = plain.rsplit("::").next()?.strip_suffix("Controller")?;
+    let snake: String = plain
+        .chars()
+        .enumerate()
+        .flat_map(|(i, c)| {
+            let gap = (i > 0 && c.is_uppercase()).then_some('_');
+            gap.into_iter().chain(c.to_lowercase())
+        })
+        .collect();
+    let last = snake.rsplit('_').next()?;
+    let stem = &snake[..snake.len() - last.len()];
+    Some(crate::extract::camelize(&format!(
+        "{stem}{}",
+        crate::inflect::singular(last)
+    )))
+}
+
+/// A controller file, read for Pundit.
+struct Source {
+    text: String,
+    facts: crate::core::Facts,
+}
+
+/// A `before_action` and the actions it runs for.
+struct Filter {
+    callbacks: Vec<String>,
+    only: Option<Vec<String>>,
+    except: Vec<String>,
+    /// The lines the declaration spans, where a lambda's body is.
+    lines: std::ops::RangeInclusive<u32>,
+}
+
+impl Filter {
+    fn runs_for(&self, action: &str) -> bool {
+        self.only
+            .as_ref()
+            .is_none_or(|only| only.iter().any(|a| a == action))
+            && !self.except.iter().any(|a| a == action)
+    }
+}
+
+impl Source {
+    fn read(path: &str) -> Option<Source> {
+        let text = std::fs::read_to_string(path).ok()?;
+        let facts = crate::extract::extract(text.as_bytes());
+        Some(Source { text, facts })
+    }
+
+    fn method(&self, name: &str) -> Option<&crate::core::Def> {
+        self.facts
+            .defs
+            .iter()
+            .find(|def| def.name == name && def.kind == crate::core::Kind::Method && !def.singleton)
+    }
+
+    /// Its `authorize record` calls on the lines `within` accepts.
+    fn authorizing(
+        &self,
+        within: impl Fn(u32) -> bool,
+    ) -> impl Iterator<Item = &crate::core::Call> {
+        self.facts
+            .calls
+            .iter()
+            .filter(move |call| by_record(call) && within(call.pos.line))
+    }
+
+    /// The first argument of `call`, as written on its line.
+    fn argument(&self, call: &crate::core::Call) -> Option<&str> {
+        let line = self.line(call.pos.line);
+        let at = line.find(call.name.as_str())?;
+        let arg = line[at + call.name.len()..]
+            .trim_start_matches(['(', ' '])
+            .split([',', ')', '}'])
+            .next()?
+            .split(" if ")
+            .next()?
+            .split(" unless ")
+            .next()?
+            .trim();
+        (!arg.is_empty()).then_some(arg)
+    }
+
+    fn line(&self, line: u32) -> &str {
+        self.text.lines().nth(line as usize - 1).unwrap_or_default()
+    }
+
+    /// Each `before_action :x, only: [:a]` declaration, read as text: its
+    /// line and those it continues on while one ends in a comma.
+    fn before_actions(&self) -> Vec<Filter> {
+        let lines: Vec<&str> = self.text.lines().collect();
+        let mut filters = Vec::new();
+        let mut at = 0;
+        while at < lines.len() {
+            let code = lines[at].trim_start();
+            let declares = [
+                "before_action",
+                "prepend_before_action",
+                "append_before_action",
+            ]
+            .iter()
+            .any(|word| {
+                code.strip_prefix(word)
+                    .is_some_and(|rest| rest.starts_with([' ', '(']))
+            });
+            if !declares {
+                at += 1;
+                continue;
+            }
+            let first = at;
+            let mut statement = lines[at].to_string();
+            while statement.trim_end().ends_with(',') && at + 1 < lines.len() {
+                at += 1;
+                statement.push(' ');
+                statement.push_str(lines[at]);
+            }
+            let (callbacks, options) = match statement.find(" only:").or(statement.find(" except:"))
+            {
+                Some(cut) => statement.split_at(cut),
+                None => (statement.as_str(), ""),
+            };
+            filters.push(Filter {
+                callbacks: symbols_in(callbacks, false),
+                // A list it cannot read (a constant) may name the action.
+                only: options
+                    .find("only:")
+                    .map(|i| actions_in(&options[i + 5..]))
+                    .filter(|only| !only.is_empty()),
+                except: options
+                    .find("except:")
+                    .map(|i| actions_in(&options[i + 7..]))
+                    .unwrap_or_default(),
+                lines: first as u32 + 1..=at as u32 + 1,
+            });
+            at += 1;
+        }
+        filters
+    }
+
+    /// The classes the record handed to `authorize` may be: a constant
+    /// written there, or a variable's assignments that start with one, or
+    /// failing those a class its name spells (`@post` → `Post`).
+    fn record_classes(&self, tree: &Tree, call: &crate::core::Call) -> Vec<String> {
+        let Some(arg) = self.argument(call) else {
+            return Vec::new();
+        };
+        if let Some(constant) = constant_at(arg) {
+            return vec![constant];
+        }
+        let variable = arg.trim_start_matches('@');
+        let is_name = !variable.is_empty()
+            && variable
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_');
+        if !is_name {
+            return Vec::new();
+        }
+        let mut classes: Vec<String> = Vec::new();
+        for assign in self.facts.assigns.iter().filter(|a| a.target == arg) {
+            let written = self.line(assign.pos.line);
+            let value = written
+                .split_once('=')
+                .map(|(_, value)| value.trim_start())
+                .unwrap_or_default();
+            if let Some(constant) = constant_at(value)
+                && !classes.contains(&constant)
+            {
+                classes.push(constant);
+            }
+        }
+        if classes.is_empty() {
+            let spelled = crate::extract::camelize(&crate::inflect::singular(variable));
+            if tree.resolve(&spelled, &[]).fqn.is_some() {
+                classes.push(spelled);
+            }
+        }
+        classes
+    }
+}
+
+/// The constant path a piece of code starts with: `Widget` of `Widget.new`.
+fn constant_at(code: &str) -> Option<String> {
+    let code = code.trim_start_matches("::");
+    if !code.starts_with(|c: char| c.is_ascii_uppercase()) {
+        return None;
+    }
+    let end = code
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
+        .unwrap_or(code.len());
+    Some(code[..end].trim_end_matches(':').to_string())
+}
+
+/// What an `only:` or `except:` lists: `[:a, :b]`, `%i[a b]` or `:a`.
+fn actions_in(options: &str) -> Vec<String> {
+    let options = options.trim_start();
+    if let Some(rest) = options.strip_prefix("%i[") {
+        return symbols_in(rest.split(']').next().unwrap_or_default(), true);
+    }
+    if let Some(rest) = options.strip_prefix('[') {
+        return symbols_in(rest.split(']').next().unwrap_or_default(), false);
+    }
+    symbols_in(options.split([',', ')']).next().unwrap_or_default(), false)
+}
+
+/// The names a piece of code writes as symbols, or as `%i[]`'s bare words.
+fn symbols_in(code: &str, bare: bool) -> Vec<String> {
+    let words = code.split(|c: char| {
+        !(c.is_ascii_alphanumeric() || c == '_' || c == ':' || c == '?' || c == '!')
+    });
+    words
+        .filter_map(|word| match word.strip_prefix(':') {
+            Some(name) if !name.is_empty() && !name.contains(':') => Some(name.to_string()),
+            _ if bare && !word.is_empty() => Some(word.to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_controllers_resource_is_its_last_word_singularized() {
+        assert_eq!(
+            resource_of("Admin::BlogPostsController").as_deref(),
+            Some("BlogPost")
+        );
+        assert_eq!(resource_of("PeopleController").as_deref(), Some("Person"));
+        assert_eq!(resource_of("WidgetHelper"), None);
+    }
+
+    #[test]
+    fn a_filters_action_list_is_read_in_each_spelling() {
+        assert_eq!(actions_in(" [:show, :edit], if: :x?"), ["show", "edit"]);
+        assert_eq!(actions_in(" %i[show edit]"), ["show", "edit"]);
+        assert_eq!(actions_in(" :show"), ["show"]);
+        assert!(
+            actions_in(" BILLING_ACTIONS").is_empty(),
+            "a constant is not read"
+        );
+    }
 }

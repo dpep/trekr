@@ -100,10 +100,13 @@
   4 in 20, and the row's `caveat` says so. A method row's `clear` held 55
   of 70 there (79 %).
 - **`--dead` knows Pundit's and gems' base classes.** A policy predicate
-  named for a controller action (`publish?` for `publish`) is
-  `convention-only` when Pundit is in the bundle, as `authorize` asks for
-  it. A method a gem's base class may run by a name it computes (a
-  CommonMarker renderer's node callbacks, a Liquid drop's methods), and a
+  is `convention-only` when Pundit is in the bundle and a controller action
+  of its name authorizes a record whose policy it is — in the action, or in
+  a `before_action` that runs for it (`authorize @post` in `publish` asks
+  `PostPolicy#publish?`). A base policy's predicate that a subclass
+  overrides is the subclass's. A method a gem's base class may run by a
+  name it computes (a CommonMarker renderer's node callbacks, a Liquid
+  drop's methods), and a
   constant a gem's base class reads on `self.class` (Administrate's
   `COLLECTION_ATTRIBUTES`), say so and are graded `lower`.
 - **`--dead` says when a method is named in YAML config.** A row whose

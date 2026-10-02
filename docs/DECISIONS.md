@@ -11446,6 +11446,56 @@ symbol, a serializer block's bare call. Logged.
 **`lower` separates**: 2 of 20 lower rows were dead, as on mastodon
 (DEC-422).
 
+### DEC-450 addendum: Pundit credits the policy the action asks
+
+**Reported** by the 0.8.5 verification hunt: a predicate was credited by
+any checkout controller's public action of its name once that controller
+called `authorize` anywhere. `PostPolicy#export?` and `#search?` were
+`convention-only` though those actions never authorize, `#show?` through
+an unrelated `ReportsController#show`; on errbit (held out),
+`ApplicationPolicy#index?`, `create?`, `new?`, `edit?`, `destroy?` —
+overridden by every subclass, dead outside specs — went from unreferenced,
+clear to `convention-only`.
+
+**Decided.** A predicate `x?` of policy `O` is credited by an action `x`
+that authorizes a record alone — in its body, or in a `before_action` the
+controller or an ancestor declares that runs for `x` (`only:`/`except:`
+read; a list it cannot read, such as a constant, may name it), whose
+callback method or lambda authorizes — when the record's policy answers
+`x?` with `O`'s method: `lookup("#{record}Policy", "x?")` lands on `O`.
+So a base policy's predicate a subclass overrides is credited only through
+a policy that inherits it. The record's class is read from the text: a
+constant (`authorize Post`, `Post.new`), else the variable's assignments
+in that file that start with one (`org = Organization.find_by(…)`), else a
+class its name spells (`@post` → `Post`), else the constant a lambda hands
+the method that authorizes (`before_action -> { check_authorization(X) }`,
+chatwoot's shape), else the controller's resource when it has a policy
+(`LabelsController` → `LabelPolicy`). A record none of these reads (forem's
+`source_type.constantize`) may be any policy's whose predicate no subclass
+overrides; a policy module no class visibly mixes in (`prepend_mod_with`)
+any policy's.
+
+**Measured**, `--dead app lib` (enterprise too on chatwoot), this build
+against the one before it:
+
+- forem, method `unreferenced` clear rows among the 82 labelled: 58/73 =
+  79 % dead → 60/75 = 80 %. Two dead predicates leave `convention-only`
+  (`UserPolicy#leave_org?`, whose action authorizes an Organization;
+  `CommentPolicy#preview?`), none true.
+- chatwoot: 57 → 55 Pundit rows; the two that left,
+  `Captain::AssistantPolicy#approve?`/`#dismiss?`, are asked by no action
+  (`approve`/`dismiss` authorize `Captain::FaqSuggestion`).
+- errbit (pundit 2.5.2 unpacked alone into the bundle path): 20 → 5
+  Pundit rows. `ApplicationPolicy`'s seven predicates are unreferenced
+  (six clear); `AppPolicy`'s seven, which only specs ask, are `override`;
+  `UserPolicy#index?` (`policy_scope`, no `authorize`) is `override`.
+
+Fitted on the hunt's fixtures and forem; errbit and chatwoot were read
+after. Testbed 462. **Not done**, logged: `super(User)` in an override of
+the authorizing callback (chatwoot's `AgentsController`) is read as the
+controller's resource; a record typed only through a method's return
+(forem's `@source = source || not_found`) falls to "any policy".
+
 **The blanket rule is named.** A row this rule alone grades `lower` carried
 an empty `caveat` (74 on discourse), and text printed a bare "(lower
 confidence)"; it now says "classes, modules and constants are graded lower
