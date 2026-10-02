@@ -11334,6 +11334,19 @@ signature read, the gem's lent ones included (`via: sig`). A finder
 (`Post.find`) keeps its convention, tried first. A write in a loop that
 reads the variable it writes is bounded by the chain's depth. Testbed 451.
 
+**A `has_many`'s model is singularized as Rails does it.** Reported by the
+0.8.5 verification hunt: the singular was a crude suffix strip, so
+`has_many :responses` named `Respons`, `:people` `People` and `:movies`
+`Movy` (likewise `purchases`, `courses`, `releases`, `cases`, `houses`); a
+model's class method called on the reader fell to the 0.2 residue class,
+which the editor's `confident` mode hides. `src/inflect.rs` now ports
+Active Support's English inflections, singular and plural, irregulars and
+uncountables, in its order — checked against Active Support 8.1 on 141
+words, both directions — and serves the `has_many` model, the table-to-model
+name, an `enum`'s plural (`enum :status` → `statuses`, as before) and a
+singular resource's controller (DEC-344's table, moved). A project's own
+`inflections.rb` is still not read. An extraction change. Testbed 460.
+
 ## DEC-450 — Libraries the held-out apps used that find code by a name
 
 **Decided.** `--dead` reads these, each found as a cause of false

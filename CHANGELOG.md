@@ -8,8 +8,11 @@
   or `CollectionProxy` instead of to any class sharing the name. A model's
   own class method or scope called on a relation (`Post.where(…).popular`,
   `user.posts.visible`) resolves to the model's, and a variable assigned a
-  chain (`posts = Post.where(…).order(:id)`) is typed as the chain is. This
-  changes what an index records.
+  chain (`posts = Post.where(…).order(:id)`) is typed as the chain is. A
+  `has_many`'s model is its name singularized as Rails does it, irregulars
+  included (`people` → `Person`, `responses` → `Response`), and an `enum`'s
+  mapping method its name pluralized the same way. This changes what an
+  index records.
 - **A macro inside `Class.new { … }` is no longer the enclosing class's.**
   A `has_many`, `attr_reader` or `include` in a block whose `self` is another
   object (an anonymous class in a test) made methods on the class the block

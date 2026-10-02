@@ -158,7 +158,7 @@ pub(super) fn generated(macro_name: &str, arg: &str) -> Vec<Generated> {
         // A collection association. `widget_ids` is the one people forget.
         // Its reader is a relation of the associated records (DEC-444).
         "has_many" | "has_and_belongs_to_many" => {
-            let singular = singularize(arg);
+            let singular = crate::inflect::singular(arg);
             let mut out = vec![
                 Generated::reader(arg).returning("::ActiveRecord::Associations::CollectionProxy"),
                 Generated::writer(format!("{arg}=")),
@@ -313,7 +313,7 @@ pub(super) fn collection_class(
     match class_name {
         Some(class) => Some(class.to_string()),
         None if source => None,
-        None => Some(camelize(&singularize(arg))),
+        None => Some(camelize(&crate::inflect::singular(arg))),
     }
 }
 
@@ -348,7 +348,7 @@ pub(crate) fn table_to_class(table: &str) -> String {
     // A namespaced table is `admin_users` for `Admin::User` only when an
     // `Admin` module exists, which the extractor cannot know. The flat reading
     // is the common one and the one that is right without cross-file evidence.
-    camelize(&singularize(table))
+    camelize(&crate::inflect::singular(table))
 }
 
 /// `blog_post` → `BlogPost`. Rails' own inflection, minus the irregulars: an
@@ -364,44 +364,6 @@ pub(crate) fn camelize(name: &str) -> String {
             }
         })
         .collect()
-}
-
-/// `widgets` → `widget`, for the `_ids` readers. Deliberately crude: the only
-/// consumer is a method name, and a wrong guess costs one unfound name rather
-/// than a wrong answer.
-/// The inverse of `singularize`, for the one place Rails needs it: `enum
-/// :segment` defines a class method `segments` holding the mapping.
-///
-/// Same rules, run backwards, and the same standard of proof — a name we
-/// cannot spell confidently is not offered at all (session 28), so this
-/// deliberately handles only the shapes `singularize` already claims.
-pub(super) fn pluralize(name: &str) -> String {
-    if let Some(stem) = name.strip_suffix('y')
-        && !name.ends_with("ay")
-        && !name.ends_with("ey")
-        && !name.ends_with("oy")
-        && !name.ends_with("uy")
-    {
-        return format!("{stem}ies");
-    }
-    for suffix in ["s", "x", "z", "ch", "sh"] {
-        if name.ends_with(suffix) {
-            return format!("{name}es");
-        }
-    }
-    format!("{name}s")
-}
-
-fn singularize(name: &str) -> String {
-    if let Some(stem) = name.strip_suffix("ies") {
-        return format!("{stem}y");
-    }
-    for suffix in ["ses", "xes", "zes", "ches", "shes"] {
-        if let Some(stem) = name.strip_suffix(suffix) {
-            return format!("{stem}{}", &suffix[..suffix.len() - 2]);
-        }
-    }
-    name.strip_suffix('s').unwrap_or(name).to_string()
 }
 
 #[cfg(test)]
@@ -522,35 +484,5 @@ mod tests {
     #[test]
     fn a_macro_we_do_not_model_generates_nothing() {
         assert!(generated("validates", "name").is_empty());
-    }
-
-    #[test]
-    fn pluralizes_the_shapes_singularize_claims() {
-        for (singular, plural) in [
-            ("segment", "segments"),
-            ("status", "statuses"),
-            ("category", "categories"),
-            ("box", "boxes"),
-            ("branch", "branches"),
-            ("wish", "wishes"),
-            // A vowel before `y` is not the `ies` case.
-            ("day", "days"),
-            ("key", "keys"),
-        ] {
-            assert_eq!(pluralize(singular), plural, "pluralize({singular})");
-        }
-    }
-
-    #[test]
-    fn singularizes_well_enough_for_a_method_name() {
-        for (plural, singular) in [
-            ("widgets", "widget"),
-            ("categories", "category"),
-            ("boxes", "box"),
-            ("addresses", "address"),
-            ("person", "person"),
-        ] {
-            assert_eq!(singularize(plural), singular, "{plural}");
-        }
     }
 }

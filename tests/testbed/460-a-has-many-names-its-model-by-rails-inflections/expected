@@ -1,0 +1,6 @@
+# A has_many reader's model is its name singularized as Active Support does.
+# A crude singular named Respons, People and Movy, so a model's class method
+# called on the relation fell to a weak residue the editor hides.
+def app/models.rb:19:15 status=resolved owner=Response via=relation
+def app/models.rb:20:12 status=resolved owner=Person via=relation
+def app/models.rb:21:12 status=resolved owner=Movie via=relation

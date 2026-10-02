@@ -11,6 +11,7 @@
 //! read rather than that none reaches it.
 
 use crate::extract::line_index::LineIndex;
+use crate::inflect::plural;
 use ruby_prism::{Node, Visit};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -217,69 +218,6 @@ fn controller_in(module: &[String], written: &str) -> String {
     }
     path.push_str(written);
     path
-}
-
-/// `widgets` for `resource :widget`, as Rails' controller for a singular
-/// resource is its name pluralized: Active Support's English inflections,
-/// in its order (irregulars, then the last rule defined first).
-fn plural(name: &str) -> String {
-    const UNCOUNTABLE: [&str; 10] = [
-        "equipment",
-        "information",
-        "rice",
-        "money",
-        "species",
-        "series",
-        "fish",
-        "sheep",
-        "jeans",
-        "police",
-    ];
-    const IRREGULAR: [(&str, &str); 6] = [
-        ("person", "people"),
-        ("man", "men"),
-        ("child", "children"),
-        ("sex", "sexes"),
-        ("move", "moves"),
-        ("zombie", "zombies"),
-    ];
-    if UNCOUNTABLE.contains(&name) {
-        return name.to_string();
-    }
-    for (one, many) in IRREGULAR {
-        if let Some(stem) = name.strip_suffix(one) {
-            return format!("{stem}{many}");
-        }
-    }
-    let ends = |suffixes: &[&str]| suffixes.iter().any(|s| name.ends_with(s));
-    let cut = |n: usize, to: &str| format!("{}{to}", &name[..name.len() - n]);
-    let before = |n: usize| name[..name.len() - n].chars().last();
-    match name {
-        _ if ends(&["quiz"]) => format!("{name}zes"),
-        "ox" => "oxen".to_string(),
-        "oxen" | "mice" | "lice" => name.to_string(),
-        "mouse" | "louse" => cut(4, "ice"),
-        _ if ends(&["matrix", "matrex", "vertix", "vertex", "indix", "index"]) => cut(2, "ices"),
-        _ if ends(&["x", "ch", "ss", "sh"]) => format!("{name}es"),
-        _ if name.ends_with('y')
-            && (name.ends_with("quy") || before(1).is_some_and(|c| !"aeiouy".contains(c))) =>
-        {
-            cut(1, "ies")
-        }
-        _ if ends(&["hive"]) => format!("{name}s"),
-        _ if name.ends_with("fe") && before(2).is_some_and(|c| c != 'f') => cut(2, "ves"),
-        _ if ends(&["lf", "rf"]) => cut(1, "ves"),
-        _ if ends(&["sis"]) => cut(3, "ses"),
-        _ if ends(&["ta", "ia"]) => name.to_string(),
-        _ if ends(&["tum", "ium"]) => cut(2, "a"),
-        _ if ends(&["buffalo", "tomato"]) => format!("{name}es"),
-        _ if ends(&["bus", "alias", "status"]) => format!("{name}es"),
-        _ if ends(&["octopi", "viri"]) => name.to_string(),
-        _ if ends(&["octopus", "virus"]) => cut(2, "i"),
-        "axis" | "testis" => cut(2, "es"),
-        _ if name.ends_with('s') => name.to_string(),
-        _ => format!("{name}s"),
-    }
 }
 
 impl<'pr> Reader<'_, '_> {

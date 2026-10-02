@@ -2,6 +2,7 @@ pub mod cli;
 pub(crate) mod core;
 pub(crate) mod extract;
 pub(crate) mod gems;
+pub(crate) mod inflect;
 pub(crate) mod rbs;
 pub(crate) mod resolve;
 pub(crate) mod scan;

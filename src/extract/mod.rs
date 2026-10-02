@@ -4237,7 +4237,7 @@ impl<'pr> Extractor<'_> {
             let mut made = vec![
                 (attribute.clone(), false, at, Some("String")),
                 (format!("{attribute}="), false, at, None),
-                (macros::pluralize(attribute), true, at, None),
+                (crate::inflect::plural(attribute), true, at, None),
             ];
             for (label, offset) in &decl.members {
                 let Some(name) = decl.method_name(label) else {
