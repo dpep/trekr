@@ -3678,6 +3678,25 @@ fn an_index_that_outwaits_the_lock_says_it_is_incomplete() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Outwaited by a writer that is still filling the checkout, an index does
+/// not call that writer's index interrupted: it is not.
+#[test]
+fn an_index_outwaited_by_a_live_writer_leaves_its_mark_running() {
+    let (dir, db, holder) = marked_behind_a_lock("index-outwaited-live", std::process::id());
+    let out = neutral(Command::new(env!("CARGO_BIN_EXE_trekr")))
+        .args(["--index", "--json", "--no-gems"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .env("TREKR_TEST_WRITER_WAIT_MS", "1500")
+        .output()
+        .unwrap();
+    holder.execute_batch("ROLLBACK").unwrap();
+    let answer = json(&out);
+    assert_eq!(answer["status"], "incomplete", "{answer}");
+    assert_eq!(answer["warming"]["interrupted"], false, "{answer}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// Stopped by a signal — Ctrl-C, or a caller's timeout — an index says how
 /// far it got before it goes, and dies of the signal, as a shell expects.
 #[test]

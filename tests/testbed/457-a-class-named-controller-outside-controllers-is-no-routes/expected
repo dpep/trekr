@@ -1,0 +1,6 @@
+# The caveat that a gem's routes may reach a controller was given to any
+# class named `…Controller`, so a RuboCop cop was graded lower. Only a
+# class under a `controllers/` directory, or an ActionController::Metal,
+# is one routes may reach.
+dead lib Cops::NoRawController=unreferenced~
+dead app StaleController=unreferenced~routes

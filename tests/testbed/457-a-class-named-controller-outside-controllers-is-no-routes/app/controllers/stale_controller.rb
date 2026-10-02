@@ -1,0 +1,2 @@
+class StaleController
+end

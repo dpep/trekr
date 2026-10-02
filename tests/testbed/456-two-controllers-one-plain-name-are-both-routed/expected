@@ -1,0 +1,5 @@
+# Routed controllers were looked up by a name with `::` and `_` dropped, so
+# `Admin::WidgetsController` and `AdminWidgetsController` shared a key and
+# one of them — with its namespace — was unreferenced, clear, while its
+# action said a route named it.
+dead app Admin::WidgetsController=convention-only AdminWidgetsController=convention-only Admin=none
