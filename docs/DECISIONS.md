@@ -11229,12 +11229,14 @@ possible to 123 excluded; a Gemfile's `gem` was `Kernel#gem` and a
   (`register_asset`), a Guardfile, a Capfile with `install_plugin`. No
   further list: a name list would have to know every DSL, and the evidence
   rule needs none.
-- **A top-level `def` is Object's only in the checkout, and only outside a
-  block.** A gem's is Object's if something requires its file, which the
-  index does not know; a `def` in a block is whatever the block runs on
-  (`instance_eval do def task`), and exists only if the block runs. Such a
-  `def` is recorded `via: "def in a block at the top level"` (an
-  extraction change, within v56).
+- **A top-level `def` in a block is not Object's**: it is whatever the
+  block runs on (`instance_eval do def task`), and exists only if the block
+  runs. Such a `def` is recorded `via: "def in a block at the top level"`
+  (an extraction change, within v56). A gem's top-level `def` outside a
+  block still is Object's: taking only the checkout's, as the hunt asked,
+  was measured — fabrication's `def Fabricator` begins every discourse
+  fabricator file, and six such gold-set sites went from correct to a
+  residue (the file then looked foreign to `main`).
 
 **Measured** on discourse, `--refs`: `Rake::DSL#task` 242 confirmed, 14
 possible (tasks in a `namespace` block, untyped as before), 16 excluded

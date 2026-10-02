@@ -2914,16 +2914,15 @@ fn evaluated_elsewhere(path: &str) -> bool {
             .any(|ext| file.ends_with(ext))
 }
 
-/// The `def`s written at the top of a checkout file, outside any class and
-/// any block: Object's. A gem's is Object's only if something requires its
-/// file, which the index does not know (DEC-445).
+/// The `def`s written at the top of a file, outside any class and any
+/// block: Object's. A gem's counts — fabrication's `Fabricator` is how every
+/// fabricator file starts — but not one in a block, which is whatever the
+/// block runs on, once it runs (thor's `instance_eval do def task`, DEC-445).
 fn top_level_defs(tree: &Tree, name: &str) -> Vec<crate::tree::MethodDef> {
     tree.named(name)
         .iter()
         .filter(|method| method.owner.is_empty() && !method.singleton)
         .filter(|method| method.via.as_deref() != Some(crate::core::TOP_LEVEL_BLOCK))
-        // A relative site is a fixture's, built with no checkout root.
-        .filter(|method| tree.in_checkout(&method.site.path) || !method.site.path.starts_with('/'))
         .cloned()
         .collect()
 }
