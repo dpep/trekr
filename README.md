@@ -17,6 +17,16 @@ brew install dpep/tools/trekr    # or: cargo install trekr
 
 VS Code Extension: [trekr from the Marketplace](https://marketplace.visualstudio.com/items?itemName=dpep.trekr) ([more below](#in-vs-code)).
 
+**Upgrading needs no editor restart.** A running `trekr --lsp` watches the
+binary it was launched as — `brew upgrade` re-pointing the `trekr` symlink
+counts, and so does removing the old version — and at a quiet moment hands
+the session to the new build in place, unsaved buffers and all (DEC-050).
+It waits for a background index it started to finish first. If the new
+build's index format changed, the index is rebuilt in the background and
+answers say they are partial until it is done (DEC-275). An older build
+still running beside a newer one's index never writes into it: it keeps its
+own beside it (`trekr.v54.db`) until it is upgraded too (DEC-300).
+
 ## Usage
 
 ```sh

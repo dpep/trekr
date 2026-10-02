@@ -2315,8 +2315,10 @@ fn a_replaced_binary_takes_over_the_session_in_place() {
 }
 
 /// `brew upgrade` does not touch the running file: it installs into a new
-/// Cellar directory and re-points the symlink the editor launched. The link is
-/// what is watched, so the relink is the upgrade.
+/// Cellar directory, re-points the symlink the editor launched, and its
+/// cleanup removes the old directory. The link is what is watched, so the
+/// relink is the upgrade, and the running build's file being gone is no
+/// obstacle.
 #[test]
 fn a_relinked_symlink_is_an_upgrade_too() {
     let (_, scratch_db) = scratch("relink-bin");
@@ -2331,6 +2333,7 @@ fn a_relinked_symlink_is_an_upgrade_too() {
 
     fs::remove_file(&link).unwrap();
     std::os::unix::fs::symlink(bin.join("v2/trekr"), &link).unwrap();
+    fs::remove_dir_all(bin.join("v1")).unwrap();
     // Asked straight away, so the question may arrive mid-swap: either build
     // answers it, and neither loses it.
     assert_the_unsaved_buffer_is_honored(&mut session, &dir);
@@ -3029,6 +3032,40 @@ fn a_server_whose_store_a_newer_trekr_rebuilt_keeps_its_own() {
         .find(|n| n.starts_with("trekr.v") && n.ends_with(".db"))
         .expect("a store of its own");
     assert!(blobs(&db.with_file_name(own)) > 0, "refilled");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A server started on a store a newer trekr wrote — an older build still
+/// launched by an editor, beside a newer CLI — never writes into it: it
+/// answers from a store of its own beside it, which it fills itself.
+#[test]
+fn a_server_started_on_a_newer_trekrs_store_keeps_its_own() {
+    let (dir, db) = scratch("store-newer-at-start");
+    fs::write(dir.join("Gemfile"), "source 'https://rubygems.org'\n").unwrap();
+    ruby_repo(
+        &dir,
+        &db,
+        "class Widget\n  def save\n  end\nend\nWidget.new.save\n",
+    );
+    let store = rusqlite::Connection::open(&db).unwrap();
+    let version: i64 = store
+        .pragma_query_value(None, "user_version", |r| r.get(0))
+        .unwrap();
+    store
+        .pragma_update(None, "user_version", version + 1)
+        .unwrap();
+    drop(store);
+    let before = blobs(&db);
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let answer = definition_eventually(&mut session, &uri_of(&dir, "app.rb"), 4, 12);
+    assert_eq!(answer[0]["range"]["start"]["line"], 1, "{answer}");
+    session.stop();
+
+    assert_eq!(blobs(&db), before, "nothing written into the newer store");
+    let own = db.with_file_name(format!("trekr.v{version}.db"));
+    assert!(blobs(&own) > 0, "filled its own");
     let _ = fs::remove_dir_all(&dir);
 }
 
