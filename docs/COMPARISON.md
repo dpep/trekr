@@ -3,7 +3,8 @@
 Each engine is asked `textDocument/definition` over LSP at call sites whose
 answer Ruby itself recorded: the TracePoint gold set
 ([BASELINE.md](BASELINE.md)). `script/compare.py` produces every row. Latest
-run: **2026-10-01**, trekr 0.8.4.
+run: **2026-10-02**, trekr after 0.8.4 (unreleased: DEC-440–445); the other
+engines' rows are the 2026-10-01 run's.
 
 **correct@1** means the first location returned is the file and line Ruby ran
 (±1). **wrong@1** means the engine answered and the first location is
@@ -17,44 +18,47 @@ processes.
 
 | engine | answered | correct@1 | wrong@1 | found | ready, cold | ready, restart | warm | RSS |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| trekr 0.8.4 | **96.0 %** | **78.0 %** | 18.0 % | **82.8 %** | **5.2 s** | **0.01 s** | **0.76 ms** | **360 MB** |
+| trekr, unreleased | **88.0 %** | **80.8 %** | **7.2 %** | **82.4 %** | **4.8 s** | **0.01 s** | **0.72 ms** | **390 MB** |
 | ruby-lsp 0.26.9 | 63.0 % | 51.4 % | **11.6 %** | 56.8 % | 17 s | 17 s | 1.4 ms | 1,300 MB |
 
-trekr is right half again as often (78.0 % vs 51.4 %) in under a third of the
-memory, and its index persists, so a restart costs nothing while ruby-lsp
-re-indexes on every launch. ruby-lsp is right at 5 sites where trekr is not;
-trekr at 138 where ruby-lsp is not. ruby-lsp is wrong less often because it
-declines more: of the 90 sites where trekr's first location is wrong, ruby-lsp
-answers nothing at 32 and is also wrong at 53.
+trekr is right more than half again as often (80.8 % vs 51.4 %), wrong less
+often (7.2 % vs 11.6 %), in under a third of the memory, and its index
+persists, so a restart costs nothing while ruby-lsp re-indexes on every
+launch. ruby-lsp is right at 7 sites where trekr is not; trekr at 154 where
+ruby-lsp is not. Of the 36 sites where trekr's first location is wrong,
+ruby-lsp answers nothing at 27 and is also wrong at 8. trekr declines a call
+it could not resolve when its best guess is a weak one (DEC-443); with every
+guess shown (`unresolved: peek`), it answers 96.0 % and is wrong 14.4 %.
 
 ## mastodon — 500 app-code sites, public
 
 | engine | answered | correct@1 | wrong@1 | found | ready, cold | ready, restart | warm | RSS |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| trekr 0.8.4 | **98.8 %** | **64.2 %** | 34.6 % | **72.6 %** | **4.3 s** | **0.01 s** | **0.85 ms** | **340 MB** |
+| trekr, unreleased | **83.8 %** | **63.8 %** | **20.0 %** | **67.6 %** | **3.5 s** | **0.01 s** | **0.65 ms** | **290 MB** |
 | ruby-lsp 0.26.11 | 72.6 % | 51.2 % | **21.4 %** | 57.0 % | 13 s | 13 s | 0.86 ms | 740 MB |
 | ruby-lsp 0.27.0.beta5 (Rubydex) | 67.4 % | 45.2 % | 22.2 % | 52.6 % | 5.5 s | 5.5 s | 1.1 ms | 660 MB |
 
-The same lead, a narrower one, and twice the wrong@1. mastodon calls far
-more through untyped receivers — serializer `object`, controller `params`,
-relation chains, association readers — and declares far more of its methods
-through Rails (`scope`, `belongs_to`, columns in `db/schema.rb`), which this
-scorer counts against an answer that names the declaration. ruby-lsp is right
-at 7 sites where trekr is not; trekr at 72 where ruby-lsp is not. The
-Rubydex-based beta answers less often than 0.26 and is right less often.
+The same lead, a narrower one, and about the same wrong@1. mastodon calls
+far more through untyped receivers — serializer `object`, controller
+`params`, association readers — and declares far more of its methods through
+Rails (`scope`, `belongs_to`, columns in `db/schema.rb`), which this scorer
+counts against an answer that names the declaration: 37 of trekr's 100
+wrong@1 are such declarations. ruby-lsp is right at 19 sites where trekr is
+not; trekr at 82 where ruby-lsp is not. The Rubydex-based beta answers less
+often than 0.26 and is right less often.
 
 ## widget_shop — 63 sites, private
 
 | engine | answered | correct@1 | wrong@1 | found | ready, cold | ready, restart | warm | RSS |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| trekr 0.8.4 | **100 %** | **62 %** | 38 % | **62 %** | 3.7 s | **0.01 s** | 0.64 ms | 260 MB |
+| trekr, unreleased | **100 %** | **67 %** | 33 % | **67 %** | 2.0 s | **0.01 s** | 0.43 ms | 260 MB |
 | ruby-lsp 0.26.11 † | 78 % | 49 % | 29 % | 54 % | 16 s | 16 s | 0.48 ms | 560 MB |
 | ruby-lsp 0.27.0.beta5 (Rubydex) † | 56 % | 35 % | **21 %** | 38 % | 5.4 s | 5.4 s | 0.48 ms | 420 MB |
 | Sorbet 0.6.13439, as configured | 13 % | 0 % | 13 % | 0 % | 0.87 s | 0.87 s | 0.32 ms | **140 MB** |
 | Sorbet 0.6.13439, `--typed=true` | 59 % | 19 % | 40 % | 19 % | **0.48 s** | 0.48 s | **0.28 ms** | 150 MB |
 
 † Run on a worktree without `sorbet/` and with byte-identical app code. trekr
-scores the same there, except found is 65 %.
+0.8.4 scored the same there, except found was 65 %.
 
 Over a third of these sites call Rails-generated methods. trekr answers with
 the macro (`belongs_to :supplier`), and the scorer wants the `define_method`
@@ -67,20 +71,19 @@ Every wrong@1 and unanswered site, by root cause (`wrong@1 / none`):
 
 | cause | discourse | mastodon | fix |
 | --- | ---: | ---: | --- |
-| untyped receiver, and the first candidate is another class's method | 55 / 0 | 96 / 0 | partly a general rule |
-| a Rails-generated method, answered by its declaration (column, `belongs_to`, `scope`, `after_save`) | 15 / 1 | 37 / 0 | by construction |
+| a Rails-generated method, answered by its declaration (column, `belongs_to`, `scope`, `after_save`) | 16 / 1 | 37 / 0 | by construction |
+| untyped receiver, and the first candidate is another class's method | 3 / 29 | 33 / 58 | partly a general rule |
 | a call through `delegate`, answered with the method it sends to first (DEC-211) | 6 / 0 | 13 / 0 | by choice |
-| the receiver's self or ancestors incomplete (`include Singleton`, `routes.draw do`, `on_load` includes, `db/structure.sql`) | 6 / 2 | 14 / 1 | a general rule |
-| metaprogramming trekr does not model (SiteSetting, route helpers, `enum`) | 3 / 17 | 6 / 5 | by construction |
-| resolved, to the wrong method (extend or include order, a nil receiver) | 5 / 0 | 7 / 0 | mostly a general rule |
+| the receiver's self or ancestors incomplete (`include Singleton`, `routes.draw do`, `on_load` includes, `db/structure.sql`) | 6 / 13 | 8 / 15 | a general rule, not yet |
+| metaprogramming trekr does not model (SiteSetting, route helpers, `enum`) | 3 / 17 | 4 / 8 | by construction |
+| resolved, to the wrong method (a `devise` include, a nil receiver) | 2 / 0 | 5 / 0 | mostly by construction |
 
-Most wrong@1 is `residue`: trekr said it was unsure, and its first candidate
-was wrong. That is 64 of discourse's 90 wrong@1 and 99 of mastodon's 173. An
-LSP client cannot see the status, so the tables above are what an editor
-shows. trekr's residue `confidence` is always 0.00, so it cannot
-pick out the residue worth showing. Returning no location for residue would
-take discourse to 67.6 % answered, 62.4 % correct, 5.2 % wrong, and mastodon
-to 65.8 %, 51.0 %, 14.8 %.
+A residue — trekr unsure — now carries a confidence counted on these gold
+sets (DEC-442): 0.7 when the call is on `self` or the name has at most three
+definitions, 0.2 otherwise. The LSP returns a residue's guesses only at 0.5
+or above (DEC-443), which is why "none" grew: most of it is residue trekr
+holds back, of which 36 in 40 on discourse and 59 in 75 on mastodon
+would have been wrong.
 
 ## Reading the numbers
 
@@ -125,22 +128,24 @@ to 65.8 %, 51.0 %, 14.8 %.
   ruby-lsp's warm latency by 3×. Compare timings within a table. Accuracy was
   identical in every run.
 
-## Since the 2026-09-30 run
+## Since the 2026-10-01 run
 
-* trekr went from 76.6 % to 78.0 % correct on discourse, and 19.4 % to
-  18.0 % wrong. Seven sites moved, all from wrong to correct, and they are the
-  seven DEC-350 and DEC-351 fixed: `@user.id` beside a script's `User`, and a
-  `delegate` line ranked ahead of the method it sends to. DEC-390–392 moved no
-  site in this sample. widget_shop did not move.
-* A warm request went from 10 ms to 0.76 ms (DEC-333), now a little faster
-  than ruby-lsp's 1.4 ms on discourse and level with it on mastodon. The old
-  10 ms was mostly trekr checking whether its tree was stale.
-* trekr's cold index of discourse went from 8.6 s to 5.2 s, under a lower
-  load (5–15 vs 6–19), so part of that is the machine.
-* ruby-lsp's accuracy did not change. Its timings moved with the machine's
-  load.
-* mastodon is new.
-* Earlier rows, and session 9's hand-picked comparison, are in git history.
+* correct@1 went from 78.0 % to 80.8 % on discourse, 64.2 % to 63.8 % on
+  mastodon, and 62 % to 67 % on widget_shop; wrong@1 from 18.0 % to 7.2 %,
+  34.6 % to 20.0 %, and 38 % to 33 %.
+* Most of the wrong@1 that went is residue the LSP no longer shows (DEC-443):
+  with `unresolved: peek`, as before, this build is 96.0 / 81.6 / 14.4 on
+  discourse and 98.8 / 67.0 / 31.8 on mastodon (answered / correct@1 /
+  wrong@1).
+* The rest is typing: a hook's nested include runs its own hook first
+  (DEC-440, `sidekiq_options`), a top-level call runs on `main` (DEC-445,
+  `require`), and a relation chain is typed step by step (DEC-444,
+  `.order`, `.pluck`, `.exists?`). Every site those moved went to correct
+  but two, `.where` and `.includes` on a `has_many` reader, where trekr
+  names the method CollectionProxy's computed `delegate` sends to.
+* Timings are one cold and one restart run, at load 4–7, so compare them
+  within a table only.
+* Earlier rows are in git history.
 
 ## Rubydex as a library
 
