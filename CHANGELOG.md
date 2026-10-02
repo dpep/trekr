@@ -2,11 +2,16 @@
 
 ## Unreleased
 
+- **A `class_eval` block in a method body no longer replaces the class's
+  own method.** `Const.class_eval do def self.x … end end` written inside a
+  method reopens the class only if that method is called, so the class's
+  unconditional `x` answers. This changes what an index records.
 - **A module mixed in by another's `included` hook runs its own hook
   first.** `include Sidekiq::Job` extends `Job::ClassMethods` after the
   `Options::ClassMethods` its inner include brought, as Ruby does, so
   `sidekiq_options` in a worker resolves to Sidekiq's `Job` method rather
   than the one it overrides.
+- **Upgrading drops and rebuilds the index** (store v56): trekr reindexes on
 - **`--dead` lists unused classes, modules and constants too**, after the
   methods: one no constant reference in the checkout resolves to (views and
   executable scripts read too). Each row carries a new `kind` field —

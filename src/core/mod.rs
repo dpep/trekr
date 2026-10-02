@@ -352,6 +352,10 @@ impl Visibility {
     }
 }
 
+/// The `via` of a `def` in a `class_eval` block written in a method body: a
+/// definition, but one that exists only once the method has run.
+pub(crate) const DEFERRED_EVAL: &str = "class_eval in a method";
+
 /// A definition: a name this blob binds, and everything the tree layer needs
 /// to place it in a namespace without re-reading the source.
 #[derive(Clone, Debug, PartialEq, Serialize)]

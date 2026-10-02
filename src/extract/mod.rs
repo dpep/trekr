@@ -1833,11 +1833,27 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                     }
                     None => match self.evaluated_in(node) {
                         Some(scope) => {
+                            // A method handed its host (`def enable(host = ::Host)`)
+                            // is an installer, called to define these (DEC-086);
+                            // one that reopens a constant it names is a patch
+                            // applied if that method is ever called.
+                            let deferred = self.in_method_body()
+                                && node
+                                    .receiver()
+                                    .is_some_and(|r| r.as_local_variable_read_node().is_none());
+                            let before = self.facts.defs.len();
                             self.enter(Some(scope), Opens::Scope);
                             if let Some(body) = block.as_block_node().and_then(|b| b.body()) {
                                 self.visit(&body);
                             }
                             self.leave();
+                            if deferred {
+                                for def in &mut self.facts.defs[before..] {
+                                    if def.kind == Kind::Method && def.via.is_none() {
+                                        def.via = Some(crate::core::DEFERRED_EVAL.to_string());
+                                    }
+                                }
+                            }
                         }
                         None => {
                             // A hook registered later — in a Railtie's

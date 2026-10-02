@@ -10941,3 +10941,37 @@ correct@1 78.0 → 78.4 %, wrong@1 18.0 → 17.6 %; mastodon 64.2 → 64.6 %,
 34.6 → 34.2 %. All four moved sites are `sidekiq_options`, wrong at 1.0 →
 correct. widget_shop, and the graph_weaver, accord and polyid gold sets
 (app sites, `APP_SAMPLE=600 SEED=12`), unchanged.
+
+## DEC-441 — A `class_eval` block in a method body does not replace the class's own methods
+
+**Decided.** A `def` in a `Const.class_eval do … end` block written inside
+a method body is recorded with `via: "class_eval in a method"` — still a
+definition, but one that exists only once that method has run. Among the
+definitions one owner has of a name, the last written wins (the store
+orders a reopening after what it reopens), unless it is one of these: then
+the owner's unconditional definition wins, and the deferred one answers
+only when it is all there is.
+
+The same reasoning as DEC-097's for a runtime mixin: what exists only if a
+method is called is not what a load of the app runs. A method handed the
+class to evaluate in (`def self.enable_expect(host = ::RSpec::Matchers);
+host.module_exec do`, DEC-086) is not marked: it is an installer, which
+exists to be called, and rspec-expectations defines `expect` that way at
+boot (testbed 051 caught the first cut, which marked it too). A block in an
+`after_initialize do` or a Railtie's `initializer do` is not a method body
+and keeps winning as a reopening, which is how plugins patch.
+
+**Reported** by the comparison: discourse's
+`script/bulk_import/uploads_importer.rb` overrides
+`RailsMultisite::ConnectionManagement.current_db` inside
+`configure_site_settings`, and every `ConnectionManagement.current_db` in
+the app resolved to that script at confidence 1.0. It now resolves to the
+gem's `delegate :current_db` line, which is the method Ruby ran; the scorer
+still counts it wrong@1, because the gold set records a multi-line
+`delegate` at its first line. Testbed 441.
+
+**Extraction changed**, so the store version moves.
+
+**Measured**: no compare.py site moved in verdict on either corpus, and
+the gem gold sets are unchanged; discourse's one site changed answer to
+the right method, as above.

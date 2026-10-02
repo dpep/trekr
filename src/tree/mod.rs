@@ -766,7 +766,8 @@ impl Kind {
             | Some("define_method")
             | Some("define_singleton_method")
             | Some("class_eval")
-            | Some("module_eval") => Kind::Definition,
+            | Some("module_eval")
+            | Some(crate::core::DEFERRED_EVAL) => Kind::Definition,
             Some(_) => Kind::Declaration,
         }
     }
@@ -3499,7 +3500,16 @@ impl Tree {
                 method.is_definition() && !(real_only && method.site.is_rbi())
             };
             let in_module = |i: &&usize| !owner_singleton && into_generated_module(&methods[**i]);
-            if let Some(own) = hits.iter().rev().find(|i| usable(i) && !in_module(i)) {
+            // The last written wins, as the last loaded does, unless it is
+            // only defined once a method runs.
+            let deferred =
+                |i: &&usize| methods[**i].via.as_deref() == Some(crate::core::DEFERRED_EVAL);
+            let own = hits
+                .iter()
+                .rev()
+                .find(|i| usable(i) && !in_module(i) && !deferred(i))
+                .or_else(|| hits.iter().rev().find(|i| usable(i) && !in_module(i)));
+            if let Some(own) = own {
                 return Some(landed(*own, owner));
             }
             let from_model = |i: &&usize| methods[**i].via.as_deref() != Some("schema");

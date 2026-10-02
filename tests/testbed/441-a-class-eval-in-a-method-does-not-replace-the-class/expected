@@ -1,0 +1,5 @@
+# A `class_eval` block inside a method body reopens the class only if that
+# method is called, so its `def`s are no rival to the class's own: the
+# class's `current` is what a load of the app runs. Taking whichever file
+# sorted last let a one-off script's override win at confidence 1.0.
+def app/use.rb:3:14 status=resolved owner=Registry site=lib/registry.rb:3
