@@ -66,7 +66,7 @@ pub(super) fn routed_controllers(
             engine
                 .iter()
                 .chain(std::iter::once(&path))
-                .find_map(|name| controllers.get(&plain(name)))
+                .find_map(|name| controllers.get(&controller_key(name)))
         });
         if let Some(class) = class {
             routed
@@ -75,7 +75,7 @@ pub(super) fn routed_controllers(
         }
     }
     for (path, at) in &named.route_strings {
-        if let Some(class) = controllers.get(path) {
+        if let Some(class) = controllers.get(&controller_key(path)) {
             routed.entry(class.clone()).or_insert_with(|| at.clone());
         }
     }
@@ -464,7 +464,15 @@ impl Ways<'_> {
     /// Why one nothing reaches may still be reached.
     pub(super) fn caveats(&self, fqn: &str) -> Vec<String> {
         let mut caveats = Vec::new();
-        if fqn.ends_with("Controller") || self.inherits(fqn, "ActionController::Metal") {
+        // A class named `…Controller` elsewhere — a RuboCop cop — is no route's.
+        let controller = self.inherits(fqn, "ActionController::Metal")
+            || fqn.ends_with("Controller")
+                && self
+                    .tree
+                    .sites(fqn)
+                    .iter()
+                    .any(|site| site.path.contains("/controllers/"));
+        if controller {
             let unread = match self.routes.unread.first() {
                 _ if self.routes.files == 0 => Some("no routes file read".to_string()),
                 Some(((path, line), why)) => Some(format!("{why} at {path}:{line}")),

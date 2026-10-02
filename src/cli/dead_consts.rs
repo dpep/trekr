@@ -149,6 +149,13 @@ fn uses_of(
         for spelling in spellings(fqn) {
             spelled.entry(spelling).or_default().push(fqn);
         }
+        if let Some((owner, tail)) = fqn.rsplit_once("::") {
+            for heir in heirs.get(owner).into_iter().flatten() {
+                for spelling in spellings(&format!("{heir}::{tail}")) {
+                    spelled.entry(spelling).or_default().push(fqn);
+                }
+            }
+        }
         let head = fqn.split("::").next().unwrap_or(fqn);
         if head == fqn || !tree.sites(head).is_empty() {
             continue;
@@ -291,10 +298,19 @@ pub(super) fn dead_constants(
     let mut classes = HashSet::new();
     let mut tails: HashMap<String, usize> = HashMap::new();
     let mut children: HashMap<String, Vec<String>> = HashMap::new();
+    let mut heirs: HashMap<String, Vec<String>> = HashMap::new();
     for (fqn, kind) in &all {
         let sites = tree.sites(fqn);
         if !sites.iter().any(|site| site.path.starts_with(&prefix)) {
             continue;
+        }
+        if kind == "class" || kind == "module" {
+            for ancestor in tree.ancestors(fqn).chain.iter().filter(|a| *a != fqn) {
+                heirs
+                    .entry(crate::tree::public_name(ancestor).to_string())
+                    .or_default()
+                    .push(fqn.clone());
+            }
         }
         let tail = fqn.rsplit("::").next().unwrap_or(fqn).to_string();
         if kind == "class" || kind == "module" {
@@ -330,7 +346,7 @@ pub(super) fn dead_constants(
                 .map(|(c, p)| (c.as_str(), p.as_str())),
         )
         .collect();
-    let uses = uses_of(tree, store, &root_str, &wanted, &unindexed)?;
+    let uses = uses_of(tree, store, &root_str, &wanted, &heirs, &unindexed)?;
     let ways = Ways {
         tree,
         routes,

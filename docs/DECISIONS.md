@@ -10824,6 +10824,27 @@ a class is not what that tier is for, and a constant's one reference is its
 use, not a call to fold. `--refs Widget` stays name-level; a resolved
 `--refs` for a constant would reuse this module's query.
 
+### DEC-420 addendum: a constant is spelled through its namespace's heirs
+
+**Reported** by the pre-release hunt: `--dead` read only the spellings of
+a constant's own name, so `Store::MAILER_KEY` (Store includes `Keys`) and
+`Child::LIMIT` (`LIMIT` in `Base`) left `Keys::MAILER_KEY` and
+`Base::LIMIT` unreferenced, clear, while `--def` resolved both; chatwoot's
+55 `Redis::RedisKeys::*` rows were read as `Redis::Alfred::X`. **Decided.**
+Every checkout class or module that has a candidate's namespace among its
+ancestors adds its spellings (`Heir::TAIL`, each suffix, rooted), and each
+row is resolved as before, so only one that lands on the candidate counts.
+No store change. Testbed 455.
+
+**Routed controllers are keyed by their path.** The lookup compared names
+with `::` and `_` dropped, so `Admin::WidgetsController` and
+`AdminWidgetsController` shared a key and one lost its route (and its
+namespace with it). Each segment is compared as before, the segments kept
+apart. Testbed 456. **A controller's caveats** (routes unread, a gem's
+routes) now need the class under a `controllers/` directory or below
+`ActionController::Metal`: a RuboCop cop `NoRawController` in `lib/` is
+no route's. Testbed 457.
+
 ## DEC-421 — What reaches a class by its name is read, and what may is said
 
 **Decided.** Rails and the libraries an app runs find many classes by a

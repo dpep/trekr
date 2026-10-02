@@ -84,12 +84,13 @@ pub(super) fn report(out: Output, root: &str, why: &str) {
     let store = store_path()
         .ok()
         .and_then(|p| Store::open_existing(&p).ok());
-    // Whatever pid the mark names, its index is over once this one is.
+    // This index's own mark is over once it is; another writer's, which
+    // outwaited this one, is over only if that writer is gone.
     let warming = store
         .as_ref()
         .and_then(|s| s.warming(root).ok().flatten())
         .map(|w| crate::store::Warming {
-            interrupted: true,
+            interrupted: w.interrupted || w.pid == std::process::id(),
             ..w
         });
     let indexed = store

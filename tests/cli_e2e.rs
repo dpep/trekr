@@ -3632,6 +3632,11 @@ fn a_queued_index_says_what_it_is_waiting_for() {
 /// longer running — and a connection holding the write lock, so the next
 /// `--index` of it cannot write a row until the holder lets go.
 fn cut_short_behind_a_lock(label: &str) -> (PathBuf, PathBuf, rusqlite::Connection) {
+    marked_behind_a_lock(label, i32::MAX as u32)
+}
+
+/// The same, with the mark naming `pid` as its writer.
+fn marked_behind_a_lock(label: &str, pid: u32) -> (PathBuf, PathBuf, rusqlite::Connection) {
     let (dir, db) = scratch(label);
     repo(&dir);
     let indexed = trekr(&db, &dir, &["--index", "--json", "--no-gems"]);
@@ -3640,7 +3645,7 @@ fn cut_short_behind_a_lock(label: &str) -> (PathBuf, PathBuf, rusqlite::Connecti
     holder
         .execute(
             "INSERT INTO meta (key, value) VALUES (?1, ?2)",
-            [format!("warming {root}"), format!("{} 1 2", i32::MAX)],
+            [format!("warming {root}"), format!("{pid} 1 2")],
         )
         .unwrap();
     holder.execute_batch("BEGIN IMMEDIATE").unwrap();

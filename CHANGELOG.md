@@ -56,7 +56,9 @@
   policy, serializer or validator, a job built from a symbol, an
   association, a YAML value, a registry — is `convention-only`, and what
   may still reach one (`self.class::LIMIT`, a listed namespace, a factory,
-  an STI subclass) grades it `lower`. A constant handed to `enum` or an
+  an STI subclass) grades it `lower`. A constant read through a class or
+  module that inherits or includes its namespace (`Child::LIMIT`,
+  `Store::KEY`) is used. A constant handed to `enum` or an
   `attr_*` macro counts as a reference (this changes what an index
   records).
 - **Upgrading drops and rebuilds the index** (store v56): trekr reindexes on
