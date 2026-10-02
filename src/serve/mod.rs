@@ -260,6 +260,17 @@ fn serve(
     session.definition_links = client.definition_links;
     session.reference_limit = client.reference_limit;
     session.unresolved = client.unresolved;
+    if let Some(value) = &client.unresolved_invalid {
+        log.event(
+            "setting_invalid",
+            serde_json::json!({
+                "setting": "unresolved",
+                "value": value,
+                "using": "confident",
+                "valid": ["confident", "peek", "best", "none"],
+            }),
+        );
+    }
     for buffer in buffers {
         session.did_open(buffer.path, buffer.text, buffer.version);
     }
@@ -1154,11 +1165,14 @@ struct Client {
     /// `initializationOptions.unresolved`: `peek`, `best`, `confident` or
     /// `none`; anything else keeps the default.
     unresolved: state::Unresolved,
+    /// The `unresolved` given, when it was none of those: logged once.
+    unresolved_invalid: Option<serde_json::Value>,
 }
 
 impl Client {
     fn from(params: &serde_json::Value) -> Client {
         let flag = |pointer: &str| params.pointer(pointer).and_then(serde_json::Value::as_bool);
+        let unresolved = params.pointer("/initializationOptions/unresolved");
         Client {
             progress: flag("/capabilities/window/workDoneProgress").unwrap_or(false),
             watch: flag("/capabilities/workspace/didChangeWatchedFiles/dynamicRegistration")
@@ -1171,11 +1185,12 @@ impl Client {
                 .and_then(serde_json::Value::as_u64)
                 .filter(|&n| n > 0)
                 .map_or(gather::DEFAULT_LIMIT, |n| n as usize),
-            unresolved: state::Unresolved::parse(
-                params
-                    .pointer("/initializationOptions/unresolved")
-                    .and_then(serde_json::Value::as_str),
-            ),
+            unresolved: unresolved
+                .and_then(state::Unresolved::parse)
+                .unwrap_or_default(),
+            unresolved_invalid: unresolved
+                .filter(|v| state::Unresolved::parse(v).is_none())
+                .cloned(),
         }
     }
 }

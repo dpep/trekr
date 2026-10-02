@@ -892,9 +892,14 @@ the new binary in place (DEC-050).
 
 **Mapping ranked answers onto LSP**, which has no confidence field:
 
-- `definition` returns the resolved site(s). Residue returns up to five ranked
-  candidates, so the editor shows a peek list rather than jumping confidently
-  to a guess; `hover` at the same position says, in words, that it is one.
+- `definition` returns the resolved site(s). What a residue returns is
+  `initializationOptions.unresolved` (VS Code: `trekr.unresolved`, DEC-443):
+  `confident`, the default, its ranked candidates — up to five, a peek list —
+  when the first's confidence is at least 0.5 and nothing otherwise; `peek`
+  the candidates always; `best` the first only; `none` nothing. Any other
+  value is `confident`, and the server logs a `setting_invalid` event once.
+  A held-back guess logs its `miss` with that mode's reason. `hover` at the
+  same position says, in words, that the call is unresolved.
 - `references` orders confirmed before possible and drops excluded — the order
   is the disclosure. On a class or constant it resolves every written constant
   and keeps those that land on the same FQN. It is bounded; see below.

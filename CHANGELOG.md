@@ -17,6 +17,8 @@
   `trekr.unresolved`) to `peek` for every guess as before, `best` for the
   first, or `none`. On the comparison corpora this halves wrong jumps for
   under a point (discourse) and three points (mastodon) of right ones.
+- **An invalid `unresolved` setting is logged** (`setting_invalid` in
+  `lsp.log`) instead of silently read as `confident`.
 - **A residue's `confidence` is graded** (`--json`): how often its first
   candidate ran, on the gold sets, among residues resting on the same
   evidence — 0.7 for a call on `self` or a name with at most three

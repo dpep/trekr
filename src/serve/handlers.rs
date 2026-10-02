@@ -463,7 +463,7 @@ fn resolve_at(
                 // at the same position says the receiver was never resolved.
                 let keep = unresolved.keep(answer.confidence);
                 if keep == 0 && !answer.candidates.is_empty() {
-                    super::miss::why("an unresolved call below the confidence shown");
+                    super::miss::why(unresolved.withheld());
                 }
                 answer
                     .candidates

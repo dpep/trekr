@@ -611,6 +611,26 @@ fn the_unresolved_setting_decides_which_guesses_reach_the_editor() {
         (0, 1),
         "an unknown mode is the default"
     );
+    // ...and is said once, in the log, so a typo is findable.
+    let invalid = logged_events(&db, "setting_invalid");
+    assert_eq!(invalid.len(), 1, "{invalid:?}");
+    assert_eq!(invalid[0]["value"], "bogus");
+    // A held-back guess is logged with the reason its mode gives.
+    let mut why: Vec<String> = logged_events(&db, "miss")
+        .iter()
+        .filter_map(|m| m["why"].as_str())
+        .filter(|why| why.starts_with("an unresolved call"))
+        .map(str::to_string)
+        .collect();
+    why.sort();
+    why.dedup();
+    assert_eq!(
+        why,
+        [
+            "an unresolved call whose first guess is below `confident`'s bar",
+            "an unresolved call, and `unresolved` is `none`",
+        ]
+    );
     let _ = fs::remove_dir_all(&dir);
 }
 

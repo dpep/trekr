@@ -892,14 +892,22 @@ impl Unresolved {
     /// Between the two grades a residue's first candidate gets (DEC-442).
     pub(crate) const THRESHOLD: f64 = 0.5;
 
-    /// The setting as the client spells it; anything else is the default.
-    pub(crate) fn parse(value: Option<&str>) -> Unresolved {
-        match value {
-            Some("peek") => Unresolved::Peek,
-            Some("best") => Unresolved::Best,
-            Some("confident") => Unresolved::Confident,
-            Some("none") => Unresolved::None,
-            _ => Unresolved::default(),
+    /// The setting as the client spells it; `None` for anything else.
+    pub(crate) fn parse(value: &serde_json::Value) -> Option<Unresolved> {
+        match value.as_str()? {
+            "peek" => Some(Unresolved::Peek),
+            "best" => Some(Unresolved::Best),
+            "confident" => Some(Unresolved::Confident),
+            "none" => Some(Unresolved::None),
+            _ => None,
+        }
+    }
+
+    /// Why a residue's guesses were held back, as a miss logs it.
+    pub(crate) fn withheld(self) -> &'static str {
+        match self {
+            Unresolved::None => "an unresolved call, and `unresolved` is `none`",
+            _ => "an unresolved call whose first guess is below `confident`'s bar",
         }
     }
 
