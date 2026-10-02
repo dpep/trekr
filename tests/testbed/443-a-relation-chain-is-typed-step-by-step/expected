@@ -1,0 +1,10 @@
+# ActiveRecord builds each relation with `spawn` and `clone`, which no
+# reading types, so a chain stopped after its first step and the next call
+# went to whichever class shared the name — `order` to OptionParser's. Its
+# query methods now return a relation (a signature lent to the gem's own
+# methods), a `scope` returns one, and a `has_many` reader is a
+# CollectionProxy, so each step lands on ActiveRecord.
+def app/use.rb:3:25 status=resolved owner=ActiveRecord::QueryMethods via=chain
+def app/use.rb:3:36 status=resolved owner=ActiveRecord::Calculations via=chain
+def app/use.rb:4:19 status=resolved owner=ActiveRecord::Calculations via=chain
+def app/use.rb:6:18 status=resolved owner=ActiveRecord::Associations::CollectionProxy via=chain

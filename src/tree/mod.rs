@@ -371,6 +371,9 @@ pub(crate) struct Tree {
     /// name), as each is first asked: lent to the real definitions, never a
     /// location (DEC-220).
     stdlib_sigs: Memo<(String, bool, String), Option<MethodDef>>,
+    /// What ActiveRecord's query methods return, by (owner, singleton,
+    /// name): lent to its own definitions, never a location (DEC-444).
+    gem_sigs: OnceLock<HashMap<(String, bool, String), MethodDef>>,
     names: Names,
     /// Where methods come from when the tree does not already have them.
     /// `None` for a tree built from rows in hand (fixtures), which is fully
@@ -1120,6 +1123,7 @@ impl Tree {
             stdlib: None,
             stubs: None,
             stdlib_sigs: Memo::new(),
+            gem_sigs: OnceLock::new(),
             names,
             base: HashMap::new(),
             defs: Once::new(),
@@ -3569,12 +3573,36 @@ impl Tree {
         // Core's stub writes some stdlib methods too (`Time.parse`); both it
         // and the real one are the method RBS describes.
         let rubys = in_stdlib || corelib::is_core(&method.site.path);
+        let key = (method.owner.clone(), method.singleton, method.name.clone());
         stub.or_else(|| {
-            let key = (method.owner.clone(), method.singleton, method.name.clone());
             let declared = self.stdlib_signature(&key).filter(|_| rubys)?;
             let returns = declared.returns_for(argc, block)?.to_string();
             Some((declared.clone(), returns))
         })
+        .or_else(|| {
+            let declared = self.gem_signature(&key)?;
+            let returns = declared.returns_for(argc, block)?.to_string();
+            Some((declared.clone(), returns))
+        })
+    }
+
+    /// What ActiveRecord says its query methods return (DEC-444), for its
+    /// own: the key's owner is the gem's module, so an app's or another
+    /// gem's method of the name is never described.
+    fn gem_signature(&self, key: &(String, bool, String)) -> Option<&MethodDef> {
+        self.gem_sigs
+            .get_or_init(|| {
+                let (_, _, rows) =
+                    rows_from(corelib::ACTIVE_RECORD_SIGS, corelib::active_record_sigs());
+                rows.into_iter()
+                    .map(|row| self.method_def(row))
+                    .map(|method| {
+                        let key = (method.owner.clone(), method.singleton, method.name.clone());
+                        (key, method)
+                    })
+                    .collect()
+            })
+            .get(key)
     }
 
     /// The return types RBS gives the stdlib's Ruby methods, by (owner,

@@ -156,9 +156,13 @@ pub(super) fn generated(macro_name: &str, arg: &str) -> Vec<Generated> {
         "delegate" => vec![Generated::reader(arg)],
 
         // A collection association. `widget_ids` is the one people forget.
+        // Its reader is a relation of the associated records (DEC-444).
         "has_many" | "has_and_belongs_to_many" => {
             let singular = singularize(arg);
-            let mut out = accessor(arg);
+            let mut out = vec![
+                Generated::reader(arg).returning("::ActiveRecord::Associations::CollectionProxy"),
+                Generated::writer(format!("{arg}=")),
+            ];
             out.extend(accessor(&format!("{singular}_ids")));
             out
         }
@@ -225,8 +229,8 @@ pub(super) fn generated(macro_name: &str, arg: &str) -> Vec<Generated> {
         }
         "has_secure_token" => vec![Generated::reader(format!("regenerate_{arg}"))],
 
-        // A scope is a class method.
-        "scope" => vec![Generated::class_method(arg)],
+        // A scope is a class method, and returns a relation (DEC-444).
+        "scope" => vec![Generated::class_method(arg).returning("::ActiveRecord::Relation")],
 
         // `define_model_callbacks :save` is where `before_save`, `around_save`
         // and `after_save` come from. ActiveModel writes them with

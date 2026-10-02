@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Relation chains are typed.** `Post.where(…).order(…).pluck(…)`, a
+  `scope`'s result and a `has_many` reader's are ActiveRecord relations, so
+  each next call resolves to ActiveRecord's `QueryMethods`, `Calculations`
+  or `CollectionProxy` instead of to any class sharing the name. This
+  changes what an index records.
 - **A call at the top of a file runs on `main`.** A top-level `require`
   resolves to `Kernel#require`, a top-level `def` is Object's and a bare
   call to it resolves, and a Minitest spec's bare `describe` is minitest's

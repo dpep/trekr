@@ -28,6 +28,15 @@ pub(crate) struct CoreFile {
 /// Its methods are declarations: RSpec makes them when a suite boots.
 pub(crate) const RSPEC_STUB: &str = "<core>/RSpec.rb";
 
+/// What ActiveRecord's query methods return, as `sig`s lent to its own
+/// methods and never a location (DEC-444).
+pub(crate) const ACTIVE_RECORD_SIGS: &str = "<core>/ActiveRecord-sigs.rb";
+
+/// The ActiveRecord signatures' source.
+pub(crate) fn active_record_sigs() -> &'static str {
+    include_str!("activerecord.rb")
+}
+
 /// The RSpec stub, as a caller sees it.
 pub(crate) fn rspec_file() -> &'static CoreFile {
     static FILE: OnceLock<CoreFile> = OnceLock::new();

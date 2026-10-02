@@ -11090,3 +11090,53 @@ where Ruby ran the replacement `bundled_gems.rb` defines at boot.
 
 **Testbed** 442; 086 and 098 now answer a Minitest spec's bare `describe`
 with minitest/spec's `Kernel#describe`, which is what it runs.
+
+## DEC-444 — A relation chain is typed step by step
+
+**Decided.** Three sources of `ActiveRecord::Relation`, so a chain's next
+call lands on ActiveRecord instead of on whichever class shares its name:
+
+- **ActiveRecord's own query methods return a relation.** `src/tree/
+  activerecord.rb` states it as `sig`s — `QueryMethods#where`, `order`,
+  `includes`, `joins`, `limit`, `or`, `select` without a block, …,
+  `SpawnMethods#merge`, `Scoping::Named::ClassMethods#all`, and the same
+  names on `Querying`, which a model's class methods `delegate` to `all`.
+  They are lent to the gem's methods of that owner and name, as the RBS
+  signatures are to the stdlib's (DEC-220): never a location, never an
+  app's or another gem's method. `where` with no argument returns the
+  WhereChain `where.not` is called on, which a positional count cannot tell
+  from `where(x)` without saying something false, so only the calls that
+  pass one are described.
+- **A `scope` returns a relation**, and **a `has_many` (or `habtm`) reader
+  is an `ActiveRecord::Associations::CollectionProxy`** — recorded at
+  extraction, as a `belongs_to` reader's class is. A class that defines its
+  own `scope` (Mongoid) is typed the same way; DEC-136's check that the
+  scope runs on a relation is a tree-time rule this does not repeat.
+
+The relation is not "of" a model: a model's scope called on one still goes
+to the relation's lookup and, missing there, to residue.
+
+**Reported** by the comparison: 14 discourse and 24 mastodon wrong@1 were
+relation chains — `posts.order` answered with OptionParser's `order`,
+`.pluck` and `.exists?` with unrelated classes'. ActiveRecord builds each
+relation with `spawn`, `clone` and `klass.all`, which no reading types.
+
+**Measured** (compare.py, 500 sites each, after DEC-440–443, 445):
+
+| | discourse | mastodon | widget_shop |
+| --- | --- | --- | --- |
+| before | 86.2 / 79.0 / 7.2 / 80.6 | 81.0 / 61.2 / 19.8 / 65.0 | 95.2 / 61.9 / 33.3 / 61.9 |
+| sigs | 87.6 / 80.4 / 7.2 / 82.0 | 82.0 / 62.4 / 19.6 / 66.2 | unchanged |
+| + scope, has_many | 88.0 / 80.8 / 7.2 / 82.4 | 83.8 / 63.8 / 20.0 / 67.6 | 100 / 66.7 / 33.3 / 66.7 |
+
+(answered / correct@1 / wrong@1 / found). 24 sites moved, 22 to correct.
+Two mastodon sites went from a hidden residue to wrong: `.where` and
+`.includes` on a `has_many` reader, which Ruby ran as CollectionProxy's own
+`delegate(*delegate_methods, to: :scope)` — a list computed from
+`QueryMethods.public_instance_methods`, which no reading names — and which
+trekr answers with `QueryMethods#where`, the method that delegate sends to.
+That is DEC-211's choice for a delegate, reached without the delegate. One
+of the two is `resolved`, so mastodon's resolved-wrong count is 54, up one.
+Gem gold sets unchanged.
+
+**Extraction changed** (scope and has_many return types). Testbed 443.
