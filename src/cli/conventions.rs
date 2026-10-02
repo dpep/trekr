@@ -248,7 +248,7 @@ pub(super) fn pundit_predicate(
             && method.site.path.contains("/controllers/")
             && !method.singleton
             && method.visibility == "public";
-        in_controller.then(|| method.site.clone())
+        (in_controller && authorizes_by_action(tree, method, action)).then(|| method.site.clone())
     })?;
     let path = site
         .path
@@ -331,4 +331,55 @@ fn first_computed_send(path: &str) -> Option<u32> {
                 (on_self && computed).then_some(n as u32 + 1)
             })
     })
+}
+
+/// Does the controller action `name` ask Pundit for its own predicate? Its
+/// class or an ancestor calls `authorize` with the record alone — in the
+/// action or a `before_action` — and the action neither names its query
+/// (`authorize x, :edit?`) nor skips authorization.
+fn authorizes_by_action(tree: &Tree, action: &crate::tree::MethodDef, name: &str) -> bool {
+    let facts_of = |path: &str| {
+        std::fs::read(path)
+            .ok()
+            .map(|s| crate::extract::extract(&s))
+    };
+    let Some(own) = facts_of(&action.site.path) else {
+        return false;
+    };
+    if let Some(def) = own
+        .defs
+        .iter()
+        .find(|def| def.name == name && def.kind == crate::core::Kind::Method && !def.singleton)
+    {
+        let body = def.pos.line..=def.end_line;
+        let elsewhere = own.calls.iter().any(|call| {
+            body.contains(&call.pos.line)
+                && (call.name == "skip_authorization"
+                    || call.name == "authorize" && call.argc.is_some_and(|n| n > 1))
+        });
+        if elsewhere {
+            return false;
+        }
+    }
+    let by_record = |facts: &crate::core::Facts| {
+        facts
+            .calls
+            .iter()
+            .any(|call| call.name == "authorize" && call.argc == Some(1))
+    };
+    // An action a concern defines is the action of the controllers that
+    // mix it in.
+    let controllers = std::iter::once(action.owner.clone()).chain(tree.includers_of(&action.owner));
+    by_record(&own)
+        || controllers
+            .flat_map(|class| tree.ancestors(&class).chain.clone())
+            .collect::<HashSet<_>>()
+            .iter()
+            .any(|ancestor| {
+                tree.sites(ancestor)
+                    .iter()
+                    .filter(|site| tree.in_checkout(&site.path))
+                    .filter_map(|site| facts_of(&site.path))
+                    .any(|facts| by_record(&facts))
+            })
 }

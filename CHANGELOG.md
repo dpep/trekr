@@ -89,6 +89,10 @@
   controller's instance, as an `if:` lambda's do, so a concern the class
   includes answers them and `--dead` no longer calls such a method
   unreferenced. This changes what an index records.
+- **`--dead` grades every class, module and constant row `lower`**, unless
+  a convention names it: on forem, an app no rule was fitted on, an
+  `unreferenced` one was truly unused 19 times in 50 and a `test-only` one
+  4 in 20. A method row's `clear` held 55 of 70 there (79 %).
 - **`--dead` knows Pundit's and gems' base classes.** A policy predicate
   named for a controller action (`publish?` for `publish`) is
   `convention-only` when Pundit is in the bundle, as `authorize` asks for

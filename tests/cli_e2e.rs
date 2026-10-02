@@ -2991,7 +2991,7 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
     // Counted by tier, in text and JSON alike; a tier with none is a zero.
     // The class nothing names is a candidate too, after the methods.
     assert!(
-        text.contains("7 candidates in 1 file(s): 4 unreferenced, 1 convention-only, 2 single-caller (6 clear, 1 lower); 1 of them classes, modules or constants"),
+        text.contains("7 candidates in 1 file(s): 4 unreferenced, 1 convention-only, 2 single-caller (5 clear, 2 lower); 1 of them classes, modules or constants"),
         "{text}"
     );
     assert!(text.contains("  class Thing  "), "{text}");
@@ -3001,7 +3001,7 @@ fn dead_candidates_are_tiered_by_the_evidence_found() {
     assert_eq!(value["summary"]["candidates"], 7, "{value}");
     assert_eq!(value["summary"]["tiers"]["single-caller"], 2, "{value}");
     assert_eq!(value["summary"]["tiers"]["override"], 0, "{value}");
-    assert_eq!(value["summary"]["confidence"]["lower"], 1, "{value}");
+    assert_eq!(value["summary"]["confidence"]["lower"], 2, "{value}");
     assert!(text.contains("Thing#secret (private)"), "{text}");
     // The caller itself is used by nothing here, so it is reported too — but
     // never as anything stronger than a candidate.

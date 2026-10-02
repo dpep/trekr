@@ -210,7 +210,9 @@ EDIT" header; DEC-403).
 `clear` on an `unreferenced` row means none of those was found. Measured by
 hand on mastodon and discourse (DEC-372), such rows were truly dead 79 % and
 100 % of the time where the rules were fitted, and 89 % on discourse rows
-held out; on code unlike an app's (`lib/`), less — read DEC-372 before
+held out; on forem, an app no rule was fitted on, 55 of 70 (79 %) — a
+Pundit, an algoliasearch callback, a serializer block made most of the
+rest (DEC-450). On code unlike an app's (`lib/`), less — read DEC-372 before
 trusting it on a CLI or a library.
 
 **Classes, modules and constants** are listed after the methods, with
@@ -229,11 +231,12 @@ association, a YAML value or a class-lookup string, a test runner, a
 registry hook (DEC-421). Whatever may still reach it — a constant read on a
 value (`self.class::LIMIT`), a namespace whose constants are listed, a
 factory in an ancestor, an STI subclass, a gem's routes — is a `caveat`, and
-grades it `lower`. Measured by hand (DEC-422), `unreferenced`, clear was
-truly unused on every app row checked once the rules were in, and on
-held-out rows 14 %, 73 % and 31 % as drawn — the misses each a way of
-finding classes by reflection, since read; on a library or a tool, read
-DEC-422 first.
+grades it `lower`. **Every class, module and constant row that is not
+`convention-only` is `lower`**, caveat or not: measured by hand on forem,
+held out, an `unreferenced` one was truly unused 19 times in 50 (38 %) and a
+`test-only` one 4 in 20 — classes built from file names, constants read
+through a value — so `clear` is not earned there (DEC-450). Read a
+constant row as a lead to check, not a verdict.
 
 ### Where it keeps things
 

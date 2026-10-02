@@ -85,7 +85,9 @@ struct Cli {
     /// route, or a name Rails or a library looks a class up by),
     /// `super-only` (reached only by `super` from its overrides), and
     /// `single-caller` (one call: the inlining candidate). Each is `clear`, or
-    /// `lower` confidence when its `caveat` names a caller trekr cannot see —
+    /// `lower` confidence — a class, module or constant always, unless a
+    /// convention names it, as one is not reliably unused — or when its
+    /// `caveat` names a caller trekr cannot see —
     /// the file sends names dynamically, the one caller's receiver is
     /// untyped, it overrides a method, a view or a gem names it, the checkout
     /// builds a name of its shape, an ancestor is not indexed. One pass: a
@@ -3570,6 +3572,7 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
             dead_name(row),
             row["reason"].as_str().unwrap_or_default(),
             match row["caveat"].as_str().unwrap_or_default() {
+                "" if row["confidence"] == "lower" => "   (lower confidence)".to_string(),
                 "" => String::new(),
                 why => format!("   (lower confidence: {why})"),
             }

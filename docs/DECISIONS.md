@@ -11375,3 +11375,45 @@ main → this build: chatwoot methods 115 / 86 → 50 / 96, classes, modules
 and constants 120 / 36 → 33 / 60 (with DEC-420's heir spellings and
 `enum`/`attr_*` references); lobsters methods 4 / 58 → 4 / 58, constants
 5 / 3 → 4 / 1. Testbed 458; the gem readings in `tests/cli_e2e.rs`.
+
+### DEC-450 measured on a third app, held out: forem
+
+forem (8e906bd, Ruby 3.4.10 for its 3.3.0 — `.ruby-version` changed in the
+scratch clone only; 410 of 418 locked gems installed, the rest Ruby's
+default gems or vendored) was used by no rule before. `--dead app lib`,
+each row read, its name searched across the repo and its gems, strings,
+views and YAML included; a row is true when nothing outside tests reaches
+it. Labels on main's rows (3bbed21); "this build" is the same rows as this
+build grades them.
+
+| sample | main | this build | true rows lost |
+| --- | ---: | ---: | ---: |
+| methods, `unreferenced` clear, all 82 | 60/82 = 73 % | 55/70 = 79 % held out; 58/73 = 79 % after the Pundit refinement below (fitted) | 5 held out, 2 after |
+| classes, modules, constants, `unreferenced` clear, random 50 of 119 | 19/50 = 38 % | all `lower` | — |
+| constants, `test-only` clear, random 20 of 87 (true = only tests use it) | 4/20 = 20 % | all `lower` | — |
+| `unreferenced` lower, random 20 of 220 (methods and constants) | 2/20 dead | 2/20 | — |
+
+**Constants default to `lower`.** 38 % held out is not `clear`: 29 of the
+31 misses were `DataUpdateScripts::*`, classes in a directory Zeitwerk
+ignores, built from file names by `"#{self.class::NAMESPACE}::#{name}"
+.safe_constantize` — one idiom, but the next app will have its own, as
+DEC-422's held-out rows did. Every class, module and constant row that no
+convention names is graded `lower` (the caveat, when one was found, still
+says why); `convention-only` stays `clear`. Not done: substituting a
+constant's string value into a built name (`NAMESPACE = "DataUpdateScripts"`),
+which would have caught those 29 — fitted on this app, so logged.
+
+**Methods.** `clear` held 79 % on held-out app code, as on discourse's
+held-out rows (DEC-372). The Pundit rule as first written (fitted on
+chatwoot) took 12 forem rows, 5 of them truly dead: actions that
+`skip_authorization` or name their query (`authorize x, :create?`), and a
+predicate on the wrong policy. It now needs the action not to do either,
+and its controller (or a concern's includer, or an ancestor) to call
+`authorize` with the record alone — fitted on forem, so the 58/73 is not a
+held-out number. The 15 false rows left: algoliasearch-rails callbacks
+(`enqueue: :trigger_sidekiq_worker`, `"#{condition}_changed?"`), Pundit's
+`permitted_attributes_for_#{action}`, a predicate passed to `authorize` as a
+symbol, a serializer block's bare call. Logged.
+
+**`lower` separates**: 2 of 20 lower rows were dead, as on mastodon
+(DEC-422).

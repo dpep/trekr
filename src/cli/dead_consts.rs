@@ -443,7 +443,13 @@ pub(super) fn dead_constants(
             "col": col,
             "tier": tier,
             "test_refs": tests,
-            "confidence": if caveat.is_empty() { "clear" } else { "lower" },
+            // A class or constant nothing names was dead 19 times in 50 on
+            // a held-out app: `clear` is not earned yet (DEC-450).
+            "confidence": if caveat.is_empty() && tier == "convention-only" {
+                "clear"
+            } else {
+                "lower"
+            },
             "caveat": caveat,
             "reason": reason,
         });
