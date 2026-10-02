@@ -1,0 +1,2 @@
+class NoWidgets
+end

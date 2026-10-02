@@ -651,6 +651,71 @@ fn with_no_lockfile_the_gemspecs_dependencies_are_resolved() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A gem's base class may reach what a subclass in the app defines by a
+/// name no call writes: a drop's `public_send(key)` runs its methods, and a
+/// dashboard's `self.class::ATTRS` reads its constant. `--dead` reads the
+/// gem's file for each and grades the row lower; a gem's mixin, which every
+/// model has, is not read so.
+#[test]
+fn dead_reads_what_a_gems_base_class_reaches_by_name() {
+    let (dir, db) = scratch("dead-gem-base");
+    repo(&dir);
+    let gems = dir.join("vendor/bundle/ruby/3.3.0/gems");
+    for (gem, file, source) in [
+        (
+            "dropkit-1.0.0",
+            "dropkit.rb",
+            "module Dropkit\n  class Drop\n    def invoke_drop(key)\n      public_send(key)\n    end\n  end\nend\n",
+        ),
+        (
+            "boardkit-1.0.0",
+            "boardkit.rb",
+            "module Boardkit\n  class Base\n    def attrs\n      self.class::ATTRS\n    end\n  end\nend\n",
+        ),
+    ] {
+        fs::create_dir_all(gems.join(gem).join("lib")).unwrap();
+        fs::write(gems.join(gem).join("lib").join(file), source).unwrap();
+    }
+    fs::write(
+        dir.join("Gemfile.lock"),
+        concat!(
+            "GEM\n",
+            "  remote: https://rubygems.org/\n",
+            "  specs:\n",
+            "    boardkit (1.0.0)\n",
+            "    dropkit (1.0.0)\n",
+            "\n",
+            "DEPENDENCIES\n",
+            "  boardkit\n",
+            "  dropkit\n",
+        ),
+    )
+    .unwrap();
+    fs::write(
+        dir.join("widget.rb"),
+        "class WidgetDrop < Dropkit::Drop\n  def title\n  end\nend\n\n\
+         class WidgetBoard < Boardkit::Base\n  ATTRS = [].freeze\n  STALE = 1\n\n  def unused\n  end\nend\n\n\
+         WidgetDrop\nWidgetBoard\n",
+    )
+    .unwrap();
+    trekr(&db, &dir, &["--index"]);
+    let dead = json(&trekr(&db, &dir, &["--dead", "widget.rb", "--json"]));
+    let caveat = |name: &str| {
+        dead["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == name)
+            .map(|row| row["caveat"].as_str().unwrap_or_default().to_string())
+            .unwrap_or_else(|| panic!("no row {name}: {dead}"))
+    };
+    assert!(caveat("title").contains("computes"), "{dead}");
+    assert!(caveat("ATTRS").contains("read on a value"), "{dead}");
+    assert_eq!(caveat("STALE"), "", "{dead}");
+    assert!(!caveat("unused").contains("computes"), "{dead}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_gem_is_indexed_once_and_a_missing_one_is_reported() {
     let (dir, db) = scratch("gems");

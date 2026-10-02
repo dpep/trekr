@@ -21,6 +21,42 @@ use crate::tree::Tree;
 /// A controller is also known by the name its file spells, as Zeitwerk loads
 /// it: `module Admin; class Users::RolesController` in
 /// `admin/users/roles_controller.rb` is the route's `admin/users/roles`.
+/// The checkout files a RuboCop config loads: each `require:` entry that is
+/// a path (`./rubocop/my_cop.rb`, `lib/cops/x`), relative to the checkout.
+pub(super) fn rubocop_requires(root: &std::path::Path) -> HashMap<String, named::At> {
+    let mut found = HashMap::new();
+    for config in [".rubocop.yml", ".standard.yml"] {
+        let Ok(text) = std::fs::read_to_string(root.join(config)) else {
+            continue;
+        };
+        let mut listing = false;
+        for (n, line) in text.lines().enumerate() {
+            if !line.starts_with([' ', '-']) {
+                listing = line.trim_end() == "require:";
+                continue;
+            }
+            let Some(entry) = line.trim().strip_prefix('-').map(str::trim) else {
+                continue;
+            };
+            if !listing {
+                continue;
+            }
+            let entry = entry.trim_matches(['"', '\'']);
+            let path = entry.trim_start_matches("./");
+            if !(entry.starts_with('.') || entry.contains('/')) {
+                continue; // a gem: `rubocop-rails`
+            }
+            let path = if path.ends_with(".rb") {
+                path.to_string()
+            } else {
+                format!("{path}.rb")
+            };
+            found.insert(path, (config.to_string(), n as u32 + 1));
+        }
+    }
+    found
+}
+
 /// A controller's name compared segment by segment, each as `plain` compares
 /// it: `Admin::WidgetsController` is `admin/widgetscontroller`, and is not
 /// `AdminWidgetsController`.
@@ -135,6 +171,12 @@ pub(super) struct Ways<'a> {
     pub(super) own_listings: std::cell::RefCell<HashMap<String, Option<(String, u32)>>>,
     /// The checkout's classes, by the namespace that holds them.
     pub(super) children: HashMap<String, Vec<String>>,
+    /// The checkout files `.rubocop.yml` or `.standard.yml` loads by
+    /// `require:` — custom cops — and the line that names each.
+    pub(super) rubocop: HashMap<String, named::At>,
+    /// The constants each file outside the checkout reads on a value, read
+    /// once.
+    pub(super) foreign_reads: std::cell::RefCell<HashMap<String, HashMap<String, named::At>>>,
 }
 
 impl Ways<'_> {
@@ -170,6 +212,16 @@ impl Ways<'_> {
             return convention(
                 "routes",
                 format!("named only by a route, at {}:{}", at.0, at.1),
+                Some(at),
+            );
+        }
+        if let Some(at) = self.rubocop.get(relative) {
+            return convention(
+                "RuboCop",
+                format!(
+                    "in a file RuboCop loads by `require:`, at {}:{}",
+                    at.0, at.1
+                ),
                 Some(at),
             );
         }
@@ -234,6 +286,11 @@ impl Ways<'_> {
                 "Action Mailer",
                 "a mailer preview, which Rails finds by its path",
             ),
+            (
+                "ActionCable::Connection::Base",
+                "Action Cable",
+                "a connection class, which Action Cable finds by name",
+            ),
         ] {
             if self.inherits(fqn, base) {
                 return convention(by, what.to_string(), None);
@@ -266,6 +323,26 @@ impl Ways<'_> {
                     format!(
                         "built at runtime (`{shape}` at {}:{}) from a name written at {}:{}",
                         at.0, at.1, from.0, from.1
+                    ),
+                    Some(at),
+                );
+            }
+        }
+        // `"#{self.class.name}Drop".constantize`: built from a class's name,
+        // so a class of the checkout spells the built part.
+        for (shape, at) in &named.class_shapes {
+            if !crate::core::shape_matches(shape, fqn) {
+                continue;
+            }
+            let (before, after) = shape.split_once('*').unwrap_or((shape, ""));
+            let built = &fqn[before.len()..fqn.len() - after.len()];
+            let class = built.rsplit("::").next().unwrap_or(built);
+            if !after.is_empty() && self.classes.contains(&plain(class)) {
+                return convention(
+                    "constantize",
+                    format!(
+                        "built at runtime (`{shape}` at {}:{}) from a class's name ({built})",
+                        at.0, at.1
                     ),
                     Some(at),
                 );
@@ -423,6 +500,29 @@ impl Ways<'_> {
                 None,
             );
         }
+        if let Some(stem) = stem(fqn, "Mailbox")
+            && self.inherits(fqn, "ActionMailbox::Base")
+            && let Some(at) = symbol(stem)
+        {
+            return convention(
+                "Action Mailbox",
+                format!(
+                    "a mailbox Action Mailbox's `routing` names by a symbol, at {}:{}",
+                    at.0, at.1
+                ),
+                Some(&at),
+            );
+        }
+        if let Some(stem) = stem(fqn, "Dashboard")
+            && self.inherits(fqn, "Administrate::BaseDashboard")
+            && known(stem)
+        {
+            return convention(
+                "Administrate",
+                format!("a dashboard Administrate finds by its resource's class ({stem})"),
+                None,
+            );
+        }
         if let Some(stem) = stem(fqn, "Decorator")
             && self.inherits(fqn, "Draper::Decorator")
             && known(stem)
@@ -456,6 +556,28 @@ impl Ways<'_> {
                     format!("found by {how} from its name, written at {}:{}", at.0, at.1),
                     Some(&at),
                 );
+            }
+        }
+        None
+    }
+
+    /// Where an ancestor outside the checkout — a gem's base class — reads
+    /// this constant on a value: Administrate's `BaseDashboard` reads
+    /// `self.class::COLLECTION_ATTRIBUTES` of every dashboard.
+    fn read_by_a_foreign_ancestor(&self, fqn: &str) -> Option<named::At> {
+        let (owner, tail) = fqn.rsplit_once("::")?;
+        for ancestor in &self.tree.ancestors(owner).chain {
+            for site in self.tree.sites(ancestor) {
+                if self.tree.in_checkout(&site.path) {
+                    continue;
+                }
+                let mut reads = self.foreign_reads.borrow_mut();
+                let read = reads
+                    .entry(site.path.clone())
+                    .or_insert_with(|| Named::read_on_a_value(&site.path));
+                if let Some(at) = read.get(tail) {
+                    return Some(at.clone());
+                }
             }
         }
         None
@@ -509,7 +631,13 @@ impl Ways<'_> {
             ));
         }
         let tail = fqn.rsplit("::").next().unwrap_or(fqn);
-        if let Some(at) = self.named.dynamic.get(tail) {
+        if let Some(at) = self
+            .named
+            .dynamic
+            .get(tail)
+            .cloned()
+            .or_else(|| self.read_by_a_foreign_ancestor(fqn))
+        {
             caveats.push(format!(
                 "a `{tail}` is read on a value, which trekr does not resolve, at {}:{}",
                 at.0, at.1

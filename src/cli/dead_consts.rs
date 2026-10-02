@@ -360,6 +360,8 @@ pub(super) fn dead_constants(
         tails,
         own_listings: Default::default(),
         children,
+        foreign_reads: Default::default(),
+        rubocop: ways::rubocop_requires(root),
     };
     let live = |fqn: &str| uses.get(fqn).is_some_and(|u| u.live > 0);
     // A namespace holding a constant reached by convention holds a used one.

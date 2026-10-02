@@ -3847,6 +3847,7 @@ fn dead_in(
     let routed = routed_actions(&tree, &routes);
     let mut symbols = conventions::Symbols::default();
     let mut thor_blocks = conventions::ThorBlocks::default();
+    let mut foreign_sends = conventions::ForeignSends::default();
     let mut parsed = Parsed::new();
     for Defined {
         file,
@@ -3968,6 +3969,11 @@ fn dead_in(
                     || {
                         let at = (file.as_str(), def.pos.line);
                         conventions::thor_command(&tree, &owner, public, at, &mut thor_blocks)
+                            .or_else(|| {
+                                conventions::pundit_predicate(
+                                    &tree, &owner, &def.name, public, &root_str,
+                                )
+                            })
                     },
                 )
             })
@@ -4034,6 +4040,17 @@ fn dead_in(
                     risky.push_str(", ");
                 }
                 risky.push_str("it calls `super`, so it overrides a method trekr has not indexed");
+            }
+            if public
+                && !def.singleton
+                && let Some((path, line)) = foreign_sends.of(&tree, &owner)
+            {
+                if !risky.is_empty() {
+                    risky.push_str(", ");
+                }
+                risky.push_str(&format!(
+                    "an ancestor outside the checkout sends `self` a name it computes ({path}:{line})"
+                ));
             }
         }
         // A call of its name ruled out on a `self` trekr cannot name may be

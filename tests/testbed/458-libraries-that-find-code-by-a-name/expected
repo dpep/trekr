@@ -1,0 +1,12 @@
+# Libraries the held-out apps used that find code by a name no reference
+# writes: Pundit asks a policy `"#{action_name}?"` for a controller's
+# action, Administrate builds `"#{name}Dashboard"`, Action Mailbox routes to
+# a mailbox by a symbol, Action Cable finds its connection class, RuboCop
+# loads the files `.rubocop.yml` requires, and `"#{self.class.name}Drop"`
+# is built from a class's own name. Each row was unreferenced, clear.
+dead app/policies WidgetPolicy#publish?=convention-only WidgetPolicy#archive?=unreferenced
+dead app/dashboards WidgetDashboard=convention-only
+dead app/mailboxes ReplyMailbox=convention-only
+dead app/channels ApplicationCable::Connection=convention-only
+dead rubocop NoWidgets=convention-only
+dead app/drops WidgetDrop=convention-only

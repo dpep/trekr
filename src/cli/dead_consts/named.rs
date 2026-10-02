@@ -22,6 +22,9 @@ pub(super) struct Named {
     /// The shape of an interpolated string handed to `constantize` or
     /// `const_get` (`Jobs::*` for `"Jobs::#{type.camelize}"`).
     pub(super) shapes: Vec<(String, At)>,
+    /// Of those, the ones built from a class's name
+    /// (`"#{self.class.name}Drop"`), by shape.
+    pub(super) class_shapes: Vec<(String, At)>,
     /// Each symbol and hash key, `plain` (`:date_of_birth` → `dateofbirth`).
     pub(super) symbols: HashMap<String, Vec<At>>,
     /// The class an association names by convention, `plain`
@@ -126,6 +129,11 @@ impl Named {
                 self.shapes.push((shape, at));
             }
         }
+        for (shape, at) in part.class_shapes {
+            if !self.class_shapes.iter().any(|(known, _)| *known == shape) {
+                self.class_shapes.push((shape, at));
+            }
+        }
         for (key, ats) in part.symbols {
             for at in ats {
                 self.symbol_at(key.clone(), at);
@@ -170,6 +178,18 @@ impl Named {
     /// Where a symbol is written outside `path`.
     pub(super) fn symbol_outside(&self, key: &str, path: &str) -> Option<&At> {
         self.symbols.get(key)?.iter().find(|(file, _)| file != path)
+    }
+
+    /// The constants a file outside the checkout — a gem's base class —
+    /// reads on a value, by last segment.
+    pub(super) fn read_on_a_value(path: &str) -> HashMap<String, At> {
+        let mut named = Named::default();
+        if let Ok(bytes) = std::fs::read(path) {
+            for (n, line) in String::from_utf8_lossy(&bytes).lines().enumerate() {
+                named.read_dynamic(path, n as u32 + 1, line);
+            }
+        }
+        named.dynamic
     }
 
     /// `value::NAME`, and `const_get(:NAME)`: a constant read where the
@@ -260,6 +280,9 @@ impl Named {
                     i = end + 1;
                     if c == b'"' && content.contains("#{") {
                         if built && let Some(shape) = shape_of(content) {
+                            if content.contains(".name}") || content.contains(".class}") {
+                                self.class_shapes.push((shape.clone(), at()));
+                            }
                             self.shapes.push((shape, at()));
                         }
                     } else if is_constant_path(content)

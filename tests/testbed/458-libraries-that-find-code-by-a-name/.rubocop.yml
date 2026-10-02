@@ -1,0 +1,6 @@
+require:
+  - ./rubocop/no_widgets.rb
+  - rubocop-rails
+
+AllCops:
+  NewCops: enable

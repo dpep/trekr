@@ -11327,3 +11327,49 @@ nothing, is now typed by the chain rung: the receiver typed, the method's
 signature read, the gem's lent ones included (`via: sig`). A finder
 (`Post.find`) keeps its convention, tried first. A write in a loop that
 reads the variable it writes is bounded by the chain's depth. Testbed 451.
+
+## DEC-450 — Libraries the held-out apps used that find code by a name
+
+**Decided.** `--dead` reads these, each found as a cause of false
+`unreferenced`, clear rows in the pre-release hunt's held-out samples
+(lobsters, chatwoot), and each keyed on the library being in the tree:
+
+| `by` | reaches | grade |
+| --- | --- | --- |
+| `Pundit` | a policy's public predicate `x?` when a checkout controller has a public action `x`: `authorize record` asks `"#{action_name}?"` | `convention-only` |
+| `Administrate` | `XDashboard < Administrate::BaseDashboard` when `X` is a checkout class: `"#{name}Dashboard".constantize` | `convention-only` |
+| `Action Mailbox` | `XMailbox < ActionMailbox::Base` when a symbol `:x` outside it is written (`routing … => :reply`) | `convention-only` |
+| `Action Cable` | what inherits `ActionCable::Connection::Base`, found by name | `convention-only` |
+| `RuboCop` | what a file `.rubocop.yml` or `.standard.yml` loads by `require:` declares (a path, not a gem) | `convention-only` |
+| `constantize` | a class `"#{x.name}Drop".constantize` builds, the interpolation a class's name and the built part a checkout class (`"#{self.class.name}Drop"` reaches `WidgetDrop` when `Widget` is a class); a name built from anything else keeps DEC-421's symbol rule | `convention-only` |
+
+And two caveats that read a gem's own code, as DEC-421 reads the
+checkout's:
+
+- **A gem superclass that sends `self` a name it computes** (`send(x`,
+  `public_send(x`, no literal) may run any public method of a subclass:
+  CommonMarker's renderer calls node callbacks (`emph`, `list_item`) so,
+  Liquid's drop its methods. Superclasses only: a gem's mixins
+  (ActiveModel's) send computed names for their own reasons and every model
+  has them; Ruby's own classes, which gems reopen (`Object#with`), are
+  skipped. `lower`.
+- **A gem ancestor reading `self.class::X`** reaches a subclass's `X`:
+  Administrate's `BaseDashboard` reads every dashboard's
+  `COLLECTION_ATTRIBUTES`, `SHOW_PAGE_ATTRIBUTES`, `FORM_ATTRIBUTES`. `lower`.
+
+A gem's files are those under a gem root, also inside the checkout
+(`vendor/bundle`): `Tree::in_checkout` now excludes the gem roots nested
+in the checkout, which it took for the checkout's own.
+
+**Not done**, logged: Wisper-style listeners (`ActionCableListener#
+conversation_read`, sent an event name by a dispatcher through a value),
+Liquid filters registered with `register_filter`, `public_send` of a
+string built elsewhere, a polymorphic `belongs_to`'s class. Each needs a
+reading of its own, and no general one was found that does not also
+lower true rows.
+
+**Measured** (fitted, `--dead app lib`, unreferenced rows clear / lower),
+main → this build: chatwoot methods 115 / 86 → 50 / 96, classes, modules
+and constants 120 / 36 → 33 / 60 (with DEC-420's heir spellings and
+`enum`/`attr_*` references); lobsters methods 4 / 58 → 4 / 58, constants
+5 / 3 → 4 / 1. Testbed 458; the gem readings in `tests/cli_e2e.rs`.

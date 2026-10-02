@@ -366,6 +366,9 @@ pub(crate) struct Tree {
     /// gem or from core, which is a ranking signal: code in the repo you are
     /// standing in is likelier to be what you meant than a dependency's.
     root: String,
+    /// Gems' roots inside the checkout — `vendor/bundle`, a vendored gem:
+    /// what is under them is a dependency's, not the checkout's.
+    nested: Vec<String>,
     /// The Ruby's stdlib the checkout runs on, when it indexed one (DEC-180).
     stdlib: Option<String>,
     /// Core and the stdlib's compiled half, from that Ruby's signatures
@@ -890,6 +893,12 @@ impl Tree {
         };
         let mut tree = Tree::over(snapshot, root.to_string());
         tree.stdlib = roots.stdlib.clone();
+        tree.nested = roots
+            .list
+            .iter()
+            .filter(|other| crate::core::paths::under(root, other))
+            .cloned()
+            .collect();
         tree.stubs = stubs;
         // The RSpec stub's methods, before the index's, so a method rspec
         // defines itself wins over the stub's (DEC-087). Core's are loaded
@@ -1125,6 +1134,7 @@ impl Tree {
         Tree {
             id: TREES.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             root,
+            nested: Vec::new(),
             stdlib: None,
             stubs: None,
             stdlib_sigs: Memo::new(),
@@ -3719,6 +3729,10 @@ impl Tree {
     /// the tree knows the root it was built for.
     pub(crate) fn in_checkout(&self, site_path: &str) -> bool {
         crate::core::paths::under(&self.root, site_path)
+            && !self
+                .nested
+                .iter()
+                .any(|gem| crate::core::paths::under(gem, site_path))
     }
 
     /// Every method with this name, anywhere. The candidate pool for residue.

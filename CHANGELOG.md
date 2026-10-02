@@ -53,8 +53,10 @@
   should read `kind`. A new tier, `test-only`, is a class only specs and
   tests name (`summary.tiers` gains it). A class Rails or a library finds by
   name — a routed controller, a helper, a concern's `ClassMethods`, a
-  policy, serializer or validator, a job built from a symbol, an
-  association, a YAML value, a registry — is `convention-only`, and what
+  policy, serializer or validator, an Administrate dashboard, an Action
+  Mailbox mailbox, an Action Cable connection, a cop `.rubocop.yml`
+  requires, a job built from a symbol or a class's name, an association, a
+  YAML value, a registry — is `convention-only`, and what
   may still reach one (`self.class::LIMIT`, a listed namespace, a factory,
   an STI subclass) grades it `lower`. A constant read through a class or
   module that inherits or includes its namespace (`Child::LIMIT`,
@@ -87,6 +89,13 @@
   controller's instance, as an `if:` lambda's do, so a concern the class
   includes answers them and `--dead` no longer calls such a method
   unreferenced. This changes what an index records.
+- **`--dead` knows Pundit's and gems' base classes.** A policy predicate
+  named for a controller action (`publish?` for `publish`) is
+  `convention-only` when Pundit is in the bundle, as `authorize` asks for
+  it. A method a gem's base class may run by a name it computes (a
+  CommonMarker renderer's node callbacks, a Liquid drop's methods), and a
+  constant a gem's base class reads on `self.class` (Administrate's
+  `COLLECTION_ATTRIBUTES`), say so and are graded `lower`.
 - **`--dead` says when a method is named in YAML config.** A row whose
   name a tracked `.yml`/`.yaml` file writes — as `generator:
   pay_schedule_resources`, or as the method of `sanitizer:

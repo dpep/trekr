@@ -1,0 +1,2 @@
+class ReplyMailbox < ApplicationMailbox
+end

@@ -218,3 +218,117 @@ pub(super) fn thor_command(
         at: None,
     })
 }
+
+/// Where a controller action named as a policy's predicate is: Pundit's
+/// `authorize record` asks the record's policy `"#{action_name}?"`, so
+/// `WidgetPolicy#publish?` is called for every controller's `publish` that
+/// authorizes. Only when Pundit is in the tree, on a public predicate of a
+/// class named a policy or below one.
+pub(super) fn pundit_predicate(
+    tree: &Tree,
+    owner: &str,
+    name: &str,
+    public: bool,
+    root: &str,
+) -> Option<Convention> {
+    let action = name.strip_suffix('?')?;
+    if !public
+        || tree
+            .lookup("Pundit::Authorization", false, "authorize")
+            .is_none()
+    {
+        return None;
+    }
+    let policy = |class: &str| crate::tree::public_name(class).ends_with("Policy");
+    if !tree.ancestors(owner).chain.iter().any(|a| policy(a)) && !policy(owner) {
+        return None;
+    }
+    let site = tree.named(action).iter().find_map(|method| {
+        let in_controller = tree.in_checkout(&method.site.path)
+            && method.site.path.contains("/controllers/")
+            && !method.singleton
+            && method.visibility == "public";
+        in_controller.then(|| method.site.clone())
+    })?;
+    let path = site
+        .path
+        .strip_prefix(&format!("{root}/"))
+        .unwrap_or(&site.path)
+        .to_string();
+    Some(Convention {
+        by: "Pundit",
+        reason: format!(
+            "Pundit's `authorize` asks a policy `{name}` for the action `{action}`, at {}:{}",
+            path, site.line
+        ),
+        at: Some((path, site.line)),
+    })
+}
+
+/// Where an ancestor outside the checkout — a gem's base class — sends
+/// `self` a name it computes: CommonMarker's renderer `send(node.type, …)`,
+/// Liquid's drop `public_send(method_or_key)`. A subclass's public method
+/// may be run so, by a name no call site writes. Each file read once.
+#[derive(Default)]
+pub(super) struct ForeignSends {
+    by_path: HashMap<String, Option<u32>>,
+}
+
+impl ForeignSends {
+    pub(super) fn of(&mut self, tree: &Tree, owner: &str) -> Option<(String, u32)> {
+        // Superclasses only: a gem's mixins (ActiveModel's attribute
+        // methods) send computed names for their own purposes, and every
+        // model has them.
+        let classes = tree.ancestors(owner).chain.clone();
+        for ancestor in classes.iter().filter(|a| tree.kind_of(a) == Some("class")) {
+            let sites = tree.sites(ancestor);
+            // Ruby's own classes, which gems reopen (`Object#with`), are
+            // every class's.
+            if sites
+                .iter()
+                .any(|site| crate::tree::is_core(&site.path) || tree.in_stdlib(&site.path))
+            {
+                continue;
+            }
+            for site in sites {
+                if tree.in_checkout(&site.path) {
+                    continue;
+                }
+                let line = *self
+                    .by_path
+                    .entry(site.path.clone())
+                    .or_insert_with(|| first_computed_send(&site.path));
+                if let Some(line) = line {
+                    return Some((site.path, line));
+                }
+            }
+        }
+        None
+    }
+}
+
+/// The first line of a file that sends `self` a computed name: `send(x`,
+/// `public_send(x`, `__send__(x`, with no receiver or `self.`, whose first
+/// argument is no literal.
+fn first_computed_send(path: &str) -> Option<u32> {
+    let text = std::fs::read_to_string(path).ok()?;
+    text.lines().enumerate().find_map(|(n, line)| {
+        let code = line.trim_start();
+        if code.starts_with('#') {
+            return None;
+        }
+        ["public_send(", "__send__(", "send("]
+            .iter()
+            .find_map(|call| {
+                let at = line.find(call)?;
+                let before = line[..at].trim_end_matches("self.");
+                let on_self = before
+                    .chars()
+                    .last()
+                    .is_none_or(|c| !(c.is_alphanumeric() || c == '_' || c == '.' || c == ':'));
+                let arg = line[at + call.len()..].trim_start();
+                let computed = arg.starts_with(|c: char| c.is_ascii_lowercase() || c == '@');
+                (on_self && computed).then_some(n as u32 + 1)
+            })
+    })
+}
