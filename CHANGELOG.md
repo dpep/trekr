@@ -2,9 +2,6 @@
 
 ## Unreleased
 
-- **`--dead` says why a class, module or constant is `lower`** when only
-  the blanket rule graded it: its `caveat` was empty and the text a bare
-  "(lower confidence)".
 - **Relation chains are typed.** `Post.where(…).order(…).pluck(…)`, a
   `scope`'s result and a `has_many` reader's are ActiveRecord relations, so
   each next call resolves to ActiveRecord's `QueryMethods`, `Calculations`
@@ -100,7 +97,8 @@
 - **`--dead` grades every class, module and constant row `lower`**, unless
   a convention names it: on forem, an app no rule was fitted on, an
   `unreferenced` one was truly unused 19 times in 50 and a `test-only` one
-  4 in 20. A method row's `clear` held 55 of 70 there (79 %).
+  4 in 20, and the row's `caveat` says so. A method row's `clear` held 55
+  of 70 there (79 %).
 - **`--dead` knows Pundit's and gems' base classes.** A policy predicate
   named for a controller action (`publish?` for `publish`) is
   `convention-only` when Pundit is in the bundle, as `authorize` asks for
