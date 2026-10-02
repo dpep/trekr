@@ -10919,3 +10919,25 @@ warning.
 constant rows (426 `convention-only`, 26 `test-only`, 15 `unreferenced` of
 which 1 clear); discourse 676 (520, 81, 75 of which 61 clear); discourse
 `plugins` 991 (526, 276, 189 of which 37 clear).
+
+## DEC-440 — A hook's `include` runs the included module's own hook there and then
+
+**Decided.** When a module's `included`/`extended`/`prepended` hook mixes
+another module into its base (DEC-102), and that module has a hook of its
+own, the inner hook's edges are applied at that point in the outer hook —
+before the outer hook's next line — as Ruby runs them. They were applied
+only once the outer hook had finished, so an inner `base.extend` landed
+after every outer one.
+
+**Reported** by the comparison (2026-10-01): `Sidekiq::Job.included` does
+`base.include(Options)` — whose hook extends `Options::ClassMethods` — and
+then `base.extend(ClassMethods)`. `Job::ClassMethods`, extended last, is
+nearer the singleton, and its `sidekiq_options` overrides `Options`'.
+trekr put `Options::ClassMethods` last and answered every worker's
+`sidekiq_options` with it at confidence 1.0. Testbed 440.
+
+**Measured** (compare.py, 500 sites each, against main dcb0559): discourse
+correct@1 78.0 → 78.4 %, wrong@1 18.0 → 17.6 %; mastodon 64.2 → 64.6 %,
+34.6 → 34.2 %. All four moved sites are `sidekiq_options`, wrong at 1.0 →
+correct. widget_shop, and the graph_weaver, accord and polyid gold sets
+(app sites, `APP_SAMPLE=600 SEED=12`), unchanged.

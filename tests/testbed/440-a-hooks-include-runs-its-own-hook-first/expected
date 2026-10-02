@@ -1,0 +1,6 @@
+# `base.include(Options)` runs Options' own `included` hook before the next
+# line of Queueing's, so Options::ClassMethods is extended first and
+# Queueing::ClassMethods, extended after it, is nearer the singleton and wins.
+# Applying a nested hook only once the outer hook had finished put Options'
+# extend last, and `configure` resolved confidently to the method it overrides.
+def app.rb:26:3 status=resolved owner=Queueing::ClassMethods

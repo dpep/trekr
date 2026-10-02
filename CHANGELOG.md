@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A module mixed in by another's `included` hook runs its own hook
+  first.** `include Sidekiq::Job` extends `Job::ClassMethods` after the
+  `Options::ClassMethods` its inner include brought, as Ruby does, so
+  `sidekiq_options` in a worker resolves to Sidekiq's `Job` method rather
+  than the one it overrides.
 - **`--dead` lists unused classes, modules and constants too**, after the
   methods: one no constant reference in the checkout resolves to (views and
   executable scripts read too). Each row carries a new `kind` field —
