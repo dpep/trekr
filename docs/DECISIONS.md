@@ -10584,3 +10584,37 @@ saying so. The reported wait was not trekr's limit, so a longer one would
 not have changed it; and past DEC-139's bound for one writer's turn,
 something is stuck, and an index queued forever behind it is a hang. Exit `2` makes "run it again"
 the caller's explicit choice.
+
+## DEC-401 — A lambda handed to a callback runs on the instance, as an `if:` one does
+
+**Decided.** A lambda that is a positional argument of a callback macro —
+`before_action -> { authorize! unless skip_auth? }`, `after_save lambda {
+… }`, `validate -> { … }` — has its calls on `self` recorded on the
+instance side of the class `self` is where the macro is written, by
+DEC-342's rule for an `if:` lambda: the class in its body, and in a
+concern's `ClassMethods` the concern. A call in it then resolves on the
+instance through the class's ancestors, so a concern the class includes —
+in another file — answers it, `confirmed` when it is the method's, as for
+any instance call.
+
+A callback macro is the name DEC-342 knows one by — `before_`, `after_`,
+`around_`, and `validate` — less `rescue_from`, whose positional arguments
+are the classes it rescues (its `with:` handler is not a positional
+lambda). ActiveSupport::Callbacks `instance_exec`s a Proc callback whatever
+its arity.
+
+**Reported:** `--dead` called a concern's `skip_auth?` unreferenced, clear,
+though `Api::BaseController` includes the concern and its `before_action`
+lambda calls it. The lambda's call was read on the class side, where no
+such method exists, so it was excluded. Testbed 400.
+
+**Extraction changed**: those calls are recorded on the instance side, so
+the store version moves for the change to reach an existing index.
+
+**Measured** (`--dead app lib`, main 58dba19 vs this): mastodon unchanged
+(no positional callback lambda calls a method it defines); discourse one
+row: `UserEmail#destroy_email_tokens`, `single-caller` clear (its
+`after_destroy` block) → not a candidate, its `before_save -> {
+destroy_email_tokens(email_was) }` now counted — right.
+Gold, discourse (900 app + 300 gem sites): verdict files byte-identical,
+9 confidently `wrong` before and after.

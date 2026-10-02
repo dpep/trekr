@@ -263,6 +263,9 @@ struct Extractor<'a> {
     nil_writes: std::collections::HashSet<Pos>,
     /// Where each `with_options` block of a class body opens (DEC-340).
     merging: std::collections::HashSet<usize>,
+    /// Where each lambda handed positionally to a callback macro starts,
+    /// with the scope whose instance runs it (DEC-401).
+    callback_lambdas: HashMap<usize, Vec<String>>,
     /// Constants this file assigns a string of code, or a list whose first
     /// element is one (`[<<-RUBY, __FILE__, __LINE__ + 1]`), as the `def`s
     /// its text spells: what `class_eval(*IMPL)` evaluates (DEC-310).
@@ -484,6 +487,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         readers: Vec::new(),
         nil_writes: std::collections::HashSet::new(),
         merging: std::collections::HashSet::new(),
+        callback_lambdas: HashMap::new(),
         code_constants: HashMap::new(),
     };
     ex.visit(&parsed.node());
@@ -1638,6 +1642,22 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         {
             self.merging.insert(block.location().start_offset());
         }
+        // `before_action -> { authorize! }`: Rails `instance_exec`s a
+        // callback lambda as it does an `if:` one (DEC-401).
+        if on_self(node)
+            && method_name(node).is_some_and(|name| runs_on_the_instance(&name))
+            && let Some(instance) = self.instance_side()
+        {
+            for arg in arg_nodes(node).iter().filter(|arg| is_lambda(arg)) {
+                // `lambda { }` runs its block: that is where the body is.
+                let body = arg
+                    .as_call_node()
+                    .and_then(|call| call.block())
+                    .map_or(arg.location(), |block| block.location());
+                self.callback_lambdas
+                    .insert(body.start_offset(), instance.clone());
+            }
+        }
         // Side effects, not consumptions: these are still ordinary calls, they
         // just also say something about the model.
         self.handle_create_table(node);
@@ -2014,17 +2034,37 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
 
     fn visit_block_node(&mut self, node: &ruby_prism::BlockNode<'pr>) {
         let merged = usize::from(self.merging.contains(&node.location().start_offset()));
+        let callback = self
+            .callback_lambdas
+            .remove(&node.location().start_offset());
+        let pushed = callback.is_some();
+        if let Some(instance) = callback {
+            self.instance_lambdas.push(instance);
+        }
         self.frame().blocks += 1;
         self.frame().merged += merged;
         ruby_prism::visit_block_node(self, node);
         self.frame().merged -= merged;
         self.frame().blocks -= 1;
+        if pushed {
+            self.instance_lambdas.pop();
+        }
     }
 
     fn visit_lambda_node(&mut self, node: &ruby_prism::LambdaNode<'pr>) {
+        let callback = self
+            .callback_lambdas
+            .remove(&node.location().start_offset());
+        let pushed = callback.is_some();
+        if let Some(instance) = callback {
+            self.instance_lambdas.push(instance);
+        }
         self.frame().blocks += 1;
         ruby_prism::visit_lambda_node(self, node);
         self.frame().blocks -= 1;
+        if pushed {
+            self.instance_lambdas.pop();
+        }
     }
 
     /// `if: -> { ready? }`, `unless: [-> { skip? }, :other?]`: a condition
@@ -2254,6 +2294,17 @@ impl Made {
             },
         )
     }
+}
+
+/// A class-level Rails macro that `instance_exec`s a callable it is handed
+/// (DEC-401): a callback, `before_action`, `after_commit`, or `validate`.
+/// Mirrors the resolver's `runs_its_block_on_an_instance`, less
+/// `rescue_from`, whose positional arguments are the classes it rescues.
+fn runs_on_the_instance(name: &str) -> bool {
+    name == "validate"
+        || ["before_", "after_", "around_"]
+            .iter()
+            .any(|prefix| name.len() > prefix.len() && name.starts_with(prefix))
 }
 
 /// `-> { }`, `lambda { }` or `proc { }`: a callable written in place.

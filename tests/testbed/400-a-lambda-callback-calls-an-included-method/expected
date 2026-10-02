@@ -1,0 +1,10 @@
+# A lambda handed to a callback macro in a class body runs on that class's
+# instance, as an `if:` one does, so a call in it reaches what the class
+# includes — here a concern's endless methods, in another file. The call
+# was read on the class, ruled out as "no such method", and `--dead` called
+# its target unreferenced, clear. The concern's other method, which nothing
+# calls, is still unreferenced.
+def app/controllers/api/base_controller.rb:5:42 status=resolved owner=Api::Concerns::TokenAuth
+refs Api::Concerns::TokenAuth#skip_auth? confirmed=1 possible=0 excluded=0
+refs Api::Concerns::TokenAuth#audited? confirmed=1 possible=0 excluded=0
+dead app/controllers/api/concerns/token_auth.rb Api::Concerns::TokenAuth#skip_auth?=single-caller Api::Concerns::TokenAuth#audited?=single-caller Api::Concerns::TokenAuth#unused_check?=unreferenced

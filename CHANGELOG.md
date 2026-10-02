@@ -12,6 +12,11 @@
   74 should retry on 2. The editor's progress for a background index
   stopped part-way says "cut short at N of M files" instead of "index
   failed".
+- **A lambda handed to a callback is read on the instance.** In
+  `before_action -> { authorize! unless skip_auth? }` the calls run on the
+  controller's instance, as an `if:` lambda's do, so a concern the class
+  includes answers them and `--dead` no longer calls such a method
+  unreferenced. This changes what an index records.
 
 ## 0.8.4 — 2026-10-01
 
