@@ -6020,6 +6020,11 @@ wrong pid is worse than none, since the obvious use of one is `kill`.
 *Reverses if:* the store gains a record of the lock holder that is right —
 then the notice names it.
 
+**Logged, not done** (0.8.5 verification hunt): on a fresh store the
+incomplete-index notice still blames "another trekr writer kept the write
+lock longer than an index waits", which a first index that found no store
+cannot have met; the message should say what the wait was for.
+
 ## DEC-172 — The naming rung never types a receiver as a class every object is
 
 **Decided.** The naming rung (`from_receiver_name`) maps a variable's name
@@ -11249,6 +11254,12 @@ confirmed; `Plugin::Instance#register_asset` 3 confirmed, 129 possible, 8
 excluded (a registry's own method). A Gemfile's `gem` and `config.ru`'s
 `map` are residue again, as before DEC-445. Testbed 452.
 
+**Logged, not done** (0.8.5 verification hunt): deciding which top-level
+calls run on `main` is quadratic in a file's top-level calls, which a
+10,000-line `db/seeds.rb` makes visible; and scripts that load their gems
+with `bundler/inline` (`gemfile do … end`) were reported as answered
+wrongly (not reproduced in this lane).
+
 ## DEC-444 — A relation chain is typed step by step
 
 **Decided.** Three sources of `ActiveRecord::Relation`, so a chain's next
@@ -11495,6 +11506,11 @@ after. Testbed 462. **Not done**, logged: `super(User)` in an override of
 the authorizing callback (chatwoot's `AgentsController`) is read as the
 controller's resource; a record typed only through a method's return
 (forem's `@source = source || not_found`) falls to "any policy".
+
+**Seen while measuring**, logged: a `test-only` row's reason names its
+first test reference by a line that varies between runs on the same store
+(forem's `Badges::AwardCommunityWellness`, "first at …_spec.rb:3" one run
+and ":5" the next) — the first reference is not chosen in a stable order.
 
 **The blanket rule is named.** A row this rule alone grades `lower` carried
 an empty `caveat` (74 on discourse), and text printed a bare "(lower
