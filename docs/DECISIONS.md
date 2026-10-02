@@ -10988,12 +10988,12 @@ method Ruby ran:
 | --- | ---: | ---: |
 | the call is on `self` (implicit or explicit) | 77 of 104 | 0.7 |
 | an untyped receiver, and at most 3 definitions of the name | 48 of 67 | 0.7 |
-| an untyped receiver, and more than 3 | 21 of 141 | 0.1 |
+| an untyped receiver, and more than 3 | 21 of 141 | 0.1, refit 0.2 below |
 | no definition of the name at all | — | 0.0 |
 
 A call on `self` is ranked by its own class's ancestors and namespace (the
 residue tiers), and a name few classes define leaves little to choose from.
-`agreement` carries the evidence ("6 definitions share the name; 0.1 of
+`agreement` carries the evidence ("6 definitions share the name; 0.2 of
 residues with more than 3 …"), and `--explain` prints it as `evidence`.
 
 **How it was fitted.** Every residue answer with candidates in the 0.8.4
@@ -11023,6 +11023,19 @@ owner" was right 8 times in 31 on an explicit receiver — `present?` on
 `ActiveRecord::Core` because a model's own ancestry was asked about another
 object. That is a ranking question, not a confidence one, and is left for
 a decision of its own.
+
+### DEC-442 refit, after DEC-444 and DEC-445
+
+DEC-444 and DEC-445 resolved 40-odd residues, mostly on `self` and on
+relations, so the classes were counted again on the final build (by the
+first CLI candidate, since the LSP now hides the weak ones): self 63 of 83
+(0.76), few 42 of 61 (0.69), many 20 of 115 (0.17). Held out by corpus,
+fit on discourse: self 0.85 → 0.52 on mastodon, few 0.67 → 0.68, many
+0.10 → 0.21; a random half: 0.76 → 0.76, 0.71 → 0.65, 0.12 → 0.23. Self
+and few stay one grade, 0.7; many moves to **0.2**, the nearer tenth to
+0.17. Nothing changes on the LSP's side of 0.5. Brier on the held-out
+corpus: mastodon 0.419 flat, 0.232 for 1/definitions, 0.221 this;
+discourse 0.560, 0.391, 0.186.
 
 ## DEC-443 — The LSP returns a residue's guesses when the first is a fair one
 

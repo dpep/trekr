@@ -2776,7 +2776,7 @@ const FEW_DEFINITIONS: usize = 3;
 /// `self` is ranked by its own class's ancestors and namespace, and a name
 /// with few definitions leaves little to choose between; either is right
 /// about seven times in ten. A name many classes define, called on a
-/// receiver nothing typed, about once in ten.
+/// receiver nothing typed, about once in six.
 fn residue_confidence(call: &Call, definitions: usize) -> (f64, Option<String>) {
     let on_self = matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv);
     let shared = match definitions {
@@ -2800,9 +2800,9 @@ fn residue_confidence(call: &Call, definitions: usize) -> (f64, Option<String>) 
             )),
         ),
         _ => (
-            0.1,
+            0.2,
             Some(format!(
-                "{shared}; 0.1 of residues with more than {FEW_DEFINITIONS}, on an untyped \
+                "{shared}; 0.2 of residues with more than {FEW_DEFINITIONS}, on an untyped \
                  receiver, ran the first candidate, on the gold sets"
             )),
         ),
@@ -3464,7 +3464,7 @@ mod tests {
                 on_self.confidence,
                 none.confidence
             ],
-            [0.7, 0.1, 0.7, 0.0]
+            [0.7, 0.2, 0.7, 0.0]
         );
         assert!(
             many.agreement

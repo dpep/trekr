@@ -197,7 +197,7 @@ separately:
   No confidence is low enough to turn `resolved` into `ambiguous`. A
   `residue`'s is how often its first candidate ran, on the gold sets, among
   residues resting on the same evidence — 0.7 for a call on `self` or a name
-  with at most three definitions, 0.1 for a name many classes define on an
+  with at most three definitions, 0.2 for a name many classes define on an
   untyped receiver — and `agreement` says which.
 * **`resolved_via`** — the rung that typed the receiver: `self`, `const`,
   `local:new`, `literal`, `sig`, `sig:param`, `sig:step`, `includer`,
