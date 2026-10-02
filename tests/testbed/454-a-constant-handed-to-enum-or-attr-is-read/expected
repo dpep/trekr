@@ -1,0 +1,4 @@
+# `enum` and `attr_*` were read for the methods they make and their
+# arguments never visited, so a constant handed to one was no reference
+# and `--dead` called it unreferenced.
+dead app/models Widget::KINDS=none Widget::STATES=none Widget::FIELDS=none Widget::UNUSED=unreferenced

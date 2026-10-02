@@ -2495,6 +2495,10 @@ impl<'pr> Extractor<'_> {
                 self.push_def(def);
             }
         }
+        // `attr_reader NAMES` still reads the constant.
+        for arg in args.iter().filter(|arg| literal_name(arg).is_none()) {
+            self.visit(arg);
+        }
         true
     }
 
@@ -4265,6 +4269,10 @@ impl<'pr> Extractor<'_> {
                 self.route_to_includer(&mut def);
                 self.push_def(def);
             }
+        }
+        // `enum kind: TYPES` still reads the constant.
+        for arg in args {
+            self.visit(arg);
         }
         true
     }
