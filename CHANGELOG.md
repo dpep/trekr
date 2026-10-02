@@ -28,6 +28,8 @@
   `trekr.unresolved`) to `peek` for every guess as before, `best` for the
   first, or `none`. On the comparison corpora this halves wrong jumps for
   under a point (discourse) and three points (mastodon) of right ones.
+  The Claude Code plugin sets `peek`: an agent can weigh the guesses, and
+  cannot learn why a definition came back empty.
 - **An invalid `unresolved` setting is logged** (`setting_invalid` in
   `lsp.log`) instead of silently read as `confident`.
 - **A residue's `confidence` is graded** (`--json`): how often its first

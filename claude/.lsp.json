@@ -13,6 +13,9 @@
       ".jbuilder": "ruby"
     },
     "startupTimeout": 5000,
-    "diagnostics": true
+    "diagnostics": true,
+    "initializationOptions": {
+      "unresolved": "peek"
+    }
   }
 }
