@@ -226,13 +226,17 @@ impl Indexer {
     }
 
     /// The editor opened a file: if an index of its checkout is running,
-    /// that index reads it next, if it still can (DEC-322).
-    pub(crate) fn opened(&mut self, path: &Path) {
+    /// that index reads it next, if it still can (DEC-322). `true` when this
+    /// server's own index was told.
+    /// `false` when no index of this server's has it to read.
+    pub(crate) fn opened(&mut self, path: &Path) -> bool {
         if let Some(job) = &mut self.running
             && path.starts_with(&job.root)
         {
             hint(job, path);
+            return true;
         }
+        false
     }
 
     /// The checkout being refilled after an upgrade dropped the store, and
@@ -638,6 +642,45 @@ impl Hints {
             false => read(),
         }
         hints
+    }
+
+    /// Also read the hints other processes append to `file` (DEC-512),
+    /// from its start, as they arrive. Someone may send some now.
+    pub(crate) fn tail(&mut self, file: PathBuf) {
+        self.listening = true;
+        let sink = self.sent.clone();
+        std::thread::spawn(move || {
+            use std::io::{Read, Seek};
+            let (mut at, mut partial) = (0u64, Vec::new());
+            loop {
+                if let Ok(mut opened) = std::fs::File::open(&file)
+                    && opened.seek(std::io::SeekFrom::Start(at)).is_ok()
+                {
+                    let mut more = Vec::new();
+                    if let Ok(read) = opened.read_to_end(&mut more) {
+                        at += read as u64;
+                        partial.extend_from_slice(&more);
+                    }
+                }
+                while let Some(end) = partial.iter().position(|b| *b == b'\n') {
+                    let line: Vec<u8> = partial.drain(..=end).collect();
+                    let line = String::from_utf8_lossy(&line[..end]).into_owned();
+                    if let Ok(mut sink) = sink.lock() {
+                        sink.push(PathBuf::from(line));
+                    }
+                }
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+        });
+    }
+
+    /// The hints that arrived since the last call, as they were sent: for a
+    /// losing index to hand to the winning one.
+    pub(crate) fn take_sent(&self) -> Vec<PathBuf> {
+        self.sent
+            .lock()
+            .map(|mut sent| std::mem::take(&mut *sent))
+            .unwrap_or_default()
     }
 
     /// Hints as if sent already.

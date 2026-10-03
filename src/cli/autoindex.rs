@@ -127,6 +127,8 @@ fn wait(
     };
     // Whether the index that filled the store was ours, not another's.
     let mut filled = false;
+    // The other index this query's file was handed to (DEC-512).
+    let mut handed: Option<u32> = None;
     loop {
         // Ours is reaped the moment it ends: until then it is a zombie, which
         // a liveness check takes for running, and its claim with it.
@@ -157,9 +159,19 @@ fn wait(
                 return Ok(Some(ExitCode::from(2)));
             }
             Seen::Filling(warming) => {
-                filled |= ours
+                let mine = ours
                     .as_ref()
                     .is_some_and(|ours| ours.child.id() == warming.pid);
+                filled |= mine;
+                // Another's index reads this query's file next, as it would
+                // the editor's (DEC-512).
+                if let (false, Some((file, _)), Some(main)) = (mine, &file, store.path())
+                    && handed != Some(warming.pid)
+                {
+                    handed = Some(warming.pid);
+                    let _ =
+                        crate::store::early::hint(main, warming.pid, std::slice::from_ref(file));
+                }
                 heads.tick(Some(warming));
             }
             Seen::Idle(warming) => {
@@ -212,6 +224,19 @@ pub(super) fn after_partial(
     if found || OFF.load(Relaxed) || !partial {
         return Ok(Then::Keep);
     }
+    // A miss from an early store waits for the whole, then asks it afresh:
+    // this query's store is the early one, and the whole is in the other.
+    if forget_early().is_some() {
+        let main = Store::open(&super::store_path()?)?;
+        if let Some(code) = ensure(out, &main, root, Need::Whole)? {
+            return Ok(Then::Exit(code));
+        }
+        use std::os::unix::process::CommandExt;
+        let error = std::process::Command::new(std::env::current_exe()?)
+            .args(std::env::args_os().skip(1))
+            .exec();
+        return Err(error.into());
+    }
     match store.warming(&root.to_string_lossy())? {
         // Cut short since: the miss stands, said to be partial.
         Some(w) if w.interrupted => Ok(Then::Keep),
@@ -243,9 +268,53 @@ fn look(store: &Store, root: &str, file: Option<&str>) -> anyhow::Result<Seen> {
         // The gems the file names land in the commit that counts the tree.
         Some(warming) => match file {
             Some(file) if !warming.uncounted && store.maps(root, file)? => Seen::Ready,
+            Some(file) if early_maps(store, root, file, &warming) => Seen::Ready,
             _ => Seen::Filling(warming),
         },
     })
+}
+
+/// Whether the early store of the index filling the checkout (DEC-332) holds
+/// `file`: the query then reads that, as the language server does (DEC-512).
+fn early_maps(store: &Store, root: &str, file: &str, warming: &Warming) -> bool {
+    let Some(main) = store.path() else {
+        return false;
+    };
+    let path = crate::store::early::path(main, warming.pid);
+    if !path.exists() {
+        return false;
+    }
+    let Ok(early) = Store::open_existing(&path) else {
+        return false;
+    };
+    let holds = early
+        .warming(root)
+        .is_ok_and(|w| w.is_some_and(|w| !w.uncounted))
+        && early.maps(root, file).unwrap_or(false);
+    if holds {
+        *lock_early() = Some(path);
+    }
+    holds
+}
+
+/// The early store this query answers from, once its wait found the file
+/// there.
+static EARLY: std::sync::Mutex<Option<std::path::PathBuf>> = std::sync::Mutex::new(None);
+
+fn lock_early() -> std::sync::MutexGuard<'static, Option<std::path::PathBuf>> {
+    EARLY
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The early store a query reads in place of the store, if any.
+pub(super) fn early_store() -> Option<std::path::PathBuf> {
+    lock_early().clone()
+}
+
+/// Stop reading the early store: gone, or the answer needs the whole.
+pub(super) fn forget_early() -> Option<std::path::PathBuf> {
+    lock_early().take()
 }
 
 /// An index this query started.

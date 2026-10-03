@@ -2948,6 +2948,134 @@ fn status_of_an_empty_store_says_the_first_query_indexes() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A repo with a second file that names `Widget`, and its first index
+/// started by hand — no file asked first — pausing after its first part and
+/// again as the rest's write holds the store.
+fn slow_first_index(label: &str) -> (PathBuf, PathBuf, std::process::Child) {
+    let (dir, db) = scratch(label);
+    repo(&dir);
+    fs::write(
+        dir.join("other.rb"),
+        "class Other\n  def go\n    Widget.new\n    Nowhere.new\n  end\nend\n",
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "other",
+        ],
+    );
+    let winner = neutral(Command::new(env!("CARGO_BIN_EXE_trekr")))
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .env("TREKR_TEST_STALL_MS", "3000")
+        .env("TREKR_TEST_STALL_BULK_MS", "6000")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    (dir, db, winner)
+}
+
+/// A query whose file another process's first index has not read hands it
+/// to that index, which reads it next — in its next part, or, while the
+/// rest's write holds the store, into its early store, which the query
+/// then answers from (DEC-512).
+#[test]
+fn a_query_behind_anothers_first_index_has_its_file_read_next() {
+    let limit = std::time::Duration::from_secs(30);
+    let ask = ["--def", "other.rb:3:5", "--json"];
+    // Asked while the first part is in: read in the next part.
+    let (dir, db, mut winner) = slow_first_index("handed-part");
+    std::thread::sleep(std::time::Duration::from_millis(1000));
+    let started = std::time::Instant::now();
+    let out = trekr_within(&db, &dir, &ask, &[], limit);
+    let took = started.elapsed();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert!(json(&out)["warming"].is_object(), "{}", stdout(&out));
+    assert!(
+        took < std::time::Duration::from_millis(4500),
+        "{took:?}: {stderr}"
+    );
+    winner.wait().unwrap();
+
+    // Asked while the rest's write holds the store: from the early store,
+    // and a miss there asks the whole once it is in.
+    let (dir, db, mut winner) = slow_first_index("handed-early");
+    std::thread::sleep(std::time::Duration::from_millis(4000));
+    let started = std::time::Instant::now();
+    let out = trekr_within(&db, &dir, &ask, &[], limit);
+    let took = started.elapsed();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(json(&out)["definition"][0]["path"], "widget.rb");
+    assert!(
+        took < std::time::Duration::from_millis(3000),
+        "{took:?}: {stderr}"
+    );
+    let miss = trekr_within(&db, &dir, &["--def", "other.rb:4:5", "--json"], &[], limit);
+    let stderr = String::from_utf8_lossy(&miss.stderr);
+    assert_eq!(miss.status.code(), Some(1), "{stderr}");
+    let answer = json(&miss);
+    assert!(answer.get("warming").is_none(), "{answer}");
+    winner.wait().unwrap();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A first index that loses the checkout to another hands what it was told
+/// to read first — the editor's open files — to the winner (DEC-512).
+#[test]
+fn a_losing_index_hands_its_hints_to_the_winner() {
+    let (dir, db) = scratch("handed-loser");
+    repo(&dir);
+    assert_eq!(trekr(&db, &dir, &["--status"]).status.code(), Some(2));
+    let mut other = Command::new("sleep").arg("30").spawn().unwrap();
+    mark_warming(&db, &dir, other.id(), 0, 1);
+    let mut loser = neutral(Command::new(env!("CARGO_BIN_EXE_trekr")))
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .env("TREKR_BACKGROUND", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let open = fs::canonicalize(&dir).unwrap().join("widget.rb");
+    {
+        use std::io::Write;
+        let mut stdin = loser.stdin.take().unwrap();
+        writeln!(stdin, "{}", open.display()).unwrap();
+        // Kept open, as the language server keeps it.
+        std::mem::forget(stdin);
+    }
+    let file = PathBuf::from(format!("{}.hints-{}", db.display(), other.id()));
+    let started = std::time::Instant::now();
+    let mut said = String::new();
+    while started.elapsed() < std::time::Duration::from_secs(10) {
+        said = fs::read_to_string(&file).unwrap_or_default();
+        if !said.is_empty() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    other.kill().unwrap();
+    other.wait().unwrap();
+    let _ = loser.kill();
+    loser.wait().unwrap();
+    assert_eq!(said.trim(), open.display().to_string());
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A hand-run `--index` that outwaits another's index of the checkout says
 /// that is what it waited for — not a write lock, which it never waited on.
 #[test]

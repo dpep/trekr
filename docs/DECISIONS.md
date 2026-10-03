@@ -12266,3 +12266,48 @@ until the patch is read. That is what an early answer is: it says
 for the rest) does not apply because it is not a miss. Not changed: making
 it right means reading every file that reopens the module first, which is
 the whole index.
+
+## DEC-512 — A first index reads next what the processes waiting on it need
+
+**Decided.** One first index fills a checkout (DEC-501), but every process
+that waits on it may need a file it has not read. Each hands it over: the
+index running as pid N reads paths appended to `trekr.db.hints-N` beside
+the store, as it reads its stdin (DEC-322), from its claim to its end, and
+removes the file then; a dead index's is swept with its early store.
+
+- A query that needs a position's file and finds another's index filling
+  the checkout appends that file once.
+- A language server that opens a file while another process's index fills
+  the checkout appends it, as it would tell its own child.
+- An index that loses the claim — the language server's child, a query's —
+  hands on what its own stdin told it, and keeps doing so while it waits.
+  It reads the mark before taking the claim's write lock: another's bulk
+  write holds that lock for seconds, and a loser blocked on it hands
+  nothing over.
+
+The winner reads a handed file in its next part, or, during the rest's bulk
+write, into its early store (DEC-332). A query whose file is there answers
+from the early store, as the language server does; a miss there waits for
+the whole and asks it in a fresh process (`exec` of the same command line),
+since the query's store is the early copy and the whole is in the other.
+
+**Why.** Reported from the pre-release hunt on the 100k corpus: an agent's
+`--refs` started 0.3 s before the editor made the editor's first definition
+take 20.1 s (0.37 alone), and a `--def` while the editor's index ran took
+21.1 s — each waited for an index that had never heard of its file.
+
+**Measured.** 100k corpus, release builds, three interleaved rounds against
+the build before this, load 3–13. Editor's first definition with an agent's
+`--refs` started 0.3 s earlier: 31.5 / 21.3 / 19.4 s → 0.49 / 0.39 / 0.51 s.
+A `--def` in another shard, 0.5 / 3 / 8 s after the editor opened its file:
+18.4–25.0 / 14.5–18.4 / 9.2–15.9 s → 0.64–1.26 / 0.19–0.31 / 0.18–0.32 s.
+
+**Considered.**
+- *A hints table in the store.* Writing it takes the write lock, which the
+  winner's bulk write holds for up to 15 s — the very window a hint is for.
+  A file appended to without a lock has none.
+- *Raising a niced language server's child when a query waits on it.* An
+  unprivileged process cannot lower a nice value — its own or a child's —
+  on macOS or Linux (without `CAP_SYS_NICE` or an `RLIMIT_NICE`). Nor was
+  it needed: handed the file, the niced child answered the `--def` above in
+  well under a second.

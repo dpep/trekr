@@ -694,7 +694,8 @@ upgrade(from_version, at)                   ← a rebuild that dropped an older 
 meta(key, value)                            ← `schema_by`: the trekr that built it
                                               (DEC-300; optional, no bump);
                                               `warming <root>`: a first index
-                                              still filling it (DEC-320)
+                                              still filling it, `pid read of
+                                              [own] [start:N]` (DEC-320, 501)
 ```
 
 **No table under `blob` may mention a path, a checkout, or a repository.**
@@ -849,7 +850,12 @@ whole write; the rest of the gems. Parts add to the map
 write would have. A reindex of a whole map is one write, as before. A
 file opened while the rest of the checkout is written goes to an early store —
 a copy of the store, cloned by file, with that file and its neighbours — which
-the language server reads until the index removes it (DEC-332).
+the language server reads until the index removes it (DEC-332). A process that
+needs a file the index has not read — a query, or a language server whose
+own index lost the checkout to this one — appends its path to
+`trekr.db.hints-<pid>` beside the store, which the index reads as it reads
+its stdin; a query whose file went to the early store answers from that
+(DEC-512).
 
 `--def` reparses the one file with Prism rather than reading stored spans, so
 it answers correctly on a file edited since the last index. A variable under

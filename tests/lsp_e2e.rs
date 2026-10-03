@@ -5058,6 +5058,53 @@ fn an_early_store_whose_index_died_is_left_and_the_index_finished() {
 /// hover says how much is read, a definition is told once (DEC-331),
 /// completion is marked incomplete, and references rule nothing out — then,
 /// once it ends, none of that.
+/// A file opened while another process's first index fills the checkout —
+/// an agent's query got there first — is handed to that index to read next,
+/// as the server's own index would have been told it (DEC-512).
+#[test]
+fn a_file_opened_behind_anothers_first_index_is_handed_to_it() {
+    let (dir, db) = scratch("handed");
+    let source = repo(&dir);
+    trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+    let root = fs::canonicalize(&dir).unwrap();
+    let mut other = Command::new("sleep").arg("30").spawn().unwrap();
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute(
+            "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+            [
+                format!("warming {}", root.to_string_lossy()),
+                format!("{} 1 4", other.id()),
+            ],
+        )
+        .unwrap();
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+    // Answered after the open is handled.
+    session.request(
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    let file = PathBuf::from(format!("{}.hints-{}", db.display(), other.id()));
+    let said = fs::read_to_string(&file).unwrap_or_default();
+    session.stop();
+    other.kill().unwrap();
+    other.wait().unwrap();
+    assert_eq!(said.trim(), root.join("app.rb").display().to_string());
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn answers_from_a_partial_index_say_so_and_rule_nothing_out() {
     let (dir, db) = scratch("warming");

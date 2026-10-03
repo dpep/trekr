@@ -373,6 +373,24 @@ impl Session {
     }
 
     /// Is this checkout in the store at all?
+    /// A file opened while another process's first index fills its
+    /// checkout — an agent's query got there first — is that index's to
+    /// read next, as this server's own would be told (DEC-512).
+    pub(crate) fn hand_to_another_index(&mut self, path: &Path) {
+        let Some(located) = self.locate(path) else {
+            return;
+        };
+        let main = self.main_store();
+        let (Some(db), Ok(Some(warming))) =
+            (main.path(), main.warming(&located.root.to_string_lossy()))
+        else {
+            return;
+        };
+        if !warming.interrupted {
+            let _ = crate::store::early::hint(db, warming.pid, &[located.absolute]);
+        }
+    }
+
     pub(crate) fn indexed(&self, root: &Path) -> bool {
         self.store
             .has_checkout(&root.to_string_lossy())

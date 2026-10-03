@@ -681,6 +681,14 @@ fn store_path() -> anyhow::Result<PathBuf> {
 }
 
 fn open_store() -> anyhow::Result<Store> {
+    // A query whose file is only in a first index's early store reads that
+    // (DEC-512), until it is gone.
+    if let Some(early) = autoindex::early_store() {
+        match Store::open_existing(&early) {
+            Ok(store) => return Ok(store),
+            Err(_) => drop(autoindex::forget_early()),
+        }
+    }
     let open = || -> anyhow::Result<Store> {
         let path = store_path()?;
         if let Some(parent) = path.parent() {
@@ -1169,6 +1177,9 @@ fn index_all(
     let root_str = root.to_string_lossy().into_owned();
     store.wait_as_writer(writer_waiting)?;
     let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
+    // What the language server or a query wants read first: this index's if
+    // it fills the checkout, the one it waits for's if another does.
+    let mut hints = crate::serve::fresh::Hints::listen();
     // A first index — no map yet, or one an index left unfinished — is
     // marked while it fills the store, so an answer meanwhile says it is
     // partial (DEC-320), and is written in the order someone looking at it
@@ -1179,13 +1190,25 @@ fn index_all(
         if store.has_checkout(&root_str)? && store.warming(&root_str)?.is_none() {
             break false;
         }
-        match store.claim_warming(&root_str, files.len() as u64, !with_gems)? {
+        // Seen without the write lock first: another's bulk write holds it
+        // for seconds, and this index has hints to hand that one meanwhile.
+        let running = store
+            .warming(&root_str)?
+            .filter(|other| !other.interrupted && other.pid != std::process::id());
+        let other = match running {
+            Some(other) => Some(other),
+            None => store.claim_warming(&root_str, files.len() as u64, !with_gems)?,
+        };
+        match other {
             None => {
                 die_after_claim_for_tests()?;
+                if let Some(main) = store.path() {
+                    hints.tail(crate::store::early::hints(main, std::process::id()));
+                }
                 break true;
             }
             Some(other) => {
-                wait_for_index(store, &root_str, other)?;
+                wait_for_index(store, &root_str, other, &hints)?;
                 // A query started this index, and the one it waited for
                 // has done what it was asked to (DEC-500).
                 if autoindex::spawned()
@@ -1200,7 +1223,7 @@ fn index_all(
     let mut known = None;
     let (counts, gems) = if filling {
         index_first(
-            store, root, files, git_state, with_gems, &mut known, &pool, profile,
+            store, root, files, git_state, with_gems, &hints, &mut known, &pool, profile,
         )?
     } else {
         let counts = index_files(
@@ -1262,12 +1285,10 @@ impl std::fmt::Display for ClaimOutwaited {
 impl std::error::Error for ClaimOutwaited {}
 
 /// `TREKR_TEST_STALL_MS`: a first index that pauses once the asked file's
-/// part is in, as a large checkout's does reading the rest.
-fn stall_for_tests() {
-    if let Some(ms) = std::env::var("TREKR_TEST_STALL_MS")
-        .ok()
-        .and_then(|ms| ms.parse().ok())
-    {
+/// part is in, as a large checkout's does reading the rest;
+/// `TREKR_TEST_STALL_BULK_MS`: and once the rest's write holds the store.
+fn stall_for_tests(var: &str) {
+    if let Some(ms) = std::env::var(var).ok().and_then(|ms| ms.parse().ok()) {
         std::thread::sleep(std::time::Duration::from_millis(ms));
     }
 }
@@ -1275,7 +1296,12 @@ fn stall_for_tests() {
 /// Wait for another process's first index of `root` to end — or to die,
 /// leaving its mark for this one to take over — saying so as a writer
 /// queued for the lock does (DEC-171), and for no longer than one waits.
-fn wait_for_index(store: &Store, root: &str, other: crate::store::Warming) -> anyhow::Result<()> {
+fn wait_for_index(
+    store: &Store,
+    root: &str,
+    other: crate::store::Warming,
+    hints: &crate::serve::fresh::Hints,
+) -> anyhow::Result<()> {
     use std::io::IsTerminal;
     let started = std::time::Instant::now();
     let every = if std::io::stderr().is_terminal() {
@@ -1302,6 +1328,10 @@ fn wait_for_index(store: &Store, root: &str, other: crate::store::Warming) -> an
                 secs => eprintln!("trekr: still waiting for the other index ({secs}s)"),
             }
             due = waited.as_secs() - waited.as_secs() % every + every;
+        }
+        // What this index was asked to read first, the other reads (DEC-512).
+        if let Some(main) = store.path() {
+            let _ = crate::store::early::hint(main, warming.pid, &hints.take_sent());
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
         match store.warming(root)? {
@@ -1412,12 +1442,12 @@ fn index_first(
     files: &scan::Files,
     git_state: i64,
     with_gems: bool,
+    hints: &crate::serve::fresh::Hints,
     known: &mut Option<HashSet<Oid>>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
 ) -> anyhow::Result<(crate::store::Indexed, GemReport)> {
     let root_str = root.to_string_lossy().into_owned();
-    let hints = crate::serve::fresh::Hints::listen();
     if let Some(main) = store.path() {
         crate::store::early::sweep(main);
     }
@@ -1428,7 +1458,7 @@ fn index_first(
         store,
         root,
         files,
-        &hints,
+        hints,
         &mut written,
         known,
         pool,
@@ -1491,13 +1521,13 @@ fn index_first(
                     report.rbs = rbs;
                 }
             }
-            stall_for_tests();
+            stall_for_tests("TREKR_TEST_STALL_MS");
             // Opened while those were read: still ahead of the rest.
             let (more, _) = index_wanted(
                 store,
                 root,
                 files,
-                &hints,
+                hints,
                 &mut written,
                 known,
                 pool,
@@ -1515,13 +1545,14 @@ fn index_first(
             let stop = std::sync::atomic::AtomicBool::new(false);
             let mut counts = std::thread::scope(|scope| {
                 let early = main.as_deref().map(|main| {
-                    let (hints, written, stop) = (&hints, &written, &stop);
+                    let (written, stop) = (&written, &stop);
                     scope.spawn(move || {
                         write_early(main, root, files, hints, written, (read, of), stop)
                     })
                 });
                 let counts = {
                     let _stop = Stop(&stop);
+                    stall_for_tests("TREKR_TEST_STALL_BULK_MS");
                     index_files(store, root, files, git_state, false, known, pool, profile)
                 };
                 if let Some(early) = early {
@@ -1552,6 +1583,9 @@ fn index_first(
         }
     };
     store.clear_warming(&root_str)?;
+    if let Some(main) = store.path() {
+        let _ = std::fs::remove_file(crate::store::early::hints(main, std::process::id()));
+    }
     add_parsed(&mut counts, &first);
     Ok((counts, gems))
 }

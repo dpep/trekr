@@ -79,9 +79,56 @@ pub(crate) fn stale(main: &Path) -> Vec<PathBuf> {
         .collect()
 }
 
-/// Remove early stores left by indexes that are no longer running.
+/// Remove early stores and hint files left by indexes that are no longer
+/// running.
 pub(crate) fn sweep(main: &Path) {
     stale(main).iter().for_each(|dir| remove(dir));
+    let (Some(dir), Some(name)) = (main.parent(), main.file_name()) else {
+        return;
+    };
+    let prefix = format!("{}.hints-", name.to_string_lossy());
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let file = entry.file_name().to_string_lossy().into_owned();
+        let dead = file
+            .strip_prefix(&prefix)
+            .and_then(|pid| pid.parse::<u64>().ok())
+            .is_some_and(|pid| !super::warming::alive(pid, None));
+        if dead {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// Where the first index running as `pid` reads the files other processes
+/// want read first: another query, or the language server, whose own index
+/// lost the checkout to it (DEC-512). A line a path, appended.
+pub(crate) fn hints(main: &Path, pid: u32) -> PathBuf {
+    let mut name = main.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".hints-{pid}"));
+    main.with_file_name(name)
+}
+
+/// Ask the first index running as `pid` to read `paths` first. Lines this
+/// short are appended whole, so writers need no lock between them.
+pub(crate) fn hint(main: &Path, pid: u32, paths: &[PathBuf]) -> std::io::Result<()> {
+    use std::io::Write;
+    use std::os::unix::ffi::OsStrExt;
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let mut lines = Vec::new();
+    for path in paths {
+        lines.extend_from_slice(path.as_os_str().as_bytes());
+        lines.push(b'\n');
+    }
+    std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(hints(main, pid))?
+        .write_all(&lines)
 }
 
 /// Copy the store at `main`, as of its last commit, to `to`; `false` when
@@ -162,6 +209,23 @@ mod tests {
         assert!(early.exists(), "a running index's early is kept");
         assert!(!dead.exists(), "a dead index's early is removed");
         assert!(main.exists());
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn hints_are_appended_and_a_dead_index_s_are_swept() {
+        let scratch = scratch("hints");
+        let main = scratch.join("t.db");
+        let me = std::process::id();
+        hint(&main, me, &[PathBuf::from("/app/a.rb")]).unwrap();
+        hint(&main, me, &[PathBuf::from("/app/b.rb")]).unwrap();
+        let said = std::fs::read_to_string(hints(&main, me)).unwrap();
+        assert_eq!(said, "/app/a.rb\n/app/b.rb\n");
+        let dead = i32::MAX as u32;
+        hint(&main, dead, &[PathBuf::from("/app/a.rb")]).unwrap();
+        sweep(&main);
+        assert!(hints(&main, me).exists(), "a running index's are kept");
+        assert!(!hints(&main, dead).exists(), "a dead index's are removed");
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
