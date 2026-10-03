@@ -28,7 +28,7 @@
   `db/structure.sql`), not on `create_table`.
 - **`trekr Post --json` carries `table`** for a model: the table's name,
   where the schema declares it, its columns, primary key and indexes.
-- This changes what an index records: trekr reindexes once after upgrading.
+- This changes what an index records (store v59): trekr reindexes once after upgrading.
 
 ## 0.8.5 — 2026-10-02
 
