@@ -320,6 +320,12 @@ pub(super) fn collection_class(
 /// `posts` → `Post`. Rails' table-to-model convention, which is how a schema
 /// attaches to a class without anything linking them.
 pub(crate) fn table_to_class(table: &str) -> String {
+    // A table outside the app's search path (`audit.posts`) is no class's by
+    // convention: its carrier is a name no constant can be, which only a
+    // `self.table_name` naming the table joins to a model.
+    if let Some((schema, table)) = table.split_once('.') {
+        return format!("{schema}.{}", table_to_class(table));
+    }
     // A namespaced table is `admin_users` for `Admin::User` only when an
     // `Admin` module exists, which the extractor cannot know. The flat reading
     // is the common one and the one that is right without cross-file evidence.

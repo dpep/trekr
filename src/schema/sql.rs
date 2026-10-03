@@ -40,11 +40,23 @@ pub(crate) fn tables(src: &[u8]) -> Vec<Table> {
     let mut tables: Vec<Table> = Vec::new();
     let mut keys: Vec<(String, Vec<String>)> = Vec::new();
     let mut indexes: Vec<(String, Index)> = Vec::new();
+    // Names are qualified by their schema while the dump is read: an older
+    // pg_dump writes them bare under a `SET search_path` per schema.
+    let mut search: Vec<String> = Vec::new();
+    let mut app_search: Vec<String> = Vec::new();
     for statement in tokens.split(|t| t.kind == Kind::Punct && &text[t.start..t.end] == ";") {
         let s = Statement {
             text,
             tokens: statement,
+            schema: search.first().map(String::as_str),
         };
+        if let Some(path) = s.search_path() {
+            if !path.is_empty() {
+                app_search = path.clone();
+            }
+            search = path;
+            continue;
+        }
         // pg_dump writes what a table inherits or a view reads before it.
         if let Some(table) = s.create_table(&lines, &tables) {
             tables.push(table);
@@ -74,6 +86,7 @@ pub(crate) fn tables(src: &[u8]) -> Vec<Table> {
             tables[i].indexes.push(index);
         }
     }
+    unqualify(&mut tables, &app_search);
     tables
 }
 
@@ -216,9 +229,35 @@ fn dollar_tag(bytes: &[u8], at: usize) -> Option<usize> {
     (bytes.get(i) == Some(&b'$')).then_some(i + 1 - at)
 }
 
+/// A table is named bare when the app's search path finds it — the last
+/// `SET search_path` (Rails appends one), else `public` — and by its schema
+/// otherwise, as `self.table_name = "audit.posts"` names it.
+fn unqualify(tables: &mut [Table], search: &[String]) {
+    let public = ["public".to_string()];
+    let search = if search.is_empty() {
+        &public[..]
+    } else {
+        search
+    };
+    let names: std::collections::HashSet<String> = tables.iter().map(|t| t.name.clone()).collect();
+    for table in tables.iter_mut() {
+        let Some((schema, bare)) = table.name.split_once('.') else {
+            continue;
+        };
+        let found = search
+            .iter()
+            .find(|s| names.contains(&format!("{s}.{bare}")));
+        if found.is_some_and(|s| s == schema) {
+            table.name = bare.to_string();
+        }
+    }
+}
+
 struct Statement<'t> {
     text: &'t str,
     tokens: &'t [Token],
+    /// Where a bare name is created: the search path's first schema.
+    schema: Option<&'t str>,
 }
 
 /// A view's column, from one item of its select list.
@@ -240,7 +279,7 @@ fn column_read<'a>(
 ) -> Option<&'a Column> {
     let mut found = read
         .iter()
-        .filter_map(|name| before.iter().find(|t| bare(&t.name) == bare(name)))
+        .filter_map(|name| before.iter().find(|t| t.name == *name))
         .filter(|t| qualifier.as_deref().is_none_or(|q| bare(&t.name) == q))
         .filter_map(|t| t.column(column));
     let first = found.next()?;
@@ -285,15 +324,41 @@ impl<'t> Statement<'t> {
         }
     }
 
-    /// `public.users`, `"users"`, `` `users` ``: the table's own name, and the
+    /// `public.users`, `"users"`, `` `users` ``: the table's name qualified
+    /// by its schema — the one written, else the search path's — and the
     /// index after it.
     fn qualified(&self, mut i: usize) -> Option<(String, usize)> {
-        let mut name = self.name(i)?;
+        let mut parts = vec![self.name(i)?];
         while self.punct(i + 1, ".") {
             i += 2;
-            name = self.name(i)?;
+            parts.push(self.name(i)?);
         }
+        let table = parts.pop()?;
+        let name = match parts.pop().as_deref().or(self.schema) {
+            Some(schema) => format!("{schema}.{table}"),
+            None => table,
+        };
         Some((name, i + 1))
+    }
+
+    /// `SET search_path TO "$user", public`: the schemas a bare name is
+    /// looked up in, those of the app's own.
+    fn search_path(&self) -> Option<Vec<String>> {
+        if !(self.is(0, "SET") && self.is(1, "search_path")) {
+            return None;
+        }
+        let path = (3..self.tokens.len())
+            .step_by(2)
+            .filter_map(|i| match self.tokens[i].kind {
+                Kind::Str => {
+                    let raw = self.raw(&self.tokens[i]);
+                    Some(raw.trim_matches('\'').to_string())
+                }
+                _ => self.name(i),
+            })
+            .filter(|s| !s.is_empty() && s != "$user" && s != "pg_catalog")
+            .collect();
+        Some(path)
     }
 
     /// Past the `)` matching the `(` at `open`.
@@ -424,7 +489,7 @@ impl<'t> Statement<'t> {
             };
             let inherited = parents
                 .iter()
-                .filter_map(|p| before.iter().find(|t| bare(&t.name) == bare(p)))
+                .filter_map(|p| before.iter().find(|t| t.name == *p))
                 .flat_map(|parent| parent.columns.iter().cloned())
                 .filter(|c| table.column(&c.name).is_none())
                 .collect::<Vec<_>>();
@@ -1154,6 +1219,24 @@ CREATE TABLE `notes` (
                 }
             ]
         );
+    }
+
+    #[test]
+    fn a_table_outside_the_search_path_keeps_its_schema() {
+        // An older pg_dump writes names bare, under a search path per schema.
+        let dump = "\
+SET search_path = audit, pg_catalog;
+CREATE TABLE posts (action text);
+CREATE TABLE logs (line text);
+SET search_path = public, pg_catalog;
+CREATE TABLE posts (title text);
+CREATE INDEX index_posts_on_title ON posts USING btree (title);
+SET search_path TO \"$user\", public;
+";
+        let tables = tables(dump.as_bytes());
+        let names: Vec<&str> = tables.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["audit.posts", "audit.logs", "posts"]);
+        assert_eq!(table(&tables, "posts").indexes.len(), 1);
     }
 
     #[test]

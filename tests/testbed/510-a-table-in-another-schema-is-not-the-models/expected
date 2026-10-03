@@ -1,0 +1,16 @@
+# pg_dump writes `audit.widgets` before `public.widgets`, and the schema was
+# dropped from both names: `Widget` had both tables' columns, its hover showed
+# audit's, and `action` resolved on it. The app's search path (`public`, or
+# its `SET search_path`) is the model's; another schema's table is a model's
+# only by a `self.table_name` naming it.
+def app.rb:15:16 status=resolved owner=Widget site=db/structure.sql:15
+def app.rb:16:16 status=residue
+def app.rb:17:23 status=resolved owner=Audit::Widget site=db/structure.sql:10
+def app.rb:17:30 status=resolved owner=String receiver_type=String
+hover app.rb:1:7 **Table `widgets`** · [`db/structure.sql:13`]
+hover app.rb:5:9 **Table `audit.widgets`** · [`db/structure.sql:8`]
+# A model backed by a view has its select list's columns, a bare one typed as
+# its table's; one the list does not name is said, not silently missing.
+def app.rb:18:27 status=resolved owner=String receiver_type=String
+hover app.rb:10:7 **View `recent_widgets`**
+hover app.rb:10:7 _A view: 1 of its select list's columns has no name written down, and is not read._
