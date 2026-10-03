@@ -1,0 +1,5 @@
+# A base method no call reaches because each lands on a subclass's override
+# is `shadowed`, the overrides named; it was `unreferenced`, with nothing to
+# say why it looked used. A call on a subclass without the override reaches
+# the base, which is no candidate (DEC-491).
+dead app.rb Shape#area=shadowed~ Vehicle#wheels=single-caller

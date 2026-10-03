@@ -51,6 +51,11 @@
   `include_context` names is a row, `kind: shared_group`, and its own
   `let`s are not listed apart from it. One written with metadata is
   `convention-only`, which the groups that match include.
+- **`shadowed`, a new `--dead` tier**: a method every call of whose name
+  lands on an override in a subclass (an abstract `raise
+  NotImplementedError` base), or a `let` every read of which an override in
+  a nested group answers. `overridden_by` names the overrides. It was
+  `unreferenced`, with nothing to say why the name looked used.
 - **A group's `def` is no longer `unreferenced` while it is called.** It was
   weighed against an owner no call resolves to.
 - **`--refs FILE:LINE[:COL]`** lists the references of what is at a

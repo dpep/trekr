@@ -11739,11 +11739,16 @@ one, and says why it looks used. Any read that can reach the outer
 definition — an example in its own group, a group without the override,
 `super` in the override — makes it no candidate.
 
-**Not done: a base method shadowed by its subclasses** (errbit's
-`ApplicationPolicy` predicates, every subclass that receives calls
-overriding them). That needs each call's receiver to be a subclass that
-overrides, and the receiver ladder types most such calls only as the base;
-logged.
+**A method, too.** An `unreferenced` method with calls of its name ruled
+out because each lands on an override in a subclass — `Trends::Base#
+request_review`, `raise NotImplementedError`, while every call is typed
+`Trends::Links`, `Trends::Tags` or `Trends::Statuses` — is `shadowed`, the
+overrides in `overridden_by`. Only a relabel: the row was `unreferenced`
+and keeps its caveats and grade. One call that reaches the base — a
+subclass without the override, an untyped receiver — makes it no candidate,
+as before. `--dead app lib`: mastodon 1 row (that one), discourse none.
+errbit's `ApplicationPolicy` predicates, whose calls Pundit makes by a name
+it builds, are not this: no call of theirs is typed. Testbed 498.
 
 ## DEC-492 — Group members are scored against a runtime gold set
 

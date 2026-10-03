@@ -83,8 +83,9 @@ struct Cli {
     /// then classes, modules and constants, which no
     /// constant reference resolves to. Each is in one tier, from the least
     /// evidence of use to the most: `unreferenced` (no call, symbol or
-    /// `super` names it), `shadowed` (a group member every read of whose name
-    /// an override answers, `overridden_by`), `test-only` (a class only tests name), `override` (none
+    /// `super` names it), `shadowed` (every call of its name lands on an
+    /// override, a subclass's or a nested group's, `overridden_by`),
+    /// `test-only` (a class only tests name), `override` (none
     /// does, but it overrides an ancestor's method, so a call of that may run
     /// it), `convention-only` (named only by a symbol handed to a macro, a
     /// route, or a name Rails or a library looks a class up by),
@@ -4270,6 +4271,9 @@ fn dead_in(
         // runs it — a condition lambda the module hands a macro (DEC-380).
         let helper = |path: &str| path.split('/').any(|dir| dir == "helpers");
         let mut unplaced = None;
+        // The overrides a call of its name lands on, in a subclass: each call
+        // that would run it runs one of them instead (DEC-491).
+        let mut shadowing: Vec<String> = Vec::new();
         if tier == "unreferenced" && !def.singleton && counts.excluded > 0 {
             let (all, _) = gather_refs(
                 &tree,
@@ -4283,6 +4287,19 @@ fn dead_in(
                 None,
             )
             .unwrap_or_default();
+            for call in all
+                .iter()
+                .filter(|r| r.ruling == Some(refs::Ruling::DifferentOwner))
+            {
+                if let Some(landed) = call.owner.as_deref()
+                    && tree.inherits(landed, &owner)
+                {
+                    let at = format!("{landed}#{}", def.name);
+                    if !shadowing.contains(&at) {
+                        shadowing.push(at);
+                    }
+                }
+            }
             let helper_caller = all.iter().find(|r| {
                 helper(file)
                     && r.tier == refs::Tier::Excluded
@@ -4415,7 +4432,13 @@ fn dead_in(
                 def.name
             ));
         }
+        let shadowed = tier == "unreferenced" && unplaced.is_none() && !shadowing.is_empty();
+        let tier = if shadowed { "shadowed" } else { tier };
         let reason = match (tier, &caller) {
+            ("shadowed", _) => format!(
+                "no call reaches it: every call of its name lands on an override in a subclass, {}",
+                shadowing.join(", ")
+            ),
             ("unreferenced", _) if unplaced.is_some() => {
                 "no call trekr can place on it, nor a symbol or `super`, names it".to_string()
             }
@@ -4472,6 +4495,7 @@ fn dead_in(
             "super_from": live.super_from,
             "mentions_by_name": written,
             "overrides": overrides,
+            "overridden_by": shadowing,
             "confidence": if risky.is_empty() && tier != "override" { "clear" } else { "lower" },
             "caveat": risky,
             "reason": reason,

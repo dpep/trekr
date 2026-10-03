@@ -288,7 +288,9 @@ method's row `kind: method`) no constant reference resolves to — `test-only`
 when only specs name it, `convention-only` when a route, Rails or a library
 finds it by name (`convention.by` says who), and a `caveat` for what may
 still reach it (`self.class::X`, a listed namespace, a factory, an STI
-subclass). Tiers: `unreferenced` (nothing found), `convention-only` (reached only by
+subclass). Tiers: `unreferenced` (nothing found), `shadowed` (every call of its
+name lands on an override — a subclass's, `overridden_by` names them — so this one
+never runs), `convention-only` (reached only by
 a symbol handed to a macro — usually a sign it *is* used), `super-only` (reached
 only by `super` from the overrides in `super_from`: live exactly when they are),
 `override` (no reference, but it overrides the ancestor methods in `overrides`,

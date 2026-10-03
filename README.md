@@ -181,6 +181,8 @@ super-only       activerecord/lib/active_record/associations/belongs_to_associat
 The tiers, from least evidence of use to most:
 
 - `unreferenced` — nothing names it.
+- `shadowed` — names it, but every such call lands on an override: a
+  subclass's, for a method; a nested group's, for a `let` (`overridden_by`).
 - `test-only` — a class, module or constant only specs and tests name.
 - `override` — nothing names it, but it overrides an ancestor's method, so
   whatever calls that one (often the framework) may run it.
