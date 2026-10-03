@@ -63,6 +63,24 @@ impl Files for CheckoutFiles<'_> {
             .files_calling(self.root_str, name)
             .unwrap_or_default()
     }
+
+    fn mentions(&self, path: &str, needle: &str) -> bool {
+        if let Some(text) = self.open.get(path) {
+            return text.contains(needle);
+        }
+        if let Some(Some(facts)) = self.held.borrow().get(path)
+            && let Some(source) = facts.source.as_deref()
+        {
+            return contains(source, needle.as_bytes());
+        }
+        std::fs::read(self.root.join(path)).is_ok_and(|bytes| contains(&bytes, needle.as_bytes()))
+    }
+}
+
+fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+    haystack
+        .windows(needle.len())
+        .any(|window| window == needle)
 }
 
 /// What kind of member a row is: `let`, `subject`, or a group's `def`.
@@ -112,7 +130,7 @@ pub(super) fn dead_row(
         true => "unreferenced",
         false => "shadowed",
     };
-    let caveat = reads.caveats.join(", ");
+    let caveat = said(&reads.caveats);
     Some(serde_json::json!({
         "kind": kind(def),
         "name": def.name,
@@ -134,6 +152,22 @@ pub(super) fn dead_row(
         "caveat": caveat,
         "reason": reason(tier, &reads),
     }))
+}
+
+/// A row's caveats, the first few: one helper that sends computed names
+/// may be cited on every line it does.
+fn said(caveats: &[String]) -> String {
+    const SHOWN: usize = 3;
+    let mut text = caveats
+        .iter()
+        .take(SHOWN)
+        .cloned()
+        .collect::<Vec<_>>()
+        .join(", ");
+    if caveats.len() > SHOWN {
+        text.push_str(&format!(", and {} more", caveats.len() - SHOWN));
+    }
+    text
 }
 
 fn reason(tier: &str, reads: &Reads) -> String {
@@ -267,10 +301,7 @@ pub(super) fn refs_text(answer: &serde_json::Value, reads: &Reads) -> Vec<String
         ));
     }
     if !reads.caveats.is_empty() {
-        lines.push(format!(
-            "  may be read unseen: {}",
-            reads.caveats.join(", ")
-        ));
+        lines.push(format!("  may be read unseen: {}", said(&reads.caveats)));
     }
     lines
 }
@@ -339,31 +370,6 @@ struct SharedGroup {
     by_metadata: bool,
 }
 
-/// The literal a call on this line hands its first argument, and whether
-/// more arguments follow it before the block: `shared_context "x", :db do`.
-fn literal_on(source: &[u8], line: u32, after: &str) -> Option<(String, bool)> {
-    let text = String::from_utf8_lossy(source.split(|b| *b == b'\n').nth(line as usize - 1)?);
-    let rest = &text[text.find(after)? + after.len()..];
-    let rest = rest.trim_start().trim_start_matches('(').trim_start();
-    let (name, tail) = match rest.chars().next()? {
-        quote @ ('"' | '\'') => {
-            let body = &rest[1..];
-            let end = body.find(quote)?;
-            (body[..end].to_string(), &body[end + 1..])
-        }
-        ':' => {
-            let body = &rest[1..];
-            let end = body
-                .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '?' || c == '!'))
-                .unwrap_or(body.len());
-            (body[..end].to_string(), &body[end..])
-        }
-        _ => return None,
-    };
-    let tail = tail.trim_start().trim_start_matches(')').trim_start();
-    Some((name, tail.starts_with(',')))
-}
-
 /// `--dead`'s rows for the shared groups the scope writes that no group
 /// includes by name (DEC-493), and the modules of those it lists, whose own
 /// members go with them.
@@ -396,7 +402,7 @@ pub(super) fn dead_shared_groups(
         for (module, pos) in top.chain(local) {
             let (name, by_metadata) = ["shared_examples_for", "shared_examples", "shared_context"]
                 .iter()
-                .find_map(|call| literal_on(source, pos.line, call))
+                .find_map(|call| members::literal_on(source, pos.line, call))
                 .unwrap_or_else(|| {
                     (
                         module.rsplit("::").next().unwrap_or_default().to_string(),
@@ -450,7 +456,7 @@ pub(super) fn dead_shared_groups(
             let literal = facts
                 .source
                 .as_deref()
-                .and_then(|source| literal_on(source, call.pos.line, &call.name));
+                .and_then(|source| members::literal_on(source, call.pos.line, &call.name));
             match literal {
                 Some((name, _)) => {
                     included.push((path.clone(), rspec::shared_module(&rspec::base_name(&name))))

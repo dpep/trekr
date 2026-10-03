@@ -27,6 +27,9 @@ pub(crate) trait Files {
     fn facts(&self, path: &str) -> Option<Arc<Facts>>;
     /// The checkout-relative files that call `name`, as the index lists them.
     fn calling(&self, name: &str) -> Vec<String>;
+    /// Whether a file's text contains `needle`, read without parsing it: a
+    /// cheap filter before a parse.
+    fn mentions(&self, path: &str, needle: &str) -> bool;
 }
 
 /// A group member: a `let`, `let!`, `subject` or `def` written in an example
@@ -227,6 +230,31 @@ impl Reads {
     }
 }
 
+/// The literal a call on this line hands its first argument, and whether
+/// more arguments follow it before the block: `shared_context "x", :db do`.
+pub(crate) fn literal_on(source: &[u8], line: u32, after: &str) -> Option<(String, bool)> {
+    let text = String::from_utf8_lossy(source.split(|b| *b == b'\n').nth(line as usize - 1)?);
+    let rest = &text[text.find(after)? + after.len()..];
+    let rest = rest.trim_start().trim_start_matches('(').trim_start();
+    let (name, tail) = match rest.chars().next()? {
+        quote @ ('"' | '\'') => {
+            let body = &rest[1..];
+            let end = body.find(quote)?;
+            (body[..end].to_string(), &body[end + 1..])
+        }
+        ':' => {
+            let body = &rest[1..];
+            let end = body
+                .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '?' || c == '!'))
+                .unwrap_or(body.len());
+            (body[..end].to_string(), &body[end..])
+        }
+        _ => return None,
+    };
+    let tail = tail.trim_start().trim_start_matches(')').trim_start();
+    Some((name, tail.starts_with(',')))
+}
+
 /// The member a call names, when a group's lookup finds one (DEC-084):
 /// written in this file, or in a shared group's module, by where its module
 /// writes it.
@@ -334,6 +362,33 @@ pub(crate) struct Context<'a> {
     /// The modules mixed into every example group.
     helpers: Vec<String>,
     modules: RefCell<HashMap<String, Arc<ModuleCalls>>>,
+    /// The shared groups metadata includes, and what their bodies call.
+    metadata: RefCell<Option<Arc<Metadata>>>,
+    /// What the hooks `RSpec.configure` adds to every example call, by name.
+    hooks: RefCell<Option<Arc<Sites>>>,
+}
+
+/// Where each name is called, by file and position.
+type Sites = HashMap<String, Vec<(String, crate::core::Pos)>>;
+
+/// The hooks `RSpec.configure` can add to every example (`config.before`).
+const CONFIG_HOOKS: [&str; 7] = [
+    "before",
+    "after",
+    "around",
+    "prepend_before",
+    "append_before",
+    "prepend_after",
+    "append_after",
+];
+
+/// The shared groups RSpec includes by metadata — `shared_context "x",
+/// :db`, `config.include_context "x", :db` — which no group names, and so
+/// may be in any group: what each body calls, by name.
+#[derive(Default)]
+struct Metadata {
+    modules: Vec<String>,
+    calls: HashMap<String, Vec<(String, crate::core::Pos, String)>>,
 }
 
 /// What a module's methods call with no receiver, by name, and where they
@@ -351,7 +406,174 @@ impl<'a> Context<'a> {
             files,
             helpers: helper_modules(tree),
             modules: RefCell::new(HashMap::new()),
+            metadata: RefCell::new(None),
+            hooks: RefCell::new(None),
         }
+    }
+
+    /// What each `config.before`/`after`/`around` block for examples calls
+    /// with no receiver, by name — on the example it runs for. One for the
+    /// suite or a whole group (`:suite`, `:all`, `:context`) cannot read a
+    /// `let`, and is not read.
+    fn hook_calls(&self) -> Arc<Sites> {
+        if let Some(held) = self.hooks.borrow().as_ref() {
+            return held.clone();
+        }
+        let mut found: Sites = HashMap::new();
+        // Written in `RSpec.configure`: only a file that calls it.
+        let configures: Vec<String> = self
+            .files
+            .calling("configure")
+            .into_iter()
+            .filter(|path| self.files.mentions(path, "RSpec.configure"))
+            .collect();
+        let mut paths: Vec<String> = CONFIG_HOOKS
+            .iter()
+            .flat_map(|hook| self.files.calling(hook))
+            .filter(|path| configures.contains(path))
+            .collect();
+        paths.sort();
+        paths.dedup();
+        for path in paths {
+            let Some(facts) = self.files.facts(&path) else {
+                continue;
+            };
+            let Some(source) = facts.source.as_deref() else {
+                continue;
+            };
+            let hooks: Vec<crate::core::Pos> = facts
+                .calls
+                .iter()
+                .filter(|call| {
+                    CONFIG_HOOKS.contains(&call.name.as_str())
+                        && call.block
+                        && !matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv)
+                        && !literal_on(source, call.pos.line, &call.name).is_some_and(
+                            |(scope, _)| matches!(scope.as_str(), "suite" | "all" | "context"),
+                        )
+                })
+                .map(|call| call.pos)
+                .collect();
+            if hooks.is_empty() {
+                continue;
+            }
+            let within = |call: &Call| {
+                let mut at = call.block_owner;
+                for _ in 0..16 {
+                    let Some(owner) = at else { return false };
+                    if hooks.contains(&owner) {
+                        return true;
+                    }
+                    at = facts
+                        .calls
+                        .iter()
+                        .find(|c| c.pos == owner)
+                        .and_then(|c| c.block_owner);
+                }
+                false
+            };
+            for call in facts.calls.iter().filter(|call| {
+                matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv) && within(call)
+            }) {
+                found
+                    .entry(call.name.clone())
+                    .or_default()
+                    .push((path.clone(), call.pos));
+            }
+        }
+        let found = Arc::new(found);
+        *self.hooks.borrow_mut() = Some(found.clone());
+        found
+    }
+
+    fn metadata(&self) -> Arc<Metadata> {
+        if let Some(held) = self.metadata.borrow().as_ref() {
+            return held.clone();
+        }
+        let found = Arc::new(self.read_metadata());
+        *self.metadata.borrow_mut() = Some(found.clone());
+        found
+    }
+
+    fn read_metadata(&self) -> Metadata {
+        let mut modules: Vec<String> = Vec::new();
+        // `config.include_context "x", :db`, sent to the configuration.
+        for name in ["include_context", "include_examples"] {
+            let sent = format!(".{name}");
+            for path in self
+                .files
+                .calling(name)
+                .into_iter()
+                .filter(|path| self.files.mentions(path, &sent))
+            {
+                let Some(facts) = self.files.facts(&path) else {
+                    continue;
+                };
+                let Some(source) = facts.source.as_deref() else {
+                    continue;
+                };
+                for call in facts.calls.iter().filter(|call| {
+                    call.name == name
+                        && !matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv)
+                }) {
+                    if let Some((written, _)) = literal_on(source, call.pos.line, name) {
+                        let module = rspec::shared_module(&rspec::base_name(&written));
+                        if !modules.contains(&module) {
+                            modules.push(module);
+                        }
+                    }
+                }
+            }
+        }
+        // `shared_context "x", :db`, written with metadata.
+        for (fqn, _) in self.tree.declared() {
+            if !rspec::is_shared_module(&fqn) || modules.contains(&fqn) {
+                continue;
+            }
+            let by_metadata = self.tree.sites(&fqn).iter().any(|site| {
+                let Some(path) = site.path.strip_prefix(&self.tree.site_path("")) else {
+                    return false;
+                };
+                let Some(source) = self
+                    .files
+                    .facts(path)
+                    .and_then(|facts| facts.source.clone())
+                else {
+                    return false;
+                };
+                ["shared_examples_for", "shared_examples", "shared_context"]
+                    .iter()
+                    .find_map(|call| literal_on(&source, site.line, call))
+                    .is_some_and(|(_, metadata)| metadata)
+            });
+            if by_metadata {
+                modules.push(fqn);
+            }
+        }
+        let mut calls: HashMap<String, Vec<(String, crate::core::Pos, String)>> = HashMap::new();
+        for module in &modules {
+            for path in checkout_paths(self.tree, module) {
+                let Some(facts) = self.files.facts(&path) else {
+                    continue;
+                };
+                for call in facts.calls.iter().filter(|call| {
+                    matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv)
+                        && !call.group_body
+                        && call
+                            .nesting
+                            .last()
+                            .and_then(|segment| rspec::shared_module_of(segment))
+                            .is_some_and(|of| of == *module)
+                }) {
+                    calls.entry(call.name.clone()).or_default().push((
+                        path.clone(),
+                        call.pos,
+                        module.clone(),
+                    ));
+                }
+            }
+        }
+        Metadata { modules, calls }
     }
 
     fn module_calls(&self, module: &str) -> Arc<ModuleCalls> {
@@ -1136,6 +1358,67 @@ pub(crate) fn reads(context: &Context<'_>, asked: &Asked<'_>, keep_all: bool) ->
     modules.sort();
     modules.dedup();
     out.shared_groups = modules.len();
+
+    // The shared groups metadata includes, which may be in any group: a
+    // call of its name in one's body may read it.
+    let metadata = context.metadata();
+    for name in &names {
+        for (path, pos, module) in metadata.calls.get(*name).into_iter().flatten() {
+            if of.as_ref().is_some_and(|of| of.module == *module) {
+                continue;
+            }
+            let why =
+                "a shared group metadata includes reads it, in the groups whose metadata matches";
+            push(
+                &mut out,
+                at(
+                    path,
+                    *pos,
+                    "implicit",
+                    &[],
+                    Tier::Possible,
+                    why,
+                    "shared_group",
+                ),
+            );
+        }
+    }
+    // A member of one is in any group whose metadata matches: a call of its
+    // name that nothing nearer answers may read it.
+    let by_metadata = of
+        .as_ref()
+        .is_some_and(|of| !of.local && metadata.modules.contains(&of.module));
+    if by_metadata {
+        for (path, facts) in held.iter().filter(|(path, _)| path != asked.path) {
+            for call in facts.calls.iter().filter(|call| {
+                names.contains(&call.name.as_str())
+                    && matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv)
+                    && rspec::in_group(&call.nesting)
+                    && !call.group_body
+            }) {
+                if member_at(tree, facts, &call.nesting, &call.name, false).is_none() {
+                    let why = "a group whose metadata may include its shared group calls it";
+                    push(
+                        &mut out,
+                        reference(path, call, Tier::Possible, why, "includer"),
+                    );
+                }
+            }
+        }
+    }
+
+    // A hook `RSpec.configure` adds to every example (its metadata filter
+    // not read) may read it by name.
+    let hooks = context.hook_calls();
+    for name in &names {
+        for (path, pos) in hooks.get(*name).into_iter().flatten() {
+            let why = "a hook RSpec.configure runs for every example calls it, for the examples it runs for";
+            push(
+                &mut out,
+                at(path, *pos, "implicit", &[], Tier::Possible, why, "helper"),
+            );
+        }
+    }
 
     // The helpers every group mixes in, and the modules a group in reach
     // includes: a call of its name there may be the member's, in whichever

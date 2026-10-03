@@ -11724,9 +11724,8 @@ and `Facts::local_shared` (a shared group written inside a group).
 candidate is not one: one pass, as for methods (`api/v1/timelines/list`'s
 `scopes`, read by a `token` every running group overrides). A group opened
 in a loop's block (`[…].each { |v| context … }`) is not a group trekr opens.
-A `def self.x` in a group is no member and no row. Metadata includes
-(`shared_context "x", :db` into `describe …, :db`) are not matched: such a
-group's members are read only through a by-name include.
+A `def self.x` in a group is no member and no row. (Metadata includes
+were not read at first; DEC-495 reads them.)
 
 ## DEC-491 — `shadowed`: a definition every read of whose name an override answers
 
@@ -11852,3 +11851,50 @@ read some of its shared groups' `let`s, did not run, so those `let`s count
 as unused. The rest are read only by a member that never runs (one pass,
 DEC-490). Timing, `--dead spec`, warm: dd-trace-rb 3.7 s, the others under
 half a second.
+
+## DEC-495 — Metadata includes and `RSpec.configure`'s hooks read a member
+
+**Measured first.** rubocop's own suite (22,234 examples, 9 failures),
+traced as DEC-492 does and scored on the build DEC-494 ended at (30388d5),
+held out: of 632 `let` rows graded `clear`, **1** was truly unused. Every
+other was read by rubocop's `shared_context 'config'`, which
+`lib/rubocop/rspec/support.rb` includes with `config.include_context
+'config', :config` into every group tagged `:config` — no group names it,
+so no include was read, and its body's `let(:config)` reads each cop
+spec's `cop_config`, `other_cops`, `source`. One unread way in, multiplied
+by every group it reaches. rspec-rails' suite (938 examples, held out the
+same way) had no `clear` `let` row; its 14 group `def` rows, `lower`, were
+truly unused 3 times — the rest override assertion methods its matchers
+call on the example by an explicit receiver, which no rule reads.
+
+**Decided.** Two ways RSpec runs code in a group that no group writes:
+
+- **A shared group included by metadata**: one named by
+  `config.include_context` or `config.include_examples` (sent to the
+  configuration, read from its line), or written with metadata
+  (`shared_context "x", :db`), which RSpec includes in the groups whose
+  metadata matches. The match is not read, so as with a `config.include`d
+  helper (DEC-088) it may be in any group: a call of a name in its body is
+  a `possible` read of every member of the name (`from: shared_group`), and
+  its own members are read by any group's call that nothing nearer answers
+  (`from: includer`).
+- **A hook `RSpec.configure` adds** — `config.before`, `after`, `around` and
+  their `prepend_`/`append_` forms, read in files that call `RSpec.configure`
+  — runs on every example (its metadata filter not read): a call of a name
+  in its block is a `possible` read (`from: helper`). One for `:suite`,
+  `:all` or `:context` runs outside any example and is not read.
+
+**Measured after**, same rows: rubocop `clear` `let` rows 1/1; mastodon
+and the six gems unchanged (DEC-492, DEC-494). Fitted on rubocop, so not
+a held-out number. Testbed 497. The cost is one read of the files that
+call `RSpec.configure` or `.include_context` and of each shared group
+written with metadata, once per run.
+
+**What the held-out suites say about `clear`.** Each suite no rule had
+seen found a way in the rules did not read, and each such way covers many
+`let`s at once: the six gems 52 clear rows true in 66 (DEC-494), rubocop 1
+in 632. After reading them, every suite scores every `clear` row truly
+unused, but that is the fitted number. `clear` on a member means trekr
+read every way in it knows of and found no read; it does not mean a suite
+with its own conventions has none, and a user deleting by it should run
+the suite after.

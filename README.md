@@ -249,9 +249,11 @@ nested groups', by a hook or `let` of an enclosing group (which runs for
 them, and reads a nested group's override where one runs), by a shared
 group's body included there — in another file, through `it_behaves_like`,
 `include_examples` or `include_context` — by `super` in an override, by
-`is_expected` and a bare `should` for the `subject`, and by a helper
-`RSpec.configure` mixes in (its metadata filter is not read, so every
-group's). `shadowed` is a member every read of whose name an override
+`is_expected` and a bare `should` for the `subject`, and by what
+`RSpec.configure` adds — a helper it includes, a shared context it includes
+by metadata (`config.include_context "x", :tag`, or one written
+`shared_context "x", :tag`), a `config.before` hook — whose metadata filter
+is not read, so they may read any group's. `shadowed` is a member every read of whose name an override
 answers where the read runs — an outer `let` each running group redefines;
 `overridden_by` names them. A name sent at runtime in its reach
 (`send("item_#{n}")`), or a group macro trekr does not read, grades a row

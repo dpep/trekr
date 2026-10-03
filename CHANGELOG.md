@@ -35,7 +35,9 @@
   runs for them, by the body of a shared group included there (in any file,
   through `it_behaves_like`, `include_examples` or `include_context`), by
   `super` in an override, by `is_expected` and a bare `should` for a
-  `subject`, and by a helper `RSpec.configure` mixes into every group. One
+  `subject`, and by what `RSpec.configure` adds to every group — a helper
+  it includes, a shared group it includes by metadata, a `config.before`
+  hook. One
   nothing reads is a row — `kind: let`, `subject` or `method`, with the
   group it is written in (`group`) and how many shared groups and helpers
   were read for it — `unreferenced`, or `shadowed` when every read lands on

@@ -1,0 +1,10 @@
+# A shared group RSpec includes by metadata — `config.include_context "x",
+# :widget`, or `shared_context "x", :gadget` — is named by no group, so its
+# body may run in any; and a `config.before` runs for every example. Each
+# reads a `let` by name: rubocop's `config` context reads 627 of its suite's
+# `let`s so, and each was reported unread (DEC-495). A member of such a
+# shared group is read by any group's call nothing nearer answers.
+# A `before(:suite)` hook runs outside every example and reads none.
+dead spec/widget_spec.rb @2=none @3=none @4=none @5=unreferenced
+refs spec/widget_spec.rb:2 confirmed=0 possible=1
+dead lib/widget_contexts.rb @2=none

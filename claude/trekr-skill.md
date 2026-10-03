@@ -132,7 +132,8 @@ whole-mention view. **A position** (`--refs spec/widget_spec.rb:12`, or
 `Owner#method`, or a spec's `let`, `subject` or group `def` — every read as
 RSpec runs it (its group's and nested groups' examples, an enclosing group's
 hooks, an included shared group's body in any file, `super`, `is_expected`,
-a `config.include`d helper), each with `from` saying where. Use it before
+a `config.include`d helper, a shared context included by metadata, a
+`config.before` hook), each with `from` saying where. Use it before
 deleting a `let`.
 
 **Through the LSP tool, findReferences is capped** (1,000 by default, confirmed
