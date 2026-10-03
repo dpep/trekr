@@ -2946,6 +2946,83 @@ fn a_first_query_whose_index_outwaits_the_lock_is_incomplete() {
     }
 }
 
+/// Run trekr with extra environment, failing the test rather than hanging
+/// it when trekr outlives `limit`.
+fn trekr_within(
+    db: &Path,
+    cwd: &Path,
+    args: &[&str],
+    vars: &[(&str, &str)],
+    limit: std::time::Duration,
+) -> Output {
+    let mut command = neutral(Command::new(env!("CARGO_BIN_EXE_trekr")));
+    command
+        .args(args)
+        .current_dir(cwd)
+        .env("TREKR_DB", db)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    for (key, value) in vars {
+        command.env(key, value);
+    }
+    let mut child = command.spawn().expect("spawn trekr");
+    let started = std::time::Instant::now();
+    while child.try_wait().unwrap().is_none() {
+        if started.elapsed() > limit {
+            let _ = child.kill();
+            let out = child.wait_with_output().unwrap();
+            panic!(
+                "trekr {args:?} still running after {limit:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    child.wait_with_output().unwrap()
+}
+
+/// A first query's index that dies once it has claimed the checkout —
+/// killed, or failing to write — ends the query with what killed it, and
+/// the next query takes the dead claim over rather than waiting on it.
+#[test]
+fn a_first_query_whose_index_dies_after_claiming_ends() {
+    let limit = std::time::Duration::from_secs(20);
+    for (hook, code, says) in [
+        ("kill", 2, "stopped by a signal"),
+        ("fail", 74, "disk I/O error"),
+    ] {
+        let (dir, db) = scratch(&format!("auto-dies-{hook}"));
+        repo(&dir);
+        let out = trekr_within(
+            &db,
+            &dir,
+            &["--refs", "Widget#helper", "--json"],
+            &[("TREKR_TEST_AFTER_CLAIM", hook)],
+            limit,
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(code), "{hook}: {stderr}");
+        assert!(stderr.contains(says), "{hook}: {stderr}");
+
+        let started = std::time::Instant::now();
+        let next = trekr_within(
+            &db,
+            &dir,
+            &["--refs", "Widget#helper", "--json"],
+            &[],
+            limit,
+        );
+        let stderr = String::from_utf8_lossy(&next.stderr);
+        assert_eq!(next.status.code(), Some(0), "{hook}: {stderr}");
+        assert!(json(&next).get("warming").is_none(), "{hook}: {stderr}");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "{hook}: the dead claim is taken over, not waited out"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
 /// A hand-typed column is a guess, so `--def` snaps to the nearest name on the
 /// line — and says that it did.
 #[test]

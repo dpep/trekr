@@ -87,10 +87,24 @@ pub(super) fn ensure(
         return Ok(None);
     }
     let mut heads = Heads::new(&root_str, Why::of(store, &seen)?);
-    let mut ours: Option<Child> = None;
+    let mut ours: Option<Index> = None;
     // Whether the index that filled the store was ours, not another's.
     let mut filled = false;
     loop {
+        // Ours is reaped the moment it ends: until then it is a zombie, which
+        // a liveness check takes for running, and its claim with it.
+        if let Some(index) = ours.as_mut()
+            && let Some(status) = index.child.try_wait()?
+        {
+            let index = ours.take().expect("just matched");
+            // Its last commit may have landed since the look.
+            if status.success() || matches!(look(store, &root_str, relative)?, Seen::Ready) {
+                break;
+            }
+            heads.clear();
+            let other = matches!(look(store, &root_str, relative)?, Seen::Filling(_));
+            return ended(out, &root_str, status, other, &index).map(Some);
+        }
         match &seen {
             Seen::Ready => break,
             // Another's index is bounded as a writer's turn is (DEC-139);
@@ -106,25 +120,15 @@ pub(super) fn ensure(
                 return Ok(Some(ExitCode::from(2)));
             }
             Seen::Filling(warming) => {
-                filled |= ours.as_ref().is_some_and(|child| child.id() == warming.pid);
+                filled |= ours
+                    .as_ref()
+                    .is_some_and(|ours| ours.child.id() == warming.pid);
                 heads.tick(Some(warming));
             }
             Seen::Idle(warming) => {
-                match ours.as_mut() {
-                    None => {
-                        ours = Some(spawn(root, file.as_ref().map(|(file, _)| file.as_path()))?);
-                        crate::usage::flag("indexed");
-                    }
-                    Some(child) => {
-                        if let Some(status) = child.try_wait()? {
-                            // Its last commit may have landed since the look.
-                            if matches!(look(store, &root_str, relative)?, Seen::Ready) {
-                                break;
-                            }
-                            heads.clear();
-                            return ended(out, &root_str, status).map(Some);
-                        }
-                    }
+                if ours.is_none() {
+                    ours = Some(spawn(root, file.as_ref().map(|(file, _)| file.as_path()))?);
+                    crate::usage::flag("indexed");
                 }
                 heads.tick(warming.as_ref());
             }
@@ -134,8 +138,8 @@ pub(super) fn ensure(
     }
     // The child prepares the tree after its last commit (DEC-192): a whole
     // question waits for that rather than assembling it again.
-    if let (Need::Whole, Some(child), true) = (need, ours.as_mut(), filled) {
-        let _ = child.wait();
+    if let (Need::Whole, Some(index), true) = (need, ours.as_mut(), filled) {
+        let _ = index.child.wait();
     }
     heads.clear();
     Ok(None)
@@ -198,21 +202,48 @@ fn look(store: &Store, root: &str, file: Option<&str>) -> anyhow::Result<Seen> {
     })
 }
 
+/// An index this query started.
+struct Index {
+    child: Child,
+    /// Its stderr: what it said when it failed. Unlinked once open, so
+    /// nothing is left behind however either process ends — and a file
+    /// rather than a pipe, which a child outliving this query would die
+    /// writing to.
+    said: Option<std::fs::File>,
+}
+
+impl Index {
+    /// The last thing it said, without its `trekr: ` prefix.
+    fn last_words(&self) -> Option<String> {
+        use std::io::{Read, Seek};
+        let mut file = self.said.as_ref()?;
+        file.seek(std::io::SeekFrom::Start(0)).ok()?;
+        let mut said = String::new();
+        file.take(64 * 1024).read_to_string(&mut said).ok()?;
+        let line = said.lines().rev().find(|line| !line.trim().is_empty())?;
+        Some(line.trim().trim_start_matches("trekr: ").to_string())
+    }
+}
+
 /// `trekr --index ROOT`, from this binary, in a process group of its own so
 /// a Ctrl-C at the terminal stops this query and not the index. Told `file`
 /// as the language server tells its child an open file, it reads that first
 /// (DEC-322). At full priority, unlike the language server's (DEC-062):
 /// another query may be waiting on it.
-fn spawn(root: &Path, file: Option<&Path>) -> anyhow::Result<Child> {
+fn spawn(root: &Path, file: Option<&Path>) -> anyhow::Result<Index> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
+    let said = said_file();
     let mut command = Command::new(std::env::current_exe()?);
     command
         .arg("--index")
         .arg(root)
         .env(SPAWNED, "1")
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(match said.as_ref().and_then(|f| f.try_clone().ok()) {
+            Some(file) => Stdio::from(file),
+            None => Stdio::null(),
+        })
         .process_group(0);
     command.stdin(match file {
         Some(_) => Stdio::piped(),
@@ -223,19 +254,45 @@ fn spawn(root: &Path, file: Option<&Path>) -> anyhow::Result<Child> {
         // A child that has already moved on leaves it unread.
         let _ = writeln!(hints, "{}", file.display());
     }
-    Ok(child)
+    Ok(Index { child, said })
 }
 
-/// The child ended without the store holding what was needed.
-fn ended(out: Output, root: &str, status: ExitStatus) -> anyhow::Result<ExitCode> {
+/// A file for the child's stderr, already unlinked.
+fn said_file() -> Option<std::fs::File> {
+    let path = std::env::temp_dir().join(format!("trekr-index-{}.err", std::process::id()));
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&path)
+        .ok()?;
+    let _ = std::fs::remove_file(&path);
+    Some(file)
+}
+
+/// The child ended without the store holding what was needed. `other`: a
+/// live index of another process is filling the checkout now.
+fn ended(
+    out: Output,
+    root: &str,
+    status: ExitStatus,
+    other: bool,
+    index: &Index,
+) -> anyhow::Result<ExitCode> {
     let why = match status.code() {
-        // DEC-400's "ask again": the write lock was outwaited.
+        // DEC-400's "ask again": the wait for a writer or an index ran out.
+        Some(2) if other => "another trekr's index of it outlasted the writer wait",
         Some(2) => "another trekr writer kept the write lock longer than an index waits",
         None => "the index was stopped by a signal",
         Some(code) => {
             let pretty = paths::pretty(root);
+            let why = index.last_words().map_or_else(
+                || format!("exit {code}"),
+                |said| format!("{said} (exit {code})"),
+            );
             return Err(failure_of(code).error(format!(
-                "indexing {pretty} failed (exit {code}); `trekr --index {pretty}` says why"
+                "indexing {pretty} failed: {why}; `trekr --index {pretty}` tries again"
             )));
         }
     };

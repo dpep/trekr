@@ -15,7 +15,9 @@
   second says so once on stderr, and at a terminal shows a progress line that
   clears itself; stdout is still only the answer. Ctrl-C stops the wait, not
   the index. A checkout whose index an upgrade dropped, or one cut short, is
-  indexed the same way. `--status` still only reports.
+  indexed the same way. `--status` still only reports. An index that
+  dies on the way — killed, or a full disk — ends the query with what it
+  died of, and the next query finishes it.
 - **One first index per checkout.** A query, or a `trekr --index`, that finds
   another process's first index of the checkout under way (the language
   server's, another query's) waits for it instead of answering partial or

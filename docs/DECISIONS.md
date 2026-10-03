@@ -12146,6 +12146,21 @@ where the whole index went; a confidence backed by the share of the *name's*
 candidate files read would say more. There is no `-q`, so nothing quiets
 the notice.
 
+*Addendum — an index that dies ends the wait.* A query reaps its own index
+child on every pass of its wait and, once the child has ended without the
+store holding what was asked, reports it: a signal (`kill -9`, the OOM
+killer) as incomplete, exit 2; an error as the child's own last stderr line
+under the child's exit kind (`database`, 74, for "disk I/O error"). Before,
+only a query that had seen no mark looked at its child; one that had seen
+its child's claim waited for the claim to end, and an exited child nobody
+has reaped is a zombie, which `kill(pid, 0)` reports as running — so the
+query, and every query behind it, waited forever. The child's stderr goes to
+an unlinked file rather than a pipe: a child that outlives the query (a
+position answered early) would die of SIGPIPE writing to a pipe nobody reads.
+The dead child's mark is left as it is — a dead writer's mark is DEC-320's
+"cut short", which the next query or `--index` takes over — and not
+cleared, which would make a partial checkout read as whole.
+
 ## DEC-501 — One first index per checkout
 
 **Decided.** A first index claims the checkout as it marks it (DEC-320): in

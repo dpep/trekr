@@ -1149,7 +1149,10 @@ fn index_all(
             break false;
         }
         match store.claim_warming(&root_str, files.len() as u64, !with_gems)? {
-            None => break true,
+            None => {
+                die_after_claim_for_tests()?;
+                break true;
+            }
             Some(other) => {
                 wait_for_index(store, &root_str, other)?;
                 // A query started this index, and the one it waited for
@@ -1193,6 +1196,26 @@ fn index_all(
     }
 
     Ok((counts, gems))
+}
+
+/// `TREKR_TEST_AFTER_CLAIM`: an index that dies holding its claim, as a
+/// `kill -9` (`kill`) or a full disk (`fail`) leaves one.
+fn die_after_claim_for_tests() -> anyhow::Result<()> {
+    match std::env::var("TREKR_TEST_AFTER_CLAIM").as_deref() {
+        // SAFETY: delivers SIGKILL to this process; nothing runs after it.
+        Ok("kill") => unsafe {
+            libc::kill(libc::getpid(), libc::SIGKILL);
+        },
+        Ok("fail") => {
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_IOERR),
+                Some("disk I/O error".into()),
+            )
+            .into());
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// Wait for another process's first index of `root` to end — or to die,
