@@ -41,11 +41,13 @@
   nothing reads is a row — `kind: let`, `subject` or `method`, with the
   group it is written in (`group`) and how many shared groups and helpers
   were read for it — `unreferenced`, or `shadowed` when every read lands on
-  an override (`overridden_by` names them). A name sent at runtime
-  (`send("item_#{n}")`) or a group macro trekr does not read grades a row
-  `lower`. `let!` runs for every example and is never listed. On mastodon's
-  suite, run with every definition traced, every such row trekr graded
-  `clear` was a `let` that never ran, and it found 9 in 10 of them.
+  an override (`overridden_by` names them). `let!` runs for every example
+  and is never listed. Every such row is `lower`, its `caveat` naming a
+  risk where one was found (a name sent at runtime, a group macro trekr
+  does not read, a string `eval`ed): on mastodon's suite, run with every
+  definition traced, every row was a `let` that never ran and it found 9 in
+  10 of them, but suites held out from the rules each read a `let` some way
+  they did not yet, so run the spec file after deleting one.
 - **`--dead` lists a shared group nothing includes**: a `shared_examples` or
   `shared_context` no `it_behaves_like`, `include_examples` or
   `include_context` names is a row, `kind: shared_group`, and its own

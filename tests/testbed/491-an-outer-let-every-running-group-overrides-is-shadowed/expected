@@ -3,6 +3,6 @@
 # definition answers. Widget runs no example of its own, and each group
 # nested in it overrides `mode`: the outer `let` never runs. Gadget runs
 # one, so its outer `let` is read.
-dead spec @2=shadowed~ @3=none @17=none @18=none
+dead spec @2=shadowed~DEC-496 @3=none @17=none @18=none
 refs spec/widget_spec.rb:2 confirmed=0 possible=0
 refs spec/widget_spec.rb:17 confirmed=1 possible=0

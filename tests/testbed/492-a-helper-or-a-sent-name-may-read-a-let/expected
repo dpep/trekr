@@ -2,5 +2,5 @@
 # `RSpec.configure` mixes into every group (its metadata filter is not
 # read, so every group), a name sent at runtime, and a group macro trekr
 # does not read. The helper is a read; the others are said, and lower it.
-dead spec @2=none @3=unreferenced~computed @4=unreferenced~ @12=unreferenced~macro
+dead spec @2=none @3=unreferenced~computed @4=unreferenced~DEC-496 @12=unreferenced~macro
 refs spec/widget_spec.rb:2 confirmed=0 possible=1

@@ -281,8 +281,10 @@ checkout** (not other indexed repos, so the answer does not depend on them);
 then a spec's `let`s, `subject`s, group `def`s (`kind: let|subject|method`,
 with `group`) and shared groups (`kind: shared_group`) nothing reads as RSpec
 runs them — `shadowed` when every read lands on an override (`overridden_by`);
-`let!` is never listed (it runs for every example); a computed `send` or a
-group macro trekr does not read grades the row `lower`. Then every class,
+`let!` is never listed (it runs for every example). Every such row is `lower`
+(held-out suites kept finding a way in): its `caveat` names a computed `send`, a
+group macro trekr does not read or an `eval`ed string when it sees one — run the
+spec file after deleting a `let`. Then every class,
 module and constant (`kind: class|module|constant`, a
 method's row `kind: method`) no constant reference resolves to — `test-only`
 when only specs name it, `convention-only` when a route, Rails or a library

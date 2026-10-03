@@ -130,7 +130,12 @@ pub(super) fn dead_row(
         true => "unreferenced",
         false => "shadowed",
     };
-    let caveat = said(&reads.caveats);
+    // Every member row is `lower` (DEC-496): on suites held out from the
+    // rules that read them, a row with no caveat was not reliably unused.
+    let caveat = match reads.caveats.is_empty() {
+        true => GRADED_LOWER.to_string(),
+        false => said(&reads.caveats),
+    };
     Some(serde_json::json!({
         "kind": kind(def),
         "name": def.name,
@@ -148,11 +153,16 @@ pub(super) fn dead_row(
         "overridden_by": reads.overridden_by,
         "shared_groups_read": reads.shared_groups,
         "helpers_read": reads.helpers,
-        "confidence": if caveat.is_empty() { "clear" } else { "lower" },
+        "confidence": "lower",
         "caveat": caveat,
         "reason": reason(tier, &reads),
     }))
 }
+
+/// Why a member row with no caveat of its own is `lower` (DEC-496).
+const GRADED_LOWER: &str = "an example group's lets, subjects, defs and shared groups are graded \
+     lower: on suites held out from the rules that read them, a row with no caveat was truly \
+     unused 79 %, 47 % and 0.2 % of the time (DEC-496)";
 
 /// A row's caveats, the first few: one helper that sends computed names
 /// may be cited on every line it does.
@@ -489,7 +499,7 @@ pub(super) fn dead_shared_groups(
         let caveat = unread
             .as_ref()
             .map(|at| format!("a shared group is included by a name trekr does not read, at {at}"))
-            .unwrap_or_default();
+            .unwrap_or_else(|| GRADED_LOWER.to_string());
         let reason = match group.by_metadata {
             true => "no group includes it by name, but metadata it is written with includes it in the groups that match".to_string(),
             false => "no group includes it by name: no `it_behaves_like`, `include_examples` or `include_context` of it".to_string(),
@@ -507,7 +517,7 @@ pub(super) fn dead_shared_groups(
             "tier": tier,
             "confirmed": 0,
             "possible": 0,
-            "confidence": if caveat.is_empty() { "clear" } else { "lower" },
+            "confidence": "lower",
             "caveat": caveat,
             "reason": reason,
         }));

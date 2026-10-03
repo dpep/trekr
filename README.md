@@ -257,9 +257,12 @@ by metadata (`config.include_context "x", :tag`, or one written
 `shared_context "x", :tag`), a `config.before` hook — whose metadata filter
 is not read, so they may read any group's. `shadowed` is a member every read of whose name an override
 answers where the read runs — an outer `let` each running group redefines;
-`overridden_by` names them. A name sent at runtime in its reach
-(`send("item_#{n}")`), or a group macro trekr does not read, grades a row
-`lower`. `let!` and `subject!` run for every example and are never listed.
+`overridden_by` names them. **Every such row is `lower`** (DEC-496), and
+its `caveat` says why: a name sent at runtime in its reach
+(`send("item_#{n}")`), a group macro trekr does not read, a string of code
+it evaluates — or, with none of those, that held-out suites showed `clear`
+is not earned here. `let!` and `subject!` run for every example and are
+never listed.
 A shared group nothing includes by name is a row too (`kind:
 shared_group`), its own `let`s with it. `trekr --refs FILE:LINE` on any of
 them lists each read and where it was found (`from`), from the same reader.
@@ -272,13 +275,16 @@ shadowed         spec/models/public_feed_spec.rb:47  let(:viewer) in PublicFeed:
 4 candidates in 1 file(s): 4 shadowed (4 clear, 0 lower); 4 of them example groups' lets, subjects, defs or shared groups
 ```
 
-Measured against what ran (DEC-492, DEC-494): mastodon's suite, with every
-`let`, `subject` and group `def` traced, then scored. Every `let` and
-`subject` row trekr listed — 46 `unreferenced` clear, 31 `shadowed` clear,
-9 `lower` — never ran in a group that passed an example, and trekr listed
-86 of the 96 `let`s that never did. Those rules were fitted on mastodon; on
-six gems' suites held out from them, a `clear` `let` row was truly unused
-52 times in 66 (79 %), and the five shapes behind the rest are now read.
+Measured against what ran (DEC-492 to DEC-496): mastodon's suite, with
+every `let`, `subject` and group `def` traced, then scored. Every `let` and
+`subject` row trekr listed never ran in a group that passed an example, and
+trekr listed 86 of the 96 `let`s that never did; 20 of 20 of discourse's
+rows, sampled and read by hand, were unused too. But each suite held out
+from the rules found a way in they did not yet read — a shared context
+included by metadata, a shared group written inside a module, a string
+`eval`ed — and a row with no caveat was truly unused 79 %, 47 % and 0.2 %
+of the time on three such batches before each was read. So every row is
+`lower`: run the spec file after deleting one.
 
 ### Where it keeps things
 

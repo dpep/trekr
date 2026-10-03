@@ -1,0 +1,6 @@
+# A shared group written inside the file's own module (`module Widgets;
+# RSpec.shared_examples …`) is still a top-level one: its body's reads were
+# missed, the module around its segment hiding it. A string of code a group
+# evaluates may read a `let` by name, and says so. An `attr_accessor` in a
+# group is no `let`, and is not weighed as one (DEC-496).
+dead spec/widget_spec.rb @7=none @8=unreferenced~evaluated @10=none

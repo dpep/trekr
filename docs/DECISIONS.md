@@ -11903,3 +11903,52 @@ unused, but that is the fitted number. `clear` on a member means trekr
 read every way in it knows of and found no read; it does not mean a suite
 with its own conventions has none, and a user deleting by it should run
 the suite after.
+
+## DEC-496 — An example group's member rows are graded `lower`
+
+**Measured first**, held out: five more suites traced as DEC-492 does
+(rspec-mocks 1,789 examples, rspec-expectations 2,400, webmock 4,530 with
+its network examples skipped, rspec-core 2,227, dd-trace-rb's `appsec` and
+`profiling` 1,168), scored on the build DEC-495 ended at (c3123c7). `let`
+rows with no caveat: 8 truly unused in 17 (47 %). The false ones:
+
+- **A top-level shared group written inside the file's own module**
+  (`module RSpec; module Mocks; RSpec.shared_examples "…"`). Its body's
+  calls carry the module around the shared group's segment, and the body
+  was looked for at the outermost segment only, so its reads of the
+  includer's `let(:target)` (rspec-mocks, four rows) and `shell_command`
+  (rspec-core) were missed. The segment is now found inside the wrappers.
+- **A string of code `eval`ed** in reach (rspec-mocks' `eval("expect(…)
+  .with(…, **expected_keywords)")`): a caveat, "a string of code evaluated
+  at line N names it", when the line names the member.
+- **`attr_accessor` in a group** (rspec-core's `metadata_filter_spec`) was
+  weighed as a `let`; a member is now a `let`, `subject` or `def` only.
+
+rspec-core's own rows are scored with care: the tracer wraps the very
+mechanics its specs test, and 18 of its failures come from that. After
+these, every suite scores every row with no caveat truly unused — fitted.
+
+**Decided.** Across three held-out batches, a row with no caveat was truly
+unused 79 % (DEC-494), 0.2 % (DEC-495) and 47 % of the time as drawn. The
+brief was that `clear` mean nine in ten or better, since a user deletes
+what it says; it was never that held out. So, as DEC-450 decided for
+constants, **every member row and shared group row is `lower`**: a row
+whose reader found a risk names it in `caveat`; one with none says why it
+is still `lower` ("an example group's lets, subjects, defs and shared
+groups are graded lower: on suites held out from the rules that read them,
+a row with no caveat was truly unused 79 %, 47 % and 0.2 % of the time
+(DEC-496)"). The tiers stand: `unreferenced` and `shadowed` are what was
+found. A wrong deletion of a `let` fails loudly — the spec raises
+`NameError` — so the cost of a false row is a re-run, not a silent break.
+
+**Reverses if** a further held-out suite, an app's especially, scores nine
+in ten or better as drawn. The apps measured point that way: mastodon
+(fitted) 86 rows true of 86, and discourse, held out, 20 of 20 `clear`
+rows sampled at random and read by hand (`--dead spec` at c9e9732: 74
+`unreferenced` and 9 `shadowed` clear `let`s). The gem suites' ways in —
+metadata includes, module-wrapped shared groups, `eval`, conditional
+`let`s — are the misses; an app suite may have its own.
+
+**Timing**, `--dead spec --json`, warm, three runs each on a machine at
+load 5: mastodon 1.6–2.3 s, discourse 5.6–7.3 s; dd-trace-rb 4.3 s and
+rubocop 1.7 s once each. Testbed 499.

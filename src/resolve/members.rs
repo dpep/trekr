@@ -37,6 +37,10 @@ pub(crate) trait Files {
 pub(crate) fn is_member(def: &Def) -> bool {
     def.kind == Kind::Method
         && !def.singleton
+        && matches!(
+            def.via.as_deref(),
+            None | Some("let" | "let!" | "subject" | "subject!")
+        )
         && (def.is_group_member() || rspec::is_shared_member(def))
 }
 
@@ -290,10 +294,7 @@ pub(crate) fn includer_members(
     {
         return Vec::new();
     }
-    let top = call
-        .nesting
-        .last()
-        .and_then(|segment| rspec::shared_module_of(segment));
+    let top = shared_body_of(&call.nesting);
     let local = facts
         .local_shared
         .iter()
@@ -559,11 +560,7 @@ impl<'a> Context<'a> {
                 for call in facts.calls.iter().filter(|call| {
                     matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv)
                         && !call.group_body
-                        && call
-                            .nesting
-                            .last()
-                            .and_then(|segment| rspec::shared_module_of(segment))
-                            .is_some_and(|of| of == *module)
+                        && shared_body_of(&call.nesting).is_some_and(|of| of == *module)
                 }) {
                     calls.entry(call.name.clone()).or_default().push((
                         path.clone(),
@@ -910,10 +907,7 @@ fn shared_of(asked: &Asked<'_>, own: &Facts) -> Option<SharedOf> {
         });
     }
     let nesting = &asked.def.nesting;
-    if let Some(module) = nesting
-        .last()
-        .and_then(|segment| rspec::shared_module_of(segment))
-    {
+    if let Some(module) = shared_body_of(nesting) {
         return Some(SharedOf {
             module,
             top: false,
@@ -1235,12 +1229,13 @@ pub(crate) fn reads(context: &Context<'_>, asked: &Asked<'_>, keep_all: bool) ->
         for (path, facts, local) in &sources {
             let within = |nesting: &[String]| match local {
                 Some(body) => nesting.ends_with(body),
-                None => nesting
-                    .last()
-                    .and_then(|segment| rspec::shared_module_of(segment))
-                    .is_some_and(|of| of == *module),
+                None => shared_body_of(nesting).is_some_and(|of| of == *module),
             };
-            let top = local.map_or(1, |body| body.len());
+            // How deep in the body a level is: 0 at its top.
+            let depth = |level: &[String]| match local {
+                Some(body) => level.len().saturating_sub(body.len()),
+                None => depth_in_shared_body(level),
+            };
             for call in &facts.calls {
                 let proxy = reads_subject
                     && call.recv == RecvShape::Implicit
@@ -1335,7 +1330,7 @@ pub(crate) fn reads(context: &Context<'_>, asked: &Asked<'_>, keep_all: bool) ->
                 }
             }
             for (level, inner, nested) in includes(facts).filter(|(level, _, _)| within(level)) {
-                let deeper = nested || level.len() > top;
+                let deeper = nested || depth(level) > 0;
                 work.push(Body {
                     module: inner.clone(),
                     includer: includer.clone(),
@@ -1465,6 +1460,26 @@ pub(crate) fn reads(context: &Context<'_>, asked: &Asked<'_>, keep_all: bool) ->
     out
 }
 
+/// The module of the top-level shared group whose body `nesting` is in: its
+/// segment is the outermost group, inside whatever modules the file wraps
+/// it in (`module RSpec; RSpec.shared_examples "x" do`).
+fn shared_body_of(nesting: &[String]) -> Option<String> {
+    nesting
+        .iter()
+        .rev()
+        .find(|segment| rspec::is_group(segment))
+        .and_then(|segment| rspec::shared_module_of(segment))
+}
+
+/// How many groups deep in a top-level shared group's body `nesting` is: 0
+/// at its top.
+fn depth_in_shared_body(nesting: &[String]) -> usize {
+    nesting
+        .iter()
+        .position(|segment| rspec::shared_module_of(segment).is_some())
+        .unwrap_or(0)
+}
+
 /// A shared group's body to read for a member: its module, the file that
 /// includes it, and the groups there it is included in (`true` when in a
 /// group of its own nested there, as `it_behaves_like` makes).
@@ -1545,16 +1560,37 @@ fn overrides(asked: &Asked<'_>, path: &str, facts: &Facts, def: &Def) -> bool {
 /// runtime, a group macro trekr does not read, a shared group included by a
 /// name it cannot read.
 fn reach_caveats(tree: &Tree, scan: &Scan<'_>, asked: &Asked<'_>, names: &[&str], out: &mut Reads) {
-    let home: &[String] = match asked.module() {
-        Some(_) => &asked.def.nesting[asked.def.nesting.len() - 1..],
-        None => &asked.def.nesting,
-    };
-    let in_reach = |nesting: &[String]| {
-        rspec::in_group(nesting) && (nesting.ends_with(home) || home.ends_with(nesting))
+    let home = &asked.def.nesting;
+    let module = asked.module();
+    let in_reach = |nesting: &[String]| match module {
+        // A top-level shared group's member: anywhere in its body.
+        Some(module) => shared_body_of(nesting).is_some_and(|of| of == module),
+        None => rspec::in_group(nesting) && (nesting.ends_with(home) || home.ends_with(nesting)),
     };
     let facts = scan.facts;
     for why in sends_in(facts, scan.path, names, |call| in_reach(&call.nesting)) {
         out.caveat(why);
+    }
+    // A string of code evaluated where it is visible, which no index reads.
+    if let Some(source) = facts.source.as_deref() {
+        let lines: Vec<&[u8]> = source.split(|b| *b == b'\n').collect();
+        for call in facts.calls.iter().filter(|call| {
+            matches!(
+                call.name.as_str(),
+                "eval" | "instance_eval" | "class_eval" | "module_eval"
+            ) && in_reach(&call.nesting)
+        }) {
+            let text = lines
+                .get(call.pos.line as usize - 1)
+                .map(|line| String::from_utf8_lossy(line).into_owned())
+                .unwrap_or_default();
+            if names.iter().any(|name| names_word(&text, name)) {
+                out.caveat(format!(
+                    "a string of code evaluated at line {} names it",
+                    call.pos.line
+                ));
+            }
+        }
     }
     // A name a test library calls on the example itself: Rack::Test, and
     // Rails' integration session, build their session from `app`.
@@ -1590,6 +1626,15 @@ fn reach_caveats(tree: &Tree, scan: &Scan<'_>, asked: &Asked<'_>, names: &[&str]
             call.pos.line
         ));
     }
+}
+
+/// Does `text` hold `name` as a word of its own?
+fn names_word(text: &str, name: &str) -> bool {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    text.match_indices(name).any(|(at, _)| {
+        !text[..at].chars().next_back().is_some_and(word)
+            && !text[at + name.len()..].chars().next().is_some_and(word)
+    })
 }
 
 /// Each send of a computed name in `facts` that may be one of `names`, as
