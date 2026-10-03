@@ -2104,8 +2104,10 @@ fn usage_counts_each_command_by_caller_and_outcome() {
     // Nothing counted yet is a definitive "no", not a failure.
     assert_eq!(trekr(&db, &dir, &["--usage"]).status.code(), Some(1));
 
-    // Asked before anything was indexed: the answer an agent needs to hear.
-    trekr_env(&db, &dir, &["--def", "widget.rb:7:5"], &agent);
+    // Asked not to index before anything was: the answer an agent needs to
+    // hear. And a query that indexed first says so.
+    trekr_env(&db, &dir, &["--def", "widget.rb:7:5", "--no-index"], &agent);
+    trekr_env(&db, &dir, &["--refs", "Widget#helper"], &agent);
     trekr_env(&db, &dir, &["--index"], &agent);
     trekr_env(&db, &dir, &["--def", "widget.rb:7:5", "--json"], &agent);
     trekr_env(&db, &dir, &["Widget#nope"], &agent);
@@ -2122,6 +2124,8 @@ fn usage_counts_each_command_by_caller_and_outcome() {
             .unwrap_or_else(|| panic!("no {feature}/{outcome} row in {rows:?}"))
     };
     assert_eq!(find("def", "not-indexed")["origin"], "claude-code");
+    assert_eq!(find("def", "not-indexed")["flags"], "no-index");
+    assert_eq!(find("refs", "hit")["flags"], "indexed");
     let def = find("def", "hit");
     assert_eq!(def["surface"], "cli");
     assert_eq!(
@@ -2654,13 +2658,13 @@ fn human_output_shortens_home_and_json_keeps_it_absolute() {
 /// opposite reactions. Exit 2, because exit 1 is this tool's "a definitive
 /// nothing" and would tell a script the question had been answered.
 #[test]
-fn an_unindexed_checkout_is_a_setup_problem_not_a_residue() {
+fn with_no_index_an_unindexed_checkout_is_a_setup_problem_not_a_residue() {
     let (dir, db) = scratch("not-indexed");
     repo(&dir);
 
     for args in [
-        vec!["--def", "widget.rb:7:5"],
-        vec!["--refs", "Widget#helper"],
+        vec!["--def", "widget.rb:7:5", "--no-index"],
+        vec!["--refs", "Widget#helper", "--no-index"],
     ] {
         let out = trekr(&db, &dir, &args);
         assert_eq!(out.status.code(), Some(2), "{args:?} should not be exit 1");
@@ -2672,7 +2676,15 @@ fn an_unindexed_checkout_is_a_setup_problem_not_a_residue() {
         );
     }
 
-    let json = trekr(&db, &dir, &["--def", "widget.rb:7:5", "--json"]);
+    // The environment says it for every command a script runs; `0` is no.
+    let indexing = trekr_env(&db, &dir, &["--status"], &[("TREKR_NO_INDEX", "0")]);
+    assert_eq!(indexing.status.code(), Some(2), "a flag that parses");
+    let json = trekr_env(
+        &db,
+        &dir,
+        &["--def", "widget.rb:7:5", "--json"],
+        &[("TREKR_NO_INDEX", "1")],
+    );
     let value: serde_json::Value = serde_json::from_slice(&json.stdout).expect("json on stdout");
     assert_eq!(value["status"], "not_indexed");
     assert!(
@@ -2680,11 +2692,258 @@ fn an_unindexed_checkout_is_a_setup_problem_not_a_residue() {
             .as_str()
             .is_some_and(|r| r.ends_with("not-indexed"))
     );
+    assert_eq!(
+        count(&db, "SELECT COUNT(*) FROM checkout"),
+        0,
+        "nothing indexed"
+    );
+    let index = trekr_env(
+        &db,
+        &dir,
+        &["--index", "--json"],
+        &[("TREKR_NO_INDEX", "1")],
+    );
+    assert!(index.status.success(), "an index is still an index");
+    trekr(&db, &dir, &["--drop"]);
 
     // And it stops being a setup problem the moment it is indexed.
     assert!(trekr(&db, &dir, &["--index"]).status.success());
-    let out = trekr(&db, &dir, &["--def", "widget.rb:7:5"]);
+    let out = trekr(&db, &dir, &["--def", "widget.rb:7:5", "--no-index"]);
     assert_eq!(out.status.code(), Some(0), "an indexed checkout answers");
+}
+
+/// Wait until no index of `dir` is under way: a position query leaves the
+/// rest of a first index to a child that outlives it.
+fn settled(db: &Path, dir: &Path) {
+    for _ in 0..400 {
+        let out = trekr(db, dir, &["--status", "--json"]);
+        if out.status.code() == Some(0) && json(&out)["checkouts"][0].get("warming").is_none() {
+            // The child prepares the tree after its last commit.
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    panic!("the index of {} never finished", dir.display());
+}
+
+/// A query in a checkout nobody indexed indexes it, and answers: no
+/// `not_indexed`, and no setup step first (DEC-500).
+#[test]
+fn a_first_query_indexes_the_checkout_and_answers() {
+    for (label, args) in [
+        ("auto-refs", vec!["--refs", "Widget#helper"]),
+        ("auto-refs-at", vec!["--refs", "widget.rb:6:7"]),
+        ("auto-def", vec!["--def", "widget.rb:7:5"]),
+        ("auto-bare", vec!["widget.rb:7:5"]),
+        ("auto-card", vec!["Widget#resize"]),
+        ("auto-const", vec!["Widget"]),
+        ("auto-ancestors", vec!["--ancestors", "Widget"]),
+        ("auto-dead", vec!["--dead", "."]),
+    ] {
+        let (dir, db) = scratch(label);
+        repo(&dir);
+        let mut asked = args.clone();
+        asked.push("--json");
+        let out = trekr(&db, &dir, &asked);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            matches!(out.status.code(), Some(0 | 1)),
+            "{args:?}: {stderr}"
+        );
+        let answer = json(&out);
+        assert_ne!(answer["status"], "not_indexed", "{args:?}: {answer}");
+        assert_ne!(answer["status"], "warming", "{args:?}: {answer}");
+        settled(&db, &dir);
+        // The store it leaves is the one an index leaves: a reindex finds
+        // nothing to parse.
+        let again = json(&trekr(&db, &dir, &["--index", "--json"]));
+        assert_eq!(again["indexed"]["parsed"], 0, "{args:?}: {again}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+/// A question about the whole checkout waits for the whole index — a
+/// caller, a subclass, an unused method may be in any file — so its answer
+/// is never partial. A position answers once its file and what it names are
+/// in, and says if the rest is not.
+#[test]
+fn a_first_whole_checkout_question_waits_for_the_whole_index() {
+    let (dir, db) = scratch("auto-whole");
+    collision_repo(&dir);
+    let out = trekr(&db, &dir, &["--refs", "Widget#save", "--json"]);
+    assert_eq!(out.status.code(), Some(0));
+    let answer = json(&out);
+    assert!(answer.get("warming").is_none(), "{answer}");
+    assert_eq!(answer["counts"]["excluded"], 2, "{answer}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `--status` reports; it never indexes.
+#[test]
+fn status_stays_read_only_in_an_unindexed_checkout() {
+    let (dir, db) = scratch("auto-status");
+    repo(&dir);
+    let out = trekr(&db, &dir, &["--status", "--json"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(json(&out)["status"], "not_indexed");
+    assert_eq!(count(&db, "SELECT COUNT(*) FROM checkout"), 0);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// An index that takes longer than a second says so once on stderr — a
+/// person or an agent waiting on it learns why — and stdout is still the
+/// answer alone.
+#[test]
+fn a_first_index_longer_than_a_second_says_so_on_stderr() {
+    let (dir, db) = scratch("auto-notice");
+    repo(&dir);
+    let (other, _) = scratch("auto-notice-other");
+    repo(&other);
+    assert!(trekr(&db, &other, &["--index"]).status.success());
+
+    let holder = rusqlite::Connection::open(&db).unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let query = spawn_trekr(&db, &dir, &["--refs", "Widget#helper", "--json"]);
+    std::thread::sleep(std::time::Duration::from_millis(1600));
+    holder.execute_batch("ROLLBACK").unwrap();
+    let out = query.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(
+        stderr.matches("for the first time").count(),
+        1,
+        "one notice: {stderr}"
+    );
+    assert!(
+        !stderr.contains('\r'),
+        "no progress line off a terminal: {stderr}"
+    );
+    assert!(json(&out)["references"].is_array(), "stdout is the answer");
+
+    // A quick one says nothing.
+    let (quick, _) = scratch("auto-notice-quick");
+    repo(&quick);
+    let out = trekr(&db, &quick, &["--refs", "Widget#helper", "--json"]);
+    assert_eq!(String::from_utf8_lossy(&out.stderr), "");
+    for dir in [dir, other, quick] {
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+/// Several first queries at once: one index, every query answered, no
+/// "database is locked".
+#[test]
+fn first_queries_at_once_share_one_index() {
+    let (dir, db) = scratch("auto-race");
+    collision_repo(&dir);
+    let asked = [
+        vec!["--refs", "Widget#save", "--json"],
+        vec!["--refs", "Widget#save", "--json"],
+        vec!["--def", "app.rb:16:7", "--json"],
+        vec!["--ancestors", "Widget", "--json"],
+    ];
+    let running: Vec<_> = asked
+        .iter()
+        .map(|args| spawn_trekr(&db, &dir, args))
+        .collect();
+    let outs: Vec<_> = running
+        .into_iter()
+        .map(|child| child.wait_with_output().unwrap())
+        .collect();
+    for (args, out) in asked.iter().zip(&outs) {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {stderr}");
+        assert!(!stderr.contains("locked"), "{args:?}: {stderr}");
+    }
+    assert_eq!(json(&outs[0]), json(&outs[1]));
+    assert_eq!(json(&outs[0])["counts"]["excluded"], 2);
+    settled(&db, &dir);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A first index another process is running — the language server's, or a
+/// `trekr --index` — is waited for, not run again; and one whose process
+/// died is finished by the query that finds it.
+#[test]
+fn a_query_waits_for_an_index_under_way_and_finishes_one_cut_short() {
+    let (dir, db) = scratch("auto-behind");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    let indexer = stand_in_indexer(&db, &dir);
+    let started = std::time::Instant::now();
+    let out = trekr(&db, &dir, &["--refs", "Widget#helper", "--json"]);
+    assert!(
+        started.elapsed() >= std::time::Duration::from_millis(1000),
+        "waited for the index under way"
+    );
+    indexer.join().unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    assert!(json(&out).get("warming").is_none(), "and finished it");
+
+    // A position answers from the part read when it finds something, and
+    // says so; a miss there is not final, so it waits for the rest.
+    let indexer = stand_in_indexer(&db, &dir);
+    let started = std::time::Instant::now();
+    let hit = trekr(&db, &dir, &["--def", "widget.rb:7:5", "--json"]);
+    assert!(started.elapsed() < std::time::Duration::from_millis(1000));
+    assert_eq!(hit.status.code(), Some(0));
+    assert!(json(&hit)["warming"].is_object(), "{}", stdout(&hit));
+    let miss = trekr(&db, &dir, &["--def", "widget.rb:1:17", "--json"]);
+    assert!(started.elapsed() >= std::time::Duration::from_millis(1000));
+    indexer.join().unwrap();
+    assert_eq!(miss.status.code(), Some(1), "a miss from the whole index");
+    assert!(json(&miss).get("warming").is_none(), "{}", stdout(&miss));
+
+    // `--index` waits its turn the same way, and says so.
+    let indexer = stand_in_indexer(&db, &dir);
+    let out = trekr(&db, &dir, &["--index", "--json"]);
+    indexer.join().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stderr}");
+    assert!(stderr.contains("already indexing"), "{stderr}");
+    assert!(json(&out)["indexed"].is_object());
+    let status = json(&trekr(&db, &dir, &["--status", "--json"]));
+    assert!(status["checkouts"][0].get("warming").is_none(), "{status}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A process that marks `dir` as an index filling it, lives a second and a
+/// half, and is reaped the moment it ends: a zombie still answers a liveness
+/// check, and would read as an index under way for good.
+fn stand_in_indexer(db: &Path, dir: &Path) -> std::thread::JoinHandle<()> {
+    let mut indexer = Command::new("sleep").arg("1.5").spawn().unwrap();
+    mark_warming(db, dir, indexer.id(), 1, 4);
+    std::thread::spawn(move || {
+        indexer.wait().unwrap();
+    })
+}
+
+/// A first index a query starts that cannot get the write lock in time is
+/// reported as `--index` reports it (DEC-400): incomplete, exit 2.
+#[test]
+fn a_first_query_whose_index_outwaits_the_lock_is_incomplete() {
+    let (dir, db) = scratch("auto-outwaited");
+    repo(&dir);
+    let (other, _) = scratch("auto-outwaited-other");
+    repo(&other);
+    assert!(trekr(&db, &other, &["--index"]).status.success());
+    let holder = rusqlite::Connection::open(&db).unwrap();
+    holder.execute_batch("BEGIN IMMEDIATE").unwrap();
+    let out = trekr_env(
+        &db,
+        &dir,
+        &["--refs", "Widget#helper", "--json"],
+        &[("TREKR_TEST_WRITER_WAIT_MS", "500")],
+    );
+    holder.execute_batch("ROLLBACK").unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert_eq!(json(&out)["status"], "incomplete", "{stderr}");
+    assert!(stderr.contains("trekr --index"), "{stderr}");
+    for dir in [dir, other] {
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
 
 /// A hand-typed column is a guess, so `--def` snaps to the nearest name on the
@@ -3666,7 +3925,11 @@ fn a_checkout_missing_after_an_upgrade_says_so() {
     let (dir, db) = scratch("upgraded");
     repo(&dir);
     old_store(&db);
-    let out = trekr(&db, &dir, &["--refs", "Widget#resize", "--json"]);
+    let out = trekr(
+        &db,
+        &dir,
+        &["--refs", "Widget#resize", "--json", "--no-index"],
+    );
     assert_eq!(out.status.code(), Some(2));
     let answer = json(&out);
     assert_eq!(answer["status"], "not_indexed");
@@ -3682,9 +3945,18 @@ fn a_checkout_missing_after_an_upgrade_says_so() {
     let (other, _) = scratch("upgraded-other");
     repo(&other);
     assert!(trekr(&db, &other, &["--index"]).status.success());
-    let answer = json(&trekr(&db, &dir, &["--refs", "Widget#resize", "--json"]));
+    let answer = json(&trekr(
+        &db,
+        &dir,
+        &["--refs", "Widget#resize", "--json", "--no-index"],
+    ));
     let reason = answer["reason"].as_str().unwrap();
     assert!(!reason.contains("format changed"), "{reason}");
+
+    // Without it, the query indexes what the upgrade dropped, and answers.
+    let out = trekr(&db, &dir, &["--refs", "Widget#resize", "--json"]);
+    assert_eq!(out.status.code(), Some(1), "no callers, found by looking");
+    assert_eq!(json(&out)["owner"], "Widget");
     let _ = fs::remove_dir_all(&dir);
     let _ = fs::remove_dir_all(&other);
 }
@@ -3699,7 +3971,11 @@ fn status_in_an_unindexed_checkout_says_so_rather_than_showing_another() {
     repo(&other);
     assert!(trekr(&db, &other, &["--index"]).status.success());
 
-    let query = trekr(&db, &dir, &["--refs", "Widget#resize", "--json"]);
+    let query = trekr(
+        &db,
+        &dir,
+        &["--refs", "Widget#resize", "--json", "--no-index"],
+    );
     let out = trekr(&db, &dir, &["--status", "--json"]);
     assert_eq!(out.status.code(), Some(2), "{}", stdout(&out));
     assert_eq!(out.status.code(), query.status.code());
@@ -5067,11 +5343,21 @@ fn a_partial_index_says_so_and_claims_nothing_certain() {
     let text = trekr(&db, &dir, &["--def", "user.rb:8:5"]);
     assert!(String::from_utf8_lossy(&text.stderr).contains("still being indexed — 1 of 4 files"));
 
-    let residue = trekr(&db, &dir, &["--def", "widget.rb:1:17", "--json"]);
+    let residue = trekr(
+        &db,
+        &dir,
+        &["--def", "widget.rb:1:17", "--json", "--no-index"],
+    );
     assert_eq!(json(&residue)["status"], "residue");
     assert_eq!(residue.status.code(), Some(2), "a miss is no answer yet");
 
-    let refs = json(&trekr(&db, &dir, &["--refs", "Widget#resize", "--json"]));
+    // Asked not to wait for the rest, a whole-checkout question answers
+    // from the part read.
+    let refs = json(&trekr(
+        &db,
+        &dir,
+        &["--refs", "Widget#resize", "--json", "--no-index"],
+    ));
     assert_eq!(refs["counts"]["excluded"], 0, "nothing ruled out");
     let gadget = refs["references"]
         .as_array()
@@ -5082,7 +5368,11 @@ fn a_partial_index_says_so_and_claims_nothing_certain() {
     assert_eq!(gadget["tier"], "possible");
     assert!(refs["warming"].is_object());
 
-    let missing = trekr(&db, &dir, &["--refs", "Gadget#nope", "--json"]);
+    let missing = trekr(
+        &db,
+        &dir,
+        &["--refs", "Gadget#nope", "--json", "--no-index"],
+    );
     assert_eq!(
         json(&missing)["status"],
         "residue",
@@ -5090,7 +5380,7 @@ fn a_partial_index_says_so_and_claims_nothing_certain() {
     );
     assert_eq!(missing.status.code(), Some(2));
 
-    let dead = trekr(&db, &dir, &["--dead", ".", "--json"]);
+    let dead = trekr(&db, &dir, &["--dead", ".", "--json", "--no-index"]);
     assert_eq!(json(&dead)["status"], "warming");
     assert_eq!(dead.status.code(), Some(2));
 
@@ -5101,7 +5391,11 @@ fn a_partial_index_says_so_and_claims_nothing_certain() {
 
     // The index that marked it died: still partial, and says what fixes it.
     mark_warming(&db, &dir, i32::MAX as u32, 1, 4);
-    let def = json(&trekr(&db, &dir, &["--def", "user.rb:8:5", "--json"]));
+    let def = json(&trekr(
+        &db,
+        &dir,
+        &["--def", "user.rb:8:5", "--json", "--no-index"],
+    ));
     assert_eq!(def["warming"]["interrupted"], true);
     assert!(
         def["warming"]["hint"]

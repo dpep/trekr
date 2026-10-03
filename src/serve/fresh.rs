@@ -608,12 +608,14 @@ pub(crate) struct Hints {
 }
 
 impl Hints {
-    /// Listen on stdin, in an index the language server spawned. Never a
+    /// Listen on stdin, in an index the language server or a query
+    /// spawned (DEC-500). Never a
     /// terminal: a background job reading one would be stopped by the shell.
     pub(crate) fn listen() -> Hints {
         let mut hints = Hints::default();
         // SAFETY: asks whether a descriptor is a terminal; nothing is read.
-        if !in_background() || unsafe { libc::isatty(0) } == 1 {
+        let told = in_background() || crate::cli::autoindex::spawned();
+        if !told || unsafe { libc::isatty(0) } == 1 {
             return hints;
         }
         hints.listening = true;

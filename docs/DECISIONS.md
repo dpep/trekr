@@ -11952,3 +11952,142 @@ metadata includes, module-wrapped shared groups, `eval`, conditional
 **Timing**, `--dead spec --json`, warm, three runs each on a machine at
 load 5: mastodon 1.6–2.3 s, discourse 5.6–7.3 s; dd-trace-rb 4.3 s and
 rubocop 1.7 s once each. Testbed 499.
+
+## DEC-500 — The first query in a checkout indexes it
+
+**Decided.** A query — `--def`, the bare position, a card, `--refs`,
+`--ancestors`, `--dead` — in a checkout no index has filled (never indexed,
+dropped by an upgrade, or cut short: DEC-320's mark of a dead writer)
+indexes it first, instead of answering `not_indexed`. The index is a
+`trekr --index ROOT` child in a process group of its own, so Ctrl-C or a
+caller's timeout stops the wait and not the work; the query only reads the
+store, polling the checkout's mark, and asks once what it needs is in:
+
+- **The whole index** for `--refs`, `--dead`, `--ancestors` and a card. A
+  caller, an override, a reopening or an include may be in any file, so a
+  partial answer to these is the confident-and-wrong one DEC-320 exists to
+  prevent, and `--dead` already refused one. These then answer as from any
+  whole index: no `warming`, ordinary exit codes.
+- **A position's own part** for `--def`: the file, the files its constants
+  most likely live in and the gems they name, told to the child on stdin as
+  the language server tells its child an open file (DEC-322, DEC-330). Once
+  that commit is in, an answer found there is given with DEC-320's
+  disclosure (`warming`, confidence scaled by the share read), and the rest
+  is read in the background. A *miss* there is not handed back as "ask
+  again" (exit 2): the query waits for the whole index and answers from it.
+- **`--status` and `--symbols` never index**: one reports, the other needs
+  no index.
+
+Past a second, the query says once on stderr what it is waiting for
+("indexing ~/code/app for the first time (22346 files, counting its gems and
+Ruby's) — once; later queries use it"; "again" after an upgrade; "finishing
+… cut short earlier"; "waiting for the index … another trekr is building"),
+and at a terminal draws a progress line ("N of M files read, Ns") that it
+clears before the answer. Stdout is the answer alone, in every mode. An
+index that cannot finish is reported as `--index` reports it (DEC-400):
+`status: incomplete`, exit 2. Waiting on another process's index is bounded
+by DEC-139's ten minutes, as a writer's wait is.
+
+`--no-index` (or `TREKR_NO_INDEX`, read with clap's falsey parser so `0` is
+off) keeps the old behaviour: answer from what is indexed, `not_indexed`,
+exit 2, where nothing is; a partial answer and `--dead`'s refusal while
+another index runs. Other commands ignore it, so a script can leave it
+exported around `trekr --index`. A query that indexed is counted with the
+flag `indexed` in `--usage`.
+
+**Why.** Reported: the first run in a repo said to run `trekr --index`, a
+setup step every new user and every agent hit once per repo, for a command
+whose only answer was "do that, then ask again". rq indexes on first query
+the same way (rq's "Staying current").
+
+**Measured.** Time to the first answer on a never-indexed checkout, release
+build, fresh store per run, three interleaved rounds, medians (load 3.7–5.7).
+Before is the query's `not_indexed`, `trekr --index`, then the query again.
+
+| | discourse | mastodon | 100k corpus |
+| --- | ---: | ---: | ---: |
+| `--def`, before | 3.83 s | 2.89 s | 17.5 s |
+| `--def`, after | **0.30** | **0.33** | **0.48** |
+| … its background index ends | 3.24 | 2.47 | 14.8 |
+| `--refs`, before | 3.96 | 2.98 | 17.1 |
+| `--refs`, after | 3.99 | 2.96 | 17.3 |
+| plain `--index` | 3.75 | 2.84 | 17.2 |
+
+`--refs` gains no speed — it is the index either way — and loses the round
+trip. The positions answered resolved, from 324 of 22,346 / 846 of 17,258 /
+359 of 111,864 files read. Every content table of each final store hashes
+the same as a plain `--index`'s (ids mapped to oids and roots, timestamps
+dropped); only `sqlite_stat4`'s samples differ, and they differ between two
+plain indexes too.
+
+**Why a position may answer early, and a miss may not.** 40 random
+positions in each of discourse and mastodon (app and lib, a constant or a
+call each), a fresh store per position, the first answer against the one
+the whole index gives:
+
+| | discourse | mastodon |
+| --- | ---: | ---: |
+| answered from the part (median 0.32 s) | 18 | 20 |
+| … the same answer | 10 | 17 |
+| … the same first definition, more listed later (a reopened class) | 7 | 3 |
+| … `resolved` became `ambiguous` | 1 | 0 |
+| missed from the part | 22 | 20 |
+| … still a miss from the whole | 13 | 12 |
+| … an answer from the whole | 9 | 8 |
+
+An answer from the part is right about where to go 37 times in 38, and
+says it is partial. A miss there became an answer two times in five, so
+returning it would have made the caller ask again until the index ended —
+the retry loop an agent cannot tell from a real miss. The cost: a miss
+waits for the whole index.
+
+**Priority.** The child runs at full priority, not DEC-062's background
+tier: in a first build of this another query was often waiting on it, and
+three queries plus a `--index` racing on the 100k corpus took 24.8 s behind a
+niced child at load 8 against 18.9 s at full priority.
+
+**Considered.**
+- *Index in-process.* Errors and Ctrl-C would be simpler, but a Ctrl-C or a
+  caller's two-minute timeout (DEC-400's report) would throw the index away,
+  and a position could not answer before the whole of it.
+- *An "about N s" estimate in the notice.* Nothing backs one before the
+  index has run: files per second varies 2× between discourse and the 100k
+  corpus. The notice gives the file count and the progress line the rate.
+- *A wait budget, as rq's `--wait`.* The whole-checkout questions have no
+  honest partial answer to fall back to, and the index is not lost when a
+  caller gives up, so the caller's own timeout is the budget.
+
+**Not done.** The progress line moves at the index's commits, so at 100k it
+stands still through the bulk write (~12 s); a finer count needs the writer
+to report as it parses. The confidence of an early position answer is
+DEC-320's share of the tree read — 0.00 to 0.04 above, though 37 of 38 were
+where the whole index went; a confidence backed by the share of the *name's*
+candidate files read would say more. There is no `-q`, so nothing quiets
+the notice.
+
+## DEC-501 — One first index per checkout
+
+**Decided.** A first index claims the checkout as it marks it (DEC-320): in
+one immediate transaction it reads the mark and writes its own unless
+another live process's mark stands. One that finds such a mark — the
+language server's child, a query's, a hand-run `--index` — waits for it,
+polling the mark, saying so on stderr as a queued writer does (DEC-171,
+"another trekr is already indexing ~/code/app (pid N, …); waiting for it to
+finish"), for at most DEC-139's ten minutes; then reports incomplete, exit
+2 (DEC-400). When it ends, `--index` reindexes, which parses nothing new;
+an index a query spawned stops there, the checkout being whole. A mark
+whose writer died is taken over.
+
+**Why.** Nothing kept two first indexes of one checkout apart: each wrote
+its own parts, the parsing done twice and the commits interleaved. DEC-500
+makes concurrent first indexes ordinary — two agents' first queries, a
+query beside the editor's first index.
+
+**Measured.** Two `--refs`, a `--def` and a `--index` started at once on a
+fresh store: every one answered, none said "locked", one process parsed
+the checkout — a `--index` that lost the claim parsed nothing — and each
+final store hashes as a plain index's. Wall time to the last answer:
+discourse 5.0 s (alone 4.0), mastodon 3.3 (3.0), 100k 18.9 (17.2). In the first cut each
+query also waited on its own child's redundant reindex after the shared one,
+and discourse took 8–9 s; queries now wait only for a child that held the
+mark.

@@ -91,6 +91,33 @@ impl Store {
         self.mark(root, &format!("{} 0 {own} own", std::process::id()))
     }
 
+    /// Mark `root` as filling by this process — as [`Store::begin_warming`]
+    /// with `counted` false, [`Store::set_warming`]'s `0 of own` with it true
+    /// — unless another index already fills it: then that one's mark, and
+    /// nothing written. One transaction, so of two first indexes started at
+    /// once one fills the checkout and the other learns it in time.
+    pub(crate) fn claim_warming(
+        &mut self,
+        root: &str,
+        own: u64,
+        counted: bool,
+    ) -> Result<Option<Warming>> {
+        let me = std::process::id();
+        self.batch(|store| {
+            if let Some(other) = store.warming(root)?
+                && !other.interrupted
+                && other.pid != me
+            {
+                return Ok(Some(other));
+            }
+            match counted {
+                true => store.set_warming(root, 0, own)?,
+                false => store.begin_warming(root, own)?,
+            }
+            Ok(None)
+        })
+    }
+
     fn mark(&self, root: &str, value: &str) -> Result<()> {
         self.conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);",
@@ -188,6 +215,32 @@ mod tests {
         writer.kill().unwrap();
         writer.wait().unwrap();
         assert!(read.now().interrupted);
+    }
+
+    #[test]
+    fn a_claim_yields_to_a_live_index_and_takes_over_a_dead_one() {
+        let mut store = Store::open_in_memory().unwrap();
+        assert_eq!(store.claim_warming("/app", 40, false).unwrap(), None);
+        assert!(store.warming("/app").unwrap().unwrap().uncounted);
+        // Our own mark is ours to write again.
+        assert_eq!(store.claim_warming("/app", 40, true).unwrap(), None);
+
+        let mut writer = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
+        store
+            .mark("/app", &format!("{} 3 40", writer.id()))
+            .unwrap();
+        let other = store.claim_warming("/app", 40, false).unwrap().unwrap();
+        assert_eq!((other.pid, other.read), (writer.id(), 3));
+        writer.kill().unwrap();
+        writer.wait().unwrap();
+        assert_eq!(store.claim_warming("/app", 40, false).unwrap(), None);
+        assert_eq!(
+            store.warming("/app").unwrap().unwrap().pid,
+            std::process::id()
+        );
     }
 
     #[test]

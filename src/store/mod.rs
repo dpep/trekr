@@ -1856,6 +1856,16 @@ impl Store {
             .optional()
     }
 
+    /// Whether `root`'s map holds `path`, relative to it.
+    pub(crate) fn maps(&self, root: &str, path: &str) -> Result<bool> {
+        self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM file f JOIN checkout c ON c.id = f.checkout_id
+                            WHERE c.root = ?1 AND f.path = ?2)",
+            params![root, path],
+            |r| r.get::<_, i64>(0).map(|n| n != 0),
+        )
+    }
+
     pub(crate) fn has_checkout(&self, root: &str) -> Result<bool> {
         self.conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM checkout WHERE root = ?1)",
@@ -1970,7 +1980,7 @@ const WRITER_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
 
 /// `WRITER_WAIT`, or the e2e suite's shorter one: a test of what an index
 /// does once the wait runs out cannot sit through ten minutes.
-fn writer_wait() -> std::time::Duration {
+pub(crate) fn writer_wait() -> std::time::Duration {
     static WAIT: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
     *WAIT.get_or_init(|| {
         std::env::var("TREKR_TEST_WRITER_WAIT_MS")

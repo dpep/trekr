@@ -31,7 +31,7 @@ own beside it (`trekr.v54.db`) until it is upgraded too (DEC-300).
 ## Usage
 
 ```sh
-trekr --index                    # index the checkout you are standing in
+trekr --index                    # index up front; the first query does it otherwise
 trekr --status                   # this checkout and its gems; --all lists every checkout
 trekr --symbols lib/thing.rb     # outline a file before reading it
 trekr --refs 'Widget#save'       # references narrowed by receiver
@@ -52,6 +52,21 @@ counts by tier (`--refs` lists the sites); for an Active Record model, its
 table from `db/schema.rb` or `db/structure.sql` (`table` in JSON: columns
 with type, null and default, the primary key, the indexes).
 
+There is no setup step: **the first query in a checkout indexes it**, once,
+and later queries use the index. A question about the whole checkout —
+`--refs`, `--dead`, `--ancestors`, a card — waits for the whole index, since a
+caller or an override may be in any file: about 4 s on discourse, 17 s on a
+100k-file monorepo. A position (`--def`, `FILE:LINE:COL`) waits only for its
+file and the files and gems it names, and answers in under a second with
+`warming` while the rest is read in the background; a miss there waits for
+the rest, so it is never a "try again". Past a second the query says on
+stderr what it is doing, and at a terminal shows a progress line that clears
+itself; Ctrl-C stops the wait, not the index, which a later query picks up.
+A checkout whose index an upgrade dropped, or one cut short, is indexed the
+same way, and two queries at once share one index. `--no-index` (or
+`TREKR_NO_INDEX=1`) answers from what is indexed instead: a checkout nobody
+indexed is `not_indexed`, exit 2. `--status` never indexes.
+
 Every command honors `--json` and `--ndjson`, because the intended caller is an
 agent. Under `--ndjson` a row set (`--refs`, `--dead`, `--symbols`, `--usage`)
 streams one row per line, then ends with one `{"answer": {…}}` line: the rest
@@ -70,7 +85,7 @@ Exit codes mean one thing each:
 | --- | --- |
 | `0` | An answer: something matched, was indexed, or was collected. |
 | `1` | Nothing found. `status` says how sure: `no_such_method` is certain, `residue` names what it could not see (an unindexed ancestor, an untyped receiver). |
-| `2` | No answer yet: the checkout is not indexed, or its first index is still running and the miss may not hold. Run the `hint` (`trekr --index …`), then ask again. From `--index`: it could not finish — another trekr writer held the lock longer than an index waits (10 minutes) — and `status: incomplete` says how far it got. |
+| `2` | No answer yet: the index could not finish — another trekr writer held the lock longer than an index waits (10 minutes) — and `status: incomplete` says how far it got; or, with `--no-index`, the checkout is not indexed (`not_indexed`) or its first index is still running and the miss may not hold. Run the `hint` (`trekr --index …`), then ask again. |
 | `64`–`74` | An error, below. |
 
 An answer given while a first index is still running carries `warming` in

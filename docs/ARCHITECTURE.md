@@ -811,7 +811,7 @@ of a guess. Narrowing it is layer 3's job.
 |---|---|
 | 0 | something was indexed, or a query matched |
 | 1 | nothing matched, nothing to do — trekr looked; `status` says whether the nothing is certain or a residue |
-| 2 | no answer yet: the checkout is not indexed (`not_indexed`), or a miss from an index still filling it (`warming`); from `--index`, an index that outwaited the write lock (`incomplete`) |
+| 2 | no answer yet: an index that could not finish (`incomplete`) — a query's own first index (DEC-500) or `--index`; with `--no-index`, a checkout not indexed (`not_indexed`) or a miss from an index still filling it (`warming`) |
 
 Errors exit on sysexits codes (`64` usage, `66` a missing path, `74` the
 store); see DEC-067.

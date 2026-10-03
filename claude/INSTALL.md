@@ -11,17 +11,20 @@ brew install dpep/tools/trekr
 No Homebrew: `cargo install trekr`. Either way it lands on `PATH`; the brew
 route also wires up shell completions.
 
-## 2. Index each repo once
+## 2. Nothing to index by hand
+
+The first query in a repo indexes it, and the LSP server indexes an unindexed
+checkout on its own, in the background. To pay that once up front — before a
+demo, or ahead of a large monorepo's first question:
 
 ```sh
 cd ~/code/your-app && trekr --index
 ```
 
 Facts are keyed by git blob OID, so every worktree of a repo shares this and a
-second checkout costs a scan. The LSP server indexes an unindexed checkout on
-its own, in the background; the CLI never does, and says so (exit `2`, with
-the command to run). Gems are indexed once per `(name, version)` and
-shared by every project that resolves the same one.
+second checkout costs a scan. Gems are indexed once per `(name, version)` and
+shared by every project that resolves the same one. `TREKR_NO_INDEX=1` keeps a
+query from ever indexing: it says `not_indexed` (exit `2`) instead.
 
 ## 3. Install the plugin
 

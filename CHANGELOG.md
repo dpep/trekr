@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **The first query in a repo indexes it.** No `trekr --index` first, and no
+  more `not_indexed`: `--refs`, `--dead`, `--ancestors` and cards wait for the
+  whole index; a position (`--def`, `FILE:LINE:COL`) answers as soon as its
+  file and the files and gems it names are read — with `warming` while the
+  rest is read in the background — and a miss there waits for the rest
+  rather than asking you to try again. An index that takes more than a
+  second says so once on stderr, and at a terminal shows a progress line that
+  clears itself; stdout is still only the answer. Ctrl-C stops the wait, not
+  the index. A checkout whose index an upgrade dropped, or one cut short, is
+  indexed the same way. `--status` still only reports.
+- **One first index per checkout.** A query, or a `trekr --index`, that finds
+  another process's first index of the checkout under way (the language
+  server's, another query's) waits for it instead of answering partial or
+  indexing it a second time; `--index` says so on stderr.
+- **For scripts:** `--no-index` or `TREKR_NO_INDEX=1` keeps the old
+  behaviour — answer from what is indexed, `not_indexed` (exit 2) where
+  nothing is. A query whose index could not get the store's write lock in
+  ten minutes answers as `--index` does: `status: incomplete`, exit 2.
 - **Hover on a model shows its table.** On an Active Record model's name, or
   any reference to it, the hover lists its table's columns — type as the
   schema spells it, null, default, the primary key first — and its indexes,

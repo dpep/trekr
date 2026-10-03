@@ -5,6 +5,7 @@
 //! reserved, and the default action stays free for the query verbs the resolve
 //! layer will add.
 
+pub(crate) mod autoindex;
 mod built;
 mod config;
 mod conventions;
@@ -18,6 +19,7 @@ mod profile;
 mod routes;
 mod views;
 
+use autoindex::{Need, Then};
 use failure::{Failure, Tag};
 
 use crate::core::Oid;
@@ -45,8 +47,9 @@ use std::process::ExitCode;
         0   something was indexed, or a query matched\n  \
         1   nothing found: no match, nothing to collect. `status` says whether that\n      \
         is certain (no_such_method) or a residue that names what it could not see\n  \
-        2   no answer yet: this checkout is not indexed (run --index), or a miss\n      \
-        while its first index is still running (`warming`: ask again)\n  \
+        2   no answer yet: a miss while this checkout's first index is still running\n      \
+        (`warming`: ask again), an index that could not finish (`incomplete`), or\n      \
+        with --no-index a checkout nobody indexed (`not_indexed`)\n  \
         64  usage: the command line is wrong\n  \
         66  not_found, not_a_repo: a path it names is missing or not in a checkout\n  \
         69  git: git could not be run\n  \
@@ -59,7 +62,8 @@ use std::process::ExitCode;
         TREKR_DB     the index (default ~/.local/share/trekr/trekr.db); its tree snapshots\n               \
         and Ruby core's files are kept beside it\n  \
         TREKR_USAGE  the usage-count file (default: beside the index), or `off`\n  \
-        TREKR_JOBS   parse threads, as --jobs"
+        TREKR_JOBS   parse threads, as --jobs\n  \
+        TREKR_NO_INDEX  never index from a query, as --no-index"
 )]
 struct Cli {
     /// What to look up, dispatched on its shape. `FILE:LINE:COL` and
@@ -205,6 +209,21 @@ struct Cli {
     #[arg(long, requires = "refs")]
     include_excluded: bool,
 
+    /// Never index from a query. Without it, a query in a checkout no index
+    /// has filled — never indexed, dropped by an upgrade, cut short —
+    /// indexes it first: a position waits for its file and what that file
+    /// names, and the rest is read in the background; any other question
+    /// waits for the whole index. With it, the query answers from what is
+    /// indexed, and a checkout nobody indexed is `not_indexed`, exit 2.
+    /// `TREKR_NO_INDEX=1` sets it too; other commands ignore it, so it can
+    /// stay exported around a `trekr --index`.
+    #[arg(
+        long,
+        env = "TREKR_NO_INDEX",
+        value_parser = clap::builder::FalseyValueParser::new()
+    )]
+    no_index: bool,
+
     /// Skip the checkout's gems. They are indexed once per machine and shared
     /// by every project that resolves the same version, so the cost is paid
     /// once — but it is paid.
@@ -276,6 +295,9 @@ pub fn run() -> ExitCode {
         // built from half a dozen call sites and the flag is a whole-process
         // decision.
         unsafe { std::env::set_var("TREKR_PROFILE", "1") };
+    }
+    if cli.no_index {
+        autoindex::turn_off();
     }
     let out = if cli.ndjson {
         Output::Ndjson
@@ -400,7 +422,7 @@ pub fn run() -> ExitCode {
         && result.is_ok()
         && let Some((root, warming)) = warming()
     {
-        let root = paths::pretty(root);
+        let root = paths::pretty(&root);
         match warming.interrupted {
             false => eprintln!(
                 "trekr: {root} is still being indexed — {} of {} files read, so this answer may change",
@@ -456,6 +478,7 @@ fn cli_flags(cli: &Cli, out: Output) -> Vec<&'static str> {
         (cli.context.is_some(), "context"),
         (cli.include_excluded, "include-excluded"),
         (cli.no_gems, "no-gems"),
+        (cli.no_index, "no-index"),
         (cli.dry_run, "dry-run"),
         (cli.vacuum, "vacuum"),
         (cli.profile, "profile"),
@@ -678,21 +701,41 @@ fn answering_in(store: &Store, root: &str) {
         base: root.to_string(),
         roots: store.roots().unwrap_or_default(),
     });
-    WARMING.get_or_init(|| {
-        store
-            .warming(root)
-            .ok()
-            .flatten()
-            .map(|warming| (root.to_string(), warming))
-    });
+    let mut held = WARMING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if held.is_none() {
+        *held = Some(read_warming(store, root));
+    }
 }
 
-static WARMING: std::sync::OnceLock<Option<(String, crate::store::Warming)>> =
-    std::sync::OnceLock::new();
+/// Read the asked checkout's mark again: an index this query waited for has
+/// moved it since `answering_in` (DEC-500).
+fn rewarm(store: &Store, root: &str) {
+    *WARMING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(read_warming(store, root));
+}
+
+fn read_warming(store: &Store, root: &str) -> Option<(String, crate::store::Warming)> {
+    store
+        .warming(root)
+        .ok()
+        .flatten()
+        .map(|warming| (root.to_string(), warming))
+}
+
+/// Unset until a command knows its checkout; then that checkout's mark, if any.
+static WARMING: std::sync::Mutex<Option<Option<(String, crate::store::Warming)>>> =
+    std::sync::Mutex::new(None);
 
 /// The asked checkout's index, while it is not whole yet.
-fn warming() -> Option<&'static (String, crate::store::Warming)> {
-    WARMING.get().and_then(Option::as_ref)
+fn warming() -> Option<(String, crate::store::Warming)> {
+    WARMING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+        .flatten()
 }
 
 /// What a partial index says beside an answer: how much is in, and what
@@ -721,7 +764,7 @@ fn disclose(value: &mut serde_json::Value) {
     let Some(object) = value.as_object_mut() else {
         return;
     };
-    object.insert("warming".into(), warming_note(root, warming));
+    object.insert("warming".into(), warming_note(&root, &warming));
     if let Some(confidence) = object.get("confidence").and_then(serde_json::Value::as_f64) {
         let scaled = (confidence * warming.coverage() * 100.0).floor() / 100.0;
         object.insert("confidence".into(), scaled.into());
@@ -1099,7 +1142,27 @@ fn index_all(
     // marked while it fills the store, so an answer meanwhile says it is
     // partial (DEC-320), and is written in the order someone looking at it
     // needs it (DEC-322). A reindex replaces a whole map with a whole map.
-    let filling = !store.has_checkout(&root_str)? || store.warming(&root_str)?.is_some();
+    // A first index claims the checkout as it marks it: one already filling
+    // it is waited for, not run a second time (DEC-500).
+    let filling = loop {
+        if store.has_checkout(&root_str)? && store.warming(&root_str)?.is_none() {
+            break false;
+        }
+        match store.claim_warming(&root_str, files.len() as u64, !with_gems)? {
+            None => break true,
+            Some(other) => {
+                wait_for_index(store, &root_str, other)?;
+                // A query started this index, and the one it waited for
+                // has done what it was asked to (DEC-500).
+                if autoindex::spawned()
+                    && store.has_checkout(&root_str)?
+                    && store.warming(&root_str)?.is_none()
+                {
+                    return Ok(Default::default());
+                }
+            }
+        }
+    };
     let mut known = None;
     let (counts, gems) = if filling {
         index_first(
@@ -1130,6 +1193,49 @@ fn index_all(
     }
 
     Ok((counts, gems))
+}
+
+/// Wait for another process's first index of `root` to end — or to die,
+/// leaving its mark for this one to take over — saying so as a writer
+/// queued for the lock does (DEC-171), and for no longer than one waits.
+fn wait_for_index(store: &Store, root: &str, other: crate::store::Warming) -> anyhow::Result<()> {
+    use std::io::IsTerminal;
+    let started = std::time::Instant::now();
+    let every = if std::io::stderr().is_terminal() {
+        10
+    } else {
+        60
+    };
+    let (mut due, mut warming) = (1, other);
+    loop {
+        let waited = started.elapsed();
+        if waited >= crate::store::writer_wait() {
+            // As a lock outwaited: `--index` reports it incomplete, exit 2.
+            return Err(rusqlite::Error::SqliteFailure(
+                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
+                Some("another trekr's index of this checkout outlasted the writer wait".into()),
+            )
+            .into());
+        }
+        if waited.as_secs() >= due {
+            match due {
+                1 => eprintln!(
+                    "trekr: another trekr is already indexing {} (pid {}, {}); \
+                     waiting for it to finish",
+                    paths::pretty(root),
+                    warming.pid,
+                    crate::serve::fresh::how_far(&warming)
+                ),
+                secs => eprintln!("trekr: still waiting for the other index ({secs}s)"),
+            }
+            due = waited.as_secs() - waited.as_secs() % every + every;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        match store.warming(root)? {
+            Some(now) if !now.interrupted && now.pid == warming.pid => warming = now,
+            _ => return Ok(()),
+        }
+    }
 }
 
 /// Whether a load of `new` blobs into a store of `known` rebuilds the fact
@@ -1242,11 +1348,8 @@ fn index_first(
     if let Some(main) = store.path() {
         crate::store::early::sweep(main);
     }
-    // With gems, the tree's count waits for their listing (DEC-400 addendum).
-    match with_gems {
-        true => store.begin_warming(&root_str, files.len() as u64)?,
-        false => store.set_warming(&root_str, 0, files.len() as u64)?,
-    }
+    // Marked already, as the claim (`index_all`); with gems, the tree's
+    // count waits for their listing (DEC-400 addendum).
     let mut written: HashSet<String> = HashSet::new();
     let (first, asked) = index_wanted(
         store,
@@ -2659,10 +2762,13 @@ fn status_not_indexed(
     }
     match upgraded {
         true => println!(
-            "{} is not indexed — {reason}. Run: {hint}",
+            "{} is not indexed — {reason}. The next query indexes it, or run: {hint}",
             paths::pretty(&root)
         ),
-        false => println!("{} is not indexed — run: {hint}", paths::pretty(&root)),
+        false => println!(
+            "{} is not indexed — the next query indexes it, or run: {hint}",
+            paths::pretty(&root)
+        ),
     }
     if repos + gems > 0 {
         let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
@@ -2846,6 +2952,10 @@ fn cmd_card(out: Output, text: &str, context: Option<&Path>) -> anyhow::Result<E
     let root = asked_from(context)?;
     let root_str = root.to_string_lossy().into_owned();
     let store = open_store()?;
+    // A card counts the call sites, which may be in any file.
+    if let Some(code) = autoindex::ensure(out, &store, &root, Need::Whole)? {
+        return Ok(code);
+    }
     if !store.has_checkout(&root_str)? {
         return not_indexed(out, &root, &store);
     }
@@ -3221,6 +3331,9 @@ fn cmd_refs(
     let root = asked_from(context)?;
     let root_str = root.to_string_lossy().into_owned();
     let store = open_store()?;
+    if let Some(code) = autoindex::ensure(out, &store, &root, Need::Whole)? {
+        return Ok(code);
+    }
     if !store.has_checkout(&root_str)? {
         return not_indexed(out, &root, &store);
     }
@@ -3377,6 +3490,10 @@ fn cmd_refs_at(
     }
     let (root, store) = checkout_for_query(file, pinned)?;
     let root_str = root.to_string_lossy().into_owned();
+    // References are anywhere: a position's own part is not enough.
+    if let Some(code) = autoindex::ensure(out, &store, &root, Need::Whole)? {
+        return Ok(code);
+    }
     if !store.has_checkout(&root_str)? {
         return not_indexed(out, &root, &store);
     }
@@ -3548,16 +3665,6 @@ fn checkout_for_query(path: &Path, pinned: Option<&Path>) -> anyhow::Result<(Pat
     Ok((root, store))
 }
 
-fn tree_for(path: &Path, pinned: Option<&Path>) -> anyhow::Result<(PathBuf, Store, OneShotTree)> {
-    let store = open_store()?;
-    let root = match pinned {
-        Some(root) => std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()),
-        None => checkout_for(&store, path)?,
-    };
-    let tree = build_tree(&store, &root.to_string_lossy())?;
-    Ok((root, store, tree))
-}
-
 /// Bring the file being asked about up to date, if git says anything moved.
 ///
 /// DEC-035's policy in one function: an O(1) probe, then a bounded refresh of
@@ -3667,6 +3774,9 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
     }
     let store = open_store()?;
     for (root, _) in &checkouts {
+        if let Some(code) = autoindex::ensure(out, &store, root, Need::Whole)? {
+            return Ok(code);
+        }
         if !store.has_checkout(&root.to_string_lossy())? {
             return not_indexed(out, root, &store);
         }
@@ -4754,16 +4864,6 @@ fn checkout_for(store: &Store, path: &Path) -> anyhow::Result<PathBuf> {
     }
 }
 
-/// The checkout we are standing in, or the one `--context` names — for the
-/// queries that ask about a name rather than a position.
-fn tree_here(context: Option<&Path>) -> anyhow::Result<(PathBuf, Store, OneShotTree)> {
-    let dir = context.unwrap_or(Path::new("."));
-    if !dir.exists() {
-        return Err(Failure::NotFound.error(format!("no such path: {}", dir.display())));
-    }
-    tree_for(dir, None)
-}
-
 fn cmd_def(
     out: Output,
     spec: &str,
@@ -4782,12 +4882,16 @@ fn cmd_def(
     let file = std::fs::canonicalize(&spec.path)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| spec.path.clone());
-    // Branches that never build a tree still write their paths against the
-    // file's checkout.
-    if let Ok((root, store)) = checkout_for_query(Path::new(&spec.path), pinned)
-        && store.has_checkout(&root.to_string_lossy()).unwrap_or(false)
-    {
-        answering_in(&store, &root.to_string_lossy());
+    if let Ok((root, store)) = checkout_for_query(Path::new(&spec.path), pinned) {
+        let need = Need::File(Path::new(&spec.path));
+        if let Some(code) = autoindex::ensure(out, &store, &root, need)? {
+            return Ok(code);
+        }
+        // Branches that never build a tree still write their paths against
+        // the file's checkout.
+        if store.has_checkout(&root.to_string_lossy()).unwrap_or(false) {
+            answering_in(&store, &root.to_string_lossy());
+        }
     }
     // A `super` with no fact behind it is one whose method has no owner the
     // source names. Snapping would answer for another name on the line.
@@ -4919,14 +5023,24 @@ fn cmd_def(
             answering_in(&store, &root.to_string_lossy());
             // Refresh before the tree is built, so the tree sees the new facts.
             freshness = refresh_for_query(&mut store, &root, Path::new(&spec.path));
-            let tree = build_tree(&store, &root.to_string_lossy())?;
+            let mut tree = build_tree(&store, &root.to_string_lossy())?;
             context = Some(root.to_string_lossy().into_owned());
             let relative = std::fs::canonicalize(&spec.path)
                 .ok()
                 .and_then(|abs| abs.strip_prefix(&root).ok().map(Path::to_path_buf))
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|| spec.path.clone());
-            let resolution = tree.resolve_at(&reference.name, &reference.nesting, &relative);
+            let mut resolution = tree.resolve_at(&reference.name, &reference.nesting, &relative);
+            let found = resolution.status != Status::Residue;
+            match autoindex::after_partial(out, &store, &root, found)? {
+                Then::Keep => {}
+                Then::Exit(code) => return Ok(code),
+                Then::Again => {
+                    rewarm(&store, &root.to_string_lossy());
+                    tree = build_tree(&store, &root.to_string_lossy())?;
+                    resolution = tree.resolve_at(&reference.name, &reference.nesting, &relative);
+                }
+            }
             let mut value = serde_json::to_value(&resolution)?;
             let object = value.as_object_mut().expect("resolution is an object");
             object.insert("query".into(), query.clone().into());
@@ -4952,7 +5066,7 @@ fn cmd_def(
             answering_in(&store, &root.to_string_lossy());
             // Refresh before the tree is built, so the tree sees the new facts.
             freshness = refresh_for_query(&mut store, &root, Path::new(&spec.path));
-            let tree = build_tree(&store, &root.to_string_lossy())?;
+            let mut tree = build_tree(&store, &root.to_string_lossy())?;
             context = Some(root.to_string_lossy().into_owned());
             let relative = std::fs::canonicalize(&spec.path)
                 .ok()
@@ -4960,15 +5074,26 @@ fn cmd_def(
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|| spec.path.clone());
             let facts = crate::extract::extract(&source);
-            let mut answer = crate::resolve::method_at(&tree, &facts, &call, &relative);
-            // A shared group's body reads what its includers define (DEC-490).
-            if answer.status == Status::Residue {
+            let answer_from = |tree: &Tree| {
+                let answer = crate::resolve::method_at(tree, &facts, &call, &relative);
+                // A shared group's body reads what its includers define (DEC-490).
+                if answer.status != Status::Residue {
+                    return answer;
+                }
                 let root_str = root.to_string_lossy().into_owned();
                 let files = members::CheckoutFiles::new(&store, &root, &root_str);
-                if let Some(includers) =
-                    members::includer_answer(&tree, &files, &relative, &call, &answer)
-                {
-                    answer = includers;
+                members::includer_answer(tree, &files, &relative, &call, &answer).unwrap_or(answer)
+            };
+            let mut answer = answer_from(&tree);
+            let found = matches!(answer.status, Status::Resolved | Status::Ambiguous);
+            match autoindex::after_partial(out, &store, &root, found)? {
+                Then::Keep => {}
+                Then::Exit(code) => return Ok(code),
+                Then::Again => {
+                    rewarm(&store, &root.to_string_lossy());
+                    // The partial tree is left to the OS with the rest.
+                    tree = build_tree(&store, &root.to_string_lossy())?;
+                    answer = answer_from(&tree);
                 }
             }
             let mut value = serde_json::to_value(&answer)?;
@@ -5181,11 +5306,21 @@ fn explanation(answer: &serde_json::Value) -> String {
 }
 
 fn cmd_ancestors(out: Output, name: &str, context: Option<&Path>) -> anyhow::Result<ExitCode> {
-    let (root, store, tree) = tree_here(context)?;
+    let dir = context.unwrap_or(Path::new("."));
+    if !dir.exists() {
+        return Err(Failure::NotFound.error(format!("no such path: {}", dir.display())));
+    }
+    let store = open_store()?;
+    let root = checkout_for(&store, dir)?;
+    // A reopening or an included module may be in any file, or a gem.
+    if let Some(code) = autoindex::ensure(out, &store, &root, Need::Whole)? {
+        return Ok(code);
+    }
     if !store.has_checkout(&root.to_string_lossy())? {
         return not_indexed(out, &root, &store);
     }
     answering_in(&store, &root.to_string_lossy());
+    let tree = build_tree(&store, &root.to_string_lossy())?;
     let resolution = tree.resolve(name, &[]);
     let Some(fqn) = resolution.fqn.clone() else {
         return report(

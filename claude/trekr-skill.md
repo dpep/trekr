@@ -59,12 +59,19 @@ Source + issues: <https://github.com/dpep/trekr>. The LSP server comes up at the
 **next session start** after the binary exists — installing fixes both surfaces,
 one of them on a delay.
 
-**Then index the repo you are asking about.** This is per-repo, not per-machine,
-and there is no automatic first run:
+**There is no setup step.** The first query in a repo indexes it — the
+checkout, its gems and its Ruby's stdlib — once. `--refs`, `--dead`,
+`--ancestors` and cards wait for the whole index (seconds; ~20 s at 100k
+files), a position answers once its file and what it names are in, with
+`warming`. Past a second it says so on stderr; stdout is still only the
+answer. Indexing up front is still a command:
 
 ```sh
 trekr --index          # the checkout you are in, plus its gems and its Ruby's stdlib
 ```
+
+`--no-index` (or `TREKR_NO_INDEX=1`) never indexes from a query: an unindexed
+checkout is then `status: not_indexed`, exit 2.
 
 A reindex with nothing changed parses nothing (~60 ms on a 3k-file repo), and a
 second worktree of the same repo costs nothing — facts are keyed by git blob.
@@ -73,7 +80,8 @@ second worktree of the same repo costs nothing — facts are keyed by git blob.
 
 | you get | it means |
 | --- | --- |
-| `status: not_indexed`, **exit 2** | nobody has indexed this repo. The answer names the root and the command. Run it; do not go looking for the definition. |
+| `status: not_indexed`, **exit 2** | only with `--no-index`: nobody has indexed this repo. The answer names the root and the command. Run it; do not go looking for the definition. |
+| `status: incomplete`, **exit 2** | the index this query started could not finish (another writer held the store's lock for 10 minutes). Run the `hint`, then ask again. |
 | `status: residue`, exit 1 | trekr looked. The receiver is genuinely undetermined — ranked `candidates` say what it might be. |
 | `status: residue`, `reason: "no name at this position"` | `--def` on a line with no name on it (blank, a comment, only punctuation). Expected; pick another line. |
 | `status: no_such_method`, exit 1 | `'Owner#name'`: the owner resolved and nothing in its ancestors defines the name — `reason` says so, and nothing is listed. `--refs` adds a `hint` (`trekr --refs name`) for every call site of the name, unnarrowed. A chain with an unindexed ancestor is `residue` instead, naming it; an owner trekr cannot find at all is `residue` with the same `hint`. |
@@ -83,8 +91,9 @@ second worktree of the same repo costs nothing — facts are keyed by git blob.
 `trekr --status` shows the checkout you are in, its gems counted (`gems:
 {count, indexed, files}`), its Ruby's stdlib (`stdlib: {root, files,
 hidden}`), and how many other checkouts are indexed (`others`); `--status
---all` lists every checkout, each with `kind` (`repo`, `gem` or `stdlib`). A checkout nobody indexed is `status: not_indexed`, exit 2, as
-a query from it is — `checkouts` is empty and `others` counts the rest.
+--all` lists every checkout, each with `kind` (`repo`, `gem` or `stdlib`). `--status` only reports, never indexes: a checkout nobody indexed is
+`status: not_indexed`, exit 2 — `checkouts` is empty and `others` counts the
+rest.
 `--context DIR` asks about another checkout; outside any checkout the repos
 are listed.
 
@@ -363,7 +372,7 @@ tiers the site `possible`.
   | --- | --- | --- |
   | `0` | an answer (`resolved` or `ambiguous`, something listed) | read it |
   | `1` | nothing found: `no_such_method` (certain), `residue` (it names what it could not see), no mention | read `reason`/`candidates` |
-  | `2` | `status: not_indexed`, or a miss while `warming` (an index still running) | run the `hint`, ask again |
+  | `2` | `status: incomplete`; with `--no-index`, `not_indexed` or a miss while `warming` | run the `hint`, ask again |
   | `64` | `usage`: the command line is wrong | fix the command; a retry won't help |
   | `66` | `not_found`, `not_a_repo`: a path is missing or in no checkout | fix the path |
   | `69` | `git`: git could not be run | |
