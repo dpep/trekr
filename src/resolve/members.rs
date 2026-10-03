@@ -179,9 +179,13 @@ impl Asked<'_> {
     fn is(&self, path: &str, found: &Member<'_>) -> bool {
         let span = self.def.pos.line..=self.def.end_line;
         match found {
+            // Two definitions of the name in one group are each the one that
+            // runs, as far as the file says: they are written in the branches
+            // of an `if` far more often than one replaces the other.
             Member::Here(def) => {
                 path == self.path
                     && (def.pos == self.def.pos
+                        || (def.name == self.def.name && def.nesting == self.def.nesting)
                         || (self.is_subject()
                             && def.via == self.def.via
                             && def.nesting == self.def.nesting
@@ -551,13 +555,29 @@ impl<'f> Scan<'f> {
                 .collect();
         }
         let under = |level: &[String]| level.ends_with(nesting);
-        let mut found: Vec<Member<'f>> = self
+        let running: Vec<&[String]> = self
             .running
             .iter()
+            .copied()
             .filter(|level| under(level))
+            .collect();
+        let nested: Vec<&(&[String], &str)> = self
+            .nested
+            .iter()
+            .filter(|(level, _)| under(level))
+            .collect();
+        // No example runs at or under it here: a shared group's body, which
+        // runs in the groups that include it, reads what its lookup finds.
+        if running.is_empty() && nested.is_empty() {
+            return member_at(tree, self.facts, nesting, name, false)
+                .into_iter()
+                .collect();
+        }
+        let mut found: Vec<Member<'f>> = running
+            .into_iter()
             .filter_map(|level| member_at(tree, self.facts, level, name, false))
             .collect();
-        for (level, module) in self.nested.iter().filter(|(level, _)| under(level)) {
+        for (level, module) in nested {
             let own = tree
                 .lookup(module, false, name)
                 .map(|method| Member::Shared(Box::new(method)));
@@ -605,6 +625,24 @@ impl<'f> Scan<'f> {
                     }
                 }
             }
+        }
+        // Included in a group around the call, it answers there unless a
+        // group between defines the name.
+        let around = includes(self.facts).any(|(level, included, nested)| {
+            !nested
+                && of.top
+                && *included == of.module
+                && nesting.len() > level.len()
+                && nesting.ends_with(level)
+                && !self.facts.defs.iter().any(|def| {
+                    is_member(def)
+                        && def.name == name
+                        && def.nesting.len() >= level.len()
+                        && nesting.ends_with(&def.nesting)
+                })
+        });
+        if around && floor <= nesting.len() {
+            return true;
         }
         includes(self.facts)
             .filter(|(level, included, _)| {
@@ -919,12 +957,37 @@ pub(crate) fn reads(context: &Context<'_>, asked: &Asked<'_>, keep_all: bool) ->
     }
 
     // The bodies of the shared groups included where it is visible: a call
-    // there that their own definitions do not answer is the includer's.
-    let mut bodies: Vec<&str> = Vec::new();
+    // there that their own definitions do not answer is the includer's. A
+    // body that includes another shared group copies it into the includer
+    // too, one group further in.
+    let mut work: Vec<Body> = Vec::new();
     for (module, includer) in &shared {
-        if !bodies.contains(&module.as_str()) {
-            bodies.push(module);
+        let Some((_, includer_facts)) = held.iter().find(|(path, _)| path == includer) else {
+            continue;
+        };
+        let levels = includes(includer_facts)
+            .filter(|(_, included, _)| *included == module)
+            .map(|(level, _, nested)| (level.clone(), nested))
+            .collect();
+        work.push(Body {
+            module: module.clone(),
+            includer: includer.clone(),
+            levels,
+        });
+    }
+    let mut bodies: Vec<(String, String, Levels)> = Vec::new();
+    while let Some(item) = work.pop() {
+        let key = (
+            item.module.clone(),
+            item.includer.clone(),
+            item.levels.clone(),
+        );
+        if bodies.contains(&key) {
+            continue;
         }
+        bodies.push(key);
+        let module = &item.module;
+        let includer = &item.includer;
         let Some((_, includer_facts)) = held.iter().find(|(path, _)| path == includer) else {
             continue;
         };
@@ -948,14 +1011,14 @@ pub(crate) fn reads(context: &Context<'_>, asked: &Asked<'_>, keep_all: bool) ->
                 .collect(),
         };
         for (path, facts, local) in &sources {
-            let in_body = |call: &Call| match local {
-                Some(body) => call.nesting.ends_with(body),
-                None => call
-                    .nesting
+            let within = |nesting: &[String]| match local {
+                Some(body) => nesting.ends_with(body),
+                None => nesting
                     .last()
                     .and_then(|segment| rspec::shared_module_of(segment))
                     .is_some_and(|of| of == *module),
             };
+            let top = local.map_or(1, |body| body.len());
             for call in &facts.calls {
                 let proxy = reads_subject
                     && call.recv == RecvShape::Implicit
@@ -966,7 +1029,7 @@ pub(crate) fn reads(context: &Context<'_>, asked: &Asked<'_>, keep_all: bool) ->
                     _ => continue,
                 };
                 let its = proxy && call.name == "its";
-                if !in_body(call)
+                if !within(&call.nesting)
                     || !matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv)
                     || (call.group_body && !its)
                 {
@@ -990,19 +1053,13 @@ pub(crate) fn reads(context: &Context<'_>, asked: &Asked<'_>, keep_all: bool) ->
                     continue;
                 }
                 let hook = !call.in_example && !its;
-                let reached = includes(includer_facts)
-                    .filter(|(_, included, _)| *included == module)
-                    .any(|(level, _, nested)| {
-                        match own {
-                            // In `it_behaves_like`'s own group the body's
-                            // definition is the nearest.
-                            Some(false) if nested => false,
-                            Some(false) => {
-                                scan.sees_below(tree, asked, level, name, hook, level.len())
-                            }
-                            _ => scan.sees(tree, asked, level, name, hook),
-                        }
-                    });
+                let reached = item.levels.iter().any(|(level, nested)| match own {
+                    // In `it_behaves_like`'s own group the body's
+                    // definition is the nearest.
+                    Some(false) if *nested => false,
+                    Some(false) => scan.sees_below(tree, asked, level, name, hook, level.len()),
+                    _ => scan.sees(tree, asked, level, name, hook),
+                });
                 if reached {
                     push(
                         &mut out,
@@ -1016,12 +1073,69 @@ pub(crate) fn reads(context: &Context<'_>, asked: &Asked<'_>, keep_all: bool) ->
                     );
                 }
             }
-            sends_in(facts, path, &names, in_body)
+            // `super` in the body's own definition of the name reads the
+            // includer's: where `it_behaves_like` nests it, the group it is
+            // written in; where `include_context` puts it on that group, the
+            // group around it.
+            for own in facts.defs.iter().filter(|def| {
+                is_member(def)
+                    && names.contains(&def.name.as_str())
+                    && match local {
+                        Some(body) => def.nesting == **body,
+                        None => rspec::is_shared_member(def),
+                    }
+            }) {
+                let Some(pos) = super_in(facts, own) else {
+                    continue;
+                };
+                let reached = item.levels.iter().any(|(level, nested)| {
+                    let from = if *nested {
+                        &level[..]
+                    } else {
+                        &level[1.min(level.len())..]
+                    };
+                    scan.sees(tree, asked, from, &own.name, false)
+                });
+                if reached {
+                    let why = "`super` in a shared group's definition of the name calls it";
+                    push(
+                        &mut out,
+                        at(
+                            path,
+                            pos,
+                            "super",
+                            &own.nesting,
+                            Tier::Confirmed,
+                            why,
+                            "super",
+                        ),
+                    );
+                }
+            }
+            for (level, inner, nested) in includes(facts).filter(|(level, _, _)| within(level)) {
+                let deeper = nested || level.len() > top;
+                work.push(Body {
+                    module: inner.clone(),
+                    includer: includer.clone(),
+                    levels: item
+                        .levels
+                        .iter()
+                        .map(|(at, outer)| (at.clone(), *outer || deeper))
+                        .collect(),
+                });
+            }
+            sends_in(facts, path, &names, |call| within(&call.nesting))
                 .into_iter()
                 .for_each(|why| out.caveat(why));
         }
     }
-    out.shared_groups = bodies.len();
+    let mut modules: Vec<&str> = bodies
+        .iter()
+        .map(|(module, _, _)| module.as_str())
+        .collect();
+    modules.sort();
+    modules.dedup();
+    out.shared_groups = modules.len();
 
     // The helpers every group mixes in, and the modules a group in reach
     // includes: a call of its name there may be the member's, in whichever
@@ -1067,6 +1181,19 @@ pub(crate) fn reads(context: &Context<'_>, asked: &Asked<'_>, keep_all: bool) ->
     out.found.sort_by_key(super::refs::order);
     out
 }
+
+/// A shared group's body to read for a member: its module, the file that
+/// includes it, and the groups there it is included in (`true` when in a
+/// group of its own nested there, as `it_behaves_like` makes).
+struct Body {
+    module: String,
+    includer: String,
+    levels: Levels,
+}
+
+/// The groups a shared group is included in, each with whether it is
+/// included into a group of its own nested there.
+type Levels = Vec<(Vec<String>, bool)>;
 
 /// Where a shared group's body is read: the file, and for one a group of
 /// that file writes, the body's own nesting.
@@ -1145,6 +1272,11 @@ fn reach_caveats(tree: &Tree, scan: &Scan<'_>, asked: &Asked<'_>, names: &[&str]
     let facts = scan.facts;
     for why in sends_in(facts, scan.path, names, |call| in_reach(&call.nesting)) {
         out.caveat(why);
+    }
+    // A name a test library calls on the example itself: Rack::Test, and
+    // Rails' integration session, build their session from `app`.
+    if names.contains(&"app") {
+        out.caveat("rack-test and Rails' integration session call `app` by name".to_string());
     }
     for call in &facts.calls {
         if !call.group_body || call.recv != RecvShape::Implicit || !in_reach(&call.nesting) {

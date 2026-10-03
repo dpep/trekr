@@ -268,11 +268,13 @@ shadowed         spec/models/public_feed_spec.rb:47  let(:viewer) in PublicFeed:
 4 candidates in 1 file(s): 4 shadowed (4 clear, 0 lower); 4 of them example groups' lets, subjects, defs or shared groups
 ```
 
-Measured against what ran (DEC-492): mastodon's suite, with every `let`,
-`subject` and group `def` traced, then scored. Every `let` and `subject`
-row trekr listed — 46 `unreferenced` clear, 31 `shadowed` clear, 9 `lower`
-— never ran in a group that passed an example, and trekr listed 86 of the
-96 `let`s that never did. Those rules were fitted on mastodon itself.
+Measured against what ran (DEC-492, DEC-494): mastodon's suite, with every
+`let`, `subject` and group `def` traced, then scored. Every `let` and
+`subject` row trekr listed — 46 `unreferenced` clear, 31 `shadowed` clear,
+9 `lower` — never ran in a group that passed an example, and trekr listed
+86 of the 96 `let`s that never did. Those rules were fitted on mastodon; on
+six gems' suites held out from them, a `clear` `let` row was truly unused
+52 times in 66 (79 %), and the five shapes behind the rest are now read.
 
 ### Where it keeps things
 

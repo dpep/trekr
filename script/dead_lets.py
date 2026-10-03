@@ -81,6 +81,9 @@ for (path, line, name), g in gold.items():
     if not g['ran'] or g['hits'] or not path.startswith('spec/'): continue
     text = line_text(path, line)
     if 'let!(' in text or 'subject!' in text or 'before' in text: continue
+    # A method a helper macro makes on a group (`define_method`) is no
+    # group `def` trekr weighs.
+    if g['type'] == 'def' and not text.strip().startswith('def '): continue
     kind = 'def' if g['type'] == 'def' else ('subject' if 'subject' in text else 'let')
     unused[kind] += 1
     if (path, line, name) in listed: found[kind] += 1

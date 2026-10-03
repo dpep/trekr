@@ -11801,3 +11801,54 @@ matches, which is not read. An include by a name trekr cannot read grades
 every such row `lower`, naming the first. mastodon writes 124 shared
 groups, all included at runtime (DEC-492's trace), and `--dead spec` lists
 none. Testbed 495.
+
+## DEC-494 — Held out: six gems' suites, and what they found
+
+**Measured.** `script/trace_lets.rb` on six gems' own suites no rule had
+seen (Ruby 3.4.10, each in a scratch copy with its own bundle): faraday
+(893 examples), flipper (2,585, its service-backed adapters left out),
+graph_weaver (2,196), berater (651) and network_resiliency (378, against a
+throwaway redis), and dd-trace-rb's `spec/datadog/core` and
+`spec/datadog/tracing` without `contrib` (3,872). `--dead spec` on the
+build that DEC-492's rules ended at (bbb16cd), scored **as drawn**:
+
+| rows | truly unused |
+| --- | ---: |
+| `let`, `unreferenced`, clear | 36/49 = 73 % |
+| `let`, `shadowed`, clear | 16/17 = 94 % |
+| `let`, lower | 5/5 |
+| `subject` | 5/5 |
+| group `def` | 3/5 |
+
+`clear` on a `let` held 52 in 66 (79 %), short of the 90 % it is meant to
+mean. Every false row was one of five shapes, each a gap in reading how
+RSpec runs, not an app's convention, and each is now read (testbed 496):
+
+- **Two definitions of a name in one group**, in an `if`'s branches
+  (berater's `let(:tracer)` for two Datadog versions): the later one hid
+  the earlier. Each is now the one that may run.
+- **A shared group that includes another** copies it into its includer:
+  dd-trace's `priority sampling without scaling` includes `priority
+  sampling`, whose examples read the includer's `decision`. Followed now,
+  one group further in each time.
+- **`super` in a shared group's own `let`** (`let(:decision) {
+  defined?(super) ? super() : '-1' }`) reads the includer's.
+- **A shared context included around a nested group** answers there:
+  dd-trace's `include_context 'no root span'` in a context whose nested
+  groups read `first_span` through another shared group.
+- **A hook at the top of a shared context with no example of its own**
+  (graph_weaver's `def serving` calling `accept_loop`) runs where it is
+  included; read where the body's lookup lands, it had looked like an
+  override answering nothing.
+
+And one caveat: `let(:app)` (network_resiliency) is read by rack-test,
+which builds its session from `app`; such a row is `lower`. After these,
+the same rows: `let` clear 53/53, `lower` 5/6, group `def` 3/3, and
+mastodon unchanged (DEC-492). Those are fitted numbers now.
+
+**Recall, as drawn**: flipper 8 of 12 truly unused `let`s, dd-trace 47 of
+83. dd-trace's is understated by the partial run: `contrib`'s specs, which
+read some of its shared groups' `let`s, did not run, so those `let`s count
+as unused. The rest are read only by a member that never runs (one pass,
+DEC-490). Timing, `--dead spec`, warm: dd-trace-rb 3.7 s, the others under
+half a second.

@@ -1,0 +1,10 @@
+# Reads the first held-out suites found (DEC-494). Two definitions of a
+# name in one group, in an `if`'s branches, are each the one that may run.
+# A shared group that includes another copies it into its includer, so a
+# `let` is read through both. A shared context included around a nested
+# group answers there. `super` in a shared group's own `let` reads the
+# includer's. A hook at the top of a shared context with no example of its
+# own reads what the body's lookup finds. rack-test calls `app` by name.
+dead spec/widget_spec.rb @3=none @5=none @16=unreferenced~ @21=none @27=none @38=unreferenced~rack-test
+dead spec/gadget_spec.rb @4=none
+dead spec/support/shared.rb @8=none @12=none
