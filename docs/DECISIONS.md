@@ -12201,6 +12201,17 @@ index says so, not that a write lock was held. A miss from the part when
 the index has ended since the answer was read is asked again of the whole;
 it was kept, exit 2, from an index no longer running.
 
+*Addendum — an answer from the file alone waits for no index.* Those
+answers — nothing under the cursor, a local, an instance variable, a
+symbol, `super` with no owner, and the definition the cursor is on — were
+decided after the wait for the file's part, so they waited for an index
+they never read: a blank line in a never-indexed discourse took 0.56–0.63 s
+to say exit 1. They are decided from the file first, and start no index:
+0.13 s (three interleaved rounds, fresh store each). The definition under
+the cursor was also given DEC-320's disclosure, its confidence 1.0 scaled
+to the share read — 0.05 for `post.rb:24:5`, `warming` beside it — though
+it is a fact of the file; it is final now, confidence 1.0, no `warming`.
+
 ## DEC-501 — One first index per checkout
 
 **Decided.** A first index claims the checkout as it marks it (DEC-320): in

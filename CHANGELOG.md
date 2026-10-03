@@ -11,7 +11,9 @@
   whole index; a position (`--def`, `FILE:LINE:COL`) answers as soon as its
   file and the files and gems it names are read — with `warming` while the
   rest is read in the background — and a miss there waits for the rest
-  rather than asking you to try again. An index that takes more than a
+  rather than asking you to try again. A position the file alone answers
+  — nothing under the cursor, a local, a symbol, the definition the cursor
+  is on — answers at once, with no index. An index that takes more than a
   second says so once on stderr, and at a terminal shows a progress line that
   clears itself; stdout is still only the answer. Ctrl-C stops the wait, not
   the index. A checkout whose index an upgrade dropped, or one cut short, is

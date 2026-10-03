@@ -737,6 +737,21 @@ fn index_free() {
         .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(None);
 }
 
+/// An answer from the file alone, given before any index is waited on:
+/// paths are written against the file's checkout, held by the store yet or not.
+fn answered_alone(store: &Store, root: &Path) {
+    let base = root.to_string_lossy().into_owned();
+    let mut roots = store.roots().unwrap_or_default();
+    if !roots.contains(&base) {
+        roots.push(base.clone());
+    }
+    ROOTING.get_or_init(|| Rooting {
+        base,
+        roots,
+        late: None,
+    });
+}
+
 /// Read the asked checkout's mark again: an index this query waited for has
 /// moved it since `answering_in` (DEC-500).
 fn rewarm(store: &Store, root: &str) {
@@ -5046,23 +5061,21 @@ fn cmd_def(
     let file = std::fs::canonicalize(&spec.path)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| spec.path.clone());
-    if let Ok((root, store)) = checkout_for_query(Path::new(&spec.path), pinned) {
-        let need = Need::File(Path::new(&spec.path));
-        if let Some(code) = autoindex::ensure(out, &store, &root, need)? {
-            return Ok(code);
+    let checkout = checkout_for_query(Path::new(&spec.path), pinned).ok();
+    // The branches below answer from the file alone, so before any index is
+    // waited on, writing their paths against the file's checkout.
+    let file_alone = || {
+        if let Some((root, store)) = &checkout {
+            answered_alone(store, root);
         }
-        // Branches that never build a tree still write their paths against
-        // the file's checkout.
-        if store.has_checkout(&root.to_string_lossy()).unwrap_or(false) {
-            answering_in(&store, &root.to_string_lossy());
-        }
-    }
+        index_free();
+    };
     // A `super` with no fact behind it is one whose method has no owner the
     // source names. Snapping would answer for another name on the line.
     if position::at_facts(&facts, spec.line, spec.col).is_none()
         && position::word_at(&source, spec.line, spec.col).as_deref() == Some("super")
     {
-        index_free();
+        file_alone();
         return report(
             out,
             serde_json::json!({
@@ -5094,7 +5107,7 @@ fn cmd_def(
                         && spec.col < pos.col + *len as u32
                 })
     {
-        index_free();
+        file_alone();
         return report(
             out,
             serde_json::json!({
@@ -5117,7 +5130,7 @@ fn cmd_def(
         && let Some(answer) = position::variable_at(&source, &file, spec.line, spec.col)
     {
         crate::usage::flag("variable");
-        index_free();
+        file_alone();
         let mut answer = answer;
         answer["query"] = written.into();
         let resolved = answer["status"] == "resolved";
@@ -5140,7 +5153,7 @@ fn cmd_def(
     }
     let snapped = position::at_or_snap(&facts, spec.line, spec.col);
     let Some((under, snapped)) = snapped else {
-        index_free();
+        file_alone();
         return report(
             out,
             serde_json::json!({
@@ -5154,6 +5167,15 @@ fn cmd_def(
             "nothing at that position",
         );
     };
+    // The cursor on a definition is a fact of the file, too.
+    if let position::Under::Definition(_) = under {
+        file_alone();
+    } else if let Some((root, store)) = checkout {
+        let need = Need::File(Path::new(&spec.path));
+        if let Some(code) = autoindex::ensure(out, &store, &root, need)? {
+            return Ok(code);
+        }
+    }
 
     let query = written.to_string();
     // Which checkout's assembled namespace answered. It is only ever a

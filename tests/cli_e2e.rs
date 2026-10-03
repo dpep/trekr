@@ -3201,6 +3201,37 @@ fn a_position_the_index_cannot_change_answers_at_once_while_it_runs() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// An answer from the file alone — nothing under the cursor, a symbol, a
+/// local, the definition the cursor is on — waits for no part of an index
+/// that has not read the file yet, and claims what the file says: confidence
+/// whole, no `warming`.
+#[test]
+fn an_answer_from_the_file_alone_waits_for_no_index() {
+    let (dir, db) = scratch("auto-file-alone");
+    repo(&dir);
+    assert_eq!(trekr(&db, &dir, &["--status"]).status.code(), Some(2));
+    let indexer = stand_in_indexer(&db, &dir);
+    let started = std::time::Instant::now();
+    for (at, code) in [
+        ("widget.rb:3:1", 1),
+        ("widget.rb:4:16", 0),
+        ("widget.rb:6:14", 0),
+        ("widget.rb:6:7", 0),
+    ] {
+        let out = trekr(&db, &dir, &["--def", at, "--json"]);
+        let answer = json(&out);
+        assert_eq!(out.status.code(), Some(code), "{at}: {answer}");
+        assert!(answer.get("warming").is_none(), "{at}: {answer}");
+        if code == 0 {
+            assert_eq!(answer["confidence"], 1.0, "{at}: {answer}");
+        }
+    }
+    let took = started.elapsed();
+    indexer.join().unwrap();
+    assert!(took < std::time::Duration::from_millis(1200), "{took:?}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A process that marks `dir` as an index filling it, lives a second and a
 /// half, and is reaped the moment it ends: a zombie still answers a liveness
 /// check, and would read as an index under way for good.
