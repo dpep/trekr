@@ -12553,3 +12553,72 @@ Builder keep it. Testbed 315 keeps its caveat on a Haml view.
 are later decisions; until then a template's implicit call is untyped
 residue, `possible` in `--refs`. Testbed 520.
 
+## DEC-521 — A view template runs on its view context: helpers, then ActionView
+
+**Decided.** An implicit call (or one on `self`) in an ERB template under an
+`app/views/` directory, outside any class or module the template writes, is
+typed `ActionView::Base`, `resolved_via: view`, and looked up as Rails' view
+class does (`Tree::lookup_in_view`):
+
+1. a name `helper_method` exposes — `body_calls` named `helper_method` in a
+   class's body — runs the exposing controller's method;
+2. the checkout's helper modules: every module named for its file under an
+   `app/helpers/` directory (`app/helpers/admin/badges_helper.rb` is
+   `Admin::BadgesHelper`), in the order `helper :all` includes them, by
+   path, so the last included is found first;
+3. `ActionView::Base`'s own chain, from the indexed actionview gem.
+
+Every block in a template keeps the view: `form_with … do |f|`, `each`,
+`content_for` and `cache` yield values, not a new `self`. An `.erb` outside
+`app/views/` — a generator's template, a config file's — runs on something
+else and stays untyped. With no actionview indexed, a name no helper has is
+residue saying so.
+
+**What Rails does.** `ActionView::Rendering#view_context_class` subclasses
+`ActionView::Base` and includes the controller's `_helpers` module and its
+routes' `url_helpers`; `AbstractController::Helpers#helper_method` defines
+each exposed name on `_helpers`, sending it to the controller, and
+`ActionController::Helpers` defaults to `helper :all`, which includes every
+`*_helper.rb` under the helpers paths sorted. The generated method has no
+source, so an exposed name answers with the controller's own method, which
+is what runs.
+
+**Not done.** Per-controller helper sets (`clear_helpers`, `helper
+FooHelper`): every template sees every helper, as `helper :all` gives. Route
+helpers (`posts_path`): trekr has no route names, and they stay residue. An
+engine's helpers are its own app's only when they are in the checkout.
+Testbed 521; LSP e2e `an_erb_template_is_answered_at_its_own_positions`.
+
+## DEC-522 — A template's `@ivar` is what the action that renders it assigned
+
+**Decided.** An instance variable a template reads with no write in the
+template is typed from the controller's (`resolved_via: controller`):
+`app/views/admin/posts/show.html.erb` is rendered by
+`Admin::PostsController#show`, `app/views/user_mailer/welcome.text.erb` by
+`UserMailer#welcome` — the directory names the class, matched without case
+or underscores as routes are (DEC-344). The writes that vote:
+
+- in the action;
+- in a `before_action` (`prepend_`, `append_`) handed a symbol in a body of
+  the controller's chain, unless its `only:` leaves the action out or its
+  `except:` names it — read from the controller file's source, since facts
+  keep no option values;
+- in an action that renders the template by symbol (`render :show` in
+  `create`).
+
+A partial (`_form`) is no action's, and a layout (`layouts/posts`,
+`layouts/application`) is every action's of the class it is named for: every
+write in the controller's chain votes. Each write is typed as an assignment
+is in its own file (`type_of` on that file's facts), and writes that
+disagree make the answer `ambiguous`. The controller's files are read from
+disk when a template asks (`Tree::file_facts`, kept while the file's mtime
+and length hold).
+
+**Why at resolve time.** What an action assigns is a fact of the
+controller's bytes, and which controller renders a template a fact of its
+path: storing the first would put every app's ivar writes in the store
+(DEC-012 kept assignments out for their volume) to serve the second.
+
+**Not done.** `render "posts/edit"` and `render template:` from another
+controller; a layout chosen by `layout "x"`. Testbed 522.
+

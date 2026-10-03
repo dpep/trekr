@@ -1,0 +1,12 @@
+# A template's implicit call was untyped residue. `self` in a view is an
+# instance of the class Rails compiles it into: the app's helpers (all of
+# app/helpers, `helper :all`), a name `helper_method` exposes from a
+# controller, then ActionView::Base. Of two helpers defining a name, the
+# one included last — by path — answers. A block keeps the view.
+def app/views/widgets/index.html.erb:1:5 status=resolved via=view owner=ActionView::Helpers::UrlHelper
+def app/views/widgets/index.html.erb:2:5 status=resolved via=view owner=ApplicationController
+def app/views/widgets/index.html.erb:2:28 status=resolved via=view owner=WidgetsHelper
+def app/views/widgets/index.html.erb:3:31 status=resolved via=view owner=WidgetsHelper
+def app/views/widgets/index.html.erb:4:5 status=residue
+refs ApplicationController#current_account confirmed=1
+refs Admin::BadgesHelper#badge confirmed=0

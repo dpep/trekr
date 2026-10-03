@@ -327,6 +327,7 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | `implicit_subject` | `subject` or `is_expected` with no `subject` written in reach: an instance of the class the group describes (DEC-114) | 1.0 |
 | `main` | a bare top-level `describe` in a spec: `main`'s method sends it to `RSpec` (DEC-115) | 1.0 |
 | `main` | a call at the top of a plain script: `main`, an Object, whose top-level `def`s outside a block are its own; in a Rake file `Rake::DSL` first. Not in a Gemfile, `config.ru` or Jbuilder view, nor a file with a top-level call `main` does not answer — another object evaluates those (DEC-445) | 1.0 |
+| `view` | a call in an ERB template under `app/views/`, outside any class it writes: Rails' view context — a name `helper_method` exposes from a controller, then the checkout's `app/helpers` modules (`helper :all`, the last by path first), then `ActionView::Base`'s chain (`Tree::lookup_in_view`, DEC-521) | 1.0 |
 | `on_load` | a call directly in `ActiveSupport.on_load(:x) do`: the class that runs the hook, on its class side; in a `def` there, its instances; two such classes are one's reading and the other's rival (DEC-214) | 1 / classes |
 | `symbol` | `send(:x)`, `obj.respond_to?(:x)`, `before_action :x`, `alias_method :a, :x`, an option naming a method (`if: :x`, `with: :x`, DEC-340): `x` on the receiver of the reflective call, or on `self`'s instances for a class-level macro (DEC-093) | the receiver's |
 | `predicate_matcher` | `be_empty` / `have_key` in a spec: the subject's `empty?` / `has_key?`, the subject typed by the rest of the ladder (DEC-090) | the subject's |
@@ -335,6 +336,7 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | `local:new` | `x = Foo.new` | agreeing / total |
 | `local:const` | `x = Foo` — holds the class, so `x.bar` is a class method | agreeing / total |
 | `local:rescue` | `rescue Foo => e` — an instance of each class rescued; `StandardError` bare (DEC-089) | agreeing / total |
+| `controller` | a template's `@post`: the writes to it in the controller action that renders the template (`posts/show` is `PostsController#show`, `user_mailer/welcome` `UserMailer#welcome`), the `before_action`s whose `only:`/`except:` let them run first, and an action that `render :show`s it; a partial or a layout, every write in the controller's chain. Read from the controller's files (`Tree::file_facts`), typed as an assignment there is (DEC-522) | agreeing / total |
 | `literal` | `out = []`, or `"x".upcase` — core knows what a String is | agreeing / total |
 | `sig` | an inline Sorbet `sig` on the method the value came from, or what a chain assigned to the variable returns, read as `chain` reads it (`x = Post.where(…).order(:id)`, DEC-444) | agreeing / total |
 | `sig:param` | the parameter's declared class, from `params(...)` | 1.0 |

@@ -29,6 +29,16 @@
   references work inside a template. `--dead`'s "named in a view, which is
   not read" caveat no longer applies to ERB templates (it stays for Haml and
   Slim). An existing index picks the templates up at its next query.
+- **A view's `self` is its view context.** A call in an ERB template under
+  `app/views/` resolves on what Rails runs it on: a name a controller's
+  `helper_method` exposes, then the app's helpers (all of `app/helpers`, as
+  `helper :all` includes them), then `ActionView::Base` — `resolved_via:
+  view`. A helper called only from views is a confirmed reference now, and
+  `--dead` weighs it so.
+- **A view's `@ivar` is typed from its controller.** `@post` in
+  `posts/show.html.erb` is what `PostsController#show` assigns, or a
+  `before_action` that runs for it, or an action that `render :show`s;
+  mailer templates read their mailer's action (`resolved_via: controller`).
 
 ## 0.8.6 — 2026-10-03
 

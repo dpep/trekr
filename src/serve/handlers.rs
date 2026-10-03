@@ -925,7 +925,7 @@ fn constant_references(
         .map(|(_, row)| (row.path, row.line, row.col))
         .collect();
     for (path, text) in &overlay {
-        let facts = crate::extract::extract(text.as_bytes());
+        let facts = crate::extract::extract_file(path, text.as_bytes());
         sites.extend(
             facts
                 .const_refs
@@ -1153,7 +1153,7 @@ fn scan_files(
                         String::from_utf8_lossy(&std::fs::read(root.join(path)).ok()?).into_owned()
                     }
                 };
-                let facts = crate::extract::extract(text.as_bytes());
+                let facts = crate::extract::extract_file(path, text.as_bytes());
                 let tiered = facts
                     .calls
                     .iter()

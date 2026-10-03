@@ -15,6 +15,7 @@
 
 pub(crate) mod members;
 pub(crate) mod refs;
+mod views;
 
 use crate::core::{Assign, Call, Def, Facts, Pos, RecvShape, RecvValue, ValueShape, rspec};
 use crate::tree::{Kind, Site, Status, Tree};
@@ -49,6 +50,9 @@ impl Receiver {
     pub(super) fn lookup(&self, tree: &Tree, name: &str) -> Option<crate::tree::MethodDef> {
         match self.via {
             "self" => tree.lookup_self(&self.fqn, self.singleton, name),
+            // A view's `self`: its controller's helpers, then ActionView's
+            // (DEC-521).
+            "view" => tree.lookup_in_view(None, name),
             // A top-level `def` is a private method of Object, ahead of
             // Kernel — when only one file writes it, since which of several
             // is loaded is not the index's to say.
@@ -275,6 +279,20 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                         Some(receiver),
                         "the call runs on an RSpec example group, and rspec-core is \
                          not indexed",
+                    )
+                }
+                // A view whose ActionView the index lacks: its helpers were
+                // asked, and ActionView's own could not be (DEC-521).
+                None if receiver.via == "view"
+                    && !tree.is_known(crate::tree::views::ACTION_VIEW) =>
+                {
+                    residue(
+                        tree,
+                        call,
+                        path,
+                        Some(receiver),
+                        "the call runs on a view, which has no helper by this name, and \
+                         actionview is not indexed",
                     )
                 }
                 // Ruby's lookup fails, and a `method_missing` hands the name
@@ -1576,6 +1594,10 @@ fn ladder(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -> 
             if let Some(hooked) = on_load_receiver(tree, facts, call) {
                 return Some(hooked);
             }
+            // A template runs on its view context (DEC-521).
+            if let Some(view) = view_receiver(call, path) {
+                return Some(view);
+            }
             // `describe` on `main`, which sends it to `RSpec` (DEC-115).
             if call.recv_value == Some(RecvValue::Main) {
                 return tree.is_known(rspec::RSPEC).then(|| Receiver {
@@ -1631,6 +1653,11 @@ fn ladder(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -> 
         // An assignment first, because it is the more specific evidence; a
         // parameter's declared type is the fallback when there is none.
         RecvShape::Local | RecvShape::Ivar => from_assignments(tree, facts, call, path, depth)
+            // A template's `@post` is what its controller's action wrote.
+            .or_else(|| match call.recv {
+                RecvShape::Ivar => views::view_ivar(tree, call, path),
+                _ => None,
+            })
             .or_else(|| from_sig_params(tree, facts, call, path))
             // Last, because it is the only rung resting on a naming habit
             // rather than on something the code states.
@@ -3023,6 +3050,24 @@ fn on_main(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiv
             && !answers(&other.name)
     });
     (!foreign).then(|| main("Object"))
+}
+
+/// `self` in a view template: an instance of the class Rails compiles it
+/// into, a subclass of `ActionView::Base` with the controller's helpers
+/// (DEC-521). Every block in a template keeps it — `form_with` and `each`
+/// yield values, not a new `self` — so only a class or module the template
+/// writes is another scope.
+fn view_receiver(call: &Call, path: &str) -> Option<Receiver> {
+    (crate::tree::views::is_view(path) && call.nesting.is_empty()).then(|| Receiver {
+        fqn: crate::tree::views::ACTION_VIEW.to_string(),
+        singleton: false,
+        via: "view",
+        bound: false,
+        agreeing: 1,
+        total: 1,
+        ambiguous: false,
+        rivals: Vec::new(),
+    })
 }
 
 /// The methods `main` has of its own, on its singleton, which no class

@@ -24,6 +24,7 @@ mod files;
 mod memo;
 mod snapshot;
 mod variants;
+pub(crate) mod views;
 
 pub(crate) use variants::public_name;
 use variants::{PlacedEdge, joinable, nearest};
@@ -451,6 +452,8 @@ pub(crate) struct Tree {
     /// (owner, macro) → the side of the method each macro makes from the
     /// block its caller hands it (DEC-260), read from the markers once.
     block_macros: OnceLock<HashMap<(String, String), bool>>,
+    /// The checkout's view conventions, read on first need (DEC-521).
+    views: OnceLock<views::Views>,
 }
 
 // Every tiering worker asks the one tree (DEC-250).
@@ -1164,6 +1167,7 @@ impl Tree {
             made: Memo::new(),
             hooks: OnceLock::new(),
             block_macros: OnceLock::new(),
+            views: OnceLock::new(),
         }
     }
 

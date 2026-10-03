@@ -175,7 +175,7 @@ pub(crate) fn completion(
         _ => PLACEHOLDER,
     };
     let patched = format!("{}{placeholder}{}", &text[..start], &text[offset..]);
-    let facts = crate::extract::extract(patched.as_bytes());
+    let facts = crate::extract::extract_file(&path.to_string_lossy(), patched.as_bytes());
     let line = text[..start].matches('\n').count() as u32 + 1;
     let col = (start - text[..start].rfind('\n').map_or(0, |n| n + 1)) as u32 + 1;
     let under = position::at_facts(&facts, line, col);

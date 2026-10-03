@@ -135,7 +135,7 @@ fn read_facts(root: &Path, open: &HashMap<String, String>, path: &str) -> Option
         Some(text) => Some(text.as_bytes().to_vec()),
         None => std::fs::read(root.join(path)).ok(),
     };
-    bytes.map(|bytes| Arc::new(crate::extract::extract(&bytes)))
+    bytes.map(|bytes| Arc::new(crate::extract::extract_file(path, &bytes)))
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {

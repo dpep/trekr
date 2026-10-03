@@ -5420,3 +5420,112 @@ fn a_let_and_a_shared_groups_read_of_it_find_each_other() {
     session.stop();
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// An ERB template is answered in the editor as a Ruby file is: definition
+/// and hover on a helper it calls, the template among the helper's
+/// references, and no syntax error for markup — each at the template's own
+/// position, past a multibyte character in the markup (DEC-520, DEC-521).
+#[test]
+fn an_erb_template_is_answered_at_its_own_positions() {
+    let (dir, db) = scratch("erb");
+    git(&dir, &["init", "-q"]);
+    fs::create_dir_all(dir.join("app/helpers")).unwrap();
+    fs::create_dir_all(dir.join("app/views/widgets")).unwrap();
+    let helper = concat!(
+        "module WidgetsHelper\n", // 1
+        "  # The widget's badge.\n",
+        "  def badge(widget)\n", // 3
+        "    widget\n",
+        "  end\n",
+        "end\n",
+    );
+    let template =
+        "<h1>Widgets</h1>\n<p>é — <%= badge(1) %></p>\n<% if true %><%= yield %><% end %>\n";
+    fs::write(dir.join("app/helpers/widgets_helper.rb"), helper).unwrap();
+    fs::write(dir.join("app/views/widgets/show.html.erb"), template).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+
+    let view = "app/views/widgets/show.html.erb";
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, view), "languageId": "erb", "version": 1, "text": template
+        }}),
+    );
+    let published = session.read();
+    assert_eq!(published["method"], "textDocument/publishDiagnostics");
+    assert_eq!(
+        published["params"]["diagnostics"],
+        serde_json::json!([]),
+        "markup and a layout's `yield` are no syntax errors"
+    );
+
+    // `badge` is at UTF-16 character 11 of line 2, byte 14: `é` and `—`
+    // are one unit each, and two and three bytes.
+    let at = serde_json::json!({
+        "textDocument": {"uri": uri_of(&dir, view)},
+        "position": {"line": 1, "character": 11},
+    });
+    let answer = session.request("textDocument/definition", at.clone());
+    let locations = answer["result"].as_array().expect("an array of locations");
+    assert_eq!(locations.len(), 1, "{answer}");
+    assert!(
+        locations[0]["uri"]
+            .as_str()
+            .unwrap()
+            .ends_with("widgets_helper.rb")
+    );
+    assert_eq!(locations[0]["range"]["start"]["line"], 2);
+
+    let hover = session.request("textDocument/hover", at);
+    let text = hover["result"]["contents"]["value"]
+        .as_str()
+        .expect("markdown");
+    assert!(text.contains("badge"), "{text}");
+
+    let answer = session.request(
+        "textDocument/references",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app/helpers/widgets_helper.rb")},
+            "position": {"line": 2, "character": 6},
+            "context": {"includeDeclaration": false},
+        }),
+    );
+    let found: Vec<(String, u64, u64)> = answer["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            let uri = l["uri"].as_str().unwrap();
+            (
+                uri.rsplit('/').next().unwrap().to_string(),
+                l["range"]["start"]["line"].as_u64().unwrap(),
+                l["range"]["start"]["character"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(found, vec![("show.html.erb".to_string(), 1, 11)]);
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}

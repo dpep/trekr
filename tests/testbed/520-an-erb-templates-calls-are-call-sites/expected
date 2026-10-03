@@ -2,5 +2,5 @@
 # `--def` inside a template answered nothing. A template's Ruby is now its
 # tags', at the template's own lines and columns, and indexed as a file.
 def app/views/widgets/show.html.erb:2:11 name=widget_label
-refs WidgetsHelper#widget_label possible=1
-dead app WidgetsHelper#widget_label=single-caller~untyped WidgetsHelper#unused_label=unreferenced
+refs WidgetsHelper#widget_label confirmed=1 possible=0
+dead app WidgetsHelper#widget_label=single-caller~ WidgetsHelper#unused_label=unreferenced

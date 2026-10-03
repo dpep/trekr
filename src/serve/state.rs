@@ -237,7 +237,13 @@ impl Document {
 
     /// Prism's syntax errors for this document.
     pub(crate) fn parse_errors(&self) -> Vec<(u32, u32, String)> {
-        crate::extract::syntax_errors(&self.ruby())
+        let mut errors = crate::extract::syntax_errors(&self.ruby());
+        // A template is compiled into a method, where `yield` is the
+        // layout's way to its content.
+        if self.erb {
+            errors.retain(|(_, _, message)| message != "Invalid yield");
+        }
+        errors
     }
 
     /// The parse, made once per edit rather than once per query.
