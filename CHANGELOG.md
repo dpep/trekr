@@ -23,11 +23,10 @@
   server's, another query's) waits for it instead of answering partial or
   indexing it a second time; `--index` says so on stderr. One left by a
   process that has since died is taken over at once, even when its pid now
-  belongs to another program.
-  The index under way reads the file the waiting query asks about, or the
-  editor has open, next — a `--def` behind the editor's first index, or the
-  editor behind an agent's, answers in about a second rather than waiting
-  for the whole checkout.
+  belongs to another program. The index under way reads next the file the
+  waiting query asks about, or the editor has open — a `--def` behind the
+  editor's first index, or the editor behind an agent's, answers in about a
+  second rather than waiting for the whole checkout.
 - **For scripts:** `--no-index` or `TREKR_NO_INDEX=1` keeps the old
   behaviour — answer from what is indexed, `not_indexed` (exit 2) where
   nothing is. A query whose index could not get the store's write lock in

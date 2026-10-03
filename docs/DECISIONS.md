@@ -12225,6 +12225,16 @@ as did the `trekr --index` its hint named. A mark an older trekr wrote has
 no start, and reads as before; an older trekr reads this one's first three
 fields and its `own`, and ignores the rest.
 
+*Addendum — a query claims before it starts an index.* A query that finds
+nothing indexing the checkout claims it (its own pid, nothing counted) before
+starting its index, and that index takes the claim over as its own; a query
+beside it finds the claim and waits rather than starting a second index that
+would only lose the claim after scanning the checkout. The claim never waits
+for the write lock: held more than half a second (another checkout's index),
+the query starts its index anyway and that index's own claim decides. Ten
+first queries at once on discourse: 20 trekr processes at the peak → 11–12,
+one index.
+
 ## DEC-510 — `--dead spec` parses a file once, and only one that can hold a read
 
 **Measured first.** `--dead spec --json` had slowed since 0.8.5, with the

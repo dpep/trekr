@@ -1180,6 +1180,8 @@ fn index_all(
     // What the language server or a query wants read first: this index's if
     // it fills the checkout, the one it waits for's if another does.
     let mut hints = crate::serve::fresh::Hints::listen();
+    // The query that started this index claimed the checkout for it.
+    let parent = autoindex::spawned().then(std::os::unix::process::parent_id);
     // A first index — no map yet, or one an index left unfinished — is
     // marked while it fills the store, so an answer meanwhile says it is
     // partial (DEC-320), and is written in the order someone looking at it
@@ -1192,18 +1194,22 @@ fn index_all(
         }
         // Seen without the write lock first: another's bulk write holds it
         // for seconds, and this index has hints to hand that one meanwhile.
-        let running = store
-            .warming(&root_str)?
-            .filter(|other| !other.interrupted && other.pid != std::process::id());
+        let running = store.warming(&root_str)?.filter(|other| {
+            !other.interrupted && other.pid != std::process::id() && Some(other.pid) != parent
+        });
         let other = match running {
             Some(other) => Some(other),
-            None => store.claim_warming(&root_str, files.len() as u64, !with_gems)?,
+            None => store.claim_warming(&root_str, files.len() as u64, !with_gems, parent)?,
         };
         match other {
             None => {
                 die_after_claim_for_tests()?;
                 if let Some(main) = store.path() {
                     hints.tail(crate::store::early::hints(main, std::process::id()));
+                    // Handed to the claim its query made for it.
+                    if let Some(parent) = parent {
+                        hints.tail(crate::store::early::hints(main, parent));
+                    }
                 }
                 break true;
             }
@@ -1222,9 +1228,13 @@ fn index_all(
     };
     let mut known = None;
     let (counts, gems) = if filling {
-        index_first(
+        let indexed = index_first(
             store, root, files, git_state, with_gems, &hints, &mut known, &pool, profile,
-        )?
+        )?;
+        if let (Some(main), Some(parent)) = (store.path(), parent) {
+            let _ = std::fs::remove_file(crate::store::early::hints(main, parent));
+        }
+        indexed
     } else {
         let counts = index_files(
             store, root, files, git_state, false, &mut known, &pool, profile,

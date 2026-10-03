@@ -129,6 +129,8 @@ fn wait(
     let mut filled = false;
     // The other index this query's file was handed to (DEC-512).
     let mut handed: Option<u32> = None;
+    // Since when the claim has found the write lock held.
+    let mut busy: Option<Instant> = None;
     loop {
         // Ours is reaped the moment it ends: until then it is a zombie, which
         // a liveness check takes for running, and its claim with it.
@@ -159,9 +161,10 @@ fn wait(
                 return Ok(Some(ExitCode::from(2)));
             }
             Seen::Filling(warming) => {
-                let mine = ours
-                    .as_ref()
-                    .is_some_and(|ours| ours.child.id() == warming.pid);
+                // Its index's mark, or the claim this query made for it.
+                let mine = ours.as_ref().is_some_and(|ours| {
+                    ours.child.id() == warming.pid || warming.pid == std::process::id()
+                });
                 filled |= mine;
                 // Another's index reads this query's file next, as it would
                 // the editor's (DEC-512).
@@ -175,7 +178,7 @@ fn wait(
                 heads.tick(Some(warming));
             }
             Seen::Idle(warming) => {
-                if ours.is_none() {
+                if ours.is_none() && claim(&root_str, &mut busy)? {
                     let file = file.as_ref().map(|(file, _)| file.as_path());
                     *ours = Some(spawn(root, file, heads.why)?);
                     crate::usage::flag("indexed");
@@ -224,12 +227,18 @@ pub(super) fn after_partial(
     if found || OFF.load(Relaxed) || !partial {
         return Ok(Then::Keep);
     }
-    // A miss from an early store waits for the whole, then asks it afresh:
-    // this query's store is the early one, and the whole is in the other.
-    if forget_early().is_some() {
+    // A miss from an early store — which holds the file and its neighbours,
+    // not the rest of the checkout — waits for the rest's write to land in
+    // the store, then asks afresh: this query reads the early copy.
+    if let Some(early) = forget_early() {
         let main = Store::open(&super::store_path()?)?;
-        if let Some(code) = ensure(out, &main, root, Need::Whole)? {
-            return Ok(Then::Exit(code));
+        let root_str = root.to_string_lossy();
+        let started = Instant::now();
+        while early.exists() && started.elapsed() < crate::store::writer_wait() {
+            if main.warming(&root_str)?.is_none_or(|w| w.interrupted) {
+                break;
+            }
+            std::thread::sleep(POLL);
         }
         use std::os::unix::process::CommandExt;
         let error = std::process::Command::new(std::env::current_exe()?)
@@ -316,6 +325,27 @@ pub(super) fn early_store() -> Option<std::path::PathBuf> {
 pub(super) fn forget_early() -> Option<std::path::PathBuf> {
     lock_early().take()
 }
+
+/// Claim the checkout for the index this query is about to start, so a
+/// query beside it waits for that one rather than starting its own. `false`
+/// when another's claim stood: no index to start. A write lock held a while
+/// — another checkout's index — is not worth waiting out: start it anyway,
+/// and its own claim decides.
+fn claim(root: &str, busy: &mut Option<Instant>) -> anyhow::Result<bool> {
+    let mut store = Store::open(&super::store_path()?)?;
+    match store.claim_for_child(root) {
+        Ok(None) => Ok(true),
+        Ok(Some(_)) => Ok(false),
+        Err(error) if crate::store::is_busy(&error) => {
+            Ok(busy.get_or_insert_with(Instant::now).elapsed() >= CLAIM_BUSY)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// How long a query's claim waits on the write lock before starting its
+/// index without one.
+const CLAIM_BUSY: Duration = Duration::from_millis(500);
 
 /// An index this query started.
 struct Index {

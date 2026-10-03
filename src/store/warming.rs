@@ -100,17 +100,22 @@ impl Store {
     /// — unless another index already fills it: then that one's mark, and
     /// nothing written. One transaction, so of two first indexes started at
     /// once one fills the checkout and the other learns it in time.
+    ///
+    /// `ours`: another process whose mark is this one's to take — the query
+    /// that claimed the checkout for the index it then started.
     pub(crate) fn claim_warming(
         &mut self,
         root: &str,
         own: u64,
         counted: bool,
+        ours: Option<u32>,
     ) -> Result<Option<Warming>> {
         let me = std::process::id();
         self.batch(|store| {
             if let Some(other) = store.warming(root)?
                 && !other.interrupted
                 && other.pid != me
+                && Some(other.pid) != ours
             {
                 return Ok(Some(other));
             }
@@ -120,6 +125,17 @@ impl Store {
             }
             Ok(None)
         })
+    }
+
+    /// Claim `root` for the first index this process is about to start, so
+    /// another query finds it under way rather than starting its own; that
+    /// index takes the claim over as its own. Never waits for the write
+    /// lock: busy is an error, and the caller starts its index anyway.
+    pub(crate) fn claim_for_child(&mut self, root: &str) -> Result<Option<Warming>> {
+        self.conn.busy_timeout(std::time::Duration::ZERO)?;
+        let claimed = self.claim_warming(root, 0, false, None);
+        self.conn.busy_timeout(super::BUSY)?;
+        claimed
     }
 
     fn mark(&self, root: &str, value: &str) -> Result<()> {
@@ -307,10 +323,10 @@ mod tests {
     #[test]
     fn a_claim_yields_to_a_live_index_and_takes_over_a_dead_one() {
         let mut store = Store::open_in_memory().unwrap();
-        assert_eq!(store.claim_warming("/app", 40, false).unwrap(), None);
+        assert_eq!(store.claim_warming("/app", 40, false, None).unwrap(), None);
         assert!(store.warming("/app").unwrap().unwrap().uncounted);
         // Our own mark is ours to write again.
-        assert_eq!(store.claim_warming("/app", 40, true).unwrap(), None);
+        assert_eq!(store.claim_warming("/app", 40, true, None).unwrap(), None);
 
         let mut writer = std::process::Command::new("sleep")
             .arg("60")
@@ -319,11 +335,14 @@ mod tests {
         store
             .mark("/app", &format!("{} 3 40", writer.id()))
             .unwrap();
-        let other = store.claim_warming("/app", 40, false).unwrap().unwrap();
+        let other = store
+            .claim_warming("/app", 40, false, None)
+            .unwrap()
+            .unwrap();
         assert_eq!((other.pid, other.read), (writer.id(), 3));
         writer.kill().unwrap();
         writer.wait().unwrap();
-        assert_eq!(store.claim_warming("/app", 40, false).unwrap(), None);
+        assert_eq!(store.claim_warming("/app", 40, false, None).unwrap(), None);
         assert_eq!(
             store.warming("/app").unwrap().unwrap().pid,
             std::process::id()
@@ -375,7 +394,7 @@ mod tests {
             .mark("/app", &format!("{} 3 40 start:1", other.id()))
             .unwrap();
         assert!(store.warming("/app").unwrap().unwrap().interrupted);
-        assert_eq!(store.claim_warming("/app", 40, false).unwrap(), None);
+        assert_eq!(store.claim_warming("/app", 40, false, None).unwrap(), None);
         other.kill().unwrap();
         other.wait().unwrap();
     }

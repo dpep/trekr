@@ -2859,6 +2859,16 @@ fn first_queries_at_once_share_one_index() {
     assert_eq!(json(&outs[0]), json(&outs[1]));
     assert_eq!(json(&outs[0])["counts"]["excluded"], 2);
     settled(&db, &dir);
+    // One of them started the index; the rest found its claim and waited.
+    let rows = json(&trekr(&db, &dir, &["--usage", "--json"]));
+    let spawned: i64 = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|r| r["flags"].as_str().unwrap_or("").contains("indexed"))
+        .map(|r| r["count"].as_i64().unwrap())
+        .sum();
+    assert_eq!(spawned, 1, "{rows}");
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -3110,8 +3120,10 @@ fn a_first_query_leaves_no_write_ahead_log() {
     let out = trekr(&db, &dir, &["--refs", "Widget#helper", "--json"]);
     assert_eq!(out.status.code(), Some(0));
     let wal = PathBuf::from(format!("{}-wal", db.display()));
+    // A page or two a reader's closing `optimize` writes may follow; the
+    // index's own frames (hundreds of KB here, tens of MB on a real app) not.
     let size = fs::metadata(&wal).map_or(0, |m| m.len());
-    assert_eq!(size, 0, "{} left at {size} bytes", wal.display());
+    assert!(size < 64 * 1024, "{} left at {size} bytes", wal.display());
     let _ = fs::remove_dir_all(&dir);
 }
 
