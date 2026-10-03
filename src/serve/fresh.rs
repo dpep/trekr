@@ -653,7 +653,7 @@ impl Hints {
             use std::io::{Read, Seek};
             let (mut at, mut partial) = (0u64, Vec::new());
             loop {
-                if let Ok(mut opened) = std::fs::File::open(&file)
+                if let Ok(mut opened) = crate::store::early::open_hints(&file)
                     && opened.seek(std::io::SeekFrom::Start(at)).is_ok()
                 {
                     let mut more = Vec::new();

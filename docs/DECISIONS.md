@@ -12363,3 +12363,10 @@ index does (DEC-400), and past a second it says what it waits for, once
 per query. Discourse, the editor's first index stopped in its bulk write, a
 `--def` missing in its early store, writer wait 3 s: still running at
 26.5 s → exit 2 after 3.3 s, the notice at one second.
+
+*Addendum — a hints file is never written or read through a link.* It sits
+beside the store, which `TREKR_DB` may put in a shared directory, and was
+appended to as any file is: a symlink laid there in its name would have had
+paths appended wherever it pointed. It is opened with `O_NOFOLLOW` to write
+and to read, created readable by its owner alone (0600), and a link in its
+place is refused.

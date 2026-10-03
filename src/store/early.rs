@@ -116,6 +116,7 @@ pub(crate) fn hints(main: &Path, pid: u32) -> PathBuf {
 pub(crate) fn hint(main: &Path, pid: u32, paths: &[PathBuf]) -> std::io::Result<()> {
     use std::io::Write;
     use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::fs::OpenOptionsExt;
     if paths.is_empty() {
         return Ok(());
     }
@@ -124,11 +125,24 @@ pub(crate) fn hint(main: &Path, pid: u32, paths: &[PathBuf]) -> std::io::Result<
         lines.extend_from_slice(path.as_os_str().as_bytes());
         lines.push(b'\n');
     }
+    // Beside the store, which may be in a shared directory: never through a
+    // link someone else laid there, and readable by the store's owner alone.
     std::fs::OpenOptions::new()
         .create(true)
         .append(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
         .open(hints(main, pid))?
         .write_all(&lines)
+}
+
+/// Open a hints file to read, refusing one that is a symlink.
+pub(crate) fn open_hints(file: &Path) -> std::io::Result<std::fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(file)
 }
 
 /// Copy the store at `main`, as of its last commit, to `to`; `false` when
@@ -226,6 +240,32 @@ mod tests {
         sweep(&main);
         assert!(hints(&main, me).exists(), "a running index's are kept");
         assert!(!hints(&main, dead).exists(), "a dead index's are removed");
+        let _ = std::fs::remove_dir_all(&scratch);
+    }
+
+    #[test]
+    fn hints_are_the_owner_s_alone_and_never_written_through_a_symlink() {
+        use std::os::unix::fs::PermissionsExt;
+        let scratch = scratch("hints-link");
+        let main = scratch.join("t.db");
+        let me = std::process::id();
+        hint(&main, me, &[PathBuf::from("/app/a.rb")]).unwrap();
+        let mode = std::fs::metadata(hints(&main, me))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
+
+        let target = scratch.join("elsewhere");
+        std::fs::write(&target, "kept\n").unwrap();
+        let linked = me + 1;
+        std::os::unix::fs::symlink(&target, hints(&main, linked)).unwrap();
+        assert!(hint(&main, linked, &[PathBuf::from("/app/a.rb")]).is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), "kept\n");
+        assert!(
+            open_hints(&hints(&main, linked)).is_err(),
+            "nor read through one"
+        );
         let _ = std::fs::remove_dir_all(&scratch);
     }
 
