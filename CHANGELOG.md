@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **`--dead`'s output is the same on every run.** A `test-only` constant's
+  reason named its "first" test reference in the order the index's rows
+  happened to come, which changed from run to run; it is the earliest by
+  path and line now.
 - **The first query in a repo indexes it.** No `trekr --index` first, and no
   more `not_indexed`: `--refs`, `--dead`, `--ancestors` and cards wait for the
   whole index; a position (`--def`, `FILE:LINE:COL`) answers as soon as its

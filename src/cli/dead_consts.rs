@@ -32,6 +32,21 @@ struct Uses {
     first_test: Option<(String, u32)>,
 }
 
+impl Uses {
+    /// A reference from a test. The first is the earliest by place, not by
+    /// the order the store's rows came in, which a name's hash decides.
+    fn test_at(&mut self, path: &str, line: u32) {
+        self.tests += 1;
+        if self
+            .first_test
+            .as_ref()
+            .is_none_or(|(first, at)| (path, line) < (first.as_str(), *at))
+        {
+            self.first_test = Some((path.to_string(), line));
+        }
+    }
+}
+
 /// A spec or a test, by a directory on its path.
 fn in_tests(path: &str) -> bool {
     path.split('/')
@@ -230,10 +245,7 @@ fn uses_of(
             }
             let entry = uses.entry(used.to_string()).or_default();
             if test {
-                entry.tests += 1;
-                entry
-                    .first_test
-                    .get_or_insert_with(|| (row.path.clone(), row.line));
+                entry.test_at(&row.path, row.line);
             } else {
                 entry.live += 1;
             }
@@ -498,6 +510,21 @@ pub(super) fn dead_constants(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn the_first_test_reference_is_the_earliest_whatever_the_order() {
+        let mut uses = Uses::default();
+        for (path, line) in [
+            ("spec/b_spec.rb", 3),
+            ("spec/a_spec.rb", 9),
+            ("spec/a_spec.rb", 2),
+        ] {
+            uses.test_at(path, line);
+        }
+        assert_eq!(uses.first_test, Some(("spec/a_spec.rb".to_string(), 2)));
+        assert_eq!(uses.tests, 3);
+    }
+
     use super::*;
 
     #[test]
