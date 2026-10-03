@@ -42,7 +42,13 @@
   `db/schema.rb`'s, typed from their SQL types, for go to definition,
   references, hover, completion and `--dead`. When an app commits both
   files, the one Rails loads is read: `db/schema.rb`, unless
-  `config/application.rb` sets `schema_format = :sql`.
+  `config/application.rb` sets `schema_format = :sql`. A view's columns are
+  its select list's (a model backed by one says so, and how many it could
+  not name); a table inheriting another has the parent's columns too; and a
+  table in a schema the app's search path does not find is `schema.table`,
+  a model's only through `self.table_name = "schema.table"`.
+- **A `date` column reads as Date**, as ActiveRecord casts it, so
+  `post.published_on.` offers Date's methods; it was typed Time.
 - **An array column is an Array.** `t.bigint "tag_ids", array: true` (or a
   Postgres `bigint[]`) types its reader as Array, not by its elements.
 - **A column's definition is its own line.** Go to definition on

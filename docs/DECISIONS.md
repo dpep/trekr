@@ -11636,8 +11636,64 @@ showed no table.
 **Not done.** `table_name_prefix` set as `self.table_name_prefix = "x_"` on
 `ActiveRecord::Base` or a class, `pluralize_table_names = false`, and a
 `def self.table_name` computed in Ruby are not read. A view-backed model shows
-"not in" the dump, since a `CREATE VIEW` is not read as a table. Testbed
-473, 474; `lsp_e2e`'s watched-dump case; `cli_e2e`'s model card.
+"not in" the dump, since a `CREATE VIEW` is not read as a table (read since:
+DEC-480's addendum). Testbed 473, 474; `lsp_e2e`'s watched-dump case;
+`cli_e2e`'s model card.
+
+### DEC-480 addendum: what real dumps held that the first reader missed
+
+A pre-release hunt read GitLab FOSS's 63,327-line dump, MySQL apps and
+hand-made edge dumps. Each miss was silent — a table with fewer columns, or
+another table's:
+
+- **The dialect is the dump's, not a backtick's.** One backtick anywhere
+  switched the lexer to mysqldump's rules, where `#` opens a comment and a
+  backslash escapes a quote. GitLab's has one, in a `CHECK`'s regex, so its
+  jsonb `#>` index swallowed itself and the statement after it; a
+  `GENERATED … (data #>> '{title}')` column or a `DEFAULT '\'::text` cost a
+  table its columns. The dialect is read from what each dump writes:
+  pg_dump's header, `SET standard_conforming_strings`, `SET search_path`,
+  `pg_catalog.`; else mysqldump's `/*!40…`, `ENGINE=`, a backtick-quoted
+  `CREATE TABLE`.
+- **A table keeps its schema unless the search path finds it.** The schema
+  was dropped from every name, so `audit.posts` and `public.posts` were one
+  table: `Post` had both's columns and pg_dump, sorting `audit` first, made
+  its card show audit's. A table is named bare when the app's search path —
+  the dump's last `SET search_path`, which Rails appends, else `public` —
+  finds it first; otherwise `schema.table`, which `self.table_name =
+  "audit.posts"` names, and whose methods sit on a carrier no constant can
+  be (`audit.Post`) until such a model takes them. An older pg_dump's bare
+  names under a per-schema `SET search_path` are qualified by it. GitLab's
+  275 partitions in `gitlab_partitions_static` no longer pose as models.
+- **Views.** `CREATE [MATERIALIZED] VIEW name AS SELECT …` is a table whose
+  columns are its select list's names: an `AS` alias, a bare or qualified
+  column, a function call's name. A bare column of a table the view reads
+  (its `FROM`/`JOIN`s, one table having it) is typed as that column; an
+  expression is untyped. An item that names no column (`*`, an expression
+  with no `AS`) is counted, and the card and hover say how many were not
+  read. GitLab: 15 views have columns now (`postgres_indexes`, which
+  `Gitlab::Database::PostgresIndex` reads, among them); discourse: one,
+  `badge_posts`.
+- **Smaller misses.** `INHERITS (parent)` puts the parent's columns first,
+  as Postgres does. A column named `exclude` (unreserved, so pg_dump leaves
+  it bare) was taken for an `EXCLUDE` constraint; that needs `(` or `USING`
+  after it now. MySQL: `int unsigned zerofill` trimmed its suffixes in the
+  wrong order and got no class; `FULLTEXT KEY` is an index; a prefix
+  index's column is `name`, not `` `name`(191) ``.
+- **`date` reads as Date**, in both dumps, as ActiveRecord casts it; it was
+  Time. 58 of GitLab's columns, 24 of discourse's.
+
+Unit tests in `schema/sql.rs` for each; testbed 510 (schemas, a view).
+
+**Measured** against main before these (022261d), each on its own store,
+gold sets as BASELINE runs them (`APP_SAMPLE=600 SAMPLE=300 SEED=12`,
+context pinned): widget_shop, discourse and mastodon, every verdict the
+same, confidently-wrong unchanged (1, 3, 15 app sites). Two discourse
+`declaration` sites gained a candidate (`hidden`, a column of the
+`badge_posts` view as well) and their confidence fell, 0.09 → 0.08 and
+0.5 → 0.33. `compare.py --engine trekr`, 500 sites: discourse 90.0 / 81.2
+/ 8.8 % and mastodon 87.6 / 52.6 / 35.0 % (answered / correct@1 /
+wrong@1), each site's answer the same.
 
 ## DEC-490 — An example group's member is read as RSpec runs it
 
@@ -11726,6 +11782,31 @@ candidate is not one: one pass, as for methods (`api/v1/timelines/list`'s
 in a loop's block (`[…].each { |v| context … }`) is not a group trekr opens.
 A `def self.x` in a group is no member and no row. (Metadata includes
 were not read at first; DEC-495 reads them.)
+
+### DEC-490 addendum: `--def` and `--refs` read a position the same way
+
+Three disagreements the hunt found between the answers DEC-490 meant to be
+one:
+
+- **A helper and an includer's `let` of one name.** A call in a shared
+  group's body that a helper `RSpec.configure` includes defines went to the
+  helper alone in `--def`, though Ruby runs an including group's `let` for
+  that group (the `let`'s module is included after the helper) and `--refs`
+  on the `let` listed the call confirmed. The includers answer first now,
+  each with its member, the helper standing in for those that define
+  nothing (`ambiguous`, one in their number each, `resolved_via:
+  includer`; `agreement` names the helper). The helper alone answers only
+  where no includer defines the name. The includers are looked for only
+  when the call's answer was residue or a module outside `RSpec::`, so
+  `expect` in a shared body costs nothing more. Testbed 512.
+- **The `let` keyword.** `--refs FILE:LINE:COL` on the `let` of
+  `let(:x)` asked RSpec's `let` macro (`no_such_method` on
+  `RSpec::Core::MemoizedHelpers::ClassMethods`) while Find References there
+  listed the `let`'s reads. On `let`, `let!`, `subject` or `subject!` the
+  position means the member it defines, for both.
+- **A class or constant.** `--refs FILE:LINE:COL` on one was a usage error
+  (exit 64) though `--refs Widget` answers. It is that answer, for the
+  constant the position resolves to. Testbed 511.
 
 ## DEC-491 — `shadowed`: a definition every read of whose name an override answers
 
@@ -12091,3 +12172,45 @@ discourse 5.0 s (alone 4.0), mastodon 3.3 (3.0), 100k 18.9 (17.2). In the first 
 query also waited on its own child's redundant reindex after the shared one,
 and discourse took 8–9 s; queries now wait only for a child that held the
 mark.
+
+## DEC-510 — `--dead spec` parses a file once, and only one that can hold a read
+
+**Measured first.** `--dead spec --json` had slowed since 0.8.5, with the
+members' reader (DEC-490): mastodon 0.73 → 1.46 s, discourse 3.23 → 5.10 s
+(five interleaved runs, medians, load 3–7). Phase timings and a sampling
+profile put most of the added time in parsing, not in reading members:
+every spec file was parsed by `--dead`'s own pass and again by the reader;
+each top-level shared group's member had every file that calls its name
+parsed — discourse's app controllers and services among them, 2,009 files
+in all — and the helper modules' gem files (756 on mastodon) were parsed
+one at a time.
+
+**Decided.** The scope's files are read and parsed in parallel, weighed in
+order as before, and their facts handed to the reader. A file whose text
+contains none of `describe`, `context`, `feature`, `example_group` and
+`shared_examples` — one of which every call that opens a group is named
+with (`extract::GROUP_WORDS`, a unit test holds it to `GROUP_METHODS`) —
+opens no group, so holds no read of a member, and is not parsed for one.
+The files a read needs, and the helpers' files, are parsed together in
+parallel ahead of it.
+
+**Measured after**, same runs: mastodon 1.03 s, discourse 3.41 s.
+`--dead spec --json` byte-identical before and after on both, and `--dead
+app` on discourse. The rest of the gap to 0.8.5 is the reader's own work —
+group lookups (`Scan::answers`, `member_at`), not parsing.
+
+**Also.** Comparing outputs found `--dead` itself was not deterministic: a
+`test-only` constant's "first at" was the first test reference in the
+order the store's rows came, which a HashMap of names decides. It is the
+earliest by path and line now.
+
+## DEC-511 — Deferred: an early `--def` on a module reopened elsewhere
+
+A position answered before the whole checkout is read (DEC-500) can be
+wrong for a module whose methods another file reopens: discourse's
+`I18n.t`, which `lib/freedom_patches` patches, answers with the gem's `t`
+until the patch is read. That is what an early answer is: it says
+`warming`, with the share of the tree read, and the miss fix (a miss waits
+for the rest) does not apply because it is not a miss. Not changed: making
+it right means reading every file that reopens the module first, which is
+the whole index.

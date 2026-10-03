@@ -138,7 +138,8 @@ checkout you asked about relative to it, and anything else absolute.
 `Owner.method` asks about a class method instead. A bare `--refs name` keeps the
 whole-mention view. **A position** (`--refs spec/widget_spec.rb:12`, or
 `FILE:LINE:COL`) asks about what is there: a method's definition or call as
-`Owner#method`, or a spec's `let`, `subject` or group `def` — every read as
+`Owner#method`, a class, module or constant as `--refs Name`, or a spec's
+`let`, `subject` or group `def` (or the `let` keyword) — every read as
 RSpec runs it (its group's and nested groups' examples, an enclosing group's
 hooks, an included shared group's body in any file, `super`, `is_expected`,
 a `config.include`d helper, a shared context included by metadata, a
@@ -361,8 +362,11 @@ tiers the site `possible`.
   subclass shares), `abstract`, and — when the schema dump has it — `path` +
   `line` of the table, `primary_key`, `columns` (`name`, `type` as the dump
   spells it, `class` its reader returns, `null`, `default`, `line`) and
-  `indexes` (`columns`, `unique`). From `db/schema.rb`, or `db/structure.sql`
-  when the app dumps SQL. A class that is not a model has no `table`.
+  `indexes` (`columns`, `unique`), and `view` — for a view, its select
+  list's columns, `unread_columns` counting those it names none for. From
+  `db/schema.rb`, or `db/structure.sql` when the app dumps SQL; a table in
+  another schema than the app's is `schema.table`. A class that is not a
+  model has no `table`.
 * An answer with `warming` came from a first index still running (`read` of
   `of` files in): it may change, and claims nothing certain. Ask again when
   the index ends.

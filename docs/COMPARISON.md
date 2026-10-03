@@ -91,6 +91,12 @@ would have been wrong.
   `kind` are discarded. A declaration answer, meaning the macro or column that
   defined a method, counts as wrong@1. BASELINE.md scores trekr on its own
   terms.
+* **discourse's row predates reading `db/structure.sql`** (DEC-480), and is
+  not re-run here. With it, `compare.py --engine trekr` on the same 500 sites
+  measured correct@1 81.2 % unchanged and wrong@1 7.0 → 8.8 %: the nine sites
+  newly answered are attribute calls answered with their column in
+  `db/structure.sql`, which `compare.py` counts as wrong and `gold.py` calls a
+  `declaration`. The move is the scorer's, not a regression.
 * **A call through `delegate` answers the method it sends to first**
   (DEC-211), and the delegate second. Ruby's trace records the delegate, so
   `Model.where` scores wrong@1 and found.
