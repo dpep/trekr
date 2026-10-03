@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **`--dead` knows more of the methods Ruby calls by name.** A private
+  `instance_variables_to_inspect` (`Kernel#inspect`, Ruby 3.4+) was
+  `unreferenced`, clear; it is graded lower now, with the hook named. The
+  list was audited against core and the stdlib, and also gained
+  `deconstruct`/`deconstruct_keys`, `to_a`, `succ`, `to_regexp`,
+  `pretty_print_instance_variables`, the `singleton_method_*` and
+  `method_removed`/`method_undefined` hooks, `append_features`/
+  `extend_object`/`prepend_features`, `const_added`, a class's
+  `method_missing`/`respond_to_missing?`, and `json_create` (#5).
+
 ## 0.8.6 — 2026-10-03
 
 - **`--dead`'s output is the same on every run.** A `test-only` constant's

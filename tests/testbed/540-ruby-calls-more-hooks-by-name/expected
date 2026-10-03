@@ -1,0 +1,6 @@
+# dpep/trekr#5: Ruby 3.4's `Kernel#inspect` calls a private
+# `instance_variables_to_inspect` by name, and `--dead` called it
+# unreferenced, clear. The DEC-315 list, audited against core and the
+# stdlib, grew pattern matching and a splat with it. (The harness reads
+# `Widget.x` as a constant, so the class-side hooks are not asserted here.)
+dead lib/widget.rb Widget#instance_variables_to_inspect=unreferenced~inspect Widget#deconstruct_keys=unreferenced~pattern Widget#to_a=unreferenced~splat Widget#lonely=unreferenced~

@@ -9156,6 +9156,8 @@ touch, in `caveat`, which grades the row `lower`:
     `read_attribute_for_serialization`, `read_attribute_for_validation`,
     and a job's `perform` (`perform_later`, Sidekiq).
 
+  (Grown by DEC-540, from an audit against core and the stdlib.)
+
   The sources are each caller's own contract: Ruby's `Marshal`, `Psych`,
   `PP`, `Comparable`, `Enumerable`, `Numeric#coerce` and the implicit
   conversion protocol (`doc/implicit_conversion.rdoc`); ActiveModel's
@@ -12370,3 +12372,45 @@ appended to as any file is: a symlink laid there in its name would have had
 paths appended wherever it pointed. It is opened with `O_NOFOLLOW` to write
 and to read, created readable by its owner alone (0600), and a link in its
 place is refused.
+
+## DEC-540 — The protocol-hook list, audited against Ruby core and the stdlib
+
+**Decided.** DEC-315's list of methods Ruby calls by name is checked
+against what core and the default gems call, rather than grown a name at a
+time. Added, with the caller each row's caveat names:
+
+| hook | side | caller |
+| --- | --- | --- |
+| `instance_variables_to_inspect` | instance | `Kernel#inspect` (Ruby 3.4+) |
+| `pretty_print_instance_variables` | instance | `pp` (`PP::ObjectMixin#pretty_print`) |
+| `deconstruct`, `deconstruct_keys` | instance | pattern matching (`in [a, b]`, `in {a:}`) |
+| `succ` | instance | a Range's iteration |
+| `to_regexp` | instance | `Regexp.union` |
+| `to_a` | instance | a splat (`*`) |
+| `singleton_method_added`, `_removed`, `_undefined` | both | defining, removing, undefining a singleton method |
+| `method_missing`, `respond_to_missing?` | class side too | dispatch and `respond_to?` on a class |
+| `method_removed`, `method_undefined` | class | `remove_method`, `undef_method` |
+| `append_features`, `extend_object`, `prepend_features` | class | `include`, `extend`, `prepend` |
+| `const_added` | class | defining a constant (Ruby 3.2+) |
+| `json_create` | class | `JSON.parse` with `create_additions` |
+
+A hook newer than the checkout's Ruby is still a hook: the caveat says the
+version, and a method of that name was written for it.
+
+**Checked and left out.** `initialize` is `Class#new`'s, and a call site
+writes it as `X.new`: that is a reference to read (dpep/trekr#4), not a
+caller to caveat. `to_h` (`**` calls `to_hash`, already listed), `to_sym`
+(core converts names with `to_str`), `to_i`/`to_f` (`Integer()` and
+`Float()` try `to_int` first; a definition is far more often called by
+name), `freeze`, `yaml_tag` (called by the class itself), and finalizers,
+which are handed a callable rather than calling a name.
+
+**Why.** dpep/trekr#5: rails' activesupport has five private
+`instance_variables_to_inspect`s, which Ruby 3.4's `Kernel#inspect` calls,
+reported `unreferenced`, clear.
+
+**Measured**, `--dead` against 0.8.6 on one store: rails activesupport/lib
+the five leave `clear` for `lower` (230 → 225 clear) and nothing else
+moves; the other nine rails libraries four more, all
+`instance_variables_to_inspect` (1,654 → 1,650). Tiers unchanged.
+
