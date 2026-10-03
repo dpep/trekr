@@ -4066,11 +4066,20 @@ fn dead_in(
     let mut defined: Vec<Defined> = Vec::new();
     // An example group's own methods, weighed by who reads them (DEC-490).
     let mut group_members: Vec<(String, crate::core::Def)> = Vec::new();
-    for file in &files {
-        let Ok(source) = std::fs::read(file) else {
-            continue;
-        };
-        let facts = extract::extract(&source);
+    // Each file's facts, for the members' reader to read rather than parse again.
+    let mut scope_facts: Vec<(String, std::sync::Arc<crate::core::Facts>)> = Vec::new();
+    // Read and parsed in parallel, weighed in order.
+    let parsed: Vec<_> = files
+        .par_iter()
+        .filter_map(|file| {
+            let source = std::fs::read(file).ok()?;
+            let facts = std::sync::Arc::new(extract::extract(&source));
+            let symbols = extract::symbol_literals(&source);
+            Some((file, source, facts, symbols))
+        })
+        .collect();
+    for (file, source, facts, symbols) in parsed {
+        scope_facts.push((file.to_string_lossy().into_owned(), facts.clone()));
         // A dynamic-dispatch marker anywhere in the file lowers confidence for
         // everything in it: these are the shapes that make "no references" a
         // weaker statement, and they are file-wide by nature.
@@ -4096,7 +4105,7 @@ fn dead_in(
             .filter(|c| c.recv == crate::core::RecvShape::Symbol)
             .map(|c| c.pos)
             .collect();
-        let unread_symbols: Vec<(String, u32)> = extract::symbol_literals(&source)
+        let unread_symbols: Vec<(String, u32)> = symbols
             .into_iter()
             .filter(|(_, pos, _)| !recorded.contains(pos))
             .map(|(name, pos, _)| (name, pos.line))
@@ -4661,6 +4670,9 @@ fn dead_in(
             .strip_prefix(root)
             .map_or(file.to_string(), |p| p.to_string_lossy().into_owned())
     };
+    for (file, facts) in scope_facts {
+        checkout_files.hold(&relative(&file), facts);
+    }
     let scope: Vec<(String, String)> = files
         .iter()
         .map(|file| file.to_string_lossy().into_owned())

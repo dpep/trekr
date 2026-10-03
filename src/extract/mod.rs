@@ -2289,6 +2289,16 @@ const GROUP_METHODS: [&str; 13] = [
     "shared_examples_for",
 ];
 
+/// Words one of which every name in `GROUP_METHODS` contains: a file whose
+/// text has none of them opens no example group.
+pub(crate) const GROUP_WORDS: [&str; 5] = [
+    "describe",
+    "context",
+    "feature",
+    "example_group",
+    "shared_examples",
+];
+
 /// Example-method blocks that a nested group runs as well as their own:
 /// hooks, `let`s and `subject`s (DEC-096).
 const INHERITED_BLOCKS: [&str; 13] = [
@@ -6083,6 +6093,17 @@ pub(crate) struct Parsed {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn every_group_method_contains_a_group_word() {
+        for name in GROUP_METHODS {
+            assert!(
+                GROUP_WORDS.iter().any(|word| name.contains(word)),
+                "{name} would be missed by the text filter"
+            );
+        }
+    }
+
     use super::*;
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/widget.rb");

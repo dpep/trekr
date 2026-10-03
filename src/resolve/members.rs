@@ -30,6 +30,11 @@ pub(crate) trait Files {
     /// Whether a file's text contains `needle`, read without parsing it: a
     /// cheap filter before a parse.
     fn mentions(&self, path: &str, needle: &str) -> bool;
+    /// Can the file open an example group, by its text? One that cannot
+    /// holds no read of a member, and is not parsed to find one.
+    fn may_open_groups(&self, path: &str) -> bool;
+    /// Parse these files now, together, ahead of the reads that follow.
+    fn prefetch(&self, paths: &[String]);
 }
 
 /// A group member: a `let`, `let!`, `subject` or `def` written in an example
@@ -979,10 +984,12 @@ pub(crate) fn reads(context: &Context<'_>, asked: &Asked<'_>, keep_all: bool) ->
             .flat_map(|name| context.files.calling(name))
             .filter(|path| path != asked.path)
             .collect();
+        calling.retain(|path| context.files.may_open_groups(path));
         calling.sort();
         calling.dedup();
         paths.extend(calling);
     }
+    context.files.prefetch(&paths);
     let held: Vec<(String, Arc<Facts>)> = paths
         .into_iter()
         .filter_map(|path| {
@@ -1465,6 +1472,12 @@ pub(crate) fn reads(context: &Context<'_>, asked: &Asked<'_>, keep_all: bool) ->
         }
     }
     out.helpers = modules.len();
+    let unread: Vec<String> = modules
+        .iter()
+        .filter(|(_, module)| !context.modules.borrow().contains_key(module))
+        .flat_map(|(_, module)| module_paths(tree, module))
+        .collect();
+    context.files.prefetch(&unread);
     for (why, module) in &modules {
         let calls = context.module_calls(module);
         for name in &names {

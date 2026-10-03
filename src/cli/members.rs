@@ -19,6 +19,8 @@ pub(crate) struct CheckoutFiles<'a> {
     /// Open buffers' text, by checkout-relative path.
     open: HashMap<String, String>,
     held: RefCell<HashMap<String, Option<Arc<Facts>>>>,
+    /// Whether each file's text can open an example group.
+    groups: RefCell<HashMap<String, bool>>,
 }
 
 impl<'a> CheckoutFiles<'a> {
@@ -38,7 +40,15 @@ impl<'a> CheckoutFiles<'a> {
             root_str,
             open,
             held: RefCell::new(HashMap::new()),
+            groups: RefCell::new(HashMap::new()),
         }
+    }
+}
+
+impl CheckoutFiles<'_> {
+    /// A file's facts, parsed already from the text on disk.
+    pub(crate) fn hold(&self, path: &str, facts: Arc<Facts>) {
+        self.held.borrow_mut().insert(path.to_string(), Some(facts));
     }
 }
 
@@ -47,15 +57,33 @@ impl Files for CheckoutFiles<'_> {
         if let Some(held) = self.held.borrow().get(path) {
             return held.clone();
         }
-        let bytes = match self.open.get(path) {
-            Some(text) => Some(text.as_bytes().to_vec()),
-            None => std::fs::read(self.root.join(path)).ok(),
-        };
-        let facts = bytes.map(|bytes| Arc::new(crate::extract::extract(&bytes)));
+        let facts = read_facts(self.root, &self.open, path);
         self.held
             .borrow_mut()
             .insert(path.to_string(), facts.clone());
         facts
+    }
+
+    fn prefetch(&self, paths: &[String]) {
+        use rayon::prelude::*;
+        let mut wanted: Vec<&String> = {
+            let held = self.held.borrow();
+            paths
+                .iter()
+                .filter(|path| !held.contains_key(*path))
+                .collect()
+        };
+        wanted.sort();
+        wanted.dedup();
+        if wanted.len() < 2 {
+            return;
+        }
+        let (root, open) = (self.root, &self.open);
+        let read: Vec<(String, Option<Arc<Facts>>)> = wanted
+            .par_iter()
+            .map(|path| (path.to_string(), read_facts(root, open, path)))
+            .collect();
+        self.held.borrow_mut().extend(read);
     }
 
     fn calling(&self, name: &str) -> Vec<String> {
@@ -75,12 +103,44 @@ impl Files for CheckoutFiles<'_> {
         }
         std::fs::read(self.root.join(path)).is_ok_and(|bytes| contains(&bytes, needle.as_bytes()))
     }
+
+    fn may_open_groups(&self, path: &str) -> bool {
+        if let Some(known) = self.groups.borrow().get(path) {
+            return *known;
+        }
+        let words = crate::extract::GROUP_WORDS;
+        let held = self.held.borrow().get(path).cloned().flatten();
+        let may = match (self.open.get(path), held) {
+            (Some(text), _) => words.iter().any(|w| text.contains(w)),
+            (None, Some(facts)) => facts
+                .source
+                .as_deref()
+                .is_some_and(|source| words.iter().any(|w| contains(source, w.as_bytes()))),
+            (None, None) => std::fs::read(self.root.join(path))
+                .is_ok_and(|bytes| words.iter().any(|w| contains(&bytes, w.as_bytes()))),
+        };
+        self.groups.borrow_mut().insert(path.to_string(), may);
+        may
+    }
+}
+
+/// A file's facts: its open buffer's, else the disk's.
+fn read_facts(root: &Path, open: &HashMap<String, String>, path: &str) -> Option<Arc<Facts>> {
+    let bytes = match open.get(path) {
+        Some(text) => Some(text.as_bytes().to_vec()),
+        None => std::fs::read(root.join(path)).ok(),
+    };
+    bytes.map(|bytes| Arc::new(crate::extract::extract(&bytes)))
 }
 
 fn contains(haystack: &[u8], needle: &[u8]) -> bool {
-    haystack
-        .windows(needle.len())
-        .any(|window| window == needle)
+    // `str`'s search skips ahead; a window per byte does not.
+    match (std::str::from_utf8(haystack), std::str::from_utf8(needle)) {
+        (Ok(haystack), Ok(needle)) => haystack.contains(needle),
+        _ => haystack
+            .windows(needle.len())
+            .any(|window| window == needle),
+    }
 }
 
 /// What kind of member a row is: `let`, `subject`, or a group's `def`.
