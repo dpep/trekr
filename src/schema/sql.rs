@@ -76,9 +76,10 @@ pub(crate) fn tables(src: &[u8]) -> Vec<Table> {
 
 fn lex(text: &str) -> Vec<Token> {
     let bytes = text.as_bytes();
-    // mysqldump escapes with a backslash; pg_dump doubles the quote and
-    // writes `E'…'` when it means escapes. Backticks say which dump this is.
-    let backslash = bytes.contains(&b'`');
+    // mysqldump escapes with a backslash and comments with `#`; pg_dump
+    // doubles the quote, writes `E'…'` when it means escapes, and uses `#`
+    // as jsonb's path operators.
+    let backslash = is_mysql(bytes);
     let mut tokens = Vec::new();
     let mut i = 0;
     let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_' || b >= 0x80;
@@ -143,6 +144,25 @@ fn lex(text: &str) -> Vec<Token> {
         });
     }
     tokens
+}
+
+/// Is this mysqldump's dialect rather than pg_dump's? Read from what each
+/// writes at the top and around every table, not from any backtick: a
+/// Postgres dump has them inside strings (a `CHECK`'s regex, a comment).
+fn is_mysql(bytes: &[u8]) -> bool {
+    let has = |needle: &[u8]| find(bytes, 0, needle).is_some();
+    let postgres = [
+        b"PostgreSQL database dump".as_slice(),
+        b"SET standard_conforming_strings",
+        b"SET search_path",
+        b"pg_catalog.",
+    ];
+    if postgres.iter().any(|marker| has(marker)) {
+        return false;
+    }
+    [b"/*!40".as_slice(), b"ENGINE=", b"CREATE TABLE `"]
+        .iter()
+        .any(|marker| has(marker))
 }
 
 fn memchr(bytes: &[u8], from: usize, needle: u8) -> usize {
@@ -746,6 +766,33 @@ CREATE TABLE `gadgets` (
         assert_eq!(gadgets.primary_key.names(), ["id"]);
         assert_eq!(gadgets.indexes.len(), 2);
         assert!(gadgets.indexes[0].unique);
+    }
+
+    #[test]
+    fn a_backtick_in_a_pg_dump_does_not_make_it_mysqls() {
+        let dump = "\
+-- PostgreSQL database dump
+SET standard_conforming_strings = on;
+CREATE TABLE public.docs (
+    data jsonb NOT NULL,
+    title text GENERATED ALWAYS AS ((data #>> '{title}'::text[])) STORED,
+    sep text DEFAULT '\\'::text,
+    body text
+);
+CREATE INDEX index_docs_on_path ON public.docs USING btree (((data #> '{a}'::text[])));
+CREATE TABLE public.tags (
+    name text CONSTRAINT quotes CHECK ((name !~ '^[\"''`]'::text))
+);
+";
+        let tables = tables(dump.as_bytes());
+        let names: Vec<&str> = table(&tables, "docs")
+            .columns
+            .iter()
+            .map(|c| c.name.as_str())
+            .collect();
+        assert_eq!(names, ["data", "title", "sep", "body"]);
+        assert_eq!(table(&tables, "docs").indexes.len(), 1);
+        assert_eq!(table(&tables, "tags").columns.len(), 1);
     }
 
     #[test]
