@@ -1242,7 +1242,8 @@ pub(crate) fn hover(session: &mut Session, params: HoverParams) -> anyhow::Resul
     };
     let card = match under {
         Under::Definition(def) => {
-            let mut card = hover_definition(session, &located.root, &def, &source)?;
+            let mut card =
+                hover_definition(session, &located.root, &located.absolute, &def, &source)?;
             // A `def` in a string read once per value makes one method per
             // value, all written here (DEC-167).
             let made: Vec<&Def> = facts
@@ -1340,6 +1341,8 @@ pub(super) struct Card {
     pub(super) caveat: Option<String>,
     pub(super) doc: Option<Doc>,
     pub(super) location: Option<String>,
+    /// A model's table, from the schema (DEC-481).
+    pub(super) schema: Option<String>,
 }
 
 impl Card {
@@ -1359,6 +1362,9 @@ impl Card {
         if let Some(location) = &self.location {
             parts.push(location.clone());
         }
+        if let Some(schema) = &self.schema {
+            parts.push(schema.clone());
+        }
         parts.join("\n\n")
     }
 }
@@ -1367,6 +1373,7 @@ impl Card {
 fn hover_definition(
     session: &mut Session,
     root: &Path,
+    file: &Path,
     def: &Def,
     source: &str,
 ) -> anyhow::Result<Card> {
@@ -1392,9 +1399,22 @@ fn hover_definition(
         }),
     };
     let display = display_name(def, qualified.as_deref());
+    // On a column in the schema itself: what the column is.
+    let location = (def.via.as_deref() == Some("schema"))
+        .then(|| {
+            let file = file.to_string_lossy();
+            super::schema::column_line(session, root, &file, def.pos.line, &def.name, false)
+        })
+        .flatten();
+    let schema = match (def.kind, &qualified) {
+        (Kind::Class, Some(fqn)) => super::schema::model_section(session, root, fqn),
+        _ => None,
+    };
     Ok(Card {
         code: Some(doc::signature(def, &display, source)),
         doc: doc::doc_above(source, def.pos.line),
+        location,
+        schema,
         ..Card::default()
     })
 }
@@ -1464,10 +1484,15 @@ fn hover_constant(
         2 => format!("{l} and 1 other place"),
         n => format!("{l} and {} other places", n - 1),
     });
+    let schema = match kind.as_str() {
+        "class" => super::schema::model_section(session, root, &fqn),
+        _ => None,
+    };
     Ok(Card {
         code: Some(code),
         doc,
         location,
+        schema,
         ..Card::default()
     })
 }
@@ -1537,11 +1562,12 @@ fn hover_call(
     let described = describe(session, root, &site, name, owner.as_deref(), singleton);
     let fallback = || doc::method_name(owner.as_deref(), singleton.unwrap_or(false), name);
     let line = described.as_ref().map_or(site.line, |d| d.line);
-    let location = defined_in(
+    let location = declared_location(
         session,
         root,
         &site.path,
         line,
+        name,
         answer.defined_via.as_deref(),
     );
     let (code, doc) = match described {
@@ -1553,6 +1579,7 @@ fn hover_call(
         caveat,
         doc,
         location: Some(location),
+        schema: None,
     })
 }
 
@@ -1702,6 +1729,22 @@ fn same_scope(def: &Def, qualified: Option<&str>) -> bool {
         _ => def.nesting.first().map(String::as_str),
     };
     scope.map(last_segment) == written.map(last_segment)
+}
+
+/// Where a method is defined, in words: a schema column says what the column
+/// is, which is what "declared by the schema" left a reader to go and look up.
+pub(super) fn declared_location(
+    session: &mut Session,
+    root: &Path,
+    path: &str,
+    line: u32,
+    name: &str,
+    declared_via: Option<&str>,
+) -> String {
+    declared_via
+        .filter(|via| *via == "schema")
+        .and_then(|_| super::schema::column_line(session, root, path, line, name, true))
+        .unwrap_or_else(|| defined_in(session, root, path, line, declared_via))
 }
 
 /// "Defined in `path:line`", linked. A gem says which, since its path alone

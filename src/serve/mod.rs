@@ -23,6 +23,7 @@ pub(crate) mod log;
 pub(crate) mod miss;
 mod reload;
 mod require;
+mod schema;
 mod state;
 mod variables;
 pub(crate) mod vars;
@@ -1114,7 +1115,7 @@ fn watched(
     let paths: Vec<(PathBuf, lsp_types::FileChangeType)> = changes
         .into_iter()
         .filter_map(|change| Some((document_path(change.uri.as_str())?, change.typ)))
-        .filter(|(path, _)| crate::scan::is_ruby(&path.to_string_lossy()))
+        .filter(|(path, _)| crate::scan::is_indexed(&path.to_string_lossy()))
         .collect();
     let bulk = paths.len() > fresh::BULK
         || paths
@@ -1213,6 +1214,8 @@ fn watch_request() -> Message {
                 "registerOptions": {
                     "watchers": [
                         { "globPattern": "**/*.{rb,rake,ru,gemspec,rbi,jbuilder}" },
+                        // A migration rewrites the app's SQL dump (DEC-480).
+                        { "globPattern": "**/db/*structure.sql" },
                     ],
                 },
             }],

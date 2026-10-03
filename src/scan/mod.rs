@@ -35,6 +35,20 @@ pub(crate) fn is_ruby(path: &str) -> bool {
     )
 }
 
+/// An app's schema dumped as SQL — `db/structure.sql`, or a second
+/// database's `db/<name>_structure.sql` — which is read for its tables
+/// (DEC-480).
+pub(crate) fn is_structure_sql(path: &str) -> bool {
+    let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
+    (dir == "db" || dir.ends_with("/db"))
+        && (name == "structure.sql" || name.ends_with("_structure.sql"))
+}
+
+/// Is this a file the index reads?
+pub(crate) fn is_indexed(path: &str) -> bool {
+    is_ruby(path) || is_structure_sql(path)
+}
+
 /// Git's blob hash: SHA-1 over `blob <byte-len>\0` then the content.
 pub(crate) fn hash_blob(bytes: &[u8]) -> Oid {
     let mut hasher = Sha1::new();
@@ -64,7 +78,7 @@ pub(crate) fn parse_ls_files(out: &[u8]) -> Files {
         if mode != "100644" && mode != "100755" {
             continue;
         }
-        if is_ruby(path) {
+        if is_indexed(path) {
             files.insert(path.to_string(), Oid(oid.to_string()));
         }
     }
@@ -337,7 +351,7 @@ pub(crate) fn scan(root: &Path) -> Result<Files> {
     }
 
     for path in dirty {
-        if !is_ruby(&path) {
+        if !is_indexed(&path) {
             continue;
         }
         match std::fs::read(root.join(&path)) {
@@ -351,7 +365,53 @@ pub(crate) fn scan(root: &Path) -> Result<Files> {
             }
         }
     }
+    one_schema_per_app(root, &mut files);
     Ok(files)
+}
+
+/// The schema dumps in the app at `app` (a directory of `root`, `""` for the
+/// root itself), as the index reads them: one per database.
+pub(crate) fn schema_dumps(root: &Path, app: &str) -> Vec<String> {
+    let db = format!("{app}db");
+    let Ok(entries) = std::fs::read_dir(root.join(&db)) else {
+        return Vec::new();
+    };
+    let mut files: Files = entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .map(|name| format!("{db}/{name}"))
+        .filter(|path| crate::schema::is_dump(path))
+        .map(|path| (path, Oid(String::new())))
+        .collect();
+    one_schema_per_app(root, &mut files);
+    files.into_keys().collect()
+}
+
+/// An app that commits both `db/schema.rb` and `db/structure.sql` keeps one
+/// of them current, and only that one is read: both would declare every
+/// column twice, half of them stale (DEC-480). Rails loads the file
+/// `schema_format` names in `config/application.rb`.
+fn one_schema_per_app(root: &Path, files: &mut Files) {
+    let dumps: Vec<String> = files
+        .keys()
+        .filter(|path| is_structure_sql(path))
+        .cloned()
+        .collect();
+    for sql in dumps {
+        let Some((dir, name)) = sql.rsplit_once('/') else {
+            continue;
+        };
+        let ruby = format!("{dir}/{}", name.replace("structure.sql", "schema.rb"));
+        if !files.contains_key(&ruby) {
+            continue;
+        }
+        let app = &dir[..dir.len() - "db".len()];
+        let config = std::fs::read_to_string(root.join(format!("{app}config/application.rb")));
+        match crate::schema::sql_is_the_schema(config.ok().as_deref()) {
+            true => files.remove(&ruby),
+            false => files.remove(&sql),
+        };
+    }
 }
 
 /// Parse `git status --porcelain -z`: `XY <path>\0` per entry, plus the
@@ -576,6 +636,55 @@ mod tests {
         for path in ["a/b.py", "README.md", "Gemfile.lock", "norb"] {
             assert!(!is_ruby(path), "{path} is not Ruby");
         }
+    }
+
+    #[test]
+    fn a_schema_dump_is_read_from_an_apps_db_directory() {
+        for path in [
+            "db/structure.sql",
+            "engines/shop/db/structure.sql",
+            "db/animals_structure.sql",
+        ] {
+            assert!(is_indexed(path), "{path}");
+        }
+        for path in ["structure.sql", "db/seeds.sql", "docs/db/structure.sql.md"] {
+            assert!(!is_indexed(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn an_app_with_both_dumps_reads_the_one_rails_loads() {
+        let temp = std::env::temp_dir().join(format!("trekr-dumps-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(temp.join("sql/config")).unwrap();
+        std::fs::write(
+            temp.join("sql/config/application.rb"),
+            "config.active_record.schema_format = :sql\n",
+        )
+        .unwrap();
+        let oid = || Oid("0".into());
+        let mut files: Files = [
+            "db/schema.rb",
+            "db/structure.sql",
+            "sql/db/schema.rb",
+            "sql/db/structure.sql",
+            "only/db/structure.sql",
+        ]
+        .into_iter()
+        .map(|path| (path.to_string(), oid()))
+        .collect();
+        one_schema_per_app(&temp, &mut files);
+        let kept: Vec<&str> = files.keys().map(String::as_str).collect();
+        assert_eq!(
+            kept,
+            [
+                "db/schema.rb",
+                "only/db/structure.sql",
+                "sql/db/structure.sql"
+            ],
+            "Rails' default is schema.rb; the config can say otherwise"
+        );
+        let _ = std::fs::remove_dir_all(&temp);
     }
 
     #[test]

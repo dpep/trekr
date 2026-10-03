@@ -1133,7 +1133,7 @@ fn bulk_load(new: usize, known: usize) -> bool {
 fn parse_file(path: &Path) -> Option<extract::Parsed> {
     let started = std::time::Instant::now();
     let bytes = std::fs::read(path).ok()?;
-    let facts = extract::extract(&bytes);
+    let facts = extract::extract_file(&path.to_string_lossy(), &bytes);
     Some(extract::Parsed {
         facts,
         bytes: bytes.len() as u64,
@@ -1416,7 +1416,8 @@ fn wanted(
         .filter(|path| files.contains_key(path))
         .filter_map(|path| {
             let bytes = std::fs::read(root.join(&path)).ok()?;
-            Some((path, extract::extract(&bytes)))
+            let facts = extract::extract_file(&path, &bytes);
+            Some((path, facts))
         })
         .collect();
     // Polled while the bulk write runs: nothing asked must cost nothing.
@@ -1506,7 +1507,7 @@ fn early_part(
             let parsed = match given.get(path.as_str()) {
                 Some(facts) => (*facts).clone(),
                 None => match std::fs::read(root.join(path)) {
-                    Ok(bytes) => extract::extract(&bytes),
+                    Ok(bytes) => extract::extract_file(path, &bytes),
                     Err(_) => continue,
                 },
             };
@@ -2673,7 +2674,7 @@ fn status_not_indexed(
 /// is the same rule the LSP surface follows (DEC-024).
 fn cmd_symbols(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
     let source = read_input(path)?;
-    let facts = extract::extract(&source);
+    let facts = extract::extract_file(&path.to_string_lossy(), &source);
     let file = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     let mut symbols: Vec<crate::store::Symbol> = facts.defs.iter().map(Into::into).collect();
     // Every row carries its location, like every other answer's (DEC-080).
@@ -2771,7 +2772,7 @@ fn gather_refs(
     let read = |path: &String| {
         std::fs::read(root.join(path))
             .ok()
-            .map(|bytes| extract::extract(&bytes))
+            .map(|bytes| extract::extract_file(path, &bytes))
     };
     let tiered: Vec<Tiered> = match parsed {
         // Held across queries by the caller: parse what it lacks, then tier.
@@ -3421,7 +3422,7 @@ fn refresh_for_query(store: &mut Store, root: &Path, file: &Path) -> Option<serd
     // Parse only when this blob is genuinely new — the common case after a
     // branch switch is bytes the store has seen before, which cost one hash.
     let known = store.has_blob(&oid).unwrap_or(false);
-    let facts = (!known).then(|| crate::extract::extract(&bytes));
+    let facts = (!known).then(|| crate::extract::extract_file(&relative, &bytes));
     // Busy means another process is writing the index. The answer comes from
     // what it has committed, and says this file may lag (DEC-066).
     let (changed, busy) = match store.refresh_file(&root_str, &relative, &oid, facts.as_ref()) {
@@ -4514,7 +4515,7 @@ fn cmd_def(
         return Err(Failure::Usage.error(why));
     }
     let source = read_input(Path::new(&spec.path))?;
-    let facts = crate::extract::extract(&source);
+    let facts = crate::extract::extract_file(&spec.path, &source);
     // The file as a site names it, whatever directory the question came from.
     let file = std::fs::canonicalize(&spec.path)
         .map(|p| p.to_string_lossy().into_owned())

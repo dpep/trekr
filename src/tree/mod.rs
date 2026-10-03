@@ -408,6 +408,10 @@ pub(crate) struct Tree {
     /// onto the model as well. Built once at build time from the `table_name`
     /// definitions alone, because a per-name load cannot see the whole table.
     carriers: HashMap<String, Vec<String>>,
+    /// Model → the table its `self.table_name` names, from the same rows.
+    table_names: HashMap<String, String>,
+    /// Classes whose body declares them abstract, read on first need.
+    abstract_models: OnceLock<HashSet<String>>,
     /// Classes that have each module in their ancestor chain. Built lazily,
     /// because the common path never asks: it costs a pass over every name and
     /// only a call inside a module needs it.
@@ -917,7 +921,7 @@ impl Tree {
                 // load cannot see the whole table to work it out later.
                 let table_names =
                     phases.time("table-names", || store.methods_named(&roots, "table_name"))?;
-                tree.carriers = tree.carriers_from(&table_names);
+                tree.learn_table_names(&table_names);
                 // And the RSpec stub's, which a per-name load would never
                 // find.
                 phases.methods = methods.len();
@@ -1146,6 +1150,8 @@ impl Tree {
             lookups: Memo::new(),
             loader: None,
             carriers: HashMap::new(),
+            table_names: HashMap::new(),
+            abstract_models: OnceLock::new(),
             includers: OnceLock::new(),
             mixers: OnceLock::new(),
             ancestors: Memo::new(),
@@ -2940,12 +2946,14 @@ impl Tree {
         }
     }
 
-    /// The carrier→models map, from the `table_name` definitions alone.
+    /// The carrier→models map, and each model's table, from the `table_name`
+    /// definitions alone.
     ///
     /// A per-name load cannot see the whole method table, so this one relation
     /// is settled up front. It is cheap: `table_name` is a single name.
-    fn carriers_from(&self, rows: &[MethodRow]) -> HashMap<String, Vec<String>> {
+    fn learn_table_names(&mut self, rows: &[MethodRow]) {
         let mut carriers: HashMap<String, Vec<String>> = HashMap::new();
+        let mut tables = HashMap::new();
         for row in rows {
             if row.via.as_deref() != Some("table_name") {
                 continue;
@@ -2955,11 +2963,39 @@ impl Tree {
             };
             let owner = self.owner_of(row);
             let carrier = crate::extract::table_to_class(table);
+            tables.insert(owner.clone(), table.to_string());
             if carrier != owner {
                 carriers.entry(carrier).or_default().push(owner);
             }
         }
-        carriers
+        self.carriers = carriers;
+        self.table_names = tables;
+    }
+
+    /// The table a model's own `self.table_name = "…"` names.
+    pub(crate) fn table_name_of(&self, fqn: &str) -> Option<&str> {
+        self.table_names.get(fqn).map(String::as_str)
+    }
+
+    /// Does the class declare itself abstract — `self.abstract_class = true`,
+    /// `primary_abstract_class` — so that it has no table of its own?
+    pub(crate) fn is_abstract_model(&self, fqn: &str) -> bool {
+        self.abstract_models
+            .get_or_init(|| {
+                let Some(loader) = self.loader.as_ref() else {
+                    return HashSet::new();
+                };
+                ["abstract_class=", "primary_abstract_class"]
+                    .iter()
+                    .flat_map(|name| {
+                        loader
+                            .with(|store, roots| store.body_calls(roots, name))
+                            .unwrap_or_default()
+                    })
+                    .filter_map(|call| self.scope_fqn(&call.nesting))
+                    .collect()
+            })
+            .contains(fqn)
     }
 
     /// The keys a definition is found under: its owner, or the variants of a
@@ -3189,7 +3225,7 @@ impl Tree {
     /// Load every method at once — for a tree built from rows rather than from
     /// a store.
     fn add_methods(&mut self, rows: Vec<MethodRow>) {
-        self.carriers = self.carriers_from(&rows);
+        self.learn_table_names(&rows);
         self.add_base(rows);
     }
 
@@ -3336,7 +3372,7 @@ impl Tree {
 
     /// Only the superclass links — no mixins. Class methods are inherited down
     /// this chain and nowhere else.
-    fn superclass_chain(&self, fqn: &str) -> Vec<String> {
+    pub(crate) fn superclass_chain(&self, fqn: &str) -> Vec<String> {
         let mut chain = Vec::new();
         let mut seen = HashSet::new();
         let mut current = fqn.to_string();

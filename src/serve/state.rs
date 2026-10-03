@@ -173,6 +173,10 @@ pub(crate) struct Document {
     facts: Option<Facts>,
     requires: Option<Vec<Require>>,
     vars: Option<std::rc::Rc<Vars>>,
+    /// A `structure.sql` rather than Ruby (DEC-480).
+    sql: bool,
+    /// The tables a schema dump declares, read once per edit.
+    tables: Option<std::rc::Rc<[crate::schema::Table]>>,
     /// Where the text came from. The editor's copy is authoritative until it
     /// closes the file; a disk read is only as good as the file it was read
     /// from, and is re-read the moment that file changes.
@@ -197,12 +201,14 @@ enum Origin {
 const DISK_CACHE: usize = 256;
 
 impl Document {
-    fn new(text: String, origin: Origin) -> Document {
+    fn new(path: &Path, text: String, origin: Origin) -> Document {
         Document {
             text,
             facts: None,
             requires: None,
             vars: None,
+            sql: crate::scan::is_structure_sql(&path.to_string_lossy()),
+            tables: None,
             origin,
         }
     }
@@ -222,8 +228,22 @@ impl Document {
 
     /// The parse, made once per edit rather than once per query.
     pub(crate) fn facts(&mut self) -> &Facts {
-        self.facts
-            .get_or_insert_with(|| crate::extract::extract(self.text.as_bytes()))
+        self.facts.get_or_insert_with(|| match self.sql {
+            true => crate::extract::extract_sql(self.text.as_bytes()),
+            false => crate::extract::extract(self.text.as_bytes()),
+        })
+    }
+
+    /// The tables this file declares, when it is a schema dump.
+    pub(crate) fn tables(&mut self) -> std::rc::Rc<[crate::schema::Table]> {
+        let sql = self.sql;
+        let text = &self.text;
+        self.tables
+            .get_or_insert_with(|| match sql {
+                true => crate::schema::sql::tables(text.as_bytes()).into(),
+                false => crate::schema::ruby::tables(text.as_bytes()).into(),
+            })
+            .clone()
     }
 
     /// The file's `require`s whose path is written literally — its own parse,
@@ -771,8 +791,8 @@ impl Session {
     /// The editor's copy of a file, replacing whatever was held for it. Used
     /// for both open and change: sync is FULL, so each carries the whole text.
     pub(crate) fn did_open(&mut self, path: PathBuf, text: String, version: i32) {
-        self.open
-            .insert(path, Document::new(text, Origin::Editor { version }));
+        let document = Document::new(&path, text, Origin::Editor { version });
+        self.open.insert(path, document);
     }
 
     /// The files the editor has open.
@@ -815,7 +835,7 @@ impl Session {
             }
             self.open.insert(
                 path.to_path_buf(),
-                Document::new(text, Origin::Disk { modified, len }),
+                Document::new(path, text, Origin::Disk { modified, len }),
             );
         }
         self.open.get_mut(path)

@@ -319,7 +319,14 @@ pub(crate) fn resolve(
         singleton,
     );
     let line = described.as_ref().map_or(site.line, |d| d.line);
-    let location = handlers::defined_in(session, &root, &site.path, line, declared_via.as_deref());
+    let location = handlers::declared_location(
+        session,
+        &root,
+        &site.path,
+        line,
+        &item.label,
+        declared_via.as_deref(),
+    );
     let mut card = handlers::Card {
         location: Some(location),
         ..Default::default()

@@ -1,0 +1,6 @@
+# Both dumps committed, as an app leaves them mid-move from one format to the
+# other, and they disagree. Rails loads the one `schema_format` names — Ruby,
+# unless config/application.rb says `:sql` — so that is the one read: the
+# column is text, not the stale dump's integer, and it is declared once.
+def app.rb:3:5 status=resolved owner=Widget site=db/schema.rb:3
+def app.rb:3:10 status=resolved owner=String

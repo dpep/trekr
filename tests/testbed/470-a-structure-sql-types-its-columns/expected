@@ -1,0 +1,10 @@
+# An app that dumps its schema as SQL keeps no db/schema.rb, so none of its
+# columns were attribute methods: `name` was nothing indexed, and so was
+# everything sent to it. `db/structure.sql` declares the same columns in
+# another language — read past the function body, whose semicolons sit in a
+# dollar-quoted string.
+def app.rb:3:5 status=resolved owner=Widget defined_via=schema site=db/structure.sql:14
+def app.rb:3:10 status=resolved owner=String receiver_type=String
+# A Postgres array column is an Array, whatever it holds.
+def app.rb:7:13 status=resolved owner=Array receiver_type=Array
+hover app.rb:3:5 Column `widgets.name`: `character varying(60)`, not null · [`db/structure.sql:14`]

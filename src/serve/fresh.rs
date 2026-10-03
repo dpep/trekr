@@ -65,7 +65,7 @@ fn refresh(session: &mut Session, path: &Path) -> Refreshed {
     let known = session.store().has_blob(&oid).unwrap_or(false);
     // Parse only a blob the store has never seen; the common save-after-undo
     // is bytes it already has, which costs one hash.
-    let facts = (!known).then(|| crate::extract::extract(&bytes));
+    let facts = (!known).then(|| crate::extract::extract_file(&located.relative, &bytes));
     match session
         .store_mut()
         .refresh_file(&root, &located.relative, &oid, facts.as_ref())

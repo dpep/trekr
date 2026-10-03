@@ -1,0 +1,6 @@
+# `array: true` makes a column of many values: its reader returns an Array.
+# It was typed by its element, so `tag_ids.first` was sent to Integer.
+# The column's methods sit at the column's own name, where a click on it
+# lands, not at `create_table`.
+def app.rb:3:13 status=resolved owner=Array receiver_type=Array
+def app.rb:3:5 status=resolved owner=Widget site=db/schema.rb:3

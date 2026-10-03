@@ -49,6 +49,12 @@ a commit and a path string, not Ruby.
 **A git repository is required.** Content addressing is the product, and git is
 what makes it nearly free (DEC-001).
 
+Ruby files, and one kind that is not: an app's schema dumped as SQL,
+`db/structure.sql` (or a second database's `db/<name>_structure.sql`), read
+for its tables (DEC-480). An app that commits both it and `db/schema.rb`
+keeps one current, and only the one Rails loads is in the map: `schema.rb`,
+unless `config/application.rb` sets `schema_format = :sql`.
+
 `scan/near.rs` guesses which files a few files most likely need — a
 constant's file by the autoloader's convention (`Admin::UserReport` →
 `admin/user_report.rb` under any root, each enclosing scope tried first), and
@@ -95,6 +101,18 @@ written above them in the same scope, the position of that body
 (`target_line`, `target_col`) and its parameters. Ruby binds an alias to the
 method as it is then, so a later `def` of the name does not move it, and
 lookup answers a bound alias with the body it copied.
+
+**A schema's columns are attribute methods on the model** (DEC-022), made by
+Rails' `posts` → `Post` convention: a reader typed from the column's SQL type
+(an `array: true` or `bigint[]` column is an Array), a writer, a predicate,
+and the dirty-tracking family, each written at the column's name. `schema/`
+reads both dumps into one `Table` — columns with type, null and default, the
+primary key, the indexes — `ruby.rs` from `create_table` (the extractor hands
+it the call as it visits), `sql.rs` from `CREATE TABLE`, `CREATE INDEX` and
+`ALTER TABLE … PRIMARY KEY` in a `pg_dump` or `mysqldump`. A SQL dump is the
+one input that is not Ruby, so `extract_file` picks the reader by path
+(DEC-480); the primary key is left to `ActiveRecord::Base`, as `schema.rb`
+leaves it by not listing it.
 
 ### `tree/` — a checkout's namespace, rebuilt not patched
 
@@ -894,6 +912,7 @@ the new binary in place (DEC-050).
 | `vars.rs` | a file's variables, pure: which writes each local read can see, each ivar with its written class and `self` (DEC-064) |
 | `variables.rs` | a variable under the cursor: definition, references, highlight, hover; an ivar's class files, read when asked (DEC-064) |
 | `doc.rs` | a definition's doc comment and its signature as written, read from its file when asked (DEC-052) |
+| `schema.rs` | a model's table and a column's facts for a hover, read from the schema dump when asked (DEC-481) |
 | `complete.rs` | completion (DEC-040), and the chosen item's doc on resolve (DEC-052) |
 | `fresh.rs` | refresh-on-save and the background `--index` child (DEC-039) |
 | `convert.rs` | UTF-16 ↔ byte columns, spans, a per-file line index |
@@ -997,6 +1016,24 @@ A file edited since it was indexed moves its definitions. The definition is
 found at the indexed line, or else as the one definition of that name, kind and
 scope in the file as it is now. If neither holds the hover shows no doc at all:
 a comment attached to the wrong definition is worse than none.
+
+**A model's hover shows its table** (DEC-481), ruby-lsp-rails' schema hover
+without a running app: on the class's name or any reference to it, a table
+of its columns — type as the dump spells it, null, default, the primary key
+first — capped at twenty rows with "and N more", then its indexes, headed by
+the table's name linked to its line in the dump. The table is worked out as
+Rails' `compute_table_name` does (`schema/model.rs`): a `self.table_name`, a
+namespace's `def self.table_name_prefix`, a model namespace's singular table
+(`Post::Comment` → `post_comments`), and for a single-table-inheritance
+subclass its base class's table, which the hover says it shares. An abstract
+class (`self.abstract_class = true`, `primary_abstract_class`, or
+`ApplicationRecord`) says it has none, and a table the dump lacks is said too.
+The dump is the nearest `db/` above the model's file, so an engine's model
+reads its engine's schema. A column's attribute method — `post.title`, `title`
+in the model, the column in `schema.rb` — shows the column instead of
+"Declared by `schema`": `` Column `posts.title`: `string`, not null, default
+`""`, indexed ``, linked to its line. Null, default and indexes are read when
+asked, like a doc comment, and never stored.
 
 `completionItem/resolve` shows the same doc and signature for the one item
 selected. The list itself carries none: it can be hundreds of items, and reading
@@ -1606,3 +1643,6 @@ Deliberate, and cheap to close when they earn it:
   core class that defines the name without RBS writing it there sends the
   lookup further up the chain.
 - Orphaned blobs are never collected (DEC-003).
+- A model's columns attach by the flat table convention (`fasp_providers` →
+  `FaspProvider`), so a namespace's `table_name_prefix` is honoured by the
+  hover's table (DEC-481) but not yet by the attribute methods (DEC-480).

@@ -11518,3 +11518,122 @@ confidence)"; it now says "classes, modules and constants are graded lower
 unless a convention names them: a name built at runtime may reach one
 (DEC-450)". A reading's own caveat, when one was found, is still the one
 shown. Testbed 461.
+
+## DEC-480 — `db/structure.sql` is read for its tables, into the shape `schema.rb` makes
+
+**Decided.** An app's schema dumped as SQL — `db/structure.sql`, or a second
+database's `db/<name>_structure.sql` — is indexed, and its tables give each
+model the attribute methods DEC-022 gives `db/schema.rb`'s: reader typed
+from the column's SQL type, writer, predicate, dirty tracking. `schema/`
+reads both dumps into one `Table` (columns with type, null and default, the
+primary key, the indexes); extraction makes the methods from it, at each
+column's own name rather than at `create_table`.
+
+**Why.** DEC-022's revisit found that discourse has no `schema.rb` at all, so
+not one of its columns was an attribute method; most Postgres apps of size
+dump SQL. The grammar that matters is small — `CREATE TABLE` with one element
+per line, `CREATE [UNIQUE] INDEX … ON t (…)`, and `ALTER TABLE ONLY t ADD
+CONSTRAINT … PRIMARY KEY (…)`, which is where `pg_dump` puts a key. It is not
+a SQL parser: a lexer that knows where a statement ends (quoted strings and
+identifiers, comments, Postgres' dollar-quoted function bodies all hide
+semicolons) and steps over every other statement whole. `mysqldump`'s
+backticks, inline `PRIMARY KEY`/`UNIQUE KEY`/`KEY`, `tinyint(1)` booleans and
+`int unsigned` are read too. Read on discourse's 25,807-line dump: 356
+tables, 797 indexes and 334 primary keys, each count equal to `grep`'s; the
+whole `--symbols` process over it, 25,920 methods made, takes 0.10 s.
+
+**The one input that is not Ruby.** `extract()` takes bytes and no path, and
+sniffing SQL from content would be the fragile way in; `extract_file(path,
+bytes)` picks the reader by path instead, at the index's own call sites and
+the LSP's. A blob is still a pure function of its content: no `.rb` file has
+a dump's bytes.
+
+**Both files committed.** An app moving from one format to the other often
+keeps both, and they disagree. Only the one Rails loads is in the checkout's
+file map: `schema.rb`, unless `config/application.rb` sets
+`config.active_record.schema_format = :sql` (Rails' default is `:ruby`).
+"The newer one" was considered and turned down: an mtime is not a property of
+a checkout, and git history is a cost per index for a rare case. The setting
+is what Rails itself obeys.
+
+**The primary key is not an attribute method here**, as `schema.rb` never
+lists one: `id` stays `ActiveRecord::Base`'s, so an app answers `post.id` the
+same whichever dump it keeps.
+
+**Also, while there.** An `array: true` column (`bigint[]` in SQL) is an
+Array; it was typed by its element, so `tag_ids.first` went to Integer. And
+the column's methods sit at the column's name, so go to definition on
+`post.title` lands on `t.string "title"` (testbed 011's site moved one line).
+
+**Measured** against 0.8.5 (main, store v58), each on a fresh store.
+discourse's gold set (`APP_SAMPLE=600 SAMPLE=300 SEED=12`, context pinned):
+app `declaration` 19 → 33, `declaration-offered` 14 → 11,
+`residue-truth-absent` 25 → 18, `residue-nothing-known` 24 → 20; `correct`
+427 and `wrong` 3 unchanged; 17 sites moved, none to a worse verdict; gem
+sites unchanged. mastodon's gold set (which has `schema.rb`): identical.
+`script/compare.py --engine trekr` on discourse's 500: correct@1 81.2 %
+unchanged, answered 88.2 → 90.0 %, wrong@1 7.0 → 8.8 %. The nine newly
+answered sites are all attribute calls whose runtime truth is Rails'
+generator (`attribute_methods.rb:273`), now answered with the column in
+`db/structure.sql`; compare.py has no `declaration` verdict, so it scores
+them wrong. Eight more of the 17 had pointed at a migration, a serializer or
+an import script and now point at the column. gold.py's `declaration` is the
+honest reading of these sites; compare.py's number moves for a reason that is
+not a regression. Testbed 470–472.
+
+**Not done.** The primary key's `default:` on `create_table` (mastodon's
+`timestamp_id(…)`) is not read. A `db/structure.sql` saved in the editor is
+refreshed in place, but one appearing beside a `schema.rb` mid-session is not
+re-chosen until the next full index. Rails' `table_name_prefix` names a
+model's table for the hover (DEC-481), but the methods still attach by the flat
+convention, so `Fasp::Provider`'s columns go to a `FaspProvider` nothing
+declares (mastodon has five such modules).
+
+## DEC-481 — A hover on a model shows its table, read from the dump when asked
+
+**Decided.** Hover on an Active Record model — its `class` line or any
+reference to it — shows its table: a markdown table of the columns (type as
+the dump spells it, null, default; the primary key first), at most twenty
+rows then "and N more", the indexes on one line, under the table's name
+linked to its line in the dump. Hover on a column's attribute method shows
+the column — `` Column `posts.title`: `string`, not null, default `""`,
+indexed `` — linked, where it said "Declared by `schema`". This is
+ruby-lsp-rails' schema hover without a running app.
+
+**Read when asked, not stored.** Null, default and indexes are a hover's
+facts, as a doc comment is (DEC-052): the dump is read through the session's
+document cache and parsed once per change. Storing them would put a column
+table in the blob layer for one surface that reads them a model at a time.
+
+**Which table** is Rails' `compute_table_name`, from what the tree has:
+
+- a `self.table_name = "…"` on the class or an ancestor up to the base;
+- the base class: the first class up the superclass chain whose parent is
+  `ActiveRecord::Base` or abstract. A subclass below it shares its table
+  (single-table inheritance), and the hover says so and names it;
+- abstract: `self.abstract_class = true` or `primary_abstract_class` in the
+  body (read from the stored body calls), or `ApplicationRecord` by
+  convention. It says it has no table;
+- the name: the nearest enclosing module's `def self.table_name_prefix` (its
+  string literal, read from the file; a computed one is not guessed), the
+  enclosing model's singular table when the namespace is a model
+  (`Post::Comment` → `post_comments`), then the plural of the class's own
+  name, then the suffix likewise.
+
+A table the dump lacks is said ("not in `db/schema.rb`"), rather than nothing.
+The dump is the nearest `db/` above the model's file, so an engine's model
+reads its engine's.
+
+**Spot-checked**, 20 model files sampled per corpus (seed 12), each table and
+column list counted against the dump by hand: discourse (`structure.sql`) 16
+models, all the right table with every column (`topics`: 50 columns, 2
+`CHECK` constraints not columns); mastodon (`schema.rb`) 15 models, all right,
+including `Fasp::Subscription` → `fasp_subscriptions` by its module's prefix;
+the 9 non-models (a site setting enum, an `OpenStruct`, a serializer model)
+showed no table.
+
+**Not done.** `table_name_prefix` set as `self.table_name_prefix = "x_"` on
+`ActiveRecord::Base` or a class, `pluralize_table_names = false`, and a
+`def self.table_name` computed in Ruby are not read. A view-backed model shows
+"not in" the dump, since a `CREATE VIEW` is not read as a table. Testbed
+473, 474; `lsp_e2e`'s watched-dump case.

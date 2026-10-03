@@ -1,0 +1,2 @@
+class FeaturedPost < Post
+end

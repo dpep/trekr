@@ -306,7 +306,10 @@ plus the comments — with no way to tell them apart. `Widget.save` and
 workspace symbols, implementation, call hierarchy, `require` strings as links,
 and Prism syntax diagnostics. It answers on methods and constants, and on
 locals, parameters and instance variables — whose other mentions it also
-highlights. It keeps the index current as files are saved, and indexes an
+highlights. Hover on a model shows its table's columns and indexes, and on a
+column's attribute (`post.title`) the column's type, null and default — read
+from `db/schema.rb`, or `db/structure.sql` for an app that dumps SQL, without
+booting the app. It keeps the index current as files are saved, and indexes an
 unindexed checkout in the background, the files you have open first.
 
 [claude/INSTALL.md](claude/INSTALL.md) wires up the skill and the server.

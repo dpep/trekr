@@ -6,6 +6,7 @@ pub(crate) mod inflect;
 pub(crate) mod rbs;
 pub(crate) mod resolve;
 pub(crate) mod scan;
+pub(crate) mod schema;
 pub(crate) mod serve;
 pub(crate) mod store;
 pub(crate) mod tree;

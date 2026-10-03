@@ -119,7 +119,7 @@ fn file_of(constant: &str) -> String {
     format!("{}.rb", parts.join("/"))
 }
 
-fn underscore(word: &str) -> String {
+pub(crate) fn underscore(word: &str) -> String {
     let chars: Vec<char> = word.chars().collect();
     let mut out = String::with_capacity(word.len() + 4);
     for (at, &c) in chars.iter().enumerate() {

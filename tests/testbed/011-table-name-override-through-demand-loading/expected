@@ -10,4 +10,4 @@
 # `owner` is the model, because that is where Ruby's lookup lands. It used to
 # report the *carrier* (`LegacyPost`) — the class the table-name convention
 # invented, which no code declares and no agent can look up.
-def post.rb:7:7 status=resolved owner=Post via=local:new site=db/schema.rb:1
+def post.rb:7:7 status=resolved owner=Post via=local:new site=db/schema.rb:2

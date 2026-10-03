@@ -1,0 +1,18 @@
+# ruby-lsp-rails' schema hover, without booting the app: on a model, its
+# table's columns from db/schema.rb. The table is worked out as Rails does —
+# a `self.table_name`, a namespace's `table_name_prefix`, the base class's
+# table for a single-table-inheritance subclass — and an abstract class says
+# it has none.
+hover app/models/post.rb:1:7 **Table `posts`** · [`db/schema.rb:2`]
+hover app/models/post.rb:1:7 | title | string | no | `""` |
+hover app/models/post.rb:1:7 | id | primary key | no |  |
+hover app/models/post.rb:1:7 Indexes: unique `title`
+# A reference to the model, anywhere, shows the same.
+hover app/job.rb:3:5 **Table `posts`**
+hover app/models/featured_post.rb:1:7 **Table `posts`**, shared with `Post` (single-table inheritance)
+hover app/models/widget.rb:1:7 **Table `legacy_widgets`**
+hover app/models/admin/report.rb:2:9 **Table `admin_reports`**
+hover app/models/base_record.rb:1:7 _Abstract: `BaseRecord` has no table of its own
+hover app/models/application_record.rb:1:7 _Abstract: `ApplicationRecord` has no table of its own
+# A model whose table the schema does not have says so, rather than nothing.
+hover app/models/gadget.rb:1:7 _Table `gadgets` is not in `db/schema.rb`._

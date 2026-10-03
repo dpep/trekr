@@ -418,6 +418,88 @@ pub(crate) fn symbol_literals(src: &[u8]) -> Vec<(String, Pos, usize)> {
     symbols.found
 }
 
+/// Facts from a file of a checkout, by what the file is: Ruby, or the SQL
+/// dump an app keeps its schema in (DEC-480).
+pub(crate) fn extract_file(path: &str, src: &[u8]) -> Facts {
+    match crate::scan::is_structure_sql(path) {
+        true => extract_sql(src),
+        false => extract(src),
+    }
+}
+
+/// A `db/structure.sql`: only its tables' attribute methods.
+pub(crate) fn extract_sql(src: &[u8]) -> Facts {
+    let lines = LineIndex::new(src);
+    Facts {
+        defs: crate::schema::sql::tables(src)
+            .iter()
+            .flat_map(schema_defs)
+            .collect(),
+        lines: lines.count(),
+        source: Some(src.into()),
+        ..Facts::default()
+    }
+}
+
+/// The attribute methods Rails generates for a table's columns, each written
+/// at its column.
+///
+/// This is ruby-lsp-rails' capability without a running app, and the point
+/// is not that `post.body` exists but that it has a **type**: a column's
+/// SQL type names a class, which makes every attribute a typed receiver.
+///
+/// The table attaches to a model by Rails' `posts` → `Post` convention,
+/// applied here rather than in the tree because it is a pure function of
+/// the table name (DEC-022); a `self.table_name` override is joined in the
+/// tree.
+fn schema_defs(table: &crate::schema::Table) -> Vec<Def> {
+    let owner = macros::table_to_class(&table.name);
+    let mut defs = Vec::new();
+    for column in table.attribute_columns() {
+        // Getter, setter, predicate, and the dirty tracking code calls
+        // (DEC-111).
+        let dirty = macros::dirty(&column.name)
+            .into_iter()
+            .map(|made| (made.name, false));
+        for (name, writer) in [
+            (column.name.clone(), false),
+            (format!("{}=", column.name), true),
+            (format!("{}?", column.name), false),
+        ]
+        .into_iter()
+        .chain(dirty)
+        {
+            defs.push(Def {
+                sig_returns: column
+                    .class
+                    .filter(|_| name == column.name)
+                    .map(str::to_string),
+                params: match writer {
+                    true => vec![Param {
+                        kind: ParamKind::Req,
+                        name: "value".into(),
+                    }],
+                    false => Vec::new(),
+                },
+                name,
+                kind: Kind::Method,
+                nesting: vec![owner.clone()],
+                singleton: false,
+                visibility: Visibility::Public,
+                via: Some("schema".into()),
+                target: None,
+                target_pos: None,
+                sig_overloads: Vec::new(),
+                sig_params: Vec::new(),
+                value: None,
+                pos: column.pos,
+                end_line: column.pos.line,
+            });
+        }
+    }
+    defs
+}
+
 pub(crate) fn extract(src: &[u8]) -> Facts {
     let parsed = ruby_prism::parse(src);
     let lines = LineIndex::new(src);
@@ -4278,114 +4360,10 @@ impl<'pr> Extractor<'_> {
     }
 
     /// `db/schema.rb`'s `create_table "posts" do |t| … end` — the attribute
-    /// methods Rails generates for every column.
-    ///
-    /// This is ruby-lsp-rails' capability without a running app, and the point
-    /// is not that `post.body` exists but that it has a **type**: a column's
-    /// SQL type names a class, which makes every attribute a typed receiver.
-    ///
-    /// The table attaches to a model by Rails' `posts` → `Post` convention,
-    /// applied here rather than in the tree because it is a pure function of
-    /// the table name. A model that overrides `self.table_name` is a known gap
-    /// (DEC-022): the override lives in a different blob.
+    /// methods Rails generates for every column (`schema_defs`).
     fn handle_create_table(&mut self, call: &ruby_prism::CallNode<'pr>) {
-        if method_name(call).as_deref() != Some("create_table") {
-            return;
-        }
-        let args = arg_nodes(call);
-        let Some(table) = args.first().and_then(literal_name) else {
-            return;
-        };
-        let Some(block) = call.block().and_then(|b| b.as_block_node()) else {
-            return;
-        };
-        // The block parameter is what column declarations are called on.
-        let builder = block
-            .parameters()
-            .and_then(|p| p.as_block_parameters_node())
-            .and_then(|p| p.parameters())
-            .and_then(|p| p.requireds().iter().next())
-            .and_then(|p| p.as_required_parameter_node())
-            .and_then(|p| String::from_utf8(p.name().as_slice().to_vec()).ok());
-        let Some(builder) = builder else { return };
-        let Some(body) = block.body().and_then(|b| b.as_statements_node()) else {
-            return;
-        };
-
-        let owner = macros::table_to_class(&table);
-        let mut columns: Vec<(String, Option<&'static str>)> = Vec::new();
-        for statement in body.body().iter() {
-            let Some(inner) = statement.as_call_node() else {
-                continue;
-            };
-            // Only calls on the block parameter declare columns.
-            let on_builder = inner
-                .receiver()
-                .and_then(|r| r.as_local_variable_read_node())
-                .and_then(|l| String::from_utf8(l.name().as_slice().to_vec()).ok())
-                .is_some_and(|name| name == builder);
-            if !on_builder {
-                continue;
-            }
-            let Some(kind) = method_name(&inner) else {
-                continue;
-            };
-            match kind.as_str() {
-                // `t.timestamps` is two datetime columns spelled as one call.
-                "timestamps" => {
-                    columns.push(("created_at".into(), macros::column_class("datetime")));
-                    columns.push(("updated_at".into(), macros::column_class("datetime")));
-                }
-                // `t.references :author` is the `author_id` column. The
-                // `author` reader is the model's `belongs_to`, not the table's.
-                "references" | "belongs_to" => {
-                    for arg in arg_nodes(&inner) {
-                        if let Some(name) = literal_name(&arg) {
-                            columns.push((format!("{name}_id"), macros::column_class("integer")));
-                        }
-                    }
-                }
-                _ if macros::is_column_type(&kind) => {
-                    let class = macros::column_class(&kind);
-                    for arg in arg_nodes(&inner) {
-                        if let Some(name) = literal_name(&arg) {
-                            columns.push((name, class));
-                        }
-                    }
-                }
-                _ => continue,
-            }
-        }
-
-        let loc = call.location();
-        let (start, end) = (loc.start_offset(), loc.end_offset());
-        for (column, class) in columns {
-            // Getter, setter, predicate, and the dirty tracking code calls
-            // (DEC-111).
-            let dirty = macros::dirty(&column)
-                .into_iter()
-                .map(|made| (made.name, false));
-            for (name, writer) in [
-                (column.clone(), false),
-                (format!("{column}="), true),
-                (format!("{column}?"), false),
-            ]
-            .into_iter()
-            .chain(dirty)
-            {
-                let mut def = self.def(name.clone(), Kind::Method, start, end);
-                def.nesting = vec![owner.clone()];
-                def.via = Some("schema".into());
-                if writer {
-                    def.params = vec![Param {
-                        kind: ParamKind::Req,
-                        name: "value".into(),
-                    }];
-                } else if name == column {
-                    def.sig_returns = class.map(str::to_string);
-                }
-                self.push_def(def);
-            }
+        if let Some(table) = crate::schema::ruby::table_of(call, self.src, &self.lines) {
+            self.facts.defs.extend(schema_defs(&table));
         }
     }
 

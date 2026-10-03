@@ -3555,6 +3555,58 @@ fn a_deleted_file_reported_by_the_watcher_leaves_the_index() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// `db:migrate` rewrites `db/structure.sql`, and the watcher reports it: the
+/// column's new type reaches what a call on it resolves to, not only a
+/// hover, which reads the dump as it is.
+#[test]
+fn a_rewritten_structure_sql_reported_by_the_watcher_retypes_its_columns() {
+    let (dir, db) = scratch("structure-sql");
+    fs::create_dir_all(dir.join("db")).unwrap();
+    fs::write(
+        dir.join("stubs.rb"),
+        "module ActiveRecord\n  class Base\n  end\nend\n",
+    )
+    .unwrap();
+    let dump = |kind: &str| {
+        let text = format!(
+            "CREATE TABLE public.widgets (\n    id bigint NOT NULL,\n    code {kind}\n);\n"
+        );
+        fs::write(dir.join("db/structure.sql"), text).unwrap();
+    };
+    dump("integer");
+    ruby_repo(
+        &dir,
+        &db,
+        "class Widget < ActiveRecord::Base\n  def shout\n    code.upcase\n  end\nend\n",
+    );
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let text = hover_at(&mut session, &dir, 3, 4);
+    assert!(
+        text.contains("Column `widgets.code`: `integer`"),
+        "the column, from the dump: {text}"
+    );
+    assert!(!hover_at(&mut session, &dir, 3, 9).contains("String#upcase"));
+
+    dump("text");
+    session.notify(
+        "workspace/didChangeWatchedFiles",
+        serde_json::json!({"changes": [{"uri": uri_of(&dir, "db/structure.sql"), "type": 2}]}),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !hover_at(&mut session, &dir, 3, 9).contains("String#upcase") {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the column was never retyped"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 const SHOP: &str = concat!(
     "module Shop\n",                 // 1
     "  class Widget\n",              // 2

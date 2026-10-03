@@ -1,0 +1,9 @@
+# A column's attribute method hovered: what the column is — its SQL type, null
+# and default, whether it leads an index — and the schema line, where it said
+# only "declared by `schema`".
+hover app.rb:3:5 Column `posts.title`: `string`, not null, default `""` · [`db/schema.rb:3`]
+hover app.rb:7:5 Column `posts.author_id`: `bigint`, indexed
+# `t.timestamps` is two columns written once.
+hover app.rb:11:5 Column `posts.updated_at`: `datetime`, not null
+# On the column in the schema itself.
+hover db/schema.rb:3:14 Column `posts.title`: `string`, not null

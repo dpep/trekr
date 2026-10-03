@@ -317,31 +317,6 @@ pub(super) fn collection_class(
     }
 }
 
-/// The class a `db/schema.rb` column type produces.
-///
-/// Only where it is determinate and the class is one core knows. `boolean` is
-/// deliberately absent: `true` and `false` are different classes and neither is
-/// a useful receiver. `decimal` is BigDecimal, which core.rb declares.
-pub(super) fn column_class(sql_type: &str) -> Option<&'static str> {
-    Some(match sql_type {
-        "string" | "text" | "citext" | "binary" | "uuid" | "inet" | "cidr" => "String",
-        "integer" | "bigint" | "serial" | "bigserial" | "primary_key" => "Integer",
-        "float" => "Float",
-        "decimal" | "numeric" | "money" => "BigDecimal",
-        "datetime" | "timestamp" | "timestamptz" | "time" | "date" => "Time",
-        "json" | "jsonb" | "hstore" => "Hash",
-        _ => return None,
-    })
-}
-
-/// Is this `t.<name>` call a column declaration, and does it name the column
-/// in its arguments?
-///
-/// `t.index`, `t.check_constraint` and friends declare something else.
-pub(super) fn is_column_type(name: &str) -> bool {
-    column_class(name).is_some() || matches!(name, "boolean" | "virtual" | "column" | "interval")
-}
-
 /// `posts` → `Post`. Rails' table-to-model convention, which is how a schema
 /// attaches to a class without anything linking them.
 pub(crate) fn table_to_class(table: &str) -> String {

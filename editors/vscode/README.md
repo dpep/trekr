@@ -33,7 +33,7 @@ worktree of the repo and kept current as you save.
 | --- | --- |
 | Go to Definition / Peek | Where the call actually goes: the receiver's type is resolved (`w = Widget.new; w.save` → `Widget#save`). An unresolvable receiver gives a short ranked peek list, never a single confident guess. |
 | Find All References | Call sites that can reach *this* method — confirmed ones first, then possible ones; ones whose receiver resolves elsewhere are left out. On a class or constant: every reference Ruby's lookup resolves to it. |
-| Hover | The definition's signature and doc comment, and where it lives — "Defined in", or "Declared by `belongs_to`" when a macro made the method. A resolved answer carries no caveat; a guess says so in words, never as a number. |
+| Hover | The definition's signature and doc comment, and where it lives — "Defined in", or "Declared by `belongs_to`" when a macro made the method. A resolved answer carries no caveat; a guess says so in words, never as a number. On an Active Record model: its table's columns (type, null, default), primary key and indexes, linked to the schema; on a column's attribute (`post.title`): the column's type, null and default. Read from `db/schema.rb`, or `db/structure.sql`, without booting the app. |
 | `require` strings | Cmd-click or Go to Definition on a `require`, `require_relative`, `load` or `autoload` string opens the file it loads — the checkout's, a gem's, or the standard library's. Several matches give a peek list; hover names the file and gem; a string with one file behind it is underlined as a link (`documentLink`). |
 | Variables | Cmd-click a local or parameter: the assignments its value can come from (both branches of an `if`, a loop's own later write, the parameter). Cmd-click an `@ivar` or `@@cvar`: where its class, a reopening of it, or an ancestor sets it — `@x =`, `attr_accessor`, `instance_variable_set` — `initialize` first; nothing when the object could be one of several classes. Find All References lists every read and write; hover says where it was set. `$globals` are not answered. |
 | Highlight | On a variable, its other mentions in the file (`documentHighlight`). Unsaved edits included. |
@@ -79,7 +79,7 @@ What that gives up, and where to get it instead:
 | Run/debug test code lenses, Test Explorer | A test-runner extension, or the terminal. Debugging (`rdbg`) is a separate extension and is unaffected. |
 | Rename, signature help, inlay hints, folding/selection ranges | Not provided by trekr. VS Code still folds by indentation and expands selection by word and bracket. |
 | Sorbet type errors and typed hover | Run `srb tc` in CI or the terminal. trekr *reads* `sig`s to resolve receivers but does not type-check. |
-| ruby-lsp-rails (routes, schema hover) | Not provided. trekr does resolve `has_many`, `belongs_to`, schema columns and `delegate` for definitions and completion. |
+| ruby-lsp-rails (routes, schema hover) | Schema hover is provided, from `db/schema.rb` or `db/structure.sql` with no running app. Routes are not. trekr resolves `has_many`, `belongs_to`, schema columns and `delegate` for definitions and completion. |
 
 ## With the rq extension
 

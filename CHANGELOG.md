@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+- **Hover on a model shows its table.** On an Active Record model's name, or
+  any reference to it, the hover lists its table's columns — type as the
+  schema spells it, null, default, the primary key first — and its indexes,
+  linked to the table's line in `db/schema.rb` or `db/structure.sql`; a wide
+  table shows twenty columns and says how many more. The table is worked out
+  as Rails does: `self.table_name`, a namespace's `table_name_prefix`, and a
+  single-table-inheritance subclass's base table, which the hover says it
+  shares. An abstract class says it has no table. Nothing boots the app.
+- **Hover on a column's attribute shows the column.** `post.title`, `title`
+  inside the model, or the column in `db/schema.rb`: "Column `posts.title`:
+  `string`, not null, default `""`", linked to its line, where it said
+  "Declared by `schema`". Completion's detail says the same.
+- **Apps that keep `db/structure.sql` get their columns.** An app that dumps
+  its schema as SQL (Postgres or MySQL) had no attribute methods at all, so
+  `user.name.upcase` resolved nothing; its columns are now read like
+  `db/schema.rb`'s, typed from their SQL types, for go to definition,
+  references, hover, completion and `--dead`. When an app commits both
+  files, the one Rails loads is read: `db/schema.rb`, unless
+  `config/application.rb` sets `schema_format = :sql`.
+- **An array column is an Array.** `t.bigint "tag_ids", array: true` (or a
+  Postgres `bigint[]`) types its reader as Array, not by its elements.
+- **A column's definition is its own line.** Go to definition on
+  `post.title` lands on `t.string "title"` (or the column in
+  `db/structure.sql`), not on `create_table`.
+- This changes what an index records: trekr reindexes once after upgrading.
+
 ## 0.8.5 — 2026-10-02
 
 - **Relation chains are typed.** `Post.where(…).order(…).pluck(…)`, a
