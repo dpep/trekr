@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.6 — 2026-10-03
 
 - **`--dead`'s output is the same on every run.** A `test-only` constant's
   reason named its "first" test reference in the order the index's rows
