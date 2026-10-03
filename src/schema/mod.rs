@@ -26,6 +26,15 @@ pub(crate) struct Table {
     pub(crate) columns: Vec<Column>,
     pub(crate) primary_key: PrimaryKey,
     pub(crate) indexes: Vec<Index>,
+    /// A `CREATE [MATERIALIZED] VIEW`: its columns are its select list's.
+    pub(crate) view: Option<View>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct View {
+    /// Select-list items whose column name is not written down: `*`, or an
+    /// expression with no `AS`.
+    pub(crate) unread: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -92,7 +101,8 @@ pub(crate) fn column_class(rails_type: &str) -> Option<&'static str> {
         "integer" | "bigint" | "serial" | "bigserial" | "primary_key" => "Integer",
         "float" => "Float",
         "decimal" | "numeric" | "money" => "BigDecimal",
-        "datetime" | "timestamp" | "timestamptz" | "time" | "date" => "Time",
+        "datetime" | "timestamp" | "timestamptz" | "time" => "Time",
+        "date" => "Date",
         "json" | "jsonb" | "hstore" => "Hash",
         _ => return None,
     })

@@ -51,8 +51,12 @@ pub(super) fn model_section(session: &mut Session, root: &Path, fqn: &str) -> Op
         let tables = document.tables();
         if let Some(found) = tables.iter().find(|t| t.name == table) {
             let link = link(&absolute, dump, found.line);
+            let kind = match found.view {
+                Some(_) => "View",
+                None => "Table",
+            };
             return Some(format!(
-                "**Table `{table}`**{inherited} · {link}\n\n{}",
+                "**{kind} `{table}`**{inherited} · {link}\n\n{}",
                 render(found)
             ));
         }
@@ -88,7 +92,11 @@ pub(super) fn column_line(
             .max_by_key(|c| c.name.len())
             .map(|c| (table, c))
     })?;
-    let mut facts = vec![format!("`{}`", column.sql_type)];
+    // A view's column computed by an expression has no type to show.
+    let mut facts: Vec<String> = (!column.sql_type.is_empty())
+        .then(|| format!("`{}`", column.sql_type))
+        .into_iter()
+        .collect();
     if !column.null {
         facts.push("not null".to_string());
     }
@@ -159,6 +167,14 @@ fn render(table: &Table) -> String {
         ]));
     }
     let mut out = rows.join("\n");
+    if let Some(view) = table.view.filter(|v| v.unread > 0) {
+        out.push_str(&format!(
+            "\n\n_A view: {} of its select list's columns {} no name written down, and {} not read._",
+            view.unread,
+            if view.unread == 1 { "has" } else { "have" },
+            if view.unread == 1 { "is" } else { "are" },
+        ));
+    }
     if ordered.len() > shown {
         out.push_str(&format!(
             "\n\n_and {} more {}_",

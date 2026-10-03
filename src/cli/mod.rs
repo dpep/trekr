@@ -3141,14 +3141,23 @@ fn model_table(tree: &Tree, root: &Path, fqn: &str) -> Option<(serde_json::Value
     table["primary_key"] = found.primary_key.names().into();
     table["columns"] = columns.into();
     table["indexes"] = indexes.into();
+    table["view"] = found.view.is_some().into();
+    if let Some(view) = found.view {
+        table["unread_columns"] = view.unread.into();
+    }
     let implicit = found
         .primary_key
         .names()
         .iter()
         .filter(|key| found.column(key).is_none())
         .count();
+    let (kind, unread) = match found.view {
+        Some(view) if view.unread > 0 => ("view", format!(", {} not read", view.unread)),
+        Some(_) => ("view", String::new()),
+        None => ("table", String::new()),
+    };
     let line = format!(
-        "table {name}{shared} · {dump}:{} · {} columns",
+        "{kind} {name}{shared} · {dump}:{} · {} columns{unread}",
         found.line,
         found.columns.len() + implicit
     );

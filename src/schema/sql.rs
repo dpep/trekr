@@ -9,7 +9,7 @@
 //! know where a statement ends: quoted strings, quoted identifiers, comments
 //! and Postgres' dollar-quoted function bodies all hide semicolons.
 
-use super::{Column, Index, PrimaryKey, Table};
+use super::{Column, Index, PrimaryKey, Table, View};
 use crate::extract::LineIndex;
 use std::collections::HashMap;
 
@@ -45,8 +45,11 @@ pub(crate) fn tables(src: &[u8]) -> Vec<Table> {
             text,
             tokens: statement,
         };
-        if let Some(table) = s.create_table(&lines) {
+        // pg_dump writes what a table inherits or a view reads before it.
+        if let Some(table) = s.create_table(&lines, &tables) {
             tables.push(table);
+        } else if let Some(view) = s.create_view(&lines, &tables) {
+            tables.push(view);
         } else if let Some((table, index)) = s.create_index() {
             indexes.push((table, index));
         } else if let Some(found) = s.alter_table() {
@@ -218,6 +221,32 @@ struct Statement<'t> {
     tokens: &'t [Token],
 }
 
+/// A view's column, from one item of its select list.
+struct Output {
+    name: String,
+    /// The token it is named at.
+    at: usize,
+    /// The column it is, when the item is a bare reference: its qualifier
+    /// and name.
+    reads: Option<(Option<String>, String)>,
+}
+
+/// The column of a table the view reads that a bare reference names, when
+/// exactly one of them has it.
+fn column_read<'a>(
+    (qualifier, column): &(Option<String>, String),
+    read: &[String],
+    before: &'a [Table],
+) -> Option<&'a Column> {
+    let mut found = read
+        .iter()
+        .filter_map(|name| before.iter().find(|t| bare(&t.name) == bare(name)))
+        .filter(|t| qualifier.as_deref().is_none_or(|q| bare(&t.name) == q))
+        .filter_map(|t| t.column(column));
+    let first = found.next()?;
+    found.next().is_none().then_some(first)
+}
+
 enum Altered {
     Key(String, Vec<String>),
     Unique(String, Index),
@@ -322,6 +351,13 @@ impl<'t> Statement<'t> {
                 .into_iter()
                 .map(|(from, to)| match to - from {
                     1 => self.name(from).unwrap_or_else(|| self.source(from, to)),
+                    // mysqldump's prefix index, `` `name`(191) ``.
+                    4 if self.raw(&self.tokens[from]).starts_with('`')
+                        && self.punct(from + 1, "(")
+                        && self.punct(from + 3, ")") =>
+                    {
+                        self.name(from).unwrap_or_default()
+                    }
                     // `name varchar_pattern_ops`, `created_at DESC`: the
                     // column is what is indexed.
                     _ if matches!(self.tokens[from].kind, Kind::Word | Kind::Quoted)
@@ -335,7 +371,7 @@ impl<'t> Statement<'t> {
         )
     }
 
-    fn create_table(&self, lines: &LineIndex) -> Option<Table> {
+    fn create_table(&self, lines: &LineIndex, before: &[Table]) -> Option<Table> {
         if !self.is(0, "CREATE") {
             return None;
         }
@@ -376,7 +412,205 @@ impl<'t> Statement<'t> {
         if !key.is_empty() {
             table.primary_key = PrimaryKey::Columns(key, None);
         }
+        // `INHERITS (parent)`: Postgres puts the parent's columns first.
+        if self.is(close + 1, "INHERITS") {
+            let parents: Vec<String> = match self.close(close + 2) {
+                Some(end) if self.punct(close + 2, "(") => self
+                    .elements(close + 2, end)
+                    .into_iter()
+                    .filter_map(|(from, _)| Some(self.qualified(from)?.0))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let inherited = parents
+                .iter()
+                .filter_map(|p| before.iter().find(|t| bare(&t.name) == bare(p)))
+                .flat_map(|parent| parent.columns.iter().cloned())
+                .filter(|c| table.column(&c.name).is_none())
+                .collect::<Vec<_>>();
+            table.columns.splice(0..0, inherited);
+        }
         Some(table)
+    }
+
+    /// `CREATE [OR REPLACE] [MATERIALIZED] VIEW name AS SELECT …`: a column
+    /// per select-list item that names one, typed when it is a bare column
+    /// of a table the view reads.
+    fn create_view(&self, lines: &LineIndex, before: &[Table]) -> Option<Table> {
+        if !self.is(0, "CREATE") {
+            return None;
+        }
+        let mut i = 1;
+        while [
+            "OR",
+            "REPLACE",
+            "TEMP",
+            "TEMPORARY",
+            "RECURSIVE",
+            "MATERIALIZED",
+        ]
+        .iter()
+        .any(|w| self.is(i, w))
+        {
+            i += 1;
+        }
+        if !self.is(i, "VIEW") {
+            return None;
+        }
+        i += 1;
+        if self.is(i, "IF") {
+            i += 3;
+        }
+        let (name, after) = self.qualified(i)?;
+        let named = match self.punct(after, "(") {
+            true => self.column_list(after),
+            false => None,
+        };
+        let select = (after..self.tokens.len()).find(|&at| self.is(at, "SELECT"))?;
+        let mut view = Table {
+            name,
+            line: lines.pos(self.tokens[0].start).line,
+            ..Table::default()
+        };
+        let (items, read) = self.select_list(select);
+        let mut unread = 0;
+        for (at, (from, to)) in items.into_iter().enumerate() {
+            let output = self.output(from, to);
+            let written = named.as_ref().and_then(|names| names.get(at)).cloned();
+            let Some(name) = written.or_else(|| output.as_ref().map(|o| o.name.clone())) else {
+                unread += 1;
+                continue;
+            };
+            let typed = output
+                .as_ref()
+                .and_then(|o| o.reads.as_ref())
+                .and_then(|reads| column_read(reads, &read, before));
+            view.columns.push(Column {
+                name,
+                sql_type: typed.map_or(String::new(), |c| c.sql_type.clone()),
+                class: typed.and_then(|c| c.class),
+                null: true,
+                default: None,
+                pos: lines.pos(self.tokens[output.map_or(from, |o| o.at)].start),
+            });
+        }
+        view.view = Some(View { unread });
+        Some(view)
+    }
+
+    /// The items of the select list starting at `select`, and the tables its
+    /// `FROM` and `JOIN`s name.
+    fn select_list(&self, select: usize) -> (Vec<(usize, usize)>, Vec<String>) {
+        let mut i = select + 1;
+        if self.is(i, "ALL") {
+            i += 1;
+        } else if self.is(i, "DISTINCT") {
+            i += 1;
+            if self.is(i, "ON") {
+                i = self.close(i + 1).map_or(i + 1, |close| close + 1);
+            }
+        }
+        let ends = [
+            "FROM",
+            "UNION",
+            "INTERSECT",
+            "EXCEPT",
+            "WHERE",
+            "GROUP",
+            "HAVING",
+            "ORDER",
+            "LIMIT",
+            "WINDOW",
+            "WITH",
+        ];
+        let mut items = Vec::new();
+        let mut depth = 0;
+        let mut start = i;
+        let mut end = self.tokens.len();
+        while i < self.tokens.len() {
+            if self.punct(i, "(") {
+                depth += 1;
+            } else if self.punct(i, ")") {
+                depth -= 1;
+            } else if depth == 0 && ends.iter().any(|w| self.is(i, w)) {
+                end = i;
+                break;
+            } else if depth == 0 && self.punct(i, ",") {
+                items.push((start, i));
+                start = i + 1;
+            }
+            i += 1;
+        }
+        if start < end {
+            items.push((start, end));
+        }
+        let mut read = Vec::new();
+        let mut depth = 0;
+        for at in end..self.tokens.len() {
+            if self.punct(at, "(") {
+                depth += 1;
+            } else if self.punct(at, ")") {
+                depth -= 1;
+            } else if depth == 0
+                && (self.is(at, "FROM") || self.is(at, "JOIN"))
+                && let Some((table, _)) = self.qualified(at + 1)
+            {
+                read.push(table);
+            }
+        }
+        (items, read)
+    }
+
+    /// The column a select-list item makes. `None` for `*`, or an expression
+    /// with no name, which Postgres calls `?column?`.
+    fn output(&self, from: usize, to: usize) -> Option<Output> {
+        if to >= from + 2 && self.is(to - 2, "AS") {
+            return Some(Output {
+                name: self.name(to - 1)?,
+                at: to - 1,
+                reads: self.reference(from, to - 2),
+            });
+        }
+        if let Some(reads) = self.reference(from, to) {
+            return Some(Output {
+                name: reads.1.clone(),
+                at: to - 1,
+                reads: Some(reads),
+            });
+        }
+        // `lower(title)` is a column named `lower`.
+        let call = self.tokens[from].kind == Kind::Word
+            && self.punct(from + 1, "(")
+            && self.close(from + 1) == Some(to - 1);
+        if !call {
+            return None;
+        }
+        Some(Output {
+            name: self.name(from)?,
+            at: from,
+            reads: None,
+        })
+    }
+
+    /// `title`, `posts.title`, `public.posts.title`: the column, and the
+    /// table it is qualified by.
+    fn reference(&self, from: usize, to: usize) -> Option<(Option<String>, String)> {
+        let parts = to.checked_sub(from)?;
+        if parts % 2 == 0 {
+            return None;
+        }
+        let mut names = Vec::new();
+        for at in (from..to).step_by(2) {
+            if !matches!(self.tokens[at].kind, Kind::Word | Kind::Quoted) {
+                return None;
+            }
+            names.push(self.name(at)?);
+            if at + 1 < to && !self.punct(at + 1, ".") {
+                return None;
+            }
+        }
+        let column = names.pop()?;
+        Some((names.pop(), column))
     }
 
     /// A table constraint, or mysqldump's inline `KEY`: recorded, and `true`.
@@ -391,17 +625,18 @@ impl<'t> Statement<'t> {
                 || self.tokens.get(at).is_some_and(|t| t.kind == Kind::Quoted)
                     && self.punct(at + 1, "(")
         };
+        // `exclude` is not reserved either, and pg_dump leaves it unquoted.
         let starts_constraint = [
             "CONSTRAINT",
             "PRIMARY",
             "UNIQUE",
             "FOREIGN",
             "CHECK",
-            "EXCLUDE",
             "LIKE",
         ]
         .iter()
         .any(|w| self.is(i, w))
+            || self.is(i, "EXCLUDE") && (self.punct(i + 1, "(") || self.is(i + 1, "USING"))
             || ["KEY", "INDEX", "FULLTEXT", "SPATIAL"]
                 .iter()
                 .any(|w| self.is(i, w))
@@ -413,11 +648,14 @@ impl<'t> Statement<'t> {
             i += 2;
         }
         let unique = self.is(i, "UNIQUE");
+        if self.is(i, "FULLTEXT") || self.is(i, "SPATIAL") {
+            i += 1;
+        }
         if self.is(i, "PRIMARY") && self.is(i + 1, "KEY") {
             if let Some(columns) = self.paren_after(i + 2) {
                 *key = columns;
             }
-        } else if (unique || ["KEY", "INDEX"].iter().any(|w| self.is(i, w)))
+        } else if (unique || ["KEY", "INDEX"].iter().any(|w| self.is(i, w)) || opens(i))
             && let Some(columns) = self.paren_after(i + 1)
         {
             indexes.push(Index { columns, unique });
@@ -574,6 +812,11 @@ impl<'t> Statement<'t> {
     }
 }
 
+/// A table's name without its schema: `public.posts` → `posts`.
+fn bare(name: &str) -> &str {
+    name.rsplit_once('.').map_or(name, |(_, table)| table)
+}
+
 /// The class a column of this SQL type reads as, by the Rails type it maps
 /// to. An array column is an Array whatever it holds.
 pub(crate) fn class_of(sql_type: &str) -> Option<&'static str> {
@@ -594,8 +837,8 @@ fn rails_type(lower: &str) -> Option<&'static str> {
         None => (bare, ""),
     };
     let base = base
-        .trim_end_matches(" unsigned")
         .trim_end_matches(" zerofill")
+        .trim_end_matches(" unsigned")
         .trim();
     Some(match base {
         "character varying" | "varchar" | "character" | "char" | "nvarchar" | "nchar" => "string",
@@ -793,6 +1036,124 @@ CREATE TABLE public.tags (
         assert_eq!(names, ["data", "title", "sep", "body"]);
         assert_eq!(table(&tables, "docs").indexes.len(), 1);
         assert_eq!(table(&tables, "tags").columns.len(), 1);
+    }
+
+    #[test]
+    fn a_column_named_like_a_constraint_word_is_a_column() {
+        let dump = "\
+CREATE TABLE public.rules (
+    exclude boolean,
+    born date,
+    CONSTRAINT no_overlap EXCLUDE USING gist (born WITH =)
+);
+";
+        let rules = tables(dump.as_bytes());
+        let columns: Vec<(&str, Option<&str>)> = rules[0]
+            .columns
+            .iter()
+            .map(|c| (c.name.as_str(), c.class))
+            .collect();
+        assert_eq!(columns, [("exclude", None), ("born", Some("Date"))]);
+    }
+
+    #[test]
+    fn an_inheriting_table_has_its_parents_columns_first() {
+        let dump = "\
+CREATE TABLE public.base_things (
+    id bigint NOT NULL,
+    name text
+);
+CREATE TABLE public.sub_things (
+    extra integer
+)
+INHERITS (public.base_things);
+";
+        let tables = tables(dump.as_bytes());
+        let sub = table(&tables, "sub_things");
+        let names: Vec<&str> = sub.columns.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["id", "name", "extra"]);
+        assert_eq!(sub.column("name").unwrap().pos.line, 3, "at the parent's");
+    }
+
+    #[test]
+    fn a_views_columns_are_its_select_lists_names() {
+        let dump = "\
+CREATE TABLE public.posts (
+    id bigint NOT NULL,
+    title character varying(60) NOT NULL,
+    score integer
+);
+CREATE VIEW public.recent_posts AS
+ SELECT posts.id,
+    title,
+    (score * 2) AS doubled,
+    lower(title)
+   FROM public.posts
+  WHERE (score > 0);
+CREATE MATERIALIZED VIEW public.post_stats AS
+ SELECT count(*) AS n,
+    max(score) AS top
+   FROM public.posts
+  WITH NO DATA;
+CREATE VIEW public.everything AS
+ SELECT * FROM public.posts;
+";
+        let tables = tables(dump.as_bytes());
+        let recent = table(&tables, "recent_posts");
+        let columns: Vec<(&str, Option<&str>)> = recent
+            .columns
+            .iter()
+            .map(|c| (c.name.as_str(), c.class))
+            .collect();
+        assert_eq!(
+            columns,
+            [
+                ("id", Some("Integer")),
+                ("title", Some("String")),
+                ("doubled", None),
+                ("lower", None),
+            ],
+            "a bare column has its table's type"
+        );
+        assert!(recent.view.is_some_and(|v| v.unread == 0));
+        let stats = table(&tables, "post_stats");
+        assert_eq!(stats.columns.len(), 2);
+        assert!(stats.view.is_some());
+        let everything = table(&tables, "everything");
+        assert!(everything.columns.is_empty());
+        assert_eq!(
+            everything.view.map(|v| v.unread),
+            Some(1),
+            "`*` is not read"
+        );
+    }
+
+    #[test]
+    fn reads_mysqls_zerofill_fulltext_and_prefix_indexes() {
+        let dump = "\
+CREATE TABLE `notes` (
+  `id` int unsigned zerofill NOT NULL,
+  `name` varchar(255) NOT NULL,
+  `body` text,
+  UNIQUE KEY `index_notes_on_name` (`name`(191)),
+  FULLTEXT KEY `index_notes_on_body` (`body`)
+) ENGINE=InnoDB;
+";
+        let notes = &tables(dump.as_bytes())[0];
+        assert_eq!(notes.column("id").unwrap().class, Some("Integer"));
+        assert_eq!(
+            notes.indexes,
+            [
+                Index {
+                    columns: vec!["name".into()],
+                    unique: true
+                },
+                Index {
+                    columns: vec!["body".into()],
+                    unique: false
+                }
+            ]
+        );
     }
 
     #[test]
