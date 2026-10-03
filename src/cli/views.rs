@@ -2,16 +2,17 @@
 //! cannot see calls from, and says so per row (DEC-315).
 //!
 //! Not a reading of the templates. A name here is a word that appears where
-//! a template runs Ruby — an ERB tag, a Haml or Slim line, a Jbuilder file —
-//! with no receiver typed and no scope known, which is evidence enough for a
-//! caveat and never for a caller.
+//! a template runs Ruby — a Haml or Slim line, a Jbuilder file — with no
+//! receiver typed and no scope known, which is evidence enough for a caveat
+//! and never for a caller. ERB and RABL templates are not among them: the
+//! index reads those, and their calls are call sites (DEC-520).
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 
-/// Template extensions whose Ruby a view runs.
-const TEMPLATES: [&str; 6] = ["erb", "haml", "slim", "jbuilder", "rabl", "builder"];
+/// Template extensions whose Ruby a view runs, and the index does not read.
+const TEMPLATES: [&str; 4] = ["haml", "slim", "jbuilder", "builder"];
 
 #[derive(Default)]
 pub(super) struct Views {
@@ -42,9 +43,7 @@ impl Views {
             let Some(text) = template_text(&bytes) else {
                 continue;
             };
-            let ruby = if path.ends_with(".erb") {
-                erb_ruby(text)
-            } else if path.ends_with(".haml") || path.ends_with(".slim") {
+            let ruby = if path.ends_with(".haml") || path.ends_with(".slim") {
                 indented_ruby(text)
             } else {
                 text.to_string()
@@ -140,25 +139,6 @@ fn template_text(bytes: &[u8]) -> Option<&str> {
     std::str::from_utf8(bytes)
         .ok()
         .filter(|text| !text.contains('\0'))
-}
-
-/// The Ruby an ERB template runs: the insides of its `<% %>` tags, less the
-/// `<%#` comments.
-fn erb_ruby(text: &str) -> String {
-    let mut ruby = String::new();
-    let mut rest = text;
-    while let Some(open) = rest.find("<%") {
-        let after = &rest[open + 2..];
-        let Some(close) = after.find("%>") else {
-            break;
-        };
-        if !after.starts_with('#') {
-            ruby.push_str(&after[..close]);
-            ruby.push('\n');
-        }
-        rest = &after[close + 2..];
-    }
-    ruby
 }
 
 /// The Ruby a Haml or Slim template runs: a line that starts with `-` or
@@ -269,15 +249,6 @@ fn words(ruby: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn an_erb_template_names_only_what_its_tags_run() {
-        let ruby = erb_ruby("<p>quiet</p><%= @w.title %><%# lonely %><% if w.shown? %>");
-        let names = words(&ruby);
-        assert!(names.contains(&"title".to_string()));
-        assert!(names.contains(&"shown?".to_string()));
-        assert!(!names.iter().any(|n| n == "quiet" || n == "lonely"));
-    }
 
     #[test]
     fn a_strings_text_is_no_name_but_its_interpolation_is() {

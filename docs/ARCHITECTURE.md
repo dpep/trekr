@@ -55,6 +55,10 @@ for its tables (DEC-480). An app that commits both it and `db/schema.rb`
 keeps one current, and only the one Rails loads is in the map: `schema.rb`,
 unless `config/application.rb` sets `schema_format = :sql`.
 
+A checkout's view templates are in the map too: ERB (`*.erb`), read for
+the Ruby its tags run, and RABL (`*.rabl`), which is Ruby (DEC-520). A gem's
+are not.
+
 `scan/near.rs` guesses which files a few files most likely need — a
 constant's file by the autoloader's convention (`Admin::UserReport` →
 `admin/user_report.rb` under any root, each enclosing scope tried first), and
@@ -109,10 +113,16 @@ and the dirty-tracking family, each written at the column's name. `schema/`
 reads both dumps into one `Table` — columns with type, null and default, the
 primary key, the indexes — `ruby.rs` from `create_table` (the extractor hands
 it the call as it visits), `sql.rs` from `CREATE TABLE`, `CREATE INDEX` and
-`ALTER TABLE … PRIMARY KEY` in a `pg_dump` or `mysqldump`. A SQL dump is the
-one input that is not Ruby, so `extract_file` picks the reader by path
-(DEC-480); the primary key is left to `ActiveRecord::Base`, as `schema.rb`
+`ALTER TABLE … PRIMARY KEY` in a `pg_dump` or `mysqldump`. A SQL dump is
+not Ruby, so `extract_file` picks the reader by path (DEC-480); the primary key is left to `ActiveRecord::Base`, as `schema.rb`
 leaves it by not listing it.
+
+**An ERB template is read in place** (DEC-520). `extract_file` hands
+`extract` the template with every byte outside a tag's code blanked to a
+space (newlines kept) and a `;` where each tag's `<` and `>` were, so its
+facts sit at the template's own offsets and a block opened in one tag closes
+in another, as Erubi compiles it. `<%#` comments and `<%%` literals are not
+code.
 
 ### `tree/` — a checkout's namespace, rebuilt not patched
 

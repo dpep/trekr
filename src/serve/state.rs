@@ -175,6 +175,8 @@ pub(crate) struct Document {
     vars: Option<std::rc::Rc<Vars>>,
     /// A `structure.sql` rather than Ruby (DEC-480).
     sql: bool,
+    /// An ERB template, whose Ruby is its tags' (DEC-520).
+    erb: bool,
     /// The tables a schema dump declares, read once per edit.
     tables: Option<std::rc::Rc<[crate::schema::Table]>>,
     /// Where the text came from. The editor's copy is authoritative until it
@@ -208,6 +210,7 @@ impl Document {
             requires: None,
             vars: None,
             sql: crate::scan::is_structure_sql(&path.to_string_lossy()),
+            erb: crate::scan::is_erb(&path.to_string_lossy()),
             tables: None,
             origin,
         }
@@ -221,17 +224,32 @@ impl Document {
         }
     }
 
+    /// The Ruby this document runs, at its own offsets: an ERB template's
+    /// tags, blanked around (DEC-520), or the text itself.
+    fn ruby(&self) -> std::borrow::Cow<'_, [u8]> {
+        match self.erb {
+            true => crate::extract::template::erb_ruby(self.text.as_bytes())
+                .unwrap_or_default()
+                .into(),
+            false => self.text.as_bytes().into(),
+        }
+    }
+
     /// Prism's syntax errors for this document.
     pub(crate) fn parse_errors(&self) -> Vec<(u32, u32, String)> {
-        crate::extract::syntax_errors(self.text.as_bytes())
+        crate::extract::syntax_errors(&self.ruby())
     }
 
     /// The parse, made once per edit rather than once per query.
     pub(crate) fn facts(&mut self) -> &Facts {
-        self.facts.get_or_insert_with(|| match self.sql {
-            true => crate::extract::extract_sql(self.text.as_bytes()),
-            false => crate::extract::extract(self.text.as_bytes()),
-        })
+        if self.facts.is_none() {
+            let facts = match self.sql {
+                true => crate::extract::extract_sql(self.text.as_bytes()),
+                false => crate::extract::extract(&self.ruby()),
+            };
+            self.facts = Some(facts);
+        }
+        self.facts.as_ref().expect("just set")
     }
 
     /// The tables this file declares, when it is a schema dump.
@@ -249,8 +267,10 @@ impl Document {
     /// The file's `require`s whose path is written literally — its own parse,
     /// since facts do not keep string arguments; also once per edit.
     pub(crate) fn requires(&mut self) -> &[Require] {
-        self.requires
-            .get_or_insert_with(|| require::requires_in(self.text.as_bytes()))
+        if self.requires.is_none() {
+            self.requires = Some(require::requires_in(&self.ruby()));
+        }
+        self.requires.as_deref().expect("just set")
     }
 
     /// Its variables and what each read of a local can see — once per edit,
@@ -261,7 +281,7 @@ impl Document {
         if let Some(vars) = &self.vars {
             return vars.clone();
         }
-        let mut vars = vars::analyze(self.text.as_bytes());
+        let mut vars = vars::analyze(&self.ruby());
         let strings = self.facts().strings.clone();
         for string in strings {
             vars.absorb(vars::analyze(&string.src), |span| string.place(span));

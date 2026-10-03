@@ -12517,3 +12517,39 @@ change. FactoryBot's `build`/`create` and Active Record's `create`/
 untyped site there already is; they are not read as references of their
 own. `X[…]` (Struct, Set) and `Class.new(Base)` bodies' `new` are not read.
 
+## DEC-520 — An ERB template's Ruby is read in place, and indexed as a file
+
+**Decided.** A checkout's `*.erb` files are in its file map (`scan::
+is_template`), and `extract_file` reads one through
+`extract::template::erb_ruby`: a buffer the length of the file in which
+every byte outside a tag's code is a space and every newline stays, so a
+fact's line, column and byte offset are the template's own. Tags are read
+as Rails' Erubi compiles them: `<% %>` a statement, `<%= %>` and `<%==` an
+expression, `<%# %>` nothing, `<%%` text, `<%-`/`-%>` and `=%>` delimiters
+only. A `;` takes the place of each tag's `<` and `>`, so two tags on a line
+are two statements and a block opened in one tag (`<%= form_with … do |f|
+%>`) closes in another (`<% end %>`), as in Erubi's output. A file that is
+not UTF-8 or holds a NUL has no Ruby (DEC-360's addendum).
+
+The LSP's document reads the same buffer for its facts, variables, syntax
+errors and requires, and keeps the template's own text for UTF-16
+conversion — a byte-for-byte blanking moves no offset, while a multibyte
+character in the markup would move a column in the blanked copy. The client
+is asked to report changes to `*.erb` and `*.rabl` files too.
+
+A gem's templates are not read: `scan::walk` keeps to Ruby. No app calls
+into a gem's template, and what one calls is the gem's own business.
+
+**Why bytes, not characters.** Columns are byte columns everywhere in
+trekr (`LineIndex`). Replacing each character with one space would keep
+character columns and move byte offsets, which every fact is keyed by.
+
+**What it retires.** DEC-315's "named in a view, which is not read" caveat
+listed ERB and RABL templates' names; both are read now, and their calls
+are call sites, so they are no longer in its list. Haml, Slim, Jbuilder and
+Builder keep it. Testbed 315 keeps its caveat on a Haml view.
+
+**Not done here.** What `self` is in a view, and what an `@ivar` holds,
+are later decisions; until then a template's implicit call is untyped
+residue, `possible` in `--refs`. Testbed 520.
+

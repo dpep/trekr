@@ -1203,7 +1203,8 @@ impl Client {
 /// the client still holds it.
 const WATCH: &str = "trekr-watch";
 
-/// Ask the client to report changes to Ruby files. A branch switch arrives as
+/// Ask the client to report changes to Ruby files and the templates whose
+/// Ruby the index reads (DEC-520). A branch switch arrives as
 /// a burst of these, which is what tips a batch into a full index.
 fn watch_request() -> Message {
     Message::Request(Request::new(
@@ -1215,7 +1216,7 @@ fn watch_request() -> Message {
                 "method": "workspace/didChangeWatchedFiles",
                 "registerOptions": {
                     "watchers": [
-                        { "globPattern": "**/*.{rb,rake,ru,gemspec,rbi,jbuilder}" },
+                        { "globPattern": "**/*.{rb,rake,ru,gemspec,rbi,jbuilder,erb,rabl}" },
                         // A migration rewrites the app's SQL dump (DEC-480).
                         { "globPattern": "**/db/*structure.sql" },
                     ],

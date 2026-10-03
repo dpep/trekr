@@ -22,6 +22,13 @@
   `method_removed`/`method_undefined` hooks, `append_features`/
   `extend_object`/`prepend_features`, `const_added`, a class's
   `method_missing`/`respond_to_missing?`, and `json_create` (#5).
+- **ERB templates are read.** Every `*.erb` in a checkout (`show.html.erb`,
+  `welcome.text.erb`, `_form.html.erb`) is indexed for the Ruby its tags run,
+  at the template's own lines and columns: a call in a view is a call site,
+  so `--refs` lists it and `--dead` counts it, and `--def`, hover and
+  references work inside a template. `--dead`'s "named in a view, which is
+  not read" caveat no longer applies to ERB templates (it stays for Haml and
+  Slim). An existing index picks the templates up at its next query.
 
 ## 0.8.6 — 2026-10-03
 

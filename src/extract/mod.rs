@@ -17,6 +17,7 @@ mod macros;
 
 pub(crate) use macros::{camelize, table_to_class};
 mod sig;
+pub(crate) mod template;
 
 use crate::core::*;
 pub(crate) use line_index::LineIndex;
@@ -418,12 +419,22 @@ pub(crate) fn symbol_literals(src: &[u8]) -> Vec<(String, Pos, usize)> {
     symbols.found
 }
 
-/// Facts from a file of a checkout, by what the file is: Ruby, or the SQL
-/// dump an app keeps its schema in (DEC-480).
+/// Facts from a file of a checkout, by what the file is: Ruby, an ERB
+/// template's Ruby (DEC-520), or the SQL dump an app keeps its schema in
+/// (DEC-480).
 pub(crate) fn extract_file(path: &str, src: &[u8]) -> Facts {
     match crate::scan::is_structure_sql(path) {
         true => extract_sql(src),
-        false => extract(src),
+        false => extract(&ruby_source(path, src)),
+    }
+}
+
+/// The Ruby a file runs, at the file's own offsets: an ERB template's tags
+/// with everything else blanked (DEC-520), or the file itself.
+pub(crate) fn ruby_source<'a>(path: &str, src: &'a [u8]) -> std::borrow::Cow<'a, [u8]> {
+    match crate::scan::is_erb(path) {
+        true => template::erb_ruby(src).unwrap_or_default().into(),
+        false => src.into(),
     }
 }
 

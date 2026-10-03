@@ -44,9 +44,21 @@ pub(crate) fn is_structure_sql(path: &str) -> bool {
         && (name == "structure.sql" || name.ends_with("_structure.sql"))
 }
 
-/// Is this a file the index reads?
+/// A view template whose Ruby the index reads (DEC-520): ERB, read through
+/// its tags, and RABL, which is Ruby.
+pub(crate) fn is_template(path: &str) -> bool {
+    is_erb(path) || path.ends_with(".rabl")
+}
+
+/// An ERB template: `show.html.erb`, `welcome.text.erb`, `_form.erb`.
+pub(crate) fn is_erb(path: &str) -> bool {
+    path.ends_with(".erb")
+}
+
+/// Is this a file the index reads? A gem's templates are not: no app calls
+/// into them, and what they call is the gem's to answer.
 pub(crate) fn is_indexed(path: &str) -> bool {
-    is_ruby(path) || is_structure_sql(path)
+    is_ruby(path) || is_structure_sql(path) || is_template(path)
 }
 
 /// Git's blob hash: SHA-1 over `blob <byte-len>\0` then the content.

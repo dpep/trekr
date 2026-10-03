@@ -2,5 +2,6 @@
 # a view template, which it does not read, and Ruby or Rails calling a
 # protocol hook by name (`Marshal` calls `marshal_load`, `render` calls
 # `to_partial_path`). Each row now says which it may be. A name only in a
-# template's markup or an ERB comment is no evidence.
+# template's markup or an ERB comment is no evidence. An ERB template is
+# read now (DEC-520); the caveat stays for Haml, which is not.
 dead app/models/widget.rb Widget#display_title=single-caller~view Widget#marshal_load=unreferenced~Marshal Widget#to_partial_path=unreferenced~render Widget#each=unreferenced~Enumerable Widget#lonely=unreferenced~ Widget#quiet=unreferenced~

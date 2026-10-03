@@ -3869,7 +3869,7 @@ fn cmd_refs_at(
     }
     // A method: the one defined there, or the one a call there runs.
     let source = read_input(file)?;
-    let facts = crate::extract::extract(&source);
+    let facts = crate::extract::extract_file(&file.to_string_lossy(), &source);
     let under = position::at_or_snap(&facts, spec.line, spec.col).map(|(under, _)| under);
     // A class, module or constant: its references, as `--refs Name` lists them.
     let constant = match &under {
@@ -4409,7 +4409,8 @@ fn dead_in(
     let parsed: Vec<_> = files
         .par_iter()
         .filter_map(|file| {
-            let source = std::fs::read(file).ok()?;
+            let raw = std::fs::read(file).ok()?;
+            let source = extract::ruby_source(&file.to_string_lossy(), &raw).into_owned();
             let facts = std::sync::Arc::new(extract::extract(&source));
             let symbols = extract::symbol_literals(&source);
             Some((file, source, facts, symbols))
@@ -5324,8 +5325,10 @@ fn cmd_def(
     if let Some(why) = spec.out_of_range(written) {
         return Err(Failure::Usage.error(why));
     }
-    let source = read_input(Path::new(&spec.path))?;
-    let facts = crate::extract::extract_file(&spec.path, &source);
+    let raw = read_input(Path::new(&spec.path))?;
+    let facts = crate::extract::extract_file(&spec.path, &raw);
+    // What the file runs, at its offsets: a template's tags (DEC-520).
+    let source = crate::extract::ruby_source(&spec.path, &raw).into_owned();
     // The file as a site names it, whatever directory the question came from.
     let file = std::fs::canonicalize(&spec.path)
         .map(|p| p.to_string_lossy().into_owned())
