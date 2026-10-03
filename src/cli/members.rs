@@ -328,7 +328,9 @@ pub(super) fn refs_text(answer: &serde_json::Value, reads: &Reads) -> Vec<String
 
 /// `--def` on a call in a shared group's body that the body does not
 /// answer: the includers' members of the name, one answer each (DEC-490).
-/// `None` when no includer defines one.
+/// A helper `RSpec.configure` mixes into every group answers too, for the
+/// includers that define none. `None` when no includer defines one, or
+/// something else answered.
 pub(crate) fn includer_answer(
     tree: &crate::tree::Tree,
     files: &CheckoutFiles<'_>,
@@ -338,11 +340,21 @@ pub(crate) fn includer_answer(
 ) -> Option<crate::resolve::MethodAnswer> {
     let facts = files.facts(relative)?;
     let context = Context::new(tree, files);
-    let found = members::includer_members(&context, relative, &facts, call);
+    let helper = answer.status != crate::tree::Status::Residue;
+    if helper
+        && !answer
+            .owner
+            .as_deref()
+            .is_some_and(|o| context.is_helper(o))
+    {
+        return None;
+    }
+    let members::Includers { found, unanswered } =
+        members::includer_members(&context, relative, &facts, call);
     if found.is_empty() {
         return None;
     }
-    let sites: Vec<crate::tree::Site> = found
+    let mut sites: Vec<crate::tree::Site> = found
         .iter()
         .map(|(path, def)| crate::tree::Site {
             path: tree.site_path(path),
@@ -351,9 +363,19 @@ pub(crate) fn includer_answer(
             kind: "method".to_string(),
         })
         .collect();
+    let groups = sites.len();
+    let mut agreement = format!("{groups} groups that include the shared group define it");
+    if helper && unanswered > 0 {
+        sites.extend(answer.sites.iter().cloned());
+        agreement = format!(
+            "{groups} of the groups that include the shared group define it; \
+             {} answers for {unanswered} that do not",
+            answer.owner.as_deref().unwrap_or_default()
+        );
+    }
     let (path, def) = &found[0];
     let first = Asked { path, def };
-    let n = found.len();
+    let n = sites.len();
     Some(crate::resolve::MethodAnswer {
         status: match n {
             1 => crate::tree::Status::Resolved,
@@ -371,7 +393,7 @@ pub(crate) fn includer_answer(
         }),
         defined_via: def.via.clone(),
         sites,
-        agreement: (n > 1).then(|| format!("{n} groups that include the shared group define it")),
+        agreement: (n > 1).then_some(agreement),
         unresolved_ancestors: Vec::new(),
         candidates: Vec::new(),
         reason: None,

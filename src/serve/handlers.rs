@@ -448,7 +448,7 @@ fn resolve_at(
         Under::Call(call) => {
             let mut answer = crate::resolve::method_at(tree, &facts, &call, &path);
             // A shared group's body reads what its includers define (DEC-490).
-            if answer.status == crate::tree::Status::Residue {
+            if crate::resolve::members::includers_may_answer(&call, &answer) {
                 let root = located.root.to_string_lossy().into_owned();
                 let files = crate::cli::members::CheckoutFiles::with_open(
                     store,

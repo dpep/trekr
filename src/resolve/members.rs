@@ -277,6 +277,28 @@ pub(crate) fn named_by(tree: &Tree, facts: &Facts, call: &Call) -> Option<Named>
     }
 }
 
+/// The groups that include a shared group, as a call in its body reads
+/// them: the member each defines of the name, and how many define none.
+#[derive(Default)]
+pub(crate) struct Includers {
+    pub(crate) found: Vec<(String, Def)>,
+    pub(crate) unanswered: usize,
+}
+
+/// Can a call's answer be its shared group's includers' (DEC-490)? A cheap
+/// look before the files are read: an implicit call in a group, which
+/// nothing answered or a module answered — a helper every group mixes in
+/// answers only where no includer defines the name.
+pub(crate) fn includers_may_answer(call: &Call, answer: &crate::resolve::MethodAnswer) -> bool {
+    matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv)
+        && rspec::in_group(&call.nesting)
+        && (answer.status == crate::tree::Status::Residue
+            || answer
+                .owner
+                .as_deref()
+                .is_some_and(|owner| !owner.starts_with("RSpec::")))
+}
+
 /// What a call in a shared group's body reads when the body does not define
 /// the name: the member each group that includes the body defines, where
 /// the call runs (DEC-490). A top-level shared group's includers are the
@@ -287,12 +309,13 @@ pub(crate) fn includer_members(
     path: &str,
     facts: &Facts,
     call: &Call,
-) -> Vec<(String, Def)> {
+) -> Includers {
     let tree = context.tree;
+    let mut out = Includers::default();
     if !matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv)
         || !rspec::in_group(&call.nesting)
     {
-        return Vec::new();
+        return out;
     }
     let top = shared_body_of(&call.nesting);
     let local = facts
@@ -303,13 +326,13 @@ pub(crate) fn includer_members(
     let (module, body) = match (top, local) {
         (_, Some(local)) => (local.module.clone(), Some(&local.body)),
         (Some(module), None) => (module, None),
-        (None, None) => return Vec::new(),
+        (None, None) => return out,
     };
     match member_at(tree, facts, &call.nesting, &call.name, false) {
         Some(Member::Here(def)) if body.is_none_or(|body| def.nesting.ends_with(body)) => {
-            return Vec::new();
+            return out;
         }
-        Some(Member::Shared(found)) if found.owner == module => return Vec::new(),
+        Some(Member::Shared(found)) if found.owner == module => return out,
         _ => {}
     }
     let mut paths = vec![path.to_string()];
@@ -323,7 +346,7 @@ pub(crate) fn includer_members(
         );
     }
     let hook = !call.in_example;
-    let mut found: Vec<(String, Def)> = Vec::new();
+    let found = &mut out.found;
     for includer in paths {
         let Some(held) = (match includer == path {
             true => context.files.facts(path),
@@ -337,12 +360,14 @@ pub(crate) fn includer_members(
             if hook {
                 answers.extend(member_at(tree, &held, level, &call.name, false));
             }
+            let mut answered = false;
             for answer in answers {
                 let Member::Here(def) = answer else { continue };
                 // Its own body's, read lexically from an includer in its file.
                 if body.is_some_and(|body| def.nesting.ends_with(body)) {
                     continue;
                 }
+                answered = true;
                 if !found
                     .iter()
                     .any(|(p, d)| *p == includer && d.pos == def.pos)
@@ -350,9 +375,10 @@ pub(crate) fn includer_members(
                     found.push((includer.clone(), def.clone()));
                 }
             }
+            out.unanswered += usize::from(!answered);
         }
     }
-    found
+    out
 }
 
 /// What every member's question shares: the files, and what each module
@@ -410,6 +436,11 @@ impl<'a> Context<'a> {
             metadata: RefCell::new(None),
             hooks: RefCell::new(None),
         }
+    }
+
+    /// Is `module` one `RSpec.configure` mixes into every example group?
+    pub(crate) fn is_helper(&self, module: &str) -> bool {
+        self.helpers.iter().any(|helper| helper == module)
     }
 
     /// What each `config.before`/`after`/`around` block for examples calls

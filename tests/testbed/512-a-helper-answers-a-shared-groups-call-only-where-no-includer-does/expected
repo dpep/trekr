@@ -1,0 +1,9 @@
+# A helper `RSpec.configure` includes in every group defines the name a
+# shared group's body calls, and so does one including group's `let`. Ruby
+# runs Alpha's `let` for Alpha and the helper for Beta, as `--refs` on the
+# `let` said; `--def` answered the helper alone. Each includer's own answer
+# now, the helper standing in for those that define nothing.
+def spec/support/shared.rb:9:22 status=ambiguous via=includer confidence=0.5
+refs spec/widget_spec.rb:2 confirmed=2 possible=0
+# Every includer defines it: the helper runs for none of them.
+def spec/support/shared.rb:13:22 status=resolved via=includer site=spec/widget_spec.rb:2

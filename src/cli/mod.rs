@@ -5107,7 +5107,7 @@ fn cmd_def(
             let answer_from = |tree: &Tree| {
                 let answer = crate::resolve::method_at(tree, &facts, &call, &relative);
                 // A shared group's body reads what its includers define (DEC-490).
-                if answer.status != Status::Residue {
+                if !crate::resolve::members::includers_may_answer(&call, &answer) {
                     return answer;
                 }
                 let root_str = root.to_string_lossy().into_owned();

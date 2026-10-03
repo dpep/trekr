@@ -92,7 +92,8 @@
 - **Go to definition on a call in a shared group's body** that the body does
   not define lands on each including group's `let`, `subject` or `def` of
   the name — one answer, or one per includer (`resolved_via: includer`).
-  It was residue.
+  It was residue. A helper `RSpec.configure` includes in every group is
+  the answer only for the includers that define nothing of the name.
 
 ## 0.8.5 — 2026-10-02
 
