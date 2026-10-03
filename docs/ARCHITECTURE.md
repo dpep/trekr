@@ -770,6 +770,7 @@ holding the rest of the `--json` answer and `rows`, the count (DEC-290).
 | `--refs NAME` | every mention of a name in this checkout |
 | `--def FILE:LINE:COL` | what is the name here, and where is it defined |
 | `--ancestors NAME` | the linearized ancestor chain |
+| `Constant`, `Owner#method` | a card: the definition, a method's reference counts by tier, a constant's chain — and a model's table from the schema dump, `table` in JSON (DEC-481) |
 | `--drop [PATH]` | forget a checkout's file map |
 | `--gc [--dry-run] [--older-than AGE] [--vacuum]` | remove checkouts nothing can reach again, the blobs only they mapped, and tree snapshots no checkout's index names |
 | `--usage [--days N]` | which commands and editor features get used, by whom, how often empty, how slow (see below) |

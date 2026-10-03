@@ -46,7 +46,9 @@ trekr --gc --dry-run             # what old gem versions and deleted worktrees w
 
 The bare forms are sugar: a position is `--def`, and `Owner#method` or a
 `Constant` is a **card** — the definition and, for a method, the reference
-counts by tier (`--refs` lists the sites).
+counts by tier (`--refs` lists the sites); for an Active Record model, its
+table from `db/schema.rb` or `db/structure.sql` (`table` in JSON: columns
+with type, null and default, the primary key, the indexes).
 
 Every command honors `--json` and `--ndjson`, because the intended caller is an
 agent. Under `--ndjson` a row set (`--refs`, `--dead`, `--symbols`, `--usage`)

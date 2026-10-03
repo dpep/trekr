@@ -11597,8 +11597,9 @@ the dump spells it, null, default; the primary key first), at most twenty
 rows then "and N more", the indexes on one line, under the table's name
 linked to its line in the dump. Hover on a column's attribute method shows
 the column — `` Column `posts.title`: `string`, not null, default `""`,
-indexed `` — linked, where it said "Declared by `schema`". This is
-ruby-lsp-rails' schema hover without a running app.
+indexed `` — linked, where it said "Declared by `schema`". `trekr Post
+--json` carries the same as `table`. This is ruby-lsp-rails' schema hover
+without a running app.
 
 **Read when asked, not stored.** Null, default and indexes are a hover's
 facts, as a doc comment is (DEC-052): the dump is read through the session's
@@ -11636,4 +11637,4 @@ showed no table.
 `ActiveRecord::Base` or a class, `pluralize_table_names = false`, and a
 `def self.table_name` computed in Ruby are not read. A view-backed model shows
 "not in" the dump, since a `CREATE VIEW` is not read as a table. Testbed
-473, 474; `lsp_e2e`'s watched-dump case.
+473, 474; `lsp_e2e`'s watched-dump case; `cli_e2e`'s model card.

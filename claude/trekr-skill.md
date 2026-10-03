@@ -18,6 +18,7 @@ Ruby only. For "where is `Foo` defined" across languages, use `rq`.
 ```sh
 trekr 'Widget#save'              # method: where it is, and who can reach it
 trekr Widget                     # constant: where it is, and what it inherits
+                                 # (a model: its table, `table` in JSON)
 trekr app/models/user.rb:42:11   # position: what is at it
 trekr app/models/user.rb:42      # same, column optional
 ```
@@ -330,6 +331,13 @@ tiers the site `possible`.
   unknown), `receiver`/`receiver_text`/`receiver_type` for a call's receiver,
   `unresolved_ancestors` for what could not be seen, and `path` + `root` +
   `line` + `col` on everything located.
+* A model's card (`trekr Post --json`) has `table`: `name`,
+  `inherited_from` (the base class whose table a single-table-inheritance
+  subclass shares), `abstract`, and — when the schema dump has it — `path` +
+  `line` of the table, `primary_key`, `columns` (`name`, `type` as the dump
+  spells it, `class` its reader returns, `null`, `default`, `line`) and
+  `indexes` (`columns`, `unique`). From `db/schema.rb`, or `db/structure.sql`
+  when the app dumps SQL. A class that is not a model has no `table`.
 * An answer with `warming` came from a first index still running (`read` of
   `of` files in): it may change, and claims nothing certain. Ask again when
   the index ends.

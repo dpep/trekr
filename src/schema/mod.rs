@@ -106,6 +106,14 @@ pub(crate) fn is_column_type(name: &str) -> bool {
         || matches!(name, "boolean" | "virtual" | "column" | "interval" | "enum")
 }
 
+/// Every table a schema dump declares, read as the file's kind says.
+pub(crate) fn tables_in(path: &str, src: &[u8]) -> Vec<Table> {
+    match crate::scan::is_structure_sql(path) {
+        true => sql::tables(src),
+        false => ruby::tables(src),
+    }
+}
+
 /// The dumps of the app a file belongs to: the nearest directory above it
 /// that has a `db/` with one, so an engine or a monorepo's app finds its own.
 pub(crate) fn dumps_near(root: &Path, site: Option<&str>) -> Vec<String> {

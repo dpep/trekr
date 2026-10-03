@@ -2880,21 +2880,21 @@ fn cmd_card(out: Output, text: &str, context: Option<&Path>) -> anyhow::Result<E
         let chain = tree.ancestors(&fqn);
         let ancestors = public_chain(&chain.chain);
         let sites = tree.sites(&fqn).to_vec();
-        let text_out = card_text(&fqn, &sites, &ancestors, None);
-        return report(
-            out,
-            serde_json::json!({
-                "query": text,
-                "status": "resolved",
-                "fqn": fqn,
-                "kind": tree.kind_of(&fqn),
-                "definition": sites,
-                "ancestors": ancestors,
-                "unresolved_ancestors": chain.unresolved,
-            }),
-            true,
-            &text_out,
-        );
+        let mut text_out = card_text(&fqn, &sites, &ancestors, None);
+        let mut answer = serde_json::json!({
+            "query": text,
+            "status": "resolved",
+            "fqn": fqn,
+            "kind": tree.kind_of(&fqn),
+            "definition": sites,
+            "ancestors": ancestors,
+            "unresolved_ancestors": chain.unresolved,
+        });
+        if let Some((table, line)) = model_table(&tree, &root, &fqn) {
+            text_out.push_str(&format!("\n  {line}"));
+            answer["table"] = table;
+        }
+        return report(out, answer, true, &text_out);
     }
 
     // A method: where it is, and who can reach it.
@@ -2955,6 +2955,84 @@ fn cmd_card(out: Output, text: &str, context: Option<&Path>) -> anyhow::Result<E
         answer["reason"] = reason.into();
     }
     report(out, answer, !definition.is_empty(), &text_out)
+}
+
+/// A model's table, from the app's schema dump (DEC-481): the card's `table`
+/// object and its one line of text. `None` for a class that is not a model.
+fn model_table(tree: &Tree, root: &Path, fqn: &str) -> Option<(serde_json::Value, String)> {
+    use crate::schema::model::Model;
+    let read = |path: &str| std::fs::read_to_string(path).ok();
+    let (name, base) = match crate::schema::model::of(tree, fqn, &read)? {
+        Model::Abstract => {
+            let table = serde_json::json!({"name": null, "abstract": true});
+            return Some((table, "abstract: no table of its own".to_string()));
+        }
+        Model::Table { name, base } => (name, base),
+    };
+    let root_text = root.to_string_lossy();
+    let site = tree
+        .sites(fqn)
+        .into_iter()
+        .map(|s| s.path)
+        .find(|p| crate::core::paths::under(&root_text, p));
+    let found = crate::schema::dumps_near(root, site.as_deref())
+        .into_iter()
+        .find_map(|dump| {
+            let bytes = std::fs::read(root.join(&dump)).ok()?;
+            let table = crate::schema::tables_in(&dump, &bytes)
+                .into_iter()
+                .find(|t| t.name == name)?;
+            Some((dump, table))
+        });
+    let mut table = serde_json::json!({
+        "name": name,
+        "abstract": false,
+        "inherited_from": base,
+    });
+    let shared = base
+        .as_deref()
+        .map(|base| format!(", shared with {base}"))
+        .unwrap_or_default();
+    let Some((dump, found)) = found else {
+        let line = format!("table {name}{shared}, not in the schema");
+        return Some((table, line));
+    };
+    let columns: Vec<serde_json::Value> = found
+        .columns
+        .iter()
+        .map(|c| {
+            serde_json::json!({
+                "name": c.name,
+                "type": c.sql_type,
+                "class": c.class,
+                "null": c.null,
+                "default": c.default,
+                "line": c.pos.line,
+            })
+        })
+        .collect();
+    let indexes: Vec<serde_json::Value> = found
+        .indexes
+        .iter()
+        .map(|i| serde_json::json!({"columns": i.columns, "unique": i.unique}))
+        .collect();
+    table["path"] = dump.clone().into();
+    table["line"] = found.line.into();
+    table["primary_key"] = found.primary_key.names().into();
+    table["columns"] = columns.into();
+    table["indexes"] = indexes.into();
+    let implicit = found
+        .primary_key
+        .names()
+        .iter()
+        .filter(|key| found.column(key).is_none())
+        .count();
+    let line = format!(
+        "table {name}{shared} · {dump}:{} · {} columns",
+        found.line,
+        found.columns.len() + implicit
+    );
+    Some((table, line))
 }
 
 /// "resolves to Base#save, inherited", for a method the owner does not define.

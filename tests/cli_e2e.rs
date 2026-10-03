@@ -1179,6 +1179,76 @@ fn a_constant_card_on_a_split_name_lists_each_declaration() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A model's card carries its table from the app's SQL dump: the columns
+/// with their types, null and defaults, the key and the indexes. A class that
+/// is not a model has no `table` at all.
+#[test]
+fn a_models_card_carries_its_table() {
+    let (dir, db) = scratch("model-card");
+    git(&dir, &["init", "-q"]);
+    fs::create_dir_all(dir.join("db")).unwrap();
+    fs::write(
+        dir.join("app.rb"),
+        "module ActiveRecord\n  class Base\n  end\nend\n\
+         class Widget < ActiveRecord::Base\nend\nclass Gadget\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("db/structure.sql"),
+        "CREATE TABLE public.widgets (\n    id bigint NOT NULL,\n    \
+         name character varying(60) DEFAULT 'x'::character varying NOT NULL\n);\n\
+         ALTER TABLE ONLY public.widgets ADD CONSTRAINT widgets_pkey PRIMARY KEY (id);\n\
+         CREATE UNIQUE INDEX index_widgets_on_name ON public.widgets USING btree (name);\n",
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    trekr(&db, &dir, &["--index"]);
+
+    let card = json(&trekr(&db, &dir, &["Widget", "--json"]));
+    let table = &card["table"];
+    assert_eq!(table["name"], "widgets", "{card}");
+    assert_eq!(table["path"], "db/structure.sql", "{card}");
+    assert_eq!(table["primary_key"], serde_json::json!(["id"]), "{card}");
+    assert_eq!(
+        table["columns"][1],
+        serde_json::json!({
+            "name": "name",
+            "type": "character varying(60)",
+            "class": "String",
+            "null": false,
+            "default": "'x'::character varying",
+            "line": 3,
+        }),
+        "{card}"
+    );
+    assert_eq!(
+        table["indexes"],
+        serde_json::json!([{"columns": ["name"], "unique": true}]),
+        "{card}"
+    );
+    let text = stdout(&trekr(&db, &dir, &["Widget"]));
+    assert!(
+        text.contains("table widgets · db/structure.sql:1 · 2 columns"),
+        "{text}"
+    );
+    let card = json(&trekr(&db, &dir, &["Gadget", "--json"]));
+    assert!(card.get("table").is_none(), "not a model: {card}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A Ruby core definition lands on a file that exists, for the command line
 /// as for the editor: `<core>/String.rb` named nothing a caller could open.
 #[test]

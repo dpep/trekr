@@ -26,6 +26,8 @@
 - **A column's definition is its own line.** Go to definition on
   `post.title` lands on `t.string "title"` (or the column in
   `db/structure.sql`), not on `create_table`.
+- **`trekr Post --json` carries `table`** for a model: the table's name,
+  where the schema declares it, its columns, primary key and indexes.
 - This changes what an index records: trekr reindexes once after upgrading.
 
 ## 0.8.5 — 2026-10-02
