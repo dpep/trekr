@@ -346,9 +346,19 @@ fn check_def(
     }
 }
 
-fn check_refs(case: &str, line: &str, answer: &serde_json::Value, failures: &mut Vec<String>) {
+fn check_refs(
+    case: &str,
+    line: &str,
+    (answer, code): &(serde_json::Value, i32),
+    failures: &mut Vec<String>,
+) {
     for (key, want) in pairs(line) {
         let got = match key.as_str() {
+            "exit" => code.to_string(),
+            // A name's answer is its mentions, one row each.
+            "rows" => answer
+                .as_array()
+                .map_or_else(|| "<none>".into(), |rows| rows.len().to_string()),
             "status" => answer["status"].as_str().unwrap_or("<none>").to_string(),
             "resolves_to" => answer["resolves_to"]
                 .as_str()
@@ -498,7 +508,7 @@ fn every_testbed_case_answers_as_recorded() {
                     }
                 }
                 "refs" => {
-                    let (answer, _) = trekr(&db, &dir, &["--refs", target, "--json"]);
+                    let answer = trekr(&db, &dir, &["--refs", target, "--json"]);
                     check_refs(&label, line, &answer, &mut failures);
                 }
                 "ancestors" => {

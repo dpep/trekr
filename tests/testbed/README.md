@@ -51,7 +51,8 @@ symbols app.rb   Widget,save,Job,run
 | `exit` | the process exit code, for cases about not dying |
 
 `refs QUERY` (a name, or a `FILE:LINE[:COL]` position) asserts the `counts` object, `status=` the answer's status, and
-`resolves_to=` the method the query lands on (`Base#save`); `card` takes
+`resolves_to=` the method the query lands on (`Base#save`), `exit=` the exit
+code, and `rows=` how many mentions a name's answer lists; `card` takes
 `resolves_to=` too.
 `card Owner#name` asserts the card's `status`, `reason`, `owner` and `exit`, as
 `def` does. `dead FILE Owner#name=tier …`

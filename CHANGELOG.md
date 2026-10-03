@@ -84,7 +84,9 @@
   `nested_group`, `enclosing_group`, `shared_group`, `includer`, `helper`,
   `super`, `subject`); `--dead` finds the same reads. On a method's
   definition or a call of it, the method's references, as `--refs
-  Owner#method` lists them.
+  Owner#method` lists them; on a class, module or constant, its mentions,
+  as `--refs Name` lists them. The `let` keyword of `let(:x)` means the
+  `let` it defines, as Find References in the editor reads it.
 - **Find References on a `let` or `subject`** in the editor lists the same
   reads, a shared group's body in another file included.
 - **Go to definition on a call in a shared group's body** that the body does

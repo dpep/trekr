@@ -218,17 +218,27 @@ pub(crate) fn member_at_position(
 ) -> Option<(String, Def)> {
     use crate::resolve::members::{Named, is_member, named_by};
     let facts = files.facts(relative)?;
-    if col == 0 {
-        return facts
+    let defined_on = |line: u32, from: u32| {
+        facts
             .defs
             .iter()
-            .filter(|def| def.pos.line == line && is_member(def))
-            .find(|def| !members::names_a_named_subject(def, &facts))
-            .map(|def| (relative.to_string(), def.clone()));
+            .filter(|def| def.pos.line == line && def.pos.col >= from && is_member(def))
+            .filter(|def| !members::names_a_named_subject(def, &facts))
+            .min_by_key(|def| def.pos.col)
+            .map(|def| (relative.to_string(), def.clone()))
+    };
+    if col == 0 {
+        return defined_on(line, 0);
     }
     match super::position::at_facts(&facts, line, col)? {
         super::position::Under::Definition(def) if is_member(&def) => {
             Some((relative.to_string(), def))
+        }
+        // On the `let` of `let(:widget)`: the member it defines.
+        super::position::Under::Call(call)
+            if matches!(call.name.as_str(), "let" | "let!" | "subject" | "subject!") =>
+        {
+            defined_on(call.pos.line, call.pos.col)
         }
         super::position::Under::Call(call) => match named_by(tree, &facts, &call)? {
             Named::Here(def) => Some((relative.to_string(), *def)),

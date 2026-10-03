@@ -3532,12 +3532,33 @@ fn cmd_refs_at(
     // A method: the one defined there, or the one a call there runs.
     let source = read_input(file)?;
     let facts = crate::extract::extract(&source);
-    let owner_and_name = match position::at_or_snap(&facts, spec.line, spec.col) {
-        Some((position::Under::Definition(def), _)) if def.kind == crate::core::Kind::Method => {
-            tree.scope_fqn(&def.nesting)
-                .map(|owner| (owner, def.singleton, def.name.clone()))
+    let under = position::at_or_snap(&facts, spec.line, spec.col).map(|(under, _)| under);
+    // A class, module or constant: its references, as `--refs Name` lists them.
+    let constant = match &under {
+        Some(position::Under::Definition(def))
+            if matches!(
+                def.kind,
+                crate::core::Kind::Class | crate::core::Kind::Module
+            ) =>
+        {
+            let mut nesting = def.nesting.clone();
+            nesting.insert(0, def.name.clone());
+            tree.scope_fqn(&nesting)
         }
-        Some((position::Under::Call(call), _)) => {
+        Some(position::Under::Constant(reference)) => tree
+            .resolve_at(&reference.name, &reference.nesting, &relative)
+            .fqn
+            .or_else(|| Some(reference.name.clone())),
+        _ => None,
+    };
+    if let Some(fqn) = constant {
+        return cmd_refs(out, &fqn, include_excluded, Some(&root));
+    }
+    let owner_and_name = match under {
+        Some(position::Under::Definition(def)) if def.kind == crate::core::Kind::Method => tree
+            .scope_fqn(&def.nesting)
+            .map(|owner| (owner, def.singleton, def.name.clone())),
+        Some(position::Under::Call(call)) => {
             let answer = crate::resolve::method_at(&tree, &facts, &call, &relative);
             answer
                 .owner
@@ -3548,7 +3569,7 @@ fn cmd_refs_at(
     let Some((owner, singleton, name)) = owner_and_name else {
         return Err(Failure::Usage.error(format!(
             "no method at {written}: --refs takes a method's definition or a call of it, \
-             or an example group's let, subject or def"
+             a class, module or constant, or an example group's let, subject or def"
         )));
     };
     let query = format!("{owner}{}{name}", if singleton { "." } else { "#" });
