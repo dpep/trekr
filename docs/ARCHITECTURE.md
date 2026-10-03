@@ -767,14 +767,14 @@ holding the rest of the `--json` answer and `rows`, the count (DEC-290).
 | `--index [PATH]` | scan a checkout and store what is new |
 | `--status` | the checkout here, its gems counted, the rest counted, and the shared totals; `--all` lists every checkout (DEC-125) |
 | `--symbols FILE` | one file's definitions, in source order |
-| `--refs NAME` | every mention of a name in this checkout |
+| `--refs NAME` | every mention of a name in this checkout; `Owner#method` narrowed by receiver; `FILE:LINE[:COL]` what is at a position (an example group's member's reads, DEC-490) |
 | `--def FILE:LINE:COL` | what is the name here, and where is it defined |
 | `--ancestors NAME` | the linearized ancestor chain |
 | `Constant`, `Owner#method` | a card: the definition, a method's reference counts by tier, a constant's chain — and a model's table from the schema dump, `table` in JSON (DEC-481) |
 | `--drop [PATH]` | forget a checkout's file map |
 | `--gc [--dry-run] [--older-than AGE] [--vacuum]` | remove checkouts nothing can reach again, the blobs only they mapped, and tree snapshots no checkout's index names |
 | `--usage [--days N]` | which commands and editor features get used, by whom, how often empty, how slow (see below) |
-| `--dead PATH…` | methods, then classes, modules and constants, in scope that nothing appears to use, tiered and graded (see below) |
+| `--dead PATH…` | methods, then example groups' members and shared groups, then classes, modules and constants, in scope that nothing appears to use, tiered and graded (see below) |
 
 **`--dead` weighs a definition against the whole checkout** (DEC-038,
 DEC-074). Methods (`cli::dead_in`) are tiered by their receiver-narrowed
@@ -788,6 +788,19 @@ as text (`dead_consts::named`) and the conventions that find a class by its
 name (`dead_consts::ways`, DEC-421). Each is evidence of a way in, never of
 a caller: it moves a row to `convention-only` or grades it `lower`, and the
 row says which.
+
+**An example group's members** (`let`, `subject`, a group's `def`) are file
+facts the store never sees (DEC-084), so they are weighed by
+`resolve::members::reads`, which follows RSpec's runtime lookup over the
+files a member can be read from: its own, the bodies of the shared groups
+included in its reach, the includers of a top-level shared group's (the
+files that call its name), and the helpers `RSpec.configure` mixes into
+every group (DEC-490). The reader takes a `members::Files` — the CLI's reads
+disk (`cli::members::CheckoutFiles`), the LSP's prefers open buffers — so
+`--dead`, `--refs FILE:LINE` and Find References ask one function. A member
+nothing reads is `unreferenced`, one only overrides answer is `shadowed`
+(DEC-491); a shared group nothing includes by name is a row of its own
+(DEC-493).
 
 `--refs` is **name-level, not resolved**: two unrelated `Config` classes both
 answer, and so does every `#save` on every receiver. Each row says what sort of

@@ -1,0 +1,10 @@
+# A shared group's body reads a `let` its includers define, in other files:
+# `--def` on the read was residue ("rspec-core is not indexed"), and the
+# includers' `let`s looked unread. Each includer's definition is an answer:
+# `it_behaves_like`, `include_examples`, and a customization block's.
+def spec/support/shared.rb:2:15 status=ambiguous via=includer
+def spec/support/shared.rb:6:15 status=resolved via=includer site=spec/alpha_spec.rb:3
+refs spec/alpha_spec.rb:2 confirmed=1 possible=0
+refs spec/gamma_spec.rb:3 confirmed=1 possible=0
+dead spec/alpha_spec.rb @2=none @3=none
+dead spec/beta_spec.rb @2=none

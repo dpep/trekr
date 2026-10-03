@@ -50,13 +50,14 @@ symbols app.rb   Widget,save,Job,run
 | `reason` | a word the residue's reason contains |
 | `exit` | the process exit code, for cases about not dying |
 
-`refs QUERY` asserts the `counts` object, `status=` the answer's status, and
+`refs QUERY` (a name, or a `FILE:LINE[:COL]` position) asserts the `counts` object, `status=` the answer's status, and
 `resolves_to=` the method the query lands on (`Base#save`); `card` takes
 `resolves_to=` too.
 `card Owner#name` asserts the card's `status`, `reason`, `owner` and `exit`, as
 `def` does. `dead FILE Owner#name=tier …`
 asserts each method's `--dead` tier — or a class's, module's or constant's, by
-its whole name (`Admin::Widget=unreferenced`) — `none` for one not reported; `tier~word`
+its whole name (`Admin::Widget=unreferenced`), or an example group's `let`, `subject` or
+`def` by the line it is written on (`@3=unreferenced`) — `none` for one not reported; `tier~word`
 also asserts its caveat contains `word`, and `tier~` that it has none. `ancestors NAME A,B,C`
 asserts the chain starts with those names, and `unresolved=X,Y` (empty for
 none) asserts the ancestors it could not resolve. `symbols FILE` asserts the outline,

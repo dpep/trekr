@@ -36,11 +36,13 @@ trekr --status                   # this checkout and its gems; --all lists every
 trekr --symbols lib/thing.rb     # outline a file before reading it
 trekr --refs 'Widget#save'       # references narrowed by receiver
 trekr --refs Widget              # every mention of a name in this checkout
+trekr --refs spec/widget_spec.rb:12  # what reads the let (or method) at a position
 trekr --def lib/thing.rb:12:5    # what is this name, and where is it defined
 trekr lib/thing.rb:12:5 --explain  # the same, and why it came out that way
 trekr Widget#save                # a card: where it is defined, how many sites reach it
 trekr --ancestors Widget         # the linearized ancestor chain
 trekr --dead app/models          # methods and classes nothing appears to use, graded
+trekr --dead spec                # and the lets, subjects and shared groups nothing reads
 trekr --gc --dry-run             # what old gem versions and deleted worktrees would free
 ```
 
@@ -240,6 +242,38 @@ held out, an `unreferenced` one was truly unused 19 times in 50 (38 %) and a
 through a value — so `clear` is not earned there (DEC-450). Read a
 constant row as a lead to check, not a verdict.
 
+**An example group's `let`s, `subject`s and `def`s** are listed after the
+methods (`kind` `let`, `subject` or `method`, with the `group` they are
+written in), read the way RSpec runs them: by the group's examples and its
+nested groups', by a hook or `let` of an enclosing group (which runs for
+them, and reads a nested group's override where one runs), by a shared
+group's body included there — in another file, through `it_behaves_like`,
+`include_examples` or `include_context` — by `super` in an override, by
+`is_expected` and a bare `should` for the `subject`, and by a helper
+`RSpec.configure` mixes in (its metadata filter is not read, so every
+group's). `shadowed` is a member every read of whose name an override
+answers where the read runs — an outer `let` each running group redefines;
+`overridden_by` names them. A name sent at runtime in its reach
+(`send("item_#{n}")`), or a group macro trekr does not read, grades a row
+`lower`. `let!` and `subject!` run for every example and are never listed.
+A shared group nothing includes by name is a row too (`kind:
+shared_group`), its own `let`s with it. `trekr --refs FILE:LINE` on any of
+them lists each read and where it was found (`from`), from the same reader.
+
+```console
+$ trekr --dead spec/models/public_feed_spec.rb
+shadowed         spec/models/public_feed_spec.rb:47  let(:viewer) in PublicFeed::Get::WithoutLocalOnlyOption  — every call of its name in reach runs an override instead: spec/models/public_feed_spec.rb:55, spec/models/public_feed_spec.rb:65
+…
+
+4 candidates in 1 file(s): 4 shadowed (4 clear, 0 lower); 4 of them example groups' lets, subjects, defs or shared groups
+```
+
+Measured against what ran (DEC-492): mastodon's suite, with every `let`,
+`subject` and group `def` traced, then scored. Every `let` and `subject`
+row trekr listed — 46 `unreferenced` clear, 31 `shadowed` clear, 9 `lower`
+— never ran in a group that passed an example, and trekr listed 86 of the
+96 `let`s that never did. Those rules were fitted on mastodon itself.
+
 ### Where it keeps things
 
 The index is `~/.local/share/trekr/trekr.db`. `TREKR_DB=/some/path.db` points
@@ -297,6 +331,13 @@ activerecord/lib/active_record/connection_handling.rb:270:23  possible   untyped
 - **Excluded**: not listed, but counted, because that count is the difference
   between this and a grep. `--include-excluded` lists them with their reason,
   so the claim is auditable rather than asserted.
+
+A position asks about what is there: `trekr --refs spec/widget_spec.rb:12`
+on a `let`, a `subject` or a group's `def` lists every read RSpec would run
+it for, with `from` — `group`, `nested_group`, `enclosing_group`,
+`shared_group`, `includer`, `helper`, `super`, `subject` — and on a method's
+definition or a call of it, the method's references as above. The editor's
+Find References on a `let` gives the same list.
 
 `rg -w lease_connection` returns 1,237 lines in rails — the 1,195 call sites
 plus the comments — with no way to tell them apart. `Widget.save` and

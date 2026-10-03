@@ -1844,6 +1844,20 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                         if let Some(class) = described {
                             self.facts.described.push((self.nesting.clone(), class));
                         }
+                        if method_name(node)
+                            .is_some_and(|name| SHARED_METHODS.contains(&name.as_str()))
+                            && let Some(name) = arg_nodes(node).first().and_then(literal_name)
+                        {
+                            let module = crate::core::rspec::shared_module(
+                                &crate::core::rspec::base_name(&name),
+                            );
+                            let pos = self.pos(node.location().start_offset());
+                            self.facts.local_shared.push(crate::core::LocalShared {
+                                body: self.nesting.clone(),
+                                module,
+                                pos,
+                            });
+                        }
                         // `it_behaves_like "x" do … end` is a group that
                         // includes x, and its block customizes that group.
                         if let Some(module) = self.shared_included(node) {
@@ -3903,8 +3917,23 @@ impl<'pr> Extractor<'_> {
     /// `include_context "x"` and `include_examples "x"` include a shared
     /// group into the group they are written in (DEC-092).
     fn handle_shared_include(&mut self, call: &ruby_prism::CallNode<'pr>) {
-        let into_this_group = method_name(call)
-            .is_some_and(|name| matches!(name.as_str(), "include_context" | "include_examples"));
+        let name = method_name(call);
+        let into_this_group = name
+            .as_deref()
+            .is_some_and(|name| matches!(name, "include_context" | "include_examples"));
+        // With a block it is a group of the file's own (`SpecBlock::Group`).
+        let into_a_nested_group = call.block().is_none()
+            && name
+                .as_deref()
+                .is_some_and(|name| NESTED_GROUP_METHODS.contains(&name));
+        if into_a_nested_group && self.writes_group_members() {
+            if let Some(module) = self.shared_included(call) {
+                self.facts
+                    .nested_includes
+                    .push((self.nesting.clone(), module));
+            }
+            return;
+        }
         if !into_this_group || !self.writes_group_members() {
             return;
         }
@@ -4879,6 +4908,7 @@ impl<'pr> Extractor<'_> {
             recv_value,
             block_owner,
             in_example: self.frames.last().is_some_and(|f| f.example),
+            group_body: self.writes_group_members(),
             in_scope: self.scope_body > 0 && !self.in_method_body(),
             argc,
             block,
@@ -4964,6 +4994,7 @@ impl<'pr> Extractor<'_> {
             recv_value: None,
             block_owner: None,
             in_example: false,
+            group_body: false,
             in_scope: false,
             argc: None,
             block: false,
@@ -4984,6 +5015,7 @@ impl<'pr> Extractor<'_> {
             recv_value: to.recv_value,
             block_owner: self.open_blocks.last().copied().flatten(),
             in_example: self.frames.last().is_some_and(|f| f.example),
+            group_body: false,
             in_scope: self.scope_body > 0 && !self.in_method_body(),
             argc,
             block,
@@ -5072,6 +5104,7 @@ impl<'pr> Extractor<'_> {
             recv_value: None,
             block_owner: None,
             in_example: false,
+            group_body: false,
             in_scope: false,
             stands_for: None,
             argc,
@@ -5292,6 +5325,7 @@ impl<'pr> Extractor<'_> {
             recv_value: None,
             block_owner: None,
             in_example: false,
+            group_body: false,
             in_scope: false,
             // Unknowable: whatever invokes it decides the arity.
             argc: None,

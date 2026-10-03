@@ -29,6 +29,41 @@
 - **`trekr Post --json` carries `table`** for a model: the table's name,
   where the schema declares it, its columns, primary key and indexes.
 - This changes what an index records (store v59): trekr reindexes once after upgrading.
+- **`--dead` weighs an example group's own `let`s, `subject`s and `def`s.**
+  Each is read the way RSpec runs it: by its group's examples and those of
+  the groups nested in it, by a hook or `let` of an enclosing group, which
+  runs for them, by the body of a shared group included there (in any file,
+  through `it_behaves_like`, `include_examples` or `include_context`), by
+  `super` in an override, by `is_expected` and a bare `should` for a
+  `subject`, and by a helper `RSpec.configure` mixes into every group. One
+  nothing reads is a row — `kind: let`, `subject` or `method`, with the
+  group it is written in (`group`) and how many shared groups and helpers
+  were read for it — `unreferenced`, or `shadowed` when every read lands on
+  an override (`overridden_by` names them). A name sent at runtime
+  (`send("item_#{n}")`) or a group macro trekr does not read grades a row
+  `lower`. `let!` runs for every example and is never listed. On mastodon's
+  suite, run with every definition traced, every such row trekr graded
+  `clear` was a `let` that never ran, and it found 9 in 10 of them.
+- **`--dead` lists a shared group nothing includes**: a `shared_examples` or
+  `shared_context` no `it_behaves_like`, `include_examples` or
+  `include_context` names is a row, `kind: shared_group`, and its own
+  `let`s are not listed apart from it. One written with metadata is
+  `convention-only`, which the groups that match include.
+- **A group's `def` is no longer `unreferenced` while it is called.** It was
+  weighed against an owner no call resolves to.
+- **`--refs FILE:LINE[:COL]`** lists the references of what is at a
+  position. On a `let`, `subject` or group `def` (or a read of one), every
+  read, tiered, with `from` saying where it was found (`group`,
+  `nested_group`, `enclosing_group`, `shared_group`, `includer`, `helper`,
+  `super`, `subject`); `--dead` finds the same reads. On a method's
+  definition or a call of it, the method's references, as `--refs
+  Owner#method` lists them.
+- **Find References on a `let` or `subject`** in the editor lists the same
+  reads, a shared group's body in another file included.
+- **Go to definition on a call in a shared group's body** that the body does
+  not define lands on each including group's `let`, `subject` or `def` of
+  the name — one answer, or one per includer (`resolved_via: includer`).
+  It was residue.
 
 ## 0.8.5 — 2026-10-02
 

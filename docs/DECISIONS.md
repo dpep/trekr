@@ -11638,3 +11638,166 @@ showed no table.
 `def self.table_name` computed in Ruby are not read. A view-backed model shows
 "not in" the dump, since a `CREATE VIEW` is not read as a table. Testbed
 473, 474; `lsp_e2e`'s watched-dump case; `cli_e2e`'s model card.
+
+## DEC-490 — An example group's member is read as RSpec runs it
+
+**Decided.** A `let`, `subject` or `def` written in an example group's body,
+or a top-level shared group's (DEC-084, DEC-092), is a *member*, and
+`resolve::members::reads` finds what reads it. `--dead`, `--refs
+FILE:LINE[:COL]` and the editor's Find References all ask that one function,
+so they cannot disagree (`cli_e2e`'s `dead_and_refs_agree…` asserts it over
+the testbed's cases). A call of the member's name reads it when Ruby's
+lookup, where the call runs, lands on it:
+
+- **Where a call runs.** An example's own call (`it`) runs in its group,
+  and reads the innermost definition there (DEC-096). A hook's, a `let`'s, a
+  `subject`'s or a group `def`'s runs for every example of its group and of
+  the groups nested in it, and reads the innermost definition *where each
+  example runs* — so a `before` in an outer group reads a nested group's
+  `let`, and an outer `let` every running group overrides is read by
+  nothing. A group runs examples when it writes one (`it`, `specify`,
+  `its`, …), includes a shared group, or calls a macro trekr does not read;
+  `it_behaves_like` runs examples in a nested group of its own, which looks
+  up through its includer after the shared group's own definitions.
+- **A shared group's body** reads what its includer defines when its own
+  definitions do not answer: `include_context` and `include_examples` put
+  the body's definitions on the including group, where that group's own
+  `let` wins; `it_behaves_like`'s nested group has the body's first. A
+  shared group written inside a group is the file's (RSpec scopes it there),
+  found before a top-level one of the name, and copied, with what it
+  includes, into each group that includes it.
+- **`super`** in an overriding `let` reads the one it overrides — read from
+  the block's text, since a block has no method name for the index to keep
+  a `super` under.
+- **The `subject`** is read by `is_expected`, a bare `should`/`should_not`
+  and `its`, and `subject(:x)` by either name; it is one row.
+- **Helpers.** A module `RSpec.configure` includes or extends into every
+  group (DEC-088; its metadata filter not read, so every group), the
+  checkout's or a gem's, and a module a group in reach `include`s, read
+  where it calls the name with no receiver: `possible`, as the groups it
+  reaches are not read. rspec-core's own modules are not helpers: their
+  reads of the subject are `is_expected` and `should`, read where written.
+- **What may read it unseen**, a caveat that grades a row `lower`: a send
+  of a name computed at runtime in its reach, in a shared body included
+  there or in a checkout helper (`send(name)`; `try("item_#{n}")` only for
+  names of the shape `item_*`; a gem's generic sends are not read); a group
+  macro neither RSpec's DSL nor anything indexed defines (an app's
+  `include_examples_for_x`); a shared group included by a name trekr cannot
+  read; a symbol of its name no rule reads as a call.
+
+**`--dead`'s rows.** A member nothing reads is a row after the methods:
+`kind: let | subject | method`, `group` (the group's class as RSpec names
+it, `Widget::WhenSaved`, or `shared group X`), `shared_groups_read` and
+`helpers_read`, tier `unreferenced` or `shadowed` (DEC-491). **`let!` and
+`subject!` are never rows**: each runs for every example, read or not, and
+removing one changes what every example sets up — a verdict there would be
+a guess about side effects. A group's `def` was a method row before, weighed
+against an owner no call resolves to, and so `unreferenced` while called
+(the 0.8.4 hunt's `(group X)#helper`); it is a member now.
+
+**`--refs FILE:LINE[:COL]`** answers for what is at a position: a member
+(or a read of one: the call's group lookup) with every read, tiered
+`confirmed` (Ruby's lookup lands on it where the call runs), `possible` (a
+helper; a call in a block handed to a method that may run it elsewhere;
+`send(:x)`) or `excluded` (an override answers it there), and `from`
+(`group`, `nested_group`, `enclosing_group`, `shared_group`, `includer`,
+`helper`, `super`, `subject`, `symbol`). A bare `FILE:LINE` takes a member
+defined on the line. A method's definition or a call of one is asked as
+`--refs Owner#method` asks it. `Reference` gains `from`, absent elsewhere.
+
+**`--def` from a shared group's body.** A call there the body does not
+define answers with each includer's member of the name — `resolved` for
+one, `ambiguous` (confidence one in their number) for more,
+`resolved_via: includer` — where it was residue. A top-level shared group's
+includers are found among the files that call the name, which `let(:name)`
+does by its symbol. Testbed 058's pinned residue is now this answer.
+Reverses DEC-092's "A shared group's body calling what its includer
+defines … is still residue".
+
+**Extraction.** Three resolve-time facts, never stored — the store and its
+version are unchanged: `Call::group_body` (a call written directly in a
+group's body, a macro), `Facts::nested_includes` (`it_behaves_like "x"`
+with no block, which made no group the file writes and was not recorded),
+and `Facts::local_shared` (a shared group written inside a group).
+
+**Not done.** A member read only by another member that is itself a
+candidate is not one: one pass, as for methods (`api/v1/timelines/list`'s
+`scopes`, read by a `token` every running group overrides). A group opened
+in a loop's block (`[…].each { |v| context … }`) is not a group trekr opens.
+A `def self.x` in a group is no member and no row. Metadata includes
+(`shared_context "x", :db` into `describe …, :db`) are not matched: such a
+group's members are read only through a by-name include.
+
+## DEC-491 — `shadowed`: a definition every read of whose name an override answers
+
+**Decided.** A new `--dead` tier, between `unreferenced` and `test-only`:
+a group member with no read, for which a call of its name in its reach is
+answered by an override wherever the call runs — an outer `let(:mode) {
+:default }` read by the group's `subject`, where every group that runs an
+example overrides `mode`. `overridden_by` lists the overrides as
+`path:line`; the reason names them. It is as removable as an unreferenced
+one, and says why it looks used. Any read that can reach the outer
+definition — an example in its own group, a group without the override,
+`super` in the override — makes it no candidate.
+
+**Not done: a base method shadowed by its subclasses** (errbit's
+`ApplicationPolicy` predicates, every subclass that receives calls
+overriding them). That needs each call's receiver to be a subclass that
+overrides, and the receiver ladder types most such calls only as the base;
+logged.
+
+## DEC-492 — Group members are scored against a runtime gold set
+
+**Decided.** `script/trace_lets.rb`, loaded into a suite with `rspec -r`,
+wraps every `let` and `subject` where RSpec keeps its block (the group's
+LetDefinitions module) and every `def` a group adds (a prepended module),
+and records each definition's calls and which groups ran a passing example.
+A member whose group or a group nested in it passed an example, and which
+was never called, is truly unused; one whose groups passed nothing is
+unknown and not scored. `script/dead_lets.py` scores `--dead`'s member rows
+against it, per kind, tier and confidence, with recall over the truly
+unused `let`s, `subject`s and `def`s (`let!` aside).
+
+**mastodon** (2f40549d4, Ruby 4.0.6): 7,591 examples, 19 failures, in 20
+minutes, with two stubs the clone needed and the suite does not test (no
+built frontend: Vite's manifest and premailer's stylesheet answer a stub; a
+first run without them failed 777 examples and left their groups unknown).
+8,033 `let`/`subject` sites and 539 group `def`s recorded; 101 `let`s and
+`subject`s never called in a group that ran, none of the `def`s. `--dead
+spec`:
+
+| rows | truly unused |
+| --- | ---: |
+| `let`, `unreferenced`, clear | 46/46 |
+| `let`, `unreferenced`, lower | 8/8 |
+| `let`, `shadowed`, clear | 31/31 |
+| `let`, `shadowed`, lower | 1/1 |
+| `subject`, `unreferenced` and `shadowed` | 5/5 |
+
+Recall: 86 of 96 truly unused `let`s listed (90 %), 5 of 5 `subject`s. The
+10 missed are read only by a member that never runs (one pass, DEC-490),
+a `let` whose group's examples live in a loop's `context`, or reads in
+groups whose own examples all override them. **Fitted, not held out**: the
+rules were fixed against rows from every spec directory; the script's
+`--split` halves were defined after. The false rows the rules removed, in
+order: a shared context's own `let` reading the includer's override
+(`with API authentication`'s `token` reading `scopes`), `it_behaves_like`
+with no block (not recorded), a shared group written inside a group, a
+`let` in a group a local shared group writes, a hook reading only overrides
+(the `shadowed` tier), rspec-core's own `subject` reads, and a gem helper
+calling the name (rack-test's `app`).
+
+## DEC-493 — A shared group no group includes by name is a row
+
+**Decided.** `--dead` lists a `shared_examples` or `shared_context` the
+scope writes — top-level, or inside a group (included only from its own
+file, which scopes it) — that no `it_behaves_like`, `include_examples` or
+`include_context` in the checkout names, read from the files that call one
+(`config.include_context "x"` read from its line). `kind: shared_group`,
+`name` as written, `owner` its module. Its own members are not listed apart
+from it: they go with it. One written with metadata (`shared_context "x",
+:db`) is `convention-only` — RSpec includes it in the groups whose metadata
+matches, which is not read. An include by a name trekr cannot read grades
+every such row `lower`, naming the first. mastodon writes 124 shared
+groups, all included at runtime (DEC-492's trace), and `--dead spec` lists
+none. Testbed 495.

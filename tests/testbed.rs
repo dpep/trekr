@@ -407,8 +407,13 @@ fn check_dead(case: &str, line: &str, answer: &serde_json::Value, failures: &mut
         // its whole name (`Admin::Widget=unreferenced`).
         let constant =
             !method.contains('#') && method.starts_with(|c: char| c.is_ascii_uppercase());
+        // `@LINE` is the example group member written at that line, which no
+        // owner names (DEC-490).
+        let at_line = method.strip_prefix('@').and_then(|n| n.parse::<u64>().ok());
         let row = rows.iter().find(|row| {
-            if constant {
+            if let Some(line) = at_line {
+                row["line"] == line && row.get("group").is_some()
+            } else if constant {
                 let whole = match row["owner"].as_str().unwrap_or_default() {
                     "" => row["name"].as_str().unwrap_or_default().to_string(),
                     owner => format!("{owner}::{}", row["name"].as_str().unwrap_or_default()),

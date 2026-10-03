@@ -127,7 +127,13 @@ checkout you asked about relative to it, and anything else absolute.
   reason, so the count is auditable.
 
 `Owner.method` asks about a class method instead. A bare `--refs name` keeps the
-whole-mention view.
+whole-mention view. **A position** (`--refs spec/widget_spec.rb:12`, or
+`FILE:LINE:COL`) asks about what is there: a method's definition or call as
+`Owner#method`, or a spec's `let`, `subject` or group `def` — every read as
+RSpec runs it (its group's and nested groups' examples, an enclosing group's
+hooks, an included shared group's body in any file, `super`, `is_expected`,
+a `config.include`d helper), each with `from` saying where. Use it before
+deleting a `let`.
 
 **Through the LSP tool, findReferences is capped** (1,000 by default, confirmed
 callers first) and the cut is only announced to editors, not to you. If you get
@@ -271,7 +277,12 @@ trekr --dead app/models app/services --json
 
 Every method defined in scope, checked against references from the **whole
 checkout** (not other indexed repos, so the answer does not depend on them);
-then every class, module and constant (`kind: class|module|constant`, a
+then a spec's `let`s, `subject`s, group `def`s (`kind: let|subject|method`,
+with `group`) and shared groups (`kind: shared_group`) nothing reads as RSpec
+runs them — `shadowed` when every read lands on an override (`overridden_by`);
+`let!` is never listed (it runs for every example); a computed `send` or a
+group macro trekr does not read grades the row `lower`. Then every class,
+module and constant (`kind: class|module|constant`, a
 method's row `kind: method`) no constant reference resolves to — `test-only`
 when only specs name it, `convention-only` when a route, Rails or a library
 finds it by name (`convention.by` says who), and a `caveat` for what may

@@ -1,0 +1,6 @@
+# `is_expected` and a bare `should` read the subject without naming it, and
+# `subject(:widget)` is read by either name. One row for a named subject,
+# not one per name.
+dead spec @2=none @7=none @13=unreferenced~
+refs spec/widget_spec.rb:2 confirmed=1 possible=0
+refs spec/widget_spec.rb:7:14 confirmed=1 possible=0

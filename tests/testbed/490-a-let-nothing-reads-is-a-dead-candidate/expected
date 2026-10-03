@@ -1,0 +1,8 @@
+# An example group's own methods were never --dead's: a `let` was a macro's
+# declaration and skipped, and a group's `def` was weighed against an owner
+# no call resolves to, so it was unreferenced however often it was called.
+# A member is read by Ruby's lookup at runtime: its group's examples, a
+# nested group's, an enclosing group's hook (which runs for the nested
+# group's examples), a shared group's body included there, `super` in an
+# override. `let!` runs for every example and is never listed.
+dead spec @2=none @3=unreferenced~ @4=none @5=none @6=none @7=none @11=none @15=unreferenced @22=none @23=unreferenced @31=none @34=none

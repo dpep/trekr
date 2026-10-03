@@ -5186,3 +5186,111 @@ fn answers_from_a_partial_index_say_so_and_rule_nothing_out() {
     session.stop();
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// An example group's `let` is read by Ruby's lookup at runtime: Find
+/// References on one lists a shared group's body that reads it, in another
+/// file, and Go to Definition on that read lands on each includer's `let`
+/// (DEC-490).
+#[test]
+fn a_let_and_a_shared_groups_read_of_it_find_each_other() {
+    let (dir, db) = scratch("let-refs");
+    git(&dir, &["init", "-q"]);
+    let shared = concat!(
+        "RSpec.shared_examples \"a named thing\" do\n", // 1
+        "  it { expect(name).to eq(\"x\") }\n",         // 2
+        "end\n",                                        // 3
+    );
+    let alpha = concat!(
+        "RSpec.describe \"Alpha\" do\n",         // 1
+        "  let(:name) { \"x\" }\n",              // 2
+        "\n",                                    // 3
+        "  it_behaves_like \"a named thing\"\n", // 4
+        "  it { expect(name).to be }\n",         // 5
+        "end\n",                                 // 6
+    );
+    let beta = concat!(
+        "RSpec.describe \"Beta\" do\n",           // 1
+        "  let(:name) { \"x\" }\n",               // 2
+        "\n",                                     // 3
+        "  include_examples \"a named thing\"\n", // 4
+        "end\n",                                  // 5
+    );
+    fs::create_dir_all(dir.join("spec/support")).unwrap();
+    fs::write(dir.join("spec/support/shared.rb"), shared).unwrap();
+    fs::write(dir.join("spec/alpha_spec.rb"), alpha).unwrap();
+    fs::write(dir.join("spec/beta_spec.rb"), beta).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let places = |answer: &serde_json::Value| -> Vec<(String, u64)> {
+        let mut found: Vec<(String, u64)> = answer["result"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|l| {
+                let uri = l["uri"].as_str().unwrap();
+                let file = uri.rsplit('/').next().unwrap().to_string();
+                (file, l["range"]["start"]["line"].as_u64().unwrap() + 1)
+            })
+            .collect();
+        found.sort();
+        found
+    };
+
+    // On Alpha's `let(:name)`: its own example, and the shared body's read.
+    let answer = session.request(
+        "textDocument/references",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "spec/alpha_spec.rb")},
+            "position": {"line": 1, "character": 8},
+            "context": {"includeDeclaration": false},
+        }),
+    );
+    assert_eq!(
+        places(&answer),
+        vec![
+            ("alpha_spec.rb".to_string(), 5),
+            ("shared.rb".to_string(), 2)
+        ],
+        "the example's read and the shared group's, not Beta's"
+    );
+
+    // On the shared body's `name`: each includer's `let`.
+    let answer = session.request(
+        "textDocument/definition",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "spec/support/shared.rb")},
+            "position": {"line": 1, "character": 16},
+        }),
+    );
+    assert_eq!(
+        places(&answer),
+        vec![
+            ("alpha_spec.rb".to_string(), 2),
+            ("beta_spec.rb".to_string(), 2)
+        ],
+        "both includers' `let(:name)`"
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}

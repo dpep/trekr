@@ -12,6 +12,7 @@ mod dead_consts;
 mod failure;
 mod generated;
 mod incomplete;
+pub(crate) mod members;
 pub(crate) mod position;
 mod profile;
 mod routes;
@@ -76,10 +77,14 @@ struct Cli {
 
     /// Find definitions in these files or directories that nothing appears to
     /// use — candidates for deletion or inlining, graded, never asserted:
-    /// methods, then classes, modules and constants (`kind`), which no
+    /// methods, then an example group's `let`s, `subject`s and `def`s (`kind`
+    /// `let`, `subject`, `method`, with `group`), which no example, hook,
+    /// included shared group or helper reads as RSpec runs it (`let!` never),
+    /// then classes, modules and constants, which no
     /// constant reference resolves to. Each is in one tier, from the least
     /// evidence of use to the most: `unreferenced` (no call, symbol or
-    /// `super` names it), `test-only` (a class only tests name), `override` (none
+    /// `super` names it), `shadowed` (a group member every read of whose name
+    /// an override answers, `overridden_by`), `test-only` (a class only tests name), `override` (none
     /// does, but it overrides an ancestor's method, so a call of that may run
     /// it), `convention-only` (named only by a symbol handed to a macro, a
     /// route, or a name Rails or a library looks a class up by),
@@ -130,7 +135,11 @@ struct Cli {
     symbols: Option<PathBuf>,
 
     /// Every mention of a name in this checkout: definitions, constant
-    /// references, and call sites. Name-level — not yet resolved.
+    /// references, and call sites; `Owner#method` narrows them to the call
+    /// sites that may reach that method, tiered. `FILE:LINE[:COL]` asks about
+    /// what is at a position: a method's definition or a call of it, as
+    /// `Owner#method`; an example group's `let`, `subject` or `def`, with
+    /// every read as RSpec runs it and where it was found (`from`).
     #[arg(long, value_name = "NAME", conflicts_with_all = ["index", "drop", "symbols"])]
     refs: Option<String>,
 
@@ -3203,6 +3212,9 @@ fn cmd_refs(
     context: Option<&Path>,
 ) -> anyhow::Result<ExitCode> {
     use crate::resolve::refs;
+    if position::Spec::parse(text).is_some() {
+        return cmd_refs_at(out, text, include_excluded, context);
+    }
     let query = refs::Query::parse(text);
     check_method_shape(&query, text)?;
     let root = asked_from(context)?;
@@ -3342,6 +3354,78 @@ fn cmd_refs(
         );
     }
     Ok(exit_on(!found.is_empty()))
+}
+
+/// `--refs FILE:LINE:COL`: the references of what is at a position. An
+/// example group's `let`, `subject` or `def` is read by Ruby's lookup at
+/// runtime, which `resolve::members` follows (DEC-490); a method is asked by
+/// its owner, as `--refs Owner#method` asks it.
+fn cmd_refs_at(
+    out: Output,
+    written: &str,
+    include_excluded: bool,
+    pinned: Option<&Path>,
+) -> anyhow::Result<ExitCode> {
+    let spec = position::Spec::parse(written).expect("checked by the caller");
+    if let Some(why) = spec.out_of_range(written) {
+        return Err(Failure::Usage.error(why));
+    }
+    let file = Path::new(&spec.path);
+    if !file.exists() {
+        return Err(Failure::NotFound.error(format!("no such path: {}", spec.path)));
+    }
+    let (root, store) = checkout_for_query(file, pinned)?;
+    let root_str = root.to_string_lossy().into_owned();
+    if !store.has_checkout(&root_str)? {
+        return not_indexed(out, &root, &store);
+    }
+    answering_in(&store, &root_str);
+    let absolute = std::fs::canonicalize(file).unwrap_or_else(|_| file.to_path_buf());
+    let relative = absolute
+        .strip_prefix(&root)
+        .map_or_else(|_| spec.path.clone(), |p| p.to_string_lossy().into_owned());
+    let tree = build_tree(&store, &root_str)?;
+    let files = members::CheckoutFiles::new(&store, &root, &root_str);
+    if let Some((path, def)) =
+        members::member_at_position(&tree, &files, &relative, spec.line, spec.col)
+    {
+        let context = crate::resolve::members::Context::new(&tree, &files);
+        let (answer, reads) =
+            members::refs_answer(&context, written, &path, &def, include_excluded);
+        let found = reads.counts.confirmed + reads.counts.possible > 0;
+        if out != Output::Text {
+            emit_listing(out, answer, "references", &reads.found)?;
+        } else {
+            for line in members::refs_text(&answer, &reads) {
+                println!("{line}");
+            }
+        }
+        return Ok(exit_on(found));
+    }
+    // A method: the one defined there, or the one a call there runs.
+    let source = read_input(file)?;
+    let facts = crate::extract::extract(&source);
+    let owner_and_name = match position::at_or_snap(&facts, spec.line, spec.col) {
+        Some((position::Under::Definition(def), _)) if def.kind == crate::core::Kind::Method => {
+            tree.scope_fqn(&def.nesting)
+                .map(|owner| (owner, def.singleton, def.name.clone()))
+        }
+        Some((position::Under::Call(call), _)) => {
+            let answer = crate::resolve::method_at(&tree, &facts, &call, &relative);
+            answer
+                .owner
+                .map(|owner| (owner, call.singleton, call.name.clone()))
+        }
+        _ => None,
+    };
+    let Some((owner, singleton, name)) = owner_and_name else {
+        return Err(Failure::Usage.error(format!(
+            "no method at {written}: --refs takes a method's definition or a call of it, \
+             or an example group's let, subject or def"
+        )));
+    };
+    let query = format!("{owner}{}{name}", if singleton { "." } else { "#" });
+    cmd_refs(out, &query, include_excluded, Some(&root))
 }
 
 /// The whole-mention view for a bare name, with each call site's resolved owner
@@ -3635,9 +3719,16 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
         emit_listing(out, answer, "candidates", &rows)?;
         return Ok(exit_on(found));
     }
+    // Methods first, then example groups' own, then the classes, modules and
+    // constants, each apart.
+    let family = |row: &serde_json::Value| match row["kind"].as_str() {
+        _ if row.get("group").is_some() => 1,
+        Some("shared_group") => 1,
+        Some("method") => 0,
+        _ => 2,
+    };
     for (at, row) in rows.iter().enumerate() {
-        // Methods first, then the classes, modules and constants, apart.
-        if at > 0 && row["kind"] != "method" && rows[at - 1]["kind"] == "method" {
+        if at > 0 && family(row) != family(&rows[at - 1]) {
             println!();
         }
         let visibility = match row["visibility"].as_str() {
@@ -3667,16 +3758,28 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
         .filter(|(_, n)| *n > 0)
         .map(|(tier, n)| format!("{n} {tier}"))
         .collect();
-    let constants = rows.len() as u64 - summary["kinds"]["method"].as_u64().unwrap_or(0);
+    let constants = rows.iter().filter(|row| family(row) == 2).count();
+    let members = rows.iter().filter(|row| family(row) == 1).count();
+    let of_them: Vec<String> = [
+        (
+            members,
+            "example groups' lets, subjects, defs or shared groups",
+        ),
+        (constants, "classes, modules or constants"),
+    ]
+    .iter()
+    .filter(|(n, _)| *n > 0)
+    .map(|(n, what)| format!("{n} of them {what}"))
+    .collect();
     println!(
         "\n{} candidates in {scope} file(s): {} ({} clear, {} lower){}",
         rows.len(),
         tiers.join(", "),
         summary["confidence"]["clear"],
         summary["confidence"]["lower"],
-        match constants {
-            0 => String::new(),
-            n => format!("; {n} of them classes, modules or constants"),
+        match of_them.is_empty() {
+            true => String::new(),
+            false => format!("; {}", of_them.join(", ")),
         },
     );
     Ok(exit_on(found))
@@ -3686,8 +3789,9 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
 const MAILER: &str = "ActionMailer::Base";
 
 /// `--dead`'s tiers, from the least evidence of use to the most.
-const DEAD_TIERS: [&str; 6] = [
+const DEAD_TIERS: [&str; 7] = [
     "unreferenced",
+    "shadowed",
     "test-only",
     "override",
     "convention-only",
@@ -3703,11 +3807,18 @@ fn dead_summary(rows: &[serde_json::Value]) -> serde_json::Value {
         .iter()
         .map(|tier| (tier.to_string(), count("tier", tier).into()))
         .collect();
-    let kinds: serde_json::Map<String, serde_json::Value> =
-        ["method", "class", "module", "constant"]
-            .iter()
-            .map(|kind| (kind.to_string(), count("kind", kind).into()))
-            .collect();
+    let kinds: serde_json::Map<String, serde_json::Value> = [
+        "method",
+        "let",
+        "subject",
+        "shared_group",
+        "class",
+        "module",
+        "constant",
+    ]
+    .iter()
+    .map(|kind| (kind.to_string(), count("kind", kind).into()))
+    .collect();
     serde_json::json!({
         "candidates": rows.len(),
         "tiers": tiers,
@@ -3720,6 +3831,9 @@ fn dead_summary(rows: &[serde_json::Value]) -> serde_json::Value {
 /// `Widget.build` for a method on the singleton; a class, module or constant
 /// by its kind and whole name (`class Admin::Widget`).
 fn dead_name(row: &serde_json::Value) -> String {
+    if row.get("group").is_some() {
+        return members::dead_name(row);
+    }
     let name = row["name"].as_str().unwrap_or_default();
     if let Some(kind @ ("class" | "module" | "constant")) = row["kind"].as_str() {
         return match row["owner"].as_str().unwrap_or_default() {
@@ -3809,6 +3923,8 @@ fn dead_in(
     let root_str = root.to_string_lossy().into_owned();
     let files = ruby_files(paths);
     let mut defined: Vec<Defined> = Vec::new();
+    // An example group's own methods, weighed by who reads them (DEC-490).
+    let mut group_members: Vec<(String, crate::core::Def)> = Vec::new();
     for file in &files {
         let Ok(source) = std::fs::read(file) else {
             continue;
@@ -3844,7 +3960,7 @@ fn dead_in(
             .filter(|(_, pos, _)| !recorded.contains(pos))
             .map(|(name, pos, _)| (name, pos.line))
             .collect();
-        let unread_calls = facts.unread_calls;
+        let unread_calls = &facts.unread_calls;
         // A call of an alias runs its target's body (DEC-316), and so does a
         // call of a `module_function`'s singleton copy (DEC-361).
         let aliases_of = |def: &crate::core::Def| -> Vec<(String, bool)> {
@@ -3870,6 +3986,18 @@ fn dead_in(
         };
         for def in &facts.defs {
             if def.kind != crate::core::Kind::Method {
+                continue;
+            }
+            if crate::resolve::members::is_member(def) {
+                if !members::eager(def)
+                    && !crate::resolve::members::names_a_named_subject(def, &facts)
+                {
+                    group_members.push((at.clone(), def.clone()));
+                }
+                continue;
+            }
+            // A group's method on its class side is no member any read reaches.
+            if def.is_group_member() {
                 continue;
             }
             // A schema column is not dead because nothing calls it; that is a
@@ -4363,6 +4491,38 @@ fn dead_in(
         }
         rows.push(row);
     }
+    let checkout_files = members::CheckoutFiles::new(store, root, &root_str);
+    let relative = |file: &str| {
+        Path::new(file)
+            .strip_prefix(root)
+            .map_or(file.to_string(), |p| p.to_string_lossy().into_owned())
+    };
+    let scope: Vec<(String, String)> = files
+        .iter()
+        .map(|file| file.to_string_lossy().into_owned())
+        .map(|file| (file.clone(), relative(&file)))
+        .collect();
+    // A shared group nothing includes goes with its own members (DEC-493).
+    let mut shared_rows = Vec::new();
+    let unincluded = members::dead_shared_groups(&checkout_files, &scope, &mut shared_rows);
+    let context = crate::resolve::members::Context::new(&tree, &checkout_files);
+    for (file, def) in &group_members {
+        let relative = relative(file);
+        let in_unincluded = !unincluded.is_empty()
+            && crate::resolve::members::Files::facts(&checkout_files, &relative).is_some_and(
+                |facts| {
+                    crate::resolve::members::shared_group_of(&relative, def, &facts)
+                        .is_some_and(|module| unincluded.contains(&module))
+                },
+            );
+        if in_unincluded {
+            continue;
+        }
+        if let Some(row) = members::dead_row(&context, file, &relative, def) {
+            rows.push(row);
+        }
+    }
+    rows.extend(shared_rows);
     let sources = dead_consts::Sources {
         routes: &routes,
         views: &views,
@@ -4776,7 +4936,17 @@ fn cmd_def(
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|| spec.path.clone());
             let facts = crate::extract::extract(&source);
-            let answer = crate::resolve::method_at(&tree, &facts, &call, &relative);
+            let mut answer = crate::resolve::method_at(&tree, &facts, &call, &relative);
+            // A shared group's body reads what its includers define (DEC-490).
+            if answer.status == Status::Residue {
+                let root_str = root.to_string_lossy().into_owned();
+                let files = members::CheckoutFiles::new(&store, &root, &root_str);
+                if let Some(includers) =
+                    members::includer_answer(&tree, &files, &relative, &call, &answer)
+                {
+                    answer = includers;
+                }
+            }
             let mut value = serde_json::to_value(&answer)?;
             let object = value.as_object_mut().expect("answer is an object");
             object.insert("query".into(), query.clone().into());

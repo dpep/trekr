@@ -1,0 +1,6 @@
+# A shared group no group includes by name runs nowhere: a row of its own,
+# `kind: shared_group`, and its members are not listed apart from it. One
+# written with metadata is included by it, in the groups that match; one
+# written inside a group is included only from its own file.
+dead spec/support/shared.rb @1=none @5=unreferenced~ @6=none @11=convention-only
+dead spec/widget_spec.rb @6=none @10=unreferenced~

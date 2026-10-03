@@ -429,7 +429,8 @@ fn resolve_at(
     };
     let path = located.relative.clone();
     let unresolved = session.unresolved;
-    let tree = session.tree(&located.root)?;
+    let open = overlay(session, &located.root);
+    let (tree, store) = session.tree_and_store(&located.root)?;
     Ok(match under {
         Under::Definition(def) => vec![(path, def.pos.line, def.pos.col)],
         Under::Constant(reference) => {
@@ -445,7 +446,22 @@ fn resolve_at(
                 .collect()
         }
         Under::Call(call) => {
-            let answer = crate::resolve::method_at(tree, &facts, &call, &path);
+            let mut answer = crate::resolve::method_at(tree, &facts, &call, &path);
+            // A shared group's body reads what its includers define (DEC-490).
+            if answer.status == crate::tree::Status::Residue {
+                let root = located.root.to_string_lossy().into_owned();
+                let files = crate::cli::members::CheckoutFiles::with_open(
+                    store,
+                    &located.root,
+                    &root,
+                    open,
+                );
+                if let Some(includers) =
+                    crate::cli::members::includer_answer(tree, &files, &path, &call, &answer)
+                {
+                    answer = includers;
+                }
+            }
             note_uncertain(&answer);
             if !answer.sites.is_empty() {
                 answer
@@ -551,6 +567,11 @@ pub(crate) fn references(
     let Some(under) = position::at_facts(&facts, pos.line, pos.col) else {
         return Ok(None);
     };
+    // An example group's own `let`, `subject` or `def`: read by Ruby's lookup
+    // at runtime, as `--refs` lists it (DEC-490).
+    if let Some(found) = member_references(session, &located, pos, declarations)? {
+        return Ok(Some(found));
+    }
 
     // A class, module or constant is a different question from a method: its
     // references are constant references, resolved by Ruby's lookup rather
@@ -766,6 +787,89 @@ pub(crate) fn references(
     }
     declared.extend(gathered.finish());
     Ok(Some(declared))
+}
+
+/// The reads of the example group member at `pos`, or `None` when no member
+/// is there: the same reads `--refs` and `--dead` find.
+fn member_references(
+    session: &mut Session,
+    located: &Located,
+    pos: crate::core::Pos,
+    declarations: bool,
+) -> anyhow::Result<Option<Vec<Location>>> {
+    use crate::cli::members::{CheckoutFiles, member_at_position};
+    use crate::resolve::members::{Asked, Context, reads};
+    let root = located.root.clone();
+    let root_str = root.to_string_lossy().into_owned();
+    let open = overlay(session, &root);
+    let (tree, store) = session.tree_and_store(&root)?;
+    let files = CheckoutFiles::with_open(store, &root, &root_str, open.clone());
+    let Some((path, def)) = member_at_position(tree, &files, &located.relative, pos.line, pos.col)
+    else {
+        return Ok(None);
+    };
+    let context = Context::new(tree, &files);
+    let found = reads(
+        &context,
+        &Asked {
+            path: &path,
+            def: &def,
+        },
+        false,
+    );
+    let text = |path: &str| open.get(path).map(String::as_str);
+    let mut locations: Vec<Location> = Vec::new();
+    if declarations {
+        locations.extend(location(
+            &root,
+            &path,
+            def.pos.line,
+            def.pos.col,
+            def.name.len(),
+            text(&path),
+        ));
+    }
+    for reference in &found.found {
+        let len = written_len(
+            &root,
+            &reference.path,
+            reference.line,
+            reference.col,
+            text(&reference.path),
+        );
+        locations.extend(location(
+            &root,
+            &reference.path,
+            reference.line,
+            reference.col,
+            len,
+            text(&reference.path),
+        ));
+    }
+    Ok(Some(locations))
+}
+
+/// How long the name written at a position is: a read of a member may be
+/// spelled `super` or `is_expected` rather than its name.
+fn written_len(root: &Path, path: &str, line: u32, col: u32, text: Option<&str>) -> usize {
+    let read;
+    let text = match text {
+        Some(text) => text,
+        None => {
+            read = absolute_site(root, path).and_then(|at| std::fs::read_to_string(at).ok());
+            read.as_deref().unwrap_or_default()
+        }
+    };
+    let Some(written) = text.lines().nth(line.saturating_sub(1) as usize) else {
+        return 0;
+    };
+    written
+        .get(col.saturating_sub(1) as usize..)
+        .unwrap_or_default()
+        .chars()
+        .take_while(|c| c.is_alphanumeric() || matches!(c, '_' | '?' | '!'))
+        .map(char::len_utf8)
+        .sum()
 }
 
 /// References to a class, module or constant: every written constant that

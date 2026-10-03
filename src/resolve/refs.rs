@@ -85,6 +85,10 @@ pub(crate) struct Reference {
     /// `why` string names it, and no weights are invented (DEC-011).
     #[serde(skip)]
     pub(crate) proximity: u8,
+    /// Where a read of an example group's own method was found: its group,
+    /// a nested one, an included shared group's body, a helper (DEC-490).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) from: Option<&'static str>,
 }
 
 impl Tier {
@@ -210,6 +214,7 @@ fn tier(
         why,
         ruling,
         proximity,
+        from: None,
     };
 
     if call.recv == crate::core::RecvShape::Super {
@@ -743,6 +748,7 @@ fn tier_super(
         why,
         ruling,
         proximity,
+        from: None,
     };
     let scope = tree.scope_fqn(&call.nesting).filter(|s| tree.is_known(s));
     // `super` looks after its own method's owner, so the method it is written
@@ -872,6 +878,7 @@ fn possible(
             why: "the argument count does not fit this method",
             ruling: Some(Ruling::Arity),
             proximity: 0,
+            from: None,
         };
     }
 
@@ -890,6 +897,7 @@ fn possible(
             why: "named by a symbol handed to a macro — invoked by name, receiver unknown",
             ruling: None,
             proximity: 4,
+            from: None,
         };
     }
 
@@ -927,6 +935,7 @@ fn possible(
         why,
         ruling: None,
         proximity,
+        from: None,
     }
 }
 

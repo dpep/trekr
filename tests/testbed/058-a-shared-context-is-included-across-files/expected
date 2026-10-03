@@ -11,8 +11,9 @@ def spec/widget_spec.rb:9:10 status=resolved site=spec/widget_spec.rb:7
 # includes it does not see it.
 def spec/support/raw_http_server.rb:7:13 status=resolved site=spec/support/raw_http_server.rb:2
 def spec/gadget_spec.rb:2:8 status=residue
-# A shared example group's body may call what its includer defines; the
-# file does not say which includer, so that stays residue.
-def spec/support/raw_http_server.rb:11:8 status=residue
+# A shared example group's body may call what its includer defines: each
+# group that includes it answers, here the `it_behaves_like` block's `let`
+# (DEC-490; it was residue, the file not saying which includer).
+def spec/support/raw_http_server.rb:11:8 status=resolved via=includer site=spec/widget_spec.rb:15
 # The symbol in the shared context's `let(:port)` is still the definition.
 def spec/support/raw_http_server.rb:2:8 status=resolved site=spec/support/raw_http_server.rb:2

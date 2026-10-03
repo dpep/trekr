@@ -5246,3 +5246,120 @@ fn dead_says_a_gem_in_the_bundle_calls_the_name() {
     assert_eq!(row("type_for_attribute", true)["confidence"], "clear");
     assert_eq!(row("lonely", false)["confidence"], "clear");
 }
+
+/// `--dead` and `--refs FILE:LINE:COL` ask the same reader about an example
+/// group's member, so they cannot disagree: every member `--dead` lists has
+/// no read `--refs` would show, and every member it does not list (bar a
+/// `let!`, and the members of a shared group it lists) has one (DEC-490).
+/// Run over the testbed's example group cases, staged as one checkout.
+#[test]
+fn dead_and_refs_agree_on_an_example_groups_members() {
+    let (dir, db) = scratch("members-agree");
+    git(&dir, &["init", "-q"]);
+    let testbed = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/testbed");
+    let mut cases = 0;
+    for entry in fs::read_dir(&testbed).unwrap().flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let numbered: u32 = name.split('-').next().unwrap().parse().unwrap_or(0);
+        if !(490..=499).contains(&numbered) || !entry.path().join("spec").is_dir() {
+            continue;
+        }
+        let into = dir.join(&name);
+        fs::create_dir_all(&into).unwrap();
+        let copied = Command::new("cp")
+            .arg("-R")
+            .arg(entry.path().join("spec"))
+            .arg(&into)
+            .status()
+            .unwrap();
+        assert!(copied.success());
+        cases += 1;
+    }
+    assert!(cases >= 5, "the testbed's example group cases were staged");
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+
+    let dead = json(&trekr(&db, &dir, &["--dead", ".", "--json"]));
+    let listed: Vec<(String, u64, u64)> = dead["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| {
+            matches!(row["kind"].as_str(), Some("let" | "subject")) || row["group"].is_string()
+        })
+        .map(|row| {
+            let path = row["path"].as_str().unwrap();
+            let relative = path
+                .strip_prefix(&format!("{}/", dir.display()))
+                .unwrap_or(path);
+            (
+                relative.to_string(),
+                row["line"].as_u64().unwrap(),
+                row["col"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert!(!listed.is_empty(), "the cases list members: {dead}");
+    let reads = |path: &str, line: u64, col: u64| {
+        let at = format!("{path}:{line}:{col}");
+        let answer = json(&trekr(&db, &dir, &["--refs", &at, "--json"]));
+        let counts = &answer["counts"];
+        assert!(
+            counts.is_object(),
+            "--refs {at} answers for a member: {answer}"
+        );
+        counts["confirmed"].as_u64().unwrap() + counts["possible"].as_u64().unwrap()
+    };
+    for (path, line, col) in &listed {
+        assert_eq!(
+            reads(path, *line, *col),
+            0,
+            "--dead lists {path}:{line}, so --refs finds no read"
+        );
+    }
+
+    // Every other `let` and `subject` the cases write is read, but for the
+    // members of a shared group `--dead` lists, which go with it.
+    let unincluded: Vec<String> = dead["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|row| row["kind"] == "shared_group")
+        .map(|row| format!("::{}", row["owner"].as_str().unwrap()))
+        .collect();
+    let symbols = |path: &str| json(&trekr(&db, &dir, &["--symbols", path, "--json"]));
+    for (path, _, _) in &listed {
+        let outline = symbols(path);
+        for symbol in outline.as_array().into_iter().flatten() {
+            let line = symbol["line"].as_u64().unwrap();
+            let col = symbol["col"].as_u64().unwrap_or(0);
+            let via = symbol["via"].as_str().unwrap_or_default();
+            let in_unincluded = symbol["nesting"][0]
+                .as_str()
+                .is_some_and(|scope| unincluded.iter().any(|module| module == scope));
+            if !matches!(via, "let" | "subject")
+                || in_unincluded
+                || listed.iter().any(|(p, l, _)| p == path && *l == line)
+            {
+                continue;
+            }
+            assert!(
+                reads(path, line, col) > 0,
+                "--dead does not list {path}:{line}, so --refs finds a read"
+            );
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}

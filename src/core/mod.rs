@@ -158,6 +158,17 @@ pub(crate) struct Facts {
     /// shared group, by its nesting, and the shared group's module (DEC-092).
     /// A resolve-time fact, like `assigns`: never stored.
     pub(crate) shared_includes: Vec<(Vec<String>, String)>,
+    /// `it_behaves_like "x"` written with no block: the group it is written
+    /// in, and the shared group's module, which RSpec includes into a nested
+    /// group of its own that the file writes nothing in. Read by `--dead`
+    /// and `--refs` for an includer's member a shared body reads (DEC-490).
+    /// Resolve-time, never stored.
+    pub(crate) nested_includes: Vec<(Vec<String>, String)>,
+    /// A shared group written inside a group, which RSpec scopes to it: its
+    /// body's nesting, a group of the file's (DEC-092), and the module its
+    /// name would make, which an include in reach names (DEC-490).
+    /// Resolve-time, never stored.
+    pub(crate) local_shared: Vec<LocalShared>,
     /// Each example group that describes a constant, by its nesting, and the
     /// constant as written — its own argument or its parent's. What an
     /// implicit `subject` is made from (DEC-114). Resolve-time, never stored.
@@ -846,6 +857,17 @@ pub(crate) fn shape_matches(shape: &str, name: &str) -> bool {
     rest.ends_with(last)
 }
 
+/// A shared group written inside an example group (DEC-490).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct LocalShared {
+    /// Its body's nesting: a group segment of the file's.
+    pub(crate) body: Vec<String>,
+    /// The module its name would make, which an include names.
+    pub(crate) module: String,
+    /// Where the `shared_examples` call is written.
+    pub(crate) pos: Pos,
+}
+
 /// An `ActiveSupport.on_load(:name) do … end` block (DEC-214).
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct HookBlock {
@@ -990,6 +1012,11 @@ pub(crate) struct Call {
     /// their own `let`s (DEC-096).
     #[serde(skip)]
     pub(crate) in_example: bool,
+    /// Written directly in an example group's body, as a macro (`it`, `let`,
+    /// `include_examples`) — run on the group's class as the file loads,
+    /// never on an example (DEC-490).
+    #[serde(skip)]
+    pub(crate) group_body: bool,
     /// Written in a `scope`'s body, which ActiveRecord runs on the model's
     /// relation (DEC-116).
     #[serde(skip)]

@@ -13,6 +13,7 @@
 //! Everything below that is residue, and residue is not nothing: it comes back
 //! as ordered candidates with the receiver shape as the reason.
 
+pub(crate) mod members;
 pub(crate) mod refs;
 
 use crate::core::{Assign, Call, Def, Facts, Pos, RecvShape, RecvValue, ValueShape, rspec};
@@ -750,7 +751,7 @@ fn symbol_answer(
 /// constant's method in the checkout or a gem, may be a DSL's body, so a
 /// call in it is not answered as the example's (DEC-084). So is one handed to
 /// the methods whose purpose is to change `self`.
-fn on_the_example(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> bool {
+pub(super) fn on_the_example(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> bool {
     let mut current = call;
     // Each step goes to an enclosing block, which is earlier in the file.
     for _ in 0..facts.calls.len() {
@@ -894,7 +895,7 @@ impl Member<'_> {
 /// definitions first, the last one written, as a redefined method does; then
 /// the shared groups it includes, the last included first. A symbol is the
 /// definition itself only where it is written: `let(:name)`.
-fn group_member<'f>(tree: &Tree, facts: &'f Facts, call: &Call) -> Option<Member<'f>> {
+pub(super) fn group_member<'f>(tree: &Tree, facts: &'f Facts, call: &Call) -> Option<Member<'f>> {
     let named = |def: &&Def| def.kind == crate::core::Kind::Method && def.name == call.name;
     if call.recv == RecvShape::Symbol {
         return facts
@@ -905,13 +906,27 @@ fn group_member<'f>(tree: &Tree, facts: &'f Facts, call: &Call) -> Option<Member
             .find(|def| def.pos == call.pos)
             .map(Member::Here);
     }
-    if !matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv)
-        || !rspec::in_group(&call.nesting)
-    {
+    if !matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv) {
         return None;
     }
-    for at in 0..call.nesting.len() {
-        let level = &call.nesting[at..];
+    member_at(tree, facts, &call.nesting, &call.name, call.singleton)
+}
+
+/// The group member `name` is, for a call written at `nesting`: as
+/// `group_member` finds it, without the call.
+pub(super) fn member_at<'f>(
+    tree: &Tree,
+    facts: &'f Facts,
+    nesting: &[String],
+    name: &str,
+    singleton: bool,
+) -> Option<Member<'f>> {
+    if !rspec::in_group(nesting) {
+        return None;
+    }
+    let named = |def: &&Def| def.kind == crate::core::Kind::Method && def.name == name;
+    for at in 0..nesting.len() {
+        let level = &nesting[at..];
         if !rspec::is_group(&level[0]) {
             continue;
         }
@@ -919,12 +934,12 @@ fn group_member<'f>(tree: &Tree, facts: &'f Facts, call: &Call) -> Option<Member
             .defs
             .iter()
             .filter(named)
-            .filter(|def| def.singleton == call.singleton && def.nesting == level)
+            .filter(|def| def.singleton == singleton && def.nesting == level)
             .max_by_key(|def| def.pos);
         if let Some(def) = own {
             return Some(Member::Here(def));
         }
-        if call.singleton {
+        if singleton {
             continue;
         }
         let included = facts
@@ -935,7 +950,7 @@ fn group_member<'f>(tree: &Tree, facts: &'f Facts, call: &Call) -> Option<Member
             .map(|(_, module)| module.clone())
             .chain(rspec::shared_module_of(&level[0]));
         for module in included {
-            if let Some(found) = tree.lookup(&module, false, &call.name) {
+            if let Some(found) = tree.lookup(&module, false, name) {
                 return Some(Member::Shared(Box::new(found)));
             }
         }
@@ -1245,6 +1260,7 @@ pub(crate) fn overridden(tree: &Tree, def: &crate::core::Def, path: &str) -> Vec
         recv_value: None,
         block_owner: None,
         in_example: false,
+        group_body: false,
         in_scope: false,
         stands_for: None,
         argc: None,
@@ -2534,7 +2550,7 @@ fn last_write_before<'f>(facts: &'f Facts, name: &str, at: Pos) -> Option<&'f As
 /// `1/31` is 0.032, not 0.03225806451612903: printing the tail claims evidence
 /// that is not there, and it claims it hardest in JSON, where a reader cannot
 /// see that the human output was more careful.
-fn share(agreeing: usize, total: usize) -> f64 {
+pub(crate) fn share(agreeing: usize, total: usize) -> f64 {
     if total == 0 {
         return 0.0;
     }
