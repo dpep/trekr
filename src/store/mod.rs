@@ -1970,6 +1970,25 @@ impl Drop for Store {
     }
 }
 
+impl Store {
+    /// Copy the write-ahead log into the store and empty it, as the last
+    /// connection to close does — which an index a query spawned is not:
+    /// the query holds one open, and the log stayed tens of megabytes.
+    /// Best effort, and briefly: a reader mid-transaction keeps it.
+    pub(crate) fn truncate_wal(&self) {
+        let _ = self.conn.busy_timeout(std::time::Duration::ZERO);
+        for _ in 0..10 {
+            let done: rusqlite::Result<i64> =
+                self.conn
+                    .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0));
+            if matches!(done, Ok(0)) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+}
+
 /// How long a connection waits for another's lock before giving up.
 pub(super) const BUSY: std::time::Duration = std::time::Duration::from_secs(5);
 

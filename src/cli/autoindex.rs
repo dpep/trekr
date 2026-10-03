@@ -71,6 +71,38 @@ pub(super) fn ensure(
     if OFF.load(Relaxed) {
         return Ok(None);
     }
+    let lock = || {
+        OURS.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    };
+    let mut ours = lock().take();
+    let waited = wait(out, store, root, need, &mut ours);
+    *lock() = ours;
+    waited
+}
+
+/// The index this query started, while it runs: a second wait — for the
+/// rest, after a miss in the part — watches it as the first did.
+static OURS: std::sync::Mutex<Option<Index>> = std::sync::Mutex::new(None);
+
+/// The checkout this query's index is still reading, once the query has
+/// its answer.
+pub(super) fn left_running() -> Option<String> {
+    let mut ours = OURS.lock().ok()?;
+    let index = ours.as_mut()?;
+    match index.child.try_wait() {
+        Ok(None) => Some(index.root.clone()),
+        _ => None,
+    }
+}
+
+fn wait(
+    out: Output,
+    store: &Store,
+    root: &Path,
+    need: Need,
+    ours: &mut Option<Index>,
+) -> anyhow::Result<Option<ExitCode>> {
     let root_str = root.to_string_lossy().into_owned();
     // A file outside the checkout — a gem's, asked with --context — is
     // never in its map: that question waits for the whole index.
@@ -86,8 +118,13 @@ pub(super) fn ensure(
     if matches!(seen, Seen::Ready) {
         return Ok(None);
     }
-    let mut heads = Heads::new(&root_str, Why::of(store, &seen)?);
-    let mut ours: Option<Index> = None;
+    // Still ours, from this query's first wait: say what it said then.
+    let mut heads = match (&seen, ours.as_ref()) {
+        (Seen::Filling(w), Some(index)) if index.child.id() == w.pid => {
+            Heads::new(&root_str, index.why, index.told)
+        }
+        _ => Heads::new(&root_str, Why::of(store, &seen)?, false),
+    };
     // Whether the index that filled the store was ours, not another's.
     let mut filled = false;
     loop {
@@ -127,7 +164,8 @@ pub(super) fn ensure(
             }
             Seen::Idle(warming) => {
                 if ours.is_none() {
-                    ours = Some(spawn(root, file.as_ref().map(|(file, _)| file.as_path()))?);
+                    let file = file.as_ref().map(|(file, _)| file.as_path());
+                    *ours = Some(spawn(root, file, heads.why)?);
                     crate::usage::flag("indexed");
                 }
                 heads.tick(warming.as_ref());
@@ -140,6 +178,9 @@ pub(super) fn ensure(
     // question waits for that rather than assembling it again.
     if let (Need::Whole, Some(index), true) = (need, ours.as_mut(), filled) {
         let _ = index.child.wait();
+    }
+    if let Some(index) = ours.as_mut() {
+        index.told |= heads.told;
     }
     heads.clear();
     Ok(None)
@@ -166,16 +207,21 @@ pub(super) fn after_partial(
     root: &Path,
     found: bool,
 ) -> anyhow::Result<Then> {
-    let live = store
-        .warming(&root.to_string_lossy())?
-        .is_some_and(|w| !w.interrupted);
-    if found || OFF.load(Relaxed) || !live {
+    // Read from a live index's part, as `answering_in` saw it.
+    let partial = super::warming().is_some_and(|(_, w)| !w.interrupted);
+    if found || OFF.load(Relaxed) || !partial {
         return Ok(Then::Keep);
     }
-    Ok(match ensure(out, store, root, Need::Whole)? {
-        Some(code) => Then::Exit(code),
-        None => Then::Again,
-    })
+    match store.warming(&root.to_string_lossy())? {
+        // Cut short since: the miss stands, said to be partial.
+        Some(w) if w.interrupted => Ok(Then::Keep),
+        Some(_) => Ok(match ensure(out, store, root, Need::Whole)? {
+            Some(code) => Then::Exit(code),
+            None => Then::Again,
+        }),
+        // Whole since the answer was read: ask the whole.
+        None => Ok(Then::Again),
+    }
 }
 
 /// The checkout as the store holds it now, against what is needed.
@@ -205,6 +251,11 @@ fn look(store: &Store, root: &str, file: Option<&str>) -> anyhow::Result<Seen> {
 /// An index this query started.
 struct Index {
     child: Child,
+    /// The checkout it indexes, as a person reads it.
+    root: String,
+    /// Why this query waits for it, and whether it has said so.
+    why: Why,
+    told: bool,
     /// Its stderr: what it said when it failed. Unlinked once open, so
     /// nothing is left behind however either process ends — and a file
     /// rather than a pipe, which a child outliving this query would die
@@ -230,7 +281,7 @@ impl Index {
 /// as the language server tells its child an open file, it reads that first
 /// (DEC-322). At full priority, unlike the language server's (DEC-062):
 /// another query may be waiting on it.
-fn spawn(root: &Path, file: Option<&Path>) -> anyhow::Result<Index> {
+fn spawn(root: &Path, file: Option<&Path>, why: Why) -> anyhow::Result<Index> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
     let said = said_file();
@@ -254,7 +305,13 @@ fn spawn(root: &Path, file: Option<&Path>) -> anyhow::Result<Index> {
         // A child that has already moved on leaves it unread.
         let _ = writeln!(hints, "{}", file.display());
     }
-    Ok(Index { child, said })
+    Ok(Index {
+        child,
+        root: paths::pretty(&root.to_string_lossy()),
+        why,
+        told: false,
+        said,
+    })
 }
 
 /// A file for the child's stderr, already unlinked.
@@ -316,6 +373,7 @@ fn failure_of(code: i32) -> Failure {
 }
 
 /// Why a query is waiting, as its notice says it.
+#[derive(Clone, Copy)]
 enum Why {
     First,
     Upgraded,
@@ -349,13 +407,13 @@ struct Heads {
 }
 
 impl Heads {
-    fn new(root: &str, why: Why) -> Heads {
+    fn new(root: &str, why: Why, told: bool) -> Heads {
         use std::io::IsTerminal;
         Heads {
             root: paths::pretty(root),
             why,
             started: Instant::now(),
-            told: false,
+            told,
             terminal: std::io::stderr().is_terminal(),
             drawn: None,
         }
@@ -389,6 +447,8 @@ impl Heads {
 
 fn notice(root: &str, why: &Why, warming: Option<&Warming>) -> String {
     let files = match warming {
+        // A query's claim, made before its index has listed anything.
+        Some(w) if w.of == 0 => String::new(),
         Some(w) if w.uncounted => format!(" ({} files)", w.of),
         Some(w) => format!(" ({} files, counting its gems and Ruby's)", w.of),
         None => String::new(),
@@ -403,7 +463,7 @@ fn notice(root: &str, why: &Why, warming: Option<&Warming>) -> String {
         ),
         Why::CutShort => format!("trekr: finishing the index of {root}, cut short earlier{files}"),
         Why::UnderWay => {
-            format!("trekr: waiting for the index of {root} another trekr is building{files}")
+            format!("trekr: waiting for the index of {root} that another trekr is building{files}")
         }
     }
 }
@@ -443,6 +503,13 @@ mod tests {
             counted.contains("(9000 files, counting its gems and Ruby's)"),
             "{counted}"
         );
+        assert!(
+            counted.contains("of ~/app that another trekr is building"),
+            "{counted}"
+        );
+        // A query's claim, before its index has counted anything.
+        let claimed = notice("~/app", &Why::UnderWay, Some(&warming(0, 0, true)));
+        assert!(!claimed.contains("files"), "{claimed}");
         let unseen = notice("~/app", &Why::First, None);
         assert!(unseen.contains("for the first time — once"), "{unseen}");
     }

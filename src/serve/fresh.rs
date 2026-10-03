@@ -620,7 +620,7 @@ impl Hints {
         }
         hints.listening = true;
         let sink = hints.sent.clone();
-        std::thread::spawn(move || {
+        let read = move || {
             use std::io::BufRead;
             for line in std::io::stdin().lock().lines() {
                 let Ok(line) = line else {
@@ -630,7 +630,13 @@ impl Hints {
                     sink.push(PathBuf::from(line));
                 }
             }
-        });
+        };
+        // A query writes its one file and closes the pipe at spawn: read it
+        // now, or the first part may be written without it.
+        match in_background() {
+            true => drop(std::thread::spawn(read)),
+            false => read(),
+        }
         hints
     }
 

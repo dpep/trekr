@@ -12163,6 +12163,28 @@ The dead child's mark is left as it is — a dead writer's mark is DEC-320's
 "cut short", which the next query or `--index` takes over — and not
 cleared, which would make a partial checkout read as whole.
 
+*Addendum — what a first-use answer says.* An answer read from the file
+alone — nothing under the cursor, a local, an instance variable, a symbol —
+is final while the index runs, as after it: exit 1 and no `warming`, where
+it was exit 2 "ask again", which asking again could not change (5 of 60
+discourse positions, 6 of 60 mastodon, in the hunt). A constant resolved
+with no definition read yet — a namespace only its nested classes name so
+far — is a miss for the wait, not an answer: mastodon's `Admin` answered
+`resolved`, `definition: []`, exit 0 from the part, 38 definitions from the
+whole. A path an early answer names is placed against the store's roots as
+of the answer, not as of the wait: a gem committed meanwhile was given
+whole, with `root: null`. A miss that waits for the rest waits on the
+query's own index as its own — the notice no longer calls it "another
+trekr's". A position answered with the rest unread says, in text, that the
+rest is being indexed in the background. Every index, a query's child
+included, checkpoints and empties the write-ahead log as it ends: the
+query's open connection kept the child from being the last to close, and
+the log stayed at 74 MB on discourse (597 MB after ten concurrent first
+queries on the 100k corpus). A `trekr --index` that outwaits another's
+index says so, not that a write lock was held. A miss from the part when
+the index has ended since the answer was read is asked again of the whole;
+it was kept, exit 2, from an index no longer running.
+
 ## DEC-501 — One first index per checkout
 
 **Decided.** A first index claims the checkout as it marks it (DEC-320): in

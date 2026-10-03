@@ -424,10 +424,17 @@ pub fn run() -> ExitCode {
     {
         let root = paths::pretty(&root);
         match warming.interrupted {
-            false => eprintln!(
-                "trekr: {root} is still being indexed — {} of {} files read, so this answer may change",
-                warming.read, warming.of
-            ),
+            false => {
+                eprintln!(
+                    "trekr: {root} is still being indexed — {} of {} files read, so this answer may change",
+                    warming.read, warming.of
+                );
+                if autoindex::left_running().is_some() {
+                    eprintln!(
+                        "trekr: the rest of {root} is being indexed in the background; later queries use it"
+                    );
+                }
+            }
             true => eprintln!(
                 "trekr: the index of {root} was cut short at {} of {} files, so answers are partial until: trekr --index {root}",
                 warming.read, warming.of
@@ -690,6 +697,9 @@ fn open_store() -> anyhow::Result<Store> {
 struct Rooting {
     base: String,
     roots: Vec<String>,
+    /// Read while an index filled the store: a gem it committed since may
+    /// hold the answer, so the store's roots are read again at the answer.
+    late: Option<std::sync::OnceLock<Vec<String>>>,
 }
 
 static ROOTING: std::sync::OnceLock<Rooting> = std::sync::OnceLock::new();
@@ -700,6 +710,7 @@ fn answering_in(store: &Store, root: &str) {
     ROOTING.get_or_init(|| Rooting {
         base: root.to_string(),
         roots: store.roots().unwrap_or_default(),
+        late: read_warming(store, root).map(|_| std::sync::OnceLock::new()),
     });
     let mut held = WARMING
         .lock()
@@ -707,6 +718,15 @@ fn answering_in(store: &Store, root: &str) {
     if held.is_none() {
         *held = Some(read_warming(store, root));
     }
+}
+
+/// An answer read from the file alone — nothing under the cursor, a
+/// variable, a symbol: no index can change it, so it says nothing of one
+/// still filling the store, and a miss is final (exit 1, not 2).
+fn index_free() {
+    *WARMING
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(None);
 }
 
 /// Read the asked checkout's mark again: an index this query waited for has
@@ -800,6 +820,7 @@ fn answering_about(file: &Path) {
     ROOTING.get_or_init(|| Rooting {
         base: base.map_or_else(String::new, |b| b.to_string_lossy().into_owned()),
         roots,
+        late: None,
     });
 }
 
@@ -817,13 +838,23 @@ impl Rooting {
             true => path.to_string(),
             false => format!("{}/{path}", self.base),
         };
-        let holder = self
-            .roots
-            .iter()
-            .filter(|root| paths::under(root, &absolute))
-            .max_by_key(|root| root.len());
+        let holder = |roots: &[String]| {
+            roots
+                .iter()
+                .filter(|root| paths::under(root, &absolute))
+                .max_by_key(|root| root.len())
+                .cloned()
+        };
+        let holder = holder(&self.roots).or_else(|| {
+            let late = self.late.as_ref()?.get_or_init(|| {
+                open_store()
+                    .and_then(|store| Ok(store.roots()?))
+                    .unwrap_or_default()
+            });
+            holder(late)
+        });
         match holder {
-            Some(root) => (absolute[root.len() + 1..].to_string(), root.clone().into()),
+            Some(root) => (absolute[root.len() + 1..].to_string(), root.into()),
             None => (absolute, serde_json::Value::Null),
         }
     }
@@ -1218,6 +1249,29 @@ fn die_after_claim_for_tests() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Another process's first index of the checkout outlasted the writer wait.
+#[derive(Debug)]
+struct ClaimOutwaited;
+
+impl std::fmt::Display for ClaimOutwaited {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("another trekr's index of this checkout outlasted the writer wait")
+    }
+}
+
+impl std::error::Error for ClaimOutwaited {}
+
+/// `TREKR_TEST_STALL_MS`: a first index that pauses once the asked file's
+/// part is in, as a large checkout's does reading the rest.
+fn stall_for_tests() {
+    if let Some(ms) = std::env::var("TREKR_TEST_STALL_MS")
+        .ok()
+        .and_then(|ms| ms.parse().ok())
+    {
+        std::thread::sleep(std::time::Duration::from_millis(ms));
+    }
+}
+
 /// Wait for another process's first index of `root` to end — or to die,
 /// leaving its mark for this one to take over — saying so as a writer
 /// queued for the lock does (DEC-171), and for no longer than one waits.
@@ -1234,11 +1288,7 @@ fn wait_for_index(store: &Store, root: &str, other: crate::store::Warming) -> an
         let waited = started.elapsed();
         if waited >= crate::store::writer_wait() {
             // As a lock outwaited: `--index` reports it incomplete, exit 2.
-            return Err(rusqlite::Error::SqliteFailure(
-                rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_BUSY),
-                Some("another trekr's index of this checkout outlasted the writer wait".into()),
-            )
-            .into());
+            return Err(ClaimOutwaited.into());
         }
         if waited.as_secs() >= due {
             match due {
@@ -1441,6 +1491,7 @@ fn index_first(
                     report.rbs = rbs;
                 }
             }
+            stall_for_tests();
             // Opened while those were read: still ahead of the rest.
             let (more, _) = index_wanted(
                 store,
@@ -2251,12 +2302,15 @@ fn cmd_index(
         &mut profile,
     );
     let (counts, gems) = match indexed {
-        Err(error) if incomplete::outwaited(&error) => {
+        Err(error) if error.is::<ClaimOutwaited>() || incomplete::outwaited(&error) => {
             drop(store);
             incomplete::report(
                 out,
                 &root_str,
-                "another trekr writer kept the write lock longer than an index waits",
+                match error.is::<ClaimOutwaited>() {
+                    true => "another trekr's index of it outlasted the writer wait",
+                    false => "another trekr writer kept the write lock longer than an index waits",
+                },
             );
             crate::usage::outcome(Outcome::Error("incomplete"));
             return Ok(ExitCode::from(2));
@@ -2453,6 +2507,7 @@ fn cmd_index(
     profile::timed(&mut profile, "tree", || {
         crate::tree::Tree::prepare(&store, &root_str)
     })?;
+    store.truncate_wal();
     if let Some(profile) = profile {
         match out {
             Output::Text => profile.report_text(),
@@ -2613,7 +2668,7 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
         return Ok(exit_on(!checkouts.is_empty()));
     }
     if let Some(reason) = reason {
-        println!("{reason} (try `trekr --index`)");
+        println!("{reason} — the first query in a checkout indexes it, or `trekr --index` does");
         return Ok(ExitCode::from(1));
     }
     for row in &rows {
@@ -4963,6 +5018,7 @@ fn cmd_def(
     if position::at_facts(&facts, spec.line, spec.col).is_none()
         && position::word_at(&source, spec.line, spec.col).as_deref() == Some("super")
     {
+        index_free();
         return report(
             out,
             serde_json::json!({
@@ -4994,6 +5050,7 @@ fn cmd_def(
                         && spec.col < pos.col + *len as u32
                 })
     {
+        index_free();
         return report(
             out,
             serde_json::json!({
@@ -5016,6 +5073,7 @@ fn cmd_def(
         && let Some(answer) = position::variable_at(&source, &file, spec.line, spec.col)
     {
         crate::usage::flag("variable");
+        index_free();
         let mut answer = answer;
         answer["query"] = written.into();
         let resolved = answer["status"] == "resolved";
@@ -5038,6 +5096,7 @@ fn cmd_def(
     }
     let snapped = position::at_or_snap(&facts, spec.line, spec.col);
     let Some((under, snapped)) = snapped else {
+        index_free();
         return report(
             out,
             serde_json::json!({
@@ -5096,7 +5155,8 @@ fn cmd_def(
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|| spec.path.clone());
             let mut resolution = tree.resolve_at(&reference.name, &reference.nesting, &relative);
-            let found = resolution.status != Status::Residue;
+            // A namespace resolved with nowhere to go yet is no answer yet.
+            let found = resolution.status != Status::Residue && !resolution.sites.is_empty();
             match autoindex::after_partial(out, &store, &root, found)? {
                 Then::Keep => {}
                 Then::Exit(code) => return Ok(code),

@@ -2908,6 +2908,125 @@ fn a_query_waits_for_an_index_under_way_and_finishes_one_cut_short() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A position answered from the part of a first index says, at a terminal
+/// or not, that the rest is still being read in the background; and when a
+/// miss there waits for the rest, it waits for its own index as its own.
+#[test]
+fn an_early_answer_says_the_rest_is_indexed_in_the_background() {
+    let (dir, db) = scratch("auto-background");
+    repo(&dir);
+    let stall = [("TREKR_TEST_STALL_MS", "4000")];
+    let limit = std::time::Duration::from_secs(20);
+    let hit = trekr_within(&db, &dir, &["--def", "widget.rb:7:5"], &stall, limit);
+    let stderr = String::from_utf8_lossy(&hit.stderr);
+    assert_eq!(hit.status.code(), Some(0), "{stderr}");
+    assert!(stderr.contains("still being indexed"), "{stderr}");
+    assert!(stderr.contains("in the background"), "{stderr}");
+    settled(&db, &dir);
+
+    let (dir, db) = scratch("auto-background-miss");
+    repo(&dir);
+    let miss = trekr_within(&db, &dir, &["--def", "widget.rb:1:17"], &stall, limit);
+    let stderr = String::from_utf8_lossy(&miss.stderr);
+    assert_eq!(miss.status.code(), Some(1), "{stderr}");
+    assert!(!stderr.contains("another trekr"), "{stderr}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// An empty store's `--status --all` says how a checkout gets indexed now:
+/// by its first query.
+#[test]
+fn status_of_an_empty_store_says_the_first_query_indexes() {
+    let (dir, db) = scratch("status-empty");
+    repo(&dir);
+    let out = trekr(&db, &dir, &["--status", "--all"]);
+    let text = stdout(&out);
+    assert!(
+        text.contains("the first query in a checkout indexes it"),
+        "{text}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A hand-run `--index` that outwaits another's index of the checkout says
+/// that is what it waited for — not a write lock, which it never waited on.
+#[test]
+fn an_index_that_outwaits_another_index_says_so() {
+    let (dir, db) = scratch("claim-outwaited");
+    repo(&dir);
+    assert_eq!(trekr(&db, &dir, &["--status"]).status.code(), Some(2));
+    let mut other = Command::new("sleep").arg("30").spawn().unwrap();
+    mark_warming(&db, &dir, other.id(), 0, 1);
+    let out = trekr_env(
+        &db,
+        &dir,
+        &["--index"],
+        &[("TREKR_TEST_WRITER_WAIT_MS", "1500")],
+    );
+    other.kill().unwrap();
+    other.wait().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("index of it outlasted"), "{stderr}");
+    assert!(!stderr.contains("write lock"), "{stderr}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A first query's index leaves no write-ahead log behind, as `--index`
+/// does not: the query's own connection keeps the child from being the
+/// last to close, which is what would have checkpointed and removed it.
+#[test]
+fn a_first_query_leaves_no_write_ahead_log() {
+    let (dir, db) = scratch("auto-wal");
+    repo(&dir);
+    let out = trekr(&db, &dir, &["--refs", "Widget#helper", "--json"]);
+    assert_eq!(out.status.code(), Some(0));
+    let wal = PathBuf::from(format!("{}-wal", db.display()));
+    let size = fs::metadata(&wal).map_or(0, |m| m.len());
+    assert_eq!(size, 0, "{} left at {size} bytes", wal.display());
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A position's answer that no index can change — nothing under the cursor
+/// — is final while an index runs, as after it: exit 1, no `warming`, no
+/// wait. One the index can change — a namespace resolved with nowhere yet
+/// to go — waits for the rest.
+#[test]
+fn a_position_the_index_cannot_change_answers_at_once_while_it_runs() {
+    let (dir, db) = scratch("auto-final");
+    repo(&dir);
+    fs::write(dir.join("thing.rb"), "class Outer::Thing\nend\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "thing",
+        ],
+    );
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    let indexer = stand_in_indexer(&db, &dir);
+    let started = std::time::Instant::now();
+    let blank = trekr(&db, &dir, &["--def", "widget.rb:3:1", "--json"]);
+    assert!(started.elapsed() < std::time::Duration::from_millis(1000));
+    assert_eq!(blank.status.code(), Some(1), "{}", stdout(&blank));
+    assert!(json(&blank).get("warming").is_none(), "{}", stdout(&blank));
+    let namespace = trekr(&db, &dir, &["--def", "thing.rb:1:7", "--json"]);
+    assert!(started.elapsed() >= std::time::Duration::from_millis(1000));
+    indexer.join().unwrap();
+    assert!(
+        json(&namespace).get("warming").is_none(),
+        "{}",
+        stdout(&namespace)
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A process that marks `dir` as an index filling it, lives a second and a
 /// half, and is reaped the moment it ends: a zombie still answers a liveness
 /// check, and would read as an index under way for good.
