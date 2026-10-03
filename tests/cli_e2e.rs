@@ -2961,7 +2961,7 @@ fn status_of_an_empty_store_says_the_first_query_indexes() {
 /// A repo with a second file that names `Widget`, and its first index
 /// started by hand — no file asked first — pausing after its first part and
 /// again as the rest's write holds the store.
-fn slow_first_index(label: &str) -> (PathBuf, PathBuf, std::process::Child) {
+fn slow_first_index(label: &str, bulk_ms: &str) -> (PathBuf, PathBuf, std::process::Child) {
     let (dir, db) = scratch(label);
     repo(&dir);
     fs::write(
@@ -2987,7 +2987,7 @@ fn slow_first_index(label: &str) -> (PathBuf, PathBuf, std::process::Child) {
         .current_dir(&dir)
         .env("TREKR_DB", &db)
         .env("TREKR_TEST_STALL_MS", "3000")
-        .env("TREKR_TEST_STALL_BULK_MS", "6000")
+        .env("TREKR_TEST_STALL_BULK_MS", bulk_ms)
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
@@ -3004,7 +3004,7 @@ fn a_query_behind_anothers_first_index_has_its_file_read_next() {
     let limit = std::time::Duration::from_secs(30);
     let ask = ["--def", "other.rb:3:5", "--json"];
     // Asked while the first part is in: read in the next part.
-    let (dir, db, mut winner) = slow_first_index("handed-part");
+    let (dir, db, mut winner) = slow_first_index("handed-part", "6000");
     std::thread::sleep(std::time::Duration::from_millis(1000));
     let started = std::time::Instant::now();
     let out = trekr_within(&db, &dir, &ask, &[], limit);
@@ -3020,7 +3020,7 @@ fn a_query_behind_anothers_first_index_has_its_file_read_next() {
 
     // Asked while the rest's write holds the store: from the early store,
     // and a miss there asks the whole once it is in.
-    let (dir, db, mut winner) = slow_first_index("handed-early");
+    let (dir, db, mut winner) = slow_first_index("handed-early", "6000");
     std::thread::sleep(std::time::Duration::from_millis(4000));
     let started = std::time::Instant::now();
     let out = trekr_within(&db, &dir, &ask, &[], limit);
@@ -3038,6 +3038,40 @@ fn a_query_behind_anothers_first_index_has_its_file_read_next() {
     let answer = json(&miss);
     assert!(answer.get("warming").is_none(), "{answer}");
     winner.wait().unwrap();
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A miss from another's early store waits for the rest as a query waits
+/// for any index — saying so past a second, bounded by the writer wait —
+/// rather than asking again in a fresh process that finds the same early
+/// store and misses again, for as long as that index stands still.
+#[test]
+fn a_miss_from_an_early_store_waits_a_bounded_while_and_says_so() {
+    /// Stopped however the test ends: it would stall a minute more.
+    struct Reaped(std::process::Child);
+    impl Drop for Reaped {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let (dir, db, winner) = slow_first_index("early-stuck", "60000");
+    let winner = Reaped(winner);
+    std::thread::sleep(std::time::Duration::from_millis(4000));
+    let wait = [("TREKR_TEST_WRITER_WAIT_MS", "2500")];
+    let limit = std::time::Duration::from_secs(20);
+    let miss = trekr_within(
+        &db,
+        &dir,
+        &["--def", "other.rb:4:5", "--json"],
+        &wait,
+        limit,
+    );
+    drop(winner);
+    let stderr = String::from_utf8_lossy(&miss.stderr);
+    assert_eq!(miss.status.code(), Some(2), "{stderr}");
+    assert_eq!(json(&miss)["status"], "incomplete", "{}", stdout(&miss));
+    assert!(stderr.contains("waiting for the index"), "{stderr}");
     let _ = fs::remove_dir_all(&dir);
 }
 

@@ -12337,3 +12337,18 @@ A `--def` in another shard, 0.5 / 3 / 8 s after the editor opened its file:
   on macOS or Linux (without `CAP_SYS_NICE` or an `RLIMIT_NICE`). Nor was
   it needed: handed the file, the niced child answered the `--def` above in
   well under a second.
+
+*Addendum — a miss from an early store asks again only once the store is
+gone.* A query that missed in another index's early store waited for that
+store to go, at most DEC-139's wait, and then asked again in a fresh
+process whatever had happened. With that index stopped (SIGSTOP in the
+verification hunt; a debugger, a laptop lid), its mark reads live and its
+early store stays, so the fresh process answered from the same store,
+missed, waited and asked again — for as long as the index stood still,
+silently. It asks again now only once the early store is gone or the mark
+has ended (or been cut short, which the fresh process takes over); past the
+writer wait it reports incomplete, exit 2, as a query waiting on another's
+index does (DEC-400), and past a second it says what it waits for, once
+per query. Discourse, the editor's first index stopped in its bulk write, a
+`--def` missing in its early store, writer wait 3 s: still running at
+26.5 s → exit 2 after 3.3 s, the notice at one second.

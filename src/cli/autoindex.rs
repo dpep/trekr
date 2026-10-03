@@ -229,17 +229,31 @@ pub(super) fn after_partial(
     }
     // A miss from an early store — which holds the file and its neighbours,
     // not the rest of the checkout — waits for the rest's write to land in
-    // the store, then asks afresh: this query reads the early copy.
+    // the store, then asks afresh: this query reads the early copy. Only
+    // then: a fresh process asking while the early store stands would find
+    // it, miss again and loop for as long as its index stood still.
     if let Some(early) = forget_early() {
         let main = Store::open(&super::store_path()?)?;
-        let root_str = root.to_string_lossy();
-        let started = Instant::now();
-        while early.exists() && started.elapsed() < crate::store::writer_wait() {
-            if main.warming(&root_str)?.is_none_or(|w| w.interrupted) {
-                break;
+        let root_str = root.to_string_lossy().into_owned();
+        let mut heads = Heads::new(&root_str, Why::UnderWay, TOLD.load(Relaxed));
+        // Ended, or cut short: the fresh process finishes it as any query.
+        while let Some(warming) = main.warming(&root_str)?.filter(|w| !w.interrupted)
+            && early.exists()
+        {
+            if heads.waited() >= crate::store::writer_wait() {
+                heads.clear();
+                incomplete::report(
+                    out,
+                    &root_str,
+                    "another trekr's index of it outlasted the writer wait",
+                );
+                crate::usage::outcome(crate::usage::Outcome::Error("incomplete"));
+                return Ok(Then::Exit(ExitCode::from(2)));
             }
+            heads.tick(Some(&warming));
             std::thread::sleep(POLL);
         }
+        heads.clear();
         use std::os::unix::process::CommandExt;
         let error = std::process::Command::new(std::env::current_exe()?)
             .args(std::env::args_os().skip(1))
@@ -493,6 +507,9 @@ impl Why {
     }
 }
 
+/// Whether this query has said why it waits: a second wait says it once.
+static TOLD: AtomicBool = AtomicBool::new(false);
+
 /// What a person or an agent waiting on the index is told: one line on
 /// stderr once it has taken a second — stdout stays the answer alone — and
 /// at a terminal a progress line that clears itself.
@@ -529,6 +546,7 @@ impl Heads {
         }
         if !self.told {
             self.told = true;
+            TOLD.store(true, Relaxed);
             eprintln!("{}", notice(&self.root, &self.why, warming));
         }
         if self.terminal && self.drawn.is_none_or(|at| at.elapsed() >= REDRAW) {
