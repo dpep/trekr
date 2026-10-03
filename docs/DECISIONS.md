@@ -11810,6 +11810,22 @@ one:
   (exit 64) though `--refs Widget` answers. It is that answer, for the
   constant the position resolves to. Testbed 511.
 
+*Addendum — the open buffers are copied only for an includer's answer.*
+The language server's definition copied every open buffer under the
+checkout on every request, for the includers' lookup above, which app code
+never reaches; warm definition latency grew with the files left open. It
+copies them only when the includers may answer. `warm.py` (500 sites,
+files left open, release builds, three interleaved rounds, medians, load
+~4), before → after:
+
+| | mastodon | discourse |
+| --- | ---: | ---: |
+| first request at a site | 0.80–0.84 → 0.67–0.69 ms | 0.86–0.88 → 0.72–0.73 ms |
+| the same request again | 0.40–0.42 → 0.26–0.27 | 0.45–0.46 → 0.32 |
+
+0.8.5 measured 0.65–0.66 / 0.26 and 0.69 / 0.31 in the same harness. With
+each file closed after its request nothing changed (0.26 / 0.32 again).
+
 ## DEC-491 — `shadowed`: a definition every read of whose name an override answers
 
 **Decided.** A new `--dead` tier, between `unreferenced` and `test-only`:

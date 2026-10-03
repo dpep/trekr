@@ -46,6 +46,11 @@ impl<'a> CheckoutFiles<'a> {
 }
 
 impl CheckoutFiles<'_> {
+    /// An open buffer's text, by checkout-relative path.
+    pub(crate) fn open_text(&self, path: &str) -> Option<&str> {
+        self.open.get(path).map(String::as_str)
+    }
+
     /// A file's facts, parsed already from the text on disk.
     pub(crate) fn hold(&self, path: &str, facts: Arc<Facts>) {
         self.held.borrow_mut().insert(path.to_string(), Some(facts));

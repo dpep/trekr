@@ -429,8 +429,7 @@ fn resolve_at(
     };
     let path = located.relative.clone();
     let unresolved = session.unresolved;
-    let open = overlay(session, &located.root);
-    let (tree, store) = session.tree_and_store(&located.root)?;
+    let tree = session.tree(&located.root)?;
     Ok(match under {
         Under::Definition(def) => vec![(path, def.pos.line, def.pos.col)],
         Under::Constant(reference) => {
@@ -448,7 +447,10 @@ fn resolve_at(
         Under::Call(call) => {
             let mut answer = crate::resolve::method_at(tree, &facts, &call, &path);
             // A shared group's body reads what its includers define (DEC-490).
+            // Only then are the open buffers copied: never for app code.
             if crate::resolve::members::includers_may_answer(&call, &answer) {
+                let open = overlay(session, &located.root);
+                let (tree, store) = session.tree_and_store(&located.root)?;
                 let root = located.root.to_string_lossy().into_owned();
                 let files = crate::cli::members::CheckoutFiles::with_open(
                     store,
@@ -803,7 +805,7 @@ fn member_references(
     let root_str = root.to_string_lossy().into_owned();
     let open = overlay(session, &root);
     let (tree, store) = session.tree_and_store(&root)?;
-    let files = CheckoutFiles::with_open(store, &root, &root_str, open.clone());
+    let files = CheckoutFiles::with_open(store, &root, &root_str, open);
     let Some((path, def)) = member_at_position(tree, &files, &located.relative, pos.line, pos.col)
     else {
         return Ok(None);
@@ -817,7 +819,7 @@ fn member_references(
         },
         false,
     );
-    let text = |path: &str| open.get(path).map(String::as_str);
+    let text = |path: &str| files.open_text(path);
     let mut locations: Vec<Location> = Vec::new();
     if declarations {
         locations.extend(location(
