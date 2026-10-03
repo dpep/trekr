@@ -9249,7 +9249,9 @@ mark to answer, so a store an older trekr built at this version, without
 `meta`, is not rebuilt for it, and no store version moves. The pid check
 means a crash leaves a checkout honestly partial instead of claiming an
 index under way forever; a reused pid reads as running, which keeps the
-checkout partial until its next index — the safe side.
+checkout partial until its next index — the safe side. (*Amended by
+DEC-501's addendum:* a mark names its writer's start, and a reused pid is
+dead.)
 
 **Measured.** discourse, release build, a fresh store per run, the editor's
 own sequence over `trekr --lsp` (open `app/models/about.rb`, then hover,
@@ -12187,6 +12189,19 @@ discourse 5.0 s (alone 4.0), mastodon 3.3 (3.0), 100k 18.9 (17.2). In the first 
 query also waited on its own child's redundant reindex after the shared one,
 and discourse took 8–9 s; queries now wait only for a child that held the
 mark.
+
+*Addendum — a mark names its writer's start.* A mark carries the writer's
+process start time beside its pid (`start:N` — macOS's `pbi_start_tvsec`
+and `_tvusec`, Linux's `/proc/<pid>/stat` field 22), and a pid running
+under another start is the pid reused, not the writer: dead, so taken over.
+So is a pid of another user's process (`kill` says `EPERM`) under a mark
+that names a start, since a store's writers are its owner's, and so is a
+zombie — exited, not yet reaped, which `kill(pid, 0)` still finds (on macOS
+`proc_pidinfo` answers `ESRCH` for one). Before, a reused pid read as
+running, and every query in the checkout waited out DEC-139's ten minutes,
+as did the `trekr --index` its hint named. A mark an older trekr wrote has
+no start, and reads as before; an older trekr reads this one's first three
+fields and its `own`, and ignores the rest.
 
 ## DEC-510 — `--dead spec` parses a file once, and only one that can hold a read
 

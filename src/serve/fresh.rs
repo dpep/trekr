@@ -755,6 +755,7 @@ mod tests {
             interrupted: true,
             pid: 1,
             uncounted,
+            start: None,
         }
     }
 

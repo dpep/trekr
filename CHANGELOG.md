@@ -21,7 +21,9 @@
 - **One first index per checkout.** A query, or a `trekr --index`, that finds
   another process's first index of the checkout under way (the language
   server's, another query's) waits for it instead of answering partial or
-  indexing it a second time; `--index` says so on stderr.
+  indexing it a second time; `--index` says so on stderr. One left by a
+  process that has since died is taken over at once, even when its pid now
+  belongs to another program.
 - **For scripts:** `--no-index` or `TREKR_NO_INDEX=1` keeps the old
   behaviour — answer from what is indexed, `not_indexed` (exit 2) where
   nothing is. A query whose index could not get the store's write lock in

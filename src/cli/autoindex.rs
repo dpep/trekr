@@ -427,6 +427,7 @@ mod tests {
             interrupted: false,
             pid: 1,
             uncounted,
+            start: None,
         }
     }
 

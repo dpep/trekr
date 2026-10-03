@@ -3023,6 +3023,41 @@ fn a_first_query_whose_index_dies_after_claiming_ends() {
     }
 }
 
+/// A mark whose pid now names another process — the pid reused since its
+/// writer died — is no index under way: a hand-run `--index` and a query
+/// each take it over at once rather than waiting the writer wait out.
+#[test]
+fn a_claim_whose_pid_was_reused_is_taken_over() {
+    let limit = std::time::Duration::from_secs(20);
+    let wait = [("TREKR_TEST_WRITER_WAIT_MS", "3000")];
+    for args in [
+        vec!["--index", "--json"],
+        vec!["--refs", "Widget#helper", "--json"],
+    ] {
+        let (dir, db) = scratch(&format!("reused-{}", args[0].trim_start_matches('-')));
+        repo(&dir);
+        assert!(trekr(&db, &dir, &["--status"]).status.code() == Some(2));
+        let root = fs::canonicalize(&dir).unwrap();
+        // This test's own pid: running, but not since the start the mark names.
+        rusqlite::Connection::open(&db)
+            .unwrap()
+            .execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES (?1, ?2)",
+                [
+                    format!("warming {}", root.to_string_lossy()),
+                    format!("{} 0 1 own start:1", std::process::id()),
+                ],
+            )
+            .unwrap();
+        let out = trekr_within(&db, &dir, &args, &wait, limit);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert_eq!(out.status.code(), Some(0), "{args:?}: {stderr}");
+        assert!(!stderr.contains("already indexing"), "{args:?}: {stderr}");
+        assert!(!stderr.contains("another trekr"), "{args:?}: {stderr}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
 /// A hand-typed column is a guess, so `--def` snaps to the nearest name on the
 /// line — and says that it did.
 #[test]

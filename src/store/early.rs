@@ -73,7 +73,7 @@ pub(crate) fn stale(main: &Path) -> Vec<PathBuf> {
             let digits = pid.find(|c: char| !c.is_ascii_digit()).unwrap_or(pid.len());
             pid[..digits]
                 .parse::<u64>()
-                .is_ok_and(|pid| !super::warming::alive(pid))
+                .is_ok_and(|pid| !super::warming::alive(pid, None))
         })
         .map(|entry| entry.path())
         .collect()

@@ -32,13 +32,17 @@ pub(crate) struct Warming {
     /// one.
     #[serde(skip)]
     pub(crate) uncounted: bool,
+    /// When that process started, as the kernel tells it: a pid reused
+    /// since names another process. `None` in a mark an older trekr wrote.
+    #[serde(skip)]
+    pub(crate) start: Option<u64>,
 }
 
 impl Warming {
     /// As of now: the index that was running when this was read may have
     /// died since, and a tree keeps what it was built with for its life.
     pub(crate) fn now(mut self) -> Warming {
-        self.interrupted |= !alive(u64::from(self.pid));
+        self.interrupted |= !alive(u64::from(self.pid), self.start);
         self
     }
 
@@ -80,7 +84,7 @@ impl Store {
 
     /// Mark `root` as filling, `read` of `of` files visible, by this process.
     pub(crate) fn set_warming(&self, root: &str, read: u64, of: u64) -> Result<()> {
-        self.mark(root, &format!("{} {read} {of}", std::process::id()))
+        self.mark(root, &format!("{} {read} {of}{}", std::process::id(), me()))
     }
 
     /// Mark `root` as filling before its gems are listed: `own` is the
@@ -88,7 +92,7 @@ impl Store {
     /// A trekr before this one reads the first three fields and ignores the
     /// rest.
     pub(crate) fn begin_warming(&self, root: &str, own: u64) -> Result<()> {
-        self.mark(root, &format!("{} 0 {own} own", std::process::id()))
+        self.mark(root, &format!("{} 0 {own} own{}", std::process::id(), me()))
     }
 
     /// Mark `root` as filling by this process — as [`Store::begin_warming`]
@@ -142,31 +146,114 @@ impl Store {
     }
 }
 
-/// `pid read of`, then `own` while the gems are uncounted, and whether that
-/// pid is still running.
+/// `pid read of`, then `own` while the gems are uncounted and `start:N` once
+/// the writer's start is known, and whether that process is still running.
 fn parse(value: &str) -> Option<Warming> {
     let mut parts = value.split(' ');
     let mut number = || parts.next()?.parse::<u64>().ok();
     let (pid, read, of) = (number()?, number()?, number()?);
+    let (mut uncounted, mut start) = (false, None);
+    for part in parts {
+        match part.strip_prefix("start:") {
+            Some(at) => start = at.parse().ok(),
+            None => uncounted |= part == "own",
+        }
+    }
     Some(Warming {
         read,
         of,
-        interrupted: !alive(pid),
+        interrupted: !alive(pid, start),
         pid: u32::try_from(pid).ok()?,
-        uncounted: parts.next() == Some("own"),
+        uncounted,
+        start,
     })
 }
 
-/// Is a process with this pid running? A pid reused since reads as running,
-/// which keeps the checkout marked partial until its next index — the safe
-/// side of the mistake.
-pub(super) fn alive(pid: u64) -> bool {
+/// ` start:N` for this process's mark, or nothing where the kernel won't say.
+fn me() -> String {
+    static ME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ME.get_or_init(|| {
+        started(std::process::id()).map_or_else(String::new, |start| format!(" start:{start}"))
+    })
+    .clone()
+}
+
+/// Is the process with this pid — started at `start`, when the mark says —
+/// still running? One that has exited is not, though nobody has reaped it:
+/// `kill(pid, 0)` still finds a zombie. One started at another time is the
+/// pid reused, not the writer, and so is another user's process under a
+/// mark that names a start — a store's writers are its owner's. A mark an
+/// older trekr wrote names none, and where the kernel will not say, a pid
+/// in use reads as running, which keeps the checkout marked partial until
+/// its next index — the safe side of the mistake.
+pub(super) fn alive(pid: u64, start: Option<u64>) -> bool {
     let Ok(pid) = libc::pid_t::try_from(pid) else {
         return false;
     };
     // SAFETY: signal 0 checks for the process and delivers nothing.
-    let sent = unsafe { libc::kill(pid, 0) };
-    sent == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    if unsafe { libc::kill(pid, 0) } != 0 {
+        let theirs = std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+        return theirs && start.is_none();
+    }
+    match process(pid) {
+        Some(found) => !found.zombie && start.is_none_or(|start| start == found.start),
+        None => true,
+    }
+}
+
+/// When the process `pid` started, in the kernel's own units: comparable
+/// only with another reading on the same machine.
+pub(crate) fn started(pid: u32) -> Option<u64> {
+    process(libc::pid_t::try_from(pid).ok()?)
+        .filter(|found| !found.zombie)
+        .map(|found| found.start)
+}
+
+/// A process as the kernel holds it.
+struct Process {
+    zombie: bool,
+    start: u64,
+}
+
+#[cfg(target_os = "macos")]
+fn process(pid: libc::pid_t) -> Option<Process> {
+    let size = std::mem::size_of::<libc::proc_bsdinfo>() as libc::c_int;
+    // SAFETY: an all-zero proc_bsdinfo is a valid value of a plain C struct.
+    let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+    // SAFETY: the buffer is `info`, `size` bytes long, written by the kernel.
+    let got =
+        unsafe { libc::proc_pidinfo(pid, libc::PROC_PIDTBSDINFO, 0, (&raw mut info).cast(), size) };
+    if got != size {
+        // A process `kill` finds and this cannot is a zombie: its task is gone.
+        let error = std::io::Error::last_os_error().raw_os_error();
+        return (error == Some(libc::ESRCH)).then_some(Process {
+            zombie: true,
+            start: 0,
+        });
+    }
+    Some(Process {
+        zombie: info.pbi_status == libc::SZOMB,
+        start: info.pbi_start_tvsec * 1_000_000 + info.pbi_start_tvusec,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn process(pid: libc::pid_t) -> Option<Process> {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    // `pid (comm) state …`: the name may hold spaces and parentheses.
+    let mut fields = stat.get(stat.rfind(')')? + 1..)?.split_whitespace();
+    let state = fields.next()?;
+    // The start time is field 22 of stat(5); the state was field 3.
+    let start = fields.nth(18)?.parse().ok()?;
+    Some(Process {
+        zombie: state == "Z" || state == "X",
+        start,
+    })
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn process(_pid: libc::pid_t) -> Option<Process> {
+    None
 }
 
 #[cfg(test)]
@@ -244,6 +331,56 @@ mod tests {
     }
 
     #[test]
+    fn an_exited_process_nobody_reaped_is_not_running() {
+        let mut child = std::process::Command::new("true").spawn().unwrap();
+        // Ended, and not yet reaped: a zombie, which `kill(pid, 0)` finds.
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        let gone = !alive(u64::from(child.id()), None);
+        child.wait().unwrap();
+        assert!(gone, "a zombie reads as running");
+    }
+
+    #[test]
+    fn a_mark_whose_pid_now_names_another_process_is_dead() {
+        let me = std::process::id();
+        let start = started(me).expect("this process's start");
+        let mine = parse(&format!("{me} 1 3 own start:{start}")).unwrap();
+        assert!(!mine.interrupted);
+        assert!(mine.uncounted);
+        // The same pid, started at another time: reused since the mark.
+        let reused = parse(&format!("{me} 1 3 start:{}", start + 1)).unwrap();
+        assert!(reused.interrupted);
+        assert!(!reused.uncounted);
+        // Another user's process — init's, here — is no writer of ours.
+        assert!(parse("1 1 3 start:5").unwrap().interrupted);
+        assert!(!parse("1 1 3").unwrap().interrupted);
+        // A mark an older trekr wrote has no start, and reads as before.
+        let old = parse(&format!("{me} 1 3 own")).unwrap();
+        assert!(!old.interrupted && old.uncounted);
+        assert_eq!(old.start, None);
+    }
+
+    #[test]
+    fn a_mark_names_its_writers_start_and_a_claim_takes_over_a_reused_pid() {
+        let mut store = Store::open_in_memory().unwrap();
+        store.set_warming("/app", 1, 3).unwrap();
+        let own = store.warming("/app").unwrap().unwrap();
+        assert_eq!(own.start, started(std::process::id()));
+        // A live process's pid, written with a start it never had.
+        let mut other = std::process::Command::new("sleep")
+            .arg("60")
+            .spawn()
+            .unwrap();
+        store
+            .mark("/app", &format!("{} 3 40 start:1", other.id()))
+            .unwrap();
+        assert!(store.warming("/app").unwrap().unwrap().interrupted);
+        assert_eq!(store.claim_warming("/app", 40, false).unwrap(), None);
+        other.kill().unwrap();
+        other.wait().unwrap();
+    }
+
+    #[test]
     fn coverage_never_rounds_up_to_whole() {
         let warming = Warming {
             read: 999,
@@ -251,6 +388,7 @@ mod tests {
             interrupted: false,
             pid: 1,
             uncounted: false,
+            start: None,
         };
         assert_eq!(warming.coverage(), 0.99);
     }
