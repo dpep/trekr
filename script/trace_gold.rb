@@ -16,6 +16,10 @@
 #                   for a first gold set, and the reason pointing this at a
 #                   bigger app is only a matter of writing a better exercise.
 #   TREKR_MAX       stop after this many distinct call sites (default 20000)
+#   TREKR_ONLY      record only call sites whose file matches this regexp —
+#                   `\.(erb|rabl)\z` for a gold set of view templates. Rails
+#                   compiles a template with its own path and line, so its
+#                   frames name the template (DEC-523).
 
 require "json"
 require "set"
@@ -23,6 +27,7 @@ require "set"
 OUT      = ENV.fetch("TREKR_GOLD", "/tmp/trekr-gold.ndjson")
 EXERCISE = ENV["TREKR_EXERCISE"]
 MAX      = Integer(ENV.fetch("TREKR_MAX", "20000"))
+ONLY     = ENV["TREKR_ONLY"]&.then { |pattern| Regexp.new(pattern) }
 APP_ROOT = File.realpath(Dir.pwd)
 SELF     = File.realpath(__FILE__)
 
@@ -90,6 +95,7 @@ trace = TracePoint.new(:call) do |tp|
   caller_path = location.absolute_path || location.path
   next if caller_path.nil? || caller_path == SELF
   next if EXERCISE && caller_path == EXERCISE
+  next if ONLY && !ONLY.match?(caller_path)
 
   key = [caller_path, location.lineno, tp.method_id]
   next unless seen.add?(key)
