@@ -12697,7 +12697,9 @@ the template's source (`resolve::rabl`):
 
 A symbol `attributes`, `attribute`, `child` or `glue` is handed — a hash's
 key too, `attributes :label => :title`, which the extractor now records as
-a symbol for those four names (`RENAMES_BY_KEY`) — is a call of that name
+a symbol for those four names at the top of a file (`RENAMES_BY_KEY`; in a
+class body `attribute :x, if: :y?` is a serializer's, whose option DEC-340
+reads) — is a call of that name
 on the object of its scope (`resolved_via: rabl:object`): `--def` resolves
 it, `--refs` confirms it, `--dead` counts it. A `node` block's parameter is
 the object, so `node(:x) { |p| p.slug }` types `p`. `extends "x"` opens the

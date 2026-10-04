@@ -5269,8 +5269,13 @@ impl<'pr> Extractor<'_> {
             }
             if let Some(options) = arg.as_keyword_hash_node() {
                 // RABL's `attributes :id => :key` and `child(:author =>
-                // :writer)`: a key is the object's method (DEC-526).
-                if call.receiver().is_none() && RENAMES_BY_KEY.contains(&macro_name.as_str()) {
+                // :writer)`: a key is the object's method (DEC-526). At the
+                // top of a file only: in a class body `attribute :x, if:
+                // :y?` is a serializer's, whose options DEC-340 reads.
+                if call.receiver().is_none()
+                    && self.nesting.is_empty()
+                    && RENAMES_BY_KEY.contains(&macro_name.as_str())
+                {
                     for element in options.elements().iter() {
                         if let Some(key) = element
                             .as_assoc_node()

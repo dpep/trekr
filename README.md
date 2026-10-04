@@ -213,8 +213,9 @@ The tiers, from least evidence of use to most:
 Each row is `clear` or `lower` confidence, and says why in words. It is one
 pass and does not cascade: a method whose only caller is itself a candidate
 is `single-caller`, and its reason says so. Two callers trekr cannot see grade
-a row `lower` and are named in `caveat`: a view template that writes the name
-(trekr does not read views), and Ruby or Rails calling a protocol hook by name
+a row `lower` and are named in `caveat`: a Haml, Slim, Jbuilder or Builder
+template that writes the name (ERB and RABL templates are read, and their
+calls counted), and Ruby or Rails calling a protocol hook by name
 — `marshal_load`, `to_partial_path`, `each`, `perform`, … (DEC-315). So
 does a symbol in the method's own file that trekr does not read as a call
 (`only: [:archive]`), and a controller action when a route is built at
@@ -438,7 +439,10 @@ to surprise you:
   (`METHODS_WITH_QUERY.each { class_eval "def #{m}…" }`) is not named. Its
   class answers `residue` for such a name, never "no such method", and the
   string's own calls are still read.
-- ERB templates are not read, and `refine` is not modeled.
+- Haml and Slim templates are not read (ERB and RABL are), and `refine` is
+  not modeled. In a view, route helpers (`posts_path`) are residue, and
+  every template sees every helper: `clear_helpers` and a controller's own
+  `helper` list are not modeled.
 
 ## Development
 

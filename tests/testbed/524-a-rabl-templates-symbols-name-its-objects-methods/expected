@@ -14,3 +14,6 @@ def app/views/widgets/show.rabl:8:9 status=resolved site=app/views/widgets/base.
 def app/views/widgets/base.rabl:1:13 status=resolved owner=Widget via=rabl:object
 refs Widget#label confirmed=4
 refs Part#sku confirmed=1
+# A serializer's `attribute :x, if: :y?` in a class body is not RABL's: its
+# option still names the method it calls (DEC-340).
+dead app/serializers WidgetSerializer#shown?=convention-only

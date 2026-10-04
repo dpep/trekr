@@ -182,6 +182,18 @@ trekr --def activerecord/lib/active_record/relation/batches.rb:94:34
 # activerecord/lib/active_record/relation/batches.rb:93:11  local `cursor`
 ```
 
+**In a view template** (`*.erb`, `*.rabl` under `app/views/`) positions are
+the template's own. A bare call runs on the view: a controller's
+`helper_method`, the app's helpers, then ActionView (`resolved_via: view`;
+`rabl` in RABL, its engine first). `@post` is typed from the controller
+action that renders the template (`resolved_via: controller`). On a
+`render`'s name (`render "row"`, `render @posts`, `extends "x"`) the answer
+is the template file (`under: template`); in a partial, a name a `render`
+hands it is a local defined at that key (`resolved_via: render`). RABL's
+`attributes :title` and `child(:comments)` resolve on the template's object
+(`rabl:object`). Route helpers (`posts_path`) are residue. Haml and Slim
+are not read.
+
 **`--def` keeps itself fresh.** It checks git in O(1) and re-reads the file you
 asked about if the checkout moved, so a definition that shifted lines is found
 at its new line without reindexing. When the answer carries `index`, read it:
@@ -328,12 +340,12 @@ break: a private candidate's evidence is complete, a public one's is not.
 discourse's history, `unreferenced` candidates were deleted 19.8 % of the time
 against a 19.0 % base rate — no lift. Treat a candidate as *"nothing was found,
 here is what was checked"*, weigh `confidence` (`clear`, or `lower` when the
-file uses `send`, `method_missing` and the like — `caveat` names them). trekr
-does not read view templates: a row whose name a template's Ruby writes says
-"named in a view (…), which is not read", and a protocol hook Ruby or Rails
+file uses `send`, `method_missing` and the like — `caveat` names them). ERB
+and RABL templates are read, so a helper or model method a view calls has
+that call; a Haml or Slim template is not, and a row whose name one writes
+says "named in a view (…), which is not read". A protocol hook Ruby or Rails
 calls by name (`marshal_load`, `to_partial_path`, `each`, a job's `perform`)
-says "a hook … calls by name". A method called only from a view whose
-template does not spell it still looks unreferenced.
+says "a hook … calls by name".
 
 ## Two more
 
