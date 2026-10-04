@@ -95,6 +95,22 @@ pub(crate) struct Reference {
     pub(crate) called_as: Option<&'static str>,
 }
 
+const SUPER_UNPLACED: &str = "`super` from a method whose owner the index cannot place";
+const SUPER_UNINDEXED: &str = "`super` from a class whose ancestors are not fully indexed";
+const BY_SYMBOL: &str = "named by a symbol handed to a macro — invoked by name, receiver unknown";
+
+/// A possible site that names no class it would run in, so it would reach
+/// any class's `initialize` as readily as this one's (DEC-541).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Unplaced {
+    /// `new` on an untyped receiver.
+    New,
+    /// A `super` whose landing the index cannot place.
+    Super,
+    /// A symbol handed to a macro.
+    Symbol,
+}
+
 impl Tier {
     /// Confirmed before possible; excluded is never listed.
     pub(crate) fn rank(self) -> u8 {
@@ -107,6 +123,20 @@ impl Tier {
 }
 
 impl Reference {
+    /// What kind of site this is, when it is possible only because nothing
+    /// places it.
+    pub(crate) fn unplaced(&self) -> Option<Unplaced> {
+        if self.tier != Tier::Possible {
+            return None;
+        }
+        match self.why {
+            _ if self.called_as.is_some() && self.receiver_type.is_none() => Some(Unplaced::New),
+            SUPER_UNPLACED | SUPER_UNINDEXED => Some(Unplaced::Super),
+            BY_SYMBOL => Some(Unplaced::Symbol),
+            _ => None,
+        }
+    }
+
     /// A site ruled out against an index still being filled is not ruled
     /// out: the definition that would take its call may be in a file not read
     /// yet (DEC-320). It is listed as possible, last, with the ruling kept.
@@ -1097,14 +1127,7 @@ fn tier_super(
         if own {
             return never_itself();
         }
-        return here(
-            Tier::Possible,
-            scope.clone(),
-            None,
-            "`super` from a method whose owner the index cannot place",
-            3,
-            None,
-        );
+        return here(Tier::Possible, scope.clone(), None, SUPER_UNPLACED, 3, None);
     };
     let is_target = |class: &str, method: &crate::tree::MethodDef| {
         target.is_none_or(|target| runs_asked(tree, query, target, (class, call.singleton), method))
@@ -1146,14 +1169,7 @@ fn tier_super(
     }
     if !super::unresolved_behind(tree, &landings).is_empty() && could_hide(tree, &landings, target)
     {
-        return here(
-            Tier::Possible,
-            owner,
-            None,
-            "`super` from a class whose ancestors are not fully indexed",
-            1,
-            None,
-        );
+        return here(Tier::Possible, owner, None, SUPER_UNINDEXED, 1, None);
     }
     match landed {
         Some(elsewhere) => here(
@@ -1219,7 +1235,7 @@ fn possible(
             receiver: shape,
             receiver_type: None,
             owner: None,
-            why: "named by a symbol handed to a macro — invoked by name, receiver unknown",
+            why: BY_SYMBOL,
             ruling: None,
             proximity: 4,
             from: None,

@@ -3271,6 +3271,45 @@ fn gather_constructions(
     Ok((found, counts))
 }
 
+/// Takes an `initialize`'s unplaced sites out of its evidence (DEC-541),
+/// and says what they were: `None` when there were none.
+fn unplaced_caveat(
+    found: &mut Vec<crate::resolve::refs::Reference>,
+    counts: &mut crate::resolve::refs::Counts,
+) -> Option<String> {
+    use crate::resolve::refs::Unplaced;
+    let mut parts = Vec::new();
+    for (kind, what) in [
+        (Unplaced::New, "`new` on an untyped receiver"),
+        (Unplaced::Super, "`super` whose landing trekr cannot place"),
+        (Unplaced::Symbol, "symbol handed to a macro"),
+    ] {
+        let sites: Vec<_> = found
+            .iter()
+            .filter(|r| r.unplaced() == Some(kind))
+            .collect();
+        let Some(first) = sites.iter().min_by_key(|r| (&r.path, r.line)) else {
+            continue;
+        };
+        parts.push(format!(
+            "{} {what} (first at {}:{})",
+            sites.len(),
+            first.path,
+            first.line
+        ));
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let before = found.len();
+    found.retain(|r| r.unplaced().is_none());
+    counts.possible -= before - found.len();
+    Some(format!(
+        "constructed where its class is not known: {}",
+        parts.join(", ")
+    ))
+}
+
 /// What a name *is*, in one answer: where it is defined, what kind of location
 /// that is, and how many call sites can actually reach it.
 ///
@@ -4613,7 +4652,9 @@ fn dead_in(
         }
         // Action Mailer runs an action through its class, whose
         // `method_missing` the index finds nothing behind (DEC-369).
-        let public = def.visibility.as_str() == "public";
+        let constructor = refs::constructor_of(&query).is_some();
+        // Ruby makes `initialize` private wherever it is written.
+        let public = def.visibility.as_str() == "public" && !constructor;
         if !def.singleton && public && tree.inherits(&owner, MAILER) {
             let query = refs::Query {
                 owner: query.owner.clone(),
@@ -4648,28 +4689,14 @@ fn dead_in(
                 found.push(call);
             }
         }
-        // An `X.new` on a value of no known class is any class's: it keeps
-        // an `initialize` alive no more than a grep would, so it is weighed
+        // An `X.new` on a value of no known class, a `super` trekr cannot
+        // place and a macro's symbol are any class's: they keep an
+        // `initialize` alive no more than a grep would, so they are weighed
         // as a caveat instead (DEC-541).
-        let constructor = refs::constructor_of(&query).is_some();
-        let dynamic: Vec<&refs::Reference> = found
-            .iter()
-            .filter(|r| constructor && r.called_as.is_some() && r.receiver_type.is_none())
-            .filter(|r| r.tier == refs::Tier::Possible)
-            .collect();
-        let dynamic_new = dynamic
-            .iter()
-            .min_by_key(|r| (r.path.clone(), r.line))
-            .map(|r| format!("{}:{}", r.path, r.line));
-        let dynamic_count = dynamic.len();
-        if dynamic_count > 0 {
-            found.retain(|r| {
-                !(r.called_as.is_some()
-                    && r.receiver_type.is_none()
-                    && r.tier == refs::Tier::Possible)
-            });
-            counts.possible -= dynamic_count;
-        }
+        let unplaced_sites = match constructor {
+            true => unplaced_caveat(&mut found, &mut counts),
+            false => None,
+        };
         // A `def` its scope may not own: a call of its name whose receiver
         // has no such method may be on the object it is defined on (DEC-562).
         let defined_on = crate::resolve::defined_on(&tree, facts, def, file);
@@ -4800,14 +4827,11 @@ fn dead_in(
             }
             risky.push_str(how);
         }
-        if let Some(first) = &dynamic_new {
+        if let Some(unplaced) = &unplaced_sites {
             if !risky.is_empty() {
                 risky.push_str(", ");
             }
-            risky.push_str(&format!(
-                "constructed where its class is not known: {dynamic_count} `new` on an untyped \
-                 receiver (first at {first})"
-            ));
+            risky.push_str(unplaced);
         }
         if caller.as_ref().is_some_and(|c| c["tier"] == "possible") {
             if !risky.is_empty() {
@@ -4885,9 +4909,11 @@ fn dead_in(
         let helper = |path: &str| path.split('/').any(|dir| dir == "helpers");
         let mut unplaced = None;
         // The overrides a call of its name lands on, in a subclass: each call
-        // that would run it runs one of them instead (DEC-491).
+        // that would run it runs one of them instead (DEC-491). Not an
+        // `initialize`'s: a subclass's own calls `super`, and nothing calls
+        // one with no receiver.
         let mut shadowing: Vec<String> = Vec::new();
-        if tier == "unreferenced" && !def.singleton && counts.excluded > 0 {
+        if tier == "unreferenced" && !def.singleton && !constructor && counts.excluded > 0 {
             let (all, _) = gather_refs(
                 &tree,
                 store,

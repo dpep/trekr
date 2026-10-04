@@ -1,0 +1,8 @@
+# A `super` trekr cannot place — from a module nothing includes, or a class
+# whose ancestors are not indexed — and a symbol handed to a macro would be
+# any class's `initialize`: in `--dead` they weigh no more than an untyped
+# `klass.new`, and are said in the caveat. Each used to keep every
+# unconstructed class's `initialize` off the list (DEC-541). `--refs` still
+# lists them.
+dead lib/widgets.rb Lonely#initialize=unreferenced~super Built#initialize=none
+refs Lonely#initialize confirmed=0 possible=3

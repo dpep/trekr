@@ -12461,6 +12461,14 @@ subclasses' `super`s reach belongs to an abstract class. An untyped
 `klass.new` is any class's: it keeps an `initialize` alive no more than a
 grep would, so those are dropped from the evidence and said in the caveat
 (`constructed where its class is not known: N `new` on an untyped receiver`).
+So are a `super` whose landing trekr cannot place — from a module nothing
+indexed includes, from a class whose ancestors are not all indexed — and a
+symbol handed to a macro (`receive(:initialize)`): each would be any
+class's `initialize` too (`resolve::refs::Unplaced`; the addendum below).
+`--refs` still lists all of them. Ruby makes `initialize` private wherever
+it is written, so no public-method convention (a Thor command, a route's
+action) reaches one, and DEC-491's shadowing does not apply: a subclass's
+`initialize` calls `super`.
 Every reported `initialize` is graded lower, as a class is (DEC-450): an
 exception is constructed by `raise` from its name, a Singleton by
 `instance`, a module's `initialize` when a class mixing it in is, and any
@@ -12489,10 +12497,14 @@ the index, the first cut took discourse to 25 s wall.
 | | initialize rows before | after | of them `clear` |
 | --- | ---: | ---: | ---: |
 | mastodon | 0 | 14 unreferenced | 0 |
-| discourse | 0 | 0 | 0 |
-| rails, eleven libraries | 0 | 0 | 0 |
+| discourse | 0 | 46 unreferenced | 0 |
+| rails, twelve libraries | 0 | 72 unreferenced | 0 |
 
-No other row moves. The 14 mastodon rows, each read: four exceptions
+The discourse and rails rows first read 0 → 0: one unplaceable `super` or
+macro symbol anywhere kept every `initialize` off the list, and the table
+did not show it (the addendum below). No row but an `initialize`'s moves,
+other than a single caller's reason noting that its caller, an
+`initialize`, is itself a candidate. The 14 mastodon rows, each read: four exceptions
 raised by name (`Antispam::SilentlyDrop`, `Mastodon::UnexpectedResponseError`,
 `Mastodon::PrivateNetworkAddressError`, `Vite::Manifest::MissingEntryError`),
 two Singletons (`InlineScriptManager`, `Themes`), two HTTP gem features
@@ -12516,6 +12528,35 @@ change. FactoryBot's `build`/`create` and Active Record's `create`/
 `find_or_create_by` construct through a `new` inside the gem, which an
 untyped site there already is; they are not read as references of their
 own. `X[…]` (Struct, Set) and `Class.new(Base)` bodies' `new` are not read.
+
+### DEC-541 addendum — a `super` or symbol trekr cannot place keeps no `initialize` alive
+
+**Found.** On discourse and rails `--dead` reported no `initialize` at all.
+A class planted with nothing constructing it got no row: besides the
+untyped `x.new` already dropped, its evidence held `super`s "from a class
+whose ancestors are not fully indexed" (`class Bundle < Item` where `Item =
+Struct.new`), `super`s "from a method whose owner the index cannot place"
+(any module's `def initialize(*); super; end` that nothing includes), and
+symbols handed to a macro (`receive(:initialize)` in specs). Each is as much
+any class's as an untyped `new`, and each is in every `initialize`'s
+`--refs`, so one of them anywhere masked the whole checkout.
+
+**Decided.** For an `initialize`, `--dead` drops those possible sites from
+the evidence as it drops an untyped `new`, and says each kind in the
+caveat, with a count and the first site: `constructed where its class is
+not known: 115 `new` on an untyped receiver (first at …), 4 `super` whose
+landing trekr cannot place (first at …), 4 symbol handed to a macro (first
+at …)`. A `super` that lands here from some of a module's includers is
+placed, and still counts. Testbed 580.
+
+**Measured.** `--dead`, main → this, one store, every reported row read for
+its tier and confidence: discourse `app lib` 0 → 46 `initialize` rows,
+`spec` 0 → 7, rails' twelve libraries 0 → 72, mastodon `app lib` 14 → 14
+and `spec` 0 → 0 — every one `unreferenced` and `lower`. Read by hand,
+each constructed out of sight: `ThemeSettingsManager` through `constantize`,
+`LengthValidator` handed to `validates_with`, `MockRateLimiter` to
+`stub_const`, `ActiveStorage::Analyzer` subclasses through
+`analyzer_class.new`, exceptions by `raise`.
 
 ## DEC-520 — An ERB template's Ruby is read in place, and indexed as a file
 

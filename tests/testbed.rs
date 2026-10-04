@@ -462,6 +462,13 @@ fn every_testbed_case_answers_as_recorded() {
         .flatten()
         .map(|e| e.path())
         .filter(|p| p.is_dir())
+        // `TESTBED_ONLY=580` runs the cases whose name starts with it.
+        .filter(|p| {
+            std::env::var("TESTBED_ONLY").map_or(true, |only| {
+                p.file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with(&only))
+            })
+        })
         .collect();
     cases.sort();
     assert!(!cases.is_empty(), "no cases in {}", root.display());
