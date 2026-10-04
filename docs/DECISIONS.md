@@ -13169,3 +13169,12 @@ the top level asked `Base#build` and answered for the instance method, or
 `Base.build`. Both entry points share `resolve::asked_at`. Testbed 564.
 
 **Resolve only**; no extraction change.
+
+### DEC-563 addendum — a call no method is placed on is still a call
+
+`--refs` at a call whose method trekr cannot place (`x.build` on an untyped
+receiver, `o.build` on a block's parameter) exited 64, `kind: usage`, saying
+`--refs` takes "a call of it" — which it was given. It is answered now as
+`--refs Owner#name` answers an owner it cannot find: the `--def` answer's
+`status` and `reason`, no references, a `hint` naming the bare-name listing
+(`trekr --refs build`), exit 1. Testbed 582.

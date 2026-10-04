@@ -1,0 +1,6 @@
+# `--refs` at a call whose method trekr cannot place — an untyped receiver,
+# a block's parameter — is a call, and is answered as one: residue, the
+# `--def` reason, exit 1. It was a usage error, exit 64, that said `--refs`
+# takes "a call of it".
+refs lib/app.rb:5:3 status=residue exit=1
+refs lib/app.rb:6:18 status=residue exit=1

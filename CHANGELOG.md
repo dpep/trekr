@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **`--refs` at a call trekr cannot place answers instead of failing.** On
+  `x.build` with an untyped receiver it exited 64 as a usage error; it now
+  answers `residue` with the reason and a hint to list the name's call
+  sites (`trekr --refs build`), exit 1.
 - **A superclass is looked up as Ruby looks it up.** `class Pool < Pool`
   inside `class Child < Parent` inherits `Parent::Pool`, found through the
   enclosing class's ancestors, where `--ancestors` stopped and called it

@@ -4103,7 +4103,12 @@ fn cmd_refs_at(
         Some(position::Under::Call(call)) => {
             let answer = crate::resolve::method_at(&tree, &facts, &call, &relative);
             let (name, singleton) = crate::resolve::asked_at(&tree, &call, &answer);
-            answer.owner.map(|owner| (owner, singleton, name))
+            // A call whose method trekr cannot place has no references to
+            // narrow: say so, and point at the name's.
+            let Some(owner) = answer.owner.clone() else {
+                return refs_of_unplaced_call(out, written, &name, &answer);
+            };
+            Some((owner, singleton, name))
         }
         _ => None,
     };
@@ -4115,6 +4120,47 @@ fn cmd_refs_at(
     };
     let query = format!("{owner}{}{name}", if singleton { "." } else { "#" });
     cmd_refs(out, &query, include_excluded, Some(&root))
+}
+
+/// `--refs` at a call whose method trekr cannot place: the `--def` answer's
+/// status and reason, no references, and the bare name's listing as a hint.
+fn refs_of_unplaced_call(
+    out: Output,
+    written: &str,
+    name: &str,
+    answer: &crate::resolve::MethodAnswer,
+) -> anyhow::Result<ExitCode> {
+    let reason = answer
+        .reason
+        .clone()
+        .unwrap_or_else(|| format!("no method `{name}` trekr can place for this call"));
+    let hint = format!("trekr --refs {name}");
+    if out != Output::Text {
+        let found = serde_json::json!({
+            "query": written,
+            "status": answer.status,
+            "owner": null,
+            "method": name,
+            "receiver": answer.receiver,
+            "receiver_type": answer.receiver_type,
+            "definition": [],
+            "resolves_to": null,
+            "inherited": false,
+            "counts": crate::resolve::refs::Counts::default(),
+            "references": null,
+            "reason": reason,
+            "hint": hint,
+        });
+        emit_listing(
+            out,
+            found,
+            "references",
+            &[] as &[crate::resolve::refs::Reference],
+        )?;
+    } else {
+        println!("{reason}\n  every call site of {name} by name: {hint}");
+    }
+    Ok(exit_on(false))
 }
 
 /// The whole-mention view for a bare name, with each call site's resolved owner
