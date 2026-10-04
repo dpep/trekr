@@ -12759,6 +12759,18 @@ for a render that reaches the template in question.
 only their templates, and an answer reads a handful in depth. A tree lives
 until the index's stamp moves, which a method body's edit does not move.
 
+**The renderer scan reads only files that name the template.** Finding the
+controllers that render a template (DEC-521's addendum) scans every file
+that calls `render`; a file not yet read whose text lacks the template's
+name — `topics/show` in a controller, which names another directory's
+template by its path, or `row` in a view — is not parsed. Instructions
+retired by a cold `--def` on `@topic_view.topic` in discourse's
+`topics/show.html.erb`: main ~1,000 M, this lane without the filter ~1,650
+M, with it ~1,130 M; on an ivar in a partial (`exceptions/
+_not_found_topics`) ~990 M → ~1,140 M, the partial's renderers being
+followed. The LSP keeps what it read, so a warm answer pays none of it.
+Answers identical on the four corpora's gold sets.
+
 ## DEC-524 — A `render`'s name reaches the template it renders
 
 **Decided.** The extractor records each template a call with no receiver

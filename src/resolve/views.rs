@@ -129,8 +129,14 @@ fn renderings_at(tree: &Tree, path: &str, depth: usize, seen: &mut Vec<String>) 
         if !in_controller && !(partial && under(caller, "views").is_some()) {
             continue;
         }
+        // A controller names another directory's template by its path; a
+        // view may name a partial beside it by its name alone.
+        let naming = match in_controller && !dir.is_empty() {
+            true => format!("{dir}/{base}"),
+            false => base.to_string(),
+        };
         let absolute = root.join(caller).to_string_lossy().into_owned();
-        let Some(named) = tree.file_templates(&absolute) else {
+        let Some(named) = tree.file_templates(&absolute, Some(&naming)) else {
             continue;
         };
         for template in named.iter() {
@@ -562,7 +568,7 @@ pub(crate) fn partial_local(tree: &Tree, call: &Call, path: &str) -> Option<Part
     };
     for caller in tree.files_calling("render").iter() {
         let absolute = root.join(caller).to_string_lossy().into_owned();
-        let Some(named) = tree.file_templates(&absolute) else {
+        let Some(named) = tree.file_templates(&absolute, None) else {
             continue;
         };
         // The whole file is read only for a render that names this partial.

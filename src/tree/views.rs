@@ -283,8 +283,14 @@ impl Tree {
 
     /// The templates a checkout file names (`render "row"`, `extends "x"`),
     /// read from disk and kept while it is unchanged — what a scan over
-    /// every file that calls `render` needs of each.
-    pub(crate) fn file_templates(&self, path: &str) -> Option<Arc<[crate::core::TemplateRef]>> {
+    /// every file that calls `render` needs of each. With `naming`, a file
+    /// not yet read whose text lacks that word is not parsed: it names no
+    /// template by it.
+    pub(crate) fn file_templates(
+        &self,
+        path: &str,
+        naming: Option<&str>,
+    ) -> Option<Arc<[crate::core::TemplateRef]>> {
         let stamp = stamp_of(path)?;
         if let Some((read, named)) = self.views().named.lock().ok()?.get(path)
             && *read == stamp
@@ -292,6 +298,11 @@ impl Tree {
             return Some(named.clone());
         }
         let bytes = std::fs::read(path).ok()?;
+        if let Some(word) = naming
+            && !bytes.windows(word.len()).any(|w| w == word.as_bytes())
+        {
+            return None;
+        }
         let named: Arc<[crate::core::TemplateRef]> =
             crate::extract::extract_file(path, &bytes).templates.into();
         self.views()
@@ -475,7 +486,7 @@ mod tests {
         assert_eq!(again.defs[0].name, "W0", "and read again when asked");
         // The scan's templates are kept for every file.
         for i in 0..=FACTS_KEPT {
-            tree.file_templates(&path(i)).unwrap();
+            tree.file_templates(&path(i), None).unwrap();
         }
         assert_eq!(tree.views().named.lock().unwrap().len(), FACTS_KEPT + 1);
         let _ = std::fs::remove_dir_all(&dir);
