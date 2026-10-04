@@ -1,0 +1,8 @@
+# `GadgetsController#show` renders `widgets/show` with its own `@widget`,
+# and the template typed `@widget` from `WidgetsController#show` alone, at
+# confidence 1. Every controller that renders a template hands it its
+# writes: types that disagree make the answer ambiguous, each a candidate.
+# A controller that names the template is read only for the action that
+# renders it, so `GadgetsController#index`'s `@title` has no vote.
+def app/views/widgets/show.html.erb:1:13 status=ambiguous via=controller owner=Widget candidates=1 candidate1=Gadget
+def app/views/widgets/show.html.erb:2:12 receiver_type=String

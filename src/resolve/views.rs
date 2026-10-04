@@ -208,12 +208,7 @@ fn chain_files(tree: &Tree, controller: &str) -> Vec<(String, Arc<Facts>)> {
 /// every write in that controller's chain.
 fn controller_writes(tree: &Tree, path: &str, target: &str) -> Vec<(String, Arc<Facts>, Assign)> {
     let mut found: Vec<(String, Arc<Facts>, Assign)> = Vec::new();
-    // The path convention's controller only, for now.
-    for rendering in renderings(tree, path)
-        .into_iter()
-        .take(1)
-        .filter(|r| r.conventional)
-    {
+    for rendering in renderings(tree, path) {
         let files = chain_files(tree, &rendering.controller);
         let widths: &[bool] = match (&rendering.runs, rendering.conventional) {
             (None, _) => &[false],

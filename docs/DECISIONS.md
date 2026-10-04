@@ -12693,6 +12693,26 @@ path: storing the first would put every app's ivar writes in the store
 **Not done.** A render of the template from another controller; a layout
 chosen by `layout "x"`. Testbed 522.
 
+### DEC-522 addendum — every controller that renders a template votes
+
+**Decided.** The writes a template's `@ivar` sees are collected from each
+controller in `resolve::views::renderings` (DEC-521's addendum), not the
+path convention's alone: a controller whose action names the template in a
+`render` (`GadgetsController#show`'s `render template: "widgets/show"`)
+votes with that action and its `before_action`s — never its whole chain,
+since another action's write does not reach this render — and a partial
+hears the controllers of the templates that render it. Writes that
+disagree make the answer `ambiguous`, as before. Only the convention's
+controller widens to every write in its chain when its action writes
+nothing.
+
+**Why.** The hunt's `GadgetsController#show` set `@widget = Status.first`
+and rendered `widgets/show`, whose `@widget.username` answered
+`Account#username` at 1.0 from `WidgetsController` alone. Testbed 602.
+
+**Retires** DEC-522's "not done: a render of the template from another
+controller".
+
 ## DEC-524 — A `render`'s name reaches the template it renders
 
 **Decided.** The extractor records each template a call with no receiver
