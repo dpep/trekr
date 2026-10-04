@@ -340,6 +340,9 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | `local:new` | `x = Foo.new` | agreeing / total |
 | `local:const` | `x = Foo` — holds the class, so `x.bar` is a class method | agreeing / total |
 | `local:rescue` | `rescue Foo => e` — an instance of each class rescued; `StandardError` bare (DEC-089) | agreeing / total |
+| `rabl` | a call in a `.rabl` template under `app/views/`: `Rabl::Engine`, then the view context (DEC-526) | 1.0 |
+| `rabl:object` | a symbol `attributes`/`child`/`glue` is handed in a `.rabl` template, or a `node` block's parameter: the object of its scope — `object @post`, a `child`'s reader's records, an extender's object (DEC-526) | 1.0 |
+| `render` | a bare name in a partial that a `render` reaching it hands as a local, typed by what it is handed (DEC-525) | agreeing / handed |
 | `controller` | a template's `@post`: the writes to it in the controller action that renders the template (`posts/show` is `PostsController#show`, `user_mailer/welcome` `UserMailer#welcome`), the `before_action`s whose `only:`/`except:` let them run first, and an action that `render :show`s it; a partial or a layout, every write in the controller's chain. Read from the controller's files (`Tree::file_facts`), typed as an assignment there is (DEC-522) | agreeing / total |
 | `literal` | `out = []`, or `"x".upcase` — core knows what a String is | agreeing / total |
 | `sig` | an inline Sorbet `sig` on the method the value came from, or what a chain assigned to the variable returns, read as `chain` reads it (`x = Post.where(…).order(:id)`, DEC-444) | agreeing / total |

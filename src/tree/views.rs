@@ -23,8 +23,11 @@ type Read = (std::time::SystemTime, u64, Arc<Facts>);
 /// The checkout's view conventions, read once per tree.
 #[derive(Default)]
 pub(crate) struct Views {
-    /// The checkout's helper modules, in the order `helper :all` includes
-    /// them: by path. The last included is the first found.
+    /// The checkout's helper modules — each module named for its file under
+    /// an `app/helpers/` directory — in the order `helper :all` includes
+    /// them: by path. The last included is the first found. A module not in
+    /// a `*_helper.rb` is one `helper :all` leaves to a controller's `helper
+    /// X`, which is taken as the app's too.
     helpers: Vec<String>,
     /// A name `helper_method` exposes to views → the classes whose body
     /// exposes it, and where.
@@ -36,8 +39,9 @@ pub(crate) struct Views {
     /// A controller's file read for what its actions assign, by path, with
     /// the modification time and length it was read at.
     files: Mutex<HashMap<String, Read>>,
-    /// The checkout's files that call `render`, relative to it.
-    rendering: std::sync::OnceLock<Vec<String>>,
+    /// The checkout's files that call a name (`render`, `extends`),
+    /// relative to it.
+    calling: Mutex<HashMap<String, Arc<[String]>>>,
 }
 
 /// `Admin::OAuthController` and `admin/o_auth` alike.
@@ -76,7 +80,7 @@ impl Tree {
                     "class" => {
                         classes.entry(fold(&fqn)).or_insert(fqn);
                     }
-                    "module" if fqn.ends_with("Helper") => {
+                    "module" => {
                         let site = self.sites(&fqn).into_iter().find(|site| {
                             self.in_checkout(&site.path)
                                 && under(&site.path, "helpers").is_some_and(|rest| {
@@ -123,7 +127,7 @@ impl Tree {
                 exposed,
                 classes,
                 files: Mutex::default(),
-                rendering: std::sync::OnceLock::new(),
+                calling: Mutex::default(),
             }
         })
     }
@@ -161,19 +165,27 @@ impl Tree {
         &self.root
     }
 
-    /// The checkout's files that call `render` — every place a partial may
-    /// be rendered from — relative to it.
-    pub(crate) fn rendering_files(&self) -> &[String] {
-        self.views().rendering.get_or_init(|| {
-            self.loader
-                .as_ref()
-                .and_then(|loader| {
-                    loader
-                        .with(|store, _| store.files_calling(&self.root, "render"))
-                        .ok()
-                })
-                .unwrap_or_default()
-        })
+    /// The checkout's files that call `name` — `render`, every place a
+    /// partial may be rendered from; RABL's `extends` — relative to it.
+    pub(crate) fn files_calling(&self, name: &str) -> Arc<[String]> {
+        let views = self.views();
+        if let Some(files) = views.calling.lock().ok().and_then(|c| c.get(name).cloned()) {
+            return files;
+        }
+        let files: Arc<[String]> = self
+            .loader
+            .as_ref()
+            .and_then(|loader| {
+                loader
+                    .with(|store, _| store.files_calling(&self.root, name))
+                    .ok()
+            })
+            .unwrap_or_default()
+            .into();
+        if let Ok(mut calling) = views.calling.lock() {
+            calling.insert(name.to_string(), files.clone());
+        }
+        files
     }
 
     /// Where `owner`'s body exposes `name` to views with `helper_method`: the

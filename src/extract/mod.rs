@@ -5268,6 +5268,19 @@ impl<'pr> Extractor<'_> {
                 continue;
             }
             if let Some(options) = arg.as_keyword_hash_node() {
+                // RABL's `attributes :id => :key` and `child(:author =>
+                // :writer)`: a key is the object's method (DEC-526).
+                if call.receiver().is_none() && RENAMES_BY_KEY.contains(&macro_name.as_str()) {
+                    for element in options.elements().iter() {
+                        if let Some(key) = element
+                            .as_assoc_node()
+                            .and_then(|a| a.key().as_symbol_node())
+                        {
+                            self.record_symbol(&key, None);
+                        }
+                    }
+                    continue;
+                }
                 self.record_option_symbols(call, &options);
                 continue;
             }
@@ -5508,6 +5521,10 @@ fn push_local<'pr>(
         value: value_at(&assoc.value()),
     });
 }
+
+/// RABL's calls whose hash names a method by each key and the name it is
+/// written out under by each value (DEC-526).
+const RENAMES_BY_KEY: [&str; 4] = ["attributes", "attribute", "child", "glue"];
 
 /// Does an option of this name take a method of `self` as its value
 /// (DEC-340)? `if:`/`unless:` on a callback or validation, `rescue_from`'s

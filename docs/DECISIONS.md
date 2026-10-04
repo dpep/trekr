@@ -12565,7 +12565,10 @@ class does (`Tree::lookup_in_view`):
 2. the checkout's helper modules: every module named for its file under an
    `app/helpers/` directory (`app/helpers/admin/badges_helper.rb` is
    `Admin::BadgesHelper`), in the order `helper :all` includes them, by
-   path, so the last included is found first;
+   path, so the last included is found first. `helper :all` reads only
+   `*_helper.rb`; a module there in another file (Spree's
+   `api_helpers.rb`) is one a controller's `helper X` includes, and is
+   taken as the app's too;
 3. `ActionView::Base`'s own chain, from the indexed actionview gem.
 
 Every block in a template keeps the view: `form_with … do |f|`, `each`,
@@ -12647,7 +12650,8 @@ Rails' rules (`ActionView::PartialRenderer`, `TemplateRenderer`):
 - `render @post` is the partial `to_partial_path` names, `posts/_post` for
   a `Post` (`admin/blog_posts/_blog_post` for `Admin::BlogPost`), the value
   typed as any receiver is; a collection by its relation's model, or by the
-  constant its controller's writes start from (`Post.where(…)`).
+  class its controller's writes start from (`Post.where(…)`) — not a
+  module's method, which may return any class (`Spree.user_class`).
 
 Each relative to the views root of the file that names it — an engine's
 `app/views/` for its own.
@@ -12672,4 +12676,46 @@ The renders are found by reading the checkout's files that call `render`
 
 **Not done.** `as:`, `object:` and `collection:` beside `partial:`;
 `local_assigns[:x]`; Rails 7.1's magic `locals:` comment. Testbed 523.
+
+## DEC-526 — A RABL template is read on its engine, and its symbols name its object's methods
+
+**Decided.** A `*.rabl` file is indexed as Ruby (DEC-520). Under an
+`app/views/` directory, `self` in it is a `Rabl::Engine` (`resolved_via:
+rabl`): a name the engine has (`object`, `attributes`, `node`, from the
+indexed rabl gem), else what the view context has (DEC-521), as
+`Rabl::Engine#method_missing` hands it to the view. Its object, read from
+the template's source (`resolve::rabl`):
+
+- `object @post` and `collection @posts` name it, typed as a template's
+  `@ivar` is (DEC-522), a collection by its element (DEC-524);
+- `child(:comments) do … end` and `glue` open a scope whose object is what
+  the reader returns (a `has_many`'s records, a declared return), and
+  `child(@author)` one whose object is the ivar;
+- a template that names no object (`object false` aside) serializes the
+  object of the templates that `extends` (or `partial`) it, where they do,
+  when they agree — followed through four templates.
+
+A symbol `attributes`, `attribute`, `child` or `glue` is handed — a hash's
+key too, `attributes :label => :title`, which the extractor now records as
+a symbol for those four names (`RENAMES_BY_KEY`) — is a call of that name
+on the object of its scope (`resolved_via: rabl:object`): `--def` resolves
+it, `--refs` confirms it, `--dead` counts it. A `node` block's parameter is
+the object, so `node(:x) { |p| p.slug }` types `p`. `extends "x"` opens the
+template (DEC-524).
+
+**Why from the source.** Which scope a symbol is in is the nesting of the
+`child` calls around it, which the facts keep only as positions; a RABL
+template is small, and is read once per content per process.
+
+**Measured** on Spree 2.4's 94 templates (`api/app/views/spree/api`,
+`backend`), indexed with no gems and no schema: of 244 symbols handed to
+`attributes`/`child`/`glue` and `node` parameter calls, 49 resolve, and 13
+read by hand of them are each right (`Spree::Order#billing_address`,
+`Spree::Shipment#shipping_rates`, `Spree::InventoryUnit#variant`); the
+rest are residue — values (`=> :master` names a key, not a method), an
+object whose controller write trekr cannot type (`find_product(…)`), or a
+column or `ActiveRecord::Base` method with no schema or gem to find it in.
+
+**Not done.** A splat (`attributes *product_attributes`); `node`'s value
+when it names no method; `object` named by a symbol or a call. Testbed 524.
 

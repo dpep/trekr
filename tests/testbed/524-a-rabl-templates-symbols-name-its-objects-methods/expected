@@ -1,0 +1,16 @@
+# A RABL template was not read. It is Ruby on a Rabl::Engine, which hands
+# what it lacks to the view: a helper answers. `object @widget` is typed
+# from the action that renders it, and a symbol `attributes` or `child`
+# is handed — a hash's key too — names a method of the object of its scope;
+# a `node` block's parameter is that object; a template that `extends`
+# names no object of its own and serializes its extender's.
+def app/views/widgets/show.rabl:2:13 status=resolved owner=Widget via=rabl:object
+def app/views/widgets/show.rabl:2:21 status=resolved owner=Widget via=rabl:object
+def app/views/widgets/show.rabl:3:8 owner=Widget via=rabl:object
+def app/views/widgets/show.rabl:4:15 status=resolved owner=Part via=rabl:object
+def app/views/widgets/show.rabl:6:18 status=resolved owner=Widget via=rabl:object
+def app/views/widgets/show.rabl:7:13 status=resolved owner=WidgetsHelper via=rabl
+def app/views/widgets/show.rabl:8:9 status=resolved site=app/views/widgets/base.rabl:1
+def app/views/widgets/base.rabl:1:13 status=resolved owner=Widget via=rabl:object
+refs Widget#label confirmed=4
+refs Part#sku confirmed=1

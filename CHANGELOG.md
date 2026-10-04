@@ -44,6 +44,13 @@
   `extends "posts/base"` answers the template file (`under: template`). In a
   partial, a local a `render` hands it (`render "row", widget: @widget`,
   `post` from `render @post`) is defined at those keys, and typed by them.
+- **RABL templates are read.** A `*.rabl` view is indexed as Ruby on its
+  engine, which hands a name it lacks to the view's helpers. `object
+  @post`'s `@post` is typed from the controller; `attributes :title`,
+  `child(:comments)` and a hash's keys (`:label => :title`) name methods of
+  the object of their scope — `--def` resolves them, `--refs` lists them,
+  `--dead` counts them — and a `node` block's parameter is that object. A
+  template that `extends` another lends it its object.
 
 ## 0.8.6 — 2026-10-03
 

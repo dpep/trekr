@@ -14,6 +14,7 @@
 //! as ordered candidates with the receiver shape as the reason.
 
 pub(crate) mod members;
+mod rabl;
 pub(crate) mod refs;
 pub(crate) mod views;
 
@@ -53,6 +54,11 @@ impl Receiver {
             // A view's `self`: its controller's helpers, then ActionView's
             // (DEC-521).
             "view" => tree.lookup_in_view(None, name),
+            // A RABL template's `self`: its engine, which sends what it lacks
+            // to the view (DEC-526).
+            "rabl" => tree
+                .lookup(rabl::ENGINE, false, name)
+                .or_else(|| tree.lookup_in_view(None, name)),
             // A top-level `def` is a private method of Object, ahead of
             // Kernel — when only one file writes it, since which of several
             // is loaded is not the index's to say.
@@ -295,7 +301,7 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                 }
                 // A view whose ActionView the index lacks: its helpers were
                 // asked, and ActionView's own could not be (DEC-521).
-                None if receiver.via == "view"
+                None if matches!(receiver.via, "view" | "rabl")
                     && !tree.is_known(crate::tree::views::ACTION_VIEW) =>
                 {
                     residue(
@@ -1703,13 +1709,18 @@ fn ladder(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -> 
                 _ => None,
             })
             .or_else(|| from_sig_params(tree, facts, call, path))
+            // A RABL `node` block's parameter is the template's object.
+            .or_else(|| rabl::param_receiver(tree, facts, call, path))
             // Last, because it is the only rung resting on a naming habit
             // rather than on something the code states.
             .or_else(|| from_receiver_name(tree, call, path)),
         RecvShape::Other => chained(tree, facts, call, path, depth),
         // A symbol names the method, never the receiver, so there is nothing
         // here to type. `super` is typed by its own rule, `super_landings`.
-        RecvShape::Symbol | RecvShape::Super => None,
+        // A RABL `attributes :title` names `title` on the template's object
+        // (DEC-526).
+        RecvShape::Symbol => rabl::symbol_receiver(tree, facts, call, path),
+        RecvShape::Super => None,
     }
 }
 
@@ -3106,10 +3117,18 @@ fn on_main(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiv
 /// yield values, not a new `self` — so only a class or module the template
 /// writes is another scope.
 fn view_receiver(call: &Call, path: &str) -> Option<Receiver> {
-    (crate::tree::views::is_view(path) && call.nesting.is_empty()).then(|| Receiver {
-        fqn: crate::tree::views::ACTION_VIEW.to_string(),
+    if !call.nesting.is_empty() {
+        return None;
+    }
+    let (fqn, via) = match (crate::tree::views::is_view(path), rabl::is_rabl(path)) {
+        (true, _) => (crate::tree::views::ACTION_VIEW, "view"),
+        (_, true) => (rabl::ENGINE, "rabl"),
+        _ => return None,
+    };
+    Some(Receiver {
+        fqn: fqn.to_string(),
         singleton: false,
-        via: "view",
+        via,
         bound: false,
         agreeing: 1,
         total: 1,

@@ -152,7 +152,10 @@ fn collection_model(tree: &Tree, path: &str, target: &str) -> Option<String> {
                 }
                 _ => return None,
             };
+            // A class the chain starts from; a module's method
+            // (`Spree.user_class`) may return any class.
             tree.namespace_named(&tree.resolve(&head, &assign.nesting).fqn?)
+                .filter(|fqn| tree.kind_of(fqn) == Some("class"))
         })
         .collect();
     let first = heads.first()?;
@@ -317,7 +320,7 @@ pub(crate) fn partial_local(tree: &Tree, call: &Call, path: &str) -> Option<Part
         sites: Vec::new(),
         types: Vec::new(),
     };
-    for caller in tree.rendering_files() {
+    for caller in tree.files_calling("render").iter() {
         let absolute = root.join(caller).to_string_lossy().into_owned();
         let Some(facts) = tree.file_facts(&absolute) else {
             continue;
