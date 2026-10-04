@@ -51,6 +51,8 @@
   the object of their scope — `--def` resolves them, `--refs` lists them,
   `--dead` counts them — and a `node` block's parameter is that object. A
   template that `extends` another lends it its object.
+- **Editors serve templates.** The VS Code extension (0.6.0) and the Claude
+  Code plugin's language server start for `.erb` and `.rabl` files too.
 
 ## 0.8.6 — 2026-10-03
 

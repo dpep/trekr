@@ -10,7 +10,9 @@
       ".ru": "ruby",
       ".gemspec": "ruby",
       ".rbi": "ruby",
-      ".jbuilder": "ruby"
+      ".jbuilder": "ruby",
+      ".erb": "erb",
+      ".rabl": "ruby"
     },
     "startupTimeout": 5000,
     "diagnostics": true,

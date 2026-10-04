@@ -4,6 +4,13 @@ The extension is a thin client: what it answers comes from the `trekr` binary
 it runs, whose own changelog is in the
 [trekr repo](https://github.com/dpep/trekr/blob/main/CHANGELOG.md).
 
+## 0.6.0
+
+- ERB and RABL templates are served: go to definition, hover, references
+  and completion in a `.erb` (whatever language id an ERB extension gives
+  it, or plain HTML) and a `.rabl`. Needs a trekr that reads templates
+  (the release after 0.8.6); an older one answers nothing there.
+
 ## 0.5.0
 
 - `trekr.unresolved` decides what Go to Definition shows for a call trekr

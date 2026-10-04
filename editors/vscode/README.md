@@ -6,6 +6,11 @@ asked about, completion from the receiver's actual ancestors, call hierarchy,
 outline, and syntax errors as you type. No project Ruby, no `bundle install`,
 no bootable app — trekr reads the source and its gems off disk.
 
+ERB and RABL views are served too: a helper, an `@ivar` from the
+controller action that renders the template, a `render`'s partial, a
+partial's locals, and RABL's `attributes` — under whatever language id an
+ERB extension gives a `.erb`, or plain HTML.
+
 ## Install
 
 1. Install the trekr binary, 0.5.0 or newer: `brew install dpep/tools/trekr`

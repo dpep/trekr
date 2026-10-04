@@ -1,8 +1,10 @@
-// A thin client: launch `trekr --lsp` for Ruby files, and get out of the way.
+// A thin client: launch `trekr --lsp` for Ruby files and view templates, and
+// get out of the way.
 // Everything it answers comes from the server; this file only starts it,
 // switches features off on request, and says so plainly when it cannot start.
 import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, State } from "vscode-languageclient/node";
+import { DOCUMENTS } from "./documents";
 import { middlewareFor } from "./features";
 
 let client: LanguageClient | undefined;
@@ -34,7 +36,7 @@ async function start() {
   const command = config.get<string>("path") || "trekr";
   const serverOptions: ServerOptions = { command, args: ["--lsp"] };
   const clientOptions: LanguageClientOptions = {
-    documentSelector: [{ scheme: "file", language: "ruby" }],
+    documentSelector: DOCUMENTS,
     outputChannel: output,
     initializationOptions: {
       index: config.get<boolean>("index", true),
