@@ -12802,3 +12802,25 @@ correct@1 81.2 %, wrong@1 8.8 %, found 82.8 % and mastodon 64.0 / 19.8 /
 and 221 MB against main's 187 and 196 (discourse 288 against 295); it is
 not explained here, and is logged as a follow-up.
 
+## DEC-560 — A superclass named like its class is looked up outside it
+
+**Decided.** `class SchemaDumper < SchemaDumper` inside `module
+ActiveRecord; module ConnectionAdapters` inherits
+`ActiveRecord::SchemaDumper`: Ruby evaluates the superclass before the
+constant being defined exists, so the lexical scopes searched for its head
+stop short of the one where it would name the class itself. A reopening of
+that shape would raise "superclass mismatch", so every one is a first
+definition. A superclass that still resolves to its own class (`class X <
+::X`) is reported in `unresolved_ancestors`.
+
+**Why.** The reported 0.8.6 chain for rails'
+`PostgreSQL::SchemaDumper` was itself and `ConnectionAdapters::SchemaDumper`,
+with nothing unresolved, and `PostgreSQL::SchemaCreation` was itself alone.
+The superclass resolved to the class being defined; linearizing it met
+itself, and DEC-200's cycle cut answers a structural cycle with an empty
+chain and no note — so the chain ended and nothing said so. The hooks
+`ActiveRecord::SchemaDumper#dump` calls on `self` (`schemas`,
+`virtual_tables`, `exclusion_constraints_in_create`) had no caller in the
+adapter dumpers that override them. Testbed 560.
+
+**Tree only**; no extraction change.

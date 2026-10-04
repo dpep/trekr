@@ -56,6 +56,14 @@
 - This changes what an index records (store v60): trekr reindexes once after
   upgrading.
 
+- **`class X < X` inside a namespace inherits the outer `X`.** Ruby reads
+  the superclass before the new class exists, so rails'
+  `ConnectionAdapters::SchemaDumper < SchemaDumper` is an
+  `ActiveRecord::SchemaDumper`; trekr read it as the class itself and ended
+  the chain there, without saying so. `--ancestors` gives the whole chain,
+  and `--dead` sees the base's calls of the hooks an adapter overrides. A
+  superclass that names its own class is listed in `unresolved_ancestors`.
+
 ## 0.8.6 — 2026-10-03
 
 - **`--dead`'s output is the same on every run.** A `test-only` constant's

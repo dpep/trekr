@@ -1,0 +1,10 @@
+# `class SchemaDumper < SchemaDumper` inside `Store::Adapters`: Ruby evaluates
+# the superclass before the new constant exists, so it is `Store::SchemaDumper`.
+# It resolved to the class itself, the cycle cut the chain, and nothing said so;
+# the hooks the base's `dump` calls on `self` were unreferenced (DEC-560).
+ancestors Store::Adapters::SchemaDumper Store::Adapters::SchemaDumper,Store::SchemaDumper,Object unresolved=
+ancestors Store::Adapters::Pg::SchemaDumper Store::Adapters::Pg::SchemaDumper,Store::Adapters::SchemaDumper,Store::SchemaDumper,Object
+dead lib/adapters/schema_dumper.rb Store::Adapters::SchemaDumper#extensions=single-caller
+dead lib/adapters/pg/schema_dumper.rb Store::Adapters::Pg::SchemaDumper#tables=single-caller
+# Nothing outside defines the one it names: unresolved, never silently gone.
+ancestors Store::Adapters::SchemaCreation Store::Adapters::SchemaCreation unresolved=SchemaCreation

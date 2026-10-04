@@ -590,6 +590,14 @@ pub(crate) struct Ancestry {
     pub(crate) unresolved: Vec<String>,
 }
 
+impl Ancestry {
+    fn note_unresolved(&mut self, name: &str) {
+        if !self.unresolved.iter().any(|u| u == name) {
+            self.unresolved.push(name.to_string());
+        }
+    }
+}
+
 /// The class every definition of a name that declares a return agrees on.
 pub(crate) struct AgreedReturn {
     pub(crate) fqn: String,
@@ -841,6 +849,19 @@ fn qualify(scope: &str, name: &str) -> String {
         name.to_string()
     } else {
         format!("{scope}::{name}")
+    }
+}
+
+/// The scopes a superclass of `class` is looked up in. Ruby evaluates it
+/// before the constant being defined exists, so `class SchemaDumper <
+/// SchemaDumper` inside `Adapters` means an outer `SchemaDumper`: the scopes
+/// through the one where the head would name the class itself are dropped
+/// (DEC-560). A reopening with that shape would raise, so it is always this.
+fn not_yet_defined(class: &str, superclass: &str, outer: &[String]) -> Vec<String> {
+    let (head, _) = split_path(superclass);
+    match outer.iter().position(|scope| qualify(scope, head) == class) {
+        Some(at) => outer[at + 1..].to_vec(),
+        None => outer.to_vec(),
     }
 }
 
@@ -1318,7 +1339,7 @@ impl Tree {
                     // is written, not where `C`'s constants live. Every other
                     // relation is written inside.
                     let nesting = if edge.relation == "superclass" {
-                        nesting.get(1..).unwrap_or_default().to_vec()
+                        not_yet_defined(&scope, &edge.target, nesting.get(1..).unwrap_or_default())
                     } else {
                         nesting
                     };
@@ -1855,6 +1876,12 @@ impl Tree {
         // The parent chain is needed before includes, because includes dedup
         // against it.
         let parent: Vec<String> = match entry.and_then(EntryRef::superclass) {
+            // `class X < ::X` names nothing that exists yet: unresolved, not a
+            // cycle cut that answers nothing and says nothing.
+            Some(target) if self.resolves_to(&target, fqn) => {
+                out.note_unresolved(target.name);
+                Vec::new()
+            }
             Some(target) => self.chain_of(&target, out),
             // Every class without an explicit superclass inherits Object, and
             // that tail is most of what core indexing buys: it is how `puts`
@@ -1953,12 +1980,15 @@ impl Tree {
             // `class Widget < ActiveRecord::Base` in a checkout with no gems
             // indexed. The chain stops here, and the answer says so.
             None => {
-                if !out.unresolved.iter().any(|u| u == target.name) {
-                    out.unresolved.push(target.name.to_string());
-                }
+                out.note_unresolved(target.name);
                 Vec::new()
             }
         }
+    }
+
+    fn resolves_to(&self, target: &Written, fqn: &str) -> bool {
+        self.resolve_lexical(target.name, &target.nesting)
+            .is_some_and(|found| self.namespace_of(&found) == fqn)
     }
 
     /// Constant lookup **without** the ancestor rung.
@@ -2888,6 +2918,14 @@ mod tests {
     fn a_superclass_is_resolved_in_the_scope_that_wrote_it() {
         let tree = one("module A\n  class Base\n  end\n  class C < Base\n  end\nend\n");
         assert_eq!(chain(&tree, "A::C"), ["A::C", "A::Base"]);
+    }
+
+    #[test]
+    fn a_superclass_naming_its_own_class_is_unresolved_not_a_silent_cut() {
+        let tree = one("class Widget < ::Widget\nend\n");
+        let ancestry = tree.ancestors("Widget");
+        assert_eq!(ancestry.chain, ["Widget"]);
+        assert_eq!(ancestry.unresolved, ["::Widget"]);
     }
 
     #[test]
