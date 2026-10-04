@@ -2361,6 +2361,11 @@ pub(crate) fn diagnostics(
     path: &Path,
     uri: Url,
 ) -> Option<lsp_server::Message> {
+    // A client may send what it calls ERB or Ruby under another name — an
+    // `.html`, a `.yml` — whose text is no Ruby: every line would be an error.
+    if !crate::scan::reads_as_ruby(&path.to_string_lossy()) {
+        return None;
+    }
     let document = session.document(path)?;
     let version = document.version();
     let errors = document.parse_errors();

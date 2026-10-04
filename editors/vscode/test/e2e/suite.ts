@@ -97,4 +97,19 @@ export async function run() {
     (d) => d.some((x) => x.source === "trekr"),
   );
   assert.ok(diagnostics.some((d) => d.source === "trekr"), "a syntax diagnostic from trekr");
+
+  // A template reaches a trekr that says it reads them: its tags are Ruby
+  // at the template's own positions, and its markup is no syntax error.
+  const view = await vscode.workspace.openTextDocument(vscode.Uri.joinPath(root, "app/views/widgets/show.html.erb"));
+  await vscode.window.showTextDocument(view);
+  const helper = await eventually(
+    () => vscode.commands.executeCommand<Def[]>("vscode.executeDefinitionProvider", view.uri, at(view, "badge", 2)),
+    (d) => d.length > 0,
+  );
+  assert.deepEqual(
+    helper.map((d) => ("targetUri" in d ? where(root.fsPath, d.targetUri, d.targetRange) : where(root.fsPath, d.uri, d.range))),
+    ["app/helpers/widgets_helper.rb:2"],
+  );
+  const markup = vscode.languages.getDiagnostics(view.uri).filter((d) => d.source === "trekr");
+  assert.deepEqual(markup.map((d) => d.message), [], "markup is no syntax error");
 }

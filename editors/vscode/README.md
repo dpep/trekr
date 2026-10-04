@@ -9,7 +9,8 @@ no bootable app — trekr reads the source and its gems off disk.
 ERB and RABL views are served too: a helper, an `@ivar` from the
 controller action that renders the template, a `render`'s partial, a
 partial's locals, and RABL's `attributes` — under whatever language id an
-ERB extension gives a `.erb`, or plain HTML.
+ERB extension gives a `.erb`, or plain HTML. Templates need trekr 0.8.7 or
+newer; an older one is never sent them.
 
 ## Install
 

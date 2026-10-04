@@ -2,6 +2,7 @@
 // it reads — ERB under whichever language id an ERB extension gives it, or
 // plain HTML for a `.erb` with none, and RABL, which no common extension
 // names.
+// Templates reach only a server that says it reads them (`templateGate`).
 export const DOCUMENTS = [
   { scheme: "file", language: "ruby" },
   { scheme: "file", language: "erb" },

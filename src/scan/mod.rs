@@ -50,6 +50,13 @@ pub(crate) fn is_template(path: &str) -> bool {
     is_erb(path) || path.ends_with(".rabl")
 }
 
+/// A file whose text is read as Ruby: Ruby by its name, a template's tags,
+/// or a script named without an extension (`bin/rails`, `.irbrc`).
+pub(crate) fn reads_as_ruby(path: &str) -> bool {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    is_ruby(path) || is_template(path) || !name.trim_start_matches('.').contains('.')
+}
+
 /// An ERB template: `show.html.erb`, `welcome.text.erb`, `_form.erb`.
 pub(crate) fn is_erb(path: &str) -> bool {
     path.ends_with(".erb")

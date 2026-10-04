@@ -57,7 +57,12 @@
   `--dead` counts them — and a `node` block's parameter is that object. A
   template that `extends` another lends it its object.
 - **Editors serve templates.** The VS Code extension (0.6.0) and the Claude
-  Code plugin's language server start for `.erb` and `.rabl` files too.
+  Code plugin's language server start for `.erb` and `.rabl` files too. The
+  server says it reads them — `initialize` answers with `serverInfo` and
+  `capabilities.experimental.trekr.templates: ["erb", "rabl"]` — and the
+  extension sends a template only to a server that does, so an older trekr
+  is never handed one. A document that is neither Ruby nor a template by its
+  name (an `.html` an ERB extension claims) gets no syntax diagnostics.
 - This changes what an index records (store v61): trekr reindexes once after
   upgrading.
 

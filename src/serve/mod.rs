@@ -81,6 +81,10 @@ fn capabilities() -> ServerCapabilities {
             resolve_provider: Some(true),
             ..Default::default()
         }),
+        // The view templates whose Ruby this server reads (DEC-520, DEC-526).
+        // A client selects them only on seeing this: an older trekr parses a
+        // `.erb` as Ruby, and every tag's markup is a syntax error to it.
+        experimental: Some(serde_json::json!({ "trekr": { "templates": ["erb", "rabl"] } })),
         ..Default::default()
     }
 }
@@ -174,7 +178,10 @@ fn initialize(inbox: &Inbox, writer: &wire::Writer) -> anyhow::Result<serde_json
             Next::Closed => anyhow::bail!("the client disconnected before initialize"),
         }
     };
-    let result = serde_json::json!({ "capabilities": capabilities() });
+    let result = serde_json::json!({
+        "capabilities": capabilities(),
+        "serverInfo": { "name": "trekr", "version": env!("CARGO_PKG_VERSION") },
+    });
     writer.send(Response::new_ok(id, result).into())?;
     loop {
         match inbox.next(None) {

@@ -12560,6 +12560,31 @@ builds: mastodon 5.03 / 4.71 / 5.78 s → 5.49 / 4.63 / 5.58 s, discourse
 a discourse template answers in 0.07–0.10 s warm, a partial's local in
 0.21–0.25 s (it reads the files that call `render`).
 
+### DEC-520 addendum — a client sends templates only to a server that reads them
+
+**Decided.** `initialize` answers with `serverInfo` (`name`, `version`) and
+`capabilities.experimental.trekr.templates: ["erb", "rabl"]`. The VS Code
+extension still selects templates from the start — a `LanguageClient`'s
+document selector is fixed before the server answers — but its middleware
+holds back every message about a template (open, change, save, close, each
+provider, published diagnostics) unless that list names its kind. The
+server, for its part, publishes no syntax diagnostics for a document whose
+name is neither Ruby's nor a template's (`scan::reads_as_ruby`): an `.html`
+an ERB extension claims.
+
+**Why.** Extension 0.6.0 against trekr 0.8.6 flooded every `.erb` —
+`config/*.yml.erb` and generator `*.rb.erb` too — with Prism's `unexpected
+'<'`, since 0.8.6 reads the whole file as Ruby; its changelog's "an older
+binary answers nothing there" was wrong. **Rejected:** having the server
+register template selectors with `client/registerCapability` — it needs a
+dynamic registration per feature, duplicates answers where a client also
+matched statically, and a client without dynamic registration (the Claude
+Code plugin) would get nothing.
+
+**Not solvable here.** A client that cannot read the capability — Claude
+Code's `.lsp.json` maps extensions statically — sends an old binary the
+template anyway; its mapping is synced at the release that ships 0.8.7.
+
 ## DEC-521 — A view template runs on its view context: helpers, then ActionView
 
 **Decided.** An implicit call (or one on `self`) in an ERB template under an

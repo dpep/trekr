@@ -6,6 +6,7 @@ import * as vscode from "vscode";
 import { LanguageClient, LanguageClientOptions, ServerOptions, State } from "vscode-languageclient/node";
 import { DOCUMENTS } from "./documents";
 import { middlewareFor } from "./features";
+import { templateGate } from "./templates";
 
 let client: LanguageClient | undefined;
 let output: vscode.OutputChannel;
@@ -43,7 +44,11 @@ async function start() {
       referenceLimit: config.get<number>("referenceLimit", 1000),
       unresolved: config.get<string>("unresolved", "confident"),
     },
-    middleware: middlewareFor(config.get<string[]>("features") ?? []),
+    // A disabled feature answers nothing, template or not.
+    middleware: {
+      ...templateGate(() => client?.initializeResult),
+      ...middlewareFor(config.get<string[]>("features") ?? []),
+    },
   };
   client = new LanguageClient("trekr", "trekr", serverOptions, clientOptions);
   client.onDidChangeState((e) => {

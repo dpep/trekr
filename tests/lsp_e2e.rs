@@ -337,6 +337,17 @@ fn the_server_announces_only_what_it_answers() {
     ] {
         assert!(caps[absent].is_null(), "{absent} must not be announced");
     }
+    // What a client checks before it sends a template: an older trekr reads
+    // a `.erb` as Ruby, and would flood it with syntax errors.
+    assert_eq!(
+        caps["experimental"]["trekr"]["templates"],
+        serde_json::json!(["erb", "rabl"])
+    );
+    assert_eq!(result["result"]["serverInfo"]["name"], "trekr");
+    assert_eq!(
+        result["result"]["serverInfo"]["version"],
+        env!("CARGO_PKG_VERSION")
+    );
     session.stop();
     let _ = fs::remove_dir_all(&dir);
 }
@@ -5425,6 +5436,38 @@ fn a_let_and_a_shared_groups_read_of_it_find_each_other() {
 /// and hover on a helper it calls, the template among the helper's
 /// references, and no syntax error for markup — each at the template's own
 /// position, past a multibyte character in the markup (DEC-520, DEC-521).
+#[test]
+fn a_document_that_is_neither_ruby_nor_a_template_gets_no_diagnostics() {
+    let (dir, db) = scratch("not-ruby");
+    repo(&dir);
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    // An ERB language id on a file not named `.erb`: its markup is no Ruby.
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app/views/notes.html"), "languageId": "html.erb",
+            "version": 1, "text": "<p>hi <%= 1 %></p>\n"
+        }}),
+    );
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "broken.rb"), "languageId": "ruby",
+            "version": 1, "text": "def x(\n"
+        }}),
+    );
+    let published = session.read();
+    assert_eq!(published["method"], "textDocument/publishDiagnostics");
+    assert!(
+        published["params"]["uri"]
+            .as_str()
+            .is_some_and(|uri| uri.ends_with("broken.rb")),
+        "nothing is published for the HTML: {published}"
+    );
+    session.stop();
+}
+
 #[test]
 fn an_erb_template_is_answered_at_its_own_positions() {
     let (dir, db) = scratch("erb");
