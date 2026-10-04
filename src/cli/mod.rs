@@ -2653,6 +2653,8 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
         .map(|c| (c.repo.as_str(), c.files))
         .collect();
     let mut rows: Vec<serde_json::Value> = Vec::new();
+    // Each checkout's Ruby in words, for text.
+    let mut rubies: HashMap<String, String> = HashMap::new();
     // Counted on a row above, so not among the others.
     let mut counted: HashSet<String> = HashSet::new();
     for checkout in &shown {
@@ -2672,7 +2674,11 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
             if let Some(version) = crate::gems::stdlib::named_missing(Path::new(&checkout.repo)) {
                 row["ruby_not_found"] = version.into();
             }
-            row["ruby"] = serde_json::to_value(status_ruby(&checkout.repo, stdlib.as_deref()))?;
+            let ruby = status_ruby(&checkout.repo, stdlib.as_deref());
+            if let Some(ruby) = &ruby {
+                rubies.insert(checkout.repo.clone(), ruby_said(ruby));
+            }
+            row["ruby"] = serde_json::to_value(ruby)?;
             if let Some(stdlib) = stdlib {
                 let rbs = store.rbs_about(&stdlib)?.map(|about| {
                     serde_json::json!({
@@ -2751,6 +2757,9 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
                     ""
                 ),
             }
+        }
+        if let Some(ruby) = row["repo"].as_str().and_then(|repo| rubies.get(repo)) {
+            println!("{:>32}+ {ruby}", "");
         }
         if let Some(stdlib) = row["stdlib"]["root"].as_str() {
             println!(
@@ -2850,6 +2859,20 @@ fn status_ruby(repo: &str, stdlib: Option<&str>) -> Option<crate::gems::stdlib::
     let now = crate::gems::stdlib::for_checkout(Path::new(repo), Some(root));
     let how = now.filter(|now| now.root == root).map(|now| now.how);
     Some(crate::gems::stdlib::about(root, how))
+}
+
+/// `--status`' line for a checkout's Ruby: `Ruby 3.4.10, which the checkout
+/// names`, or `Ruby 4.0.6 (fallback: …)`.
+fn ruby_said(ruby: &crate::gems::stdlib::About) -> String {
+    let name = match &ruby.version {
+        Some(version) => format!("Ruby {version}"),
+        None => format!("the Ruby at {}", paths::pretty(&ruby.root)),
+    };
+    match ruby.how {
+        Some(crate::gems::stdlib::How::Named) => format!("{name}, which the checkout names"),
+        Some(how) => format!("{name} (fallback: {})", how.said()),
+        None => format!("{name}, which a reindex from here would replace"),
+    }
 }
 
 /// The checkout `--status` reports on from `dir`: its git repository, as a

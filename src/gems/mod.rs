@@ -476,23 +476,87 @@ fn abi_of(version: &str) -> Option<String> {
     (numeric(major) && numeric(minor)).then(|| format!("{major}.{minor}.0"))
 }
 
-/// The Ruby version the checkout names: `.ruby-version`, else the
-/// Gemfile's literal `ruby "3.4.1"`.
+/// The Ruby version the checkout names: its version file (`.ruby-version`,
+/// `.tool-versions`, mise's), else the Gemfile's literal `ruby "3.4.1"`.
 fn project_ruby(repo: &Path) -> Option<String> {
-    let version = |text: &str| {
-        let text = text.trim().trim_matches(|c| c == '"' || c == '\'');
-        let text = text.strip_prefix("ruby-").unwrap_or(text);
-        text.starts_with(|c: char| c.is_ascii_digit())
-            .then(|| text.to_string())
-    };
-    if let Ok(text) = std::fs::read_to_string(repo.join(".ruby-version")) {
-        return text.lines().next().and_then(version);
+    if let Some((version, _)) = version_file(repo) {
+        return Some(version);
     }
     let gemfile = std::fs::read_to_string(repo.join("Gemfile")).ok()?;
     gemfile.lines().find_map(|line| {
         let rest = line.trim_start().strip_prefix("ruby ")?;
-        version(rest.split(',').next()?)
+        ruby_version_text(rest.split(',').next()?)
     })
+}
+
+/// `3.4.1` from `ruby-3.4.1` or `"3.4.1"`; `None` for anything that is not
+/// a version — `system`, `jruby-9.4`, `>= 3.3`.
+fn ruby_version_text(text: &str) -> Option<String> {
+    let text = text.trim().trim_matches(|c| c == '"' || c == '\'');
+    let text = text.strip_prefix("ruby-").unwrap_or(text);
+    text.starts_with(|c: char| c.is_ascii_digit())
+        .then(|| text.to_string())
+}
+
+/// The Ruby version a version manager reads from `dir`, and the file it is
+/// read from: `.ruby-version` (rbenv, chruby, rvm, asdf and mise all read
+/// it), `.tool-versions`' `ruby` line (asdf, mise), or mise's `[tools]`.
+fn version_file(dir: &Path) -> Option<(String, PathBuf)> {
+    let read = |name: &str| {
+        let path = dir.join(name);
+        std::fs::read_to_string(&path).ok().map(|text| (text, path))
+    };
+    if let Some((text, path)) = read(".ruby-version") {
+        return Some((ruby_version_text(text.lines().next()?)?, path));
+    }
+    if let Some((text, path)) = read(".tool-versions") {
+        let version = text.lines().find_map(|line| {
+            let mut fields = line.split_whitespace();
+            (fields.next()? == "ruby").then(|| ruby_version_text(fields.next()?))?
+        });
+        if let Some(version) = version {
+            return Some((version, path));
+        }
+    }
+    ["mise.toml", ".mise.toml"].iter().find_map(|name| {
+        let (text, path) = read(name)?;
+        Some((mise_ruby(&text)?, path))
+    })
+}
+
+/// `[tools]`' `ruby = "3.4"`, or the first of `ruby = ["3.4", …]`.
+fn mise_ruby(toml: &str) -> Option<String> {
+    let mut in_tools = false;
+    toml.lines().find_map(|line| {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_tools = line == "[tools]";
+            return None;
+        }
+        let value = line
+            .strip_prefix("ruby")
+            .or_else(|| line.strip_prefix("\"ruby\""))?
+            .trim_start()
+            .strip_prefix('=')?;
+        let quoted = value.split('"').nth(1)?;
+        in_tools.then(|| ruby_version_text(quoted))?
+    })
+}
+
+/// The Ruby a checkout's `Gemfile.lock` was locked on: its `RUBY VERSION`,
+/// which bundler writes when the Gemfile has a `ruby` line. `ruby 3.4.7p58`
+/// is `3.4.7`.
+fn lockfile_ruby(repo: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(repo.join("Gemfile.lock")).ok()?;
+    let mut lines = text.lines().skip_while(|line| *line != "RUBY VERSION");
+    lines.next()?;
+    let written = lines.next()?.trim().strip_prefix("ruby ")?;
+    let written = written.split_whitespace().next()?;
+    let version = match written.rsplit_once('p') {
+        Some((version, patch)) if patch.chars().all(|c| c.is_ascii_digit()) => version,
+        _ => written,
+    };
+    ruby_version_text(version)
 }
 
 /// The `ruby` executable `$PATH` finds, resolved through symlinks.
@@ -1061,6 +1125,63 @@ BUNDLED WITH
             Some("3.4.9"),
             ".ruby-version first"
         );
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn reads_the_ruby_each_version_file_and_the_lockfile_name() {
+        let repo = scratch("version-files");
+        std::fs::write(
+            repo.join(".tool-versions"),
+            "nodejs 20.1.0\nruby 3.3.6 3.2.0\n",
+        )
+        .unwrap();
+        assert_eq!(project_ruby(&repo).as_deref(), Some("3.3.6"));
+        std::fs::write(repo.join(".tool-versions"), "ruby system\n").unwrap();
+        assert_eq!(project_ruby(&repo), None, "system names no install");
+        let mise = "[env]\nruby = \"x\"\n[tools]\nnode = \"20\"\nruby = [\"3.4\", \"3.3\"]\n";
+        assert_eq!(mise_ruby(mise).as_deref(), Some("3.4"));
+        assert_eq!(mise_ruby("[tools]\nruby-build = \"1\"\n"), None);
+        std::fs::write(
+            repo.join("Gemfile.lock"),
+            "GEM\n  specs:\n\nRUBY VERSION\n   ruby 3.4.7p58\n\nBUNDLED WITH\n   2.6.9\n",
+        )
+        .unwrap();
+        assert_eq!(lockfile_ruby(&repo).as_deref(), Some("3.4.7"));
+        std::fs::write(repo.join("Gemfile.lock"), "GEM\n  specs:\n").unwrap();
+        assert_eq!(lockfile_ruby(&repo), None);
+        let _ = std::fs::remove_dir_all(&repo);
+    }
+
+    #[test]
+    fn a_checkouts_ruby_requirements_are_read_from_its_gemspecs_and_gemfile() {
+        let repo = scratch("ruby-requirements");
+        std::fs::write(
+            repo.join("widget.gemspec"),
+            "Gem::Specification.new do |s|\n  s.required_ruby_version = Gem::Requirement.new(\">= 3.1\")\nend\n",
+        )
+        .unwrap();
+        std::fs::write(
+            repo.join("Gemfile"),
+            "source 'x'\nruby '>= 3.0', '< 4.1', engine: 'ruby'\ngem 'rake'\n",
+        )
+        .unwrap();
+        let requirements = declared::ruby_requirements(&repo);
+        assert_eq!(
+            requirements,
+            [
+                ("Gemfile".to_string(), ">= 3.0".to_string()),
+                ("Gemfile".to_string(), "< 4.1".to_string()),
+                ("widget.gemspec".to_string(), ">= 3.1".to_string()),
+            ]
+        );
+        assert!(declared::meets_all("3.4.9", &requirements));
+        assert!(!declared::meets_all("3.0.7", &requirements));
+        assert!(!declared::meets_all("4.1.0", &requirements));
+        // A literal version is named, not required.
+        std::fs::write(repo.join("Gemfile"), "ruby \"3.4.1\"\n").unwrap();
+        std::fs::remove_file(repo.join("widget.gemspec")).unwrap();
+        assert!(declared::ruby_requirements(&repo).is_empty());
         let _ = std::fs::remove_dir_all(&repo);
     }
 

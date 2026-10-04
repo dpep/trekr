@@ -690,6 +690,87 @@ fn meets(version: &Version, requirement: &str) -> bool {
     }
 }
 
+/// The Ruby a checkout's own gemspecs and Gemfile require, each requirement
+/// with the file that writes it: a gemspec's `required_ruby_version`, and a
+/// Gemfile `ruby` line's requirements (`"~> 3.4"`; a bare version is the
+/// version it names, read as `project_ruby`).
+pub(super) fn ruby_requirements(repo: &Path) -> Vec<(String, String)> {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(repo)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension().is_some_and(|e| e == "gemspec")
+                || path.file_name().is_some_and(|n| n == "Gemfile")
+        })
+        .collect();
+    entries.sort();
+    entries
+        .iter()
+        .flat_map(|path| {
+            let file = path.file_name().unwrap_or_default().to_string_lossy();
+            let source = std::fs::read(path).unwrap_or_default();
+            let parsed = ruby_prism::parse(&source);
+            let mut found = RubyRequirements::default();
+            found.visit(&parsed.node());
+            found
+                .0
+                .into_iter()
+                .map(move |requirement| (file.to_string(), requirement))
+        })
+        .collect()
+}
+
+#[derive(Default)]
+struct RubyRequirements(Vec<String>);
+
+impl RubyRequirements {
+    /// A string, a list of them, or `Gem::Requirement.new(…)` of either.
+    fn read(&mut self, node: &Node<'_>) {
+        if let Some(text) = string(node) {
+            self.0.push(text);
+        } else if let Some(array) = node.as_array_node() {
+            array.elements().iter().for_each(|e| self.read(&e));
+        } else if let Some(call) = node.as_call_node()
+            && call.name().as_slice() == b"new"
+            && let Some(args) = call.arguments()
+        {
+            args.arguments().iter().for_each(|a| self.read(&a));
+        }
+    }
+}
+
+impl<'pr> Visit<'pr> for RubyRequirements {
+    fn visit_call_node(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        let args: Vec<Node<'_>> = call
+            .arguments()
+            .map(|args| args.arguments().iter().collect())
+            .unwrap_or_default();
+        match call.name().as_slice() {
+            b"required_ruby_version=" => args.iter().for_each(|arg| self.read(arg)),
+            b"ruby" if call.receiver().is_none() => self.0.extend(
+                args.iter()
+                    .filter_map(string)
+                    .filter(|text| !text.trim_start().starts_with(|c: char| c.is_ascii_digit())),
+            ),
+            _ => {}
+        }
+        ruby_prism::visit_call_node(self, call);
+    }
+}
+
+/// Does this Ruby version meet every requirement? One that cannot be read
+/// is met, as `meets` has it.
+pub(super) fn meets_all(version: &str, requirements: &[(String, String)]) -> bool {
+    let Some(version) = Version::parse(version) else {
+        return true;
+    };
+    requirements
+        .iter()
+        .all(|(_, requirement)| meets(&version, requirement))
+}
+
 /// One installed copy of a gem.
 struct Copy {
     name: String,

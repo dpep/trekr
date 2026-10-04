@@ -27,17 +27,42 @@ pub(crate) struct Stdlib {
     ships: HashSet<(String, String)>,
 }
 
-/// How a checkout's Ruby was chosen (DEC-271): the one it names, the
-/// environment's (`$GEM_HOME`'s, the `ruby` on `$PATH`, the only one
-/// installed), or the one its last index chose, kept.
+/// How a checkout's Ruby was chosen (DEC-271, DEC-610): the one it names; a
+/// fallback — its lockfile's, the version manager's, `$GEM_HOME`'s, the
+/// `ruby` on `$PATH`'s, the highest or only one installed; or the one its
+/// last index chose, kept.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum How {
     Named,
+    /// `Gemfile.lock`'s `RUBY VERSION`.
+    Lockfile,
+    /// A version manager's choice: its variable, a version file above the
+    /// checkout, its global.
+    Manager,
     GemHome,
     Path,
+    /// The highest installed that meets the checkout's requirements.
+    Highest,
     Only,
     Kept,
+}
+
+impl How {
+    /// Where a fallback came from, briefly, for `--status`; `--index` says
+    /// it in full.
+    pub(crate) fn said(self) -> &'static str {
+        match self {
+            How::Named => "the checkout names it",
+            How::Lockfile => "Gemfile.lock's RUBY VERSION",
+            How::Manager => "the version manager's choice",
+            How::GemHome => "the Ruby $GEM_HOME names",
+            How::Path => "the ruby on $PATH",
+            How::Highest => "the highest installed that meets the checkout's requirements",
+            How::Only => "the only Ruby installed",
+            How::Kept => "kept from the last index",
+        }
+    }
 }
 
 /// A checkout's Ruby as `--index` and `--status` report it (DEC-292).
@@ -52,6 +77,9 @@ pub(crate) struct About {
     /// `null` in `--status` when this environment would choose another:
     /// the next `--index` moves it.
     pub(crate) how: Option<How>,
+    /// Whether the checkout does not name this Ruby, so it is trekr's pick:
+    /// every `how` but `named`; `null` with `how`.
+    pub(crate) fallback: Option<bool>,
 }
 
 /// A stdlib at `root`, about the Ruby it belongs to.
@@ -60,6 +88,7 @@ pub(crate) fn about(root: &Path, how: Option<How>) -> About {
         version: version_of(root),
         root: root.to_string_lossy().into_owned(),
         how,
+        fallback: how.map(|how| how != How::Named),
     }
 }
 
@@ -480,41 +509,67 @@ pub(crate) fn paths(root: &Path) -> Vec<String> {
     paths
 }
 
-/// The stdlib of the Ruby this checkout runs on, chosen as its gems are
-/// (DEC-152): the version `.ruby-version` or the Gemfile names, the Ruby
-/// `$GEM_HOME` belongs to, the `ruby` on `$PATH`; failing those, the one
-/// Ruby installed, when there is only one.
+/// The stdlib of the Ruby this checkout runs on.
+///
+/// The version the checkout names — `.ruby-version`, `.tool-versions`,
+/// mise's, the Gemfile's `ruby "3.4.1"` — when it is installed. Failing that,
+/// a fallback (DEC-610), the first of these that carries an rbs gem, so that
+/// core is known: the lockfile's `RUBY VERSION`; the version manager's
+/// current choice (`$RBENV_VERSION` and its kind, a version file above the
+/// checkout); the Ruby `$GEM_HOME` belongs to; the `ruby` on `$PATH`; each
+/// manager's global; the highest installed. Each must meet the requirements the
+/// checkout writes (`required_ruby_version`, the Gemfile's `ruby "~> 3.4"`).
+/// With none carrying rbs, the first that meets them, else the first found.
 ///
 /// A directory of scripts that names no Ruby still runs on one, and its core
 /// is that Ruby's (DEC-242). A test stays hermetic by what it puts on `PATH`
 /// and in `HOME`.
 ///
 /// `last` is the stdlib the checkout's last index chose. Only the checkout
-/// naming an installed Ruby moves it: an editor launched from the Dock, or
-/// the language server's background reindex, sees a poorer environment
-/// than the shell that indexed, and must not take core away (DEC-271).
+/// naming an installed Ruby, or its lockfile, moves it: an editor launched
+/// from the Dock, or the language server's background reindex, sees a
+/// poorer environment than the shell that indexed, and must not take core
+/// away (DEC-271). A kept Ruby that carries no rbs yields to one that does.
 pub(crate) fn for_checkout(repo: &Path, last: Option<&Path>) -> Option<Stdlib> {
+    let in_place_of = |root: &Path| match last.filter(|last| *last != root) {
+        Some(last) => format!(
+            ", in place of the {} the last index ran on",
+            install_name(last)
+        ),
+        None => String::new(),
+    };
     if let Some(version) = super::project_ruby(repo)
         && let Some(root) = named(&version)
     {
-        let mut ruby = format!("Ruby {version}, which the checkout names");
-        if let Some(last) = last.filter(|last| *last != root) {
-            ruby.push_str(&format!(
-                ", in place of the {} the last index ran on",
-                install_name(last)
-            ));
-        }
+        let ruby = format!(
+            "Ruby {version}, which the checkout names{}",
+            in_place_of(&root)
+        );
         return Some(Stdlib::at(root, ruby, How::Named));
     }
-    let found = from_environment();
-    let Some(kept) = last.filter(|root| has_default_gems(root)) else {
-        return found;
+    let found = fallback(repo);
+    let kept = last.filter(|root| has_default_gems(root)).filter(|_| {
+        found
+            .as_ref()
+            .is_none_or(|found| found.how != How::Lockfile)
+    });
+    let why = match (&found, kept) {
+        (Some(found), Some(kept))
+            if found.root != kept && (carries_rbs(kept) || !carries_rbs(&found.root)) =>
+        {
+            format!("this environment would pick {}", found.ruby)
+        }
+        (Some(found), _) => {
+            let ruby = format!("{}{}", found.ruby, in_place_of(&found.root));
+            return Some(Stdlib {
+                ruby,
+                ..found.clone()
+            });
+        }
+        (None, Some(_)) => "this environment finds no Ruby".to_string(),
+        (None, None) => return None,
     };
-    let why = match &found {
-        Some(found) if found.root == kept => return Some(found.clone()),
-        Some(found) => format!("this environment would pick {}", found.ruby),
-        None => "this environment finds no Ruby".to_string(),
-    };
+    let kept = kept?;
     Some(Stdlib::at(
         kept.to_path_buf(),
         format!(
@@ -525,47 +580,200 @@ pub(crate) fn for_checkout(repo: &Path, last: Option<&Path>) -> Option<Stdlib> {
     ))
 }
 
-/// The Ruby the environment names, when the checkout names none installed.
-fn from_environment() -> Option<Stdlib> {
+/// A Ruby the fallback chain offers: its stdlib, how it was found, and
+/// where from, in words.
+struct Candidate {
+    root: PathBuf,
+    how: How,
+    from: String,
+}
+
+/// The Ruby a checkout that names none installed runs on (DEC-610).
+fn fallback(repo: &Path) -> Option<Stdlib> {
+    let requirements = super::declared::ruby_requirements(repo);
+    let candidates = candidates(repo, &requirements);
+    let fits = |candidate: &&Candidate| {
+        version_of(&candidate.root)
+            .is_none_or(|version| super::declared::meets_all(&version, &requirements))
+    };
+    let chosen = candidates
+        .iter()
+        .filter(fits)
+        .find(|candidate| carries_rbs(&candidate.root))
+        .or_else(|| candidates.iter().find(fits))
+        .or_else(|| candidates.first())?;
+    // What came before it and was not taken, so a surprise can be traced.
+    let passed: Vec<String> = candidates
+        .iter()
+        .take_while(|candidate| !std::ptr::eq(*candidate, chosen))
+        .filter(|candidate| candidate.root != chosen.root)
+        .map(|candidate| {
+            let why = match fits(&candidate) {
+                false => "outside the checkout's requirement",
+                true => "it carries no rbs gem",
+            };
+            format!(
+                "{} from {}: {why}",
+                ruby_name(&candidate.root),
+                candidate.from
+            )
+        })
+        .collect();
+    let mut ruby = format!("{} (fallback: {}", ruby_name(&chosen.root), chosen.from);
+    if !passed.is_empty() {
+        ruby.push_str(&format!("; passed over {}", passed.join(", ")));
+    }
+    ruby.push(')');
+    Some(Stdlib::at(chosen.root.clone(), ruby, chosen.how))
+}
+
+/// `Ruby 3.4.10`, else the install it is in.
+fn ruby_name(root: &Path) -> String {
+    match version_of(root) {
+        Some(version) => format!("Ruby {version}"),
+        None => install_name(root),
+    }
+}
+
+/// Every Ruby the fallback chain finds, in its order, each once.
+fn candidates(repo: &Path, requirements: &[(String, String)]) -> Vec<Candidate> {
+    let pretty = |path: &Path| crate::core::paths::pretty(&path.to_string_lossy());
+    let mut found: Vec<Candidate> = Vec::new();
+    let mut offer = |root: Option<PathBuf>, how: How, from: String| {
+        if let Some(root) = root
+            && !found.iter().any(|c| c.root == root)
+        {
+            found.push(Candidate { root, how, from });
+        }
+    };
+    if let Some(version) = super::lockfile_ruby(repo) {
+        offer(
+            named(&version),
+            How::Lockfile,
+            format!("Gemfile.lock's RUBY VERSION, {version}"),
+        );
+    }
+    for (root, from) in manager_current(repo) {
+        offer(root, How::Manager, from);
+    }
     if let Ok(home) = std::env::var("GEM_HOME")
         && !home.is_empty()
-        && let Some(root) = of_gem_home(Path::new(&home))
     {
-        return Some(Stdlib::at(
-            root,
-            format!(
-                "the Ruby $GEM_HOME names ({})",
-                crate::core::paths::pretty(&home)
-            ),
+        offer(
+            of_gem_home(Path::new(&home)),
             How::GemHome,
-        ));
+            format!("the Ruby $GEM_HOME names, {}", pretty(Path::new(&home))),
+        );
     }
-    if let Some(ruby) = super::path_ruby()
-        && let Some(root) = ruby.parent().and_then(Path::parent).and_then(stdlib_in)
-    {
-        return Some(Stdlib::at(
-            root,
-            format!(
-                "the ruby on $PATH ({})",
-                crate::core::paths::pretty(&ruby.to_string_lossy())
-            ),
+    if let Some(ruby) = super::path_ruby() {
+        offer(
+            ruby.parent().and_then(Path::parent).and_then(stdlib_in),
             How::Path,
+            format!("the ruby on $PATH, {}", pretty(&ruby)),
+        );
+    }
+    // After `$PATH`: a shell's `rvm use` outranks rvm's default, and an
+    // rbenv shim on `$PATH` is no Ruby, so its global is reached.
+    for (root, from) in manager_globals() {
+        offer(root, How::Manager, from);
+    }
+    let mut installed: Vec<(Option<Version>, PathBuf)> = installs()
+        .iter()
+        .filter_map(|prefix| Some((install_version(prefix), stdlib_in(prefix)?)))
+        .collect();
+    installed.sort_by(|a, b| b.cmp(a));
+    installed.dedup_by(|a, b| a.1 == b.1);
+    if let [(_, root)] = installed.as_slice() {
+        let from = format!("the only Ruby installed, {}", pretty(root));
+        offer(Some(root.clone()), How::Only, from);
+        return found;
+    }
+    let from = match requirements {
+        [] => "the highest installed Ruby".to_string(),
+        _ => format!(
+            "the highest installed Ruby meeting {}",
+            requirements
+                .iter()
+                .map(|(file, requirement)| format!("{file}'s {requirement}"))
+                .collect::<Vec<_>>()
+                .join(" and ")
+        ),
+    };
+    for (_, root) in installed {
+        offer(Some(root), How::Highest, from.clone());
+    }
+    found
+}
+
+/// What a version manager would run here, before its global, as rbenv
+/// resolves one: its variable, then a version file in a directory above the
+/// checkout. `system` names the `ruby` on `$PATH`, offered anyway. A GUI
+/// editor inherits no shell variables; it sees the files.
+fn manager_current(repo: &Path) -> Vec<(Option<PathBuf>, String)> {
+    let pretty = |path: &Path| crate::core::paths::pretty(&path.to_string_lossy());
+    let mut choices = Vec::new();
+    for var in ["RBENV_VERSION", "ASDF_RUBY_VERSION", "MISE_RUBY_VERSION"] {
+        if let Ok(value) = std::env::var(var)
+            && let Some(version) = super::ruby_version_text(&value)
+        {
+            choices.push((named(&version), format!("${var}, {version}")));
+        }
+    }
+    // chruby's current Ruby, by its prefix.
+    if let Ok(prefix) = std::env::var("RUBY_ROOT")
+        && !prefix.is_empty()
+    {
+        choices.push((
+            stdlib_in(Path::new(&prefix)),
+            format!("$RUBY_ROOT, {prefix}"),
         ));
     }
-    let mut roots: Vec<PathBuf> = installs().iter().filter_map(|p| stdlib_in(p)).collect();
-    roots.sort();
-    roots.dedup();
-    match roots.as_slice() {
-        [root] => Some(Stdlib::at(
-            root.clone(),
-            format!(
-                "the only Ruby installed ({})",
-                crate::core::paths::pretty(&root.to_string_lossy())
-            ),
-            How::Only,
-        )),
-        _ => None,
+    if let Some((version, file)) = repo.ancestors().skip(1).find_map(super::version_file) {
+        choices.push((named(&version), format!("{}, {version}", pretty(&file))));
     }
+    choices
+}
+
+/// Each version manager's global: rbenv's, `~`'s version files (asdf's
+/// global, and chruby's and rvm's default), mise's, rvm's `default`.
+fn manager_globals() -> Vec<(Option<PathBuf>, String)> {
+    let pretty = |path: &Path| crate::core::paths::pretty(&path.to_string_lossy());
+    let mut choices = Vec::new();
+    let home = std::env::var_os("HOME").map(PathBuf::from);
+    let rbenv = std::env::var_os("RBENV_ROOT")
+        .filter(|root| !root.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| home.as_ref().map(|home| home.join(".rbenv")));
+    if let Some(file) = rbenv.map(|root| root.join("version"))
+        && let Ok(text) = std::fs::read_to_string(&file)
+        && let Some(version) = text.lines().next().and_then(super::ruby_version_text)
+    {
+        choices.push((named(&version), format!("rbenv's global, {version}")));
+    }
+    if let Some(home) = &home {
+        if let Some((version, file)) = super::version_file(home) {
+            choices.push((named(&version), format!("{}, {version}", pretty(&file))));
+        }
+        let config = std::env::var_os("XDG_CONFIG_HOME")
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".config"));
+        if let Ok(text) = std::fs::read_to_string(config.join("mise/config.toml"))
+            && let Some(version) = super::mise_ruby(&text)
+        {
+            choices.push((named(&version), format!("mise's global, {version}")));
+        }
+        // rvm's default, a link to the install.
+        if let Ok(prefix) = std::fs::canonicalize(home.join(".rvm/rubies/default")) {
+            choices.push((stdlib_in(&prefix), "rvm's default".to_string()));
+        }
+    }
+    choices
+}
+
+/// Does this Ruby carry signatures of its own — bundled, or installed for it?
+fn carries_rbs(root: &Path) -> bool {
+    bundled_rbs(root).is_some() || rbs_in(&gem_dirs_of(root)).is_some()
 }
 
 /// `Ruby at ~/.rvm/rubies/ruby-3.4.9`, for the stdlib at `root`

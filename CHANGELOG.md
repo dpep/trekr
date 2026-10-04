@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+- **A checkout that names no Ruby still gets core** (#9). Without a
+  `.ruby-version` (most gems), trekr used `$GEM_HOME`'s or `$PATH`'s Ruby, or
+  the only one installed — and with several installed and none of those,
+  indexed no core at all. It now falls back, in order, to the lockfile's
+  `RUBY VERSION`, the version manager's current choice (`$RBENV_VERSION`,
+  `$ASDF_RUBY_VERSION`, `$MISE_RUBY_VERSION`, chruby's `$RUBY_ROOT`, a
+  version file above the checkout), `$GEM_HOME`'s, `$PATH`'s, rbenv's,
+  mise's or rvm's global, then the highest installed — taking the first
+  that carries an rbs gem and meets the gemspec's `required_ruby_version`
+  (and a Gemfile `ruby "~> 3.4"`). `.tool-versions` and mise's `[tools]
+  ruby` now count as the checkout naming its Ruby. `--index` says
+  `Ruby 4.0.6 (fallback: …)` and what it passed over; `--status` gains a line
+  per checkout naming its Ruby; the `ruby` object's `how` gains `lockfile`,
+  `manager` and `highest`, and a `fallback` boolean. A checkout whose
+  lockfile names its Ruby moves to it on the next `--index`.
 - **Visibility follows more of Ruby's rules.** `private :x` after `def x`
   now makes `x` private in `--symbols` and completion (class methods too,
   inside `class << self`); an alias takes its original's visibility instead

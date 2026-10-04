@@ -422,8 +422,12 @@ tiers the site `possible`.
   `gems.other_ruby` lists the ones found only for another Ruby.
 * `ruby` (top level of `--index`, per checkout in `--status`) is the Ruby the
   checkout runs on: `version`, `root` (its stdlib's) and `how` it was chosen —
-  `named` by `.ruby-version`/Gemfile, `gem_home`, `path`, `only`, or `kept`
-  from the last index; `null` when none was found.
+  `named` by `.ruby-version`/`.tool-versions`/mise/Gemfile; else a fallback,
+  the first carrying rbs that meets the gemspec's `required_ruby_version`:
+  `lockfile` (`RUBY VERSION`), `manager` (`$RBENV_VERSION`, a version file
+  above, a manager's global), `gem_home`, `path`, `highest`, `only`; or
+  `kept` from the last index. `fallback` is true for all but `named`; `null`
+  when none was found.
 * `gems.stdlib` is the Ruby standard library indexed with the checkout —
   `root`, the `ruby` it belongs to and how it was chosen, and `hidden`: the
   default gems (json, logger, uri…) the bundle has its own copy of, whose

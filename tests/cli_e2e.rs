@@ -5022,6 +5022,152 @@ fn a_checkout_naming_no_ruby_runs_on_the_one_it_finds() {
     }
 }
 
+/// A checkout that names no Ruby falls back through what else says which —
+/// its lockfile, the version manager, the environment, the highest installed
+/// that meets its gemspec — to the first Ruby that carries signatures, and
+/// says it is a fallback (DEC-610).
+#[test]
+fn a_checkout_naming_no_ruby_falls_back_to_one_with_signatures() {
+    let (parent, store) = scratch("ruby-fallback");
+    fs::remove_file(parent.join(".ruby-version")).unwrap();
+    let dir = parent.join("app");
+    fs::create_dir_all(&dir).unwrap();
+    repo(&dir);
+    fs::write(dir.join("use.rb"), "\"a\".upcase\n").unwrap();
+    fs::write(
+        dir.join("widget.gemspec"),
+        "Gem::Specification.new do |s|\n  s.name = \"widget\"\n  \
+         s.required_ruby_version = \">= 9.5\"\nend\n",
+    )
+    .unwrap();
+    let (home, _) = scratch("ruby-fallback-home");
+    let versions = home.join(".rbenv/versions");
+    let low = fake_ruby_at(&versions.join("9.6.1"), "9.6.1", &[], &[]);
+    let high = fake_ruby_at(&versions.join("9.7.1"), "9.7.1", &[], &[]);
+    let old = fake_ruby_at(&versions.join("9.4.2"), "9.4.2", &[], &[]);
+    // The `ruby` on `PATH` is a system Ruby with no rbs, as macOS's is.
+    let (system, _) = scratch("ruby-fallback-system");
+    let lib = system.join("lib/ruby");
+    fs::create_dir_all(lib.join("9.5.0")).unwrap();
+    fs::create_dir_all(lib.join("gems/9.5.0/specifications/default")).unwrap();
+    fs::create_dir_all(system.join("bin")).unwrap();
+    fs::write(system.join("bin/ruby"), "").unwrap();
+    let path = format!("{}:{}", git_only().display(), system.join("bin").display());
+
+    let base = [("HOME", home.to_str().unwrap()), ("PATH", path.as_str())];
+    // A store each, or the last index's Ruby would be kept (DEC-271).
+    let mut stores = 0;
+    let mut index = |vars: &[(&str, &str)]| {
+        stores += 1;
+        let db = store.with_extension(format!("{stores}.db"));
+        let env = [&base[..], vars].concat();
+        let out = json(&trekr_env(&db, &dir, &["--index", "--json"], &env));
+        (db, out)
+    };
+
+    // Nothing names one, `PATH`'s carries no rbs: the highest installed
+    // that meets the gemspec.
+    let (db, out) = index(&[]);
+    assert_eq!(out["ruby"]["root"], high.as_str(), "{out}");
+    assert_eq!(out["ruby"]["how"], "highest", "{out}");
+    assert_eq!(out["ruby"]["fallback"], true, "{out}");
+    let said = out["gems"]["stdlib"]["ruby"].as_str().unwrap();
+    assert!(said.starts_with("Ruby 9.7.1 (fallback: "), "{said}");
+    assert!(said.contains(">= 9.5") && said.contains("$PATH"), "{said}");
+    let env = base;
+    let upcase = trekr_env(&db, &dir, &["--def", "use.rb:1:5", "--json"], &env);
+    assert_eq!(json(&upcase)["owner"], "String", "core is known");
+    let status = json(&trekr_env(&db, &dir, &["--status", "--json"], &env));
+    assert_eq!(status["checkouts"][0]["ruby"], out["ruby"], "{status}");
+    let status = stdout(&trekr_env(&db, &dir, &["--status"], &env));
+    assert!(status.contains("Ruby 9.7.1 (fallback: "), "{status}");
+
+    // The gemspec rules out the higher.
+    fs::write(
+        dir.join("widget.gemspec"),
+        "Gem::Specification.new do |s|\n  s.required_ruby_version = [\">= 9.5\", \"< 9.7\"]\nend\n",
+    )
+    .unwrap();
+    let (_, out) = index(&[]);
+    assert_eq!(out["ruby"]["root"], low.as_str(), "{out}");
+
+    // The version manager's choice, from its variable or its global file —
+    // but not one the gemspec rules out.
+    let (_, out) = index(&[("RBENV_VERSION", "9.6.1")]);
+    assert_eq!(
+        (out["ruby"]["root"].as_str(), out["ruby"]["how"].as_str()),
+        (Some(low.as_str()), Some("manager")),
+        "{out}"
+    );
+    assert!(
+        out["gems"]["stdlib"]["ruby"]
+            .as_str()
+            .unwrap()
+            .contains("$RBENV_VERSION"),
+        "{out}"
+    );
+    fs::write(home.join(".rbenv/version"), "9.4.2\n").unwrap();
+    let (_, out) = index(&[]);
+    assert_eq!(out["ruby"]["root"], low.as_str(), "outside >= 9.5: {out}");
+    fs::write(dir.join("widget.gemspec"), "").unwrap();
+    let (_, out) = index(&[]);
+    assert_eq!(
+        (out["ruby"]["root"].as_str(), out["ruby"]["how"].as_str()),
+        (Some(old.as_str()), Some("manager")),
+        "{out}"
+    );
+    // The shell's current Ruby outranks a manager's global.
+    let gem_home = format!("{}/lib/ruby/gems/9.6.0", versions.join("9.6.1").display());
+    let (_, out) = index(&[("GEM_HOME", gem_home.as_str())]);
+    assert_eq!(
+        (out["ruby"]["root"].as_str(), out["ruby"]["how"].as_str()),
+        (Some(low.as_str()), Some("gem_home")),
+        "{out}"
+    );
+    fs::remove_file(home.join(".rbenv/version")).unwrap();
+
+    // A `.ruby-version` above the checkout, as rbenv finds one.
+    fs::write(parent.join(".ruby-version"), "9.6\n").unwrap();
+    let (_, out) = index(&[]);
+    assert_eq!(
+        (out["ruby"]["root"].as_str(), out["ruby"]["how"].as_str()),
+        (Some(low.as_str()), Some("manager")),
+        "{out}"
+    );
+    fs::remove_file(parent.join(".ruby-version")).unwrap();
+
+    // The lockfile's `RUBY VERSION`, ahead of the environment.
+    fs::write(
+        dir.join("Gemfile.lock"),
+        "GEM\n  remote: https://rubygems.org/\n  specs:\n\nRUBY VERSION\n   ruby 9.4.2p100\n\n\
+         BUNDLED WITH\n   2.5.0\n",
+    )
+    .unwrap();
+    let (_, out) = index(&[("RBENV_VERSION", "9.6.1")]);
+    assert_eq!(
+        (out["ruby"]["root"].as_str(), out["ruby"]["how"].as_str()),
+        (Some(old.as_str()), Some("lockfile")),
+        "{out}"
+    );
+    fs::remove_file(dir.join("Gemfile.lock")).unwrap();
+
+    // What the checkout names is no fallback.
+    fs::write(dir.join(".tool-versions"), "nodejs 20.1.0\nruby 9.6.1\n").unwrap();
+    let (_, out) = index(&[]);
+    assert_eq!(
+        (
+            out["ruby"]["root"].as_str(),
+            out["ruby"]["fallback"].as_bool()
+        ),
+        (Some(low.as_str()), Some(false)),
+        "{out}"
+    );
+
+    for dir in [&parent, &home, &system] {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
 /// chruby's, mise's and Homebrew's versioned Rubies are found by the version
 /// a checkout names; one that is not installed is said, with the Ruby run on
 /// instead (DEC-270).
@@ -5074,7 +5220,7 @@ fn a_named_ruby_is_found_wherever_a_version_manager_put_it() {
     let text = stdout(&trekr_env(&db, &dir, &["--index"], &env));
     assert!(
         text.contains("names Ruby 9.2, which is not installed")
-            && text.contains("running on the Ruby $GEM_HOME names"),
+            && text.contains("running on Ruby 9.6.1 (fallback: the Ruby $GEM_HOME names"),
         "{text}"
     );
     let status = json(&trekr_env(&db, &dir, &["--status", "--json"], &env));
@@ -5100,14 +5246,17 @@ fn a_reindex_in_a_poorer_environment_keeps_the_rubys_core() {
     repo(&dir);
     fs::write(dir.join("use.rb"), "\"a\".upcase\n").unwrap();
     let (home, _) = scratch("ruby-kept-home");
-    let first = fake_ruby(&home, "9.8.7", &[], &[]);
-    let second = fake_ruby(&home, "9.7.1", &[], &[]);
-    let gem_home = format!("{}/.rvm/gems/ruby-9.8.7", home.display());
+    // Not a `~/.ruby-version` (DEC-610).
+    fs::remove_file(home.join(".ruby-version")).unwrap();
+    let first = fake_ruby(&home, "9.7.1", &[], &[]);
+    let second = fake_ruby(&home, "9.8.7", &[], &[]);
+    let gem_home = format!("{}/.rvm/gems/ruby-9.7.1", home.display());
     let rich = [
         ("HOME", home.to_str().unwrap()),
         ("GEM_HOME", gem_home.as_str()),
     ];
-    // Two Rubies, none named, none on `PATH`, no `$GEM_HOME`: none to choose.
+    // None named, none on `PATH`, no `$GEM_HOME`: its fallback is the
+    // highest installed, not the shell's.
     let bare = [("HOME", home.to_str().unwrap())];
 
     let index = json(&trekr_env(&db, &dir, &["--index", "--json"], &rich));
@@ -5127,7 +5276,7 @@ fn a_reindex_in_a_poorer_environment_keeps_the_rubys_core() {
     assert_eq!(json(&upcase)["owner"], "String", "core is still known");
 
     // The checkout names another Ruby: that one, and it is said.
-    fs::write(dir.join(".ruby-version"), "9.7.1\n").unwrap();
+    fs::write(dir.join(".ruby-version"), "9.8.7\n").unwrap();
     let index = json(&trekr_env(&db, &dir, &["--index", "--json"], &bare));
     let stdlib = &index["gems"]["stdlib"];
     assert_eq!(stdlib["root"], second.as_str(), "{index}");
@@ -5414,6 +5563,8 @@ fn the_rubys_choice_is_structured_in_index_and_status() {
     let (dir, db) = scratch("ruby-object");
     repo(&dir);
     let (home, _) = scratch("ruby-object-home");
+    // Not a `~/.ruby-version` (DEC-610).
+    fs::remove_file(home.join(".ruby-version")).unwrap();
     let first = fake_ruby(&home, "9.8.7", &[], &[]);
     let second = fake_ruby(&home, "9.7.1", &[], &[]);
     let gem_home = format!("{}/.rvm/gems/ruby-9.8.7", home.display());
@@ -5427,7 +5578,7 @@ fn the_rubys_choice_is_structured_in_index_and_status() {
     let index = ruby(&db, &["--index", "--json"]);
     assert_eq!(
         index["ruby"],
-        serde_json::json!({ "version": "9.7.1", "root": second, "how": "named" }),
+        serde_json::json!({ "version": "9.7.1", "root": second, "how": "named", "fallback": false }),
         "{index}"
     );
     assert!(
@@ -5448,7 +5599,7 @@ fn the_rubys_choice_is_structured_in_index_and_status() {
     let index = ruby(&fresh, &["--index", "--json"]);
     assert_eq!(
         index["ruby"],
-        serde_json::json!({ "version": "9.8.7", "root": first, "how": "gem_home" }),
+        serde_json::json!({ "version": "9.8.7", "root": first, "how": "gem_home", "fallback": true }),
         "{index}"
     );
     let skipped = ruby(&fresh, &["--index", "--no-gems", "--json"]);

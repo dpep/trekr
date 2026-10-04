@@ -13226,3 +13226,97 @@ receiver, `o.build` on a block's parameter) exited 64, `kind: usage`, saying
 `--refs Owner#name` answers an owner it cannot find: the `--def` answer's
 `status` and `reason`, no references, a `hint` naming the bare-name listing
 (`trekr --refs build`), exit 1. Testbed 582.
+
+## DEC-610 — A checkout that names no Ruby falls back to one with signatures, and says so
+
+Amends DEC-242's "the one it finds", DEC-271's keeping, and DEC-292's `how`.
+
+**Decided.** The Ruby a checkout names — its `.ruby-version`, `.tool-versions`'
+`ruby`, mise's `[tools] ruby`, the Gemfile's `ruby "3.4.1"` — is still taken
+first when installed. Otherwise the Ruby is a *fallback*, the first of these
+that carries an rbs gem of its own (bundled or installed for it, DEC-242):
+
+1. `Gemfile.lock`'s `RUBY VERSION` (`ruby 3.4.7p58`), which bundler writes
+   only when the Gemfile has a `ruby` line — mastodon's, discourse's;
+2. the version manager's current choice, as rbenv resolves one:
+   `$RBENV_VERSION`, `$ASDF_RUBY_VERSION`, `$MISE_RUBY_VERSION`, chruby's
+   `$RUBY_ROOT`; then a version file in a directory above the checkout
+   (`~/.ruby-version` among them when the checkout is under `~`). `system`
+   names the `ruby` on `$PATH`, offered at 4;
+3. the Ruby `$GEM_HOME` belongs to;
+4. the `ruby` on `$PATH`;
+5. each manager's global: rbenv's (`$RBENV_ROOT/version`), `~`'s version
+   files, mise's global config, rvm's `default` link — after 3 and 4, since
+   `rvm use 3.3` outranks rvm's default, and an rbenv shim on `$PATH` is no
+   Ruby, so rbenv's global is reached;
+6. every installed Ruby, highest first (`only` when there is one).
+
+Each must also meet what the checkout requires — its gemspecs'
+`required_ruby_version` and the Gemfile's `ruby "~> 3.4"` / `ruby ">= 3.3",
+"< 4.1"`, intersected; one that cannot be read is met. A version matches as
+DEC-180's do (`3.4` is the highest 3.4.x). With none carrying rbs, the first
+that meets the requirements, else the first found, and DEC-240's
+"another Ruby's" rbs or "no signatures" as before. A version named and not
+installed is still said (DEC-270), then this chain runs.
+
+*Kept* (DEC-271): the lockfile moves a kept Ruby as a named one does — it is
+a file in the checkout, the same from any environment. A kept Ruby that
+carries no rbs yields to a fallback that does; otherwise it stays.
+
+*Said.* `how` gains `lockfile`, `manager` and `highest`; the `ruby` object
+gains `fallback` (every `how` but `named`; `null` with `how`). The sentence
+(`gems.stdlib.ruby`, `--index` text) reads `Ruby 4.0.6 (fallback: the highest
+installed Ruby meeting graphql.gemspec's >= 2.7.0)`, and names what came
+before it and was passed over, and why ("it carries no rbs gem", "outside the
+checkout's requirement"). `--status` text has a line per checkout:
+`+ Ruby 4.0.6 (fallback: the highest installed that meets the checkout's
+requirements)`, or `…, which the checkout names`.
+
+**Why.** dpep/trekr#9: graphql-ruby commits no `.ruby-version`, and on a
+machine whose `ruby` is macOS's 2.6 (no `/usr/lib/ruby`, no rbs) with rbenv
+holding 3.4.10 and 4.0.6, DEC-242's chain found nothing — several Rubies,
+nothing to choose between — and every core call was residue. Most gems
+commit no version file. DEC-242 declined to guess among several; with the
+pick and why it was made in every report, a guess that is said beats no core:
+core differs little between the Rubies a gemspec allows, and `--status`
+shows which answered.
+
+**Order, against the issue's.** The issue put "the highest meeting
+`required_ruby_version`" before the `ruby` on `$PATH`. `$PATH`'s is what the
+shell runs and what `bundle exec` would; the requirement filter and the rbs
+rule already pass over the issue's 2.6. `$GEM_HOME` and `$PATH` keep DEC-152's
+order, so every corpus that ran on them still does.
+
+**The editor.** The language server indexes with the editor's environment: a
+GUI-launched VS Code inherits no `$RBENV_VERSION`, and its `PATH` often lacks
+the shims. The manager's files (global version, `~/.tool-versions`, mise's
+config) are what it sees, which is why they are read rather than only the
+variables; and DEC-271's keeping stops a poorer reindex moving the shell's
+choice.
+
+**Not per answer.** An answer resting on a fallback's core carries no field
+of its own. The answer's definition path already names the Ruby's signatures,
+it would ride on nearly every gem's answers (most gems name no Ruby), and
+`--status` says it once. Residue on core still says "no Ruby found" when
+there is none.
+
+**Measured** on this machine (rvm 3.4.9 with `$GEM_HOME`, rbenv 3.4.10 and
+4.0.6, macOS's `/usr/bin/ruby` 2.6), each run on its own store.
+graphql-ruby (no `.ruby-version`, no lockfile, `>= 2.7.0`) in the issue's
+environment — `$HOME` holding only rbenv, `PATH=/usr/bin:/bin`, no
+`$GEM_HOME`: before, `stdlib — none`; after, `Ruby 4.0.6 (fallback: the
+highest installed Ruby meeting graphql.gemspec's >= 2.7.0)`, rbs 3.10.0
+bundled, and the issue's `Time.iso8601` resolves to `time.rb` at 1.0; with
+`RBENV_VERSION=3.4.10`, 3.4.10 and its `time.rb`. Of 40 sampled core-method
+call sites in `lib/`, 8 residue "core is not indexed" → 0, resolved 0 → 12;
+the rest stay residue on untyped receivers, now with candidates. In the
+shell's own environment it runs on `$GEM_HOME`'s 3.4.9, as before. discourse
+(names 3.4.10) and rails (`$GEM_HOME`) answer with the same Ruby and `how`,
+plus `fallback`; mastodon moves from `$GEM_HOME`'s 3.4.9 to its lockfile's
+4.0.6, which its Gemfile's `>= 3.3.0, < 4.1.0` allows. A first cut put the
+managers' globals before `$GEM_HOME`, and rails answered from rvm's
+`default` — the same Ruby by luck, the wrong reason; they follow `$PATH` now.
+
+Not done: `.ruby-version` with `ruby file:` in
+the Gemfile is read as the file itself; mise's `.config/mise.toml` in a
+project and asdf's `legacy_version_file` settings are not read.
