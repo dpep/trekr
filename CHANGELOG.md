@@ -56,6 +56,11 @@
 - This changes what an index records (store v60): trekr reindexes once after
   upgrading.
 
+- **A private class method is private.** `private` inside `class << self`
+  was dropped, so `--symbols` listed its methods as public and completion
+  offered them after `Widget.`; `private_class_method :x` and
+  `private_class_method def self.x` were not read at all. trekr reindexes
+  once after upgrading.
 - **`class X < X` inside a namespace inherits the outer `X`.** Ruby reads
   the superclass before the new class exists, so rails'
   `ConnectionAdapters::SchemaDumper < SchemaDumper` is an

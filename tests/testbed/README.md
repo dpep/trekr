@@ -62,7 +62,8 @@ its whole name (`Admin::Widget=unreferenced`), or an example group's `let`, `sub
 also asserts its caveat contains `word`, and `tier~` that it has none. `ancestors NAME A,B,C`
 asserts the chain starts with those names, and `unresolved=X,Y` (empty for
 none) asserts the ancestors it could not resolve. `symbols FILE` asserts the outline,
-in source order, comma-separated.
+in source order, comma-separated, and `private=a,b` which of its rows are
+private.
 
 `hover FILE:LINE:COL <text>` drives a real `--lsp` session and asserts the
 markdown an editor would show contains `<text>`. It exists because some of what

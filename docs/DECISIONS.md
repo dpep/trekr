@@ -12824,3 +12824,27 @@ chain and no note — so the chain ended and nothing said so. The hooks
 adapter dumpers that override them. Testbed 560.
 
 **Tree only**; no extraction change.
+
+## DEC-561 — `class << self` keeps its own `private`
+
+**Decided.** A `class << self` body is a visibility section of its own,
+public at its start: a bare `private` (or `protected`) in it reaches the
+`def`s after it, and `private :x` there marks the class method, as before.
+`private_class_method :x` makes private the class method `x` written
+before it in the same body, and `private_class_method def self.x` the
+method it wraps; `public_class_method` the same, public. Unlike `private
+:x` (DEC-004) it adds no row: one at the symbol would answer `--def` there
+with the symbol itself, where it answers the method (testbed 059), so a
+class method inherited or written elsewhere keeps the visibility it has. Only a `def` that names
+its receiver (`def self.x`, `def Foo.x`) stays out of reach of a bare
+modifier around it.
+
+**Why.** The reported `class << self; private; def register` was public in
+`--symbols`, and so in completion after `Widget.`: the rule "a modifier
+never reaches a singleton def" was written for `def self.x` and applied to
+every singleton def. rq fixed the same shape (its #29). Testbed 561, which
+also pins that a private class method's bare call in a subclass body is its
+caller in `--dead`: nothing in `--refs` rules a call out by visibility on
+the class side.
+
+**Extraction changed**, so the store version moves.

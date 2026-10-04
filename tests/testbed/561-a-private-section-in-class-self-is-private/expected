@@ -1,0 +1,7 @@
+# `private` inside `class << self` starts that section's private methods; it
+# was dropped because "a modifier never reaches a singleton def" was read for
+# every singleton def, not only `def self.x`. `private_class_method` is the
+# class side's own `private`, by name or wrapping a `def self.x` (DEC-561).
+symbols app.rb Widget,build,register,open,secret,Gadget private=register,open,secret
+# A private class method is a DSL for subclass bodies: the bare call there is its caller.
+dead app.rb Widget#register=single-caller

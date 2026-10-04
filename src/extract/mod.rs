@@ -1567,8 +1567,9 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         }
         def.sig_params = std::mem::take(&mut self.pending_sig_params);
         // Visibility modifiers never reach `def self.x` — it is public whatever
-        // the enclosing `private` says.
-        def.visibility = if singleton {
+        // the enclosing `private` says. A `class << self` body is a section of
+        // its own, and its `private` does reach its `def`s.
+        def.visibility = if receiver.is_some() {
             Visibility::Public
         } else {
             self.visibility()
@@ -2549,6 +2550,9 @@ impl<'pr> Extractor<'_> {
             }
             "private" | "protected" | "public" | "module_function" => {
                 self.handle_visibility(call, &name, &args)
+            }
+            "private_class_method" | "public_class_method" => {
+                self.handle_class_visibility(&name, &args)
             }
             _ if !self.in_method_body()
                 && self
@@ -4847,6 +4851,46 @@ impl<'pr> Extractor<'_> {
         true
     }
 
+    /// `private_class_method :x` and `private_class_method def self.x`: the
+    /// class side's `private`, which a bare one never reaches (DEC-561).
+    fn handle_class_visibility(&mut self, macro_name: &str, args: &[Node<'pr>]) -> bool {
+        let visibility = if macro_name == "private_class_method" {
+            Visibility::Private
+        } else {
+            Visibility::Public
+        };
+        for arg in args {
+            if arg.as_def_node().is_some() {
+                // The def is pushed before its body is visited, so it is the
+                // first row this visit adds.
+                let at = self.facts.defs.len();
+                self.visit(arg);
+                if let Some(def) = self.facts.defs.get_mut(at).filter(|d| d.singleton) {
+                    def.visibility = visibility;
+                }
+                continue;
+            }
+            // The class method it names, written before it in this body. One
+            // inherited, or written elsewhere, is left as it is: a row here
+            // would answer `--def` on the symbol with the symbol itself.
+            let Some(target) = literal_name(arg) else {
+                self.visit(arg);
+                continue;
+            };
+            let nesting = &self.nesting;
+            if let Some(def) = self.facts.defs.iter_mut().rev().find(|d| {
+                d.kind == Kind::Method
+                    && d.singleton
+                    && d.via.is_none()
+                    && d.name == target
+                    && &d.nesting == nesting
+            }) {
+                def.visibility = visibility;
+            }
+        }
+        true
+    }
+
     fn record_assign(&mut self, target: String, value: &Node<'pr>, offset: usize) {
         let pos = self.pos(offset);
         let value = self.assigned(value);
@@ -6570,6 +6614,25 @@ mod tests {
     fn a_visibility_modifier_never_reaches_a_singleton_def() {
         let facts = extract(b"class K\n  private\n  def self.made\n  end\nend\n");
         assert_eq!(method(&facts, "made").visibility, Visibility::Public);
+    }
+
+    #[test]
+    fn a_private_section_in_class_self_reaches_its_defs() {
+        let facts = extract(
+            b"class K\n  class << self\n    def open\n    end\n    private\n    def shut\n    end\n  end\n  def later\n  end\nend\n",
+        );
+        assert_eq!(method(&facts, "open").visibility, Visibility::Public);
+        assert_eq!(method(&facts, "shut").visibility, Visibility::Private);
+        assert_eq!(method(&facts, "later").visibility, Visibility::Public);
+    }
+
+    #[test]
+    fn private_class_method_is_the_class_sides_private() {
+        let facts = extract(
+            b"class K\n  def self.a\n  end\n  private_class_method :a\n  private_class_method def self.b\n  end\nend\n",
+        );
+        assert_eq!(method(&facts, "a").visibility, Visibility::Private);
+        assert_eq!(method(&facts, "b").visibility, Visibility::Private);
     }
 
     #[test]

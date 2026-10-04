@@ -572,6 +572,25 @@ fn every_testbed_case_answers_as_recorded() {
                             "{label}: {line}\n      expected {want:?}, got {got:?}"
                         ));
                     }
+                    // `private=a,b`: the rows that are private, in source order.
+                    if let Some(want) = rest
+                        .split_whitespace()
+                        .find_map(|token| token.strip_prefix("private="))
+                    {
+                        let got: Vec<&str> = answer
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter(|r| r["visibility"] == "private")
+                            .filter_map(|r| r["name"].as_str())
+                            .collect();
+                        let want: Vec<&str> = want.split(',').filter(|n| !n.is_empty()).collect();
+                        if got != want {
+                            failures.push(format!(
+                                "{label}: {line}\n      private: expected {want:?}, got {got:?}"
+                            ));
+                        }
+                    }
                 }
                 other => failures.push(format!("{label}: unknown verb `{other}`")),
             }
