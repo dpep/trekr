@@ -369,6 +369,18 @@ pub(crate) fn value_class(
     at: crate::core::Pos,
     path: &str,
 ) -> Option<String> {
+    object_value(tree, facts, value, at, path).map(|(class, _)| class)
+}
+
+/// The class a value handed `render` holds, and whether that is the
+/// element of a collection it holds (a relation's, by its model).
+fn object_value(
+    tree: &Tree,
+    facts: &Facts,
+    value: &str,
+    at: crate::core::Pos,
+    path: &str,
+) -> Option<(String, bool)> {
     let call = Call {
         name: "to_partial_path".to_string(),
         recv: match value.starts_with('@') {
@@ -389,13 +401,17 @@ pub(crate) fn value_class(
         block: false,
         pos: at,
     };
-    let typed = super::receiver_of(tree, facts, &call, path).filter(|typed| {
-        !typed.singleton && !matches!(typed.fqn.as_str(), "Array" | super::RELATION | "Object")
-    });
+    let typed = super::receiver_of(tree, facts, &call, path).filter(|typed| !typed.singleton);
     match typed {
-        Some(typed) => Some(typed.fqn),
-        None if value.starts_with('@') => collection_model(tree, path, value),
-        None => None,
+        Some(typed) if !matches!(typed.fqn.as_str(), "Array" | super::RELATION | "Object") => {
+            Some((typed.fqn, false))
+        }
+        // Only a value typed as a collection is known to be one.
+        typed if value.starts_with('@') => {
+            let many = typed.is_some_and(|t| t.fqn != "Object");
+            collection_model(tree, path, value).map(|c| (c, many))
+        }
+        _ => None,
     }
 }
 
@@ -548,11 +564,17 @@ pub(crate) fn partial_local(tree: &Tree, call: &Call, path: &str) -> Option<Part
             if !names_base {
                 continue;
             }
-            let class = match &template.names {
-                crate::core::Named::Object { value, .. } => {
-                    value_class(tree, &facts, value, template.pos, caller)
+            let (class, many) = match &template.names {
+                crate::core::Named::Object { value, collection } => {
+                    // Untyped, a value named the partial's plural (`@posts`
+                    // for `_post`) is taken to be the collection it reads as.
+                    let plural = value.trim_start_matches('@') == crate::inflect::plural(base);
+                    match object_value(tree, &facts, value, template.pos, caller) {
+                        Some((class, many)) => (Some(class), many || *collection || plural),
+                        None => (None, *collection || plural),
+                    }
                 }
-                _ => None,
+                _ => (None, false),
             };
             let reaches =
                 crate::tree::views::template_files(root, caller, &template.names, class.as_deref())
@@ -575,9 +597,20 @@ pub(crate) fn partial_local(tree: &Tree, call: &Call, path: &str) -> Option<Part
                     found.types.push(class);
                 }
             }
-            if matches!(template.names, crate::core::Named::Object { .. }) && call.name == base {
-                found.sites.push(site(template.pos));
-                found.types.extend(class);
+            // `render @posts` hands `post` (and `post_counter`, for a
+            // collection) — unless an `as:` names the local instead.
+            let renamed = template
+                .locals
+                .iter()
+                .any(|l| l.value.as_ref().is_some_and(|(_, at)| *at == template.pos));
+            if matches!(template.names, crate::core::Named::Object { .. }) && !renamed {
+                let counter = [format!("{base}_counter"), format!("{base}_iteration")];
+                if call.name == base {
+                    found.sites.push(site(template.pos));
+                    found.types.extend(class);
+                } else if many && counter.contains(&call.name) {
+                    found.sites.push(site(template.pos));
+                }
             }
         }
     }

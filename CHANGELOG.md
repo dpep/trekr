@@ -53,6 +53,10 @@
   `extends "posts/base"` answers the template file (`under: template`). In a
   partial, a local a `render` hands it (`render "row", widget: @widget`,
   `post` from `render @post`) is defined at those keys, and typed by them.
+  `render partial: "row", collection: @widgets` renders `_row` once per
+  widget, handing it `row` (or the local `as:` names) with `row_counter` and
+  `row_iteration`; `object:` hands one value the same way, and `render
+  @posts` hands `post_counter` too.
 - **RABL templates are read.** A `*.rabl` view is indexed as Ruby on its
   engine, which hands a name it lacks to the view's helpers. `object
   @post`'s `@post` is typed from the controller; `attributes :title`,

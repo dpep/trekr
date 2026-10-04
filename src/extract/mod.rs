@@ -5391,6 +5391,16 @@ impl<'pr> Extractor<'_> {
         let value_at = |node: &Node<'pr>| {
             value_text(node).map(|text| (text, lines.pos(node.location().start_offset())))
         };
+        // `partial: "x"`'s name, the value `collection:` or `object:` hands
+        // it (and whether it is a collection), and the local `as:` names.
+        let mut partial: Option<String> = None;
+        struct Handed {
+            span: (usize, usize),
+            value: (String, Pos),
+            collection: bool,
+        }
+        let mut handed: Option<Handed> = None;
+        let mut as_name: Option<String> = None;
         for (index, arg) in args.iter().enumerate() {
             if let Some(hash) = arg.as_keyword_hash_node() {
                 for element in hash.elements().iter() {
@@ -5404,7 +5414,10 @@ impl<'pr> Extractor<'_> {
                     let value = assoc.value();
                     match (name.as_str(), key.as_deref()) {
                         ("render", Some("partial")) => match string(&value) {
-                            Some(s) => found.push((span(&value), Named::Partial(s))),
+                            Some(s) => {
+                                partial = Some(s.clone());
+                                found.push((span(&value), Named::Partial(s)));
+                            }
                             None => {
                                 if let Some(v) = value_text(&value) {
                                     found.push((
@@ -5422,16 +5435,21 @@ impl<'pr> Extractor<'_> {
                                 found.push((span(&value), Named::Template(s)));
                             }
                         }
-                        ("render", Some("collection")) => {
-                            if let Some(v) = value_text(&value) {
-                                found.push((
-                                    span(&value),
-                                    Named::Object {
-                                        value: v,
-                                        collection: true,
-                                    },
-                                ));
+                        ("render", Some(key @ ("collection" | "object"))) => {
+                            if let Some(v) = value_at(&value) {
+                                handed = Some(Handed {
+                                    span: span(&value),
+                                    value: v,
+                                    collection: key == "collection",
+                                });
                             }
+                        }
+                        ("render", Some("as")) => {
+                            as_name = value
+                                .as_symbol_node()
+                                .map(|s| s.unescaped().to_vec())
+                                .or_else(|| value.as_string_node().map(|s| s.unescaped().to_vec()))
+                                .and_then(|name| String::from_utf8(name).ok());
                         }
                         ("render", Some("locals")) => {
                             if let Some(hash) = value.as_hash_node() {
@@ -5443,8 +5461,8 @@ impl<'pr> Extractor<'_> {
                         (
                             "render",
                             Some(
-                                "object" | "as" | "formats" | "handlers" | "cached"
-                                | "spacer_template" | "status" | "content_type",
+                                "formats" | "handlers" | "cached" | "spacer_template" | "status"
+                                | "content_type",
                             ),
                         ) => {}
                         ("render", Some(_)) if index > 0 => {
@@ -5475,6 +5493,55 @@ impl<'pr> Extractor<'_> {
                 }
                 _ => {}
             }
+        }
+        // The value a partial is rendered for is a local named for the
+        // partial, or `as:`; each element of a collection, with its counter
+        // and iteration beside it. With no partial named, a collection names
+        // the partial by its class (DEC-525's addendum).
+        let mut name_value = |name: String, value: &(String, Pos), collection: bool| {
+            if collection {
+                for suffix in ["_counter", "_iteration"] {
+                    locals.push(Local {
+                        name: format!("{name}{suffix}"),
+                        pos: value.1,
+                        value: None,
+                    });
+                }
+            }
+            locals.push(Local {
+                name,
+                pos: value.1,
+                value: Some(value.clone()),
+            });
+        };
+        match (handed, &partial) {
+            (Some(handed), Some(partial)) => {
+                let base = partial.rsplit('/').next().unwrap_or(partial).to_string();
+                name_value(as_name.unwrap_or(base), &handed.value, handed.collection);
+            }
+            (Some(handed), None) if handed.collection => {
+                if let Some(name) = as_name {
+                    name_value(name, &handed.value, true);
+                }
+                found.push((
+                    handed.span,
+                    Named::Object {
+                        value: handed.value.0,
+                        collection: true,
+                    },
+                ));
+            }
+            (_, None) => {
+                // `render @post, as: :entry`: the object's local is `entry`.
+                let object = found.iter().find_map(|(at, names)| match names {
+                    Named::Object { value, .. } => Some((at.0, value.clone())),
+                    _ => None,
+                });
+                if let (Some(name), Some((start, value))) = (as_name, object) {
+                    name_value(name, &(value, self.pos(start)), false);
+                }
+            }
+            _ => {}
         }
         for ((start, end), names) in found {
             let len = (end - start) as u32;

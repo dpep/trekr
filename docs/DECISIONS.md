@@ -12741,8 +12741,30 @@ so a local shadows a helper of its name, as here.
 The renders are found by reading the checkout's files that call `render`
 (`Store::files_calling`), each parsed once per tree while unchanged.
 
-**Not done.** `as:`, `object:` and `collection:` beside `partial:`;
-`local_assigns[:x]`; Rails 7.1's magic `locals:` comment. Testbed 523.
+**Not done.** `local_assigns[:x]`; Rails 7.1's magic `locals:` comment.
+Testbed 523. (`as:`, `object:` and `collection:` beside `partial:`: the
+addendum below.)
+
+### DEC-525 addendum — the value a partial is rendered for is a local named for it
+
+**Decided.** `render partial: "row", collection: @widgets` is one render,
+of `_row`: the extractor no longer records the collection as a second
+template (the partial `@widgets`' class names), and hands the partial a
+local named for it — `row`, or what `as:` names — at the collection, typed
+by its element, with `row_counter` and `row_iteration` beside it.
+`object: @widget` beside `partial:` hands `card` the same way, without
+the counters. `render @posts` (and `collection: @posts` with no partial)
+keeps naming the partial by the class; its local is `post`, or `as:`'s,
+and `post_counter`/`post_iteration` are defined too when the value is a
+collection: typed as one, handed as `collection:`, or untyped and named
+the partial's plural (`@posts` for `_post`). The counters have no type.
+
+**Why.** The hunt's `render partial: "row", collection: @widgets` answered
+`--def` on `@widgets` with `accounts/_account.html.erb` at 1.0 — Rails
+never renders it — and `row` in `_row` was no local. Testbed 601.
+
+**Extraction changed** (`record_template`): `Facts::templates` is a
+resolve-time fact, never stored, so the store does not change.
 
 ## DEC-526 — A RABL template is read on its engine, and its symbols name its object's methods
 

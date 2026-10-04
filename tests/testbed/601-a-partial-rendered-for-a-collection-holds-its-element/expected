@@ -1,0 +1,19 @@
+# `render partial: "row", collection: @widgets` was read as two renders:
+# `_row`, and the partial `@widgets`' class names, so `_widget` was handed a
+# local it never gets, and `row` in `_row` was no local at all. Rails
+# renders the named partial once per element, handing it as a local named
+# for the partial — or for `as:` — with `<name>_counter` and
+# `<name>_iteration` beside it; `object:` hands the one value the same way.
+# `render @gadgets` hands its partial `gadget_counter` too, and `as:` names
+# its local instead.
+def app/views/widgets/_row.html.erb:1:5 status=resolved via=render site=app/views/widgets/index.html.erb:1
+def app/views/widgets/_row.html.erb:1:9 status=resolved owner=Widget
+def app/views/widgets/_row.html.erb:1:22 status=resolved via=render site=app/views/widgets/index.html.erb:1
+def app/views/widgets/_row.html.erb:1:41 status=resolved via=render site=app/views/widgets/index.html.erb:1
+def app/views/widgets/_item.html.erb:1:11 status=resolved owner=Widget
+def app/views/widgets/_item.html.erb:1:24 status=resolved via=render site=app/views/widgets/index.html.erb:2
+def app/views/widgets/_card.html.erb:1:10 status=resolved owner=Widget
+def app/views/widgets/_widget.html.erb:1:5 status=residue
+def app/views/gadgets/_gadget.html.erb:1:12 status=resolved owner=Gadget
+def app/views/gadgets/_gadget.html.erb:1:25 status=resolved via=render site=app/views/gadgets/index.html.erb:1
+def app/views/gadgets/_gadget.html.erb:1:53 status=resolved owner=Gadget
