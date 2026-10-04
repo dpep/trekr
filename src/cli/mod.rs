@@ -24,8 +24,9 @@ use failure::{Failure, Tag};
 
 use crate::core::Oid;
 use crate::core::paths;
+use crate::resolve::DefinedOn;
 use crate::store::Store;
-use crate::tree::{Status, Tree};
+use crate::tree::{Status, Tree, public_name};
 use crate::{extract, scan};
 use clap::{CommandFactory, Parser};
 use clap_complete::Shell;
@@ -4386,6 +4387,8 @@ struct Defined {
     unread_symbol: Option<u32>,
     /// Whether its body calls `super`: it overrides something (DEC-365).
     calls_super: bool,
+    /// Its file's facts, for what a `def` its scope may not own is on.
+    facts: std::sync::Arc<crate::core::Facts>,
 }
 
 /// `--dead` over the scopes in one checkout, weighed against that checkout:
@@ -4525,6 +4528,7 @@ fn dead_in(
                 aliases,
                 unread_symbol,
                 calls_super,
+                facts: facts.clone(),
             });
         }
     }
@@ -4554,6 +4558,7 @@ fn dead_in(
         aliases,
         unread_symbol,
         calls_super,
+        facts,
     } in &defined
     {
         // The class it is, not the name as written: `Helpers` inside `module
@@ -4665,6 +4670,38 @@ fn dead_in(
             });
             counts.possible -= dynamic_count;
         }
+        // A `def` its scope may not own: a call of its name whose receiver
+        // has no such method may be on the object it is defined on (DEC-562).
+        let defined_on = crate::resolve::defined_on(&tree, facts, def, file);
+        if let Some(on) = &defined_on {
+            let (all, _) = gather_refs(
+                &tree,
+                store,
+                root,
+                &root_str,
+                &query,
+                Some(&owner),
+                true,
+                Some(&mut parsed),
+                None,
+            )
+            .unwrap_or_default();
+            let may_be = |class: &str| match on {
+                DefinedOn::Object(of) => class == of || tree.inherits(of, class),
+                DefinedOn::Unknown => true,
+            };
+            for mut call in all
+                .into_iter()
+                .filter(|r| r.ruling == Some(refs::Ruling::NoSuchMethod))
+                .filter(|r| r.receiver_type.as_deref().is_none_or(may_be))
+            {
+                call.tier = refs::Tier::Possible;
+                call.ruling = None;
+                call.why = "the method is defined on an object the receiver may be";
+                counts.possible += 1;
+                found.push(call);
+            }
+        }
         let live = refs::liveness(&found, &counts);
         let Some(tier) = live.tier else { continue };
         // An `initialize` one `X.new` reaches is how a class is built, not a
@@ -4676,10 +4713,15 @@ fn dead_in(
         // Whoever calls the method this overrides may run it instead, and
         // that is often a framework the checkout never names (DEC-121) —
         // but `Class#new` runs a class's own `initialize`, never one it
-        // overrides.
-        let overrides = match constructor {
-            true => Vec::new(),
-            false => crate::resolve::overridden(&tree, def, file),
+        // overrides. One object's own method replaces its class's for that
+        // object (DEC-562).
+        let overrides = match (&defined_on, constructor) {
+            (_, true) => Vec::new(),
+            (Some(DefinedOn::Object(of)), false) => tree
+                .lookup(of, false, &def.name)
+                .map(|found| vec![format!("{}#{}", public_name(&found.owner), def.name)])
+                .unwrap_or_default(),
+            _ => crate::resolve::overridden(&tree, def, file),
         };
         let tier = match tier {
             "unreferenced" if !overrides.is_empty() => "override",
@@ -4778,6 +4820,22 @@ fn dead_in(
                 risky.push_str(", ");
             }
             risky.push_str(&format!("overrides {}", overrides.join(", ")));
+        }
+        let elsewhere = match (&defined_on, &def.unsettled) {
+            (Some(DefinedOn::Object(of)), _) => Some(format!("defined on one `{of}` object")),
+            (Some(DefinedOn::Unknown), Some(crate::core::Unsettled::Object { local, .. })) => Some(
+                format!("defined on the object `{local}` holds, which trekr cannot type"),
+            ),
+            (Some(DefinedOn::Unknown), _) => {
+                Some("defined in a block whose `self` trekr cannot pin down".to_string())
+            }
+            (None, _) => None,
+        };
+        if let Some(elsewhere) = elsewhere {
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            risky.push_str(&elsewhere);
         }
         // An ancestor not indexed may call it, and a `super` says one is
         // there (DEC-365).
@@ -5058,6 +5116,11 @@ fn dead_in(
         });
         if let Some(caller) = caller {
             row["caller"] = caller;
+        }
+        // A method of one object is that object's class's, as a caller sees it.
+        if let Some(DefinedOn::Object(of)) = &defined_on {
+            row["owner"] = public_name(of).into();
+            row["singleton"] = false.into();
         }
         if let Some((path, line)) = route {
             row["route"] = serde_json::json!({ "path": path, "line": line });

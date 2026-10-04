@@ -1,0 +1,9 @@
+# A `def` in a block that may run as another object is not the enclosing
+# class's. It was listed as `WidgetTest`'s, unreferenced and clear, though
+# `instance_eval` made it the target's and the target calls it (DEC-562).
+dead widget_test.rb Target#rebound_helper=single-caller
+# Run by a method trekr does not vouch for: whoever it runs on, never clear.
+dead widget_test.rb WidgetTest#hooked_helper=unreferenced~pin
+dead widget_test.rb WidgetTest#built_helper=single-caller
+# A block Ruby's own `each` runs keeps its `self`: still the class's, clear.
+dead widget_test.rb WidgetTest#kept_helper=unreferenced~

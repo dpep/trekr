@@ -423,8 +423,24 @@ pub(crate) struct Def {
     /// is typed from (DEC-096). Not stored: a group's own methods never are.
     #[serde(skip)]
     pub(crate) value: Option<ValueShape>,
+    /// A `def` whose owner the source does not settle (DEC-562). Not stored:
+    /// the tree places it where it is written, and only `--dead` asks.
+    #[serde(skip)]
+    pub(crate) unsettled: Option<Unsettled>,
     pub(crate) pos: Pos,
     pub(crate) end_line: u32,
+}
+
+/// Where a `def` is written when what it is defined on is not the scope
+/// around it (DEC-562).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Unsettled {
+    /// In the block handed to the call written here, which may run it as
+    /// another object: `instance_eval`, `Class.new`, a gem's DSL.
+    Block(Pos),
+    /// `def clock.x`: a method of the one object the local `clock` holds,
+    /// read at `at`.
+    Object { local: String, at: Pos },
 }
 
 impl Def {

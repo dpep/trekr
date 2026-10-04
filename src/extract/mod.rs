@@ -503,6 +503,7 @@ fn schema_defs(table: &crate::schema::Table) -> Vec<Def> {
                 sig_overloads: Vec::new(),
                 sig_params: Vec::new(),
                 value: None,
+                unsettled: None,
                 pos: column.pos,
                 end_line: column.pos.line,
             });
@@ -939,6 +940,7 @@ impl<'a> Extractor<'a> {
             sig_overloads: Vec::new(),
             sig_params: Vec::new(),
             value: None,
+            unsettled: None,
             pos: self.pos(start),
             end_line: self.pos(end).line,
         }
@@ -1597,6 +1599,22 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         // (DEC-104).
         if !singleton && let Some(module) = self.hook_module() {
             def.nesting = vec![format!("::{module}")];
+        } else if !self.nesting.is_empty() {
+            // Not the scope's own when a block may run as another object, or
+            // when it is written on one (DEC-562).
+            def.unsettled = match receiver.as_ref() {
+                Some(r) => r.as_local_variable_read_node().and_then(|read| {
+                    let local = String::from_utf8(read.name().as_slice().to_vec()).ok()?;
+                    let at = self.pos(r.location().start_offset());
+                    Some(crate::core::Unsettled::Object { local, at })
+                }),
+                None => self
+                    .open_blocks
+                    .last()
+                    .copied()
+                    .flatten()
+                    .map(crate::core::Unsettled::Block),
+            };
         }
 
         let module_function = self.frames.last().is_some_and(|f| f.module_function);

@@ -56,6 +56,14 @@
 - This changes what an index records (store v60): trekr reindexes once after
   upgrading.
 
+- **`--dead` no longer credits the enclosing class with a `def` it does
+  not own.** A `def` in a block that may run as another object
+  (`instance_eval`, `Class.new`, a gem's DSL inside a method) and a
+  singleton `def obj.meth` on a local were listed as the class's own,
+  unreferenced and clear. One on an object of a known class is listed under
+  that class — an `override` when the class has the method — and the rest
+  say why they are not trusted; a call of the name on a receiver without
+  such a method counts as a possible caller, and none is ever `clear`.
 - **A private class method is private.** `private` inside `class << self`
   was dropped, so `--symbols` listed its methods as public and completion
   offered them after `Widget.`; `private_class_method :x` and

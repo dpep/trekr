@@ -1404,6 +1404,94 @@ pub(crate) fn overridden(tree: &Tree, def: &crate::core::Def, path: &str) -> Vec
     overridden
 }
 
+/// What a `def` the source does not settle is defined on (DEC-562).
+pub(crate) enum DefinedOn {
+    /// One object of this class: `def clock.x` on a typed local, or a `def`
+    /// in its `instance_eval` block.
+    Object(String),
+    /// Whatever its block runs on, or an object trekr cannot type.
+    Unknown,
+}
+
+/// `None` for a `def` its scope owns, which includes one in a block that a
+/// method of Ruby's own runs as it stands (`each`, `tap`): DEC-391's rule.
+pub(crate) fn defined_on(
+    tree: &Tree,
+    facts: &Facts,
+    def: &crate::core::Def,
+    path: &str,
+) -> Option<DefinedOn> {
+    let probe = |recv, recv_text, recv_pos, block_owner| Call {
+        name: def.name.clone(),
+        recv,
+        recv_text,
+        nesting: def.nesting.clone(),
+        singleton: def.singleton,
+        recv_pos,
+        recv_value: None,
+        block_owner,
+        in_example: false,
+        group_body: false,
+        in_scope: false,
+        stands_for: None,
+        argc: None,
+        block: false,
+        pos: def.pos,
+    };
+    let object = |receiver: Option<Receiver>| {
+        receiver
+            .filter(|r| !r.singleton && !r.ambiguous)
+            .map_or(DefinedOn::Unknown, |r| DefinedOn::Object(r.fqn))
+    };
+    match def.unsettled.as_ref()? {
+        crate::core::Unsettled::Object { local, at } => {
+            // The flow analysis reads no `def`'s receiver, so every write to
+            // the name in the scope votes: trusted when this method writes it
+            // and every write agrees. A parameter's value is no write here.
+            let method = facts
+                .defs
+                .iter()
+                .filter(|d| d.kind == crate::core::Kind::Method && d.pos != def.pos)
+                .filter(|d| d.pos.line <= def.pos.line && def.pos.line <= d.end_line)
+                .min_by_key(|d| d.end_line - d.pos.line);
+            let local_to = |m: &Def| {
+                !m.params.iter().any(|p| p.name == *local)
+                    && facts
+                        .assigns
+                        .iter()
+                        .filter(|a| a.target == *local && a.nesting.first() == def.nesting.first())
+                        .any(|a| m.pos.line <= a.pos.line && a.pos.line <= m.end_line)
+            };
+            if !method.is_some_and(local_to) {
+                return Some(DefinedOn::Unknown);
+            }
+            let read = probe(RecvShape::Local, Some(local.clone()), Some(*at), None);
+            let agreed = receiver_of(tree, facts, &read, path).filter(|r| r.agreeing == r.total);
+            Some(object(agreed))
+        }
+        crate::core::Unsettled::Block(at) => {
+            let inside = probe(RecvShape::Implicit, None, None, Some(*at));
+            if !self_unsettled(tree, facts, &inside, path) {
+                return None;
+            }
+            let runs = facts
+                .calls
+                .iter()
+                .find(|c| c.pos == *at && c.recv != RecvShape::Symbol);
+            Some(match runs {
+                Some(call) if matches!(call.name.as_str(), "instance_eval" | "instance_exec") => {
+                    let explicit = !matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv);
+                    let receiver = explicit
+                        .then(|| receiver_of(tree, facts, call, path))
+                        .flatten();
+                    object(receiver)
+                }
+                _ => DefinedOn::Unknown,
+            })
+        }
+    }
+}
+
 /// Ancestors of the classes a `super` was asked from that the index could not
 /// resolve — where an unseen definition could be hiding.
 pub(super) fn unresolved_behind(tree: &Tree, landings: &SuperLandings) -> Vec<String> {

@@ -12848,3 +12848,50 @@ caller in `--dead`: nothing in `--refs` rules a call out by visibility on
 the class side.
 
 **Extraction changed**, so the store version moves.
+
+## DEC-562 — A `def` its scope may not own is not graded as the scope's
+
+**Decided.** Two kinds of `def` are not their scope's own as far as
+`--dead` is concerned:
+
+- **One in a block that may run as another object**: `target.instance_eval
+  do def x`, `Class.new do def x`, a `def` in an `on_load` or other gem or
+  checkout method's block written in a method body. DEC-391's rule decides:
+  a block a method of Ruby's own runs as it stands (`[1].each do`) keeps
+  `self`, and its `def` stays the scope's. Blocks already placed keep their
+  rules — `X.class_eval do` (DEC-086), an `on_load` block run as its file
+  loads (DEC-104), RSpec's groups and examples (DEC-084), `included do`.
+- **One written on an object**: `def clock.time_now`, a singleton method of
+  the one object the local `clock` holds. `def self.x` and `def Const.x`
+  are unchanged.
+
+Each is graded with what it is defined on. When that is one object of a
+known class — a local whose writes are all in the enclosing method and
+type it, or the typed receiver of `instance_eval`/`instance_exec` — the
+row's owner is that class, and a method the class already has makes it an
+`override` of it (`Clock#time_now`). Otherwise the owner stays where it is
+written and the row says why it is not trusted: "defined in a block whose
+`self` trekr cannot pin down", or "defined on the object `clock` holds,
+which trekr cannot type". Either way a call of the name that `--refs` rules
+out as "no such method" on its receiver — or every one, when the object is
+unknown — counts as a possible caller, and the row is never `clear`.
+
+**Why.** The reported rows: `rebound_helper`, defined in
+`target.instance_eval do` and called as `target.rebound_helper`, was
+`WidgetTest`'s, unreferenced and clear; rails' `second_wrestler`, defined in
+`on_load(:uses_instance_eval) do` inside a test and called four times on a
+`FakeContext`, the same; and `def zone.time_now` (three in
+`time_zone_test.rb`), which replaces `ActiveSupport::TimeZone#time_now` for
+one zone, was `TimeZoneTest`'s own unreferenced class method. Testbeds 562
+and 563.
+
+**`--dead` only.** The tree still places such a `def` where it is written,
+as before, so `--def` and `--refs` answer as they did: the field that marks
+it is not stored, and the store does not change. Placing it on the object's
+class in the tree would make a test's stub one of the class's own
+definitions, which every call of the name would then reach.
+
+**The local's type is trusted only inside its method** because the flow
+analysis behind a local's type (DEC-064) reads no `def`'s receiver, so the
+writes that vote are every write to that name in the scope; one outside the
+enclosing method, or the name being a parameter, makes it unknown.
