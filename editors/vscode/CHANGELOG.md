@@ -4,7 +4,7 @@ The extension is a thin client: what it answers comes from the `trekr` binary
 it runs, whose own changelog is in the
 [trekr repo](https://github.com/dpep/trekr/blob/main/CHANGELOG.md).
 
-## 0.6.0
+## 0.5.1
 
 - ERB and RABL templates are served: go to definition, hover, references
   and completion in a `.erb` (whatever language id an ERB extension gives

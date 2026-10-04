@@ -2,7 +2,7 @@
   "name": "trekr",
   "displayName": "trekr — Ruby code intelligence",
   "description": "A Ruby language server backed by trekr: receiver-aware definitions, references narrowed by receiver, completion, call hierarchy.",
-  "version": "0.6.0",
+  "version": "0.5.1",
   "publisher": "dpep",
   "license": "MIT",
   "icon": "images/icon.png",

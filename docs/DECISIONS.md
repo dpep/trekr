@@ -12658,7 +12658,7 @@ server, for its part, publishes no syntax diagnostics for a document whose
 name is neither Ruby's nor a template's (`scan::reads_as_ruby`): an `.html`
 an ERB extension claims.
 
-**Why.** Extension 0.6.0 against trekr 0.8.6 flooded every `.erb` —
+**Why.** Extension 0.5.1 (first numbered 0.6.0) against trekr 0.8.6 flooded every `.erb` —
 `config/*.yml.erb` and generator `*.rb.erb` too — with Prism's `unexpected
 '<'`, since 0.8.6 reads the whole file as Ruby; its changelog's "an older
 binary answers nothing there" was wrong. **Rejected:** having the server
