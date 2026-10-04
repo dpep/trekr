@@ -12483,16 +12483,47 @@ unreferenced.
 
 **Cost, and how it is kept.** Asking about each of hundreds of
 `initialize`s, `--dead` would tier every `X.new` of the checkout each time.
-What a site constructs does not depend on the query (`refs::construct`), so
-it is worked out once per run (`cli::Constructions`), the sites of a class
-with a definite `initialize` filed under it; each `initialize` then tiers
-only those filed under the one its owner runs, and the few no class
-settles. A subclass's `super` whose resolved chain does not hold the owner
-is counted out without `tier_super`. Measured `--dead`, user CPU, 0.8.6 →
-this, interleaved, load 10–15: rails (eleven libraries) 8.2 → 10.8 s,
-discourse `app lib` 9.2–9.8 → 13.1–13.3 s, mastodon `app lib` 4.4–5.1 →
-5.3–6.8 s — the rest is parsing every file that calls `new`, once. Before
-the index, the first cut took discourse to 25 s wall.
+Three things keep it down (`cli::gather_constructions`):
+
+- **One live site settles it.** Only an `initialize` nothing reaches is
+  reported, so a query stops at the first site that reaches it and is not
+  any class's (`Reference::unplaced`): the calls of its own name first —
+  every subclass's `super`, read once per run with the chain of the class
+  it is in, so one whose fully indexed chain lacks the owner is counted out
+  at a glance — then the `X.new`s in the files that call `new` and name the
+  class (an index of each such file's capitalized words, built once).
+- **The checkout's constructions, once.** An `initialize` neither reaches
+  needs every `X.new`: what a site constructs does not depend on the query
+  (`refs::construct`), so it is worked out once per run, cached by site, and
+  the sites of a class with a definite `initialize` filed under it
+  (`cli::Constructions`); each such `initialize` tiers only those filed
+  under the one its owner runs, and the ones no class settles.
+- **What remains is the caveat's count.** Saying how many untyped `new`s an
+  unconstructed class has means typing every `new` in the checkout, which
+  is parsing every file that calls it. A run that reports no `initialize`
+  never pays it; one that reports any pays it once.
+
+Measured `--dead`, user CPU, median of three interleaved rounds, one store
+per version, load 8–19 (`caffeinate -i`), 0.8.6 → before this → now:
+
+| | 0.8.6 | before | now |
+| --- | ---: | ---: | ---: |
+| rails, twelve libraries | 7.7 s | 11.0 s | 9.7 s |
+| discourse `app lib` | 7.1 s | 11.3 s | 10.3 s |
+| discourse `spec` | 6.6 s | 10.7 s | 11.0 s |
+| mastodon `app lib` | 3.1 s | 3.6 s | 3.6 s |
+| mastodon `spec` | 1.9 s | 2.7 s | 2.7 s |
+| discourse `lib/email/sender.rb` | 1.6 s | 4.6 s | 1.9 s |
+
+A single file, whose `initialize` something constructs, is back near 0.8.6;
+a directory that reports an `initialize` (or holds one no site settles, as
+a `def initialize` in a spec's `Class.new` block) pays the checkout-wide
+typing once — 1–4 s of CPU, mostly parsing. Every row is byte-identical to
+before on all five runs, but for one rails class whose `subclasses`
+convention names a different listing site from one run to the next, on
+either build: `Named::listed` keeps the first of several listings a
+parallel merge happens to meet. Before the index, the first cut took discourse to
+25 s wall.
 
 **Measured.** `--dead app lib`, against 0.8.6 on one store:
 
