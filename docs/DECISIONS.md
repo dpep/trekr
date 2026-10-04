@@ -13047,6 +13047,40 @@ adapter dumpers that override them. Testbed 560.
 
 **Tree only**; no extraction change.
 
+### DEC-560 addendum — a superclass is a class, looked up as any constant is
+
+**Decided.** Two more of Ruby's rules for the superclass expression
+(`Tree::superclass_of`):
+
+- **A module is no superclass.** `class Dumper < Dumper` whose outer
+  `Dumper` is a module raises `TypeError` in Ruby; it chained through the
+  module. It is now unresolved, listed in `unresolved_ancestors`.
+- **The enclosing class's ancestors are searched.** Ruby looks a constant
+  up in the lexical scopes, then in the ancestors of the innermost one, then
+  at the top level, so `class Pool < Pool` inside `class Child < Parent`
+  inherits `Parent::Pool` (the one `Child` inherits), as does `class Spare
+  < Pool` inside `Kid < Parent`; both were unresolved. And rails'
+  `CheckBoxBuilder < Builder`, in a class that includes `CollectionHelpers`,
+  inherits `CollectionHelpers::Builder`, where the top level's `Builder`
+  (the builder gem's module) was taken. The ancestors are those of the
+  class's enclosing namespace, so a compact `class Child::Pool < Pool`
+  written at the top level, whose innermost scope is not `Child`, is read
+  as if nested.
+
+Testbed 581. Checked against Ruby 3.4.
+
+**Measured**, `--ancestors` of every class in rails' seven largest
+libraries (1,487), discourse `app lib` (2,016) and mastodon `app lib`
+(1,325), before → after: 17 change, each read. Five gain the superclass
+Ruby gives them — rails' two `CollectionHelpers::Builder` subclasses above,
+and discourse's `Reviewable::Actions::Action`, `Actions::Bundle` and
+`EditableFields::Field`, `< Item` inside a subclass of `Reviewable::
+Collection`, now `Reviewable::Collection::Item`. Twelve rails classes
+written `< ActiveSupport::Delegation::DelegateClass(…)`, whose superclass
+the extractor reads as the module it is called on, now list that name as
+unresolved instead of chaining through the module (five directly, seven
+through a parent). Mastodon is unchanged.
+
 ## DEC-561 — `class << self` keeps its own `private`
 
 **Decided.** A `class << self` body is a visibility section of its own,

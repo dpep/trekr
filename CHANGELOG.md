@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A superclass is looked up as Ruby looks it up.** `class Pool < Pool`
+  inside `class Child < Parent` inherits `Parent::Pool`, found through the
+  enclosing class's ancestors, where `--ancestors` stopped and called it
+  unresolved; a superclass that names a module (Ruby raises) is reported
+  unresolved instead of chaining through the module.
 - **`--refs` at a call asks about the method the call runs.** On
   `Base.build("z")` at the top level, or in an instance method, it asked for
   the instance method `Base#build`; on `Base.new.build` in a class method,

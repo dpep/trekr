@@ -1,0 +1,9 @@
+# A superclass is looked up as Ruby looks up any constant from where it is
+# written: the lexical scopes, then the ancestors of the innermost one. So
+# `class Pool < Pool` in `Child < Parent` inherits `Parent::Pool`, and
+# `class Spare < Pool` in `Kid < Parent` too; both were unresolved. A module
+# is no superclass — Ruby raises — so `class Dumper < Dumper` whose outer
+# `Dumper` is a module is unresolved, not a chain through the module (DEC-560).
+ancestors Child::Pool Child::Pool,Parent::Pool,Object unresolved=
+ancestors Kid::Spare Kid::Spare,Parent::Pool,Object unresolved=
+ancestors Store::Adapters::Dumper Store::Adapters::Dumper unresolved=Dumper

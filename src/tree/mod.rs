@@ -1882,7 +1882,16 @@ impl Tree {
                 out.note_unresolved(target.name);
                 Vec::new()
             }
-            Some(target) => self.chain_of(&target, out),
+            Some(target) => match self.superclass_of(fqn, &target) {
+                // A module is no superclass: Ruby raises (DEC-560).
+                Some(found) if self.kind_of(&found) != Some("module") => {
+                    self.sub_chain(&found, out)
+                }
+                _ => {
+                    out.note_unresolved(target.name);
+                    Vec::new()
+                }
+            },
             // Every class without an explicit superclass inherits Object, and
             // that tail is most of what core indexing buys: it is how `puts`
             // and `raise` become findable from an ordinary class body.
@@ -1984,6 +1993,42 @@ impl Tree {
                 Vec::new()
             }
         }
+    }
+
+    /// The constant a superclass as written names, looked up as Ruby looks
+    /// up any constant: the scopes it is written in, then the ancestors of
+    /// the class's enclosing one, then the top level — `class Pool < Pool`
+    /// inside `Child < Parent` is `Parent::Pool` (DEC-560).
+    fn superclass_of(&self, fqn: &str, target: &Written) -> Option<String> {
+        let (head, rest) = split_path(target.name);
+        if head.starts_with("::") {
+            return self
+                .resolve_lexical(target.name, &target.nesting)
+                .map(|found| self.namespace_of(&found));
+        }
+        let own = public_name(fqn);
+        let lexical = target
+            .nesting
+            .iter()
+            .filter(|scope| !scope.is_empty())
+            .map(|scope| qualify(scope, head));
+        let inherited: Vec<String> = match own.rsplit_once("::") {
+            Some((enclosing, _)) => self
+                .ancestors(enclosing)
+                .chain
+                .iter()
+                .map(|ancestor| qualify(public_name(ancestor), head))
+                .collect(),
+            None => Vec::new(),
+        };
+        let mut current = lexical
+            .chain(inherited)
+            .chain([head.to_string()])
+            .find(|candidate| candidate != own && self.names.contains(candidate))?;
+        for segment in rest {
+            current = self.descend(&current, segment)?;
+        }
+        Some(self.namespace_of(&current))
     }
 
     fn resolves_to(&self, target: &Written, fqn: &str) -> bool {
