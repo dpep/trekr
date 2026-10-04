@@ -1,0 +1,13 @@
+# `render` named a partial no answer reached, and a partial's locals were
+# calls on the view. Go to definition on a `render`'s name opens the
+# partial (`row` beside the template, `shared/nav`, `@widgets` by its
+# model's partial path); a partial's local is defined where each render
+# that reaches it hands it, and typed by what it is handed.
+def app/views/widgets/show.html.erb:1:12 status=resolved site=app/views/widgets/_row.html.erb:1
+def app/views/widgets/show.html.erb:2:22 status=resolved site=app/views/shared/_nav.html.erb:1
+def app/views/widgets/show.html.erb:3:12 status=resolved site=app/views/widgets/_widget.html.erb:1
+def app/views/widgets/show.html.erb:4:12 status=residue
+def app/views/widgets/_row.html.erb:1:5 status=resolved via=render site=app/views/widgets/show.html.erb:1
+def app/views/widgets/_row.html.erb:1:12 status=resolved owner=Widget
+def app/views/widgets/_widget.html.erb:1:12 status=resolved owner=Widget
+refs Widget#name confirmed=2

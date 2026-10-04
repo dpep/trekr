@@ -122,7 +122,11 @@ leaves it by not listing it.
 space (newlines kept) and a `;` where each tag's `<` and `>` were, so its
 facts sit at the template's own offsets and a block opened in one tag closes
 in another, as Erubi compiles it. `<%#` comments and `<%%` literals are not
-code.
+code. Each template a call names — `render "row"`, `partial:`, `render
+@post`, `extends` — is recorded with the locals it hands
+(`Facts::templates`, resolve-time), which go to definition on the name
+answers with the files Rails' naming rules reach (DEC-524), and which type
+a partial's locals (DEC-525).
 
 ### `tree/` — a checkout's namespace, rebuilt not patched
 

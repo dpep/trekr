@@ -27,8 +27,8 @@ pub(crate) struct Views {
     /// them: by path. The last included is the first found.
     helpers: Vec<String>,
     /// A name `helper_method` exposes to views → the classes whose body
-    /// exposes it.
-    exposed: HashMap<String, Vec<String>>,
+    /// exposes it, and where.
+    exposed: HashMap<String, Vec<(String, super::Site)>>,
     /// A class's name, folded (no `::`, no `_`, lowercase) → the name: a
     /// path names a controller as Rails' inflector spells it, and an
     /// acronym inflection (`OAuth`) spells it otherwise (DEC-344).
@@ -36,6 +36,8 @@ pub(crate) struct Views {
     /// A controller's file read for what its actions assign, by path, with
     /// the modification time and length it was read at.
     files: Mutex<HashMap<String, Read>>,
+    /// The checkout's files that call `render`, relative to it.
+    rendering: std::sync::OnceLock<Vec<String>>,
 }
 
 /// `Admin::OAuthController` and `admin/o_auth` alike.
@@ -89,7 +91,7 @@ impl Tree {
                 }
             }
             helpers.sort();
-            let mut exposed: HashMap<String, Vec<String>> = HashMap::new();
+            let mut exposed: HashMap<String, Vec<(String, super::Site)>> = HashMap::new();
             let rows = self
                 .loader
                 .as_ref()
@@ -103,10 +105,16 @@ impl Tree {
                 let Some(owner) = self.scope_fqn(&row.nesting) else {
                     continue;
                 };
+                let site = super::Site {
+                    path: row.path.clone(),
+                    line: row.line,
+                    col: 1,
+                    kind: "method".to_string(),
+                };
                 for name in row.args.into_iter().flatten() {
                     let owners = exposed.entry(name).or_default();
-                    if !owners.contains(&owner) {
-                        owners.push(owner.clone());
+                    if !owners.iter().any(|(o, _)| *o == owner) {
+                        owners.push((owner.clone(), site.clone()));
                     }
                 }
             }
@@ -115,6 +123,7 @@ impl Tree {
                 exposed,
                 classes,
                 files: Mutex::default(),
+                rendering: std::sync::OnceLock::new(),
             }
         })
     }
@@ -132,7 +141,7 @@ impl Tree {
         if let Some(owners) = views.exposed.get(name) {
             let reaching =
                 |owner: &String| controller.is_none_or(|c| c == owner || self.inherits(c, owner));
-            if let Some(owner) = owners.iter().find(|owner| reaching(owner)) {
+            if let Some((owner, _)) = owners.iter().find(|(owner, _)| reaching(owner)) {
                 let on = controller.unwrap_or(owner);
                 if let Some(found) = self.lookup(on, false, name) {
                     return Some(found);
@@ -145,6 +154,36 @@ impl Tree {
             .rev()
             .find_map(|helper| self.lookup(helper, false, name))
             .or_else(|| self.lookup(ACTION_VIEW, false, name))
+    }
+
+    /// The checkout the tree was built for, absolute.
+    pub(crate) fn checkout_root(&self) -> &str {
+        &self.root
+    }
+
+    /// The checkout's files that call `render` — every place a partial may
+    /// be rendered from — relative to it.
+    pub(crate) fn rendering_files(&self) -> &[String] {
+        self.views().rendering.get_or_init(|| {
+            self.loader
+                .as_ref()
+                .and_then(|loader| {
+                    loader
+                        .with(|store, _| store.files_calling(&self.root, "render"))
+                        .ok()
+                })
+                .unwrap_or_default()
+        })
+    }
+
+    /// Where `owner`'s body exposes `name` to views with `helper_method`: the
+    /// method Rails generates there is what a template's call enters first.
+    pub(crate) fn exposed_at(&self, owner: &str, name: &str) -> Option<super::Site> {
+        let owners = self.views().exposed.get(name)?;
+        owners
+            .iter()
+            .find(|(exposer, _)| exposer == owner || self.inherits(owner, exposer))
+            .map(|(_, site)| site.clone())
     }
 
     /// The class whose action renders a template, and the action, by Rails'
@@ -191,6 +230,97 @@ impl Tree {
     }
 }
 
+/// Where a template a file names is looked for: the directory under the
+/// views root, and the start of the file's name (`_form.`, `show.`), each
+/// read by Rails' rules (DEC-524). `from` is the naming file, relative to
+/// the checkout; `class` names the partial of a `render @post`.
+pub(crate) fn template_dirs(
+    from: &str,
+    named: &crate::core::Named,
+    class: Option<&str>,
+) -> Option<(String, String, String)> {
+    use crate::core::Named;
+    // The views root the naming file belongs to, and its own directory under
+    // it: a template's, or a controller's (`admin/posts_controller.rb` is
+    // `admin/posts`).
+    let (root, here) = match under(from, "views") {
+        Some(rest) => (
+            from[..from.len() - rest.len()].to_string(),
+            rest.rsplit_once('/').map_or("", |(dir, _)| dir).to_string(),
+        ),
+        None => {
+            let rest = under(from, "controllers")?;
+            let root = format!(
+                "{}views/",
+                &from[..from.len() - rest.len() - "controllers/".len()]
+            );
+            (
+                root,
+                rest.trim_end_matches(".rb")
+                    .trim_end_matches("_controller")
+                    .to_string(),
+            )
+        }
+    };
+    let in_view = under(from, "views").is_some();
+    let split = |name: &str, partial: bool| {
+        let (dir, base) = match name.rsplit_once('/') {
+            Some((dir, base)) => (dir.to_string(), base),
+            None => (here.clone(), name),
+        };
+        let base = match partial {
+            true => format!("_{base}."),
+            false => format!("{base}."),
+        };
+        (root.clone(), dir, base)
+    };
+    Some(match named {
+        Named::Render(name) => split(name, in_view),
+        Named::Partial(name) => split(name, true),
+        Named::Template(name) => split(name, false),
+        Named::Object { .. } => {
+            // `Admin::Post#to_partial_path` is `admin/posts/_post`.
+            let class = class?;
+            let segments: Vec<String> = class
+                .split("::")
+                .map(crate::scan::near::underscore)
+                .collect();
+            let (last, scope) = segments.split_last()?;
+            let mut dir: Vec<String> = scope.to_vec();
+            dir.push(crate::inflect::plural(last));
+            (root, dir.join("/"), format!("_{last}."))
+        }
+    })
+}
+
+/// The templates under `checkout` a name reaches: every format and handler of
+/// it (`_form.html.erb`, `_form.text.erb`), in path order.
+pub(crate) fn template_files(
+    checkout: &std::path::Path,
+    from: &str,
+    named: &crate::core::Named,
+    class: Option<&str>,
+) -> Vec<String> {
+    let Some((root, dir, base)) = template_dirs(from, named, class) else {
+        return Vec::new();
+    };
+    let dir = match dir.is_empty() {
+        true => root,
+        false => format!("{root}{dir}/"),
+    };
+    let Ok(entries) = std::fs::read_dir(checkout.join(&dir)) else {
+        return Vec::new();
+    };
+    let mut found: Vec<String> = entries
+        .flatten()
+        .filter_map(|entry| entry.file_name().into_string().ok())
+        .filter(|name| name.starts_with(&base))
+        .map(|name| format!("{dir}{name}"))
+        .collect();
+    found.sort();
+    found
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -208,6 +338,44 @@ mod tests {
         assert_eq!(under("lib/templates/x.erb", "views"), None);
         assert!(is_view("app/views/a/b.html.erb"));
         assert!(!is_view("lib/generators/x/templates/migration.erb"));
+    }
+
+    #[test]
+    fn a_template_is_named_by_rails_rules() {
+        use crate::core::Named;
+        let at = |from: &str, named: Named, class: Option<&str>| {
+            let (root, dir, base) = template_dirs(from, &named, class).unwrap();
+            format!("{root}{dir}/{base}")
+        };
+        let view = "app/views/posts/show.html.erb";
+        assert_eq!(
+            at(view, Named::Render("form".into()), None),
+            "app/views/posts/_form."
+        );
+        assert_eq!(
+            at(view, Named::Render("shared/nav".into()), None),
+            "app/views/shared/_nav."
+        );
+        assert_eq!(
+            at(view, Named::Template("posts/base".into()), None),
+            "app/views/posts/base."
+        );
+        let object = Named::Object {
+            value: "@post".into(),
+            collection: false,
+        };
+        assert_eq!(
+            at(view, object, Some("Admin::BlogPost")),
+            "app/views/admin/blog_posts/_blog_post."
+        );
+        assert_eq!(
+            at(
+                "engines/shop/app/controllers/carts_controller.rb",
+                Named::Render("edit".into()),
+                None
+            ),
+            "engines/shop/app/views/carts/edit."
+        );
     }
 
     #[test]

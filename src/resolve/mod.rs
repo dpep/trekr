@@ -15,7 +15,7 @@
 
 pub(crate) mod members;
 pub(crate) mod refs;
-mod views;
+pub(crate) mod views;
 
 use crate::core::{Assign, Call, Def, Facts, Pos, RecvShape, RecvValue, ValueShape, rspec};
 use crate::tree::{Kind, Site, Status, Tree};
@@ -155,6 +155,10 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
     if let Some(member) = example_member(tree, facts, call, path) {
         return member_answer(tree, call, member, path);
     }
+    // A partial's local, handed it by the renders that reach it (DEC-525).
+    if let Some(local) = views::partial_local(tree, call, path) {
+        return local_answer(call, local);
+    }
     if call.recv == RecvShape::Symbol
         && let Some(target) = &call.stands_for
     {
@@ -199,6 +203,14 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                     } else {
                         vec![found.site.clone()]
                     };
+                    // A name `helper_method` exposes runs the method Rails
+                    // generates at that line, which sends it on (DEC-521).
+                    let mut sites = sites;
+                    if receiver.via == "view"
+                        && let Some(at) = tree.exposed_at(&found.owner, &call.name)
+                    {
+                        sites.push(at);
+                    }
                     let overrides = match receiver.via {
                         "self" => self_overrides(tree, &receiver, &call.name, &found),
                         _ => Vec::new(),
@@ -391,6 +403,38 @@ pub(crate) fn asked_at(tree: &Tree, call: &Call, answer: &MethodAnswer) -> (Stri
     match runs_initialize {
         true => ("initialize".to_string(), false),
         false => (call.name.clone(), call.singleton),
+    }
+}
+
+/// A partial's local: defined where each `render` hands it (DEC-525).
+fn local_answer(call: &Call, local: views::PartialLocal) -> MethodAnswer {
+    let types: Vec<&String> = local.types.iter().fold(Vec::new(), |mut seen, t| {
+        if !seen.contains(&t) {
+            seen.push(t);
+        }
+        seen
+    });
+    MethodAnswer {
+        status: match local.sites.len() {
+            1 => Status::Resolved,
+            _ => Status::Ambiguous,
+        },
+        confidence: share(1, local.sites.len()),
+        resolved_via: Some("render".to_string()),
+        receiver: call.recv.as_str(),
+        receiver_type: match types.as_slice() {
+            [one] => Some((*one).clone()),
+            _ => None,
+        },
+        receiver_kind: None,
+        owner: None,
+        kind: None,
+        defined_via: Some("render".to_string()),
+        sites: local.sites,
+        agreement: None,
+        unresolved_ancestors: Vec::new(),
+        candidates: Vec::new(),
+        reason: None,
     }
 }
 
@@ -2102,6 +2146,10 @@ fn returned_by(
     depth: usize,
     next: &Call,
 ) -> Option<Receiver> {
+    // `post.title` in a partial handed `post` (DEC-525).
+    if let Some(receiver) = views::partial_local_type(tree, previous, path) {
+        return Some(receiver);
+    }
     if let Some(receiver) = let_typed(tree, facts, previous, path, depth)
         .or_else(|| described_class(tree, facts, previous, path))
     {

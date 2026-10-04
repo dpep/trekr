@@ -12581,7 +12581,8 @@ each exposed name on `_helpers`, sending it to the controller, and
 `ActionController::Helpers` defaults to `helper :all`, which includes every
 `*_helper.rb` under the helpers paths sorted. The generated method has no
 source, so an exposed name answers with the controller's own method, which
-is what runs.
+is what runs, with the `helper_method` line kept as a second site — the
+method Ruby enters first, as a `delegate` line is kept (DEC-166).
 
 **Not done.** Per-controller helper sets (`clear_helpers`, `helper
 FooHelper`): every template sees every helper, as `helper :all` gives. Route
@@ -12621,4 +12622,54 @@ path: storing the first would put every app's ivar writes in the store
 
 **Not done.** `render "posts/edit"` and `render template:` from another
 controller; a layout chosen by `layout "x"`. Testbed 522.
+
+## DEC-524 — A `render`'s name reaches the template it renders
+
+**Decided.** The extractor records each template a call with no receiver
+names (`Facts::templates`, resolve-time, never stored): `render "row"`,
+`render partial: "x"`, `render template: "x"`/`layout: "x"`, `render
+@post`, `render @posts`, `render collection: @posts`, and RABL's `extends
+"x"` and `partial "x"`, with the keywords a `render` hands as locals
+(`render "row", widget: @widget`, `locals: {…}`). Go to definition on the
+name — `--def`, the LSP's definition — answers each file it reaches, at its
+top: `under: template`, `resolved_via: render`, `kind: template`;
+`ambiguous` when several formats share it (`_row.html.erb`,
+`_row.text.erb`), `residue` when none is in the checkout.
+
+Rails' rules (`ActionView::PartialRenderer`, `TemplateRenderer`):
+
+- in a view, `render "x"` and `partial: "x"` are a partial, `_x`, in the
+  rendering template's directory, or in `posts/` for `"posts/x"`;
+- in a controller, `render "x"` is a template of its own directory
+  (`admin/posts_controller.rb` renders `admin/posts/x`);
+- `template:`, `layout:` and RABL's `extends` name a template by its path,
+  without the underscore;
+- `render @post` is the partial `to_partial_path` names, `posts/_post` for
+  a `Post` (`admin/blog_posts/_blog_post` for `Admin::BlogPost`), the value
+  typed as any receiver is; a collection by its relation's model, or by the
+  constant its controller's writes start from (`Post.where(…)`).
+
+Each relative to the views root of the file that names it — an engine's
+`app/views/` for its own.
+
+**Not done.** `render @post` whose class overrides `to_partial_path`;
+`render` with a `formats:` or `variants:` that picks among the files.
+Testbed 523.
+
+## DEC-525 — A partial's local is defined where a render hands it
+
+**Decided.** In a partial (`_row.html.erb`), a bare name with no arguments
+that a `render` reaching the partial hands it — a keyword or `locals:` key
+of that name, or the object of `render @post` for the partial's own name
+(`post` in `posts/_post`) — is that local, not a call: `--def` answers each
+such key (`resolved_via: render`, `defined_via: render`), and a call on it
+(`post.title`) is typed by what each render hands, agreeing or
+`ambiguous`. Rails declares a partial's locals ahead of the template's code,
+so a local shadows a helper of its name, as here.
+
+The renders are found by reading the checkout's files that call `render`
+(`Store::files_calling`), each parsed once per tree while unchanged.
+
+**Not done.** `as:`, `object:` and `collection:` beside `partial:`;
+`local_assigns[:x]`; Rails 7.1's magic `locals:` comment. Testbed 523.
 

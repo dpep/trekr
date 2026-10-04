@@ -39,6 +39,11 @@
   `posts/show.html.erb` is what `PostsController#show` assigns, or a
   `before_action` that runs for it, or an action that `render :show`s;
   mailer templates read their mailer's action (`resolved_via: controller`).
+- **A `render`'s name opens the partial.** Go to definition on `render
+  "row"`, `render partial: "shared/nav"`, `render @posts` or RABL's
+  `extends "posts/base"` answers the template file (`under: template`). In a
+  partial, a local a `render` hands it (`render "row", widget: @widget`,
+  `post` from `render @post`) is defined at those keys, and typed by them.
 
 ## 0.8.6 — 2026-10-03
 

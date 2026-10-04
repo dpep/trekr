@@ -1078,7 +1078,7 @@ impl Store {
     /// handed.
     pub(crate) fn body_calls(&self, roots: &Roots, name: &str) -> Result<Vec<BodyCallRow>> {
         let mut stmt = self.conn.prepare_cached(&format!(
-            "SELECT DISTINCT c.nesting, c.args, k.root || '/' || f.path
+            "SELECT DISTINCT c.nesting, c.args, k.root || '/' || f.path, c.line
                FROM body_call c
                JOIN file f ON f.blob_id = c.blob_id
                JOIN checkout k ON k.id = f.checkout_id
@@ -1091,12 +1091,13 @@ impl Store {
                 r.get::<_, String>(0)?,
                 r.get::<_, String>(1)?,
                 r.get::<_, String>(2)?,
+                r.get::<_, u32>(3)?,
             ))
         })?;
         let mut seen: HashSet<(String, String)> = HashSet::new();
         let mut found = Vec::new();
         for row in rows {
-            let (nesting, args, path) = row?;
+            let (nesting, args, path, line) = row?;
             if !roots.shows(&path) || !seen.insert((nesting.clone(), args.clone())) {
                 continue;
             }
@@ -1107,6 +1108,7 @@ impl Store {
                     .map(|arg| (!arg.is_empty()).then(|| arg.to_string()))
                     .collect(),
                 path,
+                line,
             });
         }
         Ok(found)
@@ -2217,6 +2219,7 @@ pub(crate) struct BodyCallRow {
     pub(crate) args: Vec<Option<String>>,
     /// The file the call is written in, absolute.
     pub(crate) path: String,
+    pub(crate) line: u32,
 }
 
 #[derive(Debug)]

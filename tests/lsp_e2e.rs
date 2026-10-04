@@ -5439,9 +5439,14 @@ fn an_erb_template_is_answered_at_its_own_positions() {
         "  end\n",
         "end\n",
     );
-    let template =
-        "<h1>Widgets</h1>\n<p>é — <%= badge(1) %></p>\n<% if true %><%= yield %><% end %>\n";
+    let template = concat!(
+        "<h1>Widgets</h1>\n",
+        "<p>é — <%= badge(1) %></p>\n",
+        "<% if true %><%= yield %><% end %>\n",
+        "<%= render \"row\" %>\n",
+    );
     fs::write(dir.join("app/helpers/widgets_helper.rb"), helper).unwrap();
+    fs::write(dir.join("app/views/widgets/_row.html.erb"), "<li></li>\n").unwrap();
     fs::write(dir.join("app/views/widgets/show.html.erb"), template).unwrap();
     git(&dir, &["add", "-A"]);
     git(
@@ -5496,6 +5501,23 @@ fn an_erb_template_is_answered_at_its_own_positions() {
             .ends_with("widgets_helper.rb")
     );
     assert_eq!(locations[0]["range"]["start"]["line"], 2);
+
+    // A `render`'s name opens the partial it renders (DEC-524).
+    let answer = session.request(
+        "textDocument/definition",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, view)},
+            "position": {"line": 3, "character": 13},
+        }),
+    );
+    let locations = answer["result"].as_array().expect("an array of locations");
+    assert_eq!(locations.len(), 1, "{answer}");
+    assert!(
+        locations[0]["uri"]
+            .as_str()
+            .unwrap()
+            .ends_with("widgets/_row.html.erb")
+    );
 
     let hover = session.request("textDocument/hover", at);
     let text = hover["result"]["contents"]["value"]

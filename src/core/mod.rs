@@ -192,6 +192,9 @@ pub(crate) struct Facts {
     /// (not `yield: true`), for typing the calls in it (DEC-214). Never
     /// stored.
     pub(crate) hook_blocks: Vec<HookBlock>,
+    /// Each template a `render`, `extends` or `partial` names, where it is
+    /// named (DEC-524). Resolve-time, never stored.
+    pub(crate) templates: Vec<TemplateRef>,
     /// Prism reported syntax errors; the facts above are what survived.
     pub(crate) parse_errors: usize,
     pub(crate) lines: usize,
@@ -1032,6 +1035,44 @@ pub(crate) struct Call {
     pub(crate) argc: Option<u32>,
     pub(crate) block: bool,
     pub(crate) pos: Pos,
+}
+
+/// A template named in code: `render "posts/form"`, `render partial: "row"`,
+/// `render @post`, RABL's `extends "posts/base"` (DEC-524).
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct TemplateRef {
+    /// Where the name, or the value standing for it, is written.
+    pub(crate) pos: Pos,
+    /// Its length on the line.
+    pub(crate) len: u32,
+    pub(crate) names: Named,
+    /// The keywords handed to the partial as its locals (`post: @post`): the
+    /// name, where the key is written, and the value when it is a variable
+    /// (`@post`, `post`), with where it is read.
+    pub(crate) locals: Vec<Local>,
+}
+
+/// A local a `render` hands a partial.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Local {
+    pub(crate) name: String,
+    pub(crate) pos: Pos,
+    pub(crate) value: Option<(String, Pos)>,
+}
+
+/// How a template is named.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Named {
+    /// `render "x"`: a partial in a view, a template in a controller.
+    Render(String),
+    /// `partial: "x"` (and RABL's `partial "x"`).
+    Partial(String),
+    /// `template: "x"`, `layout: "x"`, RABL's `extends "x"`: a template by
+    /// its path, with no underscore.
+    Template(String),
+    /// `render @post`, `render @posts`, `collection: @posts`: the partial
+    /// the value's class names, by an instance or ivar as written.
+    Object { value: String, collection: bool },
 }
 
 /// What an `Other` receiver is, when that is worth knowing.

@@ -5342,6 +5342,38 @@ fn cmd_def(
         }
         index_free();
     };
+    // A template a `render` or `extends` names: the file it reaches (DEC-524).
+    if let Some(template) = facts
+        .templates
+        .iter()
+        .find(|t| t.pos.line == spec.line && spec.col >= t.pos.col && spec.col < t.pos.col + t.len)
+        && let Some((root, store)) = &checkout
+    {
+        let relative = std::fs::canonicalize(&spec.path)
+            .ok()
+            .and_then(|abs| abs.strip_prefix(root).ok().map(Path::to_path_buf))
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| spec.path.clone());
+        let class = match &template.names {
+            crate::core::Named::Object { value, .. } => {
+                let tree = build_tree(store, &root.to_string_lossy())?;
+                crate::resolve::views::value_class(&tree, &facts, value, template.pos, &relative)
+            }
+            _ => None,
+        };
+        let files =
+            crate::tree::views::template_files(root, &relative, &template.names, class.as_deref());
+        let answer = template_answer(written.to_string(), root, &files, class.as_deref());
+        let found = !files.is_empty();
+        let text = match files.first() {
+            Some(first) => format!(
+                "{}:1:1  template",
+                shown(&root.join(first).to_string_lossy())
+            ),
+            None => "no template by that name".to_string(),
+        };
+        return report(out, answer, found, &text);
+    }
     // A `super` with no fact behind it is one whose method has no owner the
     // source names. Snapping would answer for another name on the line.
     if position::at_facts(&facts, spec.line, spec.col).is_none()
@@ -5902,6 +5934,40 @@ fn public_chain(chain: &[String]) -> Vec<String> {
 }
 
 /// One answer, in whichever shape the caller asked for.
+/// The answer on a template's name: each file it reaches, at its top
+/// (DEC-524).
+fn template_answer(
+    query: String,
+    root: &Path,
+    files: &[String],
+    class: Option<&str>,
+) -> serde_json::Value {
+    let definition: Vec<serde_json::Value> = files
+        .iter()
+        .map(|file| {
+            serde_json::json!({
+                "path": file, "root": root.to_string_lossy(), "line": 1, "col": 1,
+                "kind": "template",
+            })
+        })
+        .collect();
+    let mut answer = serde_json::json!({
+        "query": query,
+        "under": "template",
+        "status": match files.len() { 0 => "residue", 1 => "resolved", _ => "ambiguous" },
+        "confidence": match files.len() { 0 => 0.0, n => 1.0 / n as f64 },
+        "resolved_via": "render",
+        "definition": definition,
+    });
+    if let Some(class) = class {
+        answer["receiver_type"] = class.into();
+    }
+    if files.is_empty() {
+        answer["reason"] = "no template in the checkout's views by that name".into();
+    }
+    answer
+}
+
 fn report(
     out: Output,
     value: serde_json::Value,

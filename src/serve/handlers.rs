@@ -423,6 +423,37 @@ fn resolve_at(
         super::miss::why(UNREADABLE);
         return Ok(Vec::new());
     };
+    // A template a `render` or `extends` names: its files, at their tops
+    // (DEC-524).
+    if let Some(template) = facts
+        .templates
+        .iter()
+        .find(|t| t.pos.line == pos.line && pos.col >= t.pos.col && pos.col < t.pos.col + t.len)
+    {
+        let class = match &template.names {
+            crate::core::Named::Object { value, .. } => {
+                let tree = session.tree(&located.root)?;
+                crate::resolve::views::value_class(
+                    tree,
+                    &facts,
+                    value,
+                    template.pos,
+                    &located.relative,
+                )
+            }
+            _ => None,
+        };
+        let files = crate::tree::views::template_files(
+            &located.root,
+            &located.relative,
+            &template.names,
+            class.as_deref(),
+        );
+        if files.is_empty() {
+            super::miss::why("no template by that name");
+        }
+        return Ok(files.into_iter().map(|file| (file, 1, 1)).collect());
+    }
     let Some(under) = position::at_facts(&facts, pos.line, pos.col) else {
         super::miss::why(NO_NAME);
         return Ok(Vec::new());

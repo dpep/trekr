@@ -4937,6 +4937,7 @@ impl<'pr> Extractor<'_> {
             stands_for,
         });
         self.record_symbol_arguments(call);
+        self.record_template(call);
         self.record_block_pass(call);
         self.record_body_call(call);
     }
@@ -5279,6 +5280,133 @@ impl<'pr> Extractor<'_> {
         }
     }
 
+    /// A template a call names (DEC-524): `render "x"`, `render partial:
+    /// "x", locals: {…}`, `render @post`, `render collection: @posts`,
+    /// `render template: "x"`, and RABL's `extends "x"` and `partial "x"`.
+    fn record_template(&mut self, call: &ruby_prism::CallNode<'pr>) {
+        if call.receiver().is_some() {
+            return;
+        }
+        let Some(name) = method_name(call) else {
+            return;
+        };
+        if !matches!(name.as_str(), "render" | "extends" | "partial") {
+            return;
+        }
+        let args = arg_nodes(call);
+        let mut found: Vec<((usize, usize), Named)> = Vec::new();
+        let span =
+            |node: &Node<'pr>| (node.location().start_offset(), node.location().end_offset());
+        let mut locals = Vec::new();
+        let string = |node: &Node<'pr>| {
+            node.as_string_node()
+                .and_then(|s| String::from_utf8(s.unescaped().to_vec()).ok())
+        };
+        let value_text = |node: &Node<'pr>| {
+            (node.as_instance_variable_read_node().is_some()
+                || node.as_local_variable_read_node().is_some())
+            .then(|| String::from_utf8_lossy(node.location().as_slice()).into_owned())
+        };
+        let lines = &self.lines;
+        let value_at = |node: &Node<'pr>| {
+            value_text(node).map(|text| (text, lines.pos(node.location().start_offset())))
+        };
+        for (index, arg) in args.iter().enumerate() {
+            if let Some(hash) = arg.as_keyword_hash_node() {
+                for element in hash.elements().iter() {
+                    let Some(assoc) = element.as_assoc_node() else {
+                        continue;
+                    };
+                    let key = assoc
+                        .key()
+                        .as_symbol_node()
+                        .and_then(|k| String::from_utf8(k.unescaped().to_vec()).ok());
+                    let value = assoc.value();
+                    match (name.as_str(), key.as_deref()) {
+                        ("render", Some("partial")) => match string(&value) {
+                            Some(s) => found.push((span(&value), Named::Partial(s))),
+                            None => {
+                                if let Some(v) = value_text(&value) {
+                                    found.push((
+                                        span(&value),
+                                        Named::Object {
+                                            value: v,
+                                            collection: false,
+                                        },
+                                    ));
+                                }
+                            }
+                        },
+                        ("render", Some("template" | "layout")) => {
+                            if let Some(s) = string(&value) {
+                                found.push((span(&value), Named::Template(s)));
+                            }
+                        }
+                        ("render", Some("collection")) => {
+                            if let Some(v) = value_text(&value) {
+                                found.push((
+                                    span(&value),
+                                    Named::Object {
+                                        value: v,
+                                        collection: true,
+                                    },
+                                ));
+                            }
+                        }
+                        ("render", Some("locals")) => {
+                            if let Some(hash) = value.as_hash_node() {
+                                for element in hash.elements().iter() {
+                                    push_local(lines, &element, &mut locals, &value_at);
+                                }
+                            }
+                        }
+                        (
+                            "render",
+                            Some(
+                                "object" | "as" | "formats" | "handlers" | "cached"
+                                | "spacer_template" | "status" | "content_type",
+                            ),
+                        ) => {}
+                        ("render", Some(_)) if index > 0 => {
+                            push_local(lines, &element, &mut locals, &value_at);
+                        }
+                        _ => {}
+                    }
+                }
+                continue;
+            }
+            if index > 0 {
+                continue;
+            }
+            match (name.as_str(), string(arg)) {
+                ("render", Some(s)) => found.push((span(arg), Named::Render(s))),
+                ("extends", Some(s)) => found.push((span(arg), Named::Template(s))),
+                ("partial", Some(s)) => found.push((span(arg), Named::Template(s))),
+                ("render", None) => {
+                    if let Some(v) = value_text(arg) {
+                        found.push((
+                            span(arg),
+                            Named::Object {
+                                value: v,
+                                collection: false,
+                            },
+                        ));
+                    }
+                }
+                _ => {}
+            }
+        }
+        for ((start, end), names) in found {
+            let len = (end - start) as u32;
+            self.facts.templates.push(TemplateRef {
+                pos: self.pos(start),
+                len,
+                names,
+                locals: locals.clone(),
+            });
+        }
+    }
+
     /// `rescue_from Error, with: :handler`, `before_action :x, if: :ready?`:
     /// an option whose value names a method of `self` (DEC-340). Its symbol
     /// stands for that method where a positional one would.
@@ -5355,6 +5483,30 @@ impl<'pr> Extractor<'_> {
             stands_for,
         });
     }
+}
+
+/// A key a partial is handed as a local, with the value as written.
+fn push_local<'pr>(
+    lines: &LineIndex,
+    element: &Node<'pr>,
+    locals: &mut Vec<Local>,
+    value_at: &dyn Fn(&Node<'pr>) -> Option<(String, Pos)>,
+) {
+    let Some(assoc) = element.as_assoc_node() else {
+        return;
+    };
+    let Some(key) = assoc.key().as_symbol_node() else {
+        return;
+    };
+    let (Ok(name), Some(at)) = (String::from_utf8(key.unescaped().to_vec()), key.value_loc())
+    else {
+        return;
+    };
+    locals.push(Local {
+        name,
+        pos: lines.pos(at.start_offset()),
+        value: value_at(&assoc.value()),
+    });
 }
 
 /// Does an option of this name take a method of `self` as its value
