@@ -1502,6 +1502,60 @@ fn refs_for_a_class_method_are_a_different_question() {
 }
 
 #[test]
+fn refs_text_folds_an_initializes_untyped_news_into_one_line() {
+    let (dir, db) = scratch("refsuntypednew");
+    git(&dir, &["init", "-q"]);
+    fs::write(
+        dir.join("app.rb"),
+        concat!(
+            "class Widget
+", // 1
+            "  def initialize(a); end\n", // 2
+            "end
+",                        // 3
+            "Widget.new(1)
+",              // 4  confirmed
+            "klass.new(2)
+",               // 5  untyped
+            "other.new(3)
+",               // 6  untyped
+        ),
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    trekr(&db, &dir, &["--index"]);
+
+    let text = stdout(&trekr(&db, &dir, &["--refs", "Widget#initialize"]));
+    assert!(text.contains("app.rb:4:"), "{text}");
+    assert!(!text.contains("app.rb:5:"), "{text}");
+    assert!(
+        text.contains("2 untyped x.new (possible) — --json lists them"),
+        "{text}"
+    );
+    // JSON keeps every row.
+    let answer = json(&trekr(
+        &db,
+        &dir,
+        &["--refs", "Widget#initialize", "--json"],
+    ));
+    assert_eq!(answer["references"].as_array().unwrap().len(), 3);
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn a_bare_name_still_reports_every_mention_and_now_says_what_each_resolves_to() {
     let (dir, db) = scratch("refsbare");
     collision_repo(&dir);

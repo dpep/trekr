@@ -12441,7 +12441,9 @@ mixes in. It is tiered as any call (`resolve::refs::tier_construct`):
 A `super` inside a custom `def self.new` is not counted: the `X.new` that
 runs that `new` already is. `X.allocate` constructs without `initialize` and
 is not read; `dup`/`clone` run `initialize_copy`, a DEC-315 hook. A row's
-`called_as: "new"` says a site writes `new`; the LSP's Find References spans
+`called_as: "new"` says a site writes `new`; `--refs`' text folds the
+untyped ones into one closing line, `… N untyped x.new (possible) — --json
+lists them`, since a busy `initialize` has hundreds; the LSP's Find References spans
 the `new`, and call hierarchy lists its callers. Arity is checked only for
 an untyped receiver, as for any call: a typed `X.new` with the wrong count
 still runs `initialize`, and raises there.

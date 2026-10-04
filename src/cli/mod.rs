@@ -3820,7 +3820,12 @@ fn cmd_refs(
             site.col
         );
     }
-    for reference in &found {
+    // An untyped `x.new` may build any class, and an `initialize` with many
+    // callers has hundreds: one line says so, and `--json` lists them.
+    let (untyped_new, listed): (Vec<_>, Vec<_>) = found
+        .iter()
+        .partition(|r| r.unplaced() == Some(refs::Unplaced::New));
+    for reference in listed {
         println!(
             "{}:{}:{}  {:<10} {}",
             shown(&reference.path),
@@ -3828,6 +3833,12 @@ fn cmd_refs(
             reference.col,
             format!("{:?}", reference.tier).to_lowercase(),
             reference.why,
+        );
+    }
+    if !untyped_new.is_empty() {
+        println!(
+            "… {} untyped x.new (possible) — --json lists them",
+            untyped_new.len()
         );
     }
     // The number a grep cannot produce, said out loud — a zero included,

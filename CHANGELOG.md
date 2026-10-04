@@ -18,7 +18,9 @@
   an `initialize` only when nothing constructs its class, always graded
   lower — before, a real app's were never checked at all. An untyped
   `klass.new`, a `super` trekr cannot place and a macro's symbol keep none
-  alive; the caveat counts them.
+  alive; the caveat counts them. In text, `--refs` folds the untyped
+  `x.new` rows into one closing line (`… 1104 untyped x.new (possible)`);
+  `--json` lists each.
 
 - **`--dead` knows more of the methods Ruby calls by name.** A private
   `instance_variables_to_inspect` (`Kernel#inspect`, Ruby 3.4+) was
