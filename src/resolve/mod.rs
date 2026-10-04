@@ -1451,26 +1451,8 @@ pub(crate) fn defined_on(
     };
     match def.unsettled.as_ref()? {
         crate::core::Unsettled::Object { local, at } => {
-            // The flow analysis reads no `def`'s receiver, so every write to
-            // the name in the scope votes: trusted when this method writes it
-            // and every write agrees. A parameter's value is no write here.
-            let method = facts
-                .defs
-                .iter()
-                .filter(|d| d.kind == crate::core::Kind::Method && d.pos != def.pos)
-                .filter(|d| d.pos.line <= def.pos.line && def.pos.line <= d.end_line)
-                .min_by_key(|d| d.end_line - d.pos.line);
-            let local_to = |m: &Def| {
-                !m.params.iter().any(|p| p.name == *local)
-                    && facts
-                        .assigns
-                        .iter()
-                        .filter(|a| a.target == *local && a.nesting.first() == def.nesting.first())
-                        .any(|a| m.pos.line <= a.pos.line && a.pos.line <= m.end_line)
-            };
-            if !method.is_some_and(local_to) {
-                return Some(DefinedOn::Unknown);
-            }
+            // The writes the receiver's read can see, and only when they agree:
+            // a parameter, or a value of no type, leaves the object unknown.
             let read = probe(RecvShape::Local, Some(local.clone()), Some(*at), None);
             let agreed = receiver_of(tree, facts, &read, path).filter(|r| r.agreeing == r.total);
             Some(object(agreed))

@@ -562,6 +562,8 @@ impl<'pr> Visit<'pr> for Walker<'_> {
     fn visit_def_node(&mut self, node: &ruby_prism::DefNode<'pr>) {
         let name = String::from_utf8_lossy(node.name().as_slice()).into_owned();
         let singleton = node.receiver().is_some() || self.eigen;
+        // `def zone.x` reads `zone` in the scope around the def.
+        self.visit_opt(node.receiver());
         let saved = self.method.replace((name, singleton));
         self.fresh(|w| {
             w.params(node.parameters().map(|p| p.as_node()), Binding::Param);
@@ -1316,6 +1318,12 @@ mod tests {
     fn rescue_sees_any_write_the_body_made_before_it_failed() {
         let src = "x = 1\nbegin\n  x = 2\n  work\n  x = 3\nrescue\n  x\nend\n";
         assert_eq!(defined_at(src, 7, "x", 0), [1, 3, 5]);
+    }
+
+    #[test]
+    fn a_defs_receiver_reads_the_local_around_it() {
+        let src = "clock = 1\nclock = 2\ndef clock.tick\n  clock = 3\nend\n";
+        assert_eq!(defined_at(src, 3, "clock", 0), [2]);
     }
 
     #[test]

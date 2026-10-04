@@ -1,5 +1,7 @@
 # `def clock.time_now` replaces one Clock's `time_now`; it was listed as
 # `WidgetTest`'s own singleton method, unreferenced and clear (DEC-562).
+# Its type is the write `clock`'s read sees, not every write of the name in
+# the class: the receiver of a `def` is now read by the flow analysis.
 dead widget_test.rb Clock#time_now=override
 # On an object trekr cannot type: whose it is is unknown, so never clear.
 dead widget_test.rb WidgetTest#tick=unreferenced~object

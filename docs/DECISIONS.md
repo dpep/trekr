@@ -12847,7 +12847,7 @@ also pins that a private class method's bare call in a subclass body is its
 caller in `--dead`: nothing in `--refs` rules a call out by visibility on
 the class side.
 
-**Extraction changed**, so the store version moves.
+**Extraction changed**: store v61.
 
 ## DEC-562 — A `def` its scope may not own is not graded as the scope's
 
@@ -12891,10 +12891,11 @@ it is not stored, and the store does not change. Placing it on the object's
 class in the tree would make a test's stub one of the class's own
 definitions, which every call of the name would then reach.
 
-**The local's type is trusted only inside its method** because the flow
-analysis behind a local's type (DEC-064) reads no `def`'s receiver, so the
-writes that vote are every write to that name in the scope; one outside the
-enclosing method, or the name being a parameter, makes it unknown.
+**The local's type is the writes its read sees.** The flow analysis behind
+a local's type (DEC-064) now reads a `def`'s receiver, so `def clock.x`
+types `clock` from the writes that reach it, not from every write of the
+name in the class; writes that disagree, a parameter, or a value of no
+type (rails' `TimeZone[…].dup`) leave the object unknown.
 
 ## DEC-563 — `--refs` at a call asks the side its receiver lands on
 

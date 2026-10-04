@@ -7,6 +7,11 @@ class WidgetTest
     clock.now
   end
 
+  def test_other
+    clock = "text"
+    clock.size
+  end
+
   def test_untyped(clock)
     def clock.tick
       1
