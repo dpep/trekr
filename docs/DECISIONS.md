@@ -12637,6 +12637,28 @@ read by hand are each a real call), and 51 `convention-only` rows lose the
 "named in a view" caveat, lower → clear, the template that named them now
 read. None moved away from use.
 
+### DEC-521 addendum — an exposed name runs on the controller that renders the template
+
+**Decided.** A name `helper_method` exposes is sent to the controller
+that renders the template (`resolve::views::exposed_receiver`), which is
+then the receiver (`receiver_type`), and Ruby's lookup on it answers — a
+subclass's override of an `ApplicationController` helper method too. The
+controllers that render a template (`resolve::views::renderings`) are its
+directory's by the path convention (DEC-522), each whose action names it
+in a `render` (`render template: "widgets/show"`), and for a partial those
+of each template that renders it, followed three partials deep. Of those,
+the ones that reach an exposer vote; landings that differ make the answer
+`ambiguous` (confidence 1 / landings), each other landing a candidate. No
+renderer reaching an exposer — a shared partial, a directory no controller
+is named for — and every exposer and each subclass that overrides the name
+is a rival. `--refs` counts a call in such a template as `possible` for
+each landing, never `confirmed`.
+
+**Why.** Two controllers exposing `current_widget_label` answered a
+`gadgets/show` call with `WidgetsController#…` at 1.0 — whichever the
+index met first — and `--refs 'GadgetsController#…'` ruled the real caller
+out. Testbed 600.
+
 ## DEC-522 — A template's `@ivar` is what the action that renders it assigned
 
 **Decided.** An instance variable a template reads with no write in the

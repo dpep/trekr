@@ -39,7 +39,11 @@
   `helper_method` exposes, then the app's helpers (all of `app/helpers`, as
   `helper :all` includes them), then `ActionView::Base` — `resolved_via:
   view`. A helper called only from views is a confirmed reference now, and
-  `--dead` weighs it so.
+  `--dead` weighs it so. An exposed name runs on the controller that renders
+  the template — its directory's, one whose action renders it by name, or
+  for a partial those of the templates that render it — overrides included;
+  rendered by several that differ, or by none trekr can name, it is
+  ambiguous, and `--refs` lists it as possible for each.
 - **A view's `@ivar` is typed from its controller.** `@post` in
   `posts/show.html.erb` is what `PostsController#show` assigns, or a
   `before_action` that runs for it, or an action that `render :show`s;

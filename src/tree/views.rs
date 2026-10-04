@@ -132,32 +132,27 @@ impl Tree {
         })
     }
 
-    /// The method a call on a view's `self` runs: one `helper_method`
-    /// exposes from `controller` (or from any controller, when the template
-    /// names none the index has), then the checkout's helpers, last included
-    /// first, then `ActionView::Base`'s own chain.
-    pub(crate) fn lookup_in_view(
-        &self,
-        controller: Option<&str>,
-        name: &str,
-    ) -> Option<super::MethodDef> {
-        let views = self.views();
-        if let Some(owners) = views.exposed.get(name) {
-            let reaching =
-                |owner: &String| controller.is_none_or(|c| c == owner || self.inherits(c, owner));
-            if let Some((owner, _)) = owners.iter().find(|(owner, _)| reaching(owner)) {
-                let on = controller.unwrap_or(owner);
-                if let Some(found) = self.lookup(on, false, name) {
-                    return Some(found);
-                }
-            }
-        }
-        views
+    /// The method a call on a view's `self` runs when no controller's
+    /// `helper_method` exposes the name: the checkout's helpers, last
+    /// included first, then `ActionView::Base`'s own chain. An exposed name
+    /// is sent to the controller that renders the template
+    /// (`resolve::views::exposed_receiver`).
+    pub(crate) fn lookup_in_view(&self, name: &str) -> Option<super::MethodDef> {
+        self.views()
             .helpers
             .iter()
             .rev()
             .find_map(|helper| self.lookup(helper, false, name))
             .or_else(|| self.lookup(ACTION_VIEW, false, name))
+    }
+
+    /// The classes whose body exposes `name` to views with `helper_method`.
+    pub(crate) fn exposers(&self, name: &str) -> Vec<String> {
+        self.views()
+            .exposed
+            .get(name)
+            .map(|owners| owners.iter().map(|(owner, _)| owner.clone()).collect())
+            .unwrap_or_default()
     }
 
     /// The checkout the tree was built for, absolute.

@@ -424,6 +424,28 @@ fn tier(
             None,
         );
     }
+    // A template that several controllers may render runs the method of
+    // whichever does: each landing is a possibility, none a confirmation
+    // (DEC-521).
+    if matches!(receiver.via, "view" | "rabl")
+        && receiver.ambiguous
+        && let Some(target) = target
+        && std::iter::once(receiver.fqn.as_str())
+            .chain(receiver.rivals.iter().map(|(rival, _)| rival.as_str()))
+            .any(|class| {
+                tree.lookup(class, false, &call.name)
+                    .is_some_and(|landed| runs_asked(tree, query, target, (class, false), &landed))
+            })
+    {
+        return here(
+            Tier::Possible,
+            Some(receiver.fqn.clone()),
+            found.map(|found| found.owner),
+            "the template may be rendered by controllers whose methods differ",
+            1,
+            None,
+        );
+    }
     // A guess among classes that define the name, landing on a method it
     // only inherits, lands wherever its ancestors do — for `to_s`, Kernel's —
     // so it cannot confirm a call of the owner that inherits that method.

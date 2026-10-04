@@ -1,0 +1,19 @@
+# Two controllers expose `label` with `helper_method`, and a template's
+# call answered whichever the index met first, at confidence 1 — and
+# `--refs` on the other ruled its real caller out. A template runs on the
+# view of the controller that renders it: its own directory's, or one that
+# renders it by name, or — for a partial — those of the templates that
+# render it. A controller's override of an exposed method is what runs for
+# its templates. Rendered by several, or by none the index can name, the
+# call is ambiguous among what each would run.
+def app/views/gadgets/show.html.erb:1:5 status=resolved via=view owner=GadgetsController
+def app/views/widgets/show.html.erb:1:5 status=resolved via=view owner=WidgetsController
+def app/views/gadgets/show.html.erb:2:5 status=resolved via=view owner=GadgetsController
+def app/views/widgets/show.html.erb:2:5 status=resolved via=view owner=ApplicationController
+def app/views/widgets/edit.html.erb:1:5 status=ambiguous via=view candidates=1
+def app/views/widgets/_row.html.erb:1:5 status=ambiguous via=view candidates=1
+def app/views/shared/_nav.html.erb:1:5 status=ambiguous via=view candidates=1
+def app/views/shared/_nav.html.erb:2:5 status=ambiguous via=view candidates=1
+refs GadgetsController#label confirmed=1 possible=5 excluded=1
+refs WidgetsController#label confirmed=1 possible=5 excluded=1
+refs GadgetsController#current_account confirmed=1 possible=2 excluded=1

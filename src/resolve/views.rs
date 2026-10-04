@@ -66,18 +66,126 @@ pub(super) fn view_ivar(tree: &Tree, call: &Call, path: &str) -> Option<Receiver
     })
 }
 
-/// The writes to `target` that a template at `path` sees: those of the
-/// action that renders it, its `before_action`s and an action that renders
-/// it by symbol (`render :edit` in `update`); for a partial or a layout, or
-/// when none of those writes it, every write in the controller's chain.
-fn controller_writes(tree: &Tree, path: &str, target: &str) -> Vec<(String, Arc<Facts>, Assign)> {
-    let renders =
-        crate::scan::is_template(path) && crate::tree::views::under(path, "views").is_some();
-    let Some((controller, action)) = renders.then(|| tree.renderer_of(path)).flatten() else {
+/// A controller that renders a template, and the methods whose writes the
+/// template sees: the action, the `before_action`s it runs, and an action
+/// that renders it by name — `None` for every method in the controller's
+/// chain, a partial's or a layout's.
+pub(crate) struct Rendering {
+    pub(crate) controller: String,
+    runs: Option<Vec<String>>,
+    /// Named by the path convention (DEC-522), whose writes widen to the
+    /// whole chain when the action's write nothing. A controller that names
+    /// the template in a `render` is read only for what that action runs.
+    conventional: bool,
+}
+
+/// How many partials deep the templates rendering a partial are followed.
+const PARTIAL_DEPTH: usize = 3;
+
+/// The controllers that render the template at `path` (relative to the
+/// checkout): its directory's by the path convention; one whose action
+/// names it in a `render` (`render template: "widgets/show"` in
+/// `GadgetsController#show`); and for a partial, those of each template
+/// that renders it. The convention's first.
+pub(crate) fn renderings(tree: &Tree, path: &str) -> Vec<Rendering> {
+    let mut seen = vec![path.to_string()];
+    renderings_at(tree, path, 0, &mut seen)
+}
+
+fn renderings_at(tree: &Tree, path: &str, depth: usize, seen: &mut Vec<String>) -> Vec<Rendering> {
+    use crate::core::Named;
+    use crate::tree::views::under;
+    let Some(rest) = under(path, "views").filter(|_| crate::scan::is_template(path)) else {
         return Vec::new();
     };
-    let files: Vec<(String, Arc<Facts>)> = tree
-        .ancestors(&controller)
+    let (dir, file) = rest.rsplit_once('/').unwrap_or(("", rest));
+    let mut found: Vec<Rendering> = Vec::new();
+    if let Some((controller, action)) = tree.renderer_of(path) {
+        let runs = action.map(|action| {
+            let mut runs = vec![action.clone()];
+            for (_, facts) in chain_files(tree, &controller) {
+                if let Some(source) = &facts.source {
+                    runs.extend(callbacks_before(source, &action));
+                }
+                runs.extend(rendering(&facts, &action, dir));
+            }
+            runs
+        });
+        found.push(Rendering {
+            controller,
+            runs,
+            conventional: true,
+        });
+    }
+    let partial = file.starts_with('_');
+    let base = file
+        .trim_start_matches('_')
+        .split('.')
+        .next()
+        .unwrap_or(file);
+    let root = std::path::Path::new(tree.checkout_root());
+    for caller in tree.files_calling("render").iter() {
+        let in_controller = under(caller, "controllers").is_some();
+        if !in_controller && !(partial && under(caller, "views").is_some()) {
+            continue;
+        }
+        let absolute = root.join(caller).to_string_lossy().into_owned();
+        let Some(facts) = tree.file_facts(&absolute) else {
+            continue;
+        };
+        for template in &facts.templates {
+            let (Named::Render(name) | Named::Partial(name) | Named::Template(name)) =
+                &template.names
+            else {
+                continue;
+            };
+            let reaches = name.rsplit('/').next() == Some(base)
+                && crate::tree::views::template_files(root, caller, &template.names, None)
+                    .iter()
+                    .any(|file| file == path);
+            if !reaches {
+                continue;
+            }
+            if !in_controller {
+                if depth < PARTIAL_DEPTH && !seen.contains(caller) {
+                    seen.push(caller.clone());
+                    found.extend(renderings_at(tree, caller, depth + 1, seen));
+                }
+                continue;
+            }
+            let Some(method) = super::enclosing_method(&facts, template.pos.line) else {
+                continue;
+            };
+            let Some(controller) = tree.scope_fqn(&method.nesting) else {
+                continue;
+            };
+            // The convention's own controller already counts the actions
+            // that render the template by name (`rendering`).
+            if found
+                .iter()
+                .any(|r| r.conventional && r.controller == controller)
+            {
+                continue;
+            }
+            let mut runs = vec![method.name.clone()];
+            for (_, facts) in chain_files(tree, &controller) {
+                if let Some(source) = &facts.source {
+                    runs.extend(callbacks_before(source, &method.name));
+                }
+            }
+            found.push(Rendering {
+                controller,
+                runs: Some(runs),
+                conventional: false,
+            });
+        }
+    }
+    found
+}
+
+/// The checkout's files that write a controller's chain, each read once.
+fn chain_files(tree: &Tree, controller: &str) -> Vec<(String, Arc<Facts>)> {
+    tree.ancestors(controller)
         .chain
         .iter()
         .flat_map(|class| tree.sites(class))
@@ -91,45 +199,131 @@ fn controller_writes(tree: &Tree, path: &str, target: &str) -> Vec<(String, Arc<
         })
         .into_iter()
         .filter_map(|path| Some((path.clone(), tree.file_facts(&path)?)))
-        .collect();
-    let dir = crate::tree::views::under(path, "views")
-        .and_then(|rest| rest.rsplit_once('/'))
-        .map_or("", |(dir, _)| dir);
-    let runs: Vec<String> = match &action {
-        Some(action) => {
-            let mut runs = vec![action.clone()];
-            for (_, facts) in &files {
-                if let Some(source) = &facts.source {
-                    runs.extend(callbacks_before(source, action));
+        .collect()
+}
+
+/// The writes to `target` that a template at `path` sees, from every
+/// controller that renders it: those of the methods each runs for it; for a
+/// partial or a layout, or when the conventional action's write nothing,
+/// every write in that controller's chain.
+fn controller_writes(tree: &Tree, path: &str, target: &str) -> Vec<(String, Arc<Facts>, Assign)> {
+    let mut found: Vec<(String, Arc<Facts>, Assign)> = Vec::new();
+    // The path convention's controller only, for now.
+    for rendering in renderings(tree, path)
+        .into_iter()
+        .take(1)
+        .filter(|r| r.conventional)
+    {
+        let files = chain_files(tree, &rendering.controller);
+        let widths: &[bool] = match (&rendering.runs, rendering.conventional) {
+            (None, _) => &[false],
+            (Some(_), true) => &[true, false],
+            (Some(_), false) => &[true],
+        };
+        for &narrow in widths {
+            let mut writes = Vec::new();
+            for (file, facts) in &files {
+                for assign in facts
+                    .assigns
+                    .iter()
+                    .filter(|a| a.target == target && !a.singleton)
+                {
+                    let method = super::enclosing_method(facts, assign.pos.line);
+                    let counts = method.is_some_and(|m| {
+                        m.kind == Kind::Method
+                            && !m.singleton
+                            && (!narrow
+                                || rendering.runs.as_ref().is_some_and(|r| r.contains(&m.name)))
+                    });
+                    if counts {
+                        writes.push((file.clone(), facts.clone(), assign.clone()));
+                    }
                 }
-                runs.extend(rendering(facts, action, dir));
             }
-            runs
-        }
-        None => Vec::new(),
-    };
-    for narrow in [true, false] {
-        let mut found = Vec::new();
-        for (file, facts) in &files {
-            for assign in facts
-                .assigns
-                .iter()
-                .filter(|a| a.target == target && !a.singleton)
-            {
-                let method = super::enclosing_method(facts, assign.pos.line);
-                let counts = method.is_some_and(|m| {
-                    m.kind == Kind::Method && !m.singleton && (!narrow || runs.contains(&m.name))
-                });
-                if counts {
-                    found.push((file.clone(), facts.clone(), assign.clone()));
+            if writes.is_empty() {
+                continue;
+            }
+            for write in writes {
+                if !found
+                    .iter()
+                    .any(|(f, _, a)| *f == write.0 && a.pos == write.2.pos)
+                {
+                    found.push(write);
                 }
             }
-        }
-        if !found.is_empty() {
-            return found;
+            break;
         }
     }
-    Vec::new()
+    found
+}
+
+/// The controller a call on a view's `self` runs a name on that a
+/// `helper_method` exposes (DEC-521): the one that renders the template,
+/// whose own method — an override, too — is what the generated helper
+/// sends to. Rendered by several that land on different methods, or by none
+/// that exposes the name — a shared partial — every exposing controller and
+/// each subclass overriding it is a rival, and the answer is ambiguous.
+pub(super) fn exposed_receiver(
+    tree: &Tree,
+    name: &str,
+    path: &str,
+    via: &'static str,
+) -> Option<Receiver> {
+    let owners = tree.exposers(name);
+    if owners.is_empty() {
+        return None;
+    }
+    let exposes = |class: &str| {
+        owners
+            .iter()
+            .any(|owner| owner == class || tree.inherits(class, owner))
+    };
+    let mut pool: Vec<String> = Vec::new();
+    for rendering in renderings(tree, path) {
+        if exposes(&rendering.controller) && !pool.contains(&rendering.controller) {
+            pool.push(rendering.controller);
+        }
+    }
+    if pool.is_empty() {
+        pool = owners.clone();
+        for method in tree.named(name).iter() {
+            if !method.singleton
+                && !pool.contains(&method.owner)
+                && tree.kind_of(&method.owner) == Some("class")
+                && exposes(&method.owner)
+            {
+                pool.push(method.owner.clone());
+            }
+        }
+    }
+    let mut landings: Vec<(String, crate::tree::MethodDef)> = Vec::new();
+    for class in pool {
+        let Some(found) = tree.lookup(&class, false, name) else {
+            continue;
+        };
+        let same = |(_, other): &(String, crate::tree::MethodDef)| {
+            other.owner == found.owner
+                && other.site.path == found.site.path
+                && other.site.line == found.site.line
+        };
+        if !landings.iter().any(same) {
+            landings.push((class, found));
+        }
+    }
+    let ((first, _), rest) = landings.split_first()?;
+    Some(Receiver {
+        fqn: first.clone(),
+        singleton: false,
+        via,
+        agreeing: 1,
+        total: landings.len(),
+        ambiguous: !rest.is_empty(),
+        rivals: rest
+            .iter()
+            .map(|(class, _)| (class.clone(), false))
+            .collect(),
+        bound: false,
+    })
 }
 
 /// The model a template's collection holds, by the constant its

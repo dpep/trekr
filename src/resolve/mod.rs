@@ -51,14 +51,14 @@ impl Receiver {
     pub(super) fn lookup(&self, tree: &Tree, name: &str) -> Option<crate::tree::MethodDef> {
         match self.via {
             "self" => tree.lookup_self(&self.fqn, self.singleton, name),
-            // A view's `self`: its controller's helpers, then ActionView's
-            // (DEC-521).
-            "view" => tree.lookup_in_view(None, name),
+            // A view's `self`: the app's helpers, then ActionView's — or the
+            // controller a `helper_method` sends the name to (DEC-521).
+            "view" if self.fqn == crate::tree::views::ACTION_VIEW => tree.lookup_in_view(name),
             // A RABL template's `self`: its engine, which sends what it lacks
             // to the view (DEC-526).
-            "rabl" => tree
+            "rabl" if self.fqn == rabl::ENGINE => tree
                 .lookup(rabl::ENGINE, false, name)
-                .or_else(|| tree.lookup_in_view(None, name)),
+                .or_else(|| tree.lookup_in_view(name)),
             // A top-level `def` is a private method of Object, ahead of
             // Kernel — when only one file writes it, since which of several
             // is loaded is not the index's to say.
@@ -212,7 +212,7 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                     // A name `helper_method` exposes runs the method Rails
                     // generates at that line, which sends it on (DEC-521).
                     let mut sites = sites;
-                    if receiver.via == "view"
+                    if matches!(receiver.via, "view" | "rabl")
                         && let Some(at) = tree.exposed_at(&found.owner, &call.name)
                     {
                         sites.push(at);
@@ -1721,7 +1721,7 @@ fn ladder(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -> 
                 return Some(hooked);
             }
             // A template runs on its view context (DEC-521).
-            if let Some(view) = view_receiver(call, path) {
+            if let Some(view) = view_receiver(tree, call, path) {
                 return Some(view);
             }
             // `describe` on `main`, which sends it to `RSpec` (DEC-115).
@@ -2979,6 +2979,7 @@ fn rival_landings(tree: &Tree, receiver: &Receiver, name: &str) -> Vec<Candidate
             singleton: method.singleton,
             why: match receiver.via {
                 "on_load" => "another class that runs the hook",
+                "view" | "rabl" => "another controller that may render the template exposes it",
                 _ => "another write the receiver's read can see gives it this type",
             },
             kind: method.kind(),
@@ -3191,8 +3192,9 @@ fn on_main(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiv
 /// into, a subclass of `ActionView::Base` with the controller's helpers
 /// (DEC-521). Every block in a template keeps it — `form_with` and `each`
 /// yield values, not a new `self` — so only a class or module the template
-/// writes is another scope.
-fn view_receiver(call: &Call, path: &str) -> Option<Receiver> {
+/// writes is another scope. A name a `helper_method` exposes is sent to the
+/// controller that renders the template, which is then the receiver.
+fn view_receiver(tree: &Tree, call: &Call, path: &str) -> Option<Receiver> {
     if !call.nesting.is_empty() {
         return None;
     }
@@ -3201,6 +3203,11 @@ fn view_receiver(call: &Call, path: &str) -> Option<Receiver> {
         (_, true) => (rabl::ENGINE, "rabl"),
         _ => return None,
     };
+    let engine_has_it = via == "rabl" && tree.lookup(rabl::ENGINE, false, &call.name).is_some();
+    if !engine_has_it && let Some(controller) = views::exposed_receiver(tree, &call.name, path, via)
+    {
+        return Some(controller);
+    }
     Some(Receiver {
         fqn: fqn.to_string(),
         singleton: false,
