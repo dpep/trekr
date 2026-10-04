@@ -12585,6 +12585,13 @@ Code plugin) would get nothing.
 Code's `.lsp.json` maps extensions statically — sends an old binary the
 template anyway; its mapping is synced at the release that ships 0.8.7.
 
+### DEC-520 addendum — deferred: untracked Haml views
+
+DEC-315's "named in a view, which is not read" caveat reads the views the
+index holds, so a Haml (or Slim) view git does not track names nothing, and
+a method only it calls is graded without the caveat. Pre-existing; not
+changed by the template work.
+
 ## DEC-521 — A view template runs on its view context: helpers, then ActionView
 
 **Decided.** An implicit call (or one on `self`) in an ERB template under an
@@ -12736,6 +12743,21 @@ its reads are typed from (`resolve::views::template_ivar_writes`):
 `resolved_via: controller`, in the CLI and the LSP's definition and
 hover. It answered "not set in this file" and the LSP nothing. Testbed
 603.
+
+### DEC-522 addendum — a scan keeps templates; whole facts are kept for 64 files
+
+**Decided.** `Tree::file_facts` keeps the whole facts of the 64 files most
+recently asked for (`FACTS_KEPT`), least recently asked for dropped first
+and read again when asked — each still kept only while its stamp holds. The
+scans over every file that calls `render` (a template's renderers, a
+partial's locals) read `Tree::file_templates` instead, which keeps only the
+templates a file names, for every file; a file's whole facts are read only
+for a render that reaches the template in question.
+
+**Why.** Every render-calling file's facts were kept for the tree's life —
+382 on discourse, about 16 MB in the hunt's estimate — though a scan reads
+only their templates, and an answer reads a handful in depth. A tree lives
+until the index's stamp moves, which a method body's edit does not move.
 
 ## DEC-524 — A `render`'s name reaches the template it renders
 

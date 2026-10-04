@@ -17,8 +17,20 @@ use std::sync::{Arc, Mutex};
 /// can name: Rails' own subclass of it is anonymous.
 pub(crate) const ACTION_VIEW: &str = "ActionView::Base";
 
-/// A file's facts, with the modification time and length they were read at.
-type Read = (std::time::SystemTime, u64, Arc<Facts>);
+/// A file's modification time and length, which a read is kept while.
+type Stamp = (std::time::SystemTime, u64);
+
+/// A file's facts, the stamp they were read at, and when last asked for.
+type Read = (Stamp, Arc<Facts>, u64);
+
+/// The templates a file names, and the stamp they were read at.
+type NamedRead = (Stamp, Arc<[crate::core::TemplateRef]>);
+
+/// How many files' whole facts are kept: what a template's answer reads in
+/// depth — a controller's chain, the renders that reach a partial — is a
+/// few files, and past this the least recently asked for is dropped and
+/// read again when asked. The scan for renders keeps only templates.
+const FACTS_KEPT: usize = 64;
 
 /// The checkout's view conventions, read once per tree.
 #[derive(Default)]
@@ -37,8 +49,11 @@ pub(crate) struct Views {
     /// acronym inflection (`OAuth`) spells it otherwise (DEC-344).
     classes: HashMap<String, String>,
     /// A controller's file read for what its actions assign, by path, with
-    /// the modification time and length it was read at.
-    files: Mutex<HashMap<String, Read>>,
+    /// the stamp it was read at; at most `FACTS_KEPT`, and a counter of asks.
+    files: Mutex<(HashMap<String, Read>, u64)>,
+    /// The templates each file names, for the scans over every file that
+    /// calls `render`: kept for every file, being small.
+    named: Mutex<HashMap<String, NamedRead>>,
     /// The checkout's files that call a name (`render`, `extends`),
     /// relative to it.
     calling: Mutex<HashMap<String, Arc<[String]>>>,
@@ -127,6 +142,7 @@ impl Tree {
                 exposed,
                 classes,
                 files: Mutex::default(),
+                named: Mutex::default(),
                 calling: Mutex::default(),
             }
         })
@@ -238,21 +254,58 @@ impl Tree {
 
     /// A checkout file's facts, read from disk: what a controller's actions
     /// assign is read where a template reads it. Kept while the file is
-    /// unchanged.
+    /// unchanged, for the `FACTS_KEPT` files most recently asked for.
     pub(crate) fn file_facts(&self, path: &str) -> Option<Arc<Facts>> {
-        let meta = std::fs::metadata(path).ok()?;
-        let stamp = (meta.modified().ok()?, meta.len());
-        let mut files = self.views().files.lock().ok()?;
-        if let Some((modified, len, facts)) = files.get(path)
-            && (*modified, *len) == stamp
+        let stamp = stamp_of(path)?;
+        let mut guard = self.views().files.lock().ok()?;
+        let (files, asks) = &mut *guard;
+        *asks += 1;
+        let now = *asks;
+        if let Some((read, facts, used)) = files.get_mut(path)
+            && *read == stamp
         {
+            *used = now;
             return Some(facts.clone());
         }
         let bytes = std::fs::read(path).ok()?;
         let facts = Arc::new(crate::extract::extract_file(path, &bytes));
-        files.insert(path.to_string(), (stamp.0, stamp.1, facts.clone()));
+        files.insert(path.to_string(), (stamp, facts.clone(), now));
+        if files.len() > FACTS_KEPT
+            && let Some(oldest) = files
+                .iter()
+                .min_by_key(|(_, (_, _, used))| *used)
+                .map(|(path, _)| path.clone())
+        {
+            files.remove(&oldest);
+        }
         Some(facts)
     }
+
+    /// The templates a checkout file names (`render "row"`, `extends "x"`),
+    /// read from disk and kept while it is unchanged — what a scan over
+    /// every file that calls `render` needs of each.
+    pub(crate) fn file_templates(&self, path: &str) -> Option<Arc<[crate::core::TemplateRef]>> {
+        let stamp = stamp_of(path)?;
+        if let Some((read, named)) = self.views().named.lock().ok()?.get(path)
+            && *read == stamp
+        {
+            return Some(named.clone());
+        }
+        let bytes = std::fs::read(path).ok()?;
+        let named: Arc<[crate::core::TemplateRef]> =
+            crate::extract::extract_file(path, &bytes).templates.into();
+        self.views()
+            .named
+            .lock()
+            .ok()?
+            .insert(path.to_string(), (stamp, named.clone()));
+        Some(named)
+    }
+}
+
+fn stamp_of(path: &str) -> Option<Stamp> {
+    let meta = std::fs::metadata(path).ok()?;
+    Some((meta.modified().ok()?, meta.len()))
 }
 
 /// Where a template a file names is looked for: the directory under the
@@ -401,6 +454,31 @@ mod tests {
             ),
             "engines/shop/app/views/carts/edit."
         );
+    }
+
+    #[test]
+    fn whole_facts_are_kept_for_the_files_last_asked_for_and_read_again_after() {
+        let dir = std::env::temp_dir().join(format!("trekr-views-kept-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = |i: usize| dir.join(format!("w{i}.rb")).to_string_lossy().into_owned();
+        for i in 0..=FACTS_KEPT {
+            std::fs::write(path(i), format!("class W{i}\nend\n")).unwrap();
+        }
+        let tree = crate::tree::for_test(&[]);
+        for i in 0..=FACTS_KEPT {
+            assert!(tree.file_facts(&path(i)).is_some());
+        }
+        let kept = |p: &str| tree.views().files.lock().unwrap().0.contains_key(p);
+        assert_eq!(tree.views().files.lock().unwrap().0.len(), FACTS_KEPT);
+        assert!(!kept(&path(0)), "the least recently asked for is dropped");
+        let again = tree.file_facts(&path(0)).unwrap();
+        assert_eq!(again.defs[0].name, "W0", "and read again when asked");
+        // The scan's templates are kept for every file.
+        for i in 0..=FACTS_KEPT {
+            tree.file_templates(&path(i)).unwrap();
+        }
+        assert_eq!(tree.views().named.lock().unwrap().len(), FACTS_KEPT + 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

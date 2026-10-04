@@ -130,10 +130,10 @@ fn renderings_at(tree: &Tree, path: &str, depth: usize, seen: &mut Vec<String>) 
             continue;
         }
         let absolute = root.join(caller).to_string_lossy().into_owned();
-        let Some(facts) = tree.file_facts(&absolute) else {
+        let Some(named) = tree.file_templates(&absolute) else {
             continue;
         };
-        for template in &facts.templates {
+        for template in named.iter() {
             let (Named::Render(name) | Named::Partial(name) | Named::Template(name)) =
                 &template.names
             else {
@@ -153,6 +153,9 @@ fn renderings_at(tree: &Tree, path: &str, depth: usize, seen: &mut Vec<String>) 
                 }
                 continue;
             }
+            let Some(facts) = tree.file_facts(&absolute) else {
+                continue;
+            };
             let Some(method) = super::enclosing_method(&facts, template.pos.line) else {
                 continue;
             };
@@ -559,10 +562,12 @@ pub(crate) fn partial_local(tree: &Tree, call: &Call, path: &str) -> Option<Part
     };
     for caller in tree.files_calling("render").iter() {
         let absolute = root.join(caller).to_string_lossy().into_owned();
-        let Some(facts) = tree.file_facts(&absolute) else {
+        let Some(named) = tree.file_templates(&absolute) else {
             continue;
         };
-        for template in &facts.templates {
+        // The whole file is read only for a render that names this partial.
+        let mut read: Option<Arc<Facts>> = None;
+        for template in named.iter() {
             let names_base = match &template.names {
                 crate::core::Named::Render(name) | crate::core::Named::Partial(name) => {
                     name.rsplit('/').next() == Some(base)
@@ -573,6 +578,16 @@ pub(crate) fn partial_local(tree: &Tree, call: &Call, path: &str) -> Option<Part
             if !names_base {
                 continue;
             }
+            let facts = match &read {
+                Some(facts) => Arc::clone(facts),
+                None => {
+                    let Some(facts) = tree.file_facts(&absolute) else {
+                        break;
+                    };
+                    read = Some(Arc::clone(&facts));
+                    facts
+                }
+            };
             let (class, many) = match &template.names {
                 crate::core::Named::Object { value, collection } => {
                     // Untyped, a value named the partial's plural (`@posts`
