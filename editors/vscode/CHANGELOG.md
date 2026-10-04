@@ -8,8 +8,8 @@ it runs, whose own changelog is in the
 
 - ERB and RABL templates are served: go to definition, hover, references
   and completion in a `.erb` (whatever language id an ERB extension gives
-  it, or plain HTML) and a `.rabl`. Needs a trekr that reads templates
-  (the release after 0.8.6); an older one answers nothing there.
+  it, or plain HTML) and a `.rabl`. Needs trekr 0.8.7 or newer, which reads
+  templates; an older one answers nothing there.
 
 ## 0.5.0
 

@@ -53,6 +53,8 @@
   template that `extends` another lends it its object.
 - **Editors serve templates.** The VS Code extension (0.6.0) and the Claude
   Code plugin's language server start for `.erb` and `.rabl` files too.
+- This changes what an index records (store v60): trekr reindexes once after
+  upgrading.
 
 ## 0.8.6 — 2026-10-03
 
