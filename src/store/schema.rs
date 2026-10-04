@@ -16,7 +16,7 @@
 ///
 /// The one exception is a table in [`OPTIONAL`]: nothing reads it to answer, so
 /// a store without it is still this version's (DEC-300).
-pub(crate) const VERSION: i64 = 60;
+pub(crate) const VERSION: i64 = 61;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.

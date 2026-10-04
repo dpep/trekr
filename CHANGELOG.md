@@ -58,7 +58,7 @@
   template that `extends` another lends it its object.
 - **Editors serve templates.** The VS Code extension (0.6.0) and the Claude
   Code plugin's language server start for `.erb` and `.rabl` files too.
-- This changes what an index records (store v60): trekr reindexes once after
+- This changes what an index records (store v61): trekr reindexes once after
   upgrading.
 
 - **`--dead` no longer credits the enclosing class with a `def` it does
@@ -72,8 +72,7 @@
 - **A private class method is private.** `private` inside `class << self`
   was dropped, so `--symbols` listed its methods as public and completion
   offered them after `Widget.`; `private_class_method :x` and
-  `private_class_method def self.x` were not read at all. trekr reindexes
-  once after upgrading.
+  `private_class_method def self.x` were not read at all.
 - **`class X < X` inside a namespace inherits the outer `X`.** Ruby reads
   the superclass before the new class exists, so rails'
   `ConnectionAdapters::SchemaDumper < SchemaDumper` is an
