@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Visibility follows more of Ruby's rules.** `private :x` after `def x`
+  now makes `x` private in `--symbols` and completion (class methods too,
+  inside `class << self`); an alias takes its original's visibility instead
+  of always being public; a `define_method` in a `private` section is
+  private; and `private_class_method [:a, :b]` or `*%i[a b]` names each.
 - **`--refs` at a call trekr cannot place answers instead of failing.** On
   `x.build` with an untyped receiver it exited 64 as a usage error; it now
   answers `residue` with the reason and a hint to list the name's call

@@ -13105,6 +13105,43 @@ the class side.
 
 **Extraction changed**: store v61.
 
+### DEC-561 addendum — visibility set after the fact, and an alias's own
+
+Each rule checked against Ruby 3.4, mirroring rq's (its D55 addendum):
+
+- **Names in arrays and splats.** `private_class_method [:a, :b]`,
+  `private_class_method(*%i[c])` and `private [:x]` name each element.
+- **`private :x` reaches a method written before it** in the same scope, on
+  its side of the class — instance methods in the body, class methods in
+  `class << self` — and an `attr_reader`'s or alias's too. The row at the
+  symbol (DEC-004) stays; the method's own row now says private as well.
+  After `module_function` it leaves the module's public copy alone.
+- **An alias takes its original's visibility at alias time**, not its
+  section's: `alias inner2 inner` under `public` is private when `inner`
+  is, `alias_method :mode?, :mode` under `private` public when `mode` is;
+  a later `private :inner` does not reach it. An original not written
+  before it in this scope (inherited, or in another file) is taken as
+  public. Aliases were always public before.
+- **`define_method` in a body's `private` section is private**, in a block
+  there too (`%w[a b].each { |m| define_method(m) … }`), and under
+  `module_function` it is two methods as a `def` is.
+  `define_singleton_method`, `singleton_class.define_method` and one run
+  later by a method stay public.
+
+Testbed 583. Out of reach as before: a reopening in another file, and
+`singleton_class.class_eval do … end`'s defs.
+
+**Measured**, `--symbols` over rails' six largest libraries, before →
+after: 88 rows change, every one public → private (or protected, for two
+aliases of protected methods): 61 aliases, 16 methods and 3 readers a later
+`private :x` names (`compute_cache_key`, `can_perform_case_insensitive_
+comparison_for?`), 8 `define_method`s in a private section (date_helper's
+`sec`…`year`), and the reported `aead_mode?`, `release` and
+`column_definitions` among the aliases. None moves toward public.
+
+**Extraction changed**: no version bump here (v61 is unreleased); a store
+built earlier keeps the old visibility until its files are re-read.
+
 ## DEC-562 — A `def` its scope may not own is not graded as the scope's
 
 **Decided.** Two kinds of `def` are not their scope's own as far as

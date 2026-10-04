@@ -1021,6 +1021,40 @@ fn literal_name(node: &Node<'_>) -> Option<String> {
     String::from_utf8(string.unescaped().to_vec()).ok()
 }
 
+/// Every literal name an argument holds: a symbol or string, an array of
+/// them (`[:a, :b]`, `%i[a b]`), or a splat of one (`*%i[a b]`).
+fn literal_names(node: &Node<'_>) -> Vec<String> {
+    if let Some(array) = node.as_array_node() {
+        return array
+            .elements()
+            .iter()
+            .flat_map(|e| literal_names(&e))
+            .collect();
+    }
+    if let Some(splat) = node.as_splat_node() {
+        return splat
+            .expression()
+            .map(|e| literal_names(&e))
+            .unwrap_or_default();
+    }
+    literal_name(node).into_iter().collect()
+}
+
+/// A row that asserts a visibility rather than defining a method (DEC-004).
+fn asserts_visibility(def: &Def) -> bool {
+    matches!(
+        def.via.as_deref(),
+        Some(
+            "private"
+                | "protected"
+                | "public"
+                | "module_function"
+                | "private_class_method"
+                | "public_class_method"
+        )
+    )
+}
+
 fn arg_nodes<'pr>(call: &ruby_prism::CallNode<'pr>) -> Vec<Node<'pr>> {
     call.arguments()
         .map(|a| a.arguments().iter().collect())
@@ -2283,6 +2317,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         def.singleton = self.in_singleton();
         def.via = Some("alias".into());
         self.bind_alias(&mut def, &target);
+        def.visibility = self.alias_visibility(&def, &target);
         def.target = Some(target);
         self.push_def(def);
     }
@@ -3076,14 +3111,32 @@ impl<'pr> Extractor<'_> {
 
         let start = call.location().start_offset();
         let end = call.location().end_offset();
+        // A body's `private` section reaches a `define_method` written in it,
+        // as it does a `def`; one run later by a method, or defining on the
+        // singleton, is public.
+        let own_section =
+            name == "define_method" && matches!(on, DefinedOn::Own) && !self.in_method_body();
+        let visibility = match own_section {
+            true => self.visibility(),
+            false => Visibility::Public,
+        };
+        let module_function =
+            own_section && !singleton && self.frames.last().is_some_and(|f| f.module_function);
         for generated in names {
             let mut def = self.def(generated, Kind::Method, start, end);
             def.singleton = singleton;
+            def.visibility = visibility;
             def.params = params.clone();
             // The honest location is where the definition is written, which is
             // this call — the same answer a macro gives (DEC-022, session 15).
             def.via = Some(name.clone());
             def.target = body_elsewhere.clone();
+            if module_function {
+                let mut copy = def.clone();
+                copy.singleton = true;
+                copy.visibility = Visibility::Public;
+                self.push_def(copy);
+            }
             self.push_def(def);
         }
     }
@@ -4775,6 +4828,7 @@ impl<'pr> Extractor<'_> {
         def.singleton = self.in_singleton();
         def.via = Some("alias_method".into());
         self.bind_alias(&mut def, &old);
+        def.visibility = self.alias_visibility(&def, &old);
         def.target = Some(old);
         self.push_def(def);
         true
@@ -4794,6 +4848,24 @@ impl<'pr> Extractor<'_> {
         };
         alias.target_pos = Some(body.pos);
         alias.params = body.params.clone();
+    }
+
+    /// An alias has its original's visibility at alias time, whatever section
+    /// it is written in; an original not written before it in this scope —
+    /// inherited, or in another file — is taken as public, as most are.
+    fn alias_visibility(&self, alias: &Def, target: &str) -> Visibility {
+        self.facts
+            .defs
+            .iter()
+            .rev()
+            .find(|d| {
+                d.kind == Kind::Method
+                    && d.name == target
+                    && d.nesting == alias.nesting
+                    && d.singleton == alias.singleton
+                    && !asserts_visibility(d)
+            })
+            .map_or(Visibility::Public, |d| d.visibility)
     }
 
     fn handle_visibility(
@@ -4850,9 +4922,45 @@ impl<'pr> Extractor<'_> {
         let (start, end) = (loc.start_offset(), loc.end_offset());
         let singleton = self.in_singleton();
         for arg in args {
-            let Some(target) = literal_name(arg) else {
-                continue;
-            };
+            for target in literal_names(arg) {
+                self.assert_visibility(
+                    macro_name,
+                    visibility,
+                    singleton,
+                    arg,
+                    target,
+                    (start, end),
+                );
+            }
+        }
+        true
+    }
+
+    /// `private :x`'s row for `x` (DEC-004); and the methods of that name
+    /// written before it in this scope, on its side of the class, take the
+    /// visibility, as Ruby gives it to them.
+    fn assert_visibility(
+        &mut self,
+        macro_name: &str,
+        visibility: Visibility,
+        singleton: bool,
+        arg: &Node<'pr>,
+        target: String,
+        (start, end): (usize, usize),
+    ) {
+        if macro_name != "module_function" {
+            let nesting = &self.nesting;
+            for def in self.facts.defs.iter_mut().filter(|d| {
+                d.kind == Kind::Method
+                    && d.name == target
+                    && d.singleton == singleton
+                    && &d.nesting == nesting
+                    && !asserts_visibility(d)
+            }) {
+                def.visibility = visibility;
+            }
+        }
+        {
             let mut def = self.def(target, Kind::Method, start, end);
             def.pos = self.pos(arg.location().start_offset());
             def.via = Some(macro_name.to_string());
@@ -4866,7 +4974,6 @@ impl<'pr> Extractor<'_> {
                 self.push_def(copy);
             }
         }
-        true
     }
 
     /// `private_class_method :x` and `private_class_method def self.x`: the
@@ -4891,19 +4998,22 @@ impl<'pr> Extractor<'_> {
             // The class method it names, written before it in this body. One
             // inherited, or written elsewhere, is left as it is: a row here
             // would answer `--def` on the symbol with the symbol itself.
-            let Some(target) = literal_name(arg) else {
+            let targets = literal_names(arg);
+            if targets.is_empty() {
                 self.visit(arg);
                 continue;
-            };
+            }
             let nesting = &self.nesting;
-            if let Some(def) = self.facts.defs.iter_mut().rev().find(|d| {
-                d.kind == Kind::Method
-                    && d.singleton
-                    && d.via.is_none()
-                    && d.name == target
-                    && &d.nesting == nesting
-            }) {
-                def.visibility = visibility;
+            for target in targets {
+                if let Some(def) = self.facts.defs.iter_mut().rev().find(|d| {
+                    d.kind == Kind::Method
+                        && d.singleton
+                        && d.via.is_none()
+                        && d.name == target
+                        && &d.nesting == nesting
+                }) {
+                    def.visibility = visibility;
+                }
             }
         }
         true

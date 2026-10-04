@@ -1,0 +1,7 @@
+# Visibility as Ruby 3.4 gives it, where the extractor said public:
+# `private_class_method` handed an array or a splat of `%i[…]`; `private :x`
+# after `def x` (and in `class << self`, for a class method); an alias,
+# which takes its original's visibility at alias time, not its section's
+# (`mode?` stays public under `private`, `inner2` is private under
+# `public`); and a `define_method` in a `private` section (DEC-561).
+symbols app.rb Widget,a1,a2,a3,shown,hidden,hidden,mode,mode?,built,inner,inner2,b1,b1 private=a1,a2,a3,hidden,hidden,built,inner,inner2,b1,b1
