@@ -519,6 +519,85 @@ fn references_narrow_to_the_method_asked_about_not_the_name() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Find References on `def initialize` lists the `X.new`s that run it, each
+/// range on the `new` it writes, and none of a class with its own (DEC-541).
+#[test]
+fn references_on_initialize_are_the_news_that_run_it() {
+    let (dir, db) = scratch("refs-initialize");
+    git(&dir, &["init", "-q"]);
+    let source = concat!(
+        "class Widget\n",          // 1
+        "  def initialize(a)\n",   // 2
+        "  end\n",                 // 3
+        "end\n",                   // 4
+        "class Gadget\n",          // 5
+        "  def initialize\n",      // 6
+        "  end\n",                 // 7
+        "end\n",                   // 8
+        "Widget.new(1)\n",         // 9
+        "Gadget.new\n",            // 10
+        "x = Widget.new(2).dup\n", // 11
+    );
+    fs::write(dir.join("app.rb"), source).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+    let answer = session.request(
+        "textDocument/references",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": 1, "character": 7},
+            "context": {"includeDeclaration": false},
+        }),
+    );
+    let spans: Vec<(u64, u64, u64)> = answer["result"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|l| {
+            let range = &l["range"];
+            (
+                range["start"]["line"].as_u64().unwrap() + 1,
+                range["start"]["character"].as_u64().unwrap(),
+                range["end"]["character"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        spans,
+        vec![(9, 7, 10), (11, 11, 14)],
+        "Widget's two `new`s, each spanning `new`, and not Gadget's"
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// Each `initializationOptions.unresolved` mode, on a residue whose first
 /// candidate is a weak guess (four classes define `run`) and one that is a
 /// fair one (one class defines `only`) — DEC-443.

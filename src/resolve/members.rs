@@ -1029,6 +1029,7 @@ pub(crate) fn reads(context: &Context<'_>, asked: &Asked<'_>, keep_all: bool) ->
             _ => 1,
         },
         from: Some(from),
+        called_as: None,
     };
     let reference = |path: &str, call: &Call, tier: Tier, why: &'static str, from: &'static str| {
         at(

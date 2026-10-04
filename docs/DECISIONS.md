@@ -5758,6 +5758,9 @@ moves the answer.
 instance or a factory's call types nothing new. `private_class_method :new`
 is not read, as before.
 
+(DEC-541 reads the same returns to decide whether `X.new` runs
+`initialize`.)
+
 ## DEC-134 — With no `Gemfile.lock`, the declared dependencies at their highest installed versions
 
 **Decided.** A checkout with no `Gemfile.lock` resolves its gems from what
@@ -12413,4 +12416,104 @@ reported `unreferenced`, clear.
 the five leave `clear` for `lower` (230 → 225 clear) and nothing else
 moves; the other nine rails libraries four more, all
 `instance_variables_to_inspect` (1,654 → 1,650). Tiers unchanged.
+
+## DEC-541 — `X.new` is a call of the `initialize` its class runs
+
+**Decided.** `Class#new` calls `initialize` on the instance it makes, so a
+call `X.new(…)` whose receiver types as the class `X` — a constant, `self`
+in a class method, `described_class`, a typed local — is a reference to the
+`initialize` an `X` finds: its own, an ancestor's it inherits, a module's it
+mixes in. It is tiered as any call (`resolve::refs::tier_construct`):
+
+- **confirmed** when `X`'s class side reaches `Class#new`: no `new` of its
+  own, or one whose every read return is `super` (DEC-133's reading of a
+  custom `new`; one path of several is enough).
+- **possible** when a custom `new` returns nothing the extractor reads, and
+  so may or may not call `initialize` (Active Record's ends in an `if`, a
+  cache returns `allocate`); when the receiver may be a subclass (`self`, a
+  `sig`'s bound, a guess) whose `initialize` this is; when the receiver is
+  untyped, ranked as any untyped call and ruled out when its arguments do
+  not fit; and for `public_send(:new)` on an untyped receiver.
+- **excluded** when the class runs another `initialize`, when its own `new`
+  returns only another class's `new`, for a macro's `:new` (a route's or a
+  callback's `only: :new`), and for `new` sent to an instance.
+
+A `super` inside a custom `def self.new` is not counted: the `X.new` that
+runs that `new` already is. `X.allocate` constructs without `initialize` and
+is not read; `dup`/`clone` run `initialize_copy`, a DEC-315 hook. A row's
+`called_as: "new"` says a site writes `new`; the LSP's Find References spans
+the `new`, and call hierarchy lists its callers. Arity is checked only for
+an untyped receiver, as for any call: a typed `X.new` with the wrong count
+still runs `initialize`, and raises there.
+
+`--def` on an `X.new` that lands on core's `new` answers the `initialize` it
+runs when the checkout or a gem defines one (`resolve::initialize_for`), and
+with no core indexed, the class's `initialize` as well; a custom `new` is
+its own answer, and core's `initialize` is no better than core's `new`.
+`--refs FILE:LINE` there asks about that `initialize`.
+
+**`--dead`.** An `initialize` used to be skipped by the cheap pass whenever
+more than eight calls were named `initialize` — every subclass's `super` —
+so in a real app none was ever a candidate. It now always gets the narrowed
+search, and is reported only when nothing reaches it (`unreferenced`): one
+`X.new` is how a class is built, not a method to inline, and one only
+subclasses' `super`s reach belongs to an abstract class. An untyped
+`klass.new` is any class's: it keeps an `initialize` alive no more than a
+grep would, so those are dropped from the evidence and said in the caveat
+(`constructed where its class is not known: N `new` on an untyped receiver`).
+Every reported `initialize` is graded lower, as a class is (DEC-450): an
+exception is constructed by `raise` from its name, a Singleton by
+`instance`, a module's `initialize` when a class mixing it in is, and any
+class by whatever it is handed to. The core `BasicObject#initialize` it
+overrides is no caller: `Class#new` runs a class's own.
+
+**Why.** dpep/trekr#4: `Widget.new` was no reference to
+`Widget#initialize`; `--refs` found 0 in every tier and `--dead` called it
+unreferenced.
+
+**Cost, and how it is kept.** Asking about each of hundreds of
+`initialize`s, `--dead` would tier every `X.new` of the checkout each time.
+What a site constructs does not depend on the query (`refs::construct`), so
+it is worked out once per run (`cli::Constructions`), the sites of a class
+with a definite `initialize` filed under it; each `initialize` then tiers
+only those filed under the one its owner runs, and the few no class
+settles. A subclass's `super` whose resolved chain does not hold the owner
+is counted out without `tier_super`. Measured `--dead`, user CPU, 0.8.6 →
+this, interleaved, load 10–15: rails (eleven libraries) 8.2 → 10.8 s,
+discourse `app lib` 9.2–9.8 → 13.1–13.3 s, mastodon `app lib` 4.4–5.1 →
+5.3–6.8 s — the rest is parsing every file that calls `new`, once. Before
+the index, the first cut took discourse to 25 s wall.
+
+**Measured.** `--dead app lib`, against 0.8.6 on one store:
+
+| | initialize rows before | after | of them `clear` |
+| --- | ---: | ---: | ---: |
+| mastodon | 0 | 14 unreferenced | 0 |
+| discourse | 0 | 0 | 0 |
+| rails, eleven libraries | 0 | 0 | 0 |
+
+No other row moves. The 14 mastodon rows, each read: four exceptions
+raised by name (`Antispam::SilentlyDrop`, `Mastodon::UnexpectedResponseError`,
+`Mastodon::PrivateNetworkAddressError`, `Vite::Manifest::MissingEntryError`),
+two Singletons (`InlineScriptManager`, `Themes`), two HTTP gem features
+registered by class, two Rack middlewares handed to `config.middleware`, two
+Paperclip processors and a Chewy strategy named by symbol, and a module
+prepended to a gem class — every one constructed out of sight, which is why
+none is `clear`. `--def` is unchanged on every gold site: compare.py with
+`--sample 0`, discourse 9,075 sites and mastodon 22,081 (`--exclude spec/`)
+answer identically to 0.8.6 (gold `new` rows are custom `new`s, which keep
+their answer); widget_shop's gold report is identical. Rails `--refs`
+before → after: `ActiveSupport::Duration#initialize` 1 → 21 confirmed,
+`ActionDispatch::Request#initialize` 2 → 66, `ActiveModel::Error#initialize`
+0 → 58, `ActiveSupport::SafeBuffer#initialize` 0 → 28; `ActiveRecord::Core
+#initialize` stays at 0 confirmed, its models' 950 `X.new` possible through
+Active Record's unread `new`. Each now also lists 129–1,123 untyped `x.new`
+as possible, last.
+
+**Not done.** Reading a custom `new` whose last expression is an `if`
+(Active Record's) needs the extractor to follow branches — an extraction
+change. FactoryBot's `build`/`create` and Active Record's `create`/
+`find_or_create_by` construct through a `new` inside the gem, which an
+untyped site there already is; they are not read as references of their
+own. `X[…]` (Struct, Set) and `Class.new(Base)` bodies' `new` are not read.
 

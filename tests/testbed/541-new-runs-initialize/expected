@@ -1,0 +1,7 @@
+# dpep/trekr#4, as filed: `Widget.new` runs `Class#new`, which calls
+# `initialize`, yet `--refs 'Widget#initialize'` found nothing and `--dead`
+# reported it unreferenced. An `X.new` is a call of the `initialize` an `X`
+# finds (DEC-541), and `--def` on it goes there.
+refs Widget#initialize confirmed=1 possible=0 excluded=0
+dead lib/widget.rb Widget#initialize=none
+def test/widget_test.rb:1:8 status=resolved owner=Widget site=lib/widget.rb:1

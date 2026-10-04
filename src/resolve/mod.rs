@@ -164,7 +164,10 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
             {
                 return predicate_answer(tree, facts, call, predicate, path);
             }
-            match lookup_on(tree, call, &receiver) {
+            match lookup_on(tree, call, &receiver)
+                .map(|found| initialize_for(tree, call, &receiver, &found).unwrap_or(found))
+                .or_else(|| constructed_without_core(tree, call, &receiver))
+            {
                 Some(found)
                     if let Some(answer) = through_delegate(tree, call, &receiver, &found) =>
                 {
@@ -322,6 +325,54 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
             None,
             "the receiver's type is not determined by this file",
         ),
+    }
+}
+
+/// `X.new` that reaches core's `new` runs the `initialize` an `X` finds, and
+/// that is where a reader of the call wants to go (DEC-541). A custom `new`
+/// is its own answer, and core's `initialize` is no better than core's `new`.
+fn initialize_for(
+    tree: &Tree,
+    call: &Call,
+    receiver: &Receiver,
+    found: &crate::tree::MethodDef,
+) -> Option<crate::tree::MethodDef> {
+    if call.name != "new" || !receiver.singleton || !crate::tree::is_core(&found.site.path) {
+        return None;
+    }
+    tree.lookup(&receiver.fqn, false, "initialize")
+        .filter(|init| !crate::tree::is_core(&init.site.path))
+}
+
+/// With no core indexed, `X.new` finds no `new` at all; a class's own
+/// `initialize` is still what it runs.
+fn constructed_without_core(
+    tree: &Tree,
+    call: &Call,
+    receiver: &Receiver,
+) -> Option<crate::tree::MethodDef> {
+    if call.name != "new" || !receiver.singleton || tree.kind_of(&receiver.fqn) != Some("class") {
+        return None;
+    }
+    tree.lookup(&receiver.fqn, false, "initialize")
+}
+
+/// The method `--refs` at a call is asked about, as (name, class side): the
+/// call's own name — or `initialize`, where an `X.new` was answered with the
+/// `initialize` it runs (DEC-541).
+pub(crate) fn asked_at(tree: &Tree, call: &Call, answer: &MethodAnswer) -> (String, bool) {
+    let runs_initialize = call.name == "new"
+        && answer.owner.as_deref().is_some_and(|owner| {
+            tree.lookup(owner, false, "initialize").is_some_and(|init| {
+                answer
+                    .sites
+                    .first()
+                    .is_some_and(|site| site.path == init.site.path && site.line == init.site.line)
+            })
+        });
+    match runs_initialize {
+        true => ("initialize".to_string(), false),
+        false => (call.name.clone(), call.singleton),
     }
 }
 

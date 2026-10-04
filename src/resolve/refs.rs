@@ -89,6 +89,10 @@ pub(crate) struct Reference {
     /// a nested one, an included shared group's body, a helper (DEC-490).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) from: Option<&'static str>,
+    /// The name the site writes, when it is not the queried one: `new`, for
+    /// a construction that runs `initialize` (DEC-541).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) called_as: Option<&'static str>,
 }
 
 impl Tier {
@@ -174,6 +178,29 @@ pub(crate) struct Counts {
     pub(crate) excluded_arity: usize,
 }
 
+/// The other name a call of the queried method is written as: `X.new` runs
+/// `Class#new`, which calls `initialize` on the instance it makes (DEC-541).
+/// Only for an owned query: a bare `initialize` would claim every `new`.
+pub(crate) fn constructor_of(query: &Query) -> Option<&'static str> {
+    (query.owner.is_some() && !query.singleton && query.name == "initialize").then_some("new")
+}
+
+/// The names a call of the queried method is written as.
+pub(crate) fn called_as(query: &Query) -> Vec<&str> {
+    let mut names = vec![query.name.as_str()];
+    names.extend(constructor_of(query));
+    names
+}
+
+/// Is this call a site of the queried method: one of its name, or an `X.new`
+/// that may run it. A `super` in a custom `new` is not one — the `X.new`
+/// that runs that `new` already is (DEC-541).
+pub(crate) fn names_it(call: &Call, query: &Query) -> bool {
+    call.name == query.name
+        || constructor_of(query) == Some(call.name.as_str())
+            && call.recv != crate::core::RecvShape::Super
+}
+
 /// One call site, tiered against the query.
 ///
 /// `target` is the queried method's owner, already resolved — `None` for a bare
@@ -186,11 +213,35 @@ pub(crate) fn tier_call(
     query: &Query,
     target: Option<&str>,
 ) -> Reference {
-    let mut reference = tier(tree, facts, call, path, query, target);
+    tier_call_with(tree, facts, call, path, query, target, None)
+}
+
+/// `tier_call`, given what an `X.new` site constructs when the caller has
+/// already worked it out (`--dead` asks about every `initialize`).
+pub(crate) fn tier_call_with(
+    tree: &Tree,
+    facts: &Facts,
+    call: &Call,
+    path: &str,
+    query: &Query,
+    target: Option<&str>,
+    made: Option<&Construct>,
+) -> Reference {
+    let mut reference = match made {
+        _ if call.name == query.name => tier(tree, facts, call, path, query, target),
+        Some(made) => tier_construct(tree, made, call, path, query, target),
+        None => {
+            let made = construct(tree, facts, call, path);
+            tier_construct(tree, &made, call, path, query, target)
+        }
+    };
     // A split name's variant is reported as the name (DEC-072).
     let public = |name: &mut String| *name = crate::tree::public_name(name).to_string();
     reference.receiver_type.as_mut().map(public);
     reference.owner.as_mut().map(public);
+    if call.name != query.name {
+        reference.called_as = constructor_of(query);
+    }
     reference
 }
 
@@ -215,6 +266,7 @@ fn tier(
         ruling,
         proximity,
         from: None,
+        called_as: None,
     };
 
     if call.recv == crate::core::RecvShape::Super {
@@ -600,6 +652,255 @@ fn tier(
     }
 }
 
+/// Does `X.new` on this class reach `Class#new`, and so `initialize`? Each
+/// custom `new` on the class side is followed by what it returns (DEC-133):
+/// `super` goes on up, another class's `new` makes that class instead.
+#[derive(Clone)]
+pub(crate) enum Construction {
+    /// Every path ends at `Class#new` — or one does, beside others.
+    Initializes,
+    /// A custom `new` that returns nothing the extractor reads, which may
+    /// or may not call `super` or `allocate` and `initialize`.
+    Unread,
+    /// Only other classes: this `initialize` never runs.
+    Elsewhere(String),
+}
+
+fn construction(tree: &Tree, class: &str) -> Construction {
+    let mut new = tree.lookup(class, true, "new");
+    // A chain of `super`s ends at core; the bound only guards a cycle.
+    for _ in 0..8 {
+        let Some(found) = new.take() else {
+            break;
+        };
+        if crate::tree::is_core(&found.site.path) {
+            break;
+        }
+        let Some(written) = found.returns_for(None, false) else {
+            return Construction::Unread;
+        };
+        if !written.split('|').any(|part| part == "super") {
+            return Construction::Elsewhere(found.owner.clone());
+        }
+        new = tree.after_on_class_side(class, &found, "new");
+    }
+    // A module has no `Class#new` to reach.
+    match tree.kind_of(class) {
+        Some("module") => Construction::Elsewhere(class.to_string()),
+        _ => Construction::Initializes,
+    }
+}
+
+/// What an `X.new` site constructs, which no query changes: worked out once
+/// per site and tiered against each `initialize` asked about (DEC-541).
+#[derive(Clone)]
+pub(crate) enum Construct {
+    /// A receiver the index cannot type: any class's `new`.
+    Untyped,
+    /// Not a construction of a class: a macro's `:new` (an action, an
+    /// option), or `new` sent to an instance.
+    Not {
+        receiver_type: Option<String>,
+        why: &'static str,
+    },
+    /// `new` on a class the index knows.
+    Class {
+        class: String,
+        /// `self` in a class method, or a class a `sig` bounds, or a guess:
+        /// it may be a subclass.
+        may_be_below: bool,
+        guess: bool,
+        made: Construction,
+        /// The `initialize` an instance of `class` finds.
+        found: Option<Box<crate::tree::MethodDef>>,
+        /// Its ancestors the index could not resolve, as written.
+        unresolved: Vec<String>,
+    },
+}
+
+pub(crate) fn construct(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Construct {
+    // `X.public_send(:new, …)` constructs as `X.new(…)` does.
+    if call.recv == crate::core::RecvShape::Symbol {
+        return match call.stands_for.as_deref() {
+            Some(sent) if super::receiver_of(tree, facts, sent, path).is_some() => {
+                construct(tree, facts, sent, path)
+            }
+            Some(_) => Construct::Untyped,
+            None => Construct::Not {
+                receiver_type: None,
+                why: "a symbol handed to a macro names an action or an option, not a class",
+            },
+        };
+    }
+    let Some(receiver) = super::receiver_of(tree, facts, call, path) else {
+        return Construct::Untyped;
+    };
+    if !receiver.singleton {
+        // An instance of `Class` is a class nothing says which.
+        if matches!(receiver.fqn.as_str(), "Class" | "Module") {
+            return Construct::Untyped;
+        }
+        return Construct::Not {
+            receiver_type: Some(receiver.fqn),
+            why: "the receiver is an instance, so its `new` constructs nothing",
+        };
+    }
+    let class = receiver.fqn;
+    Construct::Class {
+        may_be_below: receiver.via == "self" || receiver.bound || receiver.ambiguous,
+        guess: receiver.ambiguous,
+        made: construction(tree, &class),
+        found: tree.lookup(&class, false, "initialize").map(Box::new),
+        unresolved: tree.ancestors(&class).unresolved.clone(),
+        class,
+    }
+}
+
+/// The `initialize` a construction certainly runs, when that alone decides
+/// it against any `initialize` asked about: a definite class (no subclass it
+/// may be), whose `new` reaches `Class#new` or may.
+pub(crate) fn settled_initialize(made: &Construct) -> Option<&crate::tree::MethodDef> {
+    match made {
+        Construct::Class {
+            found: Some(found),
+            may_be_below: false,
+            made: Construction::Initializes | Construction::Unread,
+            ..
+        } => Some(found),
+        _ => None,
+    }
+}
+
+/// An `X.new` site, tiered against an `initialize` (DEC-541): a call of the
+/// `initialize` an instance of the class it makes finds, as Ruby's
+/// `Class#new` calls it.
+pub(crate) fn tier_construct(
+    tree: &Tree,
+    construct: &Construct,
+    call: &Call,
+    path: &str,
+    query: &Query,
+    target: Option<&str>,
+) -> Reference {
+    let shape = call.recv.as_str();
+    let here = |tier, receiver_type, owner, why, proximity, ruling| Reference {
+        path: path.to_string(),
+        line: call.pos.line,
+        col: call.pos.col,
+        tier,
+        receiver: shape,
+        receiver_type,
+        owner,
+        why,
+        ruling,
+        proximity,
+        from: None,
+        called_as: None,
+    };
+    let (class, may_be_below, guess, made, found, unresolved) = match construct {
+        Construct::Untyped => return possible(tree, call, path, query, target, shape),
+        Construct::Not { receiver_type, why } => {
+            return here(
+                Tier::Excluded,
+                receiver_type.clone(),
+                None,
+                why,
+                0,
+                Some(Ruling::DifferentOwner),
+            );
+        }
+        Construct::Class {
+            class,
+            may_be_below,
+            guess,
+            made,
+            found,
+            unresolved,
+        } => (class, *may_be_below, *guess, made, found, unresolved),
+    };
+    if let Construction::Elsewhere(owner) = made {
+        return here(
+            Tier::Excluded,
+            Some(class.clone()),
+            Some(owner.clone()),
+            "the class's own `new` makes another class",
+            0,
+            Some(Ruling::DifferentOwner),
+        );
+    }
+    let owner = found.as_ref().map(|found| found.owner.clone());
+    let matches = found.as_ref().is_some_and(|found| {
+        target.is_none_or(|target| runs_asked(tree, query, target, (class, false), found))
+    });
+    if matches {
+        let (tier, why, proximity) = match made {
+            _ if guess => (
+                Tier::Possible,
+                "the receiver's type is a guess, and it constructs one that runs this",
+                1,
+            ),
+            Construction::Unread => (
+                Tier::Possible,
+                "the class's own `new` runs first, and whether it calls `initialize` is not read",
+                1,
+            ),
+            _ => (
+                Tier::Confirmed,
+                "`new` on the receiver's class runs this `initialize`",
+                0,
+            ),
+        };
+        return here(tier, Some(class.clone()), owner, why, proximity, None);
+    }
+    if may_be_below && target.is_some_and(|target| below_reaches(tree, class, target, query)) {
+        return here(
+            Tier::Possible,
+            Some(class.clone()),
+            owner,
+            "the receiver may be a subclass, which this `initialize` is",
+            1,
+            None,
+        );
+    }
+    match found {
+        Some(_) => here(
+            Tier::Excluded,
+            Some(class.clone()),
+            owner,
+            "the class it constructs runs a different `initialize`",
+            0,
+            Some(Ruling::DifferentOwner),
+        ),
+        // An ancestor the index could not place may be the owner asked
+        // about only if it is written with the owner's name: an app's class
+        // is no gem's ancestor.
+        None if target.is_none_or(|target| {
+            let last = target.rsplit("::").next().unwrap_or(target);
+            unresolved
+                .iter()
+                .any(|name| name.rsplit("::").next() == Some(last))
+        }) =>
+        {
+            here(
+                Tier::Possible,
+                Some(class.clone()),
+                None,
+                "the receiver's ancestors are not fully indexed",
+                1,
+                None,
+            )
+        }
+        None => here(
+            Tier::Excluded,
+            Some(class.clone()),
+            None,
+            "nothing indexed defines `initialize` on the class it constructs",
+            0,
+            Some(Ruling::NoSuchMethod),
+        ),
+    }
+}
+
 /// May an object of a class below `fqn` run `target`'s own `query` method:
 /// a subclass that defines it (DEC-140), or a subclass that mixes in the
 /// module `target` that does, ahead of whatever else defines it (DEC-213)?
@@ -749,6 +1050,7 @@ fn tier_super(
         ruling,
         proximity,
         from: None,
+        called_as: None,
     };
     let scope = tree.scope_fqn(&call.nesting).filter(|s| tree.is_known(s));
     // `super` looks after its own method's owner, so the method it is written
@@ -879,6 +1181,7 @@ fn possible(
             ruling: Some(Ruling::Arity),
             proximity: 0,
             from: None,
+            called_as: None,
         };
     }
 
@@ -898,6 +1201,7 @@ fn possible(
             ruling: None,
             proximity: 4,
             from: None,
+            called_as: None,
         };
     }
 
@@ -936,6 +1240,36 @@ fn possible(
         ruling: None,
         proximity,
         from: None,
+        called_as: None,
+    }
+}
+
+/// An `X.new` on an untyped receiver against an `initialize` `own`, unranked:
+/// possible unless its arguments do not fit (DEC-541). `possible` ranks it
+/// too, which only a listing needs.
+pub(crate) fn untyped_construction(
+    call: &Call,
+    path: &str,
+    own: &crate::tree::MethodDef,
+) -> Reference {
+    let fits = own.accepts(call.argc);
+    Reference {
+        path: path.to_string(),
+        line: call.pos.line,
+        col: call.pos.col,
+        tier: if fits { Tier::Possible } else { Tier::Excluded },
+        receiver: call.recv.as_str(),
+        receiver_type: None,
+        owner: None,
+        why: if fits {
+            "untyped receiver, nothing rules it out"
+        } else {
+            "the argument count does not fit this method"
+        },
+        ruling: (!fits).then_some(Ruling::Arity),
+        proximity: 3,
+        from: None,
+        called_as: Some("new"),
     }
 }
 

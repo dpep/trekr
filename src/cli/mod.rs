@@ -2987,7 +2987,7 @@ fn gather_refs(
     target: Option<&str>,
     // Keep the excluded sites too, so `--include-excluded` can show them.
     keep_all: bool,
-    parsed: Option<&mut Parsed>,
+    mut parsed: Option<&mut Parsed>,
     // Every call of the name as a row of its own, for the bare-name listing:
     // the index keeps which files call a name, not where (DEC-193).
     mut sites: Option<&mut Vec<crate::store::Ref>>,
@@ -2996,14 +2996,24 @@ fn gather_refs(
     crate::resolve::refs::Counts,
 )> {
     use crate::resolve::refs;
-    let files = store.files_calling(root_str, &query.name)?;
     let listing = sites.is_some();
     let partial = warming().is_some();
+    // `--dead` asks about every `initialize`, and each would tier every
+    // `X.new` in the checkout: those are worked out once instead (DEC-541).
+    if let Some(parsed) = parsed.as_deref_mut()
+        && !keep_all
+        && !listing
+        && !partial
+        && let Some(own) = own_initialize(tree, query, target)
+    {
+        return gather_constructions(tree, store, root, root_str, query, target, &own, parsed);
+    }
+    let files = store.files_calling_any(root_str, &refs::called_as(query))?;
     // Every worker tiers against the one tree, which is shared (DEC-250),
     // and files come back in the order they were listed.
     let tier = |path: &String, facts: &crate::core::Facts| {
         let mut tiered = Tiered::default();
-        for call in facts.calls.iter().filter(|c| c.name == query.name) {
+        for call in facts.calls.iter().filter(|c| refs::names_it(c, query)) {
             if listing {
                 tiered.sites.push(crate::store::Ref::call(path, call));
             }
@@ -3032,14 +3042,14 @@ fn gather_refs(
         Some(parsed) => {
             let fresh: Vec<_> = files
                 .par_iter()
-                .filter(|path| !parsed.contains_key(*path))
+                .filter(|path| !parsed.facts.contains_key(*path))
                 .map(|path| (path.clone(), read(path)))
                 .collect();
-            parsed.extend(fresh);
+            parsed.facts.extend(fresh);
             let parsed = &*parsed;
             files
                 .par_iter()
-                .filter_map(|path| Some((path, parsed.get(path)?.as_ref()?)))
+                .filter_map(|path| Some((path, parsed.facts.get(path)?.as_ref()?)))
                 .map(|(path, facts)| tier(path, facts))
                 .collect()
         }
@@ -3071,8 +3081,194 @@ struct Tiered {
     sites: Vec<crate::store::Ref>,
 }
 
-/// A file's facts by checkout-relative path, `None` when it could not be read.
-type Parsed = HashMap<String, Option<crate::core::Facts>>;
+/// Files held across queries, by checkout-relative path: each one's facts,
+/// `None` when it could not be read; and once an `initialize` is asked
+/// about, what every `X.new` constructs.
+#[derive(Default)]
+struct Parsed {
+    facts: HashMap<String, Option<crate::core::Facts>>,
+    constructions: Option<Constructions>,
+}
+
+impl Parsed {
+    /// Parse the files not held yet.
+    fn read(&mut self, root: &Path, files: &[String]) {
+        let fresh: Vec<_> = files
+            .par_iter()
+            .filter(|path| !self.facts.contains_key(*path))
+            .map(|path| {
+                let facts = std::fs::read(root.join(path))
+                    .ok()
+                    .map(|bytes| extract::extract_file(path, &bytes));
+                (path.clone(), facts)
+            })
+            .collect();
+        self.facts.extend(fresh);
+    }
+}
+
+/// Every `X.new` of the checkout and what it constructs, which no query
+/// changes (DEC-541).
+struct Constructions {
+    /// (file, the call's index in its facts, what it constructs).
+    sites: Vec<(String, usize, crate::resolve::refs::Construct)>,
+    /// The sites on a class whose `initialize` is settled — a definite
+    /// class, not a possible subclass — by that `initialize`'s file and line:
+    /// any other `initialize` they rule out at a glance.
+    settled: HashMap<(String, u32), Vec<usize>>,
+    /// The rest, tiered against every query.
+    open: Vec<usize>,
+}
+
+impl Constructions {
+    fn build(tree: &Tree, store: &Store, root: &Path, root_str: &str, parsed: &mut Parsed) -> Self {
+        use crate::resolve::refs;
+        let files = store.files_calling(root_str, "new").unwrap_or_default();
+        parsed.read(root, &files);
+        let sites: Vec<_> = files
+            .par_iter()
+            .filter_map(|path| Some((path, parsed.facts.get(path)?.as_ref()?)))
+            .flat_map_iter(|(path, facts)| {
+                facts
+                    .calls
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, call)| {
+                        call.name == "new" && call.recv != crate::core::RecvShape::Super
+                    })
+                    .map(|(at, call)| (path.clone(), at, refs::construct(tree, facts, call, path)))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        let mut settled: HashMap<(String, u32), Vec<usize>> = HashMap::new();
+        let mut open = Vec::new();
+        for (i, (_, _, made)) in sites.iter().enumerate() {
+            match refs::settled_initialize(made) {
+                Some(found) => settled
+                    .entry((found.site.path.clone(), found.site.line))
+                    .or_default()
+                    .push(i),
+                None => open.push(i),
+            }
+        }
+        Constructions {
+            sites,
+            settled,
+            open,
+        }
+    }
+}
+
+/// The `initialize` an instance of an `initialize` query's owner runs —
+/// its own, or a module's it prepends — which the settled constructions
+/// that may reach it are filed under. `None` for any other query.
+fn own_initialize(
+    tree: &Tree,
+    query: &crate::resolve::refs::Query,
+    target: Option<&str>,
+) -> Option<crate::tree::MethodDef> {
+    crate::resolve::refs::constructor_of(query)?;
+    tree.lookup(target?, false, &query.name)
+}
+
+/// `gather_refs` for an `initialize` its owner defines, across `--dead`'s
+/// queries: its own name's calls are read as ever, and of the `X.new`s only
+/// those filed under it and those no class settles are tiered — the rest
+/// construct a class with another `initialize`, and are counted as such.
+#[allow(clippy::too_many_arguments)]
+fn gather_constructions(
+    tree: &Tree,
+    store: &Store,
+    root: &Path,
+    root_str: &str,
+    query: &crate::resolve::refs::Query,
+    target: Option<&str>,
+    own: &crate::tree::MethodDef,
+    parsed: &mut Parsed,
+) -> anyhow::Result<(
+    Vec<crate::resolve::refs::Reference>,
+    crate::resolve::refs::Counts,
+)> {
+    use crate::resolve::refs;
+    let files = store.files_calling(root_str, &query.name)?;
+    parsed.read(root, &files);
+    if parsed.constructions.is_none() {
+        parsed.constructions = Some(Constructions::build(tree, store, root, root_str, parsed));
+    }
+    let Parsed {
+        facts: held,
+        constructions: Some(made),
+    } = &*parsed
+    else {
+        unreachable!("built above")
+    };
+    let owner = target.unwrap_or_default();
+    let mut found = Vec::new();
+    let mut counts = refs::Counts::default();
+    let keep = |counts: &mut refs::Counts,
+                found: &mut Vec<refs::Reference>,
+                reference: refs::Reference| {
+        counts.record(&reference);
+        if reference.tier != refs::Tier::Excluded {
+            found.push(reference);
+        }
+    };
+    for path in &files {
+        let Some(facts) = held.get(path).and_then(Option::as_ref) else {
+            continue;
+        };
+        for call in facts.calls.iter().filter(|c| c.name == query.name) {
+            // Every subclass's `initialize` calls `super`; one in a class
+            // whose whole chain is known and does not hold the owner lands
+            // elsewhere, which is all `tier_super` would find, at length.
+            if call.recv == crate::core::RecvShape::Super
+                && let Some(scope) = tree.scope_fqn(&call.nesting)
+                && tree.kind_of(&scope) == Some("class")
+                && crate::tree::public_name(&scope) != owner
+            {
+                let chain = tree.ancestors(&scope);
+                if chain.unresolved.is_empty()
+                    && !chain
+                        .chain
+                        .iter()
+                        .any(|a| crate::tree::public_name(a) == owner)
+                {
+                    counts.excluded += 1;
+                    counts.excluded_different_owner += 1;
+                    continue;
+                }
+            }
+            keep(
+                &mut counts,
+                &mut found,
+                refs::tier_call(tree, facts, call, path, query, target),
+            );
+        }
+    }
+    let filed = made
+        .settled
+        .get(&(own.site.path.clone(), own.site.line))
+        .map_or(&[][..], Vec::as_slice);
+    for &i in filed.iter().chain(&made.open) {
+        let (path, at, construct) = &made.sites[i];
+        let Some(facts) = held.get(path).and_then(Option::as_ref) else {
+            continue;
+        };
+        let call = &facts.calls[*at];
+        let reference = match construct {
+            // Ranking it among the possible is `--refs`' business; `--dead`
+            // needs only whether its arguments fit.
+            refs::Construct::Untyped => refs::untyped_construction(call, path, own),
+            _ => refs::tier_call_with(tree, facts, call, path, query, target, Some(construct)),
+        };
+        keep(&mut counts, &mut found, reference);
+    }
+    let elsewhere = made.sites.len() - filed.len() - made.open.len();
+    counts.excluded += elsewhere;
+    counts.excluded_different_owner += elsewhere;
+    found.sort_by_key(refs::order);
+    Ok((found, counts))
+}
 
 /// What a name *is*, in one answer: where it is defined, what kind of location
 /// that is, and how many call sites can actually reach it.
@@ -3598,8 +3794,13 @@ fn cmd_refs(
     // since "nothing ruled out" is a finding too. An answer that lists no
     // site has already said why.
     if !found.is_empty() || reason.is_none() || include_excluded {
+        // An `initialize` is called as `new` too (DEC-541).
+        let sites = match refs::constructor_of(&query) {
+            Some(new) => format!("call sites of `{}` or `{new}`", query.name),
+            None => "same-name call sites".to_string(),
+        };
         println!(
-            "\n{} confirmed, {} possible, {} excluded of {} same-name call sites",
+            "\n{} confirmed, {} possible, {} excluded of {} {sites}",
             counts.confirmed,
             counts.possible,
             counts.excluded,
@@ -3697,9 +3898,8 @@ fn cmd_refs_at(
             .map(|owner| (owner, def.singleton, def.name.clone())),
         Some(position::Under::Call(call)) => {
             let answer = crate::resolve::method_at(&tree, &facts, &call, &relative);
-            answer
-                .owner
-                .map(|owner| (owner, call.singleton, call.name.clone()))
+            let (name, singleton) = crate::resolve::asked_at(&tree, &call, &answer);
+            answer.owner.map(|owner| (owner, singleton, name))
         }
         _ => None,
     };
@@ -4345,7 +4545,7 @@ fn dead_in(
     let mut symbols = conventions::Symbols::default();
     let mut thor_blocks = conventions::ThorBlocks::default();
     let mut foreign_sends = conventions::ForeignSends::default();
-    let mut parsed = Parsed::new();
+    let mut parsed = Parsed::default();
     for Defined {
         file,
         def,
@@ -4355,10 +4555,6 @@ fn dead_in(
         calls_super,
     } in &defined
     {
-        let written = written_calls.get(&def.name).copied().unwrap_or(0);
-        if written > PLAINLY_USED {
-            continue; // not worth a narrowed search
-        }
         // The class it is, not the name as written: `Helpers` inside `module
         // Alpha` is `Alpha::Helpers`, and that is what a resolved call names.
         let owner = tree
@@ -4370,6 +4566,12 @@ fn dead_in(
             singleton: def.singleton,
             name: def.name.clone(),
         };
+        // `initialize` is written by its every subclass's `super`, which
+        // says nothing about this one: its `X.new`s are what count (DEC-541).
+        let written = written_calls.get(&def.name).copied().unwrap_or(0);
+        if written > PLAINLY_USED && refs::constructor_of(&query).is_none() {
+            continue; // not worth a narrowed search
+        }
         let (mut found, mut counts) = gather_refs(
             &tree,
             store,
@@ -4440,11 +4642,44 @@ fn dead_in(
                 found.push(call);
             }
         }
+        // An `X.new` on a value of no known class is any class's: it keeps
+        // an `initialize` alive no more than a grep would, so it is weighed
+        // as a caveat instead (DEC-541).
+        let constructor = refs::constructor_of(&query).is_some();
+        let dynamic: Vec<&refs::Reference> = found
+            .iter()
+            .filter(|r| constructor && r.called_as.is_some() && r.receiver_type.is_none())
+            .filter(|r| r.tier == refs::Tier::Possible)
+            .collect();
+        let dynamic_new = dynamic
+            .iter()
+            .min_by_key(|r| (r.path.clone(), r.line))
+            .map(|r| format!("{}:{}", r.path, r.line));
+        let dynamic_count = dynamic.len();
+        if dynamic_count > 0 {
+            found.retain(|r| {
+                !(r.called_as.is_some()
+                    && r.receiver_type.is_none()
+                    && r.tier == refs::Tier::Possible)
+            });
+            counts.possible -= dynamic_count;
+        }
         let live = refs::liveness(&found, &counts);
         let Some(tier) = live.tier else { continue };
+        // An `initialize` one `X.new` reaches is how a class is built, not a
+        // method to inline; one only subclasses' `super`s reach belongs to an
+        // abstract class. Only one nothing reaches is a candidate.
+        if constructor && tier != "unreferenced" {
+            continue;
+        }
         // Whoever calls the method this overrides may run it instead, and
-        // that is often a framework the checkout never names (DEC-121).
-        let overrides = crate::resolve::overridden(&tree, def, file);
+        // that is often a framework the checkout never names (DEC-121) —
+        // but `Class#new` runs a class's own `initialize`, never one it
+        // overrides.
+        let overrides = match constructor {
+            true => Vec::new(),
+            false => crate::resolve::overridden(&tree, def, file),
+        };
         let tier = match tier {
             "unreferenced" if !overrides.is_empty() => "override",
             tier => tier,
@@ -4498,6 +4733,39 @@ fn dead_in(
         // Its only evidence of use is a call that may be another method's:
         // that is weaker than a clear single caller, and says why.
         let mut risky = risky.clone();
+        // Nothing seen constructs it, and a class is constructed wherever it
+        // is handed, by name: graded lower as a class is (DEC-450, DEC-541).
+        if constructor {
+            let ancestors = tree.ancestors(&owner);
+            let exception = |name: &String| matches!(name.as_str(), "Exception" | "StandardError");
+            let how = if ancestors
+                .chain
+                .iter()
+                .chain(&ancestors.unresolved)
+                .any(exception)
+            {
+                "an exception class, which `raise` constructs from its name"
+            } else if ancestors.chain.iter().any(|a| a == "Singleton") {
+                "a Singleton, which `instance` constructs"
+            } else if tree.kind_of(&owner) == Some("module") {
+                "a module's, which runs when a class that mixes it in is constructed"
+            } else {
+                "a class may be constructed by whatever it is handed to — a library, a registry"
+            };
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            risky.push_str(how);
+        }
+        if let Some(first) = &dynamic_new {
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            risky.push_str(&format!(
+                "constructed where its class is not known: {dynamic_count} `new` on an untyped \
+                 receiver (first at {first})"
+            ));
+        }
         if caller.as_ref().is_some_and(|c| c["tier"] == "possible") {
             if !risky.is_empty() {
                 risky.push_str(", ");
@@ -4596,6 +4864,7 @@ fn dead_in(
             // An instance's `self`: a module's own `def self.` knows its.
             let on_instance = |r: &refs::Reference| {
                 parsed
+                    .facts
                     .get(&r.path)
                     .and_then(Option::as_ref)
                     .and_then(|facts| {
@@ -6381,7 +6650,7 @@ mod tests {
                 // A connection stays on the thread that opened it.
                 let store = Store::open(&db).unwrap();
                 let tree = Tree::build(&store, &root).unwrap();
-                let mut parsed = Parsed::new();
+                let mut parsed = Parsed::default();
                 let mut sites = Vec::new();
                 let (found, counts) = gather_refs(
                     &tree,

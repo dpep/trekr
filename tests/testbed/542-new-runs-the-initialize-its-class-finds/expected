@@ -1,0 +1,8 @@
+# An `X.new` runs the `initialize` an instance of `X` finds: `Plain`
+# inherits `Base`'s, `Own` writes its own and its `super` reaches `Base`'s.
+# `new` in a class method may be a subclass's. `public_send(:new)` is a
+# construction too; an untyped `klass.new` whose arguments do not fit is
+# ruled out (DEC-541).
+refs Base#initialize confirmed=4 possible=0 excluded=2
+refs Own#initialize confirmed=1 possible=2 excluded=3
+def lib/shapes.rb:21:7 status=resolved owner=Base site=lib/shapes.rb:2

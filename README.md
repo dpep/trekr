@@ -359,6 +359,13 @@ activerecord/lib/active_record/connection_handling.rb:270:23  possible   untyped
   between this and a grep. `--include-excluded` lists them with their reason,
   so the claim is auditable rather than asserted.
 
+An `initialize` is called as `new`: `--refs 'Widget#initialize'` lists each
+`X.new` whose class runs it — `Widget`'s, or a subclass's that inherits it —
+with `"called_as": "new"`, beside the `super`s that reach it. A class whose
+own `def self.new` returns another class's `new` is ruled out; one whose
+`new` returns nothing trekr reads (Active Record's ends in an `if`) leaves its
+sites possible. `--def` on a plain `X.new` goes to the `initialize` it runs.
+
 A position asks about what is there: `trekr --refs spec/widget_spec.rb:12`
 on a `let`, a `subject` or a group's `def` lists every read RSpec would run
 it for, with `from` — `group`, `nested_group`, `enclosing_group`,

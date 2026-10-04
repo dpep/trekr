@@ -1,0 +1,11 @@
+# A custom `def self.new` decides (DEC-133, DEC-541): one that returns
+# `super` reaches `initialize`, one that returns another class's `new`
+# does not, and one whose return is not read (`allocate`) may. `--def` on
+# an `X.new` with a custom `new` goes to that `new`, on a plain one to
+# `initialize`.
+refs Wrapped#initialize confirmed=2 possible=0 excluded=3
+refs Cached#initialize confirmed=0 possible=1 excluded=4
+refs Facade#initialize confirmed=0 possible=0 excluded=5
+refs Gadget#initialize confirmed=1 possible=0 excluded=4
+def lib/made.rb:38:8 status=resolved owner=Cached site=lib/made.rb:12
+def lib/made.rb:40:8 status=resolved owner=Gadget site=lib/made.rb:32

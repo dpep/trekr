@@ -1132,6 +1132,17 @@ impl Store {
         Ok(paths)
     }
 
+    /// The files calling any of `names`, sorted and deduplicated.
+    pub(crate) fn files_calling_any(&self, root: &str, names: &[&str]) -> Result<Vec<String>> {
+        let mut paths = Vec::new();
+        for name in names {
+            paths.extend(self.files_calling(root, name)?);
+        }
+        paths.sort_unstable();
+        paths.dedup();
+        Ok(paths)
+    }
+
     /// A page of the files in a checkout that call `name`, in the index's
     /// own order: the blobs after `after` calling it, at most `rows` of them,
     /// as (the last blob read, each of their files). Pass the last blob back

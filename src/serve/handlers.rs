@@ -618,17 +618,20 @@ pub(crate) fn references(
         ),
         Under::Call(call) => {
             let answer = crate::resolve::method_at(tree, &facts, call, &path);
+            let (name, singleton) = crate::resolve::asked_at(tree, call, &answer);
             (
                 refs::Query {
                     owner: answer.owner,
-                    singleton: call.singleton,
-                    name: name.clone(),
+                    singleton,
+                    name,
                 },
                 answer.sites,
             )
         }
         Under::Constant(_) => unreachable!("answered above"),
     };
+    // An `X.new` asks about the `initialize` it runs (DEC-541).
+    let name = query.name.clone();
     let target = query.owner.clone();
     let bare = target.is_none();
 
@@ -685,7 +688,7 @@ pub(crate) fn references(
                 .find(|p| !Path::new(p).is_absolute())
                 .unwrap_or(path.as_str()),
         };
-        let mut paths = store.files_calling(&root_str, &name)?;
+        let mut paths = store.files_calling_any(&root_str, &refs::called_as(&query))?;
         gather::nearest_first(&mut paths, anchor);
         Source::Listed(paths.into_iter())
     };
@@ -699,7 +702,7 @@ pub(crate) fn references(
     let tier = |facts: &crate::core::Facts, call: &crate::core::Call, path: &str| {
         refs::tier_call(tree, facts, call, path, &query, target.as_deref())
     };
-    let reach = scan_files(&overlay, &root, source, &name, cancel, &tier, |files| {
+    let reach = scan_files(&overlay, &root, source, &query, cancel, &tier, |files| {
         for file in files {
             let Some(uri) = file_uri(&root, &file.path) else {
                 continue;
@@ -716,7 +719,7 @@ pub(crate) fn references(
                 // A `super` site is named after its method but spelled `super`.
                 let written = match reference.receiver {
                     "super" => "super".len(),
-                    _ => name.len(),
+                    _ => reference.called_as.unwrap_or(&name).len(),
                 };
                 let range = lines.span(reference.line, reference.col, written);
                 let (tier, proximity, path, line) = refs::order(&reference);
@@ -1101,14 +1104,15 @@ struct Reach {
 /// The parse and the tiering are the expensive part, and the tree `tier`
 /// consults is shared by every worker (DEC-250), so both fan out; `visit`
 /// runs on this thread, in file order, so a stream and the cap (DEC-056)
-/// see what they did. An open buffer that mentions `needle` is read first,
+/// see what they did. An open buffer that mentions a name the query is
+/// called as is read first,
 /// even when the index does not list its file: the index is as of the last
 /// save, and the buffer is what the user is looking at.
 fn scan_files(
     overlay: &HashMap<String, String>,
     root: &Path,
     mut source: Source,
-    needle: &str,
+    query: &refs::Query,
     cancel: &dyn Fn() -> bool,
     tier: &(dyn Fn(&crate::core::Facts, &crate::core::Call, &str) -> refs::Reference + Sync),
     mut visit: impl FnMut(Vec<Scanned>) -> anyhow::Result<ControlFlow<()>>,
@@ -1117,7 +1121,7 @@ fn scan_files(
     let mut seen = HashSet::new();
     let mut open: Vec<String> = overlay
         .iter()
-        .filter(|(_, text)| text.contains(needle))
+        .filter(|(_, text)| refs::called_as(query).iter().any(|n| text.contains(n)))
         .map(|(path, _)| path.clone())
         .collect();
     open.sort();
@@ -1154,7 +1158,7 @@ fn scan_files(
                     .calls
                     .iter()
                     .enumerate()
-                    .filter(|(_, call)| call.name == needle)
+                    .filter(|(_, call)| refs::names_it(call, query))
                     .map(|(at, call)| (at, tier(&facts, call, path)))
                     .collect();
                 Some(Scanned {
@@ -2176,17 +2180,20 @@ pub(crate) fn incoming_calls(
             })
             .cloned()
     });
-    let paths = session.store().files_calling(&root_str, &name)?;
-    let overlay = overlay(session, &root);
-    let tree = session.tree(&root)?;
+    let owner = owner_def
+        .as_ref()
+        .and_then(|def| session.tree(&root).ok()?.scope_fqn(&def.nesting));
     let query = refs::Query {
-        owner: owner_def
-            .as_ref()
-            .and_then(|def| tree.scope_fqn(&def.nesting)),
+        owner,
         singleton: owner_def.as_ref().is_some_and(|def| def.singleton),
         name: name.clone(),
     };
     let target = query.owner.clone();
+    let paths = session
+        .store()
+        .files_calling_any(&root_str, &refs::called_as(&query))?;
+    let overlay = overlay(session, &root);
+    let tree = session.tree(&root)?;
 
     // Keyed by (file, the caller's def line), in first-seen order.
     let mut callers: Vec<CallHierarchyIncomingCall> = Vec::new();
@@ -2198,7 +2205,7 @@ pub(crate) fn incoming_calls(
         &overlay,
         &root,
         Source::Listed(paths.into_iter()),
-        &name,
+        &query,
         cancel,
         &tier,
         |files| {

@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **`X.new` is a reference to the `initialize` it runs** (#4). `--refs
+  'Widget#initialize'` lists each `Widget.new` — and a subclass's that
+  inherits it, `self.new` in a class method, `public_send(:new)` — tiered
+  as any call, each row marked `"called_as": "new"`; a class whose own
+  `def self.new` returns another class rules its sites out, and one whose
+  `new` trekr cannot read (Active Record's) leaves them possible. Find
+  References on `def initialize` in the editor lists them, and go to
+  definition on a plain `X.new` lands on its `initialize`. `--dead` reports
+  an `initialize` only when nothing constructs its class, always graded
+  lower — before, a real app's were never checked at all.
+
 - **`--dead` knows more of the methods Ruby calls by name.** A private
   `instance_variables_to_inspect` (`Kernel#inspect`, Ruby 3.4+) was
   `unreferenced`, clear; it is graded lower now, with the hook named. The

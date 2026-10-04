@@ -1,0 +1,6 @@
+# `--dead` reports an `initialize` only when no `X.new` reaches it, and
+# grades it lower: a class is constructed wherever it is handed, an
+# exception by `raise`, and an untyped `klass.new` may be any class's
+# (DEC-541). One `super` or one `X.new` is how a class is built, not a
+# candidate to inline.
+dead lib/widgets.rb Orphan#initialize=unreferenced~handed Failure#initialize=unreferenced~raise Built#initialize=unreferenced~untyped Made#initialize=none Abstract#initialize=none Concrete#initialize=none
