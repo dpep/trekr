@@ -321,6 +321,20 @@ pub(super) fn exposed_receiver(
     })
 }
 
+/// Where a template's `@ivar` is set: each write the controllers that render
+/// it make, as its reads are typed (DEC-522). Absolute paths.
+pub(crate) fn template_ivar_writes(tree: &Tree, path: &str, name: &str) -> Vec<crate::tree::Site> {
+    controller_writes(tree, path, name)
+        .into_iter()
+        .map(|(file, _, assign)| crate::tree::Site {
+            path: file,
+            line: assign.pos.line,
+            col: assign.pos.col,
+            kind: "ivar".to_string(),
+        })
+        .collect()
+}
+
 /// The model a template's collection holds, by the constant its
 /// controller's writes start from: `@posts = Post.where(…).page(n)`.
 fn collection_model(tree: &Tree, path: &str, target: &str) -> Option<String> {
@@ -584,6 +598,12 @@ pub(crate) fn partial_local(tree: &Tree, call: &Call, path: &str) -> Option<Part
                 col: at.col,
                 kind: "local".to_string(),
             };
+            // Every local a render hands, as a Hash keyed by name.
+            if call.name == "local_assigns" {
+                found.sites.push(site(template.pos));
+                found.types.push("Hash".to_string());
+                continue;
+            }
             for local in template.locals.iter().filter(|l| l.name == call.name) {
                 found.sites.push(site(local.pos));
                 if let Some((value, at)) = &local.value

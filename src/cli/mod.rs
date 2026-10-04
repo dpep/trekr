@@ -5497,8 +5497,39 @@ fn cmd_def(
         && let Some(answer) = position::variable_at(&source, &file, spec.line, spec.col)
     {
         crate::usage::flag("variable");
-        file_alone();
         let mut answer = answer;
+        // A template's `@ivar` with no write of its own is set by the
+        // controller that renders it (DEC-522).
+        let unset_in_template = answer["variable"] == "ivar"
+            && answer["definition"].as_array().is_some_and(Vec::is_empty)
+            && crate::tree::views::under(&file, "views").is_some()
+            && crate::scan::is_template(&file);
+        let mut from_controller = Vec::new();
+        if unset_in_template && let Some((root, store)) = &checkout {
+            let relative = Path::new(&file)
+                .strip_prefix(root)
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|_| spec.path.clone());
+            let tree = build_tree(store, &root.to_string_lossy())?;
+            let name = answer["name"].as_str().unwrap_or_default().to_string();
+            from_controller = crate::resolve::views::template_ivar_writes(&tree, &relative, &name);
+        }
+        if from_controller.is_empty() {
+            file_alone();
+        } else {
+            answer["definition"] = from_controller
+                .iter()
+                .map(|site| {
+                    serde_json::json!({
+                        "path": site.path, "line": site.line, "col": site.col, "kind": "assigned",
+                    })
+                })
+                .collect();
+            answer["status"] = "resolved".into();
+            answer["confidence"] = 1.0.into();
+            answer["resolved_via"] = "controller".into();
+            answer["reason"] = "set by the controller that renders the template".into();
+        }
         answer["query"] = written.into();
         let resolved = answer["status"] == "resolved";
         let text = match answer["definition"].get(0) {

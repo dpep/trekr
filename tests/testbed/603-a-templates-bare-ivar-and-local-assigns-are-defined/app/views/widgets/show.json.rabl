@@ -1,0 +1,2 @@
+object @widget
+attributes :name

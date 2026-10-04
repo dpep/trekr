@@ -44,6 +44,12 @@
   for a partial those of the templates that render it — overrides included;
   rendered by several that differ, or by none trekr can name, it is
   ambiguous, and `--refs` lists it as possible for each.
+- **Templates, smaller things.** Go to definition on a bare `@title` in a
+  template, or RABL's `object @widget`, opens the controller's write
+  (in the editor too). `local_assigns` in a partial is a `Hash`.
+  Completing a bare word in a tag (`<%= badg`) offers the helpers,
+  `helper_method` names and ActionView's methods. A name no view has says
+  what was looked through, not that `ERB::Util` makes unnamed methods.
 - **A view's `@ivar` is typed from its controller.** `@post` in
   `posts/show.html.erb` is what `PostsController#show` assigns, or a
   `before_action` that runs for it, or an action that `render :show`s;

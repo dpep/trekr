@@ -192,6 +192,9 @@ fn writes(session: &mut Session, under: &Under) -> Vec<Found> {
         .into_iter()
         .filter(|f| f.occurrence.is_write())
         .collect();
+    if found.is_empty() && under.occurrence.sigil == Sigil::Instance {
+        found = template_writes(session, under);
+    }
     found.sort_by_key(|f| {
         (
             f.occurrence.method.as_deref() != Some("initialize"),
@@ -200,6 +203,50 @@ fn writes(session: &mut Session, under: &Under) -> Vec<Found> {
             f.range.start.character,
         )
     });
+    found
+}
+
+/// A template's `@ivar` with no write of its own: the writes of the
+/// controllers that render it (DEC-522).
+fn template_writes(session: &mut Session, under: &Under) -> Vec<Found> {
+    let path = under.file.to_string_lossy();
+    if !crate::scan::is_template(&path) || crate::tree::views::under(&path, "views").is_none() {
+        return Vec::new();
+    }
+    let Some(located) = session.locate_query(&under.file) else {
+        return Vec::new();
+    };
+    let sites = match session.tree(&located.root) {
+        Ok(tree) => crate::resolve::views::template_ivar_writes(
+            tree,
+            &located.relative,
+            &under.occurrence.name,
+        ),
+        Err(_) => return Vec::new(),
+    };
+    let mut found = Vec::new();
+    for site in sites {
+        let Some(file) = absolute_site(&located.root, &site.path) else {
+            continue;
+        };
+        let Some(document) = session.document(&file) else {
+            continue;
+        };
+        let vars = document.vars();
+        let lines = LineIndex::new(&document.text);
+        let write = vars.occurrences.iter().find(|o| {
+            o.is_write()
+                && o.name == under.occurrence.name
+                && lines.at(o.span.start).line + 1 == site.line
+        });
+        if let Some(o) = write {
+            found.push(Found {
+                file: file.clone(),
+                range: lines.range(o.span.clone()),
+                occurrence: o.clone(),
+            });
+        }
+    }
     found
 }
 

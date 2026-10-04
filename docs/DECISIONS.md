@@ -12633,9 +12633,10 @@ quote_wrap`, `CustomCssController#custom_css_styles` through its
 `helper_method`). discourse 42 / 301 → 42 / 248: 76 rows gain a caller
 (`ApplicationHelper#crawler_post_schema_skip?` from `topics/show.html.erb`,
 `EmbedHelper#get_html`, `UserNotificationsHelper#render_digest_header`; five
-read by hand are each a real call), and 51 `convention-only` rows lose the
-"named in a view" caveat, lower → clear, the template that named them now
-read. None moved away from use.
+read by hand are each a real call), and 58 rows lose the "named in a view"
+caveat, lower → clear, the template that named them now read — 51
+`convention-only` and 7 single-caller (this read 51 until a recount). None
+moved away from use.
 
 ### DEC-521 addendum — an exposed name runs on the controller that renders the template
 
@@ -12658,6 +12659,20 @@ each landing, never `confirmed`.
 `gadgets/show` call with `WidgetsController#…` at 1.0 — whichever the
 index met first — and `--refs 'GadgetsController#…'` ruled the real caller
 out. Testbed 600.
+
+### DEC-521 addendum — what a view context offers, said and listed
+
+**Decided.** A name no view has, that something indexed does define,
+is residue saying what was looked through — "no helper under app/helpers,
+controller `helper_method` or ActionView method" (and the engine, in
+RABL) — where it named a maker of unnamed methods in ActionView's chain
+(`ERB::Util`), which is no lead. Completion of a bare word in a template's
+tag offers the view context, in lookup order: a RABL template's engine,
+every name a `helper_method` exposes (with its controller), the app's
+helpers last included first, then `ActionView::Base`'s chain — after the
+template's own locals. It offered `Object`'s methods, so `<%= badg` found
+nothing. A partial's handed locals are not offered yet. Testbed 603; LSP
+e2e `an_erb_template_is_answered_at_its_own_positions`.
 
 ## DEC-522 — A template's `@ivar` is what the action that renders it assigned
 
@@ -12713,6 +12728,15 @@ and rendered `widgets/show`, whose `@widget.username` answered
 **Retires** DEC-522's "not done: a render of the template from another
 controller".
 
+### DEC-522 addendum — a bare `@ivar` is defined where its controller sets it
+
+**Decided.** Go to definition on a template's `@ivar` with no write in the
+template — `<%= @title %>`, RABL's `object @widget` — answers each write
+its reads are typed from (`resolve::views::template_ivar_writes`):
+`resolved_via: controller`, in the CLI and the LSP's definition and
+hover. It answered "not set in this file" and the LSP nothing. Testbed
+603.
+
 ## DEC-524 — A `render`'s name reaches the template it renders
 
 **Decided.** The extractor records each template a call with no receiver
@@ -12761,7 +12785,8 @@ so a local shadows a helper of its name, as here.
 The renders are found by reading the checkout's files that call `render`
 (`Store::files_calling`), each parsed once per tree while unchanged.
 
-**Not done.** `local_assigns[:x]`; Rails 7.1's magic `locals:` comment.
+**Not done.** Rails 7.1's magic `locals:` comment. (`local_assigns` in a
+partial is a `Hash`, defined at each render that reaches it: testbed 603.)
 Testbed 523. (`as:`, `object:` and `collection:` beside `partial:`: the
 addendum below.)
 

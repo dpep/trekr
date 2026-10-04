@@ -239,6 +239,12 @@ pub(crate) fn completion(
                     add_methods(&mut list, tree, members, class, hooked.singleton, true, 1);
                 }
                 incomplete |= bases.count() > MIXERS_OFFERED;
+            } else if call.nesting.is_empty()
+                && let Some(engine) = view_self(&located.relative)
+            {
+                // A template's `self` is its view context (DEC-521): what
+                // the controllers expose, the app's helpers, ActionView.
+                add_view_context(&mut list, tree, members, engine);
             } else if let Some(fqn) = tree.scope_fqn(&call.nesting) {
                 let fqn = tree.variant_at(&fqn, &located.relative);
                 add_methods(&mut list, tree, members, &fqn, call.singleton, true, 1);
@@ -557,6 +563,49 @@ fn add_methods(
             );
         }
     }
+}
+
+/// The class a template's `self` is first, when the file is a view
+/// template: `ActionView::Base`, or a RABL template's engine ahead of it.
+fn view_self(relative: &str) -> Option<&'static str> {
+    if crate::tree::views::is_view(relative) {
+        return Some(crate::tree::views::ACTION_VIEW);
+    }
+    (relative.ends_with(".rabl") && crate::tree::views::under(relative, "views").is_some())
+        .then_some(crate::resolve::RABL_ENGINE)
+}
+
+/// The names a view's `self` answers, in the order a call finds them.
+fn add_view_context(list: &mut Ranked, tree: &Tree, members: &Members, engine: &str) {
+    if engine != crate::tree::views::ACTION_VIEW {
+        add_methods(list, tree, members, engine, false, true, 1);
+    }
+    let (exposed, helpers) = tree.view_context();
+    for (name, owner) in exposed {
+        if typeable(&name) {
+            list.add(
+                1,
+                0,
+                &name,
+                CompletionItemKind::METHOD,
+                format!("{owner}#{name} (helper_method)"),
+                Some(owner.clone()),
+                Some(serde_json::json!({"owner": owner, "singleton": false})),
+            );
+        }
+    }
+    for helper in helpers {
+        add_methods(list, tree, members, &helper, false, true, 1);
+    }
+    add_methods(
+        list,
+        tree,
+        members,
+        crate::tree::views::ACTION_VIEW,
+        false,
+        true,
+        1,
+    );
 }
 
 /// Constants declared directly in `scope`, and in its ancestors — `Foo::X`

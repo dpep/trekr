@@ -1,0 +1,10 @@
+# A template's bare `@title` answered "not set in this file", and RABL's
+# `object @widget` the same: the controller that renders the template sets
+# them. `local_assigns` in a partial is the Hash of what each render hands
+# it. A name no view has blamed a maker of unnamed methods deep in
+# ActionView's chain; it says what was looked through.
+def app/views/widgets/show.html.erb:1:9 variable=ivar status=resolved via=controller site=app/controllers/widgets_controller.rb:4
+def app/views/widgets/show.json.rabl:1:8 variable=ivar status=resolved via=controller site=app/controllers/widgets_controller.rb:3
+def app/views/widgets/_row.html.erb:1:5 status=resolved via=render receiver_type=Hash site=app/views/widgets/show.html.erb:2
+def app/views/widgets/_row.html.erb:2:19 receiver_type=Hash
+def app/views/widgets/show.html.erb:3:5 status=residue reason=helper_method

@@ -5487,9 +5487,17 @@ fn an_erb_template_is_answered_at_its_own_positions() {
         "<p>é — <%= badge(1) %></p>\n",
         "<% if true %><%= yield %><% end %>\n",
         "<%= render \"row\" %>\n",
+        "<h1><%= @title %></h1>\n", // 5
+        "<%= badg %>\n",
     );
     fs::write(dir.join("app/helpers/widgets_helper.rb"), helper).unwrap();
     fs::write(dir.join("app/views/widgets/_row.html.erb"), "<li></li>\n").unwrap();
+    fs::create_dir_all(dir.join("app/controllers")).unwrap();
+    fs::write(
+        dir.join("app/controllers/widgets_controller.rb"),
+        "class WidgetsController\n  def show\n    @title = \"w\"\n  end\nend\n",
+    )
+    .unwrap();
     fs::write(dir.join("app/views/widgets/show.html.erb"), template).unwrap();
     git(&dir, &["add", "-A"]);
     git(
@@ -5590,6 +5598,42 @@ fn an_erb_template_is_answered_at_its_own_positions() {
         })
         .collect();
     assert_eq!(found, vec![("show.html.erb".to_string(), 1, 11)]);
+
+    // A bare `@title` is set by the controller that renders the template
+    // (DEC-522).
+    let answer = session.request(
+        "textDocument/definition",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, view)},
+            "position": {"line": 4, "character": 9},
+        }),
+    );
+    let locations = answer["result"].as_array().expect("an array of locations");
+    assert_eq!(locations.len(), 1, "{answer}");
+    assert!(
+        locations[0]["uri"]
+            .as_str()
+            .unwrap()
+            .ends_with("widgets_controller.rb")
+    );
+    assert_eq!(locations[0]["range"]["start"]["line"], 2);
+
+    // A bare word in a tag completes from the view context: the helpers.
+    let answer = session.request(
+        "textDocument/completion",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, view)},
+            "position": {"line": 5, "character": 8},
+        }),
+    );
+    let labels: Vec<&str> = answer["result"]["items"]
+        .as_array()
+        .or(answer["result"].as_array())
+        .expect("completion items")
+        .iter()
+        .filter_map(|item| item["label"].as_str())
+        .collect();
+    assert!(labels.contains(&"badge"), "{labels:?}");
 
     session.stop();
     let _ = fs::remove_dir_all(&dir);

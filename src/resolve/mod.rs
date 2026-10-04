@@ -18,6 +18,9 @@ mod rabl;
 pub(crate) mod refs;
 pub(crate) mod views;
 
+/// The class a RABL template's `self` is (DEC-526).
+pub(crate) const RABL_ENGINE: &str = rabl::ENGINE;
+
 use crate::core::{Assign, Call, Def, Facts, Pos, RecvShape, RecvValue, ValueShape, rspec};
 use crate::tree::{Kind, Site, Status, Tree};
 use serde::Serialize;
@@ -312,6 +315,23 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                         "the call runs on a view, which has no helper by this name, and \
                          actionview is not indexed",
                     )
+                }
+                // A view looked through everything Rails gives it; a maker of
+                // unnamed methods deep in ActionView's chain is no lead.
+                None if matches!(receiver.via, "view" | "rabl") && !defined_nowhere(tree, call) => {
+                    let reason = match receiver.via {
+                        "rabl" => {
+                            "the call runs on a RABL template, and neither its engine nor \
+                                   the view has this name: no helper under app/helpers, \
+                                   controller `helper_method` or ActionView method"
+                        }
+                        _ => {
+                            "the call runs on a view, and nothing it looks through has this \
+                              name: no helper under app/helpers, controller `helper_method` or \
+                              ActionView method"
+                        }
+                    };
+                    residue(tree, call, path, Some(receiver), reason)
                 }
                 // Ruby's lookup fails, and a `method_missing` hands the name
                 // on: a relation's to its model (DEC-116), a class's

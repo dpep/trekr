@@ -146,6 +146,24 @@ impl Tree {
             .or_else(|| self.lookup(ACTION_VIEW, false, name))
     }
 
+    /// What a view's `self` offers, in the order a call finds it: every name
+    /// a `helper_method` exposes, with its controller, then the helper
+    /// modules, last included first.
+    pub(crate) fn view_context(&self) -> (Vec<(String, String)>, Vec<String>) {
+        let views = self.views();
+        let mut exposed: Vec<(String, String)> = views
+            .exposed
+            .iter()
+            .flat_map(|(name, owners)| {
+                owners
+                    .iter()
+                    .map(move |(owner, _)| (name.clone(), owner.clone()))
+            })
+            .collect();
+        exposed.sort();
+        (exposed, views.helpers.iter().rev().cloned().collect())
+    }
+
     /// The classes whose body exposes `name` to views with `helper_method`.
     pub(crate) fn exposers(&self, name: &str) -> Vec<String> {
         self.views()
