@@ -12462,7 +12462,9 @@ search, and is reported only when nothing reaches it (`unreferenced`): one
 subclasses' `super`s reach belongs to an abstract class. An untyped
 `klass.new` is any class's: it keeps an `initialize` alive no more than a
 grep would, so those are dropped from the evidence and said in the caveat
-(`constructed where its class is not known: N `new` on an untyped receiver`).
+(`constructed where its class is not known: `new` on untyped receivers may
+reach it (first at …)` — the first site only, since finding them all is
+typing every `new` in the checkout).
 So are a `super` whose landing trekr cannot place — from a module nothing
 indexed includes, from a class whose ancestors are not all indexed — and a
 symbol handed to a macro (`receive(:initialize)`): each would be any
@@ -12483,47 +12485,55 @@ unreferenced.
 
 **Cost, and how it is kept.** Asking about each of hundreds of
 `initialize`s, `--dead` would tier every `X.new` of the checkout each time.
-Three things keep it down (`cli::gather_constructions`):
+It needs much less (`cli::gather_constructions`): only an `initialize`
+nothing reaches is reported, so a query stops at the first site that
+reaches it and is not any class's (`Reference::unplaced`), looking where
+such a site must be first:
 
-- **One live site settles it.** Only an `initialize` nothing reaches is
-  reported, so a query stops at the first site that reaches it and is not
-  any class's (`Reference::unplaced`): the calls of its own name first —
-  every subclass's `super`, read once per run with the chain of the class
-  it is in, so one whose fully indexed chain lacks the owner is counted out
-  at a glance — then the `X.new`s in the files that call `new` and name the
-  class (an index of each such file's capitalized words, built once).
-- **The checkout's constructions, once.** An `initialize` neither reaches
-  needs every `X.new`: what a site constructs does not depend on the query
-  (`refs::construct`), so it is worked out once per run, cached by site, and
-  the sites of a class with a definite `initialize` filed under it
-  (`cli::Constructions`); each such `initialize` tiers only those filed
-  under the one its owner runs, and the ones no class settles.
-- **What remains is the caveat's count.** Saying how many untyped `new`s an
-  unconstructed class has means typing every `new` in the checkout, which
-  is parsing every file that calls it. A run that reports no `initialize`
-  never pays it; one that reports any pays it once.
+- the files that call `new` and name the class or a class that runs it (a
+  subclass, a class mixing it in) — last segment and outermost namespace
+  both, from an index of each file's capitalized words built once — and
+  the files where a class it inherits from is written, for a `self.new` in
+  a class method; their `X.new`s, cached by site, and their calls of
+  `initialize`;
+- then every call named `initialize`, read once per run, each `super` with
+  the chain of the class it is in, so one whose fully indexed chain lacks
+  the owner is counted out at a glance.
+
+One nothing reaches gets, for its caveat, the first untyped `new` that
+could reach it: files in path order, until one has such a site. Counting
+them all was typing every `new` in the checkout — most of this pass's cost
+— for a number that changes no decision, so the caveat names the first.
+The `super`s and symbols are calls of the name `initialize`, already read,
+and keep their counts. An `initialize` written in a block whose `self` is
+not known (`Class.new do`, DEC-562) is an anonymous class's, built through
+whatever holds it, and is not a candidate.
+
+What this can miss: an `X.new` whose class reaches it under a name the file
+does not write — a constant alias, a class a method in another file
+returns. Such an `initialize` would be reported, `lower` as every one is.
+On the corpora below every row is the same as when every `new` was typed.
 
 Measured `--dead`, user CPU, median of three interleaved rounds, one store
-per version, load 8–19 (`caffeinate -i`), 0.8.6 → before this → now:
+per version, load 4–8 (`caffeinate -i`); "no initialize" is this build with
+`initialize`s skipped, the floor:
 
-| | 0.8.6 | before | now |
-| --- | ---: | ---: | ---: |
-| rails, twelve libraries | 7.7 s | 11.0 s | 9.7 s |
-| discourse `app lib` | 7.1 s | 11.3 s | 10.3 s |
-| discourse `spec` | 6.6 s | 10.7 s | 11.0 s |
-| mastodon `app lib` | 3.1 s | 3.6 s | 3.6 s |
-| mastodon `spec` | 1.9 s | 2.7 s | 2.7 s |
-| discourse `lib/email/sender.rb` | 1.6 s | 4.6 s | 1.9 s |
+| | 0.8.6 | before | now | no initialize |
+| --- | ---: | ---: | ---: | ---: |
+| rails, twelve libraries | 5.5 s | 8.2 s | 7.0 s | 5.5 s |
+| discourse `app lib` | 6.1 s | 8.2 s | 7.7 s | 6.3 s |
+| discourse `spec` | 5.5 s | 8.7 s | 5.9 s | 5.5 s |
+| mastodon `app lib` | 2.3 s | 3.2 s | 2.7 s | 2.4 s |
+| mastodon `spec` | 1.5 s | 1.9 s | 1.6 s | 1.5 s |
+| discourse `lib/email/sender.rb` | 1.3 s | 3.5 s | 1.4 s | 1.3 s |
 
-A single file, whose `initialize` something constructs, is back near 0.8.6;
-a directory that reports an `initialize` (or holds one no site settles, as
-a `def initialize` in a spec's `Class.new` block) pays the checkout-wide
-typing once — 1–4 s of CPU, mostly parsing. Every row is byte-identical to
-before on all five runs, but for one rails class whose `subclasses`
-convention names a different listing site from one run to the next, on
-either build: `Named::listed` keeps the first of several listings a
-parallel merge happens to meet. Before the index, the first cut took discourse to
-25 s wall.
+What remains on a whole library is the candidate files' parsing and typing,
+per `initialize` whose class has a common name. Rows are byte-identical to
+the typed-every-`new` build but for the caveat's wording, and for one rails
+class whose `subclasses` convention names a different listing site from one
+run to the next, on either build: `Named::listed` keeps the first of
+several listings a parallel merge happens to meet. Before any of this, the
+first cut took discourse to 25 s wall.
 
 **Measured.** `--dead app lib`, against 0.8.6 on one store:
 
@@ -12576,10 +12586,12 @@ any class's as an untyped `new`, and each is in every `initialize`'s
 
 **Decided.** For an `initialize`, `--dead` drops those possible sites from
 the evidence as it drops an untyped `new`, and says each kind in the
-caveat, with a count and the first site: `constructed where its class is
-not known: 115 `new` on an untyped receiver (first at …), 4 `super` whose
-landing trekr cannot place (first at …), 4 symbol handed to a macro (first
-at …)`. A `super` that lands here from some of a module's includers is
+caveat with its first site, and a count where the count is free:
+`constructed where its class is not known: `new` on untyped receivers may
+reach it (first at …), 4 `super` whose landing trekr cannot place (first
+at …), 4 symbol handed to a macro (first at …)`. The `super`s and symbols
+are calls of the name `initialize`, read for every query anyway; the
+untyped `new`s are not counted (the cost section). A `super` that lands here from some of a module's includers is
 placed, and still counts. Testbed 580.
 
 **Measured.** `--dead`, main → this, one store, every reported row read for

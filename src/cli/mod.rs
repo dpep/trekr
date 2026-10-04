@@ -3091,10 +3091,11 @@ struct Parsed {
     /// Every call named `initialize` — a subclass's `super`, mostly.
     callers: Option<Vec<Caller>>,
     /// The files that call `new`, by each capitalized word their text holds.
-    naming: Option<HashMap<String, Vec<String>>>,
+    naming: Option<HashMap<u64, Vec<u32>>>,
     /// What an `X.new` site constructs, by file and call index.
     made: HashMap<(String, usize), crate::resolve::refs::Construct>,
-    constructions: Option<Constructions>,
+    /// The files that call `new`, by path.
+    calling_new: Option<Vec<String>>,
 }
 
 impl Parsed {
@@ -3162,26 +3163,35 @@ impl Parsed {
         }
     }
 
+    fn calling_new(&mut self, store: &Store, root_str: &str) -> &[String] {
+        self.calling_new.get_or_insert_with(|| {
+            let mut files = store.files_calling(root_str, "new").unwrap_or_default();
+            files.sort();
+            files
+        })
+    }
+
     /// The files calling `new` whose text names `word`.
     fn naming(&mut self, store: &Store, root: &Path, root_str: &str, word: &str) -> Vec<String> {
+        let files = self.calling_new(store, root_str).to_vec();
         let naming = self.naming.get_or_insert_with(|| {
-            let files = store.files_calling(root_str, "new").unwrap_or_default();
-            let words: Vec<(String, HashSet<String>)> = files
+            let words: Vec<HashSet<u64>> = files
                 .par_iter()
-                .map(|path| {
-                    let text = std::fs::read(root.join(path)).unwrap_or_default();
-                    (path.clone(), capitalized_words(&text))
-                })
+                .map(|path| capitalized_words(&std::fs::read(root.join(path)).unwrap_or_default()))
                 .collect();
-            let mut naming: HashMap<String, Vec<String>> = HashMap::new();
-            for (path, words) in words {
+            let mut naming: HashMap<u64, Vec<u32>> = HashMap::new();
+            for (at, words) in words.into_iter().enumerate() {
                 for word in words {
-                    naming.entry(word).or_default().push(path.clone());
+                    naming.entry(word).or_default().push(at as u32);
                 }
             }
             naming
         });
-        naming.get(word).cloned().unwrap_or_default()
+        // A hash shared by two words only adds a file to check.
+        naming
+            .get(&word_hash(word.as_bytes()))
+            .map(|at| at.iter().map(|&at| files[at as usize].clone()).collect())
+            .unwrap_or_default()
     }
 }
 
@@ -3232,9 +3242,9 @@ fn new_calls(facts: &crate::core::Facts) -> impl Iterator<Item = (usize, &crate:
         .filter(|(_, call)| call.name == "new" && call.recv != crate::core::RecvShape::Super)
 }
 
-/// Every word of a source that starts with a capital: the constants it may
-/// name, and some words of its comments and strings.
-fn capitalized_words(text: &[u8]) -> HashSet<String> {
+/// Every word of a source that starts with a capital, hashed: the
+/// constants it may name, and some words of its comments and strings.
+fn capitalized_words(text: &[u8]) -> HashSet<u64> {
     let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
     let mut words = HashSet::new();
     let mut at = 0;
@@ -3248,58 +3258,21 @@ fn capitalized_words(text: &[u8]) -> HashSet<String> {
             at += 1;
         }
         if text[start].is_ascii_uppercase() {
-            words.insert(String::from_utf8_lossy(&text[start..at]).into_owned());
+            words.insert(word_hash(&text[start..at]));
         }
     }
     words
 }
 
-/// Every `X.new` of the checkout and what it constructs, which no query
-/// changes (DEC-541).
-struct Constructions {
-    /// (file, the call's index in its facts).
-    sites: Vec<(String, usize)>,
-    /// The sites on a class whose `initialize` is settled — a definite
-    /// class, not a possible subclass — by that `initialize`'s file and line:
-    /// any other `initialize` they rule out at a glance.
-    settled: HashMap<(String, u32), Vec<usize>>,
-    /// The rest, tiered against every query.
-    open: Vec<usize>,
-}
-
-impl Constructions {
-    fn build(tree: &Tree, store: &Store, root: &Path, root_str: &str, parsed: &mut Parsed) -> Self {
-        use crate::resolve::refs;
-        let files = store.files_calling(root_str, "new").unwrap_or_default();
-        parsed.read(root, &files);
-        parsed.construct(tree, &files);
-        let sites: Vec<(String, usize)> = files
-            .iter()
-            .filter_map(|path| Some((path, parsed.facts.get(path)?.as_ref()?)))
-            .flat_map(|(path, facts)| new_calls(facts).map(|(at, _)| (path.clone(), at)))
-            .collect();
-        let mut settled: HashMap<(String, u32), Vec<usize>> = HashMap::new();
-        let mut open = Vec::new();
-        for (i, site) in sites.iter().enumerate() {
-            match refs::settled_initialize(&parsed.made[site]) {
-                Some(found) => settled
-                    .entry((found.site.path.clone(), found.site.line))
-                    .or_default()
-                    .push(i),
-                None => open.push(i),
-            }
-        }
-        Constructions {
-            sites,
-            settled,
-            open,
-        }
-    }
+/// FNV-1a: a word's key in the index, cheap to make by the million.
+fn word_hash(word: &[u8]) -> u64 {
+    word.iter().fold(0xcbf2_9ce4_8422_2325, |hash, &b| {
+        (hash ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    })
 }
 
 /// The `initialize` an instance of an `initialize` query's owner runs —
-/// its own, or a module's it prepends — which the settled constructions
-/// that may reach it are filed under. `None` for any other query.
+/// its own, or a module's it prepends. `None` for any other query.
 fn own_initialize(
     tree: &Tree,
     query: &crate::resolve::refs::Query,
@@ -3310,14 +3283,12 @@ fn own_initialize(
 }
 
 /// `gather_refs` for an `initialize` its owner defines, across `--dead`'s
-/// queries: its own name's calls are read as ever, and of the `X.new`s only
-/// those filed under it and those no class settles are tiered — the rest
-/// construct a class with another `initialize`, and are counted as such.
-///
-/// `--dead` reports an `initialize` only when nothing reaches it, so one
-/// site that does settles the answer: those of its own name, then the
-/// `X.new`s in files that name its class, are tried first, and the whole
-/// checkout's are worked out only for an `initialize` they do not reach.
+/// queries, which needs only whether a site reaches it (DEC-541): `--dead`
+/// reports one nothing reaches. The calls of its own name are tiered —
+/// every subclass's `super`, read once per run — then the `X.new`s in files
+/// that name a class that runs it or one it inherits from; the first site
+/// that reaches it and is not any class's settles it. One nothing reaches
+/// gets the first untyped `new` that could, for its caveat.
 #[allow(clippy::too_many_arguments)]
 fn gather_constructions(
     tree: &Tree,
@@ -3344,8 +3315,80 @@ fn gather_constructions(
             found.push(reference);
         }
     };
-    // What keeps it alive: a site that reaches it and is not any class's.
     let reaches = |found: &[refs::Reference]| found.iter().any(|r| r.unplaced().is_none());
+    // An `X.new` that reaches it names its class or a class that runs it (a
+    // subclass, or a class mixing it in); a `self.new` that may is in a
+    // class method of a class it inherits from, written where that class is.
+    let runs_own = |class: &str| {
+        tree.lookup(class, false, "initialize")
+            .is_some_and(|m| m.site.path == own.site.path && m.site.line == own.site.line)
+    };
+    // A name written in a file is its last segment, and the file names the
+    // outermost namespace too — to open it, or to write the whole path.
+    let mut names: Vec<(String, String)> = Vec::new();
+    for class in std::iter::once(owner.to_string())
+        .chain(tree.includers_of(owner).into_iter().filter(|c| runs_own(c)))
+    {
+        let name = crate::tree::public_name(&class);
+        let last = name.rsplit("::").next().unwrap_or(name).to_string();
+        let first = name.split("::").next().unwrap_or(name).to_string();
+        if !last.is_empty() && !names.contains(&(last.clone(), first.clone())) {
+            names.push((last, first));
+        }
+    }
+    let mut files: Vec<String> = Vec::new();
+    for (last, first) in &names {
+        let naming = parsed.naming(store, root, root_str, last);
+        let outer: HashSet<String> = parsed
+            .naming(store, root, root_str, first)
+            .into_iter()
+            .collect();
+        files.extend(naming.into_iter().filter(|path| outer.contains(path)));
+    }
+    let calling: HashSet<String> = parsed
+        .calling_new(store, root_str)
+        .iter()
+        .cloned()
+        .collect();
+    for ancestor in &tree.ancestors(owner).chain {
+        files.extend(
+            tree.sites(ancestor)
+                .iter()
+                .filter_map(|site| site.path.strip_prefix(root_str)?.strip_prefix('/'))
+                .filter(|path| calling.contains(*path))
+                .map(str::to_string),
+        );
+    }
+    files.sort();
+    files.dedup();
+    parsed.read(root, &files);
+    parsed.construct(tree, &files);
+    for path in &files {
+        let Some(facts) = parsed.facts.get(path).and_then(Option::as_ref) else {
+            continue;
+        };
+        for call in facts.calls.iter().filter(|c| c.name == "initialize") {
+            let reference = refs::tier_call(tree, facts, call, path, query, target);
+            if reference.tier != refs::Tier::Excluded && reference.unplaced().is_none() {
+                keep(&mut counts, &mut found, reference);
+                return Ok((found, counts));
+            }
+        }
+        for (at, call) in new_calls(facts) {
+            let construct = &parsed.made[&(path.clone(), at)];
+            if !refs::may_run(construct, own) {
+                continue;
+            }
+            let reference =
+                refs::tier_call_with(tree, facts, call, path, query, target, Some(construct));
+            if reference.tier != refs::Tier::Excluded && reference.unplaced().is_none() {
+                keep(&mut counts, &mut found, reference);
+                return Ok((found, counts));
+            }
+        }
+    }
+    // Then every call of its name: a subclass's `super` may be in a file
+    // that calls no `new`.
     parsed.read_callers(tree, store, root, root_str);
     for caller in parsed.callers.as_deref().unwrap_or_default() {
         // Every subclass's `initialize` calls `super`; one in a class whose
@@ -3369,57 +3412,31 @@ fn gather_constructions(
     if reaches(&found) {
         return Ok((found, counts));
     }
-    // The constructions in files that name the class.
-    if parsed.constructions.is_none() {
-        let word = owner.rsplit("::").next().unwrap_or(owner);
-        let files = parsed.naming(store, root, root_str, word);
-        parsed.read(root, &files);
-        parsed.construct(tree, &files);
-        for path in &files {
-            let Some(facts) = parsed.facts.get(path).and_then(Option::as_ref) else {
-                continue;
-            };
-            for (at, call) in new_calls(facts) {
-                let construct = &parsed.made[&(path.clone(), at)];
-                if matches!(construct, refs::Construct::Untyped) {
-                    continue;
-                }
-                let reference =
-                    refs::tier_call_with(tree, facts, call, path, query, target, Some(construct));
-                if reference.tier != refs::Tier::Excluded && reference.unplaced().is_none() {
-                    keep(&mut counts, &mut found, reference);
-                    return Ok((found, counts));
-                }
-            }
-        }
-        parsed.constructions = Some(Constructions::build(tree, store, root, root_str, parsed));
-    }
-    let Some(made) = &parsed.constructions else {
-        unreachable!("built above")
-    };
-    let filed = made
-        .settled
-        .get(&(own.site.path.clone(), own.site.line))
-        .map_or(&[][..], Vec::as_slice);
-    for &i in filed.iter().chain(&made.open) {
-        let (path, at) = &made.sites[i];
+    // Nothing placed reaches it: the first untyped `new` that could, by
+    // file and line, is all its caveat says of those.
+    let calling_new = parsed.calling_new(store, root_str).to_vec();
+    for path in &calling_new {
+        let one = std::slice::from_ref(path);
+        parsed.read(root, one);
+        parsed.construct(tree, one);
         let Some(facts) = parsed.facts.get(path).and_then(Option::as_ref) else {
             continue;
         };
-        let call = &facts.calls[*at];
-        let reference = match &parsed.made[&made.sites[i]] {
-            // Ranking it among the possible is `--refs`' business; `--dead`
-            // needs only whether its arguments fit.
-            refs::Construct::Untyped => refs::untyped_construction(call, path, own),
-            construct => {
-                refs::tier_call_with(tree, facts, call, path, query, target, Some(construct))
-            }
-        };
-        keep(&mut counts, &mut found, reference);
+        let first = new_calls(facts)
+            .filter(|(at, call)| {
+                matches!(parsed.made[&(path.clone(), *at)], refs::Construct::Untyped)
+                    && own.accepts(call.argc)
+            })
+            .min_by_key(|(_, call)| call.pos.line);
+        if let Some((_, call)) = first {
+            keep(
+                &mut counts,
+                &mut found,
+                refs::untyped_construction(call, path, own),
+            );
+            break;
+        }
     }
-    let elsewhere = made.sites.len() - filed.len() - made.open.len();
-    counts.excluded += elsewhere;
-    counts.excluded_different_owner += elsewhere;
     found.sort_by_key(refs::order);
     Ok((found, counts))
 }
@@ -3433,7 +3450,7 @@ fn unplaced_caveat(
     use crate::resolve::refs::Unplaced;
     let mut parts = Vec::new();
     for (kind, what) in [
-        (Unplaced::New, "`new` on an untyped receiver"),
+        (Unplaced::New, "`new` on untyped receivers may reach it"),
         (Unplaced::Super, "`super` whose landing trekr cannot place"),
         (Unplaced::Symbol, "symbol handed to a macro"),
     ] {
@@ -3444,12 +3461,13 @@ fn unplaced_caveat(
         let Some(first) = sites.iter().min_by_key(|r| (&r.path, r.line)) else {
             continue;
         };
-        parts.push(format!(
-            "{} {what} (first at {}:{})",
-            sites.len(),
-            first.path,
-            first.line
-        ));
+        let at = format!("first at {}:{}", first.path, first.line);
+        // Only the first untyped `new` is looked for: finding them all is
+        // typing every `new` in the checkout.
+        parts.push(match kind {
+            Unplaced::New => format!("{what} ({at})"),
+            _ => format!("{} {what} ({at})", sites.len()),
+        });
     }
     if parts.is_empty() {
         return None;
@@ -4910,6 +4928,12 @@ fn dead_in(
         // A `def` its scope may not own: a call of its name whose receiver
         // has no such method may be on the object it is defined on (DEC-562).
         let defined_on = crate::resolve::defined_on(&tree, facts, def, file);
+        // An `initialize` in a block whose `self` is not known is an
+        // anonymous class's (`Class.new do`), built through whatever holds
+        // it: nothing typed can say it is unused.
+        if constructor && defined_on.is_some() {
+            continue;
+        }
         if let Some(on) = &defined_on {
             let (all, _) = gather_refs(
                 &tree,
@@ -6804,9 +6828,11 @@ mod tests {
     #[test]
     fn a_files_capitalized_words_are_its_whole_identifiers() {
         let words = capitalized_words(b"Admin::Widget.new(x_Widget, :Gadget) # Widgets");
-        let mut words: Vec<_> = words.into_iter().collect();
-        words.sort();
-        assert_eq!(words, ["Admin", "Gadget", "Widget", "Widgets"]);
+        let want: HashSet<u64> = ["Admin", "Gadget", "Widget", "Widgets"]
+            .iter()
+            .map(|w| word_hash(w.as_bytes()))
+            .collect();
+        assert_eq!(words, want);
     }
 
     /// A file opened while the checkout's bulk write holds the store goes to

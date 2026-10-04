@@ -808,18 +808,19 @@ pub(crate) fn construct(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
     }
 }
 
-/// The `initialize` a construction certainly runs, when that alone decides
-/// it against any `initialize` asked about: a definite class (no subclass it
-/// may be), whose `new` reaches `Class#new` or may.
-pub(crate) fn settled_initialize(made: &Construct) -> Option<&crate::tree::MethodDef> {
+/// Can a construction be a typed site of `own`, an `initialize` asked
+/// about? Not an untyped one, nor what is no construction, nor a definite
+/// class whose `new` runs another `initialize`.
+pub(crate) fn may_run(made: &Construct, own: &crate::tree::MethodDef) -> bool {
     match made {
+        Construct::Untyped | Construct::Not { .. } => false,
         Construct::Class {
             found: Some(found),
             may_be_below: false,
             made: Construction::Initializes | Construction::Unread,
             ..
-        } => Some(found),
-        _ => None,
+        } => found.site.path == own.site.path && found.site.line == own.site.line,
+        Construct::Class { .. } => true,
     }
 }
 

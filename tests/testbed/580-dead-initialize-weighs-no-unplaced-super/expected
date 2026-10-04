@@ -5,4 +5,7 @@
 # unconstructed class's `initialize` off the list (DEC-541). `--refs` still
 # lists them.
 dead lib/widgets.rb Lonely#initialize=unreferenced~super Built#initialize=none
-refs Lonely#initialize confirmed=0 possible=3
+# An untyped `new` is named by its first site, not counted: counting them
+# all is typing every `new` in the checkout.
+dead lib/widgets.rb Lonely#initialize=unreferenced~receivers
+refs Lonely#initialize confirmed=0 possible=4

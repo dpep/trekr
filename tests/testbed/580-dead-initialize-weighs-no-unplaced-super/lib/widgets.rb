@@ -21,3 +21,5 @@ class Built
 end
 
 Built.new(1, 2)
+
+klass.new(1, 2)
