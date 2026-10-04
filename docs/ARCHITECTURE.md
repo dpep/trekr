@@ -343,7 +343,7 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | `rabl` | a call in a `.rabl` template under `app/views/`: `Rabl::Engine`, then the view context (DEC-526) | 1.0 |
 | `rabl:object` | a symbol `attributes`/`child`/`glue` is handed in a `.rabl` template, or a `node` block's parameter: the object of its scope — `object @post`, a `child`'s reader's records, an extender's object (DEC-526) | 1.0 |
 | `render` | a bare name in a partial that a `render` reaching it hands as a local, typed by what it is handed (DEC-525) | agreeing / handed |
-| `controller` | a template's `@post`: the writes to it in the controller action that renders the template (`posts/show` is `PostsController#show`, `user_mailer/welcome` `UserMailer#welcome`), the `before_action`s whose `only:`/`except:` let them run first, and an action that `render :show`s it; a partial or a layout, every write in the controller's chain. Read from the controller's files (`Tree::file_facts`), typed as an assignment there is (DEC-522) | agreeing / total |
+| `controller` | a template's `@post`: the writes to it in the controller action that renders the template (`posts/show` is `PostsController#show`, `user_mailer/welcome` `UserMailer#welcome`), the `before_action`s whose `only:`/`except:` let them run first, and an action that renders it by name (`render :show`, `render "posts/show"`); a partial or a layout, every write in the controller's chain. Read from the controller's files (`Tree::file_facts`), typed as an assignment there is (DEC-522) | agreeing / total |
 | `literal` | `out = []`, or `"x".upcase` — core knows what a String is | agreeing / total |
 | `sig` | an inline Sorbet `sig` on the method the value came from, or what a chain assigned to the variable returns, read as `chain` reads it (`x = Post.where(…).order(:id)`, DEC-444) | agreeing / total |
 | `sig:param` | the parameter's declared class, from `params(...)` | 1.0 |
@@ -801,7 +801,8 @@ DEC-074). Methods (`cli::dead_in`) are tiered by their receiver-narrowed
 references; classes, modules and constants (`cli::dead_consts`, DEC-420) by
 the `const_ref` rows that resolve to them through Ruby's lookup, a namespace
 by what it holds. Around both, readers of what the index does not hold, each
-a module of `cli`: the views (`views`), names the checkout builds (`built`),
+a module of `cli`: the Haml, Slim, Jbuilder and Builder views (`views`;
+ERB and RABL are indexed, DEC-520), names the checkout builds (`built`),
 the routes (`routes`), YAML config (`config`), generated files
 (`generated`), and for constants the checkout's Ruby, templates and scripts
 as text (`dead_consts::named`) and the conventions that find a class by its
@@ -957,6 +958,12 @@ the new binary in place (DEC-050).
 | `convert.rs` | UTF-16 ↔ byte columns, spans, a per-file line index |
 | `reload.rs` | hot reload: the launch-path stamp, probing the new build, the handoff file, the exec |
 | `log.rs` | the ndjson debugging log, and the usage counts for LSP operations and lifecycle events |
+
+**A view template is a document like a Ruby file** (DEC-520): its facts,
+variables, requires and syntax errors are read from its Ruby (an ERB
+template's tags, blanked around at the same byte offsets) while its own
+text converts columns, a layout's `yield` is no syntax error, and
+definition on a `render`'s name opens the template it names (DEC-524).
 
 **Mapping ranked answers onto LSP**, which has no confidence field:
 

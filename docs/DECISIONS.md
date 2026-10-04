@@ -12553,6 +12553,13 @@ Builder keep it. Testbed 315 keeps its caveat on a Haml view.
 are later decisions; until then a template's implicit call is untyped
 residue, `possible` in `--refs`. Testbed 520.
 
+**Cost.** mastodon indexes 47 more files (3,272 → 3,319), discourse 124
+(11,302 → 11,426). A fresh `--index`, three interleaved rounds each, release
+builds: mastodon 5.03 / 4.71 / 5.78 s → 5.49 / 4.63 / 5.58 s, discourse
+6.75 / 5.86 / 5.67 s → 6.53 / 5.78 / 5.97 s — within the noise. A `--def` in
+a discourse template answers in 0.07–0.10 s warm, a partial's local in
+0.21–0.25 s (it reads the files that call `render`).
+
 ## DEC-521 — A view template runs on its view context: helpers, then ActionView
 
 **Decided.** An implicit call (or one on `self`) in an ERB template under an
@@ -12593,6 +12600,18 @@ helpers (`posts_path`): trekr has no route names, and they stay residue. An
 engine's helpers are its own app's only when they are in the checkout.
 Testbed 521; LSP e2e `an_erb_template_is_answered_at_its_own_positions`.
 
+**Measured**, `--dead app` against 0.8.6, each on a fresh store (with
+DEC-522–526): mastodon `unreferenced` clear / lower 28 / 141 → 28 / 138, 8
+rows moved, all toward use, each read by hand and each a call a mailer
+template makes (`InstanceHelper#site_hostname`, `ApplicationHelper#
+quote_wrap`, `CustomCssController#custom_css_styles` through its
+`helper_method`). discourse 42 / 301 → 42 / 248: 76 rows gain a caller
+(`ApplicationHelper#crawler_post_schema_skip?` from `topics/show.html.erb`,
+`EmbedHelper#get_html`, `UserNotificationsHelper#render_digest_header`; five
+read by hand are each a real call), and 51 `convention-only` rows lose the
+"named in a view" caveat, lower → clear, the template that named them now
+read. None moved away from use.
+
 ## DEC-522 — A template's `@ivar` is what the action that renders it assigned
 
 **Decided.** An instance variable a template reads with no write in the
@@ -12607,7 +12626,8 @@ or underscores as routes are (DEC-344). The writes that vote:
   the controller's chain, unless its `only:` leaves the action out or its
   `except:` names it — read from the controller file's source, since facts
   keep no option values;
-- in an action that renders the template by symbol (`render :show` in
+- in an action that renders the template by name (`render :show`, `render
+  "show"`, `render "widgets/show"`, `render template: "widgets/show"` in
   `create`).
 
 A partial (`_form`) is no action's, and a layout (`layouts/posts`,
@@ -12623,8 +12643,8 @@ controller's bytes, and which controller renders a template a fact of its
 path: storing the first would put every app's ivar writes in the store
 (DEC-012 kept assignments out for their volume) to serve the second.
 
-**Not done.** `render "posts/edit"` and `render template:` from another
-controller; a layout chosen by `layout "x"`. Testbed 522.
+**Not done.** A render of the template from another controller; a layout
+chosen by `layout "x"`. Testbed 522.
 
 ## DEC-524 — A `render`'s name reaches the template it renders
 
@@ -12720,4 +12740,65 @@ column or `ActiveRecord::Base` method with no schema or gem to find it in.
 
 **Not done.** A splat (`attributes *product_attributes`); `node`'s value
 when it names no method; `object` named by a symbol or a call. Testbed 524.
+
+## DEC-523 — Views are scored against a runtime trace of the templates
+
+**Decided.** `script/trace_gold.rb` takes `TREKR_ONLY`, a regexp a call
+site's file must match, so a gold set can be only the calls templates make
+(`\.(erb|rabl)\z`). Rails compiles a template into a method whose frames
+carry the template's own path and line — Erubi keeps a template's lines,
+and the trace's columns land on the template's text — so no mapping is
+needed: on the set below, 197 of 202 sites' line and column land on the
+called name in the template's own text, and the other 5 differ only past a
+multibyte character.
+
+**The set.** mastodon at 2f40549d4 (47 ERB templates, all mailer text views
+but one CSS view; its 310 other views are Haml), its `spec/mailers` and
+`spec/requests/custom_css_spec.rb` (seed 12) run under the trace with
+Vite's manifest stubbed (the clone has no built assets, and an HTML mailer
+layout asks for them): 202 call sites, 197 scored (5 whose gold column
+names another token, the trace counting characters where trekr counts
+bytes past a multibyte character).
+
+**Measured** (`script/gold.py`, `SAMPLE=0`), main (0.8.6) → this lane:
+
+| verdict | main | views |
+|---|---|---|
+| correct | 11 | **100** (50.8 %) |
+| residue-hit | 28 | 4 |
+| declaration | 4 | 18 |
+| declaration-offered | 14 | 26 |
+| right-owner-wrong-site | 0 | 2 |
+| residue-truth-absent | 4 | 4 |
+| residue-nothing-known | 14 | 42 |
+| no-name | 64 | 0 |
+| confidently wrong | 0 | 1 |
+| scored | 139 | 197 |
+
+main read a template as Ruby whole, so 64 positions had no name and 63
+sites' columns named another token. Of the misses now: all 42
+`residue-nothing-known` are route helpers (`edit_user_registration_url`,
+`root_url` — Rails' `url_helpers` module, and Devise's), which this lane
+leaves residue (DEC-521); the 44 declarations are attribute and association
+methods Rails generates; the 2 wrong-site are `module_function
+:extract_status_plain_text` written after its `def`, which trekr answers at
+the `module_function` line (not view-specific). The one confidently wrong
+site is `@account.user&.invite_request&.text.present?`: `text` is a
+`String` column, answered `String#present?`, and at runtime the spec's
+`text` was `nil`, so Ruby ran `Object#present?`.
+
+**Not measured here.** RABL has no runtime set: Spree 2.4, the public app
+found that uses it, needs a bundle and a database this lane did not build;
+DEC-526 reads its answers by hand instead. Discourse's 124 ERB templates
+are not in its gold set, whose exerciser runs no views.
+
+**Regression**, main (0.8.6) → this lane at 8ea32ba, each on a fresh store:
+discourse's gold set (`APP_SAMPLE=600 SAMPLE=300 SEED=12`, context pinned)
+and mastodon's (the same), 900 sites each, and widget_shop's 3,153: not one
+site's verdict, status, confidence or rung moves; confidently wrong stays
+3, 1 and 1. `script/compare.py --engine trekr`, 500 sites: discourse
+correct@1 81.2 %, wrong@1 8.8 %, found 82.8 % and mastodon 64.0 / 19.8 /
+67.8 %, both unchanged. The server's peak RSS on mastodon's run read 243
+and 221 MB against main's 187 and 196 (discourse 288 against 295); it is
+not explained here, and is logged as a follow-up.
 

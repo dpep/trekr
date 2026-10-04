@@ -1,10 +1,12 @@
 # A template's `@widget` had no write in its file, and was typed at best by
 # its name. It is what the controller action that renders the template
 # wrote: the action, a `before_action` it runs, or an action that renders
-# it by name (`render :show`). A partial is no action's: every write in the
-# controller counts, and writes that disagree are ambiguous.
+# it by name (`render :show`, `render "widgets/show"`). A partial is no
+# action's: every write in the controller counts, and writes that disagree
+# are ambiguous.
 def app/views/widgets/show.html.erb:1:13 status=resolved via=controller owner=Widget
 def app/views/widgets/show.html.erb:2:13 status=resolved via=controller owner=Gadget
+def app/views/widgets/show.html.erb:3:12 status=resolved via=controller owner=Gadget
 def app/views/widgets/index.html.erb:1:13 status=resolved via=controller owner=Gadget
 def app/views/widgets/_row.html.erb:1:13 status=ambiguous via=controller
 def app/views/widgets/_row.html.erb:2:12 status=residue

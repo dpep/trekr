@@ -11,6 +11,12 @@ class WidgetsController < ApplicationController
 
   def index
     @widget = Gadget.new
+    @extra = Widget.new
+  end
+
+  def update
+    @extra = Gadget.new
+    render "widgets/show"
   end
 
   private

@@ -92,6 +92,9 @@ fn controller_writes(tree: &Tree, path: &str, target: &str) -> Vec<(String, Arc<
         .into_iter()
         .filter_map(|path| Some((path.clone(), tree.file_facts(&path)?)))
         .collect();
+    let dir = crate::tree::views::under(path, "views")
+        .and_then(|rest| rest.rsplit_once('/'))
+        .map_or("", |(dir, _)| dir);
     let runs: Vec<String> = match &action {
         Some(action) => {
             let mut runs = vec![action.clone()];
@@ -99,7 +102,7 @@ fn controller_writes(tree: &Tree, path: &str, target: &str) -> Vec<(String, Arc<
                 if let Some(source) = &facts.source {
                     runs.extend(callbacks_before(source, action));
                 }
-                runs.extend(rendering(facts, action));
+                runs.extend(rendering(facts, action, dir));
             }
             runs
         }
@@ -203,22 +206,37 @@ pub(crate) fn value_class(
 }
 
 /// The methods of a controller's file that render `action`'s template by
-/// name: a `render :edit` in `update`. The symbol is
-/// recorded as a call of its name; one on the line of a `render` is this.
-fn rendering<'f>(facts: &'f Facts, action: &str) -> impl Iterator<Item = String> + 'f {
+/// name: `render :edit`, `render "edit"`, `render "posts/edit"`, `render
+/// template: "posts/edit"` in `update`. A symbol is recorded as a call of
+/// its name, so one on the line of a `render` is this; a string is a
+/// template the call names (DEC-524). `dir` is the template's directory
+/// under the views.
+fn rendering(facts: &Facts, action: &str, dir: &str) -> Vec<String> {
     let renders: Vec<u32> = facts
         .calls
         .iter()
         .filter(|c| c.name == "render")
         .map(|c| c.pos.line)
         .collect();
-    let action = action.to_string();
-    facts
+    let by_symbol = facts
         .calls
         .iter()
-        .filter(move |c| c.name == action && renders.contains(&c.pos.line))
-        .filter_map(|c| super::enclosing_method(facts, c.pos.line))
+        .filter(|c| c.name == action && renders.contains(&c.pos.line))
+        .map(|c| c.pos.line);
+    let whole = format!("{dir}/{action}");
+    let by_name = facts.templates.iter().filter_map(|t| match &t.names {
+        crate::core::Named::Render(name) | crate::core::Named::Template(name)
+            if name == action || *name == whole =>
+        {
+            Some(t.pos.line)
+        }
+        _ => None,
+    });
+    by_symbol
+        .chain(by_name)
+        .filter_map(|line| super::enclosing_method(facts, line))
         .map(|m| m.name.clone())
+        .collect()
 }
 
 /// The methods a file's `before_action`s run before `action`: each symbol

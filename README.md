@@ -302,6 +302,32 @@ included by metadata, a shared group written inside a module, a string
 of the time on three such batches before each was read. So every row is
 `lower`: run the spec file after deleting one.
 
+### In a view
+
+ERB (`*.erb`) and RABL (`*.rabl`) templates are indexed like Ruby files, at
+their own lines and columns, so `--def`, `--refs`, `--dead` and the editor
+answer in them, and a helper or model method a view calls has that call.
+
+- A bare call runs on the view: a name a controller's `helper_method`
+  exposes, the app's helpers (`app/helpers`, as `helper :all` includes them),
+  then `ActionView::Base` — `resolved_via: view`.
+- `@post` in `posts/show.html.erb` is typed from `PostsController#show`: its
+  writes, a `before_action` that runs for it, an action that `render
+  :show`s; a mailer template from its mailer's action — `resolved_via:
+  controller`.
+- On a `render`'s name (`render "row"`, `render partial: "shared/nav"`,
+  `render @posts`) `--def` answers the partial's file (`under: template`). In
+  the partial, a local a `render` hands it is defined at that key and typed
+  by its value — `resolved_via: render`.
+- In RABL, `self` is the engine, then the view; `object @post` is typed from
+  the controller, and `attributes :title`, `child(:comments)` and a `node`
+  block's parameter resolve on the object of their scope (`rabl:object`); a
+  template that `extends` another lends it its object.
+
+Route helpers (`posts_path`) are residue, and Haml and Slim are not read
+(`--dead` says when one names a row). Measured against a runtime trace of
+mastodon's mailer templates, DEC-523.
+
 ### Where it keeps things
 
 The index is `~/.local/share/trekr/trekr.db`. `TREKR_DB=/some/path.db` points
