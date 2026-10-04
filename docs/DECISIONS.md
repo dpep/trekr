@@ -12895,3 +12895,20 @@ definitions, which every call of the name would then reach.
 analysis behind a local's type (DEC-064) reads no `def`'s receiver, so the
 writes that vote are every write to that name in the scope; one outside the
 enclosing method, or the name being a parameter, makes it unknown.
+
+## DEC-563 — `--refs` at a call asks the side its receiver lands on
+
+**Decided.** `--refs FILE:LINE[:COL]` on a call, and Find References on
+one in the editor, ask about the method on the side the call landed on —
+the class method when the answer is a `def self.x` (or `class << self`)
+of its owner, the instance method when it is a plain `def` — and only when
+neither or both match the landing site do they fall back to the side of
+the `def` the call is written in.
+
+**Why.** Reported beside #7: the side came from `call.singleton`, which
+says whether the *enclosing* `def` is a class method. `Base.build("z")` at
+the top level asked `Base#build` and answered for the instance method, or
+"Base has no method build"; `Base.new.build` in a class method asked
+`Base.build`. Both entry points share `resolve::asked_at`. Testbed 564.
+
+**Resolve only**; no extraction change.

@@ -1,0 +1,7 @@
+# `--refs` at a call took the method's side from the def the call is written
+# in, not from its receiver: `Base.build` at the top level or in an instance
+# method asked `Base#build`, and `Base.new.build` in a class method asked
+# `Base.build` (DEC-563).
+refs app.rb:15:6 resolves_to=Base.build confirmed=2
+refs app.rb:19:10 resolves_to=Base.build confirmed=2
+refs app.rb:7:14 resolves_to=Base#build confirmed=1

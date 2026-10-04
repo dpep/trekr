@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`--refs` at a call asks about the method the call runs.** On
+  `Base.build("z")` at the top level, or in an instance method, it asked for
+  the instance method `Base#build`; on `Base.new.build` in a class method,
+  for `Base.build`. The side now comes from what the call lands on, in the
+  CLI and in the editor's Find References.
 - **`X.new` is a reference to the `initialize` it runs** (#4). `--refs
   'Widget#initialize'` lists each `Widget.new` — and a subclass's that
   inherits it, `self.new` in a class method, `public_send(:new)` — tiered

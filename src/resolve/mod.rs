@@ -395,21 +395,27 @@ fn constructed_without_core(
 
 /// The method `--refs` at a call is asked about, as (name, class side): the
 /// call's own name — or `initialize`, where an `X.new` was answered with the
-/// `initialize` it runs (DEC-541).
+/// `initialize` it runs (DEC-541) — on the side of the method it landed on,
+/// which its receiver decides, not the `def` it is written in (DEC-563).
 pub(crate) fn asked_at(tree: &Tree, call: &Call, answer: &MethodAnswer) -> (String, bool) {
-    let runs_initialize = call.name == "new"
-        && answer.owner.as_deref().is_some_and(|owner| {
-            tree.lookup(owner, false, "initialize").is_some_and(|init| {
-                answer
-                    .sites
-                    .first()
-                    .is_some_and(|site| site.path == init.site.path && site.line == init.site.line)
+    let landed_on = |singleton: bool, name: &str| {
+        answer.owner.as_deref().is_some_and(|owner| {
+            tree.lookup(owner, singleton, name).is_some_and(|found| {
+                answer.sites.first().is_some_and(|site| {
+                    site.path == found.site.path && site.line == found.site.line
+                })
             })
-        });
-    match runs_initialize {
-        true => ("initialize".to_string(), false),
-        false => (call.name.clone(), call.singleton),
+        })
+    };
+    if call.name == "new" && landed_on(false, "initialize") {
+        return ("initialize".to_string(), false);
     }
+    let singleton = match (landed_on(true, &call.name), landed_on(false, &call.name)) {
+        (true, false) => true,
+        (false, true) => false,
+        _ => call.singleton,
+    };
+    (call.name.clone(), singleton)
 }
 
 /// A partial's local: defined where each `render` hands it (DEC-525).
