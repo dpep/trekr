@@ -98,7 +98,7 @@
   extension sends a template only to a server that does, so an older trekr
   is never handed one. A document that is neither Ruby nor a template by its
   name (an `.html` an ERB extension claims) gets no syntax diagnostics.
-- This changes what an index records (store v61): trekr reindexes once after
+- This changes what an index records (store v62): trekr reindexes once after
   upgrading.
 
 - **`--dead` no longer credits the enclosing class with a `def` it does

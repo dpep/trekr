@@ -13151,8 +13151,7 @@ comparison_for?`), 8 `define_method`s in a private section (date_helper's
 `sec`…`year`), and the reported `aead_mode?`, `release` and
 `column_definitions` among the aliases. None moves toward public.
 
-**Extraction changed**: no version bump here (v61 is unreleased); a store
-built earlier keeps the old visibility until its files are re-read.
+**Extraction changed**: store v62.
 
 ## DEC-562 — A `def` its scope may not own is not graded as the scope's
 
