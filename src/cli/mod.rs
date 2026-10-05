@@ -3986,7 +3986,7 @@ fn cmd_refs(
     // query has no use for.
     if query.owner.is_none() {
         crate::usage::flag("by-name");
-        freshen(out, &mut store, &root, None, probe(&root));
+        freshen(out, &mut store, &root, None, scan::Edits::start(&root));
         return cmd_refs_by_name(out, &root, &root_str, &store, &query);
     }
 
@@ -4600,19 +4600,19 @@ fn index_note() -> Option<serde_json::Value> {
 /// (DEC-035): the edits git names, which `edits` was started to find, and —
 /// when git's index moved — the file asked about. More than `BULK` edits is
 /// an operation on the checkout, left to `--index`. Once per checkout per
-/// command (`probe` is `None` once it has been); says what it found
-/// (`Freshness::say`, `index_note`), and returns whether it re-read anything.
+/// command; says what it found (`Freshness::say`, `index_note`), and
+/// returns whether it re-read anything.
 fn freshen(
     out: Output,
     store: &mut Store,
     root: &Path,
     queried: Option<&Path>,
-    edits: Option<scan::Edits>,
+    edits: scan::Edits,
 ) -> bool {
-    let Some(edits) = edits else {
-        return false;
-    };
     let root_str = root.to_string_lossy().into_owned();
+    if checked().iter().any(|(known, _)| *known == root_str) {
+        return false;
+    }
     let found = refresh_for_query(store, root, queried, edits);
     if let Some(found) = &found {
         crate::usage::flag("stale");
@@ -4623,14 +4623,6 @@ fn freshen(
     let refreshed = found.as_ref().is_some_and(|f| !f.refreshed.is_empty());
     checked().push((root_str, found));
     refreshed
-}
-
-/// Git's look at `root`'s working tree, begun — unless this command has
-/// checked `root` already.
-fn probe(root: &Path) -> Option<scan::Edits> {
-    let root_str = root.to_string_lossy();
-    let known = checked().iter().any(|(known, _)| *known == root_str);
-    (!known).then(|| scan::Edits::start(root))
 }
 
 fn refresh_for_query(
@@ -4701,7 +4693,7 @@ fn fresh_tree(
     root: &Path,
     queried: Option<&Path>,
 ) -> anyhow::Result<OneShotTree> {
-    let edits = probe(root);
+    let edits = scan::Edits::start(root);
     let root_str = root.to_string_lossy();
     let tree = build_tree(store, &root_str)?;
     Ok(match freshen(out, store, root, queried, edits) {
@@ -4808,7 +4800,7 @@ fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCode> {
     }
     // Every candidate is a claim about every file: read the edits first.
     for (root, _) in &checkouts {
-        freshen(out, &mut store, root, None, probe(root));
+        freshen(out, &mut store, root, None, scan::Edits::start(root));
     }
     // Across checkouts no one root is "here", so text writes every path
     // whole rather than relative to whichever scope came first.
