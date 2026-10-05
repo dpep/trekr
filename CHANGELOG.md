@@ -9,6 +9,8 @@
   now used by that class, and by the tests when the call is in one — the
   receiver may be a gem's class trekr has not indexed. The patch's methods
   already overrode the class's, and `--ancestors` already showed it.
+- **`TREKR_PROFILE=0` is off everywhere.** One of the tree build's reports
+  (`fixpoint:`) treated any value, `0` included, as on.
 - **The editor recovers when building a checkout's view of the code fails
   partway.** While an index was still filling a checkout, a background
   tree build that crashed was never retried until the index moved on, so

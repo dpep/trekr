@@ -1260,7 +1260,7 @@ impl Tree {
             }
         }
         let t1 = std::time::Instant::now();
-        if std::env::var("TREKR_PROFILE").is_ok() {
+        if profiling() {
             eprintln!(
                 "  fixpoint: {rounds} rounds — {} declarations once, {} revisited — {:.0}ms, {} names",
                 decls.len(),
@@ -2318,6 +2318,22 @@ pub(crate) fn for_test(sources: &[(&str, &str)]) -> Tree {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn profiling_is_asked_by_any_value_but_zero() {
+        for (value, asked) in [
+            (None, false),
+            (Some("0"), false),
+            (Some("1"), true),
+            (Some(""), true),
+        ] {
+            assert_eq!(
+                profile_asked(value.map(std::ffi::OsStr::new)),
+                asked,
+                "{value:?}"
+            );
+        }
+    }
 
     fn tree(sources: &[(&str, &str)]) -> Tree {
         super::for_test(sources)
@@ -4719,6 +4735,27 @@ impl Loader {
     }
 }
 
+/// Set by `--profile`. A process-wide switch rather than a parameter: the
+/// tree is built from half a dozen call sites.
+static PROFILE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Report the tree build's phases on stderr, as `TREKR_PROFILE=1` does.
+pub(crate) fn profile() {
+    PROFILE.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether the tree build reports its phases: `--profile`, or
+/// `TREKR_PROFILE` set to anything but `0`.
+fn profiling() -> bool {
+    static ENV: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    PROFILE.load(std::sync::atomic::Ordering::Relaxed)
+        || *ENV.get_or_init(|| profile_asked(std::env::var_os("TREKR_PROFILE").as_deref()))
+}
+
+fn profile_asked(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|v| v != "0")
+}
+
 /// Where a tree build spent its time, when anyone asked.
 ///
 /// `--profile` has reported the *index* since session 3; a query's own cost was
@@ -4736,16 +4773,12 @@ struct Phases {
 }
 
 impl Phases {
-    fn on() -> bool {
-        std::env::var("TREKR_PROFILE").is_ok_and(|v| v != "0")
-    }
-
     fn time<T, E>(
         &mut self,
         label: &'static str,
         work: impl FnOnce() -> Result<T, E>,
     ) -> Result<T, E> {
-        if !Self::on() {
+        if !profiling() {
             return work();
         }
         let start = std::time::Instant::now();
@@ -4756,7 +4789,7 @@ impl Phases {
     }
 
     fn mark(&mut self, label: &'static str) {
-        if !Self::on() {
+        if !profiling() {
             return;
         }
         let now = std::time::Instant::now();
@@ -4766,7 +4799,7 @@ impl Phases {
     }
 
     fn report(&self) {
-        if !Self::on() || self.marks.is_empty() {
+        if !profiling() || self.marks.is_empty() {
             return;
         }
         let total: std::time::Duration = self.marks.iter().map(|(_, d)| *d).sum();

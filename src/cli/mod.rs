@@ -292,10 +292,7 @@ pub fn run() -> ExitCode {
 
     // An index reports its own phases; the tree it prepares is one of them.
     if cli.profile && cli.index.is_none() {
-        // The tree layer reads this rather than taking a parameter: it is
-        // built from half a dozen call sites and the flag is a whole-process
-        // decision.
-        unsafe { std::env::set_var("TREKR_PROFILE", "1") };
+        crate::tree::profile();
     }
     if cli.no_index {
         autoindex::turn_off();

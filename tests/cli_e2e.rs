@@ -3978,6 +3978,20 @@ fn an_index_prepares_the_tree() {
         profile.contains("snapshot-load") && !profile.contains("assemble"),
         "the query maps what the index prepared: {profile}"
     );
+    let flagged = trekr(&db, &dir, &["--ancestors", "Gadget", "--profile"]);
+    let profile = String::from_utf8_lossy(&flagged.stderr);
+    assert!(
+        profile.contains("snapshot-load"),
+        "--profile too: {profile}"
+    );
+    let off = trekr_env(
+        &db,
+        &dir,
+        &["--ancestors", "Gadget"],
+        &[("TREKR_PROFILE", "0")],
+    );
+    let profile = String::from_utf8_lossy(&off.stderr);
+    assert!(!profile.contains("snapshot-load"), "0 is off: {profile}");
     let _ = fs::remove_dir_all(&dir);
 }
 
