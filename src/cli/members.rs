@@ -25,7 +25,7 @@ pub(super) fn eager(def: &Def) -> bool {
 /// the `RSpec::ExampleGroups::` every group shares.
 fn group_name(asked: &Asked<'_>) -> String {
     let owner = asked.owner();
-    if let Some(name) = owner.strip_prefix("RSpec::SharedExampleGroups::") {
+    if let Some(name) = crate::core::rspec::shared_name(&owner) {
         return format!("shared group {name}");
     }
     owner

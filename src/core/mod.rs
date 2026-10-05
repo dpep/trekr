@@ -613,6 +613,19 @@ pub(crate) mod runtime {
         segment.strip_prefix(HOOK)?.strip_suffix(')')
     }
 
+    const HOOK_MODULE: &str = "on_load(:";
+
+    /// The module an `on_load(:name)` block's `def`s go to (DEC-104).
+    pub(crate) fn hook_module(name: &str) -> String {
+        format!("{HOOK_MODULE}{name})")
+    }
+
+    /// Is this the module an `on_load` block's `def`s make?
+    pub(crate) fn is_hook_module(fqn: &str) -> bool {
+        fqn.strip_prefix(HOOK_MODULE)
+            .is_some_and(|rest| rest.ends_with(')'))
+    }
+
     /// The owner segment for a mixin that lands on whatever mixes the module
     /// in by `how` — `include`, `prepend` or `extend`.
     pub(crate) fn mixed(how: &str) -> String {
@@ -1184,6 +1197,13 @@ impl Call {
 /// A nesting stack round-trips through one TEXT column: scope paths joined by
 /// `;`, innermost first, empty string at top level. Ruby constant paths are
 /// `[A-Za-z0-9_:]` only, so the separator can never appear inside one.
+/// A module trekr makes rather than one the code declares: a shared group's
+/// (DEC-092), an `on_load` block's (DEC-104). Whatever makes another adds it
+/// here, so nothing that asks what the code wrote lists it.
+pub(crate) fn synthetic(fqn: &str) -> bool {
+    rspec::is_shared_module(fqn) || runtime::is_hook_module(fqn)
+}
+
 pub(crate) fn join_nesting(nesting: &[String]) -> String {
     nesting.join(";")
 }
@@ -1266,8 +1286,12 @@ pub(crate) mod rspec {
 
     /// Is this the module a shared group's name makes?
     pub(crate) fn is_shared_module(fqn: &str) -> bool {
-        fqn.strip_prefix(SHARED_GROUPS)
-            .is_some_and(|name| name.starts_with("::"))
+        shared_name(fqn).is_some()
+    }
+
+    /// The shared group's name a module made for one carries.
+    pub(crate) fn shared_name(fqn: &str) -> Option<&str> {
+        fqn.strip_prefix(SHARED_GROUPS)?.strip_prefix("::")
     }
 
     /// Is the innermost scope here an example group?
@@ -1386,6 +1410,19 @@ pub(crate) mod rspec {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_module_trekr_makes_is_synthetic_and_a_written_one_is_not() {
+        for (fqn, made) in [
+            (rspec::shared_module("a widget"), true),
+            (runtime::hook_module("widget_test_case"), true),
+            ("RSpec::SharedExampleGroupsHelper".to_string(), false),
+            ("Widget".to_string(), false),
+            ("on_load".to_string(), false),
+        ] {
+            assert_eq!(synthetic(&fqn), made, "{fqn}");
+        }
+    }
 
     #[test]
     fn nesting_round_trips_through_one_column() {

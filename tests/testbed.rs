@@ -413,13 +413,12 @@ fn check_dead(case: &str, line: &str, answer: &serde_json::Value, failures: &mut
             Some((tier, word)) => (tier.to_string(), Some(word.to_string())),
             None => (want.clone(), None),
         };
-        // A capitalised name with no `#` is a class, module or constant, by
-        // its whole name (`Admin::Widget=unreferenced`).
-        let constant =
-            !method.contains('#') && method.starts_with(|c: char| c.is_ascii_uppercase());
         // `@LINE` is the example group member written at that line, which no
         // owner names (DEC-490).
         let at_line = method.strip_prefix('@').and_then(|n| n.parse::<u64>().ok());
+        // A name with no `#` is a class, module or constant, by its whole
+        // name (`Admin::Widget=unreferenced`, `on_load(:x)=none`).
+        let constant = !method.contains('#') && at_line.is_none();
         let row = rows.iter().find(|row| {
             if let Some(line) = at_line {
                 row["line"] == line && row.get("group").is_some()

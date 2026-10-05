@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`--dead` no longer lists the module trekr makes for an `on_load`
+  block.** The `def`s in an `ActiveSupport.on_load(:name) do … end` block
+  go to a module trekr models (`on_load(:name)`), which `--dead` reported as
+  an unreferenced module — rails' `test_help.rb` listed two. Like a shared
+  example group's module, it is not a constant anyone wrote.
 - **A new binary that is slow to start is tried again.** A running `--lsp`
   server asks an upgraded binary whether it can take over before switching to
   it; one that did not answer within 5 s, as on a heavily loaded machine, was

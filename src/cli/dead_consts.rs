@@ -105,11 +105,9 @@ fn declared_in(
     let prefix = format!("{root}/");
     let mut found = Vec::new();
     for (fqn, kind) in all {
-        // A shared example group is a module trekr makes for a group RSpec
-        // names by a string (DEC-092), not a constant anyone wrote.
         if !matches!(kind.as_str(), "class" | "module" | "constant")
             || crate::tree::public_name(fqn) != fqn
-            || fqn.starts_with("RSpec::SharedExampleGroups::")
+            || crate::core::synthetic(fqn)
         {
             continue;
         }

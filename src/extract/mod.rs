@@ -786,7 +786,7 @@ impl<'a> Extractor<'a> {
             .in_load_hook()
             .filter(|hook| hook.modelled && !hook.yields && self.runs_as_file_loads())?;
         let (name, at) = (hook.name.clone(), hook.at);
-        let module = format!("on_load(:{name})");
+        let module = crate::core::runtime::hook_module(&name);
         if self.hook_modules.insert(name.clone()) {
             let mut decl = self.def(format!("::{module}"), Kind::Module, at, at);
             decl.nesting.clear();

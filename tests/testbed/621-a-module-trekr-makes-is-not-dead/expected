@@ -1,0 +1,5 @@
+# The module trekr makes to hold an `on_load` block's `def`s (DEC-104) is not
+# a constant anyone wrote, so `--dead` has nothing to say about it; it listed
+# rails' test_help.rb's hooks as unreferenced modules. A module written beside
+# it still is.
+dead lib on_load(:widget_test_case)=none Orphan=unreferenced
