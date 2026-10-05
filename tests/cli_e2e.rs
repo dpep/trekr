@@ -243,28 +243,6 @@ fn a_templates_answers_write_paths_relative_to_their_root() {
         assert_eq!(site["path"], want, "{answer}");
         assert_eq!(site["root"], serde_json::json!(root), "{answer}");
     }
-
-    // A write the controller gained in an edit git has not been told of is
-    // read, and said, as for any other answer (DEC-035).
-    let controller = dir.join("app/controllers/widgets_controller.rb");
-    fs::write(
-        &controller,
-        "class WidgetsController\n  def show\n    @title = \"w\"\n    @fresh = 1\n  end\nend\n",
-    )
-    .unwrap();
-    fs::write(
-        dir.join(view),
-        "<%= @title %>\n<%= render \"row\" %>\n<%= @fresh %>\n",
-    )
-    .unwrap();
-    let answer = json(&trekr(
-        &db,
-        &dir,
-        &["--def", &format!("{view}:3:6"), "--json"],
-    ));
-    assert_eq!(answer["definition"][0]["line"], 4, "{answer}");
-    let refreshed = answer["index"]["refreshed_files"].to_string();
-    assert!(refreshed.contains("widgets_controller.rb"), "{answer}");
     let _ = fs::remove_dir_all(&dir);
 }
 

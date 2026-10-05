@@ -6039,11 +6039,11 @@ fn cmd_def(
     let file = std::fs::canonicalize(&spec.path)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| spec.path.clone());
-    let mut checkout = checkout_for_query(Path::new(&spec.path), pinned).ok();
+    let checkout = checkout_for_query(Path::new(&spec.path), pinned).ok();
     // The branches below answer from the file alone, so before any index is
     // waited on, writing their paths against the file's checkout.
-    let file_alone = |checkout: &Option<(PathBuf, Store)>| {
-        if let Some((root, store)) = checkout {
+    let file_alone = || {
+        if let Some((root, store)) = &checkout {
             answered_alone(store, root);
         }
         index_free();
@@ -6053,7 +6053,7 @@ fn cmd_def(
         .templates
         .iter()
         .find(|t| t.pos.line == spec.line && spec.col >= t.pos.col && spec.col < t.pos.col + t.len)
-        && let Some((root, store)) = checkout.as_mut().map(|(root, store)| (&*root, store))
+        && let Some((root, store)) = &checkout
     {
         let relative = std::fs::canonicalize(&spec.path)
             .ok()
@@ -6062,7 +6062,7 @@ fn cmd_def(
             .unwrap_or_else(|| spec.path.clone());
         let class = match &template.names {
             crate::core::Named::Object { value, .. } => {
-                let tree = fresh_tree(out, store, root, Some(Path::new(&spec.path)))?;
+                let tree = build_tree(store, &root.to_string_lossy())?;
                 crate::resolve::views::value_class(&tree, &facts, value, template.pos, &relative)
             }
             _ => None,
@@ -6085,7 +6085,7 @@ fn cmd_def(
     if crate::query::position::at_facts(&facts, spec.line, spec.col).is_none()
         && crate::query::position::word_at(&source, spec.line, spec.col).as_deref() == Some("super")
     {
-        file_alone(&checkout);
+        file_alone();
         return report(
             out,
             serde_json::json!({
@@ -6117,7 +6117,7 @@ fn cmd_def(
                         && spec.col < pos.col + *len as u32
                 })
     {
-        file_alone(&checkout);
+        file_alone();
         return report(
             out,
             serde_json::json!({
@@ -6147,19 +6147,17 @@ fn cmd_def(
             && answer["definition"].as_array().is_some_and(Vec::is_empty)
             && crate::tree::views::ViewTemplate::of(&file).is_some();
         let mut from_controller = Vec::new();
-        if unset_in_template
-            && let Some((root, store)) = checkout.as_mut().map(|(root, store)| (&*root, store))
-        {
+        if unset_in_template && let Some((root, store)) = &checkout {
             let relative = Path::new(&file)
                 .strip_prefix(root)
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|_| spec.path.clone());
-            let tree = fresh_tree(out, store, root, Some(Path::new(&spec.path)))?;
+            let tree = build_tree(store, &root.to_string_lossy())?;
             let name = answer["name"].as_str().unwrap_or_default().to_string();
             from_controller = crate::resolve::views::template_ivar_writes(&tree, &relative, &name);
         }
         if from_controller.is_empty() {
-            file_alone(&checkout);
+            file_alone();
         } else {
             // Read from the tree: its paths are the checkout's, and an index
             // still filling it may not hold the write yet.
@@ -6200,7 +6198,7 @@ fn cmd_def(
     }
     let snapped = crate::query::position::at_or_snap(&facts, spec.line, spec.col);
     let Some((under, snapped)) = snapped else {
-        file_alone(&checkout);
+        file_alone();
         return report(
             out,
             serde_json::json!({
@@ -6216,7 +6214,7 @@ fn cmd_def(
     };
     // The cursor on a definition is a fact of the file, too.
     if let crate::query::position::Under::Definition(_) = under {
-        file_alone(&checkout);
+        file_alone();
     } else if let Some((root, store)) = checkout {
         let need = Need::File(Path::new(&spec.path));
         if let Some(code) = autoindex::ensure(out, &store, &root, need)? {
