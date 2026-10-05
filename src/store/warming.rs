@@ -55,6 +55,19 @@ impl Warming {
         let share = self.read.min(self.of) as f64 / self.of as f64;
         (share * 100.0).floor() / 100.0
     }
+
+    /// How far a first index has read, as every surface says it: of the files
+    /// the checkout's tree spans — its own, its gems' and its Ruby's — which is
+    /// what an answer's confidence is scaled by (DEC-320).
+    pub(crate) fn how_far(&self) -> String {
+        match self.uncounted {
+            true => "files not counted yet".to_string(),
+            false => format!(
+                "{} of {} files read, counting its gems and Ruby's",
+                self.read, self.of
+            ),
+        }
+    }
 }
 
 fn key(root: &str) -> String {

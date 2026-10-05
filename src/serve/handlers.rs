@@ -187,7 +187,7 @@ pub(crate) fn tell_warming(
         return Ok(());
     };
     session.told_warming.insert(located.root);
-    let read = super::fresh::how_far(&warming);
+    let read = warming.how_far();
     let message = match warming.interrupted {
         false => format!(
             "trekr is still indexing this checkout ({read}). Until it finishes, go to \
@@ -1436,7 +1436,7 @@ pub(crate) fn hover(session: &mut Session, params: HoverParams) -> anyhow::Resul
     let warming = session.warming(&located.root);
     let read = warming
         .as_ref()
-        .map(|w| format!(" ({})", super::fresh::how_far(w)))
+        .map(|w| format!(" ({})", w.how_far()))
         .unwrap_or_default();
     if let Some((_, since)) = session
         .reindexing

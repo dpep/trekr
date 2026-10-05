@@ -275,7 +275,9 @@ enum Output {
     Ndjson,
 }
 
-pub fn run() -> ExitCode {
+/// The CLI, handing `--lsp` to `lsp`: the crate root wires in the language
+/// server, so neither front imports the other.
+pub(crate) fn run(lsp: fn(bool) -> anyhow::Result<()>) -> ExitCode {
     let started = std::time::Instant::now();
     crate::store::untracked_memory();
     let cli = match Cli::try_parse() {
@@ -346,10 +348,7 @@ pub fn run() -> ExitCode {
     // The feature each branch counts as; `None` for what is not a use of the
     // engine (`--usage` itself) or is counted by its own front (`--lsp`).
     let (feature, result) = if cli.lsp {
-        (
-            None,
-            crate::serve::run(cli.profile).map(|()| ExitCode::SUCCESS),
-        )
+        (None, lsp(cli.profile).map(|()| ExitCode::SUCCESS))
     } else if let Some(path) = &cli.index {
         (
             Some("index"),
@@ -1192,8 +1191,8 @@ fn index_all(
     let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
     // What the language server or a query wants read first: this index's if
     // it fills the checkout, the one it waits for's if another does.
-    let mut hints = crate::serve::fresh::Hints::listen(
-        crate::serve::fresh::in_background() || autoindex::spawned(),
+    let mut hints = crate::background::Hints::listen(
+        crate::background::in_background() || autoindex::spawned(),
     );
     // The query that started this index claimed the checkout for it.
     let parent = autoindex::spawned().then(std::os::unix::process::parent_id);
@@ -1325,7 +1324,7 @@ fn wait_for_index(
     store: &Store,
     root: &str,
     other: crate::store::Warming,
-    hints: &crate::serve::fresh::Hints,
+    hints: &crate::background::Hints,
 ) -> anyhow::Result<()> {
     use std::io::IsTerminal;
     let started = std::time::Instant::now();
@@ -1348,7 +1347,7 @@ fn wait_for_index(
                      waiting for it to finish",
                     paths::pretty(root),
                     warming.pid,
-                    crate::serve::fresh::how_far(&warming)
+                    warming.how_far()
                 ),
                 secs => eprintln!("trekr: still waiting for the other index ({secs}s)"),
             }
@@ -1467,7 +1466,7 @@ fn index_first(
     files: &scan::Files,
     git_state: i64,
     with_gems: bool,
-    hints: &crate::serve::fresh::Hints,
+    hints: &crate::background::Hints,
     known: &mut Option<HashSet<Oid>>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
@@ -1632,7 +1631,7 @@ fn index_wanted(
     store: &mut Store,
     root: &Path,
     files: &scan::Files,
-    hints: &crate::serve::fresh::Hints,
+    hints: &crate::background::Hints,
     written: &mut HashSet<String>,
     known: &mut Option<HashSet<Oid>>,
     pool: &rayon::ThreadPool,
@@ -1653,7 +1652,7 @@ fn index_wanted(
 fn wanted(
     root: &Path,
     files: &scan::Files,
-    hints: &crate::serve::fresh::Hints,
+    hints: &crate::background::Hints,
     written: &HashSet<String>,
 ) -> (Vec<(String, crate::core::Facts)>, scan::Files) {
     let asked: Vec<(String, crate::core::Facts)> = hints
@@ -1704,7 +1703,7 @@ fn write_early(
     main: &Path,
     root: &Path,
     files: &scan::Files,
-    hints: &crate::serve::fresh::Hints,
+    hints: &crate::background::Hints,
     written: &HashSet<String>,
     (mut read, of): (u64, u64),
     stop: &std::sync::atomic::AtomicBool,
@@ -2321,7 +2320,7 @@ fn cmd_index(
     with_gems: bool,
 ) -> anyhow::Result<ExitCode> {
     // First, before the scan or the pool starts a thread.
-    crate::serve::fresh::yield_if_background();
+    crate::background::yield_if_background();
     incomplete::watch_signals();
     let mut profile = want_profile.then(profile::Profile::default);
     let jobs = worker_count(jobs);
@@ -6621,19 +6620,19 @@ fn cmd_usage(out: Output, days: Option<u32>) -> anyhow::Result<ExitCode> {
 /// The editor's recent misses, oldest first — the positions behind `--usage`'s
 /// `empty` and `unsure` columns (DEC-083).
 fn cmd_misses(out: Output, days: Option<u32>) -> anyhow::Result<ExitCode> {
-    let Some(log) = crate::serve::log::Log::where_to_look() else {
+    let Some(log) = crate::log::Log::where_to_look() else {
         let why = "the LSP log is off or on stderr (TREKR_LOG), so no misses are recorded";
         match out {
             Output::Text => println!("{why}"),
             _ => {
                 eprintln!("trekr: {why}");
-                emit_rows(out, &[] as &[crate::serve::miss::Recorded])?;
+                emit_rows(out, &[] as &[crate::log::misses::Recorded])?;
             }
         }
         return Ok(ExitCode::from(1));
     };
-    let since = days.map(|n| crate::serve::log::days_ago(n.saturating_sub(1)));
-    let misses = crate::serve::miss::read(&log, since.as_deref())?;
+    let since = days.map(|n| crate::log::days_ago(n.saturating_sub(1)));
+    let misses = crate::log::misses::read(&log, since.as_deref())?;
     if emit_rows(out, &misses)? {
         return Ok(exit_on(!misses.is_empty()));
     }
@@ -6919,7 +6918,7 @@ mod tests {
         store.write_part(&root, &other, facts).unwrap();
         store.set_warming(&root, 1, 3).unwrap();
 
-        let hints = crate::serve::fresh::Hints::sent(&[repo.join("open.rb")]);
+        let hints = crate::background::Hints::sent(&[repo.join("open.rb")]);
         let written = HashSet::from(["other.rb".to_string()]);
         let stop = std::sync::atomic::AtomicBool::new(false);
         let early = crate::store::early::path(&main, std::process::id());
@@ -6969,7 +6968,7 @@ mod tests {
             std::fs::write(repo.join(path), source).unwrap();
             files.insert(path.to_string(), scan::hash_blob(source.as_bytes()));
         }
-        let hints = crate::serve::fresh::Hints::sent(&[repo.join("open.rb")]);
+        let hints = crate::background::Hints::sent(&[repo.join("open.rb")]);
         let written = HashSet::from(["open.rb".to_string()]);
         let (asked, part) = wanted(&repo, &files, &hints, &written);
         assert_eq!(asked.len(), 1);

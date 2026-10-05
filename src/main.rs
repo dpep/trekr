@@ -4,5 +4,5 @@ fn main() -> std::process::ExitCode {
     // is the most ordinary thing a caller does with a long result.
     // SAFETY: before any thread starts, restoring a signal's default handler.
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
-    trekr::cli::run()
+    trekr::run()
 }

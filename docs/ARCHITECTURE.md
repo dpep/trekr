@@ -34,9 +34,12 @@ boundary below is stated as a prohibition rather than a preference.
 
 The CLI (`cli/`) and the LSP (`serve/`) are fronts over these layers. What
 both ask — the fact under a position, an example group's members, how a call
-site is tiered for references — lives in
-`query/`, beneath either, so neither front imports the other and no layer
-imports a front; `tests/layers.rs` fails on a leak.
+site is tiered for references — lives in `query/`, beneath either. What both
+share at run time sits beneath them too: `background.rs`, the index child's
+side of a spawned `--index` (its hints and its lowered priority), and
+`log.rs`, the ndjson log the server writes and `--usage --misses` reads.
+`lib.rs` hands `--lsp` from the CLI to the server, so neither front imports
+the other and no layer imports a front; `tests/layers.rs` fails on a leak.
 
 ### `scan/` — the only module that knows a path exists
 
@@ -959,10 +962,10 @@ the new binary in place (DEC-050).
 | `doc.rs` | a definition's doc comment and its signature as written, read from its file when asked (DEC-052) |
 | `schema.rs` | a model's table and a column's facts for a hover, read from the schema dump when asked (DEC-481) |
 | `complete.rs` | completion (DEC-040), and the chosen item's doc on resolve (DEC-052) |
-| `fresh.rs` | refresh-on-save and the background `--index` child (DEC-039) |
+| `fresh.rs` | refresh-on-save and spawning the background `--index` child (DEC-039); the child's side is `src/background.rs` |
 | `convert.rs` | UTF-16 ↔ byte columns, spans, a per-file line index |
 | `reload.rs` | hot reload: the launch-path stamp, probing the new build, the handoff file, the exec |
-| `log.rs` | the ndjson debugging log, and the usage counts for LSP operations and lifecycle events |
+| `miss.rs` | a click that came back empty, written to the log (DEC-083); `src/log/misses.rs` reads it back |
 
 **A view template is a document like a Ruby file** (DEC-520): its facts,
 variables, requires and syntax errors are read from its Ruby (an ERB

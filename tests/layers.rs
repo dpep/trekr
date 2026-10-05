@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 /// The fronts a module under `src/<top>` may not name.
 fn forbidden(top: &str) -> &'static [&'static str] {
     match top {
-        "cli" | "main.rs" | "lib.rs" => &[],
+        "main.rs" | "lib.rs" => &[],
+        "cli" => &["serve"],
         "serve" => &["cli"],
         _ => &["cli", "serve"],
     }

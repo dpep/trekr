@@ -14,6 +14,11 @@
 //! database, one compact object per line, at a level cheap enough to leave on.
 //! `TREKR_LOG=-` sends it to stderr instead, `TREKR_LOG=off` silences it, and
 //! `TREKR_LOG_LEVEL=debug` adds the wire-level params.
+//!
+//! Below both fronts: the server writes it, an index child it spawned logs
+//! its priority there, and `--usage --misses` reads its `miss` lines back.
+
+pub(crate) mod misses;
 
 use serde_json::json;
 use std::io::Write;
