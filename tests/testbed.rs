@@ -36,6 +36,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+mod support;
+
 fn git(dir: &Path, args: &[&str]) {
     // Run from a git hook or `rebase --exec`, these are set to the outer repo,
     // and `init`/`commit` here would write into it instead of the scratch dir.
@@ -52,16 +54,7 @@ fn git(dir: &Path, args: &[&str]) {
 
 /// Stage one case as a real checkout with its own database.
 fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
-    let base = std::env::temp_dir();
-    let dir = base.join(format!("trekr-bed-{}-{label}", std::process::id()));
-    let db = base.join(format!("trekr-bed-{}-{label}.db", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    for suffix in ["", "-wal", "-shm"] {
-        let _ = fs::remove_file(format!("{}{suffix}", db.display()));
-    }
-    let _ = fs::remove_dir_all(db.with_extension("trees"));
-    let _ = fs::remove_dir_all(db.with_extension("core"));
-    fs::create_dir_all(&dir).unwrap();
+    let (dir, db) = support::scratch(label);
 
     // Every case runs on a Ruby installed as rvm installs one, under a home
     // of its own, which every command is run with (DEC-180): its core
@@ -746,6 +739,11 @@ fn check_case(case: &Path, label: &str, checks: &mut usize, failures: &mut Vec<S
             other => failures.push(format!("{label}: unknown verb `{other}`")),
         }
     }
-    let _ = fs::remove_dir_all(&dir);
-    let _ = fs::remove_dir_all(home_of(&dir));
+    // A case that passed is done with its scratch now, not at exit; one that
+    // failed keeps it to look at.
+    if failures.is_empty() {
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(home_of(&dir));
+        let _ = fs::remove_dir_all(db.parent().expect("a store in its own directory"));
+    }
 }

@@ -8,45 +8,16 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
-/// A scratch repo, and a database in a directory of its own: what is written
-/// beside a store is that store's alone.
+mod support;
+
+use support::fixture_home;
+
+/// A scratch repo and database for one test (see `support::scratch`), whose
+/// checkout runs on the fixture's Ruby.
 fn scratch(label: &str) -> (PathBuf, PathBuf) {
-    let base = std::env::temp_dir();
-    let dir = base.join(format!("trekr-lsp-{}-{label}", std::process::id()));
-    let store = base.join(format!("trekr-lsp-{}-{label}.store", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    let _ = fs::remove_dir_all(&store);
-    fs::create_dir_all(&dir).unwrap();
-    fs::create_dir_all(&store).unwrap();
+    let (dir, db) = support::scratch(label);
     fs::write(dir.join(".ruby-version"), "9.8.7\n").unwrap();
-    (dir, store.join("trekr.db"))
-}
-
-const SUITE: &str = "lsp";
-
-/// A home holding one Ruby, 9.8.7, installed as rvm installs one, with an
-/// empty stdlib and the rbs fixture as its signatures: what core is served
-/// from (DEC-240), whatever Ruby the machine running the suite has. Every
-/// scratch checkout names it.
-fn fixture_home() -> PathBuf {
-    static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    HOME.get_or_init(|| {
-        let home = std::env::temp_dir().join(format!("trekr-{SUITE}-ruby-{}", std::process::id()));
-        let lib = home.join(".rvm/rubies/ruby-9.8.7/lib/ruby");
-        fs::create_dir_all(lib.join("9.8.0")).unwrap();
-        fs::create_dir_all(lib.join("gems/9.8.0/specifications/default")).unwrap();
-        fs::create_dir_all(lib.join("gems/9.8.0/gems")).unwrap();
-        let rbs = lib.join("gems/9.8.0/gems/rbs-9.9.9");
-        if !rbs.exists() {
-            std::os::unix::fs::symlink(
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rbs"),
-                rbs,
-            )
-            .unwrap();
-        }
-        home
-    })
-    .clone()
+    (dir, db)
 }
 
 /// A command with git's repository-locating variables cleared. A gate run
@@ -1907,9 +1878,7 @@ fn a_file_outside_the_clients_root_is_still_answered() {
 fn an_outline_needs_no_index_and_no_repository() {
     let (root, db) = scratch("outline-root");
     git(&root, &["init", "-q"]);
-    let loose = std::env::temp_dir().join(format!("trekr-lsp-{}-loose", std::process::id()));
-    let _ = fs::remove_dir_all(&loose);
-    fs::create_dir_all(&loose).unwrap();
+    let loose = support::fresh("loose");
     fs::write(loose.join("app.rb"), "module Loose\n  def go\n  end\nend\n").unwrap();
 
     let mut session = Session::start(&db, &root);
@@ -2405,8 +2374,8 @@ fn the_binary() -> Vec<u8> {
 
 /// The database `scratch(label)` hands out, for a helper that kept it.
 fn scratch_db(label: &str) -> PathBuf {
-    std::env::temp_dir()
-        .join(format!("trekr-lsp-{}-{label}.store", std::process::id()))
+    support::root()
+        .join(format!("{label}.store"))
         .join("trekr.db")
 }
 
@@ -4141,7 +4110,7 @@ fn locations_come_back_in_the_spelling_the_client_used() {
 
 /// A checkout requiring its own files and a vendored gem's. `shelf` is both
 /// the checkout's `lib/shelf.rb` and the gem's, so it has two answers.
-fn require_repo(dir: &Path) {
+fn require_repo(dir: &Path, db: &Path) {
     git(dir, &["init", "-q"]);
     let gem = dir.join("vendor/bundle/ruby/3.3.0/gems/shelf-1.0.0/lib");
     fs::create_dir_all(gem.join("shelf")).unwrap();
@@ -4166,7 +4135,7 @@ fn require_repo(dir: &Path) {
     let indexed = trekr()
         .args(["--index"])
         .current_dir(dir)
-        .env("TREKR_DB", dir.with_extension("db"))
+        .env("TREKR_DB", db)
         .output()
         .unwrap();
     assert!(indexed.status.success());
@@ -4197,9 +4166,9 @@ fn definition_at(
 }
 
 fn require_session(label: &str, capabilities: serde_json::Value) -> (PathBuf, Session) {
-    let (dir, _) = scratch(label);
-    require_repo(&dir);
-    let mut session = Session::start(&dir.with_extension("db"), &dir);
+    let (dir, db) = scratch(label);
+    require_repo(&dir, &db);
+    let mut session = Session::start(&db, &dir);
     session.initialize_with(&dir, capabilities);
     (dir, session)
 }

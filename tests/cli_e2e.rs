@@ -7,46 +7,16 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-/// A scratch repo and database for one test, cleaned before use so a crashed
-/// prior run cannot poison this one. The database is in a directory of its
-/// own: what is written beside a store — its tree snapshots, core's files,
-/// usage counts, an earlier build's leftovers — is that store's alone.
+mod support;
+
+use support::{fixture_home, git_only};
+
+/// A scratch repo and database for one test (see `support::scratch`), whose
+/// checkout runs on the fixture's Ruby.
 fn scratch(label: &str) -> (PathBuf, PathBuf) {
-    let base = std::env::temp_dir();
-    let dir = base.join(format!("trekr-e2e-{}-{label}", std::process::id()));
-    let store = base.join(format!("trekr-e2e-{}-{label}.store", std::process::id()));
-    let _ = fs::remove_dir_all(&dir);
-    let _ = fs::remove_dir_all(&store);
-    fs::create_dir_all(&dir).unwrap();
+    let (dir, db) = support::scratch(label);
     fs::write(dir.join(".ruby-version"), "9.8.7\n").unwrap();
-    (dir, store.join("trekr.db"))
-}
-
-const SUITE: &str = "e2e";
-
-/// A home holding one Ruby, 9.8.7, installed as rvm installs one, with an
-/// empty stdlib and the rbs fixture as its signatures: what core is served
-/// from (DEC-240), whatever Ruby the machine running the suite has. Every
-/// scratch checkout names it.
-fn fixture_home() -> PathBuf {
-    static HOME: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    HOME.get_or_init(|| {
-        let home = std::env::temp_dir().join(format!("trekr-{SUITE}-ruby-{}", std::process::id()));
-        let lib = home.join(".rvm/rubies/ruby-9.8.7/lib/ruby");
-        fs::create_dir_all(lib.join("9.8.0")).unwrap();
-        fs::create_dir_all(lib.join("gems/9.8.0/specifications/default")).unwrap();
-        fs::create_dir_all(lib.join("gems/9.8.0/gems")).unwrap();
-        let rbs = lib.join("gems/9.8.0/gems/rbs-9.9.9");
-        if !rbs.exists() {
-            std::os::unix::fs::symlink(
-                Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/rbs"),
-                rbs,
-            )
-            .unwrap();
-        }
-        home
-    })
-    .clone()
+    (dir, db)
 }
 
 fn git(dir: &Path, args: &[&str]) {
@@ -128,25 +98,6 @@ fn neutral(mut command: Command) -> Command {
         command.env_remove(var);
     }
     command
-}
-
-/// A directory holding only `git`, for a `PATH` that finds no `ruby`.
-fn git_only() -> PathBuf {
-    static DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
-    DIR.get_or_init(|| {
-        let git = std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())
-            .map(|dir| dir.join("git"))
-            .find(|git| git.is_file())
-            .expect("git on PATH");
-        let dir = std::env::temp_dir().join(format!("trekr-e2e-git-{}", std::process::id()));
-        fs::create_dir_all(&dir).unwrap();
-        let link = dir.join("git");
-        if !link.exists() {
-            std::os::unix::fs::symlink(git, link).unwrap();
-        }
-        dir
-    })
-    .clone()
 }
 
 fn stdout(out: &Output) -> String {
