@@ -67,6 +67,13 @@
 --dead $.candidates[].test_refs: int
 --dead $.candidates[].tier: string
 --dead $.candidates[].visibility: string
+--dead $.index: object
+--dead $.index.cause: string
+--dead $.index.hint: string
+--dead $.index.refreshed: null
+--dead $.index.refreshed_files: array
+--dead $.index.refreshed_files[]: string
+--dead $.index.stale: bool
 --dead $.scope: int
 --dead $.summary: object
 --dead $.summary.candidates: int
@@ -114,6 +121,15 @@
 --def $.definition[].path: string
 --def $.definition[].root: string
 --def $.fqn: string
+--def $.index: object
+--def $.index.busy: string
+--def $.index.busy_files: array
+--def $.index.busy_files[]: string
+--def $.index.hint: string
+--def $.index.refreshed: null|string
+--def $.index.refreshed_files: array
+--def $.index.refreshed_files[]: string
+--def $.index.stale: bool
 --def $.kind: string
 --def $.name: string
 --def $.owner: string
@@ -197,6 +213,13 @@
 --refs $.group: string
 --refs $.helpers_read: int
 --refs $.hint: string
+--refs $.index: object
+--refs $.index.cause: string
+--refs $.index.hint: string
+--refs $.index.refreshed: null|string
+--refs $.index.refreshed_files: array
+--refs $.index.refreshed_files[]: string
+--refs $.index.stale: bool
 --refs $.inherited: bool
 --refs $.kind: string
 --refs $.method: string
@@ -230,12 +253,26 @@
 --refs $.variable: string
 --refs $[]: object
 --refs $[].col: int
+--refs $[].kind: string
 --refs $[].line: int
 --refs $[].nesting: array
 --refs $[].nesting[]: string
+--refs $[].owner: string
 --refs $[].path: string
+--refs $[].receiver: string
 --refs $[].role: string
 --refs $[].root: string
+--refs $[].tier: string
+--refs NAME --ndjson $: object
+--refs NAME --ndjson $.answer: object
+--refs NAME --ndjson $.answer.index: object
+--refs NAME --ndjson $.answer.index.cause: string
+--refs NAME --ndjson $.answer.index.hint: string
+--refs NAME --ndjson $.answer.index.refreshed: null
+--refs NAME --ndjson $.answer.index.refreshed_files: array
+--refs NAME --ndjson $.answer.index.refreshed_files[]: string
+--refs NAME --ndjson $.answer.index.stale: bool
+--refs NAME --ndjson $.answer.rows: int
 --status $: object
 --status $.checkouts: array
 --status $.checkouts[]: object

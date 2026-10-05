@@ -912,8 +912,80 @@ fn every_testbed_case_answers_as_recorded() {
     );
     // A run of some cases sees only some shapes.
     if std::env::var_os("TESTBED_ONLY").is_none() {
+        working_tree_shapes();
         shapes::check();
     }
+}
+
+/// The `index` object every query that reads edits carries (DEC-035), in each
+/// of its forms, for the shape golden: a clean case never has one. An
+/// unstaged edit and an untracked file, read; an edit left at the indexed
+/// version while another process holds the store (`busy`); and more changes
+/// than a query reads (`stale`, `cause`).
+fn working_tree_shapes() {
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/working-tree");
+    let (dir, db) = stage(&fixture, "working-tree");
+    let queries: [&[&str]; 5] = [
+        &["--def", "app.rb:3:5", "--json"],
+        &["--refs", "Widget#fresh", "--json"],
+        &["--refs", "app.rb:3:5", "--json"],
+        &["--refs", "fresh", "--json"],
+        &["--dead", ".", "--json"],
+    ];
+    let ask_all = || {
+        for args in queries {
+            trekr(&db, &dir, args);
+        }
+        // `--refs NAME`'s `--json` is a bare array; `--ndjson` says `index`
+        // in its closing line.
+        let out = trekr_in(&dir)
+            .args(["--refs", "fresh", "--ndjson"])
+            .env("TREKR_DB", &db)
+            .output()
+            .expect("run trekr");
+        let text = String::from_utf8_lossy(&out.stdout);
+        if let Some(last) = text.lines().last() {
+            let closing = serde_json::from_str(last).unwrap_or(serde_json::Value::Null);
+            shapes::record(&["--refs NAME --ndjson"], &closing);
+        }
+    };
+
+    let app = dir.join("app.rb");
+    let source = fs::read_to_string(&app).unwrap();
+    let edited = source.replace("    helper\n", "    helper\n    fresh\n");
+    fs::write(
+        &app,
+        edited.replace("  def helper", "  def fresh\n  end\n\n  def helper"),
+    )
+    .unwrap();
+    fs::write(
+        dir.join("extra.rb"),
+        "class Extra\n  def run\n    Widget.new.fresh\n  end\nend\n",
+    )
+    .unwrap();
+    ask_all();
+
+    // Changed again while a writer holds the store: left at the indexed
+    // version, and said so.
+    fs::write(
+        &app,
+        format!("# moved\n{}", fs::read_to_string(&app).unwrap()),
+    )
+    .unwrap();
+    let held = rusqlite::Connection::open(&db).unwrap();
+    held.execute_batch("BEGIN IMMEDIATE").unwrap();
+    trekr(&db, &dir, &["--def", "app.rb:4:5", "--json"]);
+    drop(held);
+
+    for n in 0..33 {
+        fs::write(
+            dir.join(format!("more_{n}.rb")),
+            format!("class More{n}\nend\n"),
+        )
+        .unwrap();
+    }
+    ask_all();
+    let _ = fs::remove_dir_all(&dir);
 }
 
 fn label_of(case: &Path) -> String {
