@@ -248,15 +248,16 @@ fn lsp_at(
     // A pipe read has no timeout, and a server that never answers would hang
     // CI rather than fail it — which is exactly how the retirement bug reached
     // main, passing on macOS and parking forever on Linux. Bound the wait so
-    // the worst case is a red test.
-    let watchdog = child.id();
-    std::thread::spawn(move || {
-        std::thread::sleep(std::time::Duration::from_secs(30));
-        // Harmless if it already exited: the id is reaped by `wait` below.
-        let _ = Command::new("kill")
-            .arg("-9")
-            .arg(watchdog.to_string())
-            .status();
+    // the worst case is a red test. The watchdog stands down once the reading
+    // is over, and is joined before `wait` reaps the child: a reaped pid is
+    // free for the system to hand to another process.
+    let pid = child.id();
+    let (over, told) = std::sync::mpsc::channel::<()>();
+    let watchdog = std::thread::spawn(move || {
+        let waited = told.recv_timeout(std::time::Duration::from_secs(30));
+        if waited == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
+            let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
+        }
     });
 
     let mut send = |value: serde_json::Value| {
@@ -312,6 +313,8 @@ fn lsp_at(
         }
     }
     drop(stdin);
+    drop(over);
+    let _ = watchdog.join();
     let _ = child.kill();
     let _ = child.wait();
     found
