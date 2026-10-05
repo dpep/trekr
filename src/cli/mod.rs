@@ -4568,6 +4568,17 @@ fn index_note() -> Option<serde_json::Value> {
     Some(value)
 }
 
+/// Why files beyond those this command read may differ from the index, when
+/// they may.
+fn lag() -> Option<String> {
+    let checked = checked();
+    let lag: Vec<&str> = checked
+        .iter()
+        .filter_map(|(_, found)| found.as_ref()?.lag.as_deref())
+        .collect();
+    (!lag.is_empty()).then(|| lag.join("; "))
+}
+
 /// Read what changed since the index into `store`, for this command only
 /// (DEC-035): every file `probe` finds edited, added or deleted, up to
 /// `BULK`, and the file asked about whatever it found. Once per checkout
@@ -5296,10 +5307,15 @@ fn cmd_def(
                 .as_str()
                 .unwrap_or(answer["name"].as_str().unwrap_or("?")),
         ),
+        // The JSON carries `index.stale` and its `cause` beside the reason;
+        // a line of text has only itself to say it.
         None => format!(
-            "{}  {}",
+            "{}  {}{}",
             answer["name"].as_str().unwrap_or("?"),
             answer["reason"].as_str().unwrap_or("unresolved"),
+            lag()
+                .map(|lag| format!("; but {lag}, so a file trekr has not read may define it"))
+                .unwrap_or_default(),
         ),
     };
     // Beside the answer, not on stderr: an answer about a name the caller

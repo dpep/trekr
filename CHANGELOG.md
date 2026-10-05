@@ -15,7 +15,9 @@
   does not collect those yet, so each edited version a query reads stays
   in the store. Past 32 changed files the file asked about is still read and
   the rest is left to `--index`; when git fails or takes over a second, the
-  answer says the working tree was not checked. `--ancestors` and cards
+  answer says the working tree was not checked — and a `--def` that finds
+  the name defined nowhere says, in text too, that a file not read may
+  define it. `--ancestors` and cards
   still read only the index. A copy of the file map with the edits applied
   is kept beside the store, in `trekr.overlays/`, so the next query over the
   same edits pays nothing for them; `--gc` removes it (`overlays` in its

@@ -4239,6 +4239,39 @@ fn past_the_bulk_limit_the_file_asked_about_is_still_read() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Past the bulk limit, a name nothing indexed defines may be defined in a
+/// file left unread: the text answer says so beside its "nowhere", as the
+/// JSON's `stale` and `cause` do.
+#[test]
+fn past_the_bulk_limit_a_name_found_nowhere_says_what_was_not_read() {
+    let (dir, db) = scratch("bulk-nowhere");
+    repo(&dir);
+    for i in 0..40 {
+        fs::write(dir.join(format!("w{i}.rb")), format!("class W{i}\nend\n")).unwrap();
+    }
+    git(&dir, &["add", "-A"]);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    for i in 0..40 {
+        fs::write(
+            dir.join(format!("w{i}.rb")),
+            format!("class W{i}\n  def later_m\n  end\nend\n"),
+        )
+        .unwrap();
+    }
+    fs::write(dir.join("caller.rb"), "def go(x)\n  x.later_m\nend\n").unwrap();
+    let value = json(&trekr(&db, &dir, &["--def", "caller.rb:2:5", "--json"]));
+    assert_eq!(value["status"], "residue", "{value}");
+    assert_eq!(value["index"]["stale"], true, "{value}");
+    let out = trekr(&db, &dir, &["--def", "caller.rb:2:5"]);
+    let text = stdout(&out);
+    assert!(text.contains("more than a query reads"), "{text}");
+    assert!(
+        text.contains("a file trekr has not read may define it"),
+        "{text}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A git that fails or stalls is not taken as "nothing changed": the answer
 /// says the working tree was not checked, and still reads the file asked
 /// about.
