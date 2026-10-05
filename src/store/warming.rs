@@ -267,6 +267,10 @@ fn process(pid: libc::pid_t) -> Option<Process> {
 }
 
 #[cfg(target_os = "linux")]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "procfs, not a checkout file; it reports size 0, so a bounded read would see nothing"
+)]
 fn process(pid: libc::pid_t) -> Option<Process> {
     let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
     // `pid (comm) state …`: the name may hold spaces and parentheses.
