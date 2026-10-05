@@ -243,6 +243,7 @@ fn discover_under(dir: &Path, ceilings: &str) -> Option<PathBuf> {
         .filter(|entry| *entry != start && start.starts_with(entry))
         .max_by_key(|entry| entry.as_os_str().len());
     let device = std::fs::metadata(&start).ok()?.dev();
+    // SAFETY: geteuid takes nothing and cannot fail.
     let uid = unsafe { libc::geteuid() };
     for candidate in start.ancestors() {
         if ceiling.as_ref().is_some_and(|c| c.starts_with(candidate)) {
@@ -296,6 +297,8 @@ fn true_case(dir: &Path) -> Option<PathBuf> {
     let file = std::fs::File::open(dir).ok()?;
     let mut buf = vec![0u8; libc::PATH_MAX as usize];
     let fd = std::os::unix::io::AsRawFd::as_raw_fd(&file);
+    // SAFETY: `fd` is open for as long as `file` lives, and F_GETPATH writes
+    // at most PATH_MAX bytes, the buffer's length.
     if unsafe { libc::fcntl(fd, libc::F_GETPATH, buf.as_mut_ptr()) } == -1 {
         return None;
     }

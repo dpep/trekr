@@ -746,6 +746,7 @@ unsafe extern "C" {
 
 #[cfg(target_os = "macos")]
 unsafe fn lower_io() {
+    // SAFETY: sets this process's own I/O policy; no memory is passed.
     unsafe { setiopolicy_np(0, 0, 4) };
 }
 
@@ -765,6 +766,7 @@ const BEST_EFFORT_LOWEST: libc::c_long = (2 << 13) | 7;
 
 #[cfg(target_os = "linux")]
 unsafe fn lower_io() {
+    // SAFETY: sets this thread's own I/O priority; no memory is passed.
     unsafe { libc::syscall(libc::SYS_ioprio_set, 1, 0, BEST_EFFORT_LOWEST) };
 }
 

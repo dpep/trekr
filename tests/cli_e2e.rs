@@ -4628,6 +4628,7 @@ fn an_index_stopped_by_a_signal_says_it_is_incomplete() {
     let (dir, db, holder) = cut_short_behind_a_lock("index-stopped");
     let queued = spawn_trekr(&db, &dir, &["--index", "--json", "--no-gems"]);
     std::thread::sleep(std::time::Duration::from_millis(1500));
+    // SAFETY: signals our own child, not yet reaped, so its pid is not reused.
     unsafe { libc::kill(queued.id() as i32, libc::SIGTERM) };
     let out = queued.wait_with_output().unwrap();
     holder.execute_batch("ROLLBACK").unwrap();
@@ -4647,6 +4648,7 @@ fn an_index_stopped_with_its_reader_gone_dies_quietly() {
     let mut queued = spawn_trekr(&db, &dir, &["--index", "--json", "--no-gems"]);
     drop(queued.stdout.take());
     std::thread::sleep(std::time::Duration::from_millis(1500));
+    // SAFETY: signals our own child, not yet reaped, so its pid is not reused.
     unsafe { libc::kill(queued.id() as i32, libc::SIGINT) };
     let out = queued.wait_with_output().unwrap();
     holder.execute_batch("ROLLBACK").unwrap();
