@@ -8,11 +8,6 @@
 //! exposes, which sends it to the controller. Path conventions, read here
 //! because the tree is the layer that knows where a declaration is written.
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "reads here predate scan::read_source; converting the last one fails this expect"
-)]
-
 use super::Tree;
 use crate::core::Facts;
 use std::collections::HashMap;
@@ -384,7 +379,7 @@ impl Tree {
             *used = now;
             return Some(facts.clone());
         }
-        let bytes = std::fs::read(path).ok()?;
+        let bytes = crate::scan::read_source(path).ok()?;
         let facts = Arc::new(crate::extract::extract_file(path, &bytes));
         files.insert(path.to_string(), (stamp, facts.clone(), now));
         if files.len() > FACTS_KEPT
@@ -417,7 +412,7 @@ impl Tree {
         {
             return Some(named.clone());
         }
-        let bytes = std::fs::read(path).ok()?;
+        let bytes = crate::scan::read_source(path).ok()?;
         if let Some(word) = naming
             && !bytes.windows(word.len()).any(|w| w == word.as_bytes())
         {
