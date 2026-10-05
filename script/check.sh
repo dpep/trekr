@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The commit gate: format, lint, test — then the VS Code extension's unit
+# The commit gate: format, lint, test, docs — then the VS Code extension's unit
 # tests. CI runs the first three.
 #
 #   script/check.sh          # the commit gate
@@ -30,6 +30,8 @@ command -v cargo >/dev/null 2>&1 || {
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
+# Intra-doc links stay resolvable. CI does not run this step.
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --quiet
 
 # The extension's tests went red unnoticed once, because nothing ran them.
 # No npm is the one reason to skip, and it is said out loud.

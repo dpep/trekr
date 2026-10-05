@@ -7,7 +7,7 @@
 //! exec, so the editor's connection carries on; the new process reads the
 //! handoff instead of waiting for an `initialize` that is never coming.
 //!
-//! Prior art: contour's MCP restart (watch argv[0], stamp by inode) and ae's
+//! Prior art: contour's MCP restart (watch `argv[0]`, stamp by inode) and ae's
 //! daemon step-down (snapshot identity at startup, compare on a tick).
 
 use serde::{Deserialize, Serialize};
@@ -275,7 +275,7 @@ impl Launched {
 ///
 /// `current_exe()` reads `/proc/self/exe` on Linux, which resolves through
 /// brew's symlink to the old Cellar file and so never moves on an upgrade;
-/// after a rename-over it reads `… (deleted)`. argv[0] is the stable name.
+/// after a rename-over it reads `… (deleted)`. `argv[0]` is the stable name.
 fn launch_path() -> Option<PathBuf> {
     let argv0 = PathBuf::from(std::env::args_os().next()?);
     if argv0.as_os_str().is_empty() {
