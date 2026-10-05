@@ -4466,8 +4466,8 @@ fn checkout_for_query(path: &Path, pinned: Option<&Path>) -> anyhow::Result<(Pat
 /// What a query read from the working tree in place of the index, and why
 /// the rest may still lag (DEC-035).
 ///
-/// The model: the store holds what `--index` read, and nothing a query reads
-/// is written to it. Each query compares the working tree with the store and
+/// The model: the store's map is what `--index` read, and a query writes no
+/// map — only the facts of new bytes, content-addressed. Each query compares the working tree with the store and
 /// answers as if the store held what it found (`Store::overlay`), for that
 /// query alone — so a reverted edit simply stops being overlaid, and an
 /// untracked file is read like a tracked one.

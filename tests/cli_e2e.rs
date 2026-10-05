@@ -4088,6 +4088,37 @@ fn queries_over_the_same_deletions_share_one_copy() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A query records the facts of bytes it has not read, as an index would,
+/// and maps nothing to them — which `--gc`, collecting by checkout, keeps.
+#[test]
+fn a_query_records_new_bytes_and_maps_nothing() {
+    let (dir, db) = scratch("query-blob");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    let blobs = || json(&trekr(&db, &dir, &["--status", "--json"]))["totals"]["blobs"].clone();
+    let indexed = blobs().as_i64().unwrap();
+    let file = dir.join("widget.rb");
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        text.replace("  private", "  def fresh\n  end\n\n  private"),
+    )
+    .unwrap();
+    let value = json(&trekr(&db, &dir, &["--refs", "Widget#fresh", "--json"]));
+    assert_eq!(value["definition"][0]["line"], 10, "{value}");
+    assert_eq!(blobs(), indexed + 1);
+
+    git(&dir, &["checkout", "--", "widget.rb"]);
+    let value = json(&trekr(&db, &dir, &["--refs", "Widget#fresh", "--json"]));
+    assert!(
+        value.get("index").is_none(),
+        "the map never named it: {value}"
+    );
+    trekr(&db, &dir, &["--gc", "--older-than", "0"]);
+    assert_eq!(blobs(), indexed + 1, "not collected (yet)");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A file git does not track is read as one it does, edited or deleted.
 #[test]
 fn an_untracked_file_is_read_as_it_is_now() {
