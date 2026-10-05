@@ -210,7 +210,7 @@ fn writes(session: &mut Session, under: &Under) -> Vec<Found> {
 /// controllers that render it (DEC-522).
 fn template_writes(session: &mut Session, under: &Under) -> Vec<Found> {
     let path = under.file.to_string_lossy();
-    if !crate::scan::is_template(&path) || crate::tree::views::under(&path, "views").is_none() {
+    if crate::tree::views::ViewTemplate::of(&path).is_none() {
         return Vec::new();
     }
     let Some(located) = session.locate_query(&under.file) else {

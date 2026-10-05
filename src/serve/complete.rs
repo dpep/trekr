@@ -568,11 +568,11 @@ fn add_methods(
 /// The class a template's `self` is first, when the file is a view
 /// template: `ActionView::Base`, or a RABL template's engine ahead of it.
 fn view_self(relative: &str) -> Option<&'static str> {
-    if crate::tree::views::is_view(relative) {
-        return Some(crate::tree::views::ACTION_VIEW);
-    }
-    (relative.ends_with(".rabl") && crate::tree::views::under(relative, "views").is_some())
-        .then_some(crate::resolve::RABL_ENGINE)
+    use crate::tree::views::ViewTemplate;
+    Some(match ViewTemplate::of(relative)? {
+        ViewTemplate::Erb => crate::tree::views::ACTION_VIEW,
+        ViewTemplate::Rabl => crate::resolve::RABL_ENGINE,
+    })
 }
 
 /// The names a view's `self` answers, in the order a call finds them.

@@ -78,11 +78,28 @@ pub(crate) fn under<'a>(path: &'a str, dir: &str) -> Option<&'a str> {
         .map(|at| &path[at + marker.len() + 1..])
 }
 
-/// Is this file a view template whose `self` is a view context: an ERB
-/// template under `app/views/`. A generator's `.erb` template, or a config
-/// file's, runs on something else.
-pub(crate) fn is_view(path: &str) -> bool {
-    crate::scan::is_erb(path) && under(path, "views").is_some()
+/// A view template a controller renders, by what its `self` is: one under
+/// `app/views/`. A generator's `.erb` template, or a config file's, runs on
+/// something else.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ViewTemplate {
+    /// ERB, run on a view context.
+    Erb,
+    /// RABL, run on its engine.
+    Rabl,
+}
+
+impl ViewTemplate {
+    pub(crate) fn of(path: &str) -> Option<ViewTemplate> {
+        under(path, "views")?;
+        if crate::scan::is_erb(path) {
+            Some(ViewTemplate::Erb)
+        } else if path.ends_with(".rabl") {
+            Some(ViewTemplate::Rabl)
+        } else {
+            None
+        }
+    }
 }
 
 impl Tree {
@@ -425,8 +442,18 @@ mod tests {
             Some("carts/show.html.erb")
         );
         assert_eq!(under("lib/templates/x.erb", "views"), None);
-        assert!(is_view("app/views/a/b.html.erb"));
-        assert!(!is_view("lib/generators/x/templates/migration.erb"));
+        for (path, kind) in [
+            ("app/views/a/b.html.erb", Some(ViewTemplate::Erb)),
+            (
+                "engines/e/app/views/a/b.json.rabl",
+                Some(ViewTemplate::Rabl),
+            ),
+            ("lib/generators/x/templates/migration.erb", None),
+            ("app/views/a/b.html.haml", None),
+            ("app/models/a.rb", None),
+        ] {
+            assert_eq!(ViewTemplate::of(path), kind, "{path}");
+        }
     }
 
     #[test]

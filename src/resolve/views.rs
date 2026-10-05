@@ -10,6 +10,7 @@
 use super::{Receiver, declares_a_bound, type_of};
 use crate::core::{Assign, Call, Facts, Kind};
 use crate::tree::Tree;
+use crate::tree::views::ViewTemplate;
 use std::sync::Arc;
 
 /// The callbacks that run before an action, whose writes it sees.
@@ -95,7 +96,7 @@ pub(crate) fn renderings(tree: &Tree, path: &str) -> Vec<Rendering> {
 fn renderings_at(tree: &Tree, path: &str, depth: usize, seen: &mut Vec<String>) -> Vec<Rendering> {
     use crate::core::Named;
     use crate::tree::views::under;
-    let Some(rest) = under(path, "views").filter(|_| crate::scan::is_template(path)) else {
+    let Some(rest) = under(path, "views").filter(|_| ViewTemplate::of(path).is_some()) else {
         return Vec::new();
     };
     let (dir, file) = rest.rsplit_once('/').unwrap_or(("", rest));
@@ -554,8 +555,7 @@ pub(crate) fn partial_local(tree: &Tree, call: &Call, path: &str) -> Option<Part
         || call.argc != Some(0)
         || call.block
         || !call.nesting.is_empty()
-        || !crate::scan::is_template(path)
-        || crate::tree::views::under(path, "views").is_none()
+        || ViewTemplate::of(path).is_none()
     {
         return None;
     }

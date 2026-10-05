@@ -5788,8 +5788,7 @@ fn cmd_def(
         // controller that renders it (DEC-522).
         let unset_in_template = answer["variable"] == "ivar"
             && answer["definition"].as_array().is_some_and(Vec::is_empty)
-            && crate::tree::views::under(&file, "views").is_some()
-            && crate::scan::is_template(&file);
+            && crate::tree::views::ViewTemplate::of(&file).is_some();
         let mut from_controller = Vec::new();
         if unset_in_template && let Some((root, store)) = &checkout {
             let relative = Path::new(&file)

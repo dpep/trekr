@@ -11,6 +11,7 @@ use super::Receiver;
 use crate::core::{Call, Facts, Pos, RecvShape};
 use crate::extract::LineIndex;
 use crate::tree::Tree;
+use crate::tree::views::ViewTemplate;
 use ruby_prism::Visit;
 use std::collections::HashMap;
 
@@ -240,11 +241,6 @@ fn read_fresh(source: &[u8]) -> Read {
 /// What a RABL template is evaluated on.
 pub(crate) const ENGINE: &str = "Rabl::Engine";
 
-/// Is this file a RABL template a controller renders?
-pub(crate) fn is_rabl(path: &str) -> bool {
-    path.ends_with(".rabl") && crate::tree::views::under(path, "views").is_some()
-}
-
 /// How many templates an `extends` chain is followed through.
 const MAX_EXTENDS: usize = 4;
 
@@ -297,7 +293,7 @@ pub(super) fn symbol_receiver(
     call: &Call,
     path: &str,
 ) -> Option<Receiver> {
-    if call.recv != RecvShape::Symbol || !is_rabl(path) {
+    if call.recv != RecvShape::Symbol || ViewTemplate::of(path) != Some(ViewTemplate::Rabl) {
         return None;
     }
     let read = read(facts.source.as_deref()?);
@@ -314,7 +310,11 @@ fn extended_as(tree: &Tree, path: &str, depth: usize) -> Option<String> {
     let root = std::path::Path::new(tree.checkout_root());
     let mut classes: Vec<String> = Vec::new();
     for name in ["extends", "partial"] {
-        for caller in tree.files_calling(name).iter().filter(|f| is_rabl(f)) {
+        for caller in tree
+            .files_calling(name)
+            .iter()
+            .filter(|f| ViewTemplate::of(f) == Some(ViewTemplate::Rabl))
+        {
             let absolute = root.join(caller).to_string_lossy().into_owned();
             let Some(facts) = tree.file_facts(&absolute) else {
                 continue;
@@ -350,7 +350,7 @@ pub(super) fn param_receiver(
     call: &Call,
     path: &str,
 ) -> Option<Receiver> {
-    if call.recv != RecvShape::Local || !is_rabl(path) {
+    if call.recv != RecvShape::Local || ViewTemplate::of(path) != Some(ViewTemplate::Rabl) {
         return None;
     }
     let name = call.recv_text.as_deref()?;

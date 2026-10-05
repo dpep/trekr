@@ -3219,10 +3219,9 @@ fn view_receiver(tree: &Tree, call: &Call, path: &str) -> Option<Receiver> {
     if !call.nesting.is_empty() {
         return None;
     }
-    let (fqn, via) = match (crate::tree::views::is_view(path), rabl::is_rabl(path)) {
-        (true, _) => (crate::tree::views::ACTION_VIEW, "view"),
-        (_, true) => (rabl::ENGINE, "rabl"),
-        _ => return None,
+    let (fqn, via) = match crate::tree::views::ViewTemplate::of(path)? {
+        crate::tree::views::ViewTemplate::Erb => (crate::tree::views::ACTION_VIEW, "view"),
+        crate::tree::views::ViewTemplate::Rabl => (rabl::ENGINE, "rabl"),
     };
     let engine_has_it = via == "rabl" && tree.lookup(rabl::ENGINE, false, &call.name).is_some();
     if !engine_has_it && let Some(controller) = views::exposed_receiver(tree, &call.name, path, via)
