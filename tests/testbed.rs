@@ -157,6 +157,79 @@ fn copy_tree(from: &Path, to: &Path) {
 /// One `textDocument/hover`, over a real `--lsp` session against the staged
 /// checkout. Returns the markdown the editor would show.
 fn hover_text(db: &Path, dir: &Path, target: &str) -> String {
+    lsp_at(db, dir, target, "textDocument/hover", serde_json::json!({}))["contents"]["value"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// The locations `textDocument/references` lists at `FILE:LINE:COL`, as
+/// `path:line:col` in the checkout, sorted: what the editor shows, to set
+/// beside the CLI's rows for the same position.
+fn lsp_references(db: &Path, dir: &Path, target: &str) -> Vec<String> {
+    let result = lsp_at(
+        db,
+        dir,
+        target,
+        "textDocument/references",
+        serde_json::json!({"context": {"includeDeclaration": false}}),
+    );
+    let roots: Vec<String> = [Some(dir.to_path_buf()), fs::canonicalize(dir).ok()]
+        .into_iter()
+        .flatten()
+        .map(|root| format!("file://{}/", root.display()))
+        .collect();
+    let mut found: Vec<String> = result
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|location| {
+            let uri = location["uri"].as_str().unwrap_or_default();
+            let path = roots
+                .iter()
+                .find_map(|root| uri.strip_prefix(root.as_str()))
+                .unwrap_or(uri);
+            let start = &location["range"]["start"];
+            format!(
+                "{path}:{}:{}",
+                start["line"].as_u64().unwrap_or_default() + 1,
+                start["character"].as_u64().unwrap_or_default() + 1
+            )
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// The CLI's listed rows of a `--refs --json` answer, as [`lsp_references`]
+/// spells them: a method's `references`, or a bare name's mentions.
+fn cli_references(answer: &serde_json::Value) -> Vec<String> {
+    let rows = answer["references"].as_array().or(answer.as_array());
+    let mut found: Vec<String> = rows
+        .into_iter()
+        .flatten()
+        .map(|row| {
+            format!(
+                "{}:{}:{}",
+                row["path"].as_str().unwrap_or_default(),
+                row["line"],
+                row["col"]
+            )
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// One request at `FILE:LINE:COL`, over a real `--lsp` session against the
+/// staged checkout with that file open: its `result`.
+fn lsp_at(
+    db: &Path,
+    dir: &Path,
+    target: &str,
+    method: &str,
+    extra: serde_json::Value,
+) -> serde_json::Value {
     use std::io::{BufRead, BufReader, Write};
     let (file, line, col) = {
         let mut bits = target.rsplitn(3, ':');
@@ -208,13 +281,15 @@ fn hover_text(db: &Path, dir: &Path, target: &str) -> String {
         serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
         "textDocument":{"uri":uri,"languageId":"ruby","version":1,"text":text}}}),
     );
-    send(
-        serde_json::json!({"jsonrpc":"2.0","id":2,"method":"textDocument/hover","params":{
+    let mut params = serde_json::json!({
         "textDocument":{"uri":uri},
-        "position":{"line": line - 1, "character": col - 1}}}),
-    );
+        "position":{"line": line - 1, "character": col - 1}});
+    if let (Some(params), Some(extra)) = (params.as_object_mut(), extra.as_object()) {
+        params.extend(extra.clone());
+    }
+    send(serde_json::json!({"jsonrpc":"2.0","id":2,"method":method,"params":params}));
 
-    let mut found = String::new();
+    let mut found = serde_json::Value::Null;
     for _ in 0..16 {
         let mut length = 0usize;
         loop {
@@ -239,10 +314,7 @@ fn hover_text(db: &Path, dir: &Path, target: &str) -> String {
         }
         let message: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
         if message["id"] == serde_json::json!(2) {
-            found = message["result"]["contents"]["value"]
-                .as_str()
-                .unwrap_or_default()
-                .to_string();
+            found = message["result"].clone();
             break;
         }
     }
@@ -573,6 +645,23 @@ fn check_case(case: &Path, label: &str, checks: &mut usize, failures: &mut Vec<S
             "refs" => {
                 let answer = trekr(&db, &dir, &["--refs", target, "--json"]);
                 check_refs(label, line, &answer, failures);
+                // At a position, the editor's Find References lists what the
+                // CLI lists: one rule, two fronts. Not at a call nothing
+                // places, where the CLI discloses the residue and the editor
+                // lists the bare name's sites instead (DEC-563).
+                let mut at = target.rsplitn(3, ':');
+                let position = at.next().is_some_and(|n| n.parse::<u32>().is_ok())
+                    && at.next().is_some_and(|n| n.parse::<u32>().is_ok())
+                    && at.next().is_some();
+                if position && answer.0["status"] != "residue" {
+                    let editor = lsp_references(&db, &dir, target);
+                    let cli = cli_references(&answer.0);
+                    if editor != cli {
+                        failures.push(format!(
+                            "{label}: {line}\n      the editor listed {editor:?}, the CLI {cli:?}"
+                        ));
+                    }
+                }
             }
             "ancestors" => {
                 let (answer, _) = trekr(&db, &dir, &["--ancestors", target, "--json"]);

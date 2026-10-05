@@ -33,7 +33,8 @@ boundary below is stated as a prohibition rather than a preference.
 ```
 
 The CLI (`cli/`) and the LSP (`serve/`) are fronts over these layers. What
-both ask — the fact under a position, an example group's members — lives in
+both ask — the fact under a position, an example group's members, how a call
+site is tiered for references — lives in
 `query/`, beneath either, so neither front imports the other and no layer
 imports a front; `tests/layers.rs` fails on a leak.
 

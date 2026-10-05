@@ -19,6 +19,7 @@ use super::require::{self, Found, Origin};
 use super::state::{Located, Session};
 use super::variables;
 use crate::core::{Def, Kind};
+use crate::query::members::CheckoutFiles;
 use crate::query::position::{self, Under};
 use crate::query::refs as query_refs;
 use crate::resolve::refs;
@@ -734,13 +735,24 @@ pub(crate) fn references(
     let tier = |facts: &crate::core::Facts, call: &crate::core::Call, path: &str| {
         query_refs::tier(tree, facts, call, path, &query, target.as_deref(), partial)
     };
+    // Made at the first call a shared group's includers may answer.
+    let mut includers: Option<CheckoutFiles> = None;
     let reach = scan_files(&overlay, &root, source, &query, cancel, &tier, |files| {
         for file in files {
             let Some(uri) = file_uri(&root, &file.path) else {
                 continue;
             };
             let lines = LineIndex::new(&file.text);
-            for (_, reference) in file.tiered {
+            for (at, mut reference) in file.tiered {
+                let call = &file.facts.calls[at];
+                if let Some(target) = target.as_deref()
+                    && query_refs::rescuable(&file.facts, call, Some(target), &reference)
+                {
+                    let files = includers.get_or_insert_with(|| {
+                        CheckoutFiles::with_open(store, &root, &root_str, overlay.clone())
+                    });
+                    query_refs::rescue(tree, files, call, target, &mut reference);
+                }
                 if reference.tier == refs::Tier::Excluded {
                     continue;
                 }
@@ -830,7 +842,7 @@ fn member_references(
     pos: crate::core::Pos,
     declarations: bool,
 ) -> anyhow::Result<Option<Vec<Location>>> {
-    use crate::query::members::{CheckoutFiles, member_at_position};
+    use crate::query::members::member_at_position;
     use crate::resolve::members::{Asked, Context, reads};
     let root = located.root.clone();
     let root_str = root.to_string_lossy().into_owned();
@@ -2221,7 +2233,7 @@ pub(crate) fn incoming_calls(
         .store()
         .files_calling_any(&root_str, &refs::called_as(&query))?;
     let overlay = overlay(session, &root);
-    let tree = session.tree(&root)?;
+    let (tree, store) = session.tree_and_store(&root)?;
 
     // Keyed by (file, the caller's def line), in first-seen order.
     let mut callers: Vec<CallHierarchyIncomingCall> = Vec::new();
@@ -2231,6 +2243,7 @@ pub(crate) fn incoming_calls(
     let tier = |facts: &crate::core::Facts, call: &crate::core::Call, path: &str| {
         query_refs::tier(tree, facts, call, path, &query, target.as_deref(), false)
     };
+    let mut includers: Option<CheckoutFiles> = None;
     scan_files(
         &overlay,
         &root,
@@ -2239,13 +2252,21 @@ pub(crate) fn incoming_calls(
         cancel,
         &tier,
         |files| {
-            for file in files {
+            for mut file in files {
                 let Some(uri) = file_uri(&root, &file.path) else {
                     continue;
                 };
                 let lines = LineIndex::new(&file.text);
-                for (at, reference) in &file.tiered {
-                    let call = &file.facts.calls[*at];
+                for (at, mut reference) in std::mem::take(&mut file.tiered) {
+                    let call = &file.facts.calls[at];
+                    if let Some(target) = target.as_deref()
+                        && query_refs::rescuable(&file.facts, call, Some(target), &reference)
+                    {
+                        let files = includers.get_or_insert_with(|| {
+                            CheckoutFiles::with_open(store, &root, &root_str, overlay.clone())
+                        });
+                        query_refs::rescue(tree, files, call, target, &mut reference);
+                    }
                     if reference.tier != refs::Tier::Confirmed {
                         continue;
                     }

@@ -12155,11 +12155,18 @@ is one of DEC-497's and DEC-498's `let`s (graphql's 5). No suite gained a
 row. The figures cover DEC-497 and DEC-498 too; they were measured
 together.
 
-**Not done.** The editor's Find References tiers each call where it scans,
-without the includers, so it still omits a shared body's call that only an
-includer's module answers; `--refs` lists it. `include M` at a spec file's
-top level (webmock's `net_http_spec.rb`), which mixes `M` into `Object`, is
-not this rule: its `NetHTTPSpecHelper` rows stand. Testbed 606.
+**Both fronts.** The rule is one per-site function pair in `query::refs`:
+`tier` (the ladder, unruled on a partial index) runs on any worker, and
+`rescue` re-asks a ruled-out shared-body call of its includers serially,
+because the files it reads are not `Sync`. `--refs`, `--dead`, the editor's
+Find References and incoming calls all call it, so the editor lists the
+shared body's call too. It shipped CLI-only first, with this gap written
+here; the testbed now asks Find References at every `refs FILE:LINE:COL`
+and fails when the editor's locations differ from the CLI's rows.
+
+**Not done.** `include M` at a spec file's top level (webmock's
+`net_http_spec.rb`), which mixes `M` into `Object`, is not this rule: its
+`NetHTTPSpecHelper` rows stand. Testbed 606.
 
 ## DEC-500 — The first query in a checkout indexes it
 

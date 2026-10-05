@@ -22,7 +22,8 @@
   one of several does, and through a shared group included by another —
   so webmock-style adapter helpers called from shared examples are no
   longer "no call names it". `--def` there answers with each includer's
-  method.
+  method, and the editor's Find References and incoming calls list the
+  call as `--refs` does.
 - **A group whose examples come from a mixin's `included` hook runs them**
   (#10). A nested group with `let(:scheduler_class)` and `include
   Assertions`, whose `self.included` writes the examples with `class_eval`,

@@ -3,6 +3,9 @@
 # Two includers mixing in two modules make each a possible answer; the
 # helper method no call names is still unreferenced.
 refs AlphaClientHelper#library_name confirmed=0 possible=1 excluded=0
+# At the definition, the editor's Find References lists the shared body's
+# call too: the includer rule is the CLI's and the LSP's alike.
+refs spec/support/alpha_helper.rb:6:7 confirmed=0 possible=1 excluded=0
 refs BetaClientHelper#client_timeout_class confirmed=0 possible=1 excluded=0
 dead spec/support/alpha_helper.rb AlphaClientHelper#never_called=unreferenced
 def spec/support/shared.rb:4:12 status=ambiguous via=includer candidates=0
