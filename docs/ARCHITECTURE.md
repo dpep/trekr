@@ -1229,6 +1229,28 @@ The log records `reload`, `resume`, `reload_failed` and `retire`.
 
 ## Extending: a framework DSL, a template language, an LSP feature
 
+Ruby knowledge lands in six places. The first three change what is stored or
+assembled, so every front sees them; the last three are rules read at query
+time, and two of them only by some fronts:
+
+1. **A stub** (`src/tree/*.rb`): what a framework's methods return or define.
+2. **The macro table** (`src/extract/macros.rs`): a macro that creates methods.
+3. **The extractor** (`src/extract/mod.rs`): a shape neither above expresses.
+4. **Resolve's rule tables** (`src/resolve/`): which block runs with another
+   `self` (`evaluates_its_block`, `keeps_self`,
+   `runs_its_block_on_an_instance`), the methods Ruby calls by protocol
+   (`refs::protocol_hook`), RSpec's vocabulary (`members.rs`).
+5. **Library conventions** (`src/cli/conventions.rs`,
+   `src/cli/dead_consts/ways.rs`, `src/cli/routes.rs`): what a library calls
+   by name — a Thor command, a Pundit policy, a route's action. Only `--dead`
+   reads them; `--refs` and the editor do not.
+6. **Templates** (`src/tree/views.rs`): which `self` a template runs on.
+
+Pick the earliest that can say it: a fact every front sees beats a rule one
+front applies. A route helper (`posts_path`) reaching `--def` or the editor
+starts by moving `cli/routes.rs` beneath both fronts, into `query/` or
+`tree/`: `tests/layers.rs` refuses the language server a module under `cli/`.
+
 **A framework DSL**, in this order, stopping at the first step that covers it:
 
 1. **A stub**: Ruby the tree reads as if a gem had written it
@@ -1692,7 +1714,9 @@ Deliberate, and cheap to close when they earn it:
   block to the enclosing scope, and trekr to `X` (DEC-069). The same call
   *not* assigned to a constant is no scope at all — its methods land on the
   enclosing one, and their `super` is not recorded — and `class Foo <
-  Struct.new(:a)` gets no member readers.
+  Struct.new(:a)` gets no member readers. `--dead` hedges such a `def`
+  (DEC-562); `--def`, `--refs` and the editor still place it on the
+  enclosing scope.
 - A name split by conflicting superclasses (DEC-072) is split by path
   proximity, not by what each program loads. A superclass-less declaration in
   a gem directory (a `.gemspec`'s) that declares no variant is that gem's own
@@ -1700,7 +1724,8 @@ Deliberate, and cheap to close when they earn it:
   tied for nearest. Constant lookup inside a split class's body searches the
   variant its file declares, for `--def` and the LSP. A constant *receiver*
   (`NotFound.new`) is still typed without it.
-- `private_constant` / `private_class_method` are not read.
+- `private_constant` is not read: a private constant lists as public.
+  (`private_class_method` is, DEC-561.)
 - Instance, class, and global variables are not in the index (not in PLAN
   §4's Phase 1 fact set). The LSP answers locals, ivars and cvars from the
   files themselves (DEC-064); globals are not answered anywhere.

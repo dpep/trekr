@@ -381,6 +381,9 @@ it — Tapioca enumerates gem and DSL methods as Prism-parseable Ruby. It is not
 built here because it is a per-repo source rather than a baseline, and building
 both at once would leave neither measured.*
 
+*Superseded by DEC-240:* `src/tree/core.rb` is gone; core is read from the
+app's Ruby's own RBS at index time.
+
 ## DEC-016 — Gems are located by reading, never by running Ruby
 
 **Decided.** `Gemfile.lock` is parsed directly; gem sources are found by
@@ -557,6 +560,9 @@ a partially-typed monorepo is the real test, and DEC-018 already
 showed that a repo full of RBIs describing its *dependencies* is not that test.
 Or if a new type source appears (RBS in the wild, a Ruby with inline types).
 The rungs are built and tested; only the corpus is missing.
+
+*Reversed by DEC-077:* core's RBS return types were that new source, and a
+receiver that is a call is typed by what the call returns.
 
 ## DEC-021 — Exclusions are counted by reason, because the reasons are not equally strong
 
@@ -1236,7 +1242,7 @@ Measured, discourse: app confidently wrong 0.6 % → **0.2 %** with 0.4 %
 ambiguous-wrong beside it; gem floor 4.0 % → **3.3 %** with 0.7 % beside it.
 `correct` and `found the definition` identical to the decimal on both columns.
 
-## DEC-033 — `define_model_callbacks` is built, measured, and **not** shipped
+## DEC-033 — `define_model_callbacks`: built, measured, held back, then shipped on disclosure
 
 **Decided.** ActiveRecord's model callbacks — `after_save`, `before_create`,
 `after_destroy` and kin — stay unmodelled. The macro entry, the `only:` filter
@@ -13723,3 +13729,32 @@ That is 0.8.6's answer for those rows, with the call shown.
 dashboard engine's), and a generator's template runs on the generator
 whose `template` call names it, which needs that call read; the second is
 the one worth doing when a generator-heavy checkout asks for it.
+
+## DEC-640 — trekr stays Ruby-only
+
+**Decided.** trekr answers Ruby, and the templates and schema dump a Rails
+app keeps beside it. A second language is out of scope, not a plugin away.
+Finding a name across languages is rq's job; position→meaning and
+references in a type-checked language are its own language server's
+(rust-analyzer, gopls, tsserver).
+
+**Why.**
+
+- trekr's value is inferring dynamic dispatch, with disclosure: what a call
+  runs when nothing declares a type. A type-checked language's compiler
+  already knows, and a server built on it answers exactly. trekr could at
+  best match it.
+- The model is Ruby's. `core::Kind`, the reference tiers, visibility, the
+  receiver ladder, ancestors as `[prepends, self, includes, superclass]`,
+  singleton classes and `method_missing` forwarding would all bend toward a
+  common denominator to fit a second language, and the store with them.
+- rq already ranks definitions by name across Ruby, Rust, Go, Python,
+  TypeScript and JavaScript. The tools compose: rq to find a name anywhere,
+  trekr for what a Ruby call runs and who really calls a Ruby method.
+- `scan::Reader` (ERB, RABL, `structure.sql`) is not a language seam. Each
+  reader feeds the same Ruby model: a template's Ruby, or a Rails app's
+  tables.
+
+**Reverses if** a dynamically dispatched language with no adequate language
+server becomes a daily need, and rq's name ranking is shown not to be
+enough for it.
