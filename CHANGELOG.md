@@ -123,7 +123,9 @@
   References does — a local's in its scope, an `@ivar`'s across its class's
   files, each row `kind: read|write`, `"under": "variable"`; on anything
   else it lists nothing for, it exits 64. A bare `FILE:LINE` still takes the
-  line's first name.
+  line's first name. A column past the end of its line is the line's end,
+  as in the editor — `--def` and `--refs` there answered for a variable on a
+  later line.
 - **`--refs` at a call trekr cannot place answers instead of failing.** On
   `x.build` with an untyped receiver it exited 64 as a usage error; it now
   answers `residue` with the reason and a hint to list the name's call

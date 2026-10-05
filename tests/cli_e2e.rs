@@ -3718,6 +3718,29 @@ fn a_pipe_or_a_device_is_refused_rather_than_read() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A column past the end of its line is the line's end, as the editor
+/// clamps one: never a variable on a later line.
+#[test]
+fn a_column_past_the_line_stays_on_its_line() {
+    let (dir, db) = scratch("past-eol");
+    repo(&dir);
+    fs::write(
+        dir.join("counter.rb"),
+        "class Counter\n  def initialize(name)\n    count = 1\n    puts count\n  end\nend\n",
+    )
+    .unwrap();
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    for command in ["--refs", "--def"] {
+        let out = trekr(&db, &dir, &[command, "counter.rb:2:99", "--json"]);
+        let said = stdout(&out);
+        assert!(!said.contains("\"count\""), "{command}: {said}");
+    }
+    // At the end of a line holding one, it is that variable, as in the editor.
+    let out = trekr(&db, &dir, &["--refs", "counter.rb:4:99", "--json"]);
+    assert_eq!(json(&out)["name"], "count", "{out:?}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// `trekr <input>` dispatches on shape (DEC-036), and every shape speaks JSON.
 #[test]
 fn the_bare_grammar_dispatches_on_shape() {

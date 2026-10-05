@@ -4287,12 +4287,7 @@ fn variable_mentions(
     let source = crate::extract::ruby_source(&path, raw);
     let head = position::variable_at(&source, &path, line, col)?;
     crate::usage::flag("variable");
-    let offset = source
-        .split_inclusive(|b| *b == b'\n')
-        .take(line.checked_sub(1)? as usize)
-        .map(<[u8]>::len)
-        .sum::<usize>()
-        + (col as usize).checked_sub(1)?;
+    let offset = position::offset_of(&source, line, col)?;
     let here = vars::analyze(&source);
     let want = here.at(offset)?.clone();
     let relative = |p: &str| {
