@@ -550,7 +550,7 @@ mod tests {
             ),
             ("c.rb", "class Outer::W\nend\nclass Émigré\nend\n"),
         ];
-        let (mut decls, mut edges) = super::super::core_rows(&super::super::test_stubs());
+        let (mut decls, mut edges) = super::super::test_core_rows();
         for (path, source) in sources {
             let (d, e, _) = super::super::rows_from(path, source);
             decls.extend(d);

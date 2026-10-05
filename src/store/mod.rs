@@ -2204,7 +2204,7 @@ pub(crate) struct Rbs {
 
 /// A class, module, or constant declaration, as the blob layer recorded it —
 /// name as written, nesting unresolved.
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct DeclRow {
     pub(crate) name: String,
     pub(crate) kind: String,
@@ -2255,7 +2255,7 @@ pub(crate) struct BodyCallRow {
     pub(crate) line: u32,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) struct EdgeRow {
     /// Scope stack including the receiving class or module, innermost first.
     pub(crate) owner: Vec<String>,

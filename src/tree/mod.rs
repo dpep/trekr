@@ -2276,13 +2276,21 @@ pub(crate) fn test_stubs() -> std::sync::Arc<corelib::Stubs> {
         .clone()
 }
 
+/// `core_rows` of the test stubs, parsed once: hundreds of tree tests each
+/// re-parsing every core skeleton made the slowest of them seconds long.
+#[cfg(test)]
+pub(crate) fn test_core_rows() -> (Vec<DeclRow>, Vec<EdgeRow>) {
+    static ROWS: std::sync::OnceLock<(Vec<DeclRow>, Vec<EdgeRow>)> = std::sync::OnceLock::new();
+    ROWS.get_or_init(|| core_rows(&test_stubs())).clone()
+}
+
 /// Ruby source in, assembled namespace out — through the real extractor and
 /// with core stubbed from the test Ruby's signatures, so tests written
 /// against this exercise the same path `Tree::build` takes.
 #[cfg(test)]
 pub(crate) fn for_test(sources: &[(&str, &str)]) -> Tree {
     let stubs = test_stubs();
-    let (mut decls, mut edges) = core_rows(&stubs);
+    let (mut decls, mut edges) = test_core_rows();
     let mut methods = Vec::new();
     for (path, source) in sources {
         let (d, e, m) = rows_from(path, source);
