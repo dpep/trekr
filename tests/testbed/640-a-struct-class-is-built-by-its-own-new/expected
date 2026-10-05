@@ -10,7 +10,7 @@ def app.rb:23:9 status=resolved owner=Pair name=[] kind=declaration defined_via=
 def app.rb:24:11 status=resolved owner=Coord kind=declaration defined_via=Data.define site=app.rb:13
 def app.rb:24:33 status=resolved owner=Coord name=lat
 def app.rb:25:10 status=resolved owner=Opts kind=declaration defined_via=Struct.new
-def app.rb:19:15 status=resolved owner=Point kind=declaration defined_via=Struct.new site=app.rb:1
+def app.rb:19:16 status=resolved owner=Point kind=declaration defined_via=Struct.new site=app.rb:1
 def app.rb:20:8 status=resolved owner=Point name=x kind=declaration defined_via=Struct.new
 def app.rb:21:8 status=resolved owner=Point name=y= kind=declaration
 refs Point#x confirmed=3
