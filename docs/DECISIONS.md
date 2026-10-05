@@ -13867,3 +13867,50 @@ drift, not a decision.
 **Not yet.** `--dead`'s own lists in `cli/` — `built.rs`'s `SENDS`,
 `conventions.rs`'s computed-send scan, `dynamic_markers` — still keep
 their own; folding them in is the follow-up, and adds `try` to each.
+
+## DEC-631 — `--dead`'s scope is frozen, and its text grep for dispatch stays
+
+**Decided.** `--dead` takes no new tier, and a new source of "a caller
+trekr cannot see" lands only if it moves held-out precision against a
+base-rate control: the rows it lowers or moves must be live more often
+than the rows it leaves alone. A caveat that is true of the code but not
+of the row is noise, and every source so far has been argued from its
+true positives alone.
+
+**Rejected, measured: retiring `dynamic_markers`.** The grep lowers every
+method row in a file that spells `send(`, `public_send(`,
+`method_missing`, `define_method` or `const_get` anywhere. It is crude —
+`public_send(` always reads as "send, public_send", a literal
+`send(:x)` (DEC-093) and a send to another object trip it — and the pass-3
+review proposed deleting it in favour of the fact-based markers (DEC-130,
+DEC-160/161, DEC-261, DEC-363, DEC-132). On `--dead .` at 0.8.7:
+
+| corpus | rows | with a marker | marker the only caveat | of those, no caller (`unreferenced`, `override`) | …in a file that sends itself a computed name |
+| --- | --- | --- | --- | --- | --- |
+| mastodon | 4510 | 274 | 198 | 8 | 5 |
+| discourse | 17783 | 2200 | 1695 | 279 | 172 |
+| rails | 29443 | 10576 | 9206 | 7948 | 764 |
+| graphql-ruby | 3553 | 378 | 228 | 22 | 5 |
+
+Most marker-only rows already have a caller (`single-caller`,
+`convention-only`), where the grep says little. Of the no-caller rows in a
+file with a computed self-send, 6 of 7 hand-checked in discourse are
+reached exactly that way: `BulkImport::Base#process_*` by
+`send(process_method_name, …)`, `UploadSecurity#*_check` by
+`send("#{check}_check")`, `HtmlToMarkdown#visit_img` and the phpBB3
+importer's `visit_SIZE` by `send(visitor, node)`,
+`UpcomingChanges::ConditionalDisplay#should_display_*?` by
+`public_send("should_display_#{…}?")`, `TopicsBulkAction#dismiss_topics`
+by `send(@operation[:type])`; `Guardian#is_ignored_by_user?` is the one
+the grep caught by coincidence. No fact-based marker covers a computed
+name sent to `self`: DEC-363 reads interpolated symbols and computed sends
+to a constant only. Deleting the grep would grade those rows `clear`.
+Rails' share is its `test_*` methods, which minitest runs by name; 9433
+of them are already clear without a marker, so the grep is noise there,
+not a signal lost.
+
+**Reverses if** a fact reads a computed send to `self` (no literal first
+argument, implicit or `self` receiver) and lowers only the methods of its
+file's class — then the grep has nothing left to say, and goes. That is a
+new source under the rule above: it lands with a held-out base-rate
+comparison, not with these examples.
