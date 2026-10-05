@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- **A store that cannot be opened is named in the error.** A `TREKR_DB`
+  whose directory cannot be made, or a database that cannot be opened,
+  said only `Not a directory (os error 20)`; it now says `trekr store
+  <path>: …` first. Exit codes are unchanged.
 - **`--dead` no longer lists the module trekr makes for an `on_load`
   block.** The `def`s in an `ActiveSupport.on_load(:name) do … end` block
   go to a module trekr models (`on_load(:name)`), which `--dead` reported as

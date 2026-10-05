@@ -171,11 +171,13 @@ fn sweep_core_after_upgrade(db: &Path, store: &Store) {
 
 /// The database every command uses.
 pub(crate) fn open_default() -> anyhow::Result<Store> {
+    use anyhow::Context;
     let path = default_path()?;
+    let named = || format!("trekr store {}", path.display());
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        std::fs::create_dir_all(parent).with_context(named)?;
     }
-    Ok(Store::open(&path)?)
+    Store::open(&path).with_context(named)
 }
 
 /// See `Store::files_calling`.

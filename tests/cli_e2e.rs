@@ -6315,3 +6315,17 @@ fn dead_and_refs_agree_on_an_example_groups_members() {
     }
     let _ = fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_store_that_cannot_be_opened_is_named_in_the_error() {
+    let (dir, _) = scratch("unopenable");
+    // A regular file where the store's directory would be made.
+    let blocker = dir.join("blocker");
+    fs::write(&blocker, "").unwrap();
+    let db = blocker.join("store/trekr.db");
+    let out = trekr(&db, &dir, &["--status", "--json"]);
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains(&db.display().to_string()), "{stderr}");
+    let _ = fs::remove_dir_all(&dir);
+}
