@@ -6341,7 +6341,7 @@ fn template_answer(
         "query": query,
         "under": "template",
         "status": match files.len() { 0 => "residue", 1 => "resolved", _ => "ambiguous" },
-        "confidence": match files.len() { 0 => 0.0, n => 1.0 / n as f64 },
+        "confidence": crate::resolve::share(1, files.len()),
         "resolved_via": "render",
         "definition": definition,
     });

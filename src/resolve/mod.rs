@@ -2791,9 +2791,10 @@ fn last_write_before<'f>(facts: &'f Facts, name: &str, at: Pos) -> Option<&'f As
         .max_by_key(|a| a.pos)
 }
 
-/// A count over a count, rounded to the precision two counts actually carry.
+/// A count over a count, rounded to two decimals — the precision two small
+/// counts actually carry. `0` over nothing.
 ///
-/// `1/31` is 0.032, not 0.03225806451612903: printing the tail claims evidence
+/// `1/3` is 0.33, not 0.3333333333333333: printing the tail claims evidence
 /// that is not there, and it claims it hardest in JSON, where a reader cannot
 /// see that the human output was more careful.
 pub(crate) fn share(agreeing: usize, total: usize) -> f64 {

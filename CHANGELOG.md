@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- **`--def` on a `render` that reaches several templates rounds its
+  confidence** like every other answer: `0.33` for three, not
+  `0.3333333333333333`.
 - **A store that cannot be opened is named in the error.** A `TREKR_DB`
   whose directory cannot be made, or a database that cannot be opened,
   said only `Not a directory (os error 20)`; it now says `trekr store

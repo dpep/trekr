@@ -1,0 +1,4 @@
+# A `render` whose name reaches several templates is an even share among
+# them, rounded as every confidence is: 0.33 for three, not
+# 0.3333333333333333.
+def app/views/widgets/show.html.erb:1:13 status=ambiguous confidence=0.33

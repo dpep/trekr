@@ -809,8 +809,7 @@ fn dispatch(
             "op": method,
             "file": asked.0,
             "line": asked.1,
-            // Two significant figures: a sub-millisecond timer is not evidence
-            // for a third.
+            // Hundredths of a millisecond: a timer is not evidence for finer.
             "ms": round2(elapsed.as_secs_f64() * 1000.0),
             "status": status,
             "answered": answered,
