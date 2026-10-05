@@ -3,6 +3,237 @@
 //! classes, modules and constants in `dead_consts`.
 
 use super::*;
+use crate::resolve::refs;
+use serde::Serialize;
+
+/// One `--dead` candidate: what every kind shares, and its own detail
+/// beside it in the same JSON object.
+#[derive(Serialize)]
+pub(super) struct DeadRow {
+    pub(super) kind: DeadKind,
+    pub(super) name: String,
+    pub(super) owner: String,
+    /// Whether deleting it could break a caller outside the checkout.
+    pub(super) visibility: &'static str,
+    pub(super) path: String,
+    pub(super) line: u32,
+    pub(super) col: u32,
+    pub(super) tier: DeadTier,
+    pub(super) confidence: Grade,
+    pub(super) caveat: String,
+    pub(super) reason: String,
+    #[serde(flatten)]
+    pub(super) detail: Detail,
+}
+
+/// What a row says that only its kind has.
+#[derive(Serialize)]
+#[serde(untagged)]
+pub(super) enum Detail {
+    Method(MethodDetail),
+    /// An example group's `let`, `subject` or `def` (DEC-490).
+    Member(MemberDetail),
+    /// A shared group nothing includes (DEC-493).
+    SharedGroup(SharedGroupDetail),
+    /// A class, module or constant (DEC-420).
+    Constant(ConstantDetail),
+}
+
+#[derive(Serialize)]
+pub(super) struct MethodDetail {
+    pub(super) singleton: bool,
+    pub(super) end_line: u32,
+    pub(super) confirmed: usize,
+    pub(super) possible: usize,
+    pub(super) symbol_refs: usize,
+    pub(super) super_refs: usize,
+    pub(super) super_from: Vec<String>,
+    /// Written calls of its name anywhere in the checkout, capped.
+    pub(super) mentions_by_name: i64,
+    pub(super) overrides: Vec<String>,
+    pub(super) overridden_by: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) caller: Option<DeadCaller>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) route: Option<Site>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) convention: Option<ConventionSite>,
+}
+
+#[derive(Serialize)]
+pub(super) struct MemberDetail {
+    pub(super) group: String,
+    pub(super) singleton: bool,
+    pub(super) end_line: u32,
+    pub(super) confirmed: usize,
+    pub(super) possible: usize,
+    pub(super) overridden_by: Vec<String>,
+    pub(super) shared_groups_read: usize,
+    pub(super) helpers_read: usize,
+}
+
+#[derive(Serialize)]
+pub(super) struct SharedGroupDetail {
+    /// Always null: a shared group is no group's own.
+    pub(super) group: Option<String>,
+    pub(super) singleton: bool,
+    pub(super) confirmed: usize,
+    pub(super) possible: usize,
+}
+
+#[derive(Serialize)]
+pub(super) struct ConstantDetail {
+    pub(super) test_refs: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) convention: Option<ConventionSite>,
+}
+
+/// A single caller's one written call.
+#[derive(Serialize)]
+pub(super) struct DeadCaller {
+    pub(super) path: String,
+    pub(super) line: u32,
+    pub(super) col: u32,
+    pub(super) tier: refs::Tier,
+}
+
+#[derive(Serialize)]
+pub(super) struct Site {
+    pub(super) path: String,
+    pub(super) line: u32,
+}
+
+/// The library convention that reaches a row, and where, when it can say.
+#[derive(Serialize)]
+pub(super) struct ConventionSite {
+    pub(super) by: &'static str,
+    #[serde(flatten)]
+    pub(super) at: Option<Site>,
+}
+
+impl ConventionSite {
+    pub(super) fn of(convention: &conventions::Convention) -> Self {
+        ConventionSite {
+            by: convention.by,
+            at: convention
+                .at
+                .clone()
+                .map(|(path, line)| Site { path, line }),
+        }
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum DeadKind {
+    Method,
+    Let,
+    Subject,
+    SharedGroup,
+    Class,
+    Module,
+    Constant,
+}
+
+impl DeadKind {
+    const ALL: [Self; 7] = [
+        Self::Method,
+        Self::Let,
+        Self::Subject,
+        Self::SharedGroup,
+        Self::Class,
+        Self::Module,
+        Self::Constant,
+    ];
+
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Method => "method",
+            Self::Let => "let",
+            Self::Subject => "subject",
+            Self::SharedGroup => "shared_group",
+            Self::Class => "class",
+            Self::Module => "module",
+            Self::Constant => "constant",
+        }
+    }
+}
+
+/// `--dead`'s tiers, from the least evidence of use to the most.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(super) enum DeadTier {
+    Unreferenced,
+    Shadowed,
+    TestOnly,
+    Override,
+    ConventionOnly,
+    SuperOnly,
+    SingleCaller,
+}
+
+impl DeadTier {
+    const ALL: [Self; 7] = [
+        Self::Unreferenced,
+        Self::Shadowed,
+        Self::TestOnly,
+        Self::Override,
+        Self::ConventionOnly,
+        Self::SuperOnly,
+        Self::SingleCaller,
+    ];
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Unreferenced => "unreferenced",
+            Self::Shadowed => "shadowed",
+            Self::TestOnly => "test-only",
+            Self::Override => "override",
+            Self::ConventionOnly => "convention-only",
+            Self::SuperOnly => "super-only",
+            Self::SingleCaller => "single-caller",
+        }
+    }
+}
+
+impl From<refs::Use> for DeadTier {
+    fn from(seen: refs::Use) -> Self {
+        match seen {
+            refs::Use::Unreferenced => Self::Unreferenced,
+            refs::Use::ConventionOnly => Self::ConventionOnly,
+            refs::Use::SuperOnly => Self::SuperOnly,
+            refs::Use::SingleCaller => Self::SingleCaller,
+        }
+    }
+}
+
+/// How far a row's tier can be taken at its word.
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum Grade {
+    Clear,
+    Lower,
+}
+
+impl DeadRow {
+    /// Methods first, then example groups' own, then the classes, modules
+    /// and constants, each apart.
+    fn family(&self) -> u8 {
+        match self.detail {
+            Detail::Method(_) => 0,
+            Detail::Member(_) | Detail::SharedGroup(_) => 1,
+            Detail::Constant(_) => 2,
+        }
+    }
+
+    fn end_line(&self) -> Option<u32> {
+        match &self.detail {
+            Detail::Method(m) => Some(m.end_line),
+            Detail::Member(m) => Some(m.end_line),
+            Detail::SharedGroup(_) | Detail::Constant(_) => None,
+        }
+    }
+}
 
 /// Definitions in scope that nothing appears to use (DEC-038).
 ///
@@ -69,7 +300,7 @@ pub(super) fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCod
         TEXT_ABSOLUTE.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
-    let mut rows: Vec<serde_json::Value> = Vec::new();
+    let mut rows: Vec<DeadRow> = Vec::new();
     let mut scope = 0;
     for (root, scoped) in &checkouts {
         scope += dead_in(&store, root, scoped, &mut rows)?;
@@ -77,36 +308,28 @@ pub(super) fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCod
     note_candidate_callers(&mut rows);
 
     let found = !rows.is_empty();
-    let summary = dead_summary(&rows);
+    let summary = DeadSummary::of(&rows);
     if out != Output::Text {
         let answer = serde_json::json!({ "scope": scope, "summary": summary, "candidates": null });
         emit_listing(out, answer, "candidates", &rows)?;
         return Ok(exit_on(found));
     }
-    // Methods first, then example groups' own, then the classes, modules and
-    // constants, each apart.
-    let family = |row: &serde_json::Value| match row["kind"].as_str() {
-        _ if row.get("group").is_some() => 1,
-        Some("shared_group") => 1,
-        Some("method") => 0,
-        _ => 2,
-    };
     for (at, row) in rows.iter().enumerate() {
-        if at > 0 && family(row) != family(&rows[at - 1]) {
+        if at > 0 && row.family() != rows[at - 1].family() {
             println!();
         }
-        let visibility = match row["visibility"].as_str() {
-            Some("public") | None => String::new(),
-            Some(other) => format!(" ({other})"),
+        let visibility = match row.visibility {
+            "public" => String::new(),
+            other => format!(" ({other})"),
         };
         println!(
             "{:<16} {}  {}{visibility}  — {}{}",
-            row["tier"].as_str().unwrap_or_default(),
-            at_line(row),
+            row.tier.as_str(),
+            at_line(&row.path, row.line),
             dead_name(row),
-            row["reason"].as_str().unwrap_or_default(),
-            match row["caveat"].as_str().unwrap_or_default() {
-                "" if row["confidence"] == "lower" => "   (lower confidence)".to_string(),
+            row.reason,
+            match row.caveat.as_str() {
+                "" if row.confidence == Grade::Lower => "   (lower confidence)".to_string(),
                 "" => String::new(),
                 why => format!("   (lower confidence: {why})"),
             }
@@ -116,14 +339,14 @@ pub(super) fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCod
         println!("no candidates in {scope} file(s)");
         return Ok(exit_on(found));
     }
-    let tiers: Vec<String> = DEAD_TIERS
+    let tiers: Vec<String> = DeadTier::ALL
         .iter()
-        .map(|tier| (tier, summary["tiers"][tier].as_u64().unwrap_or(0)))
+        .map(|tier| (tier, summary.tiers[tier.as_str()]))
         .filter(|(_, n)| *n > 0)
-        .map(|(tier, n)| format!("{n} {tier}"))
+        .map(|(tier, n)| format!("{n} {}", tier.as_str()))
         .collect();
-    let constants = rows.iter().filter(|row| family(row) == 2).count();
-    let members = rows.iter().filter(|row| family(row) == 1).count();
+    let constants = rows.iter().filter(|row| row.family() == 2).count();
+    let members = rows.iter().filter(|row| row.family() == 1).count();
     let of_them: Vec<String> = [
         (
             members,
@@ -139,8 +362,8 @@ pub(super) fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCod
         "\n{} candidates in {scope} file(s): {} ({} clear, {} lower){}",
         rows.len(),
         tiers.join(", "),
-        summary["confidence"]["clear"],
-        summary["confidence"]["lower"],
+        summary.confidence.clear,
+        summary.confidence.lower,
         match of_them.is_empty() {
             true => String::new(),
             false => format!("; {}", of_them.join(", ")),
@@ -152,63 +375,61 @@ pub(super) fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCod
 /// The class Action Mailer's mailers inherit, whose class side runs an action.
 const MAILER: &str = "ActionMailer::Base";
 
-/// `--dead`'s tiers, from the least evidence of use to the most.
-const DEAD_TIERS: [&str; 7] = [
-    "unreferenced",
-    "shadowed",
-    "test-only",
-    "override",
-    "convention-only",
-    "super-only",
-    "single-caller",
-];
+/// How many candidates in each tier, of each kind, and at each confidence.
+/// Every tier and kind is present, so a script reads a zero rather than a
+/// missing key.
+#[derive(Serialize)]
+struct DeadSummary {
+    candidates: usize,
+    tiers: std::collections::BTreeMap<&'static str, usize>,
+    kinds: std::collections::BTreeMap<&'static str, usize>,
+    confidence: Grades,
+}
 
-/// How many candidates in each tier, and at each confidence. Every tier is
-/// present, so a script reads a zero rather than a missing key.
-fn dead_summary(rows: &[serde_json::Value]) -> serde_json::Value {
-    let count = |key: &str, value: &str| rows.iter().filter(|row| row[key] == value).count();
-    let tiers: serde_json::Map<String, serde_json::Value> = DEAD_TIERS
-        .iter()
-        .map(|tier| (tier.to_string(), count("tier", tier).into()))
-        .collect();
-    let kinds: serde_json::Map<String, serde_json::Value> = [
-        "method",
-        "let",
-        "subject",
-        "shared_group",
-        "class",
-        "module",
-        "constant",
-    ]
-    .iter()
-    .map(|kind| (kind.to_string(), count("kind", kind).into()))
-    .collect();
-    serde_json::json!({
-        "candidates": rows.len(),
-        "tiers": tiers,
-        "kinds": kinds,
-        "confidence": { "clear": count("confidence", "clear"), "lower": count("confidence", "lower") },
-    })
+#[derive(Serialize)]
+struct Grades {
+    clear: usize,
+    lower: usize,
+}
+
+impl DeadSummary {
+    fn of(rows: &[DeadRow]) -> Self {
+        let count = |keep: &dyn Fn(&DeadRow) -> bool| rows.iter().filter(|row| keep(row)).count();
+        DeadSummary {
+            candidates: rows.len(),
+            tiers: DeadTier::ALL
+                .iter()
+                .map(|tier| (tier.as_str(), count(&|row| row.tier == *tier)))
+                .collect(),
+            kinds: DeadKind::ALL
+                .iter()
+                .map(|kind| (kind.as_str(), count(&|row| row.kind == *kind)))
+                .collect(),
+            confidence: Grades {
+                clear: count(&|row| row.confidence == Grade::Clear),
+                lower: count(&|row| row.confidence == Grade::Lower),
+            },
+        }
+    }
 }
 
 /// A candidate as Ruby's documentation names it: `Widget#save`, or
 /// `Widget.build` for a method on the singleton; a class, module or constant
 /// by its kind and whole name (`class Admin::Widget`).
-fn dead_name(row: &serde_json::Value) -> String {
-    if row.get("group").is_some() {
-        return members::dead_name(row);
-    }
-    let name = row["name"].as_str().unwrap_or_default();
-    if let Some(kind @ ("class" | "module" | "constant")) = row["kind"].as_str() {
-        return match row["owner"].as_str().unwrap_or_default() {
-            "" => format!("{kind} {name}"),
-            owner => format!("{kind} {owner}::{name}"),
-        };
-    }
-    match row["owner"].as_str().unwrap_or_default() {
-        "" => name.to_string(),
-        owner if row["singleton"] == true => format!("{owner}.{name}"),
-        owner => format!("{owner}#{name}"),
+fn dead_name(row: &DeadRow) -> String {
+    let name = &row.name;
+    match &row.detail {
+        Detail::Member(member) => members::member_name(row.kind, name, &member.group),
+        Detail::SharedGroup(_) => members::member_name(row.kind, name, ""),
+        Detail::Constant(_) => match row.owner.as_str() {
+            "" => format!("{} {name}", row.kind.as_str()),
+            owner => format!("{} {owner}::{name}", row.kind.as_str()),
+        },
+        Detail::Method(method) => match row.owner.as_str() {
+            "" => name.clone(),
+            owner if method.singleton => format!("{owner}.{name}"),
+            owner => format!("{owner}#{name}"),
+        },
     }
 }
 
@@ -282,10 +503,8 @@ fn dead_in(
     store: &Store,
     root: &Path,
     paths: &[PathBuf],
-    rows: &mut Vec<serde_json::Value>,
+    rows: &mut Vec<DeadRow>,
 ) -> anyhow::Result<usize> {
-    use crate::resolve::refs;
-
     let root_str = root.to_string_lossy().into_owned();
     let files = ruby_files(paths);
     let mut defined: Vec<Defined> = Vec::new();
@@ -580,11 +799,13 @@ fn dead_in(
             }
         }
         let live = refs::liveness(&found, &counts);
-        let Some(tier) = live.tier else { continue };
+        let Some(tier) = live.tier.map(DeadTier::from) else {
+            continue;
+        };
         // An `initialize` one `X.new` reaches is how a class is built, not a
         // method to inline; one only subclasses' `super`s reach belongs to an
         // abstract class. Only one nothing reaches is a candidate.
-        if constructor && tier != "unreferenced" {
+        if constructor && tier != DeadTier::Unreferenced {
             continue;
         }
         // Whoever calls the method this overrides may run it instead, and
@@ -600,7 +821,7 @@ fn dead_in(
             _ => crate::resolve::overridden(&tree, def, file),
         };
         let tier = match tier {
-            "unreferenced" if !overrides.is_empty() && !constructor => "override",
+            DeadTier::Unreferenced if !overrides.is_empty() && !constructor => DeadTier::Override,
             tier => tier,
         };
         // A controller's public action a route reaches is reached by
@@ -614,7 +835,8 @@ fn dead_in(
             .then(|| routed.get(&(owner.clone(), def.name.clone())))
             .flatten();
         // A library that calls it by a name it builds (DEC-362, DEC-371).
-        let convention = (matches!(tier, "unreferenced" | "override") && !def.singleton)
+        let convention = (matches!(tier, DeadTier::Unreferenced | DeadTier::Override)
+            && !def.singleton)
             .then(|| {
                 conventions::serializer_include(&tree, &owner, &def.name, &mut symbols).or_else(
                     || {
@@ -630,24 +852,24 @@ fn dead_in(
             })
             .flatten();
         let tier = match tier {
-            "unreferenced" | "override" if route.is_some() || convention.is_some() => {
-                "convention-only"
+            DeadTier::Unreferenced | DeadTier::Override
+                if route.is_some() || convention.is_some() =>
+            {
+                DeadTier::ConventionOnly
             }
             tier => tier,
         };
         // The one written call a single caller has: whether it certainly
         // reaches this method is the difference between inlining it and
         // checking an untyped receiver first.
-        let single_call = (tier == "single-caller")
+        let single_call = (tier == DeadTier::SingleCaller)
             .then(|| found.iter().find(|r| refs::is_written_call(r)))
             .flatten();
-        let caller = single_call.map(|r| {
-            serde_json::json!({
-                "path": format!("{root_str}/{}", r.path),
-                "line": r.line,
-                "col": r.col,
-                "tier": r.tier,
-            })
+        let caller = single_call.map(|r| DeadCaller {
+            path: format!("{root_str}/{}", r.path),
+            line: r.line,
+            col: r.col,
+            tier: r.tier,
         });
         // Its only evidence of use is a call that may be another method's:
         // that is weaker than a clear single caller, and says why.
@@ -682,13 +904,16 @@ fn dead_in(
             }
             risky.push_str(unplaced);
         }
-        if caller.as_ref().is_some_and(|c| c["tier"] == "possible") {
+        if caller
+            .as_ref()
+            .is_some_and(|c| c.tier == refs::Tier::Possible)
+        {
             if !risky.is_empty() {
                 risky.push_str(", ");
             }
             risky.push_str("untyped caller");
         }
-        if tier != "override" && !constructor && !overrides.is_empty() {
+        if tier != DeadTier::Override && !constructor && !overrides.is_empty() {
             if !risky.is_empty() {
                 risky.push_str(", ");
             }
@@ -712,7 +937,7 @@ fn dead_in(
         }
         // An ancestor not indexed may call it, and a `super` says one is
         // there (DEC-365).
-        if tier == "unreferenced" {
+        if tier == DeadTier::Unreferenced {
             // A name the tree knows is no unseen ancestor: two declarations
             // of the owner (`User = Data.define` in a script) leave the
             // other's superclass unresolved, though it is indexed.
@@ -763,7 +988,7 @@ fn dead_in(
         // `initialize`'s: a subclass's own calls `super`, and nothing calls
         // one with no receiver.
         let mut shadowing: Vec<String> = Vec::new();
-        if tier == "unreferenced" && !def.singleton && !constructor && counts.excluded > 0 {
+        if tier == DeadTier::Unreferenced && !def.singleton && !constructor && counts.excluded > 0 {
             let (all, _) = gather_refs(
                 &tree,
                 store,
@@ -842,7 +1067,7 @@ fn dead_in(
         }
         // A gem of the bundle calls the name on an object it is handed: an
         // instance's method, since such a call's receiver is a value (DEC-367).
-        if tier == "unreferenced"
+        if tier == DeadTier::Unreferenced
             && !def.singleton
             && let Some((gem, n)) = store.bundle_calls(&root_str, &def.name)?
         {
@@ -898,9 +1123,11 @@ fn dead_in(
         }
         // A symbol in its own file that no rule reads as its name may still
         // be how it is reached: say so, rather than that no symbol names it.
-        let unread_symbol = unread_symbol.filter(|_| matches!(tier, "unreferenced" | "override"));
+        let unread_symbol =
+            unread_symbol.filter(|_| matches!(tier, DeadTier::Unreferenced | DeadTier::Override));
         // An action no route read reaches may be reached by one not read.
-        if action && route.is_none() && matches!(tier, "unreferenced" | "override") {
+        if action && route.is_none() && matches!(tier, DeadTier::Unreferenced | DeadTier::Override)
+        {
             let unread = match routes.unread.first() {
                 _ if routes.files == 0 => Some("no routes file read".to_string()),
                 Some(((path, line), why)) => Some(format!("{why} at {path}:{line}")),
@@ -922,96 +1149,96 @@ fn dead_in(
                 def.name
             ));
         }
-        let shadowed = tier == "unreferenced" && unplaced.is_none() && !shadowing.is_empty();
-        let tier = if shadowed { "shadowed" } else { tier };
+        let shadowed =
+            tier == DeadTier::Unreferenced && unplaced.is_none() && !shadowing.is_empty();
+        let tier = if shadowed { DeadTier::Shadowed } else { tier };
         let reason = match (tier, &caller) {
-            ("shadowed", _) => format!(
+            (DeadTier::Shadowed, _) => format!(
                 "no call reaches it: every call of its name lands on an override in a subclass, {}",
                 shadowing.join(", ")
             ),
-            ("unreferenced", _) if unplaced.is_some() => {
+            (DeadTier::Unreferenced, _) if unplaced.is_some() => {
                 "no call trekr can place on it, nor a symbol or `super`, names it".to_string()
             }
-            ("unreferenced", _) if unread_symbol.is_some() => {
+            (DeadTier::Unreferenced, _) if unread_symbol.is_some() => {
                 "no call or `super` names it, nor a symbol trekr reads as a call".to_string()
             }
-            ("unreferenced", _) if action && routes.files > 0 => {
+            (DeadTier::Unreferenced, _) if action && routes.files > 0 => {
                 "no call, symbol, `super` or route names it".to_string()
             }
-            ("unreferenced", _) => "no call, symbol or `super` names it".to_string(),
-            ("override", _) => format!(
+            (DeadTier::Unreferenced, _) => "no call, symbol or `super` names it".to_string(),
+            (DeadTier::Override, _) => format!(
                 "no call names it, but it overrides {}, so a call of that may run it",
                 overrides.join(", ")
             ),
-            ("convention-only", _) if convention.is_some() => {
+            (DeadTier::ConventionOnly, _) if convention.is_some() => {
                 convention.as_ref().expect("checked").reason.clone()
             }
-            ("convention-only", _) => match (live.by_symbol, route) {
+            (DeadTier::ConventionOnly, _) => match (live.by_symbol, route) {
                 (0, Some((path, line))) => format!("named only by a route, at {path}:{line}"),
                 (n, Some((path, line))) => format!(
                     "named only by a symbol handed to a macro ({n}) and a route, at {path}:{line}"
                 ),
                 (n, None) => format!("named only by a symbol handed to a macro ({n})"),
             },
-            ("super-only", _) => format!(
+            (DeadTier::SuperOnly, _) => format!(
                 "reached only by `super` from {}",
                 live.super_from.join(", ")
             ),
-            (_, Some(caller)) if caller["tier"] == "confirmed" => {
-                format!("one call, at {}", at_line(caller))
+            (_, Some(caller)) if caller.tier == refs::Tier::Confirmed => {
+                format!("one call, at {}", at_line(&caller.path, caller.line))
             }
             // A call found by where it runs says how (DEC-499).
             (_, Some(caller)) if let Some(r) = single_call.filter(|r| r.from.is_some()) => {
-                format!("one possible call, at {}: {}", at_line(caller), r.why)
+                format!(
+                    "one possible call, at {}: {}",
+                    at_line(&caller.path, caller.line),
+                    r.why
+                )
             }
             (_, Some(caller)) => format!(
                 "one possible call, at {}: its receiver is untyped",
-                at_line(caller)
+                at_line(&caller.path, caller.line)
             ),
             _ => String::new(),
         };
-        let mut row = serde_json::json!({
-            "kind": "method",
-            "name": def.name,
-            "owner": owner,
-            "singleton": def.singleton,
-            // Whether deleting it could break a caller outside the checkout.
-            "visibility": def.visibility.as_str(),
-            "path": file,
-            "line": def.pos.line,
-            "col": def.pos.col,
-            "end_line": def.end_line,
-            "tier": tier,
-            "confirmed": counts.confirmed,
-            "possible": counts.possible,
-            "symbol_refs": live.by_symbol,
-            "super_refs": live.by_super,
-            "super_from": live.super_from,
-            "mentions_by_name": written,
-            "overrides": overrides,
-            "overridden_by": shadowing,
-            "confidence": if risky.is_empty() && tier != "override" { "clear" } else { "lower" },
-            "caveat": risky,
-            "reason": reason,
-        });
-        if let Some(caller) = caller {
-            row["caller"] = caller;
-        }
         // A method of one object is that object's class's, as a caller sees it.
-        if let Some(DefinedOn::Object(of)) = &defined_on {
-            row["owner"] = public_name(of).into();
-            row["singleton"] = false.into();
-        }
-        if let Some((path, line)) = route {
-            row["route"] = serde_json::json!({ "path": path, "line": line });
-        }
-        if let Some(convention) = convention {
-            row["convention"] = serde_json::json!({ "by": convention.by });
-            if let Some((path, line)) = convention.at {
-                row["convention"]["path"] = path.into();
-                row["convention"]["line"] = line.into();
-            }
-        }
+        let (owner, singleton) = match &defined_on {
+            Some(DefinedOn::Object(of)) => (public_name(of).to_string(), false),
+            _ => (owner, def.singleton),
+        };
+        let confidence = match risky.is_empty() && tier != DeadTier::Override {
+            true => Grade::Clear,
+            false => Grade::Lower,
+        };
+        let row = DeadRow {
+            kind: DeadKind::Method,
+            name: def.name.clone(),
+            owner,
+            visibility: def.visibility.as_str(),
+            path: file.clone(),
+            line: def.pos.line,
+            col: def.pos.col,
+            tier,
+            confidence,
+            caveat: risky,
+            reason,
+            detail: Detail::Method(MethodDetail {
+                singleton,
+                end_line: def.end_line,
+                confirmed: counts.confirmed,
+                possible: counts.possible,
+                symbol_refs: live.by_symbol,
+                super_refs: live.by_super,
+                super_from: live.super_from,
+                mentions_by_name: written,
+                overrides,
+                overridden_by: shadowing,
+                caller,
+                route: route.cloned().map(|(path, line)| Site { path, line }),
+                convention: convention.as_ref().map(ConventionSite::of),
+            }),
+        };
         rows.push(row);
     }
     let checkout_files = crate::query::members::CheckoutFiles::new(store, root, &root_str);
@@ -1062,43 +1289,38 @@ fn dead_in(
 /// One pass does not cascade: a method whose only caller is itself a
 /// candidate is `single-caller`, not `unreferenced`. Say so on the row,
 /// where the next question is asked.
-fn note_candidate_callers(rows: &mut [serde_json::Value]) {
-    let spans: Vec<(String, u64, u64, String)> = rows
+fn note_candidate_callers(rows: &mut [DeadRow]) {
+    let spans: Vec<(String, u32, u32, String)> = rows
         .iter()
         .map(|row| {
             (
-                row["path"].as_str().unwrap_or_default().to_string(),
-                row["line"].as_u64().unwrap_or(0),
-                row["end_line"].as_u64().unwrap_or(0),
-                row["name"].as_str().unwrap_or_default().to_string(),
+                row.path.clone(),
+                row.line,
+                row.end_line().unwrap_or(0),
+                row.name.clone(),
             )
         })
         .collect();
     for row in rows.iter_mut() {
-        let caller = &row["caller"];
-        let (Some(path), Some(line)) = (caller["path"].as_str(), caller["line"].as_u64()) else {
+        let Detail::Method(MethodDetail {
+            caller: Some(caller),
+            ..
+        }) = &row.detail
+        else {
             continue;
         };
         let within = spans
             .iter()
-            .find(|(p, start, end, _)| p == path && (*start..=*end).contains(&line));
+            .find(|(p, start, end, _)| *p == caller.path && (*start..=*end).contains(&caller.line));
         if let Some((_, _, _, name)) = within {
-            let reason = format!(
-                "{}; its caller, {name}, is itself a candidate",
-                row["reason"].as_str().unwrap_or_default()
-            );
-            row["reason"] = reason.into();
+            row.reason = format!("{}; its caller, {name}, is itself a candidate", row.reason);
         }
     }
 }
 
-/// `path:line` of a located JSON object, as text shows a path.
-fn at_line(site: &serde_json::Value) -> String {
-    format!(
-        "{}:{}",
-        shown(site["path"].as_str().unwrap_or_default()),
-        site["line"]
-    )
+/// `path:line`, as text shows a path.
+fn at_line(path: &str, line: u32) -> String {
+    format!("{}:{line}", shown(path))
 }
 
 /// Ruby files under these paths, each once: the same file named twice — a

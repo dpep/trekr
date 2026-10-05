@@ -14,6 +14,7 @@ mod ways;
 
 use super::config::Config;
 use super::conventions::Convention;
+use super::dead::{ConstantDetail, ConventionSite, DeadKind, DeadRow, DeadTier, Detail, Grade};
 use super::generated::Generated;
 use super::routes::Routes;
 use super::views::Views;
@@ -85,7 +86,7 @@ const UNPROVEN: &str = "classes, modules and constants are graded lower unless a
 
 struct Declared {
     fqn: String,
-    kind: String,
+    kind: DeadKind,
     path: String,
     line: u32,
     col: u32,
@@ -105,10 +106,13 @@ fn declared_in(
     let prefix = format!("{root}/");
     let mut found = Vec::new();
     for (fqn, kind) in all {
-        if !matches!(kind.as_str(), "class" | "module" | "constant")
-            || crate::tree::public_name(fqn) != fqn
-            || crate::core::synthetic(fqn)
-        {
+        let kind = match kind.as_str() {
+            "class" => DeadKind::Class,
+            "module" => DeadKind::Module,
+            "constant" => DeadKind::Constant,
+            _ => continue,
+        };
+        if crate::tree::public_name(fqn) != fqn || crate::core::synthetic(fqn) {
             continue;
         }
         let sites = tree.sites(fqn);
@@ -124,7 +128,7 @@ fn declared_in(
         }
         found.push(Declared {
             fqn: fqn.clone(),
-            kind: kind.clone(),
+            kind,
             path: site.path.clone(),
             line: site.line,
             col: site.col,
@@ -317,7 +321,7 @@ pub(super) fn dead_constants(
     root: &Path,
     files: &[std::path::PathBuf],
     sources: Sources<'_>,
-    rows: &mut Vec<serde_json::Value>,
+    rows: &mut Vec<DeadRow>,
 ) -> anyhow::Result<()> {
     let Sources {
         routes,
@@ -434,7 +438,7 @@ pub(super) fn dead_constants(
     } in &declared
     {
         if !live(fqn) {
-            let found = ways.convention(fqn, kind, &path[prefix.len()..], *line);
+            let found = ways.convention(fqn, kind.as_str(), &path[prefix.len()..], *line);
             if found.is_some() {
                 reached.insert(fqn);
             }
@@ -463,46 +467,44 @@ pub(super) fn dead_constants(
         let tests = used.map_or(0, |u| u.tests);
         let convention = conventions.remove(fqn.as_str()).flatten();
         let (tier, reason) = match (&convention, used.and_then(|u| u.first_test.as_ref())) {
-            (Some(convention), _) => ("convention-only", convention.reason.clone()),
+            (Some(convention), _) => (DeadTier::ConventionOnly, convention.reason.clone()),
             (None, Some((at, line))) => (
-                "test-only",
+                DeadTier::TestOnly,
                 format!("referenced only from tests ({tests}, first at {at}:{line})"),
             ),
-            (None, None) => ("unreferenced", "no constant reference names it".to_string()),
+            (None, None) => (
+                DeadTier::Unreferenced,
+                "no constant reference names it".to_string(),
+            ),
         };
         let caveat = match tier {
-            "convention-only" => String::new(),
+            DeadTier::ConventionOnly => String::new(),
             _ => ways.caveats(fqn).join(", "),
         };
         let (owner, name) = fqn.rsplit_once("::").unwrap_or(("", fqn));
-        let mut row = serde_json::json!({
-            "kind": kind,
-            "name": name,
-            "owner": owner,
-            "visibility": "public",
-            "path": path,
-            "line": line,
-            "col": col,
-            "tier": tier,
-            "test_refs": tests,
-            // A class or constant nothing names was dead 19 times in 50 on
-            // a held-out app: `clear` is not earned yet (DEC-450).
-            "confidence": if caveat.is_empty() && tier == "convention-only" {
-                "clear"
-            } else {
-                "lower"
-            },
-            "caveat": caveat,
-            "reason": reason,
+        // A class or constant nothing names was dead 19 times in 50 on a
+        // held-out app: `clear` is not earned yet (DEC-450).
+        let confidence = match caveat.is_empty() && tier == DeadTier::ConventionOnly {
+            true => Grade::Clear,
+            false => Grade::Lower,
+        };
+        found.push(DeadRow {
+            kind: *kind,
+            name: name.to_string(),
+            owner: owner.to_string(),
+            visibility: "public",
+            path: path.clone(),
+            line: *line,
+            col: *col,
+            tier,
+            confidence,
+            caveat,
+            reason,
+            detail: Detail::Constant(ConstantDetail {
+                test_refs: tests,
+                convention: convention.as_ref().map(ConventionSite::of),
+            }),
         });
-        if let Some(convention) = convention {
-            row["convention"] = serde_json::json!({ "by": convention.by });
-            if let Some((path, line)) = convention.at {
-                row["convention"]["path"] = path.into();
-                row["convention"]["line"] = line.into();
-            }
-        }
-        found.push(row);
     }
     // Code a generator wrote is reached by the contract it implements, and
     // comes back when it is generated again (DEC-403).
@@ -510,24 +512,23 @@ pub(super) fn dead_constants(
         root,
         found
             .iter()
-            .filter(|row| row["tier"] != "convention-only")
-            .filter_map(|row| row["path"].as_str()),
+            .filter(|row| row.tier != DeadTier::ConventionOnly)
+            .map(|row| row.path.as_str()),
     );
     for mut row in found {
-        let how = row["path"].as_str().and_then(|path| generated.why(path));
-        if let Some(how) = how.filter(|_| row["tier"] != "convention-only") {
-            let caveat = match row["caveat"].as_str().unwrap_or_default() {
+        let how = generated.why(&row.path);
+        if let Some(how) = how.filter(|_| row.tier != DeadTier::ConventionOnly) {
+            let caveat = match row.caveat.as_str() {
                 "" => String::new(),
                 said => format!("{said}, "),
             };
-            row["caveat"] = format!(
+            row.caveat = format!(
                 "{caveat}in generated code ({how}), which its runtime may load generically"
-            )
-            .into();
-            row["confidence"] = "lower".into();
+            );
+            row.confidence = Grade::Lower;
         }
-        if row["confidence"] == "lower" && row["caveat"] == "" {
-            row["caveat"] = UNPROVEN.into();
+        if row.confidence == Grade::Lower && row.caveat.is_empty() {
+            row.caveat = UNPROVEN.into();
         }
         rows.push(row);
     }

@@ -2,16 +2,17 @@
 //! a `let`, a `subject` and a group's `def`, from the reads
 //! `resolve::members` finds, which `--refs` lists (DEC-490).
 
+use super::dead::{DeadKind, DeadRow, DeadTier, Detail, Grade, MemberDetail, SharedGroupDetail};
 use crate::core::Def;
 use crate::query::members::CheckoutFiles;
 use crate::resolve::members::{self, Asked, Context, Files, Reads};
 
 /// What kind of member a row is: `let`, `subject`, or a group's `def`.
-pub(super) fn kind(def: &Def) -> &'static str {
+pub(super) fn kind(def: &Def) -> DeadKind {
     match def.via.as_deref() {
-        Some(via) if via.starts_with("subject") => "subject",
-        Some(_) => "let",
-        None => "method",
+        Some(via) if via.starts_with("subject") => DeadKind::Subject,
+        Some(_) => DeadKind::Let,
+        None => DeadKind::Method,
     }
 }
 
@@ -40,7 +41,7 @@ pub(super) fn dead_row(
     file: &str,
     relative: &str,
     def: &Def,
-) -> Option<serde_json::Value> {
+) -> Option<DeadRow> {
     let asked = Asked {
         path: relative,
         def,
@@ -50,8 +51,8 @@ pub(super) fn dead_row(
         return None;
     }
     let tier = match reads.overridden_by.is_empty() {
-        true => "unreferenced",
-        false => "shadowed",
+        true => DeadTier::Unreferenced,
+        false => DeadTier::Shadowed,
     };
     // Every member row is `lower` (DEC-496): on suites held out from the
     // rules that read them, a row with no caveat was not reliably unused.
@@ -59,27 +60,30 @@ pub(super) fn dead_row(
         true => GRADED_LOWER.to_string(),
         false => said(&reads.caveats),
     };
-    Some(serde_json::json!({
-        "kind": kind(def),
-        "name": def.name,
-        "owner": asked.owner(),
-        "group": group_name(&asked),
-        "singleton": false,
-        "visibility": def.visibility.as_str(),
-        "path": file,
-        "line": def.pos.line,
-        "col": def.pos.col,
-        "end_line": def.end_line,
-        "tier": tier,
-        "confirmed": 0,
-        "possible": 0,
-        "overridden_by": reads.overridden_by,
-        "shared_groups_read": reads.shared_groups,
-        "helpers_read": reads.helpers,
-        "confidence": "lower",
-        "caveat": caveat,
-        "reason": reason(tier, &reads),
-    }))
+    let reason = reason(tier, &reads);
+    Some(DeadRow {
+        kind: kind(def),
+        name: def.name.clone(),
+        owner: asked.owner(),
+        visibility: def.visibility.as_str(),
+        path: file.to_string(),
+        line: def.pos.line,
+        col: def.pos.col,
+        tier,
+        confidence: Grade::Lower,
+        caveat,
+        reason,
+        detail: Detail::Member(MemberDetail {
+            group: group_name(&asked),
+            singleton: false,
+            end_line: def.end_line,
+            confirmed: 0,
+            possible: 0,
+            overridden_by: reads.overridden_by,
+            shared_groups_read: reads.shared_groups,
+            helpers_read: reads.helpers,
+        }),
+    })
 }
 
 /// Why a member row with no caveat of its own is `lower` (DEC-496).
@@ -103,9 +107,9 @@ fn said(caveats: &[String]) -> String {
     text
 }
 
-fn reason(tier: &str, reads: &Reads) -> String {
+fn reason(tier: DeadTier, reads: &Reads) -> String {
     match tier {
-        "shadowed" => format!(
+        DeadTier::Shadowed => format!(
             "every call of its name in reach runs an override instead: {}",
             reads.overridden_by.join(", ")
         ),
@@ -116,15 +120,13 @@ fn reason(tier: &str, reads: &Reads) -> String {
     }
 }
 
-/// How `--dead`'s text names a member row: `let(:widget) in Widget::Saved`.
-pub(super) fn dead_name(row: &serde_json::Value) -> String {
-    let name = row["name"].as_str().unwrap_or_default();
-    let group = row["group"].as_str().unwrap_or_default();
-    match row["kind"].as_str() {
-        Some("subject") if name == "subject" => format!("subject in {group}"),
-        Some("subject") => format!("subject(:{name}) in {group}"),
-        Some("let") => format!("let(:{name}) in {group}"),
-        Some("shared_group") => format!("shared group {name:?}"),
+/// How text names a member: `let(:widget) in Widget::Saved`.
+pub(super) fn member_name(kind: DeadKind, name: &str, group: &str) -> String {
+    match kind {
+        DeadKind::Subject if name == "subject" => format!("subject in {group}"),
+        DeadKind::Subject => format!("subject(:{name}) in {group}"),
+        DeadKind::Let => format!("let(:{name}) in {group}"),
+        DeadKind::SharedGroup => format!("shared group {name:?}"),
         _ => format!("def {name} in {group}"),
     }
 }
@@ -159,10 +161,14 @@ pub(super) fn refs_answer(
 }
 
 /// The text `--refs` prints for a member's reads.
-pub(super) fn refs_text(answer: &serde_json::Value, reads: &Reads) -> Vec<String> {
+pub(super) fn refs_text(answer: &serde_json::Value, def: &Def, reads: &Reads) -> Vec<String> {
     let mut lines = Vec::new();
     let site = &answer["definition"][0];
-    let named = dead_name(answer);
+    let named = member_name(
+        kind(def),
+        &def.name,
+        answer["group"].as_str().unwrap_or_default(),
+    );
     lines.push(format!(
         "{}:{}:{}  definition  {named}",
         super::shown(site["path"].as_str().unwrap_or_default()),
@@ -215,7 +221,7 @@ struct SharedGroup {
 pub(super) fn dead_shared_groups(
     files: &CheckoutFiles<'_>,
     scope: &[(String, String)],
-    rows: &mut Vec<serde_json::Value>,
+    rows: &mut Vec<DeadRow>,
 ) -> Vec<String> {
     use crate::core::rspec;
     let mut written: Vec<SharedGroup> = Vec::new();
@@ -322,8 +328,8 @@ pub(super) fn dead_shared_groups(
             continue;
         }
         let tier = match group.by_metadata {
-            true => "convention-only",
-            false => "unreferenced",
+            true => DeadTier::ConventionOnly,
+            false => DeadTier::Unreferenced,
         };
         let caveat = unread
             .as_ref()
@@ -333,26 +339,28 @@ pub(super) fn dead_shared_groups(
             true => "no group includes it by name, but metadata it is written with includes it in the groups that match".to_string(),
             false => "no group includes it by name: no `it_behaves_like`, `include_examples` or `include_context` of it".to_string(),
         };
-        rows.push(serde_json::json!({
-            "kind": "shared_group",
-            "name": group.name,
-            "owner": group.module,
-            "group": serde_json::Value::Null,
-            "singleton": false,
-            "visibility": "public",
-            "path": group.path,
-            "line": group.line,
-            "col": group.col,
-            "tier": tier,
-            "confirmed": 0,
-            "possible": 0,
-            "confidence": "lower",
-            "caveat": caveat,
-            "reason": reason,
-        }));
         if !group.by_metadata {
-            listed.push(group.module);
+            listed.push(group.module.clone());
         }
+        rows.push(DeadRow {
+            kind: DeadKind::SharedGroup,
+            name: group.name,
+            owner: group.module,
+            visibility: "public",
+            path: group.path,
+            line: group.line,
+            col: group.col,
+            tier,
+            confidence: Grade::Lower,
+            caveat,
+            reason,
+            detail: Detail::SharedGroup(SharedGroupDetail {
+                group: None,
+                singleton: false,
+                confirmed: 0,
+                possible: 0,
+            }),
+        });
     }
     listed
 }

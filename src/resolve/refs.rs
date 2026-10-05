@@ -1407,10 +1407,21 @@ fn could_hide(tree: &Tree, landings: &super::SuperLandings, target: Option<&str>
     })
 }
 
+/// How little a method is used, by the references that survived narrowing.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Use {
+    Unreferenced,
+    /// Named only by symbols handed to macros.
+    ConventionOnly,
+    /// Reached only by `super` from overrides the index can name.
+    SuperOnly,
+    SingleCaller,
+}
+
 #[derive(Debug, PartialEq)]
 pub(crate) struct Liveness {
     /// `None` when the method is plainly referenced and not a candidate.
-    pub(crate) tier: Option<&'static str>,
+    pub(crate) tier: Option<Use>,
     pub(crate) by_symbol: usize,
     pub(crate) by_super: usize,
     /// The owners of the overrides whose `super` reaches it.
@@ -1442,10 +1453,10 @@ pub(crate) fn liveness(found: &[Reference], counts: &Counts) -> Liveness {
         .collect();
     let written = (counts.confirmed + counts.possible).saturating_sub(by_symbol + supers.len());
     let tier = match (written, supers.len(), by_symbol) {
-        (0, 0, 0) => Some("unreferenced"),
-        (0, 0, _) => Some("convention-only"),
-        (0, _, _) => Some("super-only"),
-        (1, _, _) => Some("single-caller"),
+        (0, 0, 0) => Some(Use::Unreferenced),
+        (0, 0, _) => Some(Use::ConventionOnly),
+        (0, _, _) => Some(Use::SuperOnly),
+        (1, _, _) => Some(Use::SingleCaller),
         _ => None,
     };
     let mut super_from: Vec<String> = Vec::new();

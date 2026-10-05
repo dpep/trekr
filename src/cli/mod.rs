@@ -4106,7 +4106,7 @@ fn cmd_refs_at(
         if out != Output::Text {
             emit_listing(out, answer, "references", &reads.found)?;
         } else {
-            for line in members::refs_text(&answer, &reads) {
+            for line in members::refs_text(&answer, &def, &reads) {
                 println!("{line}");
             }
         }
