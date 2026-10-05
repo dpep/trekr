@@ -2,9 +2,11 @@
 
 `trekr` is a **Ruby code-intelligence engine** — position→meaning and
 definition→references for massive legacy Rails monorepos, agent-first. Read
-[docs/PLAN.md](docs/PLAN.md) before anything else: it carries the research, the
-read on the other engines (Ruby LSP / Rubydex / Sorbet), the architecture, the measurement
-gate, and the phased roadmap. Keep it — and the docs that grow out of it — in sync
+[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) before anything else: the layers,
+what is built, and how it was measured. [docs/DECISIONS.md](docs/DECISIONS.md)
+carries what was considered and why. [docs/PLAN.md](docs/PLAN.md) is the
+original research and phase plan — historical now, but still where the read on
+the other engines (Ruby LSP / Rubydex / Sorbet) lives. Keep the docs in sync
 with the code in the same commit, rq/rwr style.
 
 ## First principles

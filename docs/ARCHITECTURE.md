@@ -3,9 +3,9 @@
 The design contract. [PLAN.md](PLAN.md) says *why*; this says *what is built*.
 Change them in the same commit as the code, per [CLAUDE.md](../CLAUDE.md).
 
-Status: **All three layers built.** Ruby core, its stdlib and the checkout's gems are
-indexed. Not started: Rails DSL modeling, Tapioca `sorbet/rbi/` ingestion, the
-LSP front, and `--refs` narrowed by receiver.
+Status: **All three layers built**, with the CLI and the LSP front over them.
+Ruby core, its stdlib and the checkout's gems are indexed. What is not handled
+yet is under [Known gaps](#known-gaps).
 
 ## The one idea
 
@@ -24,8 +24,7 @@ boundary below is stated as a prohibition rather than a preference.
 │    resolve/  receiver ladder, ranked residue       │
 ├─ 2. tree layer ──────────────────────────── BUILT ─┤
 │    tree/     per checkout: constant namespace,     │
-│              ancestor linearization. Method tables │
-│              and singleton chains not yet.         │
+│              ancestor linearization, method tables │
 ├─ 1. blob layer ───────────────────────── BUILT ────┤
 │    scan/     checkout → path→OID map               │
 │    extract/  bytes → facts       (pure)            │

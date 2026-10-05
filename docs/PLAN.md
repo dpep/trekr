@@ -1,6 +1,12 @@
 
 # Ruby code intelligence for agents — research + plan
 
+> **Historical: the research and phase plan as of 2026-08.** Its phases have
+> shipped and its backlog has not been kept. What is built is
+> [ARCHITECTURE.md](ARCHITECTURE.md); what was decided since, and why, is
+> [DECISIONS.md](DECISIONS.md). Kept for the research, and because both cite
+> its sections.
+
 Drafted 2026-08-23 from five research tracks (rq docs, rwr docs, Ruby LSP/Rubydex,
 Sorbet + Rust Ruby parsing, resolution precedents + agent tooling). Sources are linked
 inline; **[I]** marks inference.
