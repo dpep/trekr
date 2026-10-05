@@ -3044,6 +3044,13 @@ fn gather_refs(
             if partial {
                 reference.unrule();
             }
+            // Its includers may answer it: asked below, one file at a time.
+            if reference.tier == refs::Tier::Excluded
+                && target.is_some()
+                && crate::resolve::members::in_shared_body(facts, call)
+            {
+                tiered.shared.push((call.clone(), reference.clone()));
+            }
             tiered.counts.record(&reference);
             // Excluded sites are counted, not listed: the count is the
             // product, and the list would be the grep we are trying to
@@ -3085,11 +3092,31 @@ fn gather_refs(
     };
     let mut found = Vec::new();
     let mut counts = refs::Counts::default();
+    let mut shared = Vec::new();
     for mut file in tiered {
         found.append(&mut file.found);
         counts.add(&file.counts);
+        shared.append(&mut file.shared);
         if let Some(sites) = sites.as_deref_mut() {
             sites.append(&mut file.sites);
+        }
+    }
+    // A shared group's call the example does not answer runs what the
+    // groups that include it mix in (DEC-499).
+    if let (Some(target), false) = (target, shared.is_empty()) {
+        let files = crate::query::members::CheckoutFiles::new(store, root, root_str);
+        for (call, excluded) in &shared {
+            let Some(reference) =
+                crate::query::members::includer_reference(tree, &files, call, target, excluded)
+            else {
+                continue;
+            };
+            counts.forget(excluded);
+            counts.record(&reference);
+            found.retain(|r| {
+                (&r.path, r.line, r.col) != (&excluded.path, excluded.line, excluded.col)
+            });
+            found.push(reference);
         }
     }
     found.sort_by_key(refs::order);
@@ -3102,6 +3129,8 @@ struct Tiered {
     found: Vec<crate::resolve::refs::Reference>,
     counts: crate::resolve::refs::Counts,
     sites: Vec<crate::store::Ref>,
+    /// Calls in a shared group's body ruled out, for its includers to answer.
+    shared: Vec<(crate::core::Call, crate::resolve::refs::Reference)>,
 }
 
 /// Files held across queries, by checkout-relative path: each one's facts,
@@ -5049,17 +5078,17 @@ fn dead_in(
         // The one written call a single caller has: whether it certainly
         // reaches this method is the difference between inlining it and
         // checking an untyped receiver first.
-        let caller = (tier == "single-caller")
+        let written = (tier == "single-caller")
             .then(|| found.iter().find(|r| refs::is_written_call(r)))
-            .flatten()
-            .map(|r| {
-                serde_json::json!({
-                    "path": format!("{root_str}/{}", r.path),
-                    "line": r.line,
-                    "col": r.col,
-                    "tier": r.tier,
-                })
-            });
+            .flatten();
+        let caller = written.map(|r| {
+            serde_json::json!({
+                "path": format!("{root_str}/{}", r.path),
+                "line": r.line,
+                "col": r.col,
+                "tier": r.tier,
+            })
+        });
         // Its only evidence of use is a call that may be another method's:
         // that is weaker than a clear single caller, and says why.
         let mut risky = risky.clone();
@@ -5369,6 +5398,10 @@ fn dead_in(
             ),
             (_, Some(caller)) if caller["tier"] == "confirmed" => {
                 format!("one call, at {}", at_line(caller))
+            }
+            // A call found by where it runs says how (DEC-499).
+            (_, Some(caller)) if let Some(r) = written.filter(|r| r.from.is_some()) => {
+                format!("one possible call, at {}: {}", at_line(caller), r.why)
             }
             (_, Some(caller)) => format!(
                 "one possible call, at {}: its receiver is untyped",

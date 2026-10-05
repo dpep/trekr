@@ -6212,7 +6212,8 @@ fn dead_and_refs_agree_on_an_example_groups_members() {
     for entry in fs::read_dir(&testbed).unwrap().flatten() {
         let name = entry.file_name().to_string_lossy().into_owned();
         let numbered: u32 = name.split('-').next().unwrap().parse().unwrap_or(0);
-        if !(490..=499).contains(&numbered) || !entry.path().join("spec").is_dir() {
+        let members = (490..=499).contains(&numbered) || (604..=606).contains(&numbered);
+        if !members || !entry.path().join("spec").is_dir() {
             continue;
         }
         let into = dir.join(&name);

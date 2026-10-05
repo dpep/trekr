@@ -223,9 +223,12 @@ pub(crate) fn includer_answer(
     {
         return None;
     }
-    let members::Includers { found, unanswered } =
-        members::includer_members(&context, relative, &facts, call);
-    if found.is_empty() {
+    let members::Includers {
+        found,
+        mixed,
+        unanswered,
+    } = members::includer_members(&context, relative, &facts, call);
+    if found.is_empty() && mixed.is_empty() {
         return None;
     }
     let mut sites: Vec<crate::tree::Site> = found
@@ -236,9 +239,11 @@ pub(crate) fn includer_answer(
             col: def.pos.col,
             kind: "method".to_string(),
         })
+        .chain(mixed.iter().map(|method| method.site.clone()))
         .collect();
     let groups = sites.len();
-    let mut agreement = format!("{groups} groups that include the shared group define it");
+    let mut agreement =
+        format!("{groups} groups that include the shared group define it or mix it in");
     if helper && unanswered > 0 {
         sites.extend(answer.sites.iter().cloned());
         agreement = format!(
@@ -247,8 +252,18 @@ pub(crate) fn includer_answer(
             answer.owner.as_deref().unwrap_or_default()
         );
     }
-    let (path, def) = &found[0];
-    let first = Asked { path, def };
+    let (owner, kind, defined_via) = match (found.first(), mixed.first()) {
+        (Some((path, def)), _) => (
+            Asked { path, def }.owner(),
+            match def.via {
+                Some(_) => crate::tree::Kind::Declaration,
+                None => crate::tree::Kind::Definition,
+            },
+            def.via.clone(),
+        ),
+        (None, Some(method)) => (method.owner.clone(), method.kind(), method.declared_via()),
+        (None, None) => return None,
+    };
     let n = sites.len();
     Some(crate::resolve::MethodAnswer {
         status: match n {
@@ -260,16 +275,61 @@ pub(crate) fn includer_answer(
         receiver: answer.receiver,
         receiver_type: answer.receiver_type.clone(),
         receiver_kind: answer.receiver_kind.clone(),
-        owner: Some(first.owner()),
-        kind: Some(match def.via {
-            Some(_) => crate::tree::Kind::Declaration,
-            None => crate::tree::Kind::Definition,
-        }),
-        defined_via: def.via.clone(),
+        owner: Some(owner),
+        kind: Some(kind),
+        defined_via,
         sites,
         agreement: (n > 1).then_some(agreement),
         unresolved_ancestors: Vec::new(),
         candidates: Vec::new(),
         reason: None,
+    })
+}
+
+/// A call in a shared group's body that `--refs Owner#method` ruled out on
+/// the example, tiered again by its includers (DEC-499): where a module an
+/// including group mixes in has the method, the call runs it for that
+/// group — `confirmed` when every includer's answer is that method,
+/// `possible` when only some.
+pub(crate) fn includer_reference(
+    tree: &crate::tree::Tree,
+    files: &CheckoutFiles<'_>,
+    call: &crate::core::Call,
+    target: &str,
+    excluded: &crate::resolve::refs::Reference,
+) -> Option<crate::resolve::refs::Reference> {
+    use crate::resolve::refs::Tier;
+    let facts = files.facts(&excluded.path)?;
+    let context = Context::new(tree, files);
+    let includers = members::includer_members(&context, &excluded.path, &facts, call);
+    let lands = |method: &&crate::tree::MethodDef| {
+        !method.singleton && crate::tree::public_name(&method.owner) == target
+    };
+    let hits = includers.mixed.iter().filter(lands).count();
+    if hits == 0 {
+        return None;
+    }
+    let every =
+        includers.found.is_empty() && includers.unanswered == 0 && hits == includers.mixed.len();
+    let (tier, why, proximity) = match every {
+        true => (
+            Tier::Confirmed,
+            "the shared group runs in groups that include it, each mixing in this",
+            0,
+        ),
+        false => (
+            Tier::Possible,
+            "the shared group runs in groups that include it, one of which mixes in this",
+            1,
+        ),
+    };
+    Some(crate::resolve::refs::Reference {
+        tier,
+        owner: Some(target.to_string()),
+        why,
+        ruling: None,
+        proximity,
+        from: Some("includer"),
+        ..excluded.clone()
     })
 }

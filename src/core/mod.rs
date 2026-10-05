@@ -163,6 +163,11 @@ pub(crate) struct Facts {
     /// shared group, by its nesting, and the shared group's module (DEC-092).
     /// A resolve-time fact, like `assigns`: never stored.
     pub(crate) shared_includes: Vec<(Vec<String>, String)>,
+    /// `include M` or `prepend M` in an example group's body: the group, by
+    /// its nesting, and the module as written. A group is a class only its
+    /// file sees (DEC-084), so no tree edge carries this; its examples find
+    /// `M`'s methods through it (DEC-499). Resolve-time, never stored.
+    pub(crate) group_mixins: Vec<(Vec<String>, String)>,
     /// `it_behaves_like "x"` written with no block: the group it is written
     /// in, and the shared group's module, which RSpec includes into a nested
     /// group of its own that the file writes nothing in. Read by `--dead`

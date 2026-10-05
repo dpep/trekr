@@ -64,7 +64,7 @@ pub(crate) enum Tier {
     Excluded,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct Reference {
     pub(crate) path: String,
     pub(crate) line: u32,
@@ -164,6 +164,18 @@ impl Counts {
                 }
             }
         }
+    }
+
+    /// A site counted already, taken back: a later rule tiered it again.
+    pub(crate) fn forget(&mut self, reference: &Reference) {
+        let mut taken = Counts::default();
+        taken.record(reference);
+        self.confirmed -= taken.confirmed;
+        self.possible -= taken.possible;
+        self.excluded -= taken.excluded;
+        self.excluded_different_owner -= taken.excluded_different_owner;
+        self.excluded_no_such_method -= taken.excluded_no_such_method;
+        self.excluded_arity -= taken.excluded_arity;
     }
 
     /// Another run's counts, added to these.

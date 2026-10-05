@@ -2707,6 +2707,11 @@ impl<'pr> Extractor<'_> {
             self.record_macro_mixin(relation, args);
             return false;
         }
+        if self.in_group_body() && relation != Relation::Extend {
+            for target in args.iter().filter_map(const_name) {
+                self.facts.group_mixins.push((self.nesting.clone(), target));
+            }
+        }
         let Some(mut owner) = self.mixin_owner() else {
             return false;
         };

@@ -12099,6 +12099,68 @@ read of the name in an ancestor group's hooks — is what DEC-490 already
 does for a group that runs examples; the gap was seeing that this one does.
 Testbed 605.
 
+## DEC-499 — A group's `include` answers its examples, and its shared groups'
+
+**Decided.** `include M` (or `prepend M`) in an example group's body puts
+`M`'s methods on the group's lookup, after the group's own definitions and
+the shared groups it includes, before the groups around it — where Ruby has
+them, since a group is a class and `M` is in its ancestors. A group is a
+class only its file sees (DEC-084), so no tree edge carries the include:
+extraction keeps it beside the facts (`Facts::group_mixins`, resolve-time,
+never stored), as it keeps `include_context`. An example's call of a name
+`M` defines is `confirmed` for `M#name`; a `let` an outer group defines and
+`M` answers is overridden there, as by an inner `let`.
+
+**A shared group's body** runs on the groups that include it, so a call
+there that the body and the example do not answer is answered by what each
+includer's lookup lands on — its `let`s (DEC-490) and now the modules it
+mixes in. `--refs Owner#method` and `--dead` tier such a call, ruled out on
+the example, again by the includers: `confirmed` when every includer's
+answer is the method, `possible` when only some (`from: includer`,
+"the shared group runs in groups that include it, one of which mixes in
+this"). `--def` there answers with each includer's method, `ambiguous` for
+several. An includer that is itself a shared group's body hands the call on
+to its own includers, up to four deep (webmock's `"with WebMock"` includes
+`"callbacks"`, whose `http_library()` each adapter's helper defines). The
+includers of a top-level shared group are found among the files that call
+`include_context` and its kin and write its name. A `single-caller` row whose
+one call was found this way says so instead of "its receiver is untyped".
+
+**Why.** webmock's acceptance suite: each adapter's spec includes its helper
+module and `include_context "with WebMock"`, whose examples call
+`client_timeout_exception_class`, `http_library` and the rest; all were
+"no call names it" (#11) — 40 rows of those four names across nine
+adapters, of which 4 remain (`NetHTTPSpecHelper`'s, below) and 9 are
+`single-caller` on their one `possible` call. The direct form, an example calling a module its
+own group includes, was ruled out the same way: the example's receiver is
+`RSpec::Core::ExampleGroup`, which has no such method.
+
+**Measured**, `--dead spec`, before (033cb8f) and after, rows diffed:
+
+| suite | rows before → after | gone | retiered | new |
+| --- | ---: | ---: | ---: | ---: |
+| webmock | 104 → 76 | 28 | 9 `unreferenced` → `single-caller` | 0 |
+| graphql-ruby | 2,680 → 2,672 | 8 | 0 | 0 |
+| mastodon | 197 → 194 | 3 | 1 | 0 |
+| dd-trace-rb | 402 → 400 | 2 | 5 | 0 |
+| rubocop | 70 → 69 | 1 | 1 | 0 |
+| faraday | 35 → 35 | 0 | 1 | 0 |
+| flipper, rspec-core, discourse | unchanged | 0 | 0 | 0 |
+
+Every gone row was read by hand: each is called through a group's `include`
+or an including group's (webmock's adapter helpers, graphql's
+`RubocopTestHelpers`, rubocop's `FileHelper#create_link`, dd-trace's
+`GRPCHelper`, mastodon's `ProfileStories` and `ProviderRequestHelper`), or
+is one of DEC-497's and DEC-498's `let`s (graphql's 5). No suite gained a
+row. The figures cover DEC-497 and DEC-498 too; they were measured
+together.
+
+**Not done.** The editor's Find References tiers each call where it scans,
+without the includers, so it still omits a shared body's call that only an
+includer's module answers; `--refs` lists it. `include M` at a spec file's
+top level (webmock's `net_http_spec.rb`), which mixes `M` into `Object`, is
+not this rule: its `NetHTTPSpecHelper` rows stand. Testbed 606.
+
 ## DEC-500 — The first query in a checkout indexes it
 
 **Decided.** A query — `--def`, the bare position, a card, `--refs`,

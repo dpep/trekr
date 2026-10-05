@@ -283,11 +283,25 @@ pub(crate) fn named_by(tree: &Tree, facts: &Facts, call: &Call) -> Option<Named>
 }
 
 /// The groups that include a shared group, as a call in its body reads
-/// them: the member each defines of the name, and how many define none.
+/// them: the member each defines of the name, the method a module each
+/// mixes in has of it (DEC-499), and how many have none.
 #[derive(Default)]
 pub(crate) struct Includers {
     pub(crate) found: Vec<(String, Def)>,
+    pub(crate) mixed: Vec<crate::tree::MethodDef>,
     pub(crate) unanswered: usize,
+}
+
+/// Is `call` one with no receiver in a shared group's body, which runs on
+/// the groups that include it?
+pub(crate) fn in_shared_body(facts: &Facts, call: &Call) -> bool {
+    matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv)
+        && rspec::in_group(&call.nesting)
+        && (shared_body_of(&call.nesting).is_some()
+            || facts
+                .local_shared
+                .iter()
+                .any(|local| call.nesting.ends_with(&local.body)))
 }
 
 /// Can a call's answer be its shared group's includers' (DEC-490)? A cheap
@@ -308,12 +322,26 @@ pub(crate) fn includers_may_answer(call: &Call, answer: &crate::resolve::MethodA
 /// the name: the member each group that includes the body defines, where
 /// the call runs (DEC-490). A top-level shared group's includers are the
 /// files that call the name — `let(:name)` is a call of it — and one written
-/// in a group, its own file's.
+/// in a group, its own file's. An includer that is itself a shared group's
+/// body, answering nothing, hands the call on to its own includers.
 pub(crate) fn includer_members(
     context: &Context<'_>,
     path: &str,
     facts: &Facts,
     call: &Call,
+) -> Includers {
+    includers_from(context, path, facts, call, 0)
+}
+
+/// How many shared groups deep `includer_members` follows a call.
+const INCLUDER_DEPTH: usize = 4;
+
+fn includers_from(
+    context: &Context<'_>,
+    path: &str,
+    facts: &Facts,
+    call: &Call,
+    depth: usize,
 ) -> Includers {
     let tree = context.tree;
     let mut out = Includers::default();
@@ -347,11 +375,13 @@ pub(crate) fn includer_members(
                 .files
                 .calling(&call.name)
                 .into_iter()
+                .chain(naming_files(context, &module))
                 .filter(|p| p != path),
         );
+        paths.sort();
+        paths.dedup();
     }
     let hook = !call.in_example;
-    let found = &mut out.found;
     for includer in paths {
         let Some(held) = (match includer == path {
             true => context.files.facts(path),
@@ -367,23 +397,95 @@ pub(crate) fn includer_members(
             }
             let mut answered = false;
             for answer in answers {
-                let Member::Here(def) = answer else { continue };
+                let def = match answer {
+                    Member::Here(def) => def,
+                    // A module the includer mixes in (DEC-499).
+                    Member::Shared(method) if method.owner != module => {
+                        answered = true;
+                        let same = |m: &crate::tree::MethodDef| {
+                            m.site.path == method.site.path && m.site.line == method.site.line
+                        };
+                        if !out.mixed.iter().any(same) {
+                            out.mixed.push(*method);
+                        }
+                        continue;
+                    }
+                    Member::Shared(_) => continue,
+                };
                 // Its own body's, read lexically from an includer in its file.
                 if body.is_some_and(|body| def.nesting.ends_with(body)) {
                     continue;
                 }
                 answered = true;
-                if !found
+                if !out
+                    .found
                     .iter()
                     .any(|(p, d)| *p == includer && d.pos == def.pos)
                 {
-                    found.push((includer.clone(), def.clone()));
+                    out.found.push((includer.clone(), def.clone()));
+                }
+            }
+            // `include_context "x"` in another shared group's body: the call
+            // runs in the groups that include that one.
+            if !answered && depth < INCLUDER_DEPTH {
+                let mut outer = call.clone();
+                outer.nesting = level.clone();
+                let further = includers_from(context, &includer, &held, &outer, depth + 1);
+                answered = !further.found.is_empty() || !further.mixed.is_empty();
+                for (p, def) in further.found {
+                    if !out.found.iter().any(|(q, d)| *q == p && d.pos == def.pos) {
+                        out.found.push((p, def));
+                    }
+                }
+                for method in further.mixed {
+                    let same = |m: &crate::tree::MethodDef| {
+                        m.site.path == method.site.path && m.site.line == method.site.line
+                    };
+                    if !out.mixed.iter().any(same) {
+                        out.mixed.push(method);
+                    }
+                }
+                // Counted where they are, when there were any.
+                out.unanswered += further.unanswered;
+                if !answered && further.unanswered > 0 {
+                    continue;
                 }
             }
             out.unanswered += usize::from(!answered);
         }
     }
     out
+}
+
+/// The files that include the top-level shared group `module` by the name
+/// it is written with: where the groups that may mix in what its body calls
+/// are, though they need not call the name.
+fn naming_files(context: &Context<'_>, module: &str) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    for site in context.tree.sites(module) {
+        let Some(path) = site.path.strip_prefix(&context.tree.site_path("")) else {
+            continue;
+        };
+        let Some(source) = context.files.facts(path).and_then(|f| f.source.clone()) else {
+            continue;
+        };
+        let written = ["shared_examples_for", "shared_examples", "shared_context"]
+            .iter()
+            .find_map(|call| literal_on(&source, site.line, call));
+        if let Some((name, _)) = written
+            && !names.contains(&name)
+        {
+            names.push(name);
+        }
+    }
+    let mut paths: Vec<String> = SHARED_INCLUDERS
+        .iter()
+        .flat_map(|name| context.files.calling(name))
+        .filter(|path| names.iter().any(|name| context.files.mentions(path, name)))
+        .collect();
+    paths.sort();
+    paths.dedup();
+    paths
 }
 
 /// What every member's question shares: the files, and what each module
@@ -1747,7 +1849,7 @@ fn computed_sends(facts: &Facts, wanted: impl Fn(&Call) -> bool) -> Vec<(u32, St
 
 /// `include M` (or `extend`, `prepend`) of a module with its own hook for
 /// it: `def self.included(group)` may write examples into the group, as a
-/// macro trekr does not read may (DEC-498).
+/// macro trekr does not read may.
 fn mixes_in_a_hook(tree: &Tree, path: &str, facts: &Facts, call: &Call) -> bool {
     let hook = match call.name.as_str() {
         "include" => "included",

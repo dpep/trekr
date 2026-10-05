@@ -1100,6 +1100,18 @@ pub(super) fn member_at<'f>(
                 return Some(Member::Shared(Box::new(found)));
             }
         }
+        // `include Helpers` in the group's body (DEC-499).
+        let mixed = facts
+            .group_mixins
+            .iter()
+            .rev()
+            .filter(|(group, _)| group == level)
+            .filter_map(|(_, written)| tree.resolve(written, level).fqn);
+        for module in mixed {
+            if let Some(found) = tree.lookup(&module, false, name) {
+                return Some(Member::Shared(Box::new(found)));
+            }
+        }
     }
     None
 }

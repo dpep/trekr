@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **A module an example group `include`s answers its examples' calls**
+  (#11). A helper method called from an example of a group that `include`s
+  its module was ruled out (`no_such_method` on the example group) and
+  listed by `--dead` as unreferenced; it is a confirmed reference now. A
+  shared group's call is answered by what the groups including it mix in —
+  `confirmed` when every includer's module has the method, `possible` when
+  one of several does, and through a shared group included by another —
+  so webmock-style adapter helpers called from shared examples are no
+  longer "no call names it". `--def` there answers with each includer's
+  method.
 - **A group whose examples come from a mixin's `included` hook runs them**
   (#10). A nested group with `let(:scheduler_class)` and `include
   Assertions`, whose `self.included` writes the examples with `class_eval`,

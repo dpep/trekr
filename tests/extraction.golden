@@ -615,6 +615,14 @@ ruby tests/testbed/603-a-templates-bare-ivar-and-local-assigns-are-defined/app/m
 ruby tests/testbed/603-a-templates-bare-ivar-and-local-assigns-are-defined/lib/action_view/base.rb c0772a1f742fb5f9
 ruby tests/testbed/604-a-let-read-through-an-alias-of-self/app.rb 6142d861caa30323
 ruby tests/testbed/604-a-let-read-through-an-alias-of-self/spec/widget_spec.rb 962180933fdfb076
+ruby tests/testbed/605-a-nested-let-read-by-an-outer-def-whose-examples-an-include-writes/spec/widget_spec.rb fd21464ab9e04746
+ruby tests/testbed/606-a-shared-groups-call-reaches-a-helper-its-includer-mixes-in/spec/alpha_spec.rb 12a4e827f4235bb0
+ruby tests/testbed/606-a-shared-groups-call-reaches-a-helper-its-includer-mixes-in/spec/beta_spec.rb 2a9d6d95342aeaf0
+ruby tests/testbed/606-a-shared-groups-call-reaches-a-helper-its-includer-mixes-in/spec/gamma_spec.rb 36d33f7e6929e709
+ruby tests/testbed/606-a-shared-groups-call-reaches-a-helper-its-includer-mixes-in/spec/support/alpha_helper.rb 2529f5d75c077030
+ruby tests/testbed/606-a-shared-groups-call-reaches-a-helper-its-includer-mixes-in/spec/support/beta_helper.rb 4a43490d36a78475
+ruby tests/testbed/606-a-shared-groups-call-reaches-a-helper-its-includer-mixes-in/spec/support/gamma_helper.rb 8496c8242286a711
+ruby tests/testbed/606-a-shared-groups-call-reaches-a-helper-its-includer-mixes-in/spec/support/shared.rb ef6e32a5d86fb87e
 ruby tests/testbed/620-a-module-that-mixes-itself-in-is-used/lib/patches.rb b7ece727f0fc708e
 ruby tests/testbed/620-a-module-that-mixes-itself-in-is-used/lib/widget.rb 41d5463b6e2c2330
 ruby tests/testbed/620-a-module-that-mixes-itself-in-is-used/spec/support/stubbing.rb 5a2d9588602e7e98
