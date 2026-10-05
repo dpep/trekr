@@ -32,6 +32,11 @@ boundary below is stated as a prohibition rather than a preference.
 └────────────────────────────────────────────────────┘
 ```
 
+The CLI (`cli/`) and the LSP (`serve/`) are fronts over these layers. What
+both ask — the fact under a position, an example group's members — lives in
+`query/`, beneath either, so neither front imports the other and no layer
+imports a front; `tests/layers.rs` fails on a leak.
+
 ### `scan/` — the only module that knows a path exists
 
 `git ls-files -s` yields path→OID for every tracked file in ~100 ms at 100k
@@ -358,7 +363,7 @@ The ladder, tried in order, stopping at the first rung that names a type:
 out to be method *parameters* — they have no assignment to chase, so every rung
 that looks for one is structurally blind to them, and a signature had already
 said what they are. **A local is typed from the writes its read can see** — the flow analysis the
-LSP answers a local with (`serve/vars.rs`, DEC-064), run on the file's source
+LSP answers a local with (`resolve/vars.rs`, DEC-064), run on the file's source
 the first time a query needs it and kept on its facts. An assignment in
 another method, or one a later write replaced, has no vote; a write that
 cannot be typed (a parameter, `x = compute`) counts against the answer; and
@@ -816,7 +821,7 @@ files a member can be read from: its own, the bodies of the shared groups
 included in its reach, the includers of a top-level shared group's (the
 files that call its name), and the helpers `RSpec.configure` mixes into
 every group (DEC-490). The reader takes a `members::Files` — the CLI's reads
-disk (`cli::members::CheckoutFiles`), the LSP's prefers open buffers — so
+disk (`query::members::CheckoutFiles`), the LSP's prefers open buffers — so
 `--dead`, `--refs FILE:LINE` and Find References ask one function. A member
 nothing reads is `unreferenced`, one only overrides answer is `shadowed`
 (DEC-491); a shared group nothing includes by name is a row of its own
@@ -878,7 +883,7 @@ its stdin; a query whose file went to the early store answers from that
 
 `--def` reparses the one file with Prism rather than reading stored spans, so
 it answers correctly on a file edited since the last index. A variable under
-the cursor is answered from that file's flow (`serve/vars.rs`, DEC-064) before
+the cursor is answered from that file's flow (`resolve/vars.rs`, DEC-064) before
 anything snaps: a local or parameter with the writes its read can see, an
 ivar or cvar with its writes in the file — the class's other files are the
 LSP's to read, and the answer says they were not searched.

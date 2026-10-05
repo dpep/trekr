@@ -10,7 +10,7 @@
 use super::convert::{self, LineIndex, path_to_uri};
 use super::handlers::absolute_site;
 use super::state::Session;
-use super::vars::{self, Binding, Occurrence, Sigil, Vars};
+use crate::resolve::vars::{self, Binding, Occurrence, Sigil, Vars};
 use lsp_types::Uri as Url;
 use lsp_types::{DocumentHighlight, DocumentHighlightKind, Location, Position};
 use std::collections::{HashMap, HashSet};

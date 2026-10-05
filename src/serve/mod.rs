@@ -26,7 +26,6 @@ mod require;
 mod schema;
 mod state;
 mod variables;
-pub(crate) mod vars;
 mod wire;
 
 use crate::usage::Outcome;

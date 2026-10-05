@@ -16,6 +16,7 @@
 pub(crate) mod members;
 mod rabl;
 pub(crate) mod refs;
+pub(crate) mod vars;
 pub(crate) mod views;
 
 /// The class a RABL template's `self` is (DEC-526).
@@ -2596,12 +2597,12 @@ fn declares_a_bound(via: &str) -> bool {
 
 /// Every local read in a source → the writes that may have set it.
 fn reaching_writes(source: &[u8]) -> std::collections::HashMap<Pos, Vec<Pos>> {
-    let vars = crate::serve::vars::analyze(source);
+    let vars = crate::resolve::vars::analyze(source);
     let lines = crate::extract::LineIndex::new(source);
-    let at = |occurrence: &crate::serve::vars::Occurrence| lines.pos(occurrence.span.start);
+    let at = |occurrence: &crate::resolve::vars::Occurrence| lines.pos(occurrence.span.start);
     vars.occurrences
         .iter()
-        .filter(|o| o.sigil == crate::serve::vars::Sigil::Local && o.read)
+        .filter(|o| o.sigil == crate::resolve::vars::Sigil::Local && o.read)
         .map(|read| {
             let writes = read
                 .reaches

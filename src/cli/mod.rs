@@ -13,8 +13,8 @@ mod dead_consts;
 mod failure;
 mod generated;
 mod incomplete;
-pub(crate) mod members;
-pub(crate) mod position;
+mod members;
+mod position;
 mod profile;
 mod routes;
 mod views;
@@ -1192,7 +1192,9 @@ fn index_all(
     let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
     // What the language server or a query wants read first: this index's if
     // it fills the checkout, the one it waits for's if another does.
-    let mut hints = crate::serve::fresh::Hints::listen();
+    let mut hints = crate::serve::fresh::Hints::listen(
+        crate::serve::fresh::in_background() || autoindex::spawned(),
+    );
     // The query that started this index claimed the checkout for it.
     let parent = autoindex::spawned().then(std::os::unix::process::parent_id);
     // A first index — no map yet, or one an index left unfinished — is
@@ -4092,9 +4094,9 @@ fn cmd_refs_at(
         .strip_prefix(&root)
         .map_or_else(|_| spec.path.clone(), |p| p.to_string_lossy().into_owned());
     let tree = build_tree(&store, &root_str)?;
-    let files = members::CheckoutFiles::new(&store, &root, &root_str);
+    let files = crate::query::members::CheckoutFiles::new(&store, &root, &root_str);
     if let Some((path, def)) =
-        members::member_at_position(&tree, &files, &relative, spec.line, spec.col)
+        crate::query::members::member_at_position(&tree, &files, &relative, spec.line, spec.col)
     {
         let context = crate::resolve::members::Context::new(&tree, &files);
         let (answer, reads) =
@@ -4112,10 +4114,11 @@ fn cmd_refs_at(
     // A method: the one defined there, or the one a call there runs.
     let source = read_input(file)?;
     let facts = crate::extract::extract_file(&file.to_string_lossy(), &source);
-    let under = position::at_or_snap(&facts, spec.line, spec.col).map(|(under, _)| under);
+    let under =
+        crate::query::position::at_or_snap(&facts, spec.line, spec.col).map(|(under, _)| under);
     // A class, module or constant: its references, as `--refs Name` lists them.
     let constant = match &under {
-        Some(position::Under::Definition(def))
+        Some(crate::query::position::Under::Definition(def))
             if matches!(
                 def.kind,
                 crate::core::Kind::Class | crate::core::Kind::Module
@@ -4125,7 +4128,7 @@ fn cmd_refs_at(
             nesting.insert(0, def.name.clone());
             tree.scope_fqn(&nesting)
         }
-        Some(position::Under::Constant(reference)) => tree
+        Some(crate::query::position::Under::Constant(reference)) => tree
             .resolve_at(&reference.name, &reference.nesting, &relative)
             .fqn
             .or_else(|| Some(reference.name.clone())),
@@ -4135,10 +4138,13 @@ fn cmd_refs_at(
         return cmd_refs(out, &fqn, include_excluded, Some(&root));
     }
     let owner_and_name = match under {
-        Some(position::Under::Definition(def)) if def.kind == crate::core::Kind::Method => tree
-            .scope_fqn(&def.nesting)
-            .map(|owner| (owner, def.singleton, def.name.clone())),
-        Some(position::Under::Call(call)) => {
+        Some(crate::query::position::Under::Definition(def))
+            if def.kind == crate::core::Kind::Method =>
+        {
+            tree.scope_fqn(&def.nesting)
+                .map(|owner| (owner, def.singleton, def.name.clone()))
+        }
+        Some(crate::query::position::Under::Call(call)) => {
             let answer = crate::resolve::method_at(&tree, &facts, &call, &relative);
             let (name, singleton) = crate::resolve::asked_at(&tree, &call, &answer);
             // A call whose method trekr cannot place has no references to
@@ -5414,7 +5420,7 @@ fn dead_in(
         }
         rows.push(row);
     }
-    let checkout_files = members::CheckoutFiles::new(store, root, &root_str);
+    let checkout_files = crate::query::members::CheckoutFiles::new(store, root, &root_str);
     let relative = |file: &str| {
         Path::new(file)
             .strip_prefix(root)
@@ -5719,8 +5725,8 @@ fn cmd_def(
     }
     // A `super` with no fact behind it is one whose method has no owner the
     // source names. Snapping would answer for another name on the line.
-    if position::at_facts(&facts, spec.line, spec.col).is_none()
-        && position::word_at(&source, spec.line, spec.col).as_deref() == Some("super")
+    if crate::query::position::at_facts(&facts, spec.line, spec.col).is_none()
+        && crate::query::position::word_at(&source, spec.line, spec.col).as_deref() == Some("super")
     {
         file_alone();
         return report(
@@ -5744,7 +5750,7 @@ fn cmd_def(
     // `status: :ok`). Snapping from one answered, resolved, for whatever
     // other name was nearest on the line (DEC-343).
     if spec.col > 0
-        && position::at_facts(&facts, spec.line, spec.col).is_none()
+        && crate::query::position::at_facts(&facts, spec.line, spec.col).is_none()
         && let Some((name, _, _)) =
             crate::extract::symbol_literals(&source)
                 .into_iter()
@@ -5773,7 +5779,7 @@ fn cmd_def(
     // A variable is not a call, and snapping from one answered for whatever
     // name was nearest on the line.
     if spec.col > 0
-        && position::at_facts(&facts, spec.line, spec.col).is_none()
+        && crate::query::position::at_facts(&facts, spec.line, spec.col).is_none()
         && let Some(answer) = position::variable_at(&source, &file, spec.line, spec.col)
     {
         crate::usage::flag("variable");
@@ -5829,7 +5835,7 @@ fn cmd_def(
         };
         return report(out, answer, resolved, &text);
     }
-    let snapped = position::at_or_snap(&facts, spec.line, spec.col);
+    let snapped = crate::query::position::at_or_snap(&facts, spec.line, spec.col);
     let Some((under, snapped)) = snapped else {
         file_alone();
         return report(
@@ -5846,7 +5852,7 @@ fn cmd_def(
         );
     };
     // The cursor on a definition is a fact of the file, too.
-    if let position::Under::Definition(_) = under {
+    if let crate::query::position::Under::Definition(_) = under {
         file_alone();
     } else if let Some((root, store)) = checkout {
         let need = Need::File(Path::new(&spec.path));
@@ -5864,7 +5870,7 @@ fn cmd_def(
     let answer = match under {
         // The cursor is on the declaration itself. Ruby has no indirection to
         // follow here, so the honest answer is "you are already there".
-        position::Under::Definition(def) => {
+        crate::query::position::Under::Definition(def) => {
             let mut answer = serde_json::json!({
                 "query": query,
                 "under": "definition",
@@ -5883,7 +5889,7 @@ fn cmd_def(
             }
             answer
         }
-        position::Under::Constant(reference) => {
+        crate::query::position::Under::Constant(reference) => {
             let (root, mut store) = checkout_for_query(Path::new(&spec.path), pinned)?;
             if !store.has_checkout(&root.to_string_lossy())? {
                 return not_indexed(out, &root, &store);
@@ -5927,7 +5933,7 @@ fn cmd_def(
             }
             value
         }
-        position::Under::Call(call) => {
+        crate::query::position::Under::Call(call) => {
             let (root, mut store) = checkout_for_query(Path::new(&spec.path), pinned)?;
             if !store.has_checkout(&root.to_string_lossy())? {
                 return not_indexed(out, &root, &store);
@@ -5950,8 +5956,9 @@ fn cmd_def(
                     return answer;
                 }
                 let root_str = root.to_string_lossy().into_owned();
-                let files = members::CheckoutFiles::new(&store, &root, &root_str);
-                members::includer_answer(tree, &files, &relative, &call, &answer).unwrap_or(answer)
+                let files = crate::query::members::CheckoutFiles::new(&store, &root, &root_str);
+                crate::query::members::includer_answer(tree, &files, &relative, &call, &answer)
+                    .unwrap_or(answer)
             };
             let mut answer = answer_from(&tree);
             let found = matches!(answer.status, Status::Resolved | Status::Ambiguous);

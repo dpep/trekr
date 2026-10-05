@@ -19,8 +19,8 @@
 
 use super::handlers;
 use super::state::Session;
-use crate::cli::position::{self, Under};
 use crate::core::{Facts, RecvShape};
+use crate::query::position::{self, Under};
 use crate::tree::Tree;
 use lsp_types::{
     CompletionItem, CompletionItemKind, CompletionItemLabelDetails, CompletionList,

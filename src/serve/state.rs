@@ -19,8 +19,8 @@
 
 use super::complete::Members;
 use super::require::{self, LoadPath, Require};
-use super::vars::{self, Vars};
 use crate::core::Facts;
+use crate::resolve::vars::{self, Vars};
 use crate::store::Store;
 use crate::tree::Tree;
 use std::collections::HashMap;

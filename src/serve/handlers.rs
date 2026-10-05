@@ -18,8 +18,8 @@ use super::gather;
 use super::require::{self, Found, Origin};
 use super::state::{Located, Session};
 use super::variables;
-use crate::cli::position::{self, Under};
 use crate::core::{Def, Kind};
+use crate::query::position::{self, Under};
 use crate::resolve::refs;
 use lsp_types::Uri as Url;
 use lsp_types::{
@@ -483,14 +483,14 @@ fn resolve_at(
                 let open = overlay(session, &located.root);
                 let (tree, store) = session.tree_and_store(&located.root)?;
                 let root = located.root.to_string_lossy().into_owned();
-                let files = crate::cli::members::CheckoutFiles::with_open(
+                let files = crate::query::members::CheckoutFiles::with_open(
                     store,
                     &located.root,
                     &root,
                     open,
                 );
                 if let Some(includers) =
-                    crate::cli::members::includer_answer(tree, &files, &path, &call, &answer)
+                    crate::query::members::includer_answer(tree, &files, &path, &call, &answer)
                 {
                     answer = includers;
                 }
@@ -833,7 +833,7 @@ fn member_references(
     pos: crate::core::Pos,
     declarations: bool,
 ) -> anyhow::Result<Option<Vec<Location>>> {
-    use crate::cli::members::{CheckoutFiles, member_at_position};
+    use crate::query::members::{CheckoutFiles, member_at_position};
     use crate::resolve::members::{Asked, Context, reads};
     let root = located.root.clone();
     let root_str = root.to_string_lossy().into_owned();
