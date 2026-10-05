@@ -665,17 +665,24 @@ impl Session {
         let Some(next) = &checkout.next else {
             return;
         };
+        // Disconnected is a build that panicked: as finished as one that
+        // failed, or `next` would keep its stamp and nothing would rebuild.
         let built = match wait {
-            Some(wait) => next.done.recv_timeout(wait).ok(),
-            None => next.done.try_recv().ok(),
-        };
-        let Some(built) = built else {
-            return;
+            Some(wait) => match next.done.recv_timeout(wait) {
+                Ok(built) => Some(built),
+                Err(mpsc::RecvTimeoutError::Timeout) => return,
+                Err(mpsc::RecvTimeoutError::Disconnected) => None,
+            },
+            None => match next.done.try_recv() {
+                Ok(built) => Some(built),
+                Err(mpsc::TryRecvError::Empty) => return,
+                Err(mpsc::TryRecvError::Disconnected) => None,
+            },
         };
         let next = checkout.next.take().expect("checked above");
         // A build that failed leaves the tree that answers; the next question
         // tries again.
-        if let Ok((tree, partial)) = built {
+        if let Some(Ok((tree, partial))) = built {
             checkout.replace(tree, next.stamp, partial);
         }
     }
@@ -948,6 +955,24 @@ mod tests {
         let members = Members::of(checkout.tree.as_ref().unwrap());
         checkout.listed(members);
         assert!(matches!(checkout.listing(), Some((_, true))));
+    }
+
+    #[test]
+    fn a_build_aside_that_panicked_is_given_up_so_the_next_request_rebuilds() {
+        let root = PathBuf::from("/app");
+        let mut session = Session::open(root.clone(), Store::open_in_memory().unwrap());
+        for wait in [None, Some(ASIDE)] {
+            // A panicking build thread drops its sender without sending.
+            let (send, done) = mpsc::channel();
+            drop(send);
+            let checkout = session.checkouts.entry(root.clone()).or_default();
+            checkout.next = Some(Next {
+                stamp: Stamp([0; 20]),
+                done,
+            });
+            session.collect_tree(&root, wait);
+            assert!(session.checkouts[&root].next.is_none(), "waiting {wait:?}");
+        }
     }
 }
 
