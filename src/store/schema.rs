@@ -7,6 +7,8 @@
 /// premise that they are a pure function of the bytes — but when the *function*
 /// changes, identical bytes must still be re-read. An extractor fix otherwise
 /// ships silently dead, because every blob it would affect is already "known".
+/// `store::golden` fails when the testbed's extraction output moves and this
+/// does not.
 ///
 /// There are no migrations, and that is deliberate:
 /// every row below `blob` is derived from bytes this machine can read again, so

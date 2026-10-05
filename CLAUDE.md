@@ -81,6 +81,10 @@ brew unlink trekr   # …verify…   then:   brew link trekr
   dropping in files, no Rust. See `tests/testbed/README.md`; the rule that
   matters is that every case is checked against a build with the fix removed,
   because a case that passes both ways is worse than none.
+- **An extraction change bumps the store version** (`schema::VERSION`).
+  `tests/extraction.golden` holds each testbed input's stored facts, hashed;
+  output that moves without a bump fails, and a bump says to regenerate with
+  `UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden`.
 - Fixture repos under `tests/fixtures/`, generic names (`Widget`, `HandlerA`) —
   public repo, nothing employer-identifying.
 - Verify through `cargo test`, not hand-run binaries; e2e drives the built binary

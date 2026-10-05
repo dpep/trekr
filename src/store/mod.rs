@@ -9,6 +9,8 @@
 
 pub(crate) mod early;
 mod gc;
+#[cfg(test)]
+mod golden;
 mod recover;
 mod schema;
 mod warming;
