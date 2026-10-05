@@ -13788,6 +13788,14 @@ modelled the `new` each made class gets. `--refs 'Point#x'` answered that
 Point had no method `x` in its ancestors: DEC-073's provably-absent claim,
 and false. Testbed 640.
 
+**Measured**, `--def` on every `X.new` / `X[` whose `X` some file makes
+with `Struct.new` or `Data.define` (a text match, so same-named classes
+and comments are in the count), 0.8.7 against this change, fresh stores:
+rails 705 of 1908 sites change, discourse 150 of 2781, rubocop 40 of 82,
+mastodon 3 of 3. Every change is the same one: an answer on `Struct`,
+`Data` or `Class` becomes the made class's `initialize`. No other answer
+moved in status or owner.
+
 **Not done.** `Pair[…]` is not counted as a construction by `--refs
 Pair#initialize` or `--dead`'s construction scan, which read `new` by
 name; the members' `super` above.
