@@ -9,8 +9,12 @@ import { runTests } from "@vscode/test-electron";
 
 async function main() {
   const ext = path.resolve(__dirname, "../../..");
-  // The build under test: TREKR_BIN, else the repo's debug build.
-  const trekr = process.env.TREKR_BIN ?? path.resolve(ext, "../../target/debug/trekr");
+  // The build under test: TREKR_BIN, else the debug build in cargo's target
+  // directory — CARGO_TARGET_DIR's, relative to the repo as cargo reads it
+  // there, when set.
+  const repo = path.resolve(ext, "../..");
+  const target = path.resolve(repo, process.env.CARGO_TARGET_DIR || "target");
+  const trekr = process.env.TREKR_BIN || path.join(target, "debug", "trekr");
   if (!fs.existsSync(trekr)) throw new Error(`no trekr binary at ${trekr} — cargo build, or set TREKR_BIN`);
 
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "trekr-vscode-e2e-"));

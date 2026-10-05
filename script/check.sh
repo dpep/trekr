@@ -42,6 +42,6 @@ if [ ! -d editors/vscode/node_modules ]; then
 fi
 npm --prefix editors/vscode test
 if [ -n "$e2e" ]; then
-  # Against target/debug/trekr, which `cargo test` just built.
+  # Against the debug build `cargo test` just built (TREKR_BIN overrides).
   npm --prefix editors/vscode run test:e2e
 fi
