@@ -13367,3 +13367,55 @@ SchemaMigrationDetails` and `RequireDependencyBackwardCompatibility`
 **Not done.** `--refs Disabling` stays name-level (DEC-420) and lists no
 `self`.
 
+## DEC-621 — Rejected: a file loaded by a path is not a use of what it opens
+
+**Proposed** (dpep/trekr#13): `require_relative "x"`, `load
+File.expand_path("../fixtures/x.rb", __FILE__)`, `File.join(__dir__, …)`
+and `require "x"` along the checkout's own load path (`lib`, `spec`,
+`test`, path gems' `lib`, as `require.rs` already searches it for the
+editor's links) credit the constants the loaded file opens at its top
+level, as references written where the load is. Built and measured: a
+`load_call` blob fact (verb, anchor, path as written, line; store v63),
+resolved per checkout by `require::resolve`, each loaded file's
+top-level declarations fed to `dead_consts::uses_of` as references.
+
+**Measured**, `--dead` constants on the DEC-620 corpora (faraday `.`,
+rack `.`, rails' six frameworks, discourse `app lib spec plugins`,
+mastodon `app lib spec`), against DEC-620's build: 19 rows moved, 0 on
+faraday and rack.
+
+- *Loaded from a test* (4): the issue's `SomeConcern` (unreferenced →
+  `test-only`, right); `ORIG_ARGV` in `activesupport/test/
+  abstract_unit.rb` (unreferenced → `test-only`; its one reader is a
+  `defined?` guard in `testing/isolation.rb`, arguable); and two
+  `on_load(:…)` rows, hook modules that should never have been
+  candidates.
+- *Loaded from code that only makes it available* (15): every row moved
+  to used, and the verdict before was the honest one in most. rails'
+  `activerecord/Rakefile` requires `test/config`, so its six `*_ROOT`
+  constants, which only tests read, went `test-only` → used; railties'
+  Rakefile loads `test/isolation/abstract_unit` (`TestHelpers`,
+  `RAILS_FRAMEWORK_ROOT`, the same); the top-level `HashWithIndifferentAccess`
+  alias, which only tests name, became used because its file is required;
+  discourse's `TimeSniffer`, named only by its spec, became used because
+  its plugin requires it; `CredentialsCommand`, `RDoc::Generator::API` and
+  two discourse-reactions settings classes traded the convention that
+  reaches them for "a require loads them"; `Mastodon::CLI`, a namespace
+  its command files open, went `test-only` → used.
+
+**Why not.** Requiring a file is how code becomes available, not how it
+is used: every file of a gem is required by its entry point, and
+crediting that hides exactly the `test-only` class (`TimeSniffer`) that
+`--dead` exists to find. Counting only loads written in tests keeps the
+issue's row and loses none above (4 moved: `SomeConcern`, `ORIG_ARGV` and
+the two hook modules) — but that is a rule with an exception (a load is a
+use from a test and nothing from anywhere else), for one row in five
+repos, at the cost of a fact table and a store version. Not done.
+
+**Not done either.** A library's own file loader (`Rack::Builder.parse_file
+'builder/an_underscore_app'`, the issue's second case) is that library's
+convention, not Ruby's. A file-level "nothing loads this file" signal
+would read the same fact and is a feature of its own: it would need
+Zeitwerk's and Rails' loaders as well as `require`, or every autoloaded
+file is an orphan.
+
