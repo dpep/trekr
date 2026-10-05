@@ -452,14 +452,16 @@ fn serve(
                     return Ok(());
                 }
                 let method = notification.method.clone();
-                let published = notify(&mut session, &mut indexer, notification);
+                let published = unwinding(|| Ok(notify(&mut session, &mut indexer, notification)));
                 log.event(
                     "notification",
                     serde_json::json!({
                         "op": method,
-                        "diagnostics": published.is_some(),
+                        "diagnostics": matches!(published, Ok(Some(_))),
+                        "error": published.as_ref().err().map(|e| e.to_string()),
                     }),
                 );
+                let published = published.ok().flatten();
                 if let Some(mut diagnostics) = published {
                     if let (Some(spelling), Message::Notification(n)) =
                         (&spelling, &mut diagnostics)
@@ -791,7 +793,7 @@ fn dispatch(
     // Whatever an earlier operation noted and nobody took is not this one's.
     let _ = crate::usage::take();
     let _ = miss::take_why();
-    let result = route(session, request, out, cancel);
+    let result = unwinding(|| route(session, request, out, cancel));
     let elapsed = started.elapsed();
     let note = crate::usage::take();
 
@@ -900,6 +902,25 @@ impl Outbound<'_> {
 #[derive(Debug)]
 pub(crate) struct Cancelled;
 
+/// A handler panicked. It costs that one message an internal error, not the
+/// session: extraction runs on half-typed buffers, and a client restarts a
+/// dead server only a few times before giving up (rust-analyzer does the same).
+#[derive(Debug)]
+struct Panicked(String);
+
+/// `work`, with a panic turned into a [`Panicked`] error. Whatever it left
+/// half-updated in the session is rebuilt from the stamp on the next request.
+fn unwinding<T>(work: impl FnOnce() -> anyhow::Result<T>) -> anyhow::Result<T> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(work)).unwrap_or_else(|payload| {
+        let text = payload
+            .downcast_ref::<&str>()
+            .map(|s| (*s).to_string())
+            .or_else(|| payload.downcast_ref::<String>().cloned())
+            .unwrap_or_default();
+        Err(Panicked(text).into())
+    })
+}
+
 /// The params did not have the shape the method requires.
 #[derive(Debug)]
 struct BadParams(String);
@@ -913,6 +934,11 @@ impl std::fmt::Display for Cancelled {
         f.write_str("cancelled")
     }
 }
+impl std::fmt::Display for Panicked {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "trekr panicked: {}", self.0)
+    }
+}
 impl std::fmt::Display for BadParams {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "invalid params: {}", self.0)
@@ -924,6 +950,7 @@ impl std::fmt::Display for Unsupported {
     }
 }
 impl std::error::Error for Cancelled {}
+impl std::error::Error for Panicked {}
 impl std::error::Error for BadParams {}
 impl std::error::Error for Unsupported {}
 
@@ -977,6 +1004,9 @@ fn route(
         req::ResolveCompletionItem::METHOD => {
             run_handler(request, |p| complete::resolve(session, p))
         }
+        // What the suite uses to prove a panicking handler is survived.
+        #[cfg(debug_assertions)]
+        "trekr/panic" => panic!("asked to"),
         other => Err(Unsupported(other.to_string()).into()),
     }
 }

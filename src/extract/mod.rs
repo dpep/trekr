@@ -6532,6 +6532,57 @@ mod tests {
 
     const FIXTURE: &str = include_str!("../../tests/fixtures/widget.rb");
 
+    /// A buffer mid-edit is any prefix of a file, or a file with a stray byte
+    /// in it; the LSP extracts whatever it is sent. A deterministic fuzz, so a
+    /// failure reproduces.
+    #[test]
+    fn extraction_survives_any_bytes() {
+        let source = FIXTURE.as_bytes();
+        let mut seed = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        const TOKENS: [&[u8]; 12] = [
+            b"end",
+            b"def ",
+            b"do |",
+            b"class ",
+            b"<<~X\n",
+            b"\"#{",
+            b"%w[",
+            b"::",
+            b"&.",
+            b"<%=",
+            b"\xff\xfe",
+            b"\0",
+        ];
+        let mut inputs: Vec<Vec<u8>> = (0..=source.len()).map(|n| source[..n].to_vec()).collect();
+        for _ in 0..300 {
+            let mut buffer = source.to_vec();
+            for _ in 0..1 + next() % 4 {
+                let at = (next() as usize) % buffer.len();
+                match next() % 3 {
+                    0 => buffer[at] = next() as u8,
+                    1 => drop(buffer.splice(
+                        at..at,
+                        TOKENS[next() as usize % TOKENS.len()].iter().copied(),
+                    )),
+                    _ => drop(buffer.drain(at..(at + (next() as usize % 16)).min(buffer.len()))),
+                }
+            }
+            inputs.push(buffer);
+        }
+        inputs.extend((0..50).map(|_| (0..next() % 512).map(|_| next() as u8).collect()));
+        for input in &inputs {
+            for path in ["a.rb", "app/views/a/show.html.erb", "db/structure.sql"] {
+                extract_file(path, input);
+            }
+        }
+    }
+
     fn facts() -> Facts {
         let facts = extract(FIXTURE.as_bytes());
         assert_eq!(facts.parse_errors, 0, "the fixture must be valid Ruby");

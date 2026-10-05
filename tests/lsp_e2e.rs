@@ -1717,6 +1717,41 @@ fn the_log_records_each_request_and_how_much_came_back() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// One panicking request costs that request, not the session: a dead server
+/// is restarted a few times by the client, then left dead.
+#[cfg(debug_assertions)]
+#[test]
+fn a_handler_that_panics_answers_an_error_and_the_session_survives() {
+    let (dir, db) = scratch("panic");
+    repo(&dir);
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+
+    let answer = session.request("trekr/panic", serde_json::json!({}));
+    assert_eq!(answer["error"]["code"], -32603, "an internal error");
+    assert!(
+        answer["error"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains("panicked")),
+        "{answer}"
+    );
+
+    let answer = session.request(
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    assert_eq!(outline_names(&answer["result"])[0], "Widget");
+    session.stop();
+
+    let logged = log_lines(&db)
+        .into_iter()
+        .find(|l| l["event"] == "request" && l["op"] == "trekr/panic")
+        .expect("the panic is logged");
+    assert_eq!(logged["status"], "error");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn document_symbol_outlines_the_open_buffer_not_the_index() {
     let (dir, db) = scratch("symbols");

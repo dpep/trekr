@@ -9,6 +9,11 @@
   now used by that class, and by the tests when the call is in one — the
   receiver may be a gem's class trekr has not indexed. The patch's methods
   already overrode the class's, and `--ancestors` already showed it.
+- **A bug in one editor request no longer takes the language server down.**
+  A panic while answering a request or reading an edit — an odd half-typed
+  buffer, say — ended `trekr --lsp`, and the editor stopped restarting it
+  after a few tries. That request now gets an error, the panic is in the
+  server log, and the session keeps answering.
 - **A checkout that names no Ruby still gets core** (#9). Without a
   `.ruby-version` (most gems), trekr used `$GEM_HOME`'s or `$PATH`'s Ruby, or
   the only one installed — and with several installed and none of those,
