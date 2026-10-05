@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.7 — 2026-10-05
 
 - **`--def` on a `render` that reaches several templates rounds its
   confidence** like every other answer: `0.33` for three, not
