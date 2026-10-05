@@ -807,7 +807,7 @@ holding the rest of the `--json` answer and `rows`, the count (DEC-290).
 | `--dead PATH…` | methods, then example groups' members and shared groups, then classes, modules and constants, in scope that nothing appears to use, tiered and graded (see below) |
 
 **`--dead` weighs a definition against the whole checkout** (DEC-038,
-DEC-074). Methods (`cli::dead_in`) are tiered by their receiver-narrowed
+DEC-074). Methods (`cli::dead::dead_in`) are tiered by their receiver-narrowed
 references; classes, modules and constants (`cli::dead_consts`, DEC-420) by
 the `const_ref` rows that resolve to them through Ruby's lookup, a namespace
 by what it holds. Around both, readers of what the index does not hold, each
