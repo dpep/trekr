@@ -1683,6 +1683,14 @@ touches `.git/index`. The answer then is a filesystem watcher in the LSP front,
 which is a resident process that already exists and may legitimately watch,
 rather than a daemon for the CLI.
 
+**Addendum (0.8.7): the query-time re-read of unstaged edits is deferred.**
+The blind spot above did bite — an unstaged edit is invisible to `--def`, and
+`--dead` and `--refs Owner#m` never probe at all. A fix (a `git diff-files`
+beside the fingerprint, re-reading what it names, and `index` disclosed on
+every query) was built, then pulled from 0.8.7 to ship in its own release,
+0.8.8, since it changes what `index` carries. 0.8.7 keeps the behaviour
+described here.
+
 ## DEC-036 — The CLI forgives a hand-typed position; the LSP does not
 
 **Decided.** `--def` snaps to the nearest name on the line when the exact
