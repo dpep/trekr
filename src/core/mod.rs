@@ -48,11 +48,15 @@ pub(crate) mod paths {
     /// cannot quietly forget — `tests/cli_e2e.rs` pins that with one assertion
     /// over all of them.
     pub(crate) fn pretty(path: &str) -> String {
-        let Some(home) = std::env::var_os("HOME") else {
-            return path.to_string();
-        };
-        let home = home.to_string_lossy();
-        let home = home.strip_suffix('/').unwrap_or(&home);
+        match std::env::var_os("HOME") {
+            Some(home) => tilde(path, &home.to_string_lossy()),
+            None => path.to_string(),
+        }
+    }
+
+    /// [`pretty`] with the home given rather than read.
+    fn tilde(path: &str, home: &str) -> String {
+        let home = home.strip_suffix('/').unwrap_or(home);
         if home.is_empty() {
             return path.to_string();
         }
@@ -90,22 +94,23 @@ pub(crate) mod paths {
         /// claim `/Users/danger/x`, which a bare `strip_prefix` would.
         #[test]
         fn pretty_shortens_home_and_nothing_else() {
-            // SAFETY: single-threaded test, restored before it returns.
-            let before = std::env::var_os("HOME");
-            unsafe { std::env::set_var("HOME", "/Users/dan") };
-
-            assert_eq!(pretty("/Users/dan/code/app.rb"), "~/code/app.rb");
-            assert_eq!(pretty("/Users/dan"), "~");
-            assert_eq!(pretty("/Users/danger/x.rb"), "/Users/danger/x.rb");
-            assert_eq!(pretty("/opt/homebrew/bin/trekr"), "/opt/homebrew/bin/trekr");
+            let home = "/Users/dan";
+            assert_eq!(tilde("/Users/dan/code/app.rb", home), "~/code/app.rb");
+            assert_eq!(tilde("/Users/dan", home), "~");
+            assert_eq!(tilde("/Users/danger/x.rb", home), "/Users/danger/x.rb");
+            assert_eq!(
+                tilde("/opt/homebrew/bin/trekr", home),
+                "/opt/homebrew/bin/trekr"
+            );
             // A trailing slash on HOME is a real shape and must not double up.
-            unsafe { std::env::set_var("HOME", "/Users/dan/") };
-            assert_eq!(pretty("/Users/dan/code/app.rb"), "~/code/app.rb");
-
-            match before {
-                Some(value) => unsafe { std::env::set_var("HOME", value) },
-                None => unsafe { std::env::remove_var("HOME") },
-            }
+            assert_eq!(
+                tilde("/Users/dan/code/app.rb", "/Users/dan/"),
+                "~/code/app.rb"
+            );
+            assert_eq!(
+                tilde("/Users/dan/code/app.rb", ""),
+                "/Users/dan/code/app.rb"
+            );
         }
 
         #[test]

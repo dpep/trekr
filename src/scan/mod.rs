@@ -214,6 +214,12 @@ pub(crate) fn repo_root(path: &Path) -> Result<PathBuf> {
 /// discovery steered by the environment, a `.git` it would not accept, a
 /// configured work tree, `safe.directory`'s ownership rule — and git decides.
 fn discover(dir: &Path) -> Option<PathBuf> {
+    let ceilings = std::env::var("GIT_CEILING_DIRECTORIES").unwrap_or_default();
+    discover_under(dir, &ceilings)
+}
+
+/// [`discover`] with git's `GIT_CEILING_DIRECTORIES` given rather than read.
+fn discover_under(dir: &Path, ceilings: &str) -> Option<PathBuf> {
     use std::os::unix::fs::MetadataExt;
     const STEERING: [&str; 4] = [
         "GIT_DIR",
@@ -230,8 +236,7 @@ fn discover(dir: &Path) -> Option<PathBuf> {
         return None;
     }
     // Git never climbs into the nearest ceiling above where it starts.
-    let ceiling = std::env::var("GIT_CEILING_DIRECTORIES")
-        .unwrap_or_default()
+    let ceiling = ceilings
         .split(':')
         .filter(|entry| !entry.is_empty())
         .map(|entry| std::fs::canonicalize(entry).unwrap_or_else(|_| PathBuf::from(entry)))
@@ -613,20 +618,14 @@ mod tests {
         if shouted.is_dir() {
             assert_eq!(discover(&shouted), Some(toplevel(&main)));
         }
-        // A ceiling between the start and the repository hides it, from both.
-        let before = std::env::var_os("GIT_CEILING_DIRECTORIES");
-        unsafe { std::env::set_var("GIT_CEILING_DIRECTORIES", &main) };
-        assert_eq!(discover(&main.join("lib/deep")), None);
-        assert!(repo_root(&main.join("lib/deep")).is_err());
+        // A ceiling between the start and the repository hides it.
+        let ceiling = main.to_string_lossy();
+        assert_eq!(discover_under(&main.join("lib/deep"), &ceiling), None);
         assert_eq!(
-            discover(&main),
+            discover_under(&main, &ceiling),
             Some(toplevel(&main)),
             "the start itself is looked at"
         );
-        match before {
-            Some(value) => unsafe { std::env::set_var("GIT_CEILING_DIRECTORIES", value) },
-            None => unsafe { std::env::remove_var("GIT_CEILING_DIRECTORIES") },
-        }
         // A gitdir itself is git's call, and git says no.
         assert_eq!(discover(&main.join(".git/objects")), None);
         // A `.git` git would not accept: leave it to git, which refuses it.
