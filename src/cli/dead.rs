@@ -444,8 +444,10 @@ fn routed_actions(
     routes: &routes::Routes,
 ) -> HashMap<(String, String), routes::At> {
     let plain = |name: &str| name.replace('_', "").to_lowercase();
-    let controllers: HashMap<String, String> = tree
-        .declared()
+    // In name order, so of two controllers that compare alike the same one wins.
+    let mut declared = tree.declared();
+    declared.sort();
+    let controllers: HashMap<String, String> = declared
         .into_iter()
         .filter(|(fqn, kind)| kind == "class" && fqn.ends_with("Controller"))
         .map(|(fqn, _)| (plain(&fqn), fqn))

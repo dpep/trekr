@@ -632,6 +632,59 @@ fn with_no_lockfile_the_gemspecs_dependencies_are_resolved() {
 /// dashboard's `self.class::ATTRS` reads its constant. `--dead` reads the
 /// gem's file for each and grades the row lower; a gem's mixin, which every
 /// model has, is not read so.
+/// Two listings name one namespace, `Punctuation` and
+/// `Lexer::Punctuation`: the rows cite the more specific one every run,
+/// whatever order a hash held them in.
+#[test]
+fn dead_answers_the_same_every_run() {
+    let (dir, db) = scratch("dead-stable");
+    repo(&dir);
+    fs::write(
+        dir.join("lexer.rb"),
+        "module Lexer\n  module Punctuation\n    LPAREN = 1\n    RPAREN = 2\n  end\n\n  \
+         ALL = Punctuation.constants\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join("language.rb"),
+        "module Language\n  def self.marks\n    Lexer::Punctuation.constants\n  end\nend\n",
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "lexer",
+        ],
+    );
+    trekr(&db, &dir, &["--index"]);
+    let runs: Vec<String> = (0..6)
+        .map(|_| stdout(&trekr(&db, &dir, &["--dead", ".", "--json"])))
+        .collect();
+    assert!(runs.iter().all(|run| *run == runs[0]), "{runs:#?}");
+    let dead: serde_json::Value = serde_json::from_str(&runs[0]).unwrap();
+    let lparen = dead["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["name"] == "LPAREN")
+        .unwrap_or_else(|| panic!("no LPAREN row: {dead}"));
+    assert!(
+        lparen["caveat"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("(Lexer::Punctuation.constants at language.rb:3)"),
+        "{lparen}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn dead_reads_what_a_gems_base_class_reaches_by_name() {
     let (dir, db) = scratch("dead-gem-base");

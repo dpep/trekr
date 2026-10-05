@@ -37,6 +37,13 @@
   declaration itself. Preparing an `X.new` names the `initialize` it runs
   (`Widget#initialize`, not `Widget#new`), and outgoing calls from a method
   reach a shared group's call the way `--def` does, through its includers.
+- **`--dead` answers the same every run.** A class, module or constant row
+  could cite a different listing from one run to the next — graphql-ruby's
+  `Lexer::Punctuation` constants named `Punctuation.constants` or
+  `Lexer::Punctuation.constants`, rails' models either of two places their
+  subclasses are listed — and `test_refs` could count 1 or 2. The most
+  specific listing is cited now, and references are weighed in a fixed
+  order.
 
 ## 0.8.7 — 2026-10-05
 

@@ -205,7 +205,18 @@ fn uses_of(
                 line: 0,
             }),
     );
-    rows.sort_by_key(|row| in_tests(&row.path));
+    // Tests last, and otherwise by place: whether a test reference is still
+    // counted depends on what was settled before it, so the order is fixed
+    // rather than the order the names were asked in.
+    rows.sort_by(|a, b| {
+        (in_tests(&a.path), &a.path, a.line, &a.name, &a.nesting).cmp(&(
+            in_tests(&b.path),
+            &b.path,
+            b.line,
+            &b.name,
+            &b.nesting,
+        ))
+    });
     let mut resolved: HashMap<(String, Vec<String>), Option<String>> = HashMap::new();
     let mut scopes: HashMap<Vec<String>, String> = HashMap::new();
     let mut uses: HashMap<String, Uses> = HashMap::new();
@@ -334,7 +345,10 @@ pub(super) fn dead_constants(
         .iter()
         .map(|file| file.to_string_lossy().into_owned())
         .collect();
-    let all = tree.declared();
+    // In name order: the tree holds its names in a hash, and what is
+    // collected from them — children, heirs, controllers — is cited by order.
+    let mut all = tree.declared();
+    all.sort();
     let declared = declared_in(tree, &all, &root_str, &files);
     if declared.is_empty() {
         return Ok(());

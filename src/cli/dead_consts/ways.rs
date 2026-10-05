@@ -115,12 +115,24 @@ pub(super) fn routed_controllers(
                 .or_insert_with(|| route.at.clone());
         }
     }
-    for (path, at) in &named.route_strings {
+    // The earliest string that names a controller is the one cited.
+    let mut strings: Vec<_> = named.route_strings.iter().collect();
+    strings.sort_by(|a, b| a.1.cmp(b.1));
+    for (path, at) in strings {
         if let Some(class) = controllers.get(&controller_key(path)) {
             routed.entry(class.clone()).or_insert_with(|| at.clone());
         }
     }
     routed
+}
+
+/// The listing of `name`, or of a namespace it is written as the tail of:
+/// the longest, so `Lexer::Punctuation`'s is cited before a `Punctuation`'s,
+/// whatever order the map holds them in.
+fn listing_of<'m, V>(map: &'m HashMap<String, V>, name: &str) -> Option<(&'m String, &'m V)> {
+    map.iter()
+        .filter(|(listed, _)| name == *listed || name.ends_with(&format!("::{listed}")))
+        .max_by_key(|(listed, _)| listed.len())
 }
 
 /// A class's last segment less the suffix a library finds it by:
@@ -391,14 +403,7 @@ impl Ways<'_> {
             if ancestor == fqn || !self.in_checkout(ancestor) {
                 continue;
             }
-            if let Some(at) = named
-                .listed
-                .iter()
-                .find(|(listed, _)| {
-                    ancestor == *listed || ancestor.ends_with(&format!("::{listed}"))
-                })
-                .map(|(_, at)| at)
-            {
+            if let Some((_, at)) = listing_of(&named.listed, ancestor) {
                 return convention(
                     "subclasses",
                     format!(
@@ -648,11 +653,10 @@ impl Ways<'_> {
                 at.0, at.1
             ));
         }
-        if let Some((namespace, (call, at))) = fqn.rsplit_once("::").and_then(|(namespace, _)| {
-            self.named.constants_listed.iter().find(|(listed, _)| {
-                namespace == *listed || namespace.ends_with(&format!("::{listed}"))
-            })
-        }) {
+        if let Some((namespace, (call, at))) = fqn
+            .rsplit_once("::")
+            .and_then(|(namespace, _)| listing_of(&self.named.constants_listed, namespace))
+        {
             let how = match call.as_str() {
                 "constants" => "listed",
                 _ => "looked up by a name computed",
