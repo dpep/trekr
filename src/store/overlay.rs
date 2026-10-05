@@ -213,12 +213,12 @@ impl Store {
                 } else if build {
                     // Somewhere it can be written, or else on this
                     // connection alone.
-                    self.publish(&path, &key) || self.fill_in_memory(&key)?
+                    self.publish(&path, &key) || self.fill_in_memory()?
                 } else {
                     false
                 }
             }
-            None => build && self.fill_in_memory(&key)?,
+            None => build && self.fill_in_memory()?,
         };
         if attached {
             self.conn.execute_batch(&format!(
@@ -320,7 +320,8 @@ impl Store {
     }
 
     /// Write the copy to a temporary name, rename it to `path`, and attach
-    /// it. Best effort: false when it could not be written.
+    /// it if it answers to `key`. Best effort: false when it could not be
+    /// written, or a write since `key` moved the map it copied.
     fn publish(&mut self, path: &Path, key: &str) -> bool {
         let Some(dir) = path.parent() else {
             return false;
@@ -345,7 +346,7 @@ impl Store {
                     .execute_batch(&format!(
                         "PRAGMA {SCHEMA}.journal_mode = OFF; PRAGMA {SCHEMA}.synchronous = OFF;"
                     ))
-                    .and_then(|()| self.fill(key));
+                    .and_then(|()| self.fill());
                 let detached = self.conn.execute_batch(&format!("DETACH {SCHEMA};"));
                 filled.is_ok() && detached.is_ok()
             }
@@ -358,18 +359,21 @@ impl Store {
     }
 
     /// Make the copy in memory, on this connection alone.
-    fn fill_in_memory(&mut self, key: &str) -> Result<bool> {
+    fn fill_in_memory(&mut self) -> Result<bool> {
         self.conn
             .execute_batch(&format!("ATTACH ':memory:' AS {SCHEMA};"))?;
-        self.fill(key)?;
+        self.fill()?;
         Ok(true)
     }
 
     /// The map with every overlay applied, its index, its statistics — the
     /// plans the map's own choose, not the planner's guesses — and what it
-    /// was made from, into the attached database.
-    fn fill(&mut self, key: &str) -> Result<()> {
-        let tx = self.conn.transaction()?;
+    /// was made from, into the attached database. The key is read in the
+    /// transaction that copies the map, so a write between the two cannot
+    /// label one map with another's key.
+    fn fill(&self) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let key = self.overlay_key()?;
         tx.execute_batch(&format!(
             "CREATE TABLE {SCHEMA}.file (
                checkout_id INTEGER NOT NULL,
@@ -560,6 +564,31 @@ mod tests {
             copies(&next).is_empty(),
             "a guess that no longer answers is removed"
         );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A copy is keyed by the map it copied: a write landing between the
+    /// key a connection asked for and the copy cannot file the new map
+    /// under the old key.
+    #[test]
+    fn a_copy_is_keyed_by_the_map_it_holds() {
+        let (dir, mut store, oid) = store("keyed");
+        let overlaid = store
+            .overlaid_of(ROOT, &[("widget.rb".to_string(), Some(oid))])
+            .unwrap();
+        store.overlaid.insert(ROOT.to_string(), overlaid);
+        let asked = store.overlay_key().unwrap();
+        let mut other = Store::open(store.path().unwrap()).unwrap();
+        index(&mut other, "class Widget\n  def other\n  end\nend\n");
+
+        let path = store.overlay_file(&[ROOT]).unwrap();
+        assert!(!store.publish(&path, &asked), "the key asked for moved");
+        let conn = rusqlite::Connection::open(&path).unwrap();
+        let written: String = conn
+            .query_row("SELECT key FROM meta", [], |r| r.get(0))
+            .unwrap();
+        assert_ne!(written, asked);
+        assert_eq!(written, store.overlay_key().unwrap());
         let _ = std::fs::remove_dir_all(dir);
     }
 
