@@ -271,7 +271,22 @@ struct Extractor<'a> {
     /// element is one (`[<<-RUBY, __FILE__, __LINE__ + 1]`), as the `def`s
     /// its text spells: what `class_eval(*IMPL)` evaluates (DEC-310).
     code_constants: HashMap<String, StringDefs>,
+    /// Each `x = self` outside a string of code: where it is written, and
+    /// what a call with no receiver there would run on (`bind_self_aliases`).
+    self_writes: Vec<(Pos, SelfSite)>,
     facts: Facts,
+}
+
+/// What a call on `self` runs on where it is written: its scope, its side,
+/// and the block, example or group body it is in.
+#[derive(Clone)]
+struct SelfSite {
+    nesting: Vec<String>,
+    singleton: bool,
+    block_owner: Option<Pos>,
+    in_example: bool,
+    group_body: bool,
+    in_scope: bool,
 }
 
 /// A `class_eval` string rendered as the code it evaluates, and how its bytes
@@ -583,10 +598,12 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         merging: std::collections::HashSet::new(),
         callback_lambdas: HashMap::new(),
         code_constants: HashMap::new(),
+        self_writes: Vec::new(),
     };
     ex.visit(&parsed.node());
     ex.shape_pending();
     ex.type_readers();
+    ex.bind_self_aliases();
     ex.facts
 }
 
@@ -2094,7 +2111,12 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             if let Some(values) = self.interpolated_names(&node.value()) {
                 self.loop_values.push((name.clone(), values));
             }
-            self.record_assign(name, &node.value(), node.location().start_offset());
+            let offset = node.location().start_offset();
+            if node.value().as_self_node().is_some() && self.evals.is_empty() {
+                let site = self.self_site();
+                self.self_writes.push((self.pos(offset), site));
+            }
+            self.record_assign(name, &node.value(), offset);
         }
         self.visit(&node.value());
     }
@@ -5031,6 +5053,75 @@ impl<'pr> Extractor<'_> {
         });
     }
 
+    /// What a call on `self` written here runs on.
+    fn self_site(&self) -> SelfSite {
+        // Not `in_singleton()`: that answers "is a `def` here a singleton
+        // method", which is a different question. A bare call in a class body
+        // dispatches on the class even though a `def` there does not.
+        let (nesting, singleton) = match self.instance_lambdas.last() {
+            // A condition Rails runs on the instance.
+            Some(instance) => (instance.clone(), false),
+            None => (self.nesting.clone(), self.self_is_class()),
+        };
+        SelfSite {
+            nesting,
+            singleton,
+            block_owner: self.open_blocks.last().copied().flatten(),
+            in_example: self.frames.last().is_some_and(|f| f.example),
+            group_body: self.writes_group_members(),
+            in_scope: self.scope_body > 0 && !self.in_method_body(),
+        }
+    }
+
+    /// `this = self`, then `this.x` in a block that runs as another object
+    /// (`Class.new do … end`): the call runs on the `self` of the write, as a
+    /// call with no receiver written there would. Only for a local whose one
+    /// write is that one; a local written anything else stays a local.
+    fn bind_self_aliases(&mut self) {
+        use crate::resolve::vars::{self, Sigil};
+        let self_writes = std::mem::take(&mut self.self_writes);
+        if self_writes.is_empty() {
+            return;
+        }
+        let found = vars::analyze(self.src);
+        let lines = &self.lines;
+        let locals = || found.occurrences.iter().filter(|o| o.sigil == Sigil::Local);
+        let mut writes: HashMap<u32, Vec<Pos>> = HashMap::new();
+        for write in locals().filter(|o| o.is_write()) {
+            writes
+                .entry(write.var)
+                .or_default()
+                .push(lines.pos(write.span.start));
+        }
+        let mut aliased: HashMap<Pos, &SelfSite> = HashMap::new();
+        for read in locals().filter(|o| o.read && !o.is_write()) {
+            let Some([only]) = writes.get(&read.var).map(Vec::as_slice) else {
+                continue;
+            };
+            if let Some((_, site)) = self_writes.iter().find(|(at, _)| at == only) {
+                aliased.insert(lines.pos(read.span.start), site);
+            }
+        }
+        for call in &mut self.facts.calls {
+            let Some(site) = call
+                .recv_pos
+                .filter(|_| call.recv == RecvShape::Local)
+                .and_then(|read| aliased.get(&read))
+            else {
+                continue;
+            };
+            call.recv = RecvShape::SelfRecv;
+            call.recv_text = None;
+            call.recv_pos = None;
+            call.nesting = site.nesting.clone();
+            call.singleton = site.singleton;
+            call.block_owner = site.block_owner;
+            call.in_example = site.in_example;
+            call.group_body = site.group_body;
+            call.in_scope = site.in_scope;
+        }
+    }
+
     /// A call site, with the receiver shape that the resolution ladder climbs.
     fn record_call(&mut self, call: &ruby_prism::CallNode<'pr>) {
         let Some(name) = method_name(call) else {
@@ -5068,18 +5159,11 @@ impl<'pr> Extractor<'_> {
         };
         let argc = argc_of(&arg_nodes(call));
         let pos = self.pos(message.start_offset());
-        // Not `in_singleton()`: that answers "is a `def` here a singleton
-        // method", which is a different question. A bare call in a class body
-        // dispatches on the class even though a `def` there does not.
-        let singleton = self.self_is_class();
-        // A call on `self` in a condition Rails runs on the instance.
-        let (nesting, singleton) = match self.instance_lambdas.last() {
-            Some(instance) if matches!(recv, RecvShape::Implicit | RecvShape::SelfRecv) => {
-                (instance.clone(), false)
-            }
-            _ => (self.nesting.clone(), singleton),
+        let site = self.self_site();
+        let (nesting, singleton) = match recv {
+            RecvShape::Implicit | RecvShape::SelfRecv => (site.nesting, site.singleton),
+            _ => (self.nesting.clone(), self.self_is_class()),
         };
-        let block_owner = self.open_blocks.last().copied().flatten();
         let block = call.block().is_some();
         let stands_for = (recv == RecvShape::Implicit && rspec::in_group(&self.nesting))
             .then(|| rspec::predicate(&name))
@@ -5099,10 +5183,10 @@ impl<'pr> Extractor<'_> {
             singleton,
             recv_pos,
             recv_value,
-            block_owner,
-            in_example: self.frames.last().is_some_and(|f| f.example),
-            group_body: self.writes_group_members(),
-            in_scope: self.scope_body > 0 && !self.in_method_body(),
+            block_owner: site.block_owner,
+            in_example: site.in_example,
+            group_body: site.group_body,
+            in_scope: site.in_scope,
             argc,
             block,
             pos,

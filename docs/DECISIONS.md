@@ -12057,6 +12057,29 @@ metadata includes, module-wrapped shared groups, `eval`, conditional
 load 5: mastodon 1.6–2.3 s, discourse 5.6–7.3 s; dd-trace-rb 4.3 s and
 rubocop 1.7 s once each. Testbed 499.
 
+## DEC-497 — A local holding `self` is `self` where it was taken
+
+**Decided.** `this = self`, then `this.x` — the idiom for reaching the outer
+`self` from a block that rebinds it (`Class.new do … end`, `instance_eval`,
+a DSL) — is a call on `self` written where the local was assigned: its
+receiver is `self`, its scope, side, block, example and group body the
+assignment's. Extraction rewrites the call once the file is read, using the
+local-variable analysis the editor's variable answers already use
+(`resolve::vars`): only for a local whose one write is `x = self`; a local
+written anything else as well (`other = self; other = Object.new`) stays a
+local. It is Ruby's rule, not RSpec's: `--def`, `--refs` and `--dead` all
+see the call, for a class's method as for a group's `let`.
+
+**Why.** graphql-ruby's `one_of_spec.rb` reads `let(:one_of_input_object)`
+as `this.one_of_input_object` inside a `Class.new` block, and
+`instrumentation_spec.rb` reads `query_type` as `spec.query_type`; both
+`let`s were `unreferenced` and deleting either fails its spec (#10). The
+call's receiver was an untyped local, and the block it sits in runs as the
+new class, so neither an implicit-self reading nor the local's type could
+place it.
+
+**Extraction changed**: store v63. Testbed 604.
+
 ## DEC-500 — The first query in a checkout indexes it
 
 **Decided.** A query — `--def`, the bare position, a card, `--refs`,

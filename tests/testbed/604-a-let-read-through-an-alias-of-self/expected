@@ -1,0 +1,11 @@
+# `this = self` in a `let`, then `this.part_class` inside `Class.new do … end`,
+# whose `self` is the new class: the call runs on the example, where the alias
+# was taken, and reads the `let` (#10). A local written anything else besides
+# `self` is still a local, and reads nothing.
+dead spec/widget_spec.rb @8=none @9=none @10=unreferenced
+def spec/widget_spec.rb:5:29 status=resolved
+def spec/widget_spec.rb:14:56 status=resolved
+# Not RSpec's alone: any `self` taken into a local before a block that
+# rebinds it.
+def app.rb:5:35 status=resolved owner=Widget
+refs Widget#part_name confirmed=1

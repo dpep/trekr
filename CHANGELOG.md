@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A call through a local holding `self` is a call on `self`** (#10).
+  `this = self`, then `this.part_class` inside `Class.new do … end`, now
+  resolves as an implicit call where `this` was assigned: `--def` lands on
+  the method or `let`, and `--dead` no longer lists a `let` read only that
+  way as unreferenced. Only a local whose one assignment is `self`.
 - **`--dead` counts a module that mixes itself into another class** (#12).
   `Widget.prepend self` (or `include`, `extend`, `send(:prepend, self)`) in
   a module's body was reported `unreferenced`, though the class holds it as
@@ -135,7 +140,7 @@
   extension sends a template only to a server that does, so an older trekr
   is never handed one. A document that is neither Ruby nor a template by its
   name (an `.html` an ERB extension claims) gets no syntax diagnostics.
-- This changes what an index records (store v62): trekr reindexes once after
+- This changes what an index records (store v63): trekr reindexes once after
   upgrading.
 
 - **`--dead` no longer credits the enclosing class with a `def` it does

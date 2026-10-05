@@ -1,6 +1,6 @@
 # Each testbed input's stored facts, hashed, at the store version below.
 # Regenerate: UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden
-version 62
+version 63
 erb tests/testbed/315-dead-says-what-it-cannot-see/app/views/widgets/index.html.erb fb6993b57ce1afc0
 erb tests/testbed/430-a-view-or-a-script-references-a-constant/app/views/widgets/index.html.erb df75e9ccc30b1507
 erb tests/testbed/520-an-erb-templates-calls-are-call-sites/app/views/widgets/show.html.erb 7d61239ea66915a3
@@ -613,6 +613,11 @@ ruby tests/testbed/602-a-template-two-controllers-render-sees-both-their-writes/
 ruby tests/testbed/603-a-templates-bare-ivar-and-local-assigns-are-defined/app/controllers/widgets_controller.rb 7677921a714e1190
 ruby tests/testbed/603-a-templates-bare-ivar-and-local-assigns-are-defined/app/models/widget.rb a93ecd379efa9c44
 ruby tests/testbed/603-a-templates-bare-ivar-and-local-assigns-are-defined/lib/action_view/base.rb c0772a1f742fb5f9
+ruby tests/testbed/604-a-let-read-through-an-alias-of-self/app.rb 6142d861caa30323
+ruby tests/testbed/604-a-let-read-through-an-alias-of-self/spec/widget_spec.rb 962180933fdfb076
+ruby tests/testbed/620-a-module-that-mixes-itself-in-is-used/lib/patches.rb b7ece727f0fc708e
+ruby tests/testbed/620-a-module-that-mixes-itself-in-is-used/lib/widget.rb 41d5463b6e2c2330
+ruby tests/testbed/620-a-module-that-mixes-itself-in-is-used/spec/support/stubbing.rb 5a2d9588602e7e98
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28
