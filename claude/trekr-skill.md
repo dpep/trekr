@@ -241,12 +241,15 @@ separately:
   Ruby core's return types come from the RBS signatures of the checkout's own
   Ruby, so `x.gsub(a, b).downcase` is `String#downcase`.
 
-Core is the checkout's Ruby's: the one `.ruby-version` or the Gemfile names,
-else `$GEM_HOME`'s, the `ruby` on `PATH`, or the only one installed, read from
-the `rbs` gem bundled with it. **No Ruby found, or one without rbs, means no
+Core is the checkout's Ruby's: the one `.ruby-version`, `.tool-versions`,
+mise or the Gemfile names, else a fallback that meets its
+`required_ruby_version` — the lockfile's, the version manager's, `$GEM_HOME`'s,
+the `ruby` on `PATH`, the highest installed — read from the `rbs` gem bundled
+with it. **No Ruby found, or one without rbs, means no
 core**: `puts` and `"x".upcase` are `residue` whose reason says Ruby core is
 not indexed for this checkout. `trekr --index` and `--status` name the Ruby
-and rbs used, and a named Ruby that is not installed (`ruby_not_found`).
+and rbs used, a named Ruby that is not installed (`ruby_not_found`), and
+requirements no installed Ruby meets (`ruby_unmet`).
 
 A core site is the owner's stub, written beside the database: `path:
 "String.rb"` with `root` a directory per Ruby's signatures,

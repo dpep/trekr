@@ -42,7 +42,7 @@ pub(crate) enum How {
     Manager,
     GemHome,
     Path,
-    /// The highest installed that meets the checkout's requirements.
+    /// The highest installed that the checkout's requirements allow.
     Highest,
     Only,
     Kept,
@@ -58,7 +58,7 @@ impl How {
             How::Manager => "the version manager's choice",
             How::GemHome => "the Ruby $GEM_HOME names",
             How::Path => "the ruby on $PATH",
-            How::Highest => "the highest installed that meets the checkout's requirements",
+            How::Highest => "the highest installed Ruby the checkout allows",
             How::Only => "the only Ruby installed",
             How::Kept => "kept from the last index",
         }
@@ -525,11 +525,12 @@ pub(crate) fn paths(root: &Path) -> Vec<String> {
 /// is that Ruby's (DEC-242). A test stays hermetic by what it puts on `PATH`
 /// and in `HOME`.
 ///
-/// `last` is the stdlib the checkout's last index chose. Only the checkout
-/// naming an installed Ruby, or its lockfile, moves it: an editor launched
-/// from the Dock, or the language server's background reindex, sees a
-/// poorer environment than the shell that indexed, and must not take core
-/// away (DEC-271). A kept Ruby that carries no rbs yields to one that does.
+/// `last` is the stdlib the checkout's last index chose. Only what the
+/// checkout writes moves it — naming an installed Ruby, its lockfile, a
+/// requirement the kept one no longer meets: an editor launched from the
+/// Dock, or the language server's background reindex, sees a poorer
+/// environment than the shell that indexed, and must not take core away
+/// (DEC-271). A kept Ruby that carries no rbs yields to one that does.
 pub(crate) fn for_checkout(repo: &Path, last: Option<&Path>) -> Option<Stdlib> {
     let in_place_of = |root: &Path| match last.filter(|last| *last != root) {
         Some(last) => format!(
@@ -547,12 +548,19 @@ pub(crate) fn for_checkout(repo: &Path, last: Option<&Path>) -> Option<Stdlib> {
         );
         return Some(Stdlib::at(root, ruby, How::Named));
     }
-    let found = fallback(repo);
-    let kept = last.filter(|root| has_default_gems(root)).filter(|_| {
-        found
-            .as_ref()
-            .is_none_or(|found| found.how != How::Lockfile)
-    });
+    let requirements = super::declared::ruby_requirements(repo);
+    let found = fallback(repo, &requirements);
+    // Files in the checkout read the same from any environment, so they move
+    // a kept Ruby where the environment cannot.
+    let kept = last
+        .filter(|root| has_default_gems(root))
+        .filter(|root| match &found {
+            Some(found) => {
+                found.how != How::Lockfile
+                    && (allowed(root, &requirements) || !allowed(&found.root, &requirements))
+            }
+            None => true,
+        });
     let why = match (&found, kept) {
         (Some(found), Some(kept))
             if found.root != kept && (carries_rbs(kept) || !carries_rbs(&found.root)) =>
@@ -580,51 +588,102 @@ pub(crate) fn for_checkout(repo: &Path, last: Option<&Path>) -> Option<Stdlib> {
     ))
 }
 
+/// The checkout's Ruby requirements in words, when no Ruby the fallback
+/// chain finds meets them: the Ruby run on is then outside them, and
+/// `--index` and `--status` say so (DEC-610).
+pub(crate) fn unmet(repo: &Path) -> Option<String> {
+    let requirements = super::declared::ruby_requirements(repo);
+    if requirements.is_empty() {
+        return None;
+    }
+    let candidates = candidates(repo);
+    let mut installed = candidates.iter().filter_map(|c| c.root.as_deref());
+    installed
+        .all(|root| !allowed(root, &requirements))
+        .then(|| requirements_said(&requirements))
+}
+
+/// `widget.gemspec's >= 3.3 and Gemfile's ~> 3.4`.
+fn requirements_said(requirements: &[(String, String)]) -> String {
+    requirements
+        .iter()
+        .map(|(file, requirement)| format!("{file}'s {requirement}"))
+        .collect::<Vec<_>>()
+        .join(" and ")
+}
+
+/// Does the checkout's requirements allow the Ruby at `root`? One whose
+/// version cannot be told is allowed.
+fn allowed(root: &Path, requirements: &[(String, String)]) -> bool {
+    version_of(root).is_none_or(|version| super::declared::meets_all(&version, requirements))
+}
+
 /// A Ruby the fallback chain offers: its stdlib, how it was found, and
-/// where from, in words.
+/// where from, in words. `root` is `None` for a choice that is not
+/// installed, offered so that passing it over is said.
 struct Candidate {
-    root: PathBuf,
+    root: Option<PathBuf>,
     how: How,
     from: String,
 }
 
 /// The Ruby a checkout that names none installed runs on (DEC-610).
-fn fallback(repo: &Path) -> Option<Stdlib> {
-    let requirements = super::declared::ruby_requirements(repo);
-    let candidates = candidates(repo, &requirements);
-    let fits = |candidate: &&Candidate| {
-        version_of(&candidate.root)
-            .is_none_or(|version| super::declared::meets_all(&version, &requirements))
+fn fallback(repo: &Path, requirements: &[(String, String)]) -> Option<Stdlib> {
+    let candidates = candidates(repo);
+    let fits = |root: &Path| allowed(root, requirements);
+    let installed = || {
+        candidates
+            .iter()
+            .filter_map(|candidate| Some((candidate, candidate.root.as_deref()?)))
     };
-    let chosen = candidates
-        .iter()
-        .filter(fits)
-        .find(|candidate| carries_rbs(&candidate.root))
-        .or_else(|| candidates.iter().find(fits))
-        .or_else(|| candidates.first())?;
-    // What came before it and was not taken, so a surprise can be traced.
-    let passed: Vec<String> = candidates
+    let (chosen, root) = installed()
+        .filter(|(_, root)| fits(root))
+        .find(|(_, root)| carries_rbs(root))
+        .or_else(|| installed().find(|(_, root)| fits(root)))
+        .or_else(|| installed().next())?;
+    // What came before it and was not taken, so a surprise can be traced;
+    // two installs of one version read alike, and are said once.
+    let mut passed: Vec<String> = Vec::new();
+    for candidate in candidates
         .iter()
         .take_while(|candidate| !std::ptr::eq(*candidate, chosen))
-        .filter(|candidate| candidate.root != chosen.root)
-        .map(|candidate| {
-            let why = match fits(&candidate) {
-                false => "outside the checkout's requirement",
-                true => "it carries no rbs gem",
-            };
-            format!(
-                "{} from {}: {why}",
-                ruby_name(&candidate.root),
-                candidate.from
-            )
-        })
-        .collect();
-    let mut ruby = format!("{} (fallback: {}", ruby_name(&chosen.root), chosen.from);
+    {
+        let said = match &candidate.root {
+            None => format!("{}: not installed", candidate.from),
+            Some(other) => format!(
+                "{} from {}: {}",
+                ruby_name(other),
+                candidate.from,
+                match fits(other) {
+                    false => "outside the checkout's requirement",
+                    true => "it carries no rbs gem",
+                }
+            ),
+        };
+        if !passed.contains(&said) {
+            passed.push(said);
+        }
+    }
+    let from = match (chosen.how, requirements) {
+        (How::Highest, []) => "the highest installed Ruby".to_string(),
+        (How::Highest, _) if fits(root) => format!(
+            "the highest installed Ruby meeting {}",
+            requirements_said(requirements)
+        ),
+        _ => chosen.from.clone(),
+    };
+    let mut ruby = format!("{} (fallback: {from}", ruby_name(root));
+    if !fits(root) {
+        ruby.push_str(&format!(
+            "; no Ruby found meets {}",
+            requirements_said(requirements)
+        ));
+    }
     if !passed.is_empty() {
         ruby.push_str(&format!("; passed over {}", passed.join(", ")));
     }
     ruby.push(')');
-    Some(Stdlib::at(chosen.root.clone(), ruby, chosen.how))
+    Some(Stdlib::at(root.to_path_buf(), ruby, chosen.how))
 }
 
 /// `Ruby 3.4.10`, else the install it is in.
@@ -635,23 +694,35 @@ fn ruby_name(root: &Path) -> String {
     }
 }
 
-/// Every Ruby the fallback chain finds, in its order, each once.
-fn candidates(repo: &Path, requirements: &[(String, String)]) -> Vec<Candidate> {
+/// Every Ruby the fallback chain finds, in its order, each once; and each
+/// choice it reads that is not installed.
+fn candidates(repo: &Path) -> Vec<Candidate> {
     let pretty = |path: &Path| crate::core::paths::pretty(&path.to_string_lossy());
     let mut found: Vec<Candidate> = Vec::new();
     let mut offer = |root: Option<PathBuf>, how: How, from: String| {
-        if let Some(root) = root
-            && !found.iter().any(|c| c.root == root)
-        {
+        let seen = |c: &Candidate| match &root {
+            Some(_) => c.root == root,
+            None => c.root.is_none() && c.from == from,
+        };
+        if !found.iter().any(seen) {
             found.push(Candidate { root, how, from });
         }
     };
     if let Some(version) = super::lockfile_ruby(repo) {
-        offer(
-            named(&version),
-            How::Lockfile,
-            format!("Gemfile.lock's RUBY VERSION, {version}"),
-        );
+        // A lockfile names the patch it was locked on, which a machine
+        // seldom has; its minor is what the bundle needs.
+        let said = format!("Gemfile.lock's RUBY VERSION, {version}");
+        let (root, from) = match named(&version) {
+            Some(root) => (Some(root), said),
+            None => match minor(&version).and_then(|minor| Some((named(&minor)?, minor))) {
+                Some((root, minor)) => (
+                    Some(root),
+                    format!("{said}, which is not installed: the highest {minor}"),
+                ),
+                None => (None, said),
+            },
+        };
+        offer(root, How::Lockfile, from);
     }
     for (root, from) in manager_current(repo) {
         offer(root, How::Manager, from);
@@ -688,21 +759,18 @@ fn candidates(repo: &Path, requirements: &[(String, String)]) -> Vec<Candidate> 
         offer(Some(root.clone()), How::Only, from);
         return found;
     }
-    let from = match requirements {
-        [] => "the highest installed Ruby".to_string(),
-        _ => format!(
-            "the highest installed Ruby meeting {}",
-            requirements
-                .iter()
-                .map(|(file, requirement)| format!("{file}'s {requirement}"))
-                .collect::<Vec<_>>()
-                .join(" and ")
-        ),
-    };
     for (_, root) in installed {
-        offer(Some(root), How::Highest, from.clone());
+        offer(Some(root), How::Highest, "those installed".to_string());
     }
     found
+}
+
+/// `3.4.7` → `3.4`.
+fn minor(version: &str) -> Option<String> {
+    let mut parts = version.split('.');
+    let (major, minor) = (parts.next()?, parts.next()?);
+    parts.next()?;
+    Some(format!("{major}.{minor}"))
 }
 
 /// What a version manager would run here, before its global, as rbenv
@@ -746,7 +814,10 @@ fn manager_globals() -> Vec<(Option<PathBuf>, String)> {
         .or_else(|| home.as_ref().map(|home| home.join(".rbenv")));
     if let Some(file) = rbenv.map(|root| root.join("version"))
         && let Ok(text) = std::fs::read_to_string(&file)
-        && let Some(version) = text.lines().next().and_then(super::ruby_version_text)
+        && let Some(version) = text
+            .split_whitespace()
+            .next()
+            .and_then(super::ruby_version_text)
     {
         choices.push((named(&version), format!("rbenv's global, {version}")));
     }

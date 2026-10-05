@@ -1877,6 +1877,10 @@ fn plan_gems(
         resolved_from: resolved_from.as_ref().map(crate::gems::Resolved::as_str),
         ruby,
         ruby_not_found: crate::gems::stdlib::named_missing(repo),
+        ruby_unmet: stdlib
+            .as_ref()
+            .filter(|stdlib| stdlib.how != crate::gems::stdlib::How::Named)
+            .and_then(|_| crate::gems::stdlib::unmet(repo)),
         about: stdlib.as_ref().map(crate::gems::stdlib::Stdlib::about),
         ..GemReport::default()
     };
@@ -2243,6 +2247,10 @@ struct GemReport {
     /// found, so another Ruby's stdlib and gems answer (DEC-270).
     #[serde(skip_serializing_if = "Option::is_none")]
     ruby_not_found: Option<String>,
+    /// The checkout's Ruby requirements, when no Ruby found meets them, so
+    /// the one run on is outside them (DEC-610).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ruby_unmet: Option<String>,
     /// Named by the lockfile and present on disk.
     found: usize,
     /// Of those, checked out from git (`bundler/gems/`).
@@ -2507,6 +2515,18 @@ fn cmd_index(
             }
         );
     }
+    if out == Output::Text
+        && with_gems
+        && let Some(requirements) = &gems.ruby_unmet
+    {
+        println!(
+            "ruby — no installed Ruby meets {requirements}; {}",
+            match &gems.stdlib {
+                Some(stdlib) => format!("running on {} instead", stdlib.ruby),
+                None => "no other Ruby was chosen".to_string(),
+            }
+        );
+    }
     if out == Output::Text && with_gems && gems.stdlib.is_none() {
         // Core is its Ruby's: with none, nothing describes it (DEC-240).
         println!("stdlib — none: no Ruby found for this checkout, so nothing is known of core");
@@ -2660,6 +2680,13 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
                 row["ruby_not_found"] = version.into();
             }
             let ruby = status_ruby(&checkout.repo, stdlib.as_deref());
+            if ruby
+                .as_ref()
+                .is_some_and(|ruby| ruby.fallback != Some(false))
+                && let Some(requirements) = crate::gems::stdlib::unmet(Path::new(&checkout.repo))
+            {
+                row["ruby_unmet"] = requirements.into();
+            }
             if let Some(ruby) = &ruby {
                 rubies.insert(checkout.repo.clone(), ruby_said(ruby));
             }
@@ -2771,6 +2798,12 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
             };
             println!(
                 "{:>32}! the checkout names Ruby {version}, which is not installed: {instead}",
+                ""
+            );
+        }
+        if let Some(requirements) = row["ruby_unmet"].as_str() {
+            println!(
+                "{:>32}! no installed Ruby meets {requirements}: the stdlib above is outside it",
                 ""
             );
         }

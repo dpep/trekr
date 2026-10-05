@@ -489,11 +489,13 @@ fn project_ruby(repo: &Path) -> Option<String> {
     })
 }
 
-/// `3.4.1` from `ruby-3.4.1` or `"3.4.1"`; `None` for anything that is not
-/// a version — `system`, `jruby-9.4`, `>= 3.3`.
+/// `3.4.1` from `ruby-3.4.1`, `"3.4.1"` or rvm's `ruby-3.4.1@gemset`;
+/// `None` for anything that is not a version — `system`, `jruby-9.4`,
+/// `>= 3.3`.
 fn ruby_version_text(text: &str) -> Option<String> {
     let text = text.trim().trim_matches(|c| c == '"' || c == '\'');
     let text = text.strip_prefix("ruby-").unwrap_or(text);
+    let text = text.split('@').next().unwrap_or(text);
     text.starts_with(|c: char| c.is_ascii_digit())
         .then(|| text.to_string())
 }
@@ -506,8 +508,12 @@ fn version_file(dir: &Path) -> Option<(String, PathBuf)> {
         let path = dir.join(name);
         std::fs::read_to_string(&path).ok().map(|text| (text, path))
     };
-    if let Some((text, path)) = read(".ruby-version") {
-        return Some((ruby_version_text(text.lines().next()?)?, path));
+    // Its first word, as rbenv reads it; one that names no install
+    // (`system`, a blank file) leaves the others to.
+    if let Some((text, path)) = read(".ruby-version")
+        && let Some(version) = text.split_whitespace().next().and_then(ruby_version_text)
+    {
+        return Some((version, path));
     }
     if let Some((text, path)) = read(".tool-versions") {
         let version = text.lines().find_map(|line| {
@@ -552,8 +558,16 @@ fn lockfile_ruby(repo: &Path) -> Option<String> {
     lines.next()?;
     let written = lines.next()?.trim().strip_prefix("ruby ")?;
     let written = written.split_whitespace().next()?;
+    // A development Ruby's patchlevel is `p-1`.
     let version = match written.rsplit_once('p') {
-        Some((version, patch)) if patch.chars().all(|c| c.is_ascii_digit()) => version,
+        Some((version, patch))
+            if patch
+                .trim_start_matches('-')
+                .chars()
+                .all(|c| c.is_ascii_digit()) =>
+        {
+            version
+        }
         _ => written,
     };
     ruby_version_text(version)
@@ -588,7 +602,11 @@ fn expand(pattern: &Path) -> Vec<PathBuf> {
                 continue;
             };
             for entry in entries.flatten() {
-                if entry.file_type().is_ok_and(|t| t.is_dir()) {
+                // A version manager's install may be a link to one elsewhere.
+                let dir = entry
+                    .file_type()
+                    .is_ok_and(|t| t.is_dir() || (t.is_symlink() && entry.path().is_dir()));
+                if dir {
                     next.push(entry.path());
                 }
             }
@@ -1148,6 +1166,12 @@ BUNDLED WITH
         )
         .unwrap();
         assert_eq!(lockfile_ruby(&repo).as_deref(), Some("3.4.7"));
+        std::fs::write(
+            repo.join("Gemfile.lock"),
+            "RUBY VERSION\n   ruby 3.5.0p-1\n",
+        )
+        .unwrap();
+        assert_eq!(lockfile_ruby(&repo).as_deref(), Some("3.5.0"), "a dev Ruby");
         std::fs::write(repo.join("Gemfile.lock"), "GEM\n  specs:\n").unwrap();
         assert_eq!(lockfile_ruby(&repo), None);
         let _ = std::fs::remove_dir_all(&repo);

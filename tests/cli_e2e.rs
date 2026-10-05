@@ -5222,6 +5222,177 @@ fn a_checkout_naming_no_ruby_falls_back_to_one_with_signatures() {
     }
 }
 
+/// What the checkout writes outranks what its last index chose: its
+/// lockfile's `RUBY VERSION` moves a kept Ruby, counting by its minor when
+/// that patch is not installed, and a requirement the kept one no longer
+/// meets moves it too (DEC-610).
+#[test]
+fn the_checkouts_lockfile_and_requirement_move_a_kept_ruby() {
+    let (dir, db) = scratch("ruby-kept-moves");
+    fs::remove_file(dir.join(".ruby-version")).unwrap();
+    repo(&dir);
+    let (home, _) = scratch("ruby-kept-moves-home");
+    fs::remove_file(home.join(".ruby-version")).unwrap();
+    let versions = home.join(".rbenv/versions");
+    let old = fake_ruby_at(&versions.join("9.4.2"), "9.4.2", &[], &[]);
+    let new = fake_ruby_at(&versions.join("9.6.3"), "9.6.3", &[], &[]);
+    let env = [("HOME", home.to_str().unwrap())];
+    let lock = |ruby: &str| {
+        fs::write(
+            dir.join("Gemfile.lock"),
+            format!(
+                "GEM\n  remote: https://rubygems.org/\n  specs:\n\nRUBY VERSION\n   ruby {ruby}\n\n\
+                 BUNDLED WITH\n   2.5.0\n"
+            ),
+        )
+        .unwrap();
+    };
+    let index = || {
+        let out = json(&trekr_env(&db, &dir, &["--index", "--json"], &env));
+        let said = out["gems"]["stdlib"]["ruby"].as_str().unwrap().to_string();
+        (
+            out["ruby"]["root"].as_str().unwrap().to_string(),
+            out["ruby"]["how"].clone(),
+            said,
+        )
+    };
+
+    lock("9.4.2p100");
+    let (root, how, _) = index();
+    assert_eq!(
+        (root.as_str(), how.as_str()),
+        (old.as_str(), Some("lockfile"))
+    );
+
+    // A patch this machine lacks: the highest of its minor, and that is said.
+    lock("9.6.1p0");
+    let (root, how, said) = index();
+    assert_eq!(
+        (root.as_str(), how.as_str()),
+        (new.as_str(), Some("lockfile")),
+        "{said}"
+    );
+    assert!(
+        said.contains("9.6.1") && said.contains("not installed"),
+        "{said}"
+    );
+
+    // The kept Ruby falls outside a requirement the checkout now writes.
+    lock("9.4.2p100");
+    assert_eq!(index().0, old);
+    fs::remove_file(dir.join("Gemfile.lock")).unwrap();
+    fs::write(
+        dir.join("widget.gemspec"),
+        "Gem::Specification.new do |s|\n  s.required_ruby_version = \">= 9.5\"\nend\n",
+    )
+    .unwrap();
+    let (root, how, said) = index();
+    assert_eq!(
+        (root.as_str(), how.as_str()),
+        (new.as_str(), Some("highest")),
+        "{said}"
+    );
+    assert!(said.contains("in place of"), "{said}");
+
+    for dir in [&dir, &home] {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
+/// A fallback that could not take what the checkout or the environment asked
+/// for says so: no installed Ruby meets the requirement, a manager's choice
+/// that is not installed, a version file whose first word is no version
+/// (DEC-610).
+#[test]
+fn a_ruby_fallback_says_what_it_could_not_take() {
+    let (dir, db) = scratch("ruby-unmet");
+    fs::remove_file(dir.join(".ruby-version")).unwrap();
+    repo(&dir);
+    let (home, _) = scratch("ruby-unmet-home");
+    fs::remove_file(home.join(".ruby-version")).unwrap();
+    let versions = home.join(".rbenv/versions");
+    let low = fake_ruby_at(&versions.join("9.6.1"), "9.6.1", &[], &[]);
+    let high = fake_ruby_at(&versions.join("9.7.1"), "9.7.1", &[], &[]);
+    // rvm's gemset suffix, and an install rbenv reaches through a link.
+    let (elsewhere, _) = scratch("ruby-unmet-elsewhere");
+    let linked = fake_ruby_at(&elsewhere.join("9.5.4"), "9.5.4", &[], &[]);
+    std::os::unix::fs::symlink(elsewhere.join("9.5.4"), versions.join("9.5.4")).unwrap();
+    let env = [("HOME", home.to_str().unwrap())];
+    // A store each, or the last index's Ruby would be kept (DEC-271).
+    let mut stores = 0;
+    let mut index = |vars: &[(&str, &str)]| {
+        stores += 1;
+        let db = db.with_extension(format!("{stores}.db"));
+        let all = [&env[..], vars].concat();
+        let out = json(&trekr_env(&db, &dir, &["--index", "--json"], &all));
+        let text = stdout(&trekr_env(&db, &dir, &["--index"], &all));
+        let status = json(&trekr_env(&db, &dir, &["--status", "--json"], &all));
+        (out, text, status)
+    };
+
+    // Nothing installed meets the gemspec: the first found, and that is said.
+    fs::write(
+        dir.join("widget.gemspec"),
+        "Gem::Specification.new do |s|\n  s.required_ruby_version = \">= 9.9\"\nend\n",
+    )
+    .unwrap();
+    let (out, text, status) = index(&[]);
+    assert_eq!(
+        out["gems"]["ruby_unmet"], "widget.gemspec's >= 9.9",
+        "{out}"
+    );
+    assert!(
+        text.contains("no installed Ruby meets widget.gemspec's >= 9.9"),
+        "{text}"
+    );
+    assert_eq!(
+        status["checkouts"][0]["ruby_unmet"], "widget.gemspec's >= 9.9",
+        "{status}"
+    );
+    fs::remove_file(dir.join("widget.gemspec")).unwrap();
+
+    // The manager names one that is not installed: passed over, once.
+    let (out, _, _) = index(&[("RBENV_VERSION", "9.9.9")]);
+    let said = out["gems"]["stdlib"]["ruby"].as_str().unwrap();
+    assert_eq!(out["ruby"]["root"], high.as_str(), "{out}");
+    assert!(
+        said.contains("$RBENV_VERSION, 9.9.9: not installed"),
+        "{said}"
+    );
+    assert!(out["gems"].get("ruby_unmet").is_none(), "{out}");
+
+    // `.ruby-version` of `system` leaves `.tool-versions` to name one.
+    fs::write(dir.join(".ruby-version"), "system\n").unwrap();
+    fs::write(dir.join(".tool-versions"), "ruby 9.6.1\n").unwrap();
+    let (out, _, _) = index(&[]);
+    assert_eq!(
+        (out["ruby"]["root"].as_str(), out["ruby"]["how"].as_str()),
+        (Some(low.as_str()), Some("named")),
+        "{out}"
+    );
+    fs::remove_file(dir.join(".tool-versions")).unwrap();
+
+    // Its first word is what a manager reads; rvm's gemset is not the version.
+    for (written, root) in [
+        ("9.6.1 # pinned\n", &low),
+        ("ruby-9.6.1@widgets\n", &low),
+        ("9.5.4\n", &linked),
+    ] {
+        fs::write(dir.join(".ruby-version"), written).unwrap();
+        let (out, _, _) = index(&[]);
+        assert_eq!(out["ruby"]["root"], root.as_str(), "{written}: {out}");
+        assert_eq!(out["ruby"]["how"], "named", "{written}: {out}");
+        assert!(
+            out["gems"].get("ruby_not_found").is_none(),
+            "{written}: {out}"
+        );
+    }
+
+    for dir in [&dir, &home, &elsewhere] {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
 /// chruby's, mise's and Homebrew's versioned Rubies are found by the version
 /// a checkout names; one that is not installed is said, with the Ruby run on
 /// instead (DEC-270).

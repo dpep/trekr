@@ -77,7 +77,18 @@
   `Ruby 4.0.6 (fallback: …)` and what it passed over; `--status` gains a line
   per checkout naming its Ruby; the `ruby` object's `how` gains `lockfile`,
   `manager` and `highest`, and a `fallback` boolean. A checkout whose
-  lockfile names its Ruby moves to it on the next `--index`.
+  lockfile names its Ruby moves to it on the next `--index` — the highest
+  installed of that minor when the lockfile's exact patch is not — as does
+  one whose kept Ruby falls outside a requirement it now writes. When no
+  installed Ruby meets the requirements, `--index` and `--status` say so,
+  and `--json` carries them as `ruby_unmet`; a version manager's choice that
+  is not installed is listed among what was passed over.
+- **More `.ruby-version` files name the Ruby they mean.** rvm's
+  `ruby-3.3.11@gemset`, and a Ruby an rbenv `versions/` entry links to
+  elsewhere, were reported "not installed"; a `.ruby-version` of `system`,
+  or a blank one, no longer hides the checkout's `.tool-versions` or
+  `mise.toml`; and `3.4.1 # pinned` reads as `3.4.1`, its first word, as
+  rbenv reads it.
 - **Visibility follows more of Ruby's rules.** `private :x` after `def x`
   now makes `x` private in `--symbols` and completion (class methods too,
   inside `class << self`); an alias takes its original's visibility instead

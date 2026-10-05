@@ -13493,6 +13493,49 @@ Not done: `.ruby-version` with `ruby file:` in
 the Gemfile is read as the file itself; mise's `.config/mise.toml` in a
 project and asdf's `legacy_version_file` settings are not read.
 
+**Addendum (pre-0.8.7 hunt).** Three holes in the chain above, each a
+silent wrong Ruby:
+
+- *Requirements outrank keeping.* A kept Ruby (DEC-271) that the
+  checkout's requirements now rule out yields to a fallback that meets
+  them — a gem bumping `required_ruby_version` stayed on the old core
+  indefinitely. Like the lockfile, a requirement is a file in the checkout,
+  the same from any environment, so this does not reopen DEC-271's
+  poorer-environment problem. When nothing found meets them either, the
+  kept one stays: trading one Ruby outside the requirement for another
+  would only make the choice depend on the environment.
+- *The lockfile counts by its minor.* `RUBY VERSION` names the exact patch
+  the bundle was locked on (`ruby 4.0.1p0`), which a machine seldom has;
+  matched exactly it almost never fired, and the chain fell through to an
+  unrelated Ruby on another major line. When the exact patch is not
+  installed, the lockfile's candidate is the highest installed of its
+  `major.minor` — DEC-180's rule for a `.ruby-version` of `3.4` — and the
+  sentence says so ("…, 4.0.1, which is not installed: the highest 4.0").
+  Nearest-patch was considered and turned down: patches within a minor
+  share an ABI and differ in fixes, so the highest is the one a person
+  would install, and the rule is the one `named` already has. With none of
+  that minor installed it is passed over, as below. A development Ruby's
+  `p-1` patchlevel is read.
+- *Said, not skipped.* A choice the chain reads but cannot take — a
+  manager's variable, `$RUBY_ROOT`, a version file, the lockfile naming a
+  Ruby that is not installed — is listed among what was passed over
+  ("$RBENV_VERSION, 9.9.9: not installed"), and two installs of one version
+  are listed once. When no Ruby found meets the requirements, the first
+  found is still run on (core from a near Ruby beats none), the sentence
+  says "no Ruby found meets …" instead of claiming the highest that meets
+  them, and `--index` and `--status` print a line and carry
+  `ruby_unmet: "widget.gemspec's >= 5.0"` (the gems object of `--index
+  --json`, each `--status` checkout row), absent otherwise and for a
+  checkout that names its Ruby. `how: highest` says "the highest installed
+  Ruby the checkout allows", true with no requirement too.
+
+Version files are read as rbenv reads them: `.ruby-version`'s first word,
+so `3.4.1 # pinned` is `3.4.1`; rvm's `@gemset` suffix is not part of the
+version; and a `.ruby-version` that names no install (`system`, blank)
+leaves `.tool-versions` and `mise.toml` to name one rather than hiding
+them. An install that is a symlink (`~/.rbenv/versions/3.4.1 → …`) is
+followed.
+
 ## DEC-620 — A mixin sent to another class is a use of the module, from the receiver
 
 **Decided.** A module sent to a constant's mixin as its file loads —
