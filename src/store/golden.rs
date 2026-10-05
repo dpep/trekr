@@ -10,6 +10,11 @@
 //! unrecorded input is an unguarded one. It sees only what the testbed
 //! exercises.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test reads its own fixtures and scratch files"
+)]
+
 use super::{Store, insert_facts, schema};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

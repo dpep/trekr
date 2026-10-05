@@ -1,0 +1,7 @@
+# A checkout's file may be a FIFO, /dev/zero or huge, so input goes through
+# the bounded readers. `File::open` + `read_to_end` is not covered: the
+# bounded readers are built on it, and the few other uses are deliberate.
+disallowed-methods = [
+  { path = "std::fs::read", reason = "a checkout's file may be a FIFO or /dev/zero: use scan::read_source (bounded, regular files only)" },
+  { path = "std::fs::read_to_string", reason = "a checkout's file may be a FIFO or /dev/zero: use scan::read_source / scan::read_text" },
+]

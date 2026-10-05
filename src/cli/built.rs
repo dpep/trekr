@@ -72,7 +72,7 @@ impl Texts {
         let files = paths
             .into_par_iter()
             .filter_map(|path| {
-                let bytes = crate::scan::read_source(&root.join(&path)).ok()?;
+                let bytes = crate::scan::read_source(root.join(&path)).ok()?;
                 Some((path, String::from_utf8_lossy(&bytes).into_owned()))
             })
             .collect();

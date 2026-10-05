@@ -63,7 +63,7 @@ fn location(
     let text = match text {
         Some(text) => Some(text),
         None => {
-            read = std::fs::read_to_string(&absolute).ok();
+            read = crate::scan::read_text(&absolute).ok();
             read.as_deref()
         }
     };
@@ -902,7 +902,7 @@ fn written_len(root: &Path, path: &str, line: u32, col: u32, text: Option<&str>)
     let text = match text {
         Some(text) => text,
         None => {
-            read = absolute_site(root, path).and_then(|at| std::fs::read_to_string(at).ok());
+            read = absolute_site(root, path).and_then(|at| crate::scan::read_text(at).ok());
             read.as_deref().unwrap_or_default()
         }
     };
@@ -1014,7 +1014,7 @@ fn constant_references(
         };
         let text = match overlay.get(path) {
             Some(text) => text.clone(),
-            None => std::fs::read_to_string(root.join(path)).unwrap_or_default(),
+            None => crate::scan::read_text(root.join(path)).unwrap_or_default(),
         };
         let lines = LineIndex::new(&text);
         locations.extend(group.iter().map(|(_, line, col)| Location {
@@ -1191,7 +1191,8 @@ fn scan_files(
                 let text = match overlay.get(path) {
                     Some(text) => text.clone(),
                     None => {
-                        String::from_utf8_lossy(&std::fs::read(root.join(path)).ok()?).into_owned()
+                        String::from_utf8_lossy(&crate::scan::read_source(root.join(path)).ok()?)
+                            .into_owned()
                     }
                 };
                 let facts = crate::extract::extract_file(path, text.as_bytes());
@@ -2153,7 +2154,7 @@ fn callee_item(
     let answer = crate::resolve::method_at(tree, facts, call, &located.relative);
     let site = answer.sites.first()?;
     let absolute = absolute_site(&located.root, &site.path)?;
-    let text = std::fs::read_to_string(&absolute).ok()?;
+    let text = crate::scan::read_text(&absolute).ok()?;
     let uri: Url = path_to_uri(&absolute).parse().ok()?;
     let target = crate::extract::extract(text.as_bytes());
     Some(

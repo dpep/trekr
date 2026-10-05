@@ -72,7 +72,7 @@ pub(super) fn resolve(
         if !is_gemspec && !is_gemfile {
             continue;
         }
-        let Ok(source) = std::fs::read(&path) else {
+        let Ok(source) = crate::scan::read_source(&path) else {
             continue;
         };
         any = true;
@@ -307,8 +307,8 @@ fn runtime_dependencies(dir: &Path, name: &str, version: &str) -> Vec<Dependency
     });
     let shipped = dir.join(format!("{name}.gemspec"));
     let source = installed
-        .and_then(|path| std::fs::read(path).ok())
-        .or_else(|| std::fs::read(shipped).ok())
+        .and_then(|path| crate::scan::read_source(path).ok())
+        .or_else(|| crate::scan::read_source(shipped).ok())
         .unwrap_or_default();
     dependencies(&source)
         .into_iter()
@@ -710,7 +710,7 @@ pub(super) fn ruby_requirements(repo: &Path) -> Vec<(String, String)> {
         .iter()
         .flat_map(|path| {
             let file = path.file_name().unwrap_or_default().to_string_lossy();
-            let source = std::fs::read(path).unwrap_or_default();
+            let source = crate::scan::read_source(path).unwrap_or_default();
             let parsed = ruby_prism::parse(&source);
             let mut found = RubyRequirements::default();
             found.visit(&parsed.node());

@@ -8,6 +8,11 @@
 //! exposes, which sends it to the controller. Path conventions, read here
 //! because the tree is the layer that knows where a declaration is written.
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "reads here predate scan::read_source; converting the last one fails this expect"
+)]
+
 use super::Tree;
 use crate::core::Facts;
 use std::collections::HashMap;

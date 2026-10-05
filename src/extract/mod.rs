@@ -435,6 +435,13 @@ pub(crate) fn symbol_literals(src: &[u8]) -> Vec<(String, Pos, usize)> {
     symbols.found
 }
 
+/// The facts of `path` in the checkout at `root`, read as
+/// [`crate::scan::read_source`] reads a file: `None` when it can't be.
+pub(crate) fn read_file(root: &std::path::Path, path: &str) -> Option<Facts> {
+    let bytes = crate::scan::read_source(root.join(path)).ok()?;
+    Some(extract_file(path, &bytes))
+}
+
 /// Facts from a file of a checkout, by what the file is: Ruby, an ERB
 /// template's Ruby (DEC-520), or the SQL dump an app keeps its schema in
 /// (DEC-480).

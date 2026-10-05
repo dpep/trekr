@@ -477,6 +477,8 @@ impl Drop for Lock {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_methods, reason = "a test reads what it wrote")]
+
     use super::*;
     use crate::store::schema;
 

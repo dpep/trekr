@@ -1648,11 +1648,7 @@ fn wanted(
         .take(root)
         .into_iter()
         .filter(|path| files.contains_key(path))
-        .filter_map(|path| {
-            let bytes = std::fs::read(root.join(&path)).ok()?;
-            let facts = extract::extract_file(&path, &bytes);
-            Some((path, facts))
-        })
+        .filter_map(|path| extract::read_file(root, &path).map(|facts| (path, facts)))
         .collect();
     // Polled while the bulk write runs: nothing asked must cost nothing.
     if asked.is_empty() {
@@ -1740,9 +1736,9 @@ fn early_part(
             }
             let parsed = match given.get(path.as_str()) {
                 Some(facts) => (*facts).clone(),
-                None => match std::fs::read(root.join(path)) {
-                    Ok(bytes) => extract::extract_file(path, &bytes),
-                    Err(_) => continue,
+                None => match extract::read_file(root, path) {
+                    Some(facts) => facts,
+                    None => continue,
                 },
             };
             facts.insert(oid.clone(), parsed);
@@ -3087,11 +3083,7 @@ fn gather_refs(
         }
         tiered
     };
-    let read = |path: &String| {
-        std::fs::read(root.join(path))
-            .ok()
-            .map(|bytes| extract::extract_file(path, &bytes))
-    };
+    let read = |path: &String| extract::read_file(root, path);
     let tiered: Vec<Tiered> = match parsed {
         // Held across queries by the caller: parse what it lacks, then tier.
         Some(parsed) => {
@@ -3172,12 +3164,7 @@ impl Parsed {
         let fresh: Vec<_> = files
             .par_iter()
             .filter(|path| !self.facts.contains_key(*path))
-            .map(|path| {
-                let facts = std::fs::read(root.join(path))
-                    .ok()
-                    .map(|bytes| extract::extract_file(path, &bytes));
-                (path.clone(), facts)
-            })
+            .map(|path| (path.clone(), extract::read_file(root, path)))
             .collect();
         self.facts.extend(fresh);
     }
@@ -3245,7 +3232,11 @@ impl Parsed {
         let naming = self.naming.get_or_insert_with(|| {
             let words: Vec<HashSet<u64>> = files
                 .par_iter()
-                .map(|path| capitalized_words(&std::fs::read(root.join(path)).unwrap_or_default()))
+                .map(|path| {
+                    capitalized_words(
+                        &crate::scan::read_source(root.join(path)).unwrap_or_default(),
+                    )
+                })
                 .collect();
             let mut naming: HashMap<u64, Vec<u32>> = HashMap::new();
             for (at, words) in words.into_iter().enumerate() {
@@ -3717,7 +3708,7 @@ fn cmd_card(out: Output, text: &str, context: Option<&Path>) -> anyhow::Result<E
 /// object and its one line of text. `None` for a class that is not a model.
 fn model_table(tree: &Tree, root: &Path, fqn: &str) -> Option<(serde_json::Value, String)> {
     use crate::schema::model::Model;
-    let read = |path: &str| std::fs::read_to_string(path).ok();
+    let read = |path: &str| crate::scan::read_text(path).ok();
     let (name, base) = match crate::schema::model::of(tree, fqn, &read)? {
         Model::Abstract => {
             let table = serde_json::json!({"name": null, "abstract": true});
@@ -3734,7 +3725,7 @@ fn model_table(tree: &Tree, root: &Path, fqn: &str) -> Option<(serde_json::Value
     let found = crate::schema::dumps_near(root, site.as_deref())
         .into_iter()
         .find_map(|dump| {
-            let bytes = std::fs::read(root.join(&dump)).ok()?;
+            let bytes = crate::scan::read_source(root.join(&dump)).ok()?;
             let table = crate::schema::tables_in(&dump, &bytes)
                 .into_iter()
                 .find(|t| t.name == name)?;
@@ -4329,7 +4320,7 @@ fn variable_mentions(
             .files
             .iter()
             .filter_map(|other| {
-                let raw = std::fs::read(other).ok()?;
+                let raw = crate::scan::read_source(other).ok()?;
                 let text = crate::extract::ruby_source(other, &raw).into_owned();
                 let found = vars::analyze(&text);
                 let rows: Vec<Mention> = scope
@@ -4541,7 +4532,7 @@ fn refresh_for_query(store: &mut Store, root: &Path, file: &Path) -> Option<serd
         .ok()?
         .to_string_lossy()
         .into_owned();
-    let bytes = std::fs::read(&absolute).ok()?;
+    let bytes = crate::scan::read_source(&absolute).ok()?;
     let oid = scan::hash_blob(&bytes);
     // Parse only when this blob is genuinely new — the common case after a
     // branch switch is bytes the store has seen before, which cost one hash.

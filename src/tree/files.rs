@@ -284,6 +284,8 @@ fn abandoned(entry: &std::fs::DirEntry) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_methods, reason = "a test reads what it wrote")]
+
     use super::super::Tree;
     use super::*;
 

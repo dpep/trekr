@@ -291,13 +291,13 @@ fn discover_under(dir: &Path, ceilings: &str) -> Option<PathBuf> {
             dot_git
         } else if git_meta.is_file() {
             // A worktree's or submodule's `.git` names its gitdir.
-            let text = std::fs::read_to_string(&dot_git).ok()?;
+            let text = read_text(&dot_git).ok()?;
             let named = PathBuf::from(text.strip_prefix("gitdir:")?.trim());
             candidate.join(named)
         } else {
             return None;
         };
-        let common = match std::fs::read_to_string(gitdir.join("commondir")) {
+        let common = match read_text(gitdir.join("commondir")) {
             Ok(text) => gitdir.join(text.trim()),
             Err(_) => gitdir.clone(),
         };
@@ -305,9 +305,7 @@ fn discover_under(dir: &Path, ceilings: &str) -> Option<PathBuf> {
             && common.join("objects").is_dir()
             && common.join("refs").is_dir();
         // `core.worktree`, `core.bare`, per-worktree config: git's to read.
-        let config = std::fs::read_to_string(common.join("config"))
-            .ok()?
-            .to_ascii_lowercase();
+        let config = read_text(common.join("config")).ok()?.to_ascii_lowercase();
         let plain = !config.contains("worktree") && !config.contains("bare = true");
         let ours = uid != 0 && meta.uid() == uid && std::fs::metadata(&gitdir).ok()?.uid() == uid;
         if !recognised || !plain || !ours {
@@ -357,7 +355,7 @@ fn true_case(dir: &Path) -> Option<PathBuf> {
 pub(crate) fn git_fingerprint(root: &Path) -> Option<i64> {
     // A worktree's `.git` is a file pointing at the real gitdir.
     let dot_git = root.join(".git");
-    let index = match std::fs::read_to_string(&dot_git) {
+    let index = match read_text(&dot_git) {
         Ok(text) => {
             let dir = text.strip_prefix("gitdir:")?.trim();
             PathBuf::from(dir).join("index")
@@ -379,11 +377,13 @@ pub(crate) fn git_fingerprint(root: &Path) -> Option<i64> {
 /// schema dump, short of what would cost the process its memory.
 pub(crate) const MAX_SOURCE: u64 = 64 << 20;
 
-/// A source file someone named — a path on the command line, a URI from the
-/// editor — read as trekr reads one: a regular file (a pipe would wait for a
-/// writer, `/dev/zero` never ends), no larger than [`MAX_SOURCE`].
-pub(crate) fn read_source(path: &Path) -> std::io::Result<Vec<u8>> {
+/// A file read as trekr reads one: a regular file (a pipe would wait for a
+/// writer, `/dev/zero` never ends), no larger than [`MAX_SOURCE`]. Every file
+/// trekr reads goes through here or [`read_text`]; clippy refuses
+/// `std::fs::read` and `read_to_string` (`clippy.toml`).
+pub(crate) fn read_source(path: impl AsRef<Path>) -> std::io::Result<Vec<u8>> {
     use std::io::Read;
+    let path = path.as_ref();
     let meta = std::fs::metadata(path)?;
     if !meta.is_file() {
         return Err(std::io::Error::new(
@@ -409,6 +409,12 @@ pub(crate) fn read_source(path: &Path) -> std::io::Result<Vec<u8>> {
         return Err(too_large());
     }
     Ok(bytes)
+}
+
+/// [`read_source`], as UTF-8 text: a config file, a lockfile, a `.git` file.
+pub(crate) fn read_text(path: impl AsRef<Path>) -> std::io::Result<String> {
+    String::from_utf8(read_source(path)?)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
 /// Every Ruby file in the working tree, keyed by the blob its *current* bytes
@@ -446,7 +452,7 @@ pub(crate) fn scan(root: &Path) -> Result<Files> {
         if !is_indexed(&path) {
             continue;
         }
-        match read_source(&root.join(&path)) {
+        match read_source(root.join(&path)) {
             Ok(bytes) => {
                 files.insert(path, hash_blob(&bytes));
             }
@@ -499,7 +505,7 @@ fn one_schema_per_app(root: &Path, files: &mut Files) {
             continue;
         }
         let app = &dir[..dir.len() - "db".len()];
-        let config = std::fs::read_to_string(root.join(format!("{app}config/application.rb")));
+        let config = read_text(root.join(format!("{app}config/application.rb")));
         match crate::schema::sql_is_the_schema(config.ok().as_deref()) {
             true => files.remove(&ruby),
             false => files.remove(&sql),
@@ -584,7 +590,7 @@ pub(crate) fn hash(root: &Path, paths: impl IntoIterator<Item = String>) -> File
     paths
         .into_iter()
         .filter_map(|path| {
-            let bytes = read_source(&root.join(&path)).ok()?;
+            let bytes = read_source(root.join(&path)).ok()?;
             let oid = hash_blob(&bytes);
             Some((path, oid))
         })
@@ -604,7 +610,7 @@ mod tests {
         std::fs::write(&file, "x = 1\n").unwrap();
         assert_eq!(read_source(&file).unwrap(), b"x = 1\n");
         std::os::unix::fs::symlink(&file, temp.join("linked.rb")).unwrap();
-        assert_eq!(read_source(&temp.join("linked.rb")).unwrap(), b"x = 1\n");
+        assert_eq!(read_source(temp.join("linked.rb")).unwrap(), b"x = 1\n");
 
         // A device never ends, and a pipe would wait for a writer.
         let fifo = temp.join("pipe.rb");

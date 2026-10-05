@@ -3,6 +3,11 @@
 //! Same isolation as the CLI suite — a temp git repo and its own database — so
 //! this runs in CI without touching anything real.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test reads its own fixtures and scratch files"
+)]
+
 use std::fs;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};

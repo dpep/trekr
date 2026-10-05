@@ -3,6 +3,11 @@
 //! registry, a string — and what may, which a row says as a caveat
 //! (DEC-421).
 
+#![expect(
+    clippy::disallowed_methods,
+    reason = "reads here predate scan::read_source; converting the last one fails this expect"
+)]
+
 use std::collections::{HashMap, HashSet};
 
 use super::named::{self, Named, plain};

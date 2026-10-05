@@ -16,7 +16,7 @@ impl Symbols {
     /// The first line of `path` with the symbol `:name`.
     fn line_of(&mut self, path: &str, name: &str) -> Option<u32> {
         let symbols = self.by_path.entry(path.to_string()).or_insert_with(|| {
-            std::fs::read(path)
+            crate::scan::read_source(path)
                 .map(|source| {
                     crate::extract::symbol_literals(&source)
                         .into_iter()
@@ -130,7 +130,7 @@ impl ThorBlocks {
     fn of(&mut self, path: &str) -> &Spans {
         self.by_path.entry(path.to_string()).or_insert_with(|| {
             let mut spans = Spans::default();
-            let Ok(source) = std::fs::read(path) else {
+            let Ok(source) = crate::scan::read_source(path) else {
                 return spans;
             };
             let parsed = ruby_prism::parse(&source);
@@ -329,7 +329,7 @@ impl ForeignSends {
 /// `public_send(x`, `__send__(x`, with no receiver or `self.`, whose first
 /// argument is no literal.
 fn first_computed_send(path: &str) -> Option<u32> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = crate::scan::read_text(path).ok()?;
     text.lines().enumerate().find_map(|(n, line)| {
         let code = line.trim_start();
         if code.starts_with('#') {
@@ -524,7 +524,7 @@ impl Filter {
 
 impl Source {
     fn read(path: &str) -> Option<Source> {
-        let text = std::fs::read_to_string(path).ok()?;
+        let text = crate::scan::read_text(path).ok()?;
         let facts = crate::extract::extract(text.as_bytes());
         Some(Source { text, facts })
     }

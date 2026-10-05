@@ -17,7 +17,7 @@ const DEFAULT_CHARS: usize = 40;
 
 /// The table of the model `fqn`, `None` when it is not one.
 pub(super) fn model_section(session: &mut Session, root: &Path, fqn: &str) -> Option<String> {
-    let read = |path: &str| std::fs::read_to_string(path).ok();
+    let read = |path: &str| crate::scan::read_text(path).ok();
     let (model, site) = {
         let tree = session.tree(root).ok()?;
         let model = crate::schema::model::of(tree, fqn, &read)?;

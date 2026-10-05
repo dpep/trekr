@@ -2,6 +2,11 @@
 //! a merge can land two of the same. Nothing else notices: the testbed runs
 //! both cases and the decisions read fine, until someone cites one by number.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test reads its own fixtures and scratch files"
+)]
+
 use std::collections::BTreeMap;
 use std::path::Path;
 

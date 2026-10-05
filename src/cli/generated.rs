@@ -33,7 +33,7 @@ impl Generated {
                 } else if path.split('/').rev().skip(1).any(|dir| dir == "generated") {
                     "a `generated/` directory".to_string()
                 } else {
-                    let text = std::fs::read_to_string(root.join(path)).ok()?;
+                    let text = crate::scan::read_text(root.join(path)).ok()?;
                     let line = text
                         .lines()
                         .take(HEADER_LINES)

@@ -120,13 +120,13 @@ pub(crate) fn sweep(
 pub(crate) fn sweep_legacy(beside: &Path, dry_run: bool) -> super::files::Swept {
     let mut swept = super::files::Swept::default();
     let single = beside.join("core.rb");
-    if std::fs::read_to_string(&single)
+    if crate::scan::read_text(&single)
         .is_ok_and(|text| text.starts_with("# Ruby's core library, as far as navigation cares"))
     {
         remove(&single, &mut swept, dry_run);
     }
     let dir = beside.join("core");
-    let ours = std::fs::read_to_string(dir.join(&rspec_file().name))
+    let ours = crate::scan::read_text(dir.join(&rspec_file().name))
         .is_ok_and(|text| text.lines().next() == rspec_file().text.lines().next());
     if !ours {
         return swept;
@@ -536,7 +536,7 @@ pub(crate) fn materialize(dir: &Path) -> std::io::Result<()> {
         std::fs::create_dir_all(at.join(STDLIB_DIR))?;
         for file in files {
             let path = at.join(&file.name);
-            if std::fs::read_to_string(&path).ok().as_deref() != Some(file.text.as_str()) {
+            if crate::scan::read_text(&path).ok().as_deref() != Some(file.text.as_str()) {
                 std::fs::write(&path, &file.text)?;
             }
         }
@@ -547,6 +547,8 @@ pub(crate) fn materialize(dir: &Path) -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::disallowed_methods, reason = "a test reads what it wrote")]
+
     use super::*;
 
     fn file<'a>(files: &'a [CoreFile], name: &str) -> &'a CoreFile {

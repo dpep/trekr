@@ -37,7 +37,7 @@ impl Views {
         let mut views = Views::default();
         for path in out.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
             let path = String::from_utf8_lossy(path).into_owned();
-            let Ok(bytes) = std::fs::read(root.join(&path)) else {
+            let Ok(bytes) = crate::scan::read_source(root.join(&path)) else {
                 continue;
             };
             let Some(text) = template_text(&bytes) else {

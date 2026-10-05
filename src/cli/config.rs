@@ -39,7 +39,7 @@ impl Config {
             if not_config(&path) {
                 continue;
             }
-            let Ok(text) = std::fs::read_to_string(root.join(&path)) else {
+            let Ok(text) = crate::scan::read_text(root.join(&path)) else {
                 continue;
             };
             for (at, line) in text.lines().enumerate() {

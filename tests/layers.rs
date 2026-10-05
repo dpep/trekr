@@ -3,6 +3,11 @@
 //! resolve does not reach into the LSP for a helper. A leak compiles fine, so
 //! this reads the source for one.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test reads its own fixtures and scratch files"
+)]
+
 use std::path::{Path, PathBuf};
 
 /// The fronts a module under `src/<top>` may not name.

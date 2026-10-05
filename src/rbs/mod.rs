@@ -178,9 +178,7 @@ pub(crate) fn read(dir: &Path) -> stubs::Signatures {
             .into_iter()
             .flatten()
             .flatten()
-            .filter_map(|version| {
-                std::fs::read_to_string(version.path().join("manifest.yaml")).ok()
-            })
+            .filter_map(|version| crate::scan::read_text(version.path().join("manifest.yaml")).ok())
             .flat_map(|manifest| dependencies(&manifest))
             .collect();
         libraries.insert(name, (files, deps));
@@ -189,7 +187,7 @@ pub(crate) fn read(dir: &Path) -> stubs::Signatures {
 }
 
 fn source(path: &Path, library: Option<&str>) -> Option<env::Source> {
-    let text = std::fs::read_to_string(path).ok()?;
+    let text = crate::scan::read_text(path).ok()?;
     Some(env::Source {
         library: library.map(str::to_string),
         parsed: parse::parse(&text),
@@ -317,7 +315,7 @@ fn ruby(store: &Store, root: &Path, signatures: &stubs::Signatures) -> anyhow::R
                 .any(|library| stubs::belongs(path, library))
         });
     for path in unindexed {
-        let Ok(source) = std::fs::read(root.join(&path)) else {
+        let Ok(source) = crate::scan::read_source(root.join(&path)) else {
             continue;
         };
         for def in crate::extract::extract(&source).defs {

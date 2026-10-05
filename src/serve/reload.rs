@@ -109,7 +109,7 @@ pub(crate) fn resuming() -> Option<anyhow::Result<Handoff>> {
 }
 
 fn read_handoff(path: &Path) -> anyhow::Result<Handoff> {
-    let bytes = std::fs::read(path);
+    let bytes = crate::scan::read_source(path);
     let _ = std::fs::remove_file(path);
     let handoff: Handoff = serde_json::from_slice(&bytes?)?;
     anyhow::ensure!(

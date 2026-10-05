@@ -84,7 +84,7 @@ impl Routes {
 
     /// Read one routes file in `scope`. `depth` bounds `draw`s that draw.
     fn read_file(&mut self, root: &Path, path: &str, scope: &Scope, depth: usize) {
-        let Ok(source) = std::fs::read(root.join(path)) else {
+        let Ok(source) = crate::scan::read_source(root.join(path)) else {
             return;
         };
         self.files += 1;

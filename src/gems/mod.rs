@@ -482,7 +482,7 @@ fn project_ruby(repo: &Path) -> Option<String> {
     if let Some((version, _)) = version_file(repo) {
         return Some(version);
     }
-    let gemfile = std::fs::read_to_string(repo.join("Gemfile")).ok()?;
+    let gemfile = crate::scan::read_text(repo.join("Gemfile")).ok()?;
     gemfile.lines().find_map(|line| {
         let rest = line.trim_start().strip_prefix("ruby ")?;
         ruby_version_text(rest.split(',').next()?)
@@ -506,7 +506,7 @@ fn ruby_version_text(text: &str) -> Option<String> {
 fn version_file(dir: &Path) -> Option<(String, PathBuf)> {
     let read = |name: &str| {
         let path = dir.join(name);
-        std::fs::read_to_string(&path).ok().map(|text| (text, path))
+        crate::scan::read_text(&path).ok().map(|text| (text, path))
     };
     // Its first word, as rbenv reads it; one that names no install
     // (`system`, a blank file) leaves the others to.
@@ -553,7 +553,7 @@ fn mise_ruby(toml: &str) -> Option<String> {
 /// which bundler writes when the Gemfile has a `ruby` line. `ruby 3.4.7p58`
 /// is `3.4.7`.
 fn lockfile_ruby(repo: &Path) -> Option<String> {
-    let text = std::fs::read_to_string(repo.join("Gemfile.lock")).ok()?;
+    let text = crate::scan::read_text(repo.join("Gemfile.lock")).ok()?;
     let mut lines = text.lines().skip_while(|line| *line != "RUBY VERSION");
     lines.next()?;
     let written = lines.next()?.trim().strip_prefix("ruby ")?;
@@ -624,7 +624,7 @@ fn expand(pattern: &Path) -> Vec<PathBuf> {
 /// Relative to the app. Gems go under its `ruby/<version>/`.
 fn bundle_path(repo: &Path) -> Option<PathBuf> {
     let read = |dir: PathBuf| {
-        let text = std::fs::read_to_string(dir.join("config")).ok()?;
+        let text = crate::scan::read_text(dir.join("config")).ok()?;
         config_value(&text, "BUNDLE_PATH")
     };
     let local = std::env::var_os("BUNDLE_APP_CONFIG")
@@ -810,7 +810,7 @@ pub(crate) fn for_checkout(
     repo: &Path,
     ruby: Option<&stdlib::Stdlib>,
 ) -> (Vec<Located>, Option<Resolved>) {
-    let (mut located, resolved) = match std::fs::read_to_string(repo.join("Gemfile.lock")) {
+    let (mut located, resolved) = match crate::scan::read_text(repo.join("Gemfile.lock")) {
         Ok(text) => (
             locate(repo, parse_lockfile(&text), ruby),
             Some(Resolved::Lockfile),

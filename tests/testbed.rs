@@ -32,6 +32,11 @@
 //! `resolves_to`. Unknown keys fail loudly rather than passing silently — a
 //! typo in an expectation is a test that proves nothing.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test reads its own fixtures and scratch files"
+)]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;

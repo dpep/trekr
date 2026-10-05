@@ -56,6 +56,11 @@ Rust, single crate until there's a concrete reason to split. `cargo` is keg-only
 warnings`, `cargo test`, then the VS Code extension's unit tests (`npm test` in
 `editors/vscode`, installing its deps on first run).
 
+**Every file is read through `scan::read_source` or `scan::read_text`**:
+bounded, regular files only, because a checkout's file may be a pipe or a
+link to `/dev/zero`. `clippy.toml` refuses `std::fs::read` and
+`read_to_string`; a test file allows them at its top.
+
 **Before a release, and after touching `src/serve/` or `editors/vscode/`:**
 `script/check.sh --e2e` (or `TREKR_CHECK_E2E=1`, or `make vscode-test`), which
 adds the extension's e2e suite in a real VS Code against the debug build. It

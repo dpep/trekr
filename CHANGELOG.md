@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **A file trekr finds by its name is read bounded, as a source is.** A
+  `Gemfile`, `Gemfile.lock`, `config/routes.rb` or `config/application.rb`
+  that is a link to `/dev/zero` kept `--index` and `--dead` reading forever;
+  it is passed over now.
+
 ## 0.8.7 — 2026-10-05
 
 - **`--def` on a `render` that reaches several templates rounds its

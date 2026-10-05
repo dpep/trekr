@@ -3,6 +3,11 @@
 //! Behavior gets checked here rather than by hand-running `trekr`, so a
 //! regression fails CI instead of being noticed later.
 
+#![allow(
+    clippy::disallowed_methods,
+    reason = "a test reads its own fixtures and scratch files"
+)]
+
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -3686,6 +3691,32 @@ fn an_edit_git_has_not_noticed_is_not_seen_by_the_probe() {
     let out = trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]);
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(value["definition"][0]["line"], 14, "after --index: {value}");
+}
+
+/// A file trekr finds by its name rather than by `git ls-files` — the
+/// lockfile, the routes, the app's config — is read as bounded as a source:
+/// one that is a link to `/dev/zero` is passed over, not read forever.
+#[cfg(unix)]
+#[test]
+fn a_file_found_by_its_name_is_read_bounded() {
+    let (dir, db) = scratch("named-devices");
+    repo(&dir);
+    fs::create_dir_all(dir.join("config")).unwrap();
+    for name in [
+        "Gemfile",
+        "Gemfile.lock",
+        "config/routes.rb",
+        "config/application.rb",
+    ] {
+        std::os::unix::fs::symlink("/dev/zero", dir.join(name)).unwrap();
+    }
+    let limit = std::time::Duration::from_secs(30);
+    for args in [&["--index", "--json"][..], &["--dead", ".", "--json"]] {
+        let out = trekr_within(&db, &dir, args, &[], limit);
+        assert!(out.status.code().is_some(), "{args:?}: {out:?}");
+        assert!(json(&out).is_object(), "{args:?}: {}", stdout(&out));
+    }
+    let _ = fs::remove_dir_all(&dir);
 }
 
 /// A path named as a source is read only if it is a regular file of bounded

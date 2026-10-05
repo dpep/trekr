@@ -101,7 +101,7 @@ fn version_of(root: &Path) -> Option<String> {
         .flatten()
         .map(|entry| entry.path().join("rbconfig.rb"))
         .find(|path| path.is_file())
-        .and_then(|path| std::fs::read_to_string(path).ok());
+        .and_then(|path| crate::scan::read_text(path).ok());
     let from_config = rbconfig.and_then(|text| {
         let part = |key: &str| {
             let prefix = format!("CONFIG[\"{key}\"] = \"");
@@ -328,7 +328,7 @@ fn recorded_rbs(root: &Path) -> Option<String> {
         lib.join("gems").join(abi).join("bundled_gems"),
     ];
     places.iter().find_map(|path| {
-        let text = std::fs::read_to_string(path).ok()?;
+        let text = crate::scan::read_text(path).ok()?;
         text.lines().find_map(|line| {
             let mut fields = line.split_whitespace();
             (fields.next()? == "rbs").then(|| fields.next().map(str::to_string))?
@@ -814,7 +814,7 @@ fn manager_globals() -> Vec<(Option<PathBuf>, String)> {
         .map(PathBuf::from)
         .or_else(|| home.as_ref().map(|home| home.join(".rbenv")));
     if let Some(file) = rbenv.map(|root| root.join("version"))
-        && let Ok(text) = std::fs::read_to_string(&file)
+        && let Ok(text) = crate::scan::read_text(&file)
         && let Some(version) = text
             .split_whitespace()
             .next()
@@ -830,7 +830,7 @@ fn manager_globals() -> Vec<(Option<PathBuf>, String)> {
             .filter(|dir| !dir.is_empty())
             .map(PathBuf::from)
             .unwrap_or_else(|| home.join(".config"));
-        if let Ok(text) = std::fs::read_to_string(config.join("mise/config.toml"))
+        if let Ok(text) = crate::scan::read_text(config.join("mise/config.toml"))
             && let Some(version) = super::mise_ruby(&text)
         {
             choices.push((named(&version), format!("mise's global, {version}")));
@@ -953,7 +953,12 @@ pub(crate) fn compiled(root: &Path, files: &scan::Files) -> Vec<(String, String)
     }
     let read: BTreeMap<&String, Loads> = files
         .keys()
-        .filter_map(|path| Some((path, loads(&std::fs::read(root.join(path)).ok()?))))
+        .filter_map(|path| {
+            Some((
+                path,
+                loads(&crate::scan::read_source(root.join(path)).ok()?),
+            ))
+        })
         .collect();
     let mut backed: BTreeMap<String, String> = BTreeMap::new();
     for (path, loads) in &read {
@@ -1096,7 +1101,7 @@ pub(crate) fn default_gems(root: &Path) -> Vec<DefaultGem> {
         .filter_map(|entry| {
             let file = entry.file_name().to_string_lossy().into_owned();
             let (name, version) = split_dir(file.strip_suffix(".gemspec")?)?;
-            let source = std::fs::read(entry.path()).ok()?;
+            let source = crate::scan::read_source(entry.path()).ok()?;
             Some(DefaultGem {
                 name: name.to_string(),
                 version: version.to_string(),

@@ -478,7 +478,7 @@ impl LoadPath {
             checkout(root.join(conventional));
         }
         // A path gem's code is in the checkout, and on the load path.
-        if let Ok(lockfile) = std::fs::read_to_string(root.join("Gemfile.lock")) {
+        if let Ok(lockfile) = crate::scan::read_text(root.join("Gemfile.lock")) {
             for dir in path_gem_libs(&lockfile) {
                 checkout(normalize(&root.join(dir)));
             }
