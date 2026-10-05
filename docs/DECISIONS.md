@@ -1866,12 +1866,13 @@ connection, and the second tree — declarations 80, ancestry 26, assembly
   307 ms against b45e1a8's 274, `--refs Owner#m` 277 → 233 against 227
   (alternating, 21 each, at a load of ~100 — the machine was not quiet).
 
-**Measured**, release, b45e1a8 / the re-hunt overlay (6282913) / this,
-alternating, medians of 7 (3 for `--dead`), at load 12–19 on 8 cores, five
-files edited by inserting a method after their first `class` line ("lines
-moved"), or by appending a comment:
+**Measured**, release builds, alternating, five files edited by inserting a
+method after their first `class` line ("lines moved") or by appending a
+comment. The machine was never quiet; the quietest full run (load 12–19 on
+8 cores, medians of 7) is the copy, the guess and the loader fix
+(8d33bd7), before the scan and the comparison moved:
 
-| | b45e1a8 | 6282913 | now |
+| | b45e1a8 | 6282913 | 8d33bd7 |
 |---|---|---|---|
 | mastodon `--def`, none | 40 | 43 | 43 |
 | mastodon `--def`, comment | 37 | 92 | 39 |
@@ -1881,14 +1882,34 @@ moved"), or by appending a comment:
 | discourse `--def`, lines moved | 94 | 605 | 102 |
 | discourse `--refs Owner#m`, lines moved | 105 | 798 | 112 |
 
-`--dead app/models` moved by less than its noise at three samples (mastodon
-1.2–1.8 s, discourse 3.0–4.3 s for all three). With nothing edited, a query
-costs what 6282913's did; what remains over b45e1a8 (~10–15 ms on discourse
-under load) is the probe itself — `ls-files -s` and `status` read every
-tracked file's entry where `diff-files` named only the changed ones, and
-the stored map is read to compare — the price of seeing untracked files and
-reverts. The first query over new edits pays the copy and, when the
-namespace moved, one assembly: discourse ~0.4 s, mastodon ~0.35 s.
+The final build (c510137) against the same two, medians / p25 of 15, at
+load 50–250 — slower everywhere, the ratios are what carry:
+
+| | b45e1a8 | 6282913 | c510137 |
+|---|---|---|---|
+| mastodon `--def`, none | 69 / 66 | 84 / 78 | 72 / 68 |
+| mastodon `--def`, comment | 69 / 57 | 161 / 137 | 81 / 67 |
+| mastodon `--def`, lines moved | 125 / 86 | 3,628 / 1,802 | 148 / 116 |
+| mastodon `--refs Owner#m`, lines moved | 1,025 / 730 | 4,919 / 4,264 | 1,072 / 801 |
+| discourse `--def`, none | 314 / 243 | 355 / 250 | 336 / 281 |
+| discourse `--refs Owner#m`, none | 194 / 179 | 240 / 196 | 194 / 183 |
+| discourse `--def`, comment | 145 / 139 | 348 / 337 | 159 / 154 |
+| discourse `--refs Owner#m`, comment | 237 / 157 | 852 / 698 | 196 / 179 |
+| discourse `--def`, lines moved | 207 / 183 | 1,466 / 1,123 | 240 / 195 |
+| discourse `--refs Owner#m`, lines moved | 259 / 180 | 3,118 / 1,845 | 323 / 225 |
+
+`--dead app/models` moved by less than its noise in every run (mastodon
+1.2–1.8 s at load 12–19, discourse 3.0–4.3 s; 10–27 s at load 100+, all
+three builds). With edits, a repeat query costs what the same query does
+with none (at load 12–19: mastodon `--def` 43 → 39–55 ms, discourse 117 →
+102), and within 10 ms of b45e1a8 — which wrote the edits into the store
+and so paid nothing for them after — at that load; 10–70 ms at load 50+.
+With nothing edited, what remains is the probe itself —
+`ls-files -s` and `status` read every tracked file's entry where
+`diff-files` named only the changed ones — the price of seeing untracked
+files and reverts, mostly hidden behind the tree build. The first query
+over a new set of edits pays the copy and, when the namespace moved, one
+assembly: discourse ~0.4 s, mastodon ~0.35 s, as b45e1a8's first query did.
 
 **Rejected, with numbers.**
 
