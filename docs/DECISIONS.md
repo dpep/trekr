@@ -1702,9 +1702,10 @@ each, a parse only for a blob never seen. The fingerprint moving still
 re-reads the file asked about. More than `BULK` edits (the language
 server's 32) is an operation, left to `--index`. The same `index` object
 discloses it on every one of those commands — `stale`, now `false` when
-nothing else may lag; `refreshed`, now the list of files re-read (it was the
-one file asked about, or `null`); `busy`, likewise a list; `hint` — and text
-says it on stderr. `stale` is true when git's index moved (a commit, an
+nothing else may lag; `refreshed` and `busy` as before, the file asked about
+or `null`; `refreshed_files` and `busy_files`, new, every file re-read or
+left; `hint` — and text says it on stderr. The existing fields keep their
+type: a patch release does not change what a script already reads. `stale` is true when git's index moved (a commit, an
 `add`, a checkout: a file it adds is not read by a query), an edited file
 could not be read (deleted — `refresh_file` cannot remove one), or there
 were too many. Once read, an edit is current: the next query says nothing.

@@ -3582,8 +3582,9 @@ fn a_query_refreshes_the_file_it_asks_about_and_says_the_rest_may_lag() {
         value["index"]["stale"], true,
         "staleness disclosed: {value}"
     );
+    assert_eq!(value["index"]["refreshed"], "widget.rb", "{value}");
     assert_eq!(
-        value["index"]["refreshed"],
+        value["index"]["refreshed_files"],
         serde_json::json!(["widget.rb"])
     );
     assert_eq!(
@@ -3643,16 +3644,13 @@ fn read_commands_answer_and_exit_while_another_process_writes() {
     timed(&["--ancestors", "Widget", "--json"]);
     timed(&["--refs", "Widget#helper", "--json"]);
     let value = json(&timed(&["--def", "widget.rb:9:5", "--json"]));
+    assert_eq!(value["index"]["busy"], "widget.rb", "{value}");
     assert_eq!(
-        value["index"]["busy"],
+        value["index"]["busy_files"],
         serde_json::json!(["widget.rb"]),
         "{value}"
     );
-    assert_eq!(
-        value["index"]["refreshed"],
-        serde_json::json!([]),
-        "{value}"
-    );
+    assert!(value["index"]["refreshed"].is_null(), "{value}");
     assert_eq!(
         value["definition"][0]["line"], 12,
         "answered from the committed index: {value}"
@@ -3660,11 +3658,7 @@ fn read_commands_answer_and_exit_while_another_process_writes() {
 
     drop((store, usage));
     let value = json(&trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]));
-    assert_eq!(
-        value["index"]["refreshed"],
-        serde_json::json!(["widget.rb"]),
-        "{value}"
-    );
+    assert_eq!(value["index"]["refreshed"], "widget.rb", "{value}");
     assert!(value["index"].get("busy").is_none(), "{value}");
     assert_eq!(value["definition"][0]["line"], 14, "{value}");
     let _ = fs::remove_dir_all(&dir);
@@ -3695,8 +3689,12 @@ fn an_edit_git_has_not_noticed_is_read_by_the_next_query() {
     let value = json(&trekr(&db, &dir, &["--def", "caller.rb:1:12", "--json"]));
     assert_eq!(value["definition"][0]["line"], 8, "{value}");
     assert_eq!(value["index"]["stale"], false, "nothing else lags: {value}");
+    assert!(
+        value["index"]["refreshed"].is_null(),
+        "not the file asked about"
+    );
     assert_eq!(
-        value["index"]["refreshed"],
+        value["index"]["refreshed_files"],
         serde_json::json!(["widget.rb"])
     );
 
@@ -3746,8 +3744,9 @@ fn whole_checkout_questions_read_edits_and_say_what_may_lag() {
     .unwrap();
     let (value, tier) = dead(&["--json"]);
     assert_eq!(tier.as_deref(), Some("single-caller"), "{value}");
+    assert!(value["index"]["refreshed"].is_null(), "{value}");
     assert_eq!(
-        value["index"]["refreshed"],
+        value["index"]["refreshed_files"],
         serde_json::json!(["widget.rb"]),
         "{value}"
     );

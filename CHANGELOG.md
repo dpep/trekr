@@ -9,10 +9,10 @@
   at all. Every query now asks git which files differ from its index and
   re-reads those (up to 32; more is left to `--index`), and `--dead` and
   every `--refs` disclose a lagging index as `--def` does: an `index`
-  object in JSON and a line on stderr. `index.refreshed` is now a list of
-  the files re-read (it was the one file asked about, or `null`), `busy`
-  likewise, and `stale` is `false` when nothing beyond them may lag —
-  scripts reading `refreshed` as a string must read the list.
+  object in JSON and a line on stderr. `index` gains `refreshed_files`, every
+  file re-read (`refreshed` still names the file asked about, or `null`),
+  and `busy_files` beside `busy`; `stale` is now `false` when nothing beyond
+  the re-read files may lag.
 - **`--def` on a `render` that reaches several templates rounds its
   confidence** like every other answer: `0.33` for three, not
   `0.3333333333333333`.

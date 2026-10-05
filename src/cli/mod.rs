@@ -4525,6 +4525,8 @@ fn checkout_for_query(path: &Path, pinned: Option<&Path>) -> anyhow::Result<(Pat
 /// the rest may still lag (DEC-035).
 struct Freshness {
     root: String,
+    /// The file the question is about, relative to `root`, when it is one.
+    queried: Option<String>,
     /// Files beyond those re-read may lag the working tree: git's index moved
     /// since `--index` (a commit, an `add`, a checkout — a file it adds is not
     /// read until `--index`), an edit could not be read, or too many to read.
@@ -4584,14 +4586,24 @@ fn index_note() -> Option<serde_json::Value> {
         return None;
     }
     let hint: Vec<String> = found.iter().map(|f| f.hint()).collect();
+    // `refreshed` and `busy` name the file asked about, as they always have;
+    // `refreshed_files` and `busy_files` list every file.
+    let asked = |list: fn(&Freshness) -> &Vec<String>| {
+        found.iter().find_map(|f| {
+            let queried = f.queried.as_ref()?;
+            list(f).contains(queried).then(|| queried.clone())
+        })
+    };
     let mut value = serde_json::json!({
         "stale": found.iter().any(|f| f.stale),
-        "refreshed": found.iter().flat_map(|f| f.refreshed.iter()).collect::<Vec<_>>(),
+        "refreshed": asked(|f| &f.refreshed),
+        "refreshed_files": found.iter().flat_map(|f| f.refreshed.iter()).collect::<Vec<_>>(),
         "hint": hint.join(" && "),
     });
     let busy: Vec<&String> = found.iter().flat_map(|f| f.busy.iter()).collect();
     if !busy.is_empty() {
-        value["busy"] = serde_json::json!(busy);
+        value["busy"] = asked(|f| &f.busy).into();
+        value["busy_files"] = serde_json::json!(busy);
     }
     Some(value)
 }
@@ -4650,14 +4662,14 @@ fn refresh_for_query(
     }
     let mut stale = recorded != current;
     let mut files = edited.unwrap_or_default();
+    let queried = queried
+        .and_then(|file| std::fs::canonicalize(file).ok())
+        .and_then(|file| Some(file.strip_prefix(root).ok()?.to_string_lossy().into_owned()));
     if stale
-        && let Some(file) = queried.and_then(|file| std::fs::canonicalize(file).ok())
-        && let Ok(relative) = file.strip_prefix(root)
+        && let Some(relative) = &queried
+        && !files.contains(relative)
     {
-        let relative = relative.to_string_lossy().into_owned();
-        if !files.contains(&relative) {
-            files.push(relative);
-        }
+        files.push(relative.clone());
     }
     if files.len() > scan::BULK {
         stale = true;
@@ -4686,6 +4698,7 @@ fn refresh_for_query(
     }
     (stale || !refreshed.is_empty() || !busy.is_empty()).then_some(Freshness {
         root: root_str,
+        queried,
         stale: stale || !busy.is_empty(),
         refreshed,
         busy,

@@ -203,17 +203,19 @@ re-read the file you asked about if the checkout moved, so an unstaged edit
 answers without reindexing. When the answer carries `index`, read it:
 
 ```json
-"index": { "stale": true, "refreshed": ["app/models/user.rb"], "hint": "trekr --index ~/code/app" }
+"index": { "stale": true, "refreshed": "app/models/user.rb", "refreshed_files": ["app/models/user.rb"], "hint": "trekr --index ~/code/app" }
 ```
 
-* **`index.refreshed`** — files edited since the index, re-read for this
-  answer.
+* **`index.refreshed_files`** — files edited since the index, re-read for
+  this answer; `refreshed` names the file you asked about when it is one of
+  them, else `null`.
 * **`index.stale`** — **other files may lag**: a commit, `git add` or
   checkout since the index (a file it added is not read until `--index`),
   a deleted file, or more than 32 edits. `hint` is the cure. `false` when
   the re-read files were all that moved.
-* **`index.busy`** — another trekr was writing the index, so these files
-  were answered from their indexed version rather than wait. Ask again once
+* **`index.busy_files`** — another trekr was writing the index, so these
+  files were answered from their indexed version rather than wait (`busy`
+  names the file you asked about, when it is one). Ask again once
   that index finishes.
 
 No `index` field means nothing tracked moved since the index. One limit: a
