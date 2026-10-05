@@ -207,7 +207,8 @@
   unreferenced and clear. One on an object of a known class is listed under
   that class — an `override` when the class has the method — and the rest
   say why they are not trusted; a call of the name on a receiver without
-  such a method counts as a possible caller, and none is ever `clear`.
+  such a method counts as a possible caller (so one two such calls name is
+  not listed), and none is ever `clear`.
 - **A private class method is private.** `private` inside `class << self`
   was dropped, so `--symbols` listed its methods as public and completion
   offered them after `Widget.`; `private_class_method :x` and

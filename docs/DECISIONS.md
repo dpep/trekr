@@ -13352,6 +13352,27 @@ types `clock` from the writes that reach it, not from every write of the
 name in the class; writes that disagree, a parameter, or a value of no
 type (rails' `TimeZone[…].dup`) leave the object unknown.
 
+### DEC-562 addendum — such a row is listed only while one call at most names it
+
+**Found** in the pre-0.8.7 hunt: rails' `LazyLoadHooksTest#second_wrestler`
+and `SecureTokenTest#token=` were in 0.8.6's `--dead` and are in neither
+main's nor 0.8.7's, where the changelog read as if every such `def` were
+listed with its caveat. Both are this rule working as decided. A row is
+listed only while at most one call reaches it, and the calls "no such
+method" rules out count here as possible callers: `second_wrestler` has
+three, on the `FakeContext` its `on_load` block is run on — real calls, so
+dropping it is right — and `token=`, in `Class.new(ActiveRecord::Base) do`,
+two, on `Connection` and `Interest`, which never hold an instance of that
+anonymous class.
+
+**Not done.** Typing a `Class.new(Parent) do` block's `def` as the
+anonymous subclass it is: a receiver typed as a named class other than
+`Parent` or its ancestors cannot hold one, so its calls would stop
+counting. It needs the block's superclass beside the `def`'s unsettled
+block (`Unsettled::Block` records only where the block's call is); worth it
+when a checkout shows such stubs hiding real dead code, not for two test
+fixtures.
+
 ## DEC-563 — `--refs` at a call asks the side its receiver lands on
 
 **Decided.** `--refs FILE:LINE[:COL]` on a call, and Find References on
