@@ -8,9 +8,6 @@ repository = "https://github.com/dpep/trekr"
 keywords = ["ruby", "code-intelligence", "lsp", "prism", "rails"]
 categories = ["development-tools", "command-line-utilities"]
 
-[dev-dependencies]
-serde_json = "1"
-
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }
