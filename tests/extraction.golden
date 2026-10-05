@@ -27,6 +27,10 @@ erb tests/testbed/601-a-partial-rendered-for-a-collection-holds-its-element/app/
 erb tests/testbed/602-a-template-two-controllers-render-sees-both-their-writes/app/views/widgets/show.html.erb 369e71524ce6ac46
 erb tests/testbed/603-a-templates-bare-ivar-and-local-assigns-are-defined/app/views/widgets/_row.html.erb 9b4a3d42ce23c7fc
 erb tests/testbed/603-a-templates-bare-ivar-and-local-assigns-are-defined/app/views/widgets/show.html.erb 47dd76fa05035432
+erb tests/testbed/622-a-template-several-files-answer-shares-its-confidence/app/views/widgets/_item.html.erb cc463c8566791699
+erb tests/testbed/622-a-template-several-files-answer-shares-its-confidence/app/views/widgets/_item.json.erb cc463c8566791699
+erb tests/testbed/622-a-template-several-files-answer-shares-its-confidence/app/views/widgets/_item.text.erb cc463c8566791699
+erb tests/testbed/622-a-template-several-files-answer-shares-its-confidence/app/views/widgets/show.html.erb 3c4582d4ab0b3be5
 rabl tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/views/widgets/base.rabl 706223d3bbf4a9f7
 rabl tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/views/widgets/show.rabl e1ce31e3d5212371
 rabl tests/testbed/603-a-templates-bare-ivar-and-local-assigns-are-defined/app/views/widgets/show.json.rabl bfd218e974bc4930
@@ -626,6 +630,7 @@ ruby tests/testbed/606-a-shared-groups-call-reaches-a-helper-its-includer-mixes-
 ruby tests/testbed/620-a-module-that-mixes-itself-in-is-used/lib/patches.rb b7ece727f0fc708e
 ruby tests/testbed/620-a-module-that-mixes-itself-in-is-used/lib/widget.rb 41d5463b6e2c2330
 ruby tests/testbed/620-a-module-that-mixes-itself-in-is-used/spec/support/stubbing.rb 5a2d9588602e7e98
+ruby tests/testbed/621-a-module-trekr-makes-is-not-dead/lib/test_help.rb a996f8e28fc51f1c
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28
