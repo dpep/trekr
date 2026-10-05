@@ -13730,6 +13730,9 @@ dashboard engine's), and a generator's template runs on the generator
 whose `template` call names it, which needs that call read; the second is
 the one worth doing when a generator-heavy checkout asks for it.
 
+**Addendum (DEC-644).** A template a Ruby file beside it names — a
+ViewComponent's — now has its `self` named: the component.
+
 ## DEC-640 — trekr stays Ruby-only
 
 **Decided.** trekr answers Ruby, and the templates and schema dump a Rails
@@ -13758,6 +13761,7 @@ references in a type-checked language are its own language server's
 **Reverses if** a dynamically dispatched language with no adequate language
 server becomes a daily need, and rq's name ranking is shown not to be
 enough for it.
+
 ## DEC-643 — A Struct or Data class is built by its own `new`, and `class X < Struct.new` has its members
 
 **Decided.** What `Struct.new(:a, :b)` and `Data.define(:a, :b)` give the
@@ -13787,3 +13791,36 @@ and false. Testbed 640.
 **Not done.** `Pair[…]` is not counted as a construction by `--refs
 Pair#initialize` or `--dead`'s construction scan, which read `new` by
 name; the members' `super` above.
+
+## DEC-644 — A component's template runs on the class beside it
+
+**Decided.** A template's `self` is, in order:
+
+1. the class a Ruby file beside it declares, named for it — the same
+   stem (`badge_component.html.erb` and `badge_component.rb`), or the
+   directory it sits in (`badge_component/badge_component.html.erb`,
+   or any other template there) — ViewComponent's two layouts;
+2. under `app/views/`, the view context (DEC-521);
+3. otherwise unnamed (DEC-630).
+
+The first is a path rule plus one lookup: a class whose last segment
+folds to the stem and that the index places in that file
+(`tree::views::sidecars`, `Tree::sidecar_class`). A bare call there is a
+call on `self` in a method of the class (`resolved_via: sidecar`): it
+finds private methods, and `--refs`/`--dead` tier it as typed. It needs
+no ViewComponent indexed and covers any sidecar convention; with
+ViewComponent's own chain missing, a call of one of its helpers says
+what was checked, as any call on a class with an unindexed ancestor.
+
+**Why.** DEC-630 left every template outside `app/views` unnamed, so
+a component's private helper its template calls was `unreferenced
+(lower: 1 bare call in a template whose \`self\` trekr cannot name)`.
+ViewComponent is absent from the sampled corpora, so this rests on how
+common it is in Rails apps, not a local count. Testbed 641.
+
+**Not done.** Completion in a component template still offers nothing
+of the component (`serve::complete::view_self` reads only the view
+rule), and an `@ivar` there is not typed from the component's
+`initialize`. Sidekiq's `web/views` and flipper's `ui/views` stay
+unnamed: their `self` is the Action that renders them, which needs a
+block's `self` settled first (DEC-391).

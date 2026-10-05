@@ -1272,7 +1272,9 @@ by path. Every `match` on it then has to say how the language is read:
 `extract_file`, `ruby_source`, `schema::tables_in` and `ViewTemplate::of`.
 `scan::is_indexed` has to include it. The index and the language server
 read a file through the same functions, so neither can read a template the
-other does not. A template that runs on a view context is a `ViewTemplate`.
+other does not. A template that runs on a view context is a `ViewTemplate`;
+one that runs on the class a Ruby file beside it declares (a ViewComponent)
+is named by `Tree::sidecar_class`, which is asked first (DEC-644).
 
 **An LSP feature** is a capability in `serve::capabilities`, plus a `route`
 arm that calls its handler. If the CLI asks the same question, the answer

@@ -54,7 +54,9 @@ impl Receiver {
     /// receiver is the scope the call is written in (DEC-105).
     pub(super) fn lookup(&self, tree: &Tree, name: &str) -> Option<crate::tree::MethodDef> {
         match self.via {
-            "self" => tree.lookup_self(&self.fqn, self.singleton, name),
+            // A component's template is compiled into a method of it, so it
+            // calls as its body does: private methods too (DEC-644).
+            "self" | "sidecar" => tree.lookup_self(&self.fqn, self.singleton, name),
             // A view's `self`: the app's helpers, then ActionView's — or the
             // controller a `helper_method` sends the name to (DEC-521).
             "view" if self.fqn == crate::tree::views::ACTION_VIEW => tree.lookup_in_view(name),
@@ -1759,7 +1761,7 @@ fn ladder(tree: &Tree, facts: &Facts, call: &Call, path: &str, depth: usize) -> 
             if let Some(hooked) = on_load_receiver(tree, facts, call) {
                 return Some(hooked);
             }
-            // A template runs on its view context (DEC-521).
+            // A template runs on its component, or its view context (DEC-521).
             if let Some(view) = view_receiver(tree, call, path) {
                 return Some(view);
             }
@@ -3237,6 +3239,19 @@ fn on_main(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> Option<Receiv
 fn view_receiver(tree: &Tree, call: &Call, path: &str) -> Option<Receiver> {
     if !call.nesting.is_empty() {
         return None;
+    }
+    // A component's template runs on the component (DEC-644).
+    if let Some(class) = tree.sidecar_class(path) {
+        return Some(Receiver {
+            fqn: class,
+            singleton: false,
+            via: "sidecar",
+            bound: true,
+            agreeing: 1,
+            total: 1,
+            ambiguous: false,
+            rivals: Vec::new(),
+        });
     }
     let (fqn, via) = match crate::tree::views::ViewTemplate::of(path)? {
         crate::tree::views::ViewTemplate::Erb => (crate::tree::views::ACTION_VIEW, "view"),

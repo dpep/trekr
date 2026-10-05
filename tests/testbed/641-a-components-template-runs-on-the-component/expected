@@ -1,0 +1,13 @@
+# ViewComponent renders `badge_component.html.erb` on an instance of the
+# class `badge_component.rb` beside it declares, and a template inside
+# `card_component/` on CardComponent's. trekr named no `self` outside
+# app/views (DEC-630), so the component's own private method was
+# "unreferenced (lower: 1 bare call in a template whose `self` trekr cannot
+# name)". A template beside a file that declares no class of its name keeps
+# DEC-630's answer.
+def app/components/badge_component.html.erb:1:11 status=resolved owner=BadgeComponent via=sidecar site=app/components/badge_component.rb:8
+def app/components/card_component/card_component.html.erb:1:9 status=resolved owner=CardComponent via=sidecar
+dead app/components/badge_component.rb BadgeComponent#badge_text=single-caller~
+dead app/components/gadget.rb Gadget#label=unreferenced~template Gadget#title=unreferenced~
+refs CardComponent#title confirmed=1
+hover app/components/badge_component.html.erb:1:11 Defined in

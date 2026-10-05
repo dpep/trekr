@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A ViewComponent's template runs on the component.** A bare call in
+  `badge_component.html.erb`, beside `badge_component.rb` (or in a
+  template under `badge_component/`), resolves on the class that file
+  declares, private methods included. It was a call whose `self` trekr
+  could not name, so `--dead` listed the component's helper as
+  unreferenced.
 - **A Struct or Data class is built by its own `new`.** `Pair =
   Struct.new(:a, :b)` then `Pair.new(1, 2)` resolved to `Struct.new`, the
   class maker, at confidence 1.0, and a `Data.define` class's `new` to

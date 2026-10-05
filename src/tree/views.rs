@@ -64,6 +64,9 @@ pub(crate) struct Views {
     /// path names a controller as Rails' inflector spells it, and an
     /// acronym inflection (`OAuth`) spells it otherwise (DEC-344).
     classes: HashMap<String, String>,
+    /// A class's last segment, folded → every class so named: what a
+    /// sidecar template's stem is matched against (DEC-644).
+    by_last: HashMap<String, Vec<String>>,
     /// A controller's file read for what its actions assign, by path, with
     /// the stamp it was read at; at most `FACTS_KEPT`, and a counter of asks.
     files: Mutex<(HashMap<String, Read>, u64)>,
@@ -117,14 +120,67 @@ impl ViewTemplate {
     }
 }
 
+/// The Ruby files whose class a template beside them may run on, nearest
+/// first: the same stem beside it (`badge_component.html.erb` and
+/// `badge_component.rb`), then the directory it sits in
+/// (`badge_component/badge_component.html.erb`) — ViewComponent's two
+/// layouts, and any sidecar convention's. Each with the stem a class it
+/// declares must be named for.
+pub(crate) fn sidecars(path: &str) -> Vec<(String, &str)> {
+    let (dir, file) = path.rsplit_once('/').unwrap_or(("", path));
+    let stem = file.split('.').next().unwrap_or(file);
+    let rb = |dir: &str, stem: &str| match dir {
+        "" => format!("{stem}.rb"),
+        _ => format!("{dir}/{stem}.rb"),
+    };
+    let mut found = Vec::new();
+    if !stem.is_empty() && stem != file {
+        found.push((rb(dir, stem), stem));
+    }
+    let (parent, last) = dir.rsplit_once('/').unwrap_or(("", dir));
+    if !last.is_empty() {
+        found.push((rb(parent, last), last));
+    }
+    found
+}
+
 impl Tree {
+    /// The class a template runs on when a Ruby file beside it declares
+    /// one named for it (`sidecars`): a ViewComponent's, rendered on an
+    /// instance of it (DEC-644). Asked before the view rule, so a sidecar
+    /// under `app/views` is its class's too.
+    pub(crate) fn sidecar_class(&self, path: &str) -> Option<String> {
+        if !crate::scan::is_template(path) {
+            return None;
+        }
+        let relative = |p: &str| -> String {
+            p.strip_prefix(self.root.as_str())
+                .unwrap_or(p)
+                .trim_start_matches('/')
+                .to_string()
+        };
+        let path = relative(path);
+        let by_last = &self.views().by_last;
+        sidecars(&path).into_iter().find_map(|(rb, stem)| {
+            by_last.get(&fold(stem))?.iter().find_map(|fqn| {
+                self.sites(fqn)
+                    .iter()
+                    .any(|site| relative(&site.path) == rb)
+                    .then(|| fqn.clone())
+            })
+        })
+    }
+
     fn views(&self) -> &Views {
         self.views.get_or_init(|| {
             let mut helpers: Vec<(String, String)> = Vec::new();
             let mut classes = HashMap::new();
+            let mut by_last: HashMap<String, Vec<String>> = HashMap::new();
             for (fqn, kind) in self.declared() {
                 match kind.as_str() {
                     "class" => {
+                        let last = fqn.rsplit("::").next().unwrap_or(&fqn);
+                        by_last.entry(fold(last)).or_default().push(fqn.clone());
                         classes.entry(fold(&fqn)).or_insert(fqn);
                     }
                     "module" => {
@@ -173,6 +229,7 @@ impl Tree {
                 helpers: helpers.into_iter().map(|(_, fqn)| fqn).collect(),
                 exposed,
                 classes,
+                by_last,
                 files: Mutex::default(),
                 named: Mutex::default(),
                 calling: Mutex::default(),
@@ -538,6 +595,40 @@ mod tests {
             ),
             "engines/shop/app/views/carts/edit."
         );
+    }
+
+    #[test]
+    fn a_templates_sidecar_is_the_ruby_file_beside_it_or_its_directorys() {
+        let cases: [(&str, &[(&str, &str)]); 4] = [
+            (
+                "app/components/badge_component.html.erb",
+                &[
+                    ("app/components/badge_component.rb", "badge_component"),
+                    ("app/components.rb", "components"),
+                ],
+            ),
+            (
+                "app/components/card/card.html.erb",
+                &[
+                    ("app/components/card/card.rb", "card"),
+                    ("app/components/card.rb", "card"),
+                ],
+            ),
+            ("show.html.erb", &[("show.rb", "show")]),
+            // A name with no extension has no stem to match.
+            (
+                "app/components/README",
+                &[("app/components.rb", "components")],
+            ),
+        ];
+        for (path, expected) in cases {
+            let found = sidecars(path);
+            let found: Vec<(&str, &str)> = found
+                .iter()
+                .map(|(rb, stem)| (rb.as_str(), *stem))
+                .collect();
+            assert_eq!(found, expected, "{path}");
+        }
     }
 
     #[test]

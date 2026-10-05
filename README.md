@@ -313,6 +313,10 @@ answer in them, and a helper or model method a view calls has that call.
 - A bare call runs on the view: a name a controller's `helper_method`
   exposes, the app's helpers (`app/helpers`, as `helper :all` includes them),
   then `ActionView::Base` — `resolved_via: view`.
+- A component's template runs on the component: `badge_component.html.erb`
+  beside `badge_component.rb`, or any template in `badge_component/`, calls
+  on the class that file declares, private methods too — `resolved_via:
+  sidecar`. Elsewhere outside `app/views`, a bare call's `self` is not named.
 - `@post` in `posts/show.html.erb` is typed from `PostsController#show`: its
   writes, a `before_action` that runs for it, an action that `render
   :show`s; a mailer template from its mailer's action — `resolved_via:

@@ -1281,9 +1281,9 @@ fn possible(
         };
     }
 
-    // A view's bare call is typed by its view context; any other template's
-    // runs on whatever renders it, so it names this method no more than
-    // every other of its name.
+    // A view's bare call is typed by its view context, a component's by
+    // its class; any other template's runs on whatever renders it, so it
+    // names this method no more than every other of its name.
     let bare = matches!(
         call.recv,
         crate::core::RecvShape::Implicit | crate::core::RecvShape::SelfRecv
@@ -1292,6 +1292,7 @@ fn possible(
         && call.nesting.is_empty()
         && crate::scan::is_template(path)
         && crate::tree::views::ViewTemplate::of(path).is_none()
+        && tree.sidecar_class(path).is_none()
     {
         return Reference {
             path: path.to_string(),
