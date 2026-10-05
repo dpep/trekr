@@ -71,6 +71,12 @@ an answer carries reaches an editor **only** through hover: `textDocument/
 definition` is a bare list of locations and cannot say what kind of location it
 handed back. Where a case stages a server-visible shape, pin the wire too.
 
+Some checks need no line of their own: the editor is held to the CLI. At every
+`refs FILE:LINE:COL` the case's answer is not residue, Find References must
+list the CLI's rows and incoming calls its `confirmed` ones; at every `def` on a
+call it places in the checkout, outgoing calls from the method around the call
+must reach the same definition (not for a symbol, which no method calls).
+
 An unknown key fails loudly: a typo in an expectation is a test that proves
 nothing.
 

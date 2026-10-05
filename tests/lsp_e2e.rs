@@ -2359,6 +2359,84 @@ fn incoming_calls_name_the_method_each_call_sits_in() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// An `X.new` is a call of the `initialize` it runs, as `--def` and Find
+/// References say (DEC-541): preparing it, walking out of a method that
+/// makes one, and asking who calls `initialize` all agree.
+#[test]
+fn call_hierarchy_reads_a_new_as_its_initialize() {
+    let (dir, db) = scratch("hierarchy-new");
+    git(&dir, &["init", "-q"]);
+    let source = concat!(
+        "class Widget\n",     // 1
+        "  def initialize\n", // 2
+        "  end\n",            // 3
+        "end\n",              // 4
+        "class Job\n",        // 5
+        "  def run\n",        // 6
+        "    Widget.new\n",   // 7
+        "  end\n",            // 8
+        "end\n",              // 9
+    );
+    fs::write(dir.join("app.rb"), source).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let at = |line: u32, character: u32| {
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": line, "character": character},
+        })
+    };
+    let prepared = session.request("textDocument/prepareCallHierarchy", at(6, 11));
+    let item = prepared["result"][0].clone();
+    assert_eq!(item["name"], "Widget#initialize", "the method `new` runs");
+    assert_eq!(item["selectionRange"]["start"]["line"], 1);
+
+    let incoming = session.request(
+        "callHierarchy/incomingCalls",
+        serde_json::json!({ "item": item }),
+    );
+    let callers = incoming["result"].as_array().expect("callers, not null");
+    assert_eq!(callers.len(), 1, "{callers:?}");
+    assert_eq!(callers[0]["from"]["name"], "Job#run");
+    assert_eq!(callers[0]["fromRanges"][0]["start"]["line"], 6);
+
+    let run = session.request("textDocument/prepareCallHierarchy", at(5, 6))["result"][0].clone();
+    let outgoing = session.request(
+        "callHierarchy/outgoingCalls",
+        serde_json::json!({ "item": run }),
+    );
+    let names: Vec<&str> = outgoing["result"]
+        .as_array()
+        .expect("callees, not null")
+        .iter()
+        .filter_map(|c| c["to"]["name"].as_str())
+        .collect();
+    assert!(names.contains(&"Widget#initialize"), "{names:?}");
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// Start a server from `binary` — the test's own copy, at a path the test can
 /// then replace, which is the whole subject of the hot-reload tests.
 fn start_from(binary: &Path, db: &Path, dir: &Path) -> Session {

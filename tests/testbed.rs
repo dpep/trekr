@@ -159,40 +159,135 @@ fn lsp_references(db: &Path, dir: &Path, target: &str) -> Vec<String> {
         "textDocument/references",
         serde_json::json!({"context": {"includeDeclaration": false}}),
     );
-    let roots: Vec<String> = [Some(dir.to_path_buf()), fs::canonicalize(dir).ok()]
-        .into_iter()
-        .flatten()
-        .map(|root| format!("file://{}/", root.display()))
-        .collect();
     let mut found: Vec<String> = result
         .as_array()
         .into_iter()
         .flatten()
-        .map(|location| {
-            let uri = location["uri"].as_str().unwrap_or_default();
-            let path = roots
-                .iter()
-                .find_map(|root| uri.strip_prefix(root.as_str()))
-                .unwrap_or(uri);
-            let start = &location["range"]["start"];
-            format!(
-                "{path}:{}:{}",
-                start["line"].as_u64().unwrap_or_default() + 1,
-                start["character"].as_u64().unwrap_or_default() + 1
-            )
-        })
+        .map(|location| site(dir, &location["uri"], &location["range"]["start"]))
         .collect();
     found.sort();
     found
 }
 
+/// The call sites incoming calls lists for what `prepareCallHierarchy`
+/// prepares at `FILE:LINE:COL`, spelled as [`lsp_references`] spells them —
+/// or `None` when nothing is prepared there.
+fn lsp_incoming(db: &Path, dir: &Path, target: &str) -> Option<Vec<String>> {
+    let (file, line, col) = position(target);
+    let mut lsp = Lsp::start(db, dir);
+    let uri = lsp.open(&file);
+    let prepared = lsp.at(
+        &uri,
+        line,
+        col,
+        "textDocument/prepareCallHierarchy",
+        serde_json::json!({}),
+    );
+    let item = prepared.get(0)?.clone();
+    let incoming = lsp.request(
+        "callHierarchy/incomingCalls",
+        serde_json::json!({ "item": item }),
+    );
+    let mut found: Vec<String> = incoming
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|call| {
+            let uri = &call["from"]["uri"];
+            call["fromRanges"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(move |range| site(dir, uri, &range["start"]))
+        })
+        .collect();
+    found.sort();
+    Some(found)
+}
+
+/// The callee outgoing calls names for the call at `FILE:LINE:COL`, as
+/// `path:line` — asked of the method around the call, so it is the answer
+/// the walk gives, not a second route to it. `None` when no method encloses
+/// the call; `Some(None)` when the call is not among the method's.
+fn lsp_outgoing(lsp: &mut Lsp, dir: &Path, target: &str) -> Option<Option<String>> {
+    let (file, line, col) = position(target);
+    let at = serde_json::json!({
+        "start": {"line": line - 1, "character": col - 1},
+        "end": {"line": line - 1, "character": col},
+    });
+    let item = serde_json::json!({
+        "name": "call",
+        "kind": 6,
+        "uri": format!("file://{}", dir.join(&file).display()),
+        "range": at,
+        "selectionRange": at,
+    });
+    let outgoing = lsp.request(
+        "callHierarchy/outgoingCalls",
+        serde_json::json!({ "item": item }),
+    );
+    let calls = outgoing.as_array()?;
+    let covers = |range: &serde_json::Value| {
+        let (start, end) = (&range["start"], &range["end"]);
+        start["line"] == line - 1
+            && start["character"]
+                .as_u64()
+                .is_some_and(|c| c < u64::from(col))
+            && end["character"]
+                .as_u64()
+                .is_some_and(|c| c >= u64::from(col))
+    };
+    Some(
+        calls
+            .iter()
+            .find(|call| {
+                call["fromRanges"]
+                    .as_array()
+                    .is_some_and(|ranges| ranges.iter().any(covers))
+            })
+            .map(|call| {
+                let to = &call["to"];
+                let start = &to["selectionRange"]["start"];
+                let full = site(dir, &to["uri"], start);
+                full.rsplit_once(':')
+                    .map_or(full.clone(), |(at, _)| at.to_string())
+            }),
+    )
+}
+
+/// A path relative to the staged checkout, when it is in it.
+fn in_checkout(dir: &Path, path: &str) -> Option<String> {
+    [Some(dir.to_path_buf()), fs::canonicalize(dir).ok()]
+        .into_iter()
+        .flatten()
+        .find_map(|root| {
+            path.strip_prefix(&format!("{}/", root.display()))
+                .map(str::to_string)
+        })
+}
+
+/// An LSP location as `path:line:col`, 1-based, the path relative to the
+/// staged checkout.
+fn site(dir: &Path, uri: &serde_json::Value, start: &serde_json::Value) -> String {
+    let uri = uri.as_str().unwrap_or_default();
+    let path = uri.strip_prefix("file://").unwrap_or(uri);
+    let path = in_checkout(dir, path).unwrap_or_else(|| uri.to_string());
+    format!(
+        "{path}:{}:{}",
+        start["line"].as_u64().unwrap_or_default() + 1,
+        start["character"].as_u64().unwrap_or_default() + 1
+    )
+}
+
 /// The CLI's listed rows of a `--refs --json` answer, as [`lsp_references`]
-/// spells them: a method's `references`, or a bare name's mentions.
-fn cli_references(answer: &serde_json::Value) -> Vec<String> {
+/// spells them: a method's `references`, or a bare name's mentions — those
+/// of one `tier`, when it is given.
+fn cli_references(answer: &serde_json::Value, tier: Option<&str>) -> Vec<String> {
     let rows = answer["references"].as_array().or(answer.as_array());
     let mut found: Vec<String> = rows
         .into_iter()
         .flatten()
+        .filter(|row| tier.is_none_or(|tier| row["tier"] == tier))
         .map(|row| {
             format!(
                 "{}:{}:{}",
@@ -215,101 +310,166 @@ fn lsp_at(
     method: &str,
     extra: serde_json::Value,
 ) -> serde_json::Value {
-    use std::io::{BufRead, BufReader, Write};
-    let (file, line, col) = {
-        let mut bits = target.rsplitn(3, ':');
-        let col: u32 = bits.next().unwrap_or("1").parse().unwrap_or(1);
-        let line: u32 = bits.next().unwrap_or("1").parse().unwrap_or(1);
-        (bits.next().unwrap_or_default().to_string(), line, col)
-    };
-    let path = dir.join(&file);
-    let uri = format!("file://{}", path.display());
-    let text = fs::read_to_string(&path).unwrap_or_default();
+    let (file, line, col) = position(target);
+    let mut lsp = Lsp::start(db, dir);
+    let uri = lsp.open(&file);
+    lsp.at(&uri, line, col, method, extra)
+}
 
-    let mut child = trekr_in(dir)
-        .arg("--lsp")
-        .env("TREKR_DB", db)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::null())
-        .spawn()
-        .expect("lsp");
-    let mut stdin = child.stdin.take().unwrap();
-    let mut stdout = BufReader::new(child.stdout.take().unwrap());
+/// `FILE:LINE:COL` as its parts; a missing line or column is 1.
+fn position(target: &str) -> (String, u32, u32) {
+    let mut bits = target.rsplitn(3, ':');
+    let col: u32 = bits.next().unwrap_or("1").parse().unwrap_or(1);
+    let line: u32 = bits.next().unwrap_or("1").parse().unwrap_or(1);
+    (bits.next().unwrap_or_default().to_string(), line, col)
+}
 
-    // A pipe read has no timeout, and a server that never answers would hang
-    // CI rather than fail it — which is exactly how the retirement bug reached
-    // main, passing on macOS and parking forever on Linux. Bound the wait so
-    // the worst case is a red test. The watchdog stands down once the reading
-    // is over, and is joined before `wait` reaps the child: a reaped pid is
-    // free for the system to hand to another process.
-    let pid = child.id();
-    let (over, told) = std::sync::mpsc::channel::<()>();
-    let watchdog = std::thread::spawn(move || {
-        let waited = told.recv_timeout(std::time::Duration::from_secs(30));
-        if waited == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
-            let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
+/// A real `--lsp` session against a staged checkout, for questions that take
+/// more than one request — an item prepared, then expanded.
+struct Lsp {
+    child: std::process::Child,
+    stdin: Option<std::process::ChildStdin>,
+    stdout: std::io::BufReader<std::process::ChildStdout>,
+    over: Option<std::sync::mpsc::Sender<()>>,
+    watchdog: Option<std::thread::JoinHandle<()>>,
+    dir: PathBuf,
+    next: u64,
+}
+
+impl Lsp {
+    fn start(db: &Path, dir: &Path) -> Lsp {
+        let mut child = trekr_in(dir)
+            .arg("--lsp")
+            .env("TREKR_DB", db)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("lsp");
+        let stdin = child.stdin.take();
+        let stdout = std::io::BufReader::new(child.stdout.take().unwrap());
+
+        // A pipe read has no timeout, and a server that never answers would
+        // hang CI rather than fail it — which is exactly how the retirement
+        // bug reached main, passing on macOS and parking forever on Linux.
+        // Bound the wait so the worst case is a red test. The watchdog stands
+        // down once the reading is over, and is joined before `wait` reaps the
+        // child: a reaped pid is free for the system to hand to another
+        // process.
+        let pid = child.id();
+        let (over, told) = std::sync::mpsc::channel::<()>();
+        let watchdog = std::thread::spawn(move || {
+            let waited = told.recv_timeout(std::time::Duration::from_secs(30));
+            if waited == Err(std::sync::mpsc::RecvTimeoutError::Timeout) {
+                let _ = Command::new("kill").arg("-9").arg(pid.to_string()).status();
+            }
+        });
+        let mut lsp = Lsp {
+            child,
+            stdin,
+            stdout,
+            over: Some(over),
+            watchdog: Some(watchdog),
+            dir: dir.to_path_buf(),
+            next: 1,
+        };
+        lsp.request(
+            "initialize",
+            serde_json::json!({"rootUri": format!("file://{}", dir.display()), "capabilities":{}}),
+        );
+        lsp.send(serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
+        lsp
+    }
+
+    /// Open `file` as the editor would; its URI.
+    fn open(&mut self, file: &str) -> String {
+        let path = self.dir.join(file);
+        let uri = format!("file://{}", path.display());
+        let text = fs::read_to_string(&path).unwrap_or_default();
+        self.send(
+            serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
+            "textDocument":{"uri":uri,"languageId":"ruby","version":1,"text":text}}}),
+        );
+        uri
+    }
+
+    /// A request at a 1-based position in `uri`.
+    fn at(
+        &mut self,
+        uri: &str,
+        line: u32,
+        col: u32,
+        method: &str,
+        extra: serde_json::Value,
+    ) -> serde_json::Value {
+        let mut params = serde_json::json!({
+            "textDocument":{"uri":uri},
+            "position":{"line": line - 1, "character": col - 1}});
+        if let (Some(params), Some(extra)) = (params.as_object_mut(), extra.as_object()) {
+            params.extend(extra.clone());
         }
-    });
+        self.request(method, params)
+    }
 
-    let mut send = |value: serde_json::Value| {
+    fn send(&mut self, value: serde_json::Value) {
+        use std::io::Write;
+        let Some(stdin) = self.stdin.as_mut() else {
+            return;
+        };
         let body = serde_json::to_vec(&value).unwrap();
         let _ = stdin.write_all(format!("Content-Length: {}\r\n\r\n", body.len()).as_bytes());
         let _ = stdin.write_all(&body);
         let _ = stdin.flush();
-    };
-    send(
-        serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize",
-        "params":{"rootUri": format!("file://{}", dir.display()), "capabilities":{}}}),
-    );
-    send(serde_json::json!({"jsonrpc":"2.0","method":"initialized","params":{}}));
-    send(
-        serde_json::json!({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{
-        "textDocument":{"uri":uri,"languageId":"ruby","version":1,"text":text}}}),
-    );
-    let mut params = serde_json::json!({
-        "textDocument":{"uri":uri},
-        "position":{"line": line - 1, "character": col - 1}});
-    if let (Some(params), Some(extra)) = (params.as_object_mut(), extra.as_object()) {
-        params.extend(extra.clone());
     }
-    send(serde_json::json!({"jsonrpc":"2.0","id":2,"method":method,"params":params}));
 
-    let mut found = serde_json::Value::Null;
-    for _ in 0..16 {
-        let mut length = 0usize;
-        loop {
-            let mut header = String::new();
-            if stdout.read_line(&mut header).unwrap_or(0) == 0 {
+    /// One request's `result`, `null` when the server never answered it.
+    fn request(&mut self, method: &str, params: serde_json::Value) -> serde_json::Value {
+        use std::io::BufRead;
+        let id = self.next;
+        self.next += 1;
+        self.send(serde_json::json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}));
+        // Notifications — diagnostics, progress — may come first.
+        for _ in 0..64 {
+            let mut length = 0usize;
+            loop {
+                let mut header = String::new();
+                if self.stdout.read_line(&mut header).unwrap_or(0) == 0 {
+                    break;
+                }
+                let header = header.trim().to_string();
+                if header.is_empty() {
+                    break;
+                }
+                if let Some(rest) = header.strip_prefix("Content-Length: ") {
+                    length = rest.parse().unwrap_or(0);
+                }
+            }
+            if length == 0 {
                 break;
             }
-            let header = header.trim().to_string();
-            if header.is_empty() {
+            let mut body = vec![0u8; length];
+            if std::io::Read::read_exact(&mut self.stdout, &mut body).is_err() {
                 break;
             }
-            if let Some(rest) = header.strip_prefix("Content-Length: ") {
-                length = rest.parse().unwrap_or(0);
+            let message: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+            if message["id"] == serde_json::json!(id) {
+                return message["result"].clone();
             }
         }
-        if length == 0 {
-            break;
-        }
-        let mut body = vec![0u8; length];
-        if std::io::Read::read_exact(&mut stdout, &mut body).is_err() {
-            break;
-        }
-        let message: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
-        if message["id"] == serde_json::json!(2) {
-            found = message["result"].clone();
-            break;
-        }
+        serde_json::Value::Null
     }
-    drop(stdin);
-    drop(over);
-    let _ = watchdog.join();
-    let _ = child.kill();
-    let _ = child.wait();
-    found
+}
+
+impl Drop for Lsp {
+    fn drop(&mut self) {
+        drop(self.stdin.take());
+        drop(self.over.take());
+        if let Some(watchdog) = self.watchdog.take() {
+            let _ = watchdog.join();
+        }
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
 }
 
 fn trekr(db: &Path, dir: &Path, args: &[&str]) -> (serde_json::Value, i32) {
@@ -704,6 +864,8 @@ fn check_case(case: &Path, label: &str, checks: &mut usize, failures: &mut Vec<S
     let (dir, db) = stage(case, label);
     // Every case's status, for the shape golden: no expectation names it.
     trekr(&db, &dir, &["--status", "--json"]);
+    // (expectation, position, --def's site) for each call --def placed.
+    let mut calls: Vec<(String, String, String)> = Vec::new();
 
     for line in expectations.lines() {
         let line = line.trim();
@@ -720,6 +882,27 @@ fn check_case(case: &Path, label: &str, checks: &mut usize, failures: &mut Vec<S
             "def" => {
                 let (answer, code) = trekr(&db, &dir, &["--def", target, "--json"]);
                 check_def(label, line, &answer, code, failures);
+                // A call --def places in the checkout: outgoing calls from the
+                // method around it must reach the same definition. Not a
+                // symbol (`:save`, `&:name`): it is handed to a call, not made
+                // by the method, and outgoing calls leaves it out.
+                let placed = &answer["definition"][0];
+                // A site's path is relative to its `root`, which may be a gem.
+                let absolute = format!(
+                    "{}/{}",
+                    placed["root"].as_str().unwrap_or_default(),
+                    placed["path"].as_str().unwrap_or_default()
+                );
+                if answer["receiver"].as_str().is_some_and(|r| r != "symbol")
+                    && answer["status"] == "resolved"
+                    && let Some(path) = in_checkout(&dir, &absolute)
+                {
+                    calls.push((
+                        line.to_string(),
+                        target.to_string(),
+                        format!("{path}:{}", placed["line"]),
+                    ));
+                }
             }
             "card" => {
                 let (answer, code) = trekr(&db, &dir, &[target, "--json"]);
@@ -751,11 +934,22 @@ fn check_case(case: &Path, label: &str, checks: &mut usize, failures: &mut Vec<S
                     && at.next().is_some();
                 if position && answer.0["status"] != "residue" {
                     let editor = lsp_references(&db, &dir, target);
-                    let cli = cli_references(&answer.0);
+                    let cli = cli_references(&answer.0, None);
                     if editor != cli {
                         failures.push(format!(
                             "{label}: {line}\n      the editor listed {editor:?}, the CLI {cli:?}"
                         ));
+                    }
+                    // Incoming calls are the same rule's confirmed sites,
+                    // wherever a method is prepared at the position.
+                    if let Some(incoming) = lsp_incoming(&db, &dir, target) {
+                        let confirmed = cli_references(&answer.0, Some("confirmed"));
+                        if incoming != confirmed {
+                            failures.push(format!(
+                                "{label}: {line}\n      incoming calls listed {incoming:?}, \
+                                 the CLI's confirmed {confirmed:?}"
+                            ));
+                        }
                     }
                 }
             }
@@ -840,6 +1034,19 @@ fn check_case(case: &Path, label: &str, checks: &mut usize, failures: &mut Vec<S
                 }
             }
             other => failures.push(format!("{label}: unknown verb `{other}`")),
+        }
+    }
+    if !calls.is_empty() {
+        let mut lsp = Lsp::start(&db, &dir);
+        for (line, target, placed) in &calls {
+            match lsp_outgoing(&mut lsp, &dir, target) {
+                // A call outside any method has no outgoing walk to agree.
+                None => {}
+                Some(Some(reached)) if reached == *placed => {}
+                Some(reached) => failures.push(format!(
+                    "{label}: {line}\n      outgoing calls reached {reached:?}, --def {placed}"
+                )),
+            }
         }
     }
     // A case that passed is done with its scratch now, not at exit; one that

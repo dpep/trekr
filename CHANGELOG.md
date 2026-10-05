@@ -10,6 +10,12 @@
   millisecond.** The `warm`, `reload` and `index` events gave whole
   milliseconds, and `request` hundredths; a reader of the log now gets one
   number type.
+- **Call hierarchy lists what Find References lists.** On an example
+  group's `let`, `subject` or `def` (or the `let` keyword), incoming calls
+  are the member's confirmed reads, where they were nothing or the
+  declaration itself. Preparing an `X.new` names the `initialize` it runs
+  (`Widget#initialize`, not `Widget#new`), and outgoing calls from a method
+  reach a shared group's call the way `--def` does, through its includers.
 
 ## 0.8.7 — 2026-10-05
 

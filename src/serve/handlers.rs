@@ -857,6 +857,51 @@ fn member_references(
     pos: crate::core::Pos,
     declarations: bool,
 ) -> anyhow::Result<Option<Vec<Location>>> {
+    let root = located.root.clone();
+    with_member(session, located, pos, |files, path, def, found| {
+        let text = |path: &str| files.open_text(path);
+        let mut locations: Vec<Location> = Vec::new();
+        if declarations {
+            locations.extend(location(
+                &root,
+                path,
+                def.pos.line,
+                def.pos.col,
+                def.name.len(),
+                text(path),
+            ));
+        }
+        for reference in &found {
+            let len = written_len(
+                &root,
+                &reference.path,
+                reference.line,
+                reference.col,
+                text(&reference.path),
+            );
+            locations.extend(location(
+                &root,
+                &reference.path,
+                reference.line,
+                reference.col,
+                len,
+                text(&reference.path),
+            ));
+        }
+        locations
+    })
+}
+
+/// The example group member at `pos` — written there, or read by a call
+/// there — and its reads, as `--refs` and `--dead` find them (DEC-490):
+/// handed to `answer` with the files they were read from, as (file, its
+/// definition, the reads). `None` when no member is there.
+fn with_member<R>(
+    session: &mut Session,
+    located: &Located,
+    pos: crate::core::Pos,
+    answer: impl FnOnce(&CheckoutFiles, &str, &Def, Vec<refs::Reference>) -> R,
+) -> anyhow::Result<Option<R>> {
     use crate::query::members::member_at_position;
     use crate::resolve::members::{Asked, Context, reads};
     let root = located.root.clone();
@@ -868,45 +913,12 @@ fn member_references(
     else {
         return Ok(None);
     };
-    let context = Context::new(tree, &files);
-    let found = reads(
-        &context,
-        &Asked {
-            path: &path,
-            def: &def,
-        },
-        false,
-    );
-    let text = |path: &str| files.open_text(path);
-    let mut locations: Vec<Location> = Vec::new();
-    if declarations {
-        locations.extend(location(
-            &root,
-            &path,
-            def.pos.line,
-            def.pos.col,
-            def.name.len(),
-            text(&path),
-        ));
-    }
-    for reference in &found.found {
-        let len = written_len(
-            &root,
-            &reference.path,
-            reference.line,
-            reference.col,
-            text(&reference.path),
-        );
-        locations.extend(location(
-            &root,
-            &reference.path,
-            reference.line,
-            reference.col,
-            len,
-            text(&reference.path),
-        ));
-    }
-    Ok(Some(locations))
+    let asked = Asked {
+        path: &path,
+        def: &def,
+    };
+    let found = reads(&Context::new(tree, &files), &asked, false).found;
+    Ok(Some(answer(&files, &path, &def, found)))
 }
 
 /// How long the name written at a position is: a read of a member may be
@@ -2151,6 +2163,21 @@ pub(crate) fn prepare_call_hierarchy(
         return Ok(None);
     };
     let pos = to_pos(&text, position);
+    // What Find References asks about here: an example group's member first,
+    // which needs the checkout; a method's definition needs only the file.
+    let located = session.locate_query(&path);
+    if let Some(located) = &located
+        && let Some(item) = with_member(session, located, pos, |files, path, def, _| {
+            let absolute = absolute_site(&located.root, path)?;
+            let text = match files.open_text(path) {
+                Some(text) => text.to_string(),
+                None => crate::scan::read_text(&absolute).ok()?,
+            };
+            Some(def_item(path_to_uri(&absolute).parse().ok()?, &text, def))
+        })?
+    {
+        return Ok(item.map(|item| vec![item]));
+    }
     let Some(under) = position::at_facts(&facts, pos.line, pos.col) else {
         return Ok(None);
     };
@@ -2161,8 +2188,7 @@ pub(crate) fn prepare_call_hierarchy(
         // On a call, the item is the method it calls — that is what the
         // hierarchy is *of*. Expanding the call site itself would find no
         // definition there and answer nothing.
-        Under::Call(call) => session
-            .locate_query(&path)
+        Under::Call(call) => located
             .and_then(|located| callee_item(session, &located, &facts, &call))
             .unwrap_or_else(|| call_item(uri, &text, &call)),
         _ => return Ok(None),
@@ -2202,17 +2228,18 @@ fn call_item(uri: Url, text: &str, call: &crate::core::Call) -> CallHierarchyIte
     }
 }
 
-/// The definition a call resolves to, as an item — or `None` when the call
-/// does not resolve, or its file is not in an indexed checkout.
+/// The definition a call resolves to by `--def`'s rule — `initialize` for an
+/// `X.new` that runs one — as an item; `None` when the call does not
+/// resolve, or its file is not in an indexed checkout.
 fn callee_item(
     session: &mut Session,
     located: &Located,
     facts: &crate::core::Facts,
     call: &crate::core::Call,
 ) -> Option<CallHierarchyItem> {
-    let tree = session.tree(&located.root).ok()?;
-    let answer = crate::resolve::method_at(tree, facts, call, &located.relative);
+    let answer = method_answer(session, located, facts, call).ok()?;
     let site = answer.sites.first()?;
+    let (name, _) = crate::resolve::asked_at(session.tree(&located.root).ok()?, call, &answer);
     let absolute = absolute_site(&located.root, &site.path)?;
     let text = crate::scan::read_text(&absolute).ok()?;
     let uri: Url = path_to_uri(&absolute).parse().ok()?;
@@ -2221,19 +2248,18 @@ fn callee_item(
         match target
             .defs
             .iter()
-            .find(|def| def.pos.line == site.line && def.name == call.name)
+            .find(|def| def.pos.line == site.line && def.name == name)
         {
             Some(def) => def_item(uri, &text, def),
             // A macro-made method (`attr_reader`, `delegate`) has a site but no
             // body: point at the line that made it.
             None => {
-                let range = convert::span(Some(&text), site.line, site.col, call.name.len());
+                let range = convert::span(Some(&text), site.line, site.col, name.len());
                 #[allow(deprecated)]
                 CallHierarchyItem {
                     name: answer
                         .owner
-                        .map(|owner| format!("{owner}#{}", call.name))
-                        .unwrap_or_else(|| call.name.clone()),
+                        .map_or_else(|| name.clone(), |owner| format!("{owner}#{name}")),
                     kind: SymbolKind::METHOD,
                     tags: None,
                     detail: answer.defined_via,
@@ -2258,27 +2284,49 @@ pub(crate) fn incoming_calls(
     params: CallHierarchyIncomingCallsParams,
     cancel: &dyn Fn() -> bool,
 ) -> anyhow::Result<Option<Vec<CallHierarchyIncomingCall>>> {
+    use crate::resolve::members::Files as _;
     let item = params.item;
+    // A top-level caller has no method to walk up to.
+    if item.kind == SymbolKind::FILE {
+        return Ok(Some(Vec::new()));
+    }
     // The item names a file, and that file's checkout is the one to search —
     // the client's workspace is not necessarily either.
     let Some((located, pos)) = target(session, &item.uri, item.selection_range.start) else {
         return Ok(None);
     };
+    // What Find References lists there: an example group's member's reads,
+    // or a method's calls.
+    let root = located.root.clone();
+    let mut callers = Callers::default();
+    if let Some(()) = with_member(session, &located, pos, |files, _, _, found| {
+        for read in found.iter().filter(|r| r.tier == refs::Tier::Confirmed) {
+            let (Some(uri), Some(facts)) = (file_uri(&root, &read.path), files.facts(&read.path))
+            else {
+                continue;
+            };
+            let text = match files.open_text(&read.path) {
+                Some(text) => text.to_string(),
+                None => crate::scan::read_text(root.join(&read.path)).unwrap_or_default(),
+            };
+            let len = written_len(&root, &read.path, read.line, read.col, Some(&text));
+            let range = LineIndex::new(&text).span(read.line, read.col, len);
+            callers.add(&uri, &read.path, &text, &facts, range, read.why);
+        }
+    })? {
+        return Ok(Some(callers.calls));
+    }
     let Some(facts) = session
         .document(&located.absolute)
         .map(|document| document.facts().clone())
     else {
         return Ok(None);
     };
-    // A top-level caller has no method to walk up to.
-    let under =
-        position::at_facts(&facts, pos.line, pos.col).filter(|_| item.kind != SymbolKind::FILE);
-    let root = located.root.clone();
     let root_str = root.to_string_lossy().into_owned();
     let overlay = overlay(session, &root);
     let (tree, store) = session.tree_and_store(&root)?;
-    let Some((query, _)) =
-        under.and_then(|under| asked_method(tree, &facts, &under, &located.relative))
+    let Some((query, _)) = position::at_facts(&facts, pos.line, pos.col)
+        .and_then(|under| asked_method(tree, &facts, &under, &located.relative))
     else {
         return Ok(Some(Vec::new()));
     };
@@ -2294,7 +2342,6 @@ pub(crate) fn incoming_calls(
         partial: false,
     };
     let paths = store.files_calling_any(&root_str, &refs::called_as(&query))?;
-    let mut callers = Callers::default();
     scan_files(&scan, Source::Listed(paths.into_iter()), cancel, |files| {
         for file in files {
             let Some(uri) = file_uri(&root, &file.path) else {
@@ -2305,7 +2352,14 @@ pub(crate) fn incoming_calls(
                 if reference.tier == refs::Tier::Confirmed {
                     let len = site_len(reference, &query.name);
                     let range = lines.span(reference.line, reference.col, len);
-                    callers.add(&uri, &file, range, reference.why);
+                    callers.add(
+                        &uri,
+                        &file.path,
+                        &file.text,
+                        &file.facts,
+                        range,
+                        reference.why,
+                    );
                 }
             }
         }
@@ -2323,21 +2377,30 @@ struct Callers {
 }
 
 impl Callers {
-    /// A call at `range` in `file`, from whichever method encloses it.
-    fn add(&mut self, uri: &Url, file: &Scanned, range: lsp_types::Range, why: &str) {
-        let caller = enclosing_def(&file.facts, range.start.line + 1);
-        let key = (file.path.clone(), caller.map_or(0, |def| def.pos.line));
+    /// A call at `range` in the file at `path`, from whichever method
+    /// encloses it.
+    fn add(
+        &mut self,
+        uri: &Url,
+        path: &str,
+        text: &str,
+        facts: &crate::core::Facts,
+        range: lsp_types::Range,
+        why: &str,
+    ) {
+        let caller = enclosing_def(facts, range.start.line + 1);
+        let key = (path.to_string(), caller.map_or(0, |def| def.pos.line));
         if let Some(&i) = self.index.get(&key) {
             self.calls[i].from_ranges.push(range);
             return;
         }
         #[allow(deprecated)]
         let from = match caller {
-            Some(def) => def_item(uri.clone(), &file.text, def),
+            Some(def) => def_item(uri.clone(), text, def),
             // A call at the top level of a file: there is no method to walk up
             // to, so the item is the call itself.
             None => CallHierarchyItem {
-                name: file.path.clone(),
+                name: path.to_string(),
                 kind: SymbolKind::FILE,
                 tags: None,
                 detail: Some(why.to_string()),
