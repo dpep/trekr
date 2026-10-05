@@ -1,0 +1,7 @@
+# A bare call in an ERB outside app/views (a generator's template) runs on
+# whatever renders it, which trekr cannot name: it is any class's method of
+# that name, and kept every same-name method off --dead. It is a caveat now,
+# not a caller; a view's bare call still confirms its helper.
+dead lib/widget/a.rb Widget#label=unreferenced~template Gadget#label=unreferenced~template Widget#headline=none
+dead app/helpers/widgets_helper.rb WidgetsHelper#badge=single-caller~
+refs Widget#label possible=2

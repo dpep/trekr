@@ -3465,19 +3465,40 @@ fn gather_constructions(
     Ok((found, counts))
 }
 
-/// Takes an `initialize`'s unplaced sites out of its evidence (DEC-541),
-/// and says what they were: `None` when there were none.
+/// Takes the sites that name no class they would run in out of a method's
+/// evidence, and says what they were: `None` when there were none. Any
+/// method's bare calls in a template that is not a view; an `initialize`'s
+/// untyped `new`s, unplaced `super`s and macro symbols too (DEC-541).
 fn unplaced_caveat(
     found: &mut Vec<crate::resolve::refs::Reference>,
     counts: &mut crate::resolve::refs::Counts,
+    constructor: bool,
 ) -> Option<String> {
     use crate::resolve::refs::Unplaced;
+    // What each kind is called, for one site and for several.
+    let kinds: &[(Unplaced, &str, &str)] = if constructor {
+        &[
+            (Unplaced::New, "`new` on untyped receivers may reach it", ""),
+            (
+                Unplaced::Super,
+                "`super` whose landing trekr cannot place",
+                "`super`s whose landing trekr cannot place",
+            ),
+            (
+                Unplaced::Symbol,
+                "symbol handed to a macro",
+                "symbols handed to a macro",
+            ),
+        ]
+    } else {
+        &[(
+            Unplaced::Template,
+            "bare call in a template whose `self` trekr cannot name",
+            "bare calls in templates whose `self` trekr cannot name",
+        )]
+    };
     let mut parts = Vec::new();
-    for (kind, what) in [
-        (Unplaced::New, "`new` on untyped receivers may reach it"),
-        (Unplaced::Super, "`super` whose landing trekr cannot place"),
-        (Unplaced::Symbol, "symbol handed to a macro"),
-    ] {
+    for &(kind, one, many) in kinds {
         let sites: Vec<_> = found
             .iter()
             .filter(|r| r.unplaced() == Some(kind))
@@ -3488,21 +3509,23 @@ fn unplaced_caveat(
         let at = format!("first at {}:{}", first.path, first.line);
         // Only the first untyped `new` is looked for: finding them all is
         // typing every `new` in the checkout.
-        parts.push(match kind {
-            Unplaced::New => format!("{what} ({at})"),
-            _ => format!("{} {what} ({at})", sites.len()),
+        parts.push(match (kind, sites.len()) {
+            (Unplaced::New, _) => format!("{one} ({at})"),
+            (_, 1) => format!("1 {one} ({at})"),
+            (_, n) => format!("{n} {many} ({at})"),
         });
     }
     if parts.is_empty() {
         return None;
     }
     let before = found.len();
-    found.retain(|r| r.unplaced().is_none());
+    found.retain(|r| !kinds.iter().any(|(kind, ..)| r.unplaced() == Some(*kind)));
     counts.possible -= before - found.len();
-    Some(format!(
-        "constructed where its class is not known: {}",
-        parts.join(", ")
-    ))
+    let parts = parts.join(", ");
+    Some(match constructor {
+        true => format!("constructed where its class is not known: {parts}"),
+        false => parts,
+    })
 }
 
 /// What a name *is*, in one answer: where it is defined, what kind of location
@@ -4945,14 +4968,12 @@ fn dead_in(
                 found.push(call);
             }
         }
-        // An `X.new` on a value of no known class, a `super` trekr cannot
-        // place and a macro's symbol are any class's: they keep an
-        // `initialize` alive no more than a grep would, so they are weighed
-        // as a caveat instead (DEC-541).
-        let unplaced_sites = match constructor {
-            true => unplaced_caveat(&mut found, &mut counts),
-            false => None,
-        };
+        // A bare call in a template that is not a view is any class's, and
+        // so, for an `initialize`, are an `X.new` on a value of no known
+        // class, a `super` trekr cannot place and a macro's symbol: they keep
+        // it alive no more than a grep would, so they are weighed as a caveat
+        // instead (DEC-541, DEC-630).
+        let unplaced_sites = unplaced_caveat(&mut found, &mut counts, constructor);
         // A `def` its scope may not own: a call of its name whose receiver
         // has no such method may be on the object it is defined on (DEC-562).
         let defined_on = crate::resolve::defined_on(&tree, facts, def, file);

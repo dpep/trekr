@@ -98,9 +98,11 @@ pub(crate) struct Reference {
 const SUPER_UNPLACED: &str = "`super` from a method whose owner the index cannot place";
 const SUPER_UNINDEXED: &str = "`super` from a class whose ancestors are not fully indexed";
 const BY_SYMBOL: &str = "named by a symbol handed to a macro — invoked by name, receiver unknown";
+const IN_A_TEMPLATE: &str =
+    "a bare call in a template whose `self` trekr cannot name — any class's method of this name";
 
 /// A possible site that names no class it would run in, so it would reach
-/// any class's `initialize` as readily as this one's (DEC-541).
+/// any class's method of its name as readily as this one (DEC-541, DEC-630).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Unplaced {
     /// `new` on an untyped receiver.
@@ -109,6 +111,9 @@ pub(crate) enum Unplaced {
     Super,
     /// A symbol handed to a macro.
     Symbol,
+    /// A bare call in a template that is not a view: a generator's, a
+    /// library's. Whatever renders it is its `self`.
+    Template,
 }
 
 impl Tier {
@@ -133,6 +138,7 @@ impl Reference {
             _ if self.called_as.is_some() && self.receiver_type.is_none() => Some(Unplaced::New),
             SUPER_UNPLACED | SUPER_UNINDEXED => Some(Unplaced::Super),
             BY_SYMBOL => Some(Unplaced::Symbol),
+            IN_A_TEMPLATE => Some(Unplaced::Template),
             _ => None,
         }
     }
@@ -1239,6 +1245,34 @@ fn possible(
             why: BY_SYMBOL,
             ruling: None,
             proximity: 4,
+            from: None,
+            called_as: None,
+        };
+    }
+
+    // A view's bare call is typed by its view context; any other template's
+    // runs on whatever renders it, so it names this method no more than
+    // every other of its name.
+    let bare = matches!(
+        call.recv,
+        crate::core::RecvShape::Implicit | crate::core::RecvShape::SelfRecv
+    );
+    if bare
+        && call.nesting.is_empty()
+        && crate::scan::is_template(path)
+        && crate::tree::views::ViewTemplate::of(path).is_none()
+    {
+        return Reference {
+            path: path.to_string(),
+            line: call.pos.line,
+            col: call.pos.col,
+            tier: Tier::Possible,
+            receiver: shape,
+            receiver_type: None,
+            owner: None,
+            why: IN_A_TEMPLATE,
+            ruling: None,
+            proximity: 3,
             from: None,
             called_as: None,
         };

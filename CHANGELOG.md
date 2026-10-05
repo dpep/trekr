@@ -127,7 +127,12 @@
   so `--refs` lists it and `--dead` counts it, and `--def`, hover and
   references work inside a template. `--dead`'s "named in a view, which is
   not read" caveat no longer applies to ERB templates (it stays for Haml and
-  Slim). An existing index picks the templates up at its next query.
+  Slim). A template outside `app/views/` — a generator's, a library's error
+  page — runs on whatever renders it, which trekr cannot name: its bare
+  calls (`<%= label %>`) are listed as possible by `--refs`, and keep no
+  method off `--dead`, whose caveat names them instead (graded lower), since
+  they are any class's method of that name. An existing index picks the
+  templates up at its next query.
 - **A view's `self` is its view context.** A call in an ERB template under
   `app/views/` resolves on what Rails runs it on: a name a controller's
   `helper_method` exposes, then the app's helpers (all of `app/helpers`, as

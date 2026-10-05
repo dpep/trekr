@@ -13571,3 +13571,44 @@ nobody is paying for.
 checkout plus its gems that takes long enough to report, a store shared
 across machines, or bumps frequent enough that users keep meeting a first
 index.
+
+## DEC-630 — A bare call in a template that is not a view keeps no method alive
+
+**Decided.** A template's `self` is named only for a view under
+`app/views/` (DEC-521): ActionView's view context, or RABL's engine. Any
+other `.erb` — a generator's `lib/**/templates/model.rb.erb`, Action
+Dispatch's rescue pages, a guides layout, an engine's dashboard under
+`lib/x/views/` — runs on whatever renders it, which trekr cannot name.
+A bare call there (`<%= label %>`, `self.label`) is now a `possible`
+reference whose `why` says so, and `Reference::unplaced` reads it as
+`Unplaced::Template`: like an `initialize`'s untyped `new` (DEC-541), it
+names no class it would run in. `--refs` still lists it; `--dead` takes it
+out of the method's evidence and names it in the caveat instead — `1 bare
+call in a template whose \`self\` trekr cannot name (first at …)`, graded
+lower. A call with a receiver (`<%= topic.best_post %>`) is an untyped
+call like any in Ruby, and is unchanged. Testbed 623.
+
+**Why.** Reading every ERB (DEC-520) made each bare call in such a file an
+untyped caller of *every* method of its name in the checkout. Two templates
+saying `render` kept every `render` off `--dead`: graphql's
+`GraphQLSite::CalloutBlock#render`, a Liquid tag, was "used" by its
+dashboard's ActionView `render`. In Ruby an untyped bare call is rare — a
+call with no receiver is typed by the enclosing class — so the template's
+were a new and large class of evidence that weighs no more than a grep.
+
+**Measured**, `--dead <root> --json` on fresh stores against main
+(7403988): graphql 7 rows back and 2 moved, rails 8 back and 18 moved,
+mastodon and discourse unchanged (their ERB credits are calls with a
+receiver, or views). Every moved row is `lower` with the template named.
+They split as the hunt found: the generator helpers
+(`TypeGeneratorBase#ruby_class_name`), `DebugView#debug_params`,
+`RailsGuides::Helpers#digest_path` and rails' test-fixture helpers are
+really called from their templates, and are now listed lower with the
+site; the five `GraphQLSite::*#render` were not, and are listed again.
+That is 0.8.6's answer for those rows, with the call shown.
+
+**Not done.** Naming the `self` of a template outside `app/views`. A
+`views/` directory elsewhere is not always ActionView (Sinatra's, a
+dashboard engine's), and a generator's template runs on the generator
+whose `template` call names it, which needs that call read; the second is
+the one worth doing when a generator-heavy checkout asks for it.
