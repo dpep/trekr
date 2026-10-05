@@ -726,18 +726,30 @@ impl Store {
         work: impl FnOnce(&mut Store) -> std::result::Result<T, E>,
     ) -> std::result::Result<T, E> {
         self.conn.execute_batch("BEGIN IMMEDIATE")?;
-        match work(self) {
-            Ok(value) => {
+        // Every way out but a commit rolls back — an error, a COMMIT that
+        // failed, a panic the LSP survives — or each later write on this
+        // connection joins a transaction nobody finishes. Not a drop guard:
+        // `work` needs the `&mut Store` the guard would borrow.
+        let worked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| work(self)));
+        let failed = match worked {
+            Ok(Ok(value)) => {
                 let started = std::time::Instant::now();
-                self.conn.execute_batch("COMMIT")?;
-                self.timing.commit += started.elapsed();
-                Ok(value)
+                match self.conn.execute_batch("COMMIT") {
+                    Ok(()) => {
+                        self.timing.commit += started.elapsed();
+                        return Ok(value);
+                    }
+                    Err(error) => Err(error.into()),
+                }
             }
-            Err(error) => {
+            Ok(Err(error)) => Err(error),
+            Err(panic) => {
                 let _ = self.conn.execute_batch("ROLLBACK");
-                Err(error)
+                std::panic::resume_unwind(panic);
             }
-        }
+        };
+        let _ = self.conn.execute_batch("ROLLBACK");
+        failed
     }
 
     /// One row per indexed checkout, plus the totals a caller wants to see.
@@ -2848,6 +2860,37 @@ mod tests {
         assert!(outcome.is_err());
         assert_eq!((index_names(&store), store.totals().unwrap().defs), before);
         assert!(index_names(&store).contains(&"call_name_name".to_string()));
+    }
+
+    #[test]
+    fn a_batch_that_does_not_commit_leaves_no_transaction_open() {
+        let mut store = Store::open_in_memory().unwrap();
+        // Checked at COMMIT, so the commit itself is what fails.
+        store
+            .conn
+            .execute_batch(
+                "PRAGMA foreign_keys = ON;
+                 CREATE TEMP TABLE parent(id INTEGER PRIMARY KEY);
+                 CREATE TEMP TABLE child(p REFERENCES parent(id) DEFERRABLE INITIALLY DEFERRED);",
+            )
+            .unwrap();
+        let orphan = |s: &mut Store| s.conn.execute_batch("INSERT INTO child VALUES (1)");
+        assert!(store.batch(orphan).is_err(), "the commit fails");
+        assert!(store.autocommit(), "after a failed commit");
+
+        let panicked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            store.batch(|s| -> rusqlite::Result<()> {
+                s.conn.execute_batch("INSERT INTO parent VALUES (1)")?;
+                panic!("mid-batch")
+            })
+        }));
+        assert!(panicked.is_err());
+        assert!(store.autocommit(), "after a panic");
+        let rows: i64 = store
+            .conn
+            .query_row("SELECT COUNT(*) FROM parent", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(rows, 0, "and what it wrote is gone");
     }
 
     /// What a resident front keys its stamps on: another connection's

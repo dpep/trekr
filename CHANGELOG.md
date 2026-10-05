@@ -9,6 +9,10 @@
   now used by that class, and by the tests when the call is in one — the
   receiver may be a gem's class trekr has not indexed. The patch's methods
   already overrode the class's, and `--ancestors` already showed it.
+- **A failed write no longer leaves the store stuck mid-transaction.** A
+  batch of writes whose commit failed — or, in the editor's server, that hit
+  a bug — left its transaction open, so later writes on that connection
+  joined one that would never commit. It now rolls back.
 - **`TREKR_PROFILE=0` is off everywhere.** One of the tree build's reports
   (`fixpoint:`) treated any value, `0` included, as on.
 - **The editor recovers when building a checkout's view of the code fails
