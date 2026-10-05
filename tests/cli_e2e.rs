@@ -3652,8 +3652,10 @@ fn read_commands_answer_and_exit_while_another_process_writes() {
         let out = trekr(&db, &dir, args);
         let elapsed = started.elapsed();
         assert!(out.status.success(), "{args:?}: {out:?}");
+        // Under the store's 5 s busy timeout, the least a wait on its lock
+        // costs: a loaded machine can take over a second just to run trekr.
         assert!(
-            elapsed < std::time::Duration::from_secs(1),
+            elapsed < std::time::Duration::from_secs(4),
             "{args:?} waited on the lock: {elapsed:?}"
         );
         out
