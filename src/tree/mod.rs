@@ -890,8 +890,11 @@ impl Tree {
         let mut phases = Phases::default();
         // The namespace is read from the checkout's snapshot when one answers
         // to what the store holds now, and assembled and written otherwise
-        // (DEC-065). Methods are not in it: they stay demand-loaded below.
-        let snapshot = match files::dir(store) {
+        // (DEC-065). Methods are not in it: they stay demand-loaded below. A
+        // query's overlay that moves the namespace is assembled and not kept:
+        // its snapshot would retire the checkout's for the next query, which
+        // assembles that again (DEC-035).
+        let snapshot = match files::dir(store).filter(|_| !store.overlays_namespace()) {
             Some(dir) => {
                 let key = files::key(store, &roots)?;
                 let path = dir.join(files::name(root, &key));

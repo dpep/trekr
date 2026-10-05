@@ -1689,6 +1689,117 @@ touches `.git/index`. The answer then is a filesystem watcher in the LSP front,
 which is a resident process that already exists and may legitimately watch,
 rather than a daemon for the CLI.
 
+### Addendum (pre-0.8.7 hunt): the blind spot bit, and queries see edits now
+
+It bit in the CLI. Edit a tracked file without staging it and `--def` on a
+call to the new method answered "nothing trekr indexed defines this name
+anywhere", exit 1, with no staleness note — the most common way a CLI user
+got a wrong answer, and an assertion rather than a hedge. `--dead` and
+`--refs Owner#m` never probed at all: a caller committed after the index
+left its method `unreferenced`, exit 0, and a deleted caller kept one
+"used".
+
+**Decided.** Every query that reads the index — `--def`, `--refs` (by
+owner, by name, at a position), `--dead` — runs git's own comparison of the
+working tree with its index (`git --no-optional-locks diff-files
+--name-only --relative`, `scan::Edits`) beside the fingerprint, and re-reads
+each indexed file it names whose bytes differ from the store's: one hash
+each, a parse only for a blob never seen. The fingerprint moving still
+re-reads the file asked about. More than `BULK` edits (the language
+server's 32) is an operation, left to `--index`. The same `index` object
+discloses it on every one of those commands — `stale`, now `false` when
+nothing else may lag; `refreshed` and `busy` as before, the file asked about
+or `null`; `refreshed_files` and `busy_files`, new, every file re-read or
+left; `hint` — and text says it on stderr. The existing fields keep their
+type: a patch release does not change what a script already reads. `stale` is true when git's index moved (a commit, an
+`add`, a checkout: a file it adds is not read by a query), an edited file
+could not be read (deleted — `refresh_file` cannot remove one), or there
+were too many. Once read, an edit is current: the next query says nothing.
+
+**Why git, not trekr's own stat walk.** `diff-files` is git comparing each
+tracked file's stat with its index entry, threaded (`core.preloadIndex`),
+and O(changed) where `core.fsmonitor` is on — which the large monorepos
+this is for tend to enable. trekr's own walk would need a per-file baseline
+in the store (rejected above as checkout bookkeeping below `blob`) or an
+index-time timestamp and mtime racing; and hashing every file is the scan.
+
+**Measured** on discourse (24,447 tracked files) and mastodon (3,632), git
+alone, median of 15–21: 32–45 ms and ~10 ms; single-threaded
+(`preloadIndex=false`) 86–122 ms on discourse, so it stays threaded. It is
+started before the tree is built and read after, so the two overlap.
+`--def` end to end, old vs new, alternating, medians of 11, on a machine at
+load average ~12 on 8 cores: discourse 58/66 → 86/82 ms; mastodon 74/73 →
+75/72 ms; `--refs Owner#m` discourse 181/177 → 192/202 ms, mastodon 125 →
+125 ms. The discourse `--def` cost is git's threads contending with the
+tree build on a saturated machine; on an idle one the overlap should hide
+most of it. Linear in tracked files, the 10M-line monorepo would pay
+~0.6–1 s of git per query without fsmonitor.
+
+**Reverses if** that monorepo shows it: the shape of the fix is to stop
+waiting for git once the tree is built and disclose the check as not made,
+not to drop the check.
+
+### Addendum (pre-0.8.7 re-hunt): a query's reads are an overlay, never written
+
+The addendum above wrote what a query re-read into the store
+(`refresh_file`), and that gave three silent wrong answers. An edit read
+and then reverted stayed in the store until `--index` — `git diff-files`
+no longer named the file, so nothing re-read it — and `--refs` listed a
+method that no longer existed. Untracked files, the commonest new file,
+were never re-read: `diff-files` lists tracked ones only. And more than
+`BULK` edits cleared the list after the queried file had been put on it.
+Behind those, `stale` was noise: a `touch` then `git status` turned it on
+for every `--dead` and `--refs`, `--index` did not clear it, and the stderr
+line blamed "the checkout moved" for every cause.
+
+**Decided.** The store holds what `--index` read and nothing else. Each
+query reads the working tree's map as an index would (`scan::scan`:
+`ls-files -s`, then `status`, which
+compares content where a stat moved and lists untracked files) and
+compares it with the store's map. Every path whose blob differs — edited,
+added, untracked, committed — and every path the store holds that is gone
+is read for that query alone: a new blob's facts are recorded
+(content-addressed, harmless to keep, the next index finds them known), and
+`Store::overlay` shadows the map on that connection with a temporary copy
+named `file` — same indexes, analyzed, so every query keeps its plan — and
+does the same on each connection opened from it (`reopen`, the tree's
+loader) or by the same command, moving the checkout's keys by the same
+fold. The comparison runs while the tree is built; when it finds a change
+the tree is built again over it — from the same snapshot when only methods
+moved, and assembled without keeping a snapshot when the namespace did, as
+writing one would retire the checkout's own for the next query. Nothing is written to the map, so a
+reverted edit is simply not overlaid, and `--index` leaves nothing to say.
+The file asked about is read whatever git said. Over `BULK` changes, only it
+is read, and `stale` is said with the cause. git failing, or taking longer
+than `PROBE_WAIT` (1 s — a cold stat cache after a copy makes `status`
+hash every file), is said as not checked rather than read as "nothing
+changed". `index.cause` names the reason in words; text says the same on
+stderr. The query no longer reads `git_state`; the index still records it.
+
+**Measured** on discourse (24,447 tracked files) and mastodon (3,632), git
+alone, median of 7: `status --untracked-files=normal` 45 / 10 ms,
+`ls-files -s` 13 / 6 ms, against `diff-files` 31 / 8 ms; untracked
+`ls-files -o` alone 94 / 15 ms, which `status`'s untracked cache avoids. A
+`UNION ALL` view over the map was tried first: free to set up, but a join
+cannot reach into it, and the tree build's edge query on mastodon went from
+17 to 133 ms. The analyzed copy keeps every plan (the edge query 1.0 →
+1.0 ms, declarations 97 → 96 ms on a discourse store) for 22–32 ms of copy
+and `ANALYZE` on 22,494 rows. End to end, release builds, against b45e1a8,
+alternating, medians of 7 (3 for `--dead`), at load average 10–23 on 8
+cores: with nothing changed, mastodon `--def` 31 → 34 ms, `--refs
+Owner#m` 141 → 141 ms, `--dead app/models` 931 → 948 ms; discourse 92 →
+105, 86 → 96, 2,562 → 2,730 ms. With 5 files edited — which b45e1a8 had
+written into the store on its first query and so paid nothing for after —
+mastodon 33 → 80, 161 → 211, 981 → 1,035 ms; discourse 89 → 196, 79 →
+201, 2,520 → 2,709 ms. That is the price of not writing: the copy, and a
+second tree build over the overlay (35–44 ms on discourse), every query
+until `--index`.
+
+**Reverses if** a monorepo's `status` sits on the query path for most of
+`PROBE_WAIT`: then the overlay should come from `diff-files` plus the
+untracked files the store already holds, at the cost of new untracked ones.
+And if the copy grows with a store of many checkouts past what a query can
+pay, copy only the checkouts the tree reads.
 **Addendum (0.8.7): the query-time re-read of unstaged edits is deferred.**
 The blind spot above did bite — an unstaged edit is invisible to `--def`, and
 `--dead` and `--refs Owner#m` never probe at all. A fix (a `git diff-files`

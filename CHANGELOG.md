@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- **A query sees the working tree as it is.** Editing a file without
+  `git add` was invisible to `--def` — a method the edit added was "nothing
+  trekr indexed defines this name anywhere", exit 1 — and `--dead` and
+  `--refs` read only the index, so a caller written since did not count.
+  `--def`, `--dead` and every `--refs` now compare the working tree with the
+  index and read each file edited, added (untracked too) or deleted since,
+  for that answer only: nothing a query reads is written to the store, so an
+  edit undone is simply not answered from, and only `--index` changes what
+  is stored. Past 32 changed files the file asked about is still read and
+  the rest is left to `--index`; when git fails or takes over a second, the
+  answer says the working tree was not checked. `--ancestors` and cards
+  still read only the index.
+- **Every command that reads edits says so in an `index` object** — new on
+  `--dead` and `--refs` (for `--refs NAME`, whose `--json` is a bare array,
+  on stderr and in `--ndjson`'s closing line), and on stderr in text.
+  `refreshed_files` and `busy_files` list every file read or left;
+  `refreshed` and `busy` still name the file asked about, or `null`;
+  `stale` is `false` when nothing else may lag, and a new `cause` says why
+  it may. A script that read `stale: true` as "something was re-read" should
+  read `refreshed_files`. A `touch` is not an edit.
 - **A call in `instance_eval do … end` on `self` is a call on `self`.**
   It was read as a block that may change `self`, so a name `self` lacks
   was a possible call of every other class's method of that name. And

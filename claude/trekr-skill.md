@@ -95,18 +95,17 @@ Other fields that change what you do next:
 - **`snapped_to`**: the column held no name, so trekr answered for the nearest
   one on the line. `alternatives` lists the others, for an exact follow-up.
 
-### Freshness: run `--index` after you edit
+### Freshness: edits are read; `--index` after many
 
-`--def` checks git and re-reads the file you asked about if the checkout
-moved. Its `index` field says so: `stale: true` means other files may lag
-(run the `hint`), and `busy: true` means another trekr was writing, so the
-file was answered from its indexed version.
+`--def`, `--refs` and `--dead` read every file edited, added (untracked too)
+or deleted since the index, for that answer only — no `git add` needed, and
+an edit you undo stops counting. The `index` field names what was read
+(`refreshed_files`). `stale: true` means other files may lag — over 32
+changed, git could not say, or another trekr was writing (`busy_files`) — and
+`cause` says which; run the `hint`.
 
-**`--refs`, `--dead`, `--ancestors` and cards do not re-read anything and do
-not say they're stale.** After editing or committing Ruby, run `trekr --index`
-before trusting them, or a call you just added won't be counted. An edit git
-hasn't noticed yet (no `add`, `status` or `diff` since) is invisible even to
-`--def`'s check.
+**`--ancestors` and cards read only the index.** After a branch switch or a
+large edit, run `trekr --index` before trusting them.
 
 ## References to a method
 

@@ -347,11 +347,10 @@ fn true_case(dir: &Path) -> Option<PathBuf> {
 /// scan is 145 ms on discourse and 6 s on a 10M-line monorepo, and neither can
 /// sit on a query path.
 ///
-/// **What it cannot see**, stated here so nobody rediscovers it: a tracked file
-/// edited with nothing having refreshed git's index, and a brand-new untracked
-/// file. Both are caught by an explicit `--index`. This is a *probe*, not a
-/// proof — it answers "might anything have changed", and a false negative is
-/// the reason `--index` still exists.
+/// **What it cannot see**: a tracked file edited with nothing having refreshed
+/// git's index, and a brand-new untracked file. A query no longer reads it:
+/// [`Probe`] compares the working tree's content with the store's, which
+/// sees both. The index still records it beside each checkout.
 pub(crate) fn git_fingerprint(root: &Path) -> Option<i64> {
     // A worktree's `.git` is a file pointing at the real gitdir.
     let dot_git = root.join(".git");
@@ -417,6 +416,62 @@ pub(crate) fn read_text(path: impl AsRef<Path>) -> std::io::Result<String> {
         .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))
 }
 
+/// More changed files than this in one batch is an operation — a checkout, a
+/// rebase — and is handed to a full index rather than refreshed one by one,
+/// by the language server and a CLI query alike.
+pub(crate) const BULK: usize = 32;
+
+/// How long a query waits for [`Probe`]: past it, the answer comes from the
+/// index and says the working tree was not checked. git takes this long only
+/// when its stat cache is cold — after a copy or a restore — and re-hashes
+/// every file, which a query does not sit through.
+pub(crate) const PROBE_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// The working tree's map as an index would write it ([`scan`]), read on a
+/// thread so the query's tree is built meanwhile, and so it can stop waiting
+/// at [`PROBE_WAIT`]: a query compares it with
+/// the store to find every file edited, added or deleted since the index —
+/// untracked ones and edits git has not been told about included (DEC-035).
+/// `git status` compares content where a stat moved, so a `touch` is no edit.
+pub(crate) struct Probe {
+    started: std::time::Instant,
+    found: std::sync::mpsc::Receiver<Result<Files>>,
+}
+
+impl Probe {
+    pub(crate) fn start(root: &Path) -> Probe {
+        let (send, found) = std::sync::mpsc::channel();
+        let root = root.to_path_buf();
+        // Left running when given up on: it ends with its git, and so does
+        // the process at the answer.
+        std::thread::spawn(move || drop(send.send(scan(&root))));
+        Probe {
+            started: std::time::Instant::now(),
+            found,
+        }
+    }
+
+    /// The working tree's map, or why it could not be had, in words.
+    pub(crate) fn finish(self) -> std::result::Result<Files, String> {
+        use std::sync::mpsc::RecvTimeoutError;
+        let left = PROBE_WAIT.saturating_sub(self.started.elapsed());
+        match self.found.recv_timeout(left) {
+            Ok(Ok(files)) => Ok(files),
+            Ok(Err(error)) => Err(format!(
+                "git could not say what changed since the index ({error:#})"
+            )),
+            Err(RecvTimeoutError::Disconnected) => {
+                Err("git could not say what changed since the index".to_string())
+            }
+            Err(RecvTimeoutError::Timeout) => Err(format!(
+                "git took longer than {} s to say what changed since the index \
+                 (a `git status` refreshes its cache)",
+                PROBE_WAIT.as_secs()
+            )),
+        }
+    }
+}
+
 /// Every Ruby file in the working tree, keyed by the blob its *current* bytes
 /// hash to — not what HEAD says. Uncommitted edits are first-class.
 pub(crate) fn scan(root: &Path) -> Result<Files> {
@@ -457,8 +512,7 @@ pub(crate) fn scan(root: &Path) -> Result<Files> {
                 files.insert(path, hash_blob(&bytes));
             }
             // Deleted from the worktree, unreadable, or not a source at all (a
-            // link to a device or a pipe): it is not here, so it is not in the
-            // map. No error case to handle downstream.
+            // link to a device or a pipe): it is not here, so it is not in the map. No error case to handle downstream.
             Err(_) => {
                 files.remove(&path);
             }

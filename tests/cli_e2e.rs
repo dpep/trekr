@@ -248,6 +248,28 @@ fn a_templates_answers_write_paths_relative_to_their_root() {
         assert_eq!(site["path"], want, "{answer}");
         assert_eq!(site["root"], serde_json::json!(root), "{answer}");
     }
+
+    // A write the controller gained in an edit git has not been told of is
+    // read, and said, as for any other answer (DEC-035).
+    let controller = dir.join("app/controllers/widgets_controller.rb");
+    fs::write(
+        &controller,
+        "class WidgetsController\n  def show\n    @title = \"w\"\n    @fresh = 1\n  end\nend\n",
+    )
+    .unwrap();
+    fs::write(
+        dir.join(view),
+        "<%= @title %>\n<%= render \"row\" %>\n<%= @fresh %>\n",
+    )
+    .unwrap();
+    let answer = json(&trekr(
+        &db,
+        &dir,
+        &["--def", &format!("{view}:3:6"), "--json"],
+    ));
+    assert_eq!(answer["definition"][0]["line"], 4, "{answer}");
+    let refreshed = answer["index"]["refreshed_files"].to_string();
+    assert!(refreshed.contains("widgets_controller.rb"), "{answer}");
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -3610,7 +3632,7 @@ fn a_body_only_edit_is_still_written_even_though_the_surface_is_unchanged() {
 /// DEC-035: a query probes git in O(1), refreshes the file it was asked about,
 /// and discloses that the rest of the index may lag.
 #[test]
-fn a_query_refreshes_the_file_it_asks_about_and_says_the_rest_may_lag() {
+fn a_query_reads_every_file_changed_since_the_index_commits_included() {
     let (dir, db) = scratch("freshness");
     repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
@@ -3631,7 +3653,7 @@ fn a_query_refreshes_the_file_it_asks_about_and_says_the_rest_may_lag() {
         text.replace("class Widget < Base", "class Widget < Base\n  # a\n  # b"),
     )
     .unwrap();
-    // A second file that nobody will ask about, to prove the refresh is bounded.
+    // A second file that nobody will ask about, added and committed.
     fs::write(
         dir.join("other.rb"),
         "class Other\n  def only_here\n  end\nend\n",
@@ -3653,23 +3675,25 @@ fn a_query_refreshes_the_file_it_asks_about_and_says_the_rest_may_lag() {
 
     let out = trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]);
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["index"]["stale"], false, "nothing lags: {value}");
+    assert_eq!(value["index"]["refreshed"], "widget.rb", "{value}");
     assert_eq!(
-        value["index"]["stale"], true,
-        "staleness disclosed: {value}"
+        value["index"]["refreshed_files"],
+        serde_json::json!(["other.rb", "widget.rb"])
     );
-    assert_eq!(value["index"]["refreshed"], "widget.rb");
     assert_eq!(
         value["definition"][0]["line"], 14,
         "the answer must use the moved definition: {value}"
     );
 
-    // Bounded: the file nobody asked about is still absent from the index.
-    let other = trekr(&db, &dir, &["--refs", "Other#only_here", "--json"]);
-    let value: serde_json::Value = serde_json::from_slice(&other.stdout).unwrap();
-    assert!(
-        value["definition"].as_array().is_none_or(|d| d.is_empty()),
-        "a query must refresh one file, not the repo: {value}"
-    );
+    // The file nobody asked about is read too.
+    let other = json(&trekr(&db, &dir, &["--refs", "Other#only_here", "--json"]));
+    assert_eq!(other["definition"][0]["line"], 2, "{other}");
+
+    // Indexed, nothing differs: nothing to say.
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    let value = json(&trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]));
+    assert!(value.get("index").is_none(), "{value}");
 }
 
 /// A running `--index` holds the write lock for seconds. A read command
@@ -3718,6 +3742,11 @@ fn read_commands_answer_and_exit_while_another_process_writes() {
     timed(&["--refs", "Widget#helper", "--json"]);
     let value = json(&timed(&["--def", "widget.rb:9:5", "--json"]));
     assert_eq!(value["index"]["busy"], "widget.rb", "{value}");
+    assert_eq!(
+        value["index"]["busy_files"],
+        serde_json::json!(["widget.rb"]),
+        "{value}"
+    );
     assert!(value["index"]["refreshed"].is_null(), "{value}");
     assert_eq!(
         value["definition"][0]["line"], 12,
@@ -3732,37 +3761,127 @@ fn read_commands_answer_and_exit_while_another_process_writes() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// The probe's blind spot, pinned rather than discovered later (DEC-035).
-///
-/// An edit that nothing has told git about does not move `.git/index`, so the
-/// probe cannot see it and the answer is stale. That is the stated cost of an
-/// O(1) check, and `--index` is the cure.
+/// An edit nothing has told git about leaves `.git/index` alone, so the
+/// fingerprint cannot see it; git's own comparison of the working tree with
+/// its index does, and the edited file is re-read wherever it is — the one
+/// asked about or the one defining what it calls (DEC-035).
 #[test]
-fn an_edit_git_has_not_noticed_is_not_seen_by_the_probe() {
-    let (dir, db) = scratch("blind-spot");
+fn an_edit_git_has_not_noticed_is_read_by_the_next_query() {
+    let (dir, db) = scratch("unstaged");
     repo(&dir);
+    fs::write(dir.join("caller.rb"), "Widget.new.resize(1)\n").unwrap();
+    git(&dir, &["add", "-A"]);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
 
     let file = dir.join("widget.rb");
     let text = fs::read_to_string(&file).unwrap();
     fs::write(
         &file,
-        text.replace("class Widget < Base", "class Widget < Base\n  # a\n  # b"),
+        text.replace("class Widget < Base", "class Widget < Base\n  # a\n  # b")
+            .replace("  private", "  def fresh\n  end\n\n  private"),
     )
     .unwrap();
 
-    let out = trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]);
-    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    // The definition another file calls moved, in a file nobody asked about.
+    let value = json(&trekr(&db, &dir, &["--def", "caller.rb:1:12", "--json"]));
+    assert_eq!(value["definition"][0]["line"], 8, "{value}");
+    assert_eq!(value["index"]["stale"], false, "nothing else lags: {value}");
     assert!(
-        value.get("index").is_none(),
-        "the probe cannot see this, and must not claim it did: {value}"
+        value["index"]["refreshed"].is_null(),
+        "not the file asked about"
+    );
+    assert_eq!(
+        value["index"]["refreshed_files"],
+        serde_json::json!(["widget.rb"])
     );
 
-    // And an explicit index is the cure, as the DEC says.
+    // Nothing a query reads is kept: the next one reads it again.
+    let value = json(&trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]));
+    assert_eq!(value["definition"][0]["line"], 17, "{value}");
+    assert_eq!(value["index"]["refreshed"], "widget.rb", "{value}");
+
+    // A method only the edit defines.
+    fs::write(dir.join("caller.rb"), "Widget.new.fresh\n").unwrap();
+    let out = trekr(&db, &dir, &["--def", "caller.rb:1:12", "--json"]);
+    assert!(out.status.success(), "{out:?}");
+    assert_eq!(json(&out)["definition"][0]["line"], 12);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `--dead` and `--refs Owner#m` ask about every file: they read the edits
+/// git names as `--def` does, and say when the rest may lag — a commit
+/// moves git's index, and a file it adds is not read until `--index`.
+#[test]
+fn whole_checkout_questions_read_edits_and_say_what_may_lag() {
+    let (dir, db) = scratch("whole-fresh");
+    repo(&dir);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
-    let out = trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]);
-    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(value["definition"][0]["line"], 14, "after --index: {value}");
+    // `resize`'s tier.
+    let dead = |args: &[&str]| {
+        let value = json(&trekr(&db, &dir, &[&["--dead", "."], args].concat()));
+        let tier = value["candidates"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|row| row["name"] == "resize")
+            .map(|row| row["tier"].as_str().unwrap_or_default().to_string());
+        (value, tier)
+    };
+    let (value, tier) = dead(&["--json"]);
+    assert_eq!(tier.as_deref(), Some("unreferenced"), "{value}");
+    assert!(value.get("index").is_none(), "{value}");
+
+    // An edit git has not noticed calls it.
+    let file = dir.join("widget.rb");
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        text.replace("  def helper\n", "  def helper\n    resize(2)\n"),
+    )
+    .unwrap();
+    let (value, tier) = dead(&["--json"]);
+    assert_eq!(tier.as_deref(), Some("single-caller"), "{value}");
+    assert!(value["index"]["refreshed"].is_null(), "{value}");
+    assert_eq!(
+        value["index"]["refreshed_files"],
+        serde_json::json!(["widget.rb"]),
+        "{value}"
+    );
+    assert_eq!(value["index"]["stale"], false, "{value}");
+    let refs = json(&trekr(&db, &dir, &["--refs", "Widget#resize", "--json"]));
+    assert_eq!(refs["counts"]["confirmed"], 1, "{refs}");
+
+    // A new file, untracked or added, is read like an edited one.
+    fs::write(dir.join("other.rb"), "Widget.new.resize(3)\n").unwrap();
+    for added in [false, true] {
+        if added {
+            git(&dir, &["add", "-A"]);
+        }
+        let (value, _) = dead(&["--json"]);
+        assert_eq!(value["index"]["stale"], false, "{value}");
+        assert_eq!(
+            value["index"]["refreshed_files"],
+            serde_json::json!(["other.rb", "widget.rb"]),
+            "{value}"
+        );
+        let refs = json(&trekr(&db, &dir, &["--refs", "Widget#resize", "--json"]));
+        assert_eq!(refs["counts"]["confirmed"], 2, "{refs}");
+    }
+    let out = trekr(&db, &dir, &["--dead", "."]);
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("read as it is now"), "{said}");
+
+    // `--refs NAME` is a bare array in JSON: it says so on stderr, and
+    // NDJSON's closing line carries `index`.
+    let out = trekr(&db, &dir, &["--refs", "resize", "--json"]);
+    assert!(json(&out).is_array());
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("read as it is now"), "{said}");
+    let out = trekr(&db, &dir, &["--refs", "resize", "--ndjson"]);
+    let last: serde_json::Value =
+        serde_json::from_str(stdout(&out).lines().last().unwrap()).unwrap();
+    assert_eq!(last["answer"]["index"]["stale"], false, "{last}");
+    let _ = fs::remove_dir_all(&dir);
 }
 
 /// A file trekr finds by its name rather than by `git ls-files` — the
@@ -3858,6 +3977,171 @@ fn a_column_past_the_line_stays_on_its_line() {
     // At the end of a line holding one, it is that variable, as in the editor.
     let out = trekr(&db, &dir, &["--refs", "counter.rb:4:99", "--json"]);
     assert_eq!(json(&out)["name"], "count", "{out:?}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// What a query reads from the working tree is for that query alone: an
+/// edit reverted is not answered from, and the store holds only what
+/// `--index` read (DEC-035).
+#[test]
+fn a_reverted_edit_is_not_answered_from() {
+    let (dir, db) = scratch("reverted");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    let file = dir.join("widget.rb");
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        text.replace("  private", "  def fresh\n  end\n\n  private"),
+    )
+    .unwrap();
+    let value = json(&trekr(&db, &dir, &["--refs", "Widget#fresh", "--json"]));
+    assert_eq!(value["definition"][0]["line"], 10, "{value}");
+
+    git(&dir, &["checkout", "--", "widget.rb"]);
+    let out = trekr(&db, &dir, &["--refs", "Widget#fresh", "--json"]);
+    let value = json(&out);
+    assert!(
+        value["definition"].as_array().is_none_or(|d| d.is_empty()),
+        "{value}"
+    );
+    assert!(value.get("index").is_none(), "{value}");
+    // A touch, and git's cache refreshed or not, is no edit.
+    for refresh in [false, true] {
+        let now = std::time::SystemTime::now() + std::time::Duration::from_secs(5);
+        fs::File::options()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_modified(now)
+            .unwrap();
+        if refresh {
+            git(&dir, &["status"]);
+        }
+        let value = json(&trekr(&db, &dir, &["--dead", ".", "--json"]));
+        assert!(value.get("index").is_none(), "{value}");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A file git does not track is read as one it does, edited or deleted.
+#[test]
+fn an_untracked_file_is_read_as_it_is_now() {
+    let (dir, db) = scratch("untracked");
+    repo(&dir);
+    fs::write(dir.join("extra.rb"), "class Extra\n  def y\n  end\nend\n").unwrap();
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    fs::write(
+        dir.join("extra.rb"),
+        "class Extra\n  def y\n    z\n  end\n\n  def z\n  end\nend\n",
+    )
+    .unwrap();
+    let value = json(&trekr(&db, &dir, &["--def", "extra.rb:3:5", "--json"]));
+    assert_eq!(value["definition"][0]["line"], 6, "{value}");
+    assert_eq!(value["index"]["refreshed"], "extra.rb", "{value}");
+    let value = json(&trekr(&db, &dir, &["--refs", "Extra#z", "--json"]));
+    assert_eq!(value["counts"]["confirmed"], 1, "{value}");
+    // A class only a new file declares: the namespace moves too.
+    fs::write(dir.join("gadget.rb"), "class Gadget\nend\n").unwrap();
+    fs::write(dir.join("uses.rb"), "Gadget\n").unwrap();
+    for _ in 0..2 {
+        let value = json(&trekr(&db, &dir, &["--def", "uses.rb:1:1", "--json"]));
+        assert_eq!(value["definition"][0]["path"], "gadget.rb", "{value}");
+    }
+
+    fs::remove_file(dir.join("extra.rb")).unwrap();
+    let value = json(&trekr(&db, &dir, &["--refs", "Extra#y", "--json"]));
+    assert!(
+        value["definition"].as_array().is_none_or(|d| d.is_empty()),
+        "a deleted file defines nothing: {value}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// More changes than a query reads leaves the rest to `--index`, and says
+/// so — but the file asked about is still read.
+#[test]
+fn past_the_bulk_limit_the_file_asked_about_is_still_read() {
+    let (dir, db) = scratch("bulk");
+    repo(&dir);
+    for i in 0..40 {
+        fs::write(dir.join(format!("w{i}.rb")), format!("class W{i}\nend\n")).unwrap();
+    }
+    git(&dir, &["add", "-A"]);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    for i in 0..40 {
+        fs::write(
+            dir.join(format!("w{i}.rb")),
+            format!("# moved\nclass W{i}\nend\n"),
+        )
+        .unwrap();
+    }
+    let file = dir.join("widget.rb");
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        text.replace("    helper\n", "    helper\n    fresh\n")
+            .replace("  private", "  def fresh\n  end\n\n  private"),
+    )
+    .unwrap();
+    let value = json(&trekr(&db, &dir, &["--def", "widget.rb:8:5", "--json"]));
+    assert_eq!(value["definition"][0]["line"], 11, "{value}");
+    assert_eq!(value["index"]["stale"], true, "{value}");
+    assert_eq!(
+        value["index"]["refreshed_files"],
+        serde_json::json!(["widget.rb"])
+    );
+    let cause = value["index"]["cause"].as_str().unwrap();
+    assert!(cause.contains("more than a query reads"), "{cause}");
+    let out = trekr(&db, &dir, &["--def", "widget.rb:8:5"]);
+    let said = String::from_utf8_lossy(&out.stderr);
+    assert!(said.contains("more than a query reads"), "{said}");
+    assert!(!said.contains("moved since"), "{said}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A git that fails or stalls is not taken as "nothing changed": the answer
+/// says the working tree was not checked, and still reads the file asked
+/// about.
+#[test]
+fn a_git_that_cannot_say_what_changed_is_disclosed() {
+    let (dir, db) = scratch("git-fails");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    let file = dir.join("widget.rb");
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        text.replace("    helper\n", "    helper\n    fresh\n")
+            .replace("  private", "  def fresh\n  end\n\n  private"),
+    )
+    .unwrap();
+    let (bin, _) = support::scratch("git-fails-bin");
+    let real = support::git_only().join("git");
+    for (mode, said) in [
+        ("exit 128", "git could not say"),
+        ("/bin/sleep 3", "took longer than"),
+    ] {
+        let script = format!(
+            "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = status ] && {{ {mode}; }}; done\nexec {} \"$@\"\n",
+            real.display()
+        );
+        fs::write(bin.join("git"), script).unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+        let path = [("PATH", bin.to_str().unwrap())];
+        let started = std::time::Instant::now();
+        let out = trekr_env(&db, &dir, &["--def", "widget.rb:8:5", "--json"], &path);
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "{mode}: waited out git"
+        );
+        let value = json(&out);
+        assert_eq!(value["definition"][0]["line"], 11, "{mode}: {value}");
+        assert_eq!(value["index"]["stale"], true, "{mode}: {value}");
+        let cause = value["index"]["cause"].as_str().unwrap();
+        assert!(cause.contains(said), "{mode}: {cause}");
+    }
     let _ = fs::remove_dir_all(&dir);
 }
 

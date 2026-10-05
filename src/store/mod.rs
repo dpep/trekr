@@ -37,7 +37,14 @@ pub(crate) struct Store {
     /// Where the writes since the last `take_timing` spent their time, for
     /// `--index --profile`.
     timing: WriteTiming,
+    /// Each checkout `overlay` answers for on this connection: how far that
+    /// moves its keys, and the files, for a `reopen` to answer the same.
+    overlaid: HashMap<String, (Digests, Overlay)>,
 }
+
+/// What a query reads in place of a checkout's map (`Store::overlay`): each
+/// path at its blob, or absent for `None`.
+pub(crate) type Overlay = Vec<(String, Option<Oid>)>;
 
 /// How a write lays a checkout's map down.
 #[derive(Clone, Copy, PartialEq)]
@@ -264,11 +271,16 @@ impl Store {
     /// caller that needs its own handle has to fall back to reading everything
     /// through the one it already holds.
     pub(crate) fn reopen(&self) -> Result<Option<Store>> {
-        match &self.path {
-            Some(path) if self.existing => Store::open_existing(path).map(Some),
-            Some(path) => Store::open(path).map(Some),
-            None => Ok(None),
+        let mut store = match &self.path {
+            Some(path) if self.existing => Store::open_existing(path)?,
+            Some(path) => Store::open(path)?,
+            None => return Ok(None),
+        };
+        // A second connection answers as this one does.
+        for (root, (_, files)) in &self.overlaid {
+            store.overlay(root, files)?;
         }
+        Ok(Some(store))
     }
 
     /// The database file, or `None` for an in-memory store.
@@ -311,6 +323,7 @@ impl Store {
             file: None,
             existing: false,
             timing: WriteTiming::default(),
+            overlaid: HashMap::new(),
         };
         let version = schema_version(&store.conn)?;
         if version > layout.version {
@@ -1450,9 +1463,24 @@ impl Store {
                 Ok((r.get(0)?, r.get(1)?))
             })?
             .collect::<Result<_>>()?;
+        // A key is a sum over files, so an overlay moves it by its own.
+        let shift = |root: &String| {
+            let shift = self
+                .overlaid
+                .get(root)
+                .map(|(shift, _)| *shift)
+                .unwrap_or_default();
+            match column {
+                "surface_key" => shift.0,
+                _ => shift.1,
+            }
+        };
         Ok(roots
             .iter()
-            .map(|root| known.get(root).copied().unwrap_or(0))
+            .map(|root| match known.get(root) {
+                Some(key) => key.wrapping_add(shift(root)),
+                None => 0,
+            })
             .collect())
     }
 
@@ -1919,19 +1947,126 @@ impl Store {
         Ok(true)
     }
 
-    /// git's view of this checkout when it was last indexed (DEC-035).
-    ///
-    /// `None` when the checkout is unknown, which the caller must not confuse
-    /// with `Some(0)` — a gem, or a checkout indexed before this column
-    /// existed, both of which are legitimately unprobeable.
-    pub(crate) fn git_state(&self, root: &str) -> Result<Option<i64>> {
+    /// `root`'s map as the index wrote it, path → blob oid, whatever this
+    /// connection overlays.
+    pub(crate) fn file_map(&self, root: &str) -> Result<HashMap<String, String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT f.path, b.oid FROM main.file f JOIN blob b ON b.id = f.blob_id
+              WHERE f.checkout_id = (SELECT id FROM checkout WHERE root = ?1)",
+        )?;
+        let rows = stmt.query_map(params![root], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect()
+    }
+
+    /// Whether `root` is a repository's checkout, not a gem's or a Ruby's.
+    pub(crate) fn is_repo(&self, root: &str) -> Result<bool> {
         self.conn
             .query_row(
-                "SELECT git_state FROM checkout WHERE root = ?1",
+                "SELECT kind = 'repo' FROM checkout WHERE root = ?1",
                 params![root],
                 |r| r.get(0),
             )
             .optional()
+            .map(|repo| repo.unwrap_or(false))
+    }
+
+    /// Record a blob's facts. Content-addressed, so a query may: the next
+    /// index finds the blob known, and no map points at it until one does.
+    /// Like `refresh_file`, it fails at once when another process is writing.
+    pub(crate) fn add_blob(&mut self, oid: &Oid, facts: &Facts) -> Result<()> {
+        let tx = self.conn.transaction()?;
+        Store::check_schema(&tx)?;
+        insert_facts(&tx, oid, facts)?;
+        tx.commit()
+    }
+
+    /// Answer as if `root`'s map held `files` — each path at its blob, or
+    /// absent for `None` — on this connection only, until it closes (DEC-035).
+    /// Nothing is written: a temporary copy of the whole map, named `file`
+    /// with the same indexes and analyzed, shadows it, so every query reads
+    /// it with the plan it has now. A view over the map would cost no copy,
+    /// but a join cannot reach into a `UNION ALL` view, and the tree build's
+    /// edge queries went from 17 to 133 ms on mastodon. Every blob named must
+    /// be in the store already (`add_blob`). Once per checkout per connection.
+    pub(crate) fn overlay(&mut self, root: &str, files: &[(String, Option<Oid>)]) -> Result<()> {
+        if files.is_empty() || self.overlaid.contains_key(root) {
+            return Ok(());
+        }
+        let checkout_id: i64 = self.conn.query_row(
+            "SELECT id FROM checkout WHERE root = ?1",
+            params![root],
+            |r| r.get(0),
+        )?;
+        let mut shift = Digests::default();
+        let mut rows = Vec::with_capacity(files.len());
+        for (path, oid) in files {
+            let hashed = path_hash(path);
+            let old: Option<Digests> = self
+                .conn
+                .query_row(
+                    "SELECT b.surface, b.namespace FROM main.file f JOIN blob b ON b.id = f.blob_id
+                      WHERE f.checkout_id = ?1 AND f.path = ?2",
+                    params![checkout_id, path],
+                    |r| Ok(Digests(r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            if let Some(old) = old {
+                shift = shift.sub(hashed, old);
+            }
+            let blob_id = match oid {
+                Some(oid) => {
+                    let (id, new) = self.conn.query_row(
+                        "SELECT id, surface, namespace FROM blob WHERE oid = ?1",
+                        params![oid.0],
+                        |r| Ok((r.get::<_, i64>(0)?, Digests(r.get(1)?, r.get(2)?))),
+                    )?;
+                    shift = shift.add(hashed, new);
+                    Some(id)
+                }
+                None => None,
+            };
+            rows.push((path, blob_id));
+        }
+        // Unqualified, `file` is the copy once it exists: SQLite looks in
+        // `temp` first.
+        let tx = self.conn.transaction()?;
+        if self.overlaid.is_empty() {
+            tx.execute_batch(
+                "CREATE TEMP TABLE file (
+                   checkout_id INTEGER NOT NULL,
+                   path        TEXT    NOT NULL,
+                   blob_id     INTEGER NOT NULL,
+                   PRIMARY KEY (checkout_id, path)
+                 ) WITHOUT ROWID;
+                 INSERT INTO temp.file SELECT checkout_id, path, blob_id FROM main.file;
+                 CREATE INDEX temp.file_blob ON file(blob_id);",
+            )?;
+        }
+        for (path, blob_id) in rows {
+            match blob_id {
+                Some(blob_id) => tx.execute(
+                    "INSERT OR REPLACE INTO temp.file (checkout_id, path, blob_id)
+                     VALUES (?1, ?2, ?3)",
+                    params![checkout_id, path, blob_id],
+                )?,
+                None => tx.execute(
+                    "DELETE FROM temp.file WHERE checkout_id = ?1 AND path = ?2",
+                    params![checkout_id, path],
+                )?,
+            };
+        }
+        // The plans the map's statistics choose, not the planner's guesses.
+        tx.execute_batch("ANALYZE temp;")?;
+        tx.commit()?;
+        self.overlaid
+            .insert(root.to_string(), (shift, files.to_vec()));
+        Ok(())
+    }
+
+    /// Whether an overlay on this connection moves a checkout's namespace —
+    /// a class, module or constant edited — rather than only its methods.
+    pub(crate) fn overlays_namespace(&self) -> bool {
+        self.overlaid.values().any(|(shift, _)| shift.1 != 0)
     }
 
     /// Whether `root`'s map holds `path`, relative to it.

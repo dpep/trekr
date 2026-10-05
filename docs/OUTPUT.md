@@ -133,24 +133,31 @@ whose owner the source does not name — in a block, or `def obj.x` — is
 **`X.new`** lands on the `initialize` it runs (on a custom `def self.new`, on
 that); `trekr Widget.new` or `--refs Widget.new` asks about it.
 
-**Freshness.** `--def` checks git in O(1) and re-reads the file you asked
-about if the checkout moved, so a definition that shifted lines is found at
-its new line without reindexing. When the answer carries `index`:
+**Freshness** (DEC-035). `--def`, `--dead` and every `--refs` compare the
+working tree with the index and read each file edited, added (untracked
+too) or deleted since, for that answer only — nothing is written to the
+store. When anything differed, the answer carries `index`:
 
 ```json
-"index": { "stale": true, "refreshed": "app/models/user.rb", "hint": "trekr --index ~/code/app" }
+"index": { "stale": false, "refreshed": "app/models/user.rb",
+           "refreshed_files": ["app/models/user.rb", "app/models/post.rb"],
+           "hint": "trekr --index ~/code/app" }
 ```
 
-- `index.stale` — the checkout moved since it was indexed. The file you
-  asked about was re-read (`refreshed` names it when it had changed); other
-  files may lag, and `hint` is the cure.
-- `index.busy` — another trekr was writing the index, so the file you asked
-  about was answered from its indexed version rather than wait.
+- `index.refreshed_files` — every file read as it is now. `refreshed` is
+  the file asked about when it is one of them, else `null`.
+- `index.busy_files` — changed, but another trekr was writing the index, so
+  answered from the indexed version. `busy` is the file asked about among
+  them, else `null`. Both appear only when there are any.
+- `index.stale` — other files may still differ from what was read: more
+  than 32 changed (the file asked about is still read), git failed or took
+  over a second, or `busy_files`. `index.cause` says which, and `hint` is
+  the cure.
 
-No `index` field means the checkout has not moved since it was indexed. An
-edit git has not noticed — no `add`, `status` or `diff` since — is invisible
-to the check. `--refs`, `--dead`, `--ancestors` and cards carry no `index`
-field and read only what is indexed: run `trekr --index` after editing.
+No `index` field means the working tree matched the index. `--refs NAME`'s
+`--json` is a bare array, so it says this on stderr, and `--ndjson` in its
+closing line. `--ancestors` and cards carry no `index` and read only what is
+indexed.
 
 ## `--refs`
 

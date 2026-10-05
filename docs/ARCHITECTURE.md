@@ -319,7 +319,7 @@ in it; they stay demand-loaded from SQL.
 A snapshot is built by every `--index` whose key has no snapshot yet — the
 one the LSP starts in the background and one someone runs — after the answer
 is printed, and otherwise by whichever query first finds none for the current
-key (a `--def` that refreshed an edited file, a snapshot deleted by hand). The
+key (a query that read an edited file, a snapshot deleted by hand). The
 cost is the same wherever it lands, so it lands on the command whose budget is
 seconds rather than on the query whose budget is milliseconds (DEC-192,
 revisiting DEC-065). The LSP stamps each tree with that key and every root's
@@ -745,12 +745,14 @@ rather than a sentinel.
 
 **Writers wait; queries never do** (DEC-066). WAL lets a query read while an
 index writes, and the 5 s `busy_timeout` makes a second *writer* wait its turn.
-A query path writes only best-effort — the `optimize` on close, a one-file
-refresh — and neither waits on the lock: the close drops its timeout to zero,
-and a refresh's transaction reads first, so SQLite refuses its upgrade to a
-write at once. The answer comes from what is committed; `--def` names the file
-it could not refresh (`index.busy`), and the LSP retries a save's refresh until
-it lands.
+A query path writes only best-effort — the `optimize` on close, a new blob's
+facts — and neither waits on the lock: the close drops its timeout to zero,
+and a blob's transaction reads first, so SQLite refuses its upgrade to a
+write at once. The answer comes from what is committed; a query names the
+files it could not read in (`index.busy_files`), and the LSP retries a save's
+refresh until it lands. What a query reads of the working tree is never
+written to a checkout's map: it is an overlay on that query's connection
+(`Store::overlay`, DEC-035).
 
 **One schema per store, changed atomically** (DEC-079). A version mismatch is a
 drop-and-create inside one `BEGIN IMMEDIATE` that re-reads `user_version` under

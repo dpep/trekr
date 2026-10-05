@@ -256,7 +256,7 @@ pub(super) fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCod
             None => checkouts.push((root, vec![path.clone()])),
         }
     }
-    let store = open_store()?;
+    let mut store = open_store()?;
     for (root, _) in &checkouts {
         if let Some(code) = autoindex::ensure(out, &store, root, Need::Whole)? {
             return Ok(code);
@@ -290,6 +290,10 @@ pub(super) fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCod
             }
             return Ok(ExitCode::from(2));
         }
+    }
+    // Every candidate is a claim about every file: read the edits first.
+    for (root, _) in &checkouts {
+        freshen(out, &mut store, root, None, probe(root));
     }
     // Across checkouts no one root is "here", so text writes every path
     // whole rather than relative to whichever scope came first.

@@ -787,10 +787,14 @@ fn warming_note(root: &str, warming: &crate::store::Warming) -> serde_json::Valu
 /// of the tree read, and a certain absence demoted to a residue — the method
 /// may be in a file not read yet.
 fn disclose(value: &mut serde_json::Value) {
-    let Some((root, warming)) = warming() else {
+    let Some(object) = value.as_object_mut() else {
         return;
     };
-    let Some(object) = value.as_object_mut() else {
+    // What the query's freshness check found (DEC-035).
+    if let Some(index) = index_note() {
+        object.entry("index").or_insert(index);
+    }
+    let Some((root, warming)) = warming() else {
         return;
     };
     object.insert("warming".into(), warming_note(&root, &warming));
@@ -1003,7 +1007,11 @@ fn emit_rows<T: serde::Serialize>(out: Output, rows: &[T]) -> anyhow::Result<boo
         }
         Output::Ndjson => {
             let mut w = std::io::BufWriter::new(std::io::stdout().lock());
-            ndjson_rows(rows, serde_json::Map::new(), &mut w)?;
+            let mut head = serde_json::Map::new();
+            if let Some(index) = index_note() {
+                head.insert("index".into(), index);
+            }
+            ndjson_rows(rows, head, &mut w)?;
             w.flush()?;
         }
     }
@@ -3903,7 +3911,7 @@ fn cmd_refs(
     check_method_shape(&query, text)?;
     let root = asked_from(context)?;
     let root_str = root.to_string_lossy().into_owned();
-    let store = open_store()?;
+    let mut store = open_store()?;
     if let Some(code) = autoindex::ensure(out, &store, &root, Need::Whole)? {
         return Ok(code);
     }
@@ -3917,10 +3925,17 @@ fn cmd_refs(
     // query has no use for.
     if query.owner.is_none() {
         crate::usage::flag("by-name");
+        // `--json` is a bare array, with no room for `index`: it is said on
+        // stderr, as text says it. NDJSON's closing line carries it.
+        let say = match out {
+            Output::Json => Output::Text,
+            other => other,
+        };
+        freshen(say, &mut store, &root, None, probe(&root));
         return cmd_refs_by_name(out, &root, &root_str, &store, &query);
     }
 
-    let tree = build_tree(&store, &root_str)?;
+    let tree = fresh_tree(out, &mut store, &root, None)?;
     let query = refs::constructing(&tree, query);
     let (owner, definition) = refs::definition_of(&tree, &query);
     let (status, reason) = method_verdict(&tree, &query, owner.as_deref(), !definition.is_empty());
@@ -4080,7 +4095,7 @@ fn cmd_refs_at(
     }
     // Before anything reads it unbounded: a pipe or a device is refused here.
     let source = read_input(file)?;
-    let (root, store) = checkout_for_query(file, pinned)?;
+    let (root, mut store) = checkout_for_query(file, pinned)?;
     let root_str = root.to_string_lossy().into_owned();
     // References are anywhere: a position's own part is not enough.
     if let Some(code) = autoindex::ensure(out, &store, &root, Need::Whole)? {
@@ -4094,7 +4109,7 @@ fn cmd_refs_at(
     let relative = absolute
         .strip_prefix(&root)
         .map_or_else(|_| spec.path.clone(), |p| p.to_string_lossy().into_owned());
-    let tree = build_tree(&store, &root_str)?;
+    let tree = fresh_tree(out, &mut store, &root, Some(file))?;
     let files = crate::query::members::CheckoutFiles::new(&store, &root, &root_str);
     if let Some((path, def)) =
         crate::query::members::member_at_position(&tree, &files, &relative, spec.line, spec.col)
@@ -4447,50 +4462,281 @@ fn checkout_for_query(path: &Path, pinned: Option<&Path>) -> anyhow::Result<(Pat
     Ok((root, store))
 }
 
-/// Bring the file being asked about up to date, if git says anything moved.
+/// What a query read from the working tree in place of the index, and why
+/// the rest may still lag (DEC-035).
 ///
-/// DEC-035's policy in one function: an O(1) probe, then a bounded refresh of
-/// the queried file alone. Returns what to disclose — the caller must say when
-/// the rest of the index may lag, because an answer that quietly rests on stale
-/// facts is the failure this whole mechanism exists to prevent.
-fn refresh_for_query(store: &mut Store, root: &Path, file: &Path) -> Option<serde_json::Value> {
-    let root_str = root.to_string_lossy().into_owned();
-    let current = scan::git_fingerprint(root)?;
-    let recorded = store.git_state(&root_str).ok().flatten()?;
-    // A gem, or a checkout indexed before this column existed. Nothing to
-    // compare, and claiming staleness would be as wrong as claiming freshness.
-    if recorded == 0 || recorded == current {
+/// The model: the store holds what `--index` read, and nothing a query reads
+/// is written to it. Each query compares the working tree with the store and
+/// answers as if the store held what it found (`Store::overlay`), for that
+/// query alone — so a reverted edit simply stops being overlaid, and an
+/// untracked file is read like a tracked one.
+struct Freshness {
+    root: String,
+    /// The file the question is about, relative to `root`, when it is one.
+    queried: Option<String>,
+    /// Read as they are now rather than as indexed: edited, added or deleted
+    /// since `--index`.
+    refreshed: Vec<String>,
+    /// Changed, and left at the indexed version: another trekr is writing,
+    /// so a new blob's facts could not be recorded.
+    busy: Vec<String>,
+    /// Why files beyond those read may still differ from the index, when
+    /// they may: too many changed, or git could not say what did.
+    lag: Option<String>,
+    /// What the answer reads in place of the index, applied to every store
+    /// connection this command opens on `root`.
+    overlay: crate::store::Overlay,
+}
+
+impl Freshness {
+    fn hint(&self) -> String {
+        format!("trekr --index {}", paths::pretty(&self.root))
+    }
+
+    fn stale(&self) -> bool {
+        self.lag.is_some() || !self.busy.is_empty()
+    }
+
+    /// On stderr, so stdout stays the answer.
+    fn say(&self) {
+        if !self.refreshed.is_empty() {
+            eprintln!(
+                "trekr: {} changed since the index — read as it is now",
+                self.refreshed.join(", ")
+            );
+        }
+        if !self.busy.is_empty() {
+            eprintln!(
+                "trekr: {} changed since the index, which another trekr is writing — \
+                 answered from the indexed version",
+                self.busy.join(", ")
+            );
+        }
+        if let Some(lag) = &self.lag {
+            eprintln!("trekr: {lag}; other files may lag ({})", self.hint());
+        }
+    }
+}
+
+/// Each checkout this command checked, and what it found — `None`, current.
+static CHECKED: std::sync::Mutex<Vec<(String, Option<Freshness>)>> =
+    std::sync::Mutex::new(Vec::new());
+
+fn checked() -> std::sync::MutexGuard<'static, Vec<(String, Option<Freshness>)>> {
+    CHECKED
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// `index` beside a JSON answer, from what this command's checks found:
+/// absent when every checkout it asked was current. Several checkouts (a
+/// `--dead` across two) are said as one.
+fn index_note() -> Option<serde_json::Value> {
+    let checked = checked();
+    let found: Vec<&Freshness> = checked.iter().filter_map(|(_, f)| f.as_ref()).collect();
+    if found.is_empty() {
         return None;
     }
-
-    let absolute = std::fs::canonicalize(file).ok()?;
-    let relative = absolute
-        .strip_prefix(root)
-        .ok()?
-        .to_string_lossy()
-        .into_owned();
-    let bytes = crate::scan::read_source(&absolute).ok()?;
-    let oid = scan::hash_blob(&bytes);
-    // Parse only when this blob is genuinely new — the common case after a
-    // branch switch is bytes the store has seen before, which cost one hash.
-    let known = store.has_blob(&oid).unwrap_or(false);
-    let facts = (!known).then(|| crate::extract::extract_file(&relative, &bytes));
-    // Busy means another process is writing the index. The answer comes from
-    // what it has committed, and says this file may lag (DEC-066).
-    let (changed, busy) = match store.refresh_file(&root_str, &relative, &oid, facts.as_ref()) {
-        Ok(changed) => (changed, false),
-        Err(error) => (false, crate::store::is_busy(&error)),
+    let hint: Vec<String> = found.iter().map(|f| f.hint()).collect();
+    // `refreshed` and `busy` name the file asked about, as they always have;
+    // `refreshed_files` and `busy_files` list every file.
+    let asked = |list: fn(&Freshness) -> &Vec<String>| {
+        found.iter().find_map(|f| {
+            let queried = f.queried.as_ref()?;
+            list(f).contains(queried).then(|| queried.clone())
+        })
     };
-
-    let mut freshness = serde_json::json!({
-        "stale": true,
-        "refreshed": changed.then(|| relative.clone()),
-        "hint": format!("trekr --index {}", paths::pretty(&root_str)),
+    let mut value = serde_json::json!({
+        "stale": found.iter().any(|f| f.stale()),
+        "refreshed": asked(|f| &f.refreshed),
+        "refreshed_files": found.iter().flat_map(|f| f.refreshed.iter()).collect::<Vec<_>>(),
+        "hint": hint.join(" && "),
     });
-    if busy {
-        freshness["busy"] = relative.into();
+    let busy: Vec<&String> = found.iter().flat_map(|f| f.busy.iter()).collect();
+    if !busy.is_empty() {
+        value["busy"] = asked(|f| &f.busy).into();
+        value["busy_files"] = serde_json::json!(busy);
     }
-    Some(freshness)
+    let lag: Vec<&str> = found.iter().filter_map(|f| f.lag.as_deref()).collect();
+    if !lag.is_empty() {
+        value["cause"] = lag.join("; ").into();
+    }
+    Some(value)
+}
+
+/// Read what changed since the index into `store`, for this command only
+/// (DEC-035): every file `probe` finds edited, added or deleted, up to
+/// `BULK`, and the file asked about whatever it found. Once per checkout
+/// per command — a second store opened on a checkout already checked
+/// (`probe` is `None`) gets the same reading. Says what it found
+/// (`Freshness::say`, `index_note`); returns whether the store now answers
+/// differently, so a tree built before must be built again.
+fn freshen(
+    out: Output,
+    store: &mut Store,
+    root: &Path,
+    queried: Option<&Path>,
+    probe: Option<scan::Probe>,
+) -> bool {
+    let root_str = root.to_string_lossy().into_owned();
+    let Some(probe) = probe else {
+        let overlay = checked()
+            .iter()
+            .find(|(known, _)| *known == root_str)
+            .and_then(|(_, found)| Some(found.as_ref()?.overlay.clone()))
+            .unwrap_or_default();
+        // Not read twice: what it found was said when it was.
+        return !overlay.is_empty() && store.overlay(&root_str, &overlay).is_ok();
+    };
+    let found = refresh_for_query(store, root, queried, probe);
+    if let Some(found) = &found {
+        crate::usage::flag("stale");
+        if out == Output::Text {
+            found.say();
+        }
+    }
+    let overlaid = found.as_ref().is_some_and(|f| !f.overlay.is_empty());
+    checked().push((root_str, found));
+    overlaid
+}
+
+/// The working tree of `root`, begun reading — unless this command has
+/// checked `root` already.
+fn probe(root: &Path) -> Option<scan::Probe> {
+    let root_str = root.to_string_lossy();
+    let known = checked().iter().any(|(known, _)| *known == root_str);
+    (!known).then(|| scan::Probe::start(root))
+}
+
+fn refresh_for_query(
+    store: &mut Store,
+    root: &Path,
+    queried: Option<&Path>,
+    probe: scan::Probe,
+) -> Option<Freshness> {
+    let root_str = root.to_string_lossy().into_owned();
+    // A gem never moves; a checkout a first index is still filling already
+    // says its answers are partial (DEC-320).
+    if !store.is_repo(&root_str).unwrap_or(false)
+        || store.warming(&root_str).ok().flatten().is_some()
+    {
+        return None;
+    }
+    let stored = store.file_map(&root_str).ok()?;
+    let queried = queried
+        .and_then(|file| std::fs::canonicalize(file).ok())
+        .and_then(|file| Some(file.strip_prefix(root).ok()?.to_string_lossy().into_owned()));
+    let mut lag = None;
+    let mut changed: crate::store::Overlay = match probe.finish() {
+        Ok(now) => {
+            let gone = stored
+                .keys()
+                .filter(|path| !now.contains_key(*path))
+                .map(|path| (path.clone(), None));
+            let mut changed: crate::store::Overlay = gone.collect();
+            changed.extend(
+                now.into_iter()
+                    .filter(|(path, oid)| stored.get(path) != Some(&oid.0))
+                    .map(|(path, oid)| (path, Some(oid))),
+            );
+            changed
+        }
+        Err(why) => {
+            lag = Some(why);
+            Vec::new()
+        }
+    };
+    // More is an operation on the checkout — a branch switch, a rebase —
+    // which `--index` reads at once rather than every query one by one.
+    if changed.len() > scan::BULK {
+        lag = Some(format!(
+            "{} files changed since the index, more than a query reads",
+            changed.len()
+        ));
+        changed.retain(|(path, _)| Some(path) == queried.as_ref());
+    }
+    // The file asked about is read whatever git said: its bytes are the
+    // question.
+    if let Some(path) = &queried
+        && scan::is_indexed(path)
+        && !changed.iter().any(|(changed, _)| changed == path)
+        && let Ok(bytes) = scan::read_source(root.join(path))
+    {
+        let oid = scan::hash_blob(&bytes);
+        if stored.get(path) != Some(&oid.0) {
+            changed.push((path.clone(), Some(oid)));
+        }
+    }
+    let (mut refreshed, mut busy, mut overlay) = (Vec::new(), Vec::new(), Vec::new());
+    for (path, oid) in changed {
+        let oid = match oid {
+            Some(oid) if !store.has_blob(&oid).unwrap_or(false) => {
+                // New bytes: parsed, and their facts recorded — content-
+                // addressed, so the next index finds them known.
+                let Ok(bytes) = scan::read_source(root.join(&path)) else {
+                    lag.get_or_insert_with(|| format!("{path} could not be read"));
+                    continue;
+                };
+                // Read again, the bytes may have moved since git looked.
+                let oid = scan::hash_blob(&bytes);
+                if !store.has_blob(&oid).unwrap_or(false) {
+                    let facts = crate::extract::extract_file(&path, &bytes);
+                    // Busy: another process is writing the index. The answer
+                    // comes from what it has committed (DEC-066).
+                    match store.add_blob(&oid, &facts) {
+                        Ok(()) => {}
+                        Err(error) if crate::store::is_busy(&error) => {
+                            busy.push(path);
+                            continue;
+                        }
+                        Err(_) => {
+                            lag.get_or_insert_with(|| format!("{path} could not be read"));
+                            continue;
+                        }
+                    }
+                }
+                Some(oid)
+            }
+            known => known,
+        };
+        refreshed.push(path.clone());
+        overlay.push((path, oid));
+    }
+    if store.overlay(&root_str, &overlay).is_err() {
+        lag = Some("the edits since the index could not be read".to_string());
+        refreshed.clear();
+        overlay.clear();
+    }
+    (lag.is_some() || !refreshed.is_empty() || !busy.is_empty()).then_some(Freshness {
+        root: root_str,
+        queried,
+        refreshed,
+        busy,
+        lag,
+        overlay,
+    })
+}
+
+/// The tree a query answers from, with what changed since the index read in
+/// first. git's look at the working tree runs while the tree is built, which
+/// is most queries' whole answer; when it finds a change, the tree is built
+/// again over it.
+fn fresh_tree(
+    out: Output,
+    store: &mut Store,
+    root: &Path,
+    queried: Option<&Path>,
+) -> anyhow::Result<OneShotTree> {
+    let root_str = root.to_string_lossy();
+    let Some(probe) = probe(root) else {
+        freshen(out, store, root, queried, None);
+        return build_tree(store, &root_str);
+    };
+    let tree = build_tree(store, &root_str)?;
+    Ok(match freshen(out, store, root, queried, Some(probe)) {
+        true => build_tree(store, &root_str)?,
+        false => tree,
+    })
 }
 
 /// `trekr <input>` — one argument, dispatched on its shape (DEC-036).
@@ -4654,11 +4900,11 @@ fn cmd_def(
     let file = std::fs::canonicalize(&spec.path)
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| spec.path.clone());
-    let checkout = checkout_for_query(Path::new(&spec.path), pinned).ok();
+    let mut checkout = checkout_for_query(Path::new(&spec.path), pinned).ok();
     // The branches below answer from the file alone, so before any index is
     // waited on, writing their paths against the file's checkout.
-    let file_alone = || {
-        if let Some((root, store)) = &checkout {
+    let file_alone = |checkout: &Option<(PathBuf, Store)>| {
+        if let Some((root, store)) = checkout {
             answered_alone(store, root);
         }
         index_free();
@@ -4668,7 +4914,7 @@ fn cmd_def(
         .templates
         .iter()
         .find(|t| t.pos.line == spec.line && spec.col >= t.pos.col && spec.col < t.pos.col + t.len)
-        && let Some((root, store)) = &checkout
+        && let Some((root, store)) = checkout.as_mut().map(|(root, store)| (&*root, store))
     {
         let relative = std::fs::canonicalize(&spec.path)
             .ok()
@@ -4677,7 +4923,7 @@ fn cmd_def(
             .unwrap_or_else(|| spec.path.clone());
         let class = match &template.names {
             crate::core::Named::Object { value, .. } => {
-                let tree = build_tree(store, &root.to_string_lossy())?;
+                let tree = fresh_tree(out, store, root, Some(Path::new(&spec.path)))?;
                 crate::resolve::views::value_class(&tree, &facts, value, template.pos, &relative)
             }
             _ => None,
@@ -4700,7 +4946,7 @@ fn cmd_def(
     if crate::query::position::at_facts(&facts, spec.line, spec.col).is_none()
         && crate::query::position::word_at(&source, spec.line, spec.col).as_deref() == Some("super")
     {
-        file_alone();
+        file_alone(&checkout);
         return report(
             out,
             serde_json::json!({
@@ -4732,7 +4978,7 @@ fn cmd_def(
                         && spec.col < pos.col + *len as u32
                 })
     {
-        file_alone();
+        file_alone(&checkout);
         return report(
             out,
             serde_json::json!({
@@ -4762,17 +5008,19 @@ fn cmd_def(
             && answer["definition"].as_array().is_some_and(Vec::is_empty)
             && crate::tree::views::ViewTemplate::of(&file).is_some();
         let mut from_controller = Vec::new();
-        if unset_in_template && let Some((root, store)) = &checkout {
+        if unset_in_template
+            && let Some((root, store)) = checkout.as_mut().map(|(root, store)| (&*root, store))
+        {
             let relative = Path::new(&file)
                 .strip_prefix(root)
                 .map(|p| p.to_string_lossy().into_owned())
                 .unwrap_or_else(|_| spec.path.clone());
-            let tree = build_tree(store, &root.to_string_lossy())?;
+            let tree = fresh_tree(out, store, root, Some(Path::new(&spec.path)))?;
             let name = answer["name"].as_str().unwrap_or_default().to_string();
             from_controller = crate::resolve::views::template_ivar_writes(&tree, &relative, &name);
         }
         if from_controller.is_empty() {
-            file_alone();
+            file_alone(&checkout);
         } else {
             // Read from the tree: its paths are the checkout's, and an index
             // still filling it may not hold the write yet.
@@ -4813,7 +5061,7 @@ fn cmd_def(
     }
     let snapped = crate::query::position::at_or_snap(&facts, spec.line, spec.col);
     let Some((under, snapped)) = snapped else {
-        file_alone();
+        file_alone(&checkout);
         return report(
             out,
             serde_json::json!({
@@ -4829,7 +5077,7 @@ fn cmd_def(
     };
     // The cursor on a definition is a fact of the file, too.
     if let crate::query::position::Under::Definition(_) = under {
-        file_alone();
+        file_alone(&checkout);
     } else if let Some((root, store)) = checkout {
         let need = Need::File(Path::new(&spec.path));
         if let Some(code) = autoindex::ensure(out, &store, &root, need)? {
@@ -4842,7 +5090,6 @@ fn cmd_def(
     // surprise for a position inside a gem, which is answered from an app that
     // resolves it — and an answer that depends on which app must say which.
     let mut context: Option<String> = None;
-    let mut freshness: Option<serde_json::Value> = None;
     let answer = match under {
         // The cursor is on the declaration itself. Ruby has no indirection to
         // follow here, so the honest answer is "you are already there".
@@ -4871,9 +5118,7 @@ fn cmd_def(
                 return not_indexed(out, &root, &store);
             }
             answering_in(&store, &root.to_string_lossy());
-            // Refresh before the tree is built, so the tree sees the new facts.
-            freshness = refresh_for_query(&mut store, &root, Path::new(&spec.path));
-            let mut tree = build_tree(&store, &root.to_string_lossy())?;
+            let mut tree = fresh_tree(out, &mut store, &root, Some(Path::new(&spec.path)))?;
             context = Some(root.to_string_lossy().into_owned());
             let relative = std::fs::canonicalize(&spec.path)
                 .ok()
@@ -4915,9 +5160,7 @@ fn cmd_def(
                 return not_indexed(out, &root, &store);
             }
             answering_in(&store, &root.to_string_lossy());
-            // Refresh before the tree is built, so the tree sees the new facts.
-            freshness = refresh_for_query(&mut store, &root, Path::new(&spec.path));
-            let mut tree = build_tree(&store, &root.to_string_lossy())?;
+            let mut tree = fresh_tree(out, &mut store, &root, Some(Path::new(&spec.path)))?;
             context = Some(root.to_string_lossy().into_owned());
             let relative = std::fs::canonicalize(&spec.path)
                 .ok()
@@ -4966,11 +5209,6 @@ fn cmd_def(
     if let (Some(object), Some(context)) = (answer.as_object_mut(), context) {
         object.insert("context".into(), context.into());
     }
-    // The index may lag the working tree, and an answer resting on stale facts
-    // has to say so rather than look confident.
-    if let (Some(object), Some(freshness)) = (answer.as_object_mut(), &freshness) {
-        object.insert("index".into(), freshness.clone());
-    }
     // An answer about a name the caller did not type has to say so.
     if let (Some(object), Some(snapped)) = (answer.as_object_mut(), &snapped) {
         object.insert(
@@ -4986,23 +5224,8 @@ fn cmd_def(
             }),
         );
     }
-    if freshness.is_some() {
-        crate::usage::flag("stale");
-    }
     if snapped.is_some() {
         crate::usage::flag("snapped");
-    }
-    if let (Output::Text, Some(freshness)) = (out, &freshness) {
-        match (freshness["refreshed"].as_str(), freshness["busy"].as_str()) {
-            (Some(file), _) => eprintln!("trekr: {file} changed since the index — re-read it"),
-            (None, Some(file)) => eprintln!(
-                "trekr: {file} changed since the index, which another trekr is writing — \
-                 answered from its indexed version"
-            ),
-            (None, None) => {
-                eprintln!("trekr: the checkout moved since the index; other files may lag")
-            }
-        }
     }
     let resolved = answer["status"] == "resolved" || answer["status"] == "ambiguous";
     let text = match answer["definition"].as_array().and_then(|s| s.first()) {
