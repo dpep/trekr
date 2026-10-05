@@ -3715,6 +3715,23 @@ fn a_pipe_or_a_device_is_refused_rather_than_read() {
             assert_eq!(out.status.code(), Some(64), "{command} {at}: {out:?}");
         }
     }
+
+    // --dead reads its scope and every tracked path: neither may block.
+    git(&dir, &["add", "zero.rb"]);
+    for scope in [".", "widget.rb"] {
+        let out = trekr_within(&db, &dir, &["--dead", scope, "--json"], &[], limit);
+        assert!(out.status.code().is_some(), "--dead {scope}: {out:?}");
+        let dead = json(&out);
+        let rows = dead["candidates"].as_array().unwrap();
+        for row in rows {
+            let mentions = &row["mentions_by_name"];
+            assert!(mentions.is_null() || mentions.is_u64(), "a count: {row}");
+        }
+        assert!(
+            rows.iter().any(|row| row["mentions_by_name"].is_u64()),
+            "{dead}"
+        );
+    }
     let _ = fs::remove_dir_all(&dir);
 }
 

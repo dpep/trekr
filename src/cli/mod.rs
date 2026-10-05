@@ -4898,7 +4898,7 @@ fn dead_in(
     let parsed: Vec<_> = files
         .par_iter()
         .filter_map(|file| {
-            let raw = std::fs::read(file).ok()?;
+            let raw = crate::scan::read_source(file).ok()?;
             let source = extract::ruby_source(&file.to_string_lossy(), &raw).into_owned();
             let facts = std::sync::Arc::new(extract::extract(&source));
             let symbols = extract::symbol_literals(&source);
@@ -5239,10 +5239,10 @@ fn dead_in(
         // The one written call a single caller has: whether it certainly
         // reaches this method is the difference between inlining it and
         // checking an untyped receiver first.
-        let written = (tier == "single-caller")
+        let single_call = (tier == "single-caller")
             .then(|| found.iter().find(|r| refs::is_written_call(r)))
             .flatten();
-        let caller = written.map(|r| {
+        let caller = single_call.map(|r| {
             serde_json::json!({
                 "path": format!("{root_str}/{}", r.path),
                 "line": r.line,
@@ -5562,7 +5562,7 @@ fn dead_in(
                 format!("one call, at {}", at_line(caller))
             }
             // A call found by where it runs says how (DEC-499).
-            (_, Some(caller)) if let Some(r) = written.filter(|r| r.from.is_some()) => {
+            (_, Some(caller)) if let Some(r) = single_call.filter(|r| r.from.is_some()) => {
                 format!("one possible call, at {}: {}", at_line(caller), r.why)
             }
             (_, Some(caller)) => format!(
