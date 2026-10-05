@@ -1689,6 +1689,25 @@ fn a_handler_that_panics_answers_an_error_and_the_session_survives() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A store the server cannot open ends it on the store's exit code, as on
+/// the command line — not 70, which says trekr has a bug.
+#[test]
+fn a_store_the_server_cannot_open_exits_as_a_store_failure() {
+    let (dir, db) = scratch("lsp-unopenable");
+    repo(&dir);
+    fs::create_dir_all(&db).unwrap();
+    let mut session = Session::start(&db, &dir);
+    session.send(serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {"processId": null, "rootUri": format!("file://{}", dir.display()), "capabilities": {}},
+    }));
+    session.notify("initialized", serde_json::json!({}));
+    session.stdin.take();
+    let status = session.child.wait().unwrap();
+    assert_eq!(status.code(), Some(74), "{status:?}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// What a client sends is not trusted to be a file trekr can read: a URI
 /// with a malformed escape names nothing, and a device or a pipe is not read
 /// at all — `/dev/zero` would never end. Each answers, and the session goes on.
