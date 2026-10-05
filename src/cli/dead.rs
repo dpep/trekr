@@ -1353,8 +1353,11 @@ fn ruby_files_under(paths: &[PathBuf]) -> Vec<PathBuf> {
         let Ok(walk) = std::fs::read_dir(path) else {
             continue;
         };
-        for entry in walk.flatten() {
-            let child = entry.path();
+        // Rows come out in file order, and readdir's is the filesystem's own:
+        // without a sort, the same checkout answers differently on another OS.
+        let mut children: Vec<PathBuf> = walk.flatten().map(|entry| entry.path()).collect();
+        children.sort();
+        for child in children {
             if child.is_dir() {
                 found.extend(ruby_files_under(&[child]));
             } else if child.extension().is_some_and(|e| e == "rb") {
@@ -1468,5 +1471,44 @@ mod tests {
         ] {
             assert_eq!(dynamic_markers(source.as_bytes()), said, "{source}");
         }
+    }
+
+    #[test]
+    fn files_in_scope_are_in_path_order_whatever_the_filesystem_lists() {
+        let dir = std::env::temp_dir().join(format!("trekr-dead-order-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        for file in [
+            "m.rb",
+            "lib/z.rb",
+            "a.rb",
+            "lib/b.rb",
+            "evaluated.rb",
+            "app.rb",
+        ] {
+            let path = dir.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, "").unwrap();
+        }
+        let found: Vec<String> = ruby_files_under(std::slice::from_ref(&dir))
+            .iter()
+            .map(|file| {
+                file.strip_prefix(&dir)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect();
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(
+            found,
+            [
+                "a.rb",
+                "app.rb",
+                "evaluated.rb",
+                "lib/b.rb",
+                "lib/z.rb",
+                "m.rb"
+            ]
+        );
     }
 }

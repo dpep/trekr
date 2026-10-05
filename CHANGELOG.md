@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **`--dead` lists candidates in path order on every OS.** Files in scope
+  were read in the order the filesystem listed them, so the same checkout
+  ordered its candidates differently on macOS and Linux. Same rows, new
+  order: a script that diffed `--dead` output sees one reshuffle.
+
 ## 0.8.8 — 2026-10-05
 
 - **A query sees the working tree as it is.** Editing a file without
