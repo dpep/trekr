@@ -3195,7 +3195,7 @@ mod lock_tests {
                 .unwrap()
         );
         drop(store);
-        let _ = std::fs::remove_file(&path);
+        remove(&path);
     }
 
     #[test]
@@ -3209,7 +3209,14 @@ mod lock_tests {
         drop(store);
         assert!(started.elapsed() < std::time::Duration::from_secs(1));
         drop(writer);
-        let _ = std::fs::remove_file(&path);
+        remove(&path);
+    }
+
+    /// A store and everything SQLite and the lock keep beside it.
+    fn remove(path: &Path) {
+        for suffix in ["", "-wal", "-shm", ".lock"] {
+            let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
+        }
     }
 
     fn scratch(label: &str) -> std::path::PathBuf {
@@ -3245,7 +3252,7 @@ mod lock_tests {
         assert!(is_schema_mismatch(&error), "{error}");
         assert!(!store.has_blob(&oid).unwrap(), "nothing written");
         drop(store);
-        let _ = std::fs::remove_file(&path);
+        remove(&path);
     }
 
     #[test]
@@ -3289,7 +3296,7 @@ mod lock_tests {
             0
         );
         drop((first, second));
-        let _ = std::fs::remove_file(&path);
+        remove(&path);
     }
 
     #[test]
@@ -3306,8 +3313,8 @@ mod lock_tests {
         drop(store);
         let fresh = scratch("fresh");
         assert_eq!(Store::open(&fresh).unwrap().upgraded_from().unwrap(), None);
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_file(&fresh);
+        remove(&path);
+        remove(&fresh);
     }
 
     #[test]
