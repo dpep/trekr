@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The commit gate: format, lint, test, docs — then the VS Code extension's unit
-# tests. CI runs the first three.
+# tests. CI runs the first four.
 #
 #   script/check.sh          # the commit gate
 #   script/check.sh --e2e    # plus the extension's e2e suite in a real VS Code
@@ -30,7 +30,7 @@ command -v cargo >/dev/null 2>&1 || {
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings
 cargo test
-# Intra-doc links stay resolvable. CI does not run this step.
+# Intra-doc links stay resolvable.
 RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items --quiet
 
 # The extension's tests went red unnoticed once, because nothing ran them.
