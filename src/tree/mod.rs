@@ -891,13 +891,16 @@ impl Tree {
         // The namespace is read from the checkout's snapshot when one answers
         // to what the store holds now, and assembled and written otherwise
         // (DEC-065). Methods are not in it: they stay demand-loaded below. A
-        // query's overlay that moves the namespace is assembled and not kept:
-        // its snapshot would retire the checkout's for the next query, which
-        // assembles that again (DEC-035).
-        let snapshot = match files::dir(store).filter(|_| !store.overlays_namespace()) {
+        // query's overlay that moves the namespace keeps its own, beside the
+        // index's, so the next query over the same edits maps it (DEC-035).
+        let slot = match store.overlays_namespace() {
+            true => files::Slot::Overlay,
+            false => files::Slot::Indexed,
+        };
+        let snapshot = match files::dir(store) {
             Some(dir) => {
                 let key = files::key(store, &roots)?;
-                let path = dir.join(files::name(root, &key));
+                let path = dir.join(files::name(root, &key, slot));
                 match phases.time("snapshot-load", || files::open(&path, &key)) {
                     Ok(snapshot) => snapshot,
                     Err(miss) => {
@@ -911,7 +914,7 @@ impl Tree {
                         // Freeing a namespace's worth of strings is a third
                         // of a second at 30×; nothing here waits for it.
                         std::thread::spawn(move || drop(names));
-                        let snapshot = files::save(&dir, root, &key, bytes);
+                        let snapshot = files::save(&dir, root, &key, slot, bytes);
                         phases.mark("snapshot-write");
                         snapshot
                     }
@@ -1096,7 +1099,10 @@ impl Tree {
         };
         let roots = roots(store, root)?;
         let key = files::key(store, &roots)?;
-        if dir.join(files::name(root, &key)).exists() {
+        if dir
+            .join(files::name(root, &key, files::Slot::Indexed))
+            .exists()
+        {
             return Ok(false);
         }
         let stubs = stubs(store, &roots)?;
@@ -1106,7 +1112,7 @@ impl Tree {
         // The process ends soon after; freeing the namespace string by string
         // buys nothing (DEC-054).
         std::mem::forget(names);
-        files::publish(&dir, root, &key, &bytes);
+        files::publish(&dir, root, &key, files::Slot::Indexed, &bytes);
         Ok(true)
     }
 

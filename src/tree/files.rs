@@ -102,10 +102,28 @@ fn code() -> &'static [u8] {
     })
 }
 
-/// `<checkout>-<key>.tree`. The checkout part is what lets a new snapshot
-/// retire the checkout's previous one without reading anything.
-pub(super) fn name(root: &str, key: &Key) -> String {
-    format!("{}-{}{SUFFIX}", tag(root), hex(key))
+/// Which of a checkout's two snapshots: the namespace its index holds, or
+/// the one a query's overlay moved it to (DEC-035). Each retires only its
+/// own, so a query over edits and one without never undo each other.
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum Slot {
+    Indexed,
+    Overlay,
+}
+
+/// `<checkout>-<key>.tree`, or `+` for an overlay's. The checkout part is
+/// what lets a new snapshot retire the slot's previous one without reading
+/// anything.
+pub(super) fn name(root: &str, key: &Key, slot: Slot) -> String {
+    format!("{}{}{SUFFIX}", prefix(root, slot), hex(key))
+}
+
+fn prefix(root: &str, slot: Slot) -> String {
+    let sep = match slot {
+        Slot::Indexed => '-',
+        Slot::Overlay => '+',
+    };
+    format!("{}{sep}", tag(root))
 }
 
 fn tag(root: &str) -> String {
@@ -157,8 +175,8 @@ pub(super) fn open(path: &Path, key: &Key) -> Result<Snapshot, Miss> {
 /// Best effort: a snapshot that cannot be written (a read-only directory, a
 /// full disk) or mapped once written is still a correct tree, held on the
 /// heap instead.
-pub(super) fn save(dir: &Path, root: &str, key: &Key, bytes: Vec<u8>) -> Snapshot {
-    if let Some(path) = publish(dir, root, key, &bytes)
+pub(super) fn save(dir: &Path, root: &str, key: &Key, slot: Slot, bytes: Vec<u8>) -> Snapshot {
+    if let Some(path) = publish(dir, root, key, slot, &bytes)
         && let Ok(mapped) = open(&path, key)
     {
         return mapped;
@@ -168,11 +186,17 @@ pub(super) fn save(dir: &Path, root: &str, key: &Key, bytes: Vec<u8>) -> Snapsho
 
 /// Write a snapshot under its final name and retire the checkout's older
 /// ones; its path, or `None` when it could not be written.
-pub(super) fn publish(dir: &Path, root: &str, key: &Key, bytes: &[u8]) -> Option<PathBuf> {
-    let name = name(root, key);
+pub(super) fn publish(
+    dir: &Path,
+    root: &str,
+    key: &Key,
+    slot: Slot,
+    bytes: &[u8],
+) -> Option<PathBuf> {
+    let name = name(root, key, slot);
     let path = dir.join(&name);
     write(dir, &path, bytes).ok()?;
-    retire(dir, &tag(root), &name);
+    retire(dir, &prefix(root, slot), &name);
     Some(path)
 }
 
@@ -195,17 +219,17 @@ fn write(dir: &Path, path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     renamed
 }
 
-/// Remove this checkout's snapshots other than `keep`, and any temporary
-/// file of its that a dead writer left. Only this checkout's: another
-/// checkout's current snapshot is not this one's to judge.
-fn retire(dir: &Path, tag: &str, keep: &str) {
+/// Remove the snapshots named from `prefix` other than `keep`, and any
+/// temporary file of theirs that a dead writer left. Only this checkout's:
+/// another checkout's current snapshot is not this one's to judge.
+fn retire(dir: &Path, prefix: &str, keep: &str) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
     for entry in entries.flatten() {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
-        if !name.starts_with(tag) || name == keep {
+        if !name.starts_with(prefix) || name == keep {
             continue;
         }
         if name.ends_with(SUFFIX) || (name.ends_with(TEMP) && abandoned(&entry)) {
@@ -255,7 +279,8 @@ pub(crate) fn sweep(store: &Store, gone: &[&str], dry_run: bool) -> anyhow::Resu
         if gone.contains(&root.as_str()) {
             continue;
         }
-        live.insert(name(&root, &key(store, &super::roots(store, &root)?)?));
+        let key = key(store, &super::roots(store, &root)?)?;
+        live.insert(name(&root, &key, Slot::Indexed));
     }
     for entry in entries.flatten() {
         let file = entry.file_name();
@@ -330,7 +355,7 @@ mod tests {
 
     fn current(store: &Store) -> PathBuf {
         let key = key(store, &Roots::of(vec![ROOT.to_string()])).unwrap();
-        dir(store).unwrap().join(name(ROOT, &key))
+        dir(store).unwrap().join(name(ROOT, &key, Slot::Indexed))
     }
 
     const WIDGET: (&str, &str) = (
@@ -353,7 +378,8 @@ mod tests {
             snapshots(&store),
             [name(
                 ROOT,
-                &key(&store, &Roots::of(vec![ROOT.into()])).unwrap()
+                &key(&store, &Roots::of(vec![ROOT.into()])).unwrap(),
+                Slot::Indexed
             )]
         );
         let written = std::fs::read(current(&store)).unwrap();
@@ -410,6 +436,33 @@ mod tests {
         let after = snapshots(&store);
         assert_eq!(after.len(), 1);
         assert_ne!(after, before, "the stale key's file is gone");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A query's overlay that moves the namespace keeps its snapshot beside
+    /// the index's: neither retires the other, and the next build over the
+    /// same edits maps it rather than assembling it again.
+    #[test]
+    fn an_overlay_keeps_its_own_snapshot_beside_the_index() {
+        let (dir, mut store) = store("overlay", &[WIDGET]);
+        Tree::build(&store, ROOT).unwrap();
+        let indexed = snapshots(&store);
+        let gadget = "class Gadget < Base\nend\n";
+        let oid = crate::scan::hash_blob(gadget.as_bytes());
+        store
+            .add_blob(&oid, &crate::extract::extract(gadget.as_bytes()))
+            .unwrap();
+        store
+            .overlay(ROOT, &[("gadget.rb".to_string(), Some(oid))])
+            .unwrap();
+        let tree = Tree::build(&store, ROOT).unwrap();
+        assert!(tree.is_known("Gadget"), "answers from the overlay");
+        let both = snapshots(&store);
+        assert_eq!(both.len(), 2, "{both:?}");
+        assert!(indexed.iter().all(|kept| both.contains(kept)), "{both:?}");
+        let again = Tree::build(&store, ROOT).unwrap();
+        assert!(matches!(&again.names, super::super::Names::Frozen(s) if s.is_mapped()));
+        assert!(again.is_known("Gadget"));
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -480,7 +533,7 @@ mod tests {
         if std::env::var("TREKR_TEST_SNAPSHOT_REWRITE").is_ok() {
             let key = key(&store, &Roots::of(vec![ROOT.to_string()])).unwrap();
             let bytes = std::fs::read(current(&store)).unwrap();
-            save(&dir(&store).unwrap(), ROOT, &key, bytes);
+            save(&dir(&store).unwrap(), ROOT, &key, Slot::Indexed, bytes);
         } else {
             Tree::build(&store, ROOT).unwrap();
         }
