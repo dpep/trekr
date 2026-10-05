@@ -22,10 +22,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 
-/// More changed files than this in one batch is an operation — a checkout, a
-/// rebase — and is handed to a full index rather than refreshed one by one.
-pub(crate) const BULK: usize = 32;
-
 /// How often a refresh that met a busy index is tried again.
 const RETRY: std::time::Duration = std::time::Duration::from_millis(250);
 

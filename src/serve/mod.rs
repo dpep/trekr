@@ -1149,7 +1149,7 @@ fn watched(
         .filter_map(|change| Some((document_path(change.uri.as_str())?, change.typ)))
         .filter(|(path, _)| crate::scan::is_indexed(&path.to_string_lossy()))
         .collect();
-    let bulk = paths.len() > fresh::BULK
+    let bulk = paths.len() > crate::scan::BULK
         || paths
             .iter()
             .any(|(_, kind)| *kind == lsp_types::FileChangeType::DELETED);

@@ -197,24 +197,27 @@ hands it is a local defined at that key (`resolved_via: render`). RABL's
 (`rabl:object`). Route helpers (`posts_path`) are residue. Haml and Slim
 are not read.
 
-**`--def` keeps itself fresh.** It checks git in O(1) and re-reads the file you
-asked about if the checkout moved, so a definition that shifted lines is found
-at its new line without reindexing. When the answer carries `index`, read it:
+**Queries keep themselves fresh.** `--def`, `--refs` and `--dead` ask git
+which tracked files differ from what it last recorded and re-read those, and
+re-read the file you asked about if the checkout moved, so an unstaged edit
+answers without reindexing. When the answer carries `index`, read it:
 
 ```json
-"index": { "stale": true, "refreshed": "app/models/user.rb", "hint": "trekr --index ~/code/app" }
+"index": { "stale": true, "refreshed": ["app/models/user.rb"], "hint": "trekr --index ~/code/app" }
 ```
 
-* **`index.stale`** — the checkout moved since it was indexed. The file you
-  asked about was re-read (`refreshed` names it when it had changed); **other
-  files may lag**, and `hint` is the cure.
-* **`index.busy`** — another trekr was writing the index, so the file you
-  asked about was answered from its indexed version rather than wait. Ask
-  again once that index finishes.
+* **`index.refreshed`** — files edited since the index, re-read for this
+  answer.
+* **`index.stale`** — **other files may lag**: a commit, `git add` or
+  checkout since the index (a file it added is not read until `--index`),
+  a deleted file, or more than 32 edits. `hint` is the cure. `false` when
+  the re-read files were all that moved.
+* **`index.busy`** — another trekr was writing the index, so these files
+  were answered from their indexed version rather than wait. Ask again once
+  that index finishes.
 
-No `index` field means the checkout has not moved since it was indexed. One
-limit: an edit git has not noticed — no `add`, `status` or `diff` since — is
-invisible to the check, so run `--index` after bulk edits.
+No `index` field means nothing tracked moved since the index. One limit: a
+new file nothing has `git add`ed is not seen until `--index`.
 
 A `--def` answer carries `status`, `confidence`, and (when something typed
 the receiver) `resolved_via`. They answer different questions, so read them

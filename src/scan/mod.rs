@@ -349,11 +349,10 @@ fn true_case(dir: &Path) -> Option<PathBuf> {
 /// scan is 145 ms on discourse and 6 s on a 10M-line monorepo, and neither can
 /// sit on a query path.
 ///
-/// **What it cannot see**, stated here so nobody rediscovers it: a tracked file
-/// edited with nothing having refreshed git's index, and a brand-new untracked
-/// file. Both are caught by an explicit `--index`. This is a *probe*, not a
-/// proof — it answers "might anything have changed", and a false negative is
-/// the reason `--index` still exists.
+/// **What it cannot see**: a tracked file edited with nothing having refreshed
+/// git's index — [`Edits`] is the query's look at those — and a brand-new
+/// untracked file, which only an explicit `--index` finds. This is a *probe*,
+/// not a proof — it answers "might anything have changed".
 pub(crate) fn git_fingerprint(root: &Path) -> Option<i64> {
     // A worktree's `.git` is a file pointing at the real gitdir.
     let dot_git = root.join(".git");
@@ -373,6 +372,54 @@ pub(crate) fn git_fingerprint(root: &Path) -> Option<i64> {
     // Nanoseconds and size together: a same-second rewrite of the same length
     // is possible, and the nanoseconds are what separate them.
     Some((modified.as_nanos() as i64).wrapping_mul(31) ^ (meta.len() as i64))
+}
+
+/// More changed files than this in one batch is an operation — a checkout, a
+/// rebase — and is handed to a full index rather than refreshed one by one,
+/// by the language server and a CLI query alike.
+pub(crate) const BULK: usize = 32;
+
+/// The tracked files whose working-tree stat differs from git's index — an
+/// edit nothing has told git about, which [`git_fingerprint`] cannot see
+/// (DEC-035) — as git's `diff-files` finds them. Started at once and read
+/// with [`Edits::finish`], so git's walk overlaps the caller's own work: it
+/// stats every tracked file, ~35 ms on discourse, which a query should not
+/// wait out alone.
+pub(crate) struct Edits(Option<std::process::Child>);
+
+impl Edits {
+    pub(crate) fn start(root: &Path) -> Edits {
+        let child = Command::new("git")
+            // `--no-optional-locks`: refreshing `.git/index` would move the
+            // fingerprint the next query compares.
+            .args([
+                "--no-optional-locks",
+                "diff-files",
+                "--name-only",
+                "--relative",
+                "-z",
+            ])
+            .current_dir(root)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .ok();
+        Edits(child)
+    }
+
+    /// The indexed files git names, relative to the checkout; `None` when
+    /// git could not say. A file whose stat moved and bytes did not is named
+    /// too: the caller's hash is the truth.
+    pub(crate) fn finish(self) -> Option<Vec<String>> {
+        let out = self.0?.wait_with_output().ok()?;
+        out.status.success().then(|| {
+            parse_paths(&out.stdout)
+                .into_iter()
+                .filter(|path| is_indexed(path))
+                .collect()
+        })
+    }
 }
 
 /// Every Ruby file in the working tree, keyed by the blob its *current* bytes
