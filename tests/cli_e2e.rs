@@ -4119,6 +4119,50 @@ fn a_query_records_new_bytes_and_maps_nothing() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// `--gc` counts the copies of a query's edits as what they are, and the
+/// help of `--gc` and `--drop` says where they are kept.
+#[test]
+fn gc_counts_overlay_copies_apart_from_snapshots() {
+    let (dir, db) = scratch("gc-overlays");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    let file = dir.join("widget.rb");
+    let text = fs::read_to_string(&file).unwrap();
+    fs::write(
+        &file,
+        text.replace("  private", "  def fresh\n  end\n\n  private"),
+    )
+    .unwrap();
+    trekr(&db, &dir, &["--refs", "Widget#fresh", "--json"]);
+    let copies = || fs::read_dir(db.with_extension("overlays")).map_or(0, |d| d.count());
+    assert_eq!(copies(), 1);
+
+    let dry = json(&trekr(&db, &dir, &["--gc", "--dry-run", "--json"]));
+    assert_eq!(dry["overlays"]["files"], 1, "{dry}");
+    assert!(dry["overlays"]["bytes"].as_u64().unwrap() > 0, "{dry}");
+    assert_eq!(copies(), 1, "a dry run removes nothing");
+    let out = trekr(&db, &dir, &["--gc"]);
+    assert!(out.status.success(), "{out:?}");
+    let said = stdout(&out);
+    assert!(said.contains("trekr.overlays"), "{said}");
+    assert!(!said.contains("tree snapshots"), "{said}");
+    assert_eq!(copies(), 0);
+
+    let help = stdout(&trekr(&db, &dir, &["--help"]));
+    for flag in ["--gc", "--drop"] {
+        let at = help.find(&format!("      {flag}")).unwrap();
+        let next = help[at + 8..]
+            .find("\n      --")
+            .map_or(help.len(), |n| at + 8 + n);
+        assert!(
+            help[at..next].contains("trekr.overlays/"),
+            "{flag}: {}",
+            &help[at..next]
+        );
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A file git does not track is read as one it does, edited or deleted.
 #[test]
 fn an_untracked_file_is_read_as_it_is_now() {

@@ -173,7 +173,8 @@ struct Cli {
     ancestors: Option<String>,
 
     /// Forget a checkout's file map (its blobs stay, for the worktrees that
-    /// share them).
+    /// share them), and the copy of its edits queries keep in
+    /// `trekr.overlays/` beside the index.
     #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = ".")]
     drop: Option<PathBuf>,
 
@@ -181,7 +182,9 @@ struct Cli {
     /// surviving project's bundle names, and projects whose root is gone.
     /// Their blobs go too, unless another checkout still maps them. Also
     /// removes an index set aside as unusable, an early copy a stopped index
-    /// left, and another trekr's own index once it is idle.
+    /// left, another trekr's own index once it is idle, and every copy of
+    /// the working tree's edits queries keep in `trekr.overlays/` (the next
+    /// query over edits writes its own again).
     #[arg(long, conflicts_with_all = ["index", "status", "symbols", "refs", "def", "ancestors", "drop", "lsp"])]
     gc: bool,
 
@@ -5688,11 +5691,9 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
         dry_run,
     )?;
     let gone: Vec<&str> = garbage.checkouts.iter().map(|c| c.repo.as_str()).collect();
-    let mut snapshots = crate::tree::sweep_snapshots(&store, &gone, dry_run)?;
-    // A query's overlay copies are kept beside them the same way (DEC-035).
-    let (files, bytes) = store.sweep_overlays(dry_run);
-    snapshots.files += files;
-    snapshots.bytes += bytes;
+    let snapshots = crate::tree::sweep_snapshots(&store, &gone, dry_run)?;
+    // A query's copies of the map with its edits applied (DEC-035).
+    let (overlays, overlay_bytes) = store.sweep_overlays(dry_run);
     // Each Ruby's core files beside the store, and an earlier build's.
     let db = crate::store::default_path()?;
     let beside_store = crate::store::core_dir_of(&crate::store::in_use(&db));
@@ -5718,6 +5719,7 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
     let db_bytes = store.db_bytes()?;
     let found = !garbage.checkouts.is_empty()
         || snapshots.files > 0
+        || overlays > 0
         || garbage.signatures > 0
         || core.files > 0
         || !kept.is_empty();
@@ -5734,6 +5736,7 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
                 "facts": garbage.facts,
                 "reclaimed_bytes": garbage.reclaimed_bytes,
                 "snapshots": snapshots,
+                "overlays": { "files": overlays, "bytes": overlay_bytes },
                 "signatures": garbage.signatures,
                 "core_files": core,
                 "kept": kept,
@@ -5776,6 +5779,12 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
             "{verb} {} tree snapshots no checkout's index names any more: {:.1} MB",
             snapshots.files,
             mb(snapshots.bytes as i64)
+        );
+    }
+    if overlays > 0 {
+        println!(
+            "{verb} {overlays} copies of the edits queries read, in trekr.overlays/: {:.1} MB",
+            mb(overlay_bytes as i64)
         );
     }
     if garbage.signatures > 0 || core.files > 0 {

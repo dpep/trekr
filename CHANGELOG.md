@@ -18,7 +18,8 @@
   answer says the working tree was not checked. `--ancestors` and cards
   still read only the index. A copy of the file map with the edits applied
   is kept beside the store, in `trekr.overlays/`, so the next query over the
-  same edits pays nothing for them; `--gc` removes it.
+  same edits pays nothing for them; `--gc` removes it (`overlays` in its
+  `--json`), and `--drop` a checkout's.
 - **Every command that reads edits says so in an `index` object** — new on
   `--dead` and `--refs` (for `--refs NAME`, whose `--json` is a bare array,
   on stderr and in `--ndjson`'s closing line), and on stderr in text.
