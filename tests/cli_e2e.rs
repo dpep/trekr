@@ -2852,7 +2852,7 @@ fn a_query_waits_for_an_index_under_way_and_finishes_one_cut_short() {
         started.elapsed() >= std::time::Duration::from_millis(1000),
         "waited for the index under way"
     );
-    indexer.join().unwrap();
+    indexer.join();
     assert_eq!(out.status.code(), Some(0));
     assert!(json(&out).get("warming").is_none(), "and finished it");
 
@@ -2861,19 +2861,19 @@ fn a_query_waits_for_an_index_under_way_and_finishes_one_cut_short() {
     let indexer = stand_in_indexer(&db, &dir);
     let started = std::time::Instant::now();
     let hit = trekr(&db, &dir, &["--def", "widget.rb:7:5", "--json"]);
-    assert!(started.elapsed() < std::time::Duration::from_millis(1000));
+    assert!(indexer.running(), "answered without waiting for the index");
     assert_eq!(hit.status.code(), Some(0));
     assert!(json(&hit)["warming"].is_object(), "{}", stdout(&hit));
     let miss = trekr(&db, &dir, &["--def", "widget.rb:1:17", "--json"]);
     assert!(started.elapsed() >= std::time::Duration::from_millis(1000));
-    indexer.join().unwrap();
+    indexer.join();
     assert_eq!(miss.status.code(), Some(1), "a miss from the whole index");
     assert!(json(&miss).get("warming").is_none(), "{}", stdout(&miss));
 
     // `--index` waits its turn the same way, and says so.
     let indexer = stand_in_indexer(&db, &dir);
     let out = trekr(&db, &dir, &["--index", "--json"]);
-    indexer.join().unwrap();
+    indexer.join();
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{stderr}");
     assert!(stderr.contains("already indexing"), "{stderr}");
@@ -3152,12 +3152,12 @@ fn a_position_the_index_cannot_change_answers_at_once_while_it_runs() {
     let indexer = stand_in_indexer(&db, &dir);
     let started = std::time::Instant::now();
     let blank = trekr(&db, &dir, &["--def", "widget.rb:3:1", "--json"]);
-    assert!(started.elapsed() < std::time::Duration::from_millis(1000));
+    assert!(indexer.running(), "answered without waiting for the index");
     assert_eq!(blank.status.code(), Some(1), "{}", stdout(&blank));
     assert!(json(&blank).get("warming").is_none(), "{}", stdout(&blank));
     let namespace = trekr(&db, &dir, &["--def", "thing.rb:1:7", "--json"]);
     assert!(started.elapsed() >= std::time::Duration::from_millis(1000));
-    indexer.join().unwrap();
+    indexer.join();
     assert!(
         json(&namespace).get("warming").is_none(),
         "{}",
@@ -3176,7 +3176,6 @@ fn an_answer_from_the_file_alone_waits_for_no_index() {
     repo(&dir);
     assert_eq!(trekr(&db, &dir, &["--status"]).status.code(), Some(2));
     let indexer = stand_in_indexer(&db, &dir);
-    let started = std::time::Instant::now();
     for (at, code) in [
         ("widget.rb:3:1", 1),
         ("widget.rb:4:16", 0),
@@ -3191,21 +3190,43 @@ fn an_answer_from_the_file_alone_waits_for_no_index() {
             assert_eq!(answer["confidence"], 1.0, "{at}: {answer}");
         }
     }
-    let took = started.elapsed();
-    indexer.join().unwrap();
-    assert!(took < std::time::Duration::from_millis(1200), "{took:?}");
+    assert!(indexer.running(), "answered without waiting for the index");
+    indexer.join();
     let _ = fs::remove_dir_all(&dir);
 }
 
 /// A process that marks `dir` as an index filling it, lives a second and a
 /// half, and is reaped the moment it ends: a zombie still answers a liveness
 /// check, and would read as an index under way for good.
-fn stand_in_indexer(db: &Path, dir: &Path) -> std::thread::JoinHandle<()> {
+fn stand_in_indexer(db: &Path, dir: &Path) -> StandIn {
     let mut indexer = Command::new("sleep").arg("1.5").spawn().unwrap();
     mark_warming(db, dir, indexer.id(), 1, 4);
-    std::thread::spawn(move || {
-        indexer.wait().unwrap();
-    })
+    let ended = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let reaper = std::thread::spawn({
+        let ended = ended.clone();
+        move || {
+            indexer.wait().unwrap();
+            ended.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+    StandIn { ended, reaper }
+}
+
+struct StandIn {
+    ended: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    reaper: std::thread::JoinHandle<()>,
+}
+
+impl StandIn {
+    /// Still holding its mark: what an answer that did not wait for the
+    /// index came back during, however slow the machine.
+    fn running(&self) -> bool {
+        !self.ended.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn join(self) {
+        self.reaper.join().unwrap();
+    }
 }
 
 /// A first index a query starts that cannot get the write lock in time is
@@ -4152,6 +4173,50 @@ fn gc_collects_a_gem_version_no_bundle_names_and_an_index_brings_it_back() {
 }
 
 /// Start trekr without waiting for it, so several can race for one store.
+/// A spawned trekr's stderr, read as it is written: a test acts once the
+/// process has said where it is, not after a guess at how long that takes.
+struct Said {
+    text: std::sync::Arc<std::sync::Mutex<String>>,
+    reader: std::thread::JoinHandle<()>,
+}
+
+impl Said {
+    fn of(child: &mut std::process::Child) -> Said {
+        use std::io::Read;
+        let mut pipe = child.stderr.take().expect("stderr piped");
+        let text = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let reader = std::thread::spawn({
+            let text = text.clone();
+            move || {
+                let mut buffer = [0u8; 4096];
+                while let Ok(n @ 1..) = pipe.read(&mut buffer) {
+                    let more = String::from_utf8_lossy(&buffer[..n]);
+                    text.lock().unwrap().push_str(&more);
+                }
+            }
+        });
+        Said { text, reader }
+    }
+
+    fn wait_for(&self, what: &str) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while !self.text.lock().unwrap().contains(what) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "never said {what:?}: {}",
+                self.text.lock().unwrap()
+            );
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// Everything it said, once it has closed stderr.
+    fn all(self) -> String {
+        self.reader.join().unwrap();
+        std::mem::take(&mut *self.text.lock().unwrap())
+    }
+}
+
 fn spawn_trekr(db: &Path, cwd: &Path, args: &[&str]) -> std::process::Child {
     neutral(Command::new(env!("CARGO_BIN_EXE_trekr")))
         .args(args)
@@ -4441,14 +4506,14 @@ fn a_queued_index_says_what_it_is_waiting_for() {
 
     let holder = rusqlite::Connection::open(&db).unwrap();
     holder.execute_batch("BEGIN IMMEDIATE").unwrap();
-    let queued = spawn_trekr(&db, &dir, &["--index", "--json"]);
-    std::thread::sleep(std::time::Duration::from_millis(2500));
+    let mut queued = spawn_trekr(&db, &dir, &["--index", "--json"]);
+    let stderr = Said::of(&mut queued);
+    stderr.wait_for("waiting for another");
     holder.execute_batch("ROLLBACK").unwrap();
 
     let out = queued.wait_with_output().unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stderr = stderr.all();
     assert!(out.status.success(), "{stderr}");
-    assert!(stderr.contains("waiting for another"), "{stderr}");
     assert_eq!(
         json(&out)["indexed"]["parsed"],
         1,
@@ -4537,13 +4602,14 @@ fn an_index_outwaited_by_a_live_writer_leaves_its_mark_running() {
 fn an_index_stopped_by_a_signal_says_it_is_incomplete() {
     use std::os::unix::process::ExitStatusExt;
     let (dir, db, holder) = cut_short_behind_a_lock("index-stopped");
-    let queued = spawn_trekr(&db, &dir, &["--index", "--json", "--no-gems"]);
-    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let mut queued = spawn_trekr(&db, &dir, &["--index", "--json", "--no-gems"]);
+    let stderr = Said::of(&mut queued);
+    stderr.wait_for("waiting for another");
     // SAFETY: signals our own child, not yet reaped, so its pid is not reused.
     unsafe { libc::kill(queued.id() as i32, libc::SIGTERM) };
     let out = queued.wait_with_output().unwrap();
     holder.execute_batch("ROLLBACK").unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stderr = stderr.all();
     assert_eq!(out.status.signal(), Some(libc::SIGTERM), "{stderr}");
     assert!(stderr.contains("1 of 2 files"), "{stderr}");
     assert_eq!(json(&out)["status"], "incomplete");
@@ -4558,12 +4624,13 @@ fn an_index_stopped_with_its_reader_gone_dies_quietly() {
     let (dir, db, holder) = cut_short_behind_a_lock("index-stopped-pipe");
     let mut queued = spawn_trekr(&db, &dir, &["--index", "--json", "--no-gems"]);
     drop(queued.stdout.take());
-    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let stderr = Said::of(&mut queued);
+    stderr.wait_for("waiting for another");
     // SAFETY: signals our own child, not yet reaped, so its pid is not reused.
     unsafe { libc::kill(queued.id() as i32, libc::SIGINT) };
     let out = queued.wait_with_output().unwrap();
     holder.execute_batch("ROLLBACK").unwrap();
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stderr = stderr.all();
     assert_eq!(out.status.signal(), Some(libc::SIGINT), "{stderr}");
     assert!(!stderr.contains("panicked"), "{stderr}");
     let _ = fs::remove_dir_all(&dir);
