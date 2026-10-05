@@ -811,6 +811,23 @@ impl Store {
         rows.collect()
     }
 
+    /// The mixins one checkout sends to a constant (`Widget.prepend self`,
+    /// DEC-097), with the path relative to the checkout: `--dead` reads each
+    /// as a use of the module sent (DEC-620).
+    pub(crate) fn sent_mixins(&self, root: &str) -> Result<Vec<EdgeRow>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT a.owner, a.relation, a.target, f.path, a.line
+               FROM ancestry a
+               JOIN file f ON f.blob_id = a.blob_id
+              WHERE f.checkout_id = (SELECT id FROM checkout WHERE root = ?1)
+                AND substr(a.owner, 1, length(?2)) = ?2
+                AND a.relation IN ('include', 'prepend', 'extend', 'singleton_prepend')
+              ORDER BY f.path, a.line",
+        )?;
+        let rows = stmt.query_map(params![root, runtime::SENT], edge_row)?;
+        rows.collect()
+    }
+
     /// The constant references in one checkout written as any of `names`,
     /// unresolved: `--dead` resolves each against the tree (DEC-420).
     pub(crate) fn const_refs_named(

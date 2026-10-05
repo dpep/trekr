@@ -1,0 +1,11 @@
+# A module that sends itself to another class's mixin as its file loads
+# (`Widget.prepend self`, as faraday's specs prepend a stub to WebMock's) is
+# used as surely as `prepend Disabling` written in Widget would be, though no
+# constant names it: the edge is the reference. A receiver the index does
+# not hold (`Missing::Thing`, a gem's class) still takes the module. A
+# module's own `extend self` hands it to nothing. One a spec mixes in is
+# used by the tests (#12).
+dead lib Disabling=none Naming=none Remote=none Outer::Inner=none Outer=none Helpful=unreferenced Orphan=unreferenced
+dead spec Stubbing=test-only
+ancestors Widget Stubbing,Disabling,Widget,Outer::Inner
+def lib/patches.rb:3:5 status=resolved owner=Widget via=super

@@ -251,6 +251,34 @@ fn uses_of(
             }
         }
     }
+    // A module sent to another class's mixin as its file loads
+    // (`Widget.prepend self`) is held by that class, as `prepend` written in
+    // its body would be, though the call is in the module's own body: the
+    // receiver, not the call, is where it is used from (DEC-620).
+    for edge in store.sent_mixins(root)? {
+        let Some((sent, nesting)) = edge.owner.split_first() else {
+            continue;
+        };
+        let Some(fqn) = tree.resolve(&edge.target, nesting).fqn else {
+            continue;
+        };
+        // One the index does not hold (a gem's class) is outside them all.
+        let receiver = crate::core::runtime::sent_to(sent)
+            .and_then(|receiver| tree.resolve(receiver, nesting).fqn)
+            .unwrap_or_default();
+        let test = in_tests(&edge.path);
+        for used in std::iter::once(fqn.as_str()).chain(namespaces(&fqn)) {
+            if !wanted.contains(used) || within(&receiver, used) {
+                continue;
+            }
+            let entry = uses.entry(used.to_string()).or_default();
+            if test {
+                entry.test_at(&edge.path, edge.line);
+            } else {
+                entry.live += 1;
+            }
+        }
+    }
     Ok(uses)
 }
 

@@ -13320,3 +13320,50 @@ managers' globals before `$GEM_HOME`, and rails answered from rvm's
 Not done: `.ruby-version` with `ruby file:` in
 the Gemfile is read as the file itself; mise's `.config/mise.toml` in a
 project and asdf's `legacy_version_file` settings are not read.
+
+## DEC-620 — A mixin sent to another class is a use of the module, from the receiver
+
+**Decided.** A module sent to a constant's mixin as its file loads —
+`Widget.prepend self`, `Gadget.include(self)`, `X.send(:prepend, self)`,
+`Widget.include Outer::Inner` (DEC-097) — is used by the class that takes
+it, for `--dead`'s constants, as `prepend Disabling` written in Widget's
+body is. `dead_consts::uses_of` reads the store's sent edges
+(`Store::sent_mixins`, no store change) after the constant references: the
+target resolves where the call is written, and is a use (of it and of each
+namespace above it, as a reference to `A::B` is a use of `A`) unless the
+receiver is within it — `Helpful.extend self` is the module's own. A
+receiver the index does not hold (`WebMock::RequestStub` when the gem is
+not indexed) is outside every candidate, so the module is used. A call
+under `spec/` or `test/` is a test's use: faraday's two are `test-only`.
+Testbed 620.
+
+**Why the receiver, not the call.** DEC-420 drops a reference written in
+the constant's own body, since a class naming itself does not keep itself
+alive. A sent mixin is always written there when it hands `self`, and what
+it does is put the module into another class's chain: Widget now holds it,
+and deleting the module breaks Widget. The edge already existed — the
+method overrides (`Disabling#run` over `Widget#run`) and `--ancestors
+Widget` showed the module before this — only the constant's liveness
+ignored it.
+
+**Not the text rule.** DEC-421's `registration` read `(self)` handed to
+any constant's method as a convention, so `Gadget.include(self)` was
+`convention-only` and `Widget.prepend self` (no parentheses) nothing. A
+mixin is modelled, so it is a use; the text rule stays for other methods
+(`register_feature(:x, self)`). A sent mixin under a condition is still no
+edge (DEC-097) and falls to that rule.
+
+**Measured**, `--dead` constants before and after on faraday (`.`), rack
+(`.`), rails (six frameworks), discourse (`app lib spec plugins`) and
+mastodon (`app lib spec`): 7 rows moved, each hand-checked a true use —
+faraday's `DisablingStub` and `FormatterOverrides` (the issue's) to
+`test-only`; rails' `RequireDependency` (`Object.prepend(self)`, was
+`convention-only`) and `XmlMini_Nokogiri` (holds the `Conversions` modules
+it sends to Nokogiri's classes; Rails also finds it by a built name),
+discourse's `FreedomPatches::SafeBuffer`, `FreedomPatches::
+SchemaMigrationDetails` and `RequireDependencyBackwardCompatibility`
+(each `X.prepend(self)`) to used.
+
+**Not done.** `--refs Disabling` stays name-level (DEC-420) and lists no
+`self`.
+

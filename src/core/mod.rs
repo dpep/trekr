@@ -572,7 +572,7 @@ pub(crate) struct Ancestry {
 /// includes the module (DEC-102): `(mixed include)` before the module's own
 /// nesting, and `prepend` or `extend` for the other two hooks.
 pub(crate) mod runtime {
-    const SENT: &str = "(sent ";
+    pub(crate) const SENT: &str = "(sent ";
     const HOOK: &str = "(on_load ";
     const MIXED: &str = "(mixed ";
 

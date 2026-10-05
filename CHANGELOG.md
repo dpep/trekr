@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **`--dead` counts a module that mixes itself into another class** (#12).
+  `Widget.prepend self` (or `include`, `extend`, `send(:prepend, self)`) in
+  a module's body was reported `unreferenced`, though the class holds it as
+  surely as `prepend Disabling` written in its body would; the module is
+  now used by that class, and by the tests when the call is in one — the
+  receiver may be a gem's class trekr has not indexed. The patch's methods
+  already overrode the class's, and `--ancestors` already showed it.
 - **A checkout that names no Ruby still gets core** (#9). Without a
   `.ruby-version` (most gems), trekr used `$GEM_HOME`'s or `$PATH`'s Ruby, or
   the only one installed — and with several installed and none of those,
