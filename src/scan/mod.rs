@@ -433,26 +433,29 @@ pub(crate) const PROBE_WAIT: std::time::Duration = std::time::Duration::from_sec
 /// the store to find every file edited, added or deleted since the index —
 /// untracked ones and edits git has not been told about included (DEC-035).
 /// `git status` compares content where a stat moved, so a `touch` is no edit.
-pub(crate) struct Probe {
+/// `then` runs on the same thread with what it found, so the comparison is
+/// made there too.
+pub(crate) struct Probe<T> {
     started: std::time::Instant,
-    found: std::sync::mpsc::Receiver<Result<Files>>,
+    found: std::sync::mpsc::Receiver<Result<T>>,
 }
 
-impl Probe {
-    pub(crate) fn start(root: &Path) -> Probe {
+impl<T: Send + 'static> Probe<T> {
+    pub(crate) fn start(root: &Path, then: impl FnOnce(Files) -> T + Send + 'static) -> Probe<T> {
         let (send, found) = std::sync::mpsc::channel();
         let root = root.to_path_buf();
         // Left running when given up on: it ends with its git, and so does
         // the process at the answer.
-        std::thread::spawn(move || drop(send.send(scan(&root))));
+        std::thread::spawn(move || drop(send.send(scan(&root).map(then))));
         Probe {
             started: std::time::Instant::now(),
             found,
         }
     }
 
-    /// The working tree's map, or why it could not be had, in words.
-    pub(crate) fn finish(self) -> std::result::Result<Files, String> {
+    /// What `then` made of the working tree's map, or why the map could not
+    /// be had, in words.
+    pub(crate) fn finish(self) -> std::result::Result<T, String> {
         use std::sync::mpsc::RecvTimeoutError;
         let left = PROBE_WAIT.saturating_sub(self.started.elapsed());
         match self.found.recv_timeout(left) {

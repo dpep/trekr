@@ -293,7 +293,8 @@ pub(super) fn cmd_dead(out: Output, paths: &[PathBuf]) -> anyhow::Result<ExitCod
     }
     // Every candidate is a claim about every file: read the edits first.
     for (root, _) in &checkouts {
-        freshen(out, &mut store, root, None, probe(root));
+        let probe = probe(&store, root);
+        freshen(out, &mut store, root, None, probe);
     }
     // Across checkouts no one root is "here", so text writes every path
     // whole rather than relative to whichever scope came first.

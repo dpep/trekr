@@ -283,6 +283,18 @@ impl Store {
         Ok(Some(store))
     }
 
+    /// How to open another connection to this store later, on any thread —
+    /// as `reopen` does, without this one's overlays. `None` for an
+    /// in-memory store.
+    pub(crate) fn opener(&self) -> Option<impl FnOnce() -> Result<Store> + Send + 'static> {
+        let path = self.path.clone()?;
+        let existing = self.existing;
+        Some(move || match existing {
+            true => Store::open_existing(&path),
+            false => Store::open(&path),
+        })
+    }
+
     /// The database file, or `None` for an in-memory store.
     pub(crate) fn path(&self) -> Option<&Path> {
         self.path.as_deref()

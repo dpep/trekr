@@ -3931,7 +3931,8 @@ fn cmd_refs(
             Output::Json => Output::Text,
             other => other,
         };
-        freshen(say, &mut store, &root, None, probe(&root));
+        let probe = probe(&store, &root);
+        freshen(say, &mut store, &root, None, probe);
         return cmd_refs_by_name(out, &root, &root_str, &store, &query);
     }
 
@@ -4576,7 +4577,7 @@ fn freshen(
     store: &mut Store,
     root: &Path,
     queried: Option<&Path>,
-    probe: Option<scan::Probe>,
+    probe: Option<Probe>,
 ) -> bool {
     let root_str = root.to_string_lossy().into_owned();
     let Some(probe) = probe else {
@@ -4599,12 +4600,42 @@ fn freshen(
     changed
 }
 
+/// What changed since the index, as git found it and compared with the map
+/// the store holds; `None` when the map could not be read.
+type Probe = scan::Probe<Option<Compared>>;
+
+struct Compared {
+    /// The map as indexed, path → blob oid.
+    stored: HashMap<String, String>,
+    /// Every path whose blob differs, and every one gone.
+    changed: crate::store::Overlay,
+}
+
 /// The working tree of `root`, begun reading — unless this command has
-/// checked `root` already.
-fn probe(root: &Path) -> Option<scan::Probe> {
-    let root_str = root.to_string_lossy();
-    let known = checked().iter().any(|(known, _)| *known == root_str);
-    (!known).then(|| scan::Probe::start(root))
+/// checked `root` already. The stored map is read on a connection of its
+/// own while git runs, and compared on git's thread: none of it waits
+/// behind the tree build.
+fn probe(store: &Store, root: &Path) -> Option<Probe> {
+    let root_str = root.to_string_lossy().into_owned();
+    if checked().iter().any(|(known, _)| *known == root_str) {
+        return None;
+    }
+    let open = store.opener();
+    let stored = std::thread::spawn(move || open?().ok()?.file_map(&root_str).ok());
+    Some(scan::Probe::start(root, move |now| {
+        let stored = stored.join().ok().flatten()?;
+        let gone = stored
+            .keys()
+            .filter(|path| !now.contains_key(*path))
+            .map(|path| (path.clone(), None));
+        let mut changed: crate::store::Overlay = gone.collect();
+        changed.extend(
+            now.into_iter()
+                .filter(|(path, oid)| stored.get(path) != Some(&oid.0))
+                .map(|(path, oid)| (path, Some(oid))),
+        );
+        Some(Compared { stored, changed })
+    }))
 }
 
 /// Read what changed into `store` (`changes`), as its overlay on `root` —
@@ -4614,7 +4645,7 @@ fn refresh_for_query(
     store: &mut Store,
     root: &Path,
     queried: Option<&Path>,
-    probe: scan::Probe,
+    probe: Probe,
 ) -> (Option<Freshness>, bool) {
     let root_str = root.to_string_lossy();
     let mut found = changes(store, root, queried, probe);
@@ -4636,7 +4667,7 @@ fn changes(
     store: &mut Store,
     root: &Path,
     queried: Option<&Path>,
-    probe: scan::Probe,
+    probe: Probe,
 ) -> Option<Freshness> {
     let root_str = root.to_string_lossy().into_owned();
     // A gem never moves; a checkout a first index is still filling already
@@ -4646,28 +4677,18 @@ fn changes(
     {
         return None;
     }
-    let stored = store.file_map(&root_str).ok()?;
     let queried = queried
         .and_then(|file| std::fs::canonicalize(file).ok())
         .and_then(|file| Some(file.strip_prefix(root).ok()?.to_string_lossy().into_owned()));
     let mut lag = None;
-    let mut changed: crate::store::Overlay = match probe.finish() {
-        Ok(now) => {
-            let gone = stored
-                .keys()
-                .filter(|path| !now.contains_key(*path))
-                .map(|path| (path.clone(), None));
-            let mut changed: crate::store::Overlay = gone.collect();
-            changed.extend(
-                now.into_iter()
-                    .filter(|(path, oid)| stored.get(path) != Some(&oid.0))
-                    .map(|(path, oid)| (path, Some(oid))),
-            );
-            changed
+    let (stored, mut changed) = match probe.finish() {
+        Ok(compared) => {
+            let Compared { stored, changed } = compared?;
+            (stored, changed)
         }
         Err(why) => {
             lag = Some(why);
-            Vec::new()
+            (store.file_map(&root_str).ok()?, Vec::new())
         }
     };
     // More is an operation on the checkout — a branch switch, a rebase —
@@ -4748,7 +4769,7 @@ fn fresh_tree(
     queried: Option<&Path>,
 ) -> anyhow::Result<OneShotTree> {
     let root_str = root.to_string_lossy();
-    let Some(probe) = probe(root) else {
+    let Some(probe) = probe(store, root) else {
         freshen(out, store, root, queried, None);
         return build_tree(store, &root_str);
     };

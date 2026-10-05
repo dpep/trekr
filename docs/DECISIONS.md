@@ -1859,6 +1859,12 @@ connection, and the second tree — declarations 80, ancestry 26, assembly
 - **`ls-files -s` and `status` run at once**: both only read the index.
   The scan alone, alternating, 25 each, at load ~40: discourse 171 → 103 ms
   (p25), mastodon 45 → 29.
+- **The stored map is read and compared on the probe's thread**, on a
+  connection of its own opened there (`Store::opener`), while git runs: the
+  5 ms of `file_map` and 3 ms of comparing on discourse no longer wait
+  behind the tree build. With nothing edited, discourse `--def` p25 340 →
+  307 ms against b45e1a8's 274, `--refs Owner#m` 277 → 233 against 227
+  (alternating, 21 each, at a load of ~100 — the machine was not quiet).
 
 **Measured**, release, b45e1a8 / the re-hunt overlay (6282913) / this,
 alternating, medians of 7 (3 for `--dead`), at load 12–19 on 8 cores, five
