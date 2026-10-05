@@ -1898,6 +1898,24 @@ load 50–250 — slower everywhere, the ratios are what carry:
 | discourse `--def`, lines moved | 207 / 183 | 1,466 / 1,123 | 240 / 195 |
 | discourse `--refs Owner#m`, lines moved | 259 / 180 | 3,118 / 1,845 | 323 / 225 |
 
+Rebased onto 0.8.7 (which shipped without any of this) and measured again
+on a quieter machine (load 7–49), medians of 15 (5 for `--dead`), against
+0.8.7's main (1a8fbca, no freshness check at all) and b45e1a8:
+
+| | 0.8.7 main | b45e1a8 | 0.8.8 |
+|---|---|---|---|
+| mastodon `--def`, none / comment / lines moved | 29 / 30 / 30 | 30 / 31 / 32 | 31 / 32 / 33 |
+| mastodon `--refs Owner#m`, none / lines moved | 134 / 132 | 128 / 129 | 134 / 137 |
+| discourse `--def`, none / comment / lines moved | 78 / 78 / 74 | 87 / 88 / 82 | 97 / 99 / 93 |
+| discourse `--refs Owner#m`, none / lines moved | 64 / 65 | 72 / 73 | 78 / 81 |
+| discourse `--dead app/models`, none / lines moved | 2,664 / 2,469 | 2,647 / 2,234 | 2,655 / 2,558 |
+
+With edits, a query costs what it costs without (0–3 ms). With none, the
+check costs mastodon ~2 ms and discourse ~14–19 ms over no check, ~6–10 ms
+over b45e1a8's `diff-files`: `status`'s walk for untracked files, which the
+tree build no longer hides on discourse. 0.8.7 answers the edited queries
+from the index (mastodon `--def` on line 201, not the edited 204).
+
 `--dead app/models` moved by less than its noise in every run (mastodon
 1.2–1.8 s at load 12–19, discourse 3.0–4.3 s; 10–27 s at load 100+, all
 three builds). With edits, a repeat query costs what the same query does
