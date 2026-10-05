@@ -1526,19 +1526,19 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         def.pos = self.pos(name_start);
         self.push_def(def);
 
-        // Compact `class Foo::Bar` opens ONE lexical scope, not two: Ruby's
-        // `Module.nesting` is `[Foo::Bar]`, so constants inside cannot see
-        // `Foo`'s. Pushing the written path whole is what preserves that.
         // `class Point < Struct.new(:x, :y)`: the members live on an
         // anonymous class between the two, taken as Point's own (DEC-643).
         if let Some(call) = node.superclass().and_then(|sup| sup.as_call_node())
-            && let Some(made @ (Made::Struct | Made::Data)) = Made::by(&call)
+            && let Some(made) = Made::by(&call)
         {
             self.nesting.insert(0, name.clone());
             self.declare_members(&call, made);
             self.nesting.remove(0);
         }
 
+        // Compact `class Foo::Bar` opens ONE lexical scope, not two: Ruby's
+        // `Module.nesting` is `[Foo::Bar]`, so constants inside cannot see
+        // `Foo`'s. Pushing the written path whole is what preserves that.
         self.enter(Some(name), Opens::Scope);
         if let Some(body) = node.body() {
             self.visit(&body);
