@@ -161,6 +161,9 @@ fn every_path_is_relative_to_the_root_beside_it() {
             &["--dead", &format!("{root}/widget.rb"), "--json"],
         )),
         json(&trekr(&db, &dir, &["--symbols", "widget.rb", "--json"])),
+        // A variable: its writes, and its mentions.
+        json(&trekr(&db, &dir, &["--def", "widget.rb:6:14", "--json"])),
+        json(&trekr(&db, &dir, &["--refs", "widget.rb:6:14", "--json"])),
     ];
     for answer in &answers {
         let mut found = Vec::new();
@@ -183,6 +186,63 @@ fn every_path_is_relative_to_the_root_beside_it() {
     let text = stdout(&trekr(&db, &dir, &["--refs", "Widget#helper"]));
     assert!(text.starts_with("widget.rb:12:7  definition"), "{text}");
 
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A template's answers that land in another file — a view's `@ivar` in
+/// its controller, a `render`'s partial — write paths as every other answer
+/// does: relative, with the root beside them.
+#[test]
+fn a_templates_answers_write_paths_relative_to_their_root() {
+    let (dir, db) = scratch("tmplpaths");
+    git(&dir, &["init", "-q"]);
+    for (path, text) in [
+        (
+            "app/controllers/widgets_controller.rb",
+            "class WidgetsController\n  def show\n    @title = \"w\"\n  end\nend\n",
+        ),
+        (
+            "app/views/widgets/show.html.erb",
+            "<%= @title %>\n<%= render \"row\" %>\n",
+        ),
+        ("app/views/widgets/_row.html.erb", "<li></li>\n"),
+    ] {
+        let file = dir.join(path);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, text).unwrap();
+    }
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    trekr(&db, &dir, &["--index"]);
+    let root = fs::canonicalize(&dir)
+        .unwrap()
+        .to_string_lossy()
+        .into_owned();
+    let view = "app/views/widgets/show.html.erb";
+    for (at, want) in [
+        ("1:6", "app/controllers/widgets_controller.rb"),
+        ("2:15", "app/views/widgets/_row.html.erb"),
+    ] {
+        let answer = json(&trekr(
+            &db,
+            &dir,
+            &["--def", &format!("{view}:{at}"), "--json"],
+        ));
+        let site = &answer["definition"][0];
+        assert_eq!(site["path"], want, "{answer}");
+        assert_eq!(site["root"], serde_json::json!(root), "{answer}");
+    }
     let _ = fs::remove_dir_all(&dir);
 }
 

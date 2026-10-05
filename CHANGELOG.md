@@ -87,6 +87,9 @@
   `attr_accessor :x, :y` (or a table's columns from `structure.sql`) made
   each method a child of the one before it; a method or constant on one
   line now holds nothing.
+- **`--def --json` on a view's `@ivar` writes its controller's path
+  relative, with `root` beside it,** as every other answer does; it was
+  absolute, with no `root`.
 - **`--def` on the start of an index's argument answers for the argument.**
   On the `k` of `h[key]` (or the `ke` of `h[key] = v`) it answered `[]`
   (`[]=`): an index call covered as many columns as its name has, not just

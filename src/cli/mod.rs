@@ -5959,6 +5959,11 @@ fn cmd_def(
         if from_controller.is_empty() {
             file_alone();
         } else {
+            // Read from the tree: its paths are the checkout's, and an index
+            // still filling it may not hold the write yet.
+            if let Some((root, store)) = &checkout {
+                answering_in(store, &root.to_string_lossy());
+            }
             answer["definition"] = from_controller
                 .iter()
                 .map(|site| {
