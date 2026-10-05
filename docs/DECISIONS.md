@@ -211,6 +211,9 @@ wrong data.
 cost — gems keyed by `(gem, version)` might get there, since they are shared
 across projects.
 
+*Revisited 2026-10-05: holds.* A rebuild is still cheap enough to pay at
+every extraction change; see DEC-622.
+
 ## DEC-010 — A partial ancestor chain reports, it does not stop
 
 **Decided.** When linearization cannot resolve an ancestor, the chain continues
@@ -226,6 +229,12 @@ the reason, not nothing.
 
 **Reverses if** gem indexing (PLAN Phase 3) lands, at which point a partial
 chain becomes rare enough that stopping is the more accurate choice.
+
+*Revisited 2026-10-05: the trigger fired, the decision was not revisited.*
+Gems are indexed (DEC-016, DEC-017), and the chain still reports
+`unresolved_ancestors` rather than stopping. A gem trekr cannot locate
+still leaves ancestors unresolved. How often that happens now has not been
+measured, so whether stopping would be the more accurate choice is open.
 
 ## DEC-011 — Method confidence is a count of agreeing evidence
 
@@ -249,6 +258,11 @@ the safe direction.
 **Reverses if** the TracePoint gold set (PLAN §5) is built. Then each rung has a
 measured accuracy and confidence can be calibrated rather than counted — which
 is the only honest way to make these numbers comparable across rungs.
+
+*Revisited 2026-10-05: the trigger fired, and this was reversed in part.* The
+gold set exists ([BASELINE.md](BASELINE.md)). A residue's confidence is now
+calibrated on it (DEC-442). A resolved answer's confidence is still the
+count this entry describes, and no rung has been calibrated.
 
 ## DEC-012 — Assignments are extracted but never stored
 
@@ -281,6 +295,9 @@ worse than a slow one.
 **Reverses if** the extractor is ever versioned separately from the schema —
 which would be worth doing if reindexing became expensive, since an extractor
 change need only invalidate the fact tables and not the checkout map.
+
+*Revisited 2026-10-05: holds.* Versioning each extractor separately was
+proposed and deferred; see DEC-622.
 
 ## DEC-014 — `--jobs` defaults to physical cores, but the writer is the real cost
 
@@ -13530,3 +13547,27 @@ would read the same fact and is a feature of its own: it would need
 Zeitwerk's and Rails' loaders as well as `require`, or every autoloaded
 file is an orphan.
 
+## DEC-622 — Rejected for now: a version per extractor
+
+**Proposed** twice: in the first sustainability pass, and in a memo on
+extractor versioning. Each extractor (Ruby, ERB, RABL, structure.sql, the
+macro table) would carry its own version, and a change to one would
+re-read only the blobs that extractor reads, instead of the whole store
+being dropped at each `schema::VERSION` bump (DEC-009, DEC-013).
+
+**Why not now.** The premise is that reindexing is expensive, and it is
+not: a dropped store is rebuilt at the next query (DEC-500). The cost is a
+first index per checkout after an upgrade. Store versions moved often in
+this window: v50 to v63 between 2026-09-29 and 2026-10-04. But each bump
+is one rebuild per checkout, which nobody has reported as a cost.
+Correctness does not need it either. The extraction golden
+(`tests/extraction.golden`) fails any extraction change that ships without
+a bump, which is the stale-cache bug DEC-013 exists to prevent. Per-extractor
+versions would add a version per reader to the schema and a partial
+invalidation path, and both would need testing, to save rebuild time that
+nobody is paying for.
+
+**Reopens if** a rebuild becomes a cost someone pays: an index of a large
+checkout plus its gems that takes long enough to report, a store shared
+across machines, or bumps frequent enough that users keep meeting a first
+index.

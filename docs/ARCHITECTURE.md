@@ -1226,6 +1226,36 @@ handshake. If the new build does not run, the old one keeps serving. If it
 runs but cannot resume, the server retires (exits) so the client restarts it.
 The log records `reload`, `resume`, `reload_failed` and `retire`.
 
+## Extending: a framework DSL, a template language, an LSP feature
+
+**A framework DSL**, in this order, stopping at the first step that covers it:
+
+1. **A stub**: Ruby the tree reads as if a gem had written it
+   (`src/tree/rspec.rb`, `src/tree/activerecord.rb`). It covers what the
+   framework's methods return or define. It needs no extractor change and no
+   store version.
+2. **A row in the macro table** (`src/extract/macros.rs`). It maps a macro
+   name and its literal argument to the methods it creates (DEC-021). It
+   changes extraction, so it bumps `schema::VERSION`, and the extraction
+   golden says so.
+3. **Extractor code** (`src/extract/mod.rs`), last, for a shape neither of
+   the above can express: an `on_load` block, an RSpec group. A module the
+   extractor makes that no code declares goes in `core::synthetic`, so
+   `--dead` does not list it.
+
+**A template language** is a `scan::Reader` variant. `Reader::of` names it
+by path. Every `match` on it then has to say how the language is read:
+`extract_file`, `ruby_source`, `schema::tables_in` and `ViewTemplate::of`.
+`scan::is_indexed` has to include it. The index and the language server
+read a file through the same functions, so neither can read a template the
+other does not. A template that runs on a view context is a `ViewTemplate`.
+
+**An LSP feature** is a capability in `serve::capabilities`, plus a `route`
+arm that calls its handler. If the CLI asks the same question, the answer
+goes in `query/` and both fronts call it. The testbed's `hover` lines and
+its position `refs` lines run against a real `--lsp` session, so when a
+case's answer reaches the editor, add one of those lines.
+
 ## Measurements
 
 2026-09-27, Apple M2 (8 cores), release build at 4b035da (the tree snapshot's

@@ -663,7 +663,8 @@ pub(crate) fn references(
         }
         Under::Constant(_) => unreachable!("answered above"),
     };
-    // An `X.new` asks about the `initialize` it runs (DEC-541).
+    // The asked name, which `resolve::asked_at` made `initialize` for an
+    // `X.new` (DEC-541).
     let name = query.name.clone();
     let target = query.owner.clone();
     let bare = target.is_none();
