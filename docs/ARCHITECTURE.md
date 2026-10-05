@@ -34,7 +34,8 @@ boundary below is stated as a prohibition rather than a preference.
 
 The CLI (`cli/`) and the LSP (`serve/`) are fronts over these layers. What
 both ask — the fact under a position, an example group's members, how a call
-site is tiered for references — lives in `query/`, beneath either. What both
+site is tiered for references, which files a member variable's class spans —
+lives in `query/`, beneath either. What both
 share at run time sits beneath them too: `background.rs`, the index child's
 side of a spawned `--index` (its hints and its lowered priority), and
 `log.rs`, the ndjson log the server writes and `--usage --misses` reads.
@@ -958,7 +959,7 @@ the new binary in place (DEC-050).
 | `gather.rs` | how much of a references answer is kept, in what order, and what is said about the rest (DEC-056) |
 | `require.rs` | which file a `require` string names: finding them in a file, the static load path, Ruby's search rules (DEC-053) |
 | `vars.rs` | a file's variables, pure: which writes each local read can see, each ivar with its written class and `self` (DEC-064) |
-| `variables.rs` | a variable under the cursor: definition, references, highlight, hover; an ivar's class files, read when asked (DEC-064) |
+| `variables.rs` | a variable under the cursor: definition, references, highlight, hover; an ivar's class files (`query::variables`, which `--refs FILE:LINE:COL` shares), read when asked (DEC-064) |
 | `doc.rs` | a definition's doc comment and its signature as written, read from its file when asked (DEC-052) |
 | `schema.rs` | a model's table and a column's facts for a hover, read from the schema dump when asked (DEC-481) |
 | `complete.rs` | completion (DEC-040), and the chosen item's doc on resolve (DEC-052) |

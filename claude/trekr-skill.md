@@ -138,13 +138,16 @@ checkout you asked about relative to it, and anything else absolute.
 `Owner.method` asks about a class method instead. A bare `--refs name` keeps the
 whole-mention view. **A position** (`--refs spec/widget_spec.rb:12`, or
 `FILE:LINE:COL`) asks about what is there: a method's definition or call as
-`Owner#method`, a class, module or constant as `--refs Name`, or a spec's
+`Owner#method`, a class, module or constant as `--refs Name`, a variable
+(its mentions: a local's in its scope, an `@ivar`'s across its class's files,
+each `read` or `write`), or a spec's
 `let`, `subject` or group `def` (or the `let` keyword) — every read as
 RSpec runs it (its group's and nested groups' examples, an enclosing group's
 hooks, an included shared group's body in any file, `super`, `is_expected`,
 a `config.include`d helper, a shared context included by metadata, a
 `config.before` hook), each with `from` saying where. Use it before
-deleting a `let`.
+deleting a `let`. A column on none of these exits 64 rather than answering
+for a name nearby.
 
 **Through the LSP tool, findReferences is capped** (1,000 by default, confirmed
 callers first) and the cut is only announced to editors, not to you. If you get

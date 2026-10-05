@@ -1,0 +1,10 @@
+# --refs at an ivar, a parameter, a hash key or a blank answered for
+# whichever method was nearest on the line (`fetch`, `go`), and did not say
+# so. At a variable it lists the variable's mentions, as the editor's Find
+# References does; at anything else that is not a name it lists, it is a
+# usage error.
+refs app.rb:8:5 confirmed=3 status=resolved
+refs app.rb:8:29 confirmed=2
+refs app.rb:7:15 exit=64
+refs app.rb:8:23 exit=64
+refs app.rb:8:26 resolves_to=Widget#go

@@ -144,8 +144,10 @@ struct Cli {
     /// references, and call sites; `Owner#method` narrows them to the call
     /// sites that may reach that method, tiered. `FILE:LINE[:COL]` asks about
     /// what is at a position: a method's definition or a call of it, as
-    /// `Owner#method`; an example group's `let`, `subject` or `def`, with
-    /// every read as RSpec runs it and where it was found (`from`).
+    /// `Owner#method`; a variable, with its mentions (a local's in its scope,
+    /// an `@ivar`'s across its class's files); an example group's `let`,
+    /// `subject` or `def`, with every read as RSpec runs it and where it was
+    /// found (`from`). A column on none of these is a usage error.
     #[arg(long, value_name = "NAME", conflicts_with_all = ["index", "drop", "symbols"])]
     refs: Option<String>,
 
@@ -4139,8 +4141,38 @@ fn cmd_refs_at(
     // A method: the one defined there, or the one a call there runs.
     let source = read_input(file)?;
     let facts = crate::extract::extract_file(&file.to_string_lossy(), &source);
-    let under =
-        crate::query::position::at_or_snap(&facts, spec.line, spec.col).map(|(under, _)| under);
+    // A variable is not a call: its mentions, as the editor lists them, and
+    // not whichever method is nearest on the line.
+    if spec.col > 0
+        && crate::query::position::at_facts(&facts, spec.line, spec.col).is_none()
+        && let Some((head, rows)) =
+            variable_mentions(&tree, &root_str, &absolute, &source, spec.line, spec.col)
+    {
+        let found = !rows.is_empty();
+        let mut head = head;
+        head["query"] = written.into();
+        if out != Output::Text {
+            emit_listing(out, head, "references", &rows)?;
+        } else {
+            for row in &rows {
+                println!("{}:{}:{}  {}", row.path, row.line, row.col, row.kind);
+            }
+            println!(
+                "{} mention(s) of {} `{}`",
+                rows.len(),
+                head["variable"].as_str().unwrap_or_default(),
+                head["name"].as_str().unwrap_or_default()
+            );
+        }
+        return Ok(exit_on(found));
+    }
+    // Exactly what is at the column: a snap to the nearest name would list
+    // another name's references, with nothing to say so. A bare `FILE:LINE`
+    // takes the line's first name.
+    let under = match spec.col {
+        0 => crate::query::position::at_or_snap(&facts, spec.line, 0).map(|(under, _)| under),
+        col => crate::query::position::at_facts(&facts, spec.line, col),
+    };
     // A class, module or constant: its references, as `--refs Name` lists them.
     let constant = match &under {
         Some(crate::query::position::Under::Definition(def))
@@ -4184,11 +4216,107 @@ fn cmd_refs_at(
     let Some((owner, singleton, name)) = owner_and_name else {
         return Err(Failure::Usage.error(format!(
             "no method at {written}: --refs takes a method's definition or a call of it, \
-             a class, module or constant, or an example group's let, subject or def"
+             a class, module or constant, a variable, or an example group's let, subject or def"
         )));
     };
     let query = format!("{owner}{}{name}", if singleton { "." } else { "#" });
     cmd_refs(out, &query, include_excluded, Some(&root))
+}
+
+/// One mention of a variable, for `--refs` at it.
+#[derive(serde::Serialize)]
+struct Mention {
+    path: String,
+    line: u32,
+    col: u32,
+    /// `read` or `write`.
+    kind: &'static str,
+}
+
+/// The variable at a position and every mention of it: a local's in its
+/// file, an instance or class variable's across its class's files
+/// (`query::variables`). `None` when no variable is there.
+fn variable_mentions(
+    tree: &crate::tree::Tree,
+    root_str: &str,
+    file: &Path,
+    raw: &[u8],
+    line: u32,
+    col: u32,
+) -> Option<(serde_json::Value, Vec<Mention>)> {
+    use crate::resolve::vars::{self, Sigil};
+    let path = file.to_string_lossy();
+    let source = crate::extract::ruby_source(&path, raw);
+    let head = position::variable_at(&source, &path, line, col)?;
+    crate::usage::flag("variable");
+    let offset = source
+        .split_inclusive(|b| *b == b'\n')
+        .take(line.checked_sub(1)? as usize)
+        .map(<[u8]>::len)
+        .sum::<usize>()
+        + (col as usize).checked_sub(1)?;
+    let here = vars::analyze(&source);
+    let want = here.at(offset)?.clone();
+    let relative = |p: &str| {
+        p.strip_prefix(root_str)
+            .and_then(|r| r.strip_prefix('/'))
+            .unwrap_or(p)
+            .to_string()
+    };
+    let mention = |path: &str, text: &[u8], o: &vars::Occurrence| {
+        let at = crate::extract::LineIndex::new(text).pos(o.span.start);
+        Mention {
+            path: relative(path),
+            line: at.line,
+            col: at.col,
+            kind: if o.is_write() { "write" } else { "read" },
+        }
+    };
+    let scope = match want.sigil {
+        Sigil::Local => None,
+        Sigil::Instance | Sigil::Class => {
+            let owner = here.owner(&want)?;
+            crate::query::variables::ClassScope::of(tree, &path, owner, want.sigil)
+        }
+    };
+    let mut rows: Vec<Mention> = match scope {
+        None => here
+            .same(&want)
+            .into_iter()
+            .map(|o| mention(&path, &source, o))
+            .collect(),
+        Some(scope) => scope
+            .files
+            .iter()
+            .filter_map(|other| {
+                let raw = std::fs::read(other).ok()?;
+                let text = crate::extract::ruby_source(other, &raw).into_owned();
+                let found = vars::analyze(&text);
+                let rows: Vec<Mention> = scope
+                    .mentions(&found, &want, |nesting| scope.holds(tree, nesting))
+                    .into_iter()
+                    .map(|o| mention(other, &text, o))
+                    .collect();
+                Some(rows)
+            })
+            .flatten()
+            .collect(),
+    };
+    rows.sort_by(|a, b| (&a.path, a.line, a.col).cmp(&(&b.path, b.line, b.col)));
+    rows.dedup_by(|a, b| (&a.path, a.line, a.col) == (&b.path, b.line, b.col));
+    let counts = crate::resolve::refs::Counts {
+        confirmed: rows.len(),
+        ..Default::default()
+    };
+    let head = serde_json::json!({
+        "under": "variable",
+        "variable": head["variable"],
+        "name": head["name"],
+        "status": "resolved",
+        "counts": counts,
+        "references": null,
+    });
+    Some((head, rows))
 }
 
 /// `--refs` at a call whose method trekr cannot place: the `--def` answer's

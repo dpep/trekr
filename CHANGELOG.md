@@ -83,6 +83,14 @@
   inside `class << self`); an alias takes its original's visibility instead
   of always being public; a `define_method` in a `private` section is
   private; and `private_class_method [:a, :b]` or `*%i[a b]` names each.
+- **`--refs FILE:LINE:COL` answers for what is at the column.** On an
+  `@ivar`, a local, a parameter, a hash key or a blank it answered for
+  whichever method was nearest on the line, without saying so. At a
+  variable it now lists the variable's mentions, as the editor's Find
+  References does — a local's in its scope, an `@ivar`'s across its class's
+  files, each row `kind: read|write`, `"under": "variable"`; on anything
+  else it lists nothing for, it exits 64. A bare `FILE:LINE` still takes the
+  line's first name.
 - **`--refs` at a call trekr cannot place answers instead of failing.** On
   `x.build` with an untyped receiver it exited 64 as a usage error; it now
   answers `residue` with the reason and a hint to list the name's call

@@ -10,17 +10,13 @@
 use super::convert::{self, LineIndex, path_to_uri};
 use super::handlers::absolute_site;
 use super::state::Session;
+use crate::query::variables::ClassScope;
 use crate::resolve::vars::{self, Binding, Occurrence, Sigil, Vars};
 use lsp_types::Uri as Url;
 use lsp_types::{DocumentHighlight, DocumentHighlightKind, Location, Position};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-
-/// How many files are read for one ivar. A class reopened across more than
-/// this — a core extension, a god object — is read in the tree's site order
-/// and cut there; a definition among the rest is not found.
-const MAX_FILES: usize = 64;
 
 /// A variable under the cursor.
 pub(super) struct Under {
@@ -251,119 +247,88 @@ fn template_writes(session: &mut Session, under: &Under) -> Vec<Found> {
 }
 
 /// Every mention of an instance or class variable in the files of the class
-/// it belongs to and of that class's ancestors.
-///
-/// An instance ivar can be set by anything in the object's ancestry; a
-/// class-level one (`@x` in a class body or `def self.x`) belongs to that one
-/// class object; a class variable is shared down the ancestry like an ivar.
+/// it belongs to and of that class's ancestors (`query::variables`).
 fn members(session: &mut Session, under: &Under) -> Vec<Found> {
     let Some(owner) = under.vars.owner(&under.occurrence).cloned() else {
         return Vec::new();
     };
-    let Some(scope) = class_files(session, &under.file, &owner, under.occurrence.sigil) else {
+    let Some(ClassFiles {
+        scope,
+        files,
+        inside,
+    }) = class_files(session, &under.file, &owner, under.occurrence.sigil)
+    else {
         return here(under);
     };
-    let want = &under.occurrence;
     let mut found = Vec::new();
-    for file in scope.files {
+    for file in files {
         let Some(document) = session.document(&file) else {
             continue;
         };
         let text = document.text.clone();
         let vars = document.vars();
         let lines = LineIndex::new(&text);
-        for o in &vars.occurrences {
-            if o.sigil != want.sigil || o.name != want.name {
-                continue;
-            }
-            let inside = vars.owner(o).is_some_and(|theirs| {
-                theirs.singleton == owner.singleton
-                    && scope.inside.get(&theirs.nesting).copied().unwrap_or(false)
-            });
-            if inside {
-                found.push(Found {
-                    file: file.clone(),
-                    range: lines.range(o.span.clone()),
-                    occurrence: o.clone(),
-                });
-            }
-        }
+        let mentions = scope.mentions(&vars, &under.occurrence, |nesting| {
+            inside.get(nesting).copied().unwrap_or(false)
+        });
+        found.extend(mentions.into_iter().map(|o| Found {
+            file: file.clone(),
+            range: lines.range(o.span.clone()),
+            occurrence: o.clone(),
+        }));
     }
     found
 }
 
-/// The files to read for a member, and whether each written nesting in them
-/// is its class or an ancestor.
+/// The member's class, the files to read for it, and whether each nesting
+/// written in them is its class or an ancestor.
 struct ClassFiles {
+    scope: ClassScope,
     files: Vec<PathBuf>,
     inside: HashMap<Vec<String>, bool>,
 }
 
-/// `None` when the class cannot be named — no checkout, a top-level ivar, or
-/// a nesting the tree does not place — and the file at hand is all there is.
+/// `None` when the class cannot be named, and the file at hand is all there
+/// is.
 fn class_files(
     session: &mut Session,
     file: &Path,
     owner: &vars::Owner,
     sigil: Sigil,
 ) -> Option<ClassFiles> {
-    if owner.nesting.is_empty() {
-        return None;
-    }
     let located = session.locate_query(file)?;
     let tree = session.tree(&located.root).ok()?;
-    let fqn = tree.scope_fqn(&owner.nesting)?;
-    tree.kind_of(&fqn)?;
-    let chain: Vec<String> = match sigil == Sigil::Instance && owner.singleton {
-        true => vec![fqn.clone()],
-        false => tree.ancestors(&fqn).chain.clone(),
-    };
+    let here = located.absolute.to_string_lossy();
+    let scope = ClassScope::of(tree, &here, owner, sigil)?;
     let mut files = vec![located.absolute.clone()];
     let mut seen: HashSet<PathBuf> = files.iter().cloned().collect();
-    for name in &chain {
-        for site in tree.sites(name) {
-            if !tree.in_checkout(&site.path) || files.len() >= MAX_FILES {
-                continue;
-            }
-            if let Some(path) = absolute_site(&located.root, &site.path)
-                && seen.insert(path.clone())
-            {
-                files.push(path);
-            }
+    for path in scope.files.iter().skip(1) {
+        if let Some(path) = absolute_site(&located.root, path)
+            && seen.insert(path.clone())
+        {
+            files.push(path);
         }
     }
-    let chain: HashSet<String> = chain.into_iter().collect();
     // Placing a nesting needs the tree, which the session will not lend while
     // a document is borrowed; so every nesting the files write is placed up
     // front.
-    let inside = placements(session, &located.root, &files, &chain);
-    Some(ClassFiles { files, inside })
-}
-
-/// Each written nesting in these files, and whether the tree places it in
-/// `chain`.
-fn placements(
-    session: &mut Session,
-    root: &Path,
-    files: &[PathBuf],
-    chain: &HashSet<String>,
-) -> HashMap<Vec<String>, bool> {
     let mut nestings: HashSet<Vec<String>> = HashSet::new();
-    for file in files {
+    for file in &files {
         if let Some(document) = session.document(file) {
             nestings.extend(document.vars().owners.iter().map(|o| o.nesting.clone()));
         }
     }
-    let Ok(tree) = session.tree(root) else {
-        return HashMap::new();
-    };
-    nestings
+    let tree = session.tree(&located.root).ok()?;
+    let inside = nestings
         .into_iter()
         .map(|nesting| {
-            let inside = tree
-                .scope_fqn(&nesting)
-                .is_some_and(|fqn| chain.contains(&fqn));
-            (nesting, inside)
+            let holds = scope.holds(tree, &nesting);
+            (nesting, holds)
         })
-        .collect()
+        .collect();
+    Some(ClassFiles {
+        scope,
+        files,
+        inside,
+    })
 }
