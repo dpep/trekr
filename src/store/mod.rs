@@ -1987,12 +1987,20 @@ impl Store {
 
     /// Record a blob's facts. Content-addressed, so a query may: the next
     /// index finds the blob known, and no map points at it until one does.
-    /// Like `refresh_file`, it fails at once when another process is writing.
+    /// Like `refresh_file`, it fails at once when another process is writing
+    /// — unless that process recorded this blob, as a sibling query reading
+    /// the same edit does.
     pub(crate) fn add_blob(&mut self, oid: &Oid, facts: &Facts) -> Result<()> {
-        let tx = self.conn.transaction()?;
-        Store::check_schema(&tx)?;
-        insert_facts(&tx, oid, facts)?;
-        tx.commit()
+        let added = (|| {
+            let tx = self.conn.transaction()?;
+            Store::check_schema(&tx)?;
+            insert_facts(&tx, oid, facts)?;
+            tx.commit()
+        })();
+        match added {
+            Err(error) if is_busy(&error) && self.has_blob(oid).unwrap_or(false) => Ok(()),
+            added => added,
+        }
     }
 
     /// Whether `root`'s map holds `path`, relative to it.
@@ -3289,6 +3297,28 @@ mod lock_tests {
                 .refresh_file("/app", "a.rb", &oid, Some(&facts))
                 .unwrap()
         );
+        drop(store);
+        remove(&path);
+    }
+
+    /// Queries reading the same edit record the same blob: one refused by
+    /// the lock after a sibling recorded it has what it came to write.
+    #[test]
+    fn a_blob_a_sibling_recorded_is_not_busy() {
+        let (mut store, writer, path) = locked("sibling");
+        writer.execute_batch("ROLLBACK").unwrap();
+        let blob = |src: &[u8]| (crate::scan::hash_blob(src), crate::extract::extract(src));
+        let (oid, facts) = blob(b"class A\n  def sibling\n  end\nend\n");
+        Store::open(&path).unwrap().add_blob(&oid, &facts).unwrap();
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+        store.add_blob(&oid, &facts).unwrap();
+        let (other, facts) = blob(b"class A\n  def nobody\n  end\nend\n");
+        let error = store
+            .add_blob(&other, &facts)
+            .expect_err("the lock is held");
+        assert!(is_busy(&error), "{error}");
+        writer.execute_batch("ROLLBACK").unwrap();
         drop(store);
         remove(&path);
     }
