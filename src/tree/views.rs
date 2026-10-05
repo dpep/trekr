@@ -32,6 +32,17 @@ type NamedRead = (Stamp, Arc<[crate::core::TemplateRef]>);
 /// read again when asked. The scan for renders keeps only templates.
 const FACTS_KEPT: usize = 64;
 
+/// An editor's unsaved copies of checkout files, by absolute path, and the
+/// session's count of edits they were copied at. Only the LSP sets them.
+#[derive(Default)]
+pub(crate) struct Open(Mutex<Copies>);
+
+#[derive(Default)]
+struct Copies {
+    generation: Option<u64>,
+    texts: HashMap<String, Arc<[u8]>>,
+}
+
 /// The checkout's view conventions, read once per tree.
 #[derive(Default)]
 pub(crate) struct Views {
@@ -268,10 +279,38 @@ impl Tree {
         Some((class, action))
     }
 
-    /// A checkout file's facts, read from disk: what a controller's actions
-    /// assign is read where a template reads it. Kept while the file is
-    /// unchanged, for the `FACTS_KEPT` files most recently asked for.
+    /// Whether the editor's copies were last set at edit `generation`.
+    pub(crate) fn open_at(&self, generation: u64) -> bool {
+        self.open
+            .0
+            .lock()
+            .is_ok_and(|open| open.generation == Some(generation))
+    }
+
+    /// The editor's unsaved copies, by absolute path as the tree spells it,
+    /// as of edit `generation`: what `file_facts` and `file_templates` read
+    /// in place of the disk.
+    pub(crate) fn set_open(&self, generation: u64, texts: HashMap<String, Arc<[u8]>>) {
+        if let Ok(mut open) = self.open.0.lock() {
+            *open = Copies {
+                generation: Some(generation),
+                texts,
+            };
+        }
+    }
+
+    fn open_text(&self, path: &str) -> Option<Arc<[u8]>> {
+        self.open.0.lock().ok()?.texts.get(path).cloned()
+    }
+
+    /// A checkout file's facts, read from the editor's copy or the disk: what
+    /// a controller's actions assign is read where a template reads it. A
+    /// disk read is kept while the file is unchanged, for the `FACTS_KEPT`
+    /// files most recently asked for.
     pub(crate) fn file_facts(&self, path: &str) -> Option<Arc<Facts>> {
+        if let Some(text) = self.open_text(path) {
+            return Some(Arc::new(crate::extract::extract_file(path, &text)));
+        }
         let stamp = stamp_of(path)?;
         let mut guard = self.views().files.lock().ok()?;
         let (files, asks) = &mut *guard;
@@ -298,15 +337,18 @@ impl Tree {
     }
 
     /// The templates a checkout file names (`render "row"`, `extends "x"`),
-    /// read from disk and kept while it is unchanged — what a scan over
-    /// every file that calls `render` needs of each. With `naming`, a file
-    /// not yet read whose text lacks that word is not parsed: it names no
-    /// template by it.
+    /// read from the editor's copy, or from disk and kept while it is
+    /// unchanged — what a scan over every file that calls `render` needs of
+    /// each. With `naming`, a file not yet read whose text lacks that word is
+    /// not parsed: it names no template by it.
     pub(crate) fn file_templates(
         &self,
         path: &str,
         naming: Option<&str>,
     ) -> Option<Arc<[crate::core::TemplateRef]>> {
+        if let Some(text) = self.open_text(path) {
+            return Some(crate::extract::extract_file(path, &text).templates.into());
+        }
         let stamp = stamp_of(path)?;
         if let Some((read, named)) = self.views().named.lock().ok()?.get(path)
             && *read == stamp

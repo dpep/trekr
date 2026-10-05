@@ -12919,7 +12919,10 @@ write in the controller's chain votes. Each write is typed as an assignment
 is in its own file (`type_of` on that file's facts), and writes that
 disagree make the answer `ambiguous`. The controller's files are read from
 disk when a template asks (`Tree::file_facts`, kept while the file's mtime
-and length hold).
+and length hold) — or, in the editor, from its unsaved copy: the session
+hands each tree the open buffers (`Tree::set_open`) when they change, and
+`file_facts` and `file_templates` read those first, so a render a buffer
+moved, or a write only a buffer has, is answered as the user sees it.
 
 **Why at resolve time.** What an action assigns is a fact of the
 controller's bytes, and which controller renders a template a fact of its

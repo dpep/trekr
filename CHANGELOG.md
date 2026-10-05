@@ -186,7 +186,10 @@
   `capabilities.experimental.trekr.templates: ["erb", "rabl"]` — and the
   extension sends a template only to a server that does, so an older trekr
   is never handed one. A document that is neither Ruby nor a template by its
-  name (an `.html` an ERB extension claims) gets no syntax diagnostics.
+  name (an `.html` an ERB extension claims) gets no syntax diagnostics. A
+  template's answers that follow another file — a partial's local to the
+  `render` that hands it, a view's `@ivar` to its controller's write — read
+  that file's unsaved buffer when the editor has one open.
 - This changes what an index records (store v63): trekr reindexes once after
   upgrading.
 

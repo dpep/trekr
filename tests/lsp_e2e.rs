@@ -5641,3 +5641,76 @@ fn an_erb_template_is_answered_at_its_own_positions() {
     session.stop();
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// A template's answers that read another file — a partial's local, from the
+/// `render` that hands it; a view's `@ivar`, from its controller — read the
+/// editor's unsaved copy of that file, as every other answer does. They read
+/// the disk, and pointed at lines the buffer had moved.
+#[test]
+fn a_templates_answers_read_the_open_buffers_of_the_files_they_follow() {
+    let controller = concat!(
+        "class WidgetsController\n", // 1
+        "  def list\n",
+        "  end\n",
+        "\n",
+        "  def show\n", // 5
+        "    @count = 3\n",
+        "  end\n",
+        "end\n",
+    );
+    let files = [
+        ("app/controllers/widgets_controller.rb", controller),
+        (
+            "app/views/widgets/list.html.erb",
+            "<%= render \"shared/card\", card: 1 %>\n",
+        ),
+        ("app/views/shared/_card.html.erb", "<%= card %>\n"),
+        ("app/views/widgets/show.html.erb", "<%= @count %>\n"),
+    ];
+    let (dir, mut session) = files_session("buffers", &files, "app/views/shared/_card.html.erb");
+    let open = |session: &mut Session, file: &str, text: &str| {
+        session.notify(
+            "textDocument/didOpen",
+            serde_json::json!({"textDocument": {
+                "uri": uri_of(&dir, file), "languageId": "erb", "version": 2, "text": text
+            }}),
+        );
+    };
+    let card = "app/views/shared/_card.html.erb";
+    let definition = |session: &mut Session, file: &str, line, character| {
+        sites_in(&ask(
+            session,
+            &dir,
+            "textDocument/definition",
+            file,
+            line,
+            character,
+        ))
+    };
+    assert_eq!(definition(&mut session, card, 0, 4), ["list.html.erb:1"]);
+
+    // The render moves down three lines, and hands a local only the buffer has.
+    open(
+        &mut session,
+        "app/views/widgets/list.html.erb",
+        "\n\n\n<%= render \"shared/card\", card: 1, extra: 2 %>\n",
+    );
+    open(&mut session, card, "<%= card %> <%= extra %>\n");
+    assert_eq!(definition(&mut session, card, 0, 4), ["list.html.erb:4"]);
+    assert_eq!(definition(&mut session, card, 0, 16), ["list.html.erb:4"]);
+
+    // An `@ivar` only the controller's buffer sets.
+    open(
+        &mut session,
+        "app/controllers/widgets_controller.rb",
+        &controller.replace("    @count = 3\n", "    @count = 3\n    @fresh = 4\n"),
+    );
+    let show = "app/views/widgets/show.html.erb";
+    open(&mut session, show, "<%= @count %>\n<%= @fresh %>\n");
+    assert_eq!(
+        definition(&mut session, show, 1, 5),
+        ["widgets_controller.rb:7"]
+    );
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}

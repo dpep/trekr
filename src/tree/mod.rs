@@ -454,6 +454,9 @@ pub(crate) struct Tree {
     block_macros: OnceLock<HashMap<(String, String), bool>>,
     /// The checkout's view conventions, read on first need (DEC-521).
     views: OnceLock<views::Views>,
+    /// An editor's unsaved copies of the checkout's files, which a
+    /// template's answer reads in place of the disk.
+    open: views::Open,
 }
 
 // Every tiering worker asks the one tree (DEC-250).
@@ -1189,6 +1192,7 @@ impl Tree {
             hooks: OnceLock::new(),
             block_macros: OnceLock::new(),
             views: OnceLock::new(),
+            open: views::Open::default(),
         }
     }
 

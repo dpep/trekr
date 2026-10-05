@@ -25,7 +25,7 @@ use crate::store::Store;
 use crate::tree::Tree;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
+use std::sync::{Arc, mpsc};
 
 /// One LSP conversation: the store, a tree per checkout it has been asked
 /// about, and the documents the editor has open.
@@ -77,6 +77,9 @@ pub(crate) struct Session {
     /// Checkouts whose first index died with its early store in use: to be
     /// indexed again, as one found cut short at start is (DEC-320).
     resume: Vec<PathBuf>,
+    /// How many times the editor's copies have changed: a tree holds the
+    /// copies as of one count, and is handed them again when it moves.
+    edits: u64,
 }
 
 /// The early store being read in place of the store, and the store, kept for
@@ -313,6 +316,7 @@ impl Session {
             early: None,
             stamps: HashMap::new(),
             resume: Vec::new(),
+            edits: 0,
         }
     }
 
@@ -567,7 +571,24 @@ impl Session {
                 }
             }
         }
-        Ok(self.checkouts[root].tree.as_ref().expect("built or kept"))
+        let tree = self.checkouts[root].tree.as_ref().expect("built or kept");
+        // What a template's answer reads of another file — the render that
+        // hands a partial its locals, a controller's writes — is the editor's
+        // copy where it has one.
+        if !tree.open_at(self.edits) {
+            let texts = self
+                .open
+                .iter()
+                .filter(|(_, d)| matches!(d.origin, Origin::Editor { .. }))
+                .filter_map(|(path, d)| {
+                    let relative = path.strip_prefix(root).ok()?.to_string_lossy();
+                    let at = format!("{}/{relative}", tree.checkout_root());
+                    Some((at, Arc::from(d.text.as_bytes())))
+                })
+                .collect();
+            tree.set_open(self.edits, texts);
+        }
+        Ok(tree)
     }
 
     /// The checkout's stamp, read again only when the store has moved since
@@ -831,6 +852,7 @@ impl Session {
     pub(crate) fn did_open(&mut self, path: PathBuf, text: String, version: i32) {
         let document = Document::new(&path, text, Origin::Editor { version });
         self.open.insert(path, document);
+        self.edits += 1;
     }
 
     /// The files the editor has open.
@@ -843,6 +865,7 @@ impl Session {
 
     pub(crate) fn did_close(&mut self, path: &Path) {
         self.open.remove(path);
+        self.edits += 1;
     }
 
     /// The editor's copy if it has one, else what is on disk. The editor's copy
