@@ -31,6 +31,11 @@ const FORMAT: u32 = 1;
 /// exits, so anything near this is a binary that is not going to work.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// How many times one stamp is asked after a transient refusal. A probe blocks
+/// the session for up to [`PROBE_TIMEOUT`], so a binary that always hangs must
+/// not be re-asked at every quiet moment.
+const TRIES: u8 = 3;
+
 /// What the client told this session that it will not say again.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Handoff {
@@ -156,6 +161,8 @@ pub(crate) fn exec(path: &Path, handoff: &Path) -> std::io::Error {
 pub(crate) struct Launched {
     path: PathBuf,
     stamp: Stamp,
+    /// The changed stamp that was refused transiently, and how often.
+    refused: Option<(Stamp, u8)>,
 }
 
 /// A binary's identity on disk, following symlinks.
@@ -181,7 +188,11 @@ impl Launched {
     pub(crate) fn now() -> Option<Launched> {
         let path = launch_path()?;
         let stamp = stamp_of(&path)?;
-        Some(Launched { path, stamp })
+        Some(Launched {
+            path,
+            stamp,
+            refused: None,
+        })
     }
 
     pub(crate) fn path(&self) -> &Path {
@@ -199,6 +210,23 @@ impl Launched {
     /// retrying at every quiet moment would spawn a probe per request.
     pub(crate) fn settle(&mut self, stamp: Stamp) {
         self.stamp = stamp;
+        self.refused = None;
+    }
+
+    /// `stamp` was refused: whether it is asked again at a later quiet moment.
+    /// A transient refusal is, up to [`TRIES`] times; anything else is
+    /// settled, and the next change to the file is tried afresh.
+    pub(crate) fn refused(&mut self, stamp: Stamp, transient: bool) -> bool {
+        let tries = match self.refused {
+            Some((seen, tries)) if seen == stamp => tries + 1,
+            _ => 1,
+        };
+        let again = transient && tries < TRIES;
+        match again {
+            true => self.refused = Some((stamp, tries)),
+            false => self.settle(stamp),
+        }
+        again
     }
 }
 
@@ -248,7 +276,8 @@ pub(crate) enum Candidate {
     /// or a different format. The session cannot be carried across.
     Unresumable { reason: String },
     /// It does not run. `transient` when it is worth asking again: a file
-    /// still open for writing (`ETXTBSY`) is one being installed.
+    /// still open for writing (`ETXTBSY`) is one being installed, and a probe
+    /// that timed out may have lost only to a loaded machine.
     Broken { reason: String, transient: bool },
 }
 
@@ -297,7 +326,10 @@ pub(crate) fn probe(path: &Path) -> Candidate {
 fn broken(error: &std::io::Error) -> Candidate {
     Candidate::Broken {
         reason: error.to_string(),
-        transient: error.kind() == std::io::ErrorKind::ExecutableFileBusy,
+        transient: matches!(
+            error.kind(),
+            std::io::ErrorKind::ExecutableFileBusy | std::io::ErrorKind::TimedOut
+        ),
     }
 }
 
@@ -444,6 +476,7 @@ mod tests {
         let launched = Launched {
             stamp: stamp_of(&link).unwrap(),
             path: link.clone(),
+            refused: None,
         };
         assert!(launched.changed().is_none());
 
@@ -452,6 +485,54 @@ mod tests {
 
         std::os::unix::fs::symlink(&new, &link).unwrap();
         assert!(launched.changed().is_some(), "brew's relink is");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_probe_that_timed_out_or_found_the_file_busy_is_asked_again() {
+        use std::io::{Error, ErrorKind};
+        for (kind, transient) in [
+            (ErrorKind::TimedOut, true),
+            (ErrorKind::ExecutableFileBusy, true),
+            (ErrorKind::NotFound, false),
+            (ErrorKind::PermissionDenied, false),
+        ] {
+            let Candidate::Broken { transient: got, .. } = broken(&Error::from(kind)) else {
+                panic!("an error is a broken candidate");
+            };
+            assert_eq!(got, transient, "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_transient_refusal_is_retried_a_few_times_then_settled() {
+        let dir = scratch("refused");
+        let path = script(&dir, "trekr", "true");
+        let old = stamp_of(&path).unwrap();
+        std::fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+        let mut launched = Launched {
+            path,
+            stamp: old,
+            refused: None,
+        };
+        let new = launched.changed().expect("rewritten");
+
+        let asked: Vec<bool> = (0..TRIES).map(|_| launched.refused(new, true)).collect();
+        assert_eq!(
+            asked.iter().filter(|again| **again).count(),
+            usize::from(TRIES - 1)
+        );
+        assert!(launched.changed().is_none(), "settled after the last try");
+
+        let mut launched = Launched {
+            stamp: old,
+            ..launched
+        };
+        assert!(
+            !launched.refused(new, false),
+            "a lasting refusal settles at once"
+        );
+        assert!(launched.changed().is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

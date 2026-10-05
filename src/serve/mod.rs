@@ -572,7 +572,8 @@ enum Swap {
 /// Returns only when that could not happen.
 fn swap(launched: &mut reload::Launched, stamp: reload::Stamp, now: Current, log: &Log) -> Swap {
     let path = launched.path().to_string_lossy().into_owned();
-    let failed = |launched: &mut reload::Launched, error: String, retry: bool| {
+    let failed = |launched: &mut reload::Launched, error: String, transient: bool| {
+        let retry = launched.refused(stamp, transient);
         log.event(
             "reload_failed",
             serde_json::json!({ "path": path, "error": error, "retry": retry }),
@@ -584,11 +585,6 @@ fn swap(launched: &mut reload::Launched, stamp: reload::Stamp, now: Current, log
             None,
             false,
         );
-        // A refusal that would recur is not retried at every quiet moment;
-        // the next change to the file is tried afresh.
-        if !retry {
-            launched.settle(stamp);
-        }
         Swap::Stay
     };
     let started = std::time::Instant::now();

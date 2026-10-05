@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A new binary that is slow to start is tried again.** A running `--lsp`
+  server asks an upgraded binary whether it can take over before switching to
+  it; one that did not answer within 5 s, as on a heavily loaded machine, was
+  given up on until the file changed again, and the session kept serving the
+  old build for good. It is now asked again at the next quiet moments, a few
+  times, before the server settles.
 - **A module an example group `include`s answers its examples' calls**
   (#11). A helper method called from an example of a group that `include`s
   its module was ruled out (`no_such_method` on the example group) and
