@@ -2368,6 +2368,9 @@ fn start_from(binary: &Path, db: &Path, dir: &Path) -> Session {
             .current_dir(dir)
             .env("TREKR_DB", db)
             .env("TREKR_LOG", log_path(db))
+            // A loaded machine starts a copied debug binary slowly; these
+            // tests are about what its probe answer says, not how soon.
+            .env("TREKR_TEST_PROBE_MS", "60000")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())

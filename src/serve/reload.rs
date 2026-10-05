@@ -31,6 +31,19 @@ const FORMAT: u32 = 1;
 /// exits, so anything near this is a binary that is not going to work.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
+/// [`PROBE_TIMEOUT`], or the e2e suite's longer one (`TREKR_TEST_PROBE_MS`):
+/// a copied debug binary on a loaded test machine can take longer than that
+/// to start, and those tests are about what the answer says, not how soon.
+fn probe_timeout() -> Duration {
+    static LIMIT: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        std::env::var("TREKR_TEST_PROBE_MS")
+            .ok()
+            .and_then(|ms| ms.parse().ok())
+            .map_or(PROBE_TIMEOUT, Duration::from_millis)
+    })
+}
+
 /// How many times one stamp is asked after a transient refusal. A probe blocks
 /// the session for up to [`PROBE_TIMEOUT`], so a binary that always hangs must
 /// not be re-asked at every quiet moment.
@@ -312,9 +325,14 @@ pub(crate) enum Candidate {
 /// exec'ing it, because an exec that succeeds into a binary that then dies
 /// takes the editor's connection with it, and there is no coming back.
 pub(crate) fn probe(path: &Path) -> Candidate {
+    probe_within(path, probe_timeout())
+}
+
+/// [`probe`], allowing the candidate `limit` for each answer.
+fn probe_within(path: &Path, limit: Duration) -> Candidate {
     // A pre-reload build exits with an error once its stdin closes, so the
     // status says nothing here; the answer is what counts.
-    let answer = match run_briefly(Command::new(path).arg("--lsp").env(PROBE, "1")) {
+    let answer = match run_briefly(Command::new(path).arg("--lsp").env(PROBE, "1"), limit) {
         Ok((_, answer)) => answer,
         Err(error) => return broken(&error),
     };
@@ -337,7 +355,7 @@ pub(crate) fn probe(path: &Path) -> Candidate {
         // No answer: a build from before hot reload, which served the probe as
         // an ordinary session and hung up on the closed stdin — or one that
         // does not run. `--version` tells them apart.
-        None => match run_briefly(Command::new(path).arg("--version")) {
+        None => match run_briefly(Command::new(path).arg("--version"), limit) {
             Ok((true, _)) => Candidate::Unresumable {
                 reason: "the new binary predates hot reload".into(),
             },
@@ -360,9 +378,9 @@ fn broken(error: &std::io::Error) -> Candidate {
     }
 }
 
-/// Run a command to completion within [`PROBE_TIMEOUT`], silently: whether it
+/// Run a command to completion within `limit`, silently: whether it
 /// succeeded, and its stdout. An error is a command that could not be run.
-fn run_briefly(command: &mut Command) -> std::io::Result<(bool, String)> {
+fn run_briefly(command: &mut Command, limit: Duration) -> std::io::Result<(bool, String)> {
     let mut child = command
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
@@ -371,7 +389,7 @@ fn run_briefly(command: &mut Command) -> std::io::Result<(bool, String)> {
         // the user's log.
         .env("TREKR_LOG", "off")
         .spawn()?;
-    let deadline = Instant::now() + PROBE_TIMEOUT;
+    let deadline = Instant::now() + limit;
     let status = loop {
         if let Some(status) = child.try_wait()? {
             break status;
@@ -476,6 +494,9 @@ mod tests {
             (script(&dir, "crashes", "exit 3"), "broken"),
             (dir.join("missing"), "broken"),
         ];
+        // A shell script's exec can outlast `PROBE_TIMEOUT` on a loaded
+        // machine; what is under test is how each answer is read.
+        let probe = |path: &Path| probe_within(path, Duration::from_secs(60));
         for (path, expected) in cases {
             let got = match probe(&path) {
                 Candidate::Resumable { .. } => "resumable",
