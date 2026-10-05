@@ -10,7 +10,6 @@ mod built;
 mod config;
 mod conventions;
 mod dead_consts;
-mod failure;
 mod generated;
 mod incomplete;
 mod members;
@@ -19,8 +18,8 @@ mod profile;
 mod routes;
 mod views;
 
+use crate::failure::{Failure, Tag};
 use autoindex::{Need, Then};
-use failure::{Failure, Tag};
 
 use crate::core::Oid;
 use crate::core::paths;

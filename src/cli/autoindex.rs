@@ -16,8 +16,8 @@
 //! One index per checkout: a first index claims the checkout as it marks it,
 //! and one that finds another's live mark waits for it (`index_all`).
 
-use super::failure::{Failure, Tag};
 use super::{Output, incomplete, not_indexed_reason, paths};
+use crate::failure::{Failure, Tag};
 use crate::store::{Store, Warming};
 use std::io::Write;
 use std::path::Path;

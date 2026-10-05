@@ -5,6 +5,7 @@ pub(crate) mod background;
 pub(crate) mod cli;
 pub(crate) mod core;
 pub(crate) mod extract;
+pub(crate) mod failure;
 pub(crate) mod gems;
 pub(crate) mod inflect;
 pub(crate) mod log;
