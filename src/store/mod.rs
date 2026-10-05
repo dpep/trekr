@@ -171,13 +171,43 @@ fn sweep_core_after_upgrade(db: &Path, store: &Store) {
 
 /// The database every command uses.
 pub(crate) fn open_default() -> anyhow::Result<Store> {
-    use anyhow::Context;
     let path = default_path()?;
-    let named = || format!("trekr store {}", path.display());
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).with_context(named)?;
+    let opened = match path.parent() {
+        Some(parent) => std::fs::create_dir_all(parent).map_err(anyhow::Error::from),
+        None => Ok(()),
     }
-    Store::open(&path).with_context(named)
+    .and_then(|()| Store::open(&path).map_err(anyhow::Error::from));
+    opened.map_err(|error| {
+        anyhow::anyhow!(
+            "trekr store {}: {}",
+            path.display(),
+            said_once(&error, &path)
+        )
+    })
+}
+
+/// An error's chain, each part said once. SQLite's open error names the path
+/// again, and rusqlite gives each failure its own code's text as its source:
+/// `unable to open database file: P: Error code 14: unable to open database
+/// file`.
+fn said_once(error: &anyhow::Error, path: &Path) -> String {
+    let spelled = format!(": {}", path.display());
+    let mut said = String::new();
+    for part in error.chain() {
+        let text = part.to_string().replace(&spelled, "");
+        let bare = match text.strip_prefix("Error code ") {
+            Some(rest) => rest.split_once(": ").map_or(rest, |(_, text)| text),
+            None => &text,
+        };
+        if said.contains(bare) {
+            continue;
+        }
+        if !said.is_empty() {
+            said.push_str(": ");
+        }
+        said.push_str(bare);
+    }
+    said
 }
 
 /// See `Store::files_calling`.

@@ -6630,5 +6630,19 @@ fn a_store_that_cannot_be_opened_is_named_in_the_error() {
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains(&db.display().to_string()), "{stderr}");
+
+    // A directory it cannot write: SQLite's reason, and the path, once each.
+    let locked = dir.join("locked");
+    fs::create_dir_all(&locked).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o555)).unwrap();
+    let db = locked.join("trekr.db");
+    let out = trekr(&db, &dir, &["--status"]);
+    assert_eq!(out.status.code(), Some(74));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let path = db.display().to_string();
+    assert_eq!(stderr.matches(&path).count(), 1, "{stderr}");
+    assert_eq!(stderr.matches("unable to open").count(), 1, "{stderr}");
+    fs::set_permissions(&locked, fs::Permissions::from_mode(0o755)).unwrap();
     let _ = fs::remove_dir_all(&dir);
 }
