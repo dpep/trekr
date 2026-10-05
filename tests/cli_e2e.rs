@@ -3046,14 +3046,12 @@ fn slow_first_index(label: &str, bulk_ms: &str) -> (PathBuf, PathBuf, std::proce
 }
 
 /// A query whose file another process's first index has not read hands it
-/// to that index, which reads it next — in its next part, or, while the
-/// rest's write holds the store, into its early store, which the query
-/// then answers from (DEC-512).
+/// to that index, which reads it next — in its next part (DEC-512).
 #[test]
-fn a_query_behind_anothers_first_index_has_its_file_read_next() {
+fn a_query_behind_anothers_first_index_has_its_file_read_in_the_next_part() {
     let limit = std::time::Duration::from_secs(30);
     let ask = ["--def", "other.rb:3:5", "--json"];
-    // Asked while the first part is in: read in the next part.
+    // Asked while the first part is in.
     let (dir, db, mut winner) = slow_first_index("handed-part", "6000");
     std::thread::sleep(std::time::Duration::from_millis(1000));
     let started = std::time::Instant::now();
@@ -3067,9 +3065,16 @@ fn a_query_behind_anothers_first_index_has_its_file_read_next() {
         "{took:?}: {stderr}"
     );
     winner.wait().unwrap();
+    let _ = fs::remove_dir_all(&dir);
+}
 
-    // Asked while the rest's write holds the store: from the early store,
-    // and a miss there asks the whole once it is in.
+/// …or, while the rest's write holds the store, into its early store, which
+/// the query then answers from — and a miss there asks the whole once it is
+/// in (DEC-512).
+#[test]
+fn a_query_behind_anothers_first_index_is_answered_from_its_early_store() {
+    let limit = std::time::Duration::from_secs(30);
+    let ask = ["--def", "other.rb:3:5", "--json"];
     let (dir, db, mut winner) = slow_first_index("handed-early", "6000");
     std::thread::sleep(std::time::Duration::from_millis(4000));
     let started = std::time::Instant::now();
