@@ -1556,8 +1556,8 @@ fn completion_resolves_a_chosen_items_doc() {
             "uri": uri_of(&dir, "job.rb"), "languageId": "ruby", "version": 1, "text": edited
         }}),
     );
-    let list = session.request(
-        "textDocument/completion",
+    let list = listed(
+        &mut session,
         serde_json::json!({
             "textDocument": {"uri": uri_of(&dir, "job.rb")},
             "position": {"line": 3, "character": 8},
@@ -3721,6 +3721,51 @@ const SHOP: &str = concat!(
     "end\n",                         // 17
 );
 
+/// A completion answered from the checkout's member listing. Until the
+/// listing is built — longer than the server waits for it, on a loaded
+/// machine — completion answers without it and says `isIncomplete`, and the
+/// client asks again (DEC-323); so does this. Only for an answer that is
+/// complete once listed: a truncated, untyped or ambiguous one never is.
+fn listed(session: &mut Session, params: serde_json::Value) -> serde_json::Value {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let answer = session.request("textDocument/completion", params.clone());
+        if !answer["result"]["isIncomplete"].as_bool().unwrap_or(false) {
+            return answer;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "never listed: {answer}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+}
+
+/// `indexed_session` for completion: its diagnostics read, and the member
+/// listing in, so each test's first answer is the one it asserts on. The
+/// listing is the checkout's, and an edit to the buffer does not move it.
+fn completion_session(label: &str, source: &str) -> (PathBuf, Session) {
+    let (dir, _db, mut session) = indexed_session(label, source);
+    session.read();
+    // A word nothing is named: incomplete only while the listing is not in.
+    let word = "zz_unnamed";
+    session.notify(
+        "textDocument/didChange",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb"), "version": 1},
+            "contentChanges": [{"text": format!("{source}{word}\n")}],
+        }),
+    );
+    listed(
+        &mut session,
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": source.lines().count(), "character": word.len()},
+        }),
+    );
+    (dir, session)
+}
+
 /// Complete at the end of `line` after replacing the file's text with
 /// `source`, returning (labels in rank order, isIncomplete).
 fn complete(
@@ -3769,8 +3814,7 @@ fn complete(
 /// class-side ones.
 #[test]
 fn completion_after_a_dot_lists_the_receivers_methods_in_lookup_order() {
-    let (dir, _db, mut session) = indexed_session("complete-dot", SHOP);
-    session.read();
+    let (dir, mut session) = completion_session("complete-dot", SHOP);
 
     let instance = format!("{SHOP}w = Shop::Widget.new\nw.\n");
     let (labels, _) = complete(&mut session, &dir, &instance, 18, 2);
@@ -3814,8 +3858,7 @@ fn completion_after_a_dot_lists_the_receivers_methods_in_lookup_order() {
 
 #[test]
 fn completion_after_a_scope_lists_its_constants() {
-    let (dir, _db, mut session) = indexed_session("complete-scope", SHOP);
-    session.read();
+    let (dir, mut session) = completion_session("complete-scope", SHOP);
     let (labels, _) = complete(&mut session, &dir, &format!("{SHOP}Shop::\n"), 17, 2);
     assert_eq!(labels, ["Widget"]);
     let (labels, _) = complete(
@@ -3835,8 +3878,7 @@ fn completion_after_a_scope_lists_its_constants() {
 /// ones too, since the receiver is self.
 #[test]
 fn completion_of_a_bare_word_offers_locals_then_the_classs_methods() {
-    let (dir, _db, mut session) = indexed_session("complete-bare", SHOP);
-    session.read();
+    let (dir, mut session) = completion_session("complete-bare", SHOP);
     let source = SHOP.replace("    count = 1\n", "    count = 1\n    \n");
     let (labels, _) = complete(&mut session, &dir, &source, 15, 2);
     let at = |name: &str| labels.iter().position(|l| l == name);
@@ -3876,8 +3918,7 @@ fn completion_in_a_module_offers_what_its_includers_have() {
         "  def stamp!; end\n",                         // 17
         "end\n",                                       // 18
     );
-    let (dir, _db, mut session) = indexed_session("complete-mixed", source);
-    session.read();
+    let (dir, mut session) = completion_session("complete-mixed", source);
     let at_line = |line: usize, word: &str| {
         let mut lines: Vec<String> = source.lines().map(str::to_string).collect();
         lines[line] = format!("    {word}");
@@ -3917,8 +3958,7 @@ fn completion_in_an_on_load_block_offers_the_hooked_classs_methods() {
         "  end\n",                                               // 13
         "end\n",                                                 // 14
     );
-    let (dir, _db, mut session) = indexed_session("complete-on-load", source);
-    session.read();
+    let (dir, mut session) = completion_session("complete-on-load", source);
     let at_line = |line: usize, word: &str| {
         let mut lines: Vec<String> = source.lines().map(str::to_string).collect();
         lines[line] = format!("    {word}");
@@ -3946,8 +3986,7 @@ fn a_truncated_completion_keeps_the_names_that_sort_first() {
     names.reverse();
     let body: String = names.iter().map(|n| format!("  def {n}; end\n")).collect();
     let source = format!("class Crowd\n{body}end\n");
-    let (dir, _db, mut session) = indexed_session("complete-cap", &source);
-    session.read();
+    let (dir, mut session) = completion_session("complete-cap", &source);
     let asking = format!("{source}w = Crowd.new\nw.\n");
     let line = asking.lines().count() as u32 - 1;
     let (labels, incomplete) = complete(&mut session, &dir, &asking, line, 2);
@@ -3962,8 +4001,7 @@ fn a_truncated_completion_keeps_the_names_that_sort_first() {
 /// marked incomplete — and nothing at all before a prefix is typed.
 #[test]
 fn completion_on_an_untyped_receiver_is_short_and_disclosed() {
-    let (dir, _db, mut session) = indexed_session("complete-untyped", SHOP);
-    session.read();
+    let (dir, mut session) = completion_session("complete-untyped", SHOP);
     let (labels, incomplete) = complete(
         &mut session,
         &dir,
@@ -3992,8 +4030,7 @@ fn completion_on_an_untyped_receiver_is_short_and_disclosed() {
 /// declared nothing.
 #[test]
 fn completion_after_a_chain_lists_what_the_chain_returns() {
-    let (dir, _db, mut session) = indexed_session("complete-chain", SHOP);
-    session.read();
+    let (dir, mut session) = completion_session("complete-chain", SHOP);
     let (labels, incomplete) = complete(
         &mut session,
         &dir,
@@ -4012,8 +4049,7 @@ fn completion_after_a_chain_lists_what_the_chain_returns() {
 
     // Label#strip declares nothing, so String is one reading of two.
     let labelled = format!("{SHOP}class Label\n  def strip; end\nend\n");
-    let (dir, _db, mut session) = indexed_session("complete-chain-split", &labelled);
-    session.read();
+    let (dir, mut session) = completion_session("complete-chain-split", &labelled);
     let (labels, incomplete) = complete(
         &mut session,
         &dir,
@@ -5623,8 +5659,8 @@ fn an_erb_template_is_answered_at_its_own_positions() {
     assert_eq!(locations[0]["range"]["start"]["line"], 2);
 
     // A bare word in a tag completes from the view context: the helpers.
-    let answer = session.request(
-        "textDocument/completion",
+    let answer = listed(
+        &mut session,
         serde_json::json!({
             "textDocument": {"uri": uri_of(&dir, view)},
             "position": {"line": 5, "character": 8},
