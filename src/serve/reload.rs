@@ -36,6 +36,13 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 /// not be re-asked at every quiet moment.
 const TRIES: u8 = 3;
 
+/// How long after each transient refusal the stamp is asked again. Asked at
+/// the next quiet moments instead, the tries landed seconds apart, inside the
+/// one load spike that timed the first out, and stalled the session's
+/// requests for each probe in turn.
+const AGAIN_AFTER: [Duration; TRIES as usize - 1] =
+    [Duration::from_secs(30), Duration::from_secs(120)];
+
 /// What the client told this session that it will not say again.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Handoff {
@@ -161,8 +168,15 @@ pub(crate) fn exec(path: &Path, handoff: &Path) -> std::io::Error {
 pub(crate) struct Launched {
     path: PathBuf,
     stamp: Stamp,
-    /// The changed stamp that was refused transiently, and how often.
-    refused: Option<(Stamp, u8)>,
+    refused: Option<Refused>,
+}
+
+/// A changed stamp that was refused transiently: how often, and when it may
+/// be asked again.
+struct Refused {
+    stamp: Stamp,
+    tries: u8,
+    until: Instant,
 }
 
 /// A binary's identity on disk, following symlinks.
@@ -173,7 +187,7 @@ pub(crate) struct Launched {
 /// Size and mtime catch a rewrite in place; the mode catches a `chmod +x` on
 /// a file that was refused for not being executable. Stat'd, not hashed: it
 /// is read at every quiet moment, and costs ~4 µs through brew's symlink.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Stamp {
     dev: u64,
     ino: u64,
@@ -201,9 +215,15 @@ impl Launched {
 
     /// What the launch path holds now, if that is not what this process
     /// started from. A path that has become unreadable is not a change: a
-    /// binary mid-replace would otherwise look like one.
+    /// binary mid-replace would otherwise look like one; nor is a stamp
+    /// refused a moment ago, until its spacing is out.
     pub(crate) fn changed(&self) -> Option<Stamp> {
-        stamp_of(&self.path).filter(|now| *now != self.stamp)
+        let waiting = |now: &Stamp| {
+            self.refused
+                .as_ref()
+                .is_some_and(|r| r.stamp == *now && Instant::now() < r.until)
+        };
+        stamp_of(&self.path).filter(|now| *now != self.stamp && !waiting(now))
     }
 
     /// Stop reporting this stamp as a change — it was tried and refused, and
@@ -213,17 +233,24 @@ impl Launched {
         self.refused = None;
     }
 
-    /// `stamp` was refused: whether it is asked again at a later quiet moment.
-    /// A transient refusal is, up to [`TRIES`] times; anything else is
-    /// settled, and the next change to the file is tried afresh.
+    /// `stamp` was refused: whether it is asked again later. A transient
+    /// refusal is, up to [`TRIES`] times, each [`AGAIN_AFTER`] the last;
+    /// anything else is settled, and the next change to the file is tried
+    /// afresh.
     pub(crate) fn refused(&mut self, stamp: Stamp, transient: bool) -> bool {
-        let tries = match self.refused {
-            Some((seen, tries)) if seen == stamp => tries + 1,
+        let tries = match &self.refused {
+            Some(refused) if refused.stamp == stamp => refused.tries + 1,
             _ => 1,
         };
         let again = transient && tries < TRIES;
         match again {
-            true => self.refused = Some((stamp, tries)),
+            true => {
+                self.refused = Some(Refused {
+                    stamp,
+                    tries,
+                    until: Instant::now() + AGAIN_AFTER[usize::from(tries) - 1],
+                })
+            }
             false => self.settle(stamp),
         }
         again
@@ -505,7 +532,7 @@ mod tests {
     }
 
     #[test]
-    fn a_transient_refusal_is_retried_a_few_times_then_settled() {
+    fn a_transient_refusal_is_retried_a_few_times_spaced_out_then_settled() {
         let dir = scratch("refused");
         let path = script(&dir, "trekr", "true");
         let old = stamp_of(&path).unwrap();
@@ -517,7 +544,21 @@ mod tests {
         };
         let new = launched.changed().expect("rewritten");
 
-        let asked: Vec<bool> = (0..TRIES).map(|_| launched.refused(new, true)).collect();
+        // Each refusal waits out its spacing before the stamp is a change
+        // again; the load that timed the probe out is still there at once.
+        let mut asked = Vec::new();
+        for _ in 0..TRIES {
+            let again = launched.refused(new, true);
+            asked.push(again);
+            if again {
+                assert!(launched.changed().is_none(), "asked again at once");
+                let refused = launched.refused.as_mut().expect("backing off");
+                let spacing = refused.until - Instant::now();
+                assert!(spacing > Duration::from_secs(10), "{spacing:?}");
+                refused.until = Instant::now();
+                assert_eq!(launched.changed(), Some(new), "asked again, later");
+            }
+        }
         assert_eq!(
             asked.iter().filter(|again| **again).count(),
             usize::from(TRIES - 1)

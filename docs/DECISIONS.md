@@ -2515,6 +2515,18 @@ server's executable, or treats an unchanged pid with new behaviour as an error.
 It would also reverse if a stdio transport appears whose descriptors do not
 survive exec.
 
+**Addendum (pre-0.8.7 hunt): transient refusals are spaced out.** A probe
+that times out, like `ETXTBSY`, is transient: the same stamp is asked again,
+up to three tries, then settled. The tries first came at the next quiet
+moments — in practice +5 and +10 s, the probe's own timeout plus the 2 s
+recheck — so on the loaded machine that had timed the first one out, all
+three landed in the same spike, stalled the session's requests ~15 s, and
+the old build served until the file changed again. Each retry now waits
+30 s, then 2 min, after the refusal before the stamp counts as a change
+(`AGAIN_AFTER`); a further change to the file is tried at once, and the
+stamp settles only after the third try. A binary that always hangs costs
+three 5 s stalls over two and a half minutes, not one 15 s stall.
+
 ## DEC-051 — SQLite reads through `mmap` (1 GiB)
 
 **Decided.** Every connection sets `PRAGMA mmap_size=1073741824`. The store is
