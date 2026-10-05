@@ -3667,7 +3667,7 @@ that working Ruby rarely writes, since a constant that resolves only through
 
 **Not modelled**: the same call unassigned (`klass = Class.new do`), whose
 owner no constant names, and `class Foo < Struct.new(:a)`, whose members live
-on an anonymous class between the two.
+on an anonymous class between the two — modelled since, by DEC-643.
 
 ## DEC-070 — `define_method` with a literal name is extracted, and a residue reason states only what was checked
 
@@ -13758,3 +13758,32 @@ references in a type-checked language are its own language server's
 **Reverses if** a dynamically dispatched language with no adequate language
 server becomes a daily need, and rq's name ranking is shown not to be
 enough for it.
+## DEC-643 — A Struct or Data class is built by its own `new`, and `class X < Struct.new` has its members
+
+**Decided.** What `Struct.new(:a, :b)` and `Data.define(:a, :b)` give the
+class they make is declared on it, by the maker (`defined_via`
+`Struct.new` / `Data.define`): the member readers (and Struct's writers,
+as DEC-069 already did), an `initialize` taking the members, and the
+class's own `[]`. So `Pair.new` is a call of `Pair#initialize` (DEC-541),
+and `Pair[1, 2]` answers with it too. Both take the members positionally
+or by keyword, any left out (optional parameters, so no arity rules a
+call out); `keyword_init: true` only by keyword. The `initialize` is
+written before the block, so a block's own `def initialize` is the one
+that runs, as the last-written definition always is.
+
+`class Point < Struct.new(:x, :y)` declares the same on `Point`. Ruby puts
+them on the anonymous class between the two; trekr takes the liberty
+DEC-069 takes for the block, and the casualties are the same size: a
+`super` in `Point#x` finds Struct's chain rather than the member, and a
+module `Point` includes that defines `x` loses to the member, where in Ruby
+it would win.
+
+**Why.** `Pair.new` resolved to `Struct.new`, the class *maker*, at
+confidence 1.0 — and `Coord.new` to `Class#new` — because nothing
+modelled the `new` each made class gets. `--refs 'Point#x'` answered that
+Point had no method `x` in its ancestors: DEC-073's provably-absent claim,
+and false. Testbed 640.
+
+**Not done.** `Pair[…]` is not counted as a construction by `--refs
+Pair#initialize` or `--dead`'s construction scan, which read `new` by
+name; the members' `super` above.

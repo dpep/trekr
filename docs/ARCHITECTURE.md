@@ -102,8 +102,9 @@ instead of a block, it is a declaration.
 
 `Point = Struct.new(:x, :y)`, `Data.define`, `Class.new(Base)` and
 `Module.new` assigned to a constant declare a class or module — the parent as
-its superclass, Struct's members as readers and writers, Data's as readers —
-and a block handed to them is its body.
+its superclass, Struct's members as readers and writers, Data's as readers,
+and the `initialize` and `[]` that take them — and a block handed to them is
+its body. `class X < Struct.new(:a)` declares the same on `X` (DEC-643).
 
 Macros are expanded at extraction, so no later layer needs to know they exist:
 `attr_accessor :x` becomes `x` and `x=`; Forwardable's `def_delegator(s)`
@@ -1713,10 +1714,11 @@ Deliberate, and cheap to close when they earn it:
   calls and a liberty for its constants: Ruby scopes a constant written in the
   block to the enclosing scope, and trekr to `X` (DEC-069). The same call
   *not* assigned to a constant is no scope at all — its methods land on the
-  enclosing one, and their `super` is not recorded — and `class Foo <
-  Struct.new(:a)` gets no member readers. `--dead` hedges such a `def`
-  (DEC-562); `--def`, `--refs` and the editor still place it on the
-  enclosing scope.
+  enclosing one, and their `super` is not recorded. `class Foo <
+  Struct.new(:a)` declares its members on `Foo`, where Ruby puts them on
+  an anonymous class between the two (DEC-643).
+  `--dead` hedges an unassigned block's `def` (DEC-562); `--def`, `--refs`
+  and the editor still place it on the enclosing scope.
 - A name split by conflicting superclasses (DEC-072) is split by path
   proximity, not by what each program loads. A superclass-less declaration in
   a gem directory (a `.gemspec`'s) that declares no variant is that gem's own

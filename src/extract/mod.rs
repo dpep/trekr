@@ -1546,6 +1546,16 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         // Compact `class Foo::Bar` opens ONE lexical scope, not two: Ruby's
         // `Module.nesting` is `[Foo::Bar]`, so constants inside cannot see
         // `Foo`'s. Pushing the written path whole is what preserves that.
+        // `class Point < Struct.new(:x, :y)`: the members live on an
+        // anonymous class between the two, taken as Point's own (DEC-643).
+        if let Some(call) = node.superclass().and_then(|sup| sup.as_call_node())
+            && let Some(made @ (Made::Struct | Made::Data)) = Made::by(&call)
+        {
+            self.nesting.insert(0, name.clone());
+            self.declare_members(&call, made);
+            self.nesting.remove(0);
+        }
+
         self.enter(Some(name), Opens::Scope);
         if let Some(body) = node.body() {
             self.visit(&body);
@@ -5455,45 +5465,8 @@ impl<'pr> Extractor<'_> {
             });
         }
 
-        // Members: every literal argument, less the class name `Struct.new`
-        // takes first when handed a string, and the options hash.
-        let mut members: Vec<(String, usize)> = args
-            .iter()
-            .filter_map(|arg| Some((literal_name(arg)?, arg.location().start_offset())))
-            .collect();
-        if made == Made::Struct
-            && args.first().is_some_and(|a| a.as_string_node().is_some())
-            && members
-                .first()
-                .is_some_and(|(n, _)| n.starts_with(|c: char| c.is_ascii_uppercase()))
-        {
-            members.remove(0);
-        }
-        if !matches!(made, Made::Struct | Made::Data) {
-            members.clear();
-        }
-        let (start, end) = (call.location().start_offset(), call.location().end_offset());
-        let via = match made {
-            Made::Struct => "Struct.new",
-            _ => "Data.define",
-        };
         self.nesting.insert(0, name.clone());
-        for (member, at) in members {
-            let mut reader = self.def(member.clone(), Kind::Method, start, end);
-            reader.pos = self.pos(at);
-            reader.via = Some(via.into());
-            self.push_def(reader);
-            if made == Made::Struct {
-                let mut writer = self.def(format!("{member}="), Kind::Method, start, end);
-                writer.pos = self.pos(at);
-                writer.via = Some(via.into());
-                writer.params = vec![Param {
-                    kind: ParamKind::Req,
-                    name: member,
-                }];
-                self.push_def(writer);
-            }
-        }
+        self.declare_members(call, made);
         self.nesting.remove(0);
 
         // Still an ordinary call, whose receiver and arguments are references.
@@ -5511,6 +5484,80 @@ impl<'pr> Extractor<'_> {
             }
             self.leave();
         }
+    }
+
+    /// What `Struct.new` / `Data.define` give the class they make, declared
+    /// on the innermost scope: each literal member's reader (and Struct's
+    /// writer), the `initialize` that takes them, and the class's own `[]`,
+    /// which builds one as `new` does (DEC-643). Called with that class
+    /// already pushed onto the nesting.
+    fn declare_members(&mut self, call: &ruby_prism::CallNode<'pr>, made: Made) {
+        let via = match made {
+            Made::Struct => "Struct.new",
+            Made::Data => "Data.define",
+            Made::Class | Made::Module => return,
+        };
+        let args = arg_nodes(call);
+        // Every literal argument, less the class name `Struct.new` takes
+        // first when handed a string, and the options hash.
+        let mut members: Vec<(String, usize)> = args
+            .iter()
+            .filter_map(|arg| Some((literal_name(arg)?, arg.location().start_offset())))
+            .collect();
+        if made == Made::Struct
+            && args.first().is_some_and(|a| a.as_string_node().is_some())
+            && members
+                .first()
+                .is_some_and(|(n, _)| n.starts_with(|c: char| c.is_ascii_uppercase()))
+        {
+            members.remove(0);
+        }
+        let (start, end) = (call.location().start_offset(), call.location().end_offset());
+        let declared = |this: &Self, name: String, at: usize, params: Vec<Param>| {
+            let mut def = this.def(name, Kind::Method, start, end);
+            def.pos = this.pos(at);
+            def.via = Some(via.into());
+            def.params = params;
+            def
+        };
+        // Both take the members positionally or by keyword, any of them
+        // left out; `keyword_init: true` only by keyword.
+        let by_keyword =
+            keyword_value(&args, "keyword_init").is_some_and(|v| v.as_true_node().is_some());
+        let kind = if by_keyword {
+            ParamKind::Key
+        } else {
+            ParamKind::Opt
+        };
+        let params: Vec<Param> = members
+            .iter()
+            .map(|(member, _)| Param {
+                kind,
+                name: member.clone(),
+            })
+            .collect();
+        for (member, at) in &members {
+            let reader = declared(self, member.clone(), *at, Vec::new());
+            self.push_def(reader);
+            if made == Made::Struct {
+                let writer = declared(
+                    self,
+                    format!("{member}="),
+                    *at,
+                    vec![Param {
+                        kind: ParamKind::Req,
+                        name: member.clone(),
+                    }],
+                );
+                self.push_def(writer);
+            }
+        }
+        // Written first, so a body's own `initialize` is the one that wins.
+        let initialize = declared(self, "initialize".into(), start, params.clone());
+        self.push_def(initialize);
+        let mut brackets = declared(self, "[]".into(), start, params);
+        brackets.singleton = true;
+        self.push_def(brackets);
     }
 
     /// `after_create :ensure_thing` invokes `ensure_thing`, and nothing in the
@@ -6989,6 +7036,59 @@ mod tests {
     fn a_dynamic_superclass_still_names_the_class_it_is_built_from() {
         let facts = extract(b"class K < Struct.new(:a)\nend\n");
         assert_eq!(facts.ancestry[0].target, "Struct");
+    }
+
+    #[test]
+    fn a_struct_or_data_class_declares_its_members_and_constructor() {
+        let declared = |source: &[u8]| -> Vec<String> {
+            extract(source)
+                .defs
+                .iter()
+                .filter(|d| d.kind == Kind::Method)
+                .map(|d| {
+                    let params: Vec<&str> = d.params.iter().map(|p| p.kind.as_str()).collect();
+                    let side = if d.singleton { "." } else { "#" };
+                    format!(
+                        "{}{side}{}({})",
+                        d.nesting.join("::"),
+                        d.name,
+                        params.join(",")
+                    )
+                })
+                .collect()
+        };
+        let cases: [(&[u8], &[&str]); 4] = [
+            (
+                b"class P < Struct.new(:x)\n  def x\n  end\nend\n",
+                &[
+                    "P#x()",
+                    "P#x=(req)",
+                    "P#initialize(opt)",
+                    "P.[](opt)",
+                    "P#x()",
+                ],
+            ),
+            (
+                b"C = Data.define(:a, :b)\n",
+                &["C#a()", "C#b()", "C#initialize(opt,opt)", "C.[](opt,opt)"],
+            ),
+            (
+                b"O = Struct.new(:a, keyword_init: true)\n",
+                &["O#a()", "O#a=(req)", "O#initialize(key)", "O.[](key)"],
+            ),
+            (
+                b"K = Struct.new(\"K\", :a)\n",
+                &["K#a()", "K#a=(req)", "K#initialize(opt)", "K.[](opt)"],
+            ),
+        ];
+        for (source, expected) in cases {
+            assert_eq!(
+                declared(source),
+                expected,
+                "{}",
+                String::from_utf8_lossy(source)
+            );
+        }
     }
 
     #[test]

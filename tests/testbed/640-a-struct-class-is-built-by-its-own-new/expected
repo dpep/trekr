@@ -1,0 +1,19 @@
+# `Pair = Struct.new(:left, :right)` makes a class whose `new` builds a Pair,
+# yet `Pair.new` resolved to `Struct.new`, the class maker, at confidence 1.0,
+# and `Data.define`'s to Class#new. A made class's `X.new` and `X[]` run the
+# `initialize` the maker gives it (DEC-541, DEC-643). And `class Point <
+# Struct.new(:x, :y)` dropped its members: `pt.x` was "nothing defines this
+# name", and `--refs Point#x` said Point had no such method.
+def app.rb:9:10 status=resolved owner=Pair name=new kind=declaration defined_via=Struct.new site=app.rb:7
+def app.rb:22:10 status=resolved owner=Pair kind=declaration defined_via=Struct.new
+def app.rb:23:9 status=resolved owner=Pair name=[] kind=declaration defined_via=Struct.new
+def app.rb:24:11 status=resolved owner=Coord kind=declaration defined_via=Data.define site=app.rb:13
+def app.rb:24:33 status=resolved owner=Coord name=lat
+def app.rb:25:10 status=resolved owner=Opts kind=declaration defined_via=Struct.new
+def app.rb:19:15 status=resolved owner=Point kind=declaration defined_via=Struct.new site=app.rb:1
+def app.rb:20:8 status=resolved owner=Point name=x kind=declaration defined_via=Struct.new
+def app.rb:21:8 status=resolved owner=Point name=y= kind=declaration
+refs Point#x confirmed=3
+refs Pair#initialize resolves_to=Pair#initialize confirmed=2
+dead app.rb Point#norm=unreferenced Pair#swap=single-caller Pair#initialize=none Point#x=none Coord#lat=none
+def app.rb:35:7 status=resolved owner=Named kind=definition site=app.rb:30

@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **A Struct or Data class is built by its own `new`.** `Pair =
+  Struct.new(:a, :b)` then `Pair.new(1, 2)` resolved to `Struct.new`, the
+  class maker, at confidence 1.0, and a `Data.define` class's `new` to
+  `Class#new`; both now answer with the `initialize` the class runs, and
+  `Pair[1, 2]` too. `class Point < Struct.new(:x, :y)` has its members:
+  `pt.x` resolves, and `--refs 'Point#x'` no longer says Point has no such
+  method.
+- This changes what an index records (store v64): trekr reindexes once after
+  upgrading.
 - **A file trekr finds by its name is read bounded, as a source is.** A
   `Gemfile`, `Gemfile.lock`, `config/routes.rb` or `config/application.rb`
   that is a link to `/dev/zero` kept `--index` and `--dead` reading forever;

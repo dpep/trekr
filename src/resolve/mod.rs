@@ -388,13 +388,19 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
 /// `X.new` that reaches core's `new` runs the `initialize` an `X` finds, and
 /// that is where a reader of the call wants to go (DEC-541). A custom `new`
 /// is its own answer, and core's `initialize` is no better than core's `new`.
+/// A Struct or Data class's `X[]` is its `new` by another name (DEC-643).
 fn initialize_for(
     tree: &Tree,
     call: &Call,
     receiver: &Receiver,
     found: &crate::tree::MethodDef,
 ) -> Option<crate::tree::MethodDef> {
-    if call.name != "new" || !receiver.singleton || !crate::tree::is_core(&found.site.path) {
+    let constructs = match call.name.as_str() {
+        "new" => crate::tree::is_core(&found.site.path),
+        "[]" => matches!(found.via.as_deref(), Some("Struct.new" | "Data.define")),
+        _ => false,
+    };
+    if !constructs || !receiver.singleton {
         return None;
     }
     tree.lookup(&receiver.fqn, false, "initialize")
@@ -428,7 +434,7 @@ pub(crate) fn asked_at(tree: &Tree, call: &Call, answer: &MethodAnswer) -> (Stri
             })
         })
     };
-    if call.name == "new" && landed_on(false, "initialize") {
+    if matches!(call.name.as_str(), "new" | "[]") && landed_on(false, "initialize") {
         return ("initialize".to_string(), false);
     }
     let singleton = match (landed_on(true, &call.name), landed_on(false, &call.name)) {

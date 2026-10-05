@@ -1,6 +1,6 @@
 # Each testbed input's stored facts, hashed, at the store version below.
 # Regenerate: UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden
-version 63
+version 64
 erb tests/testbed/315-dead-says-what-it-cannot-see/app/views/widgets/index.html.erb fb6993b57ce1afc0
 erb tests/testbed/430-a-view-or-a-script-references-a-constant/app/views/widgets/index.html.erb df75e9ccc30b1507
 erb tests/testbed/520-an-erb-templates-calls-are-call-sites/app/views/widgets/show.html.erb 7d61239ea66915a3
@@ -66,7 +66,7 @@ ruby tests/testbed/021-dead-candidates/app.rb ca42d25651f67dea
 ruby tests/testbed/022-super-follows-the-ancestor-chain/app.rb c3247ad395b320eb
 ruby tests/testbed/022-super-follows-the-ancestor-chain/delegated.rb 2cb943464f2b8e55
 ruby tests/testbed/022-super-follows-the-ancestor-chain/evaluated.rb 45e3866733789a36
-ruby tests/testbed/023-dynamic-class-bodies/app.rb 5a1448b197b2ce4f
+ruby tests/testbed/023-dynamic-class-bodies/app.rb 2eab51b90d996cde
 ruby tests/testbed/024-define-method-with-a-literal-name/app.rb ac9cf119adfaa2ef
 ruby tests/testbed/025-references-is-only-the-foreign-key/app/post.rb 29b1d50fa88b7730
 ruby tests/testbed/025-references-is-only-the-foreign-key/db/schema.rb 2de55282d08fc5c6
@@ -75,9 +75,9 @@ ruby tests/testbed/027-an-alias-binds-the-body-it-saw/app.rb 2228c8dc9ecaf152
 ruby tests/testbed/028-forwardable-delegators/app.rb b8a3fb22e76c8526
 ruby tests/testbed/029-dead-asks-about-the-qualified-owner/app.rb 24e6439814301a71
 ruby tests/testbed/030-conflicting-superclasses-are-separate-classes/guides/elsewhere.rb 29ed5aea274f1901
-ruby tests/testbed/030-conflicting-superclasses-are-separate-classes/pack/test/fake_models.rb b4f8db9a68b45870
+ruby tests/testbed/030-conflicting-superclasses-are-separate-classes/pack/test/fake_models.rb 270c9c741257f729
 ruby tests/testbed/030-conflicting-superclasses-are-separate-classes/pack/test/fake_test.rb 596d7a9f266f7d8e
-ruby tests/testbed/030-conflicting-superclasses-are-separate-classes/pack/test/item.rb c6137d2f15dcb7d6
+ruby tests/testbed/030-conflicting-superclasses-are-separate-classes/pack/test/item.rb 7d7cce6b11b717e5
 ruby tests/testbed/030-conflicting-superclasses-are-separate-classes/record/lib/record.rb 5a65fcfb63eaab65
 ruby tests/testbed/030-conflicting-superclasses-are-separate-classes/record/test/cases/batches_test.rb 73418903b8d50334
 ruby tests/testbed/030-conflicting-superclasses-are-separate-classes/record/test/models/item.rb 596b0de267b341bf
@@ -88,11 +88,11 @@ ruby tests/testbed/033-a-plain-class-in-another-gem-is-its-own-class/alpha/alpha
 ruby tests/testbed/033-a-plain-class-in-another-gem-is-its-own-class/alpha/lib/record.rb b3e16b1c6bb028a1
 ruby tests/testbed/033-a-plain-class-in-another-gem-is-its-own-class/alpha/test/models/user.rb e6d9a3e178210ff4
 ruby tests/testbed/033-a-plain-class-in-another-gem-is-its-own-class/beta/beta.gemspec 9cd3acdbd067e2af
-ruby tests/testbed/033-a-plain-class-in-another-gem-is-its-own-class/beta/test/fakes.rb 849a7e80f7a68e4a
+ruby tests/testbed/033-a-plain-class-in-another-gem-is-its-own-class/beta/test/fakes.rb 1749eef2a27e92be
 ruby tests/testbed/033-a-plain-class-in-another-gem-is-its-own-class/gamma/gamma.gemspec 9cd3acdbd067e2af
 ruby tests/testbed/033-a-plain-class-in-another-gem-is-its-own-class/gamma/test/cases/user_test.rb 161e87e6bf2e78f1
 ruby tests/testbed/033-a-plain-class-in-another-gem-is-its-own-class/gamma/test/models/user.rb a9622d695307c167
-ruby tests/testbed/034-constants-in-a-split-class-body-search-its-variant/pack/test/fake_models.rb e59c62774e3898e4
+ruby tests/testbed/034-constants-in-a-split-class-body-search-its-variant/pack/test/fake_models.rb 3fbfbb9e94800762
 ruby tests/testbed/034-constants-in-a-split-class-body-search-its-variant/record/lib/record.rb 5c9e4b6890910251
 ruby tests/testbed/034-constants-in-a-split-class-body-search-its-variant/record/test/models/post.rb e9d70de40e295ad5
 ruby tests/testbed/035-an-engine-reopens-the-apps-split-class/app/controllers/users_controller.rb 090b6fa182816ba1
@@ -100,7 +100,7 @@ ruby tests/testbed/035-an-engine-reopens-the-apps-split-class/app/models/record.
 ruby tests/testbed/035-an-engine-reopens-the-apps-split-class/app/models/user.rb eac71642d42ff4a2
 ruby tests/testbed/035-an-engine-reopens-the-apps-split-class/engines/billing/billing.gemspec 9cd3acdbd067e2af
 ruby tests/testbed/035-an-engine-reopens-the-apps-split-class/engines/billing/lib/billing/user_ext.rb 7881a5c76cedbcc7
-ruby tests/testbed/035-an-engine-reopens-the-apps-split-class/test/fakes.rb 849a7e80f7a68e4a
+ruby tests/testbed/035-an-engine-reopens-the-apps-split-class/test/fakes.rb 1749eef2a27e92be
 ruby tests/testbed/036-an-unseen-mixin-never-hides-a-class/app.rb a3f971fa70bc7373
 ruby tests/testbed/037-a-count-decides-what-first-returns/app.rb 6c0476db56f7db6a
 ruby tests/testbed/038-a-declared-type-is-looked-up-where-it-is-written/app.rb 9120ecf75b850fb5
@@ -114,7 +114,7 @@ ruby tests/testbed/042-an-engines-reopen-skips-another-programs-own-class/engine
 ruby tests/testbed/042-an-engines-reopen-skips-another-programs-own-class/engines/billing/lib/billing/user_ext.rb 7881a5c76cedbcc7
 ruby tests/testbed/042-an-engines-reopen-skips-another-programs-own-class/engines/shipping/shipping.gemspec 9cd3acdbd067e2af
 ruby tests/testbed/042-an-engines-reopen-skips-another-programs-own-class/engines/shipping/test/user.rb 02ac3f59aad0463c
-ruby tests/testbed/042-an-engines-reopen-skips-another-programs-own-class/test/fakes.rb 849a7e80f7a68e4a
+ruby tests/testbed/042-an-engines-reopen-skips-another-programs-own-class/test/fakes.rb 1749eef2a27e92be
 ruby tests/testbed/043-a-self-call-reaches-a-subclass-override/app.rb 3ff8362c13d0135e
 ruby tests/testbed/044-a-value-constant-is-not-a-class/app.rb e5009778c8a370b5
 ruby tests/testbed/045-core-names-real-code-reaches-for/app.rb 743664fc6b9f5022
@@ -297,7 +297,7 @@ ruby tests/testbed/345-routes-not-all-read-are-said/app/controllers/widgets_cont
 ruby tests/testbed/345-routes-not-all-read-are-said/config/routes.rb 06318b828ecb0d86
 ruby tests/testbed/350-a-receivers-name-reaches-the-split-class-its-file-does/app/models/widget.rb 4ed48299e032debf
 ruby tests/testbed/350-a-receivers-name-reaches-the-split-class-its-file-does/app/services/remover.rb 28c8ab23eb54c51a
-ruby tests/testbed/350-a-receivers-name-reaches-the-split-class-its-file-does/scripts/bench/data.rb 4f203760c1e1099f
+ruby tests/testbed/350-a-receivers-name-reaches-the-split-class-its-file-does/scripts/bench/data.rb 98712e793aceafce
 ruby tests/testbed/351-a-definition-ranks-before-a-declaration-among-equals/app.rb 378fdbd8502d6ce7
 ruby tests/testbed/351-a-definition-ranks-before-a-declaration-among-equals/lib/a_querying.rb 72648e1a20abf63c
 ruby tests/testbed/351-a-definition-ranks-before-a-declaration-among-equals/lib/relation.rb b96208da1808cc4e
@@ -641,6 +641,7 @@ ruby tests/testbed/624-refs-at-a-variable-lists-the-variable/more.rb fafd913b68a
 ruby tests/testbed/625-x-new-is-its-initialize-everywhere/app.rb cc74f3cea526ffb1
 ruby tests/testbed/626-an-initialize-whose-super-lands-says-so/app.rb dec3ebf7c681191d
 ruby tests/testbed/627-an-index-call-covers-only-its-bracket/app.rb 687a5812b3a81e15
+ruby tests/testbed/640-a-struct-class-is-built-by-its-own-new/app.rb 85e137f021205543
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28
