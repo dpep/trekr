@@ -79,6 +79,8 @@ trekr --refs 'Post#publish' -J | jq -c 'select(.answer | not)'   # the sites
 trekr --refs 'Post#publish' -J | tail -1 | jq .answer.counts      # the tally
 ```
 
+Every status and JSON field is described in [docs/OUTPUT.md](docs/OUTPUT.md).
+
 Exit codes mean one thing each:
 
 | Exit | Meaning |
