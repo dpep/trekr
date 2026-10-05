@@ -5,9 +5,10 @@
 //!
 //! Every testbed source is extracted and written as the store writes it, and
 //! its rows hash to the line `tests/extraction.golden` recorded for it, at the
-//! version recorded there. An input the golden has not seen yet is not a
-//! change — adding a case needs no bump — and is guarded from the next
-//! regeneration on. It sees only what the testbed exercises.
+//! version recorded there. An input the golden has not seen yet fails too,
+//! asking only for a regeneration: adding a case needs no bump, but an
+//! unrecorded input is an unguarded one. It sees only what the testbed
+//! exercises.
 
 use super::{Store, insert_facts, schema};
 use std::collections::BTreeMap;
@@ -174,5 +175,16 @@ fn extraction_matches_its_golden() {
         recorded_version == version,
         "the store version is {version}, and {GOLDEN} was taken at \
          {recorded_version}: regenerate with {REGENERATE}"
+    );
+    let unseen: Vec<&str> = current
+        .iter()
+        .filter_map(|line| line.rsplit_once(' '))
+        .filter(|(input, _)| !recorded.contains_key(input))
+        .map(|(input, _)| input)
+        .collect();
+    assert!(
+        unseen.is_empty(),
+        "unseen input: regenerate with {REGENERATE} (no store bump needed)\n\n{}",
+        unseen.join("\n")
     );
 }

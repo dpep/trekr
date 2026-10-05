@@ -31,6 +31,9 @@ erb tests/testbed/622-a-template-several-files-answer-shares-its-confidence/app/
 erb tests/testbed/622-a-template-several-files-answer-shares-its-confidence/app/views/widgets/_item.json.erb cc463c8566791699
 erb tests/testbed/622-a-template-several-files-answer-shares-its-confidence/app/views/widgets/_item.text.erb cc463c8566791699
 erb tests/testbed/622-a-template-several-files-answer-shares-its-confidence/app/views/widgets/show.html.erb 3c4582d4ab0b3be5
+erb tests/testbed/623-a-template-whose-self-is-unnamed-keeps-no-method-alive/app/views/widgets/show.html.erb c659c9c1801884a6
+erb tests/testbed/623-a-template-whose-self-is-unnamed-keeps-no-method-alive/lib/generators/templates/model.rb.erb 242b731af833d1ca
+erb tests/testbed/623-a-template-whose-self-is-unnamed-keeps-no-method-alive/lib/generators/templates/other.rb.erb 5ce3acd7ad181627
 rabl tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/views/widgets/base.rabl 706223d3bbf4a9f7
 rabl tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/views/widgets/show.rabl e1ce31e3d5212371
 rabl tests/testbed/603-a-templates-bare-ivar-and-local-assigns-are-defined/app/views/widgets/show.json.rabl bfd218e974bc4930
@@ -631,6 +634,13 @@ ruby tests/testbed/620-a-module-that-mixes-itself-in-is-used/lib/patches.rb b7ec
 ruby tests/testbed/620-a-module-that-mixes-itself-in-is-used/lib/widget.rb 41d5463b6e2c2330
 ruby tests/testbed/620-a-module-that-mixes-itself-in-is-used/spec/support/stubbing.rb 5a2d9588602e7e98
 ruby tests/testbed/621-a-module-trekr-makes-is-not-dead/lib/test_help.rb a996f8e28fc51f1c
+ruby tests/testbed/623-a-template-whose-self-is-unnamed-keeps-no-method-alive/app/helpers/widgets_helper.rb 89886b5cbc1995b1
+ruby tests/testbed/623-a-template-whose-self-is-unnamed-keeps-no-method-alive/lib/widget/a.rb a0baba295b062d47
+ruby tests/testbed/624-refs-at-a-variable-lists-the-variable/app.rb b510e3f39b5b7d62
+ruby tests/testbed/624-refs-at-a-variable-lists-the-variable/more.rb fafd913b68a17b57
+ruby tests/testbed/625-x-new-is-its-initialize-everywhere/app.rb cc74f3cea526ffb1
+ruby tests/testbed/626-an-initialize-whose-super-lands-says-so/app.rb dec3ebf7c681191d
+ruby tests/testbed/627-an-index-call-covers-only-its-bracket/app.rb 687a5812b3a81e15
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

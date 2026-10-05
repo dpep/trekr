@@ -84,7 +84,8 @@ brew unlink trekr   # …verify…   then:   brew link trekr
 - **An extraction change bumps the store version** (`schema::VERSION`).
   `tests/extraction.golden` holds each testbed input's stored facts, hashed;
   output that moves without a bump fails, and a bump says to regenerate with
-  `UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden`.
+  `UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden`. A new
+  testbed input fails too, until that regeneration records it (no bump).
 - Fixture repos under `tests/fixtures/`, generic names (`Widget`, `HandlerA`) —
   public repo, nothing employer-identifying.
 - Verify through `cargo test`, not hand-run binaries; e2e drives the built binary
