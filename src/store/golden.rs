@@ -62,15 +62,8 @@ fn stored(files: &[(String, Vec<u8>)]) -> BTreeMap<String, Vec<String>> {
         insert_facts(&store.conn, &crate::scan::hash_blob(bytes), &facts).expect("facts insert");
     }
     let mut rows: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for table in [
-        "blob",
-        "def",
-        "ancestry",
-        "const_ref",
-        "call_name",
-        "body_call",
-    ] {
-        let oid = match table {
+    for table in fact_tables(&store) {
+        let oid = match table.as_str() {
             "blob" => "t.oid",
             _ => "(SELECT oid FROM blob WHERE id = t.blob_id)",
         };
@@ -81,7 +74,7 @@ fn stored(files: &[(String, Vec<u8>)]) -> BTreeMap<String, Vec<String>> {
         let names: Vec<String> = stmt.column_names().into_iter().map(String::from).collect();
         let found = stmt
             .query_map([], |row| {
-                let mut line = table.to_string();
+                let mut line = table.clone();
                 for (at, name) in names.iter().enumerate().skip(1) {
                     if !matches!(name.as_str(), "id" | "blob_id" | "oid" | "written_by") {
                         let value: rusqlite::types::Value = row.get(at)?;
@@ -99,6 +92,25 @@ fn stored(files: &[(String, Vec<u8>)]) -> BTreeMap<String, Vec<String>> {
     }
     rows.values_mut().for_each(|lines| lines.sort());
     rows
+}
+
+/// `blob` and every table keyed by one: a fact table added to the schema is
+/// guarded without being listed here.
+fn fact_tables(store: &Store) -> Vec<String> {
+    let mut stmt = store
+        .conn
+        .prepare(
+            "SELECT m.name FROM sqlite_master m WHERE m.type = 'table' AND (m.name = 'blob' \
+             OR EXISTS (SELECT 1 FROM pragma_table_info(m.name) WHERE name = 'blob_id'))",
+        )
+        .expect("the schema");
+    let tables = stmt
+        .query_map([], |row| row.get(0))
+        .expect("tables")
+        .collect::<rusqlite::Result<Vec<String>>>()
+        .expect("tables read");
+    assert!(tables.len() > 1, "no fact tables found: {tables:?}");
+    tables
 }
 
 #[test]
