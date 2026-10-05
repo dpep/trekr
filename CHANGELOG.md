@@ -73,7 +73,14 @@
   A panic while answering a request or reading an edit — an odd half-typed
   buffer, say — ended `trekr --lsp`, and the editor stopped restarting it
   after a few tries. That request now gets an error, the panic is in the
-  server log, and the session keeps answering.
+  server log, and the session keeps answering. The guard covers the whole
+  request, not only its handler: a URI with a malformed escape
+  (`x%aé.rb`) panicked before the handler ran; it now names no file.
+- **Only a regular file is read as source, and only up to 64 MiB.** A
+  hover on `/dev/zero` grew the language server until the system killed it,
+  and a named pipe would have hung it; each now answers nothing. On the
+  command line, `--def`, `--refs` at a position and `--symbols` on such a
+  path are a usage error (exit 64).
 - **A checkout that names no Ruby still gets core** (#9). Without a
   `.ruby-version` (most gems), trekr used `$GEM_HOME`'s or `$PATH`'s Ruby, or
   the only one installed — and with several installed and none of those,

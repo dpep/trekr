@@ -54,7 +54,7 @@ fn refresh(session: &mut Session, path: &Path) -> Refreshed {
     if !session.store().has_checkout(&root).unwrap_or(false) {
         return Refreshed::Done;
     }
-    let Ok(bytes) = std::fs::read(&located.absolute) else {
+    let Ok(bytes) = crate::scan::read_source(&located.absolute) else {
         return Refreshed::Done;
     };
     let oid = crate::scan::hash_blob(&bytes);

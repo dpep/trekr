@@ -10,12 +10,16 @@ use lsp_types::{Position, Range};
 use std::path::PathBuf;
 
 /// `file:///a/b.rb` → `/a/b.rb`. Percent-decoding only; no other scheme is
-/// answerable, so anything else is `None` rather than a wrong path.
+/// answerable, and neither is a malformed escape, so either is `None` rather
+/// than a wrong path. The decoded bytes are the path's, UTF-8 or not.
 pub(crate) fn uri_to_path(uri: &str) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
     let rest = uri.strip_prefix("file://")?;
     // A `file://host/path` form is not something a local editor sends.
     let rest = rest.strip_prefix("localhost").unwrap_or(rest);
-    Some(PathBuf::from(percent_decode(rest)))
+    Some(PathBuf::from(std::ffi::OsString::from_vec(percent_decode(
+        rest,
+    )?)))
 }
 
 pub(crate) fn path_to_uri(path: &std::path::Path) -> String {
@@ -30,23 +34,19 @@ pub(crate) fn path_to_uri(path: &std::path::Path) -> String {
     out
 }
 
-fn percent_decode(text: &str) -> String {
-    let bytes = text.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%'
-            && i + 2 < bytes.len()
-            && let Ok(byte) = u8::from_str_radix(&text[i + 1..i + 3], 16)
-        {
-            out.push(byte);
-            i += 3;
-            continue;
-        }
-        out.push(bytes[i]);
-        i += 1;
+/// Byte by byte: a `%` must be followed by two hex digits, or the text is
+/// no URI.
+fn percent_decode(text: &str) -> Option<Vec<u8>> {
+    let hex = |byte: u8| (byte as char).to_digit(16);
+    let mut bytes = text.bytes();
+    let mut out = Vec::with_capacity(text.len());
+    while let Some(byte) = bytes.next() {
+        out.push(match byte {
+            b'%' => (hex(bytes.next()?)? * 16 + hex(bytes.next()?)?) as u8,
+            byte => byte,
+        });
     }
-    String::from_utf8_lossy(&out).into_owned()
+    Some(out)
 }
 
 /// An LSP position in a document → our 1-based line and byte column.
@@ -300,6 +300,23 @@ mod tests {
     #[test]
     fn refuses_a_scheme_it_cannot_answer_for() {
         assert_eq!(uri_to_path("untitled:Untitled-1"), None);
+    }
+
+    #[test]
+    fn a_malformed_escape_is_no_path_rather_than_a_panic() {
+        // `%a` then a two-byte character: a slice of the text there would
+        // split the character.
+        assert_eq!(uri_to_path("file:///a/x%a\u{e9}.rb"), None);
+        assert_eq!(uri_to_path("file:///a/x%zz.rb"), None);
+        assert_eq!(uri_to_path("file:///a/x%2"), None);
+        assert_eq!(
+            uri_to_path("file:///a/caf%C3%A9.rb"),
+            Some(PathBuf::from("/a/caf\u{e9}.rb"))
+        );
+        // A path's bytes need not be UTF-8, and are kept as they are.
+        use std::os::unix::ffi::OsStrExt;
+        let raw = uri_to_path("file:///a/%FF.rb").unwrap();
+        assert_eq!(raw.as_os_str().as_bytes(), b"/a/\xFF.rb");
     }
 
     #[test]

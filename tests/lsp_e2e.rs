@@ -1661,14 +1661,17 @@ fn a_handler_that_panics_answers_an_error_and_the_session_survives() {
     let mut session = Session::start(&db, &dir);
     session.initialize(&dir);
 
-    let answer = session.request("trekr/panic", serde_json::json!({}));
-    assert_eq!(answer["error"]["code"], -32603, "an internal error");
-    assert!(
-        answer["error"]["message"]
-            .as_str()
-            .is_some_and(|m| m.contains("panicked")),
-        "{answer}"
-    );
+    // In the handler, and before it, reading what the request asks about.
+    for method in ["trekr/panic", "trekr/panic-before"] {
+        let answer = session.request(method, serde_json::json!({}));
+        assert_eq!(answer["error"]["code"], -32603, "an internal error");
+        assert!(
+            answer["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("panicked")),
+            "{answer}"
+        );
+    }
 
     let answer = session.request(
         "textDocument/documentSymbol",
@@ -1683,6 +1686,53 @@ fn a_handler_that_panics_answers_an_error_and_the_session_survives() {
         .expect("the panic is logged");
     assert_eq!(logged["status"], "error");
 
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// What a client sends is not trusted to be a file trekr can read: a URI
+/// with a malformed escape names nothing, and a device or a pipe is not read
+/// at all — `/dev/zero` would never end. Each answers, and the session goes on.
+#[test]
+fn a_uri_that_names_no_readable_file_answers_and_the_session_survives() {
+    let (dir, db) = scratch("bad-uri");
+    repo(&dir);
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+
+    let malformed = format!("file://{}/x%a\u{e9}.rb", dir.display());
+    let fifo = dir.join("pipe.rb");
+    assert!(
+        std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let started = std::time::Instant::now();
+    for uri in [
+        malformed,
+        "file:///dev/zero".to_string(),
+        uri_of(&dir, "pipe.rb"),
+    ] {
+        for method in ["textDocument/definition", "textDocument/hover"] {
+            let answer = session.request(
+                method,
+                serde_json::json!({
+                    "textDocument": {"uri": uri},
+                    "position": {"line": 0, "character": 0},
+                }),
+            );
+            assert!(answer["result"].is_null(), "{method} {uri}: {answer}");
+        }
+    }
+    assert!(started.elapsed() < std::time::Duration::from_secs(10));
+
+    let answer = session.request(
+        "textDocument/documentSymbol",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}}),
+    );
+    assert_eq!(outline_names(&answer["result"])[0], "Widget");
+    session.stop();
     let _ = fs::remove_dir_all(&dir);
 }
 

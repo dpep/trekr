@@ -1777,6 +1777,14 @@ fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
         (&dir, &["--symbols", "."], &[], 64, "usage", "directory"),
         (
             &dir,
+            &["--symbols", "/dev/zero"],
+            &[],
+            64,
+            "usage",
+            "not a regular file",
+        ),
+        (
+            &dir,
             &["--def", "gone.rb:1:1"],
             &[],
             66,

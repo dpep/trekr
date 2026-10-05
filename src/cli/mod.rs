@@ -586,7 +586,8 @@ fn requested_output(args: impl IntoIterator<Item = std::ffi::OsString>) -> Outpu
 }
 
 /// A file the caller named. Missing is their typo, not trekr's failure, and
-/// so is a directory where a file was asked for.
+/// so is a directory, a device or a file too large to be source where a
+/// file was asked for.
 fn read_input(path: &Path) -> anyhow::Result<Vec<u8>> {
     if path.is_dir() {
         return Err(Failure::Usage.error(format!(
@@ -594,9 +595,10 @@ fn read_input(path: &Path) -> anyhow::Result<Vec<u8>> {
             path.display()
         )));
     }
-    std::fs::read(path).map_err(|error| {
+    scan::read_source(path).map_err(|error| {
         let kind = match error.kind() {
             std::io::ErrorKind::NotFound => Failure::NotFound,
+            std::io::ErrorKind::InvalidInput | std::io::ErrorKind::FileTooLarge => Failure::Usage,
             _ => Failure::Io,
         };
         kind.error(format!("cannot read {}: {error}", path.display()))

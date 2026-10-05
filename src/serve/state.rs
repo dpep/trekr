@@ -884,7 +884,7 @@ impl Session {
         };
         if !fresh {
             let (modified, len) = disk_stamp(path)?;
-            let text = std::fs::read_to_string(path).ok()?;
+            let text = String::from_utf8(crate::scan::read_source(path).ok()?).ok()?;
             let disk = self
                 .open
                 .values()

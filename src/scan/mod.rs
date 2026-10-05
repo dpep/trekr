@@ -374,6 +374,42 @@ pub(crate) fn git_fingerprint(root: &Path) -> Option<i64> {
     Some((modified.as_nanos() as i64).wrapping_mul(31) ^ (meta.len() as i64))
 }
 
+/// The most of one source file trekr reads: far past any hand-written Ruby or
+/// schema dump, short of what would cost the process its memory.
+pub(crate) const MAX_SOURCE: u64 = 64 << 20;
+
+/// A source file someone named — a path on the command line, a URI from the
+/// editor — read as trekr reads one: a regular file (a pipe would wait for a
+/// writer, `/dev/zero` never ends), no larger than [`MAX_SOURCE`].
+pub(crate) fn read_source(path: &Path) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+    let meta = std::fs::metadata(path)?;
+    if !meta.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    let too_large = || {
+        std::io::Error::new(
+            std::io::ErrorKind::FileTooLarge,
+            format!("larger than {} MiB", MAX_SOURCE >> 20),
+        )
+    };
+    if meta.len() > MAX_SOURCE {
+        return Err(too_large());
+    }
+    let mut bytes = Vec::with_capacity(meta.len() as usize);
+    // Bounded again as read: the file may grow after the stat.
+    std::fs::File::open(path)?
+        .take(MAX_SOURCE + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() as u64 > MAX_SOURCE {
+        return Err(too_large());
+    }
+    Ok(bytes)
+}
+
 /// More changed files than this in one batch is an operation — a checkout, a
 /// rebase — and is handed to a full index rather than refreshed one by one,
 /// by the language server and a CLI query alike.
@@ -604,6 +640,41 @@ pub(crate) fn hash(root: &Path, paths: impl IntoIterator<Item = String>) -> File
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_source_is_a_regular_file_of_bounded_size() {
+        let temp = std::env::temp_dir().join(format!("trekr-source-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+        let file = temp.join("a.rb");
+        std::fs::write(&file, "x = 1\n").unwrap();
+        assert_eq!(read_source(&file).unwrap(), b"x = 1\n");
+        std::os::unix::fs::symlink(&file, temp.join("linked.rb")).unwrap();
+        assert_eq!(read_source(&temp.join("linked.rb")).unwrap(), b"x = 1\n");
+
+        // A device never ends, and a pipe would wait for a writer.
+        let fifo = temp.join("pipe.rb");
+        assert!(
+            Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success()
+        );
+        for path in [Path::new("/dev/zero"), &fifo, &temp] {
+            let error = read_source(path).unwrap_err();
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput, "{path:?}");
+        }
+
+        let huge = temp.join("huge.rb");
+        std::fs::File::create(&huge)
+            .unwrap()
+            .set_len(MAX_SOURCE + 1)
+            .unwrap();
+        let error = read_source(&huge).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::FileTooLarge);
+        let _ = std::fs::remove_dir_all(&temp);
+    }
 
     #[test]
     fn a_file_is_read_by_the_reader_its_path_names() {

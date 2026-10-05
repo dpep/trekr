@@ -769,12 +769,45 @@ fn feature_of(method: &str) -> String {
         .collect()
 }
 
+/// Answer one request. Everything it touches is inside the guard — reading
+/// its params for the log reads its URI, which once panicked before the
+/// handler's own guard was reached, and took the session with it.
 fn dispatch(
     session: &mut Session,
     request: Request,
     out: &Outbound,
     cancel: &dyn Fn() -> bool,
 ) -> (Response, Counted) {
+    let id = request.id.clone();
+    let method = request.method.clone();
+    unwinding(|| Ok(answer(session, request, out, cancel))).unwrap_or_else(|panicked| {
+        out.log.event(
+            "request",
+            serde_json::json!({ "op": method, "status": "error", "error": panicked.to_string() }),
+        );
+        let counted = Counted {
+            feature: feature_of(&method),
+            flags: String::new(),
+            outcome: Outcome::Error("internal"),
+            latency: None,
+            miss: None,
+        };
+        let code = lsp_server::ErrorCode::InternalError as i32;
+        (Response::new_err(id, code, panicked.to_string()), counted)
+    })
+}
+
+fn answer(
+    session: &mut Session,
+    request: Request,
+    out: &Outbound,
+    cancel: &dyn Fn() -> bool,
+) -> (Response, Counted) {
+    // What the suite uses to prove the guard covers more than the handler.
+    #[cfg(debug_assertions)]
+    if request.method == "trekr/panic-before" {
+        panic!("asked to, before the handler");
+    }
     let log = out.log;
     let id = request.id.clone();
     let method = request.method.clone();
