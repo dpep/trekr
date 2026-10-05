@@ -233,7 +233,7 @@ pub(super) fn after_partial(
     // then: a fresh process asking while the early store stands would find
     // it, miss again and loop for as long as its index stood still.
     if let Some(early) = forget_early() {
-        let main = Store::open(&super::store_path()?)?;
+        let main = Store::open(&crate::store::default_path()?)?;
         let root_str = root.to_string_lossy().into_owned();
         let mut heads = Heads::new(&root_str, Why::UnderWay, TOLD.load(Relaxed));
         // Ended, or cut short: the fresh process finishes it as any query.
@@ -346,7 +346,7 @@ pub(super) fn forget_early() -> Option<std::path::PathBuf> {
 /// — another checkout's index — is not worth waiting out: start it anyway,
 /// and its own claim decides.
 fn claim(root: &str, busy: &mut Option<Instant>) -> anyhow::Result<bool> {
-    let mut store = Store::open(&super::store_path()?)?;
+    let mut store = Store::open(&crate::store::default_path()?)?;
     match store.claim_for_child(root) {
         Ok(None) => Ok(true),
         Ok(Some(_)) => Ok(false),

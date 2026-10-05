@@ -644,7 +644,7 @@ fn writer_waiting(waited: std::time::Duration) {
         60
     };
     DUE.store(secs - secs % every + every, Relaxed);
-    let db = store_path().map_or_else(
+    let db = crate::store::default_path().map_or_else(
         |_| "the index".into(),
         |p| paths::pretty(&p.to_string_lossy()),
     );
@@ -669,14 +669,6 @@ fn gem_holding(store: &Store, path: &Path) -> Option<String> {
         .flatten()
 }
 
-/// The database: `$TREKR_DB`, else `~/.local/share/trekr/trekr.db`.
-fn store_path() -> anyhow::Result<PathBuf> {
-    Ok(match std::env::var("TREKR_DB") {
-        Ok(p) => PathBuf::from(p),
-        Err(_) => PathBuf::from(std::env::var("HOME")?).join(".local/share/trekr/trekr.db"),
-    })
-}
-
 fn open_store() -> anyhow::Result<Store> {
     // A query whose file is only in a first index's early store reads that
     // (DEC-512), until it is gone.
@@ -686,14 +678,7 @@ fn open_store() -> anyhow::Result<Store> {
             Err(_) => drop(autoindex::forget_early()),
         }
     }
-    let open = || -> anyhow::Result<Store> {
-        let path = store_path()?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        Ok(Store::open(&path)?)
-    };
-    open().tag(Failure::Database)
+    crate::store::open_default().tag(Failure::Database)
 }
 
 /// Where an answer's paths are written from (DEC-076): the checkout the

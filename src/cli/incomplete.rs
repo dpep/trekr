@@ -8,7 +8,7 @@
 //! expects. What the report says is read from the store, not from this
 //! process: the commits a reader will see are what the checkout now holds.
 
-use super::{Output, json_text, paths, store_path, warming_note};
+use super::{Output, json_text, paths, warming_note};
 use crate::store::Store;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -81,7 +81,7 @@ pub(super) fn outwaited(error: &anyhow::Error) -> bool {
 /// answer on stdout.
 pub(super) fn report(out: Output, root: &str, why: &str) {
     let pretty = paths::pretty(root);
-    let store = store_path()
+    let store = crate::store::default_path()
         .ok()
         .and_then(|p| Store::open_existing(&p).ok());
     // This index's own mark is over once it is; another writer's, which
