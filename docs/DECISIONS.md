@@ -1683,55 +1683,6 @@ touches `.git/index`. The answer then is a filesystem watcher in the LSP front,
 which is a resident process that already exists and may legitimately watch,
 rather than a daemon for the CLI.
 
-### Addendum (pre-0.8.7 hunt): the blind spot bit, and queries see edits now
-
-It bit in the CLI. Edit a tracked file without staging it and `--def` on a
-call to the new method answered "nothing trekr indexed defines this name
-anywhere", exit 1, with no staleness note — the most common way a CLI user
-got a wrong answer, and an assertion rather than a hedge. `--dead` and
-`--refs Owner#m` never probed at all: a caller committed after the index
-left its method `unreferenced`, exit 0, and a deleted caller kept one
-"used".
-
-**Decided.** Every query that reads the index — `--def`, `--refs` (by
-owner, by name, at a position), `--dead` — runs git's own comparison of the
-working tree with its index (`git --no-optional-locks diff-files
---name-only --relative`, `scan::Edits`) beside the fingerprint, and re-reads
-each indexed file it names whose bytes differ from the store's: one hash
-each, a parse only for a blob never seen. The fingerprint moving still
-re-reads the file asked about. More than `BULK` edits (the language
-server's 32) is an operation, left to `--index`. The same `index` object
-discloses it on every one of those commands — `stale`, now `false` when
-nothing else may lag; `refreshed`, now the list of files re-read (it was the
-one file asked about, or `null`); `busy`, likewise a list; `hint` — and text
-says it on stderr. `stale` is true when git's index moved (a commit, an
-`add`, a checkout: a file it adds is not read by a query), an edited file
-could not be read (deleted — `refresh_file` cannot remove one), or there
-were too many. Once read, an edit is current: the next query says nothing.
-
-**Why git, not trekr's own stat walk.** `diff-files` is git comparing each
-tracked file's stat with its index entry, threaded (`core.preloadIndex`),
-and O(changed) where `core.fsmonitor` is on — which the large monorepos
-this is for tend to enable. trekr's own walk would need a per-file baseline
-in the store (rejected above as checkout bookkeeping below `blob`) or an
-index-time timestamp and mtime racing; and hashing every file is the scan.
-
-**Measured** on discourse (24,447 tracked files) and mastodon (3,632), git
-alone, median of 15–21: 32–45 ms and ~10 ms; single-threaded
-(`preloadIndex=false`) 86–122 ms on discourse, so it stays threaded. It is
-started before the tree is built and read after, so the two overlap.
-`--def` end to end, old vs new, alternating, medians of 11, on a machine at
-load average ~12 on 8 cores: discourse 58/66 → 86/82 ms; mastodon 74/73 →
-75/72 ms; `--refs Owner#m` discourse 181/177 → 192/202 ms, mastodon 125 →
-125 ms. The discourse `--def` cost is git's threads contending with the
-tree build on a saturated machine; on an idle one the overlap should hide
-most of it. Linear in tracked files, the 10M-line monorepo would pay
-~0.6–1 s of git per query without fsmonitor.
-
-**Reverses if** that monorepo shows it: the shape of the fix is to stop
-waiting for git once the tree is built and disclose the check as not made,
-not to drop the check.
-
 ## DEC-036 — The CLI forgives a hand-typed position; the LSP does not
 
 **Decided.** `--def` snaps to the nearest name on the line when the exact

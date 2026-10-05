@@ -3582,10 +3582,7 @@ fn a_query_refreshes_the_file_it_asks_about_and_says_the_rest_may_lag() {
         value["index"]["stale"], true,
         "staleness disclosed: {value}"
     );
-    assert_eq!(
-        value["index"]["refreshed"],
-        serde_json::json!(["widget.rb"])
-    );
+    assert_eq!(value["index"]["refreshed"], "widget.rb");
     assert_eq!(
         value["definition"][0]["line"], 14,
         "the answer must use the moved definition: {value}"
@@ -3643,16 +3640,8 @@ fn read_commands_answer_and_exit_while_another_process_writes() {
     timed(&["--ancestors", "Widget", "--json"]);
     timed(&["--refs", "Widget#helper", "--json"]);
     let value = json(&timed(&["--def", "widget.rb:9:5", "--json"]));
-    assert_eq!(
-        value["index"]["busy"],
-        serde_json::json!(["widget.rb"]),
-        "{value}"
-    );
-    assert_eq!(
-        value["index"]["refreshed"],
-        serde_json::json!([]),
-        "{value}"
-    );
+    assert_eq!(value["index"]["busy"], "widget.rb", "{value}");
+    assert!(value["index"]["refreshed"].is_null(), "{value}");
     assert_eq!(
         value["definition"][0]["line"], 12,
         "answered from the committed index: {value}"
@@ -3660,118 +3649,43 @@ fn read_commands_answer_and_exit_while_another_process_writes() {
 
     drop((store, usage));
     let value = json(&trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]));
-    assert_eq!(
-        value["index"]["refreshed"],
-        serde_json::json!(["widget.rb"]),
-        "{value}"
-    );
+    assert_eq!(value["index"]["refreshed"], "widget.rb", "{value}");
     assert!(value["index"].get("busy").is_none(), "{value}");
     assert_eq!(value["definition"][0]["line"], 14, "{value}");
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// An edit nothing has told git about leaves `.git/index` alone, so the
-/// fingerprint cannot see it; git's own comparison of the working tree with
-/// its index does, and the edited file is re-read wherever it is — the one
-/// asked about or the one defining what it calls (DEC-035).
+/// The probe's blind spot, pinned rather than discovered later (DEC-035).
+///
+/// An edit that nothing has told git about does not move `.git/index`, so the
+/// probe cannot see it and the answer is stale. That is the stated cost of an
+/// O(1) check, and `--index` is the cure.
 #[test]
-fn an_edit_git_has_not_noticed_is_read_by_the_next_query() {
-    let (dir, db) = scratch("unstaged");
+fn an_edit_git_has_not_noticed_is_not_seen_by_the_probe() {
+    let (dir, db) = scratch("blind-spot");
     repo(&dir);
-    fs::write(dir.join("caller.rb"), "Widget.new.resize(1)\n").unwrap();
-    git(&dir, &["add", "-A"]);
     assert!(trekr(&db, &dir, &["--index"]).status.success());
 
     let file = dir.join("widget.rb");
     let text = fs::read_to_string(&file).unwrap();
     fs::write(
         &file,
-        text.replace("class Widget < Base", "class Widget < Base\n  # a\n  # b")
-            .replace("  private", "  def fresh\n  end\n\n  private"),
+        text.replace("class Widget < Base", "class Widget < Base\n  # a\n  # b"),
     )
     .unwrap();
 
-    // The definition another file calls moved, in a file nobody asked about.
-    let value = json(&trekr(&db, &dir, &["--def", "caller.rb:1:12", "--json"]));
-    assert_eq!(value["definition"][0]["line"], 8, "{value}");
-    assert_eq!(value["index"]["stale"], false, "nothing else lags: {value}");
-    assert_eq!(
-        value["index"]["refreshed"],
-        serde_json::json!(["widget.rb"])
-    );
-
-    // Once read, it is current: the next query has nothing to say.
-    let value = json(&trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]));
-    assert_eq!(value["definition"][0]["line"], 17, "{value}");
-    assert!(value.get("index").is_none(), "{value}");
-
-    // A method only the edit defines.
-    fs::write(dir.join("caller.rb"), "Widget.new.fresh\n").unwrap();
-    let out = trekr(&db, &dir, &["--def", "caller.rb:1:12", "--json"]);
-    assert!(out.status.success(), "{out:?}");
-    assert_eq!(json(&out)["definition"][0]["line"], 12);
-    let _ = fs::remove_dir_all(&dir);
-}
-
-/// `--dead` and `--refs Owner#m` ask about every file: they read the edits
-/// git names as `--def` does, and say when the rest may lag — a commit
-/// moves git's index, and a file it adds is not read until `--index`.
-#[test]
-fn whole_checkout_questions_read_edits_and_say_what_may_lag() {
-    let (dir, db) = scratch("whole-fresh");
-    repo(&dir);
-    assert!(trekr(&db, &dir, &["--index"]).status.success());
-    // `resize`'s tier.
-    let dead = |args: &[&str]| {
-        let value = json(&trekr(&db, &dir, &[&["--dead", "."], args].concat()));
-        let tier = value["candidates"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|row| row["name"] == "resize")
-            .map(|row| row["tier"].as_str().unwrap_or_default().to_string());
-        (value, tier)
-    };
-    let (value, tier) = dead(&["--json"]);
-    assert_eq!(tier.as_deref(), Some("unreferenced"), "{value}");
-    assert!(value.get("index").is_none(), "{value}");
-
-    // An edit git has not noticed calls it.
-    let file = dir.join("widget.rb");
-    let text = fs::read_to_string(&file).unwrap();
-    fs::write(
-        &file,
-        text.replace("  def helper\n", "  def helper\n    resize(2)\n"),
-    )
-    .unwrap();
-    let (value, tier) = dead(&["--json"]);
-    assert_eq!(tier.as_deref(), Some("single-caller"), "{value}");
-    assert_eq!(
-        value["index"]["refreshed"],
-        serde_json::json!(["widget.rb"]),
-        "{value}"
-    );
-    assert_eq!(value["index"]["stale"], false, "{value}");
-    let refs = json(&trekr(&db, &dir, &["--refs", "Widget#resize", "--json"]));
-    assert_eq!(refs["counts"]["confirmed"], 1, "{refs}");
-
-    // A file added to git's index is not read by a query: said, with the cure.
-    fs::write(dir.join("other.rb"), "Widget.new.helper\n").unwrap();
-    git(&dir, &["add", "-A"]);
-    let (value, _) = dead(&["--json"]);
-    assert_eq!(value["index"]["stale"], true, "{value}");
+    let out = trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert!(
-        value["index"]["hint"]
-            .as_str()
-            .unwrap()
-            .starts_with("trekr --index")
+        value.get("index").is_none(),
+        "the probe cannot see this, and must not claim it did: {value}"
     );
-    let refs = json(&trekr(&db, &dir, &["--refs", "Widget#helper", "--json"]));
-    assert_eq!(refs["index"]["stale"], true, "{refs}");
-    let out = trekr(&db, &dir, &["--dead", "."]);
-    let said = String::from_utf8_lossy(&out.stderr);
-    assert!(said.contains("may lag"), "{said}");
-    let _ = fs::remove_dir_all(&dir);
+
+    // And an explicit index is the cure, as the DEC says.
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    let out = trekr(&db, &dir, &["--def", "widget.rb:9:5", "--json"]);
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(value["definition"][0]["line"], 14, "after --index: {value}");
 }
 
 /// `trekr <input>` dispatches on shape (DEC-036), and every shape speaks JSON.

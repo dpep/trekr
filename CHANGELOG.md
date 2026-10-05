@@ -2,17 +2,6 @@
 
 ## Unreleased
 
-- **A query sees an edit git has not been told about.** Editing a tracked
-  file without `git add` was invisible to `--def` — a method the edit
-  added was "nothing trekr indexed defines this name anywhere", exit 1 —
-  and `--dead` and `--refs Owner#m` never checked whether the index lagged
-  at all. Every query now asks git which files differ from its index and
-  re-reads those (up to 32; more is left to `--index`), and `--dead` and
-  every `--refs` disclose a lagging index as `--def` does: an `index`
-  object in JSON and a line on stderr. `index.refreshed` is now a list of
-  the files re-read (it was the one file asked about, or `null`), `busy`
-  likewise, and `stale` is `false` when nothing beyond them may lag —
-  scripts reading `refreshed` as a string must read the list.
 - **`--def` on a `render` that reaches several templates rounds its
   confidence** like every other answer: `0.33` for three, not
   `0.3333333333333333`.
