@@ -61,7 +61,9 @@ its whole name (`Admin::Widget=unreferenced`), or an example group's `let`, `sub
 `def` by the line it is written on (`@3=unreferenced`) — `none` for one not reported; `tier~word`
 also asserts its caveat contains `word`, `tier!~word` that it does not, and `tier~` that it has none. `ancestors NAME A,B,C`
 asserts the chain starts with those names, and `unresolved=X,Y` (empty for
-none) asserts the ancestors it could not resolve. `symbols FILE` asserts the outline,
+none) asserts the ancestors it could not resolve. A case with a `dead` line also has its whole `--dead . --json` pinned,
+byte for byte, in `tests/dead.golden`: an output change names the cases it
+moved, and `UPDATE_GOLDEN=1` accepts it. `symbols FILE` asserts the outline,
 in source order, comma-separated, and `private=a,b` which of its rows are
 private.
 

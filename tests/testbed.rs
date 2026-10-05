@@ -581,6 +581,79 @@ mod shapes {
     }
 }
 
+/// `--dead . --json` exactly as printed, with this run's scratch paths named
+/// rather than spelled. The store and home sit beside the checkout and share
+/// its prefix, so they are named first.
+fn dead_snapshot(db: &Path, dir: &Path) -> String {
+    let out = trekr_in(dir)
+        .args(["--dead", ".", "--json"])
+        .env("TREKR_DB", db)
+        .output()
+        .expect("run trekr");
+    let mut text = String::from_utf8_lossy(&out.stdout).into_owned();
+    let store = db.parent().expect("a store in its own directory");
+    for (path, name) in [
+        (store, "<store>"),
+        (&home_of(dir), "<home>"),
+        (dir, "<checkout>"),
+    ] {
+        for spelled in [fs::canonicalize(path).ok(), Some(path.to_path_buf())]
+            .into_iter()
+            .flatten()
+        {
+            text = text.replace(&*spelled.to_string_lossy(), name);
+        }
+    }
+    text
+}
+
+/// Every snapshot against `tests/dead.golden`, which pins `--dead`'s output
+/// byte for byte, hashed: a refactor of it must leave the golden unchanged,
+/// and a change of behaviour names the cases it moved. `UPDATE_GOLDEN=1`
+/// rewrites it from this run (with `TESTBED_ONLY`, only those cases).
+fn dead_golden(snapshots: &[(String, String)]) -> Vec<String> {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/dead.golden");
+    let recorded = fs::read_to_string(&path).unwrap_or_default();
+    let mut golden: std::collections::BTreeMap<String, String> = recorded
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(|line| line.split_once(' '))
+        .map(|(case, hash)| (case.to_string(), hash.to_string()))
+        .collect();
+    let hashed = |text: &str| format!("{:016x}", fnv(text.as_bytes()));
+    if std::env::var_os("UPDATE_GOLDEN").is_some() {
+        for (label, text) in snapshots {
+            golden.insert(label.clone(), hashed(text));
+        }
+        let mut out = String::from(
+            "# `--dead . --json` on each testbed case that asserts `--dead`, hashed.\n\
+             # Regenerate: UPDATE_GOLDEN=1 cargo test --test testbed\n",
+        );
+        for (label, hash) in &golden {
+            out.push_str(&format!("{label} {hash}\n"));
+        }
+        fs::write(&path, out).expect("write tests/dead.golden");
+        return Vec::new();
+    }
+    snapshots
+        .iter()
+        .filter(|(label, text)| golden.get(label) != Some(&hashed(text)))
+        .map(|(label, text)| {
+            format!(
+                "{label}: `--dead . --json` moved from tests/dead.golden \
+                 (UPDATE_GOLDEN=1 to accept). It printed:\n{text}"
+            )
+        })
+        .collect()
+}
+
+/// FNV-1a, as the extraction golden hashes.
+fn fnv(bytes: &[u8]) -> u64 {
+    bytes.iter().fold(0xcbf2_9ce4_8422_2325, |hash, byte| {
+        (hash ^ u64::from(*byte)).wrapping_mul(0x100_0000_01b3)
+    })
+}
+
 /// `key=value`, where the value may itself contain `=` or `:`.
 fn pairs(rest: &str) -> Vec<(String, String)> {
     rest.split_whitespace()
@@ -798,31 +871,37 @@ fn every_testbed_case_answers_as_recorded() {
     // by side; a worker takes the next case until none are left.
     let next = std::sync::atomic::AtomicUsize::new(0);
     let workers = std::thread::available_parallelism().map_or(4, |n| n.get());
-    let mut outcomes: Vec<(usize, usize, Vec<String>)> = std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..workers.min(cases.len()))
-            .map(|_| {
-                scope.spawn(|| {
-                    let mut done = Vec::new();
-                    loop {
-                        let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                        let Some(case) = cases.get(at) else {
-                            return done;
-                        };
-                        let (checks, failures) = run_case(case);
-                        done.push((at, checks, failures));
-                    }
+    let mut outcomes: Vec<(usize, usize, Vec<String>, Option<String>)> =
+        std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..workers.min(cases.len()))
+                .map(|_| {
+                    scope.spawn(|| {
+                        let mut done = Vec::new();
+                        loop {
+                            let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let Some(case) = cases.get(at) else {
+                                return done;
+                            };
+                            let (checks, failures, dead) = run_case(case);
+                            done.push((at, checks, failures, dead));
+                        }
+                    })
                 })
-            })
-            .collect();
-        handles
-            .into_iter()
-            .flat_map(|h| h.join().expect("a worker catches its cases' panics"))
-            .collect()
-    });
+                .collect();
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().expect("a worker catches its cases' panics"))
+                .collect()
+        });
     // Reported in case order, as a serial run would.
     outcomes.sort_by_key(|(at, ..)| *at);
-    let checks: usize = outcomes.iter().map(|(_, checks, _)| checks).sum();
-    let failures: Vec<String> = outcomes.into_iter().flat_map(|(.., f)| f).collect();
+    let checks: usize = outcomes.iter().map(|(_, checks, ..)| checks).sum();
+    let dead: Vec<(String, String)> = outcomes
+        .iter()
+        .filter_map(|(at, .., dead)| Some((label_of(&cases[*at]), dead.clone()?)))
+        .collect();
+    let mut failures: Vec<String> = outcomes.into_iter().flat_map(|(_, _, f, _)| f).collect();
+    failures.extend(dead_golden(&dead));
 
     assert!(
         failures.is_empty(),
@@ -837,15 +916,20 @@ fn every_testbed_case_answers_as_recorded() {
     }
 }
 
+fn label_of(case: &Path) -> String {
+    case.file_name().unwrap().to_string_lossy().into_owned()
+}
+
 /// Stage one case and check each of its expectations: how many it checked,
-/// and what failed. A panic — staging that could not index — is the case's
-/// failure, not the run's.
-fn run_case(case: &Path) -> (usize, Vec<String>) {
-    let label = case.file_name().unwrap().to_string_lossy().into_owned();
+/// what failed, and its `--dead` snapshot when it asserts `--dead`. A panic —
+/// staging that could not index — is the case's failure, not the run's.
+fn run_case(case: &Path) -> (usize, Vec<String>, Option<String>) {
+    let label = label_of(case);
     let mut checks = 0usize;
     let mut failures: Vec<String> = Vec::new();
+    let mut dead = None;
     let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        check_case(case, &label, &mut checks, &mut failures)
+        check_case(case, &label, &mut checks, &mut failures, &mut dead)
     }));
     if let Err(panic) = ran {
         let why = panic
@@ -855,10 +939,16 @@ fn run_case(case: &Path) -> (usize, Vec<String>) {
             .unwrap_or_default();
         failures.push(format!("{label}: panicked: {why}"));
     }
-    (checks, failures)
+    (checks, failures, dead)
 }
 
-fn check_case(case: &Path, label: &str, checks: &mut usize, failures: &mut Vec<String>) {
+fn check_case(
+    case: &Path,
+    label: &str,
+    checks: &mut usize,
+    failures: &mut Vec<String>,
+    dead: &mut Option<String>,
+) {
     let expectations = fs::read_to_string(case.join("expected"))
         .unwrap_or_else(|_| panic!("{label} has no `expected` file"));
     let (dir, db) = stage(case, label);
@@ -866,6 +956,9 @@ fn check_case(case: &Path, label: &str, checks: &mut usize, failures: &mut Vec<S
     trekr(&db, &dir, &["--status", "--json"]);
     // (expectation, position, --def's site) for each call --def placed.
     let mut calls: Vec<(String, String, String)> = Vec::new();
+    if expectations.lines().any(|line| line.starts_with("dead ")) {
+        *dead = Some(dead_snapshot(&db, &dir));
+    }
 
     for line in expectations.lines() {
         let line = line.trim();
