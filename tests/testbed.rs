@@ -473,138 +473,35 @@ fn every_testbed_case_answers_as_recorded() {
     cases.sort();
     assert!(!cases.is_empty(), "no cases in {}", root.display());
 
-    let mut failures: Vec<String> = Vec::new();
-    let mut checks = 0usize;
-    for case in &cases {
-        let label = case.file_name().unwrap().to_string_lossy().into_owned();
-        let expectations = fs::read_to_string(case.join("expected"))
-            .unwrap_or_else(|_| panic!("{label} has no `expected` file"));
-        let (dir, db) = stage(case, &label);
-
-        for line in expectations.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with('#') {
-                continue;
-            }
-            checks += 1;
-            let Some((verb, rest)) = line.split_once(char::is_whitespace) else {
-                failures.push(format!("{label}: cannot parse `{line}`"));
-                continue;
-            };
-            let target = rest.split_whitespace().next().unwrap_or_default();
-            match verb {
-                "def" => {
-                    let (answer, code) = trekr(&db, &dir, &["--def", target, "--json"]);
-                    check_def(&label, line, &answer, code, &mut failures);
-                }
-                "card" => {
-                    let (answer, code) = trekr(&db, &dir, &[target, "--json"]);
-                    check_def(&label, line, &answer, code, &mut failures);
-                }
-                "hover" => {
-                    let want = rest
-                        .split_once(char::is_whitespace)
-                        .map(|(_, w)| w.trim())
-                        .unwrap_or_default();
-                    let got = hover_text(&db, &dir, target);
-                    if !got.contains(want) {
-                        failures.push(format!(
-                            "{label}: {line}\n      hover said `{}`",
-                            got.replace('\n', " ")
-                        ));
-                    }
-                }
-                "refs" => {
-                    let answer = trekr(&db, &dir, &["--refs", target, "--json"]);
-                    check_refs(&label, line, &answer, &mut failures);
-                }
-                "ancestors" => {
-                    let (answer, _) = trekr(&db, &dir, &["--ancestors", target, "--json"]);
-                    let got: Vec<&str> = answer["ancestors"]
-                        .as_array()
-                        .map(|a| a.iter().filter_map(|n| n.as_str()).collect())
-                        .unwrap_or_default();
-                    let want: Vec<&str> = rest
-                        .split_whitespace()
-                        .nth(1)
-                        .unwrap_or_default()
-                        .split(',')
-                        .collect();
-                    // A prefix: the tail is core's, and not what a case is about.
-                    if !got.starts_with(&want) {
-                        failures.push(format!(
-                            "{label}: {line}\n      expected {want:?} first, got {got:?}"
-                        ));
-                    }
-                    for assertion in rest.split_whitespace().skip(2) {
-                        let Some(listed) = assertion.strip_prefix("unresolved=") else {
-                            failures
-                                .push(format!("{label}: {line}\n      unknown key {assertion}"));
-                            continue;
+    // Each case stages its own checkout, home and database, so they run side
+    // by side; a worker takes the next case until none are left.
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let workers = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let mut outcomes: Vec<(usize, usize, Vec<String>)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers.min(cases.len()))
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let at = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(case) = cases.get(at) else {
+                            return done;
                         };
-                        let want: Vec<&str> = listed.split(',').filter(|n| !n.is_empty()).collect();
-                        let got: Vec<&str> = answer["unresolved_ancestors"]
-                            .as_array()
-                            .map(|a| a.iter().filter_map(|n| n.as_str()).collect())
-                            .unwrap_or_default();
-                        if got != want {
-                            failures.push(format!(
-                                "{label}: {line}\n      unresolved: expected {want:?}, got {got:?}"
-                            ));
-                        }
+                        let (checks, failures) = run_case(case);
+                        done.push((at, checks, failures));
                     }
-                }
-                "dead" => {
-                    let (answer, _) = trekr(&db, &dir, &["--dead", target, "--json"]);
-                    check_dead(&label, line, &answer, &mut failures);
-                }
-                "symbols" => {
-                    let (answer, _) = trekr(&db, &dir, &["--symbols", target, "--json"]);
-                    let got: Vec<&str> = answer
-                        .as_array()
-                        .map(|rows| {
-                            rows.iter()
-                                .filter_map(|r| r["name"].as_str())
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
-                    let want: Vec<&str> = rest
-                        .split_whitespace()
-                        .nth(1)
-                        .unwrap_or_default()
-                        .split(',')
-                        .collect();
-                    if got != want {
-                        failures.push(format!(
-                            "{label}: {line}\n      expected {want:?}, got {got:?}"
-                        ));
-                    }
-                    // `private=a,b`: the rows that are private, in source order.
-                    if let Some(want) = rest
-                        .split_whitespace()
-                        .find_map(|token| token.strip_prefix("private="))
-                    {
-                        let got: Vec<&str> = answer
-                            .as_array()
-                            .into_iter()
-                            .flatten()
-                            .filter(|r| r["visibility"] == "private")
-                            .filter_map(|r| r["name"].as_str())
-                            .collect();
-                        let want: Vec<&str> = want.split(',').filter(|n| !n.is_empty()).collect();
-                        if got != want {
-                            failures.push(format!(
-                                "{label}: {line}\n      private: expected {want:?}, got {got:?}"
-                            ));
-                        }
-                    }
-                }
-                other => failures.push(format!("{label}: unknown verb `{other}`")),
-            }
-        }
-        let _ = fs::remove_dir_all(&dir);
-        let _ = fs::remove_dir_all(home_of(&dir));
-    }
+                })
+            })
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|h| h.join().expect("a worker catches its cases' panics"))
+            .collect()
+    });
+    // Reported in case order, as a serial run would.
+    outcomes.sort_by_key(|(at, ..)| *at);
+    let checks: usize = outcomes.iter().map(|(_, checks, _)| checks).sum();
+    let failures: Vec<String> = outcomes.into_iter().flat_map(|(.., f)| f).collect();
 
     assert!(
         failures.is_empty(),
@@ -613,4 +510,154 @@ fn every_testbed_case_answers_as_recorded() {
         cases.len(),
         failures.join("\n\n  ")
     );
+}
+
+/// Stage one case and check each of its expectations: how many it checked,
+/// and what failed. A panic — staging that could not index — is the case's
+/// failure, not the run's.
+fn run_case(case: &Path) -> (usize, Vec<String>) {
+    let label = case.file_name().unwrap().to_string_lossy().into_owned();
+    let mut checks = 0usize;
+    let mut failures: Vec<String> = Vec::new();
+    let ran = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        check_case(case, &label, &mut checks, &mut failures)
+    }));
+    if let Err(panic) = ran {
+        let why = panic
+            .downcast_ref::<String>()
+            .cloned()
+            .or_else(|| panic.downcast_ref::<&str>().map(|s| (*s).to_string()))
+            .unwrap_or_default();
+        failures.push(format!("{label}: panicked: {why}"));
+    }
+    (checks, failures)
+}
+
+fn check_case(case: &Path, label: &str, checks: &mut usize, failures: &mut Vec<String>) {
+    let expectations = fs::read_to_string(case.join("expected"))
+        .unwrap_or_else(|_| panic!("{label} has no `expected` file"));
+    let (dir, db) = stage(case, label);
+
+    for line in expectations.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        *checks += 1;
+        let Some((verb, rest)) = line.split_once(char::is_whitespace) else {
+            failures.push(format!("{label}: cannot parse `{line}`"));
+            continue;
+        };
+        let target = rest.split_whitespace().next().unwrap_or_default();
+        match verb {
+            "def" => {
+                let (answer, code) = trekr(&db, &dir, &["--def", target, "--json"]);
+                check_def(label, line, &answer, code, failures);
+            }
+            "card" => {
+                let (answer, code) = trekr(&db, &dir, &[target, "--json"]);
+                check_def(label, line, &answer, code, failures);
+            }
+            "hover" => {
+                let want = rest
+                    .split_once(char::is_whitespace)
+                    .map(|(_, w)| w.trim())
+                    .unwrap_or_default();
+                let got = hover_text(&db, &dir, target);
+                if !got.contains(want) {
+                    failures.push(format!(
+                        "{label}: {line}\n      hover said `{}`",
+                        got.replace('\n', " ")
+                    ));
+                }
+            }
+            "refs" => {
+                let answer = trekr(&db, &dir, &["--refs", target, "--json"]);
+                check_refs(label, line, &answer, failures);
+            }
+            "ancestors" => {
+                let (answer, _) = trekr(&db, &dir, &["--ancestors", target, "--json"]);
+                let got: Vec<&str> = answer["ancestors"]
+                    .as_array()
+                    .map(|a| a.iter().filter_map(|n| n.as_str()).collect())
+                    .unwrap_or_default();
+                let want: Vec<&str> = rest
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .split(',')
+                    .collect();
+                // A prefix: the tail is core's, and not what a case is about.
+                if !got.starts_with(&want) {
+                    failures.push(format!(
+                        "{label}: {line}\n      expected {want:?} first, got {got:?}"
+                    ));
+                }
+                for assertion in rest.split_whitespace().skip(2) {
+                    let Some(listed) = assertion.strip_prefix("unresolved=") else {
+                        failures.push(format!("{label}: {line}\n      unknown key {assertion}"));
+                        continue;
+                    };
+                    let want: Vec<&str> = listed.split(',').filter(|n| !n.is_empty()).collect();
+                    let got: Vec<&str> = answer["unresolved_ancestors"]
+                        .as_array()
+                        .map(|a| a.iter().filter_map(|n| n.as_str()).collect())
+                        .unwrap_or_default();
+                    if got != want {
+                        failures.push(format!(
+                            "{label}: {line}\n      unresolved: expected {want:?}, got {got:?}"
+                        ));
+                    }
+                }
+            }
+            "dead" => {
+                let (answer, _) = trekr(&db, &dir, &["--dead", target, "--json"]);
+                check_dead(label, line, &answer, failures);
+            }
+            "symbols" => {
+                let (answer, _) = trekr(&db, &dir, &["--symbols", target, "--json"]);
+                let got: Vec<&str> = answer
+                    .as_array()
+                    .map(|rows| {
+                        rows.iter()
+                            .filter_map(|r| r["name"].as_str())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let want: Vec<&str> = rest
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .split(',')
+                    .collect();
+                if got != want {
+                    failures.push(format!(
+                        "{label}: {line}\n      expected {want:?}, got {got:?}"
+                    ));
+                }
+                // `private=a,b`: the rows that are private, in source order.
+                if let Some(want) = rest
+                    .split_whitespace()
+                    .find_map(|token| token.strip_prefix("private="))
+                {
+                    let got: Vec<&str> = answer
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter(|r| r["visibility"] == "private")
+                        .filter_map(|r| r["name"].as_str())
+                        .collect();
+                    let want: Vec<&str> = want.split(',').filter(|n| !n.is_empty()).collect();
+                    if got != want {
+                        failures.push(format!(
+                            "{label}: {line}\n      private: expected {want:?}, got {got:?}"
+                        ));
+                    }
+                }
+            }
+            other => failures.push(format!("{label}: unknown verb `{other}`")),
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(home_of(&dir));
 }
