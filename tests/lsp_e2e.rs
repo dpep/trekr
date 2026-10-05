@@ -5214,6 +5214,12 @@ fn an_early_store_whose_index_died_is_left_and_the_index_finished() {
         1,
         "answered from the store, not the dead early store"
     );
+    // Removed by a sweep: the server's own, or the resumed index's. Which
+    // runs first is not a contract, so this waits for either.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while beside.exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
     assert!(!beside.exists(), "a dead index's early store is removed");
 
     session.stop();
