@@ -1293,7 +1293,16 @@ fn outline(defs: &[crate::core::Def], text: &str) -> Vec<DocumentSymbol> {
             ),
             children: None,
         };
+        // A method or constant on one line holds nothing: `attr_accessor :x,
+        // :y` makes four methods there, siblings, not each inside the last.
+        let holds = matches!(
+            def.kind,
+            crate::core::Kind::Class | crate::core::Kind::Module
+        ) || def.end_line > def.pos.line;
         stack.push((symbol, def.end_line.max(def.pos.line)));
+        if !holds {
+            close(&mut stack, &mut roots);
+        }
     }
     while !stack.is_empty() {
         close(&mut stack, &mut roots);
@@ -2426,3 +2435,40 @@ pub(crate) fn publish(
 }
 
 use lsp_types::notification::Notification as _;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each symbol's name, and its children's, as `name(child, …)`.
+    fn shape(symbols: &[DocumentSymbol]) -> Vec<String> {
+        symbols
+            .iter()
+            .map(|s| match &s.children {
+                Some(children) if !children.is_empty() => {
+                    format!("{}({})", s.name, shape(children).join(", "))
+                }
+                _ => s.name.clone(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_outline_nests_a_definition_only_inside_one_that_holds_it() {
+        let cases: [(&str, &[&str]); 3] = [
+            // Several methods a macro makes on one line are siblings.
+            (
+                "class W\n  attr_accessor :x, :y\n  def z; end\nend\n",
+                &["W(x, x=, y, y=, z)"],
+            ),
+            // A class written on one line still holds its method.
+            ("class A; def b; end; end\n", &["A(b)"]),
+            // A method's body can hold a `def`.
+            ("def outer\n  def inner\n  end\nend\n", &["outer(inner)"]),
+        ];
+        for (source, want) in cases {
+            let facts = crate::extract::extract(source.as_bytes());
+            assert_eq!(shape(&outline(&facts.defs, source)), want, "{source}");
+        }
+    }
+}

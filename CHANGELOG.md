@@ -83,6 +83,10 @@
   inside `class << self`); an alias takes its original's visibility instead
   of always being public; a `define_method` in a `private` section is
   private; and `private_class_method [:a, :b]` or `*%i[a b]` names each.
+- **The editor's outline keeps one line's methods side by side.**
+  `attr_accessor :x, :y` (or a table's columns from `structure.sql`) made
+  each method a child of the one before it; a method or constant on one
+  line now holds nothing.
 - **`--def` on the start of an index's argument answers for the argument.**
   On the `k` of `h[key]` (or the `ke` of `h[key] = v`) it answered `[]`
   (`[]=`): an index call covered as many columns as its name has, not just
