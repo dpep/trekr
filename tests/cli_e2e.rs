@@ -4024,6 +4024,36 @@ fn a_reverted_edit_is_not_answered_from() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A query builds its tree over what the last one read, as a guess: an
+/// edit made since is answered as it is now, and an index since drops it.
+#[test]
+fn an_edit_is_answered_as_it_is_now_not_as_last_read() {
+    let (dir, db) = scratch("guess");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    let file = dir.join("widget.rb");
+    let text = fs::read_to_string(&file).unwrap();
+    let fresh = text.replace("  private", "  def fresh\n  end\n\n  private");
+    fs::write(&file, &fresh).unwrap();
+    let line = |db: &Path| {
+        let value = json(&trekr(db, &dir, &["--refs", "Widget#fresh", "--json"]));
+        value["definition"][0]["line"].clone()
+    };
+    assert_eq!(line(&db), 10);
+    // Every declaration moves: the namespace too.
+    fs::write(&file, format!("module Extra\nend\n{fresh}")).unwrap();
+    for _ in 0..2 {
+        assert_eq!(line(&db), 12);
+    }
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    let value = json(&trekr(&db, &dir, &["--refs", "Widget#fresh", "--json"]));
+    assert_eq!(value["definition"][0]["line"], 12, "{value}");
+    assert!(value.get("index").is_none(), "{value}");
+    let copies = fs::read_dir(db.with_extension("overlays")).map_or(0, |d| d.count());
+    assert_eq!(copies, 0, "the index moved the store: no guess is kept");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A file git does not track is read as one it does, edited or deleted.
 #[test]
 fn an_untracked_file_is_read_as_it_is_now() {

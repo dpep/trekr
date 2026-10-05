@@ -1808,6 +1808,103 @@ every query) was built, then pulled from 0.8.7 to ship in its own release,
 0.8.8, since it changes what `index` carries. 0.8.7 keeps the behaviour
 described here.
 
+### Addendum (pre-0.8.8): the overlay is kept, and the next query builds over it
+
+The re-hunt's overlay paid for itself on every query until `--index`, and
+its bench understated it: the edit it timed appended a comment, which moves
+no fact. An edit that adds a line moves every declaration and `include`
+below it, so the namespace moves, and the tree build over the overlay
+assembled the namespace from scratch and kept nothing — 300–330 ms on
+mastodon and discourse, every query. Profiled on discourse with five such
+edits (release, `TREKR_PROFILE` and timers around each step, load ~20 on 8
+cores): the tree built before git answered (60 ms, of which `macro-mixins`
+is 35–57 ms and the snapshot 1 ms), the probe's diff (5 ms of `file_map`,
+3 ms of comparing), the overlay's copy on the query's connection (17 ms of
+`INSERT`, 5 ms of `ANALYZE`), the same copy again on the tree's own
+connection, and the second tree — declarations 80, ancestry 26, assembly
+175–190, macro mixins 35–50 ms.
+
+**Decided.**
+
+- **An overlay's namespace keeps its own snapshot**, `<checkout>+<key>`
+  beside the index's `<checkout>-<key>`; each slot retires only its own. The
+  key is the overlaid namespace fold, so the snapshot is a function of what
+  the files hold. The first query over a new set of edits that move the
+  namespace still assembles it once, as b45e1a8 did when it wrote the edit
+  into the store; the next maps it.
+- **The copy is a file beside the store** (`trekr.overlays/`, named by the
+  checkouts overlaid) **attached behind a temporary view `file`**. SQLite
+  resolves `temp` first and flattens a one-table view, so every plan holds
+  (`EXPLAIN QUERY PLAN` identical); `files_calling_page`'s `INDEXED BY`,
+  which a view refuses, became `+f.checkout_id`, which leaves the blob index
+  as the only one the join can use — the same plan. The file is keyed by
+  every checkout's `id`, `root`, `map_key` and `indexed_at` and each
+  overlaid path's blob row, and a connection attaches it only when the key
+  answers: written once per set of edits (27–32 ms on discourse), attached
+  in 0.3 ms by every connection after, the tree's own and the next
+  command's included. It is never written in place; `--gc` removes them,
+  `--drop` a checkout's.
+- **The tree is built over the last query's overlay, as a guess**
+  (`Store::resume`), while git checks the working tree. When git finds the
+  same changes — repeat questions over the same edits, the common case —
+  that tree is the answer's, and nothing is built twice. When it finds
+  otherwise (a new edit, a revert, an index since), the overlay is replaced
+  and the tree built again, as before; a guess whose key no longer answers
+  is never attached, and is removed. The guess decides only what the first
+  tree is built over: the answer always comes from what git found.
+
+**Measured**, release, b45e1a8 / the re-hunt overlay (6282913) / this,
+alternating, medians of 7 (3 for `--dead`), at load 12–19 on 8 cores, five
+files edited by inserting a method after their first `class` line ("lines
+moved"), or by appending a comment:
+
+| | b45e1a8 | 6282913 | now |
+|---|---|---|---|
+| mastodon `--def`, none | 40 | 43 | 43 |
+| mastodon `--def`, comment | 37 | 92 | 39 |
+| mastodon `--def`, lines moved | 45 | 556 | 55 |
+| mastodon `--refs Owner#m`, lines moved | 240 | 760 | 235 |
+| discourse `--def`, none | 99 | 115 | 117 |
+| discourse `--def`, lines moved | 94 | 605 | 102 |
+| discourse `--refs Owner#m`, lines moved | 105 | 798 | 112 |
+
+`--dead app/models` moved by less than its noise at three samples (mastodon
+1.2–1.8 s, discourse 3.0–4.3 s for all three). With nothing edited, a query
+costs what 6282913's did; what remains over b45e1a8 (~10–15 ms on discourse
+under load) is the probe itself — `ls-files -s` and `status` read every
+tracked file's entry where `diff-files` named only the changed ones, and
+the stored map is read to compare — the price of seeing untracked files and
+reverts. The first query over new edits pays the copy and, when the
+namespace moved, one assembly: discourse ~0.4 s, mastodon ~0.35 s.
+
+**Rejected, with numbers.**
+
+- *Copy the statistics instead of `ANALYZE`*: `ANALYZE` was 4.5–5 ms of the
+  22 ms; the copy itself (`INSERT` 17–23 ms, the blob index 9–13 ms) was the
+  cost, and keeping the file removes all of it.
+- *Copy only the overlaid checkout's rows*: an unqualified `file` must hold
+  every checkout's — the gems are 10,889 of discourse's 22,494 rows — and a
+  partial copy needs the `UNION ALL` view already rejected (17 → 133 ms).
+- *Patch the in-memory tree for a method-only edit*: rare in practice (a
+  line added moves the namespace, and the surface measurement above found
+  only 46 % of edits keep every definition on its line), and the tree's
+  eager parts — `table_name` overrides, macro mixins placed by lookups that
+  demand-load methods — would need invalidating by name: the metadata patch
+  `Facts::surface` was designed not to need. The guess makes it moot: the
+  steady state builds once.
+- *Wait for git before building*: the probe (45–60 ms on discourse) is as
+  long as the tree build, and in series would add it to every query with
+  nothing edited.
+- *A per-process shared-cache memory database*: still a copy per query.
+- *Remember only the overlay's list as the guess, and copy into `temp` per
+  connection*: the copy then sits before the tree build, 22 ms on each of
+  two connections, in series.
+
+**Reverses if** the map grows past what one copy per set of edits can pay
+(the 30× monorepo: ~0.7 M rows, an estimated ~1 s): then the copy should be
+of the checkouts the tree reads, behind a view the planner can still see
+through, or the map split by checkout.
+
 ## DEC-036 — The CLI forgives a hand-typed position; the LSP does not
 
 **Decided.** `--def` snaps to the nearest name on the line when the exact

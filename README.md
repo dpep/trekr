@@ -338,7 +338,8 @@ mastodon's mailer templates, DEC-523.
 
 The index is `~/.local/share/trekr/trekr.db`. `TREKR_DB=/some/path.db` points
 every command at another one — a throwaway for CI, or one per project. Beside
-it: tree snapshots (`trekr.trees/`), Ruby core as readable stub files
+it: tree snapshots (`trekr.trees/`), the working tree's edits as the last
+query read them (`trekr.overlays/`), Ruby core as readable stub files
 (`trekr.core/rbs-<version>-<key>/String.rb`, where a core definition lands),
 the language server's `lsp.log`, and the usage counts (`trekr.usage.db`).
 `trekr --help` lists the variables.

@@ -13,7 +13,9 @@
   is stored. Past 32 changed files the file asked about is still read and
   the rest is left to `--index`; when git fails or takes over a second, the
   answer says the working tree was not checked. `--ancestors` and cards
-  still read only the index.
+  still read only the index. A copy of the file map with the edits applied
+  is kept beside the store, in `trekr.overlays/`, so the next query over the
+  same edits pays nothing for them; `--gc` removes it.
 - **Every command that reads edits says so in an `index` object** — new on
   `--dead` and `--refs` (for `--refs NAME`, whose `--json` is a bare array,
   on stderr and in `--ndjson`'s closing line), and on stderr in text.

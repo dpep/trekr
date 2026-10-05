@@ -4586,18 +4586,17 @@ fn freshen(
             .and_then(|(_, found)| Some(found.as_ref()?.overlay.clone()))
             .unwrap_or_default();
         // Not read twice: what it found was said when it was.
-        return !overlay.is_empty() && store.overlay(&root_str, &overlay).is_ok();
+        return store.overlay(&root_str, &overlay).unwrap_or(false);
     };
-    let found = refresh_for_query(store, root, queried, probe);
+    let (found, changed) = refresh_for_query(store, root, queried, probe);
     if let Some(found) = &found {
         crate::usage::flag("stale");
         if out == Output::Text {
             found.say();
         }
     }
-    let overlaid = found.as_ref().is_some_and(|f| !f.overlay.is_empty());
     checked().push((root_str, found));
-    overlaid
+    changed
 }
 
 /// The working tree of `root`, begun reading — unless this command has
@@ -4608,7 +4607,32 @@ fn probe(root: &Path) -> Option<scan::Probe> {
     (!known).then(|| scan::Probe::start(root))
 }
 
+/// Read what changed into `store` (`changes`), as its overlay on `root` —
+/// replacing one a guess put there (`Store::resume`). What it found, and
+/// whether the store now answers differently than it did.
 fn refresh_for_query(
+    store: &mut Store,
+    root: &Path,
+    queried: Option<&Path>,
+    probe: scan::Probe,
+) -> (Option<Freshness>, bool) {
+    let root_str = root.to_string_lossy();
+    let mut found = changes(store, root, queried, probe);
+    let overlay = found.as_ref().map_or(&[][..], |f| f.overlay.as_slice());
+    match store.overlay(&root_str, overlay) {
+        Ok(changed) => (found, changed),
+        Err(_) => {
+            if let Some(found) = &mut found {
+                found.lag = Some("the edits since the index could not be read".to_string());
+                found.refreshed.clear();
+                found.overlay.clear();
+            }
+            (found, store.overlay(&root_str, &[]).unwrap_or(true))
+        }
+    }
+}
+
+fn changes(
     store: &mut Store,
     root: &Path,
     queried: Option<&Path>,
@@ -4702,11 +4726,6 @@ fn refresh_for_query(
         refreshed.push(path.clone());
         overlay.push((path, oid));
     }
-    if store.overlay(&root_str, &overlay).is_err() {
-        lag = Some("the edits since the index could not be read".to_string());
-        refreshed.clear();
-        overlay.clear();
-    }
     (lag.is_some() || !refreshed.is_empty() || !busy.is_empty()).then_some(Freshness {
         root: root_str,
         queried,
@@ -4719,8 +4738,9 @@ fn refresh_for_query(
 
 /// The tree a query answers from, with what changed since the index read in
 /// first. git's look at the working tree runs while the tree is built, which
-/// is most queries' whole answer; when it finds a change, the tree is built
-/// again over it.
+/// is most queries' whole answer. The tree is built over what the last query
+/// read (`Store::resume`) — the same edits, most often — and built again
+/// when git finds otherwise.
 fn fresh_tree(
     out: Output,
     store: &mut Store,
@@ -4732,6 +4752,8 @@ fn fresh_tree(
         freshen(out, store, root, queried, None);
         return build_tree(store, &root_str);
     };
+    // A guess, and only that: `freshen` puts what git found in its place.
+    let _ = store.resume(&root_str);
     let tree = build_tree(store, &root_str)?;
     Ok(match freshen(out, store, root, queried, Some(probe)) {
         true => build_tree(store, &root_str)?,
@@ -5593,6 +5615,7 @@ fn cmd_drop(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
     let dropped = store.drop_checkout(&root_str)?;
     store.clear_warming(&root_str)?;
     crate::tree::forget_snapshots(&store, &root_str);
+    store.forget_overlay(&root_str);
 
     match out {
         Output::Text if dropped == 0 => {
@@ -5641,7 +5664,11 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
         dry_run,
     )?;
     let gone: Vec<&str> = garbage.checkouts.iter().map(|c| c.repo.as_str()).collect();
-    let snapshots = crate::tree::sweep_snapshots(&store, &gone, dry_run)?;
+    let mut snapshots = crate::tree::sweep_snapshots(&store, &gone, dry_run)?;
+    // A query's overlay copies are kept beside them the same way (DEC-035).
+    let (files, bytes) = store.sweep_overlays(dry_run);
+    snapshots.files += files;
+    snapshots.bytes += bytes;
     // Each Ruby's core files beside the store, and an earlier build's.
     let db = crate::store::default_path()?;
     let beside_store = crate::store::core_dir_of(&crate::store::in_use(&db));

@@ -751,8 +751,11 @@ and a blob's transaction reads first, so SQLite refuses its upgrade to a
 write at once. The answer comes from what is committed; a query names the
 files it could not read in (`index.busy_files`), and the LSP retries a save's
 refresh until it lands. What a query reads of the working tree is never
-written to a checkout's map: it is an overlay on that query's connection
-(`Store::overlay`, DEC-035).
+written to a checkout's map: it is an overlay on that query's connections
+(`Store::overlay`, DEC-035) — a copy of the map with the edits applied, in a
+file beside the store keyed by what it was made from, attached behind a
+temporary view named `file`. The next query builds its tree over that copy
+while git checks it still answers (`Store::resume`).
 
 **One schema per store, changed atomically** (DEC-079). A version mismatch is a
 drop-and-create inside one `BEGIN IMMEDIATE` that re-reads `user_version` under

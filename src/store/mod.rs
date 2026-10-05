@@ -11,6 +11,7 @@ pub(crate) mod early;
 mod gc;
 #[cfg(test)]
 mod golden;
+mod overlay;
 mod recover;
 mod schema;
 mod warming;
@@ -39,7 +40,7 @@ pub(crate) struct Store {
     timing: WriteTiming,
     /// Each checkout `overlay` answers for on this connection: how far that
     /// moves its keys, and the files, for a `reopen` to answer the same.
-    overlaid: HashMap<String, (Digests, Overlay)>,
+    overlaid: overlay::Overlays,
 }
 
 /// What a query reads in place of a checkout's map (`Store::overlay`): each
@@ -236,9 +237,9 @@ const FILES_CALLING_PAGE: &str = "SELECT p.blob_id, f.path
                            AND f.checkout_id = (SELECT id FROM checkout WHERE root = ?1))
           ORDER BY s.blob_id
           LIMIT ?4) p
-   CROSS JOIN file f INDEXED BY file_blob
+   CROSS JOIN file f
   WHERE f.blob_id = p.blob_id
-    AND f.checkout_id = (SELECT id FROM checkout WHERE root = ?1)";
+    AND +f.checkout_id = (SELECT id FROM checkout WHERE root = ?1)";
 
 /// Turn off SQLite's memory statistics, before any connection opens. They
 /// are kept under one process-wide mutex that every allocation takes, which
@@ -277,9 +278,7 @@ impl Store {
             None => return Ok(None),
         };
         // A second connection answers as this one does.
-        for (root, (_, files)) in &self.overlaid {
-            store.overlay(root, files)?;
-        }
+        store.adopt(self.overlays())?;
         Ok(Some(store))
     }
 
@@ -323,7 +322,7 @@ impl Store {
             file: None,
             existing: false,
             timing: WriteTiming::default(),
-            overlaid: HashMap::new(),
+            overlaid: overlay::Overlays::new(),
         };
         let version = schema_version(&store.conn)?;
         if version > layout.version {
@@ -1239,6 +1238,9 @@ impl Store {
     /// SQLite walks every file of the checkout and sorts all their calls —
     /// the whole listing again, 0.7 s a page at ten times discourse — or scans
     /// the call table in row order, which for a rare name reads all of it.
+    /// The files are reached by blob because `+` takes the checkout's column
+    /// off the table: `INDEXED BY` cannot name an index through the view an
+    /// overlay puts in front of the map.
     pub(crate) fn files_calling_page(
         &self,
         root: &str,
@@ -1468,7 +1470,7 @@ impl Store {
             let shift = self
                 .overlaid
                 .get(root)
-                .map(|(shift, _)| *shift)
+                .map(|overlaid| overlaid.shift)
                 .unwrap_or_default();
             match column {
                 "surface_key" => shift.0,
@@ -1980,95 +1982,6 @@ impl Store {
         tx.commit()
     }
 
-    /// Answer as if `root`'s map held `files` — each path at its blob, or
-    /// absent for `None` — on this connection only, until it closes (DEC-035).
-    /// Nothing is written: a temporary copy of the whole map, named `file`
-    /// with the same indexes and analyzed, shadows it, so every query reads
-    /// it with the plan it has now. A view over the map would cost no copy,
-    /// but a join cannot reach into a `UNION ALL` view, and the tree build's
-    /// edge queries went from 17 to 133 ms on mastodon. Every blob named must
-    /// be in the store already (`add_blob`). Once per checkout per connection.
-    pub(crate) fn overlay(&mut self, root: &str, files: &[(String, Option<Oid>)]) -> Result<()> {
-        if files.is_empty() || self.overlaid.contains_key(root) {
-            return Ok(());
-        }
-        let checkout_id: i64 = self.conn.query_row(
-            "SELECT id FROM checkout WHERE root = ?1",
-            params![root],
-            |r| r.get(0),
-        )?;
-        let mut shift = Digests::default();
-        let mut rows = Vec::with_capacity(files.len());
-        for (path, oid) in files {
-            let hashed = path_hash(path);
-            let old: Option<Digests> = self
-                .conn
-                .query_row(
-                    "SELECT b.surface, b.namespace FROM main.file f JOIN blob b ON b.id = f.blob_id
-                      WHERE f.checkout_id = ?1 AND f.path = ?2",
-                    params![checkout_id, path],
-                    |r| Ok(Digests(r.get(0)?, r.get(1)?)),
-                )
-                .optional()?;
-            if let Some(old) = old {
-                shift = shift.sub(hashed, old);
-            }
-            let blob_id = match oid {
-                Some(oid) => {
-                    let (id, new) = self.conn.query_row(
-                        "SELECT id, surface, namespace FROM blob WHERE oid = ?1",
-                        params![oid.0],
-                        |r| Ok((r.get::<_, i64>(0)?, Digests(r.get(1)?, r.get(2)?))),
-                    )?;
-                    shift = shift.add(hashed, new);
-                    Some(id)
-                }
-                None => None,
-            };
-            rows.push((path, blob_id));
-        }
-        // Unqualified, `file` is the copy once it exists: SQLite looks in
-        // `temp` first.
-        let tx = self.conn.transaction()?;
-        if self.overlaid.is_empty() {
-            tx.execute_batch(
-                "CREATE TEMP TABLE file (
-                   checkout_id INTEGER NOT NULL,
-                   path        TEXT    NOT NULL,
-                   blob_id     INTEGER NOT NULL,
-                   PRIMARY KEY (checkout_id, path)
-                 ) WITHOUT ROWID;
-                 INSERT INTO temp.file SELECT checkout_id, path, blob_id FROM main.file;
-                 CREATE INDEX temp.file_blob ON file(blob_id);",
-            )?;
-        }
-        for (path, blob_id) in rows {
-            match blob_id {
-                Some(blob_id) => tx.execute(
-                    "INSERT OR REPLACE INTO temp.file (checkout_id, path, blob_id)
-                     VALUES (?1, ?2, ?3)",
-                    params![checkout_id, path, blob_id],
-                )?,
-                None => tx.execute(
-                    "DELETE FROM temp.file WHERE checkout_id = ?1 AND path = ?2",
-                    params![checkout_id, path],
-                )?,
-            };
-        }
-        // The plans the map's statistics choose, not the planner's guesses.
-        tx.execute_batch("ANALYZE temp;")?;
-        tx.commit()?;
-        self.overlaid
-            .insert(root.to_string(), (shift, files.to_vec()));
-        Ok(())
-    }
-
-    /// Whether an overlay on this connection moves a checkout's namespace —
-    /// a class, module or constant edited — rather than only its methods.
-    pub(crate) fn overlays_namespace(&self) -> bool {
-        self.overlaid.values().any(|(shift, _)| shift.1 != 0)
-    }
-
     /// Whether `root`'s map holds `path`, relative to it.
     pub(crate) fn maps(&self, root: &str, path: &str) -> Result<bool> {
         self.conn.query_row(
@@ -2179,6 +2092,8 @@ impl Drop for Store {
     /// writes costs nothing that process's own analysis does not cover.
     fn drop(&mut self) {
         let _ = self.conn.busy_timeout(std::time::Duration::ZERO);
+        // Statistics are the store's to gather, not an overlay's copy.
+        self.unshadow();
         let _ = self.conn.execute_batch("PRAGMA optimize;");
     }
 }
