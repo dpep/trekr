@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.8 — 2026-10-05
 
 - **A query sees the working tree as it is.** Editing a file without
   `git add` was invisible to `--def` — a method the edit added was "nothing
