@@ -1659,8 +1659,11 @@ fn hover_call(
     let tree = session.tree(root)?;
     let answer = crate::resolve::method_at(tree, facts, call, &located.relative);
     note_uncertain(&answer);
-    let named = tree.named(&call.name);
-    let name = &call.name;
+    // An `X.new` lands on the `initialize` it runs (DEC-541): that is the
+    // method to describe, not an `X#new` no class defines.
+    let (name, _) = crate::resolve::asked_at(tree, call, &answer);
+    let name = &name;
+    let named = tree.named(name);
 
     let site = match answer.status {
         Status::Resolved | Status::Ambiguous => answer.sites.first().cloned(),

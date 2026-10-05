@@ -112,9 +112,12 @@
   `def self.new` returns another class rules its sites out, and one whose
   `new` trekr cannot read (Active Record's) leaves them possible. Find
   References on `def initialize` in the editor lists them, and go to
-  definition on a plain `X.new` lands on its `initialize`. `--dead` reports
+  definition and hover on a plain `X.new` land on its `initialize` — as do
+  `trekr Widget.new` and `--refs Widget.new`, which answer for
+  `Widget#initialize` when Widget's `new` is Ruby's own. `--dead` reports
   an `initialize` only when nothing constructs its class, always graded
-  lower — before, a real app's were never checked at all. An untyped
+  lower — before, a real app's were never checked at all — with
+  `overrides` naming what its `super` lands on. An untyped
   `klass.new`, a `super` trekr cannot place and a macro's symbol keep none
   alive; the caveat names the first of each. In text, `--refs` folds the untyped
   `x.new` rows into one closing line (`… 1104 untyped x.new (possible)`);

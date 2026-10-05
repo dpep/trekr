@@ -267,7 +267,8 @@ trekr --def activerecord/lib/active_record/associations/has_many_through_associa
 **`X.new` is a call of `initialize`.** `--refs 'Widget#initialize'` lists
 the `new`s whose class runs it (its own or a subclass that inherits it),
 each marked `"called_as": "new"`; `--def` on a plain `X.new` lands on that
-`initialize` (on a custom `def self.new`, on that). An untyped `klass.new`
+`initialize` (on a custom `def self.new`, on that), and `trekr Widget.new`
+or `--refs Widget.new` asks about it. An untyped `klass.new`
 is possible for every `initialize` it fits, so `--dead` weighs those as a
 caveat, and reports an `initialize` only when nothing constructs its class.
 

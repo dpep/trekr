@@ -3554,6 +3554,7 @@ fn cmd_card(out: Output, text: &str, context: Option<&Path>) -> anyhow::Result<E
     }
     answering_in(&store, &root_str);
     let tree = build_tree(&store, &root_str)?;
+    let query = refs::constructing(&tree, query);
 
     // A constant: what it is, and what it inherits.
     if query.owner.is_none() {
@@ -3950,6 +3951,7 @@ fn cmd_refs(
     }
 
     let tree = build_tree(&store, &root_str)?;
+    let query = refs::constructing(&tree, query);
     let (owner, definition) = refs::definition_of(&tree, &query);
     let (status, reason) = method_verdict(&tree, &query, owner.as_deref(), !definition.is_empty());
 
@@ -5151,18 +5153,17 @@ fn dead_in(
         // Whoever calls the method this overrides may run it instead, and
         // that is often a framework the checkout never names (DEC-121) —
         // but `Class#new` runs a class's own `initialize`, never one it
-        // overrides. One object's own method replaces its class's for that
-        // object (DEC-562).
-        let overrides = match (&defined_on, constructor) {
-            (_, true) => Vec::new(),
-            (Some(DefinedOn::Object(of)), false) => tree
+        // overrides, so for one that is a fact and not a way in. One object's
+        // own method replaces its class's for that object (DEC-562).
+        let overrides = match &defined_on {
+            Some(DefinedOn::Object(of)) => tree
                 .lookup(of, false, &def.name)
                 .map(|found| vec![format!("{}#{}", public_name(&found.owner), def.name)])
                 .unwrap_or_default(),
             _ => crate::resolve::overridden(&tree, def, file),
         };
         let tier = match tier {
-            "unreferenced" if !overrides.is_empty() => "override",
+            "unreferenced" if !overrides.is_empty() && !constructor => "override",
             tier => tier,
         };
         // A controller's public action a route reaches is reached by
@@ -5250,7 +5251,7 @@ fn dead_in(
             }
             risky.push_str("untyped caller");
         }
-        if tier != "override" && !overrides.is_empty() {
+        if tier != "override" && !constructor && !overrides.is_empty() {
             if !risky.is_empty() {
                 risky.push_str(", ");
             }
@@ -5294,7 +5295,8 @@ fn dead_in(
                     unseen.join(", ")
                 ));
             }
-            if *calls_super {
+            // A `super` that lands on an indexed method says nothing unseen.
+            if *calls_super && overrides.is_empty() {
                 if !risky.is_empty() {
                     risky.push_str(", ");
                 }

@@ -59,7 +59,7 @@ code, and `rows=` how many mentions a name's answer lists; `card` takes
 asserts each method's `--dead` tier — or a class's, module's or constant's, by
 its whole name (`Admin::Widget=unreferenced`), or an example group's `let`, `subject` or
 `def` by the line it is written on (`@3=unreferenced`) — `none` for one not reported; `tier~word`
-also asserts its caveat contains `word`, and `tier~` that it has none. `ancestors NAME A,B,C`
+also asserts its caveat contains `word`, `tier!~word` that it does not, and `tier~` that it has none. `ancestors NAME A,B,C`
 asserts the chain starts with those names, and `unresolved=X,Y` (empty for
 none) asserts the ancestors it could not resolve. `symbols FILE` asserts the outline,
 in source order, comma-separated, and `private=a,b` which of its rows are

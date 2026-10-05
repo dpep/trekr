@@ -214,6 +214,37 @@ pub(crate) struct Counts {
     pub(crate) excluded_arity: usize,
 }
 
+/// `Widget.new` asked by name: the `initialize` it runs, when the class's
+/// `new` is core's and it has an `initialize` the checkout or a gem defines
+/// — what `--def` and the editor answer at such a call (DEC-541). Anything
+/// else is asked as written.
+pub(crate) fn constructing(tree: &Tree, query: Query) -> Query {
+    if !query.singleton || query.name != "new" {
+        return query;
+    }
+    let Some(fqn) = query
+        .owner
+        .as_deref()
+        .and_then(|owner| tree.resolve(owner, &[]).fqn)
+    else {
+        return query;
+    };
+    let core = |m: &crate::tree::MethodDef| crate::tree::is_core(&m.site.path);
+    let runs_core_new = tree.kind_of(&fqn) == Some("class")
+        && tree.lookup(&fqn, true, "new").is_none_or(|m| core(&m));
+    let own = tree
+        .lookup(&fqn, false, "initialize")
+        .is_some_and(|m| !core(&m));
+    match runs_core_new && own {
+        true => Query {
+            owner: query.owner,
+            singleton: false,
+            name: "initialize".to_string(),
+        },
+        false => query,
+    }
+}
+
 /// The other name a call of the queried method is written as: `X.new` runs
 /// `Class#new`, which calls `initialize` on the instance it makes (DEC-541).
 /// Only for an owned query: a bare `initialize` would claim every `new`.

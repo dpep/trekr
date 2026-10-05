@@ -1,0 +1,7 @@
+# `Widget.new` runs Widget#initialize (DEC-541), and --def said so; the
+# card and --refs by name answered for Widget.new, and the editor's hover
+# described a `Widget#new` no class defines.
+def app.rb:8:8 owner=Widget
+card Widget.new owner=Widget resolves_to=Widget#initialize
+refs Widget.new resolves_to=Widget#initialize confirmed=1
+hover app.rb:8:8 Builds one.

@@ -1,0 +1,4 @@
+# An `initialize` nothing constructs is listed lower (DEC-541). One whose
+# `super` lands on an indexed method was said to override "a method trekr
+# has not indexed", and its `overrides` was empty.
+dead app.rb Orphan#initialize=unreferenced!~indexed Failure#initialize=unreferenced!~indexed Base#initialize=none

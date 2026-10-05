@@ -12731,6 +12731,26 @@ each constructed out of sight: `ThemeSettingsManager` through `constantize`,
 `stub_const`, `ActiveStorage::Analyzer` subclasses through
 `analyzer_class.new`, exceptions by `raise`.
 
+### DEC-541 addendum — every front answers `X.new` with its `initialize`, and a row says what it overrides
+
+**Found** in the pre-0.8.7 hunt. `--def` and go to definition on
+`Widget.new` answered `Widget#initialize`, but the card (`trekr
+Widget.new`) and `--refs Widget.new` answered `Class#new`, and the editor's
+hover described a `Widget#new` no class defines. An `initialize` row's
+`overrides` was always empty, and one whose `super` lands on an indexed
+method (faraday's `TimeoutError#initialize` on `Faraday::Error#initialize`)
+was said to override "a method trekr has not indexed".
+
+**Decided.** `refs::constructing` reads a query `X.new` as `X#initialize`
+by `initialize_for`'s rule — the class's `new` is core's, or none is
+indexed, and it has an `initialize` that is not core's — for the card and
+`--refs`; the hover describes what `asked_at` says the call was asked
+about. An `initialize` row's `overrides` lists what its `super` lands on,
+as any method's does; it is still no `override` tier and no caveat, since
+`Class#new` runs the class's own. The "overrides a method trekr has not
+indexed" caveat is said only when it overrides nothing indexed. Testbeds
+625, 626.
+
 ## DEC-520 — An ERB template's Ruby is read in place, and indexed as a file
 
 **Decided.** A checkout's `*.erb` files are in its file map (`scan::

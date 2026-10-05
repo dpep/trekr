@@ -461,10 +461,13 @@ fn check_dead(case: &str, line: &str, answer: &serde_json::Value, failures: &mut
     for (method, want) in methods {
         let (owner, name) = method.rsplit_once('#').unwrap_or(("", &method));
         // `tier~word`: the row's caveat must also contain `word`, `tier~` that
-        // it has none.
-        let (want, caveat) = match want.split_once('~') {
-            Some((tier, word)) => (tier.to_string(), Some(word.to_string())),
-            None => (want.clone(), None),
+        // it has none, `tier!~word` that it does not contain `word`.
+        let (want, caveat, absent) = match want.split_once('~') {
+            Some((tier, word)) => match tier.strip_suffix('!') {
+                Some(tier) => (tier.to_string(), Some(word.to_string()), true),
+                None => (tier.to_string(), Some(word.to_string()), false),
+            },
+            None => (want.clone(), None, false),
         };
         // `@LINE` is the example group member written at that line, which no
         // owner names (DEC-490).
@@ -495,11 +498,12 @@ fn check_dead(case: &str, line: &str, answer: &serde_json::Value, failures: &mut
         let fits = match caveat.as_deref() {
             None => true,
             Some("") => said.is_empty(),
-            Some(word) => said.contains(word),
+            Some(word) => said.contains(word) != absent,
         };
         if !fits {
             failures.push(format!(
-                "{case}: {line}\n      {method}: expected a caveat with `{}`, got `{said}`",
+                "{case}: {line}\n      {method}: expected a caveat {} `{}`, got `{said}`",
+                if absent { "without" } else { "with" },
                 caveat.unwrap_or_default()
             ));
         }
