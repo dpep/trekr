@@ -3688,6 +3688,36 @@ fn an_edit_git_has_not_noticed_is_not_seen_by_the_probe() {
     assert_eq!(value["definition"][0]["line"], 14, "after --index: {value}");
 }
 
+/// A path named as a source is read only if it is a regular file of bounded
+/// size, by every command — and a checkout holding a link to a device still
+/// indexes, leaving it out.
+#[cfg(unix)]
+#[test]
+fn a_pipe_or_a_device_is_refused_rather_than_read() {
+    let (dir, db) = scratch("devices");
+    repo(&dir);
+    std::os::unix::fs::symlink("/dev/zero", dir.join("zero.rb")).unwrap();
+    let made = Command::new("mkfifo")
+        .arg(dir.join("pipe.rb"))
+        .status()
+        .unwrap();
+    assert!(made.success());
+    let limit = std::time::Duration::from_secs(30);
+
+    let indexed = trekr_within(&db, &dir, &["--index", "--json"], &[], limit);
+    assert!(indexed.status.success(), "{indexed:?}");
+    assert_eq!(json(&indexed)["indexed"]["files"], 1, "only widget.rb");
+
+    for path in ["pipe.rb", "zero.rb"] {
+        for command in ["--refs", "--def"] {
+            let at = format!("{path}:1:1");
+            let out = trekr_within(&db, &dir, &[command, &at], &[], limit);
+            assert_eq!(out.status.code(), Some(64), "{command} {at}: {out:?}");
+        }
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// `trekr <input>` dispatches on shape (DEC-036), and every shape speaks JSON.
 #[test]
 fn the_bare_grammar_dispatches_on_shape() {

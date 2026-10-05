@@ -446,12 +446,13 @@ pub(crate) fn scan(root: &Path) -> Result<Files> {
         if !is_indexed(&path) {
             continue;
         }
-        match std::fs::read(root.join(&path)) {
+        match read_source(&root.join(&path)) {
             Ok(bytes) => {
                 files.insert(path, hash_blob(&bytes));
             }
-            // Deleted from the worktree, or unreadable: it is not here, so it
-            // is not in the map. No error case to handle downstream.
+            // Deleted from the worktree, unreadable, or not a source at all (a
+            // link to a device or a pipe): it is not here, so it is not in the
+            // map. No error case to handle downstream.
             Err(_) => {
                 files.remove(&path);
             }
@@ -583,7 +584,7 @@ pub(crate) fn hash(root: &Path, paths: impl IntoIterator<Item = String>) -> File
     paths
         .into_iter()
         .filter_map(|path| {
-            let bytes = std::fs::read(root.join(&path)).ok()?;
+            let bytes = read_source(&root.join(&path)).ok()?;
             let oid = hash_blob(&bytes);
             Some((path, oid))
         })

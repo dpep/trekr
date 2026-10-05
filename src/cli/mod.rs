@@ -1364,7 +1364,7 @@ fn bulk_load(new: usize, known: usize) -> bool {
 /// A file read and parsed for the writer, timed for `--profile`.
 fn parse_file(path: &Path) -> Option<extract::Parsed> {
     let started = std::time::Instant::now();
-    let bytes = std::fs::read(path).ok()?;
+    let bytes = scan::read_source(path).ok()?;
     let facts = extract::extract_file(&path.to_string_lossy(), &bytes);
     Some(extract::Parsed {
         facts,
@@ -4143,6 +4143,8 @@ fn cmd_refs_at(
     if !file.exists() {
         return Err(Failure::NotFound.error(format!("no such path: {}", spec.path)));
     }
+    // Before anything reads it unbounded: a pipe or a device is refused here.
+    let source = read_input(file)?;
     let (root, store) = checkout_for_query(file, pinned)?;
     let root_str = root.to_string_lossy().into_owned();
     // References are anywhere: a position's own part is not enough.
@@ -4176,7 +4178,6 @@ fn cmd_refs_at(
         return Ok(exit_on(found));
     }
     // A method: the one defined there, or the one a call there runs.
-    let source = read_input(file)?;
     let facts = crate::extract::extract_file(&file.to_string_lossy(), &source);
     // A variable is not a call: its mentions, as the editor lists them, and
     // not whichever method is nearest on the line.

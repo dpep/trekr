@@ -106,7 +106,8 @@ impl Files for CheckoutFiles<'_> {
         {
             return contains(source, needle.as_bytes());
         }
-        std::fs::read(self.root.join(path)).is_ok_and(|bytes| contains(&bytes, needle.as_bytes()))
+        crate::scan::read_source(&self.root.join(path))
+            .is_ok_and(|bytes| contains(&bytes, needle.as_bytes()))
     }
 
     fn may_open_groups(&self, path: &str) -> bool {
@@ -121,7 +122,7 @@ impl Files for CheckoutFiles<'_> {
                 .source
                 .as_deref()
                 .is_some_and(|source| words.iter().any(|w| contains(source, w.as_bytes()))),
-            (None, None) => std::fs::read(self.root.join(path))
+            (None, None) => crate::scan::read_source(&self.root.join(path))
                 .is_ok_and(|bytes| words.iter().any(|w| contains(&bytes, w.as_bytes()))),
         };
         self.groups.borrow_mut().insert(path.to_string(), may);
@@ -133,7 +134,7 @@ impl Files for CheckoutFiles<'_> {
 fn read_facts(root: &Path, open: &HashMap<String, String>, path: &str) -> Option<Arc<Facts>> {
     let bytes = match open.get(path) {
         Some(text) => Some(text.as_bytes().to_vec()),
-        None => std::fs::read(root.join(path)).ok(),
+        None => crate::scan::read_source(&root.join(path)).ok(),
     };
     bytes.map(|bytes| Arc::new(crate::extract::extract_file(path, &bytes)))
 }
