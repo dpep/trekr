@@ -440,14 +440,21 @@ fn remembered(path: &Path, root: &str) -> Option<Overlay> {
     (!files.is_empty()).then_some(files)
 }
 
-/// `path` as a `file:` URI's path: the characters a URI gives meaning to,
-/// escaped.
+/// `path` as a `file:` URI's path: every byte but a URI's unreserved ones
+/// percent-escaped, which SQLite decodes back to the same bytes — a name's
+/// UTF-8 included.
 fn uri_path(path: &Path) -> String {
+    use std::fmt::Write;
+    use std::os::unix::ffi::OsStrExt;
     let mut out = String::new();
-    for byte in path.to_string_lossy().bytes() {
+    for &byte in path.as_os_str().as_bytes() {
         match byte {
-            b'%' | b'?' | b'#' => out.push_str(&format!("%{byte:02X}")),
-            _ => out.push(byte as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' | b'/' => {
+                out.push(byte as char)
+            }
+            _ => {
+                let _ = write!(out, "%{byte:02X}");
+            }
         }
     }
     out
@@ -590,6 +597,41 @@ mod tests {
         assert_ne!(written, asked);
         assert_eq!(written, store.overlay_key().unwrap());
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A store under a directory whose name is not ASCII attaches its copy
+    /// as any other does, rather than writing a new one every connection.
+    #[test]
+    fn a_copy_beside_a_non_ascii_store_is_attached_not_rewritten() {
+        use std::os::unix::fs::MetadataExt;
+        let (dir, mut store, oid) = store("caf\u{e9} d%r");
+        let edit = [("widget.rb".to_string(), Some(oid))];
+        assert!(store.overlay(ROOT, &edit).unwrap());
+        let made = copies(&store);
+        assert_eq!(made.len(), 1, "{made:?}");
+        let inode = std::fs::metadata(&made[0]).unwrap().ino();
+
+        let mut later = Store::open(store.path().unwrap()).unwrap();
+        assert!(later.overlay(ROOT, &edit).unwrap());
+        assert!(fresh(&later));
+        assert_eq!(copies(&store), made);
+        assert_eq!(
+            std::fs::metadata(&made[0]).unwrap().ino(),
+            inode,
+            "attached, not rewritten"
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_uri_path_escapes_all_but_the_unreserved() {
+        for (path, uri) in [
+            ("/a/b-c_d.e~f/t.db", "/a/b-c_d.e~f/t.db"),
+            ("/we ird/%#?.db", "/we%20ird/%25%23%3F.db"),
+            ("/caf\u{e9}/t.db", "/caf%C3%A9/t.db"),
+        ] {
+            assert_eq!(uri_path(Path::new(path)), uri, "{path}");
+        }
     }
 
     /// An in-memory store has nowhere to keep a copy, and makes its own.
