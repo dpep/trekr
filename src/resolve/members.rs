@@ -66,19 +66,6 @@ pub(crate) fn names_a_named_subject(def: &Def, facts: &Facts) -> bool {
 /// `should`, and `its`, whose group's subject is an attribute of it.
 const SUBJECT_READS: [&str; 4] = ["is_expected", "should", "should_not", "its"];
 
-/// Calls that send a name they are handed.
-const SENDS: [&str; 9] = [
-    "send",
-    "public_send",
-    "__send__",
-    "try",
-    "try!",
-    "respond_to?",
-    "method",
-    "public_method",
-    "instance_variable_get",
-];
-
 /// Calls that include a shared group by its name.
 pub(crate) const SHARED_INCLUDERS: [&str; 4] = [
     "include_context",
@@ -1827,7 +1814,10 @@ fn computed_sends(facts: &Facts, wanted: impl Fn(&Call) -> bool) -> Vec<(u32, St
     let lines: Vec<&[u8]> = source.split(|b| *b == b'\n').collect();
     let mut out = Vec::new();
     for call in &facts.calls {
-        if !SENDS.contains(&call.name.as_str())
+        // And `instance_variable_get("@#{name}")`, a computed name too.
+        let sends =
+            crate::core::ruby::names_a_method(&call.name) || call.name == "instance_variable_get";
+        if !sends
             || !matches!(call.recv, RecvShape::Implicit | RecvShape::SelfRecv)
             || call.argc.unwrap_or(1) == 0
             || !wanted(call)

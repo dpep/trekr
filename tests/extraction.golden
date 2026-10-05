@@ -34,6 +34,9 @@ erb tests/testbed/622-a-template-several-files-answer-shares-its-confidence/app/
 erb tests/testbed/623-a-template-whose-self-is-unnamed-keeps-no-method-alive/app/views/widgets/show.html.erb c659c9c1801884a6
 erb tests/testbed/623-a-template-whose-self-is-unnamed-keeps-no-method-alive/lib/generators/templates/model.rb.erb 242b731af833d1ca
 erb tests/testbed/623-a-template-whose-self-is-unnamed-keeps-no-method-alive/lib/generators/templates/other.rb.erb 5ce3acd7ad181627
+erb tests/testbed/641-a-components-template-runs-on-the-component/app/components/badge_component.html.erb 41fdda4cdbdf6ab8
+erb tests/testbed/641-a-components-template-runs-on-the-component/app/components/card_component/card_component.html.erb d1baad536b6dcb39
+erb tests/testbed/641-a-components-template-runs-on-the-component/app/components/stray.html.erb f1aa91821e966fe9
 rabl tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/views/widgets/base.rabl 706223d3bbf4a9f7
 rabl tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/views/widgets/show.rabl e1ce31e3d5212371
 rabl tests/testbed/603-a-templates-bare-ivar-and-local-assigns-are-defined/app/views/widgets/show.json.rabl bfd218e974bc4930
@@ -642,6 +645,10 @@ ruby tests/testbed/625-x-new-is-its-initialize-everywhere/app.rb cc74f3cea526ffb
 ruby tests/testbed/626-an-initialize-whose-super-lands-says-so/app.rb dec3ebf7c681191d
 ruby tests/testbed/627-an-index-call-covers-only-its-bracket/app.rb 687a5812b3a81e15
 ruby tests/testbed/640-a-struct-class-is-built-by-its-own-new/app.rb 85e137f021205543
+ruby tests/testbed/641-a-components-template-runs-on-the-component/app/components/badge_component.rb 8fea07d8b224f77c
+ruby tests/testbed/641-a-components-template-runs-on-the-component/app/components/card_component.rb 8e04ac4ba1e60d12
+ruby tests/testbed/641-a-components-template-runs-on-the-component/app/components/gadget.rb fb97acafb555e91c
+ruby tests/testbed/642-a-blocks-self-is-one-ruby-table/app.rb 1732897d6279a2e6
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

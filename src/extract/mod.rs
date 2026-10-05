@@ -1347,48 +1347,31 @@ fn const_defaults(node: &ruby_prism::DefNode<'_>) -> Vec<(String, String)> {
         .collect()
 }
 
+/// What `self` is in a block handed to this call, by Ruby's own table.
+fn block_self(call: &ruby_prism::CallNode<'_>) -> ruby::BlockSelf {
+    let Some(name) = method_name(call) else {
+        return ruby::BlockSelf::Unknown;
+    };
+    let constant = call.receiver().and_then(|r| const_name(&r));
+    let recv = match (&constant, on_self(call)) {
+        (_, true) => ruby::Recv::OnSelf,
+        (Some(constant), _) => ruby::Recv::Const(constant.trim_start_matches("::")),
+        (None, _) => ruby::Recv::Other,
+    };
+    ruby::block_self(recv, &name)
+}
+
 /// A block evaluated with some object other than `self` as its `self`:
-/// `mod.class_eval do`, `x.singleton_class.instance_eval do`.
+/// `mod.class_eval do`, `x.singleton_class.instance_eval do`, and
+/// `Class.new(self) { define_method … }`, which defines on the new class.
 fn evaluated_elsewhere(call: &ruby_prism::CallNode<'_>) -> bool {
-    // `Class.new(self) { define_method … }` defines on the new class.
-    let makes = method_name(call).as_deref() == Some("new")
-        && call
-            .receiver()
-            .and_then(|r| const_name(&r))
-            .is_some_and(|r| {
-                matches!(
-                    r.trim_start_matches("::"),
-                    "Class" | "Module" | "Struct" | "Data"
-                )
-            });
-    let evaluates = method_name(call).is_some_and(|name| {
-        matches!(
-            name.as_str(),
-            "module_exec"
-                | "class_exec"
-                | "module_eval"
-                | "class_eval"
-                | "instance_eval"
-                | "instance_exec"
-        )
-    });
-    makes || evaluates && !on_self(call)
+    block_self(call).elsewhere()
 }
 
 /// `(class << self; self; end).module_exec do` or `singleton_class.class_eval
 /// do`: a block whose `define_method` defines a class method.
 fn runs_on_singleton_class(call: &ruby_prism::CallNode<'_>) -> bool {
-    let evaluates = method_name(call).is_some_and(|name| {
-        matches!(
-            name.as_str(),
-            "module_exec"
-                | "class_exec"
-                | "module_eval"
-                | "class_eval"
-                | "instance_eval"
-                | "instance_exec"
-        )
-    });
+    let evaluates = block_self(call) == ruby::BlockSelf::Receiver;
     let Some(receiver) = call.receiver() else {
         return false;
     };
@@ -1828,8 +1811,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         }
         // `before_action -> { authorize! }`: Rails `instance_exec`s a
         // callback lambda as it does an `if:` one (DEC-401).
-        if on_self(node)
-            && method_name(node).is_some_and(|name| runs_on_the_instance(&name))
+        if block_self(node) == ruby::BlockSelf::Instance
             && let Some(instance) = self.instance_side()
         {
             for arg in arg_nodes(node).iter().filter(|arg| is_lambda(arg)) {
@@ -2422,16 +2404,6 @@ const INHERITED_BLOCKS: [&str; 13] = [
     "skip",
 ];
 
-/// Calls whose first symbol names a method of their receiver (DEC-093).
-const REFLECTIVE: [&str; 6] = [
-    "send",
-    "public_send",
-    "__send__",
-    "method",
-    "public_method",
-    "respond_to?",
-];
-
 /// RSpec's custom matcher DSL: each defines a matcher named by its first
 /// symbol (DEC-091). `matcher` is `define`'s alias.
 const MATCHER_DEFINERS: [&str; 4] = [
@@ -2524,17 +2496,6 @@ impl Made {
             },
         )
     }
-}
-
-/// A class-level Rails macro that `instance_exec`s a callable it is handed
-/// (DEC-401): a callback, `before_action`, `after_commit`, or `validate`.
-/// Mirrors the resolver's `runs_its_block_on_an_instance`, less
-/// `rescue_from`, whose positional arguments are the classes it rescues.
-fn runs_on_the_instance(name: &str) -> bool {
-    name == "validate"
-        || ["before_", "after_", "around_"]
-            .iter()
-            .any(|prefix| name.len() > prefix.len() && name.starts_with(prefix))
 }
 
 /// `-> { }`, `lambda { }` or `proc { }`: a callable written in place.
@@ -5332,7 +5293,7 @@ impl<'pr> Extractor<'_> {
     /// `alias_method :new, :old`, `private :x`).
     fn symbol_receiver(&self, call: &ruby_prism::CallNode<'pr>, index: usize) -> Option<Sent> {
         let name = method_name(call)?;
-        if REFLECTIVE.contains(&name.as_str()) {
+        if ruby::names_a_method(&name) {
             if index > 0 {
                 return None;
             }

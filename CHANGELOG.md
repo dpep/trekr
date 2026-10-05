@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A call in `instance_eval do … end` on `self` is a call on `self`.**
+  It was read as a block that may change `self`, so a name `self` lacks
+  was a possible call of every other class's method of that name. And
+  `--def` on `try(:name)`'s symbol answers as on `send(:name)`'s, and a
+  `define_method` in an unassigned `Data.define do` block no longer lands
+  on the enclosing class.
 - **A ViewComponent's template runs on the component.** A bare call in
   `badge_component.html.erb`, beside `badge_component.rb` (or in a
   template under `badge_component/`), resolves on the class that file

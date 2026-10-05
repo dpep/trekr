@@ -1,0 +1,11 @@
+# "Does this block run with another `self`?" was answered by five copies of
+# one table in extraction and resolution, and they had drifted (DEC-645):
+# - `instance_eval do` on `self` keeps `self`; the resolver read it as
+#   changing it, so `shine` there was a possible call of Gadget#shine.
+# - ActiveSupport's `try(:label)` names a method of its receiver as `send`
+#   does; extraction did not count it, so its symbol had no receiver.
+# - `Data.define … do` makes a class as `Struct.new` does; extraction checked
+#   `Data.new`, so the block's `define_method` landed on Host.
+refs Gadget#shine confirmed=0 possible=0 excluded=1
+def app.rb:10:10 status=resolved owner=Widget
+def app.rb:31:5 status=residue

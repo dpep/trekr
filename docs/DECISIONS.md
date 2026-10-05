@@ -13824,3 +13824,38 @@ rule), and an `@ivar` there is not typed from the component's
 `initialize`. Sidekiq's `web/views` and flipper's `ui/views` stay
 unnamed: their `self` is the Action that renders them, which needs a
 block's `self` settled first (DEC-391).
+
+## DEC-645 — One Ruby table says what a block's `self` is, and which calls send a name
+
+**Decided.** `core::ruby` holds Ruby's own vocabulary that extraction and
+resolution both read: `block_self` — whether the call a block is handed to
+runs it on its receiver (`instance_eval` and kin, on another object), on a
+class it makes (`Class.new`, `Module.new`, `Struct.new`, `Data.define`),
+as a method body (`define_method`), on an instance (a Rails callback,
+`validate`, `rescue_from`), or as it stands — and `names_a_method`, the
+calls whose first symbol names a method of their receiver (`send`,
+`public_send`, `__send__`, `try`, `try!`, `method`, `public_method`,
+`respond_to?`). The five copies it replaces each kept a list of their own,
+and they had drifted:
+
+- `instance_eval`/`class_eval` on `self` keeps `self`. Extraction knew;
+  the resolver read any such block as changing `self`, so a bare call in
+  it that `self` lacks was a *possible* call of every other class's
+  method of that name, where it is a call on `self` like any other.
+- `Data.define` makes a class. Extraction checked `Data.new` instead, so
+  a `define_method` in an unassigned `Data.define … do` block defined on
+  the enclosing class.
+- `try(:x)` names `x` on its receiver, as `send(:x)` does. Resolution's
+  RSpec member reading counted it, extraction did not, so `--def` on the
+  symbol had no receiver.
+- `rescue_from` is a callback that `instance_exec`s what it is handed.
+  The resolver listed it and extraction left it out on purpose, for its
+  positional arguments, which are classes; they are never lambdas, so
+  listing it once changes nothing.
+
+Testbed 642 pins the first three. Each is a fix: the old answer was the
+drift, not a decision.
+
+**Not yet.** `--dead`'s own lists in `cli/` — `built.rs`'s `SENDS`,
+`conventions.rs`'s computed-send scan, `dynamic_markers` — still keep
+their own; folding them in is the follow-up, and adds `try` to each.

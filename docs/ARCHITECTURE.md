@@ -1263,7 +1263,10 @@ starts by moving `cli/routes.rs` beneath both fronts, into `query/` or
    changes extraction, so it bumps `schema::VERSION`, and the extraction
    golden says so.
 3. **Extractor code** (`src/extract/mod.rs`), last, for a shape neither of
-   the above can express: an `on_load` block, an RSpec group. A module the
+   the above can express: an `on_load` block, an RSpec group. A method
+   that runs its block with another `self`, or sends a name it is handed,
+   is a row in `src/core/ruby.rs`, which extraction and resolution both
+   read (DEC-645). A module the
    extractor makes that no code declares goes in `core::synthetic`, so
    `--dead` does not list it.
 

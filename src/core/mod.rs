@@ -1229,6 +1229,8 @@ pub(crate) fn split_nesting(s: &str) -> Vec<String> {
 /// as Ruby has it — so the tree reads past it, and a method a group defines
 /// (`let`, `subject`, a `def`) is visible only from that group and the ones
 /// nested in it, so it never leaves its file.
+pub(crate) mod ruby;
+
 pub(crate) mod rspec {
     /// What every example group subclasses.
     pub(crate) const EXAMPLE_GROUP: &str = "RSpec::Core::ExampleGroup";

@@ -22,7 +22,7 @@ pub(crate) mod views;
 /// The class a RABL template's `self` is (DEC-526).
 pub(crate) const RABL_ENGINE: &str = rabl::ENGINE;
 
-use crate::core::{Assign, Call, Def, Facts, Pos, RecvShape, RecvValue, ValueShape, rspec};
+use crate::core::{Assign, Call, Def, Facts, Pos, RecvShape, RecvValue, ValueShape, rspec, ruby};
 use crate::tree::{Kind, Site, Status, Tree};
 use serde::Serialize;
 
@@ -950,25 +950,23 @@ pub(super) fn example_member<'f>(
     admitted.then_some(member)
 }
 
+/// What `self` is in a block handed to this call, by Ruby's own table.
+fn block_self(call: &Call) -> ruby::BlockSelf {
+    let recv = match call.recv {
+        RecvShape::Implicit | RecvShape::SelfRecv => ruby::Recv::OnSelf,
+        RecvShape::Const => call.recv_text.as_deref().map_or(ruby::Recv::Other, |r| {
+            ruby::Recv::Const(r.trim_start_matches("::"))
+        }),
+        _ => ruby::Recv::Other,
+    };
+    ruby::block_self(recv, &call.name)
+}
+
 /// Ruby's own ways to run a block as another object: `instance_eval` and its
-/// kin, and a class or module built with a body.
+/// kin on another, and a class or module built with a body.
 fn evaluates_its_block(call: &Call) -> bool {
-    let constant = call
-        .recv_text
-        .as_deref()
-        .map(|r| r.trim_start_matches("::"));
-    matches!(
-        call.name.as_str(),
-        "instance_eval"
-            | "instance_exec"
-            | "class_eval"
-            | "class_exec"
-            | "module_eval"
-            | "module_exec"
-    ) || matches!(
-        (constant, call.name.as_str()),
-        (Some("Class" | "Module" | "Struct"), "new") | (Some("Data"), "define")
-    ) || (call.recv == RecvShape::Implicit
+    block_self(call).elsewhere()
+        || (call.recv == RecvShape::Implicit
         // A custom matcher's block is the body of a matcher, not of the
         // example: its `match` is the DSL's, not RSpec::Matchers' (DEC-091).
         && matches!(call.name.as_str(), "define" | "matcher"))
@@ -1917,14 +1915,14 @@ fn made_side(tree: &Tree, facts: &Facts, call: &Call) -> Option<Made> {
         }
         match owner.recv {
             RecvShape::Implicit | RecvShape::SelfRecv
-                if owner.singleton && runs_its_block_on_an_instance(&owner.name) =>
+                if owner.singleton && block_self(owner) == ruby::BlockSelf::Instance =>
             {
                 return Some(Made::Side(false));
             }
             // A concern's class method runs on its includers' class, so a
             // callback it declares runs on their instances.
             RecvShape::Implicit | RecvShape::SelfRecv
-                if in_class_methods(owner) && runs_its_block_on_an_instance(&owner.name) =>
+                if in_class_methods(owner) && block_self(owner) == ruby::BlockSelf::Instance =>
             {
                 return Some(Made::IncludersInstance);
             }
@@ -1975,12 +1973,7 @@ pub(super) fn self_unsettled(tree: &Tree, facts: &Facts, call: &Call, path: &str
 /// methods do, short of the ones that exist to change `self`, and so does a
 /// concern's `included`, which trekr reads as the includer's class body.
 fn keeps_self(tree: &Tree, facts: &Facts, owner: &Call, path: &str) -> bool {
-    if evaluates_its_block(owner)
-        || matches!(
-            owner.name.as_str(),
-            "define_method" | "define_singleton_method"
-        )
-    {
+    if evaluates_its_block(owner) || block_self(owner) == ruby::BlockSelf::Method {
         return false;
     }
     let on_self = matches!(owner.recv, RecvShape::Implicit | RecvShape::SelfRecv);
@@ -2003,18 +1996,6 @@ fn keeps_self(tree: &Tree, facts: &Facts, owner: &Call, path: &str) -> bool {
 /// the extractor's `instance_side` rule: in its body `self` is the module.
 fn in_class_methods(call: &Call) -> bool {
     !call.singleton && call.nesting.len() > 1 && call.nesting[0] == "ClassMethods"
-}
-
-/// A class-level Rails macro that `instance_exec`s its block on the
-/// instance (DEC-342): a callback — `before_action`, `after_commit`,
-/// `around_perform`, a model's own `define_model_callbacks` — `validate`,
-/// and `rescue_from`. Its body is ActiveSupport's, which builds the call at
-/// runtime, so the macro is known by its name rather than read.
-fn runs_its_block_on_an_instance(name: &str) -> bool {
-    matches!(name, "validate" | "rescue_from")
-        || ["before_", "after_", "around_"]
-            .iter()
-            .any(|prefix| name.len() > prefix.len() && name.starts_with(prefix))
 }
 
 /// The side a block handed to this call on the class runs on, when the
