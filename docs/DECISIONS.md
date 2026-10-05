@@ -1852,6 +1852,10 @@ connection, and the second tree — declarations 80, ancestry 26, assembly
   and the tree built again, as before; a guess whose key no longer answers
   is never attached, and is removed. The guess decides only what the first
   tree is built over: the answer always comes from what git found.
+- **The tree's loader connections read the overlay too.** A load on a
+  second connection — two threads at once — opened the store without it
+  and read the indexed map (a gap since the overlay; a unit test failed
+  `(1, 0)` against `(1, 1)` without the fix).
 
 **Measured**, release, b45e1a8 / the re-hunt overlay (6282913) / this,
 alternating, medians of 7 (3 for `--dead`), at load 12–19 on 8 cores, five

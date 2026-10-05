@@ -2409,6 +2409,44 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// A load on a connection the tree opens while its own is busy — two
+    /// threads at once — reads through the same overlay (DEC-035).
+    #[test]
+    fn every_loader_connection_reads_the_overlay() {
+        let dir = std::env::temp_dir().join(format!("trekr-loader-overlay-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = Store::open(&dir.join("t.db")).unwrap();
+        let before = "class Widget\nend\n";
+        let oid = crate::scan::hash_blob(before.as_bytes());
+        let mut files = crate::scan::Files::new();
+        files.insert("widget.rb".to_string(), oid.clone());
+        let facts = vec![(oid, crate::extract::extract(before.as_bytes()))];
+        store.write("/repo", &files, facts, 0).unwrap();
+        let after = "class Widget\n  def fresh\n  end\nend\n";
+        let oid = crate::scan::hash_blob(after.as_bytes());
+        store
+            .add_blob(&oid, &crate::extract::extract(after.as_bytes()))
+            .unwrap();
+        store
+            .overlay("/repo", &[("widget.rb".to_string(), Some(oid))])
+            .unwrap();
+        let tree = Tree::build(&store, "/repo").unwrap();
+        let loader = tree.loader.as_ref().unwrap();
+        // The first connection is held by the outer load, so the inner one
+        // opens another.
+        let (outer, inner) = loader
+            .with(|store, roots| {
+                let inner = loader
+                    .with(|store, roots| store.methods_named(roots, "fresh"))
+                    .unwrap();
+                Ok((store.methods_named(roots, "fresh")?, inner))
+            })
+            .unwrap();
+        assert_eq!((outer.len(), inner.len()), (1, 1));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// Streaming the methods a demand-loaded tree has not fetched lists
     /// exactly what an eager tree holds: a name already loaded is not listed
     /// twice, a `private :x` assertion is not a definition, and a carrier's
@@ -4707,6 +4745,8 @@ struct Loader {
     idle: Mutex<Vec<Store>>,
     /// Where another connection opens.
     path: Option<std::path::PathBuf>,
+    /// What the first answers through, which another must too (DEC-035).
+    overlays: crate::store::Overlays,
     roots: Roots,
 }
 
@@ -4714,6 +4754,7 @@ impl Loader {
     fn new(store: Store, roots: Roots) -> Loader {
         Loader {
             path: store.path().map(std::path::Path::to_path_buf),
+            overlays: store.overlays(),
             idle: Mutex::new(vec![store]),
             roots,
         }
@@ -4744,7 +4785,11 @@ impl Loader {
     /// Another connection to the store the first one reads.
     fn open(&self) -> anyhow::Result<Store> {
         match &self.path {
-            Some(path) => Ok(Store::open(path)?),
+            Some(path) => {
+                let mut store = Store::open(path)?;
+                store.adopt(self.overlays.clone())?;
+                Ok(store)
+            }
             None => anyhow::bail!("an in-memory store has no second connection"),
         }
     }
