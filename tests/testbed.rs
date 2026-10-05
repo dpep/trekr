@@ -101,7 +101,7 @@ fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
         ],
     );
     let indexed = trekr_in(&dir)
-        .args(["--index"])
+        .args(["--index", "--json"])
         .env("TREKR_DB", &db)
         .output()
         .expect("index the case");
@@ -110,6 +110,8 @@ fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
         "indexing {label} failed: {}",
         String::from_utf8_lossy(&indexed.stderr)
     );
+    let answer = serde_json::from_slice(&indexed.stdout).unwrap_or_default();
+    shapes::record(&["--index"], &answer);
     (dir, db)
 }
 
@@ -318,7 +320,105 @@ fn trekr(db: &Path, dir: &Path, args: &[&str]) -> (serde_json::Value, i32) {
         .expect("run trekr");
     let code = out.status.code().unwrap_or(-1);
     let parsed = serde_json::from_slice(&out.stdout).unwrap_or(serde_json::Value::Null);
+    shapes::record(args, &parsed);
     (parsed, code)
+}
+
+/// The JSON shape golden: every field path of every `--json` answer the run
+/// sees, per command, with the JSON types found there
+/// (`--dead $.candidates[].mentions_by_name: int|null`), compared with
+/// `tests/json-shapes.golden` once the whole testbed has run. A field that
+/// changes type or vanishes breaks a caller who parses it, and compiles fine.
+mod shapes {
+    use std::collections::{BTreeMap, BTreeSet};
+    use std::sync::Mutex;
+
+    const GOLDEN: &str = "tests/json-shapes.golden";
+    const REGENERATE: &str = "UPDATE_GOLDEN=1 cargo test --test testbed";
+
+    static SEEN: Mutex<BTreeMap<String, BTreeSet<&'static str>>> = Mutex::new(BTreeMap::new());
+
+    /// Fold one answer into the run's shapes, under the command that gave it.
+    pub(super) fn record(args: &[&str], answer: &serde_json::Value) {
+        if answer.is_null() {
+            return;
+        }
+        let command = args
+            .iter()
+            .find(|arg| arg.starts_with("--") && **arg != "--json")
+            .copied()
+            .unwrap_or("QUERY");
+        let mut seen = SEEN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        walk(answer, format!("{command} $"), &mut seen);
+    }
+
+    fn walk(
+        value: &serde_json::Value,
+        path: String,
+        seen: &mut BTreeMap<String, BTreeSet<&'static str>>,
+    ) {
+        use serde_json::Value;
+        let kind = match value {
+            Value::Null => "null",
+            Value::Bool(_) => "bool",
+            Value::Number(n) if n.is_f64() => "float",
+            Value::Number(_) => "int",
+            Value::String(_) => "string",
+            Value::Array(items) => {
+                for item in items {
+                    walk(item, format!("{path}[]"), seen);
+                }
+                "array"
+            }
+            Value::Object(fields) => {
+                for (key, field) in fields {
+                    walk(field, format!("{path}.{key}"), seen);
+                }
+                "object"
+            }
+        };
+        seen.entry(path).or_default().insert(kind);
+    }
+
+    /// Compare the run's shapes with the golden, or write it under
+    /// `UPDATE_GOLDEN`.
+    pub(super) fn check() {
+        let seen = SEEN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let current: Vec<String> = seen
+            .iter()
+            .map(|(path, kinds)| {
+                format!(
+                    "{path}: {}",
+                    kinds.iter().copied().collect::<Vec<_>>().join("|")
+                )
+            })
+            .collect();
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(GOLDEN);
+        if std::env::var_os("UPDATE_GOLDEN").is_some() {
+            let header = format!(
+                "# Every field path of the testbed's --json answers, per command, and the\n\
+                 # JSON types seen there. Regenerate: {REGENERATE}\n"
+            );
+            std::fs::write(&path, header + &current.join("\n") + "\n").expect("golden written");
+            return;
+        }
+        let golden = std::fs::read_to_string(&path).unwrap_or_default();
+        let recorded: BTreeSet<&str> = golden.lines().filter(|l| !l.starts_with('#')).collect();
+        let now: BTreeSet<&str> = current.iter().map(String::as_str).collect();
+        let gone: Vec<&str> = recorded.difference(&now).copied().collect();
+        let new: Vec<&str> = now.difference(&recorded).copied().collect();
+        assert!(
+            gone.is_empty() && new.is_empty(),
+            "the --json answers' shapes moved from {GOLDEN}. A field that changed type \
+             or vanished breaks a caller that parses it; if that is intended, or the \
+             change is only new fields, regenerate with {REGENERATE}\n\n{}",
+            gone.iter()
+                .map(|l| format!("- {l}"))
+                .chain(new.iter().map(|l| format!("+ {l}")))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+    }
 }
 
 /// `key=value`, where the value may itself contain `=` or `:`.
@@ -571,6 +671,10 @@ fn every_testbed_case_answers_as_recorded() {
         cases.len(),
         failures.join("\n\n  ")
     );
+    // A run of some cases sees only some shapes.
+    if std::env::var_os("TESTBED_ONLY").is_none() {
+        shapes::check();
+    }
 }
 
 /// Stage one case and check each of its expectations: how many it checked,
@@ -598,6 +702,8 @@ fn check_case(case: &Path, label: &str, checks: &mut usize, failures: &mut Vec<S
     let expectations = fs::read_to_string(case.join("expected"))
         .unwrap_or_else(|_| panic!("{label} has no `expected` file"));
     let (dir, db) = stage(case, label);
+    // Every case's status, for the shape golden: no expectation names it.
+    trekr(&db, &dir, &["--status", "--json"]);
 
     for line in expectations.lines() {
         let line = line.trim();

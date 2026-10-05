@@ -91,6 +91,11 @@ brew unlink trekr   # …verify…   then:   brew link trekr
   output that moves without a bump fails, and a bump says to regenerate with
   `UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden`. A new
   testbed input fails too, until that regeneration records it (no bump).
+- **`tests/json-shapes.golden` pins the `--json` output's shape**: every
+  field path the testbed's answers reach, per command, and the JSON types
+  seen there. A field that changes type or vanishes fails the testbed; when
+  the change is meant (or only adds fields), regenerate with
+  `UPDATE_GOLDEN=1 cargo test --test testbed`.
 - Fixture repos under `tests/fixtures/`, generic names (`Widget`, `HandlerA`) —
   public repo, nothing employer-identifying.
 - Verify through `cargo test`, not hand-run binaries; e2e drives the built binary
