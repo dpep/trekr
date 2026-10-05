@@ -6,11 +6,6 @@
 //! Not a parse. Each find is evidence that a name is looked up at runtime,
 //! never a resolved reference.
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "reads here predate scan::read_source; converting the last one fails this expect"
-)]
-
 use super::super::built::{TEMPLATES, Texts};
 use rayon::prelude::*;
 use std::collections::HashMap;
@@ -189,7 +184,7 @@ impl Named {
     /// reads on a value, by last segment.
     pub(super) fn read_on_a_value(path: &str) -> HashMap<String, At> {
         let mut named = Named::default();
-        if let Ok(bytes) = std::fs::read(path) {
+        if let Ok(bytes) = crate::scan::read_source(path) {
             for (n, line) in String::from_utf8_lossy(&bytes).lines().enumerate() {
                 named.read_dynamic(path, n as u32 + 1, line);
             }

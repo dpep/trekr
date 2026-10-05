@@ -26,7 +26,8 @@
 - **A file trekr finds by its name is read bounded, as a source is.** A
   `Gemfile`, `Gemfile.lock`, `config/routes.rb` or `config/application.rb`
   that is a link to `/dev/zero` kept `--index` and `--dead` reading forever;
-  it is passed over now.
+  it is passed over now. So are `.rubocop.yml` and `.standard.yml`, and the
+  files `--dead` reopens to weigh a class.
 - **The language server's log gives every `ms` to the hundredth of a
   millisecond.** The `warm`, `reload` and `index` events gave whole
   milliseconds, and `request` hundredths; a reader of the log now gets one

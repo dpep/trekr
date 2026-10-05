@@ -3,11 +3,6 @@
 //! registry, a string — and what may, which a row says as a caveat
 //! (DEC-421).
 
-#![expect(
-    clippy::disallowed_methods,
-    reason = "reads here predate scan::read_source; converting the last one fails this expect"
-)]
-
 use std::collections::{HashMap, HashSet};
 
 use super::named::{self, Named, plain};
@@ -31,7 +26,7 @@ use crate::tree::Tree;
 pub(super) fn rubocop_requires(root: &std::path::Path) -> HashMap<String, named::At> {
     let mut found = HashMap::new();
     for config in [".rubocop.yml", ".standard.yml"] {
-        let Ok(text) = std::fs::read_to_string(root.join(config)) else {
+        let Ok(text) = crate::scan::read_text(root.join(config)) else {
             continue;
         };
         let mut listing = false;
@@ -755,7 +750,7 @@ impl Ways<'_> {
         // A call of `constants` on `self`, or on the `base` a module's
         // `extended` hook is handed.
         let lists = |path: &str, receivers: &[&str]| {
-            let text = std::fs::read_to_string(path).ok()?;
+            let text = crate::scan::read_text(path).ok()?;
             let line = text.lines().position(|line| {
                 let code = line.split(" #").next().unwrap_or(line);
                 code.match_indices("constants").any(|(at, _)| {
@@ -778,7 +773,7 @@ impl Ways<'_> {
             .or_else(|| {
                 // `extend Enumerated`, whose `extended(base)` lists `base`'s.
                 sites.iter().find_map(|site| {
-                    let text = std::fs::read_to_string(&site.path).ok()?;
+                    let text = crate::scan::read_text(&site.path).ok()?;
                     text.lines().find_map(|line| {
                         let module = line.trim_start().strip_prefix("extend ")?.trim();
                         let fqn = self.tree.resolve(module, &[namespace.to_string()]).fqn?;
@@ -844,7 +839,7 @@ impl Ways<'_> {
     fn abstract_model(&self, fqn: &str) -> bool {
         fqn == "ApplicationRecord"
             || self.tree.sites(fqn).iter().any(|site| {
-                std::fs::read_to_string(&site.path)
+                crate::scan::read_text(&site.path)
                     .is_ok_and(|text| text.contains("abstract_class = true"))
             })
     }
@@ -853,7 +848,7 @@ impl Ways<'_> {
     /// loads — `HTTP::Options.register_feature(:x, self)` — a registration
     /// that reaches it without its name.
     fn registration(&self, path: &str, line: u32) -> Option<(String, u32)> {
-        let text = std::fs::read_to_string(path).ok()?;
+        let text = crate::scan::read_text(path).ok()?;
         let lines: Vec<&str> = text.lines().collect();
         let opening = lines.get(line.checked_sub(1)? as usize)?;
         let indent = opening.len() - opening.trim_start().len();
@@ -888,7 +883,7 @@ impl Ways<'_> {
 /// klass`, `registry.push(base)`, `register(base)` — rather than only extend
 /// it?
 fn keeps_its_argument(path: &str, line: u32) -> bool {
-    let Ok(text) = std::fs::read_to_string(path) else {
+    let Ok(text) = crate::scan::read_text(path) else {
         return false;
     };
     let lines: Vec<&str> = text.lines().collect();
