@@ -118,9 +118,10 @@ pub(crate) fn is_column_type(name: &str) -> bool {
 
 /// Every table a schema dump declares, read as the file's kind says.
 pub(crate) fn tables_in(path: &str, src: &[u8]) -> Vec<Table> {
-    match crate::scan::is_structure_sql(path) {
-        true => sql::tables(src),
-        false => ruby::tables(src),
+    use crate::scan::Reader;
+    match Reader::of(path) {
+        Reader::StructureSql => sql::tables(src),
+        Reader::Ruby | Reader::Erb | Reader::Rabl => ruby::tables(src),
     }
 }
 

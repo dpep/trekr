@@ -44,10 +44,39 @@ pub(crate) fn is_structure_sql(path: &str) -> bool {
         && (name == "structure.sql" || name.ends_with("_structure.sql"))
 }
 
+/// How a file's text is read, by its path: the one place that says so, so a
+/// new template language is a new variant every reader must answer for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Reader {
+    /// Ruby as written — and anything not named below, a script without an
+    /// extension too.
+    Ruby,
+    /// An ERB template: its tags' Ruby, the rest blanked (DEC-520).
+    Erb,
+    /// A RABL template, which is Ruby.
+    Rabl,
+    /// An app's schema dumped as SQL, read for its tables (DEC-480).
+    StructureSql,
+}
+
+impl Reader {
+    pub(crate) fn of(path: &str) -> Reader {
+        if is_structure_sql(path) {
+            Reader::StructureSql
+        } else if is_erb(path) {
+            Reader::Erb
+        } else if path.ends_with(".rabl") {
+            Reader::Rabl
+        } else {
+            Reader::Ruby
+        }
+    }
+}
+
 /// A view template whose Ruby the index reads (DEC-520): ERB, read through
 /// its tags, and RABL, which is Ruby.
 pub(crate) fn is_template(path: &str) -> bool {
-    is_erb(path) || path.ends_with(".rabl")
+    matches!(Reader::of(path), Reader::Erb | Reader::Rabl)
 }
 
 /// A file whose text is read as Ruby: Ruby by its name, a template's tags,
@@ -528,6 +557,20 @@ pub(crate) fn hash(root: &Path, paths: impl IntoIterator<Item = String>) -> File
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_file_is_read_by_the_reader_its_path_names() {
+        for (path, reader) in [
+            ("app/models/widget.rb", Reader::Ruby),
+            ("bin/rails", Reader::Ruby),
+            ("app/views/a/show.html.erb", Reader::Erb),
+            ("app/views/a/show.json.rabl", Reader::Rabl),
+            ("db/structure.sql", Reader::StructureSql),
+            ("db/seeds.sql", Reader::Ruby),
+        ] {
+            assert_eq!(Reader::of(path), reader, "{path}");
+        }
+    }
 
     #[test]
     fn walks_a_plain_directory_and_skips_what_is_not_ruby() {

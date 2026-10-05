@@ -173,10 +173,8 @@ pub(crate) struct Document {
     facts: Option<Facts>,
     requires: Option<Vec<Require>>,
     vars: Option<std::rc::Rc<Vars>>,
-    /// A `structure.sql` rather than Ruby (DEC-480).
-    sql: bool,
-    /// An ERB template, whose Ruby is its tags' (DEC-520).
-    erb: bool,
+    /// Which reader takes the text, as the index's does: the path decides.
+    path: String,
     /// The tables a schema dump declares, read once per edit.
     tables: Option<std::rc::Rc<[crate::schema::Table]>>,
     /// Where the text came from. The editor's copy is authoritative until it
@@ -209,8 +207,7 @@ impl Document {
             facts: None,
             requires: None,
             vars: None,
-            sql: crate::scan::is_structure_sql(&path.to_string_lossy()),
-            erb: crate::scan::is_erb(&path.to_string_lossy()),
+            path: path.to_string_lossy().into_owned(),
             tables: None,
             origin,
         }
@@ -227,12 +224,7 @@ impl Document {
     /// The Ruby this document runs, at its own offsets: an ERB template's
     /// tags, blanked around (DEC-520), or the text itself.
     fn ruby(&self) -> std::borrow::Cow<'_, [u8]> {
-        match self.erb {
-            true => crate::extract::template::erb_ruby(self.text.as_bytes())
-                .unwrap_or_default()
-                .into(),
-            false => self.text.as_bytes().into(),
-        }
+        crate::extract::ruby_source(&self.path, self.text.as_bytes())
     }
 
     /// Prism's syntax errors for this document.
@@ -240,7 +232,7 @@ impl Document {
         let mut errors = crate::extract::syntax_errors(&self.ruby());
         // A template is compiled into a method, where `yield` is the
         // layout's way to its content.
-        if self.erb {
+        if crate::scan::Reader::of(&self.path) == crate::scan::Reader::Erb {
             errors.retain(|(_, _, message)| message != "Invalid yield");
         }
         errors
@@ -249,24 +241,19 @@ impl Document {
     /// The parse, made once per edit rather than once per query.
     pub(crate) fn facts(&mut self) -> &Facts {
         if self.facts.is_none() {
-            let facts = match self.sql {
-                true => crate::extract::extract_sql(self.text.as_bytes()),
-                false => crate::extract::extract(&self.ruby()),
-            };
-            self.facts = Some(facts);
+            self.facts = Some(crate::extract::extract_file(
+                &self.path,
+                self.text.as_bytes(),
+            ));
         }
         self.facts.as_ref().expect("just set")
     }
 
     /// The tables this file declares, when it is a schema dump.
     pub(crate) fn tables(&mut self) -> std::rc::Rc<[crate::schema::Table]> {
-        let sql = self.sql;
-        let text = &self.text;
+        let (path, text) = (&self.path, &self.text);
         self.tables
-            .get_or_insert_with(|| match sql {
-                true => crate::schema::sql::tables(text.as_bytes()).into(),
-                false => crate::schema::ruby::tables(text.as_bytes()).into(),
-            })
+            .get_or_insert_with(|| crate::schema::tables_in(path, text.as_bytes()).into())
             .clone()
     }
 

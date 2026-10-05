@@ -91,13 +91,12 @@ pub(crate) enum ViewTemplate {
 
 impl ViewTemplate {
     pub(crate) fn of(path: &str) -> Option<ViewTemplate> {
+        use crate::scan::Reader;
         under(path, "views")?;
-        if crate::scan::is_erb(path) {
-            Some(ViewTemplate::Erb)
-        } else if path.ends_with(".rabl") {
-            Some(ViewTemplate::Rabl)
-        } else {
-            None
+        match Reader::of(path) {
+            Reader::Erb => Some(ViewTemplate::Erb),
+            Reader::Rabl => Some(ViewTemplate::Rabl),
+            Reader::Ruby | Reader::StructureSql => None,
         }
     }
 }

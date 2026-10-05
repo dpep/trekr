@@ -20,6 +20,7 @@ mod sig;
 pub(crate) mod template;
 
 use crate::core::*;
+use crate::scan::Reader;
 pub(crate) use line_index::LineIndex;
 use ruby_prism::{Node, Visit};
 use std::collections::{HashMap, HashSet};
@@ -438,18 +439,18 @@ pub(crate) fn symbol_literals(src: &[u8]) -> Vec<(String, Pos, usize)> {
 /// template's Ruby (DEC-520), or the SQL dump an app keeps its schema in
 /// (DEC-480).
 pub(crate) fn extract_file(path: &str, src: &[u8]) -> Facts {
-    match crate::scan::is_structure_sql(path) {
-        true => extract_sql(src),
-        false => extract(&ruby_source(path, src)),
+    match Reader::of(path) {
+        Reader::StructureSql => extract_sql(src),
+        Reader::Ruby | Reader::Erb | Reader::Rabl => extract(&ruby_source(path, src)),
     }
 }
 
 /// The Ruby a file runs, at the file's own offsets: an ERB template's tags
 /// with everything else blanked (DEC-520), or the file itself.
 pub(crate) fn ruby_source<'a>(path: &str, src: &'a [u8]) -> std::borrow::Cow<'a, [u8]> {
-    match crate::scan::is_erb(path) {
-        true => template::erb_ruby(src).unwrap_or_default().into(),
-        false => src.into(),
+    match Reader::of(path) {
+        Reader::Erb => template::erb_ruby(src).unwrap_or_default().into(),
+        Reader::Ruby | Reader::Rabl | Reader::StructureSql => src.into(),
     }
 }
 
