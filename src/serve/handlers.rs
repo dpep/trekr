@@ -20,6 +20,7 @@ use super::state::{Located, Session};
 use super::variables;
 use crate::core::{Def, Kind};
 use crate::query::position::{self, Under};
+use crate::query::refs as query_refs;
 use crate::resolve::refs;
 use lsp_types::Uri as Url;
 use lsp_types::{
@@ -731,7 +732,7 @@ pub(crate) fn references(
     let mut gathered = gather::Gather::new(limit, policy);
     let partial = warming.is_some();
     let tier = |facts: &crate::core::Facts, call: &crate::core::Call, path: &str| {
-        refs::tier_call(tree, facts, call, path, &query, target.as_deref())
+        query_refs::tier(tree, facts, call, path, &query, target.as_deref(), partial)
     };
     let reach = scan_files(&overlay, &root, source, &query, cancel, &tier, |files| {
         for file in files {
@@ -739,11 +740,7 @@ pub(crate) fn references(
                 continue;
             };
             let lines = LineIndex::new(&file.text);
-            for (_, mut reference) in file.tiered {
-                // A partial index rules nothing out (DEC-320).
-                if partial {
-                    reference.unrule();
-                }
+            for (_, reference) in file.tiered {
                 if reference.tier == refs::Tier::Excluded {
                     continue;
                 }
@@ -2229,8 +2226,10 @@ pub(crate) fn incoming_calls(
     // Keyed by (file, the caller's def line), in first-seen order.
     let mut callers: Vec<CallHierarchyIncomingCall> = Vec::new();
     let mut index: HashMap<(String, u32), usize> = HashMap::new();
+    // Only confirmed callers are listed, which a partial index never
+    // unrules into.
     let tier = |facts: &crate::core::Facts, call: &crate::core::Call, path: &str| {
-        refs::tier_call(tree, facts, call, path, &query, target.as_deref())
+        query_refs::tier(tree, facts, call, path, &query, target.as_deref(), false)
     };
     scan_files(
         &overlay,

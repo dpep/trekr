@@ -3018,6 +3018,7 @@ fn gather_refs(
     Vec<crate::resolve::refs::Reference>,
     crate::resolve::refs::Counts,
 )> {
+    use crate::query::refs as query_refs;
     use crate::resolve::refs;
     let listing = sites.is_some();
     let partial = warming().is_some();
@@ -3034,30 +3035,26 @@ fn gather_refs(
     let files = store.files_calling_any(root_str, &refs::called_as(query))?;
     // Every worker tiers against the one tree, which is shared (DEC-250),
     // and files come back in the order they were listed.
+    // Excluded sites are counted, not listed: the count is the product, and
+    // the list would be the grep we are trying to beat. `keep_all` is how
+    // `--include-excluded` makes the claim auditable.
+    let keep = |tiered: &mut Tiered, reference: refs::Reference| {
+        tiered.counts.record(&reference);
+        if keep_all || reference.tier != refs::Tier::Excluded {
+            tiered.found.push(reference);
+        }
+    };
     let tier = |path: &String, facts: &crate::core::Facts| {
         let mut tiered = Tiered::default();
         for call in facts.calls.iter().filter(|c| refs::names_it(c, query)) {
             if listing {
                 tiered.sites.push(crate::store::Ref::call(path, call));
             }
-            let mut reference = refs::tier_call(tree, facts, call, path, query, target);
-            if partial {
-                reference.unrule();
-            }
+            let reference = query_refs::tier(tree, facts, call, path, query, target, partial);
             // Its includers may answer it: asked below, one file at a time.
-            if reference.tier == refs::Tier::Excluded
-                && target.is_some()
-                && crate::resolve::members::in_shared_body(facts, call)
-            {
-                tiered.shared.push((call.clone(), reference.clone()));
-            }
-            tiered.counts.record(&reference);
-            // Excluded sites are counted, not listed: the count is the
-            // product, and the list would be the grep we are trying to
-            // beat. `keep_all` is how `--include-excluded` makes the
-            // claim auditable.
-            if keep_all || reference.tier != refs::Tier::Excluded {
-                tiered.found.push(reference);
+            match query_refs::rescuable(facts, call, target, &reference) {
+                true => tiered.rescuable.push((call.clone(), reference)),
+                false => keep(&mut tiered, reference),
             }
         }
         tiered
@@ -3090,35 +3087,26 @@ fn gather_refs(
             .filter_map(|path| Some(tier(path, &read(path)?)))
             .collect(),
     };
-    let mut found = Vec::new();
-    let mut counts = refs::Counts::default();
-    let mut shared = Vec::new();
+    let mut merged = Tiered::default();
+    let mut rescuable = Vec::new();
     for mut file in tiered {
-        found.append(&mut file.found);
-        counts.add(&file.counts);
-        shared.append(&mut file.shared);
+        merged.found.append(&mut file.found);
+        merged.counts.add(&file.counts);
+        rescuable.append(&mut file.rescuable);
         if let Some(sites) = sites.as_deref_mut() {
             sites.append(&mut file.sites);
         }
     }
-    // A shared group's call the example does not answer runs what the
-    // groups that include it mix in (DEC-499).
-    if let (Some(target), false) = (target, shared.is_empty()) {
+    if let (Some(target), false) = (target, rescuable.is_empty()) {
         let files = crate::query::members::CheckoutFiles::new(store, root, root_str);
-        for (call, excluded) in &shared {
-            let Some(reference) =
-                crate::query::members::includer_reference(tree, &files, call, target, excluded)
-            else {
-                continue;
-            };
-            counts.forget(excluded);
-            counts.record(&reference);
-            found.retain(|r| {
-                (&r.path, r.line, r.col) != (&excluded.path, excluded.line, excluded.col)
-            });
-            found.push(reference);
+        for (call, mut reference) in rescuable {
+            query_refs::rescue(tree, &files, &call, target, &mut reference);
+            keep(&mut merged, reference);
         }
     }
+    let Tiered {
+        mut found, counts, ..
+    } = merged;
     found.sort_by_key(refs::order);
     Ok((found, counts))
 }
@@ -3129,8 +3117,9 @@ struct Tiered {
     found: Vec<crate::resolve::refs::Reference>,
     counts: crate::resolve::refs::Counts,
     sites: Vec<crate::store::Ref>,
-    /// Calls in a shared group's body ruled out, for its includers to answer.
-    shared: Vec<(crate::core::Call, crate::resolve::refs::Reference)>,
+    /// Calls ruled out that a shared group's includers may answer, counted
+    /// once they have been asked.
+    rescuable: Vec<(crate::core::Call, crate::resolve::refs::Reference)>,
 }
 
 /// Files held across queries, by checkout-relative path: each one's facts,
