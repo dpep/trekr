@@ -4054,6 +4054,40 @@ fn an_edit_is_answered_as_it_is_now_not_as_last_read() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// The same edits are the same overlay in every process: files deleted
+/// together are read in one order, so the next query attaches the copy the
+/// last one wrote rather than writing its own.
+#[test]
+fn queries_over_the_same_deletions_share_one_copy() {
+    use std::os::unix::fs::MetadataExt;
+    let (dir, db) = scratch("deleted-order");
+    repo(&dir);
+    for i in 0..6 {
+        fs::write(dir.join(format!("w{i}.rb")), format!("class W{i}\nend\n")).unwrap();
+    }
+    git(&dir, &["add", "-A"]);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    for i in 0..6 {
+        fs::remove_file(dir.join(format!("w{i}.rb"))).unwrap();
+    }
+    let copy = || {
+        let out = trekr(&db, &dir, &["--refs", "Widget#helper", "--json"]);
+        assert!(out.status.success(), "{out:?}");
+        let copies: Vec<_> = fs::read_dir(db.with_extension("overlays"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.metadata().unwrap().ino())
+            .collect();
+        assert_eq!(copies.len(), 1, "{copies:?}");
+        copies[0]
+    };
+    let first = copy();
+    for _ in 0..3 {
+        assert_eq!(copy(), first, "rewritten by a later query");
+    }
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A file git does not track is read as one it does, edited or deleted.
 #[test]
 fn an_untracked_file_is_read_as_it_is_now() {

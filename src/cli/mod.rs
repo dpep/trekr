@@ -4712,6 +4712,9 @@ fn changes(
             changed.push((path.clone(), Some(oid)));
         }
     }
+    // By path: the stored map is a `HashMap`, and the same edits must be the
+    // same overlay in every process, or none resumes another's copy.
+    changed.sort_by(|a, b| a.0.cmp(&b.0));
     let (mut refreshed, mut busy, mut overlay) = (Vec::new(), Vec::new(), Vec::new());
     for (path, oid) in changed {
         let oid = match oid {
