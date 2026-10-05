@@ -19,9 +19,11 @@ with the code in the same commit, rq/rwr style.
   assembly: constants, MRO, method tables — cheap to rebuild, memoized), resolve+rank
   (receiver ladder, confidence, explain). Cross-layer leaks are the failure mode
   Glean/Kythe warn about.
-- **Full disclosure, ranked.** Every answer carries `status: resolved | ambiguous |
-  residue`, `confidence`, `resolved_via`. Residue still returns ranked candidates
-  with the reason. Nothing silently dropped, nothing silently promoted.
+- **Full disclosure, ranked.** A definition answer carries a `status`
+  (`resolved`, `ambiguous`, `residue`, or why there is no answer yet), and one
+  that names a definition says how it got there (`resolved_via`) and how sure
+  it is (`confidence`). Residue still returns ranked candidates with the
+  reason. Nothing silently dropped, nothing silently promoted.
 - **Ruby-free, bundle-free, daemon-free engine.** Prism (`ruby-prism` crate) parses;
   no project Ruby, no `bundle install`, no bootable app. Resident processes (a
   future LSP front) are thin fronts over the on-disk state, never the owner of it.
@@ -113,6 +115,16 @@ brew unlink trekr   # …verify…   then:   brew link trekr
 Solo repo: no PRs, commit directly to `main`, small logically-connected commits,
 behavior or structure but not both. `CHANGELOG.md` gets its entry in the commit
 that earns it, under `## Unreleased`.
+
+**Fix rounds take fixes; features take their own branch and hunt.** A fix
+round accepts only a change that makes a hunt finding pass. A new code path —
+a probe, a JSON field, a flag — goes on a branch with its own hunt. 0.8.7's
+freshness work landed in a fix window, carried three silent wrong answers,
+and came back out as four reverts.
+
+**A CHANGELOG line claims only what a test pins.** A headline ahead of the
+code is the overclaim the hunts keep finding (five in the 0.8.7 cycle): narrow
+the line to what a test checks, or write the test.
 
 **A scripted edit must fail loudly when its anchor is gone.** Session 32 shipped
 five user-facing commits with no changelog, because three `str.replace` calls
