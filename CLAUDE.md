@@ -55,7 +55,8 @@ what you expected in your report, so it reaches rq's miss log.
 Rust, single crate until there's a concrete reason to split. `cargo` is keg-only:
 `/opt/homebrew/opt/rustup/bin/cargo` (or add to PATH). Gate before commit:
 `script/check.sh` — `cargo fmt --check`, `cargo clippy --all-targets -- -D
-warnings`, `cargo test`, then the VS Code extension's unit tests (`npm test` in
+warnings`, `cargo test`, `cargo doc` with warnings denied, then the VS Code
+extension's unit tests (`npm test` in
 `editors/vscode`, installing its deps on first run).
 
 **Every file is read through `scan::read_source` or `scan::read_text`**:
@@ -97,7 +98,8 @@ brew unlink trekr   # …verify…   then:   brew link trekr
   field path the testbed's answers reach, per command, and the JSON types
   seen there. A field that changes type or vanishes fails the testbed; when
   the change is meant (or only adds fields), regenerate with
-  `UPDATE_GOLDEN=1 cargo test --test testbed`.
+  `UPDATE_GOLDEN=1 cargo test --test testbed` — and update
+  [docs/OUTPUT.md](docs/OUTPUT.md), the field reference, in the same commit.
 - Fixture repos under `tests/fixtures/`, generic names (`Widget`, `HandlerA`) —
   public repo, nothing employer-identifying.
 - Verify through `cargo test`, not hand-run binaries; e2e drives the built binary
