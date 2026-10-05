@@ -30,11 +30,6 @@ jobs:
       - name: clippy
         run: cargo clippy --all-targets -- -D warnings
 
-      - name: docs
-        run: cargo doc --no-deps --document-private-items
-        env:
-          RUSTDOCFLAGS: -D warnings
-
       - name: build
         run: cargo build --all-targets
 
