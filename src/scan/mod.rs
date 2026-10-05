@@ -177,14 +177,22 @@ impl std::error::Error for GitError {
 }
 
 fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .output()
-        .map_err(|source| GitError {
-            message: "could not run git (is it installed and on PATH?)".into(),
-            source: Some(source),
-        })?;
+    git_in(root, args, None)
+}
+
+/// [`git`], registered with `gits` while it runs when there is one, so that
+/// a [`Probe`] given up on can stop it.
+fn git_in(root: &Path, args: &[&str], gits: Option<&Gits>) -> Result<Vec<u8>> {
+    let mut command = Command::new("git");
+    command.args(args).current_dir(root);
+    let out = match gits {
+        Some(gits) => gits.run(command),
+        None => command.output(),
+    }
+    .map_err(|source| GitError {
+        message: "could not run git (is it installed and on PATH?)".into(),
+        source: Some(source),
+    })?;
     if !out.status.success() {
         return Err(GitError::failed(format!(
             "git {} failed: {}",
@@ -194,6 +202,84 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
         .into());
     }
     Ok(out.stdout)
+}
+
+/// The git processes one [`Probe`] has running. Stopping kills and reaps
+/// each, and any started after: a walk nobody will read only slows the
+/// next query's own.
+#[derive(Default)]
+struct Gits(std::sync::Mutex<Running>);
+
+#[derive(Default)]
+struct Running {
+    stopped: bool,
+    children: Vec<std::process::Child>,
+}
+
+impl Gits {
+    fn lock(&self) -> std::sync::MutexGuard<'_, Running> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// `command.output()`, unless stopped first.
+    fn run(&self, mut command: Command) -> std::io::Result<std::process::Output> {
+        use std::io::Read;
+        use std::process::Stdio;
+        let stopped = || std::io::Error::new(std::io::ErrorKind::Interrupted, "given up on");
+        let mut child = command
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        let mut stdout = child.stdout.take().expect("stdout is piped");
+        let mut stderr = child.stderr.take().expect("stderr is piped");
+        let id = child.id();
+        {
+            let mut running = self.lock();
+            if running.stopped {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(stopped());
+            }
+            running.children.push(child);
+        }
+        // Both pipes at once, or a full one stalls the other.
+        let errors = std::thread::spawn(move || {
+            let mut bytes = Vec::new();
+            let _ = stderr.read_to_end(&mut bytes);
+            bytes
+        });
+        let mut out = Vec::new();
+        let read = stdout.read_to_end(&mut out);
+        let err = errors.join().unwrap_or_default();
+        let child = {
+            let mut running = self.lock();
+            let at = running.children.iter().position(|c| c.id() == id);
+            at.map(|at| running.children.swap_remove(at))
+        };
+        // Gone from the list: `stop` killed and reaped it.
+        let Some(mut child) = child else {
+            return Err(stopped());
+        };
+        let status = child.wait()?;
+        read?;
+        Ok(std::process::Output {
+            status,
+            stdout: out,
+            stderr: err,
+        })
+    }
+
+    fn stop(&self) {
+        let mut running = self.lock();
+        running.stopped = true;
+        for mut child in running.children.drain(..) {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
 
 /// The repository root containing `path`, which may name a file or a
@@ -438,18 +524,27 @@ pub(crate) const PROBE_WAIT: std::time::Duration = std::time::Duration::from_sec
 pub(crate) struct Probe<T> {
     started: std::time::Instant,
     found: std::sync::mpsc::Receiver<Result<T>>,
+    gits: std::sync::Arc<Gits>,
+}
+
+/// A probe given up on, or never asked, stops its git.
+impl<T> Drop for Probe<T> {
+    fn drop(&mut self) {
+        self.gits.stop();
+    }
 }
 
 impl<T: Send + 'static> Probe<T> {
     pub(crate) fn start(root: &Path, then: impl FnOnce(Files) -> T + Send + 'static) -> Probe<T> {
         let (send, found) = std::sync::mpsc::channel();
         let root = root.to_path_buf();
-        // Left running when given up on: it ends with its git, and so does
-        // the process at the answer.
-        std::thread::spawn(move || drop(send.send(scan(&root).map(then))));
+        let gits = std::sync::Arc::new(Gits::default());
+        let running = gits.clone();
+        std::thread::spawn(move || drop(send.send(scan_in(&root, Some(&running)).map(then))));
         Probe {
             started: std::time::Instant::now(),
             found,
+            gits,
         }
     }
 
@@ -478,6 +573,11 @@ impl<T: Send + 'static> Probe<T> {
 /// Every Ruby file in the working tree, keyed by the blob its *current* bytes
 /// hash to — not what HEAD says. Uncommitted edits are first-class.
 pub(crate) fn scan(root: &Path) -> Result<Files> {
+    scan_in(root, None)
+}
+
+/// [`scan`], its gits registered with `gits`.
+fn scan_in(root: &Path, gits: Option<&Gits>) -> Result<Files> {
     // Tracked files whose working-tree bytes differ from the index, plus files
     // git has never seen. Both need hashing; nothing else does. One `status`
     // answers both, and unlike `ls-files -o` it uses git's untracked cache,
@@ -486,8 +586,8 @@ pub(crate) fn scan(root: &Path) -> Result<Files> {
     // what `git_fingerprint` watches. Both read the index alone, so they run
     // at once: a query waits on this (DEC-035).
     let (listed, status) = std::thread::scope(|scope| {
-        let listed = scope.spawn(|| git(root, &["ls-files", "-s", "-z"]));
-        let status = git(
+        let listed = scope.spawn(|| git_in(root, &["ls-files", "-s", "-z"], gits));
+        let status = git_in(
             root,
             &[
                 "--no-optional-locks",
@@ -498,6 +598,7 @@ pub(crate) fn scan(root: &Path) -> Result<Files> {
                 "--no-renames",
                 "--ignore-submodules=all",
             ],
+            gits,
         );
         let listed = listed
             .join()
@@ -511,7 +612,7 @@ pub(crate) fn scan(root: &Path) -> Result<Files> {
     if !untracked_dirs.is_empty() {
         let mut args = vec!["ls-files", "-o", "--exclude-standard", "-z", "--"];
         args.extend(untracked_dirs.iter().map(String::as_str));
-        dirty.extend(parse_paths(&git(root, &args)?));
+        dirty.extend(parse_paths(&git_in(root, &args, gits)?));
     }
 
     for path in dirty {

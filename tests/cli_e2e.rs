@@ -4240,6 +4240,53 @@ fn a_git_that_cannot_say_what_changed_is_disclosed() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A git the query stopped waiting for is stopped too, rather than left
+/// walking the checkout after the answer — where the next query's git
+/// would compete with it.
+#[test]
+fn a_git_given_up_on_does_not_outlive_the_query() {
+    let (dir, db) = scratch("git-killed");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    let (bin, _) = support::scratch("git-killed-bin");
+    let pids = bin.join("pids");
+    let real = support::git_only().join("git");
+    let script = format!(
+        "#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = status ] && {{ echo $$ >> {}; exec /bin/sleep 30; }}; done\nexec {} \"$@\"\n",
+        pids.display(),
+        real.display()
+    );
+    fs::write(bin.join("git"), script).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    fs::set_permissions(bin.join("git"), fs::Permissions::from_mode(0o755)).unwrap();
+    let path = [("PATH", bin.to_str().unwrap())];
+    let out = trekr_env(&db, &dir, &["--refs", "Widget#helper", "--json"], &path);
+    assert!(out.status.success(), "{out:?}");
+    let cause = json(&out)["index"]["cause"].as_str().unwrap().to_string();
+    assert!(cause.contains("took longer than"), "{cause}");
+
+    let pids = fs::read_to_string(&pids).unwrap();
+    assert!(!pids.trim().is_empty());
+    let alive: Vec<&str> = pids
+        .lines()
+        .filter(|pid| {
+            let alive = Command::new("kill")
+                .args(["-0", pid])
+                .stderr(std::process::Stdio::null())
+                .status()
+                .unwrap()
+                .success();
+            if alive {
+                let _ = Command::new("kill").args(["-9", pid]).status();
+            }
+            alive
+        })
+        .collect();
+    assert!(alive.is_empty(), "git still running: {alive:?}");
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&bin);
+}
+
 /// `trekr <input>` dispatches on shape (DEC-036), and every shape speaks JSON.
 #[test]
 fn the_bare_grammar_dispatches_on_shape() {
