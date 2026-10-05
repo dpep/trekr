@@ -38,19 +38,7 @@ use std::process::Command;
 
 mod support;
 
-fn git(dir: &Path, args: &[&str]) {
-    // Run from a git hook or `rebase --exec`, these are set to the outer repo,
-    // and `init`/`commit` here would write into it instead of the scratch dir.
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .output()
-        .expect("run git");
-    assert!(out.status.success(), "git {args:?}: {out:?}");
-}
+use support::git;
 
 /// Stage one case as a real checkout with its own database.
 fn stage(case: &Path, label: &str) -> (PathBuf, PathBuf) {
@@ -125,13 +113,10 @@ fn home_of(dir: &Path) -> PathBuf {
     dir.with_extension("home")
 }
 
-/// The binary, run in a staged case: with its own home when it stages a Ruby.
+/// The binary, run in a staged case on the Ruby its home holds.
 fn trekr_in(dir: &Path) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_trekr"));
-    command.current_dir(dir);
-    if home_of(dir).is_dir() {
-        command.env("HOME", home_of(dir));
-    }
+    support::neutral(&mut command, &home_of(dir)).current_dir(dir);
     command
 }
 

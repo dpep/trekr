@@ -9,7 +9,7 @@ use std::process::{Command, Output};
 
 mod support;
 
-use support::{fixture_home, git_only};
+use support::{fixture_home, git, git_only};
 
 /// A scratch repo and database for one test (see `support::scratch`), whose
 /// checkout runs on the fixture's Ruby.
@@ -17,20 +17,6 @@ fn scratch(label: &str) -> (PathBuf, PathBuf) {
     let (dir, db) = support::scratch(label);
     fs::write(dir.join(".ruby-version"), "9.8.7\n").unwrap();
     (dir, db)
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    // Run from a git hook or `rebase --exec`, these are set to the outer repo,
-    // and `init`/`commit` here would write into it instead of the scratch dir.
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .output()
-        .expect("run git");
-    assert!(out.status.success(), "git {args:?}: {out:?}");
 }
 
 /// A git repo holding one fixture-sized Ruby file.
@@ -67,36 +53,10 @@ fn trekr(db: &Path, cwd: &Path, args: &[&str]) -> Output {
         .expect("run trekr")
 }
 
-/// A command whose caller is nobody in particular. Whoever runs the suite — an
-/// agent, CI — sets variables `--usage` reads to name the caller, and the
-/// usage tests assert on that name.
-///
-/// And on no Ruby in particular: with `git` the only program on `PATH`, no
-/// `$GEM_HOME` and the fixture's home, a checkout runs on the fixture's Ruby
-/// (DEC-180), whatever Ruby the machine running the suite has. A test about
-/// another Ruby stages one, under a home of its own.
+/// A command run as `support::neutral` says, on the fixture's Ruby. A test
+/// about another Ruby stages one, under a home of its own.
 fn neutral(mut command: Command) -> Command {
-    command
-        .env_remove("GEM_HOME")
-        .env_remove("GEM_PATH")
-        .env_remove("MISE_DATA_DIR")
-        .env_remove("XDG_DATA_HOME")
-        .env("HOME", fixture_home())
-        // The machine's own Homebrew and `/opt/rubies` Rubies, out of sight.
-        .env("TREKR_TEST_SYSTEM", fixture_home())
-        .env("PATH", git_only());
-    for var in [
-        "CLAUDECODE",
-        "CLAUDE_CODE_ENTRYPOINT",
-        "AI_AGENT",
-        "CURSOR_TRACE_ID",
-        "CURSOR_AGENT",
-        "CI",
-        "GITHUB_ACTIONS",
-        "TREKR_USAGE",
-    ] {
-        command.env_remove(var);
-    }
+    support::neutral(&mut command, fixture_home());
     command
 }
 

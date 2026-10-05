@@ -1,8 +1,10 @@
-//! What the e2e suites share: where their scratch goes.
+//! What the e2e suites share: where their scratch goes, and the environment
+//! the binary under test runs in.
 #![allow(dead_code, reason = "each test binary uses its own subset")]
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -97,4 +99,60 @@ pub fn git_only() -> &'static Path {
         std::os::unix::fs::symlink(git, dir.join("git")).unwrap();
         dir
     })
+}
+
+/// Variables of the caller's that reach past the scratch: git's (a gate run
+/// under `git rebase --exec` exports `GIT_DIR`, and a fixture's `git init`
+/// then writes into the real repository), and a Ruby's or a bundle's.
+fn outside(name: &std::ffi::OsStr) -> bool {
+    name.to_str().is_some_and(|name| {
+        ["GIT_", "GEM_", "BUNDLE_"]
+            .iter()
+            .any(|p| name.starts_with(p))
+    })
+}
+
+fn strip_outside(command: &mut Command) -> &mut Command {
+    for (name, _) in std::env::vars_os().filter(|(name, _)| outside(name)) {
+        command.env_remove(name);
+    }
+    command
+}
+
+/// `git`, run in a scratch directory and nowhere else.
+pub fn git(dir: &Path, args: &[&str]) {
+    let out = strip_outside(&mut Command::new("git"))
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .expect("run git");
+    assert!(out.status.success(), "git {args:?}: {out:?}");
+}
+
+/// Make `command` run by nobody in particular on no Ruby in particular: no
+/// caller `--usage` would name, `git` the only program on `PATH`, no gem or
+/// bundle settings, and `home` as both `HOME` and the root the machine's
+/// Rubies are looked for under — so a checkout runs on the Ruby `home` holds
+/// (DEC-180), whatever the machine running the suite has.
+pub fn neutral<'a>(command: &'a mut Command, home: &Path) -> &'a mut Command {
+    for var in [
+        // What `--usage` reads to tell an agent from a person or CI.
+        "CLAUDECODE",
+        "CLAUDE_CODE_ENTRYPOINT",
+        "AI_AGENT",
+        "CURSOR_TRACE_ID",
+        "CURSOR_AGENT",
+        "CI",
+        "GITHUB_ACTIONS",
+        "TREKR_USAGE",
+        // Where a version manager keeps its Rubies.
+        "MISE_DATA_DIR",
+        "XDG_DATA_HOME",
+    ] {
+        command.env_remove(var);
+    }
+    strip_outside(command)
+        .env("HOME", home)
+        .env("TREKR_TEST_SYSTEM", home)
+        .env("PATH", git_only())
 }

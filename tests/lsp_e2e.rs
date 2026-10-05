@@ -10,7 +10,7 @@ use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
 
 mod support;
 
-use support::fixture_home;
+use support::{fixture_home, git};
 
 /// A scratch repo and database for one test (see `support::scratch`), whose
 /// checkout runs on the fixture's Ruby.
@@ -20,40 +20,12 @@ fn scratch(label: &str) -> (PathBuf, PathBuf) {
     (dir, db)
 }
 
-/// A command with git's repository-locating variables cleared. A gate run
-/// under `git rebase --exec` exports `GIT_DIR`, and a fixture's `git init`
-/// then writes into the real repository — as does any git the binary under
-/// test runs.
+/// `program`, run as `support::neutral` says, on the fixture's Ruby.
 fn isolated(program: &str) -> Command {
     let mut command = Command::new(program);
-    command
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        // Whoever runs the suite — an agent, CI — is not the caller the usage
-        // counts are asserted against.
-        .env_remove("TREKR_USAGE")
-        // Nor is its Ruby the one a checkout runs on: the fixture's is.
-        .env("HOME", fixture_home())
-        .env("TREKR_TEST_SYSTEM", fixture_home())
-        .env_remove("MISE_DATA_DIR")
-        .env_remove("XDG_DATA_HOME");
-    for var in AGENT_VARS {
-        command.env_remove(var);
-    }
+    support::neutral(&mut command, fixture_home());
     command
 }
-
-/// What `--usage` reads to tell an agent from a person or CI.
-const AGENT_VARS: [&str; 7] = [
-    "CLAUDECODE",
-    "CLAUDE_CODE_ENTRYPOINT",
-    "AI_AGENT",
-    "CURSOR_TRACE_ID",
-    "CURSOR_AGENT",
-    "CI",
-    "GITHUB_ACTIONS",
-];
 
 /// The usage rows a test's database has counted.
 fn usage_rows(db: &Path) -> Vec<serde_json::Value> {
@@ -80,15 +52,6 @@ fn counted(rows: &[serde_json::Value], matching: &[(&str, serde_json::Value)]) -
 
 fn trekr() -> Command {
     isolated(env!("CARGO_BIN_EXE_trekr"))
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let out = isolated("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .expect("run git");
-    assert!(out.status.success(), "git {args:?}");
 }
 
 /// A repo with a call whose receiver resolves, so definition has a real answer.
