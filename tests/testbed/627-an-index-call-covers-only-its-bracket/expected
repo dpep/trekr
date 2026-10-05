@@ -1,0 +1,6 @@
+# An index call is written as its `[`, but was taken to cover as many
+# columns as its name has: `--def` on the first letters of `h[key]`'s key
+# answered `[]` or `[]=` instead of the parameter.
+def app.rb:3:5 variable=parameter
+def app.rb:4:6 variable=parameter
+def app.rb:3:4 name=[]

@@ -1177,10 +1177,13 @@ impl RecvShape {
 
 impl Call {
     /// How many bytes of source the call's name covers at `pos`. A `super`
-    /// site is named after its method but written as the keyword.
+    /// site is named after its method but written as the keyword; an index
+    /// call (`h[key]`, `h[key] = v`) is written as its `[`, with the
+    /// arguments after it.
     pub(crate) fn written_len(&self) -> usize {
         match self.recv {
             RecvShape::Super => "super".len(),
+            _ if self.name.starts_with('[') => 1,
             _ => self.name.len(),
         }
     }

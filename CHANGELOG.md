@@ -83,6 +83,10 @@
   inside `class << self`); an alias takes its original's visibility instead
   of always being public; a `define_method` in a `private` section is
   private; and `private_class_method [:a, :b]` or `*%i[a b]` names each.
+- **`--def` on the start of an index's argument answers for the argument.**
+  On the `k` of `h[key]` (or the `ke` of `h[key] = v`) it answered `[]`
+  (`[]=`): an index call covered as many columns as its name has, not just
+  its `[`. The editor's reference spans for an index call cover the `[`.
 - **`--refs FILE:LINE:COL` answers for what is at the column.** On an
   `@ivar`, a local, a parameter, a hash key or a blank it answered for
   whichever method was nearest on the line, without saying so. At a
