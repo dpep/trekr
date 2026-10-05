@@ -67,8 +67,9 @@ They answer different questions; read them separately.
   untyped receiver — and `agreement` says which.
 - **`resolved_via`** — the rung that typed the receiver: `self`, `const`,
   `local:new`, `literal`, `sig`, `sig:param`, `sig:step`, `includer`,
-  `rbi_dsl`, `super`, and `flow` for a variable; `view`, `controller`,
-  `render` and `rabl:object` in templates. `chain` means the receiver is a
+  `rbi_dsl`, `super`, and `flow` for a variable; `view`, `sidecar` (a
+  component's template, on the component), `controller`, `render` and
+  `rabl:object` in templates. `chain` means the receiver is a
   call whose method's return type is declared (`x.strip.downcase` with `x`
   typed); `chain:name` that its receiver was untyped, so every definition of
   that name was asked — `ambiguous` when some declare no return type. Ruby
