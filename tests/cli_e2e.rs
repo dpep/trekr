@@ -1723,6 +1723,10 @@ fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
     let no_git = dir.join("empty-path");
     fs::create_dir_all(&no_git).unwrap();
     let no_git = no_git.to_string_lossy().into_owned();
+    // A store whose directory would be made under a regular file.
+    fs::write(dir.join("blocker"), "").unwrap();
+    let unopenable = dir.join("blocker/store/trekr.db");
+    let unopenable = unopenable.to_string_lossy().into_owned();
 
     // (where, args, extra env, exit, kind, what stderr names)
     type Case<'a> = (
@@ -1830,6 +1834,14 @@ fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
             "not a git repository",
         ),
         (&dir, &["--index"], &[("PATH", &no_git)], 69, "git", "git"),
+        (
+            &dir,
+            &["--status"],
+            &[("TREKR_DB", &unopenable)],
+            74,
+            "database",
+            "trekr store",
+        ),
     ];
     for (cwd, args, env, code, kind, names) in cases {
         let text = trekr_env(&db, cwd, args, env);

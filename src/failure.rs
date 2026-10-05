@@ -71,7 +71,7 @@ impl Failure {
                 false => Failure::Git,
             };
         }
-        if chain().any(|e| e.is::<rusqlite::Error>() || e.is::<crate::store::Unopenable>()) {
+        if chain().any(|e| e.is::<rusqlite::Error>()) {
             Failure::Database
         } else if chain().any(|e| e.is::<std::io::Error>()) {
             Failure::Io
@@ -147,10 +147,6 @@ mod tests {
         for (error, want) in [
             (io, Failure::Io),
             (sql, Failure::Database),
-            (
-                anyhow::Error::new(crate::store::Unopenable("trekr store P: x".into())),
-                Failure::Database,
-            ),
             (git, Failure::NotARepo),
             (anyhow::anyhow!("a surprise"), Failure::Internal),
         ] {

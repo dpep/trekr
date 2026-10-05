@@ -3517,8 +3517,12 @@ elsewhere is trekr's own problem. `--index PATH` and `--drop PATH` check that
 the path exists before asking git. Otherwise git runs in the nearest existing
 parent and can answer for a checkout the caller never meant. git's failures
 carry a type (`scan::GitError`), not a string, so "not a git repository" is
-`not_a_repo` and anything else is `git`. What nobody tagged is classified from
-the chain: SQLite is `database`, other I/O is `io`, and the rest is `internal`.
+`not_a_repo` and anything else is `git`. `Failure` lives at the crate root,
+beside the engine rather than in `cli/`, so an engine function tags its own
+failure: a store that cannot be opened is `database` where `open_default`
+says so, for the CLI and the language server alike. What nobody tagged is
+classified from the chain: SQLite is `database`, other I/O is `io`, and the
+rest is `internal`.
 An unanticipated failure is a bug by definition. `--usage` counts each failure
 under the same `kind` (DEC-063's `error:<kind>`). The earlier labels
 (`store`, `not-a-repo`, `other`, `input`) stay in the rows already kept.

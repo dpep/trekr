@@ -177,29 +177,16 @@ pub(crate) fn open_default() -> anyhow::Result<Store> {
         None => Ok(()),
     }
     .and_then(|()| Store::open(&path).map_err(anyhow::Error::from));
+    // Said with its reason once, and tagged here: the chain it summarizes is
+    // not kept, or `{:#}` would say the reason twice again.
     opened.map_err(|error| {
-        Unopenable(format!(
+        crate::failure::Failure::Database.error(format!(
             "trekr store {}: {}",
             path.display(),
             said_once(&error, &path)
         ))
-        .into()
     })
 }
-
-/// The store could not be opened, said with its reason once. A type, not a
-/// message, so a caller still tells a store failure from a bug: the chain it
-/// summarizes is not kept, or `{:#}` would say the reason twice again.
-#[derive(Debug)]
-pub(crate) struct Unopenable(pub(crate) String);
-
-impl std::fmt::Display for Unopenable {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for Unopenable {}
 
 /// An error's chain, each part said once. SQLite's open error names the path
 /// again, and rusqlite gives each failure its own code's text as its source:
