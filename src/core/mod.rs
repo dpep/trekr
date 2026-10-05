@@ -1197,9 +1197,6 @@ impl Call {
     }
 }
 
-/// A nesting stack round-trips through one TEXT column: scope paths joined by
-/// `;`, innermost first, empty string at top level. Ruby constant paths are
-/// `[A-Za-z0-9_:]` only, so the separator can never appear inside one.
 /// A module trekr makes rather than one the code declares: a shared group's
 /// (DEC-092), an `on_load` block's (DEC-104). Whatever makes another adds it
 /// here, so nothing that asks what the code wrote lists it.
@@ -1207,6 +1204,9 @@ pub(crate) fn synthetic(fqn: &str) -> bool {
     rspec::is_shared_module(fqn) || runtime::is_hook_module(fqn)
 }
 
+/// A nesting stack round-trips through one TEXT column: scope paths joined by
+/// `;`, innermost first, empty string at top level. Ruby constant paths are
+/// `[A-Za-z0-9_:]` only, so the separator can never appear inside one.
 pub(crate) fn join_nesting(nesting: &[String]) -> String {
     nesting.join(";")
 }
