@@ -18,17 +18,13 @@ const REGENERATE: &str = "UPDATE_GOLDEN=1 cargo test --lib extraction_matches_it
 
 /// Which extractor reads a file, by the name the golden records it under.
 fn kind(path: &str) -> Option<&'static str> {
-    if crate::scan::is_structure_sql(path) {
-        Some("sql")
-    } else if crate::scan::is_erb(path) {
-        Some("erb")
-    } else if path.ends_with(".rabl") {
-        Some("rabl")
-    } else if crate::scan::is_ruby(path) {
-        Some("ruby")
-    } else {
-        None
-    }
+    use crate::scan::Reader;
+    crate::scan::is_indexed(path).then(|| match Reader::of(path) {
+        Reader::Ruby => "ruby",
+        Reader::Erb => "erb",
+        Reader::Rabl => "rabl",
+        Reader::StructureSql => "sql",
+    })
 }
 
 fn sources(dir: &Path, found: &mut Vec<PathBuf>) {
