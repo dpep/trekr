@@ -1,0 +1,5 @@
+# A nested group's only examples come from a module it includes, whose
+# `self.included` writes them with `class_eval`; the outer group's `def`
+# runs for those examples and reads the nested `let` (#10). A plain module
+# included writes none, and its group's `let` is still unread.
+dead spec/widget_spec.rb @18=none @23=unreferenced

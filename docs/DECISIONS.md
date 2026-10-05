@@ -12080,6 +12080,25 @@ place it.
 
 **Extraction changed**: store v63. Testbed 604.
 
+## DEC-498 — A module whose `included` hook writes into a group makes it run
+
+**Decided.** A group runs examples (DEC-490) also when its body `include`s,
+`extend`s or `prepend`s a module with its own `self.included`,
+`self.extended` or `self.prepended`. The hook runs code on the group that
+trekr does not read — `group.class_eval { it … }` writes examples — which
+is what a macro trekr does not read already counts as. A plain module (no
+hook of its own) still runs none.
+
+**Why.** graphql-ruby's `nonblocking_dataloader_spec.rb` overrides
+`let(:scheduler_class)` in a nested group whose only examples come from
+`include NonblockingDataloaderAssertions`, whose `self.included` writes them
+with `class_eval`; the outer group's `def with_scheduler` reads
+`scheduler_class` for those examples (#10). The nested group looked like it
+ran nothing, so no read reached its `let`. The issue's proposed rule — any
+read of the name in an ancestor group's hooks — is what DEC-490 already
+does for a group that runs examples; the gap was seeing that this one does.
+Testbed 605.
+
 ## DEC-500 — The first query in a checkout indexes it
 
 **Decided.** A query — `--def`, the bare position, a card, `--refs`,

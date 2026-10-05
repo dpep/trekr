@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A group whose examples come from a mixin's `included` hook runs them**
+  (#10). A nested group with `let(:scheduler_class)` and `include
+  Assertions`, whose `self.included` writes the examples with `class_eval`,
+  was seen as running none, so an outer group's hook or `def` reading
+  `scheduler_class` did not count and the `let` was listed unreferenced.
 - **A call through a local holding `self` is a call on `self`** (#10).
   `this = self`, then `this.part_class` inside `Class.new do … end`, now
   resolves as an implicit call where `this` was assigned: `--def` lands on

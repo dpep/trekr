@@ -721,7 +721,8 @@ struct Scan<'f> {
     path: &'f str,
     facts: &'f Facts,
     /// The groups whose examples run: each writes one, includes a shared
-    /// group that may, or calls a macro trekr does not read.
+    /// group that may, calls a macro trekr does not read, or mixes in a
+    /// module whose `included` hook runs code on it.
     running: Vec<&'f [String]>,
     /// `it_behaves_like` with no block: a group of its own, nested where it
     /// is written, with the shared group's module included.
@@ -742,7 +743,8 @@ impl<'f> Scan<'f> {
                 || (call.group_body
                     && !DSL.contains(&name)
                     && !name.starts_with("attr_")
-                    && tree.lookup(rspec::EXAMPLE_GROUP, true, name).is_none());
+                    && tree.lookup(rspec::EXAMPLE_GROUP, true, name).is_none())
+                || (call.group_body && mixes_in_a_hook(tree, path, facts, call));
             if adds && !running.contains(&call.nesting.as_slice()) {
                 running.push(&call.nesting);
             }
@@ -1741,6 +1743,27 @@ fn computed_sends(facts: &Facts, wanted: impl Fn(&Call) -> bool) -> Vec<(u32, St
         }
     }
     out
+}
+
+/// `include M` (or `extend`, `prepend`) of a module with its own hook for
+/// it: `def self.included(group)` may write examples into the group, as a
+/// macro trekr does not read may (DEC-498).
+fn mixes_in_a_hook(tree: &Tree, path: &str, facts: &Facts, call: &Call) -> bool {
+    let hook = match call.name.as_str() {
+        "include" => "included",
+        "extend" => "extended",
+        "prepend" => "prepended",
+        _ => return false,
+    };
+    facts
+        .const_refs
+        .iter()
+        .filter(|r| r.pos.line == call.pos.line && r.nesting == call.nesting)
+        .filter_map(|r| tree.resolve_at(&r.name, &r.nesting, path).fqn)
+        .any(|module| {
+            tree.lookup(&module, true, hook)
+                .is_some_and(|found| found.owner == module)
+        })
 }
 
 /// The modules a group in the member's reach includes in its body, as
