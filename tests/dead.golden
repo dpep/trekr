@@ -101,3 +101,5 @@
 621-a-module-trekr-makes-is-not-dead f114ab9890d1eae9
 623-a-template-whose-self-is-unnamed-keeps-no-method-alive 7621a96d63cbf7a7
 626-an-initialize-whose-super-lands-says-so 3a1a6f5458a53be7
+640-a-struct-class-is-built-by-its-own-new 585872f09e536838
+641-a-components-template-runs-on-the-component e3f9a7465e35f419
