@@ -325,9 +325,9 @@ impl ForeignSends {
     }
 }
 
-/// The first line of a file that sends `self` a computed name: `send(x`,
-/// `public_send(x`, `__send__(x`, with no receiver or `self.`, whose first
-/// argument is no literal.
+/// The first line of a file that sends `self` a computed name — `send(x`,
+/// `try(x`, any of `core::ruby::SENDS` — with no receiver or `self.`, whose
+/// first argument is no literal.
 fn first_computed_send(path: &str) -> Option<u32> {
     let text = crate::scan::read_text(path).ok()?;
     text.lines().enumerate().find_map(|(n, line)| {
@@ -335,10 +335,11 @@ fn first_computed_send(path: &str) -> Option<u32> {
         if code.starts_with('#') {
             return None;
         }
-        ["public_send(", "__send__(", "send("]
+        crate::core::ruby::SENDS
             .iter()
+            .map(|send| format!("{send}("))
             .find_map(|call| {
-                let at = line.find(call)?;
+                let at = line.find(&call)?;
                 let before = line[..at].trim_end_matches("self.");
                 let on_self = before
                     .chars()
@@ -701,6 +702,48 @@ fn symbols_in(code: &str, bare: bool) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_computed_send_to_self_is_found_by_any_send() {
+        let dir = std::env::temp_dir().join(format!("trekr-sends-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for (source, line) in [
+            (
+                "def a
+  try(name)
+end
+",
+                Some(2),
+            ),
+            (
+                "def a
+  self.public_send(@kind)
+end
+",
+                Some(2),
+            ),
+            (
+                "record.try(name)
+send(:literal)
+",
+                None,
+            ),
+            (
+                "entry(name)
+",
+                None,
+            ),
+        ] {
+            let path = dir.join("base.rb");
+            std::fs::write(&path, source).unwrap();
+            assert_eq!(
+                first_computed_send(&path.to_string_lossy()),
+                line,
+                "{source}"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn a_controllers_resource_is_its_last_word_singularized() {

@@ -45,6 +45,10 @@
   subclasses are listed — and `test_refs` could count 1 or 2. The most
   specific listing is cited now, and references are weighed in a fixed
   order.
+- **`--dead` reads `try` as a send.** A computed name handed to
+  `Const.try(x)` or `try!(x)`, or to `try(x)` on `self` in a gem's base
+  class, now caveats the methods it may reach, as `send` and
+  `public_send` already did.
 - **`--dead` names `public_send` once.** A file that calls only
   `public_send` was cited as "send, public_send", because the one contains
   the other; it now says `public_send`. Only the caveat's wording moves: the

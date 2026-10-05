@@ -9,6 +9,7 @@
 //! Evidence of a way in, never of a caller, so a row it touches keeps its
 //! tier and is graded `lower`.
 
+use crate::core::ruby::SENDS;
 use rayon::prelude::*;
 use std::path::Path;
 use std::process::Command;
@@ -29,9 +30,6 @@ pub(super) struct Built {
 
 /// The calls that list a module's methods, for a caller to call by name.
 const LISTS: [&str; 2] = ["public_instance_methods", "instance_methods"];
-
-/// The calls that send the name they are handed.
-const SENDS: [&str; 3] = ["public_send", "__send__", "send"];
 
 /// The checkout's text files `--dead` reads beside its index, each read
 /// once for every reader: Ruby, rake, gemspec and rackup files, templates,
@@ -93,7 +91,7 @@ impl Built {
             .filter(|(path, _)| path.ends_with(".rb") || path.ends_with(".rake"))
             .filter_map(|(path, text)| {
                 if !text.contains("#{")
-                    && !SENDS.iter().any(|s| text.contains(s))
+                    && !SENDS.iter().any(|s| text.contains(&format!(".{s}(")))
                     && !text.contains("instance_methods")
                 {
                     return None;
@@ -247,8 +245,9 @@ fn read_shape(body: &str) -> (Option<String>, usize) {
     (None, body.len())
 }
 
-/// The constants a line sends a computed name to: `Const.public_send(type`
-/// and the like, whose first argument is no literal.
+/// The constants a line sends a computed name to: `Const.public_send(type`,
+/// `Const.try(type` and the like (`core::ruby::SENDS`), whose first
+/// argument is no literal.
 fn computed_sends(line: &str) -> Vec<String> {
     let mut found = Vec::new();
     for send in SENDS {
@@ -322,6 +321,8 @@ mod tests {
         );
         assert!(computed_sends("Notifier.public_send(:welcome, user)").is_empty());
         assert!(computed_sends("record.send(name)").is_empty());
+        assert_eq!(computed_sends("Notifier.try(kind, user)"), ["Notifier"]);
+        assert_eq!(computed_sends("Notifier.try!(kind)"), ["Notifier"]);
     }
 
     #[test]
