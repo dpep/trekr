@@ -91,10 +91,13 @@
   `manager` and `highest`, and a `fallback` boolean. A checkout whose
   lockfile names its Ruby moves to it on the next `--index` — the highest
   installed of that minor when the lockfile's exact patch is not — as does
-  one whose kept Ruby falls outside a requirement it now writes. When no
-  installed Ruby meets the requirements, `--index` and `--status` say so,
-  and `--json` carries them as `ruby_unmet`; a version manager's choice that
-  is not installed is listed among what was passed over.
+  one whose kept Ruby falls outside a requirement it now writes. When the
+  Ruby it runs on is outside the requirements — none installed meets them —
+  `--index` and `--status` say so, and `--json` carries them as
+  `ruby_unmet`; a kept Ruby that meets them is not reported, whatever the
+  environment finds. A version manager's choice that is not installed is
+  listed among what was passed over, and a version installed twice is
+  listed once.
 - **More `.ruby-version` files name the Ruby they mean.** rvm's
   `ruby-3.3.11@gemset`, and a Ruby an rbenv `versions/` entry links to
   elsewhere, were reported "not installed"; a `.ruby-version` of `system`,

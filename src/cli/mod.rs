@@ -1882,7 +1882,7 @@ fn plan_gems(
         ruby_unmet: stdlib
             .as_ref()
             .filter(|stdlib| stdlib.how != crate::gems::stdlib::How::Named)
-            .and_then(|_| crate::gems::stdlib::unmet(repo)),
+            .and_then(|stdlib| crate::gems::stdlib::unmet(repo, &stdlib.root)),
         about: stdlib.as_ref().map(crate::gems::stdlib::Stdlib::about),
         ..GemReport::default()
     };
@@ -2521,13 +2521,14 @@ fn cmd_index(
         && with_gems
         && let Some(requirements) = &gems.ruby_unmet
     {
-        println!(
-            "ruby — no installed Ruby meets {requirements}; {}",
-            match &gems.stdlib {
-                Some(stdlib) => format!("running on {} instead", stdlib.ruby),
-                None => "no other Ruby was chosen".to_string(),
-            }
-        );
+        // The line above, when there is one, already said what it runs on.
+        match (&gems.stdlib, &gems.ruby_not_found) {
+            (Some(stdlib), None) => println!(
+                "ruby — no installed Ruby meets {requirements}; running on {} instead",
+                stdlib.ruby
+            ),
+            _ => println!("ruby — no installed Ruby meets {requirements}"),
+        }
     }
     if out == Output::Text && with_gems && gems.stdlib.is_none() {
         // Core is its Ruby's: with none, nothing describes it (DEC-240).
@@ -2682,15 +2683,17 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
                 row["ruby_not_found"] = version.into();
             }
             let ruby = status_ruby(&checkout.repo, stdlib.as_deref());
-            if ruby
-                .as_ref()
-                .is_some_and(|ruby| ruby.fallback != Some(false))
-                && let Some(requirements) = crate::gems::stdlib::unmet(Path::new(&checkout.repo))
-            {
-                row["ruby_unmet"] = requirements.into();
-            }
+            let unmet = match (&ruby, stdlib.as_deref()) {
+                (Some(ruby), Some(root)) if ruby.fallback != Some(false) => {
+                    crate::gems::stdlib::unmet(Path::new(&checkout.repo), Path::new(root))
+                }
+                _ => None,
+            };
             if let Some(ruby) = &ruby {
-                rubies.insert(checkout.repo.clone(), ruby_said(ruby));
+                rubies.insert(checkout.repo.clone(), ruby_said(ruby, unmet.is_some()));
+            }
+            if let Some(requirements) = unmet {
+                row["ruby_unmet"] = requirements.into();
             }
             row["ruby"] = serde_json::to_value(ruby)?;
             if let Some(stdlib) = stdlib {
@@ -2882,14 +2885,18 @@ fn status_ruby(repo: &str, stdlib: Option<&str>) -> Option<crate::gems::stdlib::
 }
 
 /// `--status`' line for a checkout's Ruby: `Ruby 3.4.10, which the checkout
-/// names`, or `Ruby 4.0.6 (fallback: …)`.
-fn ruby_said(ruby: &crate::gems::stdlib::About) -> String {
+/// names`, or `Ruby 4.0.6 (fallback: …)`. `unmet`: it is outside the
+/// checkout's requirements, which a line of its own says.
+fn ruby_said(ruby: &crate::gems::stdlib::About, unmet: bool) -> String {
     let name = match &ruby.version {
         Some(version) => format!("Ruby {version}"),
         None => format!("the Ruby at {}", paths::pretty(&ruby.root)),
     };
     match ruby.how {
         Some(crate::gems::stdlib::How::Named) => format!("{name}, which the checkout names"),
+        Some(crate::gems::stdlib::How::Highest) if unmet => {
+            format!("{name} (fallback: the highest installed Ruby)")
+        }
         Some(how) => format!("{name} (fallback: {})", how.said()),
         None => format!("{name}, which a reindex from here would replace"),
     }

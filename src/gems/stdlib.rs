@@ -588,19 +588,13 @@ pub(crate) fn for_checkout(repo: &Path, last: Option<&Path>) -> Option<Stdlib> {
     ))
 }
 
-/// The checkout's Ruby requirements in words, when no Ruby the fallback
-/// chain finds meets them: the Ruby run on is then outside them, and
-/// `--index` and `--status` say so (DEC-610).
-pub(crate) fn unmet(repo: &Path) -> Option<String> {
+/// The checkout's Ruby requirements in words, when the Ruby it runs on,
+/// `chosen`, is outside them, and `--index` and `--status` say so (DEC-610).
+/// The fallback takes one that meets them whenever it finds one, so a chosen
+/// Ruby outside them means none was found.
+pub(crate) fn unmet(repo: &Path, chosen: &Path) -> Option<String> {
     let requirements = super::declared::ruby_requirements(repo);
-    if requirements.is_empty() {
-        return None;
-    }
-    let candidates = candidates(repo);
-    let mut installed = candidates.iter().filter_map(|c| c.root.as_deref());
-    installed
-        .all(|root| !allowed(root, &requirements))
-        .then(|| requirements_said(&requirements))
+    (!allowed(chosen, &requirements)).then(|| requirements_said(&requirements))
 }
 
 /// `widget.gemspec's >= 3.3 and Gemfile's ~> 3.4`.
@@ -644,32 +638,39 @@ fn fallback(repo: &Path, requirements: &[(String, String)]) -> Option<Stdlib> {
     // What came before it and was not taken, so a surprise can be traced;
     // two installs of one version read alike, and are said once.
     let mut passed: Vec<String> = Vec::new();
+    let mut named: Vec<String> = Vec::new();
     for candidate in candidates
         .iter()
         .take_while(|candidate| !std::ptr::eq(*candidate, chosen))
     {
         let said = match &candidate.root {
             None => format!("{}: not installed", candidate.from),
-            Some(other) => format!(
-                "{} from {}: {}",
-                ruby_name(other),
-                candidate.from,
-                match fits(other) {
-                    false => "outside the checkout's requirement",
-                    true => "it carries no rbs gem",
+            Some(other) => {
+                let name = ruby_name(other);
+                if named.contains(&name) {
+                    continue;
                 }
-            ),
+                named.push(name.clone());
+                format!(
+                    "{name} from {}: {}",
+                    candidate.from,
+                    match fits(other) {
+                        false => "outside the checkout's requirement",
+                        true => "it carries no rbs gem",
+                    }
+                )
+            }
         };
         if !passed.contains(&said) {
             passed.push(said);
         }
     }
     let from = match (chosen.how, requirements) {
-        (How::Highest, []) => "the highest installed Ruby".to_string(),
-        (How::Highest, _) if fits(root) => format!(
+        (How::Highest, [_, ..]) if fits(root) => format!(
             "the highest installed Ruby meeting {}",
             requirements_said(requirements)
         ),
+        (How::Highest, _) => "the highest installed Ruby".to_string(),
         _ => chosen.from.clone(),
     };
     let mut ruby = format!("{} (fallback: {from}", ruby_name(root));
@@ -760,7 +761,7 @@ fn candidates(repo: &Path) -> Vec<Candidate> {
         return found;
     }
     for (_, root) in installed {
-        offer(Some(root), How::Highest, "those installed".to_string());
+        offer(Some(root), How::Highest, "the Rubies installed".to_string());
     }
     found
 }

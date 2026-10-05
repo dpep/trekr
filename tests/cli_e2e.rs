@@ -5360,6 +5360,57 @@ fn the_checkouts_lockfile_and_requirement_move_a_kept_ruby() {
     }
 }
 
+/// A Ruby kept from the last index that meets the checkout's requirement is
+/// not reported unmet in an environment that finds no Ruby, and two installs
+/// of one version passed over are said once (DEC-610).
+#[test]
+fn a_kept_ruby_meeting_the_requirement_is_not_unmet() {
+    let (dir, db) = scratch("ruby-kept-met");
+    fs::remove_file(dir.join(".ruby-version")).unwrap();
+    repo(&dir);
+    fs::write(
+        dir.join("widget.gemspec"),
+        "Gem::Specification.new do |s|\n  s.required_ruby_version = \">= 9.7\"\nend\n",
+    )
+    .unwrap();
+    let (home, _) = scratch("ruby-kept-met-home");
+    fs::remove_file(home.join(".ruby-version")).unwrap();
+    let high = fake_ruby_at(&home.join(".rbenv/versions/9.7.1"), "9.7.1", &[], &[]);
+    // One version twice, each reached before the highest: chruby's current
+    // Ruby, and the one `$GEM_HOME` is in.
+    fake_ruby_at(&home.join(".rbenv/versions/9.6.1"), "9.6.1", &[], &[]);
+    fake_ruby_at(&home.join(".rubies/9.6.1"), "9.6.1", &[], &[]);
+    let rubies = home.join(".rubies/9.6.1");
+    let gem_home = home.join(".rbenv/versions/9.6.1/lib/ruby/gems/9.6.0");
+    let rich = [
+        ("HOME", home.to_str().unwrap()),
+        ("RUBY_ROOT", rubies.to_str().unwrap()),
+        ("GEM_HOME", gem_home.to_str().unwrap()),
+    ];
+    let out = json(&trekr_env(&db, &dir, &["--index", "--json"], &rich));
+    assert_eq!(out["ruby"]["root"], high.as_str(), "{out}");
+    let said = out["gems"]["stdlib"]["ruby"].as_str().unwrap();
+    assert_eq!(said.matches("Ruby 9.6.1").count(), 1, "{said}");
+    assert!(!said.contains("those installed"), "{said}");
+
+    // An editor launched from the Dock: no Rubies found, the kept one meets.
+    let (poor, _) = scratch("ruby-kept-met-poor");
+    let poor = [("HOME", poor.to_str().unwrap())];
+    let out = json(&trekr_env(&db, &dir, &["--index", "--json"], &poor));
+    assert_eq!(out["ruby"]["root"], high.as_str(), "{out}");
+    assert!(out["gems"].get("ruby_unmet").is_none(), "{out}");
+    let status = json(&trekr_env(&db, &dir, &["--status", "--json"], &poor));
+    assert!(
+        status["checkouts"][0].get("ruby_unmet").is_none(),
+        "{status}"
+    );
+    let text = stdout(&trekr_env(&db, &dir, &["--status"], &poor));
+    assert!(!text.contains("no installed Ruby meets"), "{text}");
+    for dir in [&dir, &home] {
+        let _ = fs::remove_dir_all(dir);
+    }
+}
+
 /// A fallback that could not take what the checkout or the environment asked
 /// for says so: no installed Ruby meets the requirement, a manager's choice
 /// that is not installed, a version file whose first word is no version
@@ -5410,6 +5461,17 @@ fn a_ruby_fallback_says_what_it_could_not_take() {
         status["checkouts"][0]["ruby_unmet"], "widget.gemspec's >= 9.9",
         "{status}"
     );
+    assert!(!text.contains("those installed"), "{text}");
+    // `--status` does not call it what the checkout allows, above the line
+    // saying nothing installed meets it.
+    let said = stdout(&trekr_env(
+        &db.with_extension("1.db"),
+        &dir,
+        &["--status"],
+        &env,
+    ));
+    assert!(said.contains("no installed Ruby meets"), "{said}");
+    assert!(!said.contains("the checkout allows"), "{said}");
     fs::remove_file(dir.join("widget.gemspec")).unwrap();
 
     // The manager names one that is not installed: passed over, once.
