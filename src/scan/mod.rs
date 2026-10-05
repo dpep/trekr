@@ -475,26 +475,34 @@ impl Probe {
 /// Every Ruby file in the working tree, keyed by the blob its *current* bytes
 /// hash to — not what HEAD says. Uncommitted edits are first-class.
 pub(crate) fn scan(root: &Path) -> Result<Files> {
-    let mut files = parse_ls_files(&git(root, &["ls-files", "-s", "-z"])?);
-
     // Tracked files whose working-tree bytes differ from the index, plus files
     // git has never seen. Both need hashing; nothing else does. One `status`
     // answers both, and unlike `ls-files -o` it uses git's untracked cache,
     // which is most of a no-op index where it is enabled (DEC-043).
     // `--no-optional-locks` keeps it from rewriting `.git/index`, which is
-    // what `git_fingerprint` watches.
-    let (mut dirty, untracked_dirs) = parse_status(&git(
-        root,
-        &[
-            "--no-optional-locks",
-            "status",
-            "--porcelain",
-            "-z",
-            "--untracked-files=normal",
-            "--no-renames",
-            "--ignore-submodules=all",
-        ],
-    )?);
+    // what `git_fingerprint` watches. Both read the index alone, so they run
+    // at once: a query waits on this (DEC-035).
+    let (listed, status) = std::thread::scope(|scope| {
+        let listed = scope.spawn(|| git(root, &["ls-files", "-s", "-z"]));
+        let status = git(
+            root,
+            &[
+                "--no-optional-locks",
+                "status",
+                "--porcelain",
+                "-z",
+                "--untracked-files=normal",
+                "--no-renames",
+                "--ignore-submodules=all",
+            ],
+        );
+        let listed = listed
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        (listed, status)
+    });
+    let mut files = parse_ls_files(&listed?);
+    let (mut dirty, untracked_dirs) = parse_status(&status?);
     // `normal` names a wholly untracked directory rather than its files; list
     // those alone, which walks only them.
     if !untracked_dirs.is_empty() {

@@ -1856,6 +1856,9 @@ connection, and the second tree — declarations 80, ancestry 26, assembly
   second connection — two threads at once — opened the store without it
   and read the indexed map (a gap since the overlay; a unit test failed
   `(1, 0)` against `(1, 1)` without the fix).
+- **`ls-files -s` and `status` run at once**: both only read the index.
+  The scan alone, alternating, 25 each, at load ~40: discourse 171 → 103 ms
+  (p25), mastodon 45 → 29.
 
 **Measured**, release, b45e1a8 / the re-hunt overlay (6282913) / this,
 alternating, medians of 7 (3 for `--dead`), at load 12–19 on 8 cores, five
