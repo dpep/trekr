@@ -364,7 +364,7 @@ fn serve(
                     serde_json::json!({
                         "step": step,
                         "ok": built,
-                        "ms": started.elapsed().as_millis() as u64,
+                        "ms": ms(started.elapsed()),
                     }),
                 );
             }
@@ -622,7 +622,7 @@ fn swap(launched: &mut reload::Launched, stamp: reload::Stamp, now: Current, log
             "unread": handoff.unread.len(),
             // Asking the new build, and writing the handoff: what the swap
             // costs before the exec.
-            "ms": started.elapsed().as_millis() as u64,
+            "ms": ms(started.elapsed()),
         }),
     );
     log.count(
@@ -842,8 +842,7 @@ fn answer(
             "op": method,
             "file": asked.0,
             "line": asked.1,
-            // Hundredths of a millisecond: a timer is not evidence for finer.
-            "ms": round2(elapsed.as_secs_f64() * 1000.0),
+            "ms": ms(elapsed),
             "status": status,
             "answered": answered,
             "error": result.as_ref().err().map(|e| e.to_string()),
@@ -1076,8 +1075,10 @@ fn shape(value: &serde_json::Value) -> Option<usize> {
     }
 }
 
-fn round2(ms: f64) -> f64 {
-    (ms * 100.0).round() / 100.0
+/// A log event's `ms`, every event alike: milliseconds to the hundredth. A
+/// request answers in under one, and a timer is not evidence for finer.
+pub(super) fn ms(elapsed: Duration) -> f64 {
+    (elapsed.as_secs_f64() * 100_000.0).round() / 100.0
 }
 
 /// Deserialize a request's params, run the handler, serialize the answer.

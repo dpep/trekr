@@ -332,7 +332,7 @@ impl Indexer {
                     "root": job.root.to_string_lossy(),
                     "ok": outcome.ok,
                     "outwaited": outcome.outwaited,
-                    "ms": job.started.elapsed().as_millis() as u64,
+                    "ms": super::ms(job.started.elapsed()),
                 }),
             );
             log.count(
