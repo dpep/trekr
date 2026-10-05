@@ -44,6 +44,10 @@
   subclasses are listed — and `test_refs` could count 1 or 2. The most
   specific listing is cited now, and references are weighed in a fixed
   order.
+- **`--dead` names `public_send` once.** A file that calls only
+  `public_send` was cited as "send, public_send", because the one contains
+  the other; it now says `public_send`. Only the caveat's wording moves: the
+  same rows are graded lower.
 
 ## 0.8.7 — 2026-10-05
 

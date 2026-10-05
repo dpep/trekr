@@ -1361,22 +1361,25 @@ fn ruby_files_under(paths: &[PathBuf]) -> Vec<PathBuf> {
 }
 
 /// Shapes that make "no references found" a weaker statement, named so the
-/// answer can say which one it saw rather than hedging in general.
+/// answer can say which one it saw rather than hedging in general. Each is
+/// named once: a `public_send(` is not also a `send(`.
 fn dynamic_markers(source: &[u8]) -> String {
     let text = String::from_utf8_lossy(source);
-    let mut seen: Vec<&str> = Vec::new();
-    for marker in [
-        "send(",
-        "public_send(",
-        "method_missing",
-        "define_method",
-        "const_get",
-    ] {
-        if text.contains(marker) {
-            seen.push(marker.trim_end_matches('('));
-        }
-    }
-    seen.join(", ")
+    let plain_send = text
+        .match_indices("send(")
+        .any(|(at, _)| !text[..at].ends_with("public_"));
+    let seen = [
+        ("send", plain_send),
+        ("public_send", text.contains("public_send(")),
+        ("method_missing", text.contains("method_missing")),
+        ("define_method", text.contains("define_method")),
+        ("const_get", text.contains("const_get")),
+    ];
+    seen.iter()
+        .filter(|(_, found)| *found)
+        .map(|(marker, _)| *marker)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Takes the sites that name no class they would run in out of a method's
@@ -1440,4 +1443,25 @@ fn unplaced_caveat(
         true => format!("constructed where its class is not known: {parts}"),
         false => parts,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_dispatch_marker_is_named_once() {
+        for (source, said) in [
+            ("x.public_send(name)", "public_send"),
+            ("send(name)", "send"),
+            ("send(a); public_send(b)", "send, public_send"),
+            ("x.send_query(sql)", ""),
+            (
+                "define_method(:a) { const_get(n) }",
+                "define_method, const_get",
+            ),
+        ] {
+            assert_eq!(dynamic_markers(source.as_bytes()), said, "{source}");
+        }
+    }
 }

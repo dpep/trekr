@@ -13879,8 +13879,8 @@ true positives alone.
 
 **Rejected, measured: retiring `dynamic_markers`.** The grep lowers every
 method row in a file that spells `send(`, `public_send(`,
-`method_missing`, `define_method` or `const_get` anywhere. It is crude —
-`public_send(` always reads as "send, public_send", a literal
+`method_missing`, `define_method` or `const_get` anywhere. It is crude — a
+literal
 `send(:x)` (DEC-093) and a send to another object trip it — and the pass-3
 review proposed deleting it in favour of the fact-based markers (DEC-130,
 DEC-160/161, DEC-261, DEC-363, DEC-132). On `--dead .` at 0.8.7:
@@ -13914,3 +13914,8 @@ argument, implicit or `self` receiver) and lowers only the methods of its
 file's class — then the grep has nothing left to say, and goes. That is a
 new source under the rule above: it lands with a held-out base-rate
 comparison, not with these examples.
+
+**Addendum.** The grep names each marker once: a `public_send(` no longer
+also reads as `send`. Wording only — on mastodon, discourse, graphql-ruby
+and rails, 177, 1512, 196 and 2223 rows' caveats changed and no row's tier
+or grade did.
