@@ -11,3 +11,5 @@ def app/views/widgets/_row.html.erb:1:5 status=resolved via=render site=app/view
 def app/views/widgets/_row.html.erb:1:12 status=resolved owner=Widget
 def app/views/widgets/_widget.html.erb:1:12 status=resolved owner=Widget
 refs Widget#name confirmed=2
+# In the editor too, a `render`'s `@widgets` opens the partial, not the ivar.
+definition app/views/widgets/show.html.erb:3:12 app/views/widgets/_widget.html.erb:1

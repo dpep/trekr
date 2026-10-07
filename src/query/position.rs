@@ -230,6 +230,19 @@ pub(crate) fn at_facts(facts: &crate::core::Facts, line: u32, col: u32) -> Optio
         .map(Under::Call)
 }
 
+/// The template a `render` or `extends` names at a position (DEC-524). A
+/// definition asked there opens it, before the variable it may be written as.
+pub(crate) fn template_at(
+    facts: &crate::core::Facts,
+    line: u32,
+    col: u32,
+) -> Option<&crate::core::TemplateRef> {
+    facts
+        .templates
+        .iter()
+        .find(|t| covers(t.pos, t.len as usize, line, col))
+}
+
 /// May a variable found at a position answer for it? Only where no name is
 /// written exactly there: a variable is found with the cursor just past its
 /// end, and that must not take `x[0]`'s `[` from the call that starts there.

@@ -166,7 +166,9 @@ fn locate(
         crate::usage::flag("require");
         return Ok(required_definition(session.definition_links, required));
     }
-    if let Some(under) = variables::under(session, &uri, position) {
+    if !template_here(session, &uri, position)
+        && let Some(under) = variables::under(session, &uri, position)
+    {
         let locations = variables::definition(session, &under);
         if locations.is_empty() {
             super::miss::why("a variable with no write in reach");
@@ -184,6 +186,16 @@ fn locate(
         .filter_map(|(p, line, col)| location(&located.root, &p, line, col, name_len, None))
         .collect();
     Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)))
+}
+
+/// Does a `render` or `extends` name a template at the position? Its
+/// definition is the template, before the variable it may be written as.
+fn template_here(session: &mut Session, uri: &Url, position: lsp_types::Position) -> bool {
+    let Some(document) = file_of(uri).and_then(|file| session.document(&file)) else {
+        return false;
+    };
+    let pos = to_pos(&document.text, position);
+    position::template_at(document.facts(), pos.line, pos.col).is_some()
 }
 
 /// Say once per checkout, the first time a definition, references or
@@ -446,11 +458,7 @@ fn resolve_at(
     };
     // A template a `render` or `extends` names: its files, at their tops
     // (DEC-524).
-    if let Some(template) = facts
-        .templates
-        .iter()
-        .find(|t| t.pos.line == pos.line && pos.col >= t.pos.col && pos.col < t.pos.col + t.len)
-    {
+    if let Some(template) = position::template_at(&facts, pos.line, pos.col) {
         let class = match &template.names {
             crate::core::Named::Object { value, .. } => {
                 let tree = session.tree(&located.root)?;

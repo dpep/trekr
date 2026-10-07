@@ -2012,6 +2012,11 @@ Both fronts ask it; the editor's variable lookup asks it for every request,
 so hover and Find References read that spot as Go to Definition does.
 Testbed 123.
 
+The same holds for a template a `render` names (DEC-524): `render @widgets`
+opens the partial in both fronts, before the ivar it is written as —
+`query::position::template_at`. The editor had asked its variable first and
+answered where the controller sets `@widgets`. Testbed 523.
+
 ### Item recorded, not built: the bare-argument grammar
 
 `trekr <input>` dispatching on shape — `FILE:LINE:COL` → `--def`,

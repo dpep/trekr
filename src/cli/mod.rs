@@ -4969,10 +4969,7 @@ fn cmd_def(
         index_free();
     };
     // A template a `render` or `extends` names: the file it reaches (DEC-524).
-    if let Some(template) = facts
-        .templates
-        .iter()
-        .find(|t| t.pos.line == spec.line && spec.col >= t.pos.col && spec.col < t.pos.col + t.len)
+    if let Some(template) = crate::query::position::template_at(&facts, spec.line, spec.col)
         && let Some((root, store)) = checkout.as_mut().map(|(root, store)| (&*root, store))
     {
         let relative = std::fs::canonicalize(&spec.path)

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **Go to Definition on `render @widgets` opens the partial.** The editor
+  answered where the controller sets `@widgets`, while `--def` at the same
+  position opened `_widget.html.erb`. A template a `render` names is now
+  the editor's answer too, ahead of the variable it is written as.
+
 - **Go to Definition on a call written right after a variable answers the
   call.** With the cursor between `list` and `[` in `list[0]`, the editor
   answered the variable `list`, while `--def` at the same column answered
