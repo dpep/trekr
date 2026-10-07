@@ -3,6 +3,7 @@
 
 export const FEATURES = [
   "definition",
+  "declaration",
   "references",
   "hover",
   "documentSymbol",
@@ -20,6 +21,7 @@ export type Feature = (typeof FEATURES)[number];
 /** The middleware hooks that carry each feature. A disabled feature's hooks answer nothing. */
 const HOOKS: Record<Feature, string[]> = {
   definition: ["provideDefinition"],
+  declaration: ["provideDeclaration"],
   references: ["provideReferences"],
   hover: ["provideHover"],
   documentSymbol: ["provideDocumentSymbols"],

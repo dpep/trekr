@@ -97,11 +97,11 @@ that is installed but never chosen answers nothing.
 
 ## What it answers
 
-goToDefinition, goToDeclaration (the `.rbi` signature, else the
-definition), findReferences, documentSymbol, workspaceSymbol, hover,
+goToDefinition, findReferences, documentSymbol, workspaceSymbol, hover,
 goToImplementation, call hierarchy, documentHighlight, `require` strings as
-document links, and Prism syntax diagnostics — plus completion, for editors
-(DEC-040). Definition, references, hover and highlight work on locals,
+document links, and Prism syntax diagnostics — plus, for editors, completion
+(DEC-040) and Go to Declaration (the `.rbi` signature, else the definition),
+which Claude Code's LSP tool has no operation for. Definition, references, hover and highlight work on locals,
 parameters, `@ivars` and `@@cvars` as well as methods and constants.
 
 Not rename, formatting, or semantic tokens.

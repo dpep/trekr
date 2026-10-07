@@ -111,7 +111,9 @@ declaration, and it is what the LSP's Go to Declaration answers (Go to
 Definition lists it only when it is all there is). A constant's `.rbi`
 reopenings stay in its `definition`, listed after its real ones; a residue's
 candidates list a signature of another candidate's method after every
-distinct candidate.
+distinct candidate. A stub that is itself the answer — a gem's method only
+its RBI describes — is its own signature, so `signatures` then repeats that
+`definition` site: merge the two by location, not by concatenation.
 
 ## `--def`
 

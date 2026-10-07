@@ -54,7 +54,7 @@ worktree of the repo and kept current as you save.
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `trekr.path` | `"trekr"` | The trekr binary. Set an absolute path if VS Code's `PATH` lacks it (e.g. `/opt/homebrew/bin/trekr`). |
-| `trekr.features` | all | Which features are active: `definition`, `references`, `hover`, `documentSymbol`, `workspaceSymbol`, `implementation`, `callHierarchy`, `completion`, `diagnostics`, `documentLink`, `documentHighlight`. Remove one to leave it to another extension. Takes effect on restart. |
+| `trekr.features` | all | Which features are active: `definition`, `declaration`, `references`, `hover`, `documentSymbol`, `workspaceSymbol`, `implementation`, `callHierarchy`, `completion`, `diagnostics`, `documentLink`, `documentHighlight`. Remove one to leave it to another extension. Takes effect on restart. |
 | `trekr.index` | `true` | Index an unindexed checkout in the background. Off: answers come from whatever `trekr --index` last recorded. |
 | `trekr.unresolved` | `"confident"` | What Go to Definition shows for a call trekr could not resolve: `confident` its guesses when the first is a fair one, `peek` every guess, `best` the first, `none` nothing. Takes effect on restart. |
 | `trekr.referenceLimit` | `1000` | Most locations Find All References returns, confirmed callers first; trekr says when it cut the list and names the `trekr --refs` command for all of them. Takes effect on restart. |

@@ -65,6 +65,7 @@
             "type": "string",
             "enum": [
               "definition",
+              "declaration",
               "references",
               "hover",
               "documentSymbol",
@@ -80,6 +81,7 @@
           "uniqueItems": true,
           "default": [
             "definition",
+            "declaration",
             "references",
             "hover",
             "documentSymbol",

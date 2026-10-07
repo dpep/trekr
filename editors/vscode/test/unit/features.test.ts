@@ -16,6 +16,11 @@ test("a disabled feature answers nothing, for every hook that carries it", async
   assert.equal(middleware.prepareCallHierarchy(), null);
 });
 
+test("declaration is its own feature, apart from definition", () => {
+  const middleware = middlewareFor(FEATURES.filter((f) => f !== "declaration"));
+  assert.deepEqual(Object.keys(middleware), ["provideDeclaration"]);
+});
+
 test("disabled diagnostics publish nothing rather than passing through", () => {
   const middleware = middlewareFor(FEATURES.filter((f) => f !== "diagnostics"));
   let passed = false;
