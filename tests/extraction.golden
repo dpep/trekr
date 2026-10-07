@@ -11,6 +11,7 @@ erb tests/testbed/522-a-views-ivar-is-what-its-action-assigns/app/views/widgets/
 erb tests/testbed/523-a-render-reaches-its-partial-and-hands-it-locals/app/views/shared/_nav.html.erb cc463c8566791699
 erb tests/testbed/523-a-render-reaches-its-partial-and-hands-it-locals/app/views/widgets/_row.html.erb b679435af40f9d4c
 erb tests/testbed/523-a-render-reaches-its-partial-and-hands-it-locals/app/views/widgets/_widget.html.erb b679435af40f9d4c
+erb tests/testbed/523-a-render-reaches-its-partial-and-hands-it-locals/app/views/widgets/list.html.erb 11f740c4c762de6a
 erb tests/testbed/523-a-render-reaches-its-partial-and-hands-it-locals/app/views/widgets/show.html.erb b808975b866a50e3
 erb tests/testbed/600-a-helper-method-runs-on-the-controller-that-renders-the-view/app/views/gadgets/show.html.erb c53532272d50d154
 erb tests/testbed/600-a-helper-method-runs-on-the-controller-that-renders-the-view/app/views/shared/_nav.html.erb 22122d479458e837
@@ -581,6 +582,7 @@ ruby tests/testbed/522-a-views-ivar-is-what-its-action-assigns/app/controllers/a
 ruby tests/testbed/522-a-views-ivar-is-what-its-action-assigns/app/controllers/widgets_controller.rb a53ee8b7b8218c8b
 ruby tests/testbed/522-a-views-ivar-is-what-its-action-assigns/app/models/gadget.rb ba12119b6ef503f9
 ruby tests/testbed/522-a-views-ivar-is-what-its-action-assigns/app/models/widget.rb b0bc5b657245892b
+ruby tests/testbed/523-a-render-reaches-its-partial-and-hands-it-locals/app/controllers/things_controller.rb 7f8594eb0bfa9624
 ruby tests/testbed/523-a-render-reaches-its-partial-and-hands-it-locals/app/controllers/widgets_controller.rb e104b58da3b6904f
 ruby tests/testbed/523-a-render-reaches-its-partial-and-hands-it-locals/app/models/widget.rb a93ecd379efa9c44
 ruby tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/controllers/widgets_controller.rb 8e17e767371e68a1

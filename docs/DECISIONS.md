@@ -2015,7 +2015,9 @@ Testbed 123.
 The same holds for a template a `render` names (DEC-524): `render @widgets`
 opens the partial in both fronts, before the ivar it is written as —
 `query::position::template_at`. The editor had asked its variable first and
-answered where the controller sets `@widgets`. Testbed 523.
+answered where the controller sets `@widgets`. A template that reaches no
+file does not win: `render item`, its class unknown, answers the variable
+in both fronts rather than nothing. Testbed 523.
 
 The testbed now holds Go to Definition and Declaration to `--def` at every
 `def` it places, not only where Sorbet describes the answer. A snapped

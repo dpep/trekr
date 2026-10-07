@@ -13,3 +13,12 @@ def app/views/widgets/_widget.html.erb:1:12 status=resolved owner=Widget
 refs Widget#name confirmed=2
 # In the editor too, a `render`'s `@widgets` opens the partial, not the ivar.
 definition app/views/widgets/show.html.erb:3:12 app/views/widgets/_widget.html.erb:1
+# A `render` whose template reaches no file leaves the variable it is written
+# as to answer, in both fronts: a block's param, a template's local, a
+# controller's local.
+def app/views/widgets/list.html.erb:2:12 status=resolved variable=parameter site=app/views/widgets/list.html.erb:1
+def app/views/widgets/list.html.erb:5:12 status=resolved variable=local site=app/views/widgets/list.html.erb:4
+def app/controllers/things_controller.rb:4:12 status=resolved variable=local site=app/controllers/things_controller.rb:3
+definition app/views/widgets/list.html.erb:2:12 app/views/widgets/list.html.erb:1
+definition app/views/widgets/list.html.erb:5:12 app/views/widgets/list.html.erb:4
+definition app/controllers/things_controller.rb:4:12 app/controllers/things_controller.rb:3

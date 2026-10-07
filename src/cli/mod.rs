@@ -4986,16 +4986,23 @@ fn cmd_def(
         };
         let files =
             crate::tree::views::template_files(root, &relative, &template.names, class.as_deref());
-        let answer = template_answer(written.to_string(), root, &files, class.as_deref());
-        let found = !files.is_empty();
-        let text = match files.first() {
-            Some(first) => format!(
-                "{}:1:1  template",
-                shown(&root.join(first).to_string_lossy())
-            ),
-            None => "no template by that name".to_string(),
-        };
-        return report(out, answer, found, &text);
+        // One that reaches no file leaves the variable it is written as to
+        // answer, below.
+        let variable = files.is_empty()
+            && crate::query::position::variable_may_answer(&facts, spec.line, spec.col)
+            && position::variable_at(&source, &file, spec.line, spec.col).is_some();
+        if !variable {
+            let answer = template_answer(written.to_string(), root, &files, class.as_deref());
+            let found = !files.is_empty();
+            let text = match files.first() {
+                Some(first) => format!(
+                    "{}:1:1  template",
+                    shown(&root.join(first).to_string_lossy())
+                ),
+                None => "no template by that name".to_string(),
+            };
+            return report(out, answer, found, &text);
+        }
     }
     // A `super` with no fact behind it is one whose method has no owner the
     // source names. Snapping would answer for another name on the line.

@@ -166,7 +166,7 @@ fn locate(
         crate::usage::flag("require");
         return Ok(required_definition(session.definition_links, required));
     }
-    if !template_here(session, &uri, position)
+    if !template_here(session, &uri, position)?
         && let Some(under) = variables::under(session, &uri, position)
     {
         let locations = variables::definition(session, &under);
@@ -188,14 +188,52 @@ fn locate(
     Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)))
 }
 
-/// Does a `render` or `extends` name a template at the position? Its
-/// definition is the template, before the variable it may be written as.
-fn template_here(session: &mut Session, uri: &Url, position: lsp_types::Position) -> bool {
-    let Some(document) = file_of(uri).and_then(|file| session.document(&file)) else {
-        return false;
+/// Does a `render` or `extends` at the position reach a template? Its
+/// definition is then the template, before the variable it may be written
+/// as; one that reaches no file leaves the variable to answer.
+fn template_here(
+    session: &mut Session,
+    uri: &Url,
+    position: lsp_types::Position,
+) -> anyhow::Result<bool> {
+    let Some((located, pos)) = target(session, uri, position) else {
+        return Ok(false);
     };
-    let pos = to_pos(&document.text, position);
-    position::template_at(document.facts(), pos.line, pos.col).is_some()
+    let Some(document) = session.document(&located.absolute) else {
+        return Ok(false);
+    };
+    let facts = document.facts();
+    if position::template_at(facts, pos.line, pos.col).is_none() {
+        return Ok(false);
+    }
+    let facts = facts.clone();
+    Ok(template_files(session, &located, &facts, pos)?.is_some_and(|files| !files.is_empty()))
+}
+
+/// The files a `render` or `extends` at the position names (DEC-524): `None`
+/// where it names none, empty where its name reaches no file.
+fn template_files(
+    session: &mut Session,
+    located: &Located,
+    facts: &crate::core::Facts,
+    pos: crate::core::Pos,
+) -> anyhow::Result<Option<Vec<String>>> {
+    let Some(template) = position::template_at(facts, pos.line, pos.col) else {
+        return Ok(None);
+    };
+    let class = match &template.names {
+        crate::core::Named::Object { value, .. } => {
+            let tree = session.tree(&located.root)?;
+            crate::resolve::views::value_class(tree, facts, value, template.pos, &located.relative)
+        }
+        _ => None,
+    };
+    Ok(Some(crate::tree::views::template_files(
+        &located.root,
+        &located.relative,
+        &template.names,
+        class.as_deref(),
+    )))
 }
 
 /// Say once per checkout, the first time a definition, references or
@@ -458,26 +496,7 @@ fn resolve_at(
     };
     // A template a `render` or `extends` names: its files, at their tops
     // (DEC-524).
-    if let Some(template) = position::template_at(&facts, pos.line, pos.col) {
-        let class = match &template.names {
-            crate::core::Named::Object { value, .. } => {
-                let tree = session.tree(&located.root)?;
-                crate::resolve::views::value_class(
-                    tree,
-                    &facts,
-                    value,
-                    template.pos,
-                    &located.relative,
-                )
-            }
-            _ => None,
-        };
-        let files = crate::tree::views::template_files(
-            &located.root,
-            &located.relative,
-            &template.names,
-            class.as_deref(),
-        );
+    if let Some(files) = template_files(session, located, &facts, pos)? {
         if files.is_empty() {
             super::miss::why("no template by that name");
         }

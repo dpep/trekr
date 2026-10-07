@@ -10,7 +10,10 @@
 - **Go to Definition on `render @widgets` opens the partial.** The editor
   answered where the controller sets `@widgets`, while `--def` at the same
   position opened `_widget.html.erb`. A template a `render` names is now
-  the editor's answer too, ahead of the variable it is written as.
+  the editor's answer too, ahead of the variable it is written as. Where
+  the name reaches no partial (`render item` with `item`'s class unknown),
+  both the editor and `--def` answer the variable, where `--def` answered
+  "no template by that name".
 
 - **Go to Definition no longer offers a Sorbet `.rbi` beside the code it
   describes.** An untyped call listed a method's `.rb` and its `.rbi`
