@@ -7,12 +7,6 @@
   position opened `_widget.html.erb`. A template a `render` names is now
   the editor's answer too, ahead of the variable it is written as.
 
-- **Go to Definition on a call written right after a variable answers the
-  call.** With the cursor between `list` and `[` in `list[0]`, the editor
-  answered the variable `list`, while `--def` at the same column answered
-  the `[]` call written there. A name written exactly at the cursor now wins
-  in the editor too; on the variable itself, the variable still answers.
-
 - **Go to Definition no longer offers a Sorbet `.rbi` beside the code it
   describes.** An untyped call listed a method's `.rb` and its `.rbi`
   signature as two peers, and a class Tapioca reopens listed the model and

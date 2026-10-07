@@ -4981,6 +4981,69 @@ fn a_local_goes_to_the_assignments_its_value_can_come_from() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn a_caret_just_past_a_variable_reads_the_variable() {
+    let source = concat!(
+        "def go(a, list)\n", // 1
+        "  a+b\n",           // 2
+        "  a==b\n",          // 3
+        "  list[0]\n",       // 4
+        "  -a\n",            // 5
+        "end\n",             // 6
+    );
+    let (dir, mut session) = files_session("caret", &[("app.rb", source)], "app.rb");
+    // (line, character, the variable's name): a caret between the name and
+    // the operator or `[` after it, or on the name after a unary minus.
+    let cases = [(1, 3, "a"), (2, 3, "a"), (3, 6, "list"), (4, 3, "a")];
+    for (line, character, name) in cases {
+        let at = format!("{}:{character}", line + 1);
+        let found = ask(
+            &mut session,
+            &dir,
+            "textDocument/definition",
+            "app.rb",
+            line,
+            character,
+        );
+        assert_eq!(sites_in(&found), ["app.rb:1"], "definition at {at}");
+        let hover = ask(
+            &mut session,
+            &dir,
+            "textDocument/hover",
+            "app.rb",
+            line,
+            character,
+        );
+        let text = hover["result"]["contents"]["value"].as_str().unwrap_or("");
+        assert!(text.contains(&format!("`{name}`")), "hover at {at}: {text}");
+        let marks = ask(
+            &mut session,
+            &dir,
+            "textDocument/documentHighlight",
+            "app.rb",
+            line,
+            character,
+        );
+        let marked = marks["result"].as_array().map_or(0, Vec::len);
+        assert!(marked >= 2, "highlight at {at}: {marks}");
+        let refs = ask(
+            &mut session,
+            &dir,
+            "textDocument/references",
+            "app.rb",
+            line,
+            character,
+        );
+        assert_eq!(
+            sites_in(&refs).len(),
+            marked,
+            "references list what highlight marks at {at}: {refs}"
+        );
+    }
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 fn ivar_files() -> Vec<(&'static str, &'static str)> {
     vec![
         (

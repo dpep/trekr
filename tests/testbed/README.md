@@ -87,7 +87,9 @@ at every `def` the CLI places in the checkout, Go to Definition must list its
 `definition` and Go to Declaration its `signatures` — an `.rbi` site being a
 definition only when it is all there is, and a declaration falling back to
 the definition (DEC-646). An editor never snaps (DEC-036), so a `def` that
-snapped is asked of the editor at the column it snapped to.
+snapped is asked of the editor at the column it snapped to. A column names a
+character but an editor's position is a caret, which reads a variable ending
+just before it: there the editor owes what `--def` says on the variable.
 
 An unknown key fails loudly: a typo in an expectation is a test that proves
 nothing.

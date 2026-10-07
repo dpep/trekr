@@ -2023,6 +2023,26 @@ answer is the one exemption, and only of the column: the editor is asked
 at the column `--def` says it answered (`snapped_to`), since an editor
 never snaps (testbed 521, `badge(n)` asked at the `(`).
 
+### DEC-036 addendum: a column names a character, a caret sits between two
+
+Supersedes the editor half of the addendum above. `FILE:LINE:COL` names a
+character: on `list[0]`'s `[` it is the `[]` call, and `--def` keeps
+`variable_may_answer`. An LSP position is a caret between characters, and
+at an identifier/punctuation boundary the identifier wins — rust-analyzer's
+convention, and where VS Code leaves the caret after a double-clicked word.
+So the editor reads a caret just past a variable as the variable, before an
+operator or `[` call written after it (`a+b`, `a==b`, `h[:k]=2`,
+`@things[0]`, ERB alike), as 0.8.8 did. Taking `[` from the variable cost
+Go to Definition, hover, highlight and Find References on every such
+variable, and Find References there listed every `[]` call in the checkout.
+
+The two fronts are not forced to one answer at a boundary; the testbed
+translates between the models. At every `def` line it holds the editor to
+`--def`, asked at the same position, except that where a variable ends
+just before that column the caret reads the variable, and the editor owes
+what `--def` says on the variable's last character. Testbed 123; the four
+requests side by side in `lsp_e2e`'s caret test.
+
 ### Item recorded, not built: the bare-argument grammar
 
 `trekr <input>` dispatching on shape — `FILE:LINE:COL` → `--def`,

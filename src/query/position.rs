@@ -243,9 +243,10 @@ pub(crate) fn template_at(
         .find(|t| covers(t.pos, t.len as usize, line, col))
 }
 
-/// May a variable found at a position answer for it? Only where no name is
-/// written exactly there: a variable is found with the cursor just past its
-/// end, and that must not take `x[0]`'s `[` from the call that starts there.
+/// May a variable found at a `FILE:LINE:COL` answer for it? Only where no
+/// name is written exactly there: the column names a character, and on
+/// `x[0]`'s `[` that is the `[]` call. The editor's caret reads differently
+/// (DEC-036 addendum).
 pub(crate) fn variable_may_answer(facts: &crate::core::Facts, line: u32, col: u32) -> bool {
     col > 0 && at_facts(facts, line, col).is_none()
 }

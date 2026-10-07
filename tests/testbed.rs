@@ -191,21 +191,44 @@ fn lsp_locations(lsp: &mut Lsp, dir: &Path, target: &str, method: &str) -> Vec<S
 
 /// A `--def --json` answer's sites under `field`, as `path:line` in the
 /// checkout — `None` when any lies outside it, where the editor's path is a
-/// written-out copy rather than the CLI's.
+/// written-out copy rather than the CLI's. A variable's sites have no
+/// `root`: their path is the file's own.
 fn cli_sites(dir: &Path, answer: &serde_json::Value, field: &str) -> Option<Vec<String>> {
     answer[field]
         .as_array()
         .into_iter()
         .flatten()
         .map(|site| {
-            let absolute = format!(
-                "{}/{}",
-                site["root"].as_str().unwrap_or_default(),
-                site["path"].as_str().unwrap_or_default()
-            );
+            let path = site["path"].as_str().unwrap_or_default();
+            let absolute = match site["root"].as_str() {
+                Some(root) => format!("{root}/{path}"),
+                None => path.to_string(),
+            };
             in_checkout(dir, &absolute).map(|path| format!("{path}:{}", site["line"]))
         })
         .collect()
+}
+
+/// The `--def` answer for the variable an editor's caret at `FILE:LINE:COL`
+/// reads where the column names something else (DEC-036 addendum). A column
+/// names a character — `list[0]`'s `[` is the `[]` call — but a caret there
+/// sits between `list` and `[`, and the identifier wins.
+fn caret_variable(db: &Path, dir: &Path, target: &str) -> Option<serde_json::Value> {
+    let (file, line, col) = position(target);
+    let text = fs::read_to_string(dir.join(&file)).ok()?;
+    let bytes = text.lines().nth(line.checked_sub(1)? as usize)?.as_bytes();
+    let word = |i: usize| {
+        bytes
+            .get(i)
+            .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
+    };
+    let at = col.checked_sub(1)? as usize;
+    if at == 0 || !word(at - 1) || word(at) {
+        return None;
+    }
+    let before = format!("{file}:{line}:{}", col - 1);
+    let (answer, _) = trekr(db, dir, &["--def", &before, "--json"]);
+    (answer["under"] == "variable").then_some(answer)
 }
 
 /// What the editor's definition and declaration must list for a placed
@@ -1139,19 +1162,23 @@ fn check_case(
                 // Go to Definition and Declaration list what --def placed,
                 // by one rule: an `.rbi` is a definition only when it is all
                 // there is. An editor never snaps (DEC-036), so a snapped
-                // answer is owed at the column --def says it answered.
-                if matches!(answer["status"].as_str(), Some("resolved" | "ambiguous"))
-                    && let Some(definition) = cli_sites(&dir, &answer, "definition")
-                    && let Some(signatures) = cli_sites(&dir, &answer, "signatures")
+                // answer is owed at the column --def says it answered; and
+                // its caret reads a variable just before that column, so
+                // there it owes what --def says on the variable.
+                let at = match answer["snapped_to"]["col"].as_u64() {
+                    Some(col) => {
+                        let (file, line, _) = position(target);
+                        format!("{file}:{line}:{col}")
+                    }
+                    None => target.to_string(),
+                };
+                let read = caret_variable(&db, &dir, &at);
+                let owed = read.as_ref().unwrap_or(&answer);
+                if matches!(owed["status"].as_str(), Some("resolved" | "ambiguous"))
+                    && let Some(definition) = cli_sites(&dir, owed, "definition")
+                    && let Some(signatures) = cli_sites(&dir, owed, "signatures")
                     && !definition.is_empty()
                 {
-                    let at = match answer["snapped_to"]["col"].as_u64() {
-                        Some(col) => {
-                            let (file, line, _) = position(target);
-                            format!("{file}:{line}:{col}")
-                        }
-                        None => target.to_string(),
-                    };
                     placed_defs.push((line.to_string(), at, editor_owes(&definition, &signatures)));
                 }
                 // A call --def places in the checkout: outgoing calls from the
