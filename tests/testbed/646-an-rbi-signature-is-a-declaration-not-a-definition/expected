@@ -22,3 +22,8 @@ declaration app/job.rb:8:5 sorbet/rbi/widget.rbi:1
 def app/job.rb:9:5 status=resolved site=tools/gizmo.rb:1
 definition app/job.rb:9:5 tools/gizmo.rb:1
 declaration app/job.rb:9:5 sorbet/rbi/gizmo.rbi:1
+# One answer, two methods: the delegate and the gem method it reaches, which
+# only an RBI describes. That RBI is the gem method's definition, not a
+# signature of the delegate. (No `def` line: the guard cannot tell owners.)
+definition app/holder.rb:4:12 sorbet/rbi/gems/sprocket@1.0.rbi:2,app/holder.rb:2
+declaration app/holder.rb:4:12 sorbet/rbi/gems/sprocket@1.0.rbi:2,app/holder.rb:2

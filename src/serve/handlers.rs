@@ -528,7 +528,16 @@ fn resolve_at(
             note_uncertain(&answer);
             if !answer.sites.is_empty() {
                 let sites = locations::of_one_method(answer.sites, answer.signatures);
-                locations::answering(asked, sites, |site| ((), site))
+                // One answer may hold several methods — a delegate and the
+                // method it reaches — and a signature is only its own's.
+                let named = session.tree(&located.root)?.named(&call.name);
+                let owner = |site: &crate::tree::Site| {
+                    named
+                        .iter()
+                        .find(|m| m.site.path == site.path && m.site.line == site.line)
+                        .map(|m| (m.owner.clone(), m.singleton))
+                };
+                locations::answering(asked, sites, |site| (owner(site), site))
                     .into_iter()
                     .map(|site| (site.path, site.line, site.col))
                     .collect()
