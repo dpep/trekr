@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.9 — 2026-10-07
 
 - **`--def` on the variable after a unary minus answers the variable.** On
   `a` in `-a` (or `+a`), `--def` and `--refs` read the `-@` call as covering
