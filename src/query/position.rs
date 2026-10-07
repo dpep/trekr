@@ -230,9 +230,32 @@ pub(crate) fn at_facts(facts: &crate::core::Facts, line: u32, col: u32) -> Optio
         .map(Under::Call)
 }
 
+/// May a variable found at a position answer for it? Only where no name is
+/// written exactly there: a variable is found with the cursor just past its
+/// end, and that must not take `x[0]`'s `[` from the call that starts there.
+pub(crate) fn variable_may_answer(facts: &crate::core::Facts, line: u32, col: u32) -> bool {
+    col > 0 && at_facts(facts, line, col).is_none()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_variable_answers_only_where_no_name_is_written() {
+        let facts = crate::extract::extract(b"x = [1]\nx[0]\nx.size\n");
+        // (line, col, may a variable answer)
+        let cases = [
+            (2, 1, true),  // on `x`
+            (2, 2, false), // `[`: the `[]` call, though the cursor touches `x`
+            (3, 2, true),  // `.`: no name starts there
+            (3, 3, false), // `size`
+            (2, 0, false), // no column: the line chooses, never a variable
+        ];
+        for (line, col, want) in cases {
+            assert_eq!(variable_may_answer(&facts, line, col), want, "{line}:{col}");
+        }
+    }
 
     #[test]
     fn finds_the_qualified_constant_rather_than_its_last_segment() {

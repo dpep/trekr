@@ -8,3 +8,8 @@
 def app.rb:36:8 status=resolved owner=Factory::Builder via=local:new
 def app.rb:37:11 status=resolved owner=Model
 def app.rb:39:8 status=resolved owner=Opaque via=local:new
+# The editor reads the position as --def does: a name written exactly at it
+# (`[`) beats the variable whose end the cursor touches; on the variable
+# itself, the variable.
+definition app.rb:36:8 app.rb:12
+definition app.rb:36:1 app.rb:35

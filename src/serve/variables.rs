@@ -40,6 +40,10 @@ pub(super) fn under(session: &mut Session, uri: &Url, position: Position) -> Opt
     let path = convert::uri_to_path(uri.as_str())?;
     let file = std::fs::canonicalize(&path).unwrap_or(path);
     let document = session.document(&file)?;
+    let pos = convert::to_pos(&document.text, position);
+    if !crate::query::position::variable_may_answer(document.facts(), pos.line, pos.col) {
+        return None;
+    }
     let offset = convert::offset_of(&document.text, position);
     let vars = document.vars();
     let occurrence = vars.at(offset)?.clone();

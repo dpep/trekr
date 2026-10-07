@@ -4135,8 +4135,7 @@ fn cmd_refs_at(
     let facts = crate::extract::extract_file(&file.to_string_lossy(), &source);
     // A variable is not a call: its mentions, as the editor lists them, and
     // not whichever method is nearest on the line.
-    if spec.col > 0
-        && crate::query::position::at_facts(&facts, spec.line, spec.col).is_none()
+    if crate::query::position::variable_may_answer(&facts, spec.line, spec.col)
         && let Some((head, rows)) =
             variable_mentions(&tree, &root_str, &absolute, &source, spec.line, spec.col)
     {
@@ -5056,8 +5055,7 @@ fn cmd_def(
     }
     // A variable is not a call, and snapping from one answered for whatever
     // name was nearest on the line.
-    if spec.col > 0
-        && crate::query::position::at_facts(&facts, spec.line, spec.col).is_none()
+    if crate::query::position::variable_may_answer(&facts, spec.line, spec.col)
         && let Some(answer) = position::variable_at(&source, &file, spec.line, spec.col)
     {
         crate::usage::flag("variable");

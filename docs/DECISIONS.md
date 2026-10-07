@@ -2000,6 +2000,18 @@ mislead — the tell is `snapped_to` appearing in answers whose top result is th
 ignored. The fix would be ranking by kind rather than distance, which the fact
 model already supports.
 
+### DEC-036 addendum: an exact name beats a variable the cursor only touches
+
+A variable is found with the cursor just past its end (an editor's caret
+after `list` sits before the next character), so on `list[0]`'s `[` the
+editor answered the local `list` while `--def` at the same column answered
+the `[]` call written there — the exact hit this decision says is never
+reinterpreted. One rule now, `query::position::variable_may_answer`: a
+variable answers a position only where no name is written exactly at it.
+Both fronts ask it; the editor's variable lookup asks it for every request,
+so hover and Find References read that spot as Go to Definition does.
+Testbed 123.
+
 ### Item recorded, not built: the bare-argument grammar
 
 `trekr <input>` dispatching on shape — `FILE:LINE:COL` → `--def`,
