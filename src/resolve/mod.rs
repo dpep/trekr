@@ -130,6 +130,11 @@ pub(crate) struct MethodAnswer {
     /// is defined; always present, empty for a residue (DEC-080).
     #[serde(rename = "definition")]
     pub(crate) sites: Vec<Site>,
+    /// Where Sorbet describes the method `sites` names: its `.rbi`
+    /// signatures, which are declarations — Go to Declaration's answer, and a
+    /// definition only when nothing real defines it (DEC-646).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(crate) signatures: Vec<Site>,
     /// What `confidence` counts: assignments that agreed / were considered,
     /// when a rung inferred a type; for a residue, the evidence its first
     /// candidate rests on.
@@ -155,12 +160,46 @@ const MAX_CANDIDATES: usize = 8;
 /// `path` is the call site's file, relative to the checkout — one of the tiers
 /// residue candidates are ordered by.
 pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer {
-    let answer = if call.recv == RecvShape::Super {
+    let mut answer = if call.recv == RecvShape::Super {
         super_at(tree, call, path)
     } else {
         call_at(tree, facts, call, path)
     };
+    if answer.signatures.is_empty() {
+        answer.signatures = signatures_at(tree, &call.name, &answer.sites);
+    }
     answer.published()
+}
+
+/// The `.rbi` signatures of the methods defined at `sites`: what their owner
+/// holds by `name`, on the same side, in a Sorbet file. A stub that is the
+/// answer itself is its own signature.
+fn signatures_at(tree: &Tree, name: &str, sites: &[Site]) -> Vec<Site> {
+    if sites.is_empty() {
+        return Vec::new();
+    }
+    let named = tree.named(name);
+    let mut found: Vec<Site> = Vec::new();
+    for site in sites {
+        let Some(at) = named
+            .iter()
+            .find(|m| m.site.path == site.path && m.site.line == site.line)
+        else {
+            continue;
+        };
+        let described = named
+            .iter()
+            .filter(|m| m.site.is_rbi() && m.owner == at.owner && m.singleton == at.singleton);
+        for method in described {
+            let seen = found
+                .iter()
+                .any(|s| s.path == method.site.path && s.line == method.site.line);
+            if !seen {
+                found.push(method.site.clone());
+            }
+        }
+    }
+    found
 }
 
 fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer {
@@ -250,6 +289,12 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                         defined_via: found.declared_via(),
                         sites,
                         agreement: agreement(&receiver),
+                        // The sites are the model's; the generated stub is
+                        // where the method is described.
+                        signatures: match generated {
+                            true => vec![found.site.clone()],
+                            false => Vec::new(),
+                        },
                         unresolved_ancestors: Vec::new(),
                         // An ambiguous answer is the one case where competitors
                         // are known to exist — that is what made it ambiguous —
@@ -473,6 +518,7 @@ fn local_answer(call: &Call, local: views::PartialLocal) -> MethodAnswer {
         defined_via: Some("render".to_string()),
         sites: local.sites,
         agreement: None,
+        signatures: Vec::new(),
         unresolved_ancestors: Vec::new(),
         candidates: Vec::new(),
         reason: None,
@@ -618,6 +664,7 @@ fn to_the_model(
         defined_via: found.declared_via(),
         sites: vec![found.site.clone()],
         agreement: None,
+        signatures: Vec::new(),
         unresolved_ancestors: Vec::new(),
         candidates: Vec::new(),
         reason: None,
@@ -725,6 +772,7 @@ fn through_delegate(
         defined_via: found.declared_via(),
         sites: vec![found.site.clone(), landed.site.clone()],
         agreement: agreement(receiver),
+        signatures: Vec::new(),
         unresolved_ancestors: Vec::new(),
         candidates: overrides.into_iter().take(MAX_CANDIDATES).collect(),
         reason: Some(format!(
@@ -802,6 +850,7 @@ pub(super) fn forwarded(
         defined_via: found.declared_via(),
         sites: vec![found.site.clone()],
         agreement: agreement(receiver),
+        signatures: Vec::new(),
         unresolved_ancestors: Vec::new(),
         candidates: Vec::new(),
         reason: None,
@@ -1172,6 +1221,7 @@ fn member_answer(tree: &Tree, call: &Call, member: Member<'_>, path: &str) -> Me
         defined_via,
         sites: vec![site],
         agreement: None,
+        signatures: Vec::new(),
         unresolved_ancestors: Vec::new(),
         candidates: Vec::new(),
         reason: None,
@@ -1287,6 +1337,7 @@ fn object_answer(
         defined_via: found.declared_via(),
         sites: vec![found.site.clone()],
         agreement: None,
+        signatures: Vec::new(),
         unresolved_ancestors: Vec::new(),
         candidates: Vec::new(),
         reason: None,
@@ -1337,6 +1388,7 @@ fn via_includers(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<Method
         // The fraction counts classes that mix the module in, not assignments —
         // `resolved_via` is what says which.
         agreement: Some(format!("{agreeing}/{} includers", includers.len())),
+        signatures: Vec::new(),
         unresolved_ancestors: Vec::new(),
         // What the pick beat — the definitions the other includers offered, not
         // every method in the tree that shares the name.
@@ -1593,6 +1645,7 @@ fn super_at(tree: &Tree, call: &Call, path: &str) -> MethodAnswer {
         agreement: landings
             .via_includers
             .then(|| format!("{agreeing}/{total} includers")),
+        signatures: Vec::new(),
         unresolved_ancestors: unseen,
         candidates: beaten,
         reason: None,
@@ -2930,6 +2983,7 @@ fn split_receiver(tree: &Tree, call: &Call, path: &str, receiver: Receiver) -> M
         defined_via: first.declared_via(),
         sites: vec![first.site.clone()],
         agreement: Some(format!("1/{} declarations", variants.len())),
+        signatures: Vec::new(),
         unresolved_ancestors: Vec::new(),
         candidates: landings[1..]
             .iter()
@@ -3062,8 +3116,16 @@ fn residue(
                 .as_deref()
                 .is_some_and(|here| crate::tree::public_name(here) == method.owner)
     };
-    let mut ranked: Vec<(u8, bool, i32, bool, Candidate)> = tree
-        .named(&call.name)
+    let named = tree.named(&call.name);
+    // A signature whose method is a candidate too adds no place to look, so
+    // it follows every distinct candidate rather than taking one's slot
+    // (DEC-646).
+    let real: std::collections::HashSet<(&str, bool)> = named
+        .iter()
+        .filter(|method| !method.site.is_rbi())
+        .map(|method| (method.owner.as_str(), method.singleton))
+        .collect();
+    let mut ranked: Vec<(bool, u8, bool, i32, bool, Candidate)> = named
         .iter()
         .filter(|method| !own(method))
         .map(|method| {
@@ -3100,6 +3162,7 @@ fn residue(
                 false => 0,
             };
             (
+                method.site.is_rbi() && real.contains(&(method.owner.as_str(), method.singleton)),
                 tier,
                 // Within a tier, this checkout's own code before a dependency's.
                 !tree.in_checkout(&method.site.path),
@@ -3118,15 +3181,15 @@ fn residue(
             )
         })
         .collect();
-    ranked.sort_by_key(|(tier, from_gem, affinity, declared, _)| {
-        (*tier, *from_gem, *affinity, *declared)
+    ranked.sort_by_key(|(echo, tier, from_gem, affinity, declared, _)| {
+        (*echo, *tier, *from_gem, *affinity, *declared)
     });
 
     let total = ranked.len();
     let candidates: Vec<Candidate> = ranked
         .into_iter()
         .take(MAX_CANDIDATES)
-        .map(|(_, _, _, _, c)| c)
+        .map(|(_, _, _, _, _, c)| c)
         .collect();
     let reason = if total > candidates.len() {
         format!(
@@ -3156,6 +3219,7 @@ fn residue(
         owner: None,
         sites: Vec::new(),
         agreement,
+        signatures: Vec::new(),
         unresolved_ancestors: truncated,
         candidates,
         reason: Some(reason),
@@ -3667,6 +3731,41 @@ mod tests {
             found.sites[0].path, "app/models/widget.rb",
             "the model declares it, even though only the .rbi describes it"
         );
+        assert_eq!(
+            found.signatures[0].path, "sorbet/rbi/dsl/widget.rbi",
+            "Go to Declaration still reaches the generated signature"
+        );
+    }
+
+    #[test]
+    fn a_signature_follows_the_candidate_whose_method_it_describes() {
+        // Nearer the call than the code it describes, a stub still ranks
+        // after it: it is the same method, and it is not where it runs.
+        let job = "class Job\n  def go\n    thing.launch\n  end\nend\n";
+        let tree = crate::tree::for_test(&[
+            ("app/widget.rb", "class Widget\n  def launch\n  end\nend\n"),
+            (
+                "lib/sorbet/widget.rbi",
+                "class Widget\n  def launch; end\nend\n",
+            ),
+            ("lib/sorbet/job.rb", job),
+        ]);
+        let facts = crate::extract::extract(job.as_bytes());
+        let call = facts
+            .calls
+            .iter()
+            .find(|c| c.name == "launch")
+            .unwrap()
+            .clone();
+        let found = method_at(&tree, &facts, &call, "lib/sorbet/job.rb");
+
+        assert_eq!(found.status, Status::Residue);
+        let paths: Vec<&str> = found
+            .candidates
+            .iter()
+            .map(|c| c.site.path.as_str())
+            .collect();
+        assert_eq!(paths, ["app/widget.rb", "lib/sorbet/widget.rbi"]);
     }
 
     #[test]

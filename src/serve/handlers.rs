@@ -19,6 +19,7 @@ use super::require::{self, Found, Origin};
 use super::state::{Located, Session};
 use super::variables;
 use crate::core::{Def, Kind};
+use crate::query::locations::{self, Asked};
 use crate::query::members::CheckoutFiles;
 use crate::query::position::{self, Under};
 use crate::query::refs as query_refs;
@@ -142,6 +143,23 @@ pub(crate) fn definition(
     session: &mut Session,
     params: GotoDefinitionParams,
 ) -> anyhow::Result<Option<GotoDefinitionResponse>> {
+    locate(session, params, Asked::Definition)
+}
+
+/// Go to Declaration: where Sorbet describes the name, else its definition
+/// (DEC-646). Locations a name has only one sort of answer both alike.
+pub(crate) fn declaration(
+    session: &mut Session,
+    params: GotoDefinitionParams,
+) -> anyhow::Result<Option<GotoDefinitionResponse>> {
+    locate(session, params, Asked::Declaration)
+}
+
+fn locate(
+    session: &mut Session,
+    params: GotoDefinitionParams,
+    asked: Asked,
+) -> anyhow::Result<Option<GotoDefinitionResponse>> {
     let uri = params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;
     if let Some(required) = required_at(session, &uri, position) {
@@ -160,7 +178,7 @@ pub(crate) fn definition(
         return Ok(None);
     };
     let name_len = name_at(session, &located, pos).map_or(0, |n| last_segment(&n).len());
-    let sites = resolve_at(session, &located, pos)?;
+    let sites = resolve_at(session, &located, pos, asked)?;
     let locations: Vec<Location> = sites
         .into_iter()
         .filter_map(|(p, line, col)| location(&located.root, &p, line, col, name_len, None))
@@ -417,6 +435,7 @@ fn resolve_at(
     session: &mut Session,
     located: &Located,
     pos: crate::core::Pos,
+    asked: Asked,
 ) -> anyhow::Result<Vec<(String, u32, u32)>> {
     let facts = session
         .document(&located.absolute)
@@ -472,7 +491,7 @@ fn resolve_at(
             if sites.is_empty() {
                 super::miss::why(format!("constant `{}` not found", reference.name));
             }
-            sites
+            locations::answering(asked, sites, |site| ((), site))
                 .into_iter()
                 .map(|site| (site.path, site.line, site.col))
                 .collect()
@@ -481,8 +500,8 @@ fn resolve_at(
             let answer = method_answer(session, located, &facts, &call)?;
             note_uncertain(&answer);
             if !answer.sites.is_empty() {
-                answer
-                    .sites
+                let sites = locations::of_one_method(answer.sites, answer.signatures);
+                locations::answering(asked, sites, |site| ((), site))
                     .into_iter()
                     .map(|site| (site.path, site.line, site.col))
                     .collect()
@@ -496,8 +515,10 @@ fn resolve_at(
                 if keep == 0 && !answer.candidates.is_empty() {
                     super::miss::why(unresolved.withheld());
                 }
-                answer
-                    .candidates
+                let candidates = locations::answering(asked, answer.candidates, |c| {
+                    ((c.owner.clone(), c.singleton), &c.site)
+                });
+                candidates
                     .into_iter()
                     .take(MAX_GUESSES.min(keep))
                     .map(|candidate| (candidate.site.path, candidate.site.line, candidate.site.col))

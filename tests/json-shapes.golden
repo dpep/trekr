@@ -141,6 +141,13 @@
 --def $.receiver_type: string
 --def $.resolved_via: string
 --def $.scopes_tried: int
+--def $.signatures: array
+--def $.signatures[]: object
+--def $.signatures[].col: int
+--def $.signatures[].kind: string
+--def $.signatures[].line: int
+--def $.signatures[].path: string
+--def $.signatures[].root: string
 --def $.snapped_to: object
 --def $.snapped_to.alternatives: array
 --def $.snapped_to.alternatives[]: object

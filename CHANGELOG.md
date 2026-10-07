@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **Go to Definition no longer offers a Sorbet `.rbi` beside the code it
+  describes.** An untyped call listed a method's `.rb` and its `.rbi`
+  signature as two peers, and a class Tapioca reopens listed the model and
+  its `sorbet/rbi/dsl/` file alike. An `.rbi` is now a definition only when
+  nothing real defines the same method or class — a gem's method only its
+  RBI describes still lands there. The signature moved to **Go to
+  Declaration**, which the LSP now answers (falling back to the definition).
+  `--def --json` gains `signatures`, the `.rbi` stubs of the method it
+  answers; a constant's `definition` lists its `.rbi` sites after its real
+  ones, and a residue lists a candidate's own signature after every other
+  candidate. Nothing to do: no field changed or went away.
+
 ## 0.8.8 — 2026-10-05
 
 - **`--dead` lists candidates in path order on every OS.** Files in scope

@@ -46,6 +46,7 @@ symbols app.rb   Widget,save,Job,run
 | `variable` | `local`, `parameter`, `ivar` or `cvar`, for a variable |
 | `defined_via` | the macro that declared it, for a declaration |
 | `site` | `path:line`, matched on the path's tail |
+| `signature` | the first of `signatures` — a Sorbet stub of the method — as `site` |
 | `receiver_type` | the type the receiver was given, resolved or not |
 | `reason` | a word the residue's reason contains |
 | `exit` | the process exit code, for cases about not dying |
@@ -73,11 +74,19 @@ an answer carries reaches an editor **only** through hover: `textDocument/
 definition` is a bare list of locations and cannot say what kind of location it
 handed back. Where a case stages a server-visible shape, pin the wire too.
 
+`definition FILE:LINE:COL a.rb:2,b.rb:5` and `declaration …` drive Go to
+Definition and Go to Declaration, and assert the `path:line`s listed, in
+order (empty after the position for none).
+
 Some checks need no line of their own: the editor is held to the CLI. At every
 `refs FILE:LINE:COL` the case's answer is not residue, Find References must
 list the CLI's rows and incoming calls its `confirmed` ones; at every `def` on a
 call it places in the checkout, outgoing calls from the method around the call
-must reach the same definition (not for a symbol, which no method calls).
+must reach the same definition (not for a symbol, which no method calls); and
+at every `def` the CLI places in the checkout, Go to Definition must list its
+`definition` and Go to Declaration its `signatures` — an `.rbi` site being a
+definition only when it is all there is, and a declaration falling back to
+the definition (DEC-646).
 
 An unknown key fails loudly: a typo in an expectation is a test that proves
 nothing.

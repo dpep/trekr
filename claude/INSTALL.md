@@ -97,7 +97,8 @@ that is installed but never chosen answers nothing.
 
 ## What it answers
 
-goToDefinition, findReferences, documentSymbol, workspaceSymbol, hover,
+goToDefinition, goToDeclaration (the `.rbi` signature, else the
+definition), findReferences, documentSymbol, workspaceSymbol, hover,
 goToImplementation, call hierarchy, documentHighlight, `require` strings as
 document links, and Prism syntax diagnostics — plus completion, for editors
 (DEC-040). Definition, references, hover and highlight work on locals,

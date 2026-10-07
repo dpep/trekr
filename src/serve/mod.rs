@@ -61,6 +61,8 @@ fn capabilities() -> ServerCapabilities {
             },
         )),
         definition_provider: Some(OneOf::Left(true)),
+        // Where Sorbet describes a name: its `.rbi` signature (DEC-646).
+        declaration_provider: Some(lsp_types::DeclarationCapability::Simple(true)),
         references_provider: Some(OneOf::Left(true)),
         document_highlight_provider: Some(OneOf::Left(true)),
         document_symbol_provider: Some(OneOf::Left(true)),
@@ -989,7 +991,10 @@ fn route(
     // Neither has a field to say an answer is partial (DEC-331).
     if matches!(
         request.method.as_str(),
-        req::GotoDefinition::METHOD | req::References::METHOD | req::GotoImplementation::METHOD
+        req::GotoDefinition::METHOD
+            | req::GotoDeclaration::METHOD
+            | req::References::METHOD
+            | req::GotoImplementation::METHOD
     ) && let (Some(uri), _) = asked_about(&request.params)
         && let Some(path) = document_path(&uri)
     {
@@ -997,6 +1002,7 @@ fn route(
     }
     match request.method.as_str() {
         req::GotoDefinition::METHOD => run_handler(request, |p| handlers::definition(session, p)),
+        req::GotoDeclaration::METHOD => run_handler(request, |p| handlers::declaration(session, p)),
         req::References::METHOD => {
             run_handler(request, |p| handlers::references(session, p, out, cancel))
         }

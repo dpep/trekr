@@ -14179,3 +14179,63 @@ comparison, not with these examples.
 also reads as `send`. Wording only — on mastodon, discourse, graphql-ruby
 and rails, 177, 1512, 196 and 2223 rows' caveats changed and no row's tier
 or grade did.
+
+## DEC-646 — An `.rbi` signature is Go to Declaration's answer, and Go to Definition's only when it is all there is
+
+**Decided.** One rule, in `query::locations`, that both fronts adapt: among
+the locations an answer has for one method or constant, a Sorbet `.rbi` site
+is a definition only when nothing real defines that same thing, and it is
+what a declaration request gets first; a declaration falls back to the
+definition, as LSP has it. The LSP gains `textDocument/declaration`.
+`--def --json` gains `signatures` — the `.rbi` stubs of the method
+`definition` names, located like it — and keeps every `.rbi` site it listed
+before, ordered after the real ones: a constant's `.rbi` reopenings stay in
+its `definition`, last, and a residue candidate that is a signature of
+another candidate's method follows every distinct candidate.
+
+**Why.** DEC-019 settled which *method* answers (real source wins the whole
+chain), and DEC-034 settled what a stub *is* (a declaration). Neither reached
+the list an editor shows. Go to Definition on an untyped call — a residue,
+which VS Code's default `confident` lets through at 0.7 when few classes
+define the name — offered `app/widget.rb` and `sorbet/rbi/widget.rbi` as two
+peers for the one method, and on a constant whose class Tapioca reopens
+offered the model and `sorbet/rbi/dsl/widget.rbi` alike. A signature is a
+description of code that runs elsewhere; as a definition beside that code it
+is the same answer twice, once in the wrong place.
+
+**The unit is what a location locates, not the whole answer.** A resolved
+answer or a constant locates one thing, so "real source if any" is the same
+either way. A residue's candidates are *different* methods: `gadget.spin`
+untyped, with `Gadget#spin` described only by a gem RBI and some app class
+also defining `spin`. Dropping every `.rbi` once anything real is listed
+would throw away the candidate the receiver's name points at, which is the
+ranking evidence DEC-028 exists for. So a signature yields only to real
+source for its own owner and side — DEC-019's "at a given owner, a real
+definition wins" — and an `.rbi`-only candidate stays a definition.
+
+**Why `signatures` and not `declarations`.** DEC-034's `kind: declaration`
+already covers macros, aliases and `private :foo`; a field by that name
+holding only Sorbet stubs would read as all of them. The stubs are what the
+field holds, so that is its name.
+
+**Not measured against the gold set**, and the reasoning stands in for it:
+the resolved `definition` is untouched, and the residue reorder only moves a
+stub behind the candidate it describes. A stub is never the runtime truth
+the gold set records, so a `residue-hit` can be kept or gained by that move,
+never lost. On widget_shop (the corpus that commits `sorbet/rbi/`), against
+0.8.8: Go to Definition on `Widget` and `Supplier` went from the model plus
+its `dsl/*.rbi` to the model alone, with the `.rbi` now Go to Declaration's
+answer; `Supplier.find_by`, `widget.orders.create!` and `.count` keep their
+gem definitions and gain the `activerecord@8.1.3.1.rbi` signature as their
+declaration.
+
+**Not covered.** A declaration on a `def` itself, and on anything but a
+method call or a constant (a variable, a `require`, a template), is the
+definition. A method Rails generates and Tapioca describes in a module the
+model does not name — an `enum`'s `active?` in `GeneratedAttributeMethods` —
+has no signature at the macro's owner, so its declaration is the macro line.
+
+**Reverses if** an editor user wants the signature beside the code on Go to
+Definition — Sorbet's own server does that. The fix then is a client
+setting, as `unresolved` is (DEC-443), not a change to which sort a location
+is.

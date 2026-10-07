@@ -413,9 +413,10 @@ plus the comments — with no way to tell them apart. `Widget.save` and
 
 ## In Claude Code
 
-`trekr --lsp` speaks LSP: definition, references, hover, document and
-workspace symbols, implementation, call hierarchy, `require` strings as links,
-and Prism syntax diagnostics. It answers on methods and constants, and on
+`trekr --lsp` speaks LSP: definition, declaration (a Sorbet `.rbi`
+signature), references, hover, document and workspace symbols,
+implementation, call hierarchy, `require` strings as links, and Prism syntax
+diagnostics. It answers on methods and constants, and on
 locals, parameters and instance variables — whose other mentions it also
 highlights. Hover on a model shows its table's columns and indexes, and on a
 column's attribute (`post.title`) the column's type, null and default — read

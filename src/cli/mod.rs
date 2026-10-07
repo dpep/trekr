@@ -5197,6 +5197,8 @@ fn cmd_def(
                     resolution = tree.resolve_at(&reference.name, &reference.nesting, &relative);
                 }
             }
+            // A Sorbet signature is listed, after the code it describes (DEC-646).
+            crate::query::locations::real_first(&mut resolution.sites);
             let mut value = serde_json::to_value(&resolution)?;
             let object = value.as_object_mut().expect("resolution is an object");
             object.insert("query".into(), query.clone().into());

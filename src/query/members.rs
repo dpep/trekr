@@ -281,6 +281,7 @@ pub(crate) fn includer_answer(
         defined_via,
         sites,
         agreement: (n > 1).then_some(agreement),
+        signatures: Vec::new(),
         unresolved_ancestors: Vec::new(),
         candidates: Vec::new(),
         reason: None,

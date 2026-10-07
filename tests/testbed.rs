@@ -27,8 +27,10 @@
 //!
 //! Keys for `def` are fields of `--def --json`: `status`, `owner`, `via`
 //! (`resolved_via`), `name`, `confidence`, `candidates` (a count), `site`
-//! (`path:line`, matched on the path's tail), and `candidate1` (the top
-//! candidate's owner). Keys for `refs` are the `counts` object, `status` and
+//! (`path:line`, matched on the path's tail), `signature` (the first `.rbi`
+//! stub, as `site`), and `candidate1` (the top candidate's owner).
+//! `definition` and `declaration` lines assert what Go to Definition and Go to
+//! Declaration list. Keys for `refs` are the `counts` object, `status` and
 //! `resolves_to`. Unknown keys fail loudly rather than passing silently — a
 //! typo in an expectation is a test that proves nothing.
 
@@ -169,6 +171,62 @@ fn lsp_references(db: &Path, dir: &Path, target: &str) -> Vec<String> {
     found
 }
 
+/// The locations a `textDocument/definition` or `declaration` lists at
+/// `FILE:LINE:COL`, as `path:line`, in the order the server gave them.
+fn lsp_locations(lsp: &mut Lsp, dir: &Path, target: &str, method: &str) -> Vec<String> {
+    let (file, line, col) = position(target);
+    let uri = lsp.open(&file);
+    let result = lsp.at(&uri, line, col, method, serde_json::json!({}));
+    result
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|location| {
+            let full = site(dir, &location["uri"], &location["range"]["start"]);
+            full.rsplit_once(':')
+                .map_or(full.clone(), |(at, _)| at.to_string())
+        })
+        .collect()
+}
+
+/// A `--def --json` answer's sites under `field`, as `path:line` in the
+/// checkout — `None` when any lies outside it, where the editor's path is a
+/// written-out copy rather than the CLI's.
+fn cli_sites(dir: &Path, answer: &serde_json::Value, field: &str) -> Option<Vec<String>> {
+    answer[field]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|site| {
+            let absolute = format!(
+                "{}/{}",
+                site["root"].as_str().unwrap_or_default(),
+                site["path"].as_str().unwrap_or_default()
+            );
+            in_checkout(dir, &absolute).map(|path| format!("{path}:{}", site["line"]))
+        })
+        .collect()
+}
+
+/// What the editor's definition and declaration must list for a placed
+/// `--def` answer: an `.rbi` signature is a declaration, and a definition
+/// only when it is all there is; a declaration falls back to the definition.
+fn editor_owes(definition: &[String], signatures: &[String]) -> (Vec<String>, Vec<String>) {
+    let (rbi, real): (Vec<String>, Vec<String>) = definition
+        .iter()
+        .cloned()
+        .partition(|site| site.split(':').next().is_some_and(|p| p.ends_with(".rbi")));
+    let defined = if real.is_empty() { rbi.clone() } else { real };
+    let declared = if !signatures.is_empty() {
+        signatures.to_vec()
+    } else if !rbi.is_empty() {
+        rbi
+    } else {
+        defined.clone()
+    };
+    (defined, declared)
+}
+
 /// The call sites incoming calls lists for what `prepareCallHierarchy`
 /// prepares at `FILE:LINE:COL`, spelled as [`lsp_references`] spells them —
 /// or `None` when nothing is prepared there.
@@ -270,13 +328,37 @@ fn in_checkout(dir: &Path, path: &str) -> Option<String> {
 /// staged checkout.
 fn site(dir: &Path, uri: &serde_json::Value, start: &serde_json::Value) -> String {
     let uri = uri.as_str().unwrap_or_default();
-    let path = uri.strip_prefix("file://").unwrap_or(uri);
-    let path = in_checkout(dir, path).unwrap_or_else(|| uri.to_string());
+    let path = percent_decoded(uri.strip_prefix("file://").unwrap_or(uri));
+    let path = in_checkout(dir, &path).unwrap_or_else(|| uri.to_string());
     format!(
         "{path}:{}:{}",
         start["line"].as_u64().unwrap_or_default() + 1,
         start["character"].as_u64().unwrap_or_default() + 1
     )
+}
+
+/// A URI's path as the file system spells it: a gem RBI's `@` arrives `%40`.
+fn percent_decoded(path: &str) -> String {
+    let bytes = path.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let hex = bytes
+            .get(i + 1..i + 3)
+            .and_then(|h| std::str::from_utf8(h).ok())
+            .and_then(|h| u8::from_str_radix(h, 16).ok());
+        match (bytes[i], hex) {
+            (b'%', Some(byte)) => {
+                out.push(byte);
+                i += 3;
+            }
+            (byte, _) => {
+                out.push(byte);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// The CLI's listed rows of a `--refs --json` answer, as [`lsp_references`]
@@ -708,8 +790,12 @@ fn check_def(
                 .as_str()
                 .unwrap_or("<none>")
                 .to_string(),
-            "site" => {
-                let site = &answer["definition"][0];
+            "site" | "signature" => {
+                let field = match key.as_str() {
+                    "site" => "definition",
+                    _ => "signatures",
+                };
+                let site = &answer[field][0];
                 format!(
                     "{}:{}",
                     site["path"].as_str().unwrap_or("<none>"),
@@ -724,7 +810,7 @@ fn check_def(
         // Paths are absolute in an answer and relative in an expectation, so a
         // site matches on its tail. A reason is prose, so one word of it is
         // asserted. Everything else is exact.
-        let matched = if key == "site" {
+        let matched = if key == "site" || key == "signature" {
             got.ends_with(&want)
         } else if key == "reason" {
             got.contains(&want)
@@ -1028,6 +1114,9 @@ fn check_case(
     trekr(&db, &dir, &["--status", "--json"]);
     // (expectation, position, --def's site) for each call --def placed.
     let mut calls: Vec<(String, String, String)> = Vec::new();
+    // (expectation, position, what the editor owes) for each placed --def.
+    type Owed = (Vec<String>, Vec<String>);
+    let mut placed_defs: Vec<(String, String, Owed)> = Vec::new();
     if expectations.lines().any(|line| line.starts_with("dead ")) {
         *dead = Some(dead_snapshot(&db, &dir));
     }
@@ -1047,6 +1136,21 @@ fn check_case(
             "def" => {
                 let (answer, code) = trekr(&db, &dir, &["--def", target, "--json"]);
                 check_def(label, line, &answer, code, failures);
+                // Where Sorbet describes the answer, Go to Definition and
+                // Declaration list what --def placed, by one rule: an `.rbi`
+                // is a definition only when it is all there is.
+                if matches!(answer["status"].as_str(), Some("resolved" | "ambiguous"))
+                    && let Some(definition) = cli_sites(&dir, &answer, "definition")
+                    && let Some(signatures) = cli_sites(&dir, &answer, "signatures")
+                    && !definition.is_empty()
+                    && (!signatures.is_empty() || definition.iter().any(|s| s.contains(".rbi:")))
+                {
+                    placed_defs.push((
+                        line.to_string(),
+                        target.to_string(),
+                        editor_owes(&definition, &signatures),
+                    ));
+                }
                 // A call --def places in the checkout: outgoing calls from the
                 // method around it must reach the same definition. Not a
                 // symbol (`:save`, `&:name`): it is handed to a call, not made
@@ -1067,6 +1171,20 @@ fn check_case(
                         target.to_string(),
                         format!("{path}:{}", placed["line"]),
                     ));
+                }
+            }
+            "definition" | "declaration" => {
+                let want: Vec<&str> = rest
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                let mut lsp = Lsp::start(&db, &dir);
+                let got = lsp_locations(&mut lsp, &dir, target, &format!("textDocument/{verb}"));
+                if got != want {
+                    failures.push(format!("{label}: {line}\n      the editor listed {got:?}"));
                 }
             }
             "card" => {
@@ -1199,6 +1317,20 @@ fn check_case(
                 }
             }
             other => failures.push(format!("{label}: unknown verb `{other}`")),
+        }
+    }
+    if !placed_defs.is_empty() {
+        let mut lsp = Lsp::start(&db, &dir);
+        for (line, target, (defined, declared)) in &placed_defs {
+            for (method, owed) in [("definition", defined), ("declaration", declared)] {
+                let got = lsp_locations(&mut lsp, &dir, target, &format!("textDocument/{method}"));
+                if got != *owed {
+                    failures.push(format!(
+                        "{label}: {line}\n      the editor's {method} listed {got:?}, \
+                         --def owes {owed:?}"
+                    ));
+                }
+            }
         }
     }
     if !calls.is_empty() {

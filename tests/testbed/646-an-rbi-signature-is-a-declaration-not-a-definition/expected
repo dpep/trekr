@@ -1,0 +1,24 @@
+# Go to Definition listed a method's `.rb` and its Sorbet `.rbi` signature as
+# peers. A signature is a declaration (DEC-034): Go to Declaration lands on it,
+# and Go to Definition only when nothing real defines the name.
+#
+# A typed call: the definition is the code, its signature the declaration.
+def app/job.rb:4:7 status=resolved owner=Widget kind=definition site=app/widget.rb:2 signature=sorbet/rbi/widget.rbi:3
+definition app/job.rb:4:7 app/widget.rb:2
+declaration app/job.rb:4:7 sorbet/rbi/widget.rbi:3
+# An untyped one: the signature is a candidate still, but the code answers.
+def app/job.rb:5:11 status=residue candidates=2 candidate1=Widget
+definition app/job.rb:5:11 app/widget.rb:2
+declaration app/job.rb:5:11 sorbet/rbi/widget.rbi:3
+# A gem's method only its RBI describes: the signature is all there is.
+def app/job.rb:7:7 status=resolved owner=Gadget kind=declaration defined_via=rbi site=sorbet/rbi/gems/gadget@1.0.rbi:3
+definition app/job.rb:7:7 sorbet/rbi/gems/gadget@1.0.rbi:3
+declaration app/job.rb:7:7 sorbet/rbi/gems/gadget@1.0.rbi:3
+# A class the RBI reopens: the class body is the definition.
+def app/job.rb:8:5 status=resolved site=app/widget.rb:1
+definition app/job.rb:8:5 app/widget.rb:1
+declaration app/job.rb:8:5 sorbet/rbi/widget.rbi:1
+# The stub's path sorts before the code's, and was listed first.
+def app/job.rb:9:5 status=resolved site=tools/gizmo.rb:1
+definition app/job.rb:9:5 tools/gizmo.rb:1
+declaration app/job.rb:9:5 sorbet/rbi/gizmo.rbi:1

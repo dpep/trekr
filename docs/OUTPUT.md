@@ -104,6 +104,15 @@ does), but it is not the code that runs. Residue candidates carry their own
 `kind` on the answer is about the *location*. `kind` inside `definition[]`
 and `--symbols` is about the *symbol* — class, module, method, constant.
 
+**`signatures`** — where Sorbet describes the method `definition` names: its
+`.rbi` stubs, located like `definition`. Absent when there are none. Real
+source beside a signature stays the `definition`; the signature is a
+declaration, and it is what the LSP's Go to Declaration answers (Go to
+Definition lists it only when it is all there is). A constant's `.rbi`
+reopenings stay in its `definition`, listed after its real ones; a residue's
+candidates list a signature of another candidate's method after every
+distinct candidate.
+
 ## `--def`
 
 **Snapping.** If the column holds no name, trekr answers for the nearest one
