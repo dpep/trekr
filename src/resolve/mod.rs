@@ -174,7 +174,7 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
 /// The `.rbi` signatures of the methods defined at `sites`: what their owner
 /// holds by `name`, on the same side, in a Sorbet file. A stub that is the
 /// answer itself is its own signature.
-fn signatures_at(tree: &Tree, name: &str, sites: &[Site]) -> Vec<Site> {
+pub(crate) fn signatures_at(tree: &Tree, name: &str, sites: &[Site]) -> Vec<Site> {
     if sites.is_empty() {
         return Vec::new();
     }

@@ -509,7 +509,37 @@ fn resolve_at(
     let path = located.relative.clone();
     let unresolved = session.unresolved;
     Ok(match under {
-        Under::Definition(def) => vec![(path, def.pos.line, def.pos.col)],
+        // A method's own `def` is its definition; its declaration is the
+        // `.rbi` signature that describes it, when there is one.
+        Under::Definition(def) => {
+            let here = crate::tree::Site {
+                path,
+                line: def.pos.line,
+                col: def.pos.col,
+                kind: def.kind.as_str().to_string(),
+            };
+            let signatures = match (asked, def.kind) {
+                (Asked::Declaration, Kind::Method) => {
+                    // The tree places its methods by absolute path.
+                    let at = crate::tree::Site {
+                        path: located.root.join(&here.path).to_string_lossy().into_owned(),
+                        ..here.clone()
+                    };
+                    let tree = session.tree(&located.root)?;
+                    crate::resolve::signatures_at(tree, &def.name, &[at])
+                }
+                _ => Vec::new(),
+            };
+            let sites = if signatures.is_empty() {
+                vec![here]
+            } else {
+                signatures
+            };
+            sites
+                .into_iter()
+                .map(|site| (site.path, site.line, site.col))
+                .collect()
+        }
         Under::Constant(reference) => {
             let sites = session
                 .tree(&located.root)?

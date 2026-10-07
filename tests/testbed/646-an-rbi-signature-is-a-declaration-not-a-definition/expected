@@ -27,3 +27,5 @@ declaration app/job.rb:9:5 sorbet/rbi/gizmo.rbi:1
 # signature of the delegate. (No `def` line: the guard cannot tell owners.)
 definition app/holder.rb:4:12 sorbet/rbi/gems/sprocket@1.0.rbi:2,app/holder.rb:2
 declaration app/holder.rb:4:12 sorbet/rbi/gems/sprocket@1.0.rbi:2,app/holder.rb:2
+# Go to Declaration from a method's own `def` lands on its signature.
+declaration app/widget.rb:2:7 sorbet/rbi/widget.rbi:3
