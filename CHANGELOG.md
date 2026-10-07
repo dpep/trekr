@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`--def` on the variable after a unary minus answers the variable.** On
+  `a` in `-a` (or `+a`), `--def` and `--refs` read the `-@` call as covering
+  both characters and answered for it. The call is written as its sign
+  alone now, so the variable answers there, as the editor already did.
+
 - **Go to Definition on `render @widgets` opens the partial.** The editor
   answered where the controller sets `@widgets`, while `--def` at the same
   position opened `_widget.html.erb`. A template a `render` names is now

@@ -257,13 +257,15 @@ mod tests {
 
     #[test]
     fn a_variable_answers_only_where_no_name_is_written() {
-        let facts = crate::extract::extract(b"x = [1]\nx[0]\nx.size\n");
+        let facts = crate::extract::extract(b"x = [1]\nx[0]\nx.size\n-x\n");
         // (line, col, may a variable answer)
         let cases = [
             (2, 1, true),  // on `x`
             (2, 2, false), // `[`: the `[]` call, though the cursor touches `x`
             (3, 2, true),  // `.`: no name starts there
             (3, 3, false), // `size`
+            (4, 1, false), // `-`: the unary `-@` call
+            (4, 2, true),  // `x`: `-@` is written as one character
             (2, 0, false), // no column: the line chooses, never a variable
         ];
         for (line, col, want) in cases {
