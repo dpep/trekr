@@ -166,7 +166,8 @@ fn locate(
         crate::usage::flag("require");
         return Ok(required_definition(session.definition_links, required));
     }
-    if !template_here(session, &uri, position)?
+    let template = template_here(session, &uri, position)?;
+    if template.is_none()
         && let Some(under) = variables::under(session, &uri, position)
     {
         let locations = variables::definition(session, &under);
@@ -175,7 +176,7 @@ fn locate(
         }
         return Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)));
     }
-    let Some((located, pos)) = target(session, &uri, position) else {
+    let Some((located, pos)) = target(session, &uri, template.unwrap_or(position)) else {
         super::miss::why(NO_CHECKOUT);
         return Ok(None);
     };
@@ -188,26 +189,33 @@ fn locate(
     Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)))
 }
 
-/// Does a `render` or `extends` at the position reach a template? Its
-/// definition is then the template, before the variable it may be written
-/// as; one that reaches no file leaves the variable to answer.
+/// Where a `render` or `extends` at the position reaches a template, if it
+/// does. Its definition is then the template, before the variable it may be
+/// written as; one that reaches no file leaves the variable to answer. A
+/// caret just past the argument reads it as the variable lookup does, so the
+/// two cannot disagree about which name the caret is on.
 fn template_here(
     session: &mut Session,
     uri: &Url,
     position: lsp_types::Position,
-) -> anyhow::Result<bool> {
-    let Some((located, pos)) = target(session, uri, position) else {
-        return Ok(false);
+) -> anyhow::Result<Option<lsp_types::Position>> {
+    let Some((located, _)) = target(session, uri, position) else {
+        return Ok(None);
     };
     let Some(document) = session.document(&located.absolute) else {
-        return Ok(false);
+        return Ok(None);
     };
+    let reads = variables::last_character(document, position).unwrap_or(position);
+    let pos = to_pos(&document.text, reads);
     let facts = document.facts();
     if position::template_at(facts, pos.line, pos.col).is_none() {
-        return Ok(false);
+        return Ok(None);
     }
     let facts = facts.clone();
-    Ok(template_files(session, &located, &facts, pos)?.is_some_and(|files| !files.is_empty()))
+    let files = template_files(session, &located, &facts, pos)?;
+    Ok(files
+        .is_some_and(|files| !files.is_empty())
+        .then_some(reads))
 }
 
 /// The files a `render` or `extends` at the position names (DEC-524): `None`

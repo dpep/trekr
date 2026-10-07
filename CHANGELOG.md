@@ -10,7 +10,8 @@
 - **Go to Definition on `render @widgets` opens the partial.** The editor
   answered where the controller sets `@widgets`, while `--def` at the same
   position opened `_widget.html.erb`. A template a `render` names is now
-  the editor's answer too, ahead of the variable it is written as. Where
+  the editor's answer too, ahead of the variable it is written as, with the
+  caret on the name or just past it (where a double-click leaves it). Where
   the name reaches no partial (`render item` with `item`'s class unknown),
   both the editor and `--def` answer the variable, where `--def` answered
   "no template by that name".

@@ -2037,6 +2037,10 @@ operator or `[` call written after it (`a+b`, `a==b`, `h[:k]=2`,
 `@things[0]`, ERB alike), as 0.8.8 did. Taking `[` from the variable cost
 Go to Definition, hover, highlight and Find References on every such
 variable, and Find References there listed every `[]` call in the checkout.
+A `render` argument is read from the same caret: just past `@widgets` the
+editor asks for the template on its last character, so the partial wins
+there as on the name (`serve::variables::last_character`, one rule with
+the variable lookup).
 
 The two fronts are not forced to one answer at a boundary; the testbed
 translates between the models. At every `def` line it holds the editor to

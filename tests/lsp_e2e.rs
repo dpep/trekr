@@ -5044,6 +5044,81 @@ fn a_caret_just_past_a_variable_reads_the_variable() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A `render` argument reads as the variable lookup reads it: on the name or
+/// with the caret just past it, the partial it reaches, else the variable
+/// (DEC-036 addendum, DEC-524).
+#[test]
+fn a_caret_just_past_a_render_argument_opens_its_partial() {
+    let files = [
+        (
+            "app/controllers/widgets_controller.rb",
+            concat!(
+                "class WidgetsController\n",   // 1
+                "  def index\n",               // 2
+                "    @widgets = Widget.all\n", // 3
+                "    @others = load_others\n", // 4
+                "  end\n",                     // 5
+                "end\n",                       // 6
+            ),
+        ),
+        (
+            "app/controllers/items_controller.rb",
+            concat!(
+                "class ItemsController\n", // 1
+                "  def show\n",            // 2
+                "    w = Widget.new\n",    // 3
+                "    render w\n",          // 4
+                "    item = load_item\n",  // 5
+                "    render item\n",       // 6
+                "  end\n",                 // 7
+                "end\n",                   // 8
+            ),
+        ),
+        ("app/models/widget.rb", "class Widget\nend\n"),
+        ("app/views/widgets/_widget.html.erb", "<li></li>\n"),
+        (
+            "app/views/widgets/index.html.erb",
+            "<%= render @widgets %>\n<%= render @others %>\n",
+        ),
+    ];
+    let controller = "app/controllers/items_controller.rb";
+    let view = "app/views/widgets/index.html.erb";
+    let (dir, mut session) = files_session("render-caret", &files, controller);
+    // (file, line, character, where it goes): the name's first character,
+    // its last, and the caret just past it.
+    let cases = [
+        (view, 0, 11, "_widget.html.erb:1"),
+        (view, 0, 18, "_widget.html.erb:1"),
+        (view, 0, 19, "_widget.html.erb:1"),
+        (view, 1, 11, "widgets_controller.rb:4"),
+        (view, 1, 17, "widgets_controller.rb:4"),
+        (view, 1, 18, "widgets_controller.rb:4"),
+        (controller, 3, 11, "_widget.html.erb:1"),
+        (controller, 3, 12, "_widget.html.erb:1"),
+        (controller, 5, 11, "items_controller.rb:5"),
+        (controller, 5, 14, "items_controller.rb:5"),
+        (controller, 5, 15, "items_controller.rb:5"),
+    ];
+    for (file, line, character, expected) in cases {
+        let found = ask(
+            &mut session,
+            &dir,
+            "textDocument/definition",
+            file,
+            line,
+            character,
+        );
+        assert_eq!(
+            sites_in(&found),
+            [expected],
+            "{file}:{}:{character}",
+            line + 1
+        );
+    }
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 fn ivar_files() -> Vec<(&'static str, &'static str)> {
     vec![
         (
