@@ -2017,6 +2017,12 @@ opens the partial in both fronts, before the ivar it is written as —
 `query::position::template_at`. The editor had asked its variable first and
 answered where the controller sets `@widgets`. Testbed 523.
 
+The testbed now holds Go to Definition and Declaration to `--def` at every
+`def` it places, not only where Sorbet describes the answer. A snapped
+answer is the one exemption, and only of the column: the editor is asked
+at the column `--def` says it answered (`snapped_to`), since an editor
+never snaps (testbed 521, `badge(n)` asked at the `(`).
+
 ### Item recorded, not built: the bare-argument grammar
 
 `trekr <input>` dispatching on shape — `FILE:LINE:COL` → `--def`,

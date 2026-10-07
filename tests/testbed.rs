@@ -1136,20 +1136,23 @@ fn check_case(
             "def" => {
                 let (answer, code) = trekr(&db, &dir, &["--def", target, "--json"]);
                 check_def(label, line, &answer, code, failures);
-                // Where Sorbet describes the answer, Go to Definition and
-                // Declaration list what --def placed, by one rule: an `.rbi`
-                // is a definition only when it is all there is.
+                // Go to Definition and Declaration list what --def placed,
+                // by one rule: an `.rbi` is a definition only when it is all
+                // there is. An editor never snaps (DEC-036), so a snapped
+                // answer is owed at the column --def says it answered.
                 if matches!(answer["status"].as_str(), Some("resolved" | "ambiguous"))
                     && let Some(definition) = cli_sites(&dir, &answer, "definition")
                     && let Some(signatures) = cli_sites(&dir, &answer, "signatures")
                     && !definition.is_empty()
-                    && (!signatures.is_empty() || definition.iter().any(|s| s.contains(".rbi:")))
                 {
-                    placed_defs.push((
-                        line.to_string(),
-                        target.to_string(),
-                        editor_owes(&definition, &signatures),
-                    ));
+                    let at = match answer["snapped_to"]["col"].as_u64() {
+                        Some(col) => {
+                            let (file, line, _) = position(target);
+                            format!("{file}:{line}:{col}")
+                        }
+                        None => target.to_string(),
+                    };
+                    placed_defs.push((line.to_string(), at, editor_owes(&definition, &signatures)));
                 }
                 // A call --def places in the checkout: outgoing calls from the
                 // method around it must reach the same definition. Not a
