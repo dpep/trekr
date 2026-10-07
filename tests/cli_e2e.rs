@@ -273,6 +273,61 @@ fn a_templates_answers_write_paths_relative_to_their_root() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A `render` argument that reaches no partial answers the variable it is
+/// written as; when that has no value either, the missing partial leads.
+#[test]
+fn a_render_that_reaches_nothing_says_the_template_is_missing() {
+    let (dir, db) = scratch("tmplmiss");
+    git(&dir, &["init", "-q"]);
+    for (path, text) in [
+        (
+            "app/controllers/widgets_controller.rb",
+            "class WidgetsController\n  def index\n    @widgets = load\n  end\nend\n",
+        ),
+        (
+            "app/views/widgets/index.html.erb",
+            "<%= render @widgets %>\n<%= render @items %>\n",
+        ),
+    ] {
+        let file = dir.join(path);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file, text).unwrap();
+    }
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    trekr(&db, &dir, &["--index"]);
+    let view = "app/views/widgets/index.html.erb";
+
+    // Set by the controller: the variable answers.
+    let out = trekr(&db, &dir, &["--def", &format!("{view}:1:13"), "--json"]);
+    let answer = json(&out);
+    assert!(out.status.success(), "{answer}");
+    assert_eq!(answer["under"], "variable", "{answer}");
+
+    // Set nowhere: no template, and the variable's reason beside it.
+    let out = trekr(&db, &dir, &["--def", &format!("{view}:2:13"), "--json"]);
+    let answer = json(&out);
+    assert_eq!(out.status.code(), Some(1), "{answer}");
+    assert_eq!(answer["under"], "template", "{answer}");
+    let reason = answer["reason"].as_str().unwrap_or_default();
+    assert!(reason.starts_with("no template"), "{reason}");
+    assert!(reason.contains("@items"), "{reason}");
+    let text = stdout(&trekr(&db, &dir, &["--def", &format!("{view}:2:13")]));
+    assert!(text.contains("no template by that name"), "{text}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn indexes_edits_and_untracked_files_without_touching_the_git_index() {
     let (dir, db) = scratch("worktree");

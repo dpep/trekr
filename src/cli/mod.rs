@@ -4968,6 +4968,9 @@ fn cmd_def(
         }
         index_free();
     };
+    // A `render` whose name reaches no file, kept to answer if the variable
+    // it is written as finds no value either.
+    let mut no_template = None;
     // A template a `render` or `extends` names: the file it reaches (DEC-524).
     if let Some(template) = crate::query::position::template_at(&facts, spec.line, spec.col)
         && let Some((root, store)) = checkout.as_mut().map(|(root, store)| (&*root, store))
@@ -4991,8 +4994,10 @@ fn cmd_def(
         let variable = files.is_empty()
             && crate::query::position::variable_may_answer(&facts, spec.line, spec.col)
             && position::variable_at(&source, &file, spec.line, spec.col).is_some();
-        if !variable {
-            let answer = template_answer(written.to_string(), root, &files, class.as_deref());
+        let answer = template_answer(written.to_string(), root, &files, class.as_deref());
+        if variable {
+            no_template = Some(answer);
+        } else {
             let found = !files.is_empty();
             let text = match files.first() {
                 Some(first) => format!(
@@ -5101,6 +5106,26 @@ fn cmd_def(
             answer["confidence"] = 1.0.into();
             answer["resolved_via"] = "controller".into();
             answer["reason"] = "set by the controller that renders the template".into();
+        }
+        // Neither found: the missing partial is the more actionable reason,
+        // and the variable's is said beside it.
+        if let Some(mut template) = no_template
+            && answer["definition"].as_array().is_some_and(Vec::is_empty)
+        {
+            let variable = format!(
+                "{} {}",
+                answer["name"].as_str().unwrap_or_default(),
+                answer["reason"].as_str().unwrap_or_default(),
+            );
+            let variable = variable.trim_end();
+            template["reason"] =
+                format!("no template in the checkout's views by that name; {variable}").into();
+            return report(
+                out,
+                template,
+                false,
+                &format!("no template by that name; {variable}"),
+            );
         }
         answer["query"] = written.into();
         let resolved = answer["status"] == "resolved";

@@ -14,7 +14,8 @@
   caret on the name or just past it (where a double-click leaves it). Where
   the name reaches no partial (`render item` with `item`'s class unknown),
   both the editor and `--def` answer the variable, where `--def` answered
-  "no template by that name".
+  "no template by that name". A variable with no value found either still
+  gets "no template by that name", now with the variable's reason beside it.
 
 - **Go to Definition no longer offers a Sorbet `.rbi` beside the code it
   describes.** An untyped call listed a method's `.rb` and its `.rbi`
