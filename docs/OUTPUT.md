@@ -245,7 +245,10 @@ A name written with `::` is a constant's whole name — `Admin::Widget`, or
 `::Widget` for a top-level one: the same rows, but only its definitions and
 the references Ruby's lookup resolves to it, however each is written
 (`Widget` inside `module Admin`, `Admin::Widget`, `::Admin::Widget`). One the
-index cannot place is listed only when written out in full.
+index cannot place whole is placed by the longest leading part it can
+(`Rack::Utils` inside `module App` is `App::Rack::Utils` once `App::Rack`
+resolves); one it cannot place at all is listed only when written out in
+full.
 
 `--refs 'Widget#initialize'` lists the `new`s whose class runs it (its own or
 a subclass that inherits it), each marked `"called_as": "new"`. An untyped

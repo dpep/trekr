@@ -667,6 +667,9 @@ ruby tests/testbed/649-a-macros-symbol-is-the-name-it-makes/db/migrate/001_creat
 ruby tests/testbed/649-a-macros-symbol-is-the-name-it-makes/stubs.rb e244eb3d9c72674d
 ruby tests/testbed/650-a-defs-signature-is-its-own-methods/lib/w.rb d746e9501867d4b0
 ruby tests/testbed/650-a-defs-signature-is-its-own-methods/sorbet/rbi/w.rbi 46b69c842df0c532
+ruby tests/testbed/651-a-mention-placed-in-part-is-placed-by-that-part/app/shadow.rb 9f669794b2f0676a
+ruby tests/testbed/651-a-mention-placed-in-part-is-placed-by-that-part/app/use.rb 855a9e89d8a8c055
+ruby tests/testbed/651-a-mention-placed-in-part-is-placed-by-that-part/lib/gizmo.rb 1659eee53404277f
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

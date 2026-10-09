@@ -1,0 +1,8 @@
+# A constant the index cannot place was listed by `--refs` whenever it was
+# written as the whole name asked for, though its first segment resolved
+# elsewhere: inside `module App`, `Rack::Utils` is `App::Rack::Utils` to
+# Ruby, and the editor's Find References agreed. Such a mention is placed by
+# the part the index can place; one it cannot place at all (a gem not
+# indexed) is still listed when written in full.
+refs Rack::Utils rows=1
+refs Gizmo::Part rows=1

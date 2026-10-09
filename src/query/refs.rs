@@ -48,8 +48,11 @@ pub(crate) fn constant_mentions(
 }
 
 /// Whether a constant written as `written` in `nesting`, in the file at
-/// `path`, is `fqn`. One the index cannot place is it only when written out
-/// in full: a gem not yet indexed still lists its `Gem::Thing`s.
+/// `path`, is `fqn`. One the index cannot place whole is placed by the
+/// longest leading part it can: `Rack::Utils` inside `module App` is
+/// `App::Rack::Utils` once `App::Rack` resolves. One it cannot place at all
+/// is `fqn` only when written out in full: a gem not yet indexed still
+/// lists its `Gem::Thing`s.
 pub(crate) fn names_constant(
     tree: &Tree,
     written: &str,
@@ -57,10 +60,23 @@ pub(crate) fn names_constant(
     path: &str,
     fqn: &str,
 ) -> bool {
-    match tree.resolve_at(written, nesting, path).fqn {
-        Some(found) => found == fqn,
-        None => written.strip_prefix("::").unwrap_or(written) == fqn,
+    if let Some(found) = tree.resolve_at(written, nesting, path).fqn {
+        return found == fqn;
     }
+    let bare = written.strip_prefix("::").unwrap_or(written);
+    if bare != fqn {
+        return false;
+    }
+    let rooted = if written.starts_with("::") { "::" } else { "" };
+    let segments: Vec<&str> = bare.split("::").collect();
+    (1..segments.len())
+        .rev()
+        .find_map(|n| {
+            let prefix = segments[..n].join("::");
+            let placed = tree.resolve_at(&format!("{rooted}{prefix}"), nesting, path);
+            placed.fqn.map(|found| found == prefix)
+        })
+        .unwrap_or(true)
 }
 
 /// One call site, tiered. Reads only the tree and the file's own facts, so
