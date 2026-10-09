@@ -82,17 +82,24 @@ pub(crate) fn subject(
     if position::word_at(source, line, col).as_deref() == Some("super") {
         return Ok(Subject::Super);
     }
-    Ok(symbol_at(source, line, col).map_or(Subject::Nothing, Subject::Symbol))
+    let Some((name, named)) = symbol_at(source, line, col) else {
+        return Ok(Subject::Nothing);
+    };
+    // The whole written symbol answers as its name does: on the `:` of
+    // `send(:go)` or `before_save :go`, the call it sends.
+    Ok(position::at_facts(facts, named.line, named.col)
+        .map_or(Subject::Symbol(name), Subject::Fact))
 }
 
-/// The symbol literal written over a character, its leading `:` included.
-fn symbol_at(source: &[u8], line: u32, col: u32) -> Option<String> {
+/// The symbol literal written over a character, its leading `:` included,
+/// and where its name starts.
+fn symbol_at(source: &[u8], line: u32, col: u32) -> Option<(String, Pos)> {
     crate::extract::symbol_literals(source)
         .into_iter()
         .find(|(_, pos, len)| {
             pos.line == line && opened_at(source, *pos) <= col && col < pos.col + *len as u32
         })
-        .map(|(name, ..)| name)
+        .map(|(name, pos, _)| (name, pos))
 }
 
 /// The column a symbol whose name starts at `name` opens at: its leading
@@ -152,6 +159,11 @@ mod tests {
         "end\n",                          // 11
         "super\n",                        // 12
         "x(:\"quoted\")\n",               // 13
+        "class Cb\n",                     // 14
+        "  before_save :go\n",            // 15
+        "  def run = send(:'go')\n",      // 16
+        "end\n",                          // 17
+        "y = :\"quoted\"\n",              // 18
     );
 
     /// A subject as a line of text, to compare and to read in a failure.
@@ -263,8 +275,18 @@ mod tests {
             (9, 12, "constant Other::Thing", "constant Other::Thing"),
             (9, 18, "call new", "call new"),
             (12, 1, "super", "super"),
-            (13, 3, "symbol quoted", "symbol quoted"),
-            (13, 4, "symbol quoted", "symbol quoted"),
+            // A symbol sent as a method's name is that call, its opening
+            // included.
+            (13, 3, "call quoted", "call quoted"),
+            (13, 4, "call quoted", "call quoted"),
+            (13, 5, "call quoted", "call quoted"),
+            (15, 15, "call go", "call go"),
+            (15, 16, "call go", "call go"),
+            (16, 18, "call go", "call go"),
+            (16, 19, "call go", "call go"),
+            (16, 20, "call go", "call go"),
+            (18, 5, "symbol quoted", "symbol quoted"),
+            (18, 6, "symbol quoted", "symbol quoted"),
         ];
         for (line, col, column, caret) in cases {
             assert_eq!(readings.column(line, col), column, "column {line}:{col}");

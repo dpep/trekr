@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **The `:` of a symbol sent as a method's name is that method.** On
+  the `:` of `before_save :go`, `send(:go)` or `if: :ready?` (and the
+  `:"` of `send(:"go")`), `--def` and Go to Definition said ":go — a
+  key or a value here, not a method's name", while its letters
+  answered `go`. The whole written symbol now answers as its letters
+  do.
+
 - **A quoted macro symbol is its method to the closing quote.** On the
   last letter of `attr_reader :"name"` or `alias_method :"new", :old`,
   `--def` said ":name — a key or a value here"; the method's span
