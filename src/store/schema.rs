@@ -228,6 +228,13 @@ CREATE TABLE meta (
   value TEXT NOT NULL
 );
 
+-- A blob a query recorded, not an index (DEC-035): `--gc` collects it once
+-- no checkout maps it. Optional: a store an older trekr built lacks it, and
+-- keeps what its queries recorded.
+CREATE TABLE loose_blob (
+  blob_id INTEGER PRIMARY KEY REFERENCES blob(id) ON DELETE CASCADE
+);
+
 CREATE INDEX gem_use_gem    ON gem_use(gem_root);
 CREATE INDEX def_name       ON def(name);
 CREATE INDEX def_blob       ON def(blob_id);
@@ -276,7 +283,8 @@ pub(crate) const RETIRED: [&str; 1] = ["call_site"];
 
 /// Every table, newest first, so dropping respects nothing (foreign keys are
 /// off during the drop anyway).
-pub(crate) const TABLES: [&str; 15] = [
+pub(crate) const TABLES: [&str; 16] = [
+    "loose_blob",
     "meta",
     "upgrade",
     "rbs_use",
@@ -296,7 +304,12 @@ pub(crate) const TABLES: [&str; 15] = [
 
 /// Tables a store at its version may lack: added without a version bump,
 /// because nothing needs them to answer (DEC-300).
-pub(crate) const OPTIONAL: [&str; 1] = ["meta"];
+pub(crate) const OPTIONAL: [&str; 2] = ["meta", "loose_blob"];
+
+/// `loose_blob`, for a store at this version laid down without it.
+pub(crate) const LOOSE_BLOB: &str = "CREATE TABLE IF NOT EXISTS loose_blob (
+  blob_id INTEGER PRIMARY KEY REFERENCES blob(id) ON DELETE CASCADE
+);";
 
 /// A schema as a rebuild lays it down: this trekr's, or in tests another's.
 pub(crate) struct Layout {

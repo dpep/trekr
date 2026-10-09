@@ -537,7 +537,8 @@ it still maps its own blobs and so is never an orphan. `trekr --gc` removes the
 checkouts no future index could reach — a gem on disk that no surviving repo's
 bundle names, a repo or gem whose root is gone — spares anything an index saw
 within `--older-than` (default 7 days), and then deletes only the blobs no
-remaining checkout maps. `checkout.kind` says which rule applies, and a gem's
+remaining checkout maps — and the blobs a query recorded for an edit it read
+(`loose_blob`) once no checkout maps them. `checkout.kind` says which rule applies, and a gem's
 `indexed_at` moves every time a bundle names it, inside the index's own
 transaction. Collecting is safe because it is undone by the next index: a
 lockfile naming a gem the store lacks indexes it, collected or never seen
@@ -701,6 +702,9 @@ blob(id, oid UNIQUE, lines, parse_errors, surface, namespace, written_by)
   const_ref(blob_id, name, nesting, line, col)
   call_name(blob_id, name, calls, symbols)  ← which names a blob calls (DEC-193)
   body_call(blob_id, name, nesting, args, line)  ← a body's call on itself (DEC-162)
+  loose_blob(blob_id)                       ← recorded by a query, not an
+                                              index: `--gc`'s once no file
+                                              maps it (DEC-035; optional)
 
 checkout(id, root UNIQUE, indexed_at, kind, surface_key, namespace_key,
          map_key, git_state)
@@ -1772,7 +1776,8 @@ Deliberate, and cheap to close when they earn it:
 - A `super` that lands in core is as right as the Ruby's RBS is complete: a
   core class that defines the name without RBS writing it there sends the
   lookup further up the chain.
-- Orphaned blobs are never collected (DEC-003).
+- A blob an index read is never collected while its checkout lives, even
+  once no file maps it (DEC-003); only a query's are (DEC-035).
 - A model's columns attach by the flat table convention (`fasp_providers` →
   `FaspProvider`), so a namespace's `table_name_prefix` is honoured by the
   hover's table (DEC-481) but not yet by the attribute methods (DEC-480).

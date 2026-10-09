@@ -4181,7 +4181,7 @@ fn queries_over_the_same_deletions_share_one_copy() {
 }
 
 /// A query records the facts of bytes it has not read, as an index would,
-/// and maps nothing to them — which `--gc`, collecting by checkout, keeps.
+/// and maps nothing to them — so `--gc` collects them once the edit is gone.
 #[test]
 fn a_query_records_new_bytes_and_maps_nothing() {
     let (dir, db) = scratch("query-blob");
@@ -4206,8 +4206,10 @@ fn a_query_records_new_bytes_and_maps_nothing() {
         value.get("index").is_none(),
         "the map never named it: {value}"
     );
-    trekr(&db, &dir, &["--gc", "--older-than", "0"]);
-    assert_eq!(blobs(), indexed + 1, "not collected (yet)");
+    let gc = trekr(&db, &dir, &["--gc", "--older-than", "0", "--json"]);
+    assert_eq!(gc.status.code(), Some(0), "something was collected");
+    assert_eq!(json(&gc)["blobs"], 1);
+    assert_eq!(blobs(), indexed, "only the query's blob went");
     let _ = fs::remove_dir_all(&dir);
 }
 

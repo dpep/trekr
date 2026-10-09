@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`--gc` collects what queries recorded.** Each edited version of a file
+  a query read stayed in the store for good; `--gc` now removes those no
+  checkout maps, and exits 0 when that is all it removed. Blobs an
+  `--index` read are kept as before.
+
 - **Every macro's method ends where its argument does.** The column
   just past `let(:name)`, `subject(:name)` or `RSpec::Matchers.define
   :name` answered that method, and `store_accessor :settings, :"key"`

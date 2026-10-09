@@ -2023,6 +2023,7 @@ impl Store {
 
     /// Record a blob's facts. Content-addressed, so a query may: the next
     /// index finds the blob known, and no map points at it until one does.
+    /// One this records is loose — `--gc`'s once nothing maps it.
     /// Like `refresh_file`, it fails at once when another process is writing
     /// — unless that process recorded this blob, as a sibling query reading
     /// the same edit does.
@@ -2030,7 +2031,13 @@ impl Store {
         let added = (|| {
             let tx = self.conn.transaction()?;
             Store::check_schema(&tx)?;
-            insert_facts(&tx, oid, facts)?;
+            if let Some(blob_id) = insert_facts(&tx, oid, facts)? {
+                tx.execute_batch(schema::LOOSE_BLOB)?;
+                tx.execute(
+                    "INSERT INTO loose_blob (blob_id) VALUES (?1)",
+                    params![blob_id],
+                )?;
+            }
             tx.commit()
         })();
         match added {
@@ -2622,7 +2629,9 @@ fn path_hash(path: &str) -> i64 {
     hash as i64
 }
 
-fn insert_facts(tx: &Connection, oid: &Oid, facts: &Facts) -> Result<()> {
+/// The blob's new row, or `None` where it was recorded already and keeps
+/// the row it has.
+fn insert_facts(tx: &Connection, oid: &Oid, facts: &Facts) -> Result<Option<i64>> {
     // Another process may have recorded these bytes since this one decided
     // they were new. Their facts are a pure function of the bytes, so the row
     // already there is the answer; replacing it would give the blob a new id
@@ -2640,7 +2649,7 @@ fn insert_facts(tx: &Connection, oid: &Oid, facts: &Facts) -> Result<()> {
         ],
     )?;
     if inserted == 0 {
-        return Ok(());
+        return Ok(None);
     }
     let blob_id = tx.last_insert_rowid();
 
@@ -2724,7 +2733,7 @@ fn insert_facts(tx: &Connection, oid: &Oid, facts: &Facts) -> Result<()> {
     for (name, (calls, symbols)) in named {
         call.execute(params![blob_id, name, calls, symbols])?;
     }
-    Ok(())
+    Ok(Some(blob_id))
 }
 
 #[cfg(test)]

@@ -4,7 +4,8 @@
 //! maps its own blobs — so "blobs no file references" finds nothing (DEC-030)
 //! while every version any project ever resolved is kept forever. The unit of
 //! collection is therefore the checkout, and a blob goes only when the last
-//! checkout mapping it does.
+//! checkout mapping it does. A blob a query recorded and no index mapped
+//! (DEC-035) was never any checkout's, so it goes once nothing maps it.
 
 use super::Store;
 use rusqlite::{Result, params};
@@ -16,8 +17,9 @@ pub(crate) struct Garbage {
     pub(crate) checkouts: Vec<Collected>,
     /// File-map rows: one per path in each collected checkout.
     pub(crate) files: usize,
-    /// Blobs no surviving checkout maps. A blob another checkout still maps
-    /// is never among them.
+    /// Blobs no surviving checkout maps: a collected checkout's, and those
+    /// only a query recorded. A blob a checkout still maps is never among
+    /// them.
     pub(crate) blobs: usize,
     /// Fact rows (defs, ancestry, constant refs, call sites) those blobs held.
     pub(crate) facts: usize,
@@ -118,16 +120,6 @@ impl Store {
             .collect();
 
         let mut garbage = Garbage::default();
-        if doomed.is_empty() {
-            garbage.signatures = unserved_signatures(&tx)?;
-            garbage.core_dirs = core_dirs(&tx)?;
-            match dry_run {
-                true => tx.rollback()?,
-                false => tx.commit()?,
-            }
-            return Ok(garbage);
-        }
-
         let page_size: i64 = tx.query_row("PRAGMA page_size", [], |r| r.get(0))?;
         let free_before: i64 = tx.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
         tx.execute_batch("CREATE TEMP TABLE gc_blob (id INTEGER PRIMARY KEY)")?;
@@ -142,6 +134,13 @@ impl Store {
                 forget.execute(params![row.id])?;
             }
         }
+        // What a query recorded and no index mapped (DEC-035): the edits it
+        // read, kept only while a map points at them.
+        tx.execute_batch(super::schema::LOOSE_BLOB)?;
+        tx.execute(
+            "INSERT OR IGNORE INTO gc_blob SELECT blob_id FROM loose_blob",
+            [],
+        )?;
         // A blob some surviving checkout maps stays. The foreign key would
         // refuse the delete anyway; this makes the refusal a non-event.
         tx.execute(
@@ -303,6 +302,40 @@ mod tests {
         assert_eq!(store.totals().unwrap().blobs, before - 1);
         assert!(store.has_checkout("/gem-2").unwrap());
         assert_eq!(store.gems_used("/app").unwrap(), ["/gem-2"]);
+    }
+
+    #[test]
+    fn a_blob_only_a_query_recorded_goes_once_no_checkout_maps_it() {
+        let mut store = Store::open_in_memory().unwrap();
+        let blob = |src: &str| {
+            (
+                hash_blob(src.as_bytes()),
+                crate::extract::extract(src.as_bytes()),
+            )
+        };
+        // An edit a query read and nothing indexed: the orphan.
+        let (edit, facts) = blob("class Draft\nend\n");
+        store.add_blob(&edit, &facts).unwrap();
+        // One a query read first and an index then mapped: referenced.
+        let (committed, facts) = blob("class Kept\nend\n");
+        store.add_blob(&committed, &facts).unwrap();
+        indexed(&mut store, "/app", "kept.rb", "class Kept\nend\n");
+        // One an index mapped and then edited away: a branch switch back
+        // wants it (DEC-003), whoever asks.
+        indexed(&mut store, "/app", "kept.rb", "class Before\nend\n");
+        let (before, _) = blob("class Before\nend\n");
+        indexed(&mut store, "/app", "kept.rb", "class Kept\nend\n");
+
+        let dry = store.collect(now() - 60, |_| true, true).unwrap();
+        assert_eq!(dry.blobs, 1, "a dry run counts it");
+        assert!(store.has_blob(&edit).unwrap(), "and keeps it");
+        let garbage = store.collect(now() - 60, |_| true, false).unwrap();
+        assert!(garbage.checkouts.is_empty());
+        assert_eq!(garbage.blobs, 1);
+        assert!(garbage.facts > 0);
+        assert!(!store.has_blob(&edit).unwrap(), "the orphan went");
+        assert!(store.has_blob(&committed).unwrap(), "a mapped blob stays");
+        assert!(store.has_blob(&before).unwrap(), "an index's blob stays");
     }
 
     #[test]

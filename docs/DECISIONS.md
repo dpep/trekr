@@ -1957,6 +1957,26 @@ assembly: discourse ~0.4 s, mastodon ~0.35 s, as b45e1a8's first query did.
 of the checkouts the tree reads, behind a view the planner can still see
 through, or the map split by checkout.
 
+### Addendum (post-0.8.10): `--gc` collects the blobs only a query recorded
+
+The overlay's one debt: a query records each edited version it reads
+(`add_blob`), nothing maps it, and `--gc` collected by checkout, so every
+draft any query ever saw stayed in the store. A blob `add_blob` inserts now
+gets a `loose_blob` row, and `--gc` adds those to the blobs it deletes,
+less any a checkout maps — a query's blob an index later mapped stays while
+it does.
+
+- **Provenance, not "no file maps it".** A blob an index read and then
+  edited away is DEC-003's — a branch switch back wants it — and is
+  indistinguishable from a query's by the map alone. Only the writer knows.
+- **An optional table, no version bump** (DEC-300): nothing reads it to
+  answer, `add_blob` and `--gc` create it where an older trekr's store at
+  this version lacks it, and that store's earlier query blobs are kept, as
+  before.
+- **No age cutoff.** A blob has no timestamp, and collecting one an edit
+  still holds costs the next query one file's parse; `--gc` removes every
+  overlay copy anyway, so none refers to it after.
+
 ## DEC-036 — The CLI forgives a hand-typed position; the LSP does not
 
 **Decided.** `--def` snaps to the nearest name on the line when the exact

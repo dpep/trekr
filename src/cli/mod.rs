@@ -5903,6 +5903,7 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
     }
     let db_bytes = store.db_bytes()?;
     let found = !garbage.checkouts.is_empty()
+        || garbage.blobs > 0
         || snapshots.files > 0
         || overlays > 0
         || garbage.signatures > 0
@@ -5954,6 +5955,13 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
             "\n{verb} {} checkouts: {} files, {} blobs, {} facts, {:.1} MB",
             garbage.checkouts.len(),
             garbage.files,
+            garbage.blobs,
+            garbage.facts,
+            mb(garbage.reclaimed_bytes)
+        );
+    } else if garbage.blobs > 0 {
+        println!(
+            "{verb} {} blobs only a query had read: {} facts, {:.1} MB",
             garbage.blobs,
             garbage.facts,
             mb(garbage.reclaimed_bytes)
