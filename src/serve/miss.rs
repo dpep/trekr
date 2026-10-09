@@ -47,15 +47,15 @@ pub(crate) fn op_of(method: &str) -> Option<&'static str> {
 
 impl Miss {
     /// The log line. `line` and `col` are 1-based bytes, as `--def` takes
-    /// them, so a miss pastes straight into the CLI.
-    pub(crate) fn event(&self, text: Option<&str>) -> serde_json::Value {
-        let pos = text.map(|t| super::convert::to_pos(t, self.position));
+    /// them: the character the caret `reads` in the document's `text`, so
+    /// a miss pastes straight into the CLI and asks it the same question.
+    pub(crate) fn event(&self, read: Option<(crate::core::Pos, &str)>) -> serde_json::Value {
         serde_json::json!({
             "op": self.op,
             "file": self.path.to_string_lossy(),
-            "line": self.position.line + 1,
-            "col": pos.map_or(self.position.character + 1, |p| p.col),
-            "token": text.map(|t| token_at(t, self.position)).unwrap_or_default(),
+            "line": read.map_or(self.position.line + 1, |(at, _)| at.line),
+            "col": read.map_or(self.position.character + 1, |(at, _)| at.col),
+            "token": read.map(|(_, t)| token_at(t, self.position)).unwrap_or_default(),
             "outcome": self.outcome,
             "why": self.why,
         })

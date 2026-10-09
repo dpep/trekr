@@ -440,8 +440,13 @@ fn serve(
                     first_request = false;
                 }
                 if let Some(miss) = counted.miss {
-                    let text = session.document(&miss.path).map(|d| d.text.clone());
-                    log.event("miss", miss.event(text.as_deref()));
+                    let read = session
+                        .document(&miss.path)
+                        .map(|d| (d.reads(miss.position), d.text.clone()));
+                    log.event(
+                        "miss",
+                        miss.event(read.as_ref().map(|(at, text)| (*at, text.as_str()))),
+                    );
                 }
             }
             Message::Notification(notification) => {

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **`--usage --misses` names the character the editor read.** With the
+  caret just past a variable (`@nope|+1`), a miss logged the caret's
+  column, where `--def` reads the `+` after it. It logs the variable's
+  last character now, so the line pastes into `--def` and asks the same
+  question.
+
 - **Call hierarchy reads the caret as Go to Definition does.** With the
   caret just past a variable (`a|+b`, `list|[0]`), definition, hover,
   highlight and references answered the variable, but call hierarchy

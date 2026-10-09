@@ -390,6 +390,47 @@ fn a_click_that_finds_nothing_is_logged_where_usage_misses_reads_it() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A miss names the character its caret read, so it pastes into `--def` and
+/// asks the same question: just past a variable, the variable's last
+/// character, not the operator after it.
+#[test]
+fn a_miss_logs_the_character_its_caret_read() {
+    let (dir, db) = scratch("miss-caret");
+    let source = "class Miss\n  def go\n    @nope+1\n  end\nend\n";
+    ruby_repo(&dir, &db, source);
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+    // `@nope|+1`: the caret reads `@nope`, which nothing writes.
+    session.request(
+        "textDocument/definition",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}, "position": {"line": 2, "character": 9}}),
+    );
+    session.stop();
+
+    let out = trekr()
+        .args(["--usage", "--misses", "--json"])
+        .env("TREKR_DB", &db)
+        .env("TREKR_LOG", log_path(&db))
+        .output()
+        .unwrap();
+    let misses: Vec<serde_json::Value> = serde_json::from_slice(&out.stdout).unwrap();
+    let [miss] = misses.as_slice() else {
+        panic!("one miss: {misses:?}");
+    };
+    assert_eq!(
+        (miss["line"].as_u64(), miss["col"].as_u64()),
+        (Some(3), Some(9)),
+        "{miss}"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn references_narrow_to_the_method_asked_about_not_the_name() {
     let (dir, db) = scratch("refs");
