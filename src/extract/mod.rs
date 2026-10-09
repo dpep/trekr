@@ -730,6 +730,14 @@ impl<'a> Extractor<'a> {
         (written != end - start).then_some(written as u32)
     }
 
+    /// Places a macro's def at the argument that names it, spanning it
+    /// whole: `:"name"` is written over more than its name and a `:`.
+    fn at_arg(&self, def: &mut Def, arg: &Node<'_>) {
+        let (start, end) = (arg.location().start_offset(), arg.location().end_offset());
+        def.pos = self.pos(start);
+        def.written = Some(self.written(start, end).unwrap_or((end - start) as u32));
+    }
+
     fn text(&self, start: usize, end: usize) -> String {
         let src = self.evals.last().map_or(self.src, |eval| &eval.src[..]);
         String::from_utf8_lossy(&src[start..end.min(src.len())]).into_owned()
@@ -2688,7 +2696,7 @@ impl<'pr> Extractor<'_> {
             };
             if reader {
                 let mut def = self.def(attr.clone(), Kind::Method, start, end);
-                def.pos = self.pos(arg.location().start_offset());
+                self.at_arg(&mut def, arg);
                 def.via = Some(macro_name.to_string());
                 def.visibility = visibility;
                 def.singleton = singleton;
@@ -2697,7 +2705,7 @@ impl<'pr> Extractor<'_> {
             }
             if writer {
                 let mut def = self.def(format!("{attr}="), Kind::Method, start, end);
-                def.pos = self.pos(arg.location().start_offset());
+                self.at_arg(&mut def, arg);
                 def.via = Some(macro_name.to_string());
                 def.visibility = visibility;
                 def.singleton = singleton;
@@ -4868,7 +4876,7 @@ impl<'pr> Extractor<'_> {
         let loc = call.location();
         let mut def = self.def(new, Kind::Method, loc.start_offset(), loc.end_offset());
         // At its symbol, as attr_* records it, so a click on the name lands.
-        def.pos = self.pos(args[0].location().start_offset());
+        self.at_arg(&mut def, &args[0]);
         def.singleton = self.in_singleton();
         def.via = Some("alias_method".into());
         self.bind_alias(&mut def, &old);
@@ -5006,7 +5014,7 @@ impl<'pr> Extractor<'_> {
         }
         {
             let mut def = self.def(target, Kind::Method, start, end);
-            def.pos = self.pos(arg.location().start_offset());
+            self.at_arg(&mut def, arg);
             def.via = Some(macro_name.to_string());
             def.visibility = visibility;
             def.singleton = singleton;

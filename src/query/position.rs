@@ -387,6 +387,27 @@ mod tests {
     }
 
     #[test]
+    fn a_quoted_macro_symbol_reads_as_its_definition_to_the_closing_quote() {
+        let source = b"class W\n  attr_reader :\"qattr\"\n  alias_method :\"went\", :go\nend\n";
+        // (line, col, what it reads): `:` through the closing quote, not past it.
+        let cases = [
+            (2, 15, Some("qattr")),
+            (2, 21, Some("qattr")),
+            (2, 22, Some("qattr")),
+            (2, 23, None),
+            (3, 16, Some("went")),
+            (3, 21, Some("went")),
+        ];
+        for (line, col, want) in cases {
+            let found = match at(source, line, col) {
+                Some(Under::Definition(def)) => Some(def.name),
+                _ => None,
+            };
+            assert_eq!(found.as_deref(), want, "{line}:{col}");
+        }
+    }
+
+    #[test]
     fn a_compact_path_answers_each_segment_for_what_it_is() {
         let source = b"class Outer::Mid::Inner\nend\nmodule Outer::Mixin\nend\n";
         // `Inner`: the class being opened.

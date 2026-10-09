@@ -437,10 +437,10 @@ pub(crate) struct Def {
     /// the tree places it where it is written, and only `--dead` asks.
     #[serde(skip)]
     pub(crate) unsettled: Option<Unsettled>,
-    /// How many bytes of the file its name is written over, where a string
-    /// of code spelled it from a value: `#{name}`, not the name it expands
-    /// to. `None` where the name is written as itself. Not stored: a
-    /// position is only ever read against a fresh parse.
+    /// How many bytes of the file its name is written over, where that is
+    /// not the name itself: `#{name}` a string of code spells from a value,
+    /// or the `:"name"` a macro is handed. Not stored: a position is only
+    /// ever read against a fresh parse.
     #[serde(skip)]
     pub(crate) written: Option<u32>,
     pub(crate) pos: Pos,

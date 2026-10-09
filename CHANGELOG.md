@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A quoted macro symbol is its method to the closing quote.** On the
+  last letter of `attr_reader :"name"` or `alias_method :"new", :old`,
+  `--def` said ":name — a key or a value here"; the method's span
+  counted the `:` but not the quotes. It now covers the symbol as
+  written.
+
 - **A name a string of code spells from a value ends where its `#{…}`
   does.** In `class_eval "def #{name}(*args, &block)"` over a list, each
   method was placed with its own name's length from the `#{`, so the
