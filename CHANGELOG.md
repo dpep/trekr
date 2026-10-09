@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`index.cause` says when another trekr was writing.** An answer whose
+  edited files could not be read because another trekr held the store
+  said `stale: true` with no `cause`; `cause` now names those files and
+  why.
+
 - **A call inside a made name's `#{…}` is that call.** In
   `class_eval("def #{dir.upcase}_shout")`, every letter of `upcase`
   answered the method the string makes (`UP_shout`), with full

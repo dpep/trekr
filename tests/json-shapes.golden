@@ -125,6 +125,7 @@
 --def $.index.busy: string
 --def $.index.busy_files: array
 --def $.index.busy_files[]: string
+--def $.index.cause: string
 --def $.index.hint: string
 --def $.index.refreshed: null|string
 --def $.index.refreshed_files: array

@@ -184,9 +184,9 @@ no checkout maps. When anything differed, the answer carries `index`:
   them, else `null`. Both appear only when there are any.
 - `index.stale` — other files may still differ from what was read: more
   than 32 changed (the file asked about is still read), git failed or took
-  over a second, or `busy_files`. `index.cause` says which of the first
-  two; `busy_files` speaks for itself (another trekr process, an index or a
-  sibling query, held the store). `hint` is the cure.
+  over a second, or `busy_files` (another trekr process, an index or a
+  sibling query, held the store). `index.cause` says which. `hint` is the
+  cure.
 
 No `index` field means the working tree matched the index. `--refs NAME`'s
 `--json` is a bare array, so it says this on stderr, and `--ndjson` in its

@@ -3840,6 +3840,8 @@ fn read_commands_answer_and_exit_while_another_process_writes() {
         "{value}"
     );
     assert!(value["index"]["refreshed"].is_null(), "{value}");
+    let cause = value["index"]["cause"].as_str().unwrap_or_default();
+    assert!(cause.contains("another trekr"), "stale says why: {value}");
     assert_eq!(
         value["definition"][0]["line"], 12,
         "answered from the committed index: {value}"

@@ -35,13 +35,20 @@ impl Freshness {
     }
 
     fn stale(&self) -> bool {
-        self.lag.is_some() || !self.busy.is_empty()
+        self.cause().is_some()
     }
 
     /// Why files beyond those read may differ from the index, when they may:
     /// `index.cause`, and the text answer's caveat.
     fn cause(&self) -> Option<String> {
-        self.lag.clone()
+        let busy = (!self.busy.is_empty()).then(|| {
+            format!(
+                "{} could not be read while another trekr writes the index",
+                self.busy.join(", ")
+            )
+        });
+        let causes: Vec<String> = self.lag.iter().cloned().chain(busy).collect();
+        (!causes.is_empty()).then(|| causes.join("; "))
     }
 
     /// On stderr, so stdout stays the answer.
