@@ -1,11 +1,11 @@
-# Every field path of the testbed's --json answers, per command, and the
-# JSON types seen there. Regenerate: UPDATE_GOLDEN=1 cargo test --test testbed
+# Every field path of the testbed's --json answers, per command, the JSON
+# types seen there, and a vocabulary field's values. Regenerate: UPDATE_GOLDEN=1 cargo test --test testbed
 --ancestors $: object
 --ancestors $.ancestors: array
 --ancestors $.ancestors[]: string
 --ancestors $.fqn: string
 --ancestors $.query: string
---ancestors $.status: string
+--ancestors $.status: string {ambiguous,resolved}
 --ancestors $.unresolved_ancestors: array
 --ancestors $.unresolved_ancestors[]: string
 --ancestors $.variants: array
@@ -15,7 +15,7 @@
 --ancestors $.variants[].definition: array
 --ancestors $.variants[].definition[]: object
 --ancestors $.variants[].definition[].col: int
---ancestors $.variants[].definition[].kind: string
+--ancestors $.variants[].definition[].kind: string {class}
 --ancestors $.variants[].definition[].line: int
 --ancestors $.variants[].definition[].path: string
 --ancestors $.variants[].definition[].root: string
@@ -28,7 +28,7 @@
 --dead $.candidates[].caller.line: int
 --dead $.candidates[].caller.path: string
 --dead $.candidates[].caller.root: string
---dead $.candidates[].caller.tier: string
+--dead $.candidates[].caller.tier: string {confirmed,possible}
 --dead $.candidates[].caveat: string
 --dead $.candidates[].col: int
 --dead $.candidates[].confidence: string
@@ -41,7 +41,7 @@
 --dead $.candidates[].end_line: int
 --dead $.candidates[].group: null|string
 --dead $.candidates[].helpers_read: int
---dead $.candidates[].kind: string
+--dead $.candidates[].kind: string {class,constant,let,method,module,shared_group,subject}
 --dead $.candidates[].line: int
 --dead $.candidates[].mentions_by_name: int
 --dead $.candidates[].name: string
@@ -65,7 +65,7 @@
 --dead $.candidates[].super_refs: int
 --dead $.candidates[].symbol_refs: int
 --dead $.candidates[].test_refs: int
---dead $.candidates[].tier: string
+--dead $.candidates[].tier: string {convention-only,override,shadowed,single-caller,super-only,test-only,unreferenced}
 --dead $.candidates[].visibility: string
 --dead $.index: object
 --dead $.index.cause: string
@@ -100,12 +100,12 @@
 --def $.agreement: string
 --def $.candidates: array
 --def $.candidates[]: object
---def $.candidates[].kind: string
+--def $.candidates[].kind: string {declaration,definition}
 --def $.candidates[].owner: string
 --def $.candidates[].singleton: bool
 --def $.candidates[].site: object
 --def $.candidates[].site.col: int
---def $.candidates[].site.kind: string
+--def $.candidates[].site.kind: string {method}
 --def $.candidates[].site.line: int
 --def $.candidates[].site.path: string
 --def $.candidates[].site.root: string
@@ -116,7 +116,7 @@
 --def $.definition: array
 --def $.definition[]: object
 --def $.definition[].col: int
---def $.definition[].kind: string
+--def $.definition[].kind: string {assigned,block parameter,class,constant,local,method,module,parameter,template}
 --def $.definition[].line: int
 --def $.definition[].path: string
 --def $.definition[].root: string
@@ -130,7 +130,7 @@
 --def $.index.refreshed_files: array
 --def $.index.refreshed_files[]: string
 --def $.index.stale: bool
---def $.kind: string
+--def $.kind: string {declaration,definition}
 --def $.name: string
 --def $.owner: string
 --def $.query: string
@@ -139,12 +139,12 @@
 --def $.receiver_kind: string
 --def $.receiver_text: string
 --def $.receiver_type: string
---def $.resolved_via: string
+--def $.resolved_via: string {ancestor,chain,chain:name,const,controller,definition,delegate,delegate_missing_to,described_class,example_group,finder,flow,implicit_subject,includer,let,literal,local:new,local:rescue,main,object,on_load,path,predicate_matcher,rabl,rabl:object,receiver_name,relation,render,root,scope,self,sidecar,sig,super,symbol,view}
 --def $.scopes_tried: int
 --def $.signatures: array
 --def $.signatures[]: object
 --def $.signatures[].col: int
---def $.signatures[].kind: string
+--def $.signatures[].kind: string {method}
 --def $.signatures[].line: int
 --def $.signatures[].path: string
 --def $.signatures[].root: string
@@ -155,8 +155,8 @@
 --def $.snapped_to.alternatives[].name: string
 --def $.snapped_to.col: int
 --def $.snapped_to.name: string
---def $.status: string
---def $.under: string
+--def $.status: string {ambiguous,residue,resolved}
+--def $.under: string {call,constant,definition,symbol,template,variable}
 --def $.unresolved_ancestors: array
 --def $.unresolved_ancestors[]: string
 --def $.variable: string
@@ -212,7 +212,7 @@
 --refs $.definition: array
 --refs $.definition[]: object
 --refs $.definition[].col: int
---refs $.definition[].kind: string
+--refs $.definition[].kind: string {method}
 --refs $.definition[].line: int
 --refs $.definition[].path: string
 --refs $.definition[].root: string
@@ -228,7 +228,7 @@
 --refs $.index.refreshed_files[]: string
 --refs $.index.stale: bool
 --refs $.inherited: bool
---refs $.kind: string
+--refs $.kind: string {let,subject,usage}
 --refs $.method: string
 --refs $.name: string
 --refs $.overridden_by: array
@@ -243,24 +243,24 @@
 --refs $.references[].called_as: string
 --refs $.references[].col: int
 --refs $.references[].from: string
---refs $.references[].kind: string
+--refs $.references[].kind: string {read,write}
 --refs $.references[].line: int
 --refs $.references[].owner: string
 --refs $.references[].path: string
 --refs $.references[].receiver: string
 --refs $.references[].receiver_type: string
 --refs $.references[].root: string
---refs $.references[].tier: string
+--refs $.references[].tier: string {confirmed,possible}
 --refs $.references[].why: string
 --refs $.resolves_to: null|string
 --refs $.shared_groups_read: int
 --refs $.singleton: bool
---refs $.status: string
---refs $.under: string
+--refs $.status: string {no_such_method,residue,resolved}
+--refs $.under: string {variable}
 --refs $.variable: string
 --refs $[]: object
 --refs $[].col: int
---refs $[].kind: string
+--refs $[].kind: string {method}
 --refs $[].line: int
 --refs $[].nesting: array
 --refs $[].nesting[]: string
@@ -269,7 +269,7 @@
 --refs $[].receiver: string
 --refs $[].role: string
 --refs $[].root: string
---refs $[].tier: string
+--refs $[].tier: string {confirmed}
 --refs NAME --ndjson $: object
 --refs NAME --ndjson $.answer: object
 --refs NAME --ndjson $.answer.index: object
@@ -290,7 +290,7 @@
 --status $.checkouts[].gems.files: int
 --status $.checkouts[].gems.indexed: int
 --status $.checkouts[].indexed_at: int
---status $.checkouts[].kind: string
+--status $.checkouts[].kind: string {repo}
 --status $.checkouts[].repo: string
 --status $.checkouts[].ruby: object
 --status $.checkouts[].ruby.fallback: bool
@@ -318,7 +318,7 @@
 --symbols $[]: object
 --symbols $[].col: int
 --symbols $[].end_line: int
---symbols $[].kind: string
+--symbols $[].kind: string {class,method,module}
 --symbols $[].line: int
 --symbols $[].name: string
 --symbols $[].nesting: array
@@ -343,16 +343,16 @@ QUERY $.counts.possible: int
 QUERY $.definition: array
 QUERY $.definition[]: object
 QUERY $.definition[].col: int
-QUERY $.definition[].kind: string
+QUERY $.definition[].kind: string {method}
 QUERY $.definition[].line: int
 QUERY $.definition[].path: string
 QUERY $.definition[].root: string
 QUERY $.inherited: bool
-QUERY $.kind: null|string
+QUERY $.kind: null|string {declaration,definition}
 QUERY $.method: string
 QUERY $.owner: string
 QUERY $.query: string
 QUERY $.reason: string
 QUERY $.resolves_to: null|string
 QUERY $.singleton: bool
-QUERY $.status: string
+QUERY $.status: string {no_such_method,residue,resolved}

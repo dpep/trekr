@@ -594,6 +594,9 @@ fn trekr(db: &Path, dir: &Path, args: &[&str]) -> (serde_json::Value, i32) {
 /// (`--dead $.candidates[].mentions_by_name: int|null`), compared with
 /// `tests/json-shapes.golden` once the whole testbed has run. A field that
 /// changes type or vanishes breaks a caller who parses it, and compiles fine.
+/// A closed vocabulary's field also records the values seen
+/// (`--def $.status: string {ambiguous,resolved}`), so a renamed or new
+/// literal moves the golden too.
 mod shapes {
     use std::collections::{BTreeMap, BTreeSet};
     use std::sync::Mutex;
@@ -601,7 +604,16 @@ mod shapes {
     const GOLDEN: &str = "tests/json-shapes.golden";
     const REGENERATE: &str = "UPDATE_GOLDEN=1 cargo test --test testbed";
 
-    static SEEN: Mutex<BTreeMap<String, BTreeSet<&'static str>>> = Mutex::new(BTreeMap::new());
+    /// Fields whose strings are a fixed set a caller matches on, not data.
+    const VOCABULARY: &[&str] = &["status", "resolved_via", "under", "tier", "kind"];
+
+    #[derive(Default)]
+    struct Seen {
+        kinds: BTreeSet<&'static str>,
+        values: BTreeSet<String>,
+    }
+
+    static SEEN: Mutex<BTreeMap<String, Seen>> = Mutex::new(BTreeMap::new());
 
     /// Fold one answer into the run's shapes, under the command that gave it.
     pub(super) fn record(args: &[&str], answer: &serde_json::Value) {
@@ -617,11 +629,7 @@ mod shapes {
         walk(answer, format!("{command} $"), &mut seen);
     }
 
-    fn walk(
-        value: &serde_json::Value,
-        path: String,
-        seen: &mut BTreeMap<String, BTreeSet<&'static str>>,
-    ) {
+    fn walk(value: &serde_json::Value, path: String, seen: &mut BTreeMap<String, Seen>) {
         use serde_json::Value;
         let kind = match value {
             Value::Null => "null",
@@ -642,7 +650,14 @@ mod shapes {
                 "object"
             }
         };
-        seen.entry(path).or_default().insert(kind);
+        let vocabulary = path
+            .rsplit_once('.')
+            .is_some_and(|(_, key)| VOCABULARY.contains(&key));
+        let entry = seen.entry(path).or_default();
+        entry.kinds.insert(kind);
+        if let (true, Value::String(text)) = (vocabulary, value) {
+            entry.values.insert(text.clone());
+        }
     }
 
     /// Compare the run's shapes with the golden, or write it under
@@ -651,18 +666,22 @@ mod shapes {
         let seen = SEEN.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let current: Vec<String> = seen
             .iter()
-            .map(|(path, kinds)| {
-                format!(
-                    "{path}: {}",
-                    kinds.iter().copied().collect::<Vec<_>>().join("|")
-                )
+            .map(|(path, seen)| {
+                let kinds = seen.kinds.iter().copied().collect::<Vec<_>>().join("|");
+                match seen.values.is_empty() {
+                    true => format!("{path}: {kinds}"),
+                    false => {
+                        let values = seen.values.iter().cloned().collect::<Vec<_>>().join(",");
+                        format!("{path}: {kinds} {{{values}}}")
+                    }
+                }
             })
             .collect();
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(GOLDEN);
         if std::env::var_os("UPDATE_GOLDEN").is_some() {
             let header = format!(
-                "# Every field path of the testbed's --json answers, per command, and the\n\
-                 # JSON types seen there. Regenerate: {REGENERATE}\n"
+                "# Every field path of the testbed's --json answers, per command, the JSON\n\
+                 # types seen there, and a vocabulary field's values. Regenerate: {REGENERATE}\n"
             );
             std::fs::write(&path, header + &current.join("\n") + "\n").expect("golden written");
             return;
@@ -675,8 +694,9 @@ mod shapes {
         assert!(
             gone.is_empty() && new.is_empty(),
             "the --json answers' shapes moved from {GOLDEN}. A field that changed type \
-             or vanished breaks a caller that parses it; if that is intended, or the \
-             change is only new fields, regenerate with {REGENERATE}\n\n{}",
+             or vanished, or a vocabulary value renamed, breaks a caller that parses \
+             it; if that is intended, or the change is only new fields or values, \
+             regenerate with {REGENERATE} and update docs/OUTPUT.md\n\n{}",
             gone.iter()
                 .map(|l| format!("- {l}"))
                 .chain(new.iter().map(|l| format!("+ {l}")))

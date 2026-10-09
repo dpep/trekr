@@ -95,8 +95,10 @@ brew unlink trekr   # …verify…   then:   brew link trekr
   `UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden`. A new
   testbed input fails too, until that regeneration records it (no bump).
 - **`tests/json-shapes.golden` pins the `--json` output's shape**: every
-  field path the testbed's answers reach, per command, and the JSON types
-  seen there. A field that changes type or vanishes fails the testbed; when
+  field path the testbed's answers reach, per command, the JSON types seen
+  there, and the values of a closed vocabulary (`status`, `resolved_via`,
+  `under`, `tier`, `kind`). A field that changes type or vanishes, or a
+  value renamed or added, fails the testbed; when
   the change is meant (or only adds fields), regenerate with
   `UPDATE_GOLDEN=1 cargo test --test testbed` — and update
   [docs/OUTPUT.md](docs/OUTPUT.md), the field reference, in the same commit.
