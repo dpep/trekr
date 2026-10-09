@@ -1,53 +1,53 @@
 //! The command line's side of a position: the `FILE:LINE:COL` argument, and
 //! a variable's answer. What is under the cursor is [`crate::query::position`].
 
-/// A `FILE:LINE:COL` argument.
+use std::num::NonZeroU32;
+
+/// A `FILE:LINE:COL` argument. Lines and columns count from 1; a `FILE:LINE`
+/// has no column, and the line chooses.
 pub(crate) struct Spec {
     pub(crate) path: String,
-    pub(crate) line: u32,
-    pub(crate) col: u32,
+    pub(crate) line: NonZeroU32,
+    pub(crate) col: Option<NonZeroU32>,
 }
 
 impl Spec {
+    /// `None` when the input is not position-shaped; an `Err` saying why when
+    /// it is, but a 0 names no position.
+    ///
     /// Windows drive letters are not a concern here, but a path *can* contain a
     /// colon, so the split is from the right and only the last two fields.
-    pub(crate) fn parse(spec: &str) -> Option<Spec> {
+    pub(crate) fn parse(spec: &str) -> Option<Result<Spec, String>> {
         let (rest, last) = spec.rsplit_once(':')?;
         let last: u32 = last.parse().ok()?;
         // `FILE:LINE:COL`, when the field before the column is also a number.
         // An empty path there is malformed, not a two-field spec: `:1:2` must
         // stay a refusal rather than becoming the file `:1`.
-        if let Some((path, line)) = rest.rsplit_once(':')
-            && let Ok(line) = line.parse::<u32>()
-        {
-            return (!path.is_empty()).then(|| Spec {
-                path: path.to_string(),
-                line,
-                col: last,
-            });
-        }
-        // `FILE:LINE`, which is what a hand typing it produces. Columns are
-        // 1-based, so 0 means "not given" and the line gets to choose.
-        if rest.is_empty() {
-            return None;
-        }
-        Some(Spec {
-            path: rest.to_string(),
-            line: last,
-            col: 0,
-        })
-    }
-
-    /// Why a position-shaped input names no position, if it does not: lines
-    /// and columns count from 1. `FILE:LINE` leaves the column 0 internally,
-    /// so only a written `:0` column is refused.
-    pub(crate) fn out_of_range(&self, written: &str) -> Option<String> {
-        let col_written = written
-            .rsplit_once(':')
-            .and_then(|(rest, _)| rest.rsplit_once(':'))
-            .is_some_and(|(_, line)| line.parse::<u32>().is_ok());
-        (self.line == 0 || (col_written && self.col == 0))
-            .then(|| format!("`{written}`: lines and columns count from 1, so 0 names no position"))
+        let (path, line, col) = match rest.rsplit_once(':') {
+            Some((path, line)) if line.parse::<u32>().is_ok() => {
+                if path.is_empty() {
+                    return None;
+                }
+                (path, line.parse::<u32>().ok()?, Some(last))
+            }
+            // `FILE:LINE`, which is what a hand typing it produces.
+            _ if rest.is_empty() => return None,
+            _ => (rest, last, None),
+        };
+        let zero = || format!("`{spec}`: lines and columns count from 1, so 0 names no position");
+        let Some(line) = NonZeroU32::new(line) else {
+            return Some(Err(zero()));
+        };
+        let col = match col.map(NonZeroU32::new) {
+            Some(None) => return Some(Err(zero())),
+            Some(col) => col,
+            None => None,
+        };
+        Some(Ok(Spec {
+            path: path.to_string(),
+            line,
+            col,
+        }))
     }
 }
 
@@ -139,29 +139,38 @@ mod tests {
 
     #[test]
     fn parses_a_position_even_when_the_path_has_a_colon() {
-        let spec = Spec::parse("a:b/c.rb:12:5").expect("parses");
-        assert_eq!(
-            (spec.path.as_str(), spec.line, spec.col),
-            ("a:b/c.rb", 12, 5)
-        );
-        assert!(Spec::parse("no-position.rb").is_none());
-        assert!(Spec::parse(":1:2").is_none());
-
-        // `FILE:LINE` is what a hand types; column 0 means "the line chooses".
-        let bare = Spec::parse("app/models/user.rb:42").unwrap();
-        assert_eq!(bare.path, "app/models/user.rb");
-        assert_eq!((bare.line, bare.col), (42, 0));
-        let colonic = Spec::parse("/tmp/a:b/user.rb:42").unwrap();
-        assert_eq!(colonic.path, "/tmp/a:b/user.rb");
-        assert_eq!((colonic.line, colonic.col), (42, 0));
-        assert!(Spec::parse("app.rb").is_none());
+        let parsed = |s: &str| {
+            Spec::parse(s)
+                .and_then(Result::ok)
+                .map(|spec| (spec.path, spec.line.get(), spec.col.map(NonZeroU32::get)))
+        };
+        let path = |p: &str| p.to_string();
+        // (written, parsed)
+        let cases = [
+            ("a:b/c.rb:12:5", Some((path("a:b/c.rb"), 12, Some(5)))),
+            // `FILE:LINE` is what a hand types; the line chooses.
+            (
+                "app/models/user.rb:42",
+                Some((path("app/models/user.rb"), 42, None)),
+            ),
+            (
+                "/tmp/a:b/user.rb:42",
+                Some((path("/tmp/a:b/user.rb"), 42, None)),
+            ),
+            ("no-position.rb", None),
+            ("app.rb", None),
+            (":1:2", None),
+            (":42", None),
+        ];
+        for (written, want) in cases {
+            assert_eq!(parsed(written), want, "{written}");
+        }
 
         // Zero is a position shape, so it is refused as one rather than
-        // dispatched elsewhere; a line-only spec's column is not a written 0.
-        let zero = |s: &str| Spec::parse(s).unwrap().out_of_range(s).is_some();
+        // dispatched elsewhere.
+        let zero = |s: &str| matches!(Spec::parse(s), Some(Err(_)));
         assert!(zero("a.rb:0:0") && zero("a.rb:0") && zero("a.rb:3:0"));
         assert!(!zero("a.rb:3") && !zero("a.rb:3:1"));
-        assert!(Spec::parse(":42").is_none());
     }
 
     #[test]

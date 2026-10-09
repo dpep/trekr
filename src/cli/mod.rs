@@ -33,6 +33,7 @@ use clap_complete::Shell;
 use rayon::prelude::*;
 use std::collections::{HashMap, HashSet};
 use std::io::Write;
+use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -366,11 +367,12 @@ pub(crate) fn run(lsp: fn(bool) -> anyhow::Result<()>) -> ExitCode {
             Some("refs"),
             cmd_refs(out, name, cli.include_excluded, cli.context.as_deref()),
         )
-    } else if let Some(spec) = &cli.def {
-        (
-            Some("def"),
-            cmd_def(out, spec, cli.explain, cli.context.as_deref()),
-        )
+    } else if let Some(written) = &cli.def {
+        let def = position::Spec::parse(written)
+            .ok_or_else(|| Failure::Usage.error(format!("expected FILE:LINE:COL, got `{written}`")))
+            .and_then(|spec| spec.map_err(|why| Failure::Usage.error(why)))
+            .and_then(|spec| cmd_def(out, written, &spec, cli.explain, cli.context.as_deref()));
+        (Some("def"), def)
     } else if !cli.dead.is_empty() {
         (Some("dead"), dead::cmd_dead(out, &cli.dead))
     } else if let Some(name) = &cli.ancestors {
@@ -3910,8 +3912,9 @@ fn cmd_refs(
     context: Option<&Path>,
 ) -> anyhow::Result<ExitCode> {
     use crate::resolve::refs;
-    if position::Spec::parse(text).is_some() {
-        return cmd_refs_at(out, text, include_excluded, context);
+    if let Some(spec) = position::Spec::parse(text) {
+        let spec = spec.map_err(|why| Failure::Usage.error(why))?;
+        return cmd_refs_at(out, text, &spec, include_excluded, context);
     }
     let query = refs::Query::parse(text);
     check_method_shape(&query, text)?;
@@ -4089,13 +4092,11 @@ fn cmd_refs(
 fn cmd_refs_at(
     out: Output,
     written: &str,
+    spec: &position::Spec,
     include_excluded: bool,
     pinned: Option<&Path>,
 ) -> anyhow::Result<ExitCode> {
-    let spec = position::Spec::parse(written).expect("checked by the caller");
-    if let Some(why) = spec.out_of_range(written) {
-        return Err(Failure::Usage.error(why));
-    }
+    let line = spec.line.get();
     let file = Path::new(&spec.path);
     if !file.exists() {
         return Err(Failure::NotFound.error(format!("no such path: {}", spec.path)));
@@ -4119,7 +4120,7 @@ fn cmd_refs_at(
     let tree = fresh_tree(out, &mut store, &root, Some(file))?;
     let files = crate::query::members::CheckoutFiles::new(&store, &root, &root_str);
     if let Some((path, def)) =
-        crate::query::members::member_at_position(&tree, &files, &relative, spec.line, spec.col)
+        crate::query::members::member_at_position(&tree, &files, &relative, line, spec.col)
     {
         let context = crate::resolve::members::Context::new(&tree, &files);
         let (answer, reads) =
@@ -4138,9 +4139,10 @@ fn cmd_refs_at(
     let facts = crate::extract::extract_file(&file.to_string_lossy(), &source);
     // A variable is not a call: its mentions, as the editor lists them, and
     // not whichever method is nearest on the line.
-    if crate::query::position::variable_may_answer(&facts, spec.line, spec.col)
+    if let Some(col) = spec.col.map(NonZeroU32::get)
+        && crate::query::position::variable_may_answer(&facts, line, col)
         && let Some((head, rows)) =
-            variable_mentions(&tree, &root_str, &absolute, &source, spec.line, spec.col)
+            variable_mentions(&tree, &root_str, &absolute, &source, line, col)
     {
         let found = !rows.is_empty();
         let mut head = head;
@@ -4164,8 +4166,8 @@ fn cmd_refs_at(
     // another name's references, with nothing to say so. A bare `FILE:LINE`
     // takes the line's first name.
     let under = match spec.col {
-        0 => crate::query::position::at_or_snap(&facts, spec.line, 0).map(|(under, _)| under),
-        col => crate::query::position::at_facts(&facts, spec.line, col),
+        None => crate::query::position::at_or_snap(&facts, line, None).map(|(under, _)| under),
+        Some(col) => crate::query::position::at_facts(&facts, line, col.get()),
     };
     // A class, module or constant: its references, as `--refs Name` lists them.
     let constant = match &under {
@@ -4823,9 +4825,10 @@ fn cmd_bare(
     // A position: the last field is a line number, so `Spec::parse` accepts it.
     // Checked first because a Windows-ish path could contain anything else.
     crate::usage::flag("bare");
-    if position::Spec::parse(input).is_some() {
+    if let Some(spec) = position::Spec::parse(input) {
         crate::usage::feature("def");
-        return cmd_def(out, input, explain, context);
+        let spec = spec.map_err(|why| Failure::Usage.error(why))?;
+        return cmd_def(out, input, &spec, explain, context);
     }
     crate::usage::feature("card");
     // A method: `Owner#method` or `Owner.method`, which `--refs` already parses
@@ -4945,16 +4948,12 @@ fn checkout_for(store: &Store, path: &Path) -> anyhow::Result<PathBuf> {
 
 fn cmd_def(
     out: Output,
-    spec: &str,
+    written: &str,
+    spec: &position::Spec,
     explain: bool,
     pinned: Option<&Path>,
 ) -> anyhow::Result<ExitCode> {
-    let written = spec;
-    let spec = position::Spec::parse(spec)
-        .ok_or_else(|| Failure::Usage.error(format!("expected FILE:LINE:COL, got `{spec}`")))?;
-    if let Some(why) = spec.out_of_range(written) {
-        return Err(Failure::Usage.error(why));
-    }
+    let line = spec.line.get();
     let raw = read_input(Path::new(&spec.path))?;
     let facts = crate::extract::extract_file(&spec.path, &raw);
     // What the file runs, at its offsets: a template's tags (DEC-520).
@@ -4976,7 +4975,8 @@ fn cmd_def(
     // it is written as finds no value either.
     let mut no_template = None;
     // A template a `render` or `extends` names: the file it reaches (DEC-524).
-    if let Some(template) = crate::query::position::template_at(&facts, spec.line, spec.col)
+    if let Some(col) = spec.col.map(NonZeroU32::get)
+        && let Some(template) = crate::query::position::template_at(&facts, line, col)
         && let Some((root, store)) = checkout.as_mut().map(|(root, store)| (&*root, store))
     {
         let relative = std::fs::canonicalize(&spec.path)
@@ -4996,8 +4996,8 @@ fn cmd_def(
         // One that reaches no file leaves the variable it is written as to
         // answer, below.
         let variable = files.is_empty()
-            && crate::query::position::variable_may_answer(&facts, spec.line, spec.col)
-            && position::variable_at(&source, &file, spec.line, spec.col).is_some();
+            && crate::query::position::variable_may_answer(&facts, line, col)
+            && position::variable_at(&source, &file, line, col).is_some();
         let answer = template_answer(written.to_string(), root, &files, class.as_deref());
         if variable {
             no_template = Some(answer);
@@ -5015,8 +5015,9 @@ fn cmd_def(
     }
     // A `super` with no fact behind it is one whose method has no owner the
     // source names. Snapping would answer for another name on the line.
-    if crate::query::position::at_facts(&facts, spec.line, spec.col).is_none()
-        && crate::query::position::word_at(&source, spec.line, spec.col).as_deref() == Some("super")
+    if let Some(col) = spec.col.map(NonZeroU32::get)
+        && crate::query::position::at_facts(&facts, line, col).is_none()
+        && crate::query::position::word_at(&source, line, col).as_deref() == Some("super")
     {
         file_alone(&checkout);
         return report(
@@ -5039,15 +5040,15 @@ fn cmd_def(
     // A symbol no rule reads as a method's name is a value (`on: :create`,
     // `status: :ok`). Snapping from one answered, resolved, for whatever
     // other name was nearest on the line (DEC-343).
-    if spec.col > 0
-        && crate::query::position::at_facts(&facts, spec.line, spec.col).is_none()
+    if let Some(col) = spec.col.map(NonZeroU32::get)
+        && crate::query::position::at_facts(&facts, line, col).is_none()
         && let Some((name, _, _)) =
             crate::extract::symbol_literals(&source)
                 .into_iter()
                 .find(|(_, pos, len)| {
-                    pos.line == spec.line
-                        && pos.col.saturating_sub(1) <= spec.col
-                        && spec.col < pos.col + *len as u32
+                    pos.line == line
+                        && pos.col.saturating_sub(1) <= col
+                        && col < pos.col + *len as u32
                 })
     {
         file_alone(&checkout);
@@ -5068,8 +5069,9 @@ fn cmd_def(
     }
     // A variable is not a call, and snapping from one answered for whatever
     // name was nearest on the line.
-    if crate::query::position::variable_may_answer(&facts, spec.line, spec.col)
-        && let Some(answer) = position::variable_at(&source, &file, spec.line, spec.col)
+    if let Some(col) = spec.col.map(NonZeroU32::get)
+        && crate::query::position::variable_may_answer(&facts, line, col)
+        && let Some(answer) = position::variable_at(&source, &file, line, col)
     {
         crate::usage::flag("variable");
         let mut answer = answer;
@@ -5150,7 +5152,7 @@ fn cmd_def(
         };
         return report(out, answer, resolved, &text);
     }
-    let snapped = crate::query::position::at_or_snap(&facts, spec.line, spec.col);
+    let snapped = crate::query::position::at_or_snap(&facts, line, spec.col);
     let Some((under, snapped)) = snapped else {
         file_alone(&checkout);
         return report(
@@ -5363,8 +5365,8 @@ fn cmd_def(
                 ),
             };
             let why = match spec.col {
-                0 => "no column given".to_string(),
-                col => format!("no name at column {col}"),
+                None => "no column given".to_string(),
+                Some(col) => format!("no name at column {col}"),
             };
             format!(
                 "{text}\n  snapped_to  `{}` at column {}: {why}{others}",

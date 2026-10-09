@@ -1004,8 +1004,13 @@ fn with_member<R>(
     let open = overlay(session, &root);
     let (tree, store) = session.tree_and_store(&root)?;
     let files = CheckoutFiles::with_open(store, &root, &root_str, open);
-    let Some((path, def)) = member_at_position(tree, &files, &located.relative, pos.line, pos.col)
-    else {
+    let Some((path, def)) = member_at_position(
+        tree,
+        &files,
+        &located.relative,
+        pos.line,
+        std::num::NonZeroU32::new(pos.col),
+    ) else {
         return Ok(None);
     };
     let asked = Asked {

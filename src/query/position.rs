@@ -7,6 +7,7 @@
 //! constant is.
 
 use crate::core::{Call, ConstRef, Def, Kind, Pos};
+use std::num::NonZeroU32;
 
 /// What the cursor is on. Ordered by how much this engine can say about it.
 pub(crate) enum Under {
@@ -126,20 +127,21 @@ fn names_on_line(facts: &crate::core::Facts, line: u32) -> Vec<(String, u32)> {
 pub(crate) fn at_or_snap(
     facts: &crate::core::Facts,
     line: u32,
-    col: u32,
+    col: Option<NonZeroU32>,
 ) -> Option<(Under, Option<Snapped>)> {
-    if col > 0
-        && let Some(under) = at_facts(facts, line, col)
+    if let Some(col) = col
+        && let Some(under) = at_facts(facts, line, col.get())
     {
         return Some((under, None));
     }
     let names = names_on_line(facts, line);
-    // Nearest by column, leftmost on a tie — so a bare `FILE:LINE` (column 0)
-    // takes the first name on the line. Only *interesting* names are recorded,
-    // so `w = Widget.new` snaps to `Widget` rather than to the local `w`.
+    // Nearest by column, leftmost on a tie — so a bare `FILE:LINE` takes the
+    // first name on the line. Only *interesting* names are recorded, so
+    // `w = Widget.new` snaps to `Widget` rather than to the local `w`.
+    let from = col.map_or(0, NonZeroU32::get);
     let (name, at_col) = names
         .iter()
-        .min_by_key(|(_, c)| (c.abs_diff(col), *c))?
+        .min_by_key(|(_, c)| (c.abs_diff(from), *c))?
         .clone();
     let under = at_facts(facts, line, at_col)?;
     let alternatives = names
@@ -248,7 +250,7 @@ pub(crate) fn template_at(
 /// `x[0]`'s `[` that is the `[]` call. The editor's caret reads differently
 /// (DEC-036 addendum).
 pub(crate) fn variable_may_answer(facts: &crate::core::Facts, line: u32, col: u32) -> bool {
-    col > 0 && at_facts(facts, line, col).is_none()
+    at_facts(facts, line, col).is_none()
 }
 
 #[cfg(test)]
@@ -266,7 +268,6 @@ mod tests {
             (3, 3, false), // `size`
             (4, 1, false), // `-`: the unary `-@` call
             (4, 2, true),  // `x`: `-@` is written as one character
-            (2, 0, false), // no column: the line chooses, never a variable
         ];
         for (line, col, want) in cases {
             assert_eq!(variable_may_answer(&facts, line, col), want, "{line}:{col}");

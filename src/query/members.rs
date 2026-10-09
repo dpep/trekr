@@ -157,7 +157,7 @@ pub(crate) fn member_at_position(
     files: &CheckoutFiles<'_>,
     relative: &str,
     line: u32,
-    col: u32,
+    col: Option<std::num::NonZeroU32>,
 ) -> Option<(String, Def)> {
     use crate::resolve::members::{Named, is_member, named_by};
     let facts = files.facts(relative)?;
@@ -170,10 +170,10 @@ pub(crate) fn member_at_position(
             .min_by_key(|def| def.pos.col)
             .map(|def| (relative.to_string(), def.clone()))
     };
-    if col == 0 {
+    let Some(col) = col else {
         return defined_on(line, 0);
-    }
-    match super::position::at_facts(&facts, line, col)? {
+    };
+    match super::position::at_facts(&facts, line, col.get())? {
         super::position::Under::Definition(def) if is_member(&def) => {
             Some((relative.to_string(), def))
         }
