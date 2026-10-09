@@ -94,6 +94,13 @@ brew unlink trekr   # …verify…   then:   brew link trekr
   output that moves without a bump fails, and a bump says to regenerate with
   `UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden`. A new
   testbed input fails too, until that regeneration records it (no bump).
+  **An extraction change lands its testbed input one commit earlier**: the
+  Ruby source, its `expected` holding only what passes today, and the golden
+  regenerated. The change's own commit then shows a hash *move*, which asks
+  for the bump, and adds the new assertions. Landed together, the input is
+  only a new golden line, and a change the existing corpus does not
+  exercise slips past without a bump (107bf53 shipped only because
+  a7cec68's bump rode the same release).
 - **`tests/json-shapes.golden` pins the `--json` output's shape**: every
   field path the testbed's answers reach, per command, the JSON types seen
   there, and the values of a closed vocabulary (`status`, `resolved_via`,
