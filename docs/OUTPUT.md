@@ -247,11 +247,13 @@ the references Ruby's lookup resolves to it through the scopes they are
 written in (`Widget` inside `module Admin`, `Admin::Widget`,
 `::Admin::Widget`). A path through an includer, a subclass or an alias
 (`Host::K` for a `K` that `include Mixin` brings, `Child::K`, `Alias::K`
-where `Alias = Admin::Widget`) is not found. One the
-index cannot place whole is placed by the longest leading part it can
-(`Rack::Utils` inside `module App` is `App::Rack::Utils` once `App::Rack`
-resolves); one it cannot place at all is listed only when written out in
-full.
+where `Alias = Admin::Widget`) is not found by name. One the index cannot
+place whole is named by the longest leading part it can place plus the rest
+as written: `Rack::Utils` inside `module App` is `App::Rack::Utils` once
+`App::Rack` resolves, and `--refs App::Rack::Utils` lists it. One it cannot
+place at all is listed only when written out in full. `--refs` at a mention
+asks for the name the mention is placed as, and lists the mention itself
+however it is written.
 
 `--refs 'Widget#initialize'` lists the `new`s whose class runs it (its own or
 a subclass that inherits it), each marked `"called_as": "new"`. An untyped

@@ -44,8 +44,11 @@
   usage error, exit 64. A name written with `::` now lists the definitions
   and the references Ruby's lookup resolves to it through the scopes they
   are written in, as the editor's Find References does, and a position on
-  any class, module or constant answers that way. A path through an
-  includer, a subclass or an alias (`Child::K`) is not found. A top-level constant's whole name is `::Widget`; a bare
+  any class, module or constant answers that way. A constant nothing
+  defines whole is named by the part that resolves: `Nodes::Union` inside
+  `module Arel` is `Arel::Nodes::Union`. By name, a path through an
+  includer, a subclass or an alias (`Child::K`) is not found; at the
+  mention it is. A top-level constant's whole name is `::Widget`; a bare
   `--refs Widget` still lists every mention of the name.
 
 - **`--def` in a `require` string answers the file it loads.** Anywhere in

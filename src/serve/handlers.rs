@@ -678,14 +678,24 @@ pub(crate) fn references(
     // than by a receiver.
     let constant = match &under {
         Under::Definition(def) if def.kind != crate::core::Kind::Method => {
-            Some((def.name.clone(), def.nesting.clone()))
+            Some((def.name.clone(), def.nesting.clone(), false))
         }
-        Under::Constant(reference) => Some((reference.name.clone(), reference.nesting.clone())),
+        Under::Constant(reference) => {
+            Some((reference.name.clone(), reference.nesting.clone(), true))
+        }
         _ => None,
     };
-    if let Some((name, nesting)) = constant {
-        return constant_references(session, &located, &name, &nesting, declarations, out)
-            .map(Some);
+    if let Some((name, nesting, mention)) = constant {
+        return constant_references(
+            session,
+            &located,
+            &name,
+            &nesting,
+            mention,
+            declarations,
+            out,
+        )
+        .map(Some);
     }
 
     let root = located.root.clone();
@@ -1010,12 +1020,15 @@ fn written_len(root: &Path, path: &str, line: u32, col: u32, text: Option<&str>)
 
 /// References to a class, module or constant: every written constant that
 /// Ruby's lookup resolves to the same fully-qualified name
-/// (`query::refs::constant_mentions`), an open buffer read as it stands.
+/// (`query::refs::constant_mentions`), an open buffer read as it stands. A
+/// `mention` (not a definition) is asked by the name it is placed as, as
+/// `--refs` at it asks.
 fn constant_references(
     session: &mut Session,
     located: &Located,
     name: &str,
     nesting: &[String],
+    mention: bool,
     declarations: bool,
     out: &super::Outbound,
 ) -> anyhow::Result<Vec<Location>> {
@@ -1023,9 +1036,16 @@ fn constant_references(
     let root = located.root.clone();
     let root_str = root.to_string_lossy().into_owned();
     let overlay = overlay(session, &root);
-    let Some(fqn) = session.tree(&root)?.resolve(name, nesting).fqn else {
-        return Ok(Vec::new());
+    let tree = session.tree(&root)?;
+    let fqn = if mention {
+        query_refs::placed_name(tree, name, nesting, &located.relative)
+    } else {
+        let Some(fqn) = tree.resolve(name, nesting).fqn else {
+            return Ok(Vec::new());
+        };
+        fqn
     };
+    let written = mention.then_some(name);
 
     let (tree, store) = session.tree_and_store(&root)?;
     let tail = last_segment(&fqn);
@@ -1033,7 +1053,7 @@ fn constant_references(
     // (path, line, col) — the index's view, except for files the editor has
     // open, which are read from the buffer so an unsaved edit counts.
     let mut sites: Vec<(String, u32, u32)> =
-        query_refs::constant_mentions(tree, store, &root_str, &fqn)?
+        query_refs::constant_mentions(tree, store, &root_str, &fqn, written)?
             .into_iter()
             .filter(|row| row.role == "constant" && !overlay.contains_key(&row.path))
             .map(|row| (row.path, row.line, row.col))

@@ -670,6 +670,9 @@ ruby tests/testbed/650-a-defs-signature-is-its-own-methods/sorbet/rbi/w.rbi 46b6
 ruby tests/testbed/651-a-mention-placed-in-part-is-placed-by-that-part/app/shadow.rb 9f669794b2f0676a
 ruby tests/testbed/651-a-mention-placed-in-part-is-placed-by-that-part/app/use.rb 855a9e89d8a8c055
 ruby tests/testbed/651-a-mention-placed-in-part-is-placed-by-that-part/lib/gizmo.rb 1659eee53404277f
+ruby tests/testbed/652-a-mention-is-named-by-the-part-that-places-it/app/inside.rb 5dcc22336b85f0db
+ruby tests/testbed/652-a-mention-is-named-by-the-part-that-places-it/app/outside.rb 5772e54926be4546
+ruby tests/testbed/652-a-mention-is-named-by-the-part-that-places-it/lib/kit.rb ea26acbe7053b944
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

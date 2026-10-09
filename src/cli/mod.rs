@@ -3943,7 +3943,7 @@ fn cmd_refs(
     if let Some(fqn) = whole_constant_name(&query) {
         crate::usage::flag("by-name");
         let tree = fresh_tree(say, &mut store, &root, None)?;
-        return constant_refs(out, &tree, &store, &root_str, fqn);
+        return constant_refs(out, &tree, &store, &root_str, fqn, None);
     }
     // A bare name narrows nothing, so it keeps the whole-mention view —
     // definitions and constant references included, which a method-shaped
@@ -4186,16 +4186,16 @@ fn cmd_refs_at(
         {
             let mut nesting = def.nesting.clone();
             nesting.insert(0, def.name.clone());
-            tree.scope_fqn(&nesting)
+            tree.scope_fqn(&nesting).map(|fqn| (fqn, None))
         }
-        Some(crate::query::position::Under::Constant(reference)) => tree
-            .resolve_at(&reference.name, &reference.nesting, &relative)
-            .fqn
-            .or_else(|| Some(reference.name.clone())),
+        Some(crate::query::position::Under::Constant(reference)) => Some((
+            crate::query::refs::placed_name(&tree, &reference.name, &reference.nesting, &relative),
+            Some(reference.name.as_str()),
+        )),
         _ => None,
     };
-    if let Some(fqn) = constant {
-        return constant_refs(out, &tree, &store, &root_str, &fqn);
+    if let Some((fqn, written)) = constant {
+        return constant_refs(out, &tree, &store, &root_str, &fqn, written);
     }
     let owner_and_name = match under {
         Some(crate::query::position::Under::Definition(def))
@@ -4420,8 +4420,9 @@ fn constant_refs(
     store: &Store,
     root_str: &str,
     fqn: &str,
+    written: Option<&str>,
 ) -> anyhow::Result<ExitCode> {
-    let rows = crate::query::refs::constant_mentions(tree, store, root_str, fqn)?;
+    let rows = crate::query::refs::constant_mentions(tree, store, root_str, fqn, written)?;
     mentions(out, &rows, fqn)
 }
 

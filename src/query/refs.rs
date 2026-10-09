@@ -15,19 +15,28 @@ use crate::tree::Tree;
 ///
 /// The index records a reference by the name written (`Base`,
 /// `ActiveRecord::Base`), so each suffix of `fqn` is asked for, and each row
-/// resolved in the nesting it was written in. Same-named constants
-/// elsewhere resolve elsewhere and drop out, which is the point.
+/// named in the nesting it was written in ([`placed_name`]). Same-named
+/// constants elsewhere are named otherwise and drop out, which is the point.
+/// `written` is the spelling at the position asked from, if any: a mention
+/// placed through an ancestor (`Sub::Part` for `Base::Part`) is not a suffix,
+/// and the one under the cursor is always listed.
 pub(crate) fn constant_mentions(
     tree: &Tree,
     store: &Store,
     root: &str,
     fqn: &str,
+    written: Option<&str>,
 ) -> anyhow::Result<Vec<Ref>> {
     let mut spellings: Vec<String> = std::iter::once(fqn)
         .chain(fqn.match_indices("::").map(|(at, _)| &fqn[at + 2..]))
         .map(str::to_string)
         .collect();
     spellings.push(format!("::{fqn}"));
+    if let Some(written) = written
+        && !spellings.iter().any(|spelling| spelling == written)
+    {
+        spellings.push(written.to_string());
+    }
     let mut found = Vec::new();
     for written in &spellings {
         found.extend(
@@ -48,11 +57,7 @@ pub(crate) fn constant_mentions(
 }
 
 /// Whether a constant written as `written` in `nesting`, in the file at
-/// `path`, is `fqn`. One the index cannot place whole is placed by the
-/// longest leading part it can: `Rack::Utils` inside `module App` is
-/// `App::Rack::Utils` once `App::Rack` resolves. One it cannot place at all
-/// is `fqn` only when written out in full: a gem not yet indexed still
-/// lists its `Gem::Thing`s.
+/// `path`, is `fqn`: whether that is its [`placed_name`].
 pub(crate) fn names_constant(
     tree: &Tree,
     written: &str,
@@ -60,23 +65,31 @@ pub(crate) fn names_constant(
     path: &str,
     fqn: &str,
 ) -> bool {
+    placed_name(tree, written, nesting, path) == fqn
+}
+
+/// The whole name of a constant written as `written` in `nesting`, in the
+/// file at `path`, as far as the index can place it: its own, else the
+/// longest leading part's plus the rest as written (`Rack::Utils` inside
+/// `module App` is `App::Rack::Utils` once `App::Rack` resolves, though
+/// nothing defines `Utils`), else the name as written, from the top.
+pub(crate) fn placed_name(tree: &Tree, written: &str, nesting: &[String], path: &str) -> String {
     if let Some(found) = tree.resolve_at(written, nesting, path).fqn {
-        return found == fqn;
+        return found;
     }
     let bare = written.strip_prefix("::").unwrap_or(written);
-    if bare != fqn {
-        return false;
-    }
     let rooted = if written.starts_with("::") { "::" } else { "" };
     let segments: Vec<&str> = bare.split("::").collect();
     (1..segments.len())
         .rev()
         .find_map(|n| {
             let prefix = segments[..n].join("::");
-            let placed = tree.resolve_at(&format!("{rooted}{prefix}"), nesting, path);
-            placed.fqn.map(|found| found == prefix)
+            let placed = tree
+                .resolve_at(&format!("{rooted}{prefix}"), nesting, path)
+                .fqn?;
+            Some(format!("{placed}::{}", segments[n..].join("::")))
         })
-        .unwrap_or(true)
+        .unwrap_or_else(|| bare.to_string())
 }
 
 /// One call site, tiered. Reads only the tree and the file's own facts, so

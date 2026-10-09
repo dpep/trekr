@@ -6,3 +6,7 @@
 # indexed) is still listed when written in full.
 refs Rack::Utils rows=1
 refs Gizmo::Part rows=1
+# The shadowed mention is the nested name's, by name and at the mention.
+refs App::Rack::Utils rows=1
+refs app/shadow.rb:8:10 rows=1
+refs app/use.rb:1:7 rows=1
