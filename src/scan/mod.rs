@@ -634,12 +634,14 @@ fn scan_in(root: &Path, gits: Option<&Gits>) -> Result<Files> {
     Ok(files)
 }
 
-/// Whether [`scan`] lists `relative`, asked of one file: indexed by name,
-/// tracked or untracked and not ignored, and the schema dump its app reads.
-/// An error when git could not say within [`PROBE_WAIT`].
-pub(crate) fn admits(root: &Path, relative: &str) -> Result<bool> {
+/// The key [`scan`] lists `relative` under, if it does, asked of one file:
+/// indexed by name, tracked or untracked and not ignored, and the schema
+/// dump its app reads. git's spelling, which on macOS is composed (NFC)
+/// however the name is written on disk. An error when git could not say
+/// within [`PROBE_WAIT`].
+pub(crate) fn admits(root: &Path, relative: &str) -> Result<Option<String>> {
     if !is_indexed(relative) {
-        return Ok(false);
+        return Ok(None);
     }
     let pathspec = format!(":(literal){relative}");
     let args = [
@@ -652,15 +654,21 @@ pub(crate) fn admits(root: &Path, relative: &str) -> Result<bool> {
         &pathspec,
     ];
     let out = git_within(root, &args, PROBE_WAIT)?;
-    if !parse_paths(&out).iter().any(|p| p == relative) {
-        return Ok(false);
+    // A literal pathspec names this file alone, though git may spell it
+    // otherwise; a directory's entries are not it.
+    let inside = format!("{relative}/");
+    let Some(key) = parse_paths(&out)
+        .into_iter()
+        .find(|p| !p.starts_with(&inside))
+    else {
+        return Ok(None);
+    };
+    if !crate::schema::is_dump(&key) {
+        return Ok(Some(key));
     }
-    if !crate::schema::is_dump(relative) {
-        return Ok(true);
-    }
-    let (dir, _) = relative.rsplit_once('/').unwrap_or(("", relative));
+    let (dir, _) = key.rsplit_once('/').unwrap_or(("", &key));
     let app = &dir[..dir.len().saturating_sub("db".len())];
-    Ok(schema_dumps(root, app).iter().any(|dump| dump == relative))
+    Ok(schema_dumps(root, app).contains(&key).then_some(key))
 }
 
 /// [`git`], given up on past `wait`: stopped, as a [`Probe`]'s gits are.
@@ -1104,19 +1112,57 @@ mod tests {
         let scanned = scan(&root).unwrap();
         for path in paths {
             assert_eq!(
-                admits(&root, path).unwrap(),
-                scanned.contains_key(path),
+                admits(&root, path).unwrap().as_deref(),
+                scanned.contains_key(path).then_some(path),
                 "{path}: one file's answer is the scan's"
             );
         }
         assert!(
-            admits(&root, "fresh/new.rb").unwrap(),
+            admits(&root, "fresh/new.rb").unwrap().is_some(),
             "an untracked file is read"
         );
         assert!(
-            !admits(&root, "ignored/copy.rb").unwrap(),
+            admits(&root, "ignored/copy.rb").unwrap().is_none(),
             "an ignored one is not"
         );
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    /// A name written decomposed (NFD) is listed by macOS's git composed
+    /// (`core.precomposeunicode`), and the scan keys it so: an editor's path
+    /// spelled as on disk is admitted under the scan's key.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_decomposed_name_is_admitted_under_the_scans_key() {
+        let temp = std::env::temp_dir().join(format!("trekr-admits-nfd-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        std::fs::create_dir_all(&temp).unwrap();
+        let git = |args: &[&str]| {
+            let ok = Command::new("git")
+                .args(args)
+                .current_dir(&temp)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .output()
+                .unwrap()
+                .status
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        let (tracked, untracked) = ("nai\u{308}ve.rb", "cafe\u{301}.rb");
+        std::fs::write(temp.join(tracked), "class A; end\n").unwrap();
+        git(&["init", "-q"]);
+        git(&["add", "-A"]);
+        std::fs::write(temp.join(untracked), "class B; end\n").unwrap();
+        let root = std::fs::canonicalize(&temp).unwrap();
+        let scanned = scan(&root).unwrap();
+        for (written, composed) in [(tracked, "na\u{ef}ve.rb"), (untracked, "caf\u{e9}.rb")] {
+            assert!(scanned.contains_key(composed), "{composed}: {scanned:?}");
+            assert_eq!(
+                admits(&root, written).unwrap().as_deref(),
+                Some(composed),
+                "{written}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&temp);
     }
 

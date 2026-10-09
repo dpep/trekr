@@ -508,6 +508,64 @@ fn a_file_git_cannot_place_in_time_is_not_written() {
     let _ = fs::remove_dir_all(&slow);
 }
 
+/// A file whose name is on disk decomposed (NFD) is mapped under the name
+/// macOS's git gives it, composed: saving it refreshes that row, rather than
+/// nothing (the editor's spelling missed the map) or a second row beside it.
+#[cfg(target_os = "macos")]
+#[test]
+fn saving_a_decomposed_name_refreshes_the_file_the_index_mapped() {
+    let (dir, db) = scratch("save-nfd");
+    let name = "nai\u{308}ve.rb";
+    let caller = "class Job\n  def run\n    Naive.new.old\n  end\nend\n";
+    git(&dir, &["init", "-q"]);
+    fs::write(dir.join("app.rb"), caller).unwrap();
+    fs::write(dir.join(name), "class Naive\n  def old\n  end\nend\n").unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    let indexed = trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+    assert!(indexed.status.success());
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let old = |session: &mut Session| {
+        let answer = session.request(
+            "textDocument/definition",
+            serde_json::json!({
+                "textDocument": {"uri": uri_of(&dir, "app.rb")},
+                "position": {"line": 2, "character": 15},
+            }),
+        );
+        answer["result"].as_array().map(Vec::len).unwrap_or(0)
+    };
+    assert_eq!(old(&mut session), 1, "indexed as committed");
+    fs::write(dir.join(name), "class Naive\n  def fresh\n  end\nend\n").unwrap();
+    // Saved, not opened: an open buffer would answer for itself.
+    session.notify(
+        "textDocument/didSave",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "nai%CC%88ve.rb")}}),
+    );
+    let after = old(&mut session);
+    session.stop();
+    assert_eq!(after, 0, "`old` is gone from the saved file");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_click_that_finds_nothing_is_logged_where_usage_misses_reads_it() {
     let (dir, db) = scratch("misses");

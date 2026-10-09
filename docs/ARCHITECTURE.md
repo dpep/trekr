@@ -1214,7 +1214,8 @@ saved is not yet visible from *other* files; saving moves the index
 (`Store::refresh_file`) and the tree follows. Opening a file does the same
 with what is on disk, so one made or changed where no watcher saw (an
 untracked file created after the index) answers from its own classes. Both
-write only a file the index walk would list (`scan::admits`): an ignored copy
+write only a file the index walk would list (`scan::admits`), under the path
+it lists it by — composed (NFC) on macOS, whatever the name on disk: an ignored copy
 opened in `vendor/` or `tmp/` would otherwise answer for the checkout. git is
 given a query's probe wait (1 s) to say; past it the file is not written, and
 the log says so (`refresh_skipped`). A save that meets another

@@ -58,18 +58,21 @@ fn refresh(session: &mut Session, path: &Path) -> Refreshed {
         return Refreshed::Done;
     }
     // The index walk's rules, not the editor's: an ignored file written here
-    // would answer for the checkout until the next index dropped it.
-    if !session
+    // would answer for the checkout until the next index dropped it. Keyed
+    // as the walk keys it, which may not be the editor's spelling.
+    let relative = if session
         .store()
         .maps(&root, &located.relative)
         .unwrap_or(false)
     {
+        located.relative.clone()
+    } else {
         match crate::scan::admits(&located.root, &located.relative) {
-            Ok(true) => {}
-            Ok(false) => return Refreshed::Done,
+            Ok(Some(key)) => key,
+            Ok(None) => return Refreshed::Done,
             Err(error) => return Refreshed::Undecided(format!("{error:#}")),
         }
-    }
+    };
     let Ok(bytes) = crate::scan::read_source(&located.absolute) else {
         return Refreshed::Done;
     };
@@ -77,10 +80,10 @@ fn refresh(session: &mut Session, path: &Path) -> Refreshed {
     let known = session.store().has_blob(&oid).unwrap_or(false);
     // Parse only a blob the store has never seen; the common save-after-undo
     // is bytes it already has, which costs one hash.
-    let facts = (!known).then(|| crate::extract::extract_file(&located.relative, &bytes));
+    let facts = (!known).then(|| crate::extract::extract_file(&relative, &bytes));
     match session
         .store_mut()
-        .refresh_file(&root, &located.relative, &oid, facts.as_ref())
+        .refresh_file(&root, &relative, &oid, facts.as_ref())
     {
         Err(error) if crate::store::is_busy(&error) => Refreshed::Busy,
         Err(error) if crate::store::is_schema_mismatch(&error) => {
