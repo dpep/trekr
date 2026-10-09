@@ -21,6 +21,17 @@ pub(crate) enum Under {
     Call(Call),
 }
 
+impl Under {
+    /// The name written there.
+    pub(crate) fn name(&self) -> &str {
+        match self {
+            Under::Definition(def) => &def.name,
+            Under::Constant(reference) => &reference.name,
+            Under::Call(call) => &call.name,
+        }
+    }
+}
+
 /// Does a name starting at `pos` and `len` bytes long cover `(line, col)`?
 ///
 /// Columns are 1-based and byte-oriented, matching what the extractor records.

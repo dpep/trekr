@@ -226,7 +226,7 @@ impl Document {
 
     /// The Ruby this document runs, at its own offsets: an ERB template's
     /// tags, blanked around (DEC-520), or the text itself.
-    fn ruby(&self) -> std::borrow::Cow<'_, [u8]> {
+    pub(crate) fn ruby(&self) -> std::borrow::Cow<'_, [u8]> {
         crate::extract::ruby_source(&self.path, self.text.as_bytes())
     }
 

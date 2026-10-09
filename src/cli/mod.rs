@@ -24,6 +24,7 @@ use autoindex::{Need, Then};
 
 use crate::core::Oid;
 use crate::core::paths;
+use crate::query::def::{Reached, Subject};
 use crate::resolve::DefinedOn;
 use crate::store::Store;
 use crate::tree::{Status, Tree, public_name};
@@ -4243,10 +4244,10 @@ fn variable_mentions(
     use crate::resolve::vars::{self, Sigil};
     let path = file.to_string_lossy();
     let source = crate::extract::ruby_source(&path, raw);
-    let head = position::variable_at(&source, facts, &path, line, col)?;
-    crate::usage::flag("variable");
     let here = vars::of_file(&source, &facts.strings);
     let want = crate::query::position::variable_at(facts, &source, &here, line, col)?.clone();
+    let head = position::variable_answer(&source, &here, &want, &path);
+    crate::usage::flag("variable");
     let relative = |p: &str| {
         p.strip_prefix(root_str)
             .and_then(|r| r.strip_prefix('/'))
@@ -4970,187 +4971,187 @@ fn cmd_def(
         }
         index_free();
     };
-    // A `render` whose name reaches no file, kept to answer if the variable
-    // it is written as finds no value either.
-    let mut no_template = None;
-    // A template a `render` or `extends` names: the file it reaches (DEC-524).
-    if let Some(col) = spec.col.map(NonZeroU32::get)
-        && let Some(template) = crate::query::position::template_at(&facts, line, col)
-        && let Some((root, store)) = checkout.as_mut().map(|(root, store)| (&*root, store))
-    {
-        let relative = std::fs::canonicalize(&spec.path)
-            .ok()
-            .and_then(|abs| abs.strip_prefix(root).ok().map(Path::to_path_buf))
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|| spec.path.clone());
-        let class = match &template.names {
-            crate::core::Named::Object { value, .. } => {
-                let tree = fresh_tree(out, store, root, Some(Path::new(&spec.path)))?;
-                crate::resolve::views::value_class(&tree, &facts, value, template.pos, &relative)
-            }
-            _ => None,
-        };
-        let files =
-            crate::tree::views::template_files(root, &relative, &template.names, class.as_deref());
-        // One that reaches no file leaves the variable it is written as to
-        // answer, below.
-        let variable =
-            files.is_empty() && position::variable_at(&source, &facts, &file, line, col).is_some();
-        let answer = template_answer(written.to_string(), root, &files, class.as_deref());
-        if variable {
-            no_template = Some(answer);
-        } else {
-            let found = !files.is_empty();
-            let text = match files.first() {
-                Some(first) => format!(
+    let vars = crate::resolve::vars::of_file(&source, &facts.strings);
+    let subject = match spec.col {
+        // No column: the line chooses, by the snap below (DEC-036).
+        None => Subject::Nothing,
+        Some(col) => {
+            let at = crate::core::Pos {
+                line,
+                col: col.get(),
+            };
+            crate::query::def::subject(&facts, &source, &vars, at, |template| {
+                let Some((root, store)) = checkout.as_mut().map(|(root, store)| (&*root, store))
+                else {
+                    return Ok(None);
+                };
+                let relative = std::fs::canonicalize(&spec.path)
+                    .ok()
+                    .and_then(|abs| abs.strip_prefix(root).ok().map(Path::to_path_buf))
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| spec.path.clone());
+                let tree = || fresh_tree(out, store, root, Some(Path::new(&spec.path)));
+                crate::query::def::reach(template, &facts, root, &relative, tree).map(Some)
+            })?
+        }
+    };
+    let root = checkout.as_ref().map(|(root, _)| root.clone());
+    let template = |reached: &Reached| {
+        let root = root
+            .as_deref()
+            .expect("a template is reached through the file's checkout");
+        template_answer(
+            written.to_string(),
+            root,
+            &reached.files,
+            reached.class.as_deref(),
+        )
+    };
+    let found = match subject {
+        // A template a `render` or `extends` names: the file it reaches (DEC-524).
+        Subject::Template(reached) => {
+            let text = match (reached.files.first(), &root) {
+                (Some(first), Some(root)) => format!(
                     "{}:1:1  template",
                     shown(&root.join(first).to_string_lossy())
                 ),
-                None => "no template by that name".to_string(),
+                _ => "no template by that name".to_string(),
             };
-            return report(out, answer, found, &text);
+            return report(out, template(&reached), !reached.files.is_empty(), &text);
         }
-    }
-    // A `super` with no fact behind it is one whose method has no owner the
-    // source names. Snapping would answer for another name on the line.
-    if let Some(col) = spec.col.map(NonZeroU32::get)
-        && crate::query::position::at_facts(&facts, line, col).is_none()
-        && crate::query::position::word_at(&source, line, col).as_deref() == Some("super")
-    {
-        file_alone(&checkout);
-        return report(
-            out,
-            serde_json::json!({
-                "query": written,
-                "under": "call",
-                "name": "super",
-                "receiver": "super",
-                "status": "residue",
-                "confidence": 0.0,
-                "definition": [],
-                "reason": "`super` in a method whose owner the source does not name — \
-                           outside a method, `def obj.x`, or a `def` inside a block",
-            }),
-            false,
-            "super  its method's owner is decided at runtime",
-        );
-    }
-    // A variable is not a call, and snapping from one answered for whatever
-    // name was nearest on the line.
-    if let Some(col) = spec.col.map(NonZeroU32::get)
-        && let Some(answer) = position::variable_at(&source, &facts, &file, line, col)
-    {
-        crate::usage::flag("variable");
-        let mut answer = answer;
-        // A template's `@ivar` with no write of its own is set by the
-        // controller that renders it (DEC-522).
-        let unset_in_template = answer["variable"] == "ivar"
-            && answer["definition"].as_array().is_some_and(Vec::is_empty)
-            && crate::tree::views::ViewTemplate::of(&file).is_some();
-        let mut from_controller = Vec::new();
-        if unset_in_template
-            && let Some((root, store)) = checkout.as_mut().map(|(root, store)| (&*root, store))
-        {
-            let relative = Path::new(&file)
-                .strip_prefix(root)
-                .map(|p| p.to_string_lossy().into_owned())
-                .unwrap_or_else(|_| spec.path.clone());
-            let tree = fresh_tree(out, store, root, Some(Path::new(&spec.path)))?;
-            let name = answer["name"].as_str().unwrap_or_default().to_string();
-            from_controller = crate::resolve::views::template_ivar_writes(&tree, &relative, &name);
-        }
-        if from_controller.is_empty() {
+        // A `super` with no fact behind it is one whose method has no owner
+        // the source names. Snapping would answer for another name on the line.
+        Subject::Super => {
             file_alone(&checkout);
-        } else {
-            // Read from the tree: its paths are the checkout's, and an index
-            // still filling it may not hold the write yet.
-            if let Some((root, store)) = &checkout {
-                answering_in(store, &root.to_string_lossy());
-            }
-            answer["definition"] = from_controller
-                .iter()
-                .map(|site| {
-                    serde_json::json!({
-                        "path": site.path, "line": site.line, "col": site.col, "kind": "assigned",
-                    })
-                })
-                .collect();
-            answer["status"] = "resolved".into();
-            answer["confidence"] = 1.0.into();
-            answer["resolved_via"] = "controller".into();
-            answer["reason"] = "set by the controller that renders the template".into();
-        }
-        // Neither found: the missing partial is the more actionable reason,
-        // and the variable's is said beside it.
-        if let Some(mut template) = no_template
-            && answer["definition"].as_array().is_some_and(Vec::is_empty)
-        {
-            let variable = format!(
-                "{} {}",
-                answer["name"].as_str().unwrap_or_default(),
-                answer["reason"].as_str().unwrap_or_default(),
-            );
-            let variable = variable.trim_end();
-            template["reason"] =
-                format!("no template in the checkout's views by that name; {variable}").into();
             return report(
                 out,
-                template,
+                serde_json::json!({
+                    "query": written,
+                    "under": "call",
+                    "name": "super",
+                    "receiver": "super",
+                    "status": "residue",
+                    "confidence": 0.0,
+                    "definition": [],
+                    "reason": "`super` in a method whose owner the source does not name — \
+                               outside a method, `def obj.x`, or a `def` inside a block",
+                }),
                 false,
-                &format!("no template by that name; {variable}"),
+                "super  its method's owner is decided at runtime",
             );
         }
-        answer["query"] = written.into();
-        let resolved = answer["status"] == "resolved";
-        let text = match answer["definition"].get(0) {
-            Some(site) => format!(
-                "{}:{}:{}  {} `{}`",
-                shown(site["path"].as_str().unwrap_or_default()),
-                site["line"],
-                site["col"],
-                answer["variable"].as_str().unwrap_or_default(),
-                answer["name"].as_str().unwrap_or_default(),
-            ),
-            None => format!(
-                "{}  {}",
-                answer["name"].as_str().unwrap_or_default(),
-                answer["reason"].as_str().unwrap_or_default(),
-            ),
-        };
-        return report(out, answer, resolved, &text);
-    }
-    // A symbol no rule reads as a method's name is a value (`on: :create`,
-    // `status: :ok`). Snapping from one answered, resolved, for whatever
-    // other name was nearest on the line (DEC-343).
-    if let Some(col) = spec.col.map(NonZeroU32::get)
-        && crate::query::position::at_facts(&facts, line, col).is_none()
-        && let Some((name, _, _)) =
-            crate::extract::symbol_literals(&source)
-                .into_iter()
-                .find(|(_, pos, len)| {
-                    pos.line == line
-                        && pos.col.saturating_sub(1) <= col
-                        && col < pos.col + *len as u32
-                })
-    {
-        file_alone(&checkout);
-        return report(
-            out,
-            serde_json::json!({
-                "query": written,
-                "under": "symbol",
-                "name": name,
-                "status": "residue",
-                "confidence": 0.0,
-                "definition": [],
-                "reason": "a symbol no rule reads as a method's name here: a key or a value",
-            }),
-            false,
-            &format!(":{name}  a key or a value here, not a method's name"),
-        );
-    }
-    let snapped = crate::query::position::at_or_snap(&facts, line, spec.col);
-    let Some((under, snapped)) = snapped else {
+        // A symbol no rule reads as a method's name is a value (`on: :create`,
+        // `status: :ok`). Snapping from one answered, resolved, for whatever
+        // other name was nearest on the line (DEC-343).
+        Subject::Symbol(name) => {
+            file_alone(&checkout);
+            return report(
+                out,
+                serde_json::json!({
+                    "query": written,
+                    "under": "symbol",
+                    "name": name,
+                    "status": "residue",
+                    "confidence": 0.0,
+                    "definition": [],
+                    "reason": "a symbol no rule reads as a method's name here: a key or a value",
+                }),
+                false,
+                &format!(":{name}  a key or a value here, not a method's name"),
+            );
+        }
+        // A variable is not a call, and snapping from one answered for
+        // whatever name was nearest on the line. A `render` written as it
+        // that reaches no file is said beside it when it finds no value either.
+        Subject::Variable {
+            occurrence,
+            unreached,
+        } => {
+            crate::usage::flag("variable");
+            let no_template = unreached.as_ref().map(template);
+            let mut answer = position::variable_answer(&source, &vars, &occurrence, &file);
+            // A template's `@ivar` with no write of its own is set by the
+            // controller that renders it (DEC-522).
+            let unset_in_template = answer["variable"] == "ivar"
+                && answer["definition"].as_array().is_some_and(Vec::is_empty)
+                && crate::tree::views::ViewTemplate::of(&file).is_some();
+            let mut from_controller = Vec::new();
+            if unset_in_template
+                && let Some((root, store)) = checkout.as_mut().map(|(root, store)| (&*root, store))
+            {
+                let relative = Path::new(&file)
+                    .strip_prefix(root)
+                    .map(|p| p.to_string_lossy().into_owned())
+                    .unwrap_or_else(|_| spec.path.clone());
+                let tree = fresh_tree(out, store, root, Some(Path::new(&spec.path)))?;
+                let name = answer["name"].as_str().unwrap_or_default().to_string();
+                from_controller =
+                    crate::resolve::views::template_ivar_writes(&tree, &relative, &name);
+            }
+            if from_controller.is_empty() {
+                file_alone(&checkout);
+            } else {
+                // Read from the tree: its paths are the checkout's, and an index
+                // still filling it may not hold the write yet.
+                if let Some((root, store)) = &checkout {
+                    answering_in(store, &root.to_string_lossy());
+                }
+                answer["definition"] = from_controller
+                    .iter()
+                    .map(|site| {
+                        serde_json::json!({
+                            "path": site.path, "line": site.line, "col": site.col, "kind": "assigned",
+                        })
+                    })
+                    .collect();
+                answer["status"] = "resolved".into();
+                answer["confidence"] = 1.0.into();
+                answer["resolved_via"] = "controller".into();
+                answer["reason"] = "set by the controller that renders the template".into();
+            }
+            // Neither found: the missing partial is the more actionable reason,
+            // and the variable's is said beside it.
+            if let Some(mut template) = no_template
+                && answer["definition"].as_array().is_some_and(Vec::is_empty)
+            {
+                let variable = format!(
+                    "{} {}",
+                    answer["name"].as_str().unwrap_or_default(),
+                    answer["reason"].as_str().unwrap_or_default(),
+                );
+                let variable = variable.trim_end();
+                template["reason"] =
+                    format!("no template in the checkout's views by that name; {variable}").into();
+                return report(
+                    out,
+                    template,
+                    false,
+                    &format!("no template by that name; {variable}"),
+                );
+            }
+            answer["query"] = written.into();
+            let resolved = answer["status"] == "resolved";
+            let text = match answer["definition"].get(0) {
+                Some(site) => format!(
+                    "{}:{}:{}  {} `{}`",
+                    shown(site["path"].as_str().unwrap_or_default()),
+                    site["line"],
+                    site["col"],
+                    answer["variable"].as_str().unwrap_or_default(),
+                    answer["name"].as_str().unwrap_or_default(),
+                ),
+                None => format!(
+                    "{}  {}",
+                    answer["name"].as_str().unwrap_or_default(),
+                    answer["reason"].as_str().unwrap_or_default(),
+                ),
+            };
+            return report(out, answer, resolved, &text);
+        }
+        Subject::Fact(under) => Some((under, None)),
+        Subject::Nothing => crate::query::position::at_or_snap(&facts, line, spec.col),
+    };
+    let Some((under, snapped)) = found else {
         file_alone(&checkout);
         return report(
             out,

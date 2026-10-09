@@ -39,13 +39,23 @@ impl Under {
 pub(super) fn under(session: &mut Session, uri: &Url, position: Position) -> Option<Under> {
     let path = convert::uri_to_path(uri.as_str())?;
     let file = std::fs::canonicalize(&path).unwrap_or(path);
-    let document = session.document(&file)?;
-    let (vars, occurrence) = document.variable_read(position)?;
+    let (vars, occurrence) = session.document(&file)?.variable_read(position)?;
+    found(session, file, vars, occurrence)
+}
+
+/// A variable already found in `file`, with what answering it needs.
+pub(super) fn found(
+    session: &mut Session,
+    file: PathBuf,
+    vars: Rc<Vars>,
+    occurrence: Occurrence,
+) -> Option<Under> {
+    let text = session.document(&file)?.text.clone();
     // `--usage` tells a variable's answer from a method's.
     crate::usage::flag("variable");
     Some(Under {
         file,
-        text: document.text.clone(),
+        text,
         vars,
         occurrence,
     })

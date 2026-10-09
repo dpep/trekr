@@ -19,6 +19,7 @@ use super::require::{self, Found, Origin};
 use super::state::{Located, Session};
 use super::variables;
 use crate::core::{Def, Kind};
+use crate::query::def::{self, Subject};
 use crate::query::locations::{self, Asked};
 use crate::query::members::CheckoutFiles;
 use crate::query::position::{self, Under};
@@ -167,80 +168,75 @@ fn locate(
         crate::usage::flag("require");
         return Ok(required_definition(session.definition_links, required));
     }
-    let template = template_here(session, &uri, position)?;
-    if template.is_none()
-        && let Some(under) = variables::under(session, &uri, position)
-    {
-        let locations = variables::definition(session, &under);
-        if locations.is_empty() {
-            super::miss::why("a variable with no write in reach");
-        }
-        return Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)));
-    }
-    let Some((located, pos)) = target(session, &uri, position) else {
+    let Some(file) = file_of(&uri) else {
         super::miss::why(NO_CHECKOUT);
         return Ok(None);
     };
-    let pos = template.unwrap_or(pos);
-    let name_len = name_at(session, &located, pos).map_or(0, |n| last_segment(&n).len());
-    let sites = resolve_at(session, &located, pos, asked)?;
+    let located = session.locate_query(&file);
+    let Some(document) = session.document(&file) else {
+        super::miss::why(NO_CHECKOUT);
+        return Ok(None);
+    };
+    let at = document.reads(position);
+    let source = document.ruby().into_owned();
+    let facts = document.facts().clone();
+    let vars = document.vars();
+    // The tree is built only for an object's partial, which needs its class.
+    let trees = &mut *session;
+    let checkout = located.as_ref();
+    let subject = def::subject(&facts, &source, &vars, at, |template| {
+        let Some(located) = checkout else {
+            return Ok(None);
+        };
+        // Consumed, so the tree it lends outlives the call.
+        let tree = move || {
+            let trees = trees;
+            trees.tree(&located.root)
+        };
+        def::reach(template, &facts, &located.root, &located.relative, tree).map(Some)
+    })?;
+    let (located, sites, name_len) = match (subject, located) {
+        (Subject::Variable { occurrence, .. }, _) => {
+            let Some(under) = variables::found(session, file, vars, occurrence) else {
+                return Ok(None);
+            };
+            let locations = variables::definition(session, &under);
+            if locations.is_empty() {
+                super::miss::why("a variable with no write in reach");
+            }
+            return Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)));
+        }
+        (_, None) => {
+            super::miss::why(NO_CHECKOUT);
+            return Ok(None);
+        }
+        // Its files, at their tops (DEC-524).
+        (Subject::Template(reached), Some(located)) => {
+            if reached.files.is_empty() {
+                super::miss::why("no template by that name");
+            }
+            let written = position::at_facts(&facts, at.line, at.col);
+            let len = written.map_or(0, |under| last_segment(under.name()).len());
+            let sites = reached.files.into_iter().map(|file| (file, 1, 1)).collect();
+            (located, sites, len)
+        }
+        (Subject::Fact(under), Some(located)) => {
+            let len = last_segment(under.name()).len();
+            let sites = resolve_at(session, &located, &facts, under, asked)?;
+            (located, sites, len)
+        }
+        // `super` and a symbol name no definition to go to, and an editor
+        // never snaps (DEC-036).
+        (Subject::Super | Subject::Symbol(_) | Subject::Nothing, Some(_)) => {
+            super::miss::why(NO_NAME);
+            return Ok(None);
+        }
+    };
     let locations: Vec<Location> = sites
         .into_iter()
         .filter_map(|(p, line, col)| location(&located.root, &p, line, col, name_len, None))
         .collect();
     Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)))
-}
-
-/// Where a `render` or `extends` at the position reaches a template, if it
-/// does. Its definition is then the template, before the variable it may be
-/// written as; one that reaches no file leaves the variable to answer. A
-/// caret just past the argument reads it as the variable lookup does, so the
-/// two cannot disagree about which name the caret is on.
-fn template_here(
-    session: &mut Session,
-    uri: &Url,
-    position: lsp_types::Position,
-) -> anyhow::Result<Option<crate::core::Pos>> {
-    let Some((located, _)) = target(session, uri, position) else {
-        return Ok(None);
-    };
-    let Some(document) = session.document(&located.absolute) else {
-        return Ok(None);
-    };
-    let pos = document.reads(position);
-    let facts = document.facts();
-    if position::template_at(facts, pos.line, pos.col).is_none() {
-        return Ok(None);
-    }
-    let facts = facts.clone();
-    let files = template_files(session, &located, &facts, pos)?;
-    Ok(files.is_some_and(|files| !files.is_empty()).then_some(pos))
-}
-
-/// The files a `render` or `extends` at the position names (DEC-524): `None`
-/// where it names none, empty where its name reaches no file.
-fn template_files(
-    session: &mut Session,
-    located: &Located,
-    facts: &crate::core::Facts,
-    pos: crate::core::Pos,
-) -> anyhow::Result<Option<Vec<String>>> {
-    let Some(template) = position::template_at(facts, pos.line, pos.col) else {
-        return Ok(None);
-    };
-    let class = match &template.names {
-        crate::core::Named::Object { value, .. } => {
-            let tree = session.tree(&located.root)?;
-            crate::resolve::views::value_class(tree, facts, value, template.pos, &located.relative)
-        }
-        _ => None,
-    };
-    Ok(Some(crate::tree::views::template_files(
-        &located.root,
-        &located.relative,
-        &template.names,
-        class.as_deref(),
-    )))
 }
 
 /// Say once per checkout, the first time a definition, references or
@@ -477,42 +473,14 @@ pub(crate) fn document_link(
     Ok(Some(links))
 }
 
-/// The name under a position, as written.
-fn name_at(session: &mut Session, located: &Located, pos: crate::core::Pos) -> Option<String> {
-    let facts = session.document(&located.absolute)?.facts().clone();
-    Some(match position::at_facts(&facts, pos.line, pos.col)? {
-        Under::Definition(def) => def.name,
-        Under::Call(call) => call.name,
-        Under::Constant(reference) => reference.name,
-    })
-}
-
-/// Where the name at a position is defined — the CLI's `--def`, as sites.
+/// Where a fact in `facts` is defined — the CLI's `--def`, as sites.
 fn resolve_at(
     session: &mut Session,
     located: &Located,
-    pos: crate::core::Pos,
+    facts: &crate::core::Facts,
+    under: Under,
     asked: Asked,
 ) -> anyhow::Result<Vec<(String, u32, u32)>> {
-    let facts = session
-        .document(&located.absolute)
-        .map(|document| document.facts().clone());
-    let Some(facts) = facts else {
-        super::miss::why(UNREADABLE);
-        return Ok(Vec::new());
-    };
-    // A template a `render` or `extends` names: its files, at their tops
-    // (DEC-524).
-    if let Some(files) = template_files(session, located, &facts, pos)? {
-        if files.is_empty() {
-            super::miss::why("no template by that name");
-        }
-        return Ok(files.into_iter().map(|file| (file, 1, 1)).collect());
-    }
-    let Some(under) = position::at_facts(&facts, pos.line, pos.col) else {
-        super::miss::why(NO_NAME);
-        return Ok(Vec::new());
-    };
     let path = located.relative.clone();
     let unresolved = session.unresolved;
     Ok(match under {
@@ -561,7 +529,7 @@ fn resolve_at(
                 .collect()
         }
         Under::Call(call) => {
-            let answer = method_answer(session, located, &facts, &call)?;
+            let answer = method_answer(session, located, facts, &call)?;
             note_uncertain(&answer);
             if !answer.sites.is_empty() {
                 let sites = locations::of_one_method(answer.sites, answer.signatures);

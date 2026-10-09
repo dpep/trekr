@@ -33,9 +33,9 @@ boundary below is stated as a prohibition rather than a preference.
 ```
 
 The CLI (`cli/`) and the LSP (`serve/`) are fronts over these layers. What
-both ask — the fact under a position, an example group's members, how a call
-site is tiered for references, which files a member variable's class spans —
-lives in `query/`, beneath either. What both
+both ask — the fact under a position, what a definition is asked of there,
+an example group's members, how a call site is tiered for references, which
+files a member variable's class spans — lives in `query/`, beneath either. What both
 share at run time sits beneath them too: `background.rs`, the index child's
 side of a spawned `--index` (its hints and its lowered priority), and
 `log.rs`, the ndjson log the server writes and `--usage --misses` reads.
@@ -893,11 +893,18 @@ its stdin; a query whose file went to the early store answers from that
 (DEC-512).
 
 `--def` reparses the one file with Prism rather than reading stored spans, so
-it answers correctly on a file edited since the last index. A variable under
-the cursor is answered from that file's flow (`resolve/vars.rs`, DEC-064) before
-anything snaps: a local or parameter with the writes its read can see, an
-ivar or cvar with its writes in the file — the class's other files are the
-LSP's to read, and the answer says they were not searched.
+it answers correctly on a file edited since the last index. What it is asked
+of is `query::def::subject`, which Go to Definition asks too, in one order: a
+template a `render` reaches, then a variable, then a definition, constant or
+call, then an unplaced `super` or a symbol that names no method. The fronts
+differ only around it: a column names a character, while an editor's caret is
+first read onto one (`query::position::caret_reads`, DEC-036 addendum); the
+CLI snaps where nothing is written and the editor does not; and each answers
+the subject from its own reads. A variable is answered from the file's flow
+(`resolve/vars.rs`, DEC-064) before anything snaps: a local or parameter with
+the writes its read can see, an ivar or cvar with its writes in the file — the
+class's other files are the LSP's to read, and the answer says they were not
+searched.
 
 Every answer carries `status` (`resolved` | `residue`) and `confidence`. For
 constants that confidence is 1 or 0, and **that is not a hedge**: the ladder

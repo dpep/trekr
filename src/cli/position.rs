@@ -51,19 +51,16 @@ impl Spec {
     }
 }
 
-/// A variable under the cursor, answered from the file alone, the way the LSP
-/// answers one (DEC-064): a local or parameter by the writes its read can see,
-/// an instance or class variable by the writes to it in this file.
-pub(crate) fn variable_at(
+/// A variable's answer, from the file alone, the way the LSP answers one
+/// (DEC-064): a local or parameter by the writes its read can see, an
+/// instance or class variable by the writes to it in this file.
+pub(crate) fn variable_answer(
     source: &[u8],
-    facts: &crate::core::Facts,
+    found: &crate::resolve::vars::Vars,
+    under: &crate::resolve::vars::Occurrence,
     path: &str,
-    line: u32,
-    col: u32,
-) -> Option<serde_json::Value> {
+) -> serde_json::Value {
     use crate::resolve::vars::{self, Binding, Sigil};
-    let found = vars::of_file(source, &facts.strings);
-    let under = crate::query::position::variable_at(facts, source, &found, line, col)?;
     let writes: Vec<&vars::Occurrence> = match under.sigil {
         Sigil::Local => found.local_definitions(under),
         Sigil::Instance | Sigil::Class => found
@@ -115,7 +112,7 @@ pub(crate) fn variable_at(
     if let (Some(reason), Some(object)) = (reason, answer.as_object_mut()) {
         object.insert("reason".into(), reason.into());
     }
-    Some(answer)
+    answer
 }
 
 #[cfg(test)]
