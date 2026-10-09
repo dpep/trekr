@@ -4835,6 +4835,47 @@ fn requests_are_counted_by_operation_caller_and_outcome() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// The index the server spawns is counted once, as the server's `index`
+/// row: the child it runs records no CLI `index` row of its own.
+#[test]
+fn the_index_the_server_spawns_is_counted_once() {
+    let (dir, db) = scratch("usage-spawned");
+    let source = repo(&dir);
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "app.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    // The server logs `index` once it has reaped the child, which has by
+    // then written any usage row it was going to.
+    while logged_events(&db, "index").is_empty() && std::time::Instant::now() < deadline {
+        session.request(
+            "textDocument/definition",
+            serde_json::json!({"textDocument": {"uri": uri_of(&dir, "app.rb")}, "position": {"line": 7, "character": 6}}),
+        );
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    session.stop();
+    assert!(
+        !logged_events(&db, "index").is_empty(),
+        "the server indexed"
+    );
+
+    let rows = usage_rows(&db);
+    let index_rows = |surface: &str| {
+        rows.iter()
+            .filter(|r| r["surface"] == surface && r["feature"] == "index")
+            .count()
+    };
+    assert_eq!(index_rows("lsp"), 1, "{rows:?}");
+    assert_eq!(index_rows("cli"), 0, "{rows:?}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A checkout of several files, committed and indexed, with `open` open in the
 /// session.
 fn files_session(label: &str, files: &[(&str, &str)], open: &str) -> (PathBuf, Session) {

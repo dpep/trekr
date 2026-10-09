@@ -42,6 +42,12 @@ pub(crate) fn spawned() -> bool {
     std::env::var_os(SPAWNED).is_some()
 }
 
+/// Is this `--index` one trekr spawned, for a query or a language server?
+/// Its work belongs to the process that spawned it, not to a use of its own.
+pub(super) fn spawned_by_trekr() -> bool {
+    spawned() || crate::background::in_background()
+}
+
 /// What a query needs of the index before it can answer.
 #[derive(Clone, Copy)]
 pub(super) enum Need<'a> {

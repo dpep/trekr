@@ -446,10 +446,11 @@ pub(crate) fn run(lsp: fn(bool) -> anyhow::Result<()>) -> ExitCode {
             ),
         }
     }
-    // After the answer is out, never before it (rq DECISIONS D13). An index a
-    // query spawned is counted on that query's row, as `indexed`.
+    // After the answer is out, never before it (rq DECISIONS D13). An index
+    // trekr spawned is counted by its spawner: a query's row, as `indexed`,
+    // or the language server's own `index` row.
     if let Some(feature) = feature
-        && !autoindex::spawned()
+        && !autoindex::spawned_by_trekr()
     {
         let note = crate::usage::take();
         let mut flags = note.flags;
