@@ -9,7 +9,7 @@
 
 use super::convert::{self, LineIndex, path_to_uri};
 use super::handlers::absolute_site;
-use super::state::{Document, Session};
+use super::state::Session;
 use crate::query::variables::ClassScope;
 use crate::resolve::vars::{self, Binding, Occurrence, Sigil, Vars};
 use lsp_types::Uri as Url;
@@ -40,7 +40,7 @@ pub(super) fn under(session: &mut Session, uri: &Url, position: Position) -> Opt
     let path = convert::uri_to_path(uri.as_str())?;
     let file = std::fs::canonicalize(&path).unwrap_or(path);
     let document = session.document(&file)?;
-    let (vars, occurrence, _) = at_caret(document, position)?;
+    let (vars, occurrence) = document.variable_read(position)?;
     // `--usage` tells a variable's answer from a method's.
     crate::usage::flag("variable");
     Some(Under {
@@ -49,30 +49,6 @@ pub(super) fn under(session: &mut Session, uri: &Url, position: Position) -> Opt
         vars,
         occurrence,
     })
-}
-
-/// The variable an editor's caret reads, and the caret's byte offset. An LSP
-/// position is a caret between characters, and one just past a variable
-/// reads the variable (DEC-036 addendum): `--def`'s `variable_at` reads
-/// a character, not a caret.
-fn at_caret(document: &mut Document, position: Position) -> Option<(Rc<Vars>, Occurrence, usize)> {
-    let offset = convert::offset_of(&document.text, position);
-    let vars = document.vars();
-    let occurrence = vars.at(offset)?.clone();
-    Some((vars, occurrence, offset))
-}
-
-/// Where a caret just past a variable reads it as `--def` would: on the
-/// variable's last character. `None` anywhere else, where the caret's own
-/// position stands. A `render` argument asks here, so the template it names
-/// is found from the same caret [`under`] finds the variable from.
-pub(super) fn last_character(document: &mut Document, position: Position) -> Option<Position> {
-    let (_, occurrence, offset) = at_caret(document, position)?;
-    if offset != occurrence.span.end || offset == occurrence.span.start {
-        return None;
-    }
-    let last = document.text[..offset].chars().next_back()?;
-    Some(LineIndex::new(&document.text).at(offset - last.len_utf8()))
 }
 
 /// A mention found in some file, with that file's text to place it.

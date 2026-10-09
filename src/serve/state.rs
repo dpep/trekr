@@ -269,6 +269,33 @@ impl Document {
         self.requires.as_deref().expect("just set")
     }
 
+    /// The character a caret here reads (DEC-036 addendum): see
+    /// [`crate::query::position::caret_reads`].
+    pub(crate) fn reads(&mut self, caret: lsp_types::Position) -> crate::core::Pos {
+        let right = super::convert::to_pos(&self.text, caret);
+        let vars = self.vars();
+        crate::query::position::caret_reads(self.text.as_bytes(), &vars, right)
+    }
+
+    /// The variable a caret here reads, and the file's variables it is one of.
+    pub(crate) fn variable_read(
+        &mut self,
+        caret: lsp_types::Position,
+    ) -> Option<(std::rc::Rc<Vars>, vars::Occurrence)> {
+        let at = self.reads(caret);
+        let vars = self.vars();
+        self.facts();
+        let facts = self.facts.as_ref().expect("just read");
+        let found = crate::query::position::variable_at(
+            facts,
+            self.text.as_bytes(),
+            &vars,
+            at.line,
+            at.col,
+        )?;
+        Some((vars.clone(), found.clone()))
+    }
+
     /// Its variables and what each read of a local can see — once per edit,
     /// and shared, since an ivar answer reads several files' at once.
     /// A string of code the file evaluates contributes its locals, where

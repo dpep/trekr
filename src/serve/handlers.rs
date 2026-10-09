@@ -176,10 +176,11 @@ fn locate(
         }
         return Ok((!locations.is_empty()).then_some(GotoDefinitionResponse::Array(locations)));
     }
-    let Some((located, pos)) = target(session, &uri, template.unwrap_or(position)) else {
+    let Some((located, pos)) = target(session, &uri, position) else {
         super::miss::why(NO_CHECKOUT);
         return Ok(None);
     };
+    let pos = template.unwrap_or(pos);
     let name_len = name_at(session, &located, pos).map_or(0, |n| last_segment(&n).len());
     let sites = resolve_at(session, &located, pos, asked)?;
     let locations: Vec<Location> = sites
@@ -198,24 +199,21 @@ fn template_here(
     session: &mut Session,
     uri: &Url,
     position: lsp_types::Position,
-) -> anyhow::Result<Option<lsp_types::Position>> {
+) -> anyhow::Result<Option<crate::core::Pos>> {
     let Some((located, _)) = target(session, uri, position) else {
         return Ok(None);
     };
     let Some(document) = session.document(&located.absolute) else {
         return Ok(None);
     };
-    let reads = variables::last_character(document, position).unwrap_or(position);
-    let pos = to_pos(&document.text, reads);
+    let pos = document.reads(position);
     let facts = document.facts();
     if position::template_at(facts, pos.line, pos.col).is_none() {
         return Ok(None);
     }
     let facts = facts.clone();
     let files = template_files(session, &located, &facts, pos)?;
-    Ok(files
-        .is_some_and(|files| !files.is_empty())
-        .then_some(reads))
+    Ok(files.is_some_and(|files| !files.is_empty()).then_some(pos))
 }
 
 /// The files a `render` or `extends` at the position names (DEC-524): `None`

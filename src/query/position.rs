@@ -262,6 +262,29 @@ pub(crate) fn variable_at<'v>(
     (offset < found.span.end || at_facts(facts, line, col).is_none()).then_some(found)
 }
 
+/// The character an editor's caret reads, given the one to its right: that
+/// one, unless the caret is just past a variable, which it reads on its last
+/// character. At an identifier's boundary the identifier wins, as in
+/// rust-analyzer, so `a+b` and `list[0]` read `a` and `list` with the caret
+/// after them (DEC-036 addendum). A `FILE:LINE:COL` names a character and is
+/// not read.
+pub(crate) fn caret_reads(source: &[u8], vars: &Vars, right: Pos) -> Pos {
+    let Some(offset) = offset_of(source, right.line, right.col) else {
+        return right;
+    };
+    match vars.at(offset) {
+        Some(found) if found.span.end == offset && found.span.start < offset => {
+            // The last character's first byte: back over UTF-8 continuations.
+            let last = (found.span.start..offset)
+                .rev()
+                .find(|&i| source[i] & 0xC0 != 0x80)
+                .unwrap_or(found.span.start);
+            crate::extract::LineIndex::new(source).pos(last)
+        }
+        _ => right,
+    }
+}
+
 /// The byte offset of a 1-based line and column, clamped as the editor's
 /// are: a column past the end of its line is the line's end, never a byte of
 /// a later line. `None` past the last line, or at column 0.
@@ -280,6 +303,26 @@ pub(crate) fn offset_of(source: &[u8], line: u32, col: u32) -> Option<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_caret_just_past_a_variable_reads_its_last_character() {
+        let source = "list = [1]\nlist[0]\na = b = 1\na+b\nhé = 1\nhé + 1\n".as_bytes();
+        let vars = crate::resolve::vars::analyze(source);
+        let at = |line, col| Pos { line, col };
+        // (the character to the caret's right, what it reads)
+        let cases = [
+            (at(2, 5), at(2, 4)), // `list|[`: the `t`
+            (at(2, 1), at(2, 1)), // `|list`: the `l`
+            (at(2, 3), at(2, 3)), // `li|st`: inside, the `s`
+            (at(4, 2), at(4, 1)), // `a|+b`: the `a`
+            (at(4, 4), at(4, 3)), // `a+b|`: past the line's end, the `b`
+            (at(6, 4), at(6, 2)), // `hé| + 1`: the `é`, two bytes back
+            (at(9, 1), at(9, 1)), // past the last line: as given
+        ];
+        for (right, reads) in cases {
+            assert_eq!(caret_reads(source, &vars, right), reads, "{right:?}");
+        }
+    }
 
     #[test]
     fn a_variable_answers_where_written_and_where_nothing_follows_it() {
