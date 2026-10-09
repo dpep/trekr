@@ -17,7 +17,9 @@
   class.** In an untracked file created after the last index (with no
   file watcher to say so), a call inherited from the file's superclass
   listed every method of that name; `--def` answered the superclass's.
-  Opening a file now reads it as saving it does.
+  Opening a file now reads it as saving it does — one the index would
+  read, that is: opening or saving a file git ignores leaves the index
+  as it was.
 
 - **`--gc` collects what queries recorded.** Each edited version of a file
   a query read stayed in the store for good; `--gc` now removes those no

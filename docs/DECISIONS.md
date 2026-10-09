@@ -2244,7 +2244,11 @@ answered `Base#size` (0.8.10 hunt #3). Opening a file now refreshes it from
 disk, the same bounded one-file refresh: one read and hash, a parse only for
 bytes the store has never seen. Opening, not every request: the file the
 editor shows is the one asked about, and a refresh per request would put a
-read on every click.
+read on every click. A file the map lacks is written only when the index walk
+would list it (`scan::admits`, one `git ls-files` asked of that path): opening
+a gitignored `ignored/copy.rb` put its `Widget#size` in the map, and Go to
+Definition answered it for the session (0.9.0 hunt #2). didSave had the same
+gap and takes the same check.
 
 ## DEC-040 — Completion is built, reversing PLAN §1 for completion alone
 

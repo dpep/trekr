@@ -634,6 +634,34 @@ fn scan_in(root: &Path, gits: Option<&Gits>) -> Result<Files> {
     Ok(files)
 }
 
+/// Whether [`scan`] lists `relative`, asked of one file: indexed by name,
+/// tracked or untracked and not ignored, and the schema dump its app reads.
+pub(crate) fn admits(root: &Path, relative: &str) -> bool {
+    if !is_indexed(relative) {
+        return false;
+    }
+    let pathspec = format!(":(literal){relative}");
+    let args = [
+        "ls-files",
+        "-c",
+        "-o",
+        "--exclude-standard",
+        "-z",
+        "--",
+        &pathspec,
+    ];
+    let listed = git(root, &args).is_ok_and(|out| parse_paths(&out).iter().any(|p| p == relative));
+    if !listed {
+        return false;
+    }
+    if !crate::schema::is_dump(relative) {
+        return true;
+    }
+    let (dir, _) = relative.rsplit_once('/').unwrap_or(("", relative));
+    let app = &dir[..dir.len().saturating_sub("db".len())];
+    schema_dumps(root, app).iter().any(|dump| dump == relative)
+}
+
 /// The schema dumps in the app at `app` (a directory of `root`, `""` for the
 /// root itself), as the index reads them: one per database.
 pub(crate) fn schema_dumps(root: &Path, app: &str) -> Vec<String> {
@@ -992,6 +1020,65 @@ mod tests {
             ],
             "Rails' default is schema.rb; the config can say otherwise"
         );
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn one_file_is_admitted_exactly_when_the_scan_lists_it() {
+        let temp = std::env::temp_dir().join(format!("trekr-admits-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp);
+        let git = |args: &[&str]| {
+            let ok = Command::new("git")
+                .args(args)
+                .current_dir(&temp)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .output()
+                .unwrap()
+                .status
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        let paths = [
+            "tracked.rb",
+            "ignored/forced.rb",
+            "notes.txt",
+            "db/schema.rb",
+            "db/structure.sql",
+            "untracked.rb",
+            "fresh/new.rb",
+            "ignored/copy.rb",
+            "tmp/scratch.rb",
+            "missing.rb",
+        ];
+        for path in &paths[..paths.len() - 1] {
+            let file = temp.join(path);
+            std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+            std::fs::write(file, "class A; end\n").unwrap();
+        }
+        std::fs::write(temp.join(".gitignore"), "ignored/\n*scratch*\n").unwrap();
+        git(&["init", "-q"]);
+        git(&["add", "tracked.rb", "notes.txt", "db", ".gitignore"]);
+        git(&["add", "-f", "ignored/forced.rb"]);
+        git(&[
+            "-c",
+            "user.name=x",
+            "-c",
+            "user.email=x@x",
+            "commit",
+            "-qm",
+            "x",
+        ]);
+        let root = std::fs::canonicalize(&temp).unwrap();
+        let scanned = scan(&root).unwrap();
+        for path in paths {
+            assert_eq!(
+                admits(&root, path),
+                scanned.contains_key(path),
+                "{path}: one file's answer is the scan's"
+            );
+        }
+        assert!(admits(&root, "fresh/new.rb"), "an untracked file is read");
+        assert!(!admits(&root, "ignored/copy.rb"), "an ignored one is not");
         let _ = std::fs::remove_dir_all(&temp);
     }
 

@@ -54,6 +54,16 @@ fn refresh(session: &mut Session, path: &Path) -> Refreshed {
     if !session.store().has_checkout(&root).unwrap_or(false) {
         return Refreshed::Done;
     }
+    // The index walk's rules, not the editor's: an ignored file written here
+    // would answer for the checkout until the next index dropped it.
+    if !session
+        .store()
+        .maps(&root, &located.relative)
+        .unwrap_or(false)
+        && !crate::scan::admits(&located.root, &located.relative)
+    {
+        return Refreshed::Done;
+    }
     let Ok(bytes) = crate::scan::read_source(&located.absolute) else {
         return Refreshed::Done;
     };

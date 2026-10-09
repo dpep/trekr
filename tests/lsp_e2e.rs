@@ -385,6 +385,60 @@ fn a_file_opened_before_any_index_read_it_answers_from_its_own_class() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Opening or saving a file the index walk leaves out — gitignored here —
+/// does not put it in the checkout's map: its definitions stay unanswered.
+#[test]
+fn an_ignored_file_opened_and_saved_stays_out_of_the_index() {
+    let (dir, db) = scratch("def-ignored");
+    repo(&dir);
+    fs::write(dir.join(".gitignore"), "ignored/\n").unwrap();
+    let indexed = trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+    assert!(indexed.status.success());
+    fs::create_dir_all(dir.join("ignored")).unwrap();
+    let copy = "class Widget\n  def save\n  end\nend\n";
+    fs::write(dir.join("ignored/copy.rb"), copy).unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let document = serde_json::json!({"uri": uri_of(&dir, "ignored/copy.rb")});
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "ignored/copy.rb"), "languageId": "ruby", "version": 1, "text": copy
+        }}),
+    );
+    session.notify(
+        "textDocument/didSave",
+        serde_json::json!({"textDocument": document}),
+    );
+    let answer = session.request(
+        "textDocument/definition",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": 7, "character": 6},
+        }),
+    );
+    let found: Vec<String> = answer["result"]
+        .as_array()
+        .expect("an array of locations")
+        .iter()
+        .map(|l| l["uri"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        found,
+        [uri_of(&dir, "app.rb")],
+        "the indexed Widget#save alone"
+    );
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_click_that_finds_nothing_is_logged_where_usage_misses_reads_it() {
     let (dir, db) = scratch("misses");

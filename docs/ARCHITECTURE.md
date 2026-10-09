@@ -1203,7 +1203,9 @@ which is assembled from the index as of the last save. A method added but not
 saved is not yet visible from *other* files; saving moves the index
 (`Store::refresh_file`) and the tree follows. Opening a file does the same
 with what is on disk, so one made or changed where no watcher saw (an
-untracked file created after the index) answers from its own classes. A save that meets another
+untracked file created after the index) answers from its own classes. Both
+write only a file the index walk would list (`scan::admits`): an ignored copy
+opened in `vendor/` or `tmp/` would otherwise answer for the checkout. A save that meets another
 process writing the index — a background `--index` child — is not dropped:
 it is retried every 250 ms until it lands, answers meanwhile coming from what
 is committed (DEC-066). The child scanned before the save, so its own write
