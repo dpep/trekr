@@ -29,3 +29,5 @@ definition app/holder.rb:4:12 sorbet/rbi/gems/sprocket@1.0.rbi:2,app/holder.rb:2
 declaration app/holder.rb:4:12 sorbet/rbi/gems/sprocket@1.0.rbi:2,app/holder.rb:2
 # Go to Declaration from a method's own `def` lands on its signature.
 declaration app/widget.rb:2:7 sorbet/rbi/widget.rbi:3
+# `--def` on the `def` names that signature too, as Go to Declaration opens it.
+def app/widget.rb:2:7 status=resolved site=app/widget.rb:2 signature=sorbet/rbi/widget.rbi:3

@@ -5216,9 +5216,9 @@ fn cmd_def(
     // The cursor on a definition is a fact of the file, too.
     if let crate::query::position::Under::Definition(_) = under {
         file_alone(&checkout);
-    } else if let Some((root, store)) = checkout {
+    } else if let Some((root, store)) = &checkout {
         let need = Need::File(Path::new(&spec.path));
-        if let Some(code) = autoindex::ensure(out, &store, &root, need)? {
+        if let Some(code) = autoindex::ensure(out, store, root, need)? {
             return Ok(code);
         }
     }
@@ -5247,6 +5247,24 @@ fn cmd_def(
             // A top-level def is Object's (DEC-311).
             if def.kind == crate::core::Kind::Method {
                 answer["owner"] = def.nesting.first().map_or("Object", String::as_str).into();
+                // Its `.rbi` signatures, as Go to Declaration opens them
+                // (DEC-646): from the index as it stands, so the answer on
+                // a `def` stays the file's own, with no git probe or wait.
+                if let Some((root, store)) = &checkout
+                    && store.has_checkout(&root.to_string_lossy())?
+                {
+                    let tree = build_tree(store, &root.to_string_lossy())?;
+                    let here = crate::tree::Site {
+                        path: file.clone(),
+                        line: def.pos.line,
+                        col: def.pos.col,
+                        kind: def.kind.as_str().to_string(),
+                    };
+                    let signatures = crate::resolve::signatures_at(&tree, &def.name, &[here]);
+                    if !signatures.is_empty() {
+                        answer["signatures"] = serde_json::to_value(signatures)?;
+                    }
+                }
             }
             answer
         }

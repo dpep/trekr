@@ -19,6 +19,11 @@
   Both now ask one subject: the file, at its top, with `under: require` and
   `resolved_via: require` in `--json`, and a `reason` when no file is found.
 
+- **`--def` on a method's `def` names its Sorbet signature.** Go to
+  Declaration from a `def` opened the `.rbi` stub that describes it, while
+  `--def` there answered only the `def` itself. Its `--json` now carries
+  `signatures`, as an answer on a call of the method does.
+
 ## 0.8.10 — 2026-10-09
 
 - **The `:` of a symbol sent as a method's name is that method.** On

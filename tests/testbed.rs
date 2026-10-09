@@ -1626,11 +1626,7 @@ fn caret_sweep(db: &Path, dir: &Path, label: &str, checks: &mut usize, failures:
                     _ => continue,
                 };
                 *checks += 1;
-                // `--def` on a method's own `def` names no signature, where
-                // the editor's declaration opens the `.rbi` that describes it.
-                let declaration =
-                    (answer["under"] != "definition").then_some(("declaration", &owed.1));
-                for (method, owed) in std::iter::once(("definition", &owed.0)).chain(declaration) {
+                for (method, owed) in [("definition", &owed.0), ("declaration", &owed.1)] {
                     let got = listed(&lsp.at(
                         &uri,
                         line,
