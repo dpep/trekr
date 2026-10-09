@@ -1442,6 +1442,17 @@ fn check_case(
     }
 }
 
+/// `--def --json` at a position, kept out of the shape golden: the sweep
+/// asks where no case does, and the golden records what the cases ask.
+fn unrecorded_def(db: &Path, dir: &Path, at: &str) -> serde_json::Value {
+    let out = trekr_in(dir)
+        .args(["--def", at, "--json"])
+        .env("TREKR_DB", db)
+        .output()
+        .expect("run trekr");
+    serde_json::from_slice(&out.stdout).unwrap_or(serde_json::Value::Null)
+}
+
 /// The source files of a staged case the sweep asks in, relative to it.
 fn sources(dir: &Path, under: &Path, found: &mut Vec<String>) {
     const READ: [&str; 8] = ["rb", "erb", "rbi", "rake", "haml", "rabl", "gemspec", "ru"];
@@ -1594,7 +1605,7 @@ fn caret_sweep(db: &Path, dir: &Path, label: &str, checks: &mut usize, failures:
                 let at = format!("{file}:{line}:{col}");
                 let answer = asked
                     .entry(at.clone())
-                    .or_insert_with(|| trekr(db, dir, &["--def", &at, "--json"]).0)
+                    .or_insert_with(|| unrecorded_def(db, dir, &at))
                     .clone();
                 let definition = cli_sites(dir, &answer, "definition");
                 let signatures = cli_sites(dir, &answer, "signatures");
