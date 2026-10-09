@@ -35,7 +35,7 @@ boundary below is stated as a prohibition rather than a preference.
 The CLI (`cli/`) and the LSP (`serve/`) are fronts over these layers. What
 both ask — the fact under a position, what a definition is asked of there,
 an example group's members, how a call site is tiered for references, a
-constant's mentions by Ruby's lookup, which files a member variable's class spans — lives in `query/`, beneath either. What both
+constant's mentions by Ruby's lookup, which file a `require` string names, which files a member variable's class spans — lives in `query/`, beneath either. What both
 share at run time sits beneath them too: `background.rs`, the index child's
 side of a spawned `--index` (its hints and its lowered priority), and
 `log.rs`, the ndjson log the server writes and `--usage --misses` reads.
@@ -970,7 +970,6 @@ the new binary in place (DEC-050).
 | `state.rs` | per-checkout trees, mapped from their snapshots and reloaded when the tree key — checkout and gems — moves; completion listings; documents — the editor's copy, or a disk read revalidated by mtime+length |
 | `handlers.rs` | the nine agent operations, syntax diagnostics, `require` strings as links |
 | `gather.rs` | how much of a references answer is kept, in what order, and what is said about the rest (DEC-056) |
-| `require.rs` | which file a `require` string names: finding them in a file, the static load path, Ruby's search rules (DEC-053) |
 | `vars.rs` | a file's variables, pure: which writes each local read can see, each ivar with its written class and `self` (DEC-064) |
 | `variables.rs` | a variable under the cursor: definition, references, highlight, hover; an ivar's class files (`query::variables`, which `--refs FILE:LINE:COL` shares), read when asked (DEC-064) |
 | `doc.rs` | a definition's doc comment and its signature as written, read from its file when asked (DEC-052) |
@@ -1115,7 +1114,7 @@ whole literal is the origin, wherever the cursor is in it — a
 `LocationLink`'s `originSelectionRange` when the client takes links — because
 Ruby resolves the whole string and a directory is not a location.
 
-`require.rs` is two pure functions and one that reads the disk.
+`query/require.rs` is two pure functions and one that reads the disk.
 `requires_in` parses a file with Prism and returns each call whose path is a
 literal, or a literal in disguise (`File.expand_path("x", __dir__)`,
 `File.join(__dir__, "x")`, `File.dirname(__FILE__) + "/x"`, `"#{__dir__}/x"`,

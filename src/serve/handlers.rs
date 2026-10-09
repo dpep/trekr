@@ -15,7 +15,6 @@
 use super::convert::{self, LineIndex, path_to_uri, point};
 use super::doc::{self, Doc};
 use super::gather;
-use super::require::{self, Found, Origin};
 use super::state::{Located, Session};
 use super::variables;
 use crate::core::{Def, Kind};
@@ -24,6 +23,7 @@ use crate::query::locations::{self, Asked};
 use crate::query::members::CheckoutFiles;
 use crate::query::position::{self, Under};
 use crate::query::refs as query_refs;
+use crate::query::require::{self, Found, Origin};
 use crate::resolve::refs;
 use lsp_types::Uri as Url;
 use lsp_types::{

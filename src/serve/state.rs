@@ -18,8 +18,8 @@
 //! belongs to (DEC-024).
 
 use super::complete::Members;
-use super::require::{self, LoadPath, Require};
 use crate::core::Facts;
+use crate::query::require::{self, LoadPath, Require};
 use crate::resolve::vars::{self, Vars};
 use crate::store::Store;
 use crate::tree::Tree;
