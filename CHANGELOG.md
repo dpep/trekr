@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.10 — 2026-10-09
 
 - **The `:` of a symbol sent as a method's name is that method.** On
   the `:` of `before_save :go`, `send(:go)` or `if: :ready?` (and the
