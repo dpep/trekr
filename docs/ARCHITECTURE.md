@@ -1130,6 +1130,10 @@ literal, or a literal in disguise (`File.expand_path("x", __dir__)`,
 one the way Ruby would, given the directories and a file-exists test.
 `LoadPath::for_checkout` builds the load path, in order:
 
+0. for a file inside a path gem, that gem's own `test/` and `spec/`, as its
+   own runner puts them (`cd activerecord && bin/test`): `require
+   "cases/helper"` in rails' `activerecord/test` is that gem's helper, and
+   no other file sees them;
 1. the checkout's `lib/`, `spec/`, `test/` — rspec-core and `rails test` add
    the last two, which is where `rails_helper` lives;
 2. its path gems' `lib/`, from `Gemfile.lock`'s `PATH` sections;

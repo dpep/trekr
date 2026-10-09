@@ -744,7 +744,10 @@ impl Session {
     /// kept until the checkout's bundle moves. Outside a checkout it is empty,
     /// and only a path relative to the requiring file resolves.
     pub(crate) fn load_path(&mut self, root: Option<&Path>) -> &LoadPath {
-        static NONE: LoadPath = LoadPath { dirs: Vec::new() };
+        static NONE: LoadPath = LoadPath {
+            dirs: Vec::new(),
+            own: Vec::new(),
+        };
         let Some(root) = root else {
             return &NONE;
         };

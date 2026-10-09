@@ -5358,7 +5358,7 @@ fn required_answer(
             let stdlib = store.tree_roots(&root_str)?.stdlib;
             LoadPath::for_checkout(root, &gems, stdlib.as_deref())
         }
-        None => LoadPath { dirs: Vec::new() },
+        None => LoadPath::default(),
     };
     let cx = require::Context {
         file: Path::new(file),

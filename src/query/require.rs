@@ -275,6 +275,10 @@ impl Dir {
 #[derive(Debug, Default)]
 pub(crate) struct LoadPath {
     pub(crate) dirs: Vec<Dir>,
+    /// Each path gem's own `test/` and `spec/`, by the gem's directory:
+    /// ahead of `dirs` for a file inside that gem, as its own test runner
+    /// puts them, and nowhere for any other file.
+    pub(crate) own: Vec<(PathBuf, Vec<Dir>)>,
 }
 
 /// A file a require names.
@@ -328,7 +332,7 @@ pub(crate) fn resolve(
 
     let names = candidates(path, exact);
     let mut found = Vec::new();
-    for dir in &cx.load_path.dirs {
+    for dir in cx.load_path.for_file(cx.file) {
         // The stdlib is last on `$LOAD_PATH` whoever sets the rest up, so a
         // gem's `json.rb` shadows its copy for certain.
         if !found.is_empty() && matches!(dir.origin, Origin::Stdlib(_)) {
@@ -485,9 +489,26 @@ impl LoadPath {
             checkout(root.join(conventional));
         }
         // A path gem's code is in the checkout, and on the load path.
+        let mut own = Vec::new();
         if let Ok(lockfile) = crate::scan::read_text(root.join("Gemfile.lock")) {
             for dir in path_gem_libs(&lockfile) {
-                checkout(normalize(&root.join(dir)));
+                let lib = normalize(&root.join(dir));
+                if let Some(gem) = lib.parent().filter(|gem| *gem != root) {
+                    let tests: Vec<Dir> = ["test", "spec"]
+                        .into_iter()
+                        .map(|name| gem.join(name))
+                        .filter(|path| path.is_dir())
+                        .map(|path| Dir {
+                            path,
+                            origin: Origin::Checkout,
+                            names: None,
+                        })
+                        .collect();
+                    if !tests.is_empty() && !own.iter().any(|(seen, _)| seen == gem) {
+                        own.push((gem.to_path_buf(), tests));
+                    }
+                }
+                checkout(lib);
             }
         }
         let gem_roots: Vec<&String> = gem_roots
@@ -522,7 +543,19 @@ impl LoadPath {
                 dirs.extend(listed(arch, Origin::Stdlib(stdlib)));
             }
         }
-        LoadPath { dirs }
+        LoadPath { dirs, own }
+    }
+
+    /// The directories a require in `file` searches, in order: its own path
+    /// gem's tests first, the innermost gem when one holds another.
+    fn for_file<'a>(&'a self, file: &Path) -> impl Iterator<Item = &'a Dir> {
+        let own = self
+            .own
+            .iter()
+            .filter(|(gem, _)| file.starts_with(gem))
+            .max_by_key(|(gem, _)| gem.components().count())
+            .map_or(&[][..], |(_, dirs)| dirs.as_slice());
+        own.iter().chain(&self.dirs)
     }
 }
 
@@ -773,6 +806,7 @@ mod tests {
                     Some(&["json.rb", "json", "digest.bundle"]),
                 ),
             ],
+            own: Vec::new(),
         }
     }
 
@@ -956,6 +990,52 @@ mod tests {
             )),
             [stdlib]
         );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_path_gems_own_test_directory_is_on_the_path_for_its_own_files() {
+        let base = std::env::temp_dir().join(format!("trekr-monorepo-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        for dir in [
+            "widget/lib",
+            "widget/test/cases",
+            "gadget/test/cases",
+            "tools",
+        ] {
+            std::fs::create_dir_all(base.join(dir)).unwrap();
+        }
+        std::fs::write(base.join("widget/test/cases/helper.rb"), "").unwrap();
+        std::fs::write(base.join("gadget/test/cases/helper.rb"), "").unwrap();
+        std::fs::write(
+            base.join("Gemfile.lock"),
+            "PATH\n  remote: .\n  specs:\n    gadget (1.0)\n    widget (1.0)\n",
+        )
+        .unwrap();
+        let load_path = LoadPath::for_checkout(&base, &[], None);
+        let helper = |from: &str| -> Vec<String> {
+            let file = base.join(from);
+            let cx = Context {
+                file: &file,
+                root: Some(&base),
+                load_path: &load_path,
+            };
+            let found = resolve(&require(Verb::Require, "cases/helper"), &cx, Path::is_file);
+            found
+                .into_iter()
+                .map(|f| f.file.strip_prefix(&base).unwrap().display().to_string())
+                .collect()
+        };
+        assert_eq!(
+            helper("widget/test/models/a_test.rb"),
+            ["widget/test/cases/helper.rb"],
+            "its own gem's, not a sibling's"
+        );
+        assert_eq!(
+            helper("gadget/test/b_test.rb"),
+            ["gadget/test/cases/helper.rb"]
+        );
+        assert!(helper("tools/c.rb").is_empty(), "no gem's tests for others");
         let _ = std::fs::remove_dir_all(&base);
     }
 
