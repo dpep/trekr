@@ -1198,9 +1198,7 @@ fn index_all(
     let pool = rayon::ThreadPoolBuilder::new().num_threads(jobs).build()?;
     // What the language server or a query wants read first: this index's if
     // it fills the checkout, the one it waits for's if another does.
-    let mut hints = crate::background::Hints::listen(
-        crate::background::in_background() || autoindex::spawned(),
-    );
+    let mut hints = crate::background::Hints::listen(autoindex::spawned_by_trekr());
     // The query that started this index claimed the checkout for it.
     let parent = autoindex::spawned().then(std::os::unix::process::parent_id);
     // A first index — no map yet, or one an index left unfinished — is
