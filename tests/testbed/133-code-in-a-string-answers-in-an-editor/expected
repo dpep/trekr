@@ -7,3 +7,5 @@
 hover app.rb:6:9 local `total` · assigned at line 5
 hover app.rb:4:11 One of 3 methods
 hover app.rb:4:11 Widget#gamma_x
+def app.rb:6:9 variable=local site=app.rb:5
+refs app.rb:6:9 confirmed=2

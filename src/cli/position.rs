@@ -71,13 +71,14 @@ pub(crate) fn offset_of(source: &[u8], line: u32, col: u32) -> Option<usize> {
 /// an instance or class variable by the writes to it in this file.
 pub(crate) fn variable_at(
     source: &[u8],
+    facts: &crate::core::Facts,
     path: &str,
     line: u32,
     col: u32,
 ) -> Option<serde_json::Value> {
     use crate::resolve::vars::{self, Binding, Sigil};
     let offset = offset_of(source, line, col)?;
-    let found = vars::analyze(source);
+    let found = vars::of_file(source, &facts.strings);
     let under = found.at(offset)?;
     let writes: Vec<&vars::Occurrence> = match under.sigil {
         Sigil::Local => found.local_definitions(under),

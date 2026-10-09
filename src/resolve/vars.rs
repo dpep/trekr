@@ -191,6 +191,17 @@ impl Vars {
     }
 }
 
+/// A file's variables, a string of code it evaluates included where the
+/// string's bytes are the file's (DEC-167): what both fronts read a variable
+/// from.
+pub(crate) fn of_file(src: &[u8], strings: &[crate::core::StringCode]) -> Vars {
+    let mut vars = analyze(src);
+    for string in strings {
+        vars.absorb(analyze(&string.src), |span| string.place(span));
+    }
+    vars
+}
+
 pub(crate) fn analyze(src: &[u8]) -> Vars {
     let parsed = ruby_prism::parse(src);
     let root = parsed.node();

@@ -4142,7 +4142,7 @@ fn cmd_refs_at(
     if let Some(col) = spec.col.map(NonZeroU32::get)
         && crate::query::position::variable_may_answer(&facts, line, col)
         && let Some((head, rows)) =
-            variable_mentions(&tree, &root_str, &absolute, &source, line, col)
+            variable_mentions(&tree, &root_str, &absolute, &source, &facts, line, col)
     {
         let found = !rows.is_empty();
         let mut head = head;
@@ -4237,16 +4237,17 @@ fn variable_mentions(
     root_str: &str,
     file: &Path,
     raw: &[u8],
+    facts: &crate::core::Facts,
     line: u32,
     col: u32,
 ) -> Option<(serde_json::Value, Vec<Mention>)> {
     use crate::resolve::vars::{self, Sigil};
     let path = file.to_string_lossy();
     let source = crate::extract::ruby_source(&path, raw);
-    let head = position::variable_at(&source, &path, line, col)?;
+    let head = position::variable_at(&source, facts, &path, line, col)?;
     crate::usage::flag("variable");
     let offset = position::offset_of(&source, line, col)?;
-    let here = vars::analyze(&source);
+    let here = vars::of_file(&source, &facts.strings);
     let want = here.at(offset)?.clone();
     let relative = |p: &str| {
         p.strip_prefix(root_str)
@@ -4997,7 +4998,7 @@ fn cmd_def(
         // answer, below.
         let variable = files.is_empty()
             && crate::query::position::variable_may_answer(&facts, line, col)
-            && position::variable_at(&source, &file, line, col).is_some();
+            && position::variable_at(&source, &facts, &file, line, col).is_some();
         let answer = template_answer(written.to_string(), root, &files, class.as_deref());
         if variable {
             no_template = Some(answer);
@@ -5071,7 +5072,7 @@ fn cmd_def(
     // name was nearest on the line.
     if let Some(col) = spec.col.map(NonZeroU32::get)
         && crate::query::position::variable_may_answer(&facts, line, col)
-        && let Some(answer) = position::variable_at(&source, &file, line, col)
+        && let Some(answer) = position::variable_at(&source, &facts, &file, line, col)
     {
         crate::usage::flag("variable");
         let mut answer = answer;

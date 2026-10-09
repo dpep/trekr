@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`--def` and `--refs` answer a local in a string of code trekr reads.**
+  In a `class_eval <<~RUBY … RUBY` string, `--def` on a local snapped to
+  another name on the line and `--refs` found no variable, while the editor
+  answered both (DEC-167). Both read the string's locals now.
+
 - **`--usage` counts a query's first index once.** A query that indexed
   the checkout before answering was counted twice: its own row (flagged
   `indexed`) and an `index` row for the index it started. `index` now

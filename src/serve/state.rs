@@ -277,12 +277,8 @@ impl Document {
         if let Some(vars) = &self.vars {
             return vars.clone();
         }
-        let mut vars = vars::analyze(&self.ruby());
         let strings = self.facts().strings.clone();
-        for string in strings {
-            vars.absorb(vars::analyze(&string.src), |span| string.place(span));
-        }
-        let vars = std::rc::Rc::new(vars);
+        let vars = std::rc::Rc::new(vars::of_file(&self.ruby(), &strings));
         self.vars = Some(vars.clone());
         vars
     }
