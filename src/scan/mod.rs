@@ -636,9 +636,10 @@ fn scan_in(root: &Path, gits: Option<&Gits>) -> Result<Files> {
 
 /// Whether [`scan`] lists `relative`, asked of one file: indexed by name,
 /// tracked or untracked and not ignored, and the schema dump its app reads.
-pub(crate) fn admits(root: &Path, relative: &str) -> bool {
+/// An error when git could not say within [`PROBE_WAIT`].
+pub(crate) fn admits(root: &Path, relative: &str) -> Result<bool> {
     if !is_indexed(relative) {
-        return false;
+        return Ok(false);
     }
     let pathspec = format!(":(literal){relative}");
     let args = [
@@ -650,16 +651,47 @@ pub(crate) fn admits(root: &Path, relative: &str) -> bool {
         "--",
         &pathspec,
     ];
-    let listed = git(root, &args).is_ok_and(|out| parse_paths(&out).iter().any(|p| p == relative));
-    if !listed {
-        return false;
+    let out = git_within(root, &args, PROBE_WAIT)?;
+    if !parse_paths(&out).iter().any(|p| p == relative) {
+        return Ok(false);
     }
     if !crate::schema::is_dump(relative) {
-        return true;
+        return Ok(true);
     }
     let (dir, _) = relative.rsplit_once('/').unwrap_or(("", relative));
     let app = &dir[..dir.len().saturating_sub("db".len())];
-    schema_dumps(root, app).iter().any(|dump| dump == relative)
+    Ok(schema_dumps(root, app).iter().any(|dump| dump == relative))
+}
+
+/// [`git`], given up on past `wait`: stopped, as a [`Probe`]'s gits are.
+fn git_within(root: &Path, args: &[&str], wait: std::time::Duration) -> Result<Vec<u8>> {
+    use std::sync::mpsc::RecvTimeoutError;
+    let gits = std::sync::Arc::new(Gits::default());
+    let (send, got) = std::sync::mpsc::channel();
+    let running = gits.clone();
+    let (dir, owned): (PathBuf, Vec<String>) = (
+        root.to_path_buf(),
+        args.iter().map(|a| a.to_string()).collect(),
+    );
+    std::thread::spawn(move || {
+        let args: Vec<&str> = owned.iter().map(String::as_str).collect();
+        drop(send.send(git_in(&dir, &args, Some(&running))));
+    });
+    match got.recv_timeout(wait) {
+        Ok(out) => out,
+        Err(RecvTimeoutError::Timeout) => {
+            gits.stop();
+            Err(GitError::failed(format!(
+                "git {} took longer than {} s",
+                args.join(" "),
+                wait.as_secs()
+            ))
+            .into())
+        }
+        Err(RecvTimeoutError::Disconnected) => {
+            Err(GitError::failed(format!("git {} did not answer", args.join(" "))).into())
+        }
+    }
 }
 
 /// The schema dumps in the app at `app` (a directory of `root`, `""` for the
@@ -1072,13 +1104,19 @@ mod tests {
         let scanned = scan(&root).unwrap();
         for path in paths {
             assert_eq!(
-                admits(&root, path),
+                admits(&root, path).unwrap(),
                 scanned.contains_key(path),
                 "{path}: one file's answer is the scan's"
             );
         }
-        assert!(admits(&root, "fresh/new.rb"), "an untracked file is read");
-        assert!(!admits(&root, "ignored/copy.rb"), "an ignored one is not");
+        assert!(
+            admits(&root, "fresh/new.rb").unwrap(),
+            "an untracked file is read"
+        );
+        assert!(
+            !admits(&root, "ignored/copy.rb").unwrap(),
+            "an ignored one is not"
+        );
         let _ = std::fs::remove_dir_all(&temp);
     }
 

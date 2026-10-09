@@ -2266,7 +2266,10 @@ read on every click. A file the map lacks is written only when the index walk
 would list it (`scan::admits`, one `git ls-files` asked of that path): opening
 a gitignored `ignored/copy.rb` put its `Widget#size` in the map, and Go to
 Definition answered it for the session (0.9.0 hunt #2). didSave had the same
-gap and takes the same check.
+gap and takes the same check. That `git ls-files` runs on the serve loop, so
+it is given up on at `PROBE_WAIT`, its process stopped, and the file left
+unwritten (logged `refresh_skipped`): a git behind a 3 s wrapper held the
+next hover for 3.5 s, and a hung one would hold the server.
 
 ## DEC-040 — Completion is built, reversing PLAN §1 for completion alone
 

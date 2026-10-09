@@ -40,6 +40,9 @@ enum Refreshed {
     /// Writing would put this build's facts into a store that is not its
     /// format, so it stops until a restart or hot reload replaces it.
     Refused(String),
+    /// git could not say whether the index walk reads the file: not
+    /// written, and why, for the log.
+    Undecided(String),
 }
 
 /// Bring one saved file's facts up to date.
@@ -60,9 +63,12 @@ fn refresh(session: &mut Session, path: &Path) -> Refreshed {
         .store()
         .maps(&root, &located.relative)
         .unwrap_or(false)
-        && !crate::scan::admits(&located.root, &located.relative)
     {
-        return Refreshed::Done;
+        match crate::scan::admits(&located.root, &located.relative) {
+            Ok(true) => {}
+            Ok(false) => return Refreshed::Done,
+            Err(error) => return Refreshed::Undecided(format!("{error:#}")),
+        }
     }
     let Ok(bytes) = crate::scan::read_source(&located.absolute) else {
         return Refreshed::Done;
@@ -106,6 +112,9 @@ pub(crate) struct Indexer {
     refused: bool,
     /// Why, until `poll` logs it — once, not per save.
     unlogged: Option<String>,
+    /// Files left unwritten because git did not say whether the index reads
+    /// them, and why, until `poll` logs them.
+    undecided: Vec<(PathBuf, String)>,
     /// Roots whose first index died mid-session and was started again: once
     /// each, so an index that dies every time is not run forever.
     resumed: HashSet<PathBuf>,
@@ -176,6 +185,7 @@ impl Indexer {
             jobs: 0,
             refused: false,
             unlogged: None,
+            undecided: Vec::new(),
             resumed: HashSet::new(),
             waiting: Vec::new(),
         }
@@ -271,6 +281,7 @@ impl Indexer {
                 self.deferred.push(path.to_path_buf());
             }
             Refreshed::Refused(why) => self.refuse(why),
+            Refreshed::Undecided(why) => self.undecided.push((path.to_path_buf(), why)),
             _ => {}
         }
     }
@@ -297,14 +308,20 @@ impl Indexer {
         }
         self.retried = std::time::Instant::now();
         let mut refused = None;
+        let mut undecided = Vec::new();
         self.deferred.retain(|path| match refresh(session, path) {
             Refreshed::Busy => true,
             Refreshed::Refused(why) => {
                 refused = Some(why);
                 false
             }
+            Refreshed::Undecided(why) => {
+                undecided.push((path.clone(), why));
+                false
+            }
             Refreshed::Done => false,
         });
+        self.undecided.extend(undecided);
         if let Some(why) = refused {
             self.refuse(why);
         }
@@ -316,6 +333,12 @@ impl Indexer {
         let mut out = Vec::new();
         if let Some(why) = self.unlogged.take() {
             log.event("refresh_refused", serde_json::json!({ "error": why }));
+        }
+        for (path, why) in self.undecided.drain(..) {
+            log.event(
+                "refresh_skipped",
+                serde_json::json!({ "path": path.to_string_lossy(), "error": why }),
+            );
         }
         if let Some(job) = &mut self.running {
             let outcome = match job.child.try_wait() {

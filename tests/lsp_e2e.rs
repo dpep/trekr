@@ -439,6 +439,75 @@ fn an_ignored_file_opened_and_saved_stays_out_of_the_index() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Whether the index walk reads a file the editor opened is git's to say;
+/// a git that does not answer leaves the file as the index has it, and the
+/// server goes on answering.
+#[test]
+fn a_file_git_cannot_place_in_time_is_not_written() {
+    let (dir, db) = scratch("admit-slow");
+    repo(&dir);
+    let indexed = trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+    assert!(indexed.status.success());
+    fs::write(dir.join("fresh.rb"), "class Fresh\nend\n").unwrap();
+    // Every other git call goes through; the one asking about a single
+    // untracked file (`ls-files -c -o`) hangs.
+    let slow = dir.with_extension("slow-git");
+    fs::create_dir_all(&slow).unwrap();
+    let real = fs::canonicalize(support::git_only().join("git")).unwrap();
+    let wrapper = slow.join("git");
+    fs::write(
+        &wrapper,
+        format!(
+            "#!/bin/sh\ncase \" $* \" in *\" -c -o \"*) exec /bin/sleep 30 ;; esac\nexec '{}' \"$@\"\n",
+            real.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(
+        &wrapper,
+        std::os::unix::fs::PermissionsExt::from_mode(0o755),
+    )
+    .unwrap();
+
+    let path = slow.to_string_lossy().into_owned();
+    let mut session = Session::start_with(&db, &dir, &[("PATH", &path)]);
+    session.initialize(&dir);
+    let started = std::time::Instant::now();
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "fresh.rb"), "languageId": "ruby", "version": 1,
+            "text": "class Fresh\nend\n"
+        }}),
+    );
+    session.request(
+        "textDocument/hover",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "app.rb")},
+            "position": {"line": 0, "character": 7},
+        }),
+    );
+    let waited = started.elapsed();
+    session.stop();
+    assert!(
+        waited < std::time::Duration::from_secs(10),
+        "the server stopped waiting on git ({waited:?})"
+    );
+    let skipped: Vec<serde_json::Value> = log_lines(&db)
+        .into_iter()
+        .filter(|line| line["event"] == "refresh_skipped")
+        .collect();
+    assert_eq!(skipped.len(), 1, "said once, in the log");
+    assert!(skipped[0]["path"].as_str().unwrap().ends_with("fresh.rb"));
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(&slow);
+}
+
 #[test]
 fn a_click_that_finds_nothing_is_logged_where_usage_misses_reads_it() {
     let (dir, db) = scratch("misses");

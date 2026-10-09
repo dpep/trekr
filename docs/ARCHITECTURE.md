@@ -1215,7 +1215,9 @@ saved is not yet visible from *other* files; saving moves the index
 with what is on disk, so one made or changed where no watcher saw (an
 untracked file created after the index) answers from its own classes. Both
 write only a file the index walk would list (`scan::admits`): an ignored copy
-opened in `vendor/` or `tmp/` would otherwise answer for the checkout. A save that meets another
+opened in `vendor/` or `tmp/` would otherwise answer for the checkout. git is
+given a query's probe wait (1 s) to say; past it the file is not written, and
+the log says so (`refresh_skipped`). A save that meets another
 process writing the index — a background `--index` child — is not dropped:
 it is retried every 250 ms until it lands, answers meanwhile coming from what
 is committed (DEC-066). The child scanned before the save, so its own write
