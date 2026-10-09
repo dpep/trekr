@@ -13,26 +13,44 @@ pub(crate) struct Spec {
 
 impl Spec {
     /// `None` when the input is not position-shaped; an `Err` saying why when
-    /// it is, but a 0 names no position.
+    /// it is, but names no position: a 0, or a number a line cannot be
+    /// (`-1`, more than `u32` holds), which is a position typed wrong and
+    /// not a path ending in digits.
     ///
     /// Windows drive letters are not a concern here, but a path *can* contain a
     /// colon, so the split is from the right and only the last two fields.
     pub(crate) fn parse(spec: &str) -> Option<Result<Spec, String>> {
         let (rest, last) = spec.rsplit_once(':')?;
-        let last: u32 = last.parse().ok()?;
+        if !numeric(last) {
+            return None;
+        }
         // `FILE:LINE:COL`, when the field before the column is also a number.
         // An empty path there is malformed, not a two-field spec: `:1:2` must
         // stay a refusal rather than becoming the file `:1`.
         let (path, line, col) = match rest.rsplit_once(':') {
-            Some((path, line)) if line.parse::<u32>().is_ok() => {
+            Some((path, line)) if numeric(line) => {
                 if path.is_empty() {
                     return None;
                 }
-                (path, line.parse::<u32>().ok()?, Some(last))
+                (path, line, Some(last))
             }
             // `FILE:LINE`, which is what a hand typing it produces.
             _ if rest.is_empty() => return None,
             _ => (rest, last, None),
+        };
+        let range = || {
+            format!(
+                "`{spec}`: lines and columns are numbers from 1 to {}",
+                u32::MAX
+            )
+        };
+        let Ok(line) = line.parse::<u32>() else {
+            return Some(Err(range()));
+        };
+        let col = match col.map(str::parse::<u32>) {
+            Some(Err(_)) => return Some(Err(range())),
+            Some(Ok(col)) => Some(col),
+            None => None,
         };
         let zero = || format!("`{spec}`: lines and columns count from 1, so 0 names no position");
         let Some(line) = NonZeroU32::new(line) else {
@@ -49,6 +67,13 @@ impl Spec {
             col,
         }))
     }
+}
+
+/// A field written as a whole number, signed or not, whether or not a
+/// position can hold it.
+fn numeric(field: &str) -> bool {
+    let digits = field.strip_prefix(['+', '-']).unwrap_or(field);
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
 }
 
 /// A variable's answer, from the file alone, the way the LSP answers one
@@ -153,5 +178,18 @@ mod tests {
         let zero = |s: &str| matches!(Spec::parse(s), Some(Err(_)));
         assert!(zero("a.rb:0:0") && zero("a.rb:0") && zero("a.rb:3:0"));
         assert!(!zero("a.rb:3") && !zero("a.rb:3:1"));
+    }
+
+    #[test]
+    fn a_number_no_position_can_hold_is_refused_not_read_as_a_path() {
+        for written in [
+            "a.rb:99999999999:1",
+            "a.rb:-1:2",
+            "a.rb:3:-2",
+            "a.rb:99999999999",
+            "a.rb:-1",
+        ] {
+            assert!(matches!(Spec::parse(written), Some(Err(_))), "{written}");
+        }
     }
 }

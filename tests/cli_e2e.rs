@@ -1912,6 +1912,23 @@ fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
             "count from 1",
         ),
         (&dir, &["widget.rb:3:0"], &[], 64, "usage", "count from 1"),
+        (
+            &dir,
+            &["--def", "widget.rb:99999999999:1"],
+            &[],
+            64,
+            "usage",
+            "from 1 to",
+        ),
+        (
+            &dir,
+            &["--refs", "widget.rb:-1:2"],
+            &[],
+            64,
+            "usage",
+            "from 1 to",
+        ),
+        (&dir, &["widget.rb:-1"], &[], 64, "usage", "from 1 to"),
         (&dir, &["--def", ".:1:1"], &[], 64, "usage", "directory"),
         (&dir, &["--symbols", "."], &[], 64, "usage", "directory"),
         (

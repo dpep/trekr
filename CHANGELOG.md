@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **A line or column no position can hold is a usage error.**
+  `--def app.rb:99999999999:1` or `--refs app.rb:-1:2` was read as a
+  file named `app.rb:99999999999` and failed with "cannot read" (exit
+  66). It now says lines and columns are numbers from 1 up, and exits 64.
+
 - **`--usage --misses` names the character the editor read.** With the
   caret just past a variable (`@nope|+1`), a miss logged the caret's
   column, where `--def` reads the `+` after it. It logs the variable's
