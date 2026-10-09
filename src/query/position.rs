@@ -6,7 +6,7 @@
 //! so this shares the extractor rather than growing a second idea of what a
 //! constant is.
 
-use crate::core::{Call, ConstRef, Def, Kind, Pos};
+use crate::core::{Call, ConstRef, Def, Kind, Pos, RecvShape};
 use crate::resolve::vars::{Occurrence, Vars};
 use std::num::NonZeroU32;
 
@@ -252,7 +252,8 @@ pub(crate) fn at_facts(facts: &crate::core::Facts, line: u32, col: u32) -> Optio
 /// A call or constant written inside a definition's name, at the position:
 /// the code in the `#{…}` of a name a string of code spells answers itself,
 /// as a variable there does. Inside is past where the name begins; one
-/// recorded at that same spot is the name itself.
+/// recorded at that same spot is the name itself, and so is the symbol a
+/// macro is handed, recorded one past its `:`.
 fn written_inside(facts: &crate::core::Facts, def: &Def, line: u32, col: u32) -> Option<Under> {
     let (at, len) = (name_pos(def), name_len(def));
     let inside = |pos: Pos, n: usize| {
@@ -271,7 +272,7 @@ fn written_inside(facts: &crate::core::Facts, def: &Def, line: u32, col: u32) ->
         facts
             .calls
             .iter()
-            .find(|c| inside(c.pos, c.written_len()))
+            .find(|c| c.recv != RecvShape::Symbol && inside(c.pos, c.written_len()))
             .map(|c| Under::Call(c.clone()))
     })
 }
@@ -508,6 +509,36 @@ end
                 _ => String::new(),
             };
             assert_eq!(found, want, "3:{col}");
+        }
+    }
+
+    #[test]
+    fn a_symbol_handed_to_a_macro_is_the_name_not_a_call_inside_it() {
+        let source = b"class K
+  Pt = Struct.new(:xx, :yy)
+  Dt = Data.define(:dd)
+  has_many :dogs
+  belongs_to :owner
+  delegate :size, to: :owner
+end
+";
+        // Each symbol's first letter and last: the call trekr records for the
+        // symbol itself sits one past the `:`, inside the name it makes.
+        let cases = [
+            (2, 20, "xx"),
+            (2, 21, "xx"),
+            (2, 25, "yy"),
+            (3, 21, "dd"),
+            (4, 13, "dogs"),
+            (4, 16, "dogs"),
+            (5, 15, "owner"),
+            (6, 13, "size"),
+        ];
+        for (line, col, want) in cases {
+            let Some(Under::Definition(def)) = at(source, line, col) else {
+                panic!("expected a definition at {line}:{col}");
+            };
+            assert!(def.name.starts_with(want), "{line}:{col} read {}", def.name);
         }
     }
 

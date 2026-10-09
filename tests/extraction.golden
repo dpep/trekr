@@ -662,6 +662,9 @@ ruby tests/testbed/646-an-rbi-signature-is-a-declaration-not-a-definition/tools/
 ruby tests/testbed/647-refs-by-a-constants-whole-name/app.rb 19a45eb93771c8a8
 ruby tests/testbed/648-def-in-a-require-string-is-the-file-it-loads/app/models/widget.rb ea14ccbceba3d401
 ruby tests/testbed/648-def-in-a-require-string-is-the-file-it-loads/lib/helper.rb 1a9f32f753edc930
+ruby tests/testbed/649-a-macros-symbol-is-the-name-it-makes/app.rb 536fb272fab9dc56
+ruby tests/testbed/649-a-macros-symbol-is-the-name-it-makes/db/migrate/001_create_kennels.rb 9740d0e6df9c997b
+ruby tests/testbed/649-a-macros-symbol-is-the-name-it-makes/stubs.rb e244eb3d9c72674d
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

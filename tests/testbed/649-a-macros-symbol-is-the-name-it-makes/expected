@@ -1,0 +1,11 @@
+# A symbol handed to a macro is recorded as a call one past its `:`, inside
+# the name it makes, and the rule that a call inside a made name answers
+# itself took it: `Struct.new(:xx)`'s members, a migration's columns and an
+# association answered as a call, not the definition. The code in a made
+# name's `#{…}` still answers itself.
+def app.rb:2:20 status=resolved name=xx owner=Pt
+refs app.rb:2:20 possible=1 exit=0
+def app.rb:3:21 status=resolved name=dd owner=Dt
+def db/migrate/001_create_kennels.rb:4:15 status=resolved name=metadata owner=Kennel
+def app.rb:7:30 status=residue name=upcase
+def app.rb:7:34 status=resolved name=UP_shout
