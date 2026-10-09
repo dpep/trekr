@@ -38,6 +38,12 @@ impl Freshness {
         self.lag.is_some() || !self.busy.is_empty()
     }
 
+    /// Why files beyond those read may differ from the index, when they may:
+    /// `index.cause`, and the text answer's caveat.
+    fn cause(&self) -> Option<String> {
+        self.lag.clone()
+    }
+
     /// On stderr, so stdout stays the answer.
     fn say(&self) {
         if !self.refreshed.is_empty() {
@@ -98,9 +104,9 @@ pub(super) fn index_note() -> Option<serde_json::Value> {
         value["busy"] = asked(|f| &f.busy).into();
         value["busy_files"] = serde_json::json!(busy);
     }
-    let lag: Vec<&str> = found.iter().filter_map(|f| f.lag.as_deref()).collect();
-    if !lag.is_empty() {
-        value["cause"] = lag.join("; ").into();
+    let causes: Vec<String> = found.iter().filter_map(|f| f.cause()).collect();
+    if !causes.is_empty() {
+        value["cause"] = causes.join("; ").into();
     }
     Some(value)
 }
@@ -109,11 +115,11 @@ pub(super) fn index_note() -> Option<serde_json::Value> {
 /// they may.
 pub(super) fn lag() -> Option<String> {
     let checked = checked();
-    let lag: Vec<&str> = checked
+    let causes: Vec<String> = checked
         .iter()
-        .filter_map(|(_, found)| found.as_ref()?.lag.as_deref())
+        .filter_map(|(_, found)| found.as_ref()?.cause())
         .collect();
-    (!lag.is_empty()).then(|| lag.join("; "))
+    (!causes.is_empty()).then(|| causes.join("; "))
 }
 
 /// Read what changed since the index into `store`, for this command only
