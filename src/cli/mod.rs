@@ -443,8 +443,11 @@ pub(crate) fn run(lsp: fn(bool) -> anyhow::Result<()>) -> ExitCode {
             ),
         }
     }
-    // After the answer is out, never before it (rq DECISIONS D13).
-    if let Some(feature) = feature {
+    // After the answer is out, never before it (rq DECISIONS D13). An index a
+    // query spawned is counted on that query's row, as `indexed`.
+    if let Some(feature) = feature
+        && !autoindex::spawned()
+    {
         let note = crate::usage::take();
         let mut flags = note.flags;
         flags.extend(cli_flags(&cli, out));

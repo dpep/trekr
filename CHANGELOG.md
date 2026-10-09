@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- **`--usage` counts a query's first index once.** A query that indexed
+  the checkout before answering was counted twice: its own row (flagged
+  `indexed`) and an `index` row for the index it started. `index` now
+  counts only an `--index` someone ran; rows already counted stay.
+
 ## 0.8.9 — 2026-10-07
 
 - **`--def` on the variable after a unary minus answers the variable.** On

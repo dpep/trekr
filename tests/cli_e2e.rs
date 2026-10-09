@@ -2272,6 +2272,26 @@ fn concurrent_commands_on_a_broken_store_rebuild_it_once() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// The index a query spawns is that query's work, counted on its row
+/// (`indexed`), not a second use: `index` counts only an asked-for `--index`.
+#[test]
+fn the_index_a_query_spawns_is_not_counted_as_a_use() {
+    let (dir, db) = scratch("usage-spawned");
+    repo(&dir);
+    let spawned = [("TREKR_SPAWNED_BY_QUERY", "1")];
+    assert!(
+        trekr_env(&db, &dir, &["--index"], &spawned)
+            .status
+            .success()
+    );
+    assert_eq!(
+        trekr(&db, &dir, &["--usage"]).status.code(),
+        Some(1),
+        "nothing counted"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// Every CLI use is counted once its answer is out — by command, caller and
 /// outcome — and `--usage` folds the counts back into which commands get used,
 /// by whom, and how often they come back empty.
