@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **`--refs` by a constant's whole name lists the constant, however it is
+  written.** `--refs Admin::Widget` listed only mentions written
+  `Admin::Widget`, missing `Widget` inside `module Admin`; on
+  `SEPARATORS.join` inside `module Router` it said "no mention of
+  Router::SEPARATORS"; and on a constant's definition (`SIZES = …`) it was a
+  usage error, exit 64. A name written with `::` now lists the definitions
+  and every reference Ruby's lookup resolves to it, as the editor's Find
+  References does, and a position on any class, module or constant answers
+  that way. A top-level constant's whole name is `::Widget`; a bare
+  `--refs Widget` still lists every mention of the name.
+
 ## 0.8.10 — 2026-10-09
 
 - **The `:` of a symbol sent as a method's name is that method.** On

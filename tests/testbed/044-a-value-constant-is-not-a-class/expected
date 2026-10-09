@@ -5,3 +5,6 @@
 refs Array#join confirmed=0 possible=1 excluded=0
 # And for `Short = Router` it hid Router: `Short.go` was excluded from Router.go.
 refs Router.go confirmed=1 possible=0 excluded=0
+# A nested constant's reference lists its mentions, the definition included.
+refs app.rb:5:5 rows=2 exit=0
+refs Router::SEPARATORS rows=2 exit=0

@@ -3929,17 +3929,24 @@ fn cmd_refs(
     }
     answering_in(&store, &root_str);
 
+    // `--json` is a bare array for a name, with no room for `index`: it is
+    // said on stderr, as text says it. NDJSON's closing line carries it.
+    let say = match out {
+        Output::Json => Output::Text,
+        other => other,
+    };
+    // A name written with `::` is a constant's whole name: the mentions Ruby's
+    // lookup resolves to it, however each is written.
+    if let Some(fqn) = whole_constant_name(&query) {
+        crate::usage::flag("by-name");
+        let tree = fresh_tree(say, &mut store, &root, None)?;
+        return constant_refs(out, &tree, &store, &root_str, fqn);
+    }
     // A bare name narrows nothing, so it keeps the whole-mention view —
     // definitions and constant references included, which a method-shaped
     // query has no use for.
     if query.owner.is_none() {
         crate::usage::flag("by-name");
-        // `--json` is a bare array, with no room for `index`: it is said on
-        // stderr, as text says it. NDJSON's closing line carries it.
-        let say = match out {
-            Output::Json => Output::Text,
-            other => other,
-        };
         let probe = probe(&store, &root);
         freshen(say, &mut store, &root, None, probe);
         return cmd_refs_by_name(out, &root, &root_str, &store, &query);
@@ -4168,13 +4175,11 @@ fn cmd_refs_at(
         None => crate::query::position::at_or_snap(&facts, line, None).map(|(under, _)| under),
         Some(col) => crate::query::position::at_facts(&facts, line, col.get()),
     };
-    // A class, module or constant: its references, as `--refs Name` lists them.
+    // A class, module or constant: its references, as `--refs` by its whole
+    // name lists them.
     let constant = match &under {
         Some(crate::query::position::Under::Definition(def))
-            if matches!(
-                def.kind,
-                crate::core::Kind::Class | crate::core::Kind::Module
-            ) =>
+            if def.kind != crate::core::Kind::Method =>
         {
             let mut nesting = def.nesting.clone();
             nesting.insert(0, def.name.clone());
@@ -4187,7 +4192,7 @@ fn cmd_refs_at(
         _ => None,
     };
     if let Some(fqn) = constant {
-        return cmd_refs(out, &fqn, include_excluded, Some(&root));
+        return constant_refs(out, &tree, &store, &root_str, &fqn);
     }
     let owner_and_name = match under {
         Some(crate::query::position::Under::Definition(def))
@@ -4400,17 +4405,48 @@ fn cmd_refs_by_name(
         }
     }
 
-    if emit_rows(out, &rows)? {
+    mentions(out, &rows, &query.name)
+}
+
+/// `--refs` by a constant's whole name, or at a class, module or constant:
+/// its definitions and the references Ruby's lookup resolves to it
+/// (`query::refs::constant_mentions`), in the rows a bare name lists.
+fn constant_refs(
+    out: Output,
+    tree: &Tree,
+    store: &Store,
+    root_str: &str,
+    fqn: &str,
+) -> anyhow::Result<ExitCode> {
+    let rows = crate::query::refs::constant_mentions(tree, store, root_str, fqn)?;
+    mentions(out, &rows, fqn)
+}
+
+/// A constant's whole name as `--refs` was given it: written with `::`, every
+/// segment a constant. `::Widget` is the top-level one.
+fn whole_constant_name(query: &crate::resolve::refs::Query) -> Option<&str> {
+    if query.owner.is_some() || !query.name.contains("::") {
+        return None;
+    }
+    let name = query.name.strip_prefix("::").unwrap_or(&query.name);
+    name.split("::")
+        .all(|segment| {
+            segment.starts_with(char::is_uppercase)
+                && segment.chars().all(|c| c.is_alphanumeric() || c == '_')
+        })
+        .then_some(name)
+}
+
+/// A name's mentions, one row each, in whichever shape the caller asked for.
+fn mentions(out: Output, rows: &[crate::store::Ref], name: &str) -> anyhow::Result<ExitCode> {
+    if emit_rows(out, rows)? {
         return Ok(exit_on(!rows.is_empty()));
     }
     if rows.is_empty() {
-        println!(
-            "no mention of {} (indexed? try `trekr --index`)",
-            query.name
-        );
+        println!("no mention of {name} (indexed? try `trekr --index`)");
         return Ok(ExitCode::from(1));
     }
-    for row in &rows {
+    for row in rows {
         // The receiver shape is the disclosure: `implicit` is already resolved
         // to the enclosing class, `other` is residue. Nothing is dropped and
         // nothing is silently promoted.

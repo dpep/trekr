@@ -1,0 +1,17 @@
+# `--refs` by a constant's whole name listed only the mentions written that
+# way, and on a constant's definition it was a usage error (exit 64). A name
+# written with `::` is the constant itself: every mention Ruby's lookup
+# resolves there, however it is written, and its definitions.
+refs Shop::Widget::SIZES rows=4 exit=0
+refs app.rb:3:5 rows=4 exit=0
+refs app.rb:5:7 rows=4 exit=0
+refs app.rb:13:21 rows=4 exit=0
+# A nested class: `Widget` inside `Shop` is it, the top-level `Widget` is not.
+refs Shop::Widget rows=5 exit=0
+refs app.rb:2:9 rows=5 exit=0
+refs app.rb:6:7 rows=5 exit=0
+# A top-level constant's whole name starts with `::`.
+refs ::Widget rows=2 exit=0
+refs app.rb:20:1 rows=2 exit=0
+# A bare name is still every mention of the name, unresolved.
+refs Widget rows=5 exit=0

@@ -659,6 +659,7 @@ ruby tests/testbed/646-an-rbi-signature-is-a-declaration-not-a-definition/sorbet
 ruby tests/testbed/646-an-rbi-signature-is-a-declaration-not-a-definition/sorbet/rbi/gizmo.rbi 415e1738c4e42ac3
 ruby tests/testbed/646-an-rbi-signature-is-a-declaration-not-a-definition/sorbet/rbi/widget.rbi bf5c0945ff102a71
 ruby tests/testbed/646-an-rbi-signature-is-a-declaration-not-a-definition/tools/gizmo.rb 415e1738c4e42ac3
+ruby tests/testbed/647-refs-by-a-constants-whole-name/app.rb 19a45eb93771c8a8
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

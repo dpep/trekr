@@ -1048,7 +1048,7 @@ fn constant_references(
                 .const_refs
                 .iter()
                 .filter(|r| last_segment(&r.name) == tail)
-                .filter(|r| query_refs::names_constant(tree, &r.name, &r.nesting, &fqn))
+                .filter(|r| query_refs::names_constant(tree, &r.name, &r.nesting, path, &fqn))
                 .map(|r| (path.clone(), r.pos.line, r.pos.col)),
         );
     }

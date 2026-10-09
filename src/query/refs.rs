@@ -40,16 +40,27 @@ pub(crate) fn constant_mentions(
                     }
                     _ => true,
                 })
-                .filter(|row| names_constant(tree, written, &row.nesting, fqn)),
+                .filter(|row| names_constant(tree, written, &row.nesting, &row.path, fqn)),
         );
     }
     found.sort_by(|a, b| (&a.path, a.line, a.col).cmp(&(&b.path, b.line, b.col)));
     Ok(found)
 }
 
-/// Whether a constant written as `written` in `nesting` is `fqn`.
-pub(crate) fn names_constant(tree: &Tree, written: &str, nesting: &[String], fqn: &str) -> bool {
-    tree.resolve(written, nesting).fqn.as_deref() == Some(fqn)
+/// Whether a constant written as `written` in `nesting`, in the file at
+/// `path`, is `fqn`. One the index cannot place is it only when written out
+/// in full: a gem not yet indexed still lists its `Gem::Thing`s.
+pub(crate) fn names_constant(
+    tree: &Tree,
+    written: &str,
+    nesting: &[String],
+    path: &str,
+    fqn: &str,
+) -> bool {
+    match tree.resolve_at(written, nesting, path).fqn {
+        Some(found) => found == fqn,
+        None => written.strip_prefix("::").unwrap_or(written) == fqn,
+    }
 }
 
 /// One call site, tiered. Reads only the tree and the file's own facts, so

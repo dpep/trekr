@@ -34,8 +34,8 @@ boundary below is stated as a prohibition rather than a preference.
 
 The CLI (`cli/`) and the LSP (`serve/`) are fronts over these layers. What
 both ask — the fact under a position, what a definition is asked of there,
-an example group's members, how a call site is tiered for references, which
-files a member variable's class spans — lives in `query/`, beneath either. What both
+an example group's members, how a call site is tiered for references, a
+constant's mentions by Ruby's lookup, which files a member variable's class spans — lives in `query/`, beneath either. What both
 share at run time sits beneath them too: `background.rs`, the index child's
 side of a spawned `--index` (its hints and its lowered priority), and
 `log.rs`, the ndjson log the server writes and `--usage --misses` reads.

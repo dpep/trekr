@@ -393,6 +393,9 @@ fn cli_references(answer: &serde_json::Value, tier: Option<&str>) -> Vec<String>
         .into_iter()
         .flatten()
         .filter(|row| tier.is_none_or(|tier| row["tier"] == tier))
+        // A constant's definitions are its declarations, which the editor
+        // is asked without.
+        .filter(|row| row["role"] != "definition")
         .map(|row| {
             format!(
                 "{}:{}:{}",

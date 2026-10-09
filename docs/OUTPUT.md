@@ -212,7 +212,7 @@ indexed.
 `Owner.method` asks about a class method. A bare `--refs name` keeps the
 whole-mention view. A position (`FILE:LINE[:COL]`) asks about what is there:
 a method's definition or call as `Owner#method`; a class, module or constant
-as `--refs Name`; a variable (a local's mentions in its scope, an `@ivar`'s
+(its definition or a reference) as `--refs` by its whole name; a variable (a local's mentions in its scope, an `@ivar`'s
 across its class's files, each `read` or `write`); or a spec's `let`,
 `subject` or group `def` — every read as RSpec runs it (its group's and
 nested groups' examples, an enclosing group's hooks, an included shared
@@ -228,6 +228,12 @@ runtime, a macro not read.
 A bare `--refs name` lists every mention of the name: each row says what
 sort it is (`role`: `definition`, `call` or `constant`) and the `nesting` it
 is written in.
+
+A name written with `::` is a constant's whole name — `Admin::Widget`, or
+`::Widget` for a top-level one: the same rows, but only its definitions and
+the references Ruby's lookup resolves to it, however each is written
+(`Widget` inside `module Admin`, `Admin::Widget`, `::Admin::Widget`). One the
+index cannot place is listed only when written out in full.
 
 `--refs 'Widget#initialize'` lists the `new`s whose class runs it (its own or
 a subclass that inherits it), each marked `"called_as": "new"`. An untyped

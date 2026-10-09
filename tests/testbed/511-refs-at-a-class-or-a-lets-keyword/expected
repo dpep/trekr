@@ -1,7 +1,8 @@
 # `--refs FILE:LINE:COL` on a class, module or constant was a usage error
-# (exit 64) though `--refs Shop::Widget` answers: it is that answer now.
-refs app.rb:2:9 rows=2 exit=0
-refs app.rb:8:11 rows=2 exit=0
+# (exit 64) though `--refs Shop::Widget` answers: it is that answer now, its
+# definition among the rows.
+refs app.rb:2:9 rows=3 exit=0
+refs app.rb:8:11 rows=3 exit=0
 # On the `let` keyword the editor's Find References answered with the let's
 # reads, and `--refs` asked RSpec's `let` macro instead. The keyword means the
 # member it defines.
