@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **Every macro's method ends where its argument does.** The column
+  just past `let(:name)`, `subject(:name)` or `RSpec::Matchers.define
+  :name` answered that method, and `store_accessor :settings, :"key"`
+  placed each accessor with its own name's length from the `:` — short
+  of the closing quote for `key`, far past it for `key_changed?`. Each
+  now spans its symbol (or string) as written, closing quote included.
+
 - **`--refs` by a constant's whole name lists the constant, however it is
   written.** `--refs Admin::Widget` listed only mentions written
   `Admin::Widget`, missing `Widget` inside `module Admin`; on

@@ -733,7 +733,12 @@ impl<'a> Extractor<'a> {
     /// Places a macro's def at the argument that names it, spanning it
     /// whole: `:"name"` is written over more than its name and a `:`.
     fn at_arg(&self, def: &mut Def, arg: &Node<'_>) {
-        let (start, end) = (arg.location().start_offset(), arg.location().end_offset());
+        let loc = arg.location();
+        self.spanning(def, loc.start_offset(), loc.end_offset());
+    }
+
+    /// Places a def at `start`, its name written over `start..end`.
+    fn spanning(&self, def: &mut Def, start: usize, end: usize) {
         def.pos = self.pos(start);
         def.written = Some(self.written(start, end).unwrap_or((end - start) as u32));
     }
@@ -3924,7 +3929,7 @@ impl<'pr> Extractor<'_> {
             .unwrap_or_else(|| first.location());
         let loc = call.location();
         let mut def = self.def(name, Kind::Method, loc.start_offset(), loc.end_offset());
-        def.pos = self.pos(at.start_offset());
+        self.spanning(&mut def, at.start_offset(), first.location().end_offset());
         def.singleton = singleton;
         def.via = Some(macro_name.to_string());
         self.push_def(def);
@@ -4123,7 +4128,7 @@ impl<'pr> Extractor<'_> {
         let (start, end) = (call.location().start_offset(), call.location().end_offset());
         let mut def = self.def(name, Kind::Method, start, end);
         def.nesting = vec![format!("::{}", crate::core::rspec::MATCHERS)];
-        def.pos = self.pos(at.start_offset());
+        self.spanning(&mut def, at.start_offset(), first.location().end_offset());
         def.via = Some(format!("{}.{via}", crate::core::rspec::MATCHERS));
         self.facts.defs.push(def);
     }
@@ -4260,7 +4265,8 @@ impl<'pr> Extractor<'_> {
         {
             return;
         }
-        let mut names: Vec<(String, usize)> = Vec::new();
+        // Each name with where it starts and, for an argument, where it ends.
+        let mut names: Vec<(String, usize, Option<usize>)> = Vec::new();
         if let Some(first) = arg_nodes(call).into_iter().next()
             && let Some(name) = literal_name(&first)
         {
@@ -4268,14 +4274,18 @@ impl<'pr> Extractor<'_> {
                 .as_symbol_node()
                 .and_then(|symbol| symbol.value_loc())
                 .unwrap_or_else(|| first.location());
-            names.push((name, at.start_offset()));
+            names.push((name, at.start_offset(), Some(first.location().end_offset())));
         }
         // `subject` itself is written at the block, so a click on the word
         // `subject` there still asks what the macro is.
         if via.starts_with("subject")
             && let Some(block) = call.block().and_then(|b| b.as_block_node())
         {
-            names.push(("subject".to_string(), block.opening_loc().start_offset()));
+            names.push((
+                "subject".to_string(),
+                block.opening_loc().start_offset(),
+                None,
+            ));
         }
         let (start, end) = (call.location().start_offset(), call.location().end_offset());
         let value = matches!(via.as_str(), "let" | "let!" | "subject" | "subject!")
@@ -4285,9 +4295,12 @@ impl<'pr> Extractor<'_> {
                 Some(self.let_value(&last))
             })
             .flatten();
-        for (name, at) in names {
+        for (name, at, arg_end) in names {
             let mut def = self.def(name, Kind::Method, start, end);
-            def.pos = self.pos(at);
+            match arg_end {
+                Some(arg_end) => self.spanning(&mut def, at, arg_end),
+                None => def.pos = self.pos(at),
+            }
             def.via = Some(via.clone());
             def.value = value.clone();
             self.push_def(def);
@@ -4723,19 +4736,19 @@ impl<'pr> Extractor<'_> {
         let Some(store) = literal_name(store) else {
             return false;
         };
-        let listed = |node: &Node<'pr>| -> Vec<(String, usize)> {
+        let listed = |node: &Node<'pr>| -> Vec<(String, ruby_prism::Location<'pr>)> {
             match node.as_array_node() {
                 Some(array) => array
                     .elements()
                     .iter()
-                    .filter_map(|e| Some((literal_name(&e)?, e.location().start_offset())))
+                    .filter_map(|e| Some((literal_name(&e)?, e.location())))
                     .collect(),
                 None => literal_name(node)
-                    .map(|n| vec![(n, node.location().start_offset())])
+                    .map(|n| vec![(n, node.location())])
                     .unwrap_or_default(),
             }
         };
-        let keys: Vec<(String, usize)> = if macro_name == "store" {
+        let keys: Vec<(String, ruby_prism::Location<'pr>)> = if macro_name == "store" {
             keyword_value(args, "accessors")
                 .map(|v| listed(&v))
                 .unwrap_or_default()
@@ -4766,7 +4779,7 @@ impl<'pr> Extractor<'_> {
             );
             for made in macros::store_accessor(&key) {
                 let mut def = self.def(made.name, Kind::Method, start, end);
-                def.pos = self.pos(at);
+                self.spanning(&mut def, at.start_offset(), at.end_offset());
                 def.via = Some(macro_name.to_string());
                 def.visibility = visibility;
                 if made.writer {

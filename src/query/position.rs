@@ -408,6 +408,55 @@ mod tests {
     }
 
     #[test]
+    fn every_macro_argument_reads_as_its_definition_to_its_last_character() {
+        let source = b"RSpec.describe W do
+  let(:lx) { 1 }
+  subject(:\"sq\") { 1 }
+end
+RSpec::Matchers.define :mm do
+end
+class K
+  def self.mk(name)
+    define_method(name) {}
+  end
+  mk \"ks\"
+  store_accessor :st, :\"theme\"
+end
+";
+        // (line, col, what it reads, by name prefix): through the argument's
+        // last character, quote included, and not one past it.
+        let cases = [
+            (2, 9, Some("lx")),
+            (2, 10, None),
+            (3, 13, Some("sq")),
+            (3, 15, Some("sq")),
+            (3, 16, None),
+            (5, 26, Some("mm")),
+            (5, 27, None),
+            (11, 8, Some("ks")),
+            (11, 9, Some("ks")),
+            (11, 10, None),
+            (12, 23, Some("theme")),
+            (12, 30, Some("theme")),
+            (12, 31, None),
+        ];
+        for (line, col, want) in cases {
+            let found = match at(source, line, col) {
+                Some(Under::Definition(def)) => Some(def.name),
+                _ => None,
+            };
+            assert_eq!(
+                found.is_some(),
+                want.is_some(),
+                "{line}:{col} read {found:?}"
+            );
+            if let (Some(found), Some(want)) = (found, want) {
+                assert!(found.starts_with(want), "{line}:{col} read {found}");
+            }
+        }
+    }
+
+    #[test]
     fn a_compact_path_answers_each_segment_for_what_it_is() {
         let source = b"class Outer::Mid::Inner\nend\nmodule Outer::Mixin\nend\n";
         // `Inner`: the class being opened.
