@@ -12,3 +12,4 @@ card Maker#go_fast status=resolved
 refs Maker#run_fast confirmed=1
 refs Loops#helper_beta confirmed=1
 dead app.rb Loops#helper_beta=single-caller
+def app.rb:9:15 variable=parameter site=app.rb:7

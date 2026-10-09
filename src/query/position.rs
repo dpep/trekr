@@ -7,6 +7,7 @@
 //! constant is.
 
 use crate::core::{Call, ConstRef, Def, Kind, Pos};
+use crate::resolve::vars::{Occurrence, Vars};
 use std::num::NonZeroU32;
 
 /// What the cursor is on. Ordered by how much this engine can say about it.
@@ -245,12 +246,35 @@ pub(crate) fn template_at(
         .find(|t| covers(t.pos, t.len as usize, line, col))
 }
 
-/// May a variable found at a `FILE:LINE:COL` answer for it? Only where no
-/// name is written exactly there: the column names a character, and on
-/// `x[0]`'s `[` that is the `[]` call. The editor's caret reads differently
-/// (DEC-036 addendum).
-pub(crate) fn variable_may_answer(facts: &crate::core::Facts, line: u32, col: u32) -> bool {
-    at_facts(facts, line, col).is_none()
+/// The variable a character names: the one written over it, or one it is
+/// just past where no name is written there. On `x[0]`'s `[` that is the
+/// `[]` call, though `x` ends there; on the `n` of a `def #{n}_x` a string
+/// makes, it is `n` (DEC-036 addendum).
+pub(crate) fn variable_at<'v>(
+    facts: &crate::core::Facts,
+    source: &[u8],
+    vars: &'v Vars,
+    line: u32,
+    col: u32,
+) -> Option<&'v Occurrence> {
+    let offset = offset_of(source, line, col)?;
+    let found = vars.at(offset)?;
+    (offset < found.span.end || at_facts(facts, line, col).is_none()).then_some(found)
+}
+
+/// The byte offset of a 1-based line and column, clamped as the editor's
+/// are: a column past the end of its line is the line's end, never a byte of
+/// a later line. `None` past the last line, or at column 0.
+pub(crate) fn offset_of(source: &[u8], line: u32, col: u32) -> Option<usize> {
+    let mut lines = source.split_inclusive(|b| *b == b'\n');
+    let start: usize = lines
+        .by_ref()
+        .take(line.checked_sub(1)? as usize)
+        .map(<[u8]>::len)
+        .sum();
+    let text = lines.next()?;
+    let len = text.strip_suffix(b"\n").unwrap_or(text).len();
+    Some(start + (col as usize).checked_sub(1)?.min(len))
 }
 
 #[cfg(test)]
@@ -258,19 +282,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_variable_answers_only_where_no_name_is_written() {
-        let facts = crate::extract::extract(b"x = [1]\nx[0]\nx.size\n-x\n");
-        // (line, col, may a variable answer)
+    fn a_variable_answers_where_written_and_where_nothing_follows_it() {
+        let source = b"x = [1]\nx[0]\nx.size\n-x\n";
+        let facts = crate::extract::extract(source);
+        let vars = crate::resolve::vars::analyze(source);
+        // (line, col, does `x` answer)
         let cases = [
             (2, 1, true),  // on `x`
-            (2, 2, false), // `[`: the `[]` call, though the cursor touches `x`
+            (2, 2, false), // `[`: the `[]` call, though the column touches `x`
             (3, 2, true),  // `.`: no name starts there
             (3, 3, false), // `size`
             (4, 1, false), // `-`: the unary `-@` call
             (4, 2, true),  // `x`: `-@` is written as one character
         ];
         for (line, col, want) in cases {
-            assert_eq!(variable_may_answer(&facts, line, col), want, "{line}:{col}");
+            let found = variable_at(&facts, source, &vars, line, col).is_some();
+            assert_eq!(found, want, "{line}:{col}");
         }
     }
 
@@ -348,5 +375,21 @@ mod tests {
     #[test]
     fn whitespace_is_not_a_fact() {
         assert!(at(b"class W\nend\n", 1, 1).is_none());
+    }
+
+    #[test]
+    fn a_column_past_its_line_is_the_lines_end() {
+        let source = b"ab\ncount = 1\nlast";
+        for (line, col, offset) in [
+            (1, 1, Some(0)),
+            (1, 2, Some(1)),
+            (1, 99, Some(2)),
+            (2, 99, Some(12)),
+            (3, 99, Some(17)),
+            (4, 1, None),
+            (1, 0, None),
+        ] {
+            assert_eq!(offset_of(source, line, col), offset, "{line}:{col}");
+        }
     }
 }

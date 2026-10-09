@@ -2049,6 +2049,18 @@ just before that column the caret reads the variable, and the editor owes
 what `--def` says on the variable's last character. Testbed 123; the four
 requests side by side in `lsp_e2e`'s caret test.
 
+### DEC-036 addendum: a variable written at the column answers there
+
+Narrows `variable_may_answer`, now `query::position::variable_at`. A
+column a variable is only just past (`x[0]`'s `[`) is still the name
+written there. A column the variable is written over answers the
+variable even where a name is recorded over it too: a `def` a code string
+makes is recorded over its whole name, interpolations included, so on the
+`n` of `def #{n}_x` `--def` answered the made method while the editor
+answered the block's `n`, which is what is written there. The editor
+never met the narrower case, since its caret is read onto the variable
+first. Found by the testbed's caret sweep; testbed 130 and 133.
+
 ### Item recorded, not built: the bare-argument grammar
 
 `trekr <input>` dispatching on shape — `FILE:LINE:COL` → `--def`,

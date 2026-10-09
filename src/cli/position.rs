@@ -51,21 +51,6 @@ impl Spec {
     }
 }
 
-/// The byte offset of a 1-based line and column, clamped as the editor's
-/// are: a column past the end of its line is the line's end, never a byte of
-/// a later line. `None` past the last line, or at column 0.
-pub(crate) fn offset_of(source: &[u8], line: u32, col: u32) -> Option<usize> {
-    let mut lines = source.split_inclusive(|b| *b == b'\n');
-    let start: usize = lines
-        .by_ref()
-        .take(line.checked_sub(1)? as usize)
-        .map(<[u8]>::len)
-        .sum();
-    let text = lines.next()?;
-    let len = text.strip_suffix(b"\n").unwrap_or(text).len();
-    Some(start + (col as usize).checked_sub(1)?.min(len))
-}
-
 /// A variable under the cursor, answered from the file alone, the way the LSP
 /// answers one (DEC-064): a local or parameter by the writes its read can see,
 /// an instance or class variable by the writes to it in this file.
@@ -77,9 +62,8 @@ pub(crate) fn variable_at(
     col: u32,
 ) -> Option<serde_json::Value> {
     use crate::resolve::vars::{self, Binding, Sigil};
-    let offset = offset_of(source, line, col)?;
     let found = vars::of_file(source, &facts.strings);
-    let under = found.at(offset)?;
+    let under = crate::query::position::variable_at(facts, source, &found, line, col)?;
     let writes: Vec<&vars::Occurrence> = match under.sigil {
         Sigil::Local => found.local_definitions(under),
         Sigil::Instance | Sigil::Class => found
@@ -172,21 +156,5 @@ mod tests {
         let zero = |s: &str| matches!(Spec::parse(s), Some(Err(_)));
         assert!(zero("a.rb:0:0") && zero("a.rb:0") && zero("a.rb:3:0"));
         assert!(!zero("a.rb:3") && !zero("a.rb:3:1"));
-    }
-
-    #[test]
-    fn a_column_past_its_line_is_the_lines_end() {
-        let source = b"ab\ncount = 1\nlast";
-        for (line, col, offset) in [
-            (1, 1, Some(0)),
-            (1, 2, Some(1)),
-            (1, 99, Some(2)),
-            (2, 99, Some(12)),
-            (3, 99, Some(17)),
-            (4, 1, None),
-            (1, 0, None),
-        ] {
-            assert_eq!(offset_of(source, line, col), offset, "{line}:{col}");
-        }
     }
 }

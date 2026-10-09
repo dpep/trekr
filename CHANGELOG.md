@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- **`--def` on an interpolated variable in a `def` a string makes answers
+  the variable.** On the `n` of `class_eval "def #{n}_x …"`, `--def` and
+  `--refs` answered the method the string makes, while the editor answered
+  the block's `n`, which is what is written there. A name recorded over a
+  variable still wins where the column is only just past the variable
+  (`list[0]`'s `[`).
+
 - **`--def` and `--refs` answer a local in a string of code trekr reads.**
   In a `class_eval <<~RUBY … RUBY` string, `--def` on a local snapped to
   another name on the line and `--refs` found no variable, while the editor

@@ -4140,7 +4140,6 @@ fn cmd_refs_at(
     // A variable is not a call: its mentions, as the editor lists them, and
     // not whichever method is nearest on the line.
     if let Some(col) = spec.col.map(NonZeroU32::get)
-        && crate::query::position::variable_may_answer(&facts, line, col)
         && let Some((head, rows)) =
             variable_mentions(&tree, &root_str, &absolute, &source, &facts, line, col)
     {
@@ -4246,9 +4245,8 @@ fn variable_mentions(
     let source = crate::extract::ruby_source(&path, raw);
     let head = position::variable_at(&source, facts, &path, line, col)?;
     crate::usage::flag("variable");
-    let offset = position::offset_of(&source, line, col)?;
     let here = vars::of_file(&source, &facts.strings);
-    let want = here.at(offset)?.clone();
+    let want = crate::query::position::variable_at(facts, &source, &here, line, col)?.clone();
     let relative = |p: &str| {
         p.strip_prefix(root_str)
             .and_then(|r| r.strip_prefix('/'))
@@ -4996,9 +4994,8 @@ fn cmd_def(
             crate::tree::views::template_files(root, &relative, &template.names, class.as_deref());
         // One that reaches no file leaves the variable it is written as to
         // answer, below.
-        let variable = files.is_empty()
-            && crate::query::position::variable_may_answer(&facts, line, col)
-            && position::variable_at(&source, &facts, &file, line, col).is_some();
+        let variable =
+            files.is_empty() && position::variable_at(&source, &facts, &file, line, col).is_some();
         let answer = template_answer(written.to_string(), root, &files, class.as_deref());
         if variable {
             no_template = Some(answer);
@@ -5071,7 +5068,6 @@ fn cmd_def(
     // A variable is not a call, and snapping from one answered for whatever
     // name was nearest on the line.
     if let Some(col) = spec.col.map(NonZeroU32::get)
-        && crate::query::position::variable_may_answer(&facts, line, col)
         && let Some(answer) = position::variable_at(&source, &facts, &file, line, col)
     {
         crate::usage::flag("variable");
