@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 — 2026-10-09
 
 - **`index.cause` says when another trekr was writing.** An answer whose
   edited files could not be read because another trekr held the store
