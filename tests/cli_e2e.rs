@@ -5017,14 +5017,51 @@ impl Said {
 }
 
 fn spawn_trekr(db: &Path, cwd: &Path, args: &[&str]) -> std::process::Child {
-    neutral(Command::new(env!("CARGO_BIN_EXE_trekr")))
+    piped_trekr(db, cwd, args).spawn().expect("spawn trekr")
+}
+
+fn piped_trekr(db: &Path, cwd: &Path, args: &[&str]) -> Command {
+    let mut command = neutral(Command::new(env!("CARGO_BIN_EXE_trekr")));
+    command
         .args(args)
         .current_dir(cwd)
         .env("TREKR_DB", db)
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .expect("spawn trekr")
+        .stderr(std::process::Stdio::piped());
+    command
+}
+
+/// A trekr that a test means to signal. A harness started as `cmd &` without
+/// job control inherits SIGINT ignored, and trekr rightly keeps an inherited
+/// ignore (`nohup` relies on it), so the signal would never arrive.
+fn spawn_signalable(db: &Path, cwd: &Path, args: &[&str]) -> std::process::Child {
+    use std::os::unix::process::CommandExt;
+    let mut command = piped_trekr(db, cwd, args);
+    // SAFETY: signal(2) is async-signal-safe, and the hook touches nothing
+    // else between fork and exec.
+    unsafe {
+        command.pre_exec(|| {
+            libc::signal(libc::SIGINT, libc::SIG_DFL);
+            libc::signal(libc::SIGTERM, libc::SIG_DFL);
+            Ok(())
+        });
+    }
+    command.spawn().expect("spawn trekr")
+}
+
+/// `wait_with_output`, but a child still running at the deadline is killed
+/// and the test fails, rather than the suite hanging.
+fn wait_within(mut child: std::process::Child, secs: u64) -> Output {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(secs);
+    while child.try_wait().expect("poll child").is_none() {
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            panic!("trekr still running after {secs}s");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    child.wait_with_output().expect("collect output")
 }
 
 fn reset(db: &Path) {
@@ -5401,12 +5438,12 @@ fn an_index_outwaited_by_a_live_writer_leaves_its_mark_running() {
 fn an_index_stopped_by_a_signal_says_it_is_incomplete() {
     use std::os::unix::process::ExitStatusExt;
     let (dir, db, holder) = cut_short_behind_a_lock("index-stopped");
-    let mut queued = spawn_trekr(&db, &dir, &["--index", "--json", "--no-gems"]);
+    let mut queued = spawn_signalable(&db, &dir, &["--index", "--json", "--no-gems"]);
     let stderr = Said::of(&mut queued);
     stderr.wait_for("waiting for another");
     // SAFETY: signals our own child, not yet reaped, so its pid is not reused.
     unsafe { libc::kill(queued.id() as i32, libc::SIGTERM) };
-    let out = queued.wait_with_output().unwrap();
+    let out = wait_within(queued, 20);
     holder.execute_batch("ROLLBACK").unwrap();
     let stderr = stderr.all();
     assert_eq!(out.status.signal(), Some(libc::SIGTERM), "{stderr}");
@@ -5421,13 +5458,13 @@ fn an_index_stopped_by_a_signal_says_it_is_incomplete() {
 fn an_index_stopped_with_its_reader_gone_dies_quietly() {
     use std::os::unix::process::ExitStatusExt;
     let (dir, db, holder) = cut_short_behind_a_lock("index-stopped-pipe");
-    let mut queued = spawn_trekr(&db, &dir, &["--index", "--json", "--no-gems"]);
+    let mut queued = spawn_signalable(&db, &dir, &["--index", "--json", "--no-gems"]);
     drop(queued.stdout.take());
     let stderr = Said::of(&mut queued);
     stderr.wait_for("waiting for another");
     // SAFETY: signals our own child, not yet reaped, so its pid is not reused.
     unsafe { libc::kill(queued.id() as i32, libc::SIGINT) };
-    let out = queued.wait_with_output().unwrap();
+    let out = wait_within(queued, 20);
     holder.execute_batch("ROLLBACK").unwrap();
     let stderr = stderr.all();
     assert_eq!(out.status.signal(), Some(libc::SIGINT), "{stderr}");
