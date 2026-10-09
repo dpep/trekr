@@ -1050,6 +1050,34 @@ impl Store {
         self.method_rows(roots, Some(name))
     }
 
+    /// Whether an `.rbi` among `roots` defines a method `name`: the one
+    /// place a Sorbet signature comes from. Asks for any `.rbi` first, since
+    /// a common name has thousands of defs and most checkouts no `.rbi`.
+    pub(crate) fn rbi_defines(&self, roots: &Roots, name: &str) -> Result<bool> {
+        let count = roots.list.len();
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT EXISTS(SELECT 1
+                       FROM file f
+                       JOIN checkout c ON c.id = f.checkout_id
+                      WHERE c.root IN ({roots}) AND f.path LIKE '%.rbi')
+                AND EXISTS(SELECT 1
+                       FROM def d
+                       JOIN file f ON f.blob_id = d.blob_id
+                       JOIN checkout c ON c.id = f.checkout_id
+                      WHERE c.root IN ({roots}) AND d.kind = 'method' AND d.name = ?{at}
+                        AND f.path LIKE '%.rbi')",
+            roots = numbered(1, count),
+            at = count + 1
+        ))?;
+        let mut values: Vec<&dyn rusqlite::ToSql> = roots
+            .list
+            .iter()
+            .map(|r| r as &dyn rusqlite::ToSql)
+            .collect();
+        values.push(&name);
+        stmt.query_row(values.as_slice(), |r| r.get(0))
+    }
+
     /// Every method, in `methods`' order, handed over one row at a time
     /// rather than collected — for a caller that keeps only part of each.
     pub(crate) fn each_method(&self, roots: &Roots, visit: impl FnMut(MethodRow)) -> Result<()> {

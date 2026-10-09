@@ -4495,6 +4495,12 @@ fn mentions(out: Output, rows: &[crate::store::Ref], name: &str) -> anyhow::Resu
 /// takes the pages back in one go.
 type OneShotTree = std::mem::ManuallyDrop<Tree>;
 
+/// Whether an `.rbi` the checkout sees defines a method `name` — where every
+/// signature comes from, so a `def` with none answers without the tree.
+fn any_rbi_defines(store: &Store, root: &str, name: &str) -> anyhow::Result<bool> {
+    Ok(store.rbi_defines(&store.tree_roots(root)?, name)?)
+}
+
 fn build_tree(store: &Store, root: &str) -> anyhow::Result<OneShotTree> {
     Tree::build(store, root).map(std::mem::ManuallyDrop::new)
 }
@@ -4921,6 +4927,7 @@ fn cmd_def(
                 // a `def` stays the file's own, with no git probe or wait.
                 if let Some((root, store)) = &checkout
                     && store.has_checkout(&root.to_string_lossy())?
+                    && any_rbi_defines(store, &root.to_string_lossy(), &def.name)?
                 {
                     let tree = build_tree(store, &root.to_string_lossy())?;
                     let signatures = crate::resolve::signatures_of_def(&tree, &def);
