@@ -332,6 +332,59 @@ fn go_to_definition_answers_from_the_resolved_receiver() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A file the index has never read — created after it, where no watcher
+/// saw — is read when it is opened, as a save would read it: its class's
+/// superclass decides the call, as `--def` decides it.
+#[test]
+fn a_file_opened_before_any_index_read_it_answers_from_its_own_class() {
+    let (dir, db) = scratch("def-unindexed");
+    repo(&dir);
+    fs::write(
+        dir.join("base.rb"),
+        "class Base\n  def size = 0\nend\nclass Other\n  def size = 1\nend\n",
+    )
+    .unwrap();
+    let indexed = trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+    assert!(indexed.status.success());
+    let source = "class B4 < Base\n  def m\n    size\n  end\nend\n";
+    fs::write(dir.join("b4.rb"), source).unwrap();
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "b4.rb"), "languageId": "ruby", "version": 1, "text": source
+        }}),
+    );
+    let answer = session.request(
+        "textDocument/definition",
+        serde_json::json!({
+            "textDocument": {"uri": uri_of(&dir, "b4.rb")},
+            "position": {"line": 2, "character": 5},
+        }),
+    );
+    let found: Vec<(String, u64)> = answer["result"]
+        .as_array()
+        .expect("an array of locations")
+        .iter()
+        .map(|l| {
+            let uri = l["uri"].as_str().unwrap();
+            let file = uri.rsplit('/').next().unwrap().to_string();
+            (file, l["range"]["start"]["line"].as_u64().unwrap())
+        })
+        .collect();
+    assert_eq!(found, [("base.rb".to_string(), 1)], "Base#size alone");
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_click_that_finds_nothing_is_logged_where_usage_misses_reads_it() {
     let (dir, db) = scratch("misses");

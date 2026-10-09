@@ -2236,6 +2236,16 @@ question. The first question after spawn was paying the 300–470 ms build.
 a burst of saves both writing — enough to stall saves visibly. The answer would
 be queueing saves behind a running index rather than dropping the child.
 
+**Addendum (post-0.8.10): didOpen refreshes as didSave does.** An untracked
+`b4.rb` (`class B4 < Base`) created after the index, with no watcher event,
+was never read: the tree had no `B4`, so Go to Definition on its `size`
+offered every `size` while `--def`, which overlays the file it asks about,
+answered `Base#size` (0.8.10 hunt #3). Opening a file now refreshes it from
+disk, the same bounded one-file refresh: one read and hash, a parse only for
+bytes the store has never seen. Opening, not every request: the file the
+editor shows is the one asked about, and a refresh per request would put a
+read on every click.
+
 ## DEC-040 — Completion is built, reversing PLAN §1 for completion alone
 
 **Decided (2026-09-26, at Daniel's direction).** `--lsp` answers

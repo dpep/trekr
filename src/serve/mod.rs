@@ -1142,6 +1142,9 @@ fn notify(
             if !indexer.opened(&path) {
                 session.hand_to_another_index(&path);
             }
+            // Read as a save reads it: a file made or changed where no
+            // watcher saw would otherwise answer from what the index lacks.
+            indexer.refresh(session, &path);
             handlers::diagnostics(session, &path, params.text_document.uri)
         }
         note::DidChangeTextDocument::METHOD => {

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Go to Definition in a file the index has not read uses its own
+  class.** In an untracked file created after the last index (with no
+  file watcher to say so), a call inherited from the file's superclass
+  listed every method of that name; `--def` answered the superclass's.
+  Opening a file now reads it as saving it does.
+
 - **`--gc` collects what queries recorded.** Each edited version of a file
   a query read stayed in the store for good; `--gc` now removes those no
   checkout maps, and exits 0 when that is all it removed. Blobs an
