@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **A call inside a made name's `#{…}` is that call.** In
+  `class_eval("def #{dir.upcase}_shout")`, every letter of `upcase`
+  answered the method the string makes (`UP_shout`), with full
+  confidence. A call or constant written inside such a name now answers
+  itself, as a variable there already did.
+
 - **Go to Definition in a file the index has not read uses its own
   class.** In an untracked file created after the last index (with no
   file watcher to say so), a call inherited from the file's superclass

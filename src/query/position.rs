@@ -205,7 +205,9 @@ pub(crate) fn at_facts(facts: &crate::core::Facts, line: u32, col: u32) -> Optio
         .iter()
         .find(|d| covers(name_pos(d), name_len(d), line, col) && d.kind != Kind::Constant)
     {
-        return Some(Under::Definition(def.clone()));
+        return Some(
+            written_inside(facts, def, line, col).unwrap_or(Under::Definition(def.clone())),
+        );
     }
     if let Some(reference) = facts.defs.iter().find_map(|d| compact_prefix(d, line, col)) {
         return Some(Under::Constant(reference));
@@ -245,6 +247,33 @@ pub(crate) fn at_facts(facts: &crate::core::Facts, line: u32, col: u32) -> Optio
         .find(|c| covers(c.pos, c.written_len(), line, col))
         .cloned()
         .map(Under::Call)
+}
+
+/// A call or constant written inside a definition's name, at the position:
+/// the code in the `#{…}` of a name a string of code spells answers itself,
+/// as a variable there does. Inside is past where the name begins; one
+/// recorded at that same spot is the name itself.
+fn written_inside(facts: &crate::core::Facts, def: &Def, line: u32, col: u32) -> Option<Under> {
+    let (at, len) = (name_pos(def), name_len(def));
+    let inside = |pos: Pos, n: usize| {
+        pos.line == at.line
+            && pos.col > at.col
+            && (pos.col - at.col) as usize + n <= len
+            && covers(pos, n, line, col)
+    };
+    let constant = facts
+        .const_refs
+        .iter()
+        .filter(|r| inside(r.pos, tail(&r.name)))
+        .max_by_key(|r| r.name.len())
+        .map(|r| Under::Constant(r.clone()));
+    constant.or_else(|| {
+        facts
+            .calls
+            .iter()
+            .find(|c| inside(c.pos, c.written_len()))
+            .map(|c| Under::Call(c.clone()))
+    })
 }
 
 /// The template a `render` or `extends` names at a position (DEC-524). A
@@ -453,6 +482,32 @@ end
             if let (Some(found), Some(want)) = (found, want) {
                 assert!(found.starts_with(want), "{line}:{col} read {found}");
             }
+        }
+    }
+
+    #[test]
+    fn a_call_inside_a_made_names_interpolation_answers_itself() {
+        let source = b"class W
+  %w[up].each do |dir|
+    class_eval(\"def #{dir.upcase}_shout(a); end\")
+  end
+end
+";
+        // `#`, `upcase`'s first and last letters, `}`, and the written suffix.
+        let cases = [
+            (21, "UP_shout"),
+            (27, "upcase"),
+            (32, "upcase"),
+            (33, "UP_shout"),
+            (35, "UP_shout"),
+        ];
+        for (col, want) in cases {
+            let found = match at(source, 3, col) {
+                Some(Under::Definition(def)) => def.name,
+                Some(Under::Call(call)) => call.name,
+                _ => String::new(),
+            };
+            assert_eq!(found, want, "3:{col}");
         }
     }
 
