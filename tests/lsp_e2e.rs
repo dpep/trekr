@@ -5099,18 +5099,15 @@ fn a_caret_just_past_a_render_argument_opens_its_partial() {
     let view = "app/views/widgets/index.html.erb";
     let (dir, mut session) = files_session("render-caret", &files, controller);
     // (file, line, character, where it goes): the name's first character,
-    // its last, and the caret just past it.
+    // and the caret just past it. `query::def`'s table holds the rest.
     let cases = [
         (view, 0, 11, "_widget.html.erb:1"),
-        (view, 0, 18, "_widget.html.erb:1"),
         (view, 0, 19, "_widget.html.erb:1"),
         (view, 1, 11, "widgets_controller.rb:4"),
-        (view, 1, 17, "widgets_controller.rb:4"),
         (view, 1, 18, "widgets_controller.rb:4"),
         (controller, 3, 11, "_widget.html.erb:1"),
         (controller, 3, 12, "_widget.html.erb:1"),
         (controller, 5, 11, "items_controller.rb:5"),
-        (controller, 5, 14, "items_controller.rb:5"),
         (controller, 5, 15, "items_controller.rb:5"),
     ];
     for (file, line, character, expected) in cases {

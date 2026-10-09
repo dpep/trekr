@@ -317,17 +317,14 @@ mod tests {
 
     #[test]
     fn a_caret_just_past_a_variable_reads_its_last_character() {
-        let source = "list = [1]\nlist[0]\na = b = 1\na+b\nhé = 1\nhé + 1\n".as_bytes();
+        // The boundaries `query::def`'s table does not reach.
+        let source = "a = b = 1\na+b\nhé = 1\nhé + 1\n".as_bytes();
         let vars = crate::resolve::vars::analyze(source);
         let at = |line, col| Pos { line, col };
         // (the character to the caret's right, what it reads)
         let cases = [
-            (at(2, 5), at(2, 4)), // `list|[`: the `t`
-            (at(2, 1), at(2, 1)), // `|list`: the `l`
-            (at(2, 3), at(2, 3)), // `li|st`: inside, the `s`
-            (at(4, 2), at(4, 1)), // `a|+b`: the `a`
-            (at(4, 4), at(4, 3)), // `a+b|`: past the line's end, the `b`
-            (at(6, 4), at(6, 2)), // `hé| + 1`: the `é`, two bytes back
+            (at(2, 4), at(2, 3)), // `a+b|`: past the line's end, the `b`
+            (at(4, 4), at(4, 2)), // `hé| + 1`: the `é`, two bytes back
             (at(9, 1), at(9, 1)), // past the last line: as given
         ];
         for (right, reads) in cases {
