@@ -10,7 +10,9 @@
 //!
 //! Nothing here guesses. A path assembled at runtime is not followed; a
 //! native extension is reported as one, not swapped for a `.rb` further down
-//! the path; and several matches are all returned, in load-path order.
+//! the path; and several matches are all returned, in load-path order — but
+//! the stdlib's copy only when nothing ahead of it matched, since it is last
+//! on any load path.
 
 use ruby_prism::{Node, Visit};
 use std::collections::HashSet;
@@ -327,6 +329,11 @@ pub(crate) fn resolve(
     let names = candidates(path, exact);
     let mut found = Vec::new();
     for dir in &cx.load_path.dirs {
+        // The stdlib is last on `$LOAD_PATH` whoever sets the rest up, so a
+        // gem's `json.rb` shadows its copy for certain.
+        if !found.is_empty() && matches!(dir.origin, Origin::Stdlib(_)) {
+            break;
+        }
         let Some(hit) = probe_in(dir, &names, &is_file) else {
             continue;
         };
@@ -810,6 +817,21 @@ mod tests {
 
     #[test]
     fn several_matches_are_all_returned_first_on_the_path_first() {
+        let on_disk = ["/app/lib/shelf.rb", "/gems/shelf-1.0/lib/shelf.rb"];
+        let got = files(resolve_in(
+            &require(Verb::Require, "shelf"),
+            &standard(),
+            &on_disk,
+        ));
+        assert_eq!(
+            got,
+            vec!["/app/lib/shelf.rb", "/gems/shelf-1.0/lib/shelf.rb"],
+            "which a runner puts first is not known statically"
+        );
+    }
+
+    #[test]
+    fn the_stdlib_is_read_only_when_nothing_before_it_has_the_file() {
         let on_disk = [
             "/gems/shelf-1.0/lib/json.rb",
             "/ruby/lib/ruby/3.4.0/json.rb",
@@ -819,13 +841,13 @@ mod tests {
             &standard(),
             &on_disk,
         ));
-        assert_eq!(
-            got,
-            vec![
-                "/gems/shelf-1.0/lib/json.rb",
-                "/ruby/lib/ruby/3.4.0/json.rb"
-            ]
-        );
+        assert_eq!(got, vec!["/gems/shelf-1.0/lib/json.rb"], "the gem's copy");
+        let got = files(resolve_in(
+            &require(Verb::Require, "json"),
+            &standard(),
+            &on_disk[1..],
+        ));
+        assert_eq!(got, vec!["/ruby/lib/ruby/3.4.0/json.rb"]);
     }
 
     #[test]

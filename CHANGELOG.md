@@ -50,6 +50,8 @@
   `Kernel#require_relative`, while Go to Definition opened `lib/helper.rb`.
   Both now ask one subject: the file, at its top, with `under: require` and
   `resolved_via: require` in `--json`, and a `reason` when no file is found.
+  A gem's copy of a stdlib file (`require "json"`, `"erb"`, `"uri"`) is
+  the one answered, as Ruby loads it; Go to Definition offered both.
 
 - **`--def` on a method's `def` names its Sorbet signature.** Go to
   Declaration from a `def` opened the `.rbi` stub that describes it, while
