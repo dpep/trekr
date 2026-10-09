@@ -91,6 +91,13 @@ snapped is asked of the editor at the column it snapped to. A column names a
 character but an editor's position is a caret, which reads a variable ending
 just before it: there the editor owes what `--def` says on the variable.
 
+`TESTBED_CARETS=1` asks the same of every name, not only the placed `def`s:
+Go to Definition and Declaration at each written name's start, middle and
+just past it, in every source of every case, held to `--def` at the
+character the caret reads, and to nothing where `--def` snaps or finds
+nothing. It spawns `--def` per position, so it is a sweep to run before
+and after a change to what a position means, not part of the gate.
+
 An unknown key fails loudly: a typo in an expectation is a test that proves
 nothing.
 

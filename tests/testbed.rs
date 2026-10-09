@@ -1430,11 +1430,216 @@ fn check_case(
             }
         }
     }
+    if std::env::var_os("TESTBED_CARETS").is_some() {
+        caret_sweep(&db, &dir, label, checks, failures);
+    }
     // A case that passed is done with its scratch now, not at exit; one that
     // failed keeps it to look at.
     if failures.is_empty() {
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(home_of(&dir));
         let _ = fs::remove_dir_all(db.parent().expect("a store in its own directory"));
+    }
+}
+
+/// The source files of a staged case the sweep asks in, relative to it.
+fn sources(dir: &Path, under: &Path, found: &mut Vec<String>) {
+    const READ: [&str; 8] = ["rb", "erb", "rbi", "rake", "haml", "rabl", "gemspec", "ru"];
+    for entry in fs::read_dir(under).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if entry.file_name() == ".git" {
+            continue;
+        }
+        if path.is_dir() {
+            sources(dir, &path, found);
+        } else if path
+            .extension()
+            .is_some_and(|e| READ.iter().any(|r| e == *r))
+            && let Ok(relative) = path.strip_prefix(dir)
+        {
+            found.push(relative.to_string_lossy().into_owned());
+        }
+    }
+}
+
+/// Whether a caret is inside the string a `require` names.
+fn in_required_string(line: &str, caret: u32) -> bool {
+    let code = line.trim_start();
+    if !code.starts_with("require") {
+        return false;
+    }
+    let Some(open) = line.find(['"', '\'']) else {
+        return false;
+    };
+    let close = line[open + 1..]
+        .find(['"', '\''])
+        .map_or(line.len(), |c| open + 1 + c);
+    (open as u32) < caret && caret <= close as u32
+}
+
+/// The carets the sweep asks at on one line, 0-based: each written name's
+/// start, its middle and just past it.
+fn carets(line: &str) -> Vec<u32> {
+    let bytes = line.as_bytes();
+    let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let mut found = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if !word(bytes[i]) {
+            i += 1;
+            continue;
+        }
+        let mut start = i;
+        while start > 0 && matches!(bytes[start - 1], b'@' | b'$') {
+            start -= 1;
+        }
+        if start > 0 && bytes[start - 1] == b':' && (start < 2 || bytes[start - 2] != b':') {
+            start -= 1;
+        }
+        let mut end = i;
+        while end < bytes.len() && word(bytes[end]) {
+            end += 1;
+        }
+        if end < bytes.len()
+            && matches!(bytes[end], b'?' | b'!')
+            && bytes.get(end + 1) != Some(&b'=')
+        {
+            end += 1;
+        }
+        found.extend([start, start + (end - start) / 2, end].map(|c| c as u32));
+        i = end;
+    }
+    found.dedup();
+    found
+}
+
+/// `TESTBED_CARETS=1`: Go to Definition and Declaration asked at every
+/// written name's start, middle and just past it, in every source of the
+/// case, held to `--def` asked at the character that caret reads (DEC-036
+/// addendum): the one to its right, or a variable's last character when the
+/// caret is just past one. Where `--def` places nothing — no name there, a
+/// snap, which an editor never makes — the editor lists nothing either.
+/// Not every answer is comparable: residue's guesses are the client's
+/// setting to show (DEC-443), a gem's site is the editor's written-out copy,
+/// and an instance variable's other files are the editor's to read, so it
+/// owes at least what `--def` found in the file.
+///
+/// Opt-in: it spawns `--def` per position, and costs minutes.
+fn caret_sweep(db: &Path, dir: &Path, label: &str, checks: &mut usize, failures: &mut Vec<String>) {
+    let mut files = Vec::new();
+    sources(dir, dir, &mut files);
+    files.sort();
+    if files.is_empty() {
+        return;
+    }
+    let mut asked: std::collections::HashMap<String, serde_json::Value> = Default::default();
+    let listed = |result: &serde_json::Value| -> Vec<String> {
+        result
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|location| {
+                let full = site(dir, &location["uri"], &location["range"]["start"]);
+                full.rsplit_once(':')
+                    .map_or(full.clone(), |(at, _)| at.to_string())
+            })
+            .collect()
+    };
+    for file in &files {
+        let Ok(text) = fs::read_to_string(dir.join(file)) else {
+            continue;
+        };
+        // A session's watchdog ends it at 30 s: a fresh one every so often.
+        let mut session: Option<(Lsp, String)> = None;
+        let mut asked_here = 0;
+        for (index, written) in text.lines().enumerate() {
+            // A column is bytes and a caret UTF-16: equal only for ASCII.
+            if !written.is_ascii() {
+                continue;
+            }
+            let line = index as u32 + 1;
+            for caret in carets(written) {
+                // A `require` string opens the file it names in the editor;
+                // the CLI has no answer there (DEC-036 keeps it the editor's).
+                if in_required_string(written, caret) {
+                    continue;
+                }
+                if asked_here % 40 == 0 {
+                    session = None;
+                }
+                asked_here += 1;
+                let (lsp, uri) = session.get_or_insert_with(|| {
+                    let mut lsp = Lsp::start(db, dir);
+                    let uri = lsp.open(file);
+                    (lsp, uri)
+                });
+                let uri = uri.clone();
+                let highlight = lsp.at(
+                    &uri,
+                    line,
+                    caret + 1,
+                    "textDocument/documentHighlight",
+                    serde_json::json!({}),
+                );
+                let past_variable = highlight.as_array().into_iter().flatten().any(|h| {
+                    let (start, end) = (&h["range"]["start"], &h["range"]["end"]);
+                    end["line"] == line - 1
+                        && end["character"] == caret
+                        && start["line"] == line - 1
+                        && start["character"]
+                            .as_u64()
+                            .is_some_and(|s| s < u64::from(caret))
+                });
+                let col = if past_variable { caret } else { caret + 1 };
+                let at = format!("{file}:{line}:{col}");
+                let answer = asked
+                    .entry(at.clone())
+                    .or_insert_with(|| trekr(db, dir, &["--def", &at, "--json"]).0)
+                    .clone();
+                let definition = cli_sites(dir, &answer, "definition");
+                let signatures = cli_sites(dir, &answer, "signatures");
+                let member = matches!(answer["variable"].as_str(), Some("ivar" | "cvar"));
+                let placed = matches!(answer["status"].as_str(), Some("resolved" | "ambiguous"));
+                let nothing = answer["snapped_to"].is_object()
+                    || (answer["definition"].as_array().is_none_or(Vec::is_empty)
+                        && answer["candidates"].as_array().is_none_or(Vec::is_empty));
+                let (owed, every) = match (definition, signatures) {
+                    _ if nothing && member => continue,
+                    _ if nothing => ((Vec::new(), Vec::new()), Vec::new()),
+                    (Some(definition), Some(signatures)) if placed => {
+                        (editor_owes(&definition, &signatures), definition)
+                    }
+                    _ => continue,
+                };
+                *checks += 1;
+                // `--def` on a method's own `def` names no signature, where
+                // the editor's declaration opens the `.rbi` that describes it.
+                let declaration =
+                    (answer["under"] != "definition").then_some(("declaration", &owed.1));
+                for (method, owed) in std::iter::once(("definition", &owed.0)).chain(declaration) {
+                    let got = listed(&lsp.at(
+                        &uri,
+                        line,
+                        caret + 1,
+                        &format!("textDocument/{method}"),
+                        serde_json::json!({}),
+                    ));
+                    // `editor_owes` takes one method's sites; an answer that
+                    // reaches several (a delegate and its target) is owed
+                    // per method, which only the editor can tell apart.
+                    let agrees = match member {
+                        true => owed.iter().all(|site| got.contains(site)),
+                        false => got == *owed || got == every,
+                    };
+                    if !agrees {
+                        failures.push(format!(
+                            "{label}: caret {file}:{line}:{} (--def {at}): the editor's \
+                             {method} listed {got:?}, --def owes {owed:?}",
+                            caret + 1
+                        ));
+                    }
+                }
+            }
+        }
     }
 }
