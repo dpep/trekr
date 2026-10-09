@@ -1963,8 +1963,11 @@ The overlay's one debt: a query records each edited version it reads
 (`add_blob`), nothing maps it, and `--gc` collected by checkout, so every
 draft any query ever saw stayed in the store. A blob `add_blob` inserts now
 gets a `loose_blob` row, and `--gc` adds those to the blobs it deletes,
-less any a checkout maps — a query's blob an index later mapped stays while
-it does.
+less any a checkout maps. A map write — `--index`, or the editor's one-file
+refresh — that points a file at a loose blob deletes its row: mapped once,
+the blob is the index's, and kept after it is edited away as one the index
+read would be. Before that, a query's blob an index later mapped stayed
+loose, and went at the first `--gc` after the next edit (0.9.0 hunt #12).
 
 - **Provenance, not "no file maps it".** A blob an index read and then
   edited away is DEC-003's — a branch switch back wants it — and is

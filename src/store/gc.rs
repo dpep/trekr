@@ -353,6 +353,26 @@ mod tests {
     }
 
     #[test]
+    fn a_blob_an_index_mapped_is_the_indexs_whoever_recorded_it_first() {
+        let mut store = Store::open_in_memory().unwrap();
+        let (draft, edited) = ("class Draft\nend\n", "class Edited\nend\n");
+        let oid = hash_blob(draft.as_bytes());
+        store
+            .add_blob(&oid, &crate::extract::extract(draft.as_bytes()))
+            .unwrap();
+        // Mapped, then edited away: what a branch switch back wants (DEC-003).
+        indexed(&mut store, "/app", "a.rb", draft);
+        indexed(&mut store, "/app", "a.rb", edited);
+        store
+            .conn
+            .execute("UPDATE loose_blob SET recorded_at = 0", [])
+            .unwrap();
+        let garbage = store.collect(now() - 60, |_| true, false).unwrap();
+        assert_eq!(garbage.blobs, 0);
+        assert!(store.has_blob(&oid).unwrap());
+    }
+
+    #[test]
     fn a_blob_a_query_may_still_be_reading_is_kept_whatever_the_cutoff() {
         let mut store = Store::open_in_memory().unwrap();
         let src = "class Draft\nend\n";

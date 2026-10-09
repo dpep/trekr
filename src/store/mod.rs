@@ -721,6 +721,12 @@ impl Store {
                 tx.prepare("INSERT INTO file (checkout_id, path, blob_id) VALUES (?1, ?2, ?3)")?;
             let mut update =
                 tx.prepare("UPDATE file SET blob_id = ?3 WHERE checkout_id = ?1 AND path = ?2")?;
+            // A blob a query recorded first is the index's once mapped: kept
+            // after it is edited away, as one the index read is (DEC-003).
+            tx.execute_batch(schema::LOOSE_BLOB)?;
+            let loose: bool =
+                tx.query_row("SELECT EXISTS(SELECT 1 FROM loose_blob)", [], |r| r.get(0))?;
+            let mut adopt = tx.prepare("DELETE FROM loose_blob WHERE blob_id = ?1")?;
             for (path, oid) in files {
                 let (id, digests) = match stored.remove(path) {
                     Some((id, known, digests)) if known == oid.0 => (id, digests),
@@ -736,6 +742,9 @@ impl Store {
                             Some(_) => update.execute(row)?,
                             None => insert.execute(row)?,
                         };
+                        if loose {
+                            adopt.execute(params![found.0])?;
+                        }
                         found
                     }
                 };
@@ -1980,6 +1989,12 @@ impl Store {
         tx.execute(
             "INSERT OR REPLACE INTO file (checkout_id, path, blob_id) VALUES (?1, ?2, ?3)",
             params![checkout_id, relative, blob_id],
+        )?;
+        // Mapped, so the index's from now on, as in `write`.
+        tx.execute_batch(schema::LOOSE_BLOB)?;
+        tx.execute(
+            "DELETE FROM loose_blob WHERE blob_id = ?1",
+            params![blob_id],
         )?;
 
         let hashed = path_hash(relative);

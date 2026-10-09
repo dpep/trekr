@@ -704,9 +704,9 @@ blob(id, oid UNIQUE, lines, parse_errors, surface, namespace, written_by)
   const_ref(blob_id, name, nesting, line, col)
   call_name(blob_id, name, calls, symbols)  ← which names a blob calls (DEC-193)
   body_call(blob_id, name, nesting, args, line)  ← a body's call on itself (DEC-162)
-  loose_blob(blob_id, recorded_at)          ← recorded by a query, not an
-                                              index: `--gc`'s once no file
-                                              maps it (DEC-035; optional)
+  loose_blob(blob_id, recorded_at)          ← recorded by a query and never
+                                              mapped: `--gc`'s once aged
+                                              (DEC-035; optional)
 
 checkout(id, root UNIQUE, indexed_at, kind, surface_key, namespace_key,
          map_key, git_state)
