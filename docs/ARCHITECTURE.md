@@ -895,7 +895,7 @@ its stdin; a query whose file went to the early store answers from that
 `--def` reparses the one file with Prism rather than reading stored spans, so
 it answers correctly on a file edited since the last index. What it is asked
 of is `query::def::subject`, which Go to Definition asks too, in one order: a
-template a `render` reaches, then a variable, then a definition, constant or
+`require` string's file, a template a `render` reaches, then a variable, then a definition, constant or
 call, then an unplaced `super` or a symbol that names no method. The fronts
 differ only around it: a column names a character, while an editor's caret is
 first read onto one (`query::position::caret_reads`, DEC-036 addendum); the
@@ -1113,6 +1113,8 @@ the same reason.
 whole literal is the origin, wherever the cursor is in it — a
 `LocationLink`'s `originSelectionRange` when the client takes links — because
 Ruby resolves the whole string and a directory is not a location.
+`definition` asks it through `query::def::subject`, so `--def` in the string
+answers the same file.
 
 `query/require.rs` is two pure functions and one that reads the disk.
 `requires_in` parses a file with Prism and returns each call whose path is a

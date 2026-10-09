@@ -72,7 +72,7 @@ They answer different questions; read them separately.
   `local:new`, `literal`, `sig`, `sig:param`, `sig:step`, `includer`,
   `rbi_dsl`, `super`, and `flow` for a variable; `view`, `sidecar` (a
   component's template, on the component), `controller`, `render` and
-  `rabl:object` in templates. `chain` means the receiver is a
+  `rabl:object` in templates; `require` for a `require` string. `chain` means the receiver is a
   call whose method's return type is declared (`x.strip.downcase` with `x`
   typed); `chain:name` that its receiver was untyped, so every definition of
   that name was asked — `ambiguous` when some declare no return type. Ruby
@@ -135,6 +135,14 @@ answer). No `snapped_to` means the column hit the name. The string in
 snapped: it answers the shared group of that name. Nor is a symbol no rule
 reads as a method's name (`on: :create`, a hash key): `residue`,
 `under: symbol`.
+
+**`require` strings.** Anywhere in the string of a `require`,
+`require_relative`, `load` or `autoload`, quotes included, `--def` answers
+the file it loads, as Go to Definition opens it: `under: require`,
+`resolved_via: require`, `name` the path as written, and `definition` each
+file found at its top (`kind: file`), in load-path order — `ambiguous` when
+there are several. No file found, or a compiled extension first on the path,
+is `residue` with a `reason`.
 
 **Variables.** On a variable, `--def` answers the variable, not the nearest
 call: `under: variable`, `resolved_via: flow`, and `definition` is the writes

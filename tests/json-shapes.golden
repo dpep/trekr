@@ -116,7 +116,7 @@
 --def $.definition: array
 --def $.definition[]: object
 --def $.definition[].col: int
---def $.definition[].kind: string {assigned,block parameter,class,constant,local,method,module,parameter,template}
+--def $.definition[].kind: string {assigned,block parameter,class,constant,file,local,method,module,parameter,template}
 --def $.definition[].line: int
 --def $.definition[].path: string
 --def $.definition[].root: string
@@ -139,7 +139,7 @@
 --def $.receiver_kind: string
 --def $.receiver_text: string
 --def $.receiver_type: string
---def $.resolved_via: string {ancestor,chain,chain:name,const,controller,definition,delegate,delegate_missing_to,described_class,example_group,finder,flow,implicit_subject,includer,let,literal,local:new,local:rescue,main,object,on_load,path,predicate_matcher,rabl,rabl:object,receiver_name,relation,render,root,scope,self,sidecar,sig,super,symbol,view}
+--def $.resolved_via: string {ancestor,chain,chain:name,const,controller,definition,delegate,delegate_missing_to,described_class,example_group,finder,flow,implicit_subject,includer,let,literal,local:new,local:rescue,main,object,on_load,path,predicate_matcher,rabl,rabl:object,receiver_name,relation,render,require,root,scope,self,sidecar,sig,super,symbol,view}
 --def $.scopes_tried: int
 --def $.signatures: array
 --def $.signatures[]: object
@@ -156,7 +156,7 @@
 --def $.snapped_to.col: int
 --def $.snapped_to.name: string
 --def $.status: string {ambiguous,residue,resolved}
---def $.under: string {call,constant,definition,symbol,template,variable}
+--def $.under: string {call,constant,definition,require,symbol,template,variable}
 --def $.unresolved_ancestors: array
 --def $.unresolved_ancestors[]: string
 --def $.variable: string

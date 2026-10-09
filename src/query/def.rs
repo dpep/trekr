@@ -7,6 +7,7 @@
 //! ([`super::position::caret_reads`]).
 
 use super::position::{self, Under};
+use super::require::Require;
 use crate::core::{Facts, Named, Pos, TemplateRef};
 use crate::resolve::vars::{Occurrence, Vars};
 use crate::tree::Tree;
@@ -22,6 +23,8 @@ pub(crate) struct Reached {
 
 /// What a definition is asked of.
 pub(crate) enum Subject {
+    /// A `require` string: the file it loads (DEC-053).
+    Require(Require),
     /// A template a `render` or `extends` names. Its files are empty only
     /// where no variable is written there to answer instead.
     Template(Reached),
@@ -44,18 +47,26 @@ pub(crate) enum Subject {
     Nothing,
 }
 
-/// What the character at `at` asks a definition of. A template comes
-/// first, then a variable, then a fact: `render @widgets` opens the
-/// partial, and a variable is not a call. `reach` finds a template's files,
+/// What the character at `at` asks a definition of. A `require` string
+/// comes first, wherever in it the character is, then a template, then a
+/// variable, then a fact: `render @widgets` opens the partial, and a
+/// variable is not a call. `requires` are the file's
+/// ([`super::require::requires_in`]); `reach` finds a template's files,
 /// `None` where the file is in no checkout to look in.
 pub(crate) fn subject(
     facts: &Facts,
     source: &[u8],
     vars: &Vars,
+    requires: &[Require],
     at: Pos,
     reach: impl FnOnce(&TemplateRef) -> anyhow::Result<Option<Reached>>,
 ) -> anyhow::Result<Subject> {
     let Pos { line, col } = at;
+    if let Some(offset) = position::offset_of(source, line, col)
+        && let Some(require) = requires.iter().find(|r| r.span.contains(&offset))
+    {
+        return Ok(Subject::Require(require.clone()));
+    }
     let variable = || position::variable_at(facts, source, vars, line, col).cloned();
     if let Some(template) = position::template_at(facts, line, col)
         && let Some(reached) = reach(template)?
@@ -164,11 +175,13 @@ mod tests {
         "  def run = send(:'go')\n",      // 16
         "end\n",                          // 17
         "y = :\"quoted\"\n",              // 18
+        "require_relative \"lib/x\"\n",   // 19
     );
 
     /// A subject as a line of text, to compare and to read in a failure.
     fn said(subject: &Subject) -> String {
         match subject {
+            Subject::Require(require) => format!("require {}", require.path),
             Subject::Template(reached) => format!("template {:?}", reached.files),
             Subject::Variable {
                 occurrence,
@@ -191,6 +204,7 @@ mod tests {
     struct Readings {
         facts: Facts,
         vars: Vars,
+        requires: Vec<Require>,
     }
 
     impl Readings {
@@ -198,7 +212,12 @@ mod tests {
             let source = SOURCE.as_bytes();
             let facts = crate::extract::extract(source);
             let vars = crate::resolve::vars::of_file(source, &facts.strings);
-            Readings { facts, vars }
+            let requires = crate::query::require::requires_in(source);
+            Readings {
+                facts,
+                vars,
+                requires,
+            }
         }
 
         fn at(&self, at: Pos) -> String {
@@ -210,7 +229,14 @@ mod tests {
                 };
                 Ok(Some(Reached { files, class: None }))
             };
-            let subject = subject(&self.facts, SOURCE.as_bytes(), &self.vars, at, reach);
+            let subject = subject(
+                &self.facts,
+                SOURCE.as_bytes(),
+                &self.vars,
+                &self.requires,
+                at,
+                reach,
+            );
             said(&subject.expect("no tree is asked"))
         }
 
@@ -287,6 +313,12 @@ mod tests {
             (16, 20, "call go", "call go"),
             (18, 5, "symbol quoted", "symbol quoted"),
             (18, 6, "symbol quoted", "symbol quoted"),
+            // A require string is its file, quotes included; the call is the
+            // call.
+            (19, 1, "call require_relative", "call require_relative"),
+            (19, 18, "require lib/x", "require lib/x"),
+            (19, 22, "require lib/x", "require lib/x"),
+            (19, 24, "require lib/x", "require lib/x"),
         ];
         for (line, col, column, caret) in cases {
             assert_eq!(readings.column(line, col), column, "column {line}:{col}");

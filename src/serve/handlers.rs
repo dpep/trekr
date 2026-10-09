@@ -23,7 +23,7 @@ use crate::query::locations::{self, Asked};
 use crate::query::members::CheckoutFiles;
 use crate::query::position::{self, Under};
 use crate::query::refs as query_refs;
-use crate::query::require::{self, Found, Origin};
+use crate::query::require::{self, Found, Origin, Require};
 use crate::resolve::refs;
 use lsp_types::Uri as Url;
 use lsp_types::{
@@ -164,10 +164,6 @@ fn locate(
 ) -> anyhow::Result<Option<GotoDefinitionResponse>> {
     let uri = params.text_document_position_params.text_document.uri;
     let position = params.text_document_position_params.position;
-    if let Some(required) = required_at(session, &uri, position) {
-        crate::usage::flag("require");
-        return Ok(required_definition(session.definition_links, required));
-    }
     let Some(file) = file_of(&uri) else {
         super::miss::why(NO_CHECKOUT);
         return Ok(None);
@@ -181,10 +177,11 @@ fn locate(
     let source = document.ruby().into_owned();
     let facts = document.facts().clone();
     let vars = document.vars();
+    let requires = document.requires().to_vec();
     // The tree is built only for an object's partial, which needs its class.
     let trees = &mut *session;
     let checkout = located.as_ref();
-    let subject = def::subject(&facts, &source, &vars, at, |template| {
+    let subject = def::subject(&facts, &source, &vars, &requires, at, |template| {
         let Some(located) = checkout else {
             return Ok(None);
         };
@@ -196,6 +193,11 @@ fn locate(
         def::reach(template, &facts, &located.root, &located.relative, tree).map(Some)
     })?;
     let (located, sites, name_len) = match (subject, located) {
+        (Subject::Require(require), _) => {
+            crate::usage::flag("require");
+            let required = required(session, &file, require);
+            return Ok(required_definition(session.definition_links, required));
+        }
         (Subject::Variable { occurrence, .. }, _) => {
             let Some(under) = variables::found(session, file, vars, occurrence) else {
                 return Ok(None);
@@ -300,20 +302,28 @@ fn required_at(
         .iter()
         .find(|r| r.span.contains(&offset))?
         .clone();
-    let range = LineIndex::new(&document.text).range(require.span.clone());
-    let root = session.locate_query(&file).map(|located| located.root);
+    Some(required(session, &file, require))
+}
+
+/// The files a `require` in the open `file` names.
+fn required(session: &mut Session, file: &Path, require: Require) -> Required {
+    let range = session
+        .document(file)
+        .map(|document| LineIndex::new(&document.text).range(require.span.clone()))
+        .unwrap_or_default();
+    let root = session.locate_query(file).map(|located| located.root);
     let cx = require::Context {
-        file: &file,
+        file,
         root: root.as_deref(),
         load_path: session.load_path(root.as_deref()),
     };
     let found = require::resolve(&require, &cx, Path::is_file);
-    Some(Required {
+    Required {
         range,
         path: require.path,
         found,
         root,
-    })
+    }
 }
 
 /// The required file, opened at its top. A compiled extension has nothing to

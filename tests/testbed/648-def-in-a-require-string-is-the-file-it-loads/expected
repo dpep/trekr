@@ -1,0 +1,10 @@
+# Go to Definition anywhere in a require string opened the file it loads,
+# while `--def` there snapped to `Kernel#require_relative`. Both ask one
+# subject now: the whole string, its quotes included, is the file.
+def app/models/widget.rb:2:25 status=resolved name=../../lib/helper site=lib/helper.rb:1
+def app/models/widget.rb:2:20 status=resolved site=lib/helper.rb:1
+def app/models/widget.rb:3:12 status=resolved name=helper site=lib/helper.rb:1
+# A require nothing satisfies is no file, not the nearest name.
+def app/models/widget.rb:4:13 status=residue name=nowhere reason=nowhere exit=1
+# Outside the string, the call is the call.
+def app/models/widget.rb:2:5 name=require_relative

@@ -5007,6 +5007,10 @@ fn cmd_def(
         index_free();
     };
     let vars = crate::resolve::vars::of_file(&source, &facts.strings);
+    let requires = match spec.col {
+        Some(_) => crate::query::require::requires_in(&source),
+        None => Vec::new(),
+    };
     let subject = match spec.col {
         // No column: the line chooses, by the snap below (DEC-036).
         None => Subject::Nothing,
@@ -5015,7 +5019,7 @@ fn cmd_def(
                 line,
                 col: col.get(),
             };
-            crate::query::def::subject(&facts, &source, &vars, at, |template| {
+            crate::query::def::subject(&facts, &source, &vars, &requires, at, |template| {
                 let Some((root, store)) = checkout.as_mut().map(|(root, store)| (&*root, store))
                 else {
                     return Ok(None);
@@ -5043,6 +5047,14 @@ fn cmd_def(
         )
     };
     let found = match subject {
+        // A `require` string: the file it loads, as Go to Definition opens it
+        // (DEC-053). Read from the file and the load path alone.
+        Subject::Require(require) => {
+            file_alone(&checkout);
+            let (answer, text) = required_answer(written, &file, &require, checkout.as_ref())?;
+            let found = !answer["definition"].as_array().is_none_or(Vec::is_empty);
+            return report(out, answer, found, &text);
+        }
         // A template a `render` or `extends` names: the file it reaches (DEC-524).
         Subject::Template(reached) => {
             let text = match (reached.files.first(), &root) {
@@ -5644,6 +5656,77 @@ fn public_chain(chain: &[String]) -> Vec<String> {
         .iter()
         .map(|name| crate::tree::public_name(name).to_string())
         .collect()
+}
+
+/// The answer on a `require` string, and its text: each file it loads, at
+/// its top, in load-path order. A compiled extension is no file to open, and
+/// Ruby loads it before any `.rb` after it, so it is said rather than listed.
+fn required_answer(
+    query: &str,
+    file: &str,
+    require: &crate::query::require::Require,
+    checkout: Option<&(PathBuf, Store)>,
+) -> anyhow::Result<(serde_json::Value, String)> {
+    use crate::query::require::{self, LoadPath};
+    let root = checkout.map(|(root, _)| root.as_path());
+    let load_path = match checkout {
+        Some((root, store)) => {
+            let root_str = root.to_string_lossy();
+            let gems = store.gems_used(&root_str)?;
+            let stdlib = store.tree_roots(&root_str)?.stdlib;
+            LoadPath::for_checkout(root, &gems, stdlib.as_deref())
+        }
+        None => LoadPath { dirs: Vec::new() },
+    };
+    let cx = require::Context {
+        file: Path::new(file),
+        root,
+        load_path: &load_path,
+    };
+    let found = require::resolve(require, &cx, Path::is_file);
+    let native = found.iter().find(|found| found.native);
+    let files: Vec<String> = found
+        .iter()
+        .filter(|found| !found.native)
+        .map(|found| found.file.to_string_lossy().into_owned())
+        .collect();
+    let definition: Vec<serde_json::Value> = files
+        .iter()
+        .map(|path| serde_json::json!({"path": path, "line": 1, "col": 1, "kind": "file"}))
+        .collect();
+    let mut answer = serde_json::json!({
+        "query": query,
+        "under": "require",
+        "name": require.path,
+        "status": match files.len() { 0 => "residue", 1 => "resolved", _ => "ambiguous" },
+        "confidence": crate::resolve::share(1, files.len()),
+        "resolved_via": "require",
+        "definition": definition,
+    });
+    let text = match native {
+        Some(native) => {
+            let reason = format!(
+                "a compiled extension, {}: nothing to open",
+                shown(&native.file.to_string_lossy())
+            );
+            answer["reason"] = reason.as_str().into();
+            format!("{}  {reason}", require.path)
+        }
+        None if files.is_empty() => {
+            let reason = format!(
+                "no file found for `{}`: a gem that is not installed, or a path set up at runtime",
+                require.path
+            );
+            answer["reason"] = reason.as_str().into();
+            reason
+        }
+        None => files
+            .iter()
+            .map(|path| format!("{}:1:1  file", shown(path)))
+            .collect::<Vec<_>>()
+            .join("\n"),
+    };
+    Ok((answer, text))
 }
 
 /// One answer, in whichever shape the caller asked for.

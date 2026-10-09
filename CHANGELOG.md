@@ -13,6 +13,12 @@
   that way. A top-level constant's whole name is `::Widget`; a bare
   `--refs Widget` still lists every mention of the name.
 
+- **`--def` in a `require` string answers the file it loads.** Anywhere in
+  `require_relative "../../lib/helper"`, `--def` snapped to
+  `Kernel#require_relative`, while Go to Definition opened `lib/helper.rb`.
+  Both now ask one subject: the file, at its top, with `under: require` and
+  `resolved_via: require` in `--json`, and a `reason` when no file is found.
+
 ## 0.8.10 — 2026-10-09
 
 - **The `:` of a symbol sent as a method's name is that method.** On
