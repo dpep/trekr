@@ -4408,7 +4408,7 @@ fn cmd_refs_by_name(
         }
     }
 
-    mentions(out, &rows, &query.name)
+    mentions(out, &rows, &query.name, false)
 }
 
 /// `--refs` by a constant's whole name, or at a class, module or constant:
@@ -4423,7 +4423,7 @@ fn constant_refs(
     written: Option<&str>,
 ) -> anyhow::Result<ExitCode> {
     let rows = crate::query::refs::constant_mentions(tree, store, root_str, fqn, written)?;
-    mentions(out, &rows, fqn)
+    mentions(out, &rows, fqn, true)
 }
 
 /// A constant's whole name as `--refs` was given it: written with `::`, every
@@ -4441,13 +4441,25 @@ fn whole_constant_name(query: &crate::resolve::refs::Query) -> Option<&str> {
         .then_some(name)
 }
 
-/// A name's mentions, one row each, in whichever shape the caller asked for.
-fn mentions(out: Output, rows: &[crate::store::Ref], name: &str) -> anyhow::Result<ExitCode> {
+/// A name's mentions, one row each, in whichever shape the caller asked for:
+/// a constant's `whole` name, or a bare one.
+fn mentions(
+    out: Output,
+    rows: &[crate::store::Ref],
+    name: &str,
+    whole: bool,
+) -> anyhow::Result<ExitCode> {
     if emit_rows(out, rows)? {
         return Ok(exit_on(!rows.is_empty()));
     }
     if rows.is_empty() {
-        println!("no mention of {name} (indexed? try `trekr --index`)");
+        // Asked of an index, so a miss is a no: not a reason to index again.
+        let read = if whole {
+            " (a whole name, read from the top level)"
+        } else {
+            ""
+        };
+        println!("no mention of {name} in what trekr indexed{read}");
         return Ok(ExitCode::from(1));
     }
     for row in rows {

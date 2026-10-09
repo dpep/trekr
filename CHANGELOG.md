@@ -51,6 +51,11 @@
   mention it is. A top-level constant's whole name is `::Widget`; a bare
   `--refs Widget` still lists every mention of the name.
 
+- **A `--refs` miss is said as a no.** "no mention of X (indexed? try
+  `trekr --index`)" sent an agent to reindex a checkout already indexed;
+  it now reads "no mention of X in what trekr indexed", and for a name
+  written with `::` says it was read as a whole name from the top level.
+
 - **`--def` in a `require` string answers the file it loads.** Anywhere in
   `require_relative "../../lib/helper"`, `--def` snapped to
   `Kernel#require_relative`, while Go to Definition opened `lib/helper.rb`.

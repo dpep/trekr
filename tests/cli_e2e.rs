@@ -1059,11 +1059,24 @@ fn refs_disclose_the_receiver_rather_than_guessing_at_it() {
     let trackable = json(&trekr(&db, &dir, &["--refs", "Trackable", "--json"]));
     assert_eq!(trackable[0]["role"], "constant");
 
-    assert_eq!(
-        trekr(&db, &dir, &["--refs", "Absent"]).status.code(),
-        Some(1),
-        "a name nobody mentions is a definitive no"
-    );
+    for name in ["Absent", "Absent::Inner"] {
+        let missed = trekr(&db, &dir, &["--refs", name]);
+        assert_eq!(
+            missed.status.code(),
+            Some(1),
+            "a name nobody mentions is a definitive no"
+        );
+        let said = stdout(&missed);
+        assert!(
+            said.contains(name) && !said.contains("--index"),
+            "said as a no, not as a missing index: {said}"
+        );
+        assert_eq!(
+            said.contains("whole name"),
+            name.contains("::"),
+            "a `::` name says how it was read: {said}"
+        );
+    }
 
     let _ = fs::remove_dir_all(&dir);
 }
