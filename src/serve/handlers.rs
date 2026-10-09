@@ -1012,12 +1012,8 @@ fn written_len(root: &Path, path: &str, line: u32, col: u32, text: Option<&str>)
 }
 
 /// References to a class, module or constant: every written constant that
-/// Ruby's lookup resolves to the same fully-qualified name.
-///
-/// The index records a reference under every name it could be written as —
-/// `Base`, `ActiveRecord::Base` — so each suffix of the target is asked for,
-/// and each row resolved in the nesting it was written in. Same-named
-/// constants elsewhere resolve elsewhere and drop out, which is the point.
+/// Ruby's lookup resolves to the same fully-qualified name
+/// (`query::refs::constant_mentions`), an open buffer read as it stands.
 fn constant_references(
     session: &mut Session,
     located: &Located,
@@ -1034,30 +1030,17 @@ fn constant_references(
         return Ok(Vec::new());
     };
 
-    let segments: Vec<&str> = fqn.split("::").collect();
-    let mut rows = Vec::new();
-    for start in 0..segments.len() {
-        let suffix = segments[start..].join("::");
-        let mut spellings = vec![suffix.clone()];
-        if start == 0 {
-            spellings.push(format!("::{suffix}"));
-        }
-        for written in spellings {
-            let found = session.store().refs(&root_str, &written)?;
-            rows.extend(found.into_iter().map(|row| (written.clone(), row)));
-        }
-    }
-    let tree = session.tree(&root)?;
+    let (tree, store) = session.tree_and_store(&root)?;
     let tail = last_segment(&fqn);
 
     // (path, line, col) — the index's view, except for files the editor has
     // open, which are read from the buffer so an unsaved edit counts.
-    let mut sites: Vec<(String, u32, u32)> = rows
-        .into_iter()
-        .filter(|(_, row)| row.role == "constant" && !overlay.contains_key(&row.path))
-        .filter(|(written, row)| tree.resolve(written, &row.nesting).fqn.as_deref() == Some(&fqn))
-        .map(|(_, row)| (row.path, row.line, row.col))
-        .collect();
+    let mut sites: Vec<(String, u32, u32)> =
+        query_refs::constant_mentions(tree, store, &root_str, &fqn)?
+            .into_iter()
+            .filter(|row| row.role == "constant" && !overlay.contains_key(&row.path))
+            .map(|row| (row.path, row.line, row.col))
+            .collect();
     for (path, text) in &overlay {
         let facts = crate::extract::extract_file(path, text.as_bytes());
         sites.extend(
@@ -1065,7 +1048,7 @@ fn constant_references(
                 .const_refs
                 .iter()
                 .filter(|r| last_segment(&r.name) == tail)
-                .filter(|r| tree.resolve(&r.name, &r.nesting).fqn.as_deref() == Some(&fqn))
+                .filter(|r| query_refs::names_constant(tree, &r.name, &r.nesting, &fqn))
                 .map(|r| (path.clone(), r.pos.line, r.pos.col)),
         );
     }

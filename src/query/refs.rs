@@ -1,12 +1,56 @@
-//! The per-site reference rule both fronts list by: a call site tiered
-//! against the query, nothing ruled out on a partial index (DEC-320), and a
-//! shared group's ruled-out call asked again of the groups that include it
-//! (DEC-499).
+//! The reference rules both fronts list by: a call site tiered against the
+//! query, nothing ruled out on a partial index (DEC-320), and a shared
+//! group's ruled-out call asked again of the groups that include it
+//! (DEC-499); and a class, module or constant's mentions, by Ruby's lookup.
 
 use super::members::{CheckoutFiles, includer_reference};
 use crate::core::{Call, Facts};
 use crate::resolve::refs::{self, Query, Reference, Tier};
+use crate::store::{Ref, Store};
 use crate::tree::Tree;
+
+/// The indexed mentions of the class, module or constant `fqn` in the
+/// checkout at `root`: its definitions and constant references that Ruby's
+/// lookup resolves to it.
+///
+/// The index records a reference by the name written (`Base`,
+/// `ActiveRecord::Base`), so each suffix of `fqn` is asked for, and each row
+/// resolved in the nesting it was written in. Same-named constants
+/// elsewhere resolve elsewhere and drop out, which is the point.
+pub(crate) fn constant_mentions(
+    tree: &Tree,
+    store: &Store,
+    root: &str,
+    fqn: &str,
+) -> anyhow::Result<Vec<Ref>> {
+    let mut spellings: Vec<String> = std::iter::once(fqn)
+        .chain(fqn.match_indices("::").map(|(at, _)| &fqn[at + 2..]))
+        .map(str::to_string)
+        .collect();
+    spellings.push(format!("::{fqn}"));
+    let mut found = Vec::new();
+    for written in &spellings {
+        found.extend(
+            store
+                .refs(root, written)?
+                .into_iter()
+                .filter(|row| match row.role.as_str() {
+                    "definition" => {
+                        matches!(row.kind.as_deref(), Some("class" | "module" | "constant"))
+                    }
+                    _ => true,
+                })
+                .filter(|row| names_constant(tree, written, &row.nesting, fqn)),
+        );
+    }
+    found.sort_by(|a, b| (&a.path, a.line, a.col).cmp(&(&b.path, b.line, b.col)));
+    Ok(found)
+}
+
+/// Whether a constant written as `written` in `nesting` is `fqn`.
+pub(crate) fn names_constant(tree: &Tree, written: &str, nesting: &[String], fqn: &str) -> bool {
+    tree.resolve(written, nesting).fqn.as_deref() == Some(fqn)
+}
 
 /// One call site, tiered. Reads only the tree and the file's own facts, so
 /// it runs on any worker.
