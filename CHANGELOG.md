@@ -27,22 +27,25 @@
   so a query still reading one keeps it), and exits 0 when that is all it
   removed. Blobs an `--index` read or mapped are kept as before.
 
-- **Every macro's method ends where its argument does.** The column
-  just past `let(:name)`, `subject(:name)` or `RSpec::Matchers.define
-  :name` answered that method, and `store_accessor :settings, :"key"`
-  placed each accessor with its own name's length from the `:` — short
-  of the closing quote for `key`, far past it for `key_changed?`. Each
-  now spans its symbol (or string) as written, closing quote included.
+- **A spec macro's or `store_accessor`'s method ends where its argument
+  does.** The column just past `let(:name)`, `subject(:name)` or
+  `RSpec::Matchers.define :name` answered that method, and
+  `store_accessor :settings, :"key"` placed each accessor with its own
+  name's length from the `:` — short of the closing quote for `key`, far
+  past it for `key_changed?`. Each now spans its symbol (or string) as
+  written, closing quote included. An association's generated methods
+  (`dogs=`, `dog_ids` from `has_many :dogs`) still reach past it.
 
-- **`--refs` by a constant's whole name lists the constant, however it is
-  written.** `--refs Admin::Widget` listed only mentions written
+- **`--refs` by a constant's whole name lists the constant as its scopes
+  write it.** `--refs Admin::Widget` listed only mentions written
   `Admin::Widget`, missing `Widget` inside `module Admin`; on
   `SEPARATORS.join` inside `module Router` it said "no mention of
   Router::SEPARATORS"; and on a constant's definition (`SIZES = …`) it was a
   usage error, exit 64. A name written with `::` now lists the definitions
-  and every reference Ruby's lookup resolves to it, as the editor's Find
-  References does, and a position on any class, module or constant answers
-  that way. A top-level constant's whole name is `::Widget`; a bare
+  and the references Ruby's lookup resolves to it through the scopes they
+  are written in, as the editor's Find References does, and a position on
+  any class, module or constant answers that way. A path through an
+  includer, a subclass or an alias (`Child::K`) is not found. A top-level constant's whole name is `::Widget`; a bare
   `--refs Widget` still lists every mention of the name.
 
 - **`--def` in a `require` string answers the file it loads.** Anywhere in

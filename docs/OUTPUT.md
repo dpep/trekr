@@ -243,8 +243,11 @@ is written in.
 
 A name written with `::` is a constant's whole name — `Admin::Widget`, or
 `::Widget` for a top-level one: the same rows, but only its definitions and
-the references Ruby's lookup resolves to it, however each is written
-(`Widget` inside `module Admin`, `Admin::Widget`, `::Admin::Widget`). One the
+the references Ruby's lookup resolves to it through the scopes they are
+written in (`Widget` inside `module Admin`, `Admin::Widget`,
+`::Admin::Widget`). A path through an includer, a subclass or an alias
+(`Host::K` for a `K` that `include Mixin` brings, `Child::K`, `Alias::K`
+where `Alias = Admin::Widget`) is not found. One the
 index cannot place whole is placed by the longest leading part it can
 (`Rack::Utils` inside `module App` is `App::Rack::Utils` once `App::Rack`
 resolves); one it cannot place at all is listed only when written out in
