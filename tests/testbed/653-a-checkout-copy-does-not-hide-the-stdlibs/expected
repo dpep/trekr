@@ -1,0 +1,5 @@
+# A file in the checkout's `test/` or `lib/` named like a stdlib file hid the
+# stdlib's copy, answered alone and resolved. Those dirs are only guessed to
+# be on the load path (an app's never has `test/`), so both are listed.
+def app/x.rb:1:12 status=ambiguous confidence=0.5 site=test/benchmark.rb:1
+def app/x.rb:2:11 status=ambiguous confidence=0.5 site=lib/set.rb:1

@@ -144,7 +144,7 @@ reads as a method's name (`on: :create`, a hash key): `residue`,
 the file it loads, as Go to Definition opens it: `under: require`,
 `resolved_via: require`, `name` the path as written, and `definition` each
 file found at its top (`kind: file`), in load-path order — `ambiguous` when
-there are several. The stdlib's copy is found only when nothing ahead of it
+there are several. The stdlib's copy is found only when no gem ahead of it
 on the path has the file, so a bundled `json` answers alone. No file found, or a compiled extension first on the path,
 is `residue` with a `reason`.
 

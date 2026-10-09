@@ -1146,9 +1146,11 @@ one the way Ruby would, given the directories and a file-exists test.
 Per directory, `x.rb` then the compiled `x`, as `rb_find_file_ext` does. A
 compiled extension first on the path is named in the hover and is no
 definition. Several matches are all returned in path order, since the order
-among gems here is not bundler's — except the stdlib's copy once anything
+among gems here is not bundler's — except the stdlib's copy once a gem
 ahead of it matched: the stdlib is last on any load path, so a bundled
-`json` or `erb` is the one Ruby loads. `documentLink` links only a string with
+`json` or `erb` is the one Ruby loads. A checkout directory's copy does
+not hide it, since `lib/`, `test/` and `spec/` are only guessed to be on
+the path. `documentLink` links only a string with
 exactly one file behind it; the others are left to `definition`'s peek list.
 
 The session keeps each checkout's load path until its `gems_used` changes.

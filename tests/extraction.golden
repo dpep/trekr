@@ -673,6 +673,11 @@ ruby tests/testbed/651-a-mention-placed-in-part-is-placed-by-that-part/lib/gizmo
 ruby tests/testbed/652-a-mention-is-named-by-the-part-that-places-it/app/inside.rb 5dcc22336b85f0db
 ruby tests/testbed/652-a-mention-is-named-by-the-part-that-places-it/app/outside.rb 5772e54926be4546
 ruby tests/testbed/652-a-mention-is-named-by-the-part-that-places-it/lib/kit.rb ea26acbe7053b944
+ruby tests/testbed/653-a-checkout-copy-does-not-hide-the-stdlibs/app/x.rb 1412a6ed7ad38b0e
+ruby tests/testbed/653-a-checkout-copy-does-not-hide-the-stdlibs/lib/set.rb eeb998e217a97c6e
+ruby tests/testbed/653-a-checkout-copy-does-not-hide-the-stdlibs/ruby/benchmark.rb aca76f9bcddcfca0
+ruby tests/testbed/653-a-checkout-copy-does-not-hide-the-stdlibs/ruby/set.rb f94c1225cbeedad8
+ruby tests/testbed/653-a-checkout-copy-does-not-hide-the-stdlibs/test/benchmark.rb 2cba450d8a8db94a
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28
