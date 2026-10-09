@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **The character before a hash key is not the key.** On the space
+  before `name` in `{ name:, size: 1 }`, `--def` answered ":name — a key
+  or a value here", as if on a symbol's leading `:`; a key's colon
+  trails it. Only a leading `:` (or `:"`) counts as the symbol now.
+
 - **A line or column no position can hold is a usage error.**
   `--def app.rb:99999999999:1` or `--refs app.rb:-1:2` was read as a
   file named `app.rb:99999999999` and failed with "cannot read" (exit

@@ -85,14 +85,32 @@ pub(crate) fn subject(
     Ok(symbol_at(source, line, col).map_or(Subject::Nothing, Subject::Symbol))
 }
 
-/// The symbol literal written over a character, its `:` included.
+/// The symbol literal written over a character, its leading `:` included.
 fn symbol_at(source: &[u8], line: u32, col: u32) -> Option<String> {
     crate::extract::symbol_literals(source)
         .into_iter()
         .find(|(_, pos, len)| {
-            pos.line == line && pos.col.saturating_sub(1) <= col && col < pos.col + *len as u32
+            pos.line == line && opened_at(source, *pos) <= col && col < pos.col + *len as u32
         })
         .map(|(name, ..)| name)
+}
+
+/// The column a symbol whose name starts at `name` opens at: its leading
+/// `:` (or `:"`), where it has one. A key's colon trails (`name:`), so
+/// the character before the name is not the symbol's.
+fn opened_at(source: &[u8], name: Pos) -> u32 {
+    let Some(start) = position::offset_of(source, name.line, name.col) else {
+        return name.col;
+    };
+    let before = &source[..start];
+    let unquoted = before
+        .strip_suffix(b"\"")
+        .or_else(|| before.strip_suffix(b"'"))
+        .unwrap_or(before);
+    match unquoted.strip_suffix(b":") {
+        Some(opened) => name.col - (start - opened.len()) as u32,
+        None => name.col,
+    }
 }
 
 /// The files a template reaches from the file at `relative` in the checkout
@@ -133,6 +151,7 @@ mod tests {
         "  end\n",                        // 10
         "end\n",                          // 11
         "super\n",                        // 12
+        "x(:\"quoted\")\n",               // 13
     );
 
     /// A subject as a line of text, to compare and to read in a failure.
@@ -214,6 +233,11 @@ mod tests {
             // Shorthand `fields:` reads the local, not a symbol.
             (5, 10, "variable fields", "variable fields"),
             (5, 24, "symbol save", "symbol save"),
+            // A symbol's leading `:` is the symbol; the character before a
+            // key, whose colon trails, is not.
+            (5, 23, "symbol save", "symbol save"),
+            (5, 9, "nothing", "nothing"),
+            (5, 18, "nothing", "nothing"),
             (6, 13, "template []", "template []"),
             (
                 7,
@@ -239,6 +263,8 @@ mod tests {
             (9, 12, "constant Other::Thing", "constant Other::Thing"),
             (9, 18, "call new", "call new"),
             (12, 1, "super", "super"),
+            (13, 3, "symbol quoted", "symbol quoted"),
+            (13, 4, "symbol quoted", "symbol quoted"),
         ];
         for (line, col, column, caret) in cases {
             assert_eq!(readings.column(line, col), column, "column {line}:{col}");
