@@ -36,7 +36,10 @@ One name per fact: `query` is what you typed, `fqn` what it resolved to,
 `definition` where it is defined (always present, `[]` when unknown),
 `receiver`/`receiver_text`/`receiver_type` for a call's receiver,
 `unresolved_ancestors` for what could not be seen, and `path` + `root` +
-`line` + `col` on everything located.
+`line` + `col` on everything located. `singleton` is true for a class-side
+method (`def self.x`, `class << self`), `end_line` is the last line of a
+definition's body, and `nesting` the enclosing class and module names as
+written, innermost first. `repo` is a checkout's root.
 
 **`path` is relative to the `root` beside it**: the checkout holding the
 file, which for a gem's method is the gem. Join the two for a file to open.
@@ -75,6 +78,13 @@ They answer different questions; read them separately.
   that name was asked — `ambiguous` when some declare no return type. Ruby
   core's return types come from the RBS signatures of the checkout's own
   Ruby, so `x.gsub(a, b).downcase` is `String#downcase`.
+
+Beside them, a call's answer carries `receiver_kind` (`class` or `module`:
+inside a module an implicit receiver is whatever includes it, so a miss there
+is expected), and a constant's or call's `context` names the checkout it was
+resolved in. A residue's `candidates[]` each have `owner`, `singleton`,
+`why`, `kind` and the `site` they point at. A constant that does not resolve
+says how many scopes it tried (`scopes_tried`).
 
 `--explain` renders the same facts as text.
 
@@ -210,6 +220,15 @@ group's body in any file, `super`, `is_expected`, a `config.include`d helper,
 a shared context included by metadata, a `config.before` hook), each with
 `from` saying where. A column on none of these exits 64.
 
+A spec member's answer (`let`, `subject`, group `def`) also counts the
+shared groups' bodies and helper modules read for it (`shared_groups_read`,
+`helpers_read`), and `caveats` lists what may read it unseen: a name sent at
+runtime, a macro not read.
+
+A bare `--refs name` lists every mention of the name: each row says what
+sort it is (`role`: `definition`, `call` or `constant`) and the `nesting` it
+is written in.
+
 `--refs 'Widget#initialize'` lists the `new`s whose class runs it (its own or
 a subclass that inherits it), each marked `"called_as": "new"`. An untyped
 `klass.new` is possible for every `initialize` it fits.
@@ -238,8 +257,14 @@ measurements behind the grading. Fields per row:
   (`single-caller`; a `possible` caller grades the row `lower`).
 - `visibility` (`public`, `protected`, `private`): a private candidate's
   evidence is complete, a public one's is not.
+- The evidence counted: a method row's `confirmed`/`possible` callers,
+  `symbol_refs` (its name as a symbol), `super_refs`, `mentions_by_name`
+  (written calls of its name anywhere, capped) and, when a route reaches
+  it, `route` (`path`, `line`); a spec member's `shared_groups_read` and
+  `helpers_read`; a constant's `test_refs`, its references from tests.
 
-`summary` counts the rows per tier, per confidence and per kind. One pass, no
+`summary` counts the rows per tier (`tiers`: `unreferenced`, `test-only`,
+`single-caller`, …), per confidence and per kind (`kinds`). One pass, no
 cascade: a method whose only caller is itself a candidate is `single-caller`,
 and its `reason` says the caller is a candidate. An `initialize` is reported
 only when nothing constructs its class. A Haml or Slim template that names a
@@ -293,7 +318,22 @@ A core site is the owner's stub, written beside the database: `path:
 `trekr.core/rbs-<version>-<key>/` next to `trekr.db`, so it opens like any
 other site.
 
+## `--symbols`
+
+One row per definition in the file: `name`, `kind`, `singleton`,
+`visibility`, `line`/`col`/`end_line`, `nesting`; `params`, Ruby's own
+`Method#parameters` words (`req`, `opt`, `rest`, `keyreq`, `key`,
+`keyrest`, `block`…); `via`, the macro that made it (`attr_reader`,
+`alias_method`…); `target`, what it stands for as written (an alias's
+method, `Bar = Foo`'s `Foo`); and `sig_returns`, the class an inline Sorbet
+`sig` says it returns.
+
 ## `--index` and `--status`
+
+`--index`'s `indexed` counts the pass's work, not the checkout: `files`,
+`blobs` (distinct contents), `parsed` (contents this machine had never seen;
+0 on a reindex with no edits), and the `defs`, `refs` and `calls` read from
+them.
 
 `ruby` (top level of `--index`, per checkout in `--status`) is the Ruby the
 checkout runs on: `version`, `root` (its stdlib's) and `how` it was chosen —
@@ -316,21 +356,30 @@ was found.
 - `picked` — each gem found as `name version`. Without a lockfile, `ruby`
   says whose Ruby the picks came from and `unread` the requirements trekr
   could not read (the highest installed was taken).
+- `found` — gems the lockfile names that are on disk; of those
+  `from_git` (bundler's git checkouts), `from_path` (path gems inside the
+  checkout, indexed with it), `from_stdlib` (default gems whose code is the
+  stdlib), and `already_indexed` (known already, so free); `files` across
+  them.
 - `other_ruby` — gems found only for another Ruby. Gems are looked for in the
   checkout's own Ruby's directories first.
 - `stdlib` — the Ruby standard library indexed with the checkout: `root`, the
   `ruby` it belongs to and how it was chosen, and `hidden`: the default gems
   (json, logger, uri…) the bundle has its own copy of, whose stdlib files
-  this app does not see. Absent when the checkout names no gem and no Ruby.
+  this app does not see, and `files`. `rbs.chosen` says whose signatures
+  serve it: `bundled` with that Ruby, the highest `installed`, or an
+  `other` Ruby's. Absent when the checkout names no gem and no Ruby.
   Dev tooling (irb, rdoc, bundler's internals) is not indexed, so a question
   about it is residue. A stdlib class that is partly C (`Pathname`,
   `Monitor`, `OpenSSL::*`) answers residue naming its compiled extension for
   a method its Ruby lacks, rather than "no such method".
 
-`trekr --status` shows the checkout you are in, its gems counted (`gems:
-{count, indexed, files}`), its Ruby's stdlib (`stdlib: {root, files,
-hidden}`), and how many other checkouts are indexed (`others`); `--status
---all` lists every checkout, each with `kind` (`repo`, `gem` or `stdlib`).
+`trekr --status` shows the checkout you are in (`repo`, `files`, `blobs`,
+`indexed_at` in Unix seconds), its gems counted (`gems: {count, indexed,
+files}`), its Ruby's stdlib (`stdlib: {root, files, hidden}`), how many
+other checkouts are indexed (`others`, with `repos`), and `totals` over the
+whole store (`blobs`, `defs`, `const_refs`, `calls`); `--status --all`
+lists every checkout, each with `kind` (`repo`, `gem` or `stdlib`).
 `--status` only reports, never indexes: a checkout nobody indexed is
 `status: not_indexed`, exit 2 — `checkouts` is empty and `others` counts the
 rest. Outside any checkout the repos are listed.

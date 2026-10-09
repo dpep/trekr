@@ -706,6 +706,40 @@ mod shapes {
     }
 }
 
+/// Every field the shape golden names is named in docs/OUTPUT.md, in code
+/// (`like_this`): a field shipped without a word on what it means is one no
+/// caller can rely on. It cannot tell a wrong description from a right one.
+#[test]
+fn every_golden_field_is_documented() {
+    use std::collections::BTreeSet;
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let golden = fs::read_to_string(root.join("tests/json-shapes.golden")).expect("golden");
+    let doc = fs::read_to_string(root.join("docs/OUTPUT.md")).expect("OUTPUT.md");
+    // Odd pieces between ``` fences are code blocks; the rest holds `spans`.
+    let code = doc
+        .split("```")
+        .enumerate()
+        .flat_map(|(at, piece)| match at % 2 {
+            1 => vec![piece],
+            _ => piece.split('`').skip(1).step_by(2).collect(),
+        });
+    let named: BTreeSet<&str> = code
+        .flat_map(|text| text.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '-')))
+        .collect();
+    let fields: BTreeSet<&str> = golden
+        .lines()
+        .filter(|line| !line.starts_with('#'))
+        .filter_map(|line| Some(line.split(": ").next()?.rsplit_once('.')?.1))
+        .map(|key| key.trim_end_matches("[]"))
+        .collect();
+    let missing: Vec<&str> = fields.difference(&named).copied().collect();
+    assert!(
+        missing.is_empty(),
+        "fields in tests/json-shapes.golden that docs/OUTPUT.md never names in code: {}",
+        missing.join(", ")
+    );
+}
+
 /// `--dead . --json` exactly as printed, with this run's scratch paths named
 /// rather than spelled. The store and home sit beside the checkout and share
 /// its prefix, so they are named first.

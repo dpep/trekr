@@ -101,7 +101,8 @@ brew unlink trekr   # …verify…   then:   brew link trekr
   value renamed or added, fails the testbed; when
   the change is meant (or only adds fields), regenerate with
   `UPDATE_GOLDEN=1 cargo test --test testbed` — and update
-  [docs/OUTPUT.md](docs/OUTPUT.md), the field reference, in the same commit.
+  [docs/OUTPUT.md](docs/OUTPUT.md), the field reference, in the same commit;
+  `every_golden_field_is_documented` fails on a field it never names.
 - Fixture repos under `tests/fixtures/`, generic names (`Widget`, `HandlerA`) —
   public repo, nothing employer-identifying.
 - Verify through `cargo test`, not hand-run binaries; e2e drives the built binary
