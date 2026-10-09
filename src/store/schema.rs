@@ -232,7 +232,8 @@ CREATE TABLE meta (
 -- no checkout maps it. Optional: a store an older trekr built lacks it, and
 -- keeps what its queries recorded.
 CREATE TABLE loose_blob (
-  blob_id INTEGER PRIMARY KEY REFERENCES blob(id) ON DELETE CASCADE
+  blob_id     INTEGER PRIMARY KEY REFERENCES blob(id) ON DELETE CASCADE,
+  recorded_at INTEGER NOT NULL
 );
 
 CREATE INDEX gem_use_gem    ON gem_use(gem_root);
@@ -308,7 +309,8 @@ pub(crate) const OPTIONAL: [&str; 2] = ["meta", "loose_blob"];
 
 /// `loose_blob`, for a store at this version laid down without it.
 pub(crate) const LOOSE_BLOB: &str = "CREATE TABLE IF NOT EXISTS loose_blob (
-  blob_id INTEGER PRIMARY KEY REFERENCES blob(id) ON DELETE CASCADE
+  blob_id     INTEGER PRIMARY KEY REFERENCES blob(id) ON DELETE CASCADE,
+  recorded_at INTEGER NOT NULL
 );";
 
 /// A schema as a rebuild lays it down: this trekr's, or in tests another's.

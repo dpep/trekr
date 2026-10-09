@@ -2034,7 +2034,7 @@ impl Store {
             if let Some(blob_id) = insert_facts(&tx, oid, facts)? {
                 tx.execute_batch(schema::LOOSE_BLOB)?;
                 tx.execute(
-                    "INSERT INTO loose_blob (blob_id) VALUES (?1)",
+                    "INSERT INTO loose_blob (blob_id, recorded_at) VALUES (?1, unixepoch())",
                     params![blob_id],
                 )?;
             }

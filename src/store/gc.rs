@@ -11,6 +11,10 @@ use super::Store;
 use rusqlite::{Result, params};
 use std::collections::HashSet;
 
+/// How long a blob a query recorded is kept whatever the cutoff: the query
+/// that recorded it may still be reading it, and nothing else says so.
+const READING: i64 = 3600;
+
 /// What a collection removed, or — on a dry run — would have.
 #[derive(Debug, Default, serde::Serialize)]
 pub(crate) struct Garbage {
@@ -71,7 +75,11 @@ impl Store {
         on_disk: impl Fn(&str) -> bool,
         dry_run: bool,
     ) -> Result<Garbage> {
-        let tx = self.conn.transaction()?;
+        // Immediate, as the writers' own: what it decides to delete is what
+        // the store holds when it deletes.
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
         let rows: Vec<Row> = {
             let mut stmt = tx.prepare("SELECT id, root, kind, indexed_at FROM checkout")?;
             stmt.query_map([], |r| {
@@ -135,11 +143,13 @@ impl Store {
             }
         }
         // What a query recorded and no index mapped (DEC-035): the edits it
-        // read, kept only while a map points at them.
+        // read, kept only while a map points at them — and, like a checkout,
+        // until the cutoff, but never while the query may be reading it.
         tx.execute_batch(super::schema::LOOSE_BLOB)?;
         tx.execute(
-            "INSERT OR IGNORE INTO gc_blob SELECT blob_id FROM loose_blob",
-            [],
+            "INSERT OR IGNORE INTO gc_blob
+             SELECT blob_id FROM loose_blob WHERE recorded_at <= MIN(?1, unixepoch() - ?2)",
+            params![cutoff, READING],
         )?;
         // A blob some surviving checkout maps stays. The foreign key would
         // refuse the delete anyway; this makes the refusal a non-event.
@@ -319,6 +329,10 @@ mod tests {
         // One a query read first and an index then mapped: referenced.
         let (committed, facts) = blob("class Kept\nend\n");
         store.add_blob(&committed, &facts).unwrap();
+        store
+            .conn
+            .execute("UPDATE loose_blob SET recorded_at = 0", [])
+            .unwrap();
         indexed(&mut store, "/app", "kept.rb", "class Kept\nend\n");
         // One an index mapped and then edited away: a branch switch back
         // wants it (DEC-003), whoever asks.
@@ -336,6 +350,26 @@ mod tests {
         assert!(!store.has_blob(&edit).unwrap(), "the orphan went");
         assert!(store.has_blob(&committed).unwrap(), "a mapped blob stays");
         assert!(store.has_blob(&before).unwrap(), "an index's blob stays");
+    }
+
+    #[test]
+    fn a_blob_a_query_may_still_be_reading_is_kept_whatever_the_cutoff() {
+        let mut store = Store::open_in_memory().unwrap();
+        let src = "class Draft\nend\n";
+        let edit = hash_blob(src.as_bytes());
+        store
+            .add_blob(&edit, &crate::extract::extract(src.as_bytes()))
+            .unwrap();
+        // `--older-than 0`, while the query that recorded it answers.
+        let garbage = store.collect(now() + 1, |_| true, false).unwrap();
+        assert_eq!(garbage.blobs, 0);
+        assert!(store.has_blob(&edit).unwrap(), "just recorded: kept");
+        store
+            .conn
+            .execute("UPDATE loose_blob SET recorded_at = 0", [])
+            .unwrap();
+        let garbage = store.collect(now() - 60, |_| true, false).unwrap();
+        assert_eq!(garbage.blobs, 1, "recorded long ago: collected");
     }
 
     #[test]

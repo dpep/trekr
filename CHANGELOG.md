@@ -23,8 +23,9 @@
 
 - **`--gc` collects what queries recorded.** Each edited version of a file
   a query read stayed in the store for good; `--gc` now removes those no
-  checkout maps, and exits 0 when that is all it removed. Blobs an
-  `--index` read are kept as before.
+  checkout maps once they are older than `--older-than` (and than an hour,
+  so a query still reading one keeps it), and exits 0 when that is all it
+  removed. Blobs an `--index` read are kept as before.
 
 - **Every macro's method ends where its argument does.** The column
   just past `let(:name)`, `subject(:name)` or `RSpec::Matchers.define

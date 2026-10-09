@@ -1973,9 +1973,24 @@ it does.
   answer, `add_blob` and `--gc` create it where an older trekr's store at
   this version lacks it, and that store's earlier query blobs are kept, as
   before.
-- **No age cutoff.** A blob has no timestamp, and collecting one an edit
-  still holds costs the next query one file's parse; `--gc` removes every
-  overlay copy anyway, so none refers to it after.
+- **Aged, like a checkout** (corrected before release). The first cut had no
+  age cutoff, and a `--gc` running beside a query deleted the blob the query
+  had just recorded and was about to read: it answered "nothing trekr indexed
+  defines this name" with no caveat — 213 of 300 queries in a loop beside a
+  `--gc` loop (288 in the 0.9.0 hunt, #4) — and an `--index` that had found
+  the blob known once failed "Query returned no rows". A row now carries `recorded_at`, and `--gc`
+  takes one older than `--older-than` and than `READING` (an hour) whatever
+  the flag says — longer than any query, and a draft kept an hour more costs
+  nothing. `--gc` takes the write lock up front, as the writers do, so what it
+  chose is what it deletes; deferred, it read, met a query's write, and
+  failed "database is locked" (exit 74) 24 times in that loop. After: no
+  wrong answer and no failed `--gc`, at the default and at `--older-than 0`;
+  4–9 of 300 answers say `index.busy`, the query having met `--gc` holding
+  the lock (DEC-066). Rejected: a lock a query holds while it reads,
+  which a `--gc` loop would turn into busy answers, and a timestamp of
+  `--gc`'s own start alone, which a query that recorded a moment before it
+  still loses. A query that reuses a draft older than the cutoff, beside a
+  `--gc` in the same instant, still can; the next query records it again.
 
 ## DEC-036 — The CLI forgives a hand-typed position; the LSP does not
 

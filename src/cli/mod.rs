@@ -197,8 +197,9 @@ struct Cli {
     #[arg(long, requires = "gc")]
     dry_run: bool,
 
-    /// With `--gc`: spare anything an index saw more recently than this —
-    /// `36h`, `7d`, `2w`, or `0` for everything collectable now.
+    /// With `--gc`: spare anything an index saw, or a query recorded, more
+    /// recently than this — `36h`, `7d`, `2w`, or `0` for everything
+    /// collectable now.
     #[arg(long, value_name = "AGE", requires = "gc", default_value = "7d", value_parser = parse_age)]
     older_than: u64,
 

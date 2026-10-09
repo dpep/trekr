@@ -4208,6 +4208,11 @@ fn a_query_records_new_bytes_and_maps_nothing() {
         value.get("index").is_none(),
         "the map never named it: {value}"
     );
+    // Recorded long ago: a query just now may still be reading it.
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute("UPDATE loose_blob SET recorded_at = 0", [])
+        .unwrap();
     let gc = trekr(&db, &dir, &["--gc", "--older-than", "0", "--json"]);
     assert_eq!(gc.status.code(), Some(0), "something was collected");
     assert_eq!(json(&gc)["blobs"], 1);
