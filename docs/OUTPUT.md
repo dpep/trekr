@@ -168,8 +168,8 @@ that); `trekr Widget.new` or `--refs Widget.new` asks about it.
 **Freshness** (DEC-035). `--def`, `--dead` and every `--refs` compare the
 working tree with the index and read each file edited, added (untracked
 too) or deleted since, for that answer only. No file map is written; the
-facts of new bytes are recorded by their content, and `--gc` does not collect
-those yet. When anything differed, the answer carries `index`:
+facts of new bytes are recorded by their content, and `--gc` collects those
+no checkout maps. When anything differed, the answer carries `index`:
 
 ```json
 "index": { "stale": false, "refreshed": "app/models/user.rb",
