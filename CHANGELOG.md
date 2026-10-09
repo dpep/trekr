@@ -32,6 +32,9 @@
   `--def app.rb:99999999999:1` or `--refs app.rb:-1:2` was read as a
   file named `app.rb:99999999999` and failed with "cannot read" (exit
   66). It now says lines and columns are numbers from 1 up, and exits 64.
+  So a file whose own name ends in `:` and a negative or out-of-range
+  number (`log:-1`) must now be given a line and a column,
+  `log:-1:2:3`: `log:-1:2` is that usage error.
 
 - **`--usage --misses` names the character the editor read.** With the
   caret just past a variable (`@nope|+1`), a miss logged the caret's
