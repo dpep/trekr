@@ -219,12 +219,17 @@ pub(crate) fn signatures_at(tree: &Tree, name: &str, sites: &[MethodSite]) -> Ve
         .filter_map(|site| site.method.as_ref())
         .filter(|key| key.name == name)
         .collect();
+    signatures_of(tree, name, &keys)
+}
+
+/// The `.rbi` signatures of the methods `keys` name, all called `name`.
+fn signatures_of(tree: &Tree, name: &str, keys: &[&MethodKey]) -> Vec<MethodSite> {
     if keys.is_empty() {
         return Vec::new();
     }
     let named = tree.named(name);
     let mut found: Vec<MethodSite> = Vec::new();
-    for key in keys {
+    for &key in keys {
         let described = named
             .iter()
             .filter(|m| m.site.is_rbi() && m.owner == key.owner && m.singleton == key.singleton);

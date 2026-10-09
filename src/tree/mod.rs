@@ -3098,15 +3098,30 @@ impl Tree {
     /// the def arose — an explicit receiver, an alias's source, a `table_name`
     /// override — and only the first is an owner.
     fn owner_of(&self, row: &MethodRow) -> String {
-        let scopes = self.scopes(&row.nesting);
-        match &row.target {
-            Some(target) if row.singleton && row.via.is_none() => self
+        self.owner_in(
+            &row.nesting,
+            row.target.as_deref(),
+            row.singleton,
+            row.via.is_some(),
+        )
+    }
+
+    fn owner_in(
+        &self,
+        nesting: &[String],
+        target: Option<&str>,
+        singleton: bool,
+        made: bool,
+    ) -> String {
+        let scopes = self.scopes(nesting);
+        match target {
+            Some(target) if singleton && !made => self
                 .resolve_lexical(target, &scopes)
                 .map(|fqn| self.namespace_of(&fqn))
-                .unwrap_or_else(|| target.clone()),
+                .unwrap_or_else(|| target.to_string()),
             // Only a singleton method can be in `class << X`, and a module's
             // sites are not free to ask of every row.
-            _ if row.singleton => self.opened(&row.nesting, &scopes).unwrap_or_default(),
+            _ if singleton => self.opened(nesting, &scopes).unwrap_or_default(),
             _ => scopes.first().cloned().unwrap_or_default(),
         }
     }
