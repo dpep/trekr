@@ -1467,6 +1467,7 @@ pub(super) fn super_landings(
 /// (DEC-121). Each is `Owner#name`, or `Owner.name` on the singleton side.
 pub(crate) fn overridden(tree: &Tree, def: &crate::core::Def, path: &str) -> Vec<String> {
     let probe = Call {
+        written: None,
         name: def.name.clone(),
         recv: RecvShape::Super,
         recv_text: None,
@@ -1519,6 +1520,7 @@ pub(crate) fn defined_on(
     path: &str,
 ) -> Option<DefinedOn> {
     let probe = |recv, recv_text, recv_pos, block_owner| Call {
+        written: None,
         name: def.name.clone(),
         recv,
         recv_text,

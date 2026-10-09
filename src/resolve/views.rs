@@ -401,6 +401,7 @@ fn object_value(
     path: &str,
 ) -> Option<(String, bool)> {
     let call = Call {
+        written: None,
         name: "to_partial_path".to_string(),
         recv: match value.starts_with('@') {
             true => crate::core::RecvShape::Ivar,

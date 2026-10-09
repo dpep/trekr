@@ -61,7 +61,10 @@ fn name_pos(def: &Def) -> Pos {
 /// How many columns from `name_pos` the definition's name spans. A macro's
 /// def is recorded at its symbol, so the `:` comes first.
 fn name_len(def: &Def) -> usize {
-    tail(&def.name) + usize::from(def.via.is_some())
+    match def.written {
+        Some(written) => written as usize,
+        None => tail(&def.name) + usize::from(def.via.is_some()),
+    }
 }
 
 /// On the `A` of a compact `class A::B`: the namespace it is opened in,
@@ -402,6 +405,38 @@ mod tests {
             };
             assert_eq!(reference.name, name);
         }
+    }
+
+    #[test]
+    fn a_name_a_string_of_code_makes_spans_what_is_written() {
+        let source = concat!(
+            "class Widget\n",
+            "  %w[a long_name].each do |name|\n",
+            "    class_eval <<-RUBY\n",
+            "      def #{name}(*args)\n",
+            "        record(:\"#{name}\", args)\n",
+            "      end\n",
+            "    RUBY\n",
+            "  end\n",
+            "end\n",
+        )
+        .as_bytes();
+        let named = |line, col| match at(source, line, col) {
+            Some(Under::Definition(def)) => Some(def.name),
+            Some(Under::Call(call)) => Some(call.name),
+            _ => None,
+        };
+        // `def #{name}` is written over `#{name}`; every expansion's name
+        // ends at its `}`, however long the value it spells.
+        assert!(named(4, 11).is_some(), "on `#{{`");
+        assert!(named(4, 17).is_some(), "on `}}`");
+        assert_eq!(named(4, 18), None, "`(` after `}}`");
+        assert_eq!(named(4, 19), None, "`*`");
+        // `:"#{name}"`'s value is `#{name}`, the `"` after it no name's.
+        assert!(named(5, 18).is_some(), "on `#{{`");
+        assert!(named(5, 24).is_some(), "on `}}`");
+        assert_eq!(named(5, 25), None, "`\"` after `}}`");
+        assert_eq!(named(5, 26), None, "`,`");
     }
 
     #[test]

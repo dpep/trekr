@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **A name a string of code spells from a value ends where its `#{…}`
+  does.** In `class_eval "def #{name}(*args, &block)"` over a list, each
+  method was placed with its own name's length from the `#{`, so the
+  `(`, `*` and `,` after the `}` answered whichever listed method's name
+  reached that far (rails' `CommandRecorder`, `--def` on the `,` gave
+  `create_join_table`). Such a name now spans only what is written, in
+  `--def` and the editor alike; a column past it snaps, and says so.
+
 - **The character before a hash key is not the key.** On the space
   before `name` in `{ name:, size: 1 }`, `--def` answered ":name — a key
   or a value here", as if on a symbol's leading `:`; a key's colon

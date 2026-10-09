@@ -437,6 +437,12 @@ pub(crate) struct Def {
     /// the tree places it where it is written, and only `--dead` asks.
     #[serde(skip)]
     pub(crate) unsettled: Option<Unsettled>,
+    /// How many bytes of the file its name is written over, where a string
+    /// of code spelled it from a value: `#{name}`, not the name it expands
+    /// to. `None` where the name is written as itself. Not stored: a
+    /// position is only ever read against a fresh parse.
+    #[serde(skip)]
+    pub(crate) written: Option<u32>,
     pub(crate) pos: Pos,
     pub(crate) end_line: u32,
 }
@@ -1070,6 +1076,12 @@ pub(crate) struct Call {
     /// it (DEC-093). Untyped when the source does not say what that is.
     #[serde(skip)]
     pub(crate) stands_for: Option<Box<Call>>,
+    /// How many bytes of the file its name is written over, where a string
+    /// of code spelled it from a value: `#{name}`, not the name it expands
+    /// to. `None` where the name is written as itself. Not stored: a
+    /// position is only ever read against a fresh parse.
+    #[serde(skip)]
+    pub(crate) written: Option<u32>,
     /// Positional argument count, or `None` when a splat makes it unknowable.
     pub(crate) argc: Option<u32>,
     pub(crate) block: bool,
@@ -1181,6 +1193,9 @@ impl Call {
     /// call (`h[key]`, `h[key] = v`) is written as its `[`, with the
     /// arguments after it; a unary `-@` or `+@` as its sign alone.
     pub(crate) fn written_len(&self) -> usize {
+        if let Some(written) = self.written {
+            return written as usize;
+        }
         match self.recv {
             RecvShape::Super => "super".len(),
             _ if self.name.starts_with('[') => 1,

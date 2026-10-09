@@ -298,6 +298,9 @@ struct Eval {
     /// bytes are the file's own. A substituted value maps whole to the `#{`
     /// it replaced.
     pieces: Vec<(usize, usize, bool)>,
+    /// Where the last piece ends in the file: each piece's own end is
+    /// where the next begins.
+    end: usize,
 }
 
 impl Eval {
@@ -311,6 +314,28 @@ impl Eval {
             Some((start, origin, true)) => Some(origin + (offset - start)),
             _ => None,
         }
+    }
+
+    /// How many bytes of the file `start..end` of the code is written
+    /// over: a substituted value counts as the `#{…}` it replaced, so a
+    /// name spelled from one spans what is written, not what it spells.
+    fn written_len(&self, start: usize, end: usize) -> usize {
+        let Some(last) = end.checked_sub(1).filter(|last| *last >= start) else {
+            return 0;
+        };
+        let at = self
+            .pieces
+            .partition_point(|(start, _, _)| *start <= last)
+            .saturating_sub(1);
+        let file_end = match self.pieces.get(at) {
+            Some((piece, origin, true)) => origin + (last - piece) + 1,
+            Some((_, _, false)) => self
+                .pieces
+                .get(at + 1)
+                .map_or(self.end, |(_, next, _)| *next),
+            None => return end - start,
+        };
+        file_end.saturating_sub(self.origin(start))
     }
 
     fn origin(&self, offset: usize) -> usize {
@@ -336,7 +361,9 @@ enum Piece {
     Local {
         name: Vec<u8>,
         render: Option<String>,
+        /// Where the `#{…}` is written in the file: `at..end`.
         at: usize,
+        end: usize,
     },
 }
 
@@ -504,6 +531,7 @@ fn schema_defs(table: &crate::schema::Table) -> Vec<Def> {
         .chain(dirty)
         {
             defs.push(Def {
+                written: None,
                 sig_returns: column
                     .class
                     .filter(|_| name == column.name)
@@ -692,6 +720,14 @@ impl<'a> Extractor<'a> {
     fn pos(&self, offset: usize) -> Pos {
         let offset = self.evals.last().map_or(offset, |eval| eval.origin(offset));
         self.lines.pos(offset)
+    }
+
+    /// How many bytes of the file a name at `start..end` is written over,
+    /// where a string of code spelled it from a value (`Def::written`).
+    fn written(&self, start: usize, end: usize) -> Option<u32> {
+        let eval = self.evals.last()?;
+        let written = eval.written_len(start, end);
+        (written != end - start).then_some(written as u32)
     }
 
     fn text(&self, start: usize, end: usize) -> String {
@@ -952,6 +988,7 @@ impl<'a> Extractor<'a> {
     /// A definition with this blob's current nesting and the common defaults.
     fn def(&self, name: String, kind: Kind, start: usize, end: usize) -> Def {
         Def {
+            written: None,
             name,
             kind,
             nesting: self.nesting.clone(),
@@ -1595,6 +1632,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         let name_start = node.name_loc().start_offset();
 
         let mut def = self.def(name.clone(), Kind::Method, name_start, loc.end_offset());
+        def.written = self.written(name_start, node.name_loc().end_offset());
         def.singleton = singleton;
         def.params = params_of(node.parameters());
         let (returns, overloads) =
@@ -5143,6 +5181,7 @@ impl<'pr> Extractor<'_> {
         };
         let argc = argc_of(&arg_nodes(call));
         let pos = self.pos(message.start_offset());
+        let written = self.written(message.start_offset(), message.end_offset());
         let site = self.self_site();
         let (nesting, singleton) = match recv {
             RecvShape::Implicit | RecvShape::SelfRecv => (site.nesting, site.singleton),
@@ -5175,6 +5214,7 @@ impl<'pr> Extractor<'_> {
             block,
             pos,
             stands_for,
+            written,
         });
         self.record_symbol_arguments(call);
         self.record_template(call);
@@ -5245,6 +5285,7 @@ impl<'pr> Extractor<'_> {
             ..Sent::UNTYPED
         };
         let pos = self.pos(at.start_offset());
+        let written = self.written(at.start_offset(), at.end_offset());
         let stands_for = Some(self.sent(name.clone(), each, pos, Some(0), false));
         self.facts.calls.push(Call {
             name,
@@ -5262,12 +5303,14 @@ impl<'pr> Extractor<'_> {
             block: false,
             pos,
             stands_for,
+            written,
         });
     }
 
     /// The call a name stands for, sent where it really goes.
     fn sent(&self, name: String, to: Sent, pos: Pos, argc: Option<u32>, block: bool) -> Box<Call> {
         Box::new(Call {
+            written: None,
             name,
             recv: to.recv,
             recv_text: to.recv_text,
@@ -5357,6 +5400,7 @@ impl<'pr> Extractor<'_> {
         };
         let pos = self.pos(offset);
         self.facts.calls.push(Call {
+            written: None,
             name,
             recv: RecvShape::Super,
             recv_text: None,
@@ -5825,6 +5869,7 @@ impl<'pr> Extractor<'_> {
             return;
         };
         let pos = self.pos(loc.start_offset());
+        let written = self.written(loc.start_offset(), loc.end_offset());
         let stands_for = to.map(|to| self.sent(name.clone(), to, pos, None, false));
         self.facts.calls.push(Call {
             name,
@@ -5843,6 +5888,7 @@ impl<'pr> Extractor<'_> {
             block: false,
             pos,
             stands_for,
+            written,
         });
     }
 }
@@ -6076,6 +6122,7 @@ fn code_pieces(node: &Node<'_>) -> Option<Vec<Piece>> {
             name: read.name().as_slice().to_vec(),
             render,
             at: at.start_offset(),
+            end: at.end_offset(),
         });
     }
     Some(pieces)
@@ -6327,6 +6374,7 @@ fn render(pieces: &[Piece], values: &Values, file: &[u8]) -> Eval {
     let mut eval = Eval {
         src: Vec::new(),
         pieces: Vec::new(),
+        end: 0,
     };
     for piece in pieces {
         let start = eval.src.len();
@@ -6334,9 +6382,16 @@ fn render(pieces: &[Piece], values: &Values, file: &[u8]) -> Eval {
             Piece::Text { start: from, end } => {
                 eval.pieces.push((start, *from, true));
                 eval.src.extend_from_slice(&file[*from..*end]);
+                eval.end = *end;
             }
-            Piece::Local { name, render, at } => {
+            Piece::Local {
+                name,
+                render,
+                at,
+                end,
+            } => {
                 eval.pieces.push((start, *at, false));
+                eval.end = *end;
                 let value = values.of(name);
                 let shown = match render.as_deref() {
                     Some("upcase") => value.to_uppercase(),
