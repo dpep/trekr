@@ -5035,36 +5035,6 @@ fn cmd_def(
             "super  its method's owner is decided at runtime",
         );
     }
-    // A symbol no rule reads as a method's name is a value (`on: :create`,
-    // `status: :ok`). Snapping from one answered, resolved, for whatever
-    // other name was nearest on the line (DEC-343).
-    if let Some(col) = spec.col.map(NonZeroU32::get)
-        && crate::query::position::at_facts(&facts, line, col).is_none()
-        && let Some((name, _, _)) =
-            crate::extract::symbol_literals(&source)
-                .into_iter()
-                .find(|(_, pos, len)| {
-                    pos.line == line
-                        && pos.col.saturating_sub(1) <= col
-                        && col < pos.col + *len as u32
-                })
-    {
-        file_alone(&checkout);
-        return report(
-            out,
-            serde_json::json!({
-                "query": written,
-                "under": "symbol",
-                "name": name,
-                "status": "residue",
-                "confidence": 0.0,
-                "definition": [],
-                "reason": "a symbol no rule reads as a method's name here: a key or a value",
-            }),
-            false,
-            &format!(":{name}  a key or a value here, not a method's name"),
-        );
-    }
     // A variable is not a call, and snapping from one answered for whatever
     // name was nearest on the line.
     if let Some(col) = spec.col.map(NonZeroU32::get)
@@ -5148,6 +5118,36 @@ fn cmd_def(
             ),
         };
         return report(out, answer, resolved, &text);
+    }
+    // A symbol no rule reads as a method's name is a value (`on: :create`,
+    // `status: :ok`). Snapping from one answered, resolved, for whatever
+    // other name was nearest on the line (DEC-343).
+    if let Some(col) = spec.col.map(NonZeroU32::get)
+        && crate::query::position::at_facts(&facts, line, col).is_none()
+        && let Some((name, _, _)) =
+            crate::extract::symbol_literals(&source)
+                .into_iter()
+                .find(|(_, pos, len)| {
+                    pos.line == line
+                        && pos.col.saturating_sub(1) <= col
+                        && col < pos.col + *len as u32
+                })
+    {
+        file_alone(&checkout);
+        return report(
+            out,
+            serde_json::json!({
+                "query": written,
+                "under": "symbol",
+                "name": name,
+                "status": "residue",
+                "confidence": 0.0,
+                "definition": [],
+                "reason": "a symbol no rule reads as a method's name here: a key or a value",
+            }),
+            false,
+            &format!(":{name}  a key or a value here, not a method's name"),
+        );
     }
     let snapped = crate::query::position::at_or_snap(&facts, line, spec.col);
     let Some((under, snapped)) = snapped else {

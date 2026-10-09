@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- **`--def` on shorthand `fields:` answers the local it reads.** Ruby 3.1's
+  `call(fields:)` passes the local `fields`; `--def` there answered "a key
+  or a value here, not a method's name", while the editor opened where
+  `fields` is set. Both answer the local now.
+
 - **`--def` on an interpolated variable in a `def` a string makes answers
   the variable.** On the `n` of `class_eval "def #{n}_x …"`, `--def` and
   `--refs` answered the method the string makes, while the editor answered
