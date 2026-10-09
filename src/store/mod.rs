@@ -27,6 +27,24 @@ use rusqlite::{Connection, OptionalExtension, Result, params};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::Path;
 
+/// Lay down [`schema::LOOSE_BLOB`] where the store lacks it, or lacks its
+/// `recorded_at`: a build before that column wrote the table bare at this
+/// version. A row from then counts as recorded long ago.
+fn loose_blob(conn: &Connection) -> Result<()> {
+    conn.execute_batch(schema::LOOSE_BLOB)?;
+    let dated: bool = conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('loose_blob') WHERE name = 'recorded_at')",
+        [],
+        |r| r.get(0),
+    )?;
+    if !dated {
+        conn.execute_batch(
+            "ALTER TABLE loose_blob ADD COLUMN recorded_at INTEGER NOT NULL DEFAULT 0",
+        )?;
+    }
+    Ok(())
+}
+
 pub(crate) struct Store {
     conn: Connection,
     /// Where this store lives, so a second connection to it can be opened.
@@ -723,7 +741,7 @@ impl Store {
                 tx.prepare("UPDATE file SET blob_id = ?3 WHERE checkout_id = ?1 AND path = ?2")?;
             // A blob a query recorded first is the index's once mapped: kept
             // after it is edited away, as one the index read is (DEC-003).
-            tx.execute_batch(schema::LOOSE_BLOB)?;
+            loose_blob(&tx)?;
             let loose: bool =
                 tx.query_row("SELECT EXISTS(SELECT 1 FROM loose_blob)", [], |r| r.get(0))?;
             let mut adopt = tx.prepare("DELETE FROM loose_blob WHERE blob_id = ?1")?;
@@ -2019,7 +2037,7 @@ impl Store {
             params![checkout_id, relative, blob_id],
         )?;
         // Mapped, so the index's from now on, as in `write`.
-        tx.execute_batch(schema::LOOSE_BLOB)?;
+        loose_blob(&tx)?;
         tx.execute(
             "DELETE FROM loose_blob WHERE blob_id = ?1",
             params![blob_id],
@@ -2075,7 +2093,7 @@ impl Store {
             let tx = self.conn.transaction()?;
             Store::check_schema(&tx)?;
             if let Some(blob_id) = insert_facts(&tx, oid, facts)? {
-                tx.execute_batch(schema::LOOSE_BLOB)?;
+                loose_blob(&tx)?;
                 tx.execute(
                     "INSERT INTO loose_blob (blob_id, recorded_at) VALUES (?1, unixepoch())",
                     params![blob_id],

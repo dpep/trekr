@@ -307,7 +307,8 @@ pub(crate) const TABLES: [&str; 16] = [
 /// because nothing needs them to answer (DEC-300).
 pub(crate) const OPTIONAL: [&str; 2] = ["meta", "loose_blob"];
 
-/// `loose_blob`, for a store at this version laid down without it.
+/// `loose_blob`, for a store at this version laid down without it
+/// (`store::loose_blob`).
 pub(crate) const LOOSE_BLOB: &str = "CREATE TABLE IF NOT EXISTS loose_blob (
   blob_id     INTEGER PRIMARY KEY REFERENCES blob(id) ON DELETE CASCADE,
   recorded_at INTEGER NOT NULL

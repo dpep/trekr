@@ -145,7 +145,7 @@ impl Store {
         // What a query recorded and no index mapped (DEC-035): the edits it
         // read, kept only while a map points at them — and, like a checkout,
         // until the cutoff, but never while the query may be reading it.
-        tx.execute_batch(super::schema::LOOSE_BLOB)?;
+        super::loose_blob(&tx)?;
         tx.execute(
             "INSERT OR IGNORE INTO gc_blob
              SELECT blob_id FROM loose_blob WHERE recorded_at <= MIN(?1, unixepoch() - ?2)",
@@ -390,6 +390,44 @@ mod tests {
             .unwrap();
         let garbage = store.collect(now() - 60, |_| true, false).unwrap();
         assert_eq!(garbage.blobs, 1, "recorded long ago: collected");
+    }
+
+    #[test]
+    fn a_loose_blob_table_an_earlier_build_laid_down_is_brought_up_to_date() {
+        let blob = |src: &str| {
+            (
+                hash_blob(src.as_bytes()),
+                crate::extract::extract(src.as_bytes()),
+            )
+        };
+        // Without the table, and with it but no `recorded_at`.
+        for (shape, recorded_before) in [
+            ("DROP TABLE loose_blob;", 0),
+            (
+                "CREATE TABLE before AS SELECT blob_id FROM loose_blob;
+                 DROP TABLE loose_blob;
+                 CREATE TABLE loose_blob (
+                   blob_id INTEGER PRIMARY KEY REFERENCES blob(id) ON DELETE CASCADE
+                 );
+                 INSERT INTO loose_blob SELECT blob_id FROM before;
+                 DROP TABLE before;",
+                1,
+            ),
+        ] {
+            let mut store = Store::open_in_memory().unwrap();
+            let (old, facts) = blob("class Old\nend\n");
+            store.add_blob(&old, &facts).unwrap();
+            store.conn.execute_batch(shape).unwrap();
+            let (draft, facts) = blob("class Draft\nend\n");
+            store
+                .add_blob(&draft, &facts)
+                .expect("a query records its edit");
+            assert!(store.has_blob(&draft).unwrap());
+            let garbage = store.collect(now() - 60, |_| true, false).unwrap();
+            assert_eq!(garbage.blobs, recorded_before, "{shape}");
+            assert!(store.has_blob(&draft).unwrap(), "just recorded: kept");
+            indexed(&mut store, "/app", "draft.rb", "class Draft\nend\n");
+        }
     }
 
     #[test]
