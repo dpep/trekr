@@ -5039,6 +5039,20 @@ fn a_caret_just_past_a_variable_reads_the_variable() {
             marked,
             "references list what highlight marks at {at}: {refs}"
         );
+        // A variable has no call hierarchy: the operator after it is not
+        // prepared from a caret that reads the variable.
+        let prepared = ask(
+            &mut session,
+            &dir,
+            "textDocument/prepareCallHierarchy",
+            "app.rb",
+            line,
+            character,
+        );
+        assert!(
+            prepared["result"].is_null(),
+            "call hierarchy at {at}: {prepared}"
+        );
     }
     session.stop();
     let _ = fs::remove_dir_all(&dir);

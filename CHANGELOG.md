@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Call hierarchy reads the caret as Go to Definition does.** With the
+  caret just past a variable (`a|+b`, `list|[0]`), definition, hover,
+  highlight and references answered the variable, but call hierarchy
+  prepared the `+` or `[]` call after it. Every request now reads a caret
+  the same way: the variable.
+
 - **`--def` on shorthand `fields:` answers the local it reads.** Ruby 3.1's
   `call(fields:)` passes the local `fields`; `--def` there answered "a key
   or a value here, not a method's name", while the editor opened where

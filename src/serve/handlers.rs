@@ -12,7 +12,7 @@
 //! file belongs to, which the session finds per file rather than assuming the
 //! client's root (DEC-024).
 
-use super::convert::{self, LineIndex, path_to_uri, point, to_pos};
+use super::convert::{self, LineIndex, path_to_uri, point};
 use super::doc::{self, Doc};
 use super::gather;
 use super::require::{self, Found, Origin};
@@ -127,7 +127,8 @@ fn file_of(uri: &Url) -> Option<std::path::PathBuf> {
     Some(std::fs::canonicalize(&path).unwrap_or(path))
 }
 
-/// The checkout and position a resolving request is about.
+/// The checkout a resolving request is about, and the character its caret
+/// reads (DEC-036 addendum).
 fn target(
     session: &mut Session,
     uri: &Url,
@@ -135,8 +136,8 @@ fn target(
 ) -> Option<(Located, crate::core::Pos)> {
     let path = convert::uri_to_path(uri.as_str())?;
     let located = session.locate_query(&path)?;
-    let text = session.document(&located.absolute)?.text.clone();
-    Some((located, to_pos(&text, position)))
+    let at = session.document(&located.absolute)?.reads(position);
+    Some((located, at))
 }
 
 pub(crate) fn definition(
@@ -2254,13 +2255,12 @@ pub(crate) fn prepare_call_hierarchy(
     let Some(path) = file_of(&uri) else {
         return Ok(None);
     };
-    let Some((text, facts)) = session
-        .document(&path)
-        .map(|document| (document.text.clone(), document.facts().clone()))
-    else {
+    let Some((text, facts, pos)) = session.document(&path).map(|document| {
+        let pos = document.reads(position);
+        (document.text.clone(), document.facts().clone(), pos)
+    }) else {
         return Ok(None);
     };
-    let pos = to_pos(&text, position);
     // What Find References asks about here: an example group's member first,
     // which needs the checkout; a method's definition needs only the file.
     let located = session.locate_query(&path);
