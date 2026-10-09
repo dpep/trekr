@@ -4923,8 +4923,7 @@ fn cmd_def(
                     && store.has_checkout(&root.to_string_lossy())?
                 {
                     let tree = build_tree(store, &root.to_string_lossy())?;
-                    let signatures =
-                        crate::resolve::signatures_of_def(&tree, &def.name, &file, def.pos.line);
+                    let signatures = crate::resolve::signatures_of_def(&tree, &def);
                     if !signatures.is_empty() {
                         answer["signatures"] = serde_json::to_value(signatures)?;
                     }

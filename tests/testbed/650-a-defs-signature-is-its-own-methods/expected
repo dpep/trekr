@@ -1,0 +1,9 @@
+# `--def` and Go to Declaration on a method's own `def` found its signature
+# by the line the def is written on, so two defs of a name on one line (or
+# a def moved since the index) took another method's: B#run named A#run's
+# stub. A signature is its method's: the owner, side and name the file
+# writes.
+def lib/w.rb:1:14 status=resolved owner=A signature=sorbet/rbi/w.rbi:3
+def lib/w.rb:1:45 status=resolved owner=B signature=sorbet/rbi/w.rbi:8
+declaration lib/w.rb:1:14 sorbet/rbi/w.rbi:3
+declaration lib/w.rb:1:45 sorbet/rbi/w.rbi:8

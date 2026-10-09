@@ -505,10 +505,7 @@ fn resolve_at(
             };
             let signatures = match (asked, def.kind) {
                 (Asked::Declaration, Kind::Method) => {
-                    let path = located.root.join(&here.path);
-                    let tree = session.tree(&located.root)?;
-                    let path = path.to_string_lossy();
-                    crate::resolve::signatures_of_def(tree, &def.name, &path, here.line)
+                    crate::resolve::signatures_of_def(session.tree(&located.root)?, &def)
                 }
                 _ => Vec::new(),
             };

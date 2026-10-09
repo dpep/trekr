@@ -245,16 +245,16 @@ fn signatures_of(tree: &Tree, name: &str, keys: &[&MethodKey]) -> Vec<MethodSite
     found
 }
 
-/// The signatures of the `def` of `name` written at `path:line`: the method
-/// the tree holds for it, found by where it is written, which the tree
-/// places by absolute path.
-pub(crate) fn signatures_of_def(tree: &Tree, name: &str, path: &str, line: u32) -> Vec<MethodSite> {
-    let at = tree
-        .named(name)
-        .iter()
-        .find(|m| m.site.path == path && m.site.line == line)
-        .map(MethodSite::of);
-    signatures_at(tree, name, at.as_slice())
+/// The signatures of the method a `def` read from a file defines: by the
+/// owner, side and name the file writes, not by where the index last saw
+/// it, which a second def on the line or an edit since moves.
+pub(crate) fn signatures_of_def(tree: &Tree, def: &crate::core::Def) -> Vec<MethodSite> {
+    let key = MethodKey {
+        owner: tree.def_owner(def),
+        singleton: def.singleton,
+        name: def.name.clone(),
+    };
+    signatures_of(tree, &def.name, &[&key])
 }
 
 fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer {

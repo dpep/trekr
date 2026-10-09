@@ -119,9 +119,9 @@ and `--symbols` is about the *symbol* — class, module, method, constant.
 source beside a signature stays the `definition`; the signature is a
 declaration, and it is what the LSP's Go to Declaration answers (Go to
 Definition lists it only when it is all there is). On a method's own `def`
-(`under: definition`) it is the stubs that describe that method, read from
-the index as it stands, so a checkout not yet indexed, or a `def` moved since
-the index, shows none. A constant's `.rbi`
+(`under: definition`) it is the stubs that describe that method — the
+owner, side and name the file writes — read from the index as it stands, so
+a checkout not yet indexed shows none. A constant's `.rbi`
 reopenings stay in its `definition`, listed after its real ones; a residue's
 candidates list a signature of another candidate's method after every
 distinct candidate. A stub that is itself the answer — a gem's method only

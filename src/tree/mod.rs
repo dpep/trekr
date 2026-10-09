@@ -3106,6 +3106,17 @@ impl Tree {
         )
     }
 
+    /// [`Tree::owner_of`] for a definition read from a file rather than the
+    /// store: the owner the tree keys its methods by.
+    pub(crate) fn def_owner(&self, def: &crate::core::Def) -> String {
+        self.owner_in(
+            &def.nesting,
+            def.target.as_deref(),
+            def.singleton,
+            def.via.is_some(),
+        )
+    }
+
     fn owner_in(
         &self,
         nesting: &[String],
