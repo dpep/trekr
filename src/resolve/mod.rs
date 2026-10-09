@@ -129,12 +129,12 @@ pub(crate) struct MethodAnswer {
     /// `definition` on the wire, as in every answer that names where a thing
     /// is defined; always present, empty for a residue (DEC-080).
     #[serde(rename = "definition")]
-    pub(crate) sites: Vec<Site>,
+    pub(crate) sites: Vec<MethodSite>,
     /// Where Sorbet describes the method `sites` names: its `.rbi`
     /// signatures, which are declarations — Go to Declaration's answer, and a
     /// definition only when nothing real defines it (DEC-646).
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub(crate) signatures: Vec<Site>,
+    pub(crate) signatures: Vec<MethodSite>,
     /// What `confidence` counts: assignments that agreed / were considered,
     /// when a rung inferred a type; for a residue, the evidence its first
     /// candidate rests on.
@@ -150,6 +150,45 @@ pub(crate) struct MethodAnswer {
     pub(crate) candidates: Vec<Candidate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) reason: Option<String>,
+}
+
+/// A place an answer points, and the method there: what a signature is
+/// paired with (DEC-646), carried from the lookup rather than found again by
+/// line. On the wire it is the site alone.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct MethodSite {
+    #[serde(flatten)]
+    pub(crate) site: Site,
+    /// `None` where the site is not a method's own: the class a generated
+    /// method stands in for, the `helper_method` that exposes one, a
+    /// `render` handing a local.
+    #[serde(skip)]
+    pub(crate) method: Option<MethodKey>,
+}
+
+/// Which method: one owner's, on one side, by one name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MethodKey {
+    pub(crate) owner: String,
+    pub(crate) singleton: bool,
+    pub(crate) name: String,
+}
+
+impl MethodSite {
+    pub(crate) fn of(method: &crate::tree::MethodDef) -> MethodSite {
+        MethodSite {
+            site: method.site.clone(),
+            method: Some(MethodKey {
+                owner: method.owner.clone(),
+                singleton: method.singleton,
+                name: method.name.clone(),
+            }),
+        }
+    }
+
+    pub(crate) fn bare(site: Site) -> MethodSite {
+        MethodSite { site, method: None }
+    }
 }
 
 /// How many candidates a residue answer offers. Enough to be useful, few
@@ -171,35 +210,46 @@ pub(crate) fn method_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> 
     answer.published()
 }
 
-/// The `.rbi` signatures of the methods defined at `sites`: what their owner
-/// holds by `name`, on the same side, in a Sorbet file. A stub that is the
-/// answer itself is its own signature.
-pub(crate) fn signatures_at(tree: &Tree, name: &str, sites: &[Site]) -> Vec<Site> {
-    if sites.is_empty() {
+/// The `.rbi` signatures of the methods named `name` that `sites` locate:
+/// what their owner holds by that name, on the same side, in a Sorbet file.
+/// A stub that is the answer itself is its own signature.
+pub(crate) fn signatures_at(tree: &Tree, name: &str, sites: &[MethodSite]) -> Vec<MethodSite> {
+    let keys: Vec<&MethodKey> = sites
+        .iter()
+        .filter_map(|site| site.method.as_ref())
+        .filter(|key| key.name == name)
+        .collect();
+    if keys.is_empty() {
         return Vec::new();
     }
     let named = tree.named(name);
-    let mut found: Vec<Site> = Vec::new();
-    for site in sites {
-        let Some(at) = named
-            .iter()
-            .find(|m| m.site.path == site.path && m.site.line == site.line)
-        else {
-            continue;
-        };
+    let mut found: Vec<MethodSite> = Vec::new();
+    for key in keys {
         let described = named
             .iter()
-            .filter(|m| m.site.is_rbi() && m.owner == at.owner && m.singleton == at.singleton);
+            .filter(|m| m.site.is_rbi() && m.owner == key.owner && m.singleton == key.singleton);
         for method in described {
             let seen = found
                 .iter()
-                .any(|s| s.path == method.site.path && s.line == method.site.line);
+                .any(|s| s.site.path == method.site.path && s.site.line == method.site.line);
             if !seen {
-                found.push(method.site.clone());
+                found.push(MethodSite::of(method));
             }
         }
     }
     found
+}
+
+/// The signatures of the `def` of `name` written at `path:line`: the method
+/// the tree holds for it, found by where it is written, which the tree
+/// places by absolute path.
+pub(crate) fn signatures_of_def(tree: &Tree, name: &str, path: &str, line: u32) -> Vec<MethodSite> {
+    let at = tree
+        .named(name)
+        .iter()
+        .find(|m| m.site.path == path && m.site.line == line)
+        .map(MethodSite::of);
+    signatures_at(tree, name, at.as_slice())
 }
 
 fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer {
@@ -238,21 +288,22 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                     // the .rbi, which is where Sorbet would have left them.
                     let generated = found.site.is_dsl_rbi();
                     let sites = if generated {
-                        let real: Vec<Site> = tree
+                        let real: Vec<MethodSite> = tree
                             .sites(&found.owner)
                             .iter()
                             .filter(|site| !site.is_dsl_rbi())
                             .cloned()
+                            .map(MethodSite::bare)
                             .collect();
                         // If the class itself only exists in the RBI there is
                         // nowhere better to point, so keep what we have.
                         if real.is_empty() {
-                            vec![found.site.clone()]
+                            vec![MethodSite::of(&found)]
                         } else {
                             real
                         }
                     } else {
-                        vec![found.site.clone()]
+                        vec![MethodSite::of(&found)]
                     };
                     // A name `helper_method` exposes runs the method Rails
                     // generates at that line, which sends it on (DEC-521).
@@ -260,7 +311,7 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                     if matches!(receiver.via, "view" | "rabl")
                         && let Some(at) = tree.exposed_at(&found.owner, &call.name)
                     {
-                        sites.push(at);
+                        sites.push(MethodSite::bare(at));
                     }
                     let overrides = match receiver.via {
                         "self" => self_overrides(tree, &receiver, &call.name, &found),
@@ -292,7 +343,7 @@ fn call_at(tree: &Tree, facts: &Facts, call: &Call, path: &str) -> MethodAnswer 
                         // The sites are the model's; the generated stub is
                         // where the method is described.
                         signatures: match generated {
-                            true => vec![found.site.clone()],
+                            true => vec![MethodSite::of(&found)],
                             false => Vec::new(),
                         },
                         unresolved_ancestors: Vec::new(),
@@ -475,8 +526,8 @@ pub(crate) fn asked_at(tree: &Tree, call: &Call, answer: &MethodAnswer) -> (Stri
     let landed_on = |singleton: bool, name: &str| {
         answer.owner.as_deref().is_some_and(|owner| {
             tree.lookup(owner, singleton, name).is_some_and(|found| {
-                answer.sites.first().is_some_and(|site| {
-                    site.path == found.site.path && site.line == found.site.line
+                answer.sites.first().is_some_and(|at| {
+                    at.site.path == found.site.path && at.site.line == found.site.line
                 })
             })
         })
@@ -516,7 +567,7 @@ fn local_answer(call: &Call, local: views::PartialLocal) -> MethodAnswer {
         owner: None,
         kind: None,
         defined_via: Some("render".to_string()),
-        sites: local.sites,
+        sites: local.sites.into_iter().map(MethodSite::bare).collect(),
         agreement: None,
         signatures: Vec::new(),
         unresolved_ancestors: Vec::new(),
@@ -662,7 +713,7 @@ fn to_the_model(
         owner: Some(found.owner.clone()),
         kind: Some(found.kind()),
         defined_via: found.declared_via(),
-        sites: vec![found.site.clone()],
+        sites: vec![MethodSite::of(&found)],
         agreement: None,
         signatures: Vec::new(),
         unresolved_ancestors: Vec::new(),
@@ -770,7 +821,7 @@ fn through_delegate(
         owner: Some(found.owner.clone()),
         kind: Some(found.kind()),
         defined_via: found.declared_via(),
-        sites: vec![found.site.clone(), landed.site.clone()],
+        sites: vec![MethodSite::of(&found), MethodSite::of(landed)],
         agreement: agreement(receiver),
         signatures: Vec::new(),
         unresolved_ancestors: Vec::new(),
@@ -848,7 +899,7 @@ pub(super) fn forwarded(
         owner: Some(found.owner.clone()),
         kind: Some(found.kind()),
         defined_via: found.declared_via(),
-        sites: vec![found.site.clone()],
+        sites: vec![MethodSite::of(&found)],
         agreement: agreement(receiver),
         signatures: Vec::new(),
         unresolved_ancestors: Vec::new(),
@@ -1191,22 +1242,30 @@ fn member_answer(tree: &Tree, call: &Call, member: Member<'_>, path: &str) -> Me
     let (owner, kind, defined_via, site) = match &member {
         Member::Here(def) => {
             let kind = Kind::of(def.via.as_deref());
-            let site = Site {
-                path: tree.site_path(path),
-                line: def.pos.line,
-                col: def.pos.col,
-                kind: "method".to_string(),
+            let owner = member.owner();
+            let site = MethodSite {
+                site: Site {
+                    path: tree.site_path(path),
+                    line: def.pos.line,
+                    col: def.pos.col,
+                    kind: "method".to_string(),
+                },
+                method: Some(MethodKey {
+                    owner: owner.clone(),
+                    singleton: def.singleton,
+                    name: def.name.clone(),
+                }),
             };
             let via = (kind == Kind::Declaration)
                 .then(|| def.via.clone())
                 .flatten();
-            (member.owner(), kind, via, site)
+            (owner, kind, via, site)
         }
         Member::Shared(found) => (
             found.owner.clone(),
             found.kind(),
             found.declared_via(),
-            found.site.clone(),
+            MethodSite::of(found),
         ),
     };
     MethodAnswer {
@@ -1335,7 +1394,7 @@ fn object_answer(
         owner: Some(found.owner.clone()),
         kind: Some(found.kind()),
         defined_via: found.declared_via(),
-        sites: vec![found.site.clone()],
+        sites: vec![MethodSite::of(&found)],
         agreement: None,
         signatures: Vec::new(),
         unresolved_ancestors: Vec::new(),
@@ -1384,7 +1443,7 @@ fn via_includers(tree: &Tree, call: &Call, receiver: &Receiver) -> Option<Method
         owner: Some(winner.owner.clone()),
         kind: Some(winner.kind()),
         defined_via: winner.declared_via(),
-        sites: vec![winner.site.clone()],
+        sites: vec![MethodSite::of(winner)],
         // The fraction counts classes that mix the module in, not assignments —
         // `resolved_via` is what says which.
         agreement: Some(format!("{agreeing}/{} includers", includers.len())),
@@ -1643,7 +1702,7 @@ fn super_at(tree: &Tree, call: &Call, path: &str) -> MethodAnswer {
         owner: Some(winner.owner.clone()),
         kind: Some(winner.kind()),
         defined_via: winner.declared_via(),
-        sites: vec![winner.site.clone()],
+        sites: vec![MethodSite::of(winner)],
         agreement: landings
             .via_includers
             .then(|| format!("{agreeing}/{total} includers")),
@@ -2983,7 +3042,7 @@ fn split_receiver(tree: &Tree, call: &Call, path: &str, receiver: Receiver) -> M
         owner: Some(first.owner.clone()),
         kind: Some(first.kind()),
         defined_via: first.declared_via(),
-        sites: vec![first.site.clone()],
+        sites: vec![MethodSite::of(first)],
         agreement: Some(format!("1/{} declarations", variants.len())),
         signatures: Vec::new(),
         unresolved_ancestors: Vec::new(),
@@ -3464,7 +3523,7 @@ mod tests {
         let found = answer(source, "made");
         assert_eq!(found.receiver_type.as_deref(), Some("W"));
         assert_eq!(
-            found.sites[0].line, 2,
+            found.sites[0].site.line, 2,
             "inside `def self.go`, `made` is the class method on line 2"
         );
     }
@@ -3479,7 +3538,7 @@ mod tests {
         let found = answer(source, "setup");
         assert_eq!(found.status, Status::Resolved);
         assert_eq!(
-            found.sites[0].line, 2,
+            found.sites[0].site.line, 2,
             "the class method on line 2, not the instance method on line 5"
         );
     }
@@ -3494,7 +3553,7 @@ mod tests {
             let found = answer(source, name);
             assert_eq!(found.status, Status::Resolved, "{name}");
             assert_eq!(found.owner.as_deref(), Some("Kernel"), "{name}");
-            let path = &found.sites[0].path;
+            let path = &found.sites[0].site.path;
             assert!(
                 crate::tree::is_core(path) && path.ends_with("/Kernel.rb"),
                 "{path}"
@@ -3549,7 +3608,7 @@ mod tests {
         let found = answer(source, "lookup");
         assert_eq!(found.resolved_via.as_deref(), Some("const"));
         assert_eq!(
-            found.sites[0].line, 2,
+            found.sites[0].site.line, 2,
             "the singleton one, not the instance one"
         );
     }
@@ -3730,11 +3789,11 @@ mod tests {
         assert_eq!(found.owner.as_deref(), Some("Widget"));
         assert_eq!(found.resolved_via.as_deref(), Some("rbi_dsl"));
         assert_eq!(
-            found.sites[0].path, "app/models/widget.rb",
+            found.sites[0].site.path, "app/models/widget.rb",
             "the model declares it, even though only the .rbi describes it"
         );
         assert_eq!(
-            found.signatures[0].path, "sorbet/rbi/dsl/widget.rbi",
+            found.signatures[0].site.path, "sorbet/rbi/dsl/widget.rbi",
             "Go to Declaration still reaches the generated signature"
         );
     }

@@ -232,15 +232,22 @@ pub(crate) fn includer_answer(
     if found.is_empty() && mixed.is_empty() {
         return None;
     }
-    let mut sites: Vec<crate::tree::Site> = found
+    let mut sites: Vec<crate::resolve::MethodSite> = found
         .iter()
-        .map(|(path, def)| crate::tree::Site {
-            path: tree.site_path(path),
-            line: def.pos.line,
-            col: def.pos.col,
-            kind: "method".to_string(),
+        .map(|(path, def)| crate::resolve::MethodSite {
+            site: crate::tree::Site {
+                path: tree.site_path(path),
+                line: def.pos.line,
+                col: def.pos.col,
+                kind: "method".to_string(),
+            },
+            method: Some(crate::resolve::MethodKey {
+                owner: Asked { path, def }.owner(),
+                singleton: def.singleton,
+                name: def.name.clone(),
+            }),
         })
-        .chain(mixed.iter().map(|method| method.site.clone()))
+        .chain(mixed.iter().map(crate::resolve::MethodSite::of))
         .collect();
     let groups = sites.len();
     let mut agreement =

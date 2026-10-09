@@ -505,20 +505,17 @@ fn resolve_at(
             };
             let signatures = match (asked, def.kind) {
                 (Asked::Declaration, Kind::Method) => {
-                    // The tree places its methods by absolute path.
-                    let at = crate::tree::Site {
-                        path: located.root.join(&here.path).to_string_lossy().into_owned(),
-                        ..here.clone()
-                    };
+                    let path = located.root.join(&here.path);
                     let tree = session.tree(&located.root)?;
-                    crate::resolve::signatures_at(tree, &def.name, &[at])
+                    let path = path.to_string_lossy();
+                    crate::resolve::signatures_of_def(tree, &def.name, &path, here.line)
                 }
                 _ => Vec::new(),
             };
             let sites = if signatures.is_empty() {
                 vec![here]
             } else {
-                signatures
+                signatures.into_iter().map(|at| at.site).collect()
             };
             sites
                 .into_iter()
@@ -545,16 +542,9 @@ fn resolve_at(
                 let sites = locations::of_one_method(answer.sites, answer.signatures);
                 // One answer may hold several methods — a delegate and the
                 // method it reaches — and a signature is only its own's.
-                let named = session.tree(&located.root)?.named(&call.name);
-                let owner = |site: &crate::tree::Site| {
-                    named
-                        .iter()
-                        .find(|m| m.site.path == site.path && m.site.line == site.line)
-                        .map(|m| (m.owner.clone(), m.singleton))
-                };
-                locations::answering(asked, sites, |site| (owner(site), site))
+                locations::answering(asked, sites, |at| (at.method.clone(), &at.site))
                     .into_iter()
-                    .map(|site| (site.path, site.line, site.col))
+                    .map(|at| (at.site.path, at.site.line, at.site.col))
                     .collect()
             } else {
                 // Residue is not "nothing known": the ranked candidates are an
@@ -904,7 +894,7 @@ fn asked_method(
                     singleton,
                     name,
                 },
-                answer.sites,
+                answer.sites.into_iter().map(|at| at.site).collect(),
             ))
         }
         _ => None,
@@ -1812,16 +1802,15 @@ fn hover_call(
         Status::Resolved | Status::Ambiguous => answer.sites.first().cloned(),
         Status::Residue => None,
     };
-    let Some(site) = site else {
+    let Some(crate::resolve::MethodSite { site, method }) = site else {
         return Ok(Card {
             caveat: Some(residue_words(&answer, name, &named)),
             ..Card::default()
         });
     };
-    let singleton = named
-        .iter()
-        .find(|m| m.site.path == site.path && m.site.line == site.line)
-        .map(|m| m.singleton);
+    let singleton = method
+        .filter(|method| method.name == *name)
+        .map(|method| method.singleton);
     let caveat = match answer.status {
         // Where the call really lands is the delegate; say so (DEC-211).
         _ if answer.resolved_via.as_deref() == Some("delegate") => {
@@ -2297,7 +2286,7 @@ fn callee_item(
     call: &crate::core::Call,
 ) -> Option<CallHierarchyItem> {
     let answer = method_answer(session, located, facts, call).ok()?;
-    let site = answer.sites.first()?;
+    let site = &answer.sites.first()?.site;
     let (name, _) = crate::resolve::asked_at(session.tree(&located.root).ok()?, call, &answer);
     let absolute = absolute_site(&located.root, &site.path)?;
     let text = crate::scan::read_text(&absolute).ok()?;

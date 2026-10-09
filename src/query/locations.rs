@@ -4,6 +4,7 @@
 //! Go to Definition only when nothing real defines the same thing, and Go to
 //! Declaration first.
 
+use crate::resolve::MethodSite;
 use crate::tree::Site;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,13 +44,16 @@ pub(crate) fn answering<T, K: PartialEq>(
 
 /// One method's locations: where it is, then the signatures that describe it
 /// and are not already among them — a stub that is the answer is its own.
-pub(crate) fn of_one_method(sites: Vec<Site>, signatures: Vec<Site>) -> Vec<Site> {
-    let listed = |s: &Site| {
+pub(crate) fn of_one_method(
+    sites: Vec<MethodSite>,
+    signatures: Vec<MethodSite>,
+) -> Vec<MethodSite> {
+    let listed = |s: &MethodSite| {
         sites
             .iter()
-            .any(|at| at.path == s.path && at.line == s.line)
+            .any(|at| at.site.path == s.site.path && at.site.line == s.site.line)
     };
-    let signatures: Vec<Site> = signatures.into_iter().filter(|s| !listed(s)).collect();
+    let signatures: Vec<MethodSite> = signatures.into_iter().filter(|s| !listed(s)).collect();
     sites.into_iter().chain(signatures).collect()
 }
 

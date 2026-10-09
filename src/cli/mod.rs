@@ -5254,13 +5254,8 @@ fn cmd_def(
                     && store.has_checkout(&root.to_string_lossy())?
                 {
                     let tree = build_tree(store, &root.to_string_lossy())?;
-                    let here = crate::tree::Site {
-                        path: file.clone(),
-                        line: def.pos.line,
-                        col: def.pos.col,
-                        kind: def.kind.as_str().to_string(),
-                    };
-                    let signatures = crate::resolve::signatures_at(&tree, &def.name, &[here]);
+                    let signatures =
+                        crate::resolve::signatures_of_def(&tree, &def.name, &file, def.pos.line);
                     if !signatures.is_empty() {
                         answer["signatures"] = serde_json::to_value(signatures)?;
                     }
