@@ -45,8 +45,44 @@ pub(crate) struct Store {
 }
 
 /// What a query reads in place of a checkout's map (`Store::overlay`): each
-/// path at its blob, or absent for `None`.
-pub(crate) type Overlay = Vec<(String, Option<Oid>)>;
+/// path at its blob, or absent for `None`. One entry per path, in path
+/// order, however it was gathered: the same edits are the same overlay in
+/// every process, or none resumes another's copy.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct Overlay(Vec<(String, Option<Oid>)>);
+
+impl Overlay {
+    pub(crate) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub(crate) fn iter(&self) -> std::slice::Iter<'_, (String, Option<Oid>)> {
+        self.0.iter()
+    }
+}
+
+/// Sorted by path; of two entries for one path, the first gathered stays.
+impl FromIterator<(String, Option<Oid>)> for Overlay {
+    fn from_iter<I: IntoIterator<Item = (String, Option<Oid>)>>(files: I) -> Overlay {
+        let mut files: Vec<_> = files.into_iter().collect();
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+        files.dedup_by(|later, first| later.0 == first.0);
+        Overlay(files)
+    }
+}
+
+impl<'a> IntoIterator for &'a Overlay {
+    type Item = &'a (String, Option<Oid>);
+    type IntoIter = std::slice::Iter<'a, (String, Option<Oid>)>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
 
 /// How a write lays a checkout's map down.
 #[derive(Clone, Copy, PartialEq)]

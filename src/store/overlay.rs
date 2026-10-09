@@ -50,8 +50,8 @@ impl Store {
     /// overlay is replaced; empty takes it away. Nothing is written to the
     /// store. Every blob named must be in it already (`add_blob`). Whether
     /// the connection now answers differently than it did.
-    pub(crate) fn overlay(&mut self, root: &str, files: &[(String, Option<Oid>)]) -> Result<bool> {
-        if self.overlaid.get(root).map(|o| o.files.as_slice()) == Some(files) {
+    pub(crate) fn overlay(&mut self, root: &str, files: &Overlay) -> Result<bool> {
+        if self.overlaid.get(root).map(|o| &o.files) == Some(files) {
             return Ok(false);
         }
         if files.is_empty() {
@@ -152,7 +152,7 @@ impl Store {
         self.overlaid.values().any(|o| o.shift.1 != 0)
     }
 
-    fn overlaid_of(&self, root: &str, files: &[(String, Option<Oid>)]) -> Result<Overlaid> {
+    fn overlaid_of(&self, root: &str, files: &Overlay) -> Result<Overlaid> {
         let checkout_id: i64 = self.conn.query_row(
             "SELECT id FROM checkout WHERE root = ?1",
             params![root],
@@ -191,7 +191,7 @@ impl Store {
         Ok(Overlaid {
             checkout_id,
             shift,
-            files: files.to_vec(),
+            files: files.clone(),
             rows,
         })
     }
@@ -511,7 +511,7 @@ mod tests {
     #[test]
     fn an_overlay_is_copied_once_and_attached_after() {
         let (dir, mut store, oid) = store("once");
-        let edit = [("widget.rb".to_string(), Some(oid))];
+        let edit = Overlay::from_iter([("widget.rb".to_string(), Some(oid))]);
         assert!(!fresh(&store));
         assert!(store.overlay(ROOT, &edit).unwrap());
         assert!(fresh(&store));
@@ -540,7 +540,7 @@ mod tests {
         );
 
         // Taken away, the map answers again, and nothing is left to resume.
-        assert!(store.overlay(ROOT, &[]).unwrap());
+        assert!(store.overlay(ROOT, &Overlay::default()).unwrap());
         assert!(!fresh(&store));
         assert!(copies(&store).is_empty());
         let _ = std::fs::remove_dir_all(dir);
@@ -552,7 +552,10 @@ mod tests {
     fn a_resumed_overlay_answers_only_while_the_store_has_not_moved() {
         let (dir, mut store, oid) = store("resume");
         store
-            .overlay(ROOT, &[("widget.rb".to_string(), Some(oid))])
+            .overlay(
+                ROOT,
+                &Overlay::from_iter([("widget.rb".to_string(), Some(oid))]),
+            )
             .unwrap();
         let path = store.path().unwrap().to_path_buf();
         drop(store);
@@ -581,7 +584,10 @@ mod tests {
     fn a_copy_is_keyed_by_the_map_it_holds() {
         let (dir, mut store, oid) = store("keyed");
         let overlaid = store
-            .overlaid_of(ROOT, &[("widget.rb".to_string(), Some(oid))])
+            .overlaid_of(
+                ROOT,
+                &Overlay::from_iter([("widget.rb".to_string(), Some(oid))]),
+            )
             .unwrap();
         store.overlaid.insert(ROOT.to_string(), overlaid);
         let asked = store.overlay_key().unwrap();
@@ -605,7 +611,7 @@ mod tests {
     fn a_copy_beside_a_non_ascii_store_is_attached_not_rewritten() {
         use std::os::unix::fs::MetadataExt;
         let (dir, mut store, oid) = store("caf\u{e9} d%r");
-        let edit = [("widget.rb".to_string(), Some(oid))];
+        let edit = Overlay::from_iter([("widget.rb".to_string(), Some(oid))]);
         assert!(store.overlay(ROOT, &edit).unwrap());
         let made = copies(&store);
         assert_eq!(made.len(), 1, "{made:?}");
@@ -621,6 +627,27 @@ mod tests {
             "attached, not rewritten"
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Gathered from a `HashMap`, the same edits come in any order; as an
+    /// overlay they are one, or no process resumes another's copy.
+    #[test]
+    fn an_overlay_is_the_same_in_any_order_it_was_gathered() {
+        let oid = |s: &str| Some(Oid(s.to_string()));
+        let one = Overlay::from_iter([
+            ("b.rb".to_string(), None),
+            ("a.rb".to_string(), oid("1")),
+            ("c.rb".to_string(), None),
+        ]);
+        let other = Overlay::from_iter([
+            ("c.rb".to_string(), None),
+            ("b.rb".to_string(), None),
+            ("a.rb".to_string(), oid("1")),
+            ("a.rb".to_string(), oid("2")),
+        ]);
+        assert_eq!(one, other, "sorted, one entry per path, the first kept");
+        let paths: Vec<&str> = one.iter().map(|(path, _)| path.as_str()).collect();
+        assert_eq!(paths, ["a.rb", "b.rb", "c.rb"]);
     }
 
     #[test]
@@ -646,14 +673,17 @@ mod tests {
             .unwrap();
         assert!(
             store
-                .overlay(ROOT, &[("widget.rb".to_string(), Some(oid))])
+                .overlay(
+                    ROOT,
+                    &Overlay::from_iter([("widget.rb".to_string(), Some(oid))])
+                )
                 .unwrap()
         );
         assert!(fresh(&store));
         assert!(!store.resume(ROOT).unwrap());
         assert!(
             store
-                .overlay(ROOT, &[("widget.rb".to_string(), None)])
+                .overlay(ROOT, &Overlay::from_iter([("widget.rb".to_string(), None)]))
                 .unwrap()
         );
         assert!(

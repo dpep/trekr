@@ -453,7 +453,10 @@ mod tests {
             .add_blob(&oid, &crate::extract::extract(gadget.as_bytes()))
             .unwrap();
         store
-            .overlay(ROOT, &[("gadget.rb".to_string(), Some(oid))])
+            .overlay(
+                ROOT,
+                &crate::store::Overlay::from_iter([("gadget.rb".to_string(), Some(oid))]),
+            )
             .unwrap();
         let tree = Tree::build(&store, ROOT).unwrap();
         assert!(tree.is_known("Gadget"), "answers from the overlay");

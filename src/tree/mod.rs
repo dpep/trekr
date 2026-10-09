@@ -2429,7 +2429,10 @@ mod tests {
             .add_blob(&oid, &crate::extract::extract(after.as_bytes()))
             .unwrap();
         store
-            .overlay("/repo", &[("widget.rb".to_string(), Some(oid))])
+            .overlay(
+                "/repo",
+                &crate::store::Overlay::from_iter([("widget.rb".to_string(), Some(oid))]),
+            )
             .unwrap();
         let tree = Tree::build(&store, "/repo").unwrap();
         let loader = tree.loader.as_ref().unwrap();

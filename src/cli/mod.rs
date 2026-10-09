@@ -4620,8 +4620,8 @@ type Probe = scan::Probe<Option<Compared>>;
 struct Compared {
     /// The map as indexed, path → blob oid.
     stored: HashMap<String, String>,
-    /// Every path whose blob differs, and every one gone.
-    changed: crate::store::Overlay,
+    /// Every path whose blob differs, and every one gone, in path order.
+    changed: std::collections::BTreeMap<String, Option<crate::core::Oid>>,
 }
 
 /// The working tree of `root`, begun reading — unless this command has
@@ -4641,7 +4641,7 @@ fn probe(store: &Store, root: &Path) -> Option<Probe> {
             .keys()
             .filter(|path| !now.contains_key(*path))
             .map(|path| (path.clone(), None));
-        let mut changed: crate::store::Overlay = gone.collect();
+        let mut changed: std::collections::BTreeMap<_, _> = gone.collect();
         changed.extend(
             now.into_iter()
                 .filter(|(path, oid)| stored.get(path) != Some(&oid.0))
@@ -4662,16 +4662,17 @@ fn refresh_for_query(
 ) -> (Option<Freshness>, bool) {
     let root_str = root.to_string_lossy();
     let mut found = changes(store, root, queried, probe);
-    let overlay = found.as_ref().map_or(&[][..], |f| f.overlay.as_slice());
+    let none = crate::store::Overlay::default();
+    let overlay = found.as_ref().map_or(&none, |f| &f.overlay);
     match store.overlay(&root_str, overlay) {
         Ok(changed) => (found, changed),
         Err(_) => {
             if let Some(found) = &mut found {
                 found.lag = Some("the edits since the index could not be read".to_string());
                 found.refreshed.clear();
-                found.overlay.clear();
+                found.overlay = Default::default();
             }
-            (found, store.overlay(&root_str, &[]).unwrap_or(true))
+            (found, store.overlay(&root_str, &none).unwrap_or(true))
         }
     }
 }
@@ -4701,7 +4702,10 @@ fn changes(
         }
         Err(why) => {
             lag = Some(why);
-            (store.file_map(&root_str).ok()?, Vec::new())
+            (
+                store.file_map(&root_str).ok()?,
+                std::collections::BTreeMap::new(),
+            )
         }
     };
     // More is an operation on the checkout — a branch switch, a rebase —
@@ -4711,23 +4715,20 @@ fn changes(
             "{} files changed since the index, more than a query reads",
             changed.len()
         ));
-        changed.retain(|(path, _)| Some(path) == queried.as_ref());
+        changed.retain(|path, _| Some(path) == queried.as_ref());
     }
     // The file asked about is read whatever git said: its bytes are the
     // question.
     if let Some(path) = &queried
         && scan::is_indexed(path)
-        && !changed.iter().any(|(changed, _)| changed == path)
+        && !changed.contains_key(path)
         && let Ok(bytes) = scan::read_source(root.join(path))
     {
         let oid = scan::hash_blob(&bytes);
         if stored.get(path) != Some(&oid.0) {
-            changed.push((path.clone(), Some(oid)));
+            changed.insert(path.clone(), Some(oid));
         }
     }
-    // By path: the stored map is a `HashMap`, and the same edits must be the
-    // same overlay in every process, or none resumes another's copy.
-    changed.sort_by(|a, b| a.0.cmp(&b.0));
     let (mut refreshed, mut busy, mut overlay) = (Vec::new(), Vec::new(), Vec::new());
     for (path, oid) in changed {
         let oid = match oid {
@@ -4769,7 +4770,7 @@ fn changes(
         refreshed,
         busy,
         lag,
-        overlay,
+        overlay: overlay.into_iter().collect(),
     })
 }
 
