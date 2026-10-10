@@ -14407,7 +14407,12 @@ the constant is found. Constants on a superclass's singleton class, which
 Ruby's lookup from a subclass's `class << self` reaches, are not.
 `class << obj` for a non-constant `obj` is taken, as before, for the
 enclosing class's singleton class. Across rails, discourse and mastodon
-(450 `class << self` bodies) 18 constants are assigned in one and no class
-or module is opened in one; the 4 calls on such a constant are on values
-(`LOCK.synchronize`), which no build types, so the receiver gap costs
-nothing measured there.
+(450 `class << self` bodies, counted with Prism) 17 constants are assigned
+in one and one class is opened in one: discourse's
+`lib/freedom_patches/translate_accelerator.rb:124`, an empty
+`class MissingTranslation` in `module I18n; class << self`. It defines no
+method, so no owner moves; its two mentions in the body now resolve to it
+alone, as Ruby's lookup does, where they also matched the i18n gem's
+`I18n::MissingTranslation` (0.9.1 hunt #5, #6). The 4 calls on such a
+constant are on values (`LOCK.synchronize`), which no build types, so the
+receiver gap costs nothing measured there.
