@@ -567,6 +567,36 @@ fn a_file_lands_once_a_slow_git_places_it() {
     }
 }
 
+/// Files opened together behind a slow git share one wait for it: each
+/// open waiting its own `ASIDE` in turn held the next request for all of
+/// them, end to end.
+#[test]
+fn files_opened_together_behind_a_slow_git_wait_for_it_once() {
+    const OPENED: usize = 10;
+    let (dir, _db, mut session) = opened_behind_slow_git("admit-many", "3", "");
+    let started = std::time::Instant::now();
+    for n in 0..OPENED {
+        let (name, text) = (format!("more{n}.rb"), format!("class More{n}\nend\n"));
+        fs::write(dir.join(&name), &text).unwrap();
+        session.notify(
+            "textDocument/didOpen",
+            serde_json::json!({"textDocument": {
+                "uri": uri_of(&dir, &name), "languageId": "ruby", "version": 1, "text": text
+            }}),
+        );
+    }
+    finds_fresh(&mut session, &dir);
+    let answered = started.elapsed().as_secs_f64();
+    session.stop();
+    // One `ASIDE` each would be 4 s and more.
+    assert!(
+        answered < 2.0,
+        "{OPENED} opens held the next request {answered:.2} s"
+    );
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(dir.with_extension("slow-git"));
+}
+
 /// A git that never answers leaves the file unwritten and the server
 /// answering, and is given up on — said once, in the log — not waited for
 /// forever: the next save asks again.

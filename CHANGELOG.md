@@ -19,8 +19,9 @@
 - **A file opened behind a slow git is indexed once git answers.** In
   the editor, a new file whose `git ls-files` took over 1 s was left out
   of the index for the session, and each open or save held every request
-  for that second. git is now waited for off the request loop, and the file
-  lands when it answers; a git that has not answered in 10 s is stopped and
+  for that second. git is now asked off the request loop and waited for at
+  most 400 ms, once for files opened together, and the file lands when it
+  answers; a git that has not answered in 10 s is stopped and
   the next save asks again. An ignored file is still never written.
 
 ## 0.9.0 — 2026-10-09

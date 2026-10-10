@@ -706,6 +706,11 @@ impl Admission {
         }
     }
 
+    /// Whether [`Admission::answer`] has had its answer.
+    pub(crate) fn answered(&self) -> bool {
+        self.answer.is_some()
+    }
+
     /// git's answer — [`admits`]'s key, or why there is none to be had —
     /// waiting up to `wait` for it; `None` while git is still out.
     pub(crate) fn answer(

@@ -2274,7 +2274,10 @@ the file past it (0.9.0) traded that for a worse miss: a git answering in
 and lost again — while still stalling the loop 1 s per notification. It is
 now asked on a thread (`scan::Admission`), waited for at most `ASIDE` by the
 open or save that asked, and otherwise kept in DEC-066's retry list, landing
-when git answers. Rejected: running it under the 1 s wait and retrying a
+when git answers. The wait is one for every file whose answer is out, not
+one each: 20 files opened together behind a 2 s git held the next request
+8.2 s, `ASIDE` per open in turn (0.9.1 hunt #3); an open while another
+answer is pending does not wait, since that git is already slow. Rejected: running it under the 1 s wait and retrying a
 fresh probe each time — a git slower than the wait never answers at all.
 Past `ADMIT_WAIT` (10 s) git is taken as hung: stopped, the file left
 unwritten, `refresh_skipped` logged, and the next save asks again rather

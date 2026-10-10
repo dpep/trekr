@@ -296,7 +296,9 @@ impl Indexer {
 
     /// Refresh one saved file now, or keep it for [`Indexer::retry`] if the
     /// index is being written or git has yet to place it. Never waits on the
-    /// lock, and on git at most `wait`, once per file asked about.
+    /// lock, and on git at most `wait`: once per file asked about, and not at
+    /// all while another file's answer is still out, so files opened together
+    /// share one wait rather than queueing one each.
     pub(crate) fn refresh(
         &mut self,
         session: &mut Session,
@@ -311,10 +313,18 @@ impl Indexer {
                 self.deferred.swap_remove(at).admission,
                 std::time::Duration::ZERO,
             ),
+            None if self.asking() => (None, std::time::Duration::ZERO),
             None => (None, wait),
         };
         let refreshed = refresh(session, path, &mut admission, wait);
         self.settle(path.to_path_buf(), admission, refreshed);
+    }
+
+    /// git has yet to answer for some deferred file.
+    fn asking(&self) -> bool {
+        self.deferred
+            .iter()
+            .any(|d| d.admission.as_ref().is_some_and(|a| !a.answered()))
     }
 
     /// Keep, log or drop a refresh by how it ended.
