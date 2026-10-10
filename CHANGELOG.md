@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.1 — 2026-10-09
 
 - **A constant assigned in `class << self` is the singleton class's.**
   `--refs`, `--def`, `--dead`, hover and Go to Definition took it for the
