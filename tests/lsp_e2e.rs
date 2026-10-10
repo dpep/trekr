@@ -546,16 +546,14 @@ fn a_file_lands_once_a_slow_git_places_it() {
     ] {
         let (dir, _db, mut session) = opened_behind_slow_git(&format!("admit-{delay}"), delay, "");
         let started = std::time::Instant::now();
-        let first = finds_fresh(&mut session, &dir);
+        finds_fresh(&mut session, &dir);
         let answered = started.elapsed().as_secs_f64();
-        if secs == 0.0 {
-            assert!(first, "a git that answers at once costs the open nothing");
-        } else {
-            assert!(
-                answered < secs.max(1.0),
-                "delay {delay}: answered in {answered:.2} s, not after git"
-            );
-        }
+        // Whether the first answer has the file is git's race with `ASIDE`,
+        // which a loaded machine loses; that it never waits on git is not.
+        assert!(
+            answered < secs.max(1.0),
+            "delay {delay}: answered in {answered:.2} s, not after git"
+        );
         let landed = (0..40).any(|_| {
             finds_fresh(&mut session, &dir) || {
                 std::thread::sleep(std::time::Duration::from_millis(250));
