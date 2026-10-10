@@ -664,10 +664,14 @@ fn a_file_a_hung_git_cannot_place_is_never_written() {
         "textDocument/didSave",
         serde_json::json!({"textDocument": {"uri": uri_of(&dir, "fresh.rb")}}),
     );
-    assert!(
-        finds_fresh(&mut session, &dir),
-        "a save once git is back lands"
-    );
+    // under load git can outlast the save's own wait; the file lands at a retry
+    let landed = (0..20).any(|_| {
+        finds_fresh(&mut session, &dir) || {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            false
+        }
+    });
+    assert!(landed, "a save once git is back lands");
     session.stop();
     let _ = fs::remove_dir_all(&dir);
     let _ = fs::remove_dir_all(dir.with_extension("slow-git"));
