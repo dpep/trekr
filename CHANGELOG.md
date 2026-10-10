@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.2 — 2026-10-10
 
 - **A new file opened while git is slow for another lands with its open.**
   In the editor, a file git placed at once was written only at the next
