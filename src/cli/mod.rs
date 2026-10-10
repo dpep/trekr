@@ -4400,7 +4400,7 @@ fn cmd_refs_by_name(
         }
     }
 
-    mentions(out, &rows, &query.name, false)
+    mentions(out, &rows, &query.name, "")
 }
 
 /// `--refs` by a constant's whole name, or at a class, module or constant:
@@ -4415,7 +4415,35 @@ fn constant_refs(
     written: Option<&str>,
 ) -> anyhow::Result<ExitCode> {
     let rows = crate::query::refs::constant_mentions(tree, store, root_str, fqn, written)?;
-    mentions(out, &rows, fqn, true)
+    let mut read = " (a whole name, read from the top level)".to_string();
+    if rows.is_empty()
+        && out == Output::Text
+        && let Some(has) = in_a_singleton_class(tree, store, root_str, fqn)?
+    {
+        read.push_str(&format!("; assigned in `class << self`, it is {has}"));
+    }
+    mentions(out, &rows, fqn, &read)
+}
+
+/// The name a constant has when the whole name asked for missed only because
+/// it was assigned in a `class << self` body (DEC-647): `Widget::LIMIT` as
+/// `Widget::singleton_class::LIMIT`, the segment tried before each name.
+fn in_a_singleton_class(
+    tree: &Tree,
+    store: &Store,
+    root_str: &str,
+    fqn: &str,
+) -> anyhow::Result<Option<String>> {
+    let segments: Vec<&str> = fqn.split("::").collect();
+    for at in (1..segments.len()).rev() {
+        let mut named = segments.clone();
+        named.insert(at, crate::core::SINGLETON_CLASS);
+        let named = named.join("::");
+        if !crate::query::refs::constant_mentions(tree, store, root_str, &named, None)?.is_empty() {
+            return Ok(Some(named));
+        }
+    }
+    Ok(None)
 }
 
 /// A constant's whole name as `--refs` was given it: written with `::`, a
@@ -4444,24 +4472,19 @@ fn constant_path(name: &str) -> bool {
             .all(|segment| constant(segment) || segment == crate::core::SINGLETON_CLASS)
 }
 
-/// A name's mentions, one row each, in whichever shape the caller asked for:
-/// a constant's `whole` name, or a bare one.
+/// A name's mentions, one row each, in whichever shape the caller asked for;
+/// a miss says `read`, how the name was read.
 fn mentions(
     out: Output,
     rows: &[crate::store::Ref],
     name: &str,
-    whole: bool,
+    read: &str,
 ) -> anyhow::Result<ExitCode> {
     if emit_rows(out, rows)? {
         return Ok(exit_on(!rows.is_empty()));
     }
     if rows.is_empty() {
         // Asked of an index, so a miss is a no: not a reason to index again.
-        let read = if whole {
-            " (a whole name, read from the top level)"
-        } else {
-            ""
-        };
         println!("no mention of {name} in what trekr indexed{read}");
         return Ok(ExitCode::from(1));
     }

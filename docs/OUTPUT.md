@@ -248,7 +248,8 @@ written in — `singleton_class` in it for a `class << self` body's constants.
 
 A name written with `::` is a constant's whole name — `Admin::Widget`, or
 `::Widget` for a top-level one, `Widget::singleton_class::LIMIT` for one
-assigned in `class << self`: the same rows, but only its definitions and
+assigned in `class << self` (a text miss on `Widget::LIMIT` names it): the
+same rows, but only its definitions and
 the references Ruby's lookup resolves to it through the scopes they are
 written in (`Widget` inside `module Admin`, `Admin::Widget`,
 `::Admin::Widget`). A path through an includer, a subclass or an alias

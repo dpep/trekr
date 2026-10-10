@@ -7,12 +7,13 @@
   class's own, so `Widget::LIMIT` and an instance method's `LIMIT` were
   listed as its references, though Ruby raises NameError on both. It is now
   found only from inside that body, by position or by Ruby's own spelling
-  of its whole name, `--refs Widget::singleton_class::LIMIT`; `--dead`
-  and workspace symbol search name its owner `Widget::singleton_class`. A class opened in that body is
-  named the same way, and so are its methods:
-  `--refs 'Widget::singleton_class::Job#perform'`. A `class << self` method no
-  longer resolves a constant of the class's superclass or includes, which
-  Ruby does not find there either.
+  of its whole name, `--refs Widget::singleton_class::LIMIT`
+  (`--refs Widget::LIMIT` misses, and says the name it has); `--dead` and
+  workspace symbol search name its owner `Widget::singleton_class`. A class
+  opened in that body is named the same way, and so are its methods:
+  `--refs 'Widget::singleton_class::Job#perform'`. A `class << self` method
+  no longer resolves a constant of the class's superclass or includes,
+  which Ruby does not find there either.
 - This changes what an index records (store v65): trekr reindexes once after
   upgrading.
 

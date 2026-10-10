@@ -1081,6 +1081,36 @@ fn refs_disclose_the_receiver_rather_than_guessing_at_it() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A whole name that misses only because its constant was assigned in
+/// `class << self` says the name it has: the pre-0.9.1 spelling found it.
+#[test]
+fn a_whole_name_miss_names_the_singleton_class_constant() {
+    let (dir, db) = scratch("refs-singleton");
+    git(&dir, &["init", "-q"]);
+    fs::write(
+        dir.join("widget.rb"),
+        "class Widget\n  class << self\n    LIMIT = 1\n    class Job\n      \
+         STEP = 2\n    end\n  end\nend\n",
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    trekr(&db, &dir, &["--index"]);
+
+    for (asked, has) in [
+        ("Widget::LIMIT", "Widget::singleton_class::LIMIT"),
+        ("Widget::Job::STEP", "Widget::singleton_class::Job::STEP"),
+    ] {
+        let missed = trekr(&db, &dir, &["--refs", asked]);
+        assert_eq!(missed.status.code(), Some(1), "still a miss: {asked}");
+        let said = stdout(&missed);
+        assert!(said.contains(has), "{asked} names {has}: {said}");
+    }
+    let said = stdout(&trekr(&db, &dir, &["--refs", "Widget::Absent"]));
+    assert!(!said.contains("singleton_class"), "{said}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A repo whose namespace has something to resolve *through*.
 fn nested_repo(dir: &Path) {
     git(dir, &["init", "-q"]);
