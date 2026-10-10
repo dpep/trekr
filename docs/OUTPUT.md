@@ -242,11 +242,13 @@ shared groups' bodies and helper modules read for it (`shared_groups_read`,
 runtime, a macro not read.
 
 A bare `--refs name` lists every mention of the name: each row says what
-sort it is (`role`: `definition`, `call` or `constant`) and the `nesting` it
-is written in.
+sort it is (`role`: `definition`, `call` or `constant`; a definition's
+`kind`: `class`, `module`, `constant` or `method`) and the `nesting` it is
+written in — `singleton_class` in it for a `class << self` body's constants.
 
 A name written with `::` is a constant's whole name — `Admin::Widget`, or
-`::Widget` for a top-level one: the same rows, but only its definitions and
+`::Widget` for a top-level one, `Widget::singleton_class::LIMIT` for one
+assigned in `class << self`: the same rows, but only its definitions and
 the references Ruby's lookup resolves to it through the scopes they are
 written in (`Widget` inside `module Admin`, `Admin::Widget`,
 `::Admin::Widget`). A path through an includer, a subclass or an alias

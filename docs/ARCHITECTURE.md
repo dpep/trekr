@@ -200,6 +200,16 @@ Two things the blob layer cannot know, resolved here:
   and `singleton_class.include(M)` are `extend` edges; `singleton_class.
   prepend(M)` is a `singleton_prepend` edge, which the class-method chain
   walks ahead of the class's own singleton methods.
+- **A singleton class's constants** (DEC-647). A constant, class or module
+  written in `class << self` (or `class << x`) is the singleton class's, so
+  the blob layer nests it, and every constant mention in that body, under a
+  `singleton_class` segment: `Widget::singleton_class::LIMIT`, Ruby's own
+  spelling. The lookup from inside goes out through the class and its
+  enclosing scopes, as Ruby's does, and no further: not the class's
+  ancestors, and never from the class's own body or `Widget::LIMIT`. A
+  method or call written there keeps the class's nesting — it is the
+  class's singleton method — and a scope opened there carries the segment
+  into its whole body.
 - **A hook's mixins** (DEC-102). A mixin sent to the `base` of `def
   self.included(base)` (or `extended`, `prepended`), or written in its
   `base.class_eval` body, has an owner starting `(mixed include)` (or

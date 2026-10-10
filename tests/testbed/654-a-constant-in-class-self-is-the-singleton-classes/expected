@@ -17,3 +17,22 @@ def app.rb:31:14 status=resolved site=app.rb:25
 # `class << item` opens a singleton class too.
 def app.rb:37:17 status=resolved site=app.rb:36
 dead app.rb Gadget=unreferenced
+# From anywhere else Ruby raises NameError: an instance method's `LIMIT`
+# and `Widget::LIMIT` do not see it. It was taken for the class's own.
+def app.rb:16:16 status=residue
+def app.rb:17:17 status=residue
+def app.rb:19:11 status=residue
+refs app.rb:6:7 rows=3 exit=0
+refs app.rb:12:26 rows=3 exit=0
+refs App::Widget::singleton_class::LIMIT rows=3 exit=0
+refs App::Widget::singleton_class::Helper rows=2 exit=0
+hover app.rb:8:19 App::Widget::singleton_class::LIMIT
+definition app.rb:12:26 app.rb:6
+definition app.rb:16:16
+dead app.rb App::Widget::singleton_class::STALE=unreferenced
+# Nor does the body see the class's ancestors' constants: its lookup goes
+# through the singleton class's ancestors.
+def app.rb:29:16 status=residue
+# `class << item`'s constants are its singleton class's too.
+refs app.rb:36:7 rows=2 exit=0
+def app.rb:40:13 status=residue

@@ -14367,3 +14367,44 @@ has no signature at the macro's owner, so its declaration is the macro line.
 Definition — Sorbet's own server does that. The fix then is a client
 setting, as `unresolved` is (DEC-443), not a change to which sort a location
 is.
+
+## DEC-647 — A `class << self` body is a constant scope of its own
+
+**Decided.** Ruby's lexical scope inside `class << x` is the singleton
+class: a constant assigned there lives on it, and a lookup from there
+reads it, then the enclosing class's and modules' own constants, then the
+singleton class's ancestors (`Class`, `Module`, `Object`). trekr took the
+body for the class's own: `--refs` listed `def b = LIMIT` in the class
+body and `W::LIMIT` as references to a `class << self` `LIMIT` (0.9.0
+final re-verify #4), both of which raise NameError. The extractor now
+nests a singleton body's constants — their definitions, every constant
+mention in the body, and any class or module opened there with its whole
+body — under a `singleton_class` segment. Nothing in the tree knows the
+segment: it is a scope like any other, which no written path reaches, and
+whose ancestor rung is empty, so a `class << self` method no longer finds
+the class's superclass's or includes' constants (Ruby raises there too;
+checked against Ruby 3.4).
+
+Methods, calls, mixins and instance variables written directly in the
+body keep the class's nesting: they are the class's singleton side, which
+`singleton` already says, and every owner computation reads the nesting
+that way. The segment reads as Ruby itself would spell the constant,
+`Widget::singleton_class::LIMIT`, so `--refs` takes that whole name.
+
+**Rejected.** The segment in every fact's nesting, with the tree mapping
+an innermost `singleton_class` to its attached class for owners: one rule
+in `Tree::opened`, but some forty readers look at a nesting's first entry
+or its depth (`ClassMethods`, local-member scoping), each a place for the
+segment to be misread.
+
+**Not covered.** A call whose receiver is a constant defined in the body
+(`Helper.build`, `LIMIT.size`) types its receiver from the call's
+nesting, which lacks the segment, so it does not find it; a mention of
+the constant is found. Constants on a superclass's singleton class, which
+Ruby's lookup from a subclass's `class << self` reaches, are not.
+`class << obj` for a non-constant `obj` is taken, as before, for the
+enclosing class's singleton class. Across rails, discourse and mastodon
+(450 `class << self` bodies) 18 constants are assigned in one and no class
+or module is opened in one; the 4 calls on such a constant are on values
+(`LOCK.synchronize`), which no build types, so the receiver gap costs
+nothing measured there.

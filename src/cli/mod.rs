@@ -4427,18 +4427,24 @@ fn constant_refs(
 }
 
 /// A constant's whole name as `--refs` was given it: written with `::`, every
-/// segment a constant. `::Widget` is the top-level one.
+/// segment a constant, or a class's `singleton_class` (Ruby's own spelling of
+/// a `class << self` constant). `::Widget` is the top-level one.
 fn whole_constant_name(query: &crate::resolve::refs::Query) -> Option<&str> {
     if query.owner.is_some() || !query.name.contains("::") {
         return None;
     }
     let name = query.name.strip_prefix("::").unwrap_or(&query.name);
-    name.split("::")
-        .all(|segment| {
-            segment.starts_with(char::is_uppercase)
-                && segment.chars().all(|c| c.is_alphanumeric() || c == '_')
-        })
-        .then_some(name)
+    let constant = |segment: &str| {
+        segment.starts_with(char::is_uppercase)
+            && segment.chars().all(|c| c.is_alphanumeric() || c == '_')
+    };
+    let mut segments: Vec<&str> = name.split("::").collect();
+    let last = segments.pop()?;
+    (constant(last)
+        && segments
+            .into_iter()
+            .all(|segment| constant(segment) || segment == crate::core::SINGLETON_CLASS))
+    .then_some(name)
 }
 
 /// A name's mentions, one row each, in whichever shape the caller asked for:

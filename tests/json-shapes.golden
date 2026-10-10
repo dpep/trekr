@@ -261,7 +261,7 @@
 --refs $.variable: string
 --refs $[]: object
 --refs $[].col: int
---refs $[].kind: string {class,constant,method}
+--refs $[].kind: string {class,constant,method,module}
 --refs $[].line: int
 --refs $[].nesting: array
 --refs $[].nesting[]: string

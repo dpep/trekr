@@ -380,6 +380,12 @@ impl Visibility {
 /// definition, but one that exists only once the method has run.
 pub(crate) const DEFERRED_EVAL: &str = "class_eval in a method";
 
+/// The nesting segment of a singleton class's own constants. Ruby keeps a
+/// constant written in `class << self` on the singleton class, whose name is
+/// no constant: `Widget::singleton_class::LIMIT` is how Ruby itself spells
+/// one, and no constant path a file writes can reach it.
+pub(crate) const SINGLETON_CLASS: &str = "singleton_class";
+
 /// The `via` of a `def` in a block at the top of a file: whatever the block
 /// runs on gets it — `main`'s singleton under `instance_eval` — and only if
 /// the block runs, so it is not taken for Object's (DEC-445).

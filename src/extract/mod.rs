@@ -57,9 +57,14 @@ enum Opens {
 }
 
 struct Frame {
-    /// Did this frame push a name onto the nesting stack? `class << self` does
-    /// not — it renames nothing, it only flips what `def` means.
-    pushed: bool,
+    /// How many names this frame pushed onto the nesting stack. `class <<
+    /// self` pushes none — it renames nothing, it only flips what `def`
+    /// means — and a scope opened inside one pushes
+    /// [`crate::core::SINGLETON_CLASS`] too.
+    pushed: usize,
+    /// Constants written here are a singleton class's: inside `class << x`,
+    /// the `def`s and blocks in it, until a class or module opens.
+    in_singleton_class: bool,
     visibility: Visibility,
     /// Inside `class << self`, or `class << Foo`.
     singleton: bool,
@@ -121,9 +126,10 @@ struct Mixed {
 }
 
 impl Frame {
-    fn new(pushed: bool, opens: Opens) -> Frame {
+    fn new(pushed: usize, opens: Opens, in_singleton_class: bool) -> Frame {
         Frame {
             pushed,
+            in_singleton_class,
             // A class or module body starts public; only the file scope is
             // private (Ruby's rule for top-level `def`).
             visibility: Visibility::Public,
@@ -578,7 +584,8 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         nesting: Vec::new(),
         // The file scope: top-level `def` is private in Ruby.
         frames: vec![Frame {
-            pushed: false,
+            pushed: 0,
+            in_singleton_class: false,
             visibility: Visibility::Private,
             singleton: false,
             // At the top level `self` is `main`, an instance of Object.
@@ -763,11 +770,23 @@ impl<'a> Extractor<'a> {
     }
 
     fn enter(&mut self, name: Option<String>, opens: Opens) {
-        let pushed = name.is_some();
-        if let Some(name) = name {
-            self.nesting.insert(0, name);
-        }
-        self.frames.push(Frame::new(pushed, opens));
+        let in_singleton_class = match (opens, &name) {
+            (Opens::Singleton, _) => true,
+            (_, Some(_)) => false,
+            _ => self.in_singleton_class(),
+        };
+        let pushed = match name {
+            Some(name) => {
+                let outer = self.scope_nesting();
+                let pushed = outer.len() - self.nesting.len() + 1;
+                self.nesting = outer;
+                self.nesting.insert(0, name);
+                pushed
+            }
+            None => 0,
+        };
+        self.frames
+            .push(Frame::new(pushed, opens, in_singleton_class));
         // A frame's `self` is known, whatever block it sits in.
         self.open_blocks.push(None);
     }
@@ -966,11 +985,25 @@ impl<'a> Extractor<'a> {
 
     fn leave(&mut self) {
         self.open_blocks.pop();
-        if let Some(frame) = self.frames.pop()
-            && frame.pushed
-        {
-            self.nesting.remove(0);
+        if let Some(frame) = self.frames.pop() {
+            self.nesting.drain(..frame.pushed);
         }
+    }
+
+    fn in_singleton_class(&self) -> bool {
+        self.frames.last().is_some_and(|f| f.in_singleton_class)
+    }
+
+    /// The nesting a constant written here is defined in and looked up from:
+    /// the singleton class first inside `class << x`, where Ruby's lexical
+    /// scope is that class — `LIMIT = 1` there is no constant of the class
+    /// around it, and the class's own `LIMIT` lookups never see it.
+    fn scope_nesting(&self) -> Vec<String> {
+        let mut nesting = self.nesting.clone();
+        if self.in_singleton_class() {
+            nesting.insert(0, crate::core::SINGLETON_CLASS.to_string());
+        }
+        nesting
     }
 
     fn push_def(&mut self, mut def: Def) {
@@ -1004,7 +1037,10 @@ impl<'a> Extractor<'a> {
             written: None,
             name,
             kind,
-            nesting: self.nesting.clone(),
+            nesting: match kind {
+                Kind::Class | Kind::Module | Kind::Constant => self.scope_nesting(),
+                Kind::Method => self.nesting.clone(),
+            },
             singleton: false,
             visibility: Visibility::Public,
             params: Vec::new(),
@@ -1558,7 +1594,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                 let pos = self.pos(sup.location().start_offset());
                 // The owner is the class being opened, so it is recorded even
                 // though the frame for it does not exist yet.
-                let mut owner = self.nesting.clone();
+                let mut owner = self.scope_nesting();
                 owner.insert(0, name.clone());
                 self.facts.ancestry.push(Ancestry {
                     owner,
@@ -1581,9 +1617,11 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         if let Some(call) = node.superclass().and_then(|sup| sup.as_call_node())
             && let Some(made) = Made::by(&call)
         {
+            let scope = self.scope_nesting();
+            let outer = std::mem::replace(&mut self.nesting, scope);
             self.nesting.insert(0, name.clone());
             self.declare_members(&call, made);
-            self.nesting.remove(0);
+            self.nesting = outer;
         }
 
         // Compact `class Foo::Bar` opens ONE lexical scope, not two: Ruby's
@@ -1796,7 +1834,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             let pos = self.pos(node.location().start_offset());
             self.facts.const_refs.push(ConstRef {
                 name,
-                nesting: self.nesting.clone(),
+                nesting: self.scope_nesting(),
                 pos,
             });
         }
@@ -1809,7 +1847,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             let pos = self.pos(offset);
             self.facts.const_refs.push(ConstRef {
                 name,
-                nesting: self.nesting.clone(),
+                nesting: self.scope_nesting(),
                 pos,
             });
         }
@@ -5481,7 +5519,7 @@ impl<'pr> Extractor<'_> {
             Made::Module => None,
         };
         if let Some(target) = parent {
-            let mut owner = self.nesting.clone();
+            let mut owner = self.scope_nesting();
             owner.insert(0, name.clone());
             self.facts.ancestry.push(Ancestry {
                 owner,
@@ -5491,9 +5529,11 @@ impl<'pr> Extractor<'_> {
             });
         }
 
+        let scope = self.scope_nesting();
+        let outer = std::mem::replace(&mut self.nesting, scope);
         self.nesting.insert(0, name.clone());
         self.declare_members(call, made);
-        self.nesting.remove(0);
+        self.nesting = outer;
 
         // Still an ordinary call, whose receiver and arguments are references.
         self.record_call(call);
@@ -6854,6 +6894,46 @@ mod tests {
             .find(|d| d.name == "another" && d.via.is_some())
             .expect("public :another is its own fact");
         assert_eq!(assertion.visibility, Visibility::Public);
+    }
+
+    /// A `class << x` body is a constant scope of its own: what it defines
+    /// and looks up are nested in `singleton_class`, and so is a scope opened
+    /// in it, while its methods stay the class's.
+    #[test]
+    fn a_singleton_class_body_is_its_own_constant_scope() {
+        let facts = extract(
+            b"class W\n  class << self\n    LIMIT = 1\n    def a = LIMIT\n    \
+              Pair = Struct.new(:x)\n    class Inner < Base\n      def b = 1\n    end\n  \
+              end\n  class << W\n    TAG = 2\n  end\n  def c = LIMIT\nend\n",
+        );
+        let nesting = |name: &str| {
+            let def = facts.defs.iter().find(|d| d.name == name).unwrap();
+            def.nesting.join(" ")
+        };
+        let read_at = |line: u32| {
+            let r = facts
+                .const_refs
+                .iter()
+                .find(|r| r.pos.line == line)
+                .unwrap();
+            r.nesting.join(" ")
+        };
+        let cases = [
+            (nesting("LIMIT"), "singleton_class W"),
+            (nesting("Pair"), "singleton_class W"),
+            (nesting("Inner"), "singleton_class W"),
+            (nesting("b"), "Inner singleton_class W"),
+            (nesting("a"), "W"),
+            (nesting("TAG"), "singleton_class W W"),
+            (read_at(4), "singleton_class W"),
+            (read_at(13), "W"),
+        ];
+        for (got, want) in cases {
+            assert_eq!(got, want);
+        }
+        let inherits = facts.ancestry.iter().find(|a| a.target == "Base").unwrap();
+        assert_eq!(inherits.owner.join(" "), "Inner singleton_class W");
+        assert!(method(&facts, "a").singleton);
     }
 
     #[test]

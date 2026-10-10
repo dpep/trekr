@@ -1,6 +1,6 @@
 # Each testbed input's stored facts, hashed, at the store version below.
 # Regenerate: UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden
-version 64
+version 65
 erb tests/testbed/315-dead-says-what-it-cannot-see/app/views/widgets/index.html.erb fb6993b57ce1afc0
 erb tests/testbed/430-a-view-or-a-script-references-a-constant/app/views/widgets/index.html.erb df75e9ccc30b1507
 erb tests/testbed/520-an-erb-templates-calls-are-call-sites/app/views/widgets/show.html.erb 7d61239ea66915a3
@@ -201,8 +201,8 @@ ruby tests/testbed/086-a-bare-describe-is-sent-from-main/test/gadget_test.rb c16
 ruby tests/testbed/087-a-scope-body-runs-on-the-relation/active_record.rb fb4b851efc56aeec
 ruby tests/testbed/087-a-scope-body-runs-on-the-relation/app.rb 7bfea4ac9fc0f824
 ruby tests/testbed/088-a-literal-list-of-classes-each-takes-the-mixin/app.rb b4538b3f0e458891
-ruby tests/testbed/089-a-mixin-into-a-singleton-class-is-a-class-method/app.rb a529fb059b250f5d
-ruby tests/testbed/090-an-included-hook-mixes-into-its-includer/app.rb 53ed947a8be2b5ab
+ruby tests/testbed/089-a-mixin-into-a-singleton-class-is-a-class-method/app.rb c6a119ddc4732e8b
+ruby tests/testbed/090-an-included-hook-mixes-into-its-includer/app.rb df5338969345fa8a
 ruby tests/testbed/091-a-concerns-included-block-includes-into-the-includer/app.rb 76805263da8c0ec9
 ruby tests/testbed/092-an-on-load-block-reaches-the-hooked-class/app.rb dd856b282ca36de0
 ruby tests/testbed/093-a-self-call-in-a-module-reaches-its-includers-other-modules/app.rb 083aecfb494e4a03
@@ -265,7 +265,7 @@ ruby tests/testbed/220-stdlib-chains-take-their-rbs-returns/ruby/securerandom.rb
 ruby tests/testbed/220-stdlib-chains-take-their-rbs-returns/ruby/set.rb aa46e7e04fb8607c
 ruby tests/testbed/220-stdlib-chains-take-their-rbs-returns/ruby/time.rb f5e296cf48dd8d66
 ruby tests/testbed/220-stdlib-chains-take-their-rbs-returns/ruby/uri.rb 8b31279242f66e1a
-ruby tests/testbed/240-a-singleton-class-opened-by-name-is-the-class/app.rb 78ed3b6abe5dd73b
+ruby tests/testbed/240-a-singleton-class-opened-by-name-is-the-class/app.rb 254f127976d38c06
 ruby tests/testbed/241-a-stdlib-file-left-out-is-still-ruby/app.rb 094c44fc8b7c79b0
 ruby tests/testbed/241-a-stdlib-file-left-out-is-still-ruby/ruby/arm64-darwin/rbconfig.rb cc463c8566791699
 ruby tests/testbed/241-a-stdlib-file-left-out-is-still-ruby/ruby/json.rb a8aa5c01b67bebd8
@@ -332,7 +332,7 @@ ruby tests/testbed/368-a-helper-calls-another-helper-by-name/app/helpers/badges_
 ruby tests/testbed/368-a-helper-calls-another-helper-by-name/app/helpers/labels_helper.rb 90ede492b92ed97c
 ruby tests/testbed/369-a-mailer-action-is-called-on-its-class/app/jobs/invite_job.rb 1a787633984ca696
 ruby tests/testbed/369-a-mailer-action-is-called-on-its-class/app/mailers/invite_mailer.rb 930935560e0b5ae0
-ruby tests/testbed/369-a-mailer-action-is-called-on-its-class/lib/action_mailer/base.rb 357b8cf4b2e7bac7
+ruby tests/testbed/369-a-mailer-action-is-called-on-its-class/lib/action_mailer/base.rb f3b61db948e04902
 ruby tests/testbed/370-methods-listed-at-runtime-are-said/lib/runner.rb 0f0daa0309500860
 ruby tests/testbed/370-methods-listed-at-runtime-are-said/lib/tools.rb b3439b243513c083
 ruby tests/testbed/371-a-thor-command-is-run-by-name/lib/cli/plain.rb d289761eaedc5749
@@ -678,7 +678,7 @@ ruby tests/testbed/653-a-checkout-copy-does-not-hide-the-stdlibs/lib/set.rb eeb9
 ruby tests/testbed/653-a-checkout-copy-does-not-hide-the-stdlibs/ruby/benchmark.rb aca76f9bcddcfca0
 ruby tests/testbed/653-a-checkout-copy-does-not-hide-the-stdlibs/ruby/set.rb f94c1225cbeedad8
 ruby tests/testbed/653-a-checkout-copy-does-not-hide-the-stdlibs/test/benchmark.rb 2cba450d8a8db94a
-ruby tests/testbed/654-a-constant-in-class-self-is-the-singleton-classes/app.rb a02e0019a8491134
+ruby tests/testbed/654-a-constant-in-class-self-is-the-singleton-classes/app.rb b313a81299f83d9a
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28
