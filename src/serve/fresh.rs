@@ -25,6 +25,12 @@ use std::process::{Child, ChildStdin, Command, Stdio};
 /// How often a refresh that met a busy index is tried again.
 const RETRY: std::time::Duration = std::time::Duration::from_millis(250);
 
+/// How long the opens and saves that ask git while another file's answer is
+/// out may wait for it, together: long enough for a git that answers at once
+/// (a few ms on a large checkout), short enough that many files opened
+/// behind a slow one cost a request little.
+const BESIDE: std::time::Duration = std::time::Duration::from_millis(100);
+
 /// How long after an index outwaited another writer's lock it is run again.
 /// The index itself waits for the lock as long as one writer's turn may take
 /// (DEC-139), so this only spaces the attempts; it is never a tight loop.
@@ -123,6 +129,9 @@ pub(crate) struct Indexer {
     /// before the save, so its write will not carry the edit either: these
     /// are retried until they land (DEC-066).
     deferred: Vec<Deferred>,
+    /// How much of `BESIDE` files asked about while another's answer was out
+    /// have waited in vain, since none was.
+    beside: std::time::Duration,
     retried: std::time::Instant,
     jobs: u32,
     /// The store was rebuilt for another schema: no more refreshes.
@@ -205,6 +214,7 @@ impl Indexer {
             progress,
             enabled,
             deferred: Vec::new(),
+            beside: std::time::Duration::ZERO,
             retried: std::time::Instant::now(),
             jobs: 0,
             refused: false,
@@ -296,9 +306,10 @@ impl Indexer {
 
     /// Refresh one saved file now, or keep it for [`Indexer::retry`] if the
     /// index is being written or git has yet to place it. Never waits on the
-    /// lock, and on git at most `wait`: once per file asked about, and not at
-    /// all while another file's answer is still out, so files opened together
-    /// share one wait rather than queueing one each.
+    /// lock, and on git at most `wait`: once per file asked about, and while
+    /// another file's answer is still out, only what is left of `BESIDE`
+    /// among them all, so files opened together behind a slow git do not
+    /// queue one wait each, while one git places at once still lands now.
     pub(crate) fn refresh(
         &mut self,
         session: &mut Session,
@@ -308,15 +319,23 @@ impl Indexer {
         if self.refused {
             return;
         }
+        let asking = self.asking();
+        if !asking {
+            self.beside = std::time::Duration::ZERO;
+        }
         let (mut admission, wait) = match self.deferred.iter().position(|d| d.path == path) {
             Some(at) => (
                 self.deferred.swap_remove(at).admission,
                 std::time::Duration::ZERO,
             ),
-            None if self.asking() => (None, std::time::Duration::ZERO),
+            None if asking => (None, BESIDE.saturating_sub(self.beside)),
             None => (None, wait),
         };
+        let started = std::time::Instant::now();
         let refreshed = refresh(session, path, &mut admission, wait);
+        if asking && matches!(refreshed, Refreshed::Asking) {
+            self.beside += started.elapsed();
+        }
         self.settle(path.to_path_buf(), admission, refreshed);
     }
 

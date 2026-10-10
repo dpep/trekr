@@ -2276,8 +2276,17 @@ now asked on a thread (`scan::Admission`), waited for at most `ASIDE` by the
 open or save that asked, and otherwise kept in DEC-066's retry list, landing
 when git answers. The wait is one for every file whose answer is out, not
 one each: 20 files opened together behind a 2 s git held the next request
-8.2 s, `ASIDE` per open in turn (0.9.1 hunt #3); an open while another
-answer is pending does not wait, since that git is already slow. Rejected: running it under the 1 s wait and retrying a
+8.2 s, `ASIDE` per open in turn (0.9.1 hunt #3). An open while another
+answer is pending waits on what is left of a `BESIDE` (100 ms) budget those
+opens share, spent only by waits that ended unanswered and renewed once
+nothing is pending: 0.9.1 did not wait at all, taking that git as already
+slow, but one slow answer (a cold first `ls-files`) says nothing of the
+next, and a file git placed in a few ms landed a 250 ms retry late, missing
+the request right after its open (0.9.1 re-verify #3). Measured with a git
+slow only for some paths, at load average 13–16: a fast file opened behind
+a slow one lands with its open 16 of 16 times at 100 ms, 14 of 16 at 50 ms;
+10 and 20 opens behind a 3 s git hold the next request 0.52 and 0.55 s
+(0.42 and 0.45 s in 0.9.1). Rejected: running it under the 1 s wait and retrying a
 fresh probe each time — a git slower than the wait never answers at all.
 Past `ADMIT_WAIT` (10 s) git is taken as hung: stopped, the file left
 unwritten, `refresh_skipped` logged, and the next save asks again rather

@@ -1229,8 +1229,10 @@ write only a file the index walk would list (`scan::admits`), under the path
 it lists it by — composed (NFC) on macOS, whatever the name on disk: an ignored copy
 opened in `vendor/` or `tmp/` would otherwise answer for the checkout. git
 is asked on a thread (`scan::Admission`); an open or save waits for it at
-most a request's `ASIDE` (400 ms), and not at all while another file's
-answer is still out, so files opened together share one wait; a slower
+most a request's `ASIDE` (400 ms); while another file's answer is still
+out, the opens and saves that ask share `BESIDE` (100 ms) between them, so
+a git that answers at once still lands with its open while files opened
+together behind a slow one do not queue a wait each; a slower
 answer lands at the next retry. Until git says, the file is not written; past 10 s git is taken as
 hung, stopped, and the log says so (`refresh_skipped`) — the next save asks
 again. A save that meets another

@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- **A new file opened while git is slow for another lands with its open.**
+  In the editor, a file git placed at once was written only at the next
+  retry, a quarter second later, whenever another file's `git ls-files` was
+  still out, so the request right after its open missed it. Opens behind a
+  pending answer now share a 100 ms wait.
+
 ## 0.9.1 — 2026-10-09
 
 - **A constant assigned in `class << self` is the singleton class's.**

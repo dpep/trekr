@@ -441,7 +441,7 @@ fn an_ignored_file_opened_and_saved_stays_out_of_the_index() {
 
 /// A `git` on `PATH` that takes `delay` (a `sleep` argument, or `hang`) to
 /// answer the one call asking about a single file — its `:(literal)`
-/// pathspec — and passes every other through.
+/// pathspec — unless that file is `quick*`, and passes every other through.
 fn slow_git(dir: &Path, delay: &str) -> PathBuf {
     let slow = dir.with_extension("slow-git");
     fs::create_dir_all(&slow).unwrap();
@@ -454,7 +454,7 @@ fn slow_git(dir: &Path, delay: &str) -> PathBuf {
     fs::write(
         &wrapper,
         format!(
-            "#!/bin/sh\ncase \"$*\" in *':(literal)'*) {wait} ;; esac\nexec '{}' \"$@\"\n",
+            "#!/bin/sh\ncase \"$*\" in *':(literal)quick'*) ;; *':(literal)'*) {wait} ;; esac\nexec '{}' \"$@\"\n",
             real.display()
         ),
     )
@@ -477,7 +477,7 @@ fn opened_behind_slow_git(
 ) -> (PathBuf, PathBuf, Session) {
     let (dir, db) = scratch(label);
     git(&dir, &["init", "-q"]);
-    fs::write(dir.join("use.rb"), "Fresh.new\n").unwrap();
+    fs::write(dir.join("use.rb"), "Fresh.new\nQuick.new\n").unwrap();
     fs::write(dir.join(".gitignore"), gitignore).unwrap();
     git(&dir, &["add", "-A"]);
     git(
@@ -520,16 +520,21 @@ fn opened_behind_slow_git(
 /// Where Go to Definition on `use.rb`'s `Fresh` goes: `fresh.rb` once the
 /// file is written, nowhere before.
 fn finds_fresh(session: &mut Session, dir: &Path) -> bool {
+    finds(session, dir, 0, "fresh.rb")
+}
+
+/// Whether Go to Definition on `use.rb`'s `line` reaches `file`.
+fn finds(session: &mut Session, dir: &Path, line: u32, file: &str) -> bool {
     let answer = session.request(
         "textDocument/definition",
         serde_json::json!({
             "textDocument": {"uri": uri_of(dir, "use.rb")},
-            "position": {"line": 0, "character": 1},
+            "position": {"line": line, "character": 1},
         }),
     );
     answer["result"]
         .as_array()
-        .is_some_and(|found| found.iter().any(|l| l["uri"] == uri_of(dir, "fresh.rb")))
+        .is_some_and(|found| found.iter().any(|l| l["uri"] == uri_of(dir, file)))
 }
 
 /// Whether the index walk reads a file the editor opened is git's to say,
@@ -593,6 +598,29 @@ fn files_opened_together_behind_a_slow_git_wait_for_it_once() {
         answered < 2.0,
         "{OPENED} opens held the next request {answered:.2} s"
     );
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(dir.with_extension("slow-git"));
+}
+
+/// A file git places at once lands with its open, though another file's
+/// answer is still out: git being slow for one file says nothing of the next.
+#[test]
+fn a_file_git_places_at_once_lands_beside_a_slow_one() {
+    let (dir, _db, mut session) = opened_behind_slow_git("admit-beside", "3", "");
+    let text = "class Quick\nend\n";
+    fs::write(dir.join("quick.rb"), text).unwrap();
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "quick.rb"), "languageId": "ruby", "version": 1, "text": text
+        }}),
+    );
+    assert!(
+        finds(&mut session, &dir, 1, "quick.rb"),
+        "written by its open"
+    );
+    assert!(!finds_fresh(&mut session, &dir), "the slow one still out");
+    session.stop();
     let _ = fs::remove_dir_all(&dir);
     let _ = fs::remove_dir_all(dir.with_extension("slow-git"));
 }
