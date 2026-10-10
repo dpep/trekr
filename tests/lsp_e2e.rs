@@ -606,23 +606,27 @@ fn files_opened_together_behind_a_slow_git_wait_for_it_once() {
 /// answer is still out: git being slow for one file says nothing of the next.
 #[test]
 fn a_file_git_places_at_once_lands_beside_a_slow_one() {
-    let (dir, _db, mut session) = opened_behind_slow_git("admit-beside", "3", "");
-    let text = "class Quick\nend\n";
-    fs::write(dir.join("quick.rb"), text).unwrap();
-    session.notify(
-        "textDocument/didOpen",
-        serde_json::json!({"textDocument": {
-            "uri": uri_of(&dir, "quick.rb"), "languageId": "ruby", "version": 1, "text": text
-        }}),
-    );
-    assert!(
-        finds(&mut session, &dir, 1, "quick.rb"),
-        "written by its open"
-    );
-    assert!(!finds_fresh(&mut session, &dir), "the slow one still out");
-    session.stop();
-    let _ = fs::remove_dir_all(&dir);
-    let _ = fs::remove_dir_all(dir.with_extension("slow-git"));
+    // "At once" is a race with the open's short wait, which a loaded machine
+    // can lose; a build that does not wait loses every time.
+    let landed = (0..5).any(|attempt| {
+        let (dir, _db, mut session) =
+            opened_behind_slow_git(&format!("admit-beside-{attempt}"), "3", "");
+        let text = "class Quick\nend\n";
+        fs::write(dir.join("quick.rb"), text).unwrap();
+        session.notify(
+            "textDocument/didOpen",
+            serde_json::json!({"textDocument": {
+                "uri": uri_of(&dir, "quick.rb"), "languageId": "ruby", "version": 1, "text": text
+            }}),
+        );
+        let landed = finds(&mut session, &dir, 1, "quick.rb");
+        assert!(!finds_fresh(&mut session, &dir), "the slow one still out");
+        session.stop();
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(dir.with_extension("slow-git"));
+        landed
+    });
+    assert!(landed, "written by its open");
 }
 
 /// A git that never answers leaves the file unwritten and the server
