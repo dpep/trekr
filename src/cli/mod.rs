@@ -4416,13 +4416,41 @@ fn constant_refs(
 ) -> anyhow::Result<ExitCode> {
     let rows = crate::query::refs::constant_mentions(tree, store, root_str, fqn, written)?;
     let mut read = " (a whole name, read from the top level)".to_string();
-    if rows.is_empty()
-        && out == Output::Text
-        && let Some(has) = in_a_singleton_class(tree, store, root_str, fqn)?
-    {
-        read.push_str(&format!("; assigned in `class << self`, it is {has}"));
+    if rows.is_empty() && out == Output::Text {
+        if let Some(has) = in_a_singleton_class(tree, store, root_str, fqn)? {
+            read.push_str(&format!("; assigned in `class << self`, it is {has}"));
+        } else if let Some((has, ancestor)) = found_as(tree, fqn) {
+            read.push_str(&match ancestor {
+                Some((scope, ancestor)) => {
+                    format!("; found through {scope}'s ancestor {ancestor}, it is {has}")
+                }
+                None => format!("; Ruby's lookup reaches it as {has}"),
+            });
+        }
     }
     mentions(out, &rows, fqn, &read)
+}
+
+/// The constant Ruby's lookup reaches for a whole name that names none
+/// itself — `File::NULL` is `IO::NULL` — and, when its scope's ancestor is
+/// why, that scope and ancestor. A mention is listed under the name it
+/// reaches, so the name asked has none.
+fn found_as(tree: &Tree, fqn: &str) -> Option<(String, Option<(String, String)>)> {
+    let has = tree
+        .resolve(&format!("::{fqn}"), &[])
+        .fqn
+        .filter(|has| has != fqn)?;
+    let ancestor =
+        fqn.rsplit_once("::")
+            .zip(has.rsplit_once("::"))
+            .and_then(|((scope, _), (owner, _))| {
+                let ancestors = tree.ancestors(scope);
+                // The chain starts with the scope itself; an alias's is its target's.
+                let mut chain = ancestors.chain.iter().map(|a| public_name(a));
+                (chain.next() == Some(scope) && chain.any(|a| a == owner))
+                    .then(|| (scope.to_string(), owner.to_string()))
+            });
+    Some((has, ancestor))
 }
 
 /// The name a constant has when the whole name asked for missed only because

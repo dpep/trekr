@@ -254,7 +254,10 @@ the references Ruby's lookup resolves to it through the scopes they are
 written in (`Widget` inside `module Admin`, `Admin::Widget`,
 `::Admin::Widget`). A path through an includer, a subclass or an alias
 (`Host::K` for a `K` that `include Mixin` brings, `Child::K`, `Alias::K`
-where `Alias = Admin::Widget`) is not found by name. One the index cannot
+where `Alias = Admin::Widget`) is not found by name: such a mention is
+listed under the name it reaches, and a text miss on the path names that
+one — and the ancestor, when it is one (`File::NULL`: "found through
+File's ancestor IO, it is IO::NULL"). One the index cannot
 place whole is named by the longest leading part it can place plus the rest
 as written: `Rack::Utils` inside `module App` is `App::Rack::Utils` once
 `App::Rack` resolves, and `--refs App::Rack::Utils` lists it. One it cannot

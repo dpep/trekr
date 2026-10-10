@@ -13,6 +13,12 @@
   the stdlib as surely as an installed gem's, so it is now resolved. A copy
   in the checkout's own `lib/`, `test/` or `spec/` is still listed beside
   the stdlib's, since those are only guessed to be on the load path.
+- **A `--refs` miss on a name reached through an ancestor says where it
+  is.** `--refs File::NULL` read as if nothing defined it; the mentions are
+  listed under `IO::NULL`, where Ruby finds it through `File < IO`. The
+  miss now adds "found through File's ancestor IO, it is IO::NULL" (or,
+  through an alias, the name Ruby's lookup reaches). Which rows are found
+  is unchanged.
 
 ## 0.9.1 — 2026-10-09
 

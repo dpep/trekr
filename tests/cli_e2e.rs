@@ -1111,6 +1111,46 @@ fn a_whole_name_miss_names_the_singleton_class_constant() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A whole name Ruby finds through an ancestor of its scope misses by name
+/// (the mentions are the ancestor's constant's), and says where it is
+/// rather than reading as a name nothing defines.
+#[test]
+fn a_whole_name_miss_names_the_ancestor_ruby_finds_it_on() {
+    let (dir, db) = scratch("refs-ancestor");
+    git(&dir, &["init", "-q"]);
+    fs::write(
+        dir.join("widget.rb"),
+        "class Base\n  LIMIT = 1\nend\nclass Sub < Base\nend\n\
+         module Mixin\n  SIZE = 2\nend\nclass Host\n  include Mixin\nend\n\
+         Twin = Base\n\
+         Sub::LIMIT\nHost::SIZE\nTwin::LIMIT\n",
+    )
+    .unwrap();
+    git(&dir, &["add", "-A"]);
+    trekr(&db, &dir, &["--index"]);
+
+    for (asked, says) in [
+        ("Sub::LIMIT", ["ancestor Base", "Base::LIMIT"]),
+        ("Host::SIZE", ["ancestor Mixin", "Mixin::SIZE"]),
+    ] {
+        let missed = trekr(&db, &dir, &["--refs", asked]);
+        assert_eq!(missed.status.code(), Some(1), "still a miss: {asked}");
+        let said = stdout(&missed);
+        for says in says {
+            assert!(said.contains(says), "{asked} says {says}: {said}");
+        }
+    }
+    let said = stdout(&trekr(&db, &dir, &["--refs", "Twin::LIMIT"]));
+    assert!(
+        said.contains("Base::LIMIT") && !said.contains("ancestor"),
+        "an alias is no ancestor: {said}"
+    );
+    let said = stdout(&trekr(&db, &dir, &["--refs", "Sub::Absent"]));
+    assert!(!said.contains("Base"), "{said}");
+
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A repo whose namespace has something to resolve *through*.
 fn nested_repo(dir: &Path) {
     git(dir, &["init", "-q"]);
