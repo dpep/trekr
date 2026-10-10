@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.3 — 2026-10-10
 
 - **`Box::OBJC` no longer finds a constant written in `class Object`.**
   Ruby (since 2.5) raises NameError when a scoped lookup reaches a constant
