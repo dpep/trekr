@@ -7,6 +7,12 @@
   retry, a quarter second later, whenever another file's `git ls-files` was
   still out, so the request right after its open missed it. Opens behind a
   pending answer now share a 100 ms wait.
+- **A path gem's copy of a stdlib file answers alone.** `require "json"`
+  where a Bundler `path:` gem has its own `lib/json.rb` answered that copy
+  and the stdlib's, ambiguous; Bundler puts a path gem's `lib/` ahead of
+  the stdlib as surely as an installed gem's, so it is now resolved. A copy
+  in the checkout's own `lib/`, `test/` or `spec/` is still listed beside
+  the stdlib's, since those are only guessed to be on the load path.
 
 ## 0.9.1 — 2026-10-09
 

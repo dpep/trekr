@@ -242,6 +242,9 @@ fn span_of(node: &Node<'_>) -> Range<usize> {
 pub(crate) enum Origin {
     /// The checkout's own code, or a path relative to the requiring file.
     Checkout,
+    /// A path gem's `lib/`: the checkout's code too, but on the load path
+    /// for certain, as Bundler puts it there ahead of the stdlib.
+    PathGem,
     /// A gem, by its root (`…/gems/name-version`).
     Gem(PathBuf),
     /// Ruby's standard library, by its directory (`…/lib/ruby/3.4.0`).
@@ -334,10 +337,12 @@ pub(crate) fn resolve(
     let mut found: Vec<Found> = Vec::new();
     for dir in cx.load_path.for_file(cx.file) {
         // The stdlib is last on `$LOAD_PATH` whoever sets the rest up, so a
-        // gem's `json.rb` shadows its copy for certain. A checkout dir's does
-        // not: that dir is only guessed to be on the path.
+        // gem's or path gem's `json.rb` shadows its copy for certain. A
+        // checkout dir's does not: that dir is only guessed to be on the path.
         if matches!(dir.origin, Origin::Stdlib(_))
-            && found.iter().any(|hit| matches!(hit.origin, Origin::Gem(_)))
+            && found
+                .iter()
+                .any(|hit| matches!(hit.origin, Origin::Gem(_) | Origin::PathGem))
         {
             break;
         }
@@ -477,19 +482,24 @@ impl LoadPath {
         stdlib: Option<&str>,
     ) -> LoadPath {
         let mut dirs = Vec::new();
-        let mut checkout = |path: PathBuf| {
-            if path.is_dir() && !dirs.iter().any(|d: &Dir| d.path == path) {
-                dirs.push(Dir {
-                    path,
-                    origin: Origin::Checkout,
-                    names: None,
-                });
-            }
+        // A directory met twice keeps its first place, and the surer origin.
+        let mut checkout = |path: PathBuf, origin: Origin| match dirs
+            .iter_mut()
+            .find(|d: &&mut Dir| d.path == path)
+        {
+            Some(seen) if origin == Origin::PathGem => seen.origin = origin,
+            Some(_) => {}
+            None if path.is_dir() => dirs.push(Dir {
+                path,
+                origin,
+                names: None,
+            }),
+            None => {}
         };
         // `lib` by convention; `spec` and `test` because rspec-core and
         // `rails test` add them, which is what `require "rails_helper"` needs.
         for conventional in ["lib", "spec", "test"] {
-            checkout(root.join(conventional));
+            checkout(root.join(conventional), Origin::Checkout);
         }
         // A path gem's code is in the checkout, and on the load path.
         let mut own = Vec::new();
@@ -511,7 +521,14 @@ impl LoadPath {
                         own.push((gem.to_path_buf(), tests));
                     }
                 }
-                checkout(lib);
+                // Bundler loads a path gem from its gemspec; a remote's own
+                // `lib/` without one is no gem's.
+                let origin = if lib.parent().is_some_and(holds_gemspec) {
+                    Origin::PathGem
+                } else {
+                    Origin::Checkout
+                };
+                checkout(lib, origin);
             }
         }
         let gem_roots: Vec<&String> = gem_roots
@@ -560,6 +577,15 @@ impl LoadPath {
             .map_or(&[][..], |(_, dirs)| dirs.as_slice());
         own.iter().chain(&self.dirs)
     }
+}
+
+/// Whether `dir` holds a `.gemspec`.
+fn holds_gemspec(dir: &Path) -> bool {
+    std::fs::read_dir(dir).is_ok_and(|entries| {
+        entries
+            .flatten()
+            .any(|entry| Path::new(&entry.file_name()).extension() == Some("gemspec".as_ref()))
+    })
 }
 
 /// A directory with its entries listed, or `None` when it cannot be read.
@@ -869,11 +895,16 @@ mod tests {
 
     #[test]
     fn the_stdlib_is_read_only_when_no_gem_before_it_has_the_file() {
-        let (app, gem, stdlib) = (
+        let (app, kit, gem, stdlib) = (
             "/app/lib/json.rb",
+            "/app/engines/kit/lib/json.rb",
             "/gems/shelf-1.0/lib/json.rb",
             "/ruby/lib/ruby/3.4.0/json.rb",
         );
+        let mut load_path = standard();
+        load_path
+            .dirs
+            .insert(1, dir("/app/engines/kit/lib", Origin::PathGem, None));
         for (on_disk, expected, why) in [
             (&[gem, stdlib][..], &[gem][..], "the gem's copy"),
             (&[stdlib], &[stdlib], "nothing else has it"),
@@ -889,10 +920,17 @@ mod tests {
                 &[app, gem],
                 "a gem's copy still hides it",
             ),
+            // Bundler puts a path gem's lib on the path as surely as a gem's.
+            (&[kit, stdlib], &[kit], "a path gem's copy"),
+            (
+                &[app, kit, stdlib],
+                &[app, kit],
+                "a path gem's behind the app's",
+            ),
         ] {
             let got = files(resolve_in(
                 &require(Verb::Require, "json"),
-                &standard(),
+                &load_path,
                 on_disk,
             ));
             assert_eq!(got, expected, "{why}");
@@ -1051,6 +1089,53 @@ mod tests {
             ["gadget/test/cases/helper.rb"]
         );
         assert!(helper("tools/c.rb").is_empty(), "no gem's tests for others");
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn a_path_gems_lib_is_one_bundler_names_by_its_gemspec() {
+        let base = std::env::temp_dir().join(format!("trekr-pathgem-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        for dir in ["lib", "test", "kit/lib", "bare/lib", "solo/lib"] {
+            std::fs::create_dir_all(base.join(dir)).unwrap();
+        }
+        std::fs::write(base.join("kit/kit.gemspec"), "").unwrap();
+        std::fs::write(base.join("solo/solo.gemspec"), "").unwrap();
+        std::fs::write(
+            base.join("Gemfile.lock"),
+            "PATH\n  remote: .\n  specs:\n    kit (1.0)\n    bare (1.0)\n\n\
+             PATH\n  remote: solo\n  specs:\n    solo (1.0)\n",
+        )
+        .unwrap();
+        let origins = |base: &Path| -> Vec<(String, Origin)> {
+            LoadPath::for_checkout(base, &[], None)
+                .dirs
+                .into_iter()
+                .map(|d| {
+                    (
+                        d.path.strip_prefix(base).unwrap().display().to_string(),
+                        d.origin,
+                    )
+                })
+                .collect()
+        };
+        assert_eq!(
+            origins(&base),
+            [
+                ("lib".into(), Origin::Checkout),
+                ("test".into(), Origin::Checkout),
+                ("kit/lib".into(), Origin::PathGem),
+                ("bare/lib".into(), Origin::Checkout),
+                ("solo/lib".into(), Origin::PathGem),
+            ],
+            "the remote's lib holds no gem; a dir without a gemspec is a guess"
+        );
+        std::fs::write(base.join("app.gemspec"), "").unwrap();
+        assert_eq!(
+            origins(&base)[0],
+            ("lib".into(), Origin::PathGem),
+            "the checkout is a gem itself"
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 

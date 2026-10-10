@@ -424,7 +424,7 @@ fn found_place(found: &Found, root: Option<&Path>) -> (String, Option<String>) {
             within(dir).unwrap_or_else(|| whole.to_string()),
             Some(format!("Ruby {} standard library", name(dir))),
         ),
-        Origin::Checkout => (
+        Origin::Checkout | Origin::PathGem => (
             root.and_then(within)
                 .unwrap_or_else(|| crate::core::paths::pretty(&whole)),
             None,
