@@ -3763,15 +3763,7 @@ fn check_method_shape(query: &crate::resolve::refs::Query, text: &str) -> anyhow
     let Some(owner) = &query.owner else {
         return Ok(());
     };
-    let constant = |segment: &str| {
-        segment.starts_with(char::is_uppercase)
-            && segment.chars().all(|c| c.is_alphanumeric() || c == '_')
-    };
-    let owner_ok = owner
-        .strip_prefix("::")
-        .unwrap_or(owner)
-        .split("::")
-        .all(constant);
+    let owner_ok = constant_path(owner.strip_prefix("::").unwrap_or(owner));
     let name_ok = !query.name.is_empty()
         && !query
             .name
@@ -4426,25 +4418,30 @@ fn constant_refs(
     mentions(out, &rows, fqn, true)
 }
 
-/// A constant's whole name as `--refs` was given it: written with `::`, every
-/// segment a constant, or a class's `singleton_class` (Ruby's own spelling of
-/// a `class << self` constant). `::Widget` is the top-level one.
+/// A constant's whole name as `--refs` was given it: written with `::`, a
+/// [`constant_path`]. `::Widget` is the top-level one.
 fn whole_constant_name(query: &crate::resolve::refs::Query) -> Option<&str> {
     if query.owner.is_some() || !query.name.contains("::") {
         return None;
     }
     let name = query.name.strip_prefix("::").unwrap_or(&query.name);
+    constant_path(name).then_some(name)
+}
+
+/// `Foo::Bar` as trekr spells a constant: every segment a constant, or a
+/// class's `singleton_class` (Ruby's own spelling of a `class << self`
+/// scope) before the last. A method's owner and a whole constant name are
+/// both one, so whatever `--dead` prints, `--refs` takes back.
+fn constant_path(name: &str) -> bool {
     let constant = |segment: &str| {
         segment.starts_with(char::is_uppercase)
             && segment.chars().all(|c| c.is_alphanumeric() || c == '_')
     };
     let mut segments: Vec<&str> = name.split("::").collect();
-    let last = segments.pop()?;
-    (constant(last)
+    segments.pop().is_some_and(constant)
         && segments
             .into_iter()
-            .all(|segment| constant(segment) || segment == crate::core::SINGLETON_CLASS))
-    .then_some(name)
+            .all(|segment| constant(segment) || segment == crate::core::SINGLETON_CLASS)
 }
 
 /// A name's mentions, one row each, in whichever shape the caller asked for:

@@ -209,7 +209,8 @@ Two things the blob layer cannot know, resolved here:
   ancestors, and never from the class's own body or `Widget::LIMIT`. A
   method or call written there keeps the class's nesting — it is the
   class's singleton method — and a scope opened there carries the segment
-  into its whole body.
+  into its whole body, so its methods' owner is
+  `Widget::singleton_class::Job`, which `--refs` takes as written.
 - **A hook's mixins** (DEC-102). A mixin sent to the `base` of `def
   self.included(base)` (or `extended`, `prepended`), or written in its
   `base.class_eval` body, has an owner starting `(mixed include)` (or

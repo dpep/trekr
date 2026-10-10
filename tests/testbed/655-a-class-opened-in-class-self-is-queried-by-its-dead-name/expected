@@ -1,0 +1,8 @@
+# A class opened in `class << self` is named under `singleton_class`, and
+# `--dead` prints that owner: `--refs` must take it back, as a method's
+# owner as well as a constant's whole name.
+dead app.rb Runner::singleton_class::Job=none
+refs Runner::singleton_class::Job.build status=resolved exit=0
+refs Runner::singleton_class::Job#perform status=resolved exit=0
+refs Runner::singleton_class::Job rows=2 exit=0
+card Runner::singleton_class::Job.build status=resolved

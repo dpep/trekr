@@ -104,3 +104,4 @@
 640-a-struct-class-is-built-by-its-own-new 585872f09e536838
 641-a-components-template-runs-on-the-component efa81e45ebaede7b
 654-a-constant-in-class-self-is-the-singleton-classes 8ab3bdaff85d00f8
+655-a-class-opened-in-class-self-is-queried-by-its-dead-name 516e22ec873f3511

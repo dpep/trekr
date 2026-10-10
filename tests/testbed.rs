@@ -1198,7 +1198,9 @@ fn check_case(
     type Owed = (Vec<String>, Vec<String>);
     let mut placed_defs: Vec<(String, String, Owed)> = Vec::new();
     if expectations.lines().any(|line| line.starts_with("dead ")) {
-        *dead = Some(dead_snapshot(&db, &dir));
+        let snapshot = dead_snapshot(&db, &dir);
+        dead_rows_are_queryable(&db, &dir, label, &snapshot, failures);
+        *dead = Some(snapshot);
     }
 
     for line in expectations.lines() {
@@ -1442,6 +1444,55 @@ fn check_case(
         let _ = fs::remove_dir_all(&dir);
         let _ = fs::remove_dir_all(home_of(&dir));
         let _ = fs::remove_dir_all(db.parent().expect("a store in its own directory"));
+    }
+}
+
+/// Every name `--dead` hands out, `--refs` takes back: a method as
+/// `Owner#name` or `Owner.name` finds its owner, and a constant, class or
+/// module by its whole name finds at least its own definition.
+fn dead_rows_are_queryable(
+    db: &Path,
+    dir: &Path,
+    label: &str,
+    snapshot: &str,
+    failures: &mut Vec<String>,
+) {
+    let answer: serde_json::Value = serde_json::from_str(snapshot).unwrap_or_default();
+    for row in answer["candidates"].as_array().into_iter().flatten() {
+        let (Some(owner), Some(name)) = (row["owner"].as_str(), row["name"].as_str()) else {
+            continue;
+        };
+        // An example group's member has no owner to spell (DEC-490).
+        if owner.is_empty() || row.get("group").is_some() {
+            continue;
+        }
+        let method = row["kind"] == "method";
+        let query = match (method, row["singleton"] == true) {
+            (true, true) => format!("{owner}.{name}"),
+            (true, false) => format!("{owner}#{name}"),
+            (false, _) => format!("{owner}::{name}"),
+        };
+        let out = trekr_in(dir)
+            .args(["--refs", &query, "--json"])
+            .env("TREKR_DB", db)
+            .output()
+            .expect("run trekr");
+        let code = out.status.code().unwrap_or(-1);
+        let got: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap_or_default();
+        let lost = if method {
+            code == 64
+                || got["reason"]
+                    .as_str()
+                    .is_some_and(|r| r.contains("no indexed constant"))
+        } else {
+            code != 0
+        };
+        if lost {
+            failures.push(format!(
+                "{label}: `--dead` lists `{query}`, which `--refs` cannot find (exit {code}): {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
     }
 }
 
