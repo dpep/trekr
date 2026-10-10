@@ -2266,10 +2266,20 @@ read on every click. A file the map lacks is written only when the index walk
 would list it (`scan::admits`, one `git ls-files` asked of that path): opening
 a gitignored `ignored/copy.rb` put its `Widget#size` in the map, and Go to
 Definition answered it for the session (0.9.0 hunt #2). didSave had the same
-gap and takes the same check. That `git ls-files` runs on the serve loop, so
-it is given up on at `PROBE_WAIT`, its process stopped, and the file left
-unwritten (logged `refresh_skipped`): a git behind a 3 s wrapper held the
-next hover for 3.5 s, and a hung one would hold the server.
+gap and takes the same check. That `git ls-files` ran on the serve loop
+with no limit: a git behind a 3 s wrapper held the next hover for 3.5 s, and
+a hung one would hold the server. Bounding it at `PROBE_WAIT` and dropping
+the file past it (0.9.0) traded that for a worse miss: a git answering in
+1.05 s left a new file unwritten for the session — each save paid the 1 s
+and lost again — while still stalling the loop 1 s per notification. It is
+now asked on a thread (`scan::Admission`), waited for at most `ASIDE` by the
+open or save that asked, and otherwise kept in DEC-066's retry list, landing
+when git answers. Rejected: running it under the 1 s wait and retrying a
+fresh probe each time — a git slower than the wait never answers at all.
+Past `ADMIT_WAIT` (10 s) git is taken as hung: stopped, the file left
+unwritten, `refresh_skipped` logged, and the next save asks again rather
+than a hung git being re-asked forever in the background, which would also
+keep the server from ever being idle enough to hot-reload.
 
 ## DEC-040 — Completion is built, reversing PLAN §1 for completion alone
 

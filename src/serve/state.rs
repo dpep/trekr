@@ -99,9 +99,10 @@ struct Next {
 }
 
 /// How long a request waits for something built aside — a partial tree's
-/// successor, completion's member listing — before it answers without it.
-/// A request is answered within a second (DEC-323).
-const ASIDE: std::time::Duration = std::time::Duration::from_millis(400);
+/// successor, completion's member listing, git placing a file the editor
+/// opened — before it answers without it. A request is answered within a
+/// second (DEC-323).
+pub(crate) const ASIDE: std::time::Duration = std::time::Duration::from_millis(400);
 
 /// Members in the making, and the tree state they are being listed from.
 struct Listing {

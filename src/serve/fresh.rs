@@ -40,16 +40,26 @@ enum Refreshed {
     /// Writing would put this build's facts into a store that is not its
     /// format, so it stops until a restart or hot reload replaces it.
     Refused(String),
+    /// git has yet to say whether the index walk reads the file: kept, and
+    /// asked again.
+    Asking,
     /// git could not say whether the index walk reads the file: not
     /// written, and why, for the log.
     Undecided(String),
 }
 
-/// Bring one saved file's facts up to date.
+/// Bring one saved file's facts up to date. A file the store does not map
+/// is written once `admission` — started here when there is none — says the
+/// index walk reads it, waiting up to `wait` for git.
 ///
 /// Unconditional, unlike the CLI's probe-gated refresh: a save is the editor
 /// telling us the file changed, so there is nothing to probe for.
-fn refresh(session: &mut Session, path: &Path) -> Refreshed {
+fn refresh(
+    session: &mut Session,
+    path: &Path,
+    admission: &mut Option<crate::scan::Admission>,
+    wait: std::time::Duration,
+) -> Refreshed {
     let Some(located) = session.locate(path) else {
         return Refreshed::Done;
     };
@@ -67,10 +77,13 @@ fn refresh(session: &mut Session, path: &Path) -> Refreshed {
     {
         located.relative.clone()
     } else {
-        match crate::scan::admits(&located.root, &located.relative) {
-            Ok(Some(key)) => key,
-            Ok(None) => return Refreshed::Done,
-            Err(error) => return Refreshed::Undecided(format!("{error:#}")),
+        let admission = admission
+            .get_or_insert_with(|| crate::scan::Admission::start(&located.root, &located.relative));
+        match admission.answer(wait) {
+            Some(Ok(Some(key))) => key,
+            Some(Ok(None)) => return Refreshed::Done,
+            Some(Err(why)) => return Refreshed::Undecided(why),
+            None => return Refreshed::Asking,
         }
     };
     let Ok(bytes) = crate::scan::read_source(&located.absolute) else {
@@ -105,10 +118,11 @@ pub(crate) struct Indexer {
     progress: bool,
     /// Whether to index at all — a client can turn it off.
     enabled: bool,
-    /// Saved files whose refresh met another process writing the index. An
-    /// index child scanned before the save, so its write will not carry the
-    /// edit either: these are retried until they land (DEC-066).
-    deferred: Vec<PathBuf>,
+    /// Saved files whose refresh met another process writing the index, or
+    /// a git yet to say whether the index reads them. An index child scanned
+    /// before the save, so its write will not carry the edit either: these
+    /// are retried until they land (DEC-066).
+    deferred: Vec<Deferred>,
     retried: std::time::Instant,
     jobs: u32,
     /// The store was rebuilt for another schema: no more refreshes.
@@ -123,6 +137,13 @@ pub(crate) struct Indexer {
     resumed: HashSet<PathBuf>,
     /// Roots whose index outwaited another writer, and when to run it again.
     waiting: Vec<(PathBuf, std::time::Instant)>,
+}
+
+/// A refresh to try again, and git's answer on whether the index reads the
+/// file, once asked.
+struct Deferred {
+    path: PathBuf,
+    admission: Option<crate::scan::Admission>,
 }
 
 /// What background indexing is doing, as of the serve loop's last turn.
@@ -274,18 +295,40 @@ impl Indexer {
     }
 
     /// Refresh one saved file now, or keep it for [`Indexer::retry`] if the
-    /// index is being written. Never waits on the lock.
-    pub(crate) fn refresh(&mut self, session: &mut Session, path: &Path) {
+    /// index is being written or git has yet to place it. Never waits on the
+    /// lock, and on git at most `wait`, once per file asked about.
+    pub(crate) fn refresh(
+        &mut self,
+        session: &mut Session,
+        path: &Path,
+        wait: std::time::Duration,
+    ) {
         if self.refused {
             return;
         }
-        match refresh(session, path) {
-            Refreshed::Busy if !self.deferred.iter().any(|p| p == path) => {
-                self.deferred.push(path.to_path_buf());
-            }
+        let (mut admission, wait) = match self.deferred.iter().position(|d| d.path == path) {
+            Some(at) => (
+                self.deferred.swap_remove(at).admission,
+                std::time::Duration::ZERO,
+            ),
+            None => (None, wait),
+        };
+        let refreshed = refresh(session, path, &mut admission, wait);
+        self.settle(path.to_path_buf(), admission, refreshed);
+    }
+
+    /// Keep, log or drop a refresh by how it ended.
+    fn settle(
+        &mut self,
+        path: PathBuf,
+        admission: Option<crate::scan::Admission>,
+        refreshed: Refreshed,
+    ) {
+        match refreshed {
+            Refreshed::Busy | Refreshed::Asking => self.deferred.push(Deferred { path, admission }),
             Refreshed::Refused(why) => self.refuse(why),
-            Refreshed::Undecided(why) => self.undecided.push((path.to_path_buf(), why)),
-            _ => {}
+            Refreshed::Undecided(why) => self.undecided.push((path, why)),
+            Refreshed::Done => {}
         }
     }
 
@@ -310,23 +353,16 @@ impl Indexer {
             return;
         }
         self.retried = std::time::Instant::now();
-        let mut refused = None;
-        let mut undecided = Vec::new();
-        self.deferred.retain(|path| match refresh(session, path) {
-            Refreshed::Busy => true,
-            Refreshed::Refused(why) => {
-                refused = Some(why);
-                false
+        for Deferred {
+            path,
+            mut admission,
+        } in std::mem::take(&mut self.deferred)
+        {
+            if self.refused {
+                break;
             }
-            Refreshed::Undecided(why) => {
-                undecided.push((path.clone(), why));
-                false
-            }
-            Refreshed::Done => false,
-        });
-        self.undecided.extend(undecided);
-        if let Some(why) = refused {
-            self.refuse(why);
+            let refreshed = refresh(session, &path, &mut admission, std::time::Duration::ZERO);
+            self.settle(path, admission, refreshed);
         }
     }
 

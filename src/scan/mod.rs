@@ -637,9 +637,8 @@ fn scan_in(root: &Path, gits: Option<&Gits>) -> Result<Files> {
 /// The key [`scan`] lists `relative` under, if it does, asked of one file:
 /// indexed by name, tracked or untracked and not ignored, and the schema
 /// dump its app reads. git's spelling, which on macOS is composed (NFC)
-/// however the name is written on disk. An error when git could not say
-/// within [`PROBE_WAIT`].
-pub(crate) fn admits(root: &Path, relative: &str) -> Result<Option<String>> {
+/// however the name is written on disk.
+fn admits(root: &Path, relative: &str, gits: Option<&Gits>) -> Result<Option<String>> {
     if !is_indexed(relative) {
         return Ok(None);
     }
@@ -653,7 +652,7 @@ pub(crate) fn admits(root: &Path, relative: &str) -> Result<Option<String>> {
         "--",
         &pathspec,
     ];
-    let out = git_within(root, &args, PROBE_WAIT)?;
+    let out = git_in(root, &args, gits)?;
     // A literal pathspec names this file alone, though git may spell it
     // otherwise; a directory's entries are not it.
     let inside = format!("{relative}/");
@@ -671,34 +670,64 @@ pub(crate) fn admits(root: &Path, relative: &str) -> Result<Option<String>> {
     Ok(schema_dumps(root, app).contains(&key).then_some(key))
 }
 
-/// [`git`], given up on past `wait`: stopped, as a [`Probe`]'s gits are.
-fn git_within(root: &Path, args: &[&str], wait: std::time::Duration) -> Result<Vec<u8>> {
-    use std::sync::mpsc::RecvTimeoutError;
-    let gits = std::sync::Arc::new(Gits::default());
-    let (send, got) = std::sync::mpsc::channel();
-    let running = gits.clone();
-    let (dir, owned): (PathBuf, Vec<String>) = (
-        root.to_path_buf(),
-        args.iter().map(|a| a.to_string()).collect(),
-    );
-    std::thread::spawn(move || {
-        let args: Vec<&str> = owned.iter().map(String::as_str).collect();
-        drop(send.send(git_in(&dir, &args, Some(&running))));
-    });
-    match got.recv_timeout(wait) {
-        Ok(out) => out,
-        Err(RecvTimeoutError::Timeout) => {
-            gits.stop();
-            Err(GitError::failed(format!(
-                "git {} took longer than {} s",
-                args.join(" "),
-                wait.as_secs()
-            ))
-            .into())
+/// How long git is given to say whether the index walk reads one file before
+/// it is taken as hung. Waited for off the serve loop, so it can be long.
+const ADMIT_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// [`admits`], asked on a thread so the serve loop waits for git no longer
+/// than it chooses and takes the answer whenever it comes. Past
+/// [`ADMIT_WAIT`], or dropped unanswered, its git is stopped, as a
+/// [`Probe`]'s are.
+pub(crate) struct Admission {
+    started: std::time::Instant,
+    found: std::sync::mpsc::Receiver<Result<Option<String>>>,
+    gits: std::sync::Arc<Gits>,
+    answer: Option<std::result::Result<Option<String>, String>>,
+}
+
+impl Drop for Admission {
+    fn drop(&mut self) {
+        self.gits.stop();
+    }
+}
+
+impl Admission {
+    pub(crate) fn start(root: &Path, relative: &str) -> Admission {
+        let (send, found) = std::sync::mpsc::channel();
+        let gits = std::sync::Arc::new(Gits::default());
+        let running = gits.clone();
+        let (root, relative) = (root.to_path_buf(), relative.to_string());
+        std::thread::spawn(move || drop(send.send(admits(&root, &relative, Some(&running)))));
+        Admission {
+            started: std::time::Instant::now(),
+            found,
+            gits,
+            answer: None,
         }
-        Err(RecvTimeoutError::Disconnected) => {
-            Err(GitError::failed(format!("git {} did not answer", args.join(" "))).into())
+    }
+
+    /// git's answer — [`admits`]'s key, or why there is none to be had —
+    /// waiting up to `wait` for it; `None` while git is still out.
+    pub(crate) fn answer(
+        &mut self,
+        wait: std::time::Duration,
+    ) -> Option<std::result::Result<Option<String>, String>> {
+        use std::sync::mpsc::RecvTimeoutError;
+        if self.answer.is_none() {
+            self.answer = match self.found.recv_timeout(wait) {
+                Ok(found) => Some(found.map_err(|error| format!("{error:#}"))),
+                Err(RecvTimeoutError::Timeout) if self.started.elapsed() < ADMIT_WAIT => None,
+                Err(RecvTimeoutError::Timeout) => {
+                    self.gits.stop();
+                    Some(Err(format!(
+                        "git ls-files took longer than {} s",
+                        ADMIT_WAIT.as_secs()
+                    )))
+                }
+                Err(RecvTimeoutError::Disconnected) => Some(Err("git did not answer".into())),
+            };
         }
+        self.answer.clone()
     }
 }
 
@@ -1112,17 +1141,17 @@ mod tests {
         let scanned = scan(&root).unwrap();
         for path in paths {
             assert_eq!(
-                admits(&root, path).unwrap().as_deref(),
+                admits(&root, path, None).unwrap().as_deref(),
                 scanned.contains_key(path).then_some(path),
                 "{path}: one file's answer is the scan's"
             );
         }
         assert!(
-            admits(&root, "fresh/new.rb").unwrap().is_some(),
+            admits(&root, "fresh/new.rb", None).unwrap().is_some(),
             "an untracked file is read"
         );
         assert!(
-            admits(&root, "ignored/copy.rb").unwrap().is_none(),
+            admits(&root, "ignored/copy.rb", None).unwrap().is_none(),
             "an ignored one is not"
         );
         let _ = std::fs::remove_dir_all(&temp);
@@ -1158,7 +1187,7 @@ mod tests {
         for (written, composed) in [(tracked, "na\u{ef}ve.rb"), (untracked, "caf\u{e9}.rb")] {
             assert!(scanned.contains_key(composed), "{composed}: {scanned:?}");
             assert_eq!(
-                admits(&root, written).unwrap().as_deref(),
+                admits(&root, written, None).unwrap().as_deref(),
                 Some(composed),
                 "{written}"
             );

@@ -1121,7 +1121,7 @@ fn notify(
             let params: lsp_types::DidSaveTextDocumentParams =
                 serde_json::from_value(notification.params).ok()?;
             let path = document_path(params.text_document.uri.as_str())?;
-            indexer.refresh(session, &path);
+            indexer.refresh(session, &path, state::ASIDE);
             None
         }
         note::DidChangeWatchedFiles::METHOD => {
@@ -1144,7 +1144,7 @@ fn notify(
             }
             // Read as a save reads it: a file made or changed where no
             // watcher saw would otherwise answer from what the index lacks.
-            indexer.refresh(session, &path);
+            indexer.refresh(session, &path, state::ASIDE);
             handlers::diagnostics(session, &path, params.text_document.uri)
         }
         note::DidChangeTextDocument::METHOD => {
@@ -1223,8 +1223,10 @@ fn watched(
         }
         return;
     }
+    // Up to `BULK` files at once, which no one request is waiting on: git
+    // is not waited for, and each lands at the next retry.
     for (path, _) in paths {
-        indexer.refresh(session, &path);
+        indexer.refresh(session, &path, Duration::ZERO);
     }
 }
 

@@ -439,31 +439,22 @@ fn an_ignored_file_opened_and_saved_stays_out_of_the_index() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// Whether the index walk reads a file the editor opened is git's to say;
-/// a git that does not answer leaves the file as the index has it, and the
-/// server goes on answering.
-#[test]
-fn a_file_git_cannot_place_in_time_is_not_written() {
-    let (dir, db) = scratch("admit-slow");
-    repo(&dir);
-    let indexed = trekr()
-        .args(["--index"])
-        .current_dir(&dir)
-        .env("TREKR_DB", &db)
-        .output()
-        .unwrap();
-    assert!(indexed.status.success());
-    fs::write(dir.join("fresh.rb"), "class Fresh\nend\n").unwrap();
-    // Every other git call goes through; the one asking about a single
-    // untracked file (`ls-files -c -o`) hangs.
+/// A `git` on `PATH` that takes `delay` (a `sleep` argument, or `hang`) to
+/// answer the one call asking about a single file — its `:(literal)`
+/// pathspec — and passes every other through.
+fn slow_git(dir: &Path, delay: &str) -> PathBuf {
     let slow = dir.with_extension("slow-git");
     fs::create_dir_all(&slow).unwrap();
     let real = fs::canonicalize(support::git_only().join("git")).unwrap();
+    let wait = match delay {
+        "hang" => "exec /bin/sleep 3600".to_string(),
+        seconds => format!("/bin/sleep {seconds}"),
+    };
     let wrapper = slow.join("git");
     fs::write(
         &wrapper,
         format!(
-            "#!/bin/sh\ncase \" $* \" in *\" -c -o \"*) exec /bin/sleep 30 ;; esac\nexec '{}' \"$@\"\n",
+            "#!/bin/sh\ncase \"$*\" in *':(literal)'*) {wait} ;; esac\nexec '{}' \"$@\"\n",
             real.display()
         ),
     )
@@ -473,39 +464,177 @@ fn a_file_git_cannot_place_in_time_is_not_written() {
         std::os::unix::fs::PermissionsExt::from_mode(0o755),
     )
     .unwrap();
+    slow
+}
 
-    let path = slow.to_string_lossy().into_owned();
+/// A repo indexed with `use.rb` reading `Fresh`, and an untracked
+/// `fresh.rb` defining it that the index has not read; a session on it
+/// behind `slow_git(delay)`, which has opened and saved `fresh.rb`.
+fn opened_behind_slow_git(
+    label: &str,
+    delay: &str,
+    gitignore: &str,
+) -> (PathBuf, PathBuf, Session) {
+    let (dir, db) = scratch(label);
+    git(&dir, &["init", "-q"]);
+    fs::write(dir.join("use.rb"), "Fresh.new\n").unwrap();
+    fs::write(dir.join(".gitignore"), gitignore).unwrap();
+    git(&dir, &["add", "-A"]);
+    git(
+        &dir,
+        &[
+            "-c",
+            "user.email=t@e.st",
+            "-c",
+            "user.name=test",
+            "commit",
+            "-qm",
+            "init",
+        ],
+    );
+    let indexed = trekr()
+        .args(["--index"])
+        .current_dir(&dir)
+        .env("TREKR_DB", &db)
+        .output()
+        .unwrap();
+    assert!(indexed.status.success());
+    let text = "class Fresh\nend\n";
+    fs::write(dir.join("fresh.rb"), text).unwrap();
+    let path = slow_git(&dir, delay).to_string_lossy().into_owned();
     let mut session = Session::start_with(&db, &dir, &[("PATH", &path)]);
     session.initialize(&dir);
-    let started = std::time::Instant::now();
     session.notify(
         "textDocument/didOpen",
         serde_json::json!({"textDocument": {
-            "uri": uri_of(&dir, "fresh.rb"), "languageId": "ruby", "version": 1,
-            "text": "class Fresh\nend\n"
+            "uri": uri_of(&dir, "fresh.rb"), "languageId": "ruby", "version": 1, "text": text
         }}),
     );
-    session.request(
-        "textDocument/hover",
+    session.notify(
+        "textDocument/didSave",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "fresh.rb")}}),
+    );
+    (dir, db, session)
+}
+
+/// Where Go to Definition on `use.rb`'s `Fresh` goes: `fresh.rb` once the
+/// file is written, nowhere before.
+fn finds_fresh(session: &mut Session, dir: &Path) -> bool {
+    let answer = session.request(
+        "textDocument/definition",
         serde_json::json!({
-            "textDocument": {"uri": uri_of(&dir, "app.rb")},
-            "position": {"line": 0, "character": 7},
+            "textDocument": {"uri": uri_of(dir, "use.rb")},
+            "position": {"line": 0, "character": 1},
         }),
     );
-    let waited = started.elapsed();
-    session.stop();
+    answer["result"]
+        .as_array()
+        .is_some_and(|found| found.iter().any(|l| l["uri"] == uri_of(dir, "fresh.rb")))
+}
+
+/// Whether the index walk reads a file the editor opened is git's to say,
+/// and a slow git is waited for off the loop: the file lands once git
+/// answers, however late, and requests meanwhile are answered at once.
+#[test]
+fn a_file_lands_once_a_slow_git_places_it() {
+    for (delay, secs) in [
+        ("0", 0.0_f64),
+        ("0.95", 0.95),
+        ("1.05", 1.05),
+        ("1.2", 1.2),
+        ("3", 3.0),
+    ] {
+        let (dir, _db, mut session) = opened_behind_slow_git(&format!("admit-{delay}"), delay, "");
+        let started = std::time::Instant::now();
+        let first = finds_fresh(&mut session, &dir);
+        let answered = started.elapsed().as_secs_f64();
+        if secs == 0.0 {
+            assert!(first, "a git that answers at once costs the open nothing");
+        } else {
+            assert!(
+                answered < secs.max(1.0),
+                "delay {delay}: answered in {answered:.2} s, not after git"
+            );
+        }
+        let landed = (0..40).any(|_| {
+            finds_fresh(&mut session, &dir) || {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                false
+            }
+        });
+        session.stop();
+        assert!(landed, "delay {delay}: written once git answered");
+        let _ = fs::remove_dir_all(&dir);
+        let _ = fs::remove_dir_all(dir.with_extension("slow-git"));
+    }
+}
+
+/// A git that never answers leaves the file unwritten and the server
+/// answering, and is given up on — said once, in the log — not waited for
+/// forever: the next save asks again.
+#[test]
+fn a_file_a_hung_git_cannot_place_is_never_written() {
+    let (dir, db, mut session) = opened_behind_slow_git("admit-hung", "hang", "");
+    let started = std::time::Instant::now();
+    assert!(!finds_fresh(&mut session, &dir));
     assert!(
-        waited < std::time::Duration::from_secs(10),
-        "the server stopped waiting on git ({waited:?})"
+        started.elapsed() < std::time::Duration::from_secs(1),
+        "answered without waiting on git"
     );
-    let skipped: Vec<serde_json::Value> = log_lines(&db)
-        .into_iter()
-        .filter(|line| line["event"] == "refresh_skipped")
-        .collect();
+    let skipped = |db: &Path| {
+        log_lines(db)
+            .into_iter()
+            .filter(|line| line["event"] == "refresh_skipped")
+            .collect::<Vec<_>>()
+    };
+    let gave_up = (0..80).any(|_| {
+        assert!(!finds_fresh(&mut session, &dir), "never written");
+        !skipped(&db).is_empty() || {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            false
+        }
+    });
+    assert!(gave_up, "the hung git is given up on");
+    let skipped = skipped(&db);
     assert_eq!(skipped.len(), 1, "said once, in the log");
     assert!(skipped[0]["path"].as_str().unwrap().ends_with("fresh.rb"));
+
+    slow_git(&dir, "0");
+    session.notify(
+        "textDocument/didSave",
+        serde_json::json!({"textDocument": {"uri": uri_of(&dir, "fresh.rb")}}),
+    );
+    assert!(
+        finds_fresh(&mut session, &dir),
+        "a save once git is back lands"
+    );
+    session.stop();
     let _ = fs::remove_dir_all(&dir);
-    let _ = fs::remove_dir_all(&slow);
+    let _ = fs::remove_dir_all(dir.with_extension("slow-git"));
+}
+
+/// A git still out does not hold the server's exit.
+#[test]
+fn a_hung_git_does_not_hold_the_servers_exit() {
+    let (dir, _db, mut session) = opened_behind_slow_git("admit-exit", "hang", "");
+    assert!(!finds_fresh(&mut session, &dir));
+    let stopping = std::time::Instant::now();
+    session.stop();
+    assert!(stopping.elapsed() < std::time::Duration::from_secs(5));
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(dir.with_extension("slow-git"));
+}
+
+/// A slow git's late answer is still the index walk's: an ignored file it
+/// places nowhere stays out of the map.
+#[test]
+fn an_ignored_file_behind_a_slow_git_stays_out_of_the_index() {
+    let (dir, _db, mut session) = opened_behind_slow_git("admit-ignored", "1.2", "fresh.rb\n");
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    assert!(!finds_fresh(&mut session, &dir), "never written");
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(dir.with_extension("slow-git"));
 }
 
 /// A file whose name is on disk decomposed (NFD) is mapped under the name
