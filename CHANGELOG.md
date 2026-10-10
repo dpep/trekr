@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **`Box::OBJC` no longer finds a constant written in `class Object`.**
+  Ruby (since 2.5) raises NameError when a scoped lookup reaches a constant
+  only through Object, but `--def`, hover, Go to Definition and Find
+  References resolved it to `Object::OBJC`, and the `--refs Box::OBJC`
+  miss said it was found through Box's ancestor Object. `Object::OBJC`, a
+  bare `OBJC` inside a class, and a Kernel constant reached as `Box::KC`
+  still resolve, as in Ruby.
+
 ## 0.9.2 — 2026-10-10
 
 - **A new file opened while git is slow for another lands with its open.**

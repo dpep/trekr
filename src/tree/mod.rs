@@ -2104,6 +2104,9 @@ impl Tree {
 
     /// One segment of a path: `A::B` finds `B` in `A` or in `A`'s ancestors —
     /// never in the lexical nesting, which only ever applies to the head.
+    /// A hit on `Object` ends the walk as a miss unless `A` is `Object`:
+    /// `Box::OBJC` raises NameError though `Box < Object` (Ruby's
+    /// `rb_const_search_from`, since 2.5); Kernel, past it, is still searched.
     fn descend(&self, parent: &str, segment: &str) -> Option<String> {
         let parent = &self.namespace_of(parent);
         let direct = qualify(parent, segment);
@@ -2113,8 +2116,15 @@ impl Tree {
         self.ancestors(parent)
             .chain
             .iter()
-            .map(|ancestor| qualify(public_name(ancestor), segment))
-            .find(|candidate| self.names.contains(candidate))
+            .map(|ancestor| public_name(ancestor))
+            .find_map(|ancestor| {
+                let candidate = qualify(ancestor, segment);
+                self.names
+                    .contains(&candidate)
+                    .then_some((ancestor, candidate))
+            })
+            .filter(|(ancestor, _)| *ancestor != OBJECT || parent == OBJECT)
+            .map(|(_, candidate)| candidate)
     }
 
     /// Ruby's constant lookup, in full, with the evidence behind the answer.

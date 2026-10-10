@@ -1,0 +1,30 @@
+# A scoped lookup, `Box::OBJC`, walks Box's ancestors but a constant found
+# on Object is a miss unless the scope is Object itself (Ruby >= 2.5 raises
+# NameError). It resolved to Object::OBJC. Each answer is Ruby 3.4's.
+def app.rb:20:6 status=residue
+def app.rb:25:7 status=residue
+def app.rb:28:6 status=residue
+definition app.rb:20:6
+# Object's own scope, and a bare name's lexical-then-ancestor walk, still
+# find it.
+def app.rb:21:9 status=resolved site=app.rb:2
+def app.rb:10:14 status=resolved site=app.rb:2
+def app.rb:29:9 status=resolved site=app.rb:3
+hover app.rb:21:9 Object::OBJC
+# Only a hit on Object ends the walk: Kernel, past it, is still searched,
+# as is a superclass chain.
+def app.rb:22:6 status=resolved site=app.rb:6
+def app.rb:27:7 status=resolved site=app.rb:6
+def app.rb:26:7 status=resolved site=app.rb:16
+# A module has no Object or Kernel among its ancestors.
+def app.rb:23:6 status=residue
+def app.rb:24:6 status=residue
+# Not yet Ruby's answer: a module method's bare `OBJC` finds it (Ruby
+# reads a module's top level as Object's), but trekr's top-level rung does
+# not see a constant written in `class Object`. A gap, pinned so a fix is
+# seen.
+def app.rb:13:19 status=residue
+refs Object::OBJC rows=3 exit=0
+refs app.rb:2:3 rows=3 exit=0
+refs Object::BOTH rows=2 exit=0
+refs Kernel::BOTH rows=1 exit=0

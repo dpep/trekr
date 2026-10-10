@@ -1123,7 +1123,8 @@ fn a_whole_name_miss_names_the_ancestor_ruby_finds_it_on() {
         "class Base\n  LIMIT = 1\nend\nclass Sub < Base\nend\n\
          module Mixin\n  SIZE = 2\nend\nclass Host\n  include Mixin\nend\n\
          Twin = Base\n\
-         Sub::LIMIT\nHost::SIZE\nTwin::LIMIT\n",
+         class Object\n  OBJC = 3\nend\nmodule Kernel\n  KC = 4\nend\nclass Box\nend\n\
+         Sub::LIMIT\nHost::SIZE\nTwin::LIMIT\nBox::OBJC\nBox::KC\n",
     )
     .unwrap();
     git(&dir, &["add", "-A"]);
@@ -1132,6 +1133,7 @@ fn a_whole_name_miss_names_the_ancestor_ruby_finds_it_on() {
     for (asked, says) in [
         ("Sub::LIMIT", ["ancestor Base", "Base::LIMIT"]),
         ("Host::SIZE", ["ancestor Mixin", "Mixin::SIZE"]),
+        ("Box::KC", ["ancestor Kernel", "Kernel::KC"]),
     ] {
         let missed = trekr(&db, &dir, &["--refs", asked]);
         assert_eq!(missed.status.code(), Some(1), "still a miss: {asked}");
@@ -1147,6 +1149,9 @@ fn a_whole_name_miss_names_the_ancestor_ruby_finds_it_on() {
     );
     let said = stdout(&trekr(&db, &dir, &["--refs", "Sub::Absent"]));
     assert!(!said.contains("Base"), "{said}");
+    // A scoped lookup skips Object's constants: Ruby raises NameError.
+    let said = stdout(&trekr(&db, &dir, &["--refs", "Box::OBJC"]));
+    assert!(!said.contains("Object"), "{said}");
 
     let _ = fs::remove_dir_all(&dir);
 }
