@@ -1492,11 +1492,24 @@ pub(crate) fn workspace_symbol(
                 // Not read to convert columns: this fires per keystroke in a
                 // symbol picker, and a picker's jump lands on the line either way.
                 location: unread_location(Path::new(&row.root), &row.path, row.line, row.col, len)?,
-                container_name: row.nesting.first().cloned(),
+                container_name: container_name(&row.nesting),
             })
         })
         .collect();
     Ok(Some(symbols))
+}
+
+/// The scope a symbol is written in, innermost. A `class << self` body's
+/// is its class's singleton class, spelled as hover spells its constants;
+/// the bare segment names no class.
+fn container_name(nesting: &[String]) -> Option<String> {
+    match nesting {
+        [segment, class, ..] if segment == crate::core::SINGLETON_CLASS => {
+            Some(format!("{class}::{segment}"))
+        }
+        [innermost, ..] => Some(innermost.clone()),
+        [] => None,
+    }
 }
 
 /// What a reader wants at a glance: the signature as written, what its doc

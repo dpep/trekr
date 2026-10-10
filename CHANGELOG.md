@@ -8,7 +8,7 @@
   listed as its references, though Ruby raises NameError on both. It is now
   found only from inside that body, by position or by Ruby's own spelling
   of its whole name, `--refs Widget::singleton_class::LIMIT`; `--dead`
-  names its owner `Widget::singleton_class`. A class opened in that body is
+  and workspace symbol search name its owner `Widget::singleton_class`. A class opened in that body is
   named the same way, and so are its methods:
   `--refs 'Widget::singleton_class::Job#perform'`. A `class << self` method no
   longer resolves a constant of the class's superclass or includes, which

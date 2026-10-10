@@ -2359,6 +2359,32 @@ fn workspace_symbol_widens_when_the_clients_root_is_not_a_checkout() {
     let _ = fs::remove_dir_all(&other);
 }
 
+/// A `class << self` constant's container is the class's singleton class,
+/// as hover spells it — not the bare segment, which names no class, nor the
+/// class, whose constant it is not (DEC-647). A method written there is the
+/// class's own.
+#[test]
+fn a_singleton_class_constant_is_contained_by_its_class() {
+    let (dir, db) = scratch("wsym-singleton");
+    ruby_repo(
+        &dir,
+        &db,
+        "class Widget\n  class << self\n    INNER = 5\n    def size = INNER\n  end\nend\n",
+    );
+
+    let mut session = Session::start(&db, &dir);
+    session.initialize(&dir);
+    let mut container = |query: &str| {
+        let answer = session.request("workspace/symbol", serde_json::json!({"query": query}));
+        answer["result"][0]["containerName"].clone()
+    };
+    assert_eq!(container("INNER"), "Widget::singleton_class");
+    assert_eq!(container("size"), "Widget");
+
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A bundle moving to another gem version changes no Ruby file in the
 /// checkout — only its lockfile — so a session keyed on the checkout's own
 /// files went on answering from the old version's tree.
