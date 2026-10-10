@@ -678,6 +678,7 @@ ruby tests/testbed/653-a-checkout-copy-does-not-hide-the-stdlibs/lib/set.rb eeb9
 ruby tests/testbed/653-a-checkout-copy-does-not-hide-the-stdlibs/ruby/benchmark.rb aca76f9bcddcfca0
 ruby tests/testbed/653-a-checkout-copy-does-not-hide-the-stdlibs/ruby/set.rb f94c1225cbeedad8
 ruby tests/testbed/653-a-checkout-copy-does-not-hide-the-stdlibs/test/benchmark.rb 2cba450d8a8db94a
+ruby tests/testbed/654-a-constant-in-class-self-is-the-singleton-classes/app.rb a02e0019a8491134
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

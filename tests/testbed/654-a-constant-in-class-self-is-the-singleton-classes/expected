@@ -1,0 +1,19 @@
+# A constant assigned in `class << self` is the singleton class's: Ruby
+# finds it from inside that body, and from a scope opened there, and from
+# nowhere else.
+def app.rb:8:19 status=resolved site=app.rb:6
+def app.rb:12:26 status=resolved site=app.rb:6
+def app.rb:14:20 status=resolved site=app.rb:11
+# The lexical walk still goes out through the class: its own constants and
+# the enclosing module's are found from a `class << self` method.
+def app.rb:9:17 status=resolved site=app.rb:4
+def app.rb:10:19 status=resolved site=app.rb:2
+refs App::Widget::OWN rows=2 exit=0
+# Its methods are the class's singleton methods.
+def app.rb:22:13 status=resolved owner=App::Widget
+def app.rb:23:13 status=resolved owner=App::Widget
+# A superclass's constant is the class's to find, from an instance method.
+def app.rb:31:14 status=resolved site=app.rb:25
+# `class << item` opens a singleton class too.
+def app.rb:37:17 status=resolved site=app.rb:36
+dead app.rb Gadget=unreferenced

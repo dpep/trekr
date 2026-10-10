@@ -103,3 +103,4 @@
 626-an-initialize-whose-super-lands-says-so 3a1a6f5458a53be7
 640-a-struct-class-is-built-by-its-own-new 585872f09e536838
 641-a-components-template-runs-on-the-component efa81e45ebaede7b
+654-a-constant-in-class-self-is-the-singleton-classes e270fc09a4734c23

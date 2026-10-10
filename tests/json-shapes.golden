@@ -140,7 +140,7 @@
 --def $.receiver_kind: string
 --def $.receiver_text: string
 --def $.receiver_type: string
---def $.resolved_via: string {ancestor,chain,chain:name,const,controller,definition,delegate,delegate_missing_to,described_class,example_group,finder,flow,implicit_subject,includer,let,literal,local:new,local:rescue,main,object,on_load,path,predicate_matcher,rabl,rabl:object,receiver_name,relation,render,require,root,scope,self,sidecar,sig,super,symbol,view}
+--def $.resolved_via: string {ancestor,chain,chain:name,const,controller,definition,delegate,delegate_missing_to,described_class,example_group,finder,flow,implicit_subject,includer,let,lexical,literal,local:new,local:rescue,main,object,on_load,path,predicate_matcher,rabl,rabl:object,receiver_name,relation,render,require,root,scope,self,sidecar,sig,super,symbol,view}
 --def $.scopes_tried: int
 --def $.signatures: array
 --def $.signatures[]: object

@@ -78,6 +78,10 @@ They answer different questions; read them separately.
   that name was asked — `ambiguous` when some declare no return type. Ruby
   core's return types come from the RBS signatures of the checkout's own
   Ruby, so `x.gsub(a, b).downcase` is `String#downcase`.
+  On a constant it is the rung of Ruby's constant lookup that found it:
+  `lexical` (an enclosing scope), `ancestor` (the innermost scope's
+  ancestors), `root` (the top level), or `path` (a later segment of a path,
+  under the one before it).
 
 Beside them, a call's answer carries `receiver_kind` (`class` or `module`:
 inside a module an implicit receiver is whatever includes it, so a miss there
