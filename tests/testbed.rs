@@ -917,6 +917,9 @@ fn check_refs(
                 .as_array()
                 .map_or_else(|| "<none>".into(), |rows| rows.len().to_string()),
             "status" => answer["status"].as_str().unwrap_or("<none>").to_string(),
+            "sites" => cli_references(answer, None).join(","),
+            // Asked of the editor, by the caller.
+            "editor" => continue,
             "resolves_to" => answer["resolves_to"]
                 .as_str()
                 .unwrap_or("<none>")
@@ -1307,7 +1310,14 @@ fn check_case(
                 if position && answer.0["status"] != "residue" {
                     let editor = lsp_references(&db, &dir, target);
                     let cli = cli_references(&answer.0, None);
-                    if editor != cli {
+                    // `editor=` pins a disagreement as it stands, so a fix
+                    // to either front shows.
+                    let owed = pairs(line).into_iter().find(|(key, _)| key == "editor");
+                    let agrees = match &owed {
+                        Some((_, want)) => editor.join(",") == *want,
+                        None => editor == cli,
+                    };
+                    if !agrees {
                         failures.push(format!(
                             "{label}: {line}\n      the editor listed {editor:?}, the CLI {cli:?}"
                         ));

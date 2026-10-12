@@ -53,8 +53,12 @@ symbols app.rb   Widget,save,Job,run
 
 `refs QUERY` (a name, or a `FILE:LINE[:COL]` position) asserts the `counts` object, `status=` the answer's status, and
 `resolves_to=` the method the query lands on (`Base#save`), `exit=` the exit
-code, and `rows=` how many mentions a name's answer lists; `card` takes
-`resolves_to=` too.
+code, `rows=` how many mentions a name's answer lists, and `sites=` the
+`path:line:col` of each listed row that is not a definition, sorted and
+comma-separated; `card` takes `resolves_to=` too. At a position, the
+editor's Find References must list the CLI's rows (below); `editor=` pins
+what it lists instead, in `sites=`'s form, for a disagreement recorded as
+it stands.
 `card Owner#name` asserts the card's `status`, `reason`, `owner` and `exit`, as
 `def` does. `dead FILE Owner#name=tier …`
 asserts each method's `--dead` tier — or a class's, module's or constant's, by
