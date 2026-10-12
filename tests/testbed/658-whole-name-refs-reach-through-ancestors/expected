@@ -1,8 +1,8 @@
-# A whole name's --refs gathers only its suffix spellings (`Kernel::KC`,
+# A whole name's --refs gathered only its suffix spellings (`Kernel::KC`,
 # `KC`), so a mention that reaches it through an ancestor -- `Box::KC`,
-# `Leaf::BASEC` -- is missed, while Find References in an open file lists
-# it: the CLI and the editor disagree. Pinned as they answer today. Ruby
-# 3.4's answer is after each `#`.
+# `Leaf::BASEC` -- was missed, while Find References in an open file
+# listed it: the CLI and the editor disagreed. Ruby 3.4's answer is after
+# each `#`.
 # 7, 7, NameError, 1, 7
 def app.rb:17:6 status=resolved site=app.rb:2
 def app.rb:18:7 status=resolved site=app.rb:2
@@ -16,15 +16,19 @@ def app.rb:24:7 status=resolved site=app.rb:5
 # NameError, 3
 def app.rb:25:6 status=residue
 def app.rb:26:9 status=resolved site=app.rb:15
-refs Kernel::KC rows=3 sites=app.rb:21:9,app.rb:28:12
-refs Base::BASEC rows=3 sites=app.rb:24:7,app.rb:29:15
+# Every reference that reaches the constant, at its definition, at any
+# mention, and by name; never `Mod::KC` (a module has no Kernel) or
+# `Box::OC` (a scoped hit on Object misses).
+refs Kernel::KC rows=5 sites=app.rb:17:6,app.rb:18:7,app.rb:21:9,app.rb:28:12
+refs Base::BASEC rows=5 sites=app.rb:22:7,app.rb:23:6,app.rb:24:7,app.rb:29:15
+refs app.rb:2:3 sites=app.rb:17:6,app.rb:18:7,app.rb:21:9,app.rb:28:12
+refs app.rb:28:12 sites=app.rb:17:6,app.rb:18:7,app.rb:21:9,app.rb:28:12
+refs app.rb:17:6 sites=app.rb:17:6,app.rb:18:7,app.rb:21:9,app.rb:28:12
+refs app.rb:5:3 sites=app.rb:22:7,app.rb:23:6,app.rb:24:7,app.rb:29:15
+refs app.rb:22:7 sites=app.rb:22:7,app.rb:23:6,app.rb:24:7,app.rb:29:15
+# A name no constant has lists nothing; the miss says where Ruby finds it.
 refs Leaf::KC rows=0 exit=1
-refs app.rb:2:3 sites=app.rb:21:9,app.rb:28:12 editor=app.rb:17:6,app.rb:18:7,app.rb:21:9,app.rb:28:12
-refs app.rb:28:12 sites=app.rb:21:9,app.rb:28:12 editor=app.rb:17:6,app.rb:18:7,app.rb:21:9,app.rb:28:12
-refs app.rb:17:6 sites=app.rb:17:6,app.rb:21:9,app.rb:28:12 editor=app.rb:17:6,app.rb:18:7,app.rb:21:9,app.rb:28:12
-refs app.rb:5:3 sites=app.rb:24:7,app.rb:29:15 editor=app.rb:22:7,app.rb:23:6,app.rb:24:7,app.rb:29:15
-refs app.rb:22:7 sites=app.rb:22:7,app.rb:24:7,app.rb:29:15 editor=app.rb:22:7,app.rb:23:6,app.rb:24:7,app.rb:29:15
-# Agree already: a constant of its own, and one on Object.
+# A constant of its own, and one on Object.
 refs Other::KC rows=2
 refs app.rb:12:3 sites=app.rb:20:8
 refs Object::OC rows=2

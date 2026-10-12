@@ -14425,3 +14425,41 @@ alone, as Ruby's lookup does, where they also matched the i18n gem's
 `I18n::MissingTranslation` (0.9.1 hunt #5, #6). The 4 calls on such a
 constant are on values (`LOCK.synchronize`), which no build types, so the
 receiver gap costs nothing measured there.
+
+## DEC-648 — A constant's references are every mention ending in its last segment, placed
+
+**Decided.** `--refs Kernel::KC` asked the index for the name's suffix
+spellings (`Kernel::KC`, `KC`, `::Kernel::KC`) and placed each row, so a
+mention reaching the constant through its scope's ancestors -- `Box::KC`,
+`Leaf::BASEC` for `Base::BASEC` (Ruby 3.4 resolves both) -- was in no
+answer by name, nor at the definition; at a mention it was listed only
+when it was the one under the cursor. Find References in an open file
+filtered the buffer by the last segment instead, so the editor listed
+them and the CLI did not (testbed 658). Every mention of a constant ends
+in its last segment, so `query::refs::constant_mentions` now asks the
+index for every `const_ref` row ending in it -- one lookup on a new
+expression index, `const_ref_leaf` (store v66) -- and places each
+(`placed_name`), as the editor does with a buffer. Definitions are still
+asked by spelling: one written through an ancestor defines a constant of
+its own.
+
+**Measured** on rails against 0.9.3, 300 constants sampled from its
+references and 300 more from those written with `::`: `--refs` by whole
+name and at the sampled position gained 58 + 131 rows by name and 44 + 71
+at the position, every one resolving under `--def` to the constant asked
+through a spelling that is not a suffix of it, and lost none; by name and
+at the position now agree for all 600 (594 before). `--dead` on 8
+directories is byte-identical: it already asked the spellings through each
+class's heirs (DEC-420). `--refs ActiveRecord::Base` is 90 ms against
+106 ms (median of 15, warm): rows ending in `Base` are 33 % more than
+those spelled as a suffix, but each written name, nesting and file is
+placed once.
+
+**Rejected.** --dead's way, the spellings of `Heir::KC` for every class
+whose chain holds the owner: for a Kernel or Object constant that is every
+class, a chain linearized per class before the first answer. A `LIKE
+'%::KC'` scan: every reference in the store, per question. The planner
+reached for `const_ref_blob` over the checkout's files on its own (about 60 ms
+of a 125 ms `--refs ::ArgumentError`), so the query names its index, as
+`const_refs_named` does.
+

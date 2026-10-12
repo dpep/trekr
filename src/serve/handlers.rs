@@ -1045,7 +1045,6 @@ fn constant_references(
         };
         fqn
     };
-    let written = mention.then_some(name);
 
     let (tree, store) = session.tree_and_store(&root)?;
     let tail = last_segment(&fqn);
@@ -1053,7 +1052,7 @@ fn constant_references(
     // (path, line, col) — the index's view, except for files the editor has
     // open, which are read from the buffer so an unsaved edit counts.
     let mut sites: Vec<(String, u32, u32)> =
-        query_refs::constant_mentions(tree, store, &root_str, &fqn, written)?
+        query_refs::constant_mentions(tree, store, &root_str, &fqn)?
             .into_iter()
             .filter(|row| row.role == "constant" && !overlay.contains_key(&row.path))
             .map(|row| (row.path, row.line, row.col))

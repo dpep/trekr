@@ -964,6 +964,41 @@ impl Store {
         rows.collect()
     }
 
+    /// The constant references in one checkout whose written name ends in
+    /// the segment `leaf` (`Base`, `ActiveRecord::Base`, `::Base`), each with
+    /// that name: every mention that could be a constant called `leaf`,
+    /// for the caller to place.
+    pub(crate) fn const_refs_ending(&self, root: &str, leaf: &str) -> Result<Vec<(String, Ref)>> {
+        // Pinned: the planner otherwise walks the checkout's every file.
+        let mut stmt = self.conn.prepare_cached(&format!(
+            "SELECT f.path, r.line, r.col, r.name, r.nesting
+               FROM const_ref r INDEXED BY const_ref_leaf
+               CROSS JOIN file f
+              WHERE {} = ?2
+                AND f.blob_id = r.blob_id
+                AND f.checkout_id = (SELECT id FROM checkout WHERE root = ?1)",
+            schema::LEAF
+        ))?;
+        let rows = stmt.query_map(params![root, leaf], |r| {
+            Ok((
+                r.get(3)?,
+                Ref {
+                    path: r.get(0)?,
+                    line: r.get(1)?,
+                    col: r.get(2)?,
+                    role: "constant".to_string(),
+                    kind: None,
+                    recv: None,
+                    recv_text: None,
+                    nesting: split_nesting(&r.get::<_, String>(4)?),
+                    tier: None,
+                    owner: None,
+                },
+            ))
+        })?;
+        rows.collect()
+    }
+
     /// The constant references in one checkout written as any of `names`,
     /// unresolved: `--dead` resolves each against the tree (DEC-420).
     pub(crate) fn const_refs_named(
@@ -3174,6 +3209,42 @@ mod tests {
         let (_, facts) = map(&["c.rb"]);
         parts.write("/r", &files, facts, 0).unwrap();
         assert_eq!(keys(&parts), keys(&whole));
+    }
+
+    #[test]
+    fn a_constant_is_found_by_its_last_segment_through_its_index() {
+        let store = Store::open_in_memory().unwrap();
+        let plan: Vec<String> = store
+            .conn
+            .prepare(&format!(
+                "EXPLAIN QUERY PLAN SELECT name FROM const_ref WHERE {} = 'C'",
+                schema::LEAF
+            ))
+            .unwrap()
+            .query_map([], |r| r.get(3))
+            .unwrap()
+            .collect::<Result<_>>()
+            .unwrap();
+        assert!(
+            plan.iter().any(|step| step.contains("const_ref_leaf")),
+            "{plan:?}"
+        );
+        for (name, leaf) in [
+            ("A::B::C", "C"),
+            ("::C", "C"),
+            ("C", "C"),
+            ("Ab::Cd_9", "Cd_9"),
+        ] {
+            let got: String = store
+                .conn
+                .query_row(
+                    &format!("SELECT {} FROM (SELECT ?1 AS name)", schema::LEAF),
+                    [name],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(got, leaf, "{name}");
+        }
     }
 
     #[test]

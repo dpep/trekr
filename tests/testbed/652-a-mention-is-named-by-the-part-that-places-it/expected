@@ -8,11 +8,10 @@ refs app/inside.rb:2:10 rows=2
 refs app/outside.rb:1:13 rows=2
 # Asked as written, it is the top-level name, which nothing here mentions.
 refs Nodes::Union rows=0 exit=1
-# A part found through an ancestor names the ancestor's constant. The mention
-# under the cursor is listed however it was written; by name, only spellings
-# that end the whole name are looked up, so `Sub::Parts::Bolt` is not.
+# A part found through an ancestor names the ancestor's constant, and is
+# listed by that name as at the mention: `Sub::Parts::Bolt` too.
 refs app/inside.rb:4:15 rows=3
-refs Kit::Base::Parts::Bolt rows=2
+refs Kit::Base::Parts::Bolt rows=3
 # Nothing placed: listed when written as the name asked.
 refs Nowhere::Thing rows=1
 refs app/outside.rb:3:10 rows=1

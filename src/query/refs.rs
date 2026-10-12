@@ -8,46 +8,52 @@ use crate::core::{Call, Facts};
 use crate::resolve::refs::{self, Query, Reference, Tier};
 use crate::store::{Ref, Store};
 use crate::tree::Tree;
+use std::collections::HashMap;
 
 /// The indexed mentions of the class, module or constant `fqn` in the
 /// checkout at `root`: its definitions and constant references that Ruby's
 /// lookup resolves to it.
 ///
-/// The index records a reference by the name written (`Base`,
-/// `ActiveRecord::Base`), so each suffix of `fqn` is asked for, and each row
-/// named in the nesting it was written in ([`placed_name`]). Same-named
-/// constants elsewhere are named otherwise and drop out, which is the point.
-/// `written` is the spelling at the position asked from, if any: a mention
-/// placed through an ancestor (`Sub::Part` for `Base::Part`) is not a suffix,
-/// and the one under the cursor is always listed.
+/// The index records a mention by the name written (`Base`,
+/// `ActiveRecord::Base`), so the rows asked for are those that could be it,
+/// and each is named in the nesting it was written in ([`placed_name`]):
+/// same-named constants elsewhere are named otherwise and drop out, which is
+/// the point. A definition is written as one of the name's [`spellings`]; a
+/// reference may reach it through any scope's ancestors (`Leaf::KC` for
+/// `Kernel::KC`), so every reference ending in its last segment is placed.
 pub(crate) fn constant_mentions(
     tree: &Tree,
     store: &Store,
     root: &str,
     fqn: &str,
-    written: Option<&str>,
 ) -> anyhow::Result<Vec<Ref>> {
     let fqn = &crate::tree::whole_name(fqn);
-    let mut spellings = spellings(fqn);
-    if let Some(written) = written
-        && !spellings.iter().any(|spelling| spelling == written)
-    {
-        spellings.push(written.to_string());
-    }
     let mut found = Vec::new();
-    for written in &spellings {
+    for written in &spellings(fqn) {
         found.extend(
             store
                 .refs(root, written)?
                 .into_iter()
-                .filter(|row| match row.role.as_str() {
-                    "definition" => {
-                        matches!(row.kind.as_deref(), Some("class" | "module" | "constant"))
-                    }
-                    _ => true,
+                .filter(|row| {
+                    row.role == "definition"
+                        && matches!(row.kind.as_deref(), Some("class" | "module" | "constant"))
                 })
                 .filter(|row| names_constant(tree, written, &row.nesting, &row.path, fqn)),
         );
+    }
+    let leaf = fqn.rsplit("::").next().unwrap_or(fqn);
+    // A common leaf (`Base`) is written the same way, in the same nesting,
+    // many times a file: each is placed once.
+    let mut placed: HashMap<(String, Vec<String>, String), bool> = HashMap::new();
+    for (written, row) in store.const_refs_ending(root, leaf)? {
+        let names = *placed
+            .entry((written, row.nesting.clone(), row.path.clone()))
+            .or_insert_with_key(|(written, nesting, path)| {
+                names_constant(tree, written, nesting, path, fqn)
+            });
+        if names {
+            found.push(row);
+        }
     }
     found.sort_by(|a, b| (&a.path, a.line, a.col).cmp(&(&b.path, b.line, b.col)));
     Ok(found)

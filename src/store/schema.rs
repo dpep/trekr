@@ -18,7 +18,7 @@
 ///
 /// The one exception is a table in [`OPTIONAL`]: nothing reads it to answer, so
 /// a store without it is still this version's (DEC-300).
-pub(crate) const VERSION: i64 = 65;
+pub(crate) const VERSION: i64 = 66;
 
 /// The current schema, applied whole to a fresh database. Migrations below
 /// bring an older one up to it; this block is never replayed through them.
@@ -241,6 +241,7 @@ CREATE INDEX def_name       ON def(name);
 CREATE INDEX def_blob       ON def(blob_id);
 CREATE INDEX ancestry_blob  ON ancestry(blob_id);
 CREATE INDEX const_ref_name ON const_ref(name);
+CREATE INDEX const_ref_leaf ON const_ref(replace(name, rtrim(name, replace(name, ':', '')), ''));
 CREATE INDEX const_ref_blob ON const_ref(blob_id);
 CREATE INDEX call_name_name ON call_name(name, blob_id);
 CREATE INDEX call_name_blob ON call_name(blob_id);
@@ -250,7 +251,7 @@ CREATE INDEX file_blob      ON file(blob_id);
 
 /// The fact tables' secondary indexes: what a bulk load drops and rebuilds
 /// (DEC-057). Each statement is also in `SCHEMA`, and a test holds them equal.
-pub(crate) const BULK_INDEXES: [(&str, &str); 8] = [
+pub(crate) const BULK_INDEXES: [(&str, &str); 9] = [
     ("def_name", "CREATE INDEX def_name       ON def(name);"),
     ("def_blob", "CREATE INDEX def_blob       ON def(blob_id);"),
     (
@@ -260,6 +261,10 @@ pub(crate) const BULK_INDEXES: [(&str, &str); 8] = [
     (
         "const_ref_name",
         "CREATE INDEX const_ref_name ON const_ref(name);",
+    ),
+    (
+        "const_ref_leaf",
+        "CREATE INDEX const_ref_leaf ON const_ref(replace(name, rtrim(name, replace(name, ':', '')), ''));",
     ),
     (
         "const_ref_blob",
@@ -278,6 +283,11 @@ pub(crate) const BULK_INDEXES: [(&str, &str); 8] = [
         "CREATE INDEX body_call_name ON body_call(name);",
     ),
 ];
+
+/// A `const_ref` row's last segment, as SQL: `A::B::C` is `C` (`rtrim`
+/// strips back to the last `:`, and that prefix is cut). `const_ref_leaf`
+/// indexes this very expression; a query must spell it the same to use it.
+pub(crate) const LEAF: &str = "replace(name, rtrim(name, replace(name, ':', '')), '')";
 
 /// Tables an older schema had and this one does not, dropped with the rest.
 pub(crate) const RETIRED: [&str; 1] = ["call_site"];

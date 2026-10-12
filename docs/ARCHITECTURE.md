@@ -720,6 +720,8 @@ blob(id, oid UNIQUE, lines, parse_errors, surface, namespace, written_by)
       via, target, target_line, target_col, sig_returns, line, col, end_line)
   ancestry(blob_id, nesting, relation, target, line, col)
   const_ref(blob_id, name, nesting, line, col)
+                                            ← by name, and by last segment
+                                              (`const_ref_leaf`, DEC-648)
   call_name(blob_id, name, calls, symbols)  ← which names a blob calls (DEC-193)
   body_call(blob_id, name, nesting, args, line)  ← a body's call on itself (DEC-162)
   loose_blob(blob_id, recorded_at)          ← recorded by a query and never

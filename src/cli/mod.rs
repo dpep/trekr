@@ -3935,7 +3935,7 @@ fn cmd_refs(
     if let Some(fqn) = whole_constant_name(&query) {
         crate::usage::flag("by-name");
         let tree = fresh_tree(say, &mut store, &root, None)?;
-        return constant_refs(out, &tree, &store, &root_str, fqn, None);
+        return constant_refs(out, &tree, &store, &root_str, fqn);
     }
     // A bare name narrows nothing, so it keeps the whole-mention view —
     // definitions and constant references included, which a method-shaped
@@ -4178,16 +4178,15 @@ fn cmd_refs_at(
         {
             let mut nesting = def.nesting.clone();
             nesting.insert(0, def.name.clone());
-            tree.scope_fqn(&nesting).map(|fqn| (fqn, None))
+            tree.scope_fqn(&nesting)
         }
-        Some(crate::query::position::Under::Constant(reference)) => Some((
+        Some(crate::query::position::Under::Constant(reference)) => Some(
             crate::query::refs::placed_name(&tree, &reference.name, &reference.nesting, &relative),
-            Some(reference.name.as_str()),
-        )),
+        ),
         _ => None,
     };
-    if let Some((fqn, written)) = constant {
-        return constant_refs(out, &tree, &store, &root_str, &fqn, written);
+    if let Some(fqn) = constant {
+        return constant_refs(out, &tree, &store, &root_str, &fqn);
     }
     let owner_and_name = match under {
         Some(crate::query::position::Under::Definition(def))
@@ -4412,9 +4411,8 @@ fn constant_refs(
     store: &Store,
     root_str: &str,
     fqn: &str,
-    written: Option<&str>,
 ) -> anyhow::Result<ExitCode> {
-    let rows = crate::query::refs::constant_mentions(tree, store, root_str, fqn, written)?;
+    let rows = crate::query::refs::constant_mentions(tree, store, root_str, fqn)?;
     let mut read = " (a whole name, read from the top level)".to_string();
     if rows.is_empty() && out == Output::Text {
         if let Some(has) = in_a_singleton_class(tree, store, root_str, fqn)? {
@@ -4467,7 +4465,7 @@ fn in_a_singleton_class(
         let mut named = segments.clone();
         named.insert(at, crate::core::SINGLETON_CLASS);
         let named = named.join("::");
-        if !crate::query::refs::constant_mentions(tree, store, root_str, &named, None)?.is_empty() {
+        if !crate::query::refs::constant_mentions(tree, store, root_str, &named)?.is_empty() {
             return Ok(Some(named));
         }
     }

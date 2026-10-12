@@ -15,6 +15,13 @@
 - **`--dead` counts a top-level constant used as `Object::X` or `::X`.**
   `class Object; LIMIT = 1; end` read only as `::LIMIT`, or `TOP = 1` read
   only as `Object::TOP`, was listed unreferenced.
+- **`--refs` by a constant's whole name lists mentions made through an
+  ancestor.** `--refs Kernel::KC` missed `Box::KC` and `Leaf::KC`, which
+  Ruby resolves through Box's and Leaf's ancestors, and so did `--refs` at
+  its definition, while Find References in an open file listed them. Every
+  mention that resolves to the constant is now listed, by name, at the
+  definition and at any mention, in the CLI and the editor alike. The store
+  is rebuilt on first use (v66): the next command reindexes.
 
 ## 0.9.3 — 2026-10-10
 
