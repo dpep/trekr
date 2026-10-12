@@ -1,0 +1,6 @@
+# A constant in `class Object` or at the top level is used by any spelling
+# Ruby reaches it with -- `Object::OBJC`, `::ONLYROOT`, `Object::TOPX` --
+# but --dead asked the index for its suffixes and `::` only, so
+# `ONLYROOT` and `TOPX` read as unreferenced (and `OBJC`, once Object's
+# constants were named as the top level's).
+dead consts.rb OBJC=none ONLYROOT=none BARE=none TOPX=none UNUSED=unreferenced

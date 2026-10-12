@@ -18,6 +18,7 @@ use super::dead::{ConstantDetail, ConventionSite, DeadKind, DeadRow, DeadTier, D
 use super::generated::Generated;
 use super::routes::Routes;
 use super::views::Views;
+use crate::query::refs::spellings;
 use crate::store::{ConstRefRow, Store};
 use crate::tree::Tree;
 use named::{Named, plain};
@@ -59,16 +60,6 @@ fn in_tests(path: &str) -> bool {
 /// `A::B::C` and each namespace above it: `A::B`, `A`.
 fn namespaces(fqn: &str) -> impl Iterator<Item = &str> {
     fqn.match_indices("::").map(move |(at, _)| &fqn[..at])
-}
-
-/// Every way a reference may spell `fqn`: each suffix, and the rooted whole.
-fn spellings(fqn: &str) -> Vec<String> {
-    let mut found: Vec<String> = std::iter::once(fqn)
-        .chain(fqn.match_indices("::").map(|(at, _)| &fqn[at + 2..]))
-        .map(str::to_string)
-        .collect();
-    found.push(format!("::{fqn}"));
-    found
 }
 
 /// Is a reference written in `scope` inside `fqn`'s own body?
@@ -567,14 +558,6 @@ mod tests {
     }
 
     use super::*;
-
-    #[test]
-    fn a_name_is_spelled_by_each_suffix_and_rooted() {
-        assert_eq!(
-            spellings("A::B::C"),
-            ["A::B::C", "B::C", "C", "::A::B::C"].map(String::from)
-        );
-    }
 
     #[test]
     fn a_body_is_within_itself_and_what_it_holds_not_a_sibling() {

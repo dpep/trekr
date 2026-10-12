@@ -28,14 +28,7 @@ pub(crate) fn constant_mentions(
     written: Option<&str>,
 ) -> anyhow::Result<Vec<Ref>> {
     let fqn = &crate::tree::whole_name(fqn);
-    let mut spellings: Vec<String> = std::iter::once(fqn.as_str())
-        .chain(fqn.match_indices("::").map(|(at, _)| &fqn[at + 2..]))
-        .map(str::to_string)
-        .collect();
-    spellings.push(format!("::{fqn}"));
-    // Object's constants are the top level's (`tree::qualify`).
-    spellings.push(format!("Object::{fqn}"));
-    spellings.push(format!("::Object::{fqn}"));
+    let mut spellings = spellings(fqn);
     if let Some(written) = written
         && !spellings.iter().any(|spelling| spelling == written)
     {
@@ -58,6 +51,25 @@ pub(crate) fn constant_mentions(
     }
     found.sort_by(|a, b| (&a.path, a.line, a.col).cmp(&(&b.path, b.line, b.col)));
     Ok(found)
+}
+
+/// The ways a reference can be written that name the constant `fqn` from
+/// some scope: each suffix of its whole name, and the whole name from the
+/// top level, rooted or through Object, whose constants are the top level's
+/// (`tree::qualify`). Asked of the index, which records a reference as
+/// written; each row found is then placed to see whether it is `fqn`.
+pub(crate) fn spellings(fqn: &str) -> Vec<String> {
+    let fqn = crate::tree::whole_name(fqn);
+    let mut found: Vec<String> = std::iter::once(fqn.as_str())
+        .chain(fqn.match_indices("::").map(|(at, _)| &fqn[at + 2..]))
+        .map(str::to_string)
+        .collect();
+    found.extend([
+        format!("::{fqn}"),
+        format!("Object::{fqn}"),
+        format!("::Object::{fqn}"),
+    ]);
+    found
 }
 
 /// Whether a constant written as `written` in `nesting`, in the file at
@@ -139,5 +151,25 @@ pub(crate) fn rescue(
 ) {
     if let Some(rescued) = includer_reference(tree, files, call, target, reference) {
         *reference = rescued;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_name_is_spelled_by_each_suffix_and_from_the_top_level() {
+        assert_eq!(
+            super::spellings("A::B::C"),
+            [
+                "A::B::C",
+                "B::C",
+                "C",
+                "::A::B::C",
+                "Object::A::B::C",
+                "::Object::A::B::C"
+            ]
+            .map(String::from)
+        );
+        assert_eq!(super::spellings("Object::X"), super::spellings("X"));
     }
 }

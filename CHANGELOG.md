@@ -12,6 +12,9 @@
   list the same mentions. Hover names such a constant `OBJC`, as Ruby does.
   A module's lookup, and `::KC`, also reach a Kernel constant now, as in
   Ruby; `Box::OBJC` and `Box::TOP` still miss.
+- **`--dead` counts a top-level constant used as `Object::X` or `::X`.**
+  `class Object; LIMIT = 1; end` read only as `::LIMIT`, or `TOP = 1` read
+  only as `Object::TOP`, was listed unreferenced.
 
 ## 0.9.3 — 2026-10-10
 
