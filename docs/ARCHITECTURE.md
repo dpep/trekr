@@ -148,11 +148,18 @@ constant namespace and an ancestor order.
 
 1. every enclosing lexical scope's **own** constants (never their ancestors);
 2. the **ancestors of the innermost scope** only;
-3. the top level.
+3. the top level: Object and its ancestors, so a module's lookup reaches
+   Kernel's constants too, as a class's does through its chain.
 
 A path `A::B::C` uses that ladder for `A` alone. Every later segment descends
 through the previous one's ancestors — lexical nesting never applies past the
-head.
+head — and a hit on Object there is a miss unless the scope is Object itself
+(`Box::TOP` raises NameError).
+
+**Object's constants are the top level's.** `class Object; OBJC = 1; end` is
+stored as `OBJC`, the name `OBJC`, `::OBJC` and `Object::OBJC` all reach, so
+one constant has one name and one set of mentions (`tree::qualify`, and
+`tree::whole_name` for a whole name asked).
 
 **Linearization** is `[prepends, self, includes, superclass's whole chain]`,
 and prepend/include are **not** symmetrical:

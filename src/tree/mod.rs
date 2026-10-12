@@ -698,7 +698,7 @@ pub(crate) enum Via {
     Lexical,
     /// Found in an ancestor of the innermost scope.
     Ancestor,
-    /// Found at the top level.
+    /// Found at the top level: on Object, or an ancestor of it.
     Root,
     /// A later segment of a path, found under the segment before it.
     Path,
@@ -846,13 +846,26 @@ pub(crate) struct Resolution {
     pub(crate) sites: Vec<Site>,
 }
 
-/// `A` inside scope `X` is `X::A`; at the top level it is just `A`.
-fn qualify(scope: &str, name: &str) -> String {
-    if scope.is_empty() {
+/// `A` inside scope `X` is `X::A`; at the top level it is just `A`. So it is
+/// in `Object`, whose constants are the top level's: `class Object; A = 1;
+/// end` is the `A` that `A`, `::A` and `Object::A` all reach. Object's
+/// singleton class is no constant of it.
+pub(crate) fn qualify(scope: &str, name: &str) -> String {
+    if scope.is_empty() || (scope == OBJECT && name != crate::core::SINGLETON_CLASS) {
         name.to_string()
     } else {
         format!("{scope}::{name}")
     }
+}
+
+/// A constant's whole name, written from the top level (`::` or not), as the
+/// tree keys it: `Object::Widget::LIMIT` is `Widget::LIMIT`.
+pub(crate) fn whole_name(written: &str) -> String {
+    written
+        .strip_prefix("::")
+        .unwrap_or(written)
+        .split("::")
+        .fold(String::new(), |scope, segment| qualify(&scope, segment))
 }
 
 /// The scopes a superclass of `class` is looked up in. Ruby evaluates it
@@ -2174,6 +2187,22 @@ impl Tree {
         self.resolve_from(written, written_nesting, Some(path))
     }
 
+    /// The top level's rung for `head`: Object and its ancestors, so a
+    /// Kernel constant is reached from a module or as `::KC`, as in Ruby.
+    fn at_top(&self, head: &str) -> impl Iterator<Item = (String, Via)> {
+        let past_object: Vec<String> = self
+            .ancestors(OBJECT)
+            .chain
+            .iter()
+            .map(|ancestor| public_name(ancestor))
+            .filter(|ancestor| *ancestor != OBJECT)
+            .map(|ancestor| qualify(ancestor, head))
+            .collect();
+        std::iter::once(head.to_string())
+            .chain(past_object)
+            .map(|candidate| (candidate, Via::Root))
+    }
+
     fn resolve_from(
         &self,
         written: &str,
@@ -2186,7 +2215,7 @@ impl Tree {
 
         let mut candidates: Vec<(String, Via)> = Vec::new();
         if let Some(rooted) = head.strip_prefix("::") {
-            candidates.push((rooted.to_string(), Via::Root));
+            candidates.extend(self.at_top(rooted));
         } else {
             for scope in &nesting {
                 candidates.push((qualify(scope, head), Via::Lexical));
@@ -2198,11 +2227,19 @@ impl Tree {
                 };
                 let chain = self.ancestors(&innermost);
                 unresolved = chain.unresolved.clone();
-                for ancestor in &chain.chain {
-                    candidates.push((qualify(public_name(ancestor), head), Via::Ancestor));
+                for ancestor in chain.chain.iter().map(|ancestor| public_name(ancestor)) {
+                    // Object's constants are the top level's.
+                    let via = if ancestor == OBJECT {
+                        Via::Root
+                    } else {
+                        Via::Ancestor
+                    };
+                    candidates.push((qualify(ancestor, head), via));
                 }
             }
-            candidates.push((head.to_string(), Via::Root));
+            // A module's lookup ends at Object's too; a class's own chain
+            // already passed it, and is not tried twice.
+            candidates.extend(self.at_top(head));
         }
 
         let mut tried = 0;
@@ -2673,6 +2710,59 @@ mod tests {
         let tree = one("X = :top\nclass C\n  X = :inner\nend\n");
         assert_eq!(at(&tree, "X", &["C"]).as_deref(), Some("C::X"));
         assert_eq!(at(&tree, "::X", &["C"]).as_deref(), Some("X"));
+    }
+
+    /// Each answer is Ruby 3.4's: a class written in `class Object` is the
+    /// top level's, by every spelling, and a scope past Object still misses.
+    #[test]
+    fn a_class_in_class_object_is_the_top_levels() {
+        let tree = one("class Object
+  class Inner
+    X = 1
+  end
+  class << self
+    S = 2
+  end
+end
+             class Box
+end
+module Mod
+end
+");
+        for (written, nesting, found) in [
+            ("Inner", &[][..], Some("Inner")),
+            ("::Inner", &["Mod"][..], Some("Inner")),
+            ("Object::Inner::X", &[][..], Some("Inner::X")),
+            ("Object::Object::Inner", &[][..], Some("Inner")),
+            ("Inner::X", &["Mod"][..], Some("Inner::X")),
+            ("Box::Inner", &[][..], None),
+            (
+                "S",
+                &["singleton_class", "Object"][..],
+                Some("Object::singleton_class::S"),
+            ),
+            ("S", &[][..], None),
+        ] {
+            assert_eq!(
+                at(&tree, written, nesting).as_deref(),
+                found,
+                "{written} in {nesting:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_whole_name_drops_object_as_its_scope() {
+        for (written, whole) in [
+            ("Object::X", "X"),
+            ("::Object::X::Y", "X::Y"),
+            ("Object::Object::X", "X"),
+            ("Object", "Object"),
+            ("Widget::Object::X", "Widget::Object::X"),
+            ("Object::singleton_class::X", "Object::singleton_class::X"),
+        ] {
+            assert_eq!(super::whole_name(written), whole, "{written}");
+        }
     }
 
     #[test]

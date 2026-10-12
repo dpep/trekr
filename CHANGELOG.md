@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **A constant written in `class Object` is the top level's.** Ruby reaches
+  `class Object; OBJC = 6; end` as `OBJC`, `::OBJC` and `Object::OBJC`
+  alike, and a top-level `TOP = 1` as `Object::TOP`; trekr kept them apart,
+  so `::OBJC`, `Object::TOP`, and a bare `OBJC` at the top level or in a
+  module's method were residue, and `--refs` by each spelling listed a
+  different set. They now resolve, hover and go to the definition, and
+  `--refs ::OBJC`, `--refs Object::OBJC` and Find References at any of them
+  list the same mentions. Hover names such a constant `OBJC`, as Ruby does.
+  A module's lookup, and `::KC`, also reach a Kernel constant now, as in
+  Ruby; `Box::OBJC` and `Box::TOP` still miss.
+
 ## 0.9.3 — 2026-10-10
 
 - **`Box::OBJC` no longer finds a constant written in `class Object`.**

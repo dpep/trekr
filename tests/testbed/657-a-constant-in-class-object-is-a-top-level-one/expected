@@ -1,34 +1,39 @@
 # `class Object; OBJC = 6; end` and a top-level `TOP = 1` are each one
-# constant Ruby reaches as `X`, `::X` and `Object::X`, from anywhere,
-# including a module's singleton method. Pinned as trekr answers today,
-# which is not yet Ruby's (Ruby 3.4's answer after each line).
+# constant Ruby reaches as `X`, `::X` and `Object::X`, from anywhere: trekr
+# stored the first as `Object::OBJC`, so `::OBJC`, `Object::TOP`, a bare
+# `OBJC` outside a class and a module method's Kernel `KC` were residue,
+# and each spelling's --refs listed a different set. Ruby 3.4's answer is
+# after each `#`.
 # 6, 1
 def app.rb:9:14 status=resolved site=app.rb:3
 def app.rb:10:13 status=resolved site=app.rb:1
-# 6, 1, 7 (a module's top level is Object's, Kernel included)
-def app.rb:13:19 status=residue
+# 6, 1, 7: a module's lookup ends at Object's, Kernel included
+def app.rb:13:19 status=resolved site=app.rb:3
 def app.rb:14:18 status=resolved site=app.rb:1
-def app.rb:15:17 status=residue
+def app.rb:15:17 status=resolved site=app.rb:6
 # 1, 1, 6, 6
-def app.rb:17:9 status=residue
+def app.rb:17:9 status=resolved site=app.rb:1
 def app.rb:18:3 status=resolved site=app.rb:1
-def app.rb:19:3 status=residue
+def app.rb:19:3 status=resolved site=app.rb:3
 def app.rb:20:9 status=resolved site=app.rb:3
-hover app.rb:20:9 Object::OBJC
+hover app.rb:20:9 OBJC
+hover app.rb:17:9 TOP
 definition app.rb:20:9 app.rb:3
-definition app.rb:17:9
-# NameError, NameError: a scoped lookup ending on Object is a miss
+definition app.rb:17:9 app.rb:1
+definition app.rb:23:1 app.rb:3
+# NameError, NameError: a scoped lookup ending on Object is still a miss
 def app.rb:21:6 status=residue
 def app.rb:22:6 status=residue
 # 6, 7
-def app.rb:23:1 status=residue
-def app.rb:24:3 status=residue
-# Each spelling should list one constant's mentions.
-refs ::OBJC rows=3 exit=0
-refs Object::OBJC rows=3 exit=0
-refs ::TOP rows=4 exit=0
-refs Object::TOP rows=1 exit=0
-refs app.rb:1:1 rows=4 exit=0
-refs app.rb:3:3 rows=3 exit=0
-refs app.rb:20:9 rows=3 exit=0
-refs app.rb:17:9 rows=1 exit=0
+def app.rb:23:1 status=resolved site=app.rb:3
+def app.rb:24:3 status=resolved site=app.rb:6
+# Every spelling, and every position, lists the one constant's mentions.
+refs ::OBJC rows=6 exit=0
+refs Object::OBJC rows=6 exit=0
+refs ::TOP rows=5 exit=0
+refs Object::TOP rows=5 exit=0
+refs app.rb:1:1 rows=5 exit=0
+refs app.rb:3:3 rows=6 exit=0
+refs app.rb:13:19 rows=6 exit=0
+refs app.rb:20:9 rows=6 exit=0
+refs app.rb:17:9 rows=5 exit=0

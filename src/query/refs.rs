@@ -27,11 +27,15 @@ pub(crate) fn constant_mentions(
     fqn: &str,
     written: Option<&str>,
 ) -> anyhow::Result<Vec<Ref>> {
-    let mut spellings: Vec<String> = std::iter::once(fqn)
+    let fqn = &crate::tree::whole_name(fqn);
+    let mut spellings: Vec<String> = std::iter::once(fqn.as_str())
         .chain(fqn.match_indices("::").map(|(at, _)| &fqn[at + 2..]))
         .map(str::to_string)
         .collect();
     spellings.push(format!("::{fqn}"));
+    // Object's constants are the top level's (`tree::qualify`).
+    spellings.push(format!("Object::{fqn}"));
+    spellings.push(format!("::Object::{fqn}"));
     if let Some(written) = written
         && !spellings.iter().any(|spelling| spelling == written)
     {
@@ -87,9 +91,9 @@ pub(crate) fn placed_name(tree: &Tree, written: &str, nesting: &[String], path: 
             let placed = tree
                 .resolve_at(&format!("{rooted}{prefix}"), nesting, path)
                 .fqn?;
-            Some(format!("{placed}::{}", segments[n..].join("::")))
+            Some(crate::tree::qualify(&placed, &segments[n..].join("::")))
         })
-        .unwrap_or_else(|| bare.to_string())
+        .unwrap_or_else(|| crate::tree::whole_name(bare))
 }
 
 /// One call site, tiered. Reads only the tree and the file's own facts, so

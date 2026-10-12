@@ -80,7 +80,8 @@ They answer different questions; read them separately.
   Ruby, so `x.gsub(a, b).downcase` is `String#downcase`.
   On a constant it is the rung of Ruby's constant lookup that found it:
   `lexical` (an enclosing scope), `ancestor` (the innermost scope's
-  ancestors), `root` (the top level), or `path` (a later segment of a path,
+  ancestors), `root` (the top level, which is Object's constants,
+  and Kernel's from a module or the top level), or `path` (a later segment of a path,
   under the one before it).
 
 Beside them, a call's answer carries `receiver_kind` (`class` or `module`:
