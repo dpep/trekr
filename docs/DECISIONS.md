@@ -14524,10 +14524,19 @@ query never waits on the write lock (DEC-066): a refresh that meets the
 vacuum answers from the committed index and says `index.busy`, as it does
 behind an index's batch.
 
-**Skipped, not waited for.** A live first index's `warming` mark, or another
-writer holding the lock past the connection's 5 s wait, makes the pass skip
-without recording, so the next index pass asks again. The claim is one
-immediate transaction, so two passes started together run once. Vacuum needs
+**Claimed before it is started, and named its store.** The index that finds
+a pass due claims it — one immediate transaction that never waits, so of
+several index passes finishing together one spawns — and passes its own
+store's path to `trekr --cleanup STORE`. Beside a newer trekr's store the
+index writes a side store (DEC-300), which a fresh process looking the path
+up again would not know: the first shape opened the newer store, failed on
+its schema before logging, stamped nothing, and was respawned by every index
+pass (hunt 0.9.5). A store the pass cannot open is logged `cleanup_failed`,
+and the claim stands, so a failing pass costs one process an interval.
+
+**Skipped, not waited for.** A live first index's `warming` mark keeps an
+index from claiming; a writer holding the lock past the connection's 5 s wait
+makes the pass skip. Vacuum needs
 the disk to hold twice the live pages (they are written into the WAL once);
 otherwise the pass removes what it can and leaves the file.
 

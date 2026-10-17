@@ -570,7 +570,9 @@ pages inside the file, and tree snapshots no checkout's current key names —
 at most every two hours (`cleanup checked` in `meta`; a new store is stamped
 at creation, a rebuild drops the stamp, so what an upgrade leaves is looked
 at by the first index after it). When that is at least 32 MB and a quarter
-of the file, the index starts a detached `trekr --cleanup` and exits: a query
+of the file, the index claims the pass, starts a detached `trekr --cleanup
+STORE` naming the store it wrote (a side store, beside a newer trekr's), and
+exits: a query
 waiting on the index waits for nothing more. That process skips a store a
 first index is filling or another writer holds past the 5 s wait, removes
 the stale snapshots, collects the blobs only a query recorded over a week

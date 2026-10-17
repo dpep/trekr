@@ -5048,6 +5048,70 @@ fn an_index_pass_compacts_the_store_in_the_background_and_a_query_does_not() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// The store's file size as SQLite counts it, free pages excluded.
+fn live_and_free(db: &Path) -> (i64, i64) {
+    rusqlite::Connection::open(db)
+        .unwrap()
+        .query_row(
+            "SELECT page_count * page_size, freelist_count * page_size
+               FROM pragma_page_count(), pragma_page_size(), pragma_freelist_count()",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .unwrap()
+}
+
+/// Beside a newer trekr's store, the cleanup an index starts cleans the
+/// store that index wrote — its own side store — not the newer one, which it
+/// cannot open (DEC-650).
+#[test]
+fn the_background_cleanup_cleans_the_side_store_its_index_wrote() {
+    let (dir, db) = scratch("cleanup-side");
+    repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute_batch("PRAGMA user_version = 9999;")
+        .unwrap();
+    trekr(&db, &dir, &["--index"]);
+    let side = beside(&db, ".v")
+        .into_iter()
+        .find(|name| name.ends_with(".db"))
+        .map(|name| db.with_file_name(name))
+        .expect("a side store");
+    bloat(&side, 40);
+    let (_, bloated) = live_and_free(&side);
+    assert!(bloated >= 40_000_000);
+
+    trekr(&db, &dir, &["--index"]);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while live_and_free(&side).1 > 0 && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert_eq!(live_and_free(&side).1, 0, "the side store was compacted");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// A cleanup that cannot open its store says so in the log.
+#[test]
+fn a_cleanup_that_cannot_open_its_store_logs_why() {
+    let (dir, db) = scratch("cleanup-fail");
+    let log = dir.join("log.ndjson");
+    let bogus = dir.join("not-a-store.db");
+    let ran = neutral(Command::new(env!("CARGO_BIN_EXE_trekr")))
+        .arg("--cleanup")
+        .arg(&bogus)
+        .env("TREKR_DB", &db)
+        .env("TREKR_LOG", &log)
+        .output()
+        .unwrap();
+    assert!(ran.status.success(), "{ran:?}");
+    let said = fs::read_to_string(&log).unwrap_or_default();
+    assert!(said.contains("\"cleanup_failed\""), "{said}");
+    assert!(!bogus.exists(), "never a new store");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// `--gc` says what it returned to the disk — the files it removed, and the
 /// file's own shrink once vacuumed — apart from the pages it freed inside.
 #[test]

@@ -208,9 +208,10 @@ struct Cli {
     #[arg(long, requires = "gc", conflicts_with = "dry_run")]
     vacuum: bool,
 
-    /// One background cleanup pass, as an index starts it (DEC-650). Internal.
-    #[arg(long, hide = true, conflicts_with_all = ["index", "status", "gc", "lsp"])]
-    cleanup: bool,
+    /// One background cleanup pass over this store, as an index starts it
+    /// (DEC-650). Internal.
+    #[arg(long, hide = true, value_name = "STORE", conflicts_with_all = ["index", "status", "gc", "lsp"])]
+    cleanup: Option<PathBuf>,
 
     /// Worker threads for parsing. 0 (the default) picks the machine's
     /// **physical** core count; `TREKR_JOBS` sets it too, and the flag wins.
@@ -363,8 +364,9 @@ pub(crate) fn run(lsp: fn(bool) -> anyhow::Result<()>) -> ExitCode {
     // engine (`--usage` itself) or is counted by its own front (`--lsp`).
     let (feature, result) = if cli.lsp {
         (None, lsp(cli.profile).map(|()| ExitCode::SUCCESS))
-    } else if cli.cleanup {
-        (None, crate::cleanup::command().map(|()| ExitCode::SUCCESS))
+    } else if let Some(store) = &cli.cleanup {
+        crate::cleanup::command(store);
+        (None, Ok(ExitCode::SUCCESS))
     } else if let Some(path) = &cli.index {
         (
             Some("index"),
@@ -2597,7 +2599,7 @@ fn cmd_index(
         crate::tree::Tree::prepare(&store, &root_str)
     })?;
     store.truncate_wal();
-    crate::cleanup::after_index(&store);
+    crate::cleanup::after_index(&mut store);
     if let Some(profile) = profile {
         match out {
             Output::Text => profile.report_text(),

@@ -4,9 +4,11 @@
 //! and a release leaves each checkout not queried since with a tree snapshot
 //! no key names. Nobody should have to know `--gc --vacuum` exists. So an
 //! index pass, once it is done, measures what could be given back — at most
-//! every [`INTERVAL`] — and when that passes the threshold it starts a
-//! detached `trekr --cleanup`, which nothing waits for: a query that spawned
-//! the index waits for that process's exit, never for this one's.
+//! every [`INTERVAL`] — and when that passes the threshold it claims the
+//! store's cleanup and starts a detached `trekr --cleanup STORE`, which
+//! nothing waits for: a query that spawned the index waits for that
+//! process's exit, never for this one's. The claim is made before the spawn,
+//! so a pass that fails is not started again by every index after it.
 
 use crate::store::Store;
 use crate::tree::Swept;
@@ -54,12 +56,15 @@ fn worth(waste: i64, file: i64) -> bool {
     waste >= MIN_WASTE && waste * 4 >= file
 }
 
-/// After an index pass: start a cleanup in the background when one is due.
-/// Best effort, and never waits for it.
-pub(crate) fn after_index(store: &Store) {
-    match due(store, now()) {
+/// After an index pass: start a cleanup of `store` in the background when
+/// one is due. Best effort, and never waits for it.
+pub(crate) fn after_index(store: &mut Store) {
+    let Some(path) = store.path().map(Path::to_path_buf) else {
+        return;
+    };
+    match start(store, now()) {
         Ok(true) => {
-            if let Err(error) = spawn() {
+            if let Err(error) = spawn(&path) {
                 log(
                     "cleanup_spawn_failed",
                     serde_json::json!({ "error": error.to_string() }),
@@ -74,15 +79,32 @@ pub(crate) fn after_index(store: &Store) {
     }
 }
 
-/// Whether a cleanup should run: nobody looked within [`INTERVAL`], and what
-/// it would reclaim is worth it. A look that finds nothing worth doing is
-/// recorded, so the next is an interval away.
+/// Whether to start a cleanup now: one is [`due`], and this process took the
+/// claim for it — which another process asking at once, or the next index
+/// pass, then finds taken.
+fn start(store: &mut Store, now: i64) -> anyhow::Result<bool> {
+    if !due(store, now)? {
+        return Ok(false);
+    }
+    match store.claim_cleanup(now, INTERVAL) {
+        Err(error) if crate::store::is_busy(&error) => Ok(false),
+        claimed => Ok(claimed?),
+    }
+}
+
+/// Whether a cleanup should run: nobody looked within [`INTERVAL`], no first
+/// index is filling the store, and what it would reclaim is worth it. A look
+/// that finds nothing worth doing is recorded, so the next is an interval
+/// away.
 fn due(store: &Store, now: i64) -> anyhow::Result<bool> {
     if store
         .cleanup()?
         .checked_at
         .is_some_and(|at| now - at < INTERVAL)
     {
+        return Ok(false);
+    }
+    if store.any_warming()? {
         return Ok(false);
     }
     if worth(Reclaimable::measure(store)?.bytes(), store.db_bytes()?) {
@@ -92,14 +114,17 @@ fn due(store: &Store, now: i64) -> anyhow::Result<bool> {
     Ok(false)
 }
 
-/// `trekr --cleanup`: from this binary, detached — its own process group, so
-/// a Ctrl-C at the query that started the index does not reach it — and
-/// marked background, so it yields as the index does.
-fn spawn() -> std::io::Result<()> {
+/// `trekr --cleanup STORE`: from this binary, detached — its own process
+/// group, so a Ctrl-C at the query that started the index does not reach it
+/// — and marked background, so it yields as the index does. The store is
+/// named, not looked up again: beside a newer trekr's, the index wrote its
+/// own side store, which a new process would not know to open.
+fn spawn(store: &Path) -> std::io::Result<()> {
     use std::os::unix::process::CommandExt;
     use std::process::{Command, Stdio};
     Command::new(std::env::current_exe()?)
         .arg("--cleanup")
+        .arg(store)
         .env(crate::background::BACKGROUND, "1")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -123,24 +148,30 @@ pub(crate) struct Done {
 /// Why a cleanup did nothing.
 #[derive(Debug, PartialEq)]
 pub(crate) enum Skipped {
-    /// Another process looked within the interval.
-    NotDue,
     /// A first index is under way, or another writer kept the lock past the
-    /// wait: the next index pass asks again.
+    /// wait.
     Busy,
 }
 
-/// Clean up `store`, unless another process did lately or holds it. Writes
-/// wait as long as a query's own writes do, never as long as an index's.
+/// Clean up `store`, claimed for this pass by [`start`], unless another
+/// process holds it. Writes wait as long as a query's own writes do, never
+/// as long as an index's.
 pub(crate) fn run(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Skipped>> {
+    match pass(store, now) {
+        Err(error)
+            if error
+                .downcast_ref::<rusqlite::Error>()
+                .is_some_and(crate::store::is_busy) =>
+        {
+            Ok(Err(Skipped::Busy))
+        }
+        done => done,
+    }
+}
+
+fn pass(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Skipped>> {
     if store.any_warming()? {
         return Ok(Err(Skipped::Busy));
-    }
-    match store.claim_cleanup(now, INTERVAL) {
-        Ok(true) => {}
-        Ok(false) => return Ok(Err(Skipped::NotDue)),
-        Err(error) if crate::store::is_busy(&error) => return Ok(Err(Skipped::Busy)),
-        Err(error) => return Err(error.into()),
     }
     let before = store.disk_bytes();
     let mut done = Done {
@@ -200,13 +231,20 @@ fn log(event: &str, fields: serde_json::Value) {
     crate::log::Log::open(false).event(event, fields);
 }
 
-/// The hidden `--cleanup`: one pass over the store this binary uses, said
-/// only in the log.
-pub(crate) fn command() -> anyhow::Result<()> {
+/// The hidden `--cleanup STORE`: one pass over the store an index named,
+/// said only in the log.
+pub(crate) fn command(path: &Path) {
     crate::background::yield_if_background();
     // Never a new store: the one the index wrote may be gone by now.
-    let path = crate::store::in_use(&crate::store::default_path()?);
-    let mut store = Store::open_existing(&path)?;
+    let mut store = match Store::open_existing(path) {
+        Ok(store) => store,
+        Err(error) => {
+            return log(
+                "cleanup_failed",
+                serde_json::json!({ "store": path, "error": error.to_string() }),
+            );
+        }
+    };
     let started = std::time::Instant::now();
     let ran = run(&mut store, now());
     let ms = started.elapsed().as_millis() as u64;
@@ -221,7 +259,6 @@ pub(crate) fn command() -> anyhow::Result<()> {
             serde_json::json!({ "error": format!("{error:#}"), "ms": ms }),
         ),
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -330,6 +367,7 @@ mod tests {
         std::fs::write(&stale, vec![0u8; 4096]).unwrap();
         let before = store.disk_bytes();
         store.cleanup_checked(0).unwrap();
+        assert!(start(&mut store, NOW).unwrap());
 
         let done = run(&mut store, NOW).unwrap().expect("ran");
         assert!(done.vacuumed);
@@ -357,17 +395,19 @@ mod tests {
     }
 
     #[test]
-    fn a_pass_runs_at_most_once_an_interval() {
+    fn a_pass_is_started_at_most_once_an_interval() {
         let (dir, mut store) = store("rate");
         bloat(&dir, 40);
         store.cleanup_checked(0).unwrap();
+        assert!(start(&mut store, NOW).unwrap());
+        assert!(
+            !start(&mut store, NOW + 1).unwrap(),
+            "claimed: a pass that then fails is not started again by the next index"
+        );
         assert!(run(&mut store, NOW).unwrap().is_ok());
         bloat(&dir, 40);
-        assert_eq!(
-            run(&mut store, NOW + INTERVAL - 1).unwrap().unwrap_err(),
-            Skipped::NotDue
-        );
-        assert!(!due(&store, NOW + INTERVAL - 1).unwrap());
+        assert!(!start(&mut store, NOW + INTERVAL - 1).unwrap());
+        assert!(start(&mut store, NOW + INTERVAL).unwrap());
         assert!(run(&mut store, NOW + INTERVAL).unwrap().unwrap().vacuumed);
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -380,6 +420,10 @@ mod tests {
         store.wait_briefly();
         let writer = rusqlite::Connection::open(dir.join("t.db")).unwrap();
         writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        assert!(
+            !start(&mut store, NOW).unwrap(),
+            "no claim without the lock"
+        );
         assert_eq!(run(&mut store, NOW).unwrap().unwrap_err(), Skipped::Busy);
         writer.execute_batch("ROLLBACK").unwrap();
         assert_eq!(
@@ -390,8 +434,10 @@ mod tests {
 
         // A first index under way, in a live process: this one.
         store.set_warming("/other", 1, 10).unwrap();
+        assert!(!due(&store, NOW).unwrap());
         assert_eq!(run(&mut store, NOW).unwrap().unwrap_err(), Skipped::Busy);
         store.clear_warming("/other").unwrap();
+        assert!(start(&mut store, NOW).unwrap());
         assert!(run(&mut store, NOW).unwrap().unwrap().vacuumed);
         let _ = std::fs::remove_dir_all(dir);
     }

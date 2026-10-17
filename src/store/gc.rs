@@ -223,10 +223,18 @@ impl Store {
         set_meta(&self.conn, CLEANUP_CHECKED, &at.to_string())
     }
 
-    /// Take the cleanup for this process at `at`, unless another looked
-    /// within `interval` seconds. One immediate transaction, so of two
-    /// processes asking at once only one is told yes.
+    /// Take the cleanup at `at`, unless another looked within `interval`
+    /// seconds. One immediate transaction, so of two processes asking at
+    /// once only one is told yes. Never waits for the lock: busy is an
+    /// error, and the next index pass asks again.
     pub(crate) fn claim_cleanup(&mut self, at: i64, interval: i64) -> Result<bool> {
+        self.conn.busy_timeout(std::time::Duration::ZERO)?;
+        let claimed = self.claim_cleanup_once(at, interval);
+        self.conn.busy_timeout(super::BUSY)?;
+        claimed
+    }
+
+    fn claim_cleanup_once(&mut self, at: i64, interval: i64) -> Result<bool> {
         let tx = self
             .conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
