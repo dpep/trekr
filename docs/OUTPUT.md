@@ -433,7 +433,8 @@ until there is one.
 
 `--gc` reports `reclaimed_bytes`, what it returned to the disk: the files it
 removed (`snapshots`, `overlays`, `core_files`, `kept`) and, with `--vacuum`,
-the index file's own shrink. `freed_bytes` is the pages its deletions freed
+the pages the index file gave up — counted in pages, since a reader can hold
+off the file's own shrink until the log is folded back. `freed_bytes` is the pages its deletions freed
 inside the file, which later writes reuse; `free_bytes` is every free page
 left in it — `0` after `--vacuum` — which the background cleanup compacts
 once it is worth it.

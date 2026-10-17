@@ -5670,7 +5670,9 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as i64;
-    let disk_before = store.disk_bytes();
+    // In pages, as the cleanup counts it: the file itself shrinks only once
+    // the log is folded back, which a reader can hold off.
+    let pages_before = store.db_bytes()?;
     let garbage = store.collect(
         now - older_than as i64,
         |root| Path::new(root).is_dir(),
@@ -5705,7 +5707,7 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
     let db_bytes = store.db_bytes()?;
     let free_bytes = store.free_bytes()?;
     // What left the disk: the files, and the index file's own shrink.
-    let reclaimed_bytes = (disk_before - store.disk_bytes()).max(0)
+    let reclaimed_bytes = (pages_before - store.db_bytes()?).max(0)
         + (snapshots.bytes + overlay_bytes + core.bytes + kept.iter().map(|k| k.bytes).sum::<u64>())
             as i64;
     let found = !garbage.checkouts.is_empty()

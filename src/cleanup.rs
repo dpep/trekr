@@ -173,7 +173,9 @@ fn pass(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Skipped>> {
     if store.any_warming()? {
         return Ok(Err(Skipped::Busy));
     }
-    let before = store.disk_bytes();
+    // In pages: a writer queued behind the vacuum keeps the log from being
+    // folded back, so the file may not have shrunk yet when this measures.
+    let before = store.db_bytes()?;
     let mut done = Done {
         blobs: store.collect_loose(now - LOOSE_AGE)?.blobs,
         snapshots: crate::tree::sweep_snapshots(store, &[], false)?,
@@ -187,7 +189,7 @@ fn pass(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Skipped>> {
             Err(error) => return Err(error.into()),
         }
     }
-    done.reclaimed_bytes = (before - store.disk_bytes()).max(0) + done.snapshots.bytes as i64;
+    done.reclaimed_bytes = (before - store.db_bytes()?).max(0) + done.snapshots.bytes as i64;
     store.cleanup_ran(now, done.reclaimed_bytes)?;
     Ok(Ok(done))
 }
@@ -365,7 +367,7 @@ mod tests {
             .join("t.trees")
             .join(format!("{}-{}.tree", &live[0][..16], "0".repeat(40)));
         std::fs::write(&stale, vec![0u8; 4096]).unwrap();
-        let before = store.disk_bytes();
+        let before = store.db_bytes().unwrap();
         store.cleanup_checked(0).unwrap();
         assert!(start(&mut store, NOW).unwrap());
 
@@ -377,7 +379,7 @@ mod tests {
             live,
             "the stale one went, the live one stayed"
         );
-        let after = store.disk_bytes();
+        let after = store.db_bytes().unwrap();
         assert!(after < before - 32_000_000, "{before} -> {after}");
         // Measured by the pass itself, around its own bookkeeping write.
         let seen = before - after + 4096;
@@ -390,6 +392,32 @@ mod tests {
         assert_eq!(
             (cleanup.checked_at, cleanup.ran_at, cleanup.reclaimed_bytes),
             (Some(NOW), Some(NOW), Some(done.reclaimed_bytes))
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Another connection reading through the vacuum keeps the log from
+    /// being folded back, so the file has not shrunk yet when the pass
+    /// measures: what it gave back is counted in pages, not in file size.
+    #[test]
+    fn a_pass_counts_what_it_reclaimed_though_the_file_shrinks_later() {
+        let (dir, mut store) = store("reader");
+        bloat(&dir, 40);
+        store.cleanup_checked(0).unwrap();
+        assert!(start(&mut store, NOW).unwrap());
+        store.wait_briefly();
+        let reader = rusqlite::Connection::open(dir.join("t.db")).unwrap();
+        reader.execute_batch("BEGIN").unwrap();
+        let _: i64 = reader
+            .query_row("SELECT COUNT(*) FROM checkout", [], |r| r.get(0))
+            .unwrap();
+        let done = run(&mut store, NOW).unwrap().expect("ran");
+        reader.execute_batch("COMMIT").unwrap();
+        assert!(done.vacuumed);
+        assert!(
+            done.reclaimed_bytes >= 40_000_000,
+            "{}",
+            done.reclaimed_bytes
         );
         let _ = std::fs::remove_dir_all(dir);
     }

@@ -277,21 +277,6 @@ impl Store {
             .execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")
     }
 
-    /// The index file and its write-ahead log, as the disk counts them: 0
-    /// for an in-memory store.
-    pub(crate) fn disk_bytes(&self) -> i64 {
-        let Some(path) = self.path() else {
-            return 0;
-        };
-        let mut wal = path.as_os_str().to_owned();
-        wal.push("-wal");
-        [path.to_path_buf(), wal.into()]
-            .iter()
-            .filter_map(|file| std::fs::metadata(file).ok())
-            .map(|meta| meta.len() as i64)
-            .sum()
-    }
-
     /// The database's size, in bytes, as SQLite counts it.
     pub(crate) fn db_bytes(&self) -> Result<i64> {
         self.conn.query_row(
