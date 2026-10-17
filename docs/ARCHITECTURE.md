@@ -577,8 +577,11 @@ waiting on the index waits for nothing more. That process skips a store a
 first index is filling or another writer holds past the 5 s wait, removes
 the stale snapshots, collects the blobs only a query recorded over a week
 ago (never a checkout: that stays `--gc`'s, on its `--older-than`), and
-vacuums when the free pages alone pass the same threshold and the disk holds
-twice the live pages. `--status` reports it as `storage`.
+hands the free pages back when they alone pass the same threshold: a chunk
+of 1,024 pages per short write transaction on a store in incremental
+auto-vacuum mode — every new store — and by one full rewrite on an older
+store, which switches it (the copy in a temporary file, the disks holding the
+live pages twice). `--status` reports it as `storage`.
 
 A gem the lockfile names and disk does not have is **reported**, in the text
 output and as `gems.missing` in `--json`; a git or path gem that was not

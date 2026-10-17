@@ -10,9 +10,13 @@
   starts, or `trekr --index` — trekr measures the waste at most every two
   hours, and when it is at least 32 MB and a quarter of the file, a
   background process removes the stale snapshots, collects the blobs only
-  a query read a week ago, and compacts the file. It never runs on a
-  query, waits for nothing, and skips a store another trekr is writing.
-  Nothing to do: a store 0.9.4 rebuilt shrinks after its next index.
+  a query read a week ago, and gives the free space back to the disk a few
+  megabytes at a time, so an index or edit waits a fraction of a second,
+  not for the whole compaction. A store from before this release is
+  rewritten once instead (through a temporary file, when the disk has room
+  for twice its live size), which switches it. It never runs on a query,
+  waits for nothing, and skips a store another trekr is writing. Nothing
+  to do: a store 0.9.4 rebuilt shrinks after its next index.
 - **`--status` says how big the index is and what it could give back**
   (`storage` in `--json`), and when the background cleanup last ran.
 - **`--gc`'s `reclaimed_bytes` is what left the disk** — the snapshots,

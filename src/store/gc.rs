@@ -272,9 +272,45 @@ impl Store {
     /// Rewrite the database without its free pages, and fold the WAL back in
     /// so the file on disk actually shrinks. Seconds on a large store and it
     /// holds the write lock throughout, so it is asked for, never implied.
+    ///
+    /// The copy SQLite builds on the way goes to a temporary file, not to
+    /// memory as this connection's own temporary tables do: it is the whole
+    /// live database, and in memory it was 1.3 GB of footprint for a 1 GB
+    /// store. The rewrite also switches an older store to incremental
+    /// vacuuming, so it is the last full one the cleanup needs.
     pub(crate) fn vacuum(&self) -> Result<()> {
         self.conn
-            .execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")
+            .execute_batch("PRAGMA auto_vacuum = INCREMENTAL; PRAGMA temp_store = FILE;")?;
+        let vacuumed = self.conn.execute_batch("VACUUM;");
+        self.conn.execute_batch("PRAGMA temp_store = MEMORY;")?;
+        vacuumed?;
+        self.conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);")
+    }
+
+    /// Whether free pages can be handed back a chunk at a time, without
+    /// rewriting the file.
+    pub(crate) fn incremental(&self) -> Result<bool> {
+        // Read under a transaction, so the answer is the file's header as it
+        // is now, not as this connection last read it.
+        let tx = self.conn.unchecked_transaction()?;
+        let _: i64 = tx.query_row("SELECT COUNT(*) FROM meta", [], |r| r.get(0))?;
+        let mode: i64 = tx.query_row("PRAGMA auto_vacuum", [], |r| r.get(0))?;
+        tx.commit()?;
+        Ok(mode == 2)
+    }
+
+    /// Hand back up to `pages` free pages, moving pages from the end of the
+    /// file into the holes: one short write transaction, then the log folded
+    /// back as far as readers allow.
+    pub(crate) fn vacuum_step(&self, pages: i64) -> Result<()> {
+        // Each step of the statement frees a page: run it to the end.
+        let mut stmt = self
+            .conn
+            .prepare(&format!("PRAGMA incremental_vacuum({pages})"))?;
+        let mut rows = stmt.query([])?;
+        while rows.next()?.is_some() {}
+        self.conn
+            .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))
     }
 
     /// The database's size, in bytes, as SQLite counts it.

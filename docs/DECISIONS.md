@@ -14472,8 +14472,11 @@ free pages inside the file, and tree snapshots no checkout's current key
 names. When that is at least **32 MB and a quarter of the file**, the index
 starts a detached `trekr --cleanup` (hidden; its own process group, niced like
 a background index) and exits. That process removes the stale snapshots,
-collects the blobs only a query recorded more than 7 days ago, and vacuums
-when the free pages alone pass the same threshold. It looks at most every
+collects the blobs only a query recorded more than 7 days ago, and, when the
+free pages alone pass the same threshold, hands them back to the disk — a
+chunk at a time on a store in incremental auto-vacuum mode, which every new
+store is, and by one full rewrite on an older store, which switches it. It
+looks at most every
 **two hours** (`INTERVAL`, recorded in `meta` as `cleanup checked`).
 `--status` reports it as `storage`; `--gc`'s `reclaimed_bytes` is now what
 left the disk. [`src/cleanup.rs`](../src/cleanup.rs). DEC-049's "reverses
@@ -14536,9 +14539,51 @@ and the claim stands, so a failing pass costs one process an interval.
 
 **Skipped, not waited for.** A live first index's `warming` mark keeps an
 index from claiming; a writer holding the lock past the connection's 5 s wait
-makes the pass skip. Vacuum needs
-the disk to hold twice the live pages (they are written into the WAL once);
-otherwise the pass removes what it can and leaves the file.
+makes the pass skip.
+
+**In chunks, not by rewriting the file** (stores over 1 GB are seen in the
+wild). A full `VACUUM` copies every live page, holding the write lock
+throughout, and needs the live size twice on disk. Measured on a 1.4 GB
+store with 1.03 GB live and 28 % free — every corpus under `~/code/lib/ruby`
+plus 30 historical rails, discourse, graphql, rubocop, dd-trace-rb and ruby
+checkouts (1,646 checkouts, 119k blobs), then 400 MB freed: the full rewrite
+took 10.5–13.5 s, and an index of a small repo that takes 70 ms waited
+11–13 s behind it. With `auto_vacuum = INCREMENTAL` the file keeps a map of
+which page points where, and `PRAGMA incremental_vacuum(N)` moves pages from
+the end of the file into the holes and truncates, N pages per short write
+transaction, with no copy. On a 0.98 GB store with 525 MB freed by
+collecting 240 checkouts (holes everywhere, not a tail):
+
+| chunk | per chunk p50 / max | whole pass |
+| ---: | ---: | ---: |
+| 1,024 pages (4 MB) | 98 / 580 ms | 16.6 s |
+| 4,096 pages (17 MB) | 340 / 1,360 ms | 13.4 s |
+| 16,384 pages (67 MB) | 1,641 / 2,409 ms | 13.2 s |
+
+So 1,024 pages, with a 150 ms pause between chunks (longer than a waiting
+writer's 100 ms backoff, so a queued index goes first): the pass takes 28 s
+in the background, the same small index waited 0.62 s (70 ms alone), queries
+in rails answered at p50 152 ms during it (142 ms without), and the file went
+from 983 MB to 458 MB. A full rewrite of that store would reach 410 MB: the
+pages incremental vacuuming moves are not repacked, and the pointer map costs
+0.1 % of pages. `--refs ActiveRecord::Base` on the two results: p50 197 ms
+after chunks, 186 ms after the rewrite — within the noise of a loaded
+machine. Indexing rails into a new store: 9.9–14.5 s with the map, 12.7–13.8
+s without, noise again.
+
+A new file takes the mode when it is created (it cannot be set on a file that
+has pages without a rewrite). A store that predates it — every store before
+this change, and one a format rebuild dropped, since the drop keeps the
+file — is rewritten whole by its first pass that is worth one, and that
+rewrite switches it, so it is the last. For that rewrite, SQLite's copy goes
+to a temporary file (`temp_store = FILE` for the one statement): held in
+memory, as the store's connections keep their temporary tables, it was a
+1.30 GB peak footprint (2.34 GB RSS) for the 1.03 GB store; on file, 87 MB
+(RSS 1.1 GB, the mapped store's own pages, which the kernel can drop). The
+disks must hold the live pages twice — the copy where SQLite keeps temporary
+files (`SQLITE_TMPDIR`, `TMPDIR`, `/var/tmp`…), and the rewrite into the log
+beside the store — with a quarter of each to spare; otherwise the pass skips
+the rewrite. `--gc --vacuum` rewrites the same way, and switches too.
 
 **Only the safe part.** A checkout is never collected here: whether a gem
 version is unreachable depends on bundles and on `--older-than`'s hysteresis,
@@ -14551,13 +14596,28 @@ next query in a dirty rails worktree paid a 0.35 s rebuild). Stale snapshots go 
 used side by side already retire each other's snapshot on every query, so a
 sweep adds no rebuilds that use doesn't.
 
-**Measured** (Apple M2, this build at the branch tip, release, the 0.9.3
-store above upgraded by 0.9.4): one `--index` of rails, 0.52 s, then the
-background pass: 1.05 s, 2 stale snapshots (14.3 MB) removed, the file
-228.7 MB → 75.5 MB, 167.6 MB reclaimed in all. Peak RSS of the pass 308 MB,
-most of it the store's own pages through the 1 GB `mmap_size`
-(`temp_store=MEMORY` holds the vacuum's copy in memory: about the live
-75 MB).
+**Measured** (Apple M2, release, the 0.9.3 store above upgraded by 0.9.4,
+whose rebuild left it in the old mode): one `--index` of rails, 0.52 s, then
+the background pass — the switching rewrite: 1.05 s, 2 stale snapshots
+(14.3 MB) removed, the file 228.7 MB → 75.5 MB, 167.6 MB reclaimed in all.
+That was with the copy in memory; the 0.9.5 hunt measured such copies at
+1.5–1.9× the live size, which is what moved it to a temporary file.
+
+**What makes a store reach a gigabyte.** On the store above: checkouts —
+each historical rails or discourse version adds 15–20 MB of facts its
+neighbours do not share — and the gems their bundles resolve, which DEC-049
+collects only on `--gc`. Nothing grows it without a new checkout or a new
+file version: blobs no file maps were 0 of 119,447. That is DEC-030's
+query, and the one way growth is unbounded remains DEC-003's: a version of
+a file an index mapped and an edit replaced is kept for a branch switch
+back, and neither `--gc` nor this pass collects it. A long-lived store in a
+repo edited between many indexes grows by every edited file's facts; that
+is a decision of its own, not this one's. Collecting at that size is slow:
+`--gc --older-than 0` removing 240 checkouts and 55,916 blobs from it took
+2,029 s, and deleting the same checkouts and their blobs directly in SQL
+took 54 s with an index on `body_call(blob_id)` added first
+— the one fact table whose cascade from `blob` has none, so each blob's
+delete scans it.
 
 **`--status` reads the store in one snapshot, then the snapshot files.**
 Read statement by statement, a `--status` racing a pass reported the run's

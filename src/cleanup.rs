@@ -23,6 +23,14 @@ pub(crate) const INTERVAL: i64 = 2 * 3600;
 /// win it back.
 const MIN_WASTE: i64 = 32 * 1024 * 1024;
 
+/// Free pages handed back per write transaction: about 0.1 s each on a 1 GB
+/// store, so a writer waits that long at most, not the whole compaction.
+const CHUNK_PAGES: i64 = 1024;
+
+/// Between chunks: longer than a waiting writer's longest backoff (100 ms),
+/// so a queued index takes its turn rather than waiting out the pass.
+const CHUNK_PAUSE: std::time::Duration = std::time::Duration::from_millis(150);
+
 /// A blob only a query recorded is kept this long, as `--gc` keeps it by
 /// default (DEC-049).
 const LOOSE_AGE: i64 = 7 * 86_400;
@@ -140,9 +148,27 @@ pub(crate) struct Done {
     pub(crate) snapshots: Swept,
     /// Blobs only a query recorded, no checkout maps.
     pub(crate) blobs: usize,
-    pub(crate) vacuumed: bool,
+    pub(crate) compacted: Compacted,
     /// What left the disk: the files removed and the index file's shrink.
     pub(crate) reclaimed_bytes: i64,
+}
+
+/// What a pass did with the file's free pages.
+#[derive(Debug, Default, Clone, Copy, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Compacted {
+    /// Too few to be worth it.
+    #[default]
+    NotWorth,
+    /// Handed back a chunk at a time.
+    Incremental,
+    /// Rewritten whole: a store from before incremental vacuuming, which
+    /// the rewrite switches.
+    Full,
+    /// Rewriting whole would not fit on the disk.
+    NoRoom,
+    /// Another writer held the lock past the wait.
+    Busy,
 }
 
 /// Why a cleanup did nothing.
@@ -182,25 +208,79 @@ fn pass(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Skipped>> {
         ..Done::default()
     };
     let (free, file) = (store.free_bytes()?, store.db_bytes()?);
-    if worth(free, file) && room_for(store, file - free) {
-        match store.vacuum() {
-            Ok(()) => done.vacuumed = true,
-            Err(error) if crate::store::is_busy(&error) => {}
+    done.compacted = match () {
+        () if !worth(free, file) => Compacted::NotWorth,
+        () if store.incremental()? => in_chunks(store)?,
+        () if !room_for(store, file - free) => Compacted::NoRoom,
+        () => match store.vacuum() {
+            Ok(()) => Compacted::Full,
+            Err(error) if crate::store::is_busy(&error) => Compacted::Busy,
             Err(error) => return Err(error.into()),
-        }
-    }
+        },
+    };
     done.reclaimed_bytes = (before - store.db_bytes()?).max(0) + done.snapshots.bytes as i64;
     store.cleanup_ran(now, done.reclaimed_bytes)?;
     Ok(Ok(done))
 }
 
-/// Whether the disk holds what a vacuum writes on the way: the live pages,
-/// once into the log, with as much again to spare for everything else.
+/// Hand every free page back, a chunk per write transaction, pausing between
+/// them so a waiting writer goes first. A writer that keeps the lock past the
+/// wait ends the pass where it is.
+fn in_chunks(store: &Store) -> anyhow::Result<Compacted> {
+    while store.free_bytes()? > 0 {
+        match store.vacuum_step(CHUNK_PAGES) {
+            Ok(()) => {}
+            Err(error) if crate::store::is_busy(&error) => return Ok(Compacted::Busy),
+            Err(error) => return Err(error.into()),
+        }
+        std::thread::sleep(CHUNK_PAUSE);
+    }
+    store.truncate_wal();
+    Ok(Compacted::Incremental)
+}
+
+/// Whether the disks hold what a full vacuum writes on the way: the live
+/// pages twice — a temporary copy where SQLite keeps its temporary files,
+/// and the rewrite into the log beside the store — and a quarter again.
 fn room_for(store: &Store, live: i64) -> bool {
     let Some(dir) = store.path().and_then(Path::parent) else {
         return true;
     };
-    available(dir).is_some_and(|free| free >= 2 * live.max(0) as u64)
+    let temp = sqlite_temp_dir();
+    let (Some(beside), Some(spare)) = (available(dir), available(&temp)) else {
+        return false;
+    };
+    fits(live.max(0) as u64, beside, spare, same_disk(dir, &temp))
+}
+
+/// `live` bytes written once beside the store and once to the temporary
+/// directory, with a quarter of each to spare.
+fn fits(live: u64, beside: u64, temp: u64, same_disk: bool) -> bool {
+    let need = live + live / 4;
+    match same_disk {
+        true => beside >= 2 * need,
+        false => beside >= need && temp >= need,
+    }
+}
+
+/// Where SQLite puts a temporary file: the first of these that is a
+/// directory, as `unixTempFileDir` in its os_unix.c looks.
+fn sqlite_temp_dir() -> std::path::PathBuf {
+    ["SQLITE_TMPDIR", "TMPDIR"]
+        .iter()
+        .filter_map(std::env::var_os)
+        .map(std::path::PathBuf::from)
+        .chain(["/var/tmp", "/usr/tmp", "/tmp", "."].map(std::path::PathBuf::from))
+        .find(|dir| dir.is_dir())
+        .unwrap_or_else(|| ".".into())
+}
+
+fn same_disk(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (std::fs::metadata(a), std::fs::metadata(b)) {
+        (Ok(a), Ok(b)) => a.dev() == b.dev(),
+        _ => true,
+    }
 }
 
 /// Bytes an unprivileged process may still write on `dir`'s filesystem.
@@ -376,7 +456,11 @@ mod tests {
         assert!(start(&mut store, NOW).unwrap());
 
         let done = run(&mut store, NOW).unwrap().expect("ran");
-        assert!(done.vacuumed);
+        assert_eq!(
+            done.compacted,
+            Compacted::Incremental,
+            "a new store's pages go back in chunks"
+        );
         assert_eq!(done.snapshots.files, 1);
         let mut kept = live.clone();
         kept.push(overlay);
@@ -420,13 +504,67 @@ mod tests {
             .unwrap();
         let done = run(&mut store, NOW).unwrap().expect("ran");
         reader.execute_batch("COMMIT").unwrap();
-        assert!(done.vacuumed);
+        assert_ne!(done.compacted, Compacted::NotWorth);
         assert!(
             done.reclaimed_bytes >= 40_000_000,
             "{}",
             done.reclaimed_bytes
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A store from before incremental vacuuming is rewritten once, which
+    /// switches it: the next pass hands pages back in chunks.
+    #[test]
+    fn an_older_store_is_switched_by_one_full_vacuum() {
+        let (dir, mut store) = store("switch");
+        {
+            let conn = rusqlite::Connection::open(dir.join("t.db")).unwrap();
+            conn.execute_batch("PRAGMA auto_vacuum = NONE; VACUUM;")
+                .unwrap();
+        }
+        assert!(!store.incremental().unwrap());
+        bloat(&dir, 40);
+        store.cleanup_checked(0).unwrap();
+        assert!(start(&mut store, NOW).unwrap());
+        assert_eq!(
+            run(&mut store, NOW).unwrap().unwrap().compacted,
+            Compacted::Full
+        );
+        assert!(store.incremental().unwrap());
+        assert_eq!(store.free_bytes().unwrap(), 0);
+
+        bloat(&dir, 40);
+        assert!(start(&mut store, NOW + INTERVAL).unwrap());
+        let done = run(&mut store, NOW + INTERVAL).unwrap().unwrap();
+        assert_eq!(done.compacted, Compacted::Incremental);
+        assert_eq!(store.free_bytes().unwrap(), 0);
+        assert!(
+            done.reclaimed_bytes >= 40_000_000,
+            "{}",
+            done.reclaimed_bytes
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_full_vacuum_needs_the_live_pages_twice_and_a_quarter_spare() {
+        const GB: u64 = 1 << 30;
+        let cases = [
+            // live, beside the store, temporary dir, one disk, fits
+            (GB, 3 * GB, 3 * GB, true, true),
+            (GB, 2 * GB, 2 * GB, true, false),
+            (GB, 2 * GB, 2 * GB, false, true),
+            (GB, 2 * GB, GB, false, false),
+            (GB, GB, 2 * GB, false, false),
+        ];
+        for (live, beside, temp, one, fit) in cases {
+            assert_eq!(
+                fits(live, beside, temp, one),
+                fit,
+                "{live} {beside} {temp} {one}"
+            );
+        }
     }
 
     #[test]
@@ -443,7 +581,10 @@ mod tests {
         bloat(&dir, 40);
         assert!(!start(&mut store, NOW + INTERVAL - 1).unwrap());
         assert!(start(&mut store, NOW + INTERVAL).unwrap());
-        assert!(run(&mut store, NOW + INTERVAL).unwrap().unwrap().vacuumed);
+        assert_ne!(
+            run(&mut store, NOW + INTERVAL).unwrap().unwrap().compacted,
+            Compacted::NotWorth
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -473,7 +614,10 @@ mod tests {
         assert_eq!(run(&mut store, NOW).unwrap().unwrap_err(), Skipped::Busy);
         store.clear_warming("/other").unwrap();
         assert!(start(&mut store, NOW).unwrap());
-        assert!(run(&mut store, NOW).unwrap().unwrap().vacuumed);
+        assert_ne!(
+            run(&mut store, NOW).unwrap().unwrap().compacted,
+            Compacted::NotWorth
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 }

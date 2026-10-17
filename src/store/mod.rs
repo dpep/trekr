@@ -382,6 +382,14 @@ impl Store {
         // both take locks, and without a handler a second process opening the
         // store at the same moment fails at once instead of waiting its turn.
         conn.busy_timeout(BUSY)?;
+        // A new file keeps the map that lets free pages be handed back a
+        // chunk at a time (DEC-650); an older one switches at its first full
+        // vacuum. Only on a file with no pages: on any other the pragma
+        // writes the header, and so waits for the write lock.
+        let pages: i64 = conn.query_row("PRAGMA page_count", [], |r| r.get(0))?;
+        if pages == 0 {
+            conn.execute_batch("PRAGMA auto_vacuum = INCREMENTAL;")?;
+        }
         // WAL lets a reader answer while an indexer writes.
         wal(&conn)?;
         // mmap reads pages from the shared page cache instead of copying each
