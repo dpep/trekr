@@ -310,6 +310,17 @@
 --status $.others: object
 --status $.others.gems: int
 --status $.others.repos: int
+--status $.storage: object
+--status $.storage.bytes: int
+--status $.storage.cleanup: object
+--status $.storage.cleanup.checked_at: int
+--status $.storage.cleanup.ran_at: null
+--status $.storage.cleanup.reclaimed_bytes: null
+--status $.storage.free_bytes: int
+--status $.storage.reclaimable_bytes: int
+--status $.storage.stale_snapshots: object
+--status $.storage.stale_snapshots.bytes: int
+--status $.storage.stale_snapshots.files: int
 --status $.totals: object
 --status $.totals.blobs: int
 --status $.totals.calls: int

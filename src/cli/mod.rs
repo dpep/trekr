@@ -208,6 +208,10 @@ struct Cli {
     #[arg(long, requires = "gc", conflicts_with = "dry_run")]
     vacuum: bool,
 
+    /// One background cleanup pass, as an index starts it (DEC-650). Internal.
+    #[arg(long, hide = true, conflicts_with_all = ["index", "status", "gc", "lsp"])]
+    cleanup: bool,
+
     /// Worker threads for parsing. 0 (the default) picks the machine's
     /// **physical** core count; `TREKR_JOBS` sets it too, and the flag wins.
     #[arg(long, value_name = "N", env = "TREKR_JOBS", default_value_t = 0)]
@@ -359,6 +363,8 @@ pub(crate) fn run(lsp: fn(bool) -> anyhow::Result<()>) -> ExitCode {
     // engine (`--usage` itself) or is counted by its own front (`--lsp`).
     let (feature, result) = if cli.lsp {
         (None, lsp(cli.profile).map(|()| ExitCode::SUCCESS))
+    } else if cli.cleanup {
+        (None, crate::cleanup::command().map(|()| ExitCode::SUCCESS))
     } else if let Some(path) = &cli.index {
         (
             Some("index"),
@@ -2591,6 +2597,7 @@ fn cmd_index(
         crate::tree::Tree::prepare(&store, &root_str)
     })?;
     store.truncate_wal();
+    crate::cleanup::after_index(&store);
     if let Some(profile) = profile {
         match out {
             Output::Text => profile.report_text(),
@@ -2757,6 +2764,7 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
             "checkouts": rows,
             "others": others,
             "totals": totals,
+            "storage": storage(&store)?,
             "kept": kept,
         });
         if let Some(reason) = &reason {
@@ -2860,8 +2868,59 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
         "\nshared: {} blobs, {} defs, {} const refs, {} calls",
         totals.blobs, totals.defs, totals.const_refs, totals.calls
     );
+    println!("{}", storage_line(&storage(&store)?));
     print_kept(&kept);
     Ok(ExitCode::SUCCESS)
+}
+
+/// The store's size on disk, what it could give back, and when the
+/// background cleanup last did (DEC-650).
+fn storage(store: &Store) -> anyhow::Result<serde_json::Value> {
+    let reclaimable = crate::cleanup::Reclaimable::measure(store)?;
+    Ok(serde_json::json!({
+        "bytes": store.disk_bytes(),
+        "free_bytes": reclaimable.free_bytes,
+        "stale_snapshots": reclaimable.snapshots,
+        "reclaimable_bytes": reclaimable.bytes(),
+        "cleanup": store.cleanup()?,
+    }))
+}
+
+fn storage_line(storage: &serde_json::Value) -> String {
+    let mb = |value: &serde_json::Value| value.as_i64().unwrap_or(0) as f64 / 1e6;
+    let mut line = format!("index: {:.1} MB on disk", mb(&storage["bytes"]));
+    let reclaimable = storage["reclaimable_bytes"].as_i64().unwrap_or(0);
+    if reclaimable > 0 {
+        let snapshots = storage["stale_snapshots"]["files"].as_u64().unwrap_or(0);
+        line.push_str(&format!(
+            ", {:.1} MB reclaimable ({:.1} MB free inside it, {snapshots} stale tree snapshot{})",
+            mb(&storage["reclaimable_bytes"]),
+            mb(&storage["free_bytes"]),
+            if snapshots == 1 { "" } else { "s" }
+        ));
+    }
+    if let Some(at) = storage["cleanup"]["ran_at"].as_i64() {
+        let ago = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs() as i64)
+            - at;
+        line.push_str(&format!(
+            "; cleaned up in the background {} ago, reclaiming {:.1} MB",
+            ago_words(ago),
+            mb(&storage["cleanup"]["reclaimed_bytes"])
+        ));
+    }
+    line
+}
+
+/// `40 s`, `12 min`, `3 h`, `5 d`: as precise as a glance needs.
+fn ago_words(seconds: i64) -> String {
+    match seconds.max(0) {
+        s if s < 60 => format!("{s} s"),
+        s if s < 3600 => format!("{} min", s / 60),
+        s if s < 86_400 => format!("{} h", s / 3600),
+        s => format!("{} d", s / 86_400),
+    }
 }
 
 /// The files kept beside the store, one line each.
@@ -2959,6 +3018,7 @@ fn status_not_indexed(
                 "checkouts": [],
                 "others": { "repos": repos, "gems": gems },
                 "totals": totals,
+                "storage": storage(store)?,
             }),
         )?;
         return Ok(ExitCode::from(2));
@@ -5605,6 +5665,7 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_secs() as i64;
+    let disk_before = store.disk_bytes();
     let garbage = store.collect(
         now - older_than as i64,
         |root| Path::new(root).is_dir(),
@@ -5637,6 +5698,11 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
         store.vacuum()?;
     }
     let db_bytes = store.db_bytes()?;
+    let free_bytes = store.free_bytes()?;
+    // What left the disk: the files, and the index file's own shrink.
+    let reclaimed_bytes = (disk_before - store.disk_bytes()).max(0)
+        + (snapshots.bytes + overlay_bytes + core.bytes + kept.iter().map(|k| k.bytes).sum::<u64>())
+            as i64;
     let found = !garbage.checkouts.is_empty()
         || garbage.blobs > 0
         || snapshots.files > 0
@@ -5655,7 +5721,9 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
                 "files": garbage.files,
                 "blobs": garbage.blobs,
                 "facts": garbage.facts,
-                "reclaimed_bytes": garbage.reclaimed_bytes,
+                "freed_bytes": garbage.freed_bytes,
+                "free_bytes": free_bytes,
+                "reclaimed_bytes": reclaimed_bytes,
                 "snapshots": snapshots,
                 "overlays": { "files": overlays, "bytes": overlay_bytes },
                 "signatures": garbage.signatures,
@@ -5687,19 +5755,19 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
             );
         }
         println!(
-            "\n{verb} {} checkouts: {} files, {} blobs, {} facts, {:.1} MB",
+            "\n{verb} {} checkouts: {} files, {} blobs, {} facts, {:.1} MB inside the index",
             garbage.checkouts.len(),
             garbage.files,
             garbage.blobs,
             garbage.facts,
-            mb(garbage.reclaimed_bytes)
+            mb(garbage.freed_bytes)
         );
     } else if garbage.blobs > 0 {
         println!(
-            "{verb} {} blobs only a query had read: {} facts, {:.1} MB",
+            "{verb} {} blobs only a query had read: {} facts, {:.1} MB inside the index",
             garbage.blobs,
             garbage.facts,
-            mb(garbage.reclaimed_bytes)
+            mb(garbage.freed_bytes)
         );
     }
     if snapshots.files > 0 {
@@ -5733,6 +5801,21 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
     }
     if vacuum {
         println!("vacuumed: database is {:.1} MB", mb(db_bytes));
+    }
+    if found || vacuum {
+        let verb = if dry_run {
+            "would reclaim"
+        } else {
+            "reclaimed"
+        };
+        println!("{verb} {:.1} MB on disk", mb(reclaimed_bytes));
+    }
+    // Rewritten in the background once it is worth it (DEC-650).
+    if !vacuum && free_bytes > 0 {
+        println!(
+            "{:.1} MB is free inside the index, for later writes or a background compaction",
+            mb(free_bytes)
+        );
     }
     Ok(exit_on(found))
 }

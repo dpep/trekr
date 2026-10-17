@@ -4955,6 +4955,123 @@ fn gc_removes_tree_snapshots_no_checkouts_index_names() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// Leave `mb` megabytes of free pages in the store, as a rebuild does, and
+/// let its next cleanup look at once.
+fn bloat(db: &Path, mb: u32) {
+    rusqlite::Connection::open(db)
+        .unwrap()
+        .execute_batch(&format!(
+            "CREATE TABLE junk (b BLOB);
+             WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {mb})
+             INSERT INTO junk SELECT zeroblob(1048576) FROM n;
+             DROP TABLE junk;
+             PRAGMA wal_checkpoint(TRUNCATE);
+             UPDATE meta SET value = '0' WHERE key = 'cleanup checked';"
+        ))
+        .unwrap();
+}
+
+/// A copy of the checkout's tree snapshot under a key nothing names, as a
+/// release leaves one; its size.
+fn stale_snapshot(db: &Path) -> u64 {
+    let trees = db.with_extension("trees");
+    let current = fs::read_dir(&trees)
+        .unwrap()
+        .next()
+        .unwrap()
+        .unwrap()
+        .path();
+    let name = current.file_name().unwrap().to_str().unwrap();
+    let (tag, _) = name.split_once('-').unwrap();
+    fs::copy(
+        &current,
+        trees.join(format!("{tag}-{}.tree", "0".repeat(40))),
+    )
+    .unwrap()
+}
+
+/// What a rebuild leaves free in the file is given back after an index
+/// pass, by a process nothing waits for — and never by a query (DEC-650).
+#[test]
+fn an_index_pass_compacts_the_store_in_the_background_and_a_query_does_not() {
+    let (dir, db) = scratch("cleanup");
+    repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+    bloat(&db, 40);
+    let snapshot = stale_snapshot(&db);
+    let size = || fs::metadata(&db).unwrap().len();
+    let bloated = size();
+    let storage = |db: &Path| json(&trekr(db, &dir, &["--status", "--json"]))["storage"].clone();
+    let before = storage(&db);
+    assert!(
+        before["free_bytes"].as_i64().unwrap() >= 40_000_000,
+        "{before}"
+    );
+    assert_eq!(before["stale_snapshots"]["files"], 1, "{before}");
+    assert_eq!(
+        before["reclaimable_bytes"].as_i64().unwrap(),
+        before["free_bytes"].as_i64().unwrap() + snapshot as i64
+    );
+    assert!(before["cleanup"]["ran_at"].is_null(), "{before}");
+
+    assert!(
+        trekr(&db, &dir, &["--ancestors", "Widget"])
+            .status
+            .success()
+    );
+    std::thread::sleep(std::time::Duration::from_millis(500));
+    assert_eq!(size(), bloated, "a query never compacts");
+    assert!(storage(&db)["cleanup"]["ran_at"].is_null());
+
+    trekr(&db, &dir, &["--index"]);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let after = loop {
+        let now = storage(&db);
+        if !now["cleanup"]["ran_at"].is_null() || std::time::Instant::now() > deadline {
+            break now;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    };
+    assert!(
+        after["cleanup"]["reclaimed_bytes"].as_i64().unwrap() >= 40_000_000,
+        "{after}"
+    );
+    assert!(size() < bloated - 32_000_000, "{bloated} -> {}", size());
+    assert_eq!(after["stale_snapshots"]["files"], 0, "{after}");
+    let text = stdout(&trekr(&db, &dir, &["--status"]));
+    assert!(text.contains("cleaned up in the background"), "{text}");
+    assert_eq!(
+        trekr(&db, &dir, &["--ancestors", "Widget"]).status.code(),
+        Some(0),
+        "and still answers"
+    );
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// `--gc` says what it returned to the disk — the files it removed, and the
+/// file's own shrink once vacuumed — apart from the pages it freed inside.
+#[test]
+fn gc_reports_the_bytes_it_returned_to_the_disk() {
+    let (dir, db) = scratch("gc-bytes");
+    repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+    bloat(&db, 40);
+    let snapshot = stale_snapshot(&db);
+
+    let gc = json(&trekr(&db, &dir, &["--gc", "--json"]));
+    assert_eq!(gc["reclaimed_bytes"], snapshot, "{gc}");
+    assert!(gc["free_bytes"].as_i64().unwrap() >= 40_000_000, "{gc}");
+    assert_eq!(gc["freed_bytes"], 0, "{gc}");
+
+    let vacuumed = json(&trekr(&db, &dir, &["--gc", "--vacuum", "--json"]));
+    assert!(
+        vacuumed["reclaimed_bytes"].as_i64().unwrap() >= 40_000_000,
+        "{vacuumed}"
+    );
+    assert_eq!(vacuumed["free_bytes"], 0, "{vacuumed}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// What an older trekr, a recovery or a dead index left beside the store is
 /// listed by `--status`; `--gc` removes a set-aside copy and a dead index's
 /// early store at once, and another trekr's store once it has been idle as

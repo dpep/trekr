@@ -14463,3 +14463,93 @@ reached for `const_ref_blob` over the checkout's files on its own (about 60 ms
 of a 125 ms `--refs ::ArgumentError`), so the query names its index, as
 `const_refs_named` does.
 
+
+## DEC-650 — The store cleans up after itself, in the background, when the waste is measured to be worth it
+
+**Decided.** After an index pass — one a query or the language server
+started, or `trekr --index` — trekr measures what the store could give back:
+free pages inside the file, and tree snapshots no checkout's current key
+names. When that is at least **32 MB and a quarter of the file**, the index
+starts a detached `trekr --cleanup` (hidden; its own process group, niced like
+a background index) and exits. That process removes the stale snapshots,
+collects the blobs only a query recorded more than 7 days ago, and vacuums
+when the free pages alone pass the same threshold. It looks at most every
+**two hours** (`INTERVAL`, recorded in `meta` as `cleanup checked`).
+`--status` reports it as `storage`; `--gc`'s `reclaimed_bytes` is now what
+left the disk. [`src/cleanup.rs`](../src/cleanup.rs). DEC-049's "reverses
+if … a bounded sweep during `--index`, off the LSP path" is this, for the
+safe part only.
+
+**The problem** (hunt 0.9.4, finding 3). A format rebuild drops every table
+inside one transaction, so the file keeps its size: a 0.9.3 store holding
+rails, discourse and mastodon with their gems (228.7 MB) was 228.7 MB after
+0.9.4's rebuild with 36,499 of 55,842 pages free (65 %). A snapshot's key
+holds the binary's source, version and schema, so every release leaves one
+stale snapshot per checkout not queried since (14.3 MB for two here).
+`--status` said neither; `--gc` reported `reclaimed_bytes: 0` after removing
+the snapshots; only `--gc --vacuum` (75.5 MB in 1.5 s) gave the space back,
+and nothing mentioned it.
+
+**Trigger on measured state, not on the upgrade.** A store 0.9.4 already
+rebuilt has no event left to react to; it has free pages. A rebuild drops
+`meta`, so the first index after one looks at once; a new store is stamped
+at creation, so its first look is an interval away (every test store is new,
+and none should grow a detached process).
+
+**Why 32 MB and a quarter.** The waste after a rebuild is most of the file
+(65 % above); the churn an ordinary reindex leaves is reused by the next
+write, and DEC-049 measured 20 MB of fragmentation in a 446 MB store (4.5 %).
+A quarter sits far from both. The floor keeps a small store from being
+rewritten for a few megabytes: a vacuum rewrites every live page to win the
+waste back. One threshold, on one quantity: the snapshots count toward it,
+and the file is vacuumed only when its own free pages pass it, so a pass
+started by snapshots alone does not rewrite the file for nothing and a pass
+leaves nothing that would start another.
+
+**Why two hours.** The look is cheap — a `meta` read, and when an interval
+has passed, the free-page count and the keys of the checkouts that have a
+snapshot (`--status` warm on the store above: 34 ms before, 36 ms with it).
+The pass is not, and a store whose waste regrows faster than every two hours
+is not a store a vacuum keeps small. Short enough that what an upgrade left
+is gone within the session that upgraded. Considered once a day; user input
+preferred compaction every couple of hours when warranted.
+
+**Never on a request path.** The index is often one a query waits on (DEC-500
+waits for a whole question's index to exit), so the pass is a separate,
+detached process nobody waits for. A query mid-vacuum reads its WAL snapshot:
+twelve queries (`--refs ActiveRecord::Base`, `--def`) staggered 200 ms apart
+across a 1.3 s cleanup took 71–115 ms, against 57–107 ms with no cleanup;
+under heavier contention (a 5.1 s cleanup) 75–230 ms. All answered. A
+query never waits on the write lock (DEC-066): a refresh that meets the
+vacuum answers from the committed index and says `index.busy`, as it does
+behind an index's batch.
+
+**Skipped, not waited for.** A live first index's `warming` mark, or another
+writer holding the lock past the connection's 5 s wait, makes the pass skip
+without recording, so the next index pass asks again. The claim is one
+immediate transaction, so two passes started together run once. Vacuum needs
+the disk to hold twice the live pages (they are written into the WAL once);
+otherwise the pass removes what it can and leaves the file.
+
+**Only the safe part.** A checkout is never collected here: whether a gem
+version is unreachable depends on bundles and on `--older-than`'s hysteresis,
+which is `--gc`'s decision (DEC-049). Blobs only a query recorded are, at
+`--gc`'s own default age. Overlay copies are not touched: they are a live
+query's. Stale snapshots go whatever their age — a dev build and a release
+used side by side already retire each other's snapshot on every query, so a
+sweep adds no rebuilds that use doesn't.
+
+**Measured** (Apple M2, this build at the branch tip, release, the 0.9.3
+store above upgraded by 0.9.4): one `--index` of rails, 0.52 s, then the
+background pass: 1.05 s, 2 stale snapshots (14.3 MB) removed, the file
+228.7 MB → 75.5 MB, 167.6 MB reclaimed in all. Peak RSS of the pass 308 MB,
+most of it the store's own pages through the 1 GB `mmap_size`
+(`temp_store=MEMORY` holds the vacuum's copy in memory: about the live
+75 MB).
+
+**`PRAGMA optimize` is not added to the slot.** Every connection already runs
+it when it closes (`Drop for Store`, DEC-066), the cleanup's included.
+
+**Reverses if** a vacuum is measured stalling an index or a query beyond the
+writer's wait on a real store, or the threshold is seen firing on ordinary
+churn — then the share goes up before anything else changes.

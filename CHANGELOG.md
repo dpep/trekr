@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **The index cleans up after itself.** An upgrade's rebuild left its old
+  rows' space free inside the file (a 229 MB store stayed 229 MB holding
+  75 MB), and each release left a stale tree snapshot for every checkout
+  not queried since; only `trekr --gc --vacuum`, which nothing mentioned,
+  gave them back. Now, after an index pass — the one a query or the editor
+  starts, or `trekr --index` — trekr measures the waste at most every two
+  hours, and when it is at least 32 MB and a quarter of the file, a
+  background process removes the stale snapshots, collects the blobs only
+  a query read a week ago, and compacts the file. It never runs on a
+  query, waits for nothing, and skips a store another trekr is writing.
+  Nothing to do: a store 0.9.4 rebuilt shrinks after its next index.
+- **`--status` says how big the index is and what it could give back**
+  (`storage` in `--json`), and when the background cleanup last ran.
+- **`--gc`'s `reclaimed_bytes` is what left the disk** — the snapshots,
+  copies and stores it removed, and the file's shrink after `--vacuum`. It
+  said 0 after removing snapshots, since it counted only the pages freed
+  inside the file; those are `freed_bytes` now, and `free_bytes` is what is
+  left free.
 - **Hover at a constant's definition in `class Object` names it `OBJC`**,
   as hover at a mention already did; it said `Object::OBJC`.
 
@@ -28,8 +46,8 @@
   mention that resolves to the constant is now listed, by name, at the
   definition and at any mention, in the CLI and the editor alike. The store
   is rebuilt on first use (v66): the next command reindexes.
-  The rebuild leaves the old rows' space free inside the file; run
-  `trekr --gc --vacuum` once afterwards to shrink it.
+  The rebuild leaves the old rows' space free inside the file; the next
+  release gives it back on its own (see above), so there is nothing to run.
 
 ## 0.9.3 — 2026-10-10
 

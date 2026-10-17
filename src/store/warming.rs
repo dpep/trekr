@@ -163,6 +163,20 @@ impl Store {
         Ok(())
     }
 
+    /// Whether a first index of any checkout is under way in a live process.
+    pub(crate) fn any_warming(&self) -> Result<bool> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT value FROM meta WHERE key LIKE 'warming %'")?;
+        let values = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        for value in values {
+            if parse(&value?).is_some_and(|w| !w.interrupted) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     /// `root` is whole: its last rows are in.
     pub(crate) fn clear_warming(&self, root: &str) -> Result<()> {
         match self

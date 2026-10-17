@@ -421,6 +421,22 @@ lists every checkout, each with `kind` (`repo`, `gem` or `stdlib`).
 `status: not_indexed`, exit 2 — `checkouts` is empty and `others` counts the
 rest. Outside any checkout the repos are listed.
 
+`storage` is the index on disk (DEC-650): `bytes`, the file and its
+write-ahead log; `free_bytes`, pages free inside it; `stale_snapshots`
+(`files`, `bytes`), tree snapshots no checkout's current key names; and
+`reclaimable_bytes`, the two together — what `--gc --vacuum` would return.
+`cleanup` says what the background cleanup last did: `checked_at`, when it
+last measured the store (a new store is stamped at creation), `ran_at` and
+`reclaimed_bytes`, its last pass and what that returned to the disk — `null`
+until there is one.
+
+`--gc` reports `reclaimed_bytes`, what it returned to the disk: the files it
+removed (`snapshots`, `overlays`, `core_files`, `kept`) and, with `--vacuum`,
+the index file's own shrink. `freed_bytes` is the pages its deletions freed
+inside the file, which later writes reuse; `free_bytes` is every free page
+left in it — `0` after `--vacuum` — which the background cleanup compacts
+once it is worth it.
+
 A reindex with nothing changed parses nothing (~60 ms on a 3k-file repo), and
 a second worktree of the same repo costs nothing — facts are keyed by git
 blob.

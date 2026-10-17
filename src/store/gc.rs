@@ -8,7 +8,7 @@
 //! (DEC-035) was never any checkout's, so it goes once nothing maps it.
 
 use super::Store;
-use rusqlite::{Result, params};
+use rusqlite::{OptionalExtension, Result, params};
 use std::collections::HashSet;
 
 /// How long a blob a query recorded is kept whatever the cutoff: the query
@@ -28,8 +28,8 @@ pub(crate) struct Garbage {
     /// Fact rows (defs, ancestry, constant refs, call sites) those blobs held.
     pub(crate) facts: usize,
     /// Pages the deletion returned to SQLite's free list, which later writes
-    /// reuse. The file itself shrinks only on `--vacuum`.
-    pub(crate) reclaimed_bytes: i64,
+    /// reuse. The file itself shrinks only when it is vacuumed.
+    pub(crate) freed_bytes: i64,
     /// A Ruby's signatures no surviving stdlib is served with (DEC-274).
     pub(crate) signatures: usize,
     /// The core directories the surviving signatures are written under, for
@@ -50,6 +50,22 @@ pub(crate) struct Collected {
     /// Unix seconds: when an index last vouched for it.
     pub(crate) last_seen: i64,
 }
+
+/// What the background cleanup last did (DEC-650), from `meta`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, serde::Serialize)]
+pub(crate) struct Cleanup {
+    /// Unix seconds: when a cleanup last measured the store, or claimed it.
+    pub(crate) checked_at: Option<i64>,
+    /// Unix seconds: when one last removed or compacted anything.
+    pub(crate) ran_at: Option<i64>,
+    /// The bytes that run returned to the disk.
+    pub(crate) reclaimed_bytes: Option<i64>,
+}
+
+/// `meta` keys: when a cleanup last looked, and `<at> <bytes>` of its last
+/// run that reclaimed anything.
+pub(super) const CLEANUP_CHECKED: &str = "cleanup checked";
+const CLEANUP_RAN: &str = "cleanup ran";
 
 struct Row {
     id: i64,
@@ -127,57 +143,8 @@ impl Store {
             })
             .collect();
 
-        let mut garbage = Garbage::default();
-        let page_size: i64 = tx.query_row("PRAGMA page_size", [], |r| r.get(0))?;
-        let free_before: i64 = tx.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
-        tx.execute_batch("CREATE TEMP TABLE gc_blob (id INTEGER PRIMARY KEY)")?;
-        {
-            let mut candidates = tx.prepare(
-                "INSERT OR IGNORE INTO gc_blob SELECT blob_id FROM file WHERE checkout_id = ?1",
-            )?;
-            let mut forget = tx.prepare("DELETE FROM checkout WHERE id = ?1")?;
-            for row in &doomed {
-                garbage.files += candidates.execute(params![row.id])?;
-                // Cascades to the file map and to the bundle it claimed.
-                forget.execute(params![row.id])?;
-            }
-        }
-        // What a query recorded and no index mapped (DEC-035): the edits it
-        // read, kept only while a map points at them — and, like a checkout,
-        // until the cutoff, but never while the query may be reading it.
-        super::loose_blob(&tx)?;
-        tx.execute(
-            "INSERT OR IGNORE INTO gc_blob
-             SELECT blob_id FROM loose_blob WHERE recorded_at <= MIN(?1, unixepoch() - ?2)",
-            params![cutoff, READING],
-        )?;
-        // A blob some surviving checkout maps stays. The foreign key would
-        // refuse the delete anyway; this makes the refusal a non-event.
-        tx.execute(
-            "DELETE FROM gc_blob WHERE EXISTS (SELECT 1 FROM file WHERE blob_id = gc_blob.id)",
-            [],
-        )?;
-        // A call is a site, counted from its name's posting (DEC-193).
-        for (table, rows) in [
-            ("def", "COUNT(*)"),
-            ("ancestry", "COUNT(*)"),
-            ("const_ref", "COUNT(*)"),
-            ("call_name", "COALESCE(SUM(calls), 0)"),
-        ] {
-            let n: i64 = tx.query_row(
-                &format!("SELECT {rows} FROM {table} WHERE blob_id IN (SELECT id FROM gc_blob)"),
-                [],
-                |r| r.get(0),
-            )?;
-            garbage.facts += n as usize;
-        }
-        garbage.blobs = tx.execute("DELETE FROM blob WHERE id IN (SELECT id FROM gc_blob)", [])?;
-        tx.execute_batch("DROP TABLE gc_blob")?;
-        garbage.signatures = unserved_signatures(&tx)?;
-        garbage.core_dirs = core_dirs(&tx)?;
-        let free_after: i64 = tx.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
-        garbage.reclaimed_bytes = (free_after - free_before).max(0) * page_size;
-
+        let ids: Vec<i64> = doomed.iter().map(|row| row.id).collect();
+        let mut garbage = drop_blobs(&tx, &ids, cutoff)?;
         garbage.checkouts = doomed
             .into_iter()
             .map(|row| Collected {
@@ -199,12 +166,99 @@ impl Store {
         Ok(garbage)
     }
 
+    /// Only the blobs a query recorded and no checkout maps, recorded before
+    /// `cutoff`: what the background cleanup collects, which never judges a
+    /// checkout (DEC-650).
+    pub(crate) fn collect_loose(&mut self, cutoff: i64) -> Result<Garbage> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let garbage = drop_blobs(&tx, &[], cutoff)?;
+        tx.commit()?;
+        Ok(garbage)
+    }
+
+    /// What the background cleanup last did.
+    pub(crate) fn cleanup(&self) -> Result<Cleanup> {
+        let read = |key: &str| -> Result<Option<String>> {
+            self.conn
+                .query_row("SELECT value FROM meta WHERE key = ?1", [key], |r| r.get(0))
+                .optional()
+        };
+        let checked_at = read(CLEANUP_CHECKED)?.and_then(|v| v.parse().ok());
+        let ran = read(CLEANUP_RAN)?;
+        let mut ran = ran.iter().flat_map(|v| v.split(' ')).map(str::parse);
+        Ok(Cleanup {
+            checked_at,
+            ran_at: ran.next().and_then(|at| at.ok()),
+            reclaimed_bytes: ran.next().and_then(|bytes| bytes.ok()),
+        })
+    }
+
+    /// Record that a cleanup looked at `at` and found nothing worth doing.
+    pub(crate) fn cleanup_checked(&self, at: i64) -> Result<()> {
+        set_meta(&self.conn, CLEANUP_CHECKED, &at.to_string())
+    }
+
+    /// Take the cleanup for this process at `at`, unless another looked
+    /// within `interval` seconds. One immediate transaction, so of two
+    /// processes asking at once only one is told yes.
+    pub(crate) fn claim_cleanup(&mut self, at: i64, interval: i64) -> Result<bool> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let checked: Option<i64> = tx
+            .query_row(
+                "SELECT value FROM meta WHERE key = ?1",
+                [CLEANUP_CHECKED],
+                |r| r.get::<_, String>(0),
+            )
+            .optional()?
+            .and_then(|v| v.parse().ok());
+        if checked.is_some_and(|checked| at - checked < interval) {
+            return Ok(false);
+        }
+        set_meta(&tx, CLEANUP_CHECKED, &at.to_string())?;
+        tx.commit()?;
+        Ok(true)
+    }
+
+    /// Record a cleanup run at `at` that returned `reclaimed` bytes.
+    pub(crate) fn cleanup_ran(&self, at: i64, reclaimed: i64) -> Result<()> {
+        set_meta(&self.conn, CLEANUP_RAN, &format!("{at} {reclaimed}"))
+    }
+
+    /// Pages SQLite holds free inside the file, in bytes: what a vacuum
+    /// would return to the disk.
+    pub(crate) fn free_bytes(&self) -> Result<i64> {
+        self.conn.query_row(
+            "SELECT freelist_count * page_size FROM pragma_freelist_count(), pragma_page_size()",
+            [],
+            |r| r.get(0),
+        )
+    }
+
     /// Rewrite the database without its free pages, and fold the WAL back in
     /// so the file on disk actually shrinks. Seconds on a large store and it
     /// holds the write lock throughout, so it is asked for, never implied.
     pub(crate) fn vacuum(&self) -> Result<()> {
         self.conn
             .execute_batch("VACUUM; PRAGMA wal_checkpoint(TRUNCATE);")
+    }
+
+    /// The index file and its write-ahead log, as the disk counts them: 0
+    /// for an in-memory store.
+    pub(crate) fn disk_bytes(&self) -> i64 {
+        let Some(path) = self.path() else {
+            return 0;
+        };
+        let mut wal = path.as_os_str().to_owned();
+        wal.push("-wal");
+        [path.to_path_buf(), wal.into()]
+            .iter()
+            .filter_map(|file| std::fs::metadata(file).ok())
+            .map(|meta| meta.len() as i64)
+            .sum()
     }
 
     /// The database's size, in bytes, as SQLite counts it.
@@ -215,6 +269,72 @@ impl Store {
             |r| r.get(0),
         )
     }
+}
+
+fn set_meta(conn: &rusqlite::Connection, key: &str, value: &str) -> Result<()> {
+    conn.execute(
+        "INSERT INTO meta (key, value) VALUES (?1, ?2)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+        params![key, value],
+    )
+    .map(drop)
+}
+
+/// Forget the checkouts `doomed`, then delete the blobs no surviving
+/// checkout maps among theirs and those only a query recorded, measuring
+/// what went.
+fn drop_blobs(tx: &rusqlite::Transaction, doomed: &[i64], cutoff: i64) -> Result<Garbage> {
+    let mut garbage = Garbage::default();
+    let page_size: i64 = tx.query_row("PRAGMA page_size", [], |r| r.get(0))?;
+    let free_before: i64 = tx.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
+    tx.execute_batch("CREATE TEMP TABLE gc_blob (id INTEGER PRIMARY KEY)")?;
+    {
+        let mut candidates = tx.prepare(
+            "INSERT OR IGNORE INTO gc_blob SELECT blob_id FROM file WHERE checkout_id = ?1",
+        )?;
+        let mut forget = tx.prepare("DELETE FROM checkout WHERE id = ?1")?;
+        for id in doomed {
+            garbage.files += candidates.execute(params![id])?;
+            // Cascades to the file map and to the bundle it claimed.
+            forget.execute(params![id])?;
+        }
+    }
+    // What a query recorded and no index mapped (DEC-035): the edits it
+    // read, kept only while a map points at them — and, like a checkout,
+    // until the cutoff, but never while the query may be reading it.
+    super::loose_blob(tx)?;
+    tx.execute(
+        "INSERT OR IGNORE INTO gc_blob
+         SELECT blob_id FROM loose_blob WHERE recorded_at <= MIN(?1, unixepoch() - ?2)",
+        params![cutoff, READING],
+    )?;
+    // A blob some surviving checkout maps stays. The foreign key would
+    // refuse the delete anyway; this makes the refusal a non-event.
+    tx.execute(
+        "DELETE FROM gc_blob WHERE EXISTS (SELECT 1 FROM file WHERE blob_id = gc_blob.id)",
+        [],
+    )?;
+    // A call is a site, counted from its name's posting (DEC-193).
+    for (table, rows) in [
+        ("def", "COUNT(*)"),
+        ("ancestry", "COUNT(*)"),
+        ("const_ref", "COUNT(*)"),
+        ("call_name", "COALESCE(SUM(calls), 0)"),
+    ] {
+        let n: i64 = tx.query_row(
+            &format!("SELECT {rows} FROM {table} WHERE blob_id IN (SELECT id FROM gc_blob)"),
+            [],
+            |r| r.get(0),
+        )?;
+        garbage.facts += n as usize;
+    }
+    garbage.blobs = tx.execute("DELETE FROM blob WHERE id IN (SELECT id FROM gc_blob)", [])?;
+    tx.execute_batch("DROP TABLE gc_blob")?;
+    garbage.signatures = unserved_signatures(tx)?;
+    garbage.core_dirs = core_dirs(tx)?;
+    let free_after: i64 = tx.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
+    garbage.freed_bytes = (free_after - free_before).max(0) * page_size;
+    Ok(garbage)
 }
 
 /// Drop the signatures no stdlib is served with any more: a collected
@@ -308,7 +428,7 @@ mod tests {
         assert_eq!(garbage.checkouts[0].kind, "gem");
         // `own.rb` went; `shared.rb` is still mapped by gem-2.
         assert_eq!((garbage.files, garbage.blobs), (2, 1));
-        assert!(garbage.facts > 0 && garbage.reclaimed_bytes >= 0);
+        assert!(garbage.facts > 0 && garbage.freed_bytes >= 0);
         assert_eq!(store.totals().unwrap().blobs, before - 1);
         assert!(store.has_checkout("/gem-2").unwrap());
         assert_eq!(store.gems_used("/app").unwrap(), ["/gem-2"]);
@@ -350,6 +470,26 @@ mod tests {
         assert!(!store.has_blob(&edit).unwrap(), "the orphan went");
         assert!(store.has_blob(&committed).unwrap(), "a mapped blob stays");
         assert!(store.has_blob(&before).unwrap(), "an index's blob stays");
+    }
+
+    #[test]
+    fn the_background_collection_takes_old_query_blobs_and_never_a_checkout() {
+        let mut store = Store::open_in_memory().unwrap();
+        bundle(&mut store);
+        let src = "class Draft\nend\n";
+        let edit = hash_blob(src.as_bytes());
+        store
+            .add_blob(&edit, &crate::extract::extract(src.as_bytes()))
+            .unwrap();
+        store
+            .conn
+            .execute("UPDATE loose_blob SET recorded_at = 0", [])
+            .unwrap();
+        let garbage = store.collect_loose(now() - 60).unwrap();
+        assert_eq!(garbage.blobs, 1);
+        assert!(garbage.checkouts.is_empty());
+        assert!(!store.has_blob(&edit).unwrap());
+        assert!(store.has_checkout("/gem-1").unwrap(), "unclaimed, but kept");
     }
 
     #[test]
@@ -439,8 +579,8 @@ mod tests {
         assert!(store.has_checkout("/gem-1").unwrap(), "rolled back");
         let real = store.collect(now() - 60, |_| true, false).unwrap();
         assert_eq!(
-            (dry.files, dry.blobs, dry.facts, dry.reclaimed_bytes),
-            (real.files, real.blobs, real.facts, real.reclaimed_bytes),
+            (dry.files, dry.blobs, dry.facts, dry.freed_bytes),
+            (real.files, real.blobs, real.facts, real.freed_bytes),
             "a dry run measures the real thing"
         );
     }

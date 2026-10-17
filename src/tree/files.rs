@@ -252,7 +252,7 @@ pub(crate) fn forget(store: &Store, root: &str) {
 
 /// What `--gc` removed from the snapshot directory, or — on a dry run —
 /// would have.
-#[derive(Debug, Default, serde::Serialize)]
+#[derive(Debug, Default, Clone, Copy, serde::Serialize)]
 pub(crate) struct Swept {
     pub(crate) files: usize,
     pub(crate) bytes: u64,
@@ -274,15 +274,26 @@ pub(crate) fn sweep(store: &Store, gone: &[&str], dry_run: bool) -> anyhow::Resu
     let Ok(entries) = std::fs::read_dir(&dir) else {
         return Ok(swept);
     };
+    let entries: Vec<std::fs::DirEntry> = entries.flatten().collect();
+    // A key is only worth computing for a checkout with a snapshot here:
+    // most checkouts are gems, which never have one.
+    let tags: HashSet<String> = entries
+        .iter()
+        .filter_map(|entry| {
+            let file = entry.file_name();
+            let file = file.to_str()?;
+            Some(file[..file.find(['-', '+'])?].to_string())
+        })
+        .collect();
     let mut live = HashSet::new();
     for root in store.roots()? {
-        if gone.contains(&root.as_str()) {
+        if gone.contains(&root.as_str()) || !tags.contains(&tag(&root)) {
             continue;
         }
         let key = key(store, &super::roots(store, &root)?)?;
         live.insert(name(&root, &key, Slot::Indexed));
     }
-    for entry in entries.flatten() {
+    for entry in entries {
         let file = entry.file_name();
         let Some(file) = file.to_str() else { continue };
         let stale = file.ends_with(SUFFIX) && !live.contains(file);

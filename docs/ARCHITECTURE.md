@@ -332,7 +332,7 @@ in it; they stay demand-loaded from SQL.
   ones, since refresh-on-save moves the key with every save. What that leaves
   — a key that moved with no query since, a checkout that is gone, a
   temporary file a dead writer left — `--gc` removes (`snapshots` in its
-  `--json`).
+  `--json`), and so does the background cleanup below.
 
 A snapshot is built by every `--index` whose key has no snapshot yet — the
 one the LSP starts in the background and one someone runs — after the answer
@@ -563,6 +563,20 @@ recorded one may still be reading it. `checkout.kind` says which rule applies, a
 transaction. Collecting is safe because it is undone by the next index: a
 lockfile naming a gem the store lacks indexes it, collected or never seen
 (DEC-049).
+
+**The store cleans up after itself** (DEC-650, [`cleanup.rs`](../src/cleanup.rs)).
+After an index pass, trekr measures what the store could give back — free
+pages inside the file, and tree snapshots no checkout's current key names —
+at most every two hours (`cleanup checked` in `meta`; a new store is stamped
+at creation, a rebuild drops the stamp, so what an upgrade leaves is looked
+at by the first index after it). When that is at least 32 MB and a quarter
+of the file, the index starts a detached `trekr --cleanup` and exits: a query
+waiting on the index waits for nothing more. That process skips a store a
+first index is filling or another writer holds past the 5 s wait, removes
+the stale snapshots, collects the blobs only a query recorded over a week
+ago (never a checkout: that stays `--gc`'s, on its `--older-than`), and
+vacuums when the free pages alone pass the same threshold and the disk holds
+twice the live pages. `--status` reports it as `storage`.
 
 A gem the lockfile names and disk does not have is **reported**, in the text
 output and as `gems.missing` in `--json`; a git or path gem that was not
@@ -833,7 +847,7 @@ holding the rest of the `--json` answer and `rows`, the count (DEC-290).
 | `--ancestors NAME` | the linearized ancestor chain |
 | `Constant`, `Owner#method` | a card: the definition, a method's reference counts by tier, a constant's chain — and a model's table from the schema dump, `table` in JSON (DEC-481) |
 | `--drop [PATH]` | forget a checkout's file map, and its overlay copy in `trekr.overlays/` |
-| `--gc [--dry-run] [--older-than AGE] [--vacuum]` | remove checkouts nothing can reach again, the blobs only they mapped, tree snapshots no checkout's index names, and every overlay copy (`overlays` in its `--json`) |
+| `--gc [--dry-run] [--older-than AGE] [--vacuum]` | remove checkouts nothing can reach again, the blobs only they mapped, tree snapshots no checkout's index names, and every overlay copy (`overlays` in its `--json`); `reclaimed_bytes` is what left the disk. The background cleanup (DEC-650) does the safe part of this on its own |
 | `--usage [--days N]` | which commands and editor features get used, by whom, how often empty, how slow (see below) |
 | `--dead PATH…` | methods, then example groups' members and shared groups, then classes, modules and constants, in scope that nothing appears to use, tiered and graded (see below) |
 

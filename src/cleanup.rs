@@ -1,0 +1,398 @@
+//! The store cleans up after itself (DEC-650).
+//!
+//! A rebuild or a collection leaves its old rows' pages free inside the file,
+//! and a release leaves each checkout not queried since with a tree snapshot
+//! no key names. Nobody should have to know `--gc --vacuum` exists. So an
+//! index pass, once it is done, measures what could be given back — at most
+//! every [`INTERVAL`] — and when that passes the threshold it starts a
+//! detached `trekr --cleanup`, which nothing waits for: a query that spawned
+//! the index waits for that process's exit, never for this one's.
+
+use crate::store::Store;
+use crate::tree::Swept;
+use std::path::Path;
+
+/// The least time between two looks at the store, in seconds. Long enough
+/// that a busy day of indexes measures a handful of times, short enough that
+/// what a rebuild left is gone within a working session.
+pub(crate) const INTERVAL: i64 = 2 * 3600;
+
+/// Less than this is not worth a pass: a vacuum rewrites every live page to
+/// win it back.
+const MIN_WASTE: i64 = 32 * 1024 * 1024;
+
+/// A blob only a query recorded is kept this long, as `--gc` keeps it by
+/// default (DEC-049).
+const LOOSE_AGE: i64 = 7 * 86_400;
+
+/// What the store could give back to the disk now.
+#[derive(Debug, Default, Clone, Copy, serde::Serialize)]
+pub(crate) struct Reclaimable {
+    /// Free pages inside the index file: what a vacuum returns.
+    pub(crate) free_bytes: i64,
+    /// Tree snapshots no checkout's current key names.
+    pub(crate) snapshots: Swept,
+}
+
+impl Reclaimable {
+    pub(crate) fn measure(store: &Store) -> anyhow::Result<Reclaimable> {
+        Ok(Reclaimable {
+            free_bytes: store.free_bytes()?,
+            snapshots: crate::tree::sweep_snapshots(store, &[], true)?,
+        })
+    }
+
+    pub(crate) fn bytes(&self) -> i64 {
+        self.free_bytes + self.snapshots.bytes as i64
+    }
+}
+
+/// Worth a pass: at least [`MIN_WASTE`], and a quarter of the file. The
+/// share keeps a large store from being rewritten for the churn every index
+/// leaves and the next one reuses.
+fn worth(waste: i64, file: i64) -> bool {
+    waste >= MIN_WASTE && waste * 4 >= file
+}
+
+/// After an index pass: start a cleanup in the background when one is due.
+/// Best effort, and never waits for it.
+pub(crate) fn after_index(store: &Store) {
+    match due(store, now()) {
+        Ok(true) => {
+            if let Err(error) = spawn() {
+                log(
+                    "cleanup_spawn_failed",
+                    serde_json::json!({ "error": error.to_string() }),
+                );
+            }
+        }
+        Ok(false) => {}
+        Err(error) => log(
+            "cleanup_check_failed",
+            serde_json::json!({ "error": format!("{error:#}") }),
+        ),
+    }
+}
+
+/// Whether a cleanup should run: nobody looked within [`INTERVAL`], and what
+/// it would reclaim is worth it. A look that finds nothing worth doing is
+/// recorded, so the next is an interval away.
+fn due(store: &Store, now: i64) -> anyhow::Result<bool> {
+    if store
+        .cleanup()?
+        .checked_at
+        .is_some_and(|at| now - at < INTERVAL)
+    {
+        return Ok(false);
+    }
+    if worth(Reclaimable::measure(store)?.bytes(), store.db_bytes()?) {
+        return Ok(true);
+    }
+    store.cleanup_checked(now)?;
+    Ok(false)
+}
+
+/// `trekr --cleanup`: from this binary, detached — its own process group, so
+/// a Ctrl-C at the query that started the index does not reach it — and
+/// marked background, so it yields as the index does.
+fn spawn() -> std::io::Result<()> {
+    use std::os::unix::process::CommandExt;
+    use std::process::{Command, Stdio};
+    Command::new(std::env::current_exe()?)
+        .arg("--cleanup")
+        .env(crate::background::BACKGROUND, "1")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .process_group(0)
+        .spawn()
+        .map(drop)
+}
+
+/// What one cleanup did.
+#[derive(Debug, Default, serde::Serialize)]
+pub(crate) struct Done {
+    pub(crate) snapshots: Swept,
+    /// Blobs only a query recorded, no checkout maps.
+    pub(crate) blobs: usize,
+    pub(crate) vacuumed: bool,
+    /// What left the disk: the files removed and the index file's shrink.
+    pub(crate) reclaimed_bytes: i64,
+}
+
+/// Why a cleanup did nothing.
+#[derive(Debug, PartialEq)]
+pub(crate) enum Skipped {
+    /// Another process looked within the interval.
+    NotDue,
+    /// A first index is under way, or another writer kept the lock past the
+    /// wait: the next index pass asks again.
+    Busy,
+}
+
+/// Clean up `store`, unless another process did lately or holds it. Writes
+/// wait as long as a query's own writes do, never as long as an index's.
+pub(crate) fn run(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Skipped>> {
+    if store.any_warming()? {
+        return Ok(Err(Skipped::Busy));
+    }
+    match store.claim_cleanup(now, INTERVAL) {
+        Ok(true) => {}
+        Ok(false) => return Ok(Err(Skipped::NotDue)),
+        Err(error) if crate::store::is_busy(&error) => return Ok(Err(Skipped::Busy)),
+        Err(error) => return Err(error.into()),
+    }
+    let before = store.disk_bytes();
+    let mut done = Done {
+        blobs: store.collect_loose(now - LOOSE_AGE)?.blobs,
+        snapshots: crate::tree::sweep_snapshots(store, &[], false)?,
+        ..Done::default()
+    };
+    let (free, file) = (store.free_bytes()?, store.db_bytes()?);
+    if worth(free, file) && room_for(store, file - free) {
+        match store.vacuum() {
+            Ok(()) => done.vacuumed = true,
+            Err(error) if crate::store::is_busy(&error) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    done.reclaimed_bytes = (before - store.disk_bytes()).max(0) + done.snapshots.bytes as i64;
+    store.cleanup_ran(now, done.reclaimed_bytes)?;
+    Ok(Ok(done))
+}
+
+/// Whether the disk holds what a vacuum writes on the way: the live pages,
+/// once into the log, with as much again to spare for everything else.
+fn room_for(store: &Store, live: i64) -> bool {
+    let Some(dir) = store.path().and_then(Path::parent) else {
+        return true;
+    };
+    available(dir).is_some_and(|free| free >= 2 * live.max(0) as u64)
+}
+
+/// Bytes an unprivileged process may still write on `dir`'s filesystem.
+#[allow(
+    clippy::useless_conversion,
+    reason = "statvfs field widths differ: u32 on macOS, u64 on Linux"
+)]
+fn available(dir: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let path = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    let mut stat = std::mem::MaybeUninit::<libc::statvfs>::uninit();
+    // SAFETY: `path` is NUL-terminated and outlives the call; `stat` is
+    // written by `statvfs` and read only after it reports success.
+    let stat = unsafe {
+        if libc::statvfs(path.as_ptr(), stat.as_mut_ptr()) != 0 {
+            return None;
+        }
+        stat.assume_init()
+    };
+    Some(u64::from(stat.f_bavail) * u64::from(stat.f_frsize))
+}
+
+fn now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+fn log(event: &str, fields: serde_json::Value) {
+    crate::log::Log::open(false).event(event, fields);
+}
+
+/// The hidden `--cleanup`: one pass over the store this binary uses, said
+/// only in the log.
+pub(crate) fn command() -> anyhow::Result<()> {
+    crate::background::yield_if_background();
+    // Never a new store: the one the index wrote may be gone by now.
+    let path = crate::store::in_use(&crate::store::default_path()?);
+    let mut store = Store::open_existing(&path)?;
+    let started = std::time::Instant::now();
+    let ran = run(&mut store, now());
+    let ms = started.elapsed().as_millis() as u64;
+    match ran {
+        Ok(Ok(done)) => log("cleanup", serde_json::json!({ "done": done, "ms": ms })),
+        Ok(Err(skipped)) => log(
+            "cleanup_skipped",
+            serde_json::json!({ "why": format!("{skipped:?}") }),
+        ),
+        Err(error) => log(
+            "cleanup_failed",
+            serde_json::json!({ "error": format!("{error:#}"), "ms": ms }),
+        ),
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    const NOW: i64 = 1_800_000_000;
+
+    /// A store on disk holding one indexed checkout, its tree snapshot built.
+    fn store(name: &str) -> (PathBuf, Store) {
+        let dir = std::env::temp_dir().join(format!("trekr-cleanup-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut store = Store::open(&dir.join("t.db")).unwrap();
+        let src = "class Widget\nend\n";
+        let oid = crate::scan::hash_blob(src.as_bytes());
+        let files = crate::scan::Files::from([("widget.rb".to_string(), oid.clone())]);
+        store
+            .write(
+                "/app",
+                &files,
+                vec![(oid, crate::extract::extract(src.as_bytes()))],
+                0,
+            )
+            .unwrap();
+        crate::tree::Tree::build(&store, "/app").unwrap();
+        (dir, store)
+    }
+
+    /// Leave `mb` megabytes of free pages in the file, as a rebuild does.
+    fn bloat(dir: &Path, mb: u32) {
+        let conn = rusqlite::Connection::open(dir.join("t.db")).unwrap();
+        conn.execute_batch(&format!(
+            "CREATE TABLE junk (b BLOB);
+             WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < {mb})
+             INSERT INTO junk SELECT zeroblob(1048576) FROM n;
+             DROP TABLE junk;
+             PRAGMA wal_checkpoint(TRUNCATE);"
+        ))
+        .unwrap();
+    }
+
+    fn snapshots(dir: &Path) -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir.join("t.trees"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn a_new_store_waits_an_interval_before_its_first_look() {
+        let (dir, store) = store("new");
+        bloat(&dir, 40);
+        let created = store
+            .cleanup()
+            .unwrap()
+            .checked_at
+            .expect("stamped at creation");
+        assert!(!due(&store, created + 60).unwrap(), "looked at just now");
+        assert!(due(&store, created + INTERVAL).unwrap());
+        // A store an earlier trekr rebuilt carries no stamp: due at once.
+        rusqlite::Connection::open(dir.join("t.db"))
+            .unwrap()
+            .execute("DELETE FROM meta WHERE key = 'cleanup checked'", [])
+            .unwrap();
+        assert!(due(&store, created + 60).unwrap());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn only_waste_past_the_threshold_is_worth_a_pass() {
+        let (dir, store) = store("threshold");
+        store.cleanup_checked(0).unwrap();
+        assert!(!due(&store, NOW).unwrap(), "a small store's churn");
+        assert_eq!(
+            store.cleanup().unwrap().checked_at,
+            Some(NOW),
+            "a look that found nothing waits an interval"
+        );
+        assert!(!due(&store, NOW + INTERVAL - 1).unwrap());
+        bloat(&dir, 40);
+        assert!(due(&store, NOW + INTERVAL).unwrap());
+        assert_eq!(
+            store.cleanup().unwrap().checked_at,
+            Some(NOW),
+            "a due look leaves the claim to the cleanup"
+        );
+        // Plenty of bytes, but a small share of a large file: not worth it.
+        assert!(!worth(MIN_WASTE * 2, MIN_WASTE * 9));
+        assert!(!worth(MIN_WASTE - 1, MIN_WASTE));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_pass_compacts_the_file_and_sweeps_what_no_key_names() {
+        let (dir, mut store) = store("pass");
+        bloat(&dir, 40);
+        let live = snapshots(&dir);
+        let stale = dir
+            .join("t.trees")
+            .join(format!("{}-{}.tree", &live[0][..16], "0".repeat(40)));
+        std::fs::write(&stale, vec![0u8; 4096]).unwrap();
+        let before = store.disk_bytes();
+        store.cleanup_checked(0).unwrap();
+
+        let done = run(&mut store, NOW).unwrap().expect("ran");
+        assert!(done.vacuumed);
+        assert_eq!(done.snapshots.files, 1);
+        assert_eq!(
+            snapshots(&dir),
+            live,
+            "the stale one went, the live one stayed"
+        );
+        let after = store.disk_bytes();
+        assert!(after < before - 32_000_000, "{before} -> {after}");
+        // Measured by the pass itself, around its own bookkeeping write.
+        let seen = before - after + 4096;
+        assert!(
+            done.reclaimed_bytes.abs_diff(seen) < 65_536,
+            "{} vs {seen}",
+            done.reclaimed_bytes
+        );
+        let cleanup = store.cleanup().unwrap();
+        assert_eq!(
+            (cleanup.checked_at, cleanup.ran_at, cleanup.reclaimed_bytes),
+            (Some(NOW), Some(NOW), Some(done.reclaimed_bytes))
+        );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_pass_runs_at_most_once_an_interval() {
+        let (dir, mut store) = store("rate");
+        bloat(&dir, 40);
+        store.cleanup_checked(0).unwrap();
+        assert!(run(&mut store, NOW).unwrap().is_ok());
+        bloat(&dir, 40);
+        assert_eq!(
+            run(&mut store, NOW + INTERVAL - 1).unwrap().unwrap_err(),
+            Skipped::NotDue
+        );
+        assert!(!due(&store, NOW + INTERVAL - 1).unwrap());
+        assert!(run(&mut store, NOW + INTERVAL).unwrap().unwrap().vacuumed);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_store_another_process_holds_is_left_for_the_next_pass() {
+        let (dir, mut store) = store("busy");
+        bloat(&dir, 40);
+        store.cleanup_checked(0).unwrap();
+        store.wait_briefly();
+        let writer = rusqlite::Connection::open(dir.join("t.db")).unwrap();
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        assert_eq!(run(&mut store, NOW).unwrap().unwrap_err(), Skipped::Busy);
+        writer.execute_batch("ROLLBACK").unwrap();
+        assert_eq!(
+            store.cleanup().unwrap().checked_at,
+            Some(0),
+            "nothing recorded: the next index pass asks again"
+        );
+
+        // A first index under way, in a live process: this one.
+        store.set_warming("/other", 1, 10).unwrap();
+        assert_eq!(run(&mut store, NOW).unwrap().unwrap_err(), Skipped::Busy);
+        store.clear_warming("/other").unwrap();
+        assert!(run(&mut store, NOW).unwrap().unwrap().vacuumed);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+}

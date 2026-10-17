@@ -2,6 +2,7 @@
 //! language server — which only this root sees together.
 
 pub(crate) mod background;
+pub(crate) mod cleanup;
 pub(crate) mod cli;
 pub(crate) mod core;
 pub(crate) mod extract;

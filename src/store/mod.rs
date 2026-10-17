@@ -354,6 +354,15 @@ impl Store {
         self.path.as_deref()
     }
 
+    /// Wait for another writer's lock only briefly, so a test of giving
+    /// up does not sit through `BUSY`.
+    #[cfg(test)]
+    pub(crate) fn wait_briefly(&self) {
+        self.conn
+            .busy_timeout(std::time::Duration::from_millis(50))
+            .unwrap();
+    }
+
     #[cfg(test)]
     pub(crate) fn open_in_memory() -> Result<Store> {
         match Store::init(Connection::open_in_memory()?, &schema::LAYOUT) {
@@ -460,6 +469,15 @@ impl Store {
                     "INSERT INTO meta (key, value) VALUES ('schema_by', ?1)",
                     params![env!("CARGO_PKG_VERSION")],
                 )?;
+                // A new store has nothing to clean up: its first look waits
+                // an interval, as every later one does. A rebuild's is due
+                // at once, since what it dropped is still in the file.
+                if version == 0 {
+                    tx.execute(
+                        "INSERT INTO meta (key, value) VALUES (?1, unixepoch())",
+                        params![gc::CLEANUP_CHECKED],
+                    )?;
+                }
                 tx.pragma_update(None, "user_version", layout.version)
             };
             rebuild().map_err(|e| Refusal::upgrade(version, terse(e)))?;
