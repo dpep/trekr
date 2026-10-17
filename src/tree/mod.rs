@@ -30,7 +30,7 @@ pub(crate) use variants::public_name;
 use variants::{PlacedEdge, joinable, nearest};
 
 pub(crate) use files::forget as forget_snapshots;
-pub(crate) use files::{Swept, sweep as sweep_snapshots};
+pub(crate) use files::{Overlays, Swept, sweep as sweep_snapshots};
 
 use crate::core::{Param, runtime};
 use crate::store::{DeclRow, EdgeRow, MethodRow, Roots, Store};

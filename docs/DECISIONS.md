@@ -14544,7 +14544,10 @@ otherwise the pass removes what it can and leaves the file.
 version is unreachable depends on bundles and on `--older-than`'s hysteresis,
 which is `--gc`'s decision (DEC-049). Blobs only a query recorded are, at
 `--gc`'s own default age. Overlay copies are not touched: they are a live
-query's. Stale snapshots go whatever their age — a dev build and a release
+query's — nor is a query's tree over its edits (`<tag>+<key>.tree`), whose
+key holds edits only that query knows, so neither the pass nor `--status`
+can tell a live one from a stale one (the first shape swept them, and the
+next query in a dirty rails worktree paid a 0.35 s rebuild). Stale snapshots go whatever their age — a dev build and a release
 used side by side already retire each other's snapshot on every query, so a
 sweep adds no rebuilds that use doesn't.
 

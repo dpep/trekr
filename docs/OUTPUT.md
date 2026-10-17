@@ -424,7 +424,8 @@ rest. Outside any checkout the repos are listed.
 `storage` is the index's size (DEC-650): `bytes`, its pages as SQLite
 counts them; `free_bytes`, those free inside it — both read in one snapshot,
 with `cleanup`; `stale_snapshots`
-(`files`, `bytes`), tree snapshots no checkout's current key names; and
+(`files`, `bytes`), tree snapshots no checkout's current key names (a
+query's tree over its edits is never counted: only `--gc` removes those); and
 `reclaimable_bytes`, the two together — what `--gc --vacuum` would return.
 `cleanup` says what the background cleanup last did: `checked_at`, when it
 last measured the store (a new store is stamped at creation), `ran_at` and

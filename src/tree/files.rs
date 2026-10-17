@@ -258,6 +258,17 @@ pub(crate) struct Swept {
     pub(crate) bytes: u64,
 }
 
+/// Whether a sweep takes the trees queries built over their checkouts'
+/// edits (DEC-035). Their key holds the edits, which only that query knows,
+/// so a sweep cannot tell a live one from a stale one.
+#[derive(Clone, Copy, PartialEq)]
+pub(crate) enum Overlays {
+    /// `--gc`: asked for, so every one goes; the next query writes its own.
+    Sweep,
+    /// The background cleanup: a live query's tree is not its to take.
+    Keep,
+}
+
 /// Remove every snapshot no checkout's current key names, and any temporary
 /// file a dead writer left.
 ///
@@ -266,7 +277,12 @@ pub(crate) struct Swept {
 /// checkout that is gone. `gone` names checkouts this same collection is
 /// removing, so that a dry run — which leaves them in the store — reports
 /// what the real one would do.
-pub(crate) fn sweep(store: &Store, gone: &[&str], dry_run: bool) -> anyhow::Result<Swept> {
+pub(crate) fn sweep(
+    store: &Store,
+    gone: &[&str],
+    overlays: Overlays,
+    dry_run: bool,
+) -> anyhow::Result<Swept> {
     let mut swept = Swept::default();
     let Some(dir) = dir(store) else {
         return Ok(swept);
@@ -296,7 +312,10 @@ pub(crate) fn sweep(store: &Store, gone: &[&str], dry_run: bool) -> anyhow::Resu
     for entry in entries {
         let file = entry.file_name();
         let Some(file) = file.to_str() else { continue };
-        let stale = file.ends_with(SUFFIX) && !live.contains(file);
+        let overlay = file.contains('+');
+        let stale = file.ends_with(SUFFIX)
+            && !live.contains(file)
+            && (overlays == Overlays::Sweep || !overlay);
         if !stale && !(file.ends_with(TEMP) && abandoned(&entry)) {
             continue;
         }
@@ -507,11 +526,11 @@ mod tests {
         temp("live.3.4.tmp", 5);
         assert_eq!(snapshots(&store).len(), 4);
 
-        let dry = sweep(&store, &["/other"], true).unwrap();
+        let dry = sweep(&store, &["/other"], Overlays::Sweep, true).unwrap();
         assert_eq!(dry.files, 2, "/other's tree and the dead writer's file");
         assert_eq!(snapshots(&store).len(), 4, "a dry run removes nothing");
 
-        let done = sweep(&store, &[], false).unwrap();
+        let done = sweep(&store, &[], Overlays::Sweep, false).unwrap();
         assert_eq!(done.files, 1, "only the dead writer's file");
         assert!(!snapshots(&store).contains(&"dead.1.2.tmp".to_string()));
         assert_eq!(snapshots(&store).len(), 3);

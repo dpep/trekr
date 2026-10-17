@@ -2881,7 +2881,7 @@ fn storage(store: &Store) -> anyhow::Result<serde_json::Value> {
     // The store first, in one snapshot, and the snapshot files after: a
     // cleanup records its run last, so a run read here has already swept.
     let storage = store.storage()?;
-    let snapshots = crate::tree::sweep_snapshots(store, &[], true)?;
+    let snapshots = crate::tree::sweep_snapshots(store, &[], crate::tree::Overlays::Keep, true)?;
     Ok(serde_json::json!({
         "bytes": storage.bytes,
         "free_bytes": storage.free_bytes,
@@ -5679,7 +5679,8 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
         dry_run,
     )?;
     let gone: Vec<&str> = garbage.checkouts.iter().map(|c| c.repo.as_str()).collect();
-    let snapshots = crate::tree::sweep_snapshots(&store, &gone, dry_run)?;
+    let snapshots =
+        crate::tree::sweep_snapshots(&store, &gone, crate::tree::Overlays::Sweep, dry_run)?;
     // A query's copies of the map with its edits applied (DEC-035).
     let (overlays, overlay_bytes) = store.sweep_overlays(dry_run);
     // Each Ruby's core files beside the store, and an earlier build's.

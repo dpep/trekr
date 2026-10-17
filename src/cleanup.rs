@@ -11,7 +11,7 @@
 //! so a pass that fails is not started again by every index after it.
 
 use crate::store::Store;
-use crate::tree::Swept;
+use crate::tree::{Overlays, Swept};
 use std::path::Path;
 
 /// The least time between two looks at the store, in seconds. Long enough
@@ -32,7 +32,7 @@ const LOOSE_AGE: i64 = 7 * 86_400;
 struct Reclaimable {
     /// Free pages inside the index file: what a vacuum returns.
     pub(crate) free_bytes: i64,
-    /// Tree snapshots no checkout's current key names.
+    /// Tree snapshots no checkout's current key names, a query's own aside.
     pub(crate) snapshots: Swept,
 }
 
@@ -40,7 +40,7 @@ impl Reclaimable {
     fn measure(store: &Store) -> anyhow::Result<Reclaimable> {
         Ok(Reclaimable {
             free_bytes: store.free_bytes()?,
-            snapshots: crate::tree::sweep_snapshots(store, &[], true)?,
+            snapshots: crate::tree::sweep_snapshots(store, &[], Overlays::Keep, true)?,
         })
     }
 
@@ -178,7 +178,7 @@ fn pass(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Skipped>> {
     let before = store.db_bytes()?;
     let mut done = Done {
         blobs: store.collect_loose(now - LOOSE_AGE)?.blobs,
-        snapshots: crate::tree::sweep_snapshots(store, &[], false)?,
+        snapshots: crate::tree::sweep_snapshots(store, &[], Overlays::Keep, false)?,
         ..Done::default()
     };
     let (free, file) = (store.free_bytes()?, store.db_bytes()?);
@@ -367,6 +367,10 @@ mod tests {
             .join("t.trees")
             .join(format!("{}-{}.tree", &live[0][..16], "0".repeat(40)));
         std::fs::write(&stale, vec![0u8; 4096]).unwrap();
+        // A query's tree over its checkout's edits: a live one's, not stale.
+        let overlay = format!("{}+{}.tree", &live[0][..16], "1".repeat(40));
+        std::fs::write(dir.join("t.trees").join(&overlay), vec![0u8; 1024]).unwrap();
+        assert_eq!(Reclaimable::measure(&store).unwrap().snapshots.files, 1);
         let before = store.db_bytes().unwrap();
         store.cleanup_checked(0).unwrap();
         assert!(start(&mut store, NOW).unwrap());
@@ -374,10 +378,13 @@ mod tests {
         let done = run(&mut store, NOW).unwrap().expect("ran");
         assert!(done.vacuumed);
         assert_eq!(done.snapshots.files, 1);
+        let mut kept = live.clone();
+        kept.push(overlay);
+        kept.sort();
         assert_eq!(
             snapshots(&dir),
-            live,
-            "the stale one went, the live one stayed"
+            kept,
+            "the stale one went; the live one and the query's stayed"
         );
         let after = store.db_bytes().unwrap();
         assert!(after < before - 32_000_000, "{before} -> {after}");
