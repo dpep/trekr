@@ -3046,6 +3046,7 @@ fn status_not_indexed(
             plural(gems, "gem")
         );
     }
+    println!("\n{}", storage_line(&storage(store)?));
     Ok(ExitCode::from(2))
 }
 

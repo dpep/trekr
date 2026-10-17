@@ -1900,8 +1900,11 @@ fn nothing_to_report_is_an_exit_code_not_an_error() {
     let (dir, db) = scratch("empty");
     repo(&dir);
 
-    // Never indexed: no answer yet, as a query says (DEC-170).
-    assert_eq!(trekr(&db, &dir, &["--status"]).status.code(), Some(2));
+    // Never indexed: no answer yet, as a query says (DEC-170). The store's
+    // own size is still said, as `--json` says it.
+    let status = trekr(&db, &dir, &["--status"]);
+    assert_eq!(status.status.code(), Some(2));
+    assert!(stdout(&status).contains("\nindex: "), "{}", stdout(&status));
     // An outline is parsed, not looked up, so it answers before any index
     // exists. Exit 1 is reserved for a file that really defines nothing.
     assert_eq!(
