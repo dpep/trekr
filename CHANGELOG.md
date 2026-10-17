@@ -9,7 +9,8 @@
   module's method were residue, and `--refs` by each spelling listed a
   different set. They now resolve, hover and go to the definition, and
   `--refs ::OBJC`, `--refs Object::OBJC` and Find References at any of them
-  list the same mentions. Hover names such a constant `OBJC`, as Ruby does.
+  list the same mentions. Hover at a mention names such a constant `OBJC`,
+  as Ruby does.
   A module's lookup, and `::KC`, also reach a Kernel constant now, as in
   Ruby; `Box::OBJC` and `Box::TOP` still miss.
 - **`--dead` counts a top-level constant used as `Object::X` or `::X`.**
@@ -22,6 +23,8 @@
   mention that resolves to the constant is now listed, by name, at the
   definition and at any mention, in the CLI and the editor alike. The store
   is rebuilt on first use (v66): the next command reindexes.
+  The rebuild leaves the old rows' space free inside the file; run
+  `trekr --gc --vacuum` once afterwards to shrink it.
 
 ## 0.9.3 — 2026-10-10
 
