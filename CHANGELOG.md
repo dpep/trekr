@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.4 — 2026-10-17
 
 - **A constant written in `class Object` is the top level's.** Ruby reaches
   `class Object; OBJC = 6; end` as `OBJC`, `::OBJC` and `Object::OBJC`
