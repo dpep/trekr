@@ -18,6 +18,9 @@ def app.rb:19:3 status=resolved site=app.rb:3
 def app.rb:20:9 status=resolved site=app.rb:3
 hover app.rb:20:9 OBJC
 hover app.rb:17:9 TOP
+# At the definition too, as at a mention.
+hover app.rb:3:3 OBJC = 6
+hover app.rb:3:3 !Object::OBJC
 definition app.rb:20:9 app.rb:3
 definition app.rb:17:9 app.rb:1
 definition app.rb:23:1 app.rb:3

@@ -1706,10 +1706,11 @@ fn hover_definition(
                 .collect();
             tree.scope_fqn(&own)
         }
-        Kind::Constant => Some(match tree.scope_fqn(&def.nesting) {
-            Some(scope) if !scope.is_empty() => format!("{scope}::{}", def.name),
-            _ => def.name.clone(),
-        }),
+        // `qualify`, so a constant in `class Object` is named as at a mention.
+        Kind::Constant => Some(crate::tree::qualify(
+            &tree.scope_fqn(&def.nesting).unwrap_or_default(),
+            &def.name,
+        )),
     };
     let display = display_name(def, qualified.as_deref());
     // On a column in the schema itself: what the column is.

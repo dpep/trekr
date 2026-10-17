@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- **Hover at a constant's definition in `class Object` names it `OBJC`**,
+  as hover at a mention already did; it said `Object::OBJC`.
+
 ## 0.9.4 — 2026-10-17
 
 - **A constant written in `class Object` is the top level's.** Ruby reaches

@@ -1289,7 +1289,12 @@ fn check_case(
                     .map(|(_, w)| w.trim())
                     .unwrap_or_default();
                 let got = hover_text(&db, &dir, target);
-                if !got.contains(want) {
+                // `!text`: the hover must not say it.
+                let held = match want.strip_prefix('!') {
+                    Some(absent) => !got.contains(absent),
+                    None => got.contains(want),
+                };
+                if !held {
                     failures.push(format!(
                         "{label}: {line}\n      hover said `{}`",
                         got.replace('\n', " ")

@@ -73,7 +73,7 @@ in source order, comma-separated, and `private=a,b` which of its rows are
 private.
 
 `hover FILE:LINE:COL <text>` drives a real `--lsp` session and asserts the
-markdown an editor would show contains `<text>`. It exists because some of what
+markdown an editor would show contains `<text>` — or, as `!<text>`, does not. It exists because some of what
 an answer carries reaches an editor **only** through hover: `textDocument/
 definition` is a bare list of locations and cannot say what kind of location it
 handed back. Where a case stages a server-visible shape, pin the wire too.
