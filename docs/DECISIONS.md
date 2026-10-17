@@ -14547,6 +14547,15 @@ most of it the store's own pages through the 1 GB `mmap_size`
 (`temp_store=MEMORY` holds the vacuum's copy in memory: about the live
 75 MB).
 
+**`--status` reads the store in one snapshot, then the snapshot files.**
+Read statement by statement, a `--status` racing a pass reported the run's
+`ran_at` beside the 42 MB of free pages it had already vacuumed away, and a
+snapshot the pass deleted between the listing and its size as stale at 0
+bytes (4 of 10 runs of the e2e). The cleanup record, free pages and size
+now come from one read transaction, read before the directory; a pass
+records its run last, so a run `--status` sees has already swept; and a
+file gone since the listing is not counted.
+
 **`PRAGMA optimize` is not added to the slot.** Every connection already runs
 it when it closes (`Drop for Store`, DEC-066), the cleanup's included.
 

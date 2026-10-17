@@ -62,6 +62,15 @@ pub(crate) struct Cleanup {
     pub(crate) reclaimed_bytes: Option<i64>,
 }
 
+/// The store's size and what the background cleanup did, as of one moment.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Storage {
+    pub(crate) cleanup: Cleanup,
+    pub(crate) free_bytes: i64,
+    /// Pages, as SQLite counts them.
+    pub(crate) bytes: i64,
+}
+
 /// `meta` keys: when a cleanup last looked, and `<at> <bytes>` of its last
 /// run that reclaimed anything.
 pub(super) const CLEANUP_CHECKED: &str = "cleanup checked";
@@ -193,6 +202,20 @@ impl Store {
             ran_at: ran.next().and_then(|at| at.ok()),
             reclaimed_bytes: ran.next().and_then(|bytes| bytes.ok()),
         })
+    }
+
+    /// The cleanup record, the free pages and the file's size, read in one
+    /// snapshot: a cleanup that finishes between two separate reads would
+    /// otherwise report its run beside the pages it has since given back.
+    pub(crate) fn storage(&self) -> Result<Storage> {
+        let tx = self.conn.unchecked_transaction()?;
+        let storage = Storage {
+            cleanup: self.cleanup()?,
+            free_bytes: self.free_bytes()?,
+            bytes: self.db_bytes()?,
+        };
+        tx.commit()?;
+        Ok(storage)
     }
 
     /// Record that a cleanup looked at `at` and found nothing worth doing.

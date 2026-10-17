@@ -421,8 +421,9 @@ lists every checkout, each with `kind` (`repo`, `gem` or `stdlib`).
 `status: not_indexed`, exit 2 — `checkouts` is empty and `others` counts the
 rest. Outside any checkout the repos are listed.
 
-`storage` is the index on disk (DEC-650): `bytes`, the file and its
-write-ahead log; `free_bytes`, pages free inside it; `stale_snapshots`
+`storage` is the index's size (DEC-650): `bytes`, its pages as SQLite
+counts them; `free_bytes`, those free inside it — both read in one snapshot,
+with `cleanup`; `stale_snapshots`
 (`files`, `bytes`), tree snapshots no checkout's current key names; and
 `reclaimable_bytes`, the two together — what `--gc --vacuum` would return.
 `cleanup` says what the background cleanup last did: `checked_at`, when it

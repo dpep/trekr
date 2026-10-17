@@ -300,8 +300,12 @@ pub(crate) fn sweep(store: &Store, gone: &[&str], dry_run: bool) -> anyhow::Resu
         if !stale && !(file.ends_with(TEMP) && abandoned(&entry)) {
             continue;
         }
+        // Gone since the listing — another sweep's — is not there to count.
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
         swept.files += 1;
-        swept.bytes += entry.metadata().map_or(0, |m| m.len());
+        swept.bytes += meta.len();
         if !dry_run {
             let _ = std::fs::remove_file(entry.path());
         }

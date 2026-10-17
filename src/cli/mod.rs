@@ -2876,19 +2876,22 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
 /// The store's size on disk, what it could give back, and when the
 /// background cleanup last did (DEC-650).
 fn storage(store: &Store) -> anyhow::Result<serde_json::Value> {
-    let reclaimable = crate::cleanup::Reclaimable::measure(store)?;
+    // The store first, in one snapshot, and the snapshot files after: a
+    // cleanup records its run last, so a run read here has already swept.
+    let storage = store.storage()?;
+    let snapshots = crate::tree::sweep_snapshots(store, &[], true)?;
     Ok(serde_json::json!({
-        "bytes": store.disk_bytes(),
-        "free_bytes": reclaimable.free_bytes,
-        "stale_snapshots": reclaimable.snapshots,
-        "reclaimable_bytes": reclaimable.bytes(),
-        "cleanup": store.cleanup()?,
+        "bytes": storage.bytes,
+        "free_bytes": storage.free_bytes,
+        "stale_snapshots": snapshots,
+        "reclaimable_bytes": storage.free_bytes + snapshots.bytes as i64,
+        "cleanup": storage.cleanup,
     }))
 }
 
 fn storage_line(storage: &serde_json::Value) -> String {
     let mb = |value: &serde_json::Value| value.as_i64().unwrap_or(0) as f64 / 1e6;
-    let mut line = format!("index: {:.1} MB on disk", mb(&storage["bytes"]));
+    let mut line = format!("index: {:.1} MB", mb(&storage["bytes"]));
     let reclaimable = storage["reclaimable_bytes"].as_i64().unwrap_or(0);
     if reclaimable > 0 {
         let snapshots = storage["stale_snapshots"]["files"].as_u64().unwrap_or(0);

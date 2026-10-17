@@ -27,7 +27,7 @@ const LOOSE_AGE: i64 = 7 * 86_400;
 
 /// What the store could give back to the disk now.
 #[derive(Debug, Default, Clone, Copy, serde::Serialize)]
-pub(crate) struct Reclaimable {
+struct Reclaimable {
     /// Free pages inside the index file: what a vacuum returns.
     pub(crate) free_bytes: i64,
     /// Tree snapshots no checkout's current key names.
@@ -35,14 +35,14 @@ pub(crate) struct Reclaimable {
 }
 
 impl Reclaimable {
-    pub(crate) fn measure(store: &Store) -> anyhow::Result<Reclaimable> {
+    fn measure(store: &Store) -> anyhow::Result<Reclaimable> {
         Ok(Reclaimable {
             free_bytes: store.free_bytes()?,
             snapshots: crate::tree::sweep_snapshots(store, &[], true)?,
         })
     }
 
-    pub(crate) fn bytes(&self) -> i64 {
+    fn bytes(&self) -> i64 {
         self.free_bytes + self.snapshots.bytes as i64
     }
 }
