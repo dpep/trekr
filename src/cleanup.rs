@@ -219,7 +219,10 @@ fn pass(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Skipped>> {
         },
     };
     done.reclaimed_bytes = (before - store.db_bytes()?).max(0) + done.snapshots.bytes as i64;
-    store.cleanup_ran(now, done.reclaimed_bytes)?;
+    // A run is one that gave something back; why one did not is the log's.
+    if done.reclaimed_bytes > 0 {
+        store.cleanup_ran(now, done.reclaimed_bytes)?;
+    }
     Ok(Ok(done))
 }
 
@@ -565,6 +568,19 @@ mod tests {
                 "{live} {beside} {temp} {one}"
             );
         }
+    }
+
+    /// A pass that gave nothing back — its rewrite skipped for room, say —
+    /// is not reported as a run that reclaimed 0 bytes.
+    #[test]
+    fn a_pass_that_reclaims_nothing_is_not_recorded_as_a_run() {
+        let (_dir, mut store) = store("nothing");
+        let done = run(&mut store, NOW).unwrap().unwrap();
+        assert_eq!(
+            (done.compacted, done.reclaimed_bytes),
+            (Compacted::NotWorth, 0)
+        );
+        assert_eq!(store.cleanup().unwrap().ran_at, None);
     }
 
     #[test]
