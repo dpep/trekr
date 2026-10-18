@@ -19,6 +19,11 @@ use std::path::Path;
 /// what a rebuild left is gone within a working session.
 pub(crate) const INTERVAL: i64 = 2 * 3600;
 
+/// How soon a pass that found the store busy is asked for again, in
+/// seconds: the claim it took would otherwise hold off the next for a whole
+/// interval.
+const RETRY: i64 = 10 * 60;
+
 /// Less than this is not worth a pass: a vacuum rewrites every live page to
 /// win it back.
 const MIN_WASTE: i64 = 32 * 1024 * 1024;
@@ -183,7 +188,7 @@ pub(crate) enum Skipped {
 /// process holds it. Writes wait as long as a query's own writes do, never
 /// as long as an index's.
 pub(crate) fn run(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Skipped>> {
-    match pass(store, now) {
+    let ran = match pass(store, now) {
         Err(error)
             if error
                 .downcast_ref::<rusqlite::Error>()
@@ -192,7 +197,18 @@ pub(crate) fn run(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Sk
             Ok(Err(Skipped::Busy))
         }
         done => done,
+    };
+    let busy = match &ran {
+        Ok(Err(Skipped::Busy)) => true,
+        Ok(Ok(done)) => done.compacted == Compacted::Busy,
+        _ => false,
+    };
+    // Give back most of the claim: the next index asks again in `RETRY`.
+    // Best effort — a writer still holding the lock keeps the interval.
+    if busy {
+        let _ = store.cleanup_checked(now - INTERVAL + RETRY);
     }
+    ran
 }
 
 fn pass(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Skipped>> {
@@ -583,6 +599,22 @@ mod tests {
         assert_eq!(store.cleanup().unwrap().ran_at, None);
     }
 
+    /// A pass that found the store busy after its claim is asked again
+    /// soon, not an interval later.
+    #[test]
+    fn a_busy_pass_is_retried_soon() {
+        let (dir, mut store) = store("retry");
+        bloat(&dir, 40);
+        store.cleanup_checked(0).unwrap();
+        assert!(start(&mut store, NOW).unwrap());
+        store.set_warming("/other", 1, 10).unwrap();
+        assert_eq!(run(&mut store, NOW).unwrap().unwrap_err(), Skipped::Busy);
+        store.clear_warming("/other").unwrap();
+        assert!(!start(&mut store, NOW + RETRY - 1).unwrap());
+        assert!(start(&mut store, NOW + RETRY).unwrap());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
     #[test]
     fn a_pass_is_started_at_most_once_an_interval() {
         let (dir, mut store) = store("rate");
@@ -621,7 +653,7 @@ mod tests {
         assert_eq!(
             store.cleanup().unwrap().checked_at,
             Some(0),
-            "nothing recorded: the next index pass asks again"
+            "the lock still held, nothing recorded: the next index pass asks again"
         );
 
         // A first index under way, in a live process: this one.
@@ -629,9 +661,9 @@ mod tests {
         assert!(!due(&store, NOW).unwrap());
         assert_eq!(run(&mut store, NOW).unwrap().unwrap_err(), Skipped::Busy);
         store.clear_warming("/other").unwrap();
-        assert!(start(&mut store, NOW).unwrap());
+        assert!(start(&mut store, NOW + RETRY).unwrap());
         assert_ne!(
-            run(&mut store, NOW).unwrap().unwrap().compacted,
+            run(&mut store, NOW + RETRY).unwrap().unwrap().compacted,
             Compacted::NotWorth
         );
         let _ = std::fs::remove_dir_all(dir);

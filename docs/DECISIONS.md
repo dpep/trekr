@@ -14539,7 +14539,9 @@ and the claim stands, so a failing pass costs one process an interval.
 
 **Skipped, not waited for.** A live first index's `warming` mark keeps an
 index from claiming; a writer holding the lock past the connection's 5 s wait
-makes the pass skip.
+makes the pass skip, and so does a first index found after the claim. A pass
+that skips so moves the claim back to ten minutes short of the interval
+(`RETRY`), so the next index asks again in ten minutes rather than two hours.
 
 **In chunks, not by rewriting the file** (stores over 1 GB are seen in the
 wild). A full `VACUUM` copies every live page, holding the write lock
