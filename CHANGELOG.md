@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.5 — 2026-10-17
 
 - **The index cleans up after itself.** An upgrade's rebuild left its old
   rows' space free inside the file (a 229 MB store stayed 229 MB holding
