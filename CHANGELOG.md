@@ -29,6 +29,8 @@
   the lock, and reads such a file again. An editor's save of a version a
   collection had just deleted kept the file's previous version until the
   next save; it is now parsed.
+- `--older-than` refuses an age too long to count (exit 64), as
+  `TREKR_RETENTION` and `--retention` do; it wrapped round to a short one.
 
 ## 0.9.5 — 2026-10-17
 

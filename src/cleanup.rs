@@ -125,7 +125,11 @@ pub(crate) fn parse_age(text: &str) -> Result<u64, String> {
         "w" => 7 * 86_400,
         _ => return Err(format!("`{text}`: the unit is one of s, m, h, d, w")),
     };
-    Ok(count * unit)
+    // Wrapping would read a garbage age as a short one.
+    count
+        .checked_mul(unit)
+        .filter(|seconds| i64::try_from(*seconds).is_ok())
+        .ok_or_else(|| format!("`{text}` is too long an age"))
 }
 
 /// What the store could give back to the disk now.
@@ -926,6 +930,9 @@ mod tests {
             ("14", Err(())),
             ("", Err(())),
             ("-1d", Err(())),
+            // Wrapped, these read as hours: refused instead.
+            ("213503982334602d", Err(())),
+            ("30500568904944w", Err(())),
         ];
         for (text, want) in cases {
             assert_eq!(text.parse::<Retention>().map_err(drop), want, "{text}");

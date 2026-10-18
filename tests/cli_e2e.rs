@@ -2092,6 +2092,22 @@ fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
         ),
         (
             &dir,
+            &["--status"],
+            &[("TREKR_RETENTION", "30500568904944w")],
+            64,
+            "usage",
+            "too long",
+        ),
+        (
+            &dir,
+            &["--gc", "--older-than", "213503982334602d"],
+            &[],
+            64,
+            "usage",
+            "too long",
+        ),
+        (
+            &dir,
             &["--index", "--retention", "30d"],
             &[],
             64,
