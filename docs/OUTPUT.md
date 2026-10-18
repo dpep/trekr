@@ -432,7 +432,10 @@ last measured the store (a new store is stamped at creation), `ran_at` and
 `reclaimed_bytes`, its last pass and what that returned to the disk — `null`
 until there is one.
 
-`--gc` reports `reclaimed_bytes`, what it returned to the disk: the files it
+`--gc` first adds any index this version's schema has and the store lacks —
+on a dry run too, since without it a collection scans a table per blob, and
+an index removes nothing — and names them in `indexes` (empty when none).
+It reports `reclaimed_bytes`, what it returned to the disk: the files it
 removed (`snapshots`, `overlays`, `core_files`, `kept`) and, with `--vacuum`,
 the pages the index file gave up — counted in pages, since a reader can hold
 off the file's own shrink until the log is folded back. `freed_bytes` is the pages its deletions freed

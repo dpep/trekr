@@ -5115,6 +5115,34 @@ fn a_cleanup_that_cannot_open_its_store_logs_why() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A store laid down before an index joined the schema gains it from
+/// `--gc`, dry run included — no data goes — and `--gc` says so.
+#[test]
+fn gc_says_which_index_it_added_even_on_a_dry_run() {
+    let (dir, db) = scratch("gc-index");
+    repo(&dir);
+    trekr(&db, &dir, &["--index"]);
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute_batch("DROP INDEX body_call_blob;")
+        .unwrap();
+    let dry = json(&trekr(&db, &dir, &["--gc", "--dry-run", "--json"]));
+    assert_eq!(
+        dry["indexes"],
+        serde_json::json!(["body_call_blob"]),
+        "{dry}"
+    );
+    let again = trekr(&db, &dir, &["--gc", "--dry-run", "--json"]);
+    assert_eq!(json(&again)["indexes"], serde_json::json!([]));
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute_batch("DROP INDEX body_call_blob;")
+        .unwrap();
+    let text = stdout(&trekr(&db, &dir, &["--gc", "--dry-run"]));
+    assert!(text.contains("added the index body_call_blob"), "{text}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// `--gc` says what it returned to the disk — the files it removed, and the
 /// file's own shrink once vacuumed — apart from the pages it freed inside.
 #[test]

@@ -20,7 +20,8 @@
 - **`--gc` collecting many checkouts is ~35× faster.** Each blob it
   deleted scanned a table of class-body calls: removing 240 checkouts from
   a 1 GB index took 34 minutes, and takes 56 s now. An existing index gains
-  the missing index in the background, or at the start of the next `--gc`;
+  the missing index in the background, or at the start of the next `--gc`
+  — a dry run included, which says so (`indexes`) and removes nothing;
   nothing is rebuilt.
 - **`--status` says how big the index is and what it could give back**
   (`storage` in `--json`), and when the background cleanup last ran.

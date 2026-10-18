@@ -193,7 +193,8 @@ struct Cli {
     gc: bool,
 
     /// With `--gc`: report what would be removed, and the space it would free,
-    /// without removing it.
+    /// without removing it. It still adds an index this version's schema has
+    /// and the store lacks, which removes nothing, and says so.
     #[arg(long, requires = "gc")]
     dry_run: bool,
 
@@ -5678,7 +5679,7 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
     // deletes that cascade through it — even on a dry run, which is the real
     // collection rolled back: it changes no answer, and without it each blob
     // collected scanned a table (DEC-650).
-    store.add_missing_indexes()?;
+    let indexes = store.add_missing_indexes()?;
     let garbage = store.collect(
         now - older_than as i64,
         |root| Path::new(root).is_dir(),
@@ -5731,6 +5732,7 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
             &serde_json::json!({
                 "dry_run": dry_run,
                 "older_than": older_than,
+                "indexes": indexes,
                 "checkouts": garbage.checkouts,
                 "files": garbage.files,
                 "blobs": garbage.blobs,
@@ -5755,6 +5757,12 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
     } else {
         "collected"
     };
+    for index in &indexes {
+        println!(
+            "added the index {index}, which this version's schema has and this store lacked \
+             (no data removed)"
+        );
+    }
     if !found {
         println!("nothing to collect");
     } else if !garbage.checkouts.is_empty() {
