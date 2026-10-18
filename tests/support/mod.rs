@@ -145,6 +145,7 @@ pub fn neutral<'a>(command: &'a mut Command, home: &Path) -> &'a mut Command {
         "CI",
         "GITHUB_ACTIONS",
         "TREKR_USAGE",
+        "TREKR_RETENTION",
         // Where a version manager keeps its Rubies.
         "MISE_DATA_DIR",
         "XDG_DATA_HOME",

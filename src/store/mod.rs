@@ -46,6 +46,22 @@ fn loose_blob(conn: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Stamp each of `blobs` that no file maps any more with the moment it went
+/// unmapped, which the retention counts from (DEC-651). A stamp already there
+/// stays: the version has been unmapped since then.
+fn stamp_unmapped(conn: &Connection, blobs: impl IntoIterator<Item = i64>) -> Result<()> {
+    loose_blob(conn)?;
+    // `main.file`: a query's overlay shadows `file` with its edits.
+    let mut stamp = conn.prepare_cached(
+        "INSERT OR IGNORE INTO loose_blob (blob_id, recorded_at)
+         SELECT ?1, unixepoch() WHERE NOT EXISTS (SELECT 1 FROM main.file WHERE blob_id = ?1)",
+    )?;
+    for blob in blobs {
+        stamp.execute(params![blob])?;
+    }
+    Ok(())
+}
+
 pub(crate) struct Store {
     conn: Connection,
     /// Where this store lives, so a second connection to it can be opened.
@@ -487,6 +503,11 @@ impl Store {
                         params![gc::CLEANUP_CHECKED],
                     )?;
                 }
+                // Empty, so nothing it holds went unmapped before the stamps.
+                tx.execute(
+                    "INSERT INTO meta (key, value) VALUES (?1, '1')",
+                    params![gc::UNMAPPED_STAMPED],
+                )?;
                 tx.pragma_update(None, "user_version", layout.version)
             };
             rebuild().map_err(|e| Refusal::upgrade(version, terse(e)))?;
@@ -766,16 +787,20 @@ impl Store {
                 tx.prepare("INSERT INTO file (checkout_id, path, blob_id) VALUES (?1, ?2, ?3)")?;
             let mut update =
                 tx.prepare("UPDATE file SET blob_id = ?3 WHERE checkout_id = ?1 AND path = ?2")?;
-            // A blob a query recorded first is the index's once mapped: kept
-            // after it is edited away, as one the index read is (DEC-003).
+            // Mapped, a blob is no longer unmapped: its stamp goes, and a
+            // later write that unmaps it stamps it afresh (DEC-651).
             loose_blob(&tx)?;
             let loose: bool =
                 tx.query_row("SELECT EXISTS(SELECT 1 FROM loose_blob)", [], |r| r.get(0))?;
             let mut adopt = tx.prepare("DELETE FROM loose_blob WHERE blob_id = ?1")?;
+            // What this write unmaps, stamped once the whole map is in: a
+            // rename maps the same blob under its new path.
+            let mut replaced = Vec::new();
             for (path, oid) in files {
                 let (id, digests) = match stored.remove(path) {
                     Some((id, known, digests)) if known == oid.0 => (id, digests),
                     was => {
+                        replaced.extend(was.as_ref().map(|(old, _, _)| *old));
                         let found = match ids.get(oid) {
                             Some(found) => *found,
                             None => lookup.query_row(params![oid.0], |r| {
@@ -811,10 +836,12 @@ impl Store {
                 // What is left was stored and is no longer in the checkout.
                 let mut delete =
                     tx.prepare("DELETE FROM file WHERE checkout_id = ?1 AND path = ?2")?;
-                for path in stored.keys() {
+                for (path, (old, _, _)) in &stored {
                     delete.execute(params![checkout_id, path])?;
+                    replaced.push(*old);
                 }
             }
+            stamp_unmapped(&tx, replaced)?;
         }
 
         tx.execute(
@@ -2104,6 +2131,7 @@ impl Store {
             "DELETE FROM loose_blob WHERE blob_id = ?1",
             params![blob_id],
         )?;
+        stamp_unmapped(&tx, old.as_ref().map(|(id, _, _)| *id))?;
 
         let hashed = path_hash(relative);
         let (mut keys, mut map_key) = (keys, map_key);
@@ -2199,12 +2227,24 @@ impl Store {
         Ok(total)
     }
 
-    /// Forget a checkout's file map. Its blobs stay: another worktree may
-    /// share them, and re-reading bytes we have already parsed is the one cost
-    /// this design exists to avoid.
-    pub(crate) fn drop_checkout(&self, root: &str) -> Result<usize> {
-        self.conn
-            .execute("DELETE FROM checkout WHERE root = ?1", params![root])
+    /// Forget a checkout's file map. Its blobs stay for the retention, as an
+    /// edited-away version does: another worktree may share them, and
+    /// re-reading bytes already parsed is the cost this design avoids.
+    pub(crate) fn drop_checkout(&mut self, root: &str) -> Result<usize> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        let blobs: Vec<i64> = tx
+            .prepare(
+                "SELECT DISTINCT blob_id FROM main.file
+                  WHERE checkout_id = (SELECT id FROM checkout WHERE root = ?1)",
+            )?
+            .query_map(params![root], |r| r.get(0))?
+            .collect::<Result<_>>()?;
+        let dropped = tx.execute("DELETE FROM checkout WHERE root = ?1", params![root])?;
+        stamp_unmapped(&tx, blobs)?;
+        tx.commit()?;
+        Ok(dropped)
     }
 }
 

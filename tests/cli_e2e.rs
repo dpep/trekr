@@ -409,6 +409,72 @@ fn an_uncommitted_edit_is_indexed_like_any_other_content() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A version an edit replaced is kept for the retention — a switch back
+/// reuses it — and collected once unmapped longer than that.
+#[test]
+fn a_replaced_version_is_kept_for_the_retention_then_collected() {
+    let (dir, db) = scratch("retention");
+    repo(&dir);
+    let original = fs::read_to_string(dir.join("widget.rb")).unwrap();
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    fs::write(
+        dir.join("widget.rb"),
+        "class Widget\n  def added\n  end\nend\n",
+    )
+    .unwrap();
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+
+    let status = json(&trekr(&db, &dir, &["--status", "--json"]));
+    let retained = &status["storage"]["retained"];
+    assert_eq!(retained["blobs"], 1, "{retained}");
+    assert_eq!(retained["expired"], 0, "{retained}");
+    assert!(retained["lines"].as_u64().unwrap() > 0, "{retained}");
+    assert_eq!(retained["retention"], 14 * 86_400, "the default");
+    let text = stdout(&trekr(&db, &dir, &["--status"]));
+    assert!(text.contains("1 replaced version kept"), "{text}");
+
+    let gc = json(&trekr(&db, &dir, &["--gc", "--json"]));
+    assert_eq!(
+        (gc["blobs"].clone(), gc["expired"].clone()),
+        (0.into(), 0.into()),
+        "{gc}"
+    );
+
+    // As if replaced long ago.
+    rusqlite::Connection::open(&db)
+        .unwrap()
+        .execute("UPDATE loose_blob SET recorded_at = 0", [])
+        .unwrap();
+    let kept = trekr_env(
+        &db,
+        &dir,
+        &["--gc", "--json"],
+        &[("TREKR_RETENTION", "never")],
+    );
+    assert_eq!(json(&kept)["blobs"], 0, "never keeps every version");
+    assert_eq!(json(&kept)["retention"], serde_json::Value::Null);
+    let status = trekr(&db, &dir, &["--status", "--json", "--retention", "30d"]);
+    assert_eq!(
+        json(&status)["storage"]["retained"]["retention"],
+        30 * 86_400
+    );
+    assert_eq!(json(&status)["storage"]["retained"]["expired"], 1);
+
+    let gc = trekr(&db, &dir, &["--gc", "--json"]);
+    assert_eq!(gc.status.code(), Some(0), "something was collected");
+    assert_eq!(
+        (json(&gc)["blobs"].clone(), json(&gc)["expired"].clone()),
+        (1.into(), 1.into())
+    );
+    assert_eq!(json(&gc)["retention"], 14 * 86_400);
+
+    // The version collected: switching back reads the file again.
+    fs::write(dir.join("widget.rb"), original).unwrap();
+    let back = json(&trekr(&db, &dir, &["--index", "--json"]));
+    assert_eq!(back["indexed"]["parsed"], 1, "{back}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn a_second_worktree_of_the_same_content_costs_no_parsing() {
     let (dir, db) = scratch("worktree");
@@ -1968,6 +2034,30 @@ fn an_error_exits_on_its_own_code_and_speaks_json_when_asked() {
             "--no-such-flag",
         ),
         (&dir, &["--gc", "--older-than", "7"], &[], 64, "usage", "7"),
+        (
+            &dir,
+            &["--status"],
+            &[("TREKR_RETENTION", "off")],
+            64,
+            "usage",
+            "TREKR_RETENTION",
+        ),
+        (
+            &dir,
+            &["--gc", "--retention", "off"],
+            &[],
+            64,
+            "usage",
+            "never",
+        ),
+        (
+            &dir,
+            &["--index", "--retention", "30d"],
+            &[],
+            64,
+            "usage",
+            "--retention",
+        ),
         (
             &dir,
             &["--def", "widget.rb"],

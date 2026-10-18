@@ -433,7 +433,17 @@ last measured the store (a new store is stamped at creation), `ran_at` and
 `skipped`, why the last pass left free pages it meant to hand back —
 `no_room` (a full rewrite would not fit twice on the disk) or `busy` — all `null`
 until there is one.
+`retained` counts the versions of files no checkout maps any more — one an
+edit, a branch switch or `--drop` left, or a query's draft — kept so a switch
+back reuses them (DEC-651): `blobs`; `lines`, the source lines they were read
+from; `expired`, those unmapped longer than the retention, which the next
+`--gc` or background cleanup collects; and `retention`, in seconds, `null`
+for `never`.
 
+`--gc` collects a checkout by `--older-than` (`older_than`, seconds) and a
+version no checkout maps by the retention (`retention`, seconds or `null`
+for `never`; DEC-651). `blobs` is every blob it removed — a collected
+checkout's, and `expired`: those unmapped longer than the retention.
 `--gc` first adds any index this version's schema has and the store lacks —
 on a dry run too, since without it a collection scans a table per blob, and
 an index removes nothing — and names them in `indexes` (empty when none).

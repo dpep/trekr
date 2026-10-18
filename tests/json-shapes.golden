@@ -319,6 +319,11 @@
 --status $.storage.cleanup.skipped: null
 --status $.storage.free_bytes: int
 --status $.storage.reclaimable_bytes: int
+--status $.storage.retained: object
+--status $.storage.retained.blobs: int
+--status $.storage.retained.expired: int
+--status $.storage.retained.lines: int
+--status $.storage.retained.retention: int
 --status $.storage.stale_snapshots: object
 --status $.storage.stale_snapshots.bytes: int
 --status $.storage.stale_snapshots.files: int

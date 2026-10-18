@@ -32,13 +32,101 @@ const MIN_WASTE: i64 = 32 * 1024 * 1024;
 /// store, so a writer waits that long at most, not the whole compaction.
 const CHUNK_PAGES: i64 = 1024;
 
+/// Blobs collected per write transaction: about as long as a chunk of
+/// [`CHUNK_PAGES`] takes — 60 ms on rails, 0.1 s on a 1 GB store (DEC-651).
+const BATCH_BLOBS: usize = 100;
+
 /// Between chunks: longer than a waiting writer's longest backoff (100 ms),
 /// so a queued index takes its turn rather than waiting out the pass.
 const CHUNK_PAUSE: std::time::Duration = std::time::Duration::from_millis(150);
 
-/// A blob only a query recorded is kept this long, as `--gc` keeps it by
-/// default (DEC-049).
-const LOOSE_AGE: i64 = 7 * 86_400;
+/// How long a version of a file no checkout maps is kept (DEC-651): a
+/// query's draft, or one an edit, a branch switch or a `--drop` left behind.
+/// Within it, a switch back reuses the facts; after it, the file is read
+/// again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Retention {
+    /// Every version, forever.
+    Never,
+    /// This many seconds after nothing maps it.
+    For(u64),
+}
+
+pub(crate) const DEFAULT_RETENTION: Retention = Retention::For(14 * 86_400);
+
+/// The standing setting; `--retention` overrides it for one `--gc` or
+/// `--status`. Every process reads it, the background cleanup included.
+pub(crate) const RETENTION_ENV: &str = "TREKR_RETENTION";
+
+impl std::str::FromStr for Retention {
+    type Err = String;
+
+    fn from_str(text: &str) -> Result<Retention, String> {
+        match text {
+            "never" => Ok(Retention::Never),
+            _ => parse_age(text)
+                .map(Retention::For)
+                .map_err(|why| format!("{why}, or `never`")),
+        }
+    }
+}
+
+impl Retention {
+    /// The flag, else the environment's value (empty is unset), else the
+    /// default.
+    pub(crate) fn choose(flag: Option<Retention>, env: Option<&str>) -> Result<Retention, String> {
+        match (flag, env) {
+            (Some(flag), _) => Ok(flag),
+            (None, Some(text)) if !text.is_empty() => text
+                .parse()
+                .map_err(|why| format!("{RETENTION_ENV}: {why}")),
+            (None, _) => Ok(DEFAULT_RETENTION),
+        }
+    }
+
+    /// [`Retention::choose`] with this process's environment.
+    pub(crate) fn configured(flag: Option<Retention>) -> Result<Retention, String> {
+        let env = std::env::var(RETENTION_ENV).ok();
+        Retention::choose(flag, env.as_deref())
+    }
+
+    /// In seconds; `None` for never.
+    pub(crate) fn seconds(self) -> Option<u64> {
+        match self {
+            Retention::Never => None,
+            Retention::For(seconds) => Some(seconds),
+        }
+    }
+
+    /// At `now`, the latest a version may have gone unmapped and be
+    /// collected; `None` collects none.
+    pub(crate) fn before(self, now: i64) -> Option<i64> {
+        self.seconds()
+            .map(|seconds| now.saturating_sub(i64::try_from(seconds).unwrap_or(i64::MAX)))
+    }
+}
+
+/// `36h`, `7d`, `2w` — or `0`. A bare number is refused: minutes and days
+/// are both plausible readings, and guessing wrong deletes the wrong thing.
+pub(crate) fn parse_age(text: &str) -> Result<u64, String> {
+    if text == "0" {
+        return Ok(0);
+    }
+    let split = text.len() - text.chars().last().map_or(0, char::len_utf8);
+    let (count, unit) = text.split_at(split);
+    let count: u64 = count
+        .parse()
+        .map_err(|_| format!("`{text}` is not an age like 36h, 7d or 2w"))?;
+    let unit = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86_400,
+        "w" => 7 * 86_400,
+        _ => return Err(format!("`{text}`: the unit is one of s, m, h, d, w")),
+    };
+    Ok(count * unit)
+}
 
 /// What the store could give back to the disk now.
 #[derive(Debug, Default, Clone, Copy, serde::Serialize)]
@@ -75,7 +163,9 @@ pub(crate) fn after_index(store: &mut Store) {
     let Some(path) = store.path().map(Path::to_path_buf) else {
         return;
     };
-    match start(store, now()) {
+    // One the environment cannot give is never: nothing collected on a guess.
+    let retention = Retention::configured(None).unwrap_or(Retention::Never);
+    match start(store, now(), retention) {
         Ok(true) => {
             if let Err(error) = spawn(&path) {
                 log(
@@ -95,8 +185,8 @@ pub(crate) fn after_index(store: &mut Store) {
 /// Whether to start a cleanup now: one is [`due`], and this process took the
 /// claim for it — which another process asking at once, or the next index
 /// pass, then finds taken.
-fn start(store: &mut Store, now: i64) -> anyhow::Result<bool> {
-    if !due(store, now)? {
+fn start(store: &mut Store, now: i64, retention: Retention) -> anyhow::Result<bool> {
+    if !due(store, now, retention)? {
         return Ok(false);
     }
     match store.claim_cleanup(now, INTERVAL) {
@@ -109,7 +199,7 @@ fn start(store: &mut Store, now: i64) -> anyhow::Result<bool> {
 /// index is filling the store, and what it would reclaim is worth it. A look
 /// that finds nothing worth doing is recorded, so the next is an interval
 /// away.
-fn due(store: &Store, now: i64) -> anyhow::Result<bool> {
+fn due(store: &Store, now: i64, retention: Retention) -> anyhow::Result<bool> {
     if store
         .cleanup()?
         .checked_at
@@ -123,6 +213,15 @@ fn due(store: &Store, now: i64) -> anyhow::Result<bool> {
     // An index the schema gained since this store was laid down: built here,
     // off every query's path, rather than by a rebuild.
     if !store.missing_indexes()?.is_empty() {
+        return Ok(true);
+    }
+    // What a store left unmapped before the stamps: stamped once, here.
+    if !store.unmapped_stamped()? {
+        return Ok(true);
+    }
+    if let Some(before) = retention.before(now)
+        && store.any_unmapped_before(before)?
+    {
         return Ok(true);
     }
     if worth(Reclaimable::measure(store)?.bytes(), store.db_bytes()?) {
@@ -156,7 +255,7 @@ fn spawn(store: &Path) -> std::io::Result<()> {
 #[derive(Debug, Default, serde::Serialize)]
 pub(crate) struct Done {
     pub(crate) snapshots: Swept,
-    /// Blobs only a query recorded, no checkout maps.
+    /// Versions no checkout maps, unmapped past the retention (DEC-651).
     pub(crate) blobs: usize,
     pub(crate) compacted: Compacted,
     /// Indexes the schema gained that this store had not got.
@@ -194,8 +293,12 @@ pub(crate) enum Skipped {
 /// Clean up `store`, claimed for this pass by [`start`], unless another
 /// process holds it. Writes wait as long as a query's own writes do, never
 /// as long as an index's.
-pub(crate) fn run(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Skipped>> {
-    let ran = match pass(store, now) {
+pub(crate) fn run(
+    store: &mut Store,
+    now: i64,
+    retention: Retention,
+) -> anyhow::Result<Result<Done, Skipped>> {
+    let ran = match pass(store, now, retention) {
         Err(error)
             if error
                 .downcast_ref::<rusqlite::Error>()
@@ -218,7 +321,11 @@ pub(crate) fn run(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Sk
     ran
 }
 
-fn pass(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Skipped>> {
+fn pass(
+    store: &mut Store,
+    now: i64,
+    retention: Retention,
+) -> anyhow::Result<Result<Done, Skipped>> {
     if store.any_warming()? {
         return Ok(Err(Skipped::Busy));
     }
@@ -227,9 +334,10 @@ fn pass(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Skipped>> {
     let before = store.db_bytes()?;
     // First: the collection below deletes blobs, which cascade through them.
     let indexes = store.add_missing_indexes()?;
+    store.stamp_unmapped()?;
     let mut done = Done {
         indexes,
-        blobs: store.collect_loose(now - LOOSE_AGE)?.blobs,
+        blobs: collect_unmapped(store, retention.before(now))?,
         snapshots: crate::tree::sweep_snapshots(store, &[], Overlays::Keep, false)?,
         ..Done::default()
     };
@@ -247,6 +355,23 @@ fn pass(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Skipped>> {
     done.reclaimed_bytes = (before - store.db_bytes()?).max(0) + done.snapshots.bytes as i64;
     record(store, now, &done)?;
     Ok(Ok(done))
+}
+
+/// Collect the versions unmapped at or before `before`, a batch per write
+/// transaction, pausing between them as [`in_chunks`] does.
+fn collect_unmapped(store: &mut Store, before: Option<i64>) -> anyhow::Result<usize> {
+    let Some(before) = before else {
+        return Ok(0);
+    };
+    let mut collected = 0;
+    loop {
+        let batch = store.collect_unmapped(before, BATCH_BLOBS)?.blobs;
+        collected += batch;
+        if batch < BATCH_BLOBS {
+            return Ok(collected);
+        }
+        std::thread::sleep(CHUNK_PAUSE);
+    }
 }
 
 /// What `--status` says of a pass: a run, if it gave something back, and why
@@ -342,7 +467,7 @@ fn available(dir: &Path) -> Option<u64> {
     Some(u64::from(stat.f_bavail) * u64::from(stat.f_frsize))
 }
 
-fn now() -> i64 {
+pub(crate) fn now() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs() as i64)
@@ -366,8 +491,12 @@ pub(crate) fn command(path: &Path) {
             );
         }
     };
+    let retention = Retention::configured(None).unwrap_or_else(|why| {
+        log("cleanup_retention", serde_json::json!({ "error": why }));
+        Retention::Never
+    });
     let started = std::time::Instant::now();
-    let ran = run(&mut store, now());
+    let ran = run(&mut store, now(), retention);
     let ms = started.elapsed().as_millis() as u64;
     match ran {
         Ok(Ok(done)) => log("cleanup", serde_json::json!({ "done": done, "ms": ms })),
@@ -388,6 +517,7 @@ mod tests {
     use std::path::PathBuf;
 
     const NOW: i64 = 1_800_000_000;
+    const KEEP: Retention = DEFAULT_RETENTION;
 
     /// A store on disk holding one indexed checkout, its tree snapshot built.
     fn store(name: &str) -> (PathBuf, Store) {
@@ -442,14 +572,17 @@ mod tests {
             .unwrap()
             .checked_at
             .expect("stamped at creation");
-        assert!(!due(&store, created + 60).unwrap(), "looked at just now");
-        assert!(due(&store, created + INTERVAL).unwrap());
+        assert!(
+            !due(&store, created + 60, KEEP).unwrap(),
+            "looked at just now"
+        );
+        assert!(due(&store, created + INTERVAL, KEEP).unwrap());
         // A store an earlier trekr rebuilt carries no stamp: due at once.
         rusqlite::Connection::open(dir.join("t.db"))
             .unwrap()
             .execute("DELETE FROM meta WHERE key = 'cleanup checked'", [])
             .unwrap();
-        assert!(due(&store, created + 60).unwrap());
+        assert!(due(&store, created + 60, KEEP).unwrap());
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -457,15 +590,15 @@ mod tests {
     fn only_waste_past_the_threshold_is_worth_a_pass() {
         let (dir, store) = store("threshold");
         store.cleanup_checked(0).unwrap();
-        assert!(!due(&store, NOW).unwrap(), "a small store's churn");
+        assert!(!due(&store, NOW, KEEP).unwrap(), "a small store's churn");
         assert_eq!(
             store.cleanup().unwrap().checked_at,
             Some(NOW),
             "a look that found nothing waits an interval"
         );
-        assert!(!due(&store, NOW + INTERVAL - 1).unwrap());
+        assert!(!due(&store, NOW + INTERVAL - 1, KEEP).unwrap());
         bloat(&dir, 40);
-        assert!(due(&store, NOW + INTERVAL).unwrap());
+        assert!(due(&store, NOW + INTERVAL, KEEP).unwrap());
         assert_eq!(
             store.cleanup().unwrap().checked_at,
             Some(NOW),
@@ -492,9 +625,9 @@ mod tests {
         assert_eq!(Reclaimable::measure(&store).unwrap().snapshots.files, 1);
         let before = store.db_bytes().unwrap();
         store.cleanup_checked(0).unwrap();
-        assert!(start(&mut store, NOW).unwrap());
+        assert!(start(&mut store, NOW, KEEP).unwrap());
 
-        let done = run(&mut store, NOW).unwrap().expect("ran");
+        let done = run(&mut store, NOW, KEEP).unwrap().expect("ran");
         assert_eq!(
             done.compacted,
             Compacted::Incremental,
@@ -534,14 +667,14 @@ mod tests {
         let (dir, mut store) = store("reader");
         bloat(&dir, 40);
         store.cleanup_checked(0).unwrap();
-        assert!(start(&mut store, NOW).unwrap());
+        assert!(start(&mut store, NOW, KEEP).unwrap());
         store.wait_briefly();
         let reader = rusqlite::Connection::open(dir.join("t.db")).unwrap();
         reader.execute_batch("BEGIN").unwrap();
         let _: i64 = reader
             .query_row("SELECT COUNT(*) FROM checkout", [], |r| r.get(0))
             .unwrap();
-        let done = run(&mut store, NOW).unwrap().expect("ran");
+        let done = run(&mut store, NOW, KEEP).unwrap().expect("ran");
         reader.execute_batch("COMMIT").unwrap();
         assert_ne!(done.compacted, Compacted::NotWorth);
         assert!(
@@ -565,17 +698,17 @@ mod tests {
         assert!(!store.incremental().unwrap());
         bloat(&dir, 40);
         store.cleanup_checked(0).unwrap();
-        assert!(start(&mut store, NOW).unwrap());
+        assert!(start(&mut store, NOW, KEEP).unwrap());
         assert_eq!(
-            run(&mut store, NOW).unwrap().unwrap().compacted,
+            run(&mut store, NOW, KEEP).unwrap().unwrap().compacted,
             Compacted::Full
         );
         assert!(store.incremental().unwrap());
         assert_eq!(store.free_bytes().unwrap(), 0);
 
         bloat(&dir, 40);
-        assert!(start(&mut store, NOW + INTERVAL).unwrap());
-        let done = run(&mut store, NOW + INTERVAL).unwrap().unwrap();
+        assert!(start(&mut store, NOW + INTERVAL, KEEP).unwrap());
+        let done = run(&mut store, NOW + INTERVAL, KEEP).unwrap().unwrap();
         assert_eq!(done.compacted, Compacted::Incremental);
         assert_eq!(store.free_bytes().unwrap(), 0);
         assert!(
@@ -611,7 +744,7 @@ mod tests {
     #[test]
     fn a_pass_that_reclaims_nothing_is_not_recorded_as_a_run() {
         let (_dir, mut store) = store("nothing");
-        let done = run(&mut store, NOW).unwrap().unwrap();
+        let done = run(&mut store, NOW, KEEP).unwrap().unwrap();
         assert_eq!(
             (done.compacted, done.reclaimed_bytes),
             (Compacted::NotWorth, 0)
@@ -626,12 +759,15 @@ mod tests {
         let (dir, mut store) = store("retry");
         bloat(&dir, 40);
         store.cleanup_checked(0).unwrap();
-        assert!(start(&mut store, NOW).unwrap());
+        assert!(start(&mut store, NOW, KEEP).unwrap());
         store.set_warming("/other", 1, 10).unwrap();
-        assert_eq!(run(&mut store, NOW).unwrap().unwrap_err(), Skipped::Busy);
+        assert_eq!(
+            run(&mut store, NOW, KEEP).unwrap().unwrap_err(),
+            Skipped::Busy
+        );
         store.clear_warming("/other").unwrap();
-        assert!(!start(&mut store, NOW + RETRY - 1).unwrap());
-        assert!(start(&mut store, NOW + RETRY).unwrap());
+        assert!(!start(&mut store, NOW + RETRY - 1, KEEP).unwrap());
+        assert!(start(&mut store, NOW + RETRY, KEEP).unwrap());
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -645,11 +781,17 @@ mod tests {
             .execute_batch("DROP INDEX body_call_blob")
             .unwrap();
         store.cleanup_checked(0).unwrap();
-        assert!(start(&mut store, NOW).unwrap(), "due for the index alone");
-        let done = run(&mut store, NOW).unwrap().unwrap();
+        assert!(
+            start(&mut store, NOW, KEEP).unwrap(),
+            "due for the index alone"
+        );
+        let done = run(&mut store, NOW, KEEP).unwrap().unwrap();
         assert_eq!(done.indexes, ["body_call_blob"]);
         assert!(store.missing_indexes().unwrap().is_empty());
-        assert!(!due(&store, NOW + INTERVAL).unwrap(), "and nothing after");
+        assert!(
+            !due(&store, NOW + INTERVAL, KEEP).unwrap(),
+            "and nothing after"
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
 
@@ -676,17 +818,20 @@ mod tests {
         let (dir, mut store) = store("rate");
         bloat(&dir, 40);
         store.cleanup_checked(0).unwrap();
-        assert!(start(&mut store, NOW).unwrap());
+        assert!(start(&mut store, NOW, KEEP).unwrap());
         assert!(
-            !start(&mut store, NOW + 1).unwrap(),
+            !start(&mut store, NOW + 1, KEEP).unwrap(),
             "claimed: a pass that then fails is not started again by the next index"
         );
-        assert!(run(&mut store, NOW).unwrap().is_ok());
+        assert!(run(&mut store, NOW, KEEP).unwrap().is_ok());
         bloat(&dir, 40);
-        assert!(!start(&mut store, NOW + INTERVAL - 1).unwrap());
-        assert!(start(&mut store, NOW + INTERVAL).unwrap());
+        assert!(!start(&mut store, NOW + INTERVAL - 1, KEEP).unwrap());
+        assert!(start(&mut store, NOW + INTERVAL, KEEP).unwrap());
         assert_ne!(
-            run(&mut store, NOW + INTERVAL).unwrap().unwrap().compacted,
+            run(&mut store, NOW + INTERVAL, KEEP)
+                .unwrap()
+                .unwrap()
+                .compacted,
             Compacted::NotWorth
         );
         let _ = std::fs::remove_dir_all(dir);
@@ -701,10 +846,13 @@ mod tests {
         let writer = rusqlite::Connection::open(dir.join("t.db")).unwrap();
         writer.execute_batch("BEGIN IMMEDIATE").unwrap();
         assert!(
-            !start(&mut store, NOW).unwrap(),
+            !start(&mut store, NOW, KEEP).unwrap(),
             "no claim without the lock"
         );
-        assert_eq!(run(&mut store, NOW).unwrap().unwrap_err(), Skipped::Busy);
+        assert_eq!(
+            run(&mut store, NOW, KEEP).unwrap().unwrap_err(),
+            Skipped::Busy
+        );
         writer.execute_batch("ROLLBACK").unwrap();
         assert_eq!(
             store.cleanup().unwrap().checked_at,
@@ -714,14 +862,142 @@ mod tests {
 
         // A first index under way, in a live process: this one.
         store.set_warming("/other", 1, 10).unwrap();
-        assert!(!due(&store, NOW).unwrap());
-        assert_eq!(run(&mut store, NOW).unwrap().unwrap_err(), Skipped::Busy);
+        assert!(!due(&store, NOW, KEEP).unwrap());
+        assert_eq!(
+            run(&mut store, NOW, KEEP).unwrap().unwrap_err(),
+            Skipped::Busy
+        );
         store.clear_warming("/other").unwrap();
-        assert!(start(&mut store, NOW + RETRY).unwrap());
+        assert!(start(&mut store, NOW + RETRY, KEEP).unwrap());
         assert_ne!(
-            run(&mut store, NOW + RETRY).unwrap().unwrap().compacted,
+            run(&mut store, NOW + RETRY, KEEP)
+                .unwrap()
+                .unwrap()
+                .compacted,
             Compacted::NotWorth
         );
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    fn real_now() -> i64 {
+        now()
+    }
+
+    /// SQL on the store `store` laid down in `dir`, from beside it.
+    fn sql(dir: &Path, sql: &str) {
+        rusqlite::Connection::open(dir.join("t.db"))
+            .unwrap()
+            .execute_batch(sql)
+            .unwrap();
+    }
+
+    /// As if every version nothing maps had gone unmapped long ago.
+    fn age_unmapped(dir: &Path) {
+        sql(dir, "UPDATE loose_blob SET recorded_at = 0;");
+    }
+
+    /// `store`'s checkout with one more version of its file, the one before
+    /// edited away: stamped unmapped just now, or long ago when `aged`.
+    fn edit(dir: &Path, store: &mut Store, src: &str, aged: bool) {
+        let oid = crate::scan::hash_blob(src.as_bytes());
+        let files = crate::scan::Files::from([("widget.rb".to_string(), oid.clone())]);
+        store
+            .write(
+                "/app",
+                &files,
+                vec![(oid, crate::extract::extract(src.as_bytes()))],
+                0,
+            )
+            .unwrap();
+        if aged {
+            age_unmapped(dir);
+        }
+    }
+
+    #[test]
+    fn retention_reads_an_age_or_never() {
+        let cases = [
+            ("14d", Ok(Retention::For(14 * 86_400))),
+            ("2w", Ok(Retention::For(14 * 86_400))),
+            ("36h", Ok(Retention::For(36 * 3600))),
+            ("0", Ok(Retention::For(0))),
+            ("never", Ok(Retention::Never)),
+            ("off", Err(())),
+            ("14", Err(())),
+            ("", Err(())),
+            ("-1d", Err(())),
+        ];
+        for (text, want) in cases {
+            assert_eq!(text.parse::<Retention>().map_err(drop), want, "{text}");
+        }
+        assert_eq!(DEFAULT_RETENTION, Retention::For(14 * 86_400));
+    }
+
+    #[test]
+    fn the_flag_wins_then_the_environment_then_the_default() {
+        let month = Retention::For(30 * 86_400);
+        let cases = [
+            (Some(Retention::Never), Some("30d"), Ok(Retention::Never)),
+            (Some(Retention::Never), Some("bogus"), Ok(Retention::Never)),
+            (None, Some("30d"), Ok(month)),
+            (None, Some("never"), Ok(Retention::Never)),
+            (None, Some(""), Ok(DEFAULT_RETENTION)),
+            (None, None, Ok(DEFAULT_RETENTION)),
+        ];
+        for (flag, env, want) in cases {
+            assert_eq!(Retention::choose(flag, env), want, "{flag:?} {env:?}");
+        }
+        let bad = Retention::choose(None, Some("off")).unwrap_err();
+        assert!(
+            bad.contains("TREKR_RETENTION") && bad.contains("never"),
+            "{bad}"
+        );
+    }
+
+    #[test]
+    fn a_version_unmapped_past_the_retention_makes_a_pass_due() {
+        let (dir, mut store) = store("expired");
+        let at = real_now();
+        store.cleanup_checked(at - INTERVAL).unwrap();
+        edit(&dir, &mut store, "class Widget\n  def a; end\nend\n", false);
+        assert!(!due(&store, at, KEEP).unwrap(), "within the retention");
+        store.cleanup_checked(at - INTERVAL).unwrap();
+        age_unmapped(&dir);
+        assert!(!due(&store, at, Retention::Never).unwrap(), "kept forever");
+        store.cleanup_checked(at - INTERVAL).unwrap();
+        assert!(due(&store, at, KEEP).unwrap());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_pass_collects_what_went_unmapped_past_the_retention_and_keeps_the_rest() {
+        let (dir, mut store) = store("collects");
+        edit(&dir, &mut store, "class Widget\n  def a; end\nend\n", true);
+        edit(&dir, &mut store, "class Widget\n  def b; end\nend\n", false);
+        let before = store.totals().unwrap().blobs;
+        let done = run(&mut store, real_now(), KEEP).unwrap().unwrap();
+        assert_eq!(done.blobs, 1, "the first version went, the second stays");
+        assert_eq!(store.totals().unwrap().blobs, before - 1);
+        assert_eq!(store.retained(None).unwrap().blobs, 1);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_store_from_before_is_due_once_and_loses_nothing_that_day() {
+        let (dir, mut store) = store("legacy");
+        let at = real_now();
+        edit(&dir, &mut store, "class Widget\n  def a; end\nend\n", true);
+        // As 0.9.5 left it: the version unmapped, unstamped, no sweep.
+        sql(
+            &dir,
+            "DELETE FROM loose_blob; DELETE FROM meta WHERE key = 'unmapped stamped';",
+        );
+        store.cleanup_checked(at - INTERVAL).unwrap();
+        assert!(due(&store, at, KEEP).unwrap(), "due to stamp");
+        let done = run(&mut store, at, KEEP).unwrap().unwrap();
+        assert_eq!(done.blobs, 0, "stamped as of now");
+        assert!(store.unmapped_stamped().unwrap());
+        assert_eq!(store.retained(None).unwrap().blobs, 1);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

@@ -555,14 +555,25 @@ it still maps its own blobs and so is never an orphan. `trekr --gc` removes the
 checkouts no future index could reach — a gem on disk that no surviving repo's
 bundle names, a repo or gem whose root is gone — spares anything an index saw
 within `--older-than` (default 7 days), and then deletes only the blobs no
-remaining checkout maps — and the blobs a query recorded for an edit it read
-(`loose_blob`) once no checkout maps them and they are older than
-`--older-than` — and than an hour, whatever it says, since the query that
-recorded one may still be reading it. `checkout.kind` says which rule applies, and a gem's
+remaining checkout maps — and the versions no checkout has mapped for longer
+than the retention (`loose_blob`, below), but never one unmapped within the
+hour, since a query may still be reading it. `checkout.kind` says which rule applies, and a gem's
 `indexed_at` moves every time a bundle names it, inside the index's own
 transaction. Collecting is safe because it is undone by the next index: a
 lockfile naming a gem the store lacks indexes it, collected or never seen
 (DEC-049).
+
+**A version of a file nothing maps is kept for the retention, then
+collected** (DEC-651). A write that unmaps a blob — an edit or branch switch
+an index or the editor's save records, a `--drop` — stamps it in
+`loose_blob` with when, unless another file still maps it; a write that maps
+it again (the switch back) clears the stamp, and the facts are reused. A
+query's draft is stamped as it is recorded. Past the retention — 14 days,
+`TREKR_RETENTION` or `--retention` (an age, `0`, or `never`) — the
+background cleanup collects it in batches of 100 per write transaction, and
+`--gc` with the rest. A store from before the stamps has what it already
+left unmapped stamped once, as of then (`unmapped stamped` in `meta`), so
+the upgrade deletes nothing that day.
 
 **The store cleans up after itself** (DEC-650, [`cleanup.rs`](../src/cleanup.rs)).
 After an index pass, trekr measures what the store could give back — free
@@ -570,13 +581,14 @@ pages inside the file, and tree snapshots no checkout's current key names —
 at most every two hours (`cleanup checked` in `meta`; a new store is stamped
 at creation, a rebuild drops the stamp, so what an upgrade leaves is looked
 at by the first index after it). When that is at least 32 MB and a quarter
-of the file, the index claims the pass, starts a detached `trekr --cleanup
+of the file — or a version has gone unmapped past the retention, or the
+store's unmapped versions are not yet stamped — the index claims the pass, starts a detached `trekr --cleanup
 STORE` naming the store it wrote (a side store, beside a newer trekr's), and
 exits: a query
 waiting on the index waits for nothing more. That process skips a store a
 first index is filling or another writer holds past the 5 s wait, removes
-the stale snapshots, collects the blobs only a query recorded over a week
-ago (never a checkout: that stays `--gc`'s, on its `--older-than`), and
+the stale snapshots, collects the versions no checkout has mapped for the
+retention (never a checkout: that stays `--gc`'s, on its `--older-than`), and
 hands the free pages back when they alone pass the same threshold: a chunk
 of 1,024 pages per short write transaction on a store in incremental
 auto-vacuum mode — every new store — and by one full rewrite on an older
@@ -745,9 +757,9 @@ blob(id, oid UNIQUE, lines, parse_errors, surface, namespace, written_by)
                                               (`const_ref_leaf`, DEC-648)
   call_name(blob_id, name, calls, symbols)  ← which names a blob calls (DEC-193)
   body_call(blob_id, name, nesting, args, line)  ← a body's call on itself (DEC-162)
-  loose_blob(blob_id, recorded_at)          ← recorded by a query and never
-                                              mapped: `--gc`'s once aged
-                                              (DEC-035; optional)
+  loose_blob(blob_id, recorded_at)          ← mapped by no file since
+                                              `recorded_at`: collected past
+                                              the retention (DEC-651; optional)
 
 checkout(id, root UNIQUE, indexed_at, kind, surface_key, namespace_key,
          map_key, git_state)
@@ -854,7 +866,7 @@ holding the rest of the `--json` answer and `rows`, the count (DEC-290).
 | `--ancestors NAME` | the linearized ancestor chain |
 | `Constant`, `Owner#method` | a card: the definition, a method's reference counts by tier, a constant's chain — and a model's table from the schema dump, `table` in JSON (DEC-481) |
 | `--drop [PATH]` | forget a checkout's file map, and its overlay copy in `trekr.overlays/` |
-| `--gc [--dry-run] [--older-than AGE] [--vacuum]` | remove checkouts nothing can reach again, the blobs only they mapped, tree snapshots no checkout's index names, and every overlay copy (`overlays` in its `--json`); `reclaimed_bytes` is what left the disk. The background cleanup (DEC-650) does the safe part of this on its own |
+| `--gc [--dry-run] [--older-than AGE] [--retention AGE] [--vacuum]` | remove checkouts nothing can reach again, the blobs only they mapped, the versions no checkout has mapped for the retention (DEC-651), tree snapshots no checkout's index names, and every overlay copy (`overlays` in its `--json`); `reclaimed_bytes` is what left the disk. The background cleanup (DEC-650) does the safe part of this on its own |
 | `--usage [--days N]` | which commands and editor features get used, by whom, how often empty, how slow (see below) |
 | `--dead PATH…` | methods, then example groups' members and shared groups, then classes, modules and constants, in scope that nothing appears to use, tiered and graded (see below) |
 
@@ -1842,8 +1854,9 @@ Deliberate, and cheap to close when they earn it:
 - A `super` that lands in core is as right as the Ruby's RBS is complete: a
   core class that defines the name without RBS writing it there sends the
   lookup further up the chain.
-- A blob an index read is never collected while its checkout lives, even
-  once no file maps it (DEC-003); only a query's are (DEC-035).
+- A version no file maps is kept for the retention (14 days by default),
+  then collected (DEC-651); a branch switch back after that reads the file
+  again — 2.2–2.5 s for 2,611 files of rails, against 0.26–0.41 s within it.
 - A model's columns attach by the flat table convention (`fasp_providers` →
   `FaspProvider`), so a namespace's `table_name_prefix` is honoured by the
   hover's table (DEC-481) but not yet by the attribute methods (DEC-480).

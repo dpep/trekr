@@ -24,6 +24,7 @@ use crate::failure::{Failure, Tag};
 use autoindex::{Need, Then};
 use fresh::{fresh_tree, freshen, index_note, lag, probe};
 
+use crate::cleanup::Retention;
 use crate::core::Oid;
 use crate::core::paths;
 use crate::query::def::{Reached, Subject};
@@ -68,7 +69,9 @@ use std::process::ExitCode;
         and Ruby core's files are kept beside it\n  \
         TREKR_USAGE  the usage-count file (default: beside the index), or `off`\n  \
         TREKR_JOBS   parse threads, as --jobs\n  \
-        TREKR_NO_INDEX  never index from a query, as --no-index"
+        TREKR_NO_INDEX  never index from a query, as --no-index\n  \
+        TREKR_RETENTION  how long a file version nothing maps is kept (default 14d), as\n               \
+        --retention; the background cleanup reads it too"
 )]
 struct Cli {
     /// What to look up, dispatched on its shape. `FILE:LINE:COL` and
@@ -176,15 +179,16 @@ struct Cli {
     #[arg(long, value_name = "NAME", conflicts_with_all = ["index", "drop", "symbols", "refs", "def"])]
     ancestors: Option<String>,
 
-    /// Forget a checkout's file map (its blobs stay, for the worktrees that
-    /// share them), and the copy of its edits queries keep in
-    /// `trekr.overlays/` beside the index.
+    /// Forget a checkout's file map (its blobs stay for the worktrees that
+    /// share them, and those no other maps for `--retention`), and the copy
+    /// of its edits queries keep in `trekr.overlays/` beside the index.
     #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = ".")]
     drop: Option<PathBuf>,
 
     /// Remove checkouts nothing will ask about again: gem versions no
     /// surviving project's bundle names, and projects whose root is gone.
-    /// Their blobs go too, unless another checkout still maps them. Also
+    /// Their blobs go too, unless another checkout still maps them, and so do
+    /// versions of files no checkout has mapped for `--retention`. Also
     /// removes an index set aside as unusable, an early copy a stopped index
     /// left, another trekr's own index once it is idle, and every copy of
     /// the working tree's edits queries keep in `trekr.overlays/` (the next
@@ -198,11 +202,20 @@ struct Cli {
     #[arg(long, requires = "gc")]
     dry_run: bool,
 
-    /// With `--gc`: spare anything an index saw, or a query recorded, more
-    /// recently than this — `36h`, `7d`, `2w`, or `0` for everything
-    /// collectable now.
-    #[arg(long, value_name = "AGE", requires = "gc", default_value = "7d", value_parser = parse_age)]
+    /// With `--gc`: spare a checkout an index saw more recently than this —
+    /// `36h`, `7d`, `2w`, or `0` for every one collectable now. A version no
+    /// checkout maps goes by `--retention` instead.
+    #[arg(long, value_name = "AGE", requires = "gc", default_value = "7d", value_parser = crate::cleanup::parse_age)]
     older_than: u64,
+
+    /// How long a version of a file no checkout maps any more is kept — one
+    /// an edit, a branch switch or `--drop` left, or a query's draft — so a
+    /// switch back reuses it: `36h`, `14d`, `2w`, `0` for none past the
+    /// hour a query may still be reading it, or `never`. For one `--gc` or
+    /// `--status`; `TREKR_RETENTION` sets it for every trekr, the background
+    /// cleanup included. Default 14d.
+    #[arg(long, value_name = "AGE")]
+    retention: Option<crate::cleanup::Retention>,
 
     /// With `--gc`: compact the database afterwards so the file shrinks.
     /// Seconds on a large store, holding the write lock.
@@ -340,12 +353,16 @@ pub(crate) fn run(lsp: fn(bool) -> anyhow::Result<()>) -> ExitCode {
             "--context",
             position || named || cli.status,
         ),
+        (cli.retention.is_some(), "--retention", cli.gc || cli.status),
     ] {
         if on && !applies {
             let message = match flag {
                 "--context" => "--context applies to a query: a position, a name \
                                 (`trekr Widget#save --context DIR`), --refs, --ancestors \
                                 or --status"
+                    .to_string(),
+                "--retention" => "--retention applies to --gc and --status; \
+                                  TREKR_RETENTION sets it for every trekr"
                     .to_string(),
                 _ => format!(
                     "{flag} applies to a position: `trekr {flag} FILE:LINE:COL`, or with --def"
@@ -398,12 +415,12 @@ pub(crate) fn run(lsp: fn(bool) -> anyhow::Result<()>) -> ExitCode {
     } else if cli.gc {
         (
             Some("gc"),
-            cmd_gc(out, cli.older_than, cli.dry_run, cli.vacuum),
+            cmd_gc(out, cli.older_than, cli.retention, cli.dry_run, cli.vacuum),
         )
     } else if cli.status {
         (
             Some("status"),
-            cmd_status(out, cli.all, cli.context.as_deref()),
+            cmd_status(out, cli.all, cli.context.as_deref(), cli.retention),
         )
     } else if cli.usage {
         let days = cli.days;
@@ -2645,7 +2662,13 @@ fn abridged(gems: &[String]) -> String {
 /// hundreds of them — and a count of the rest; `--all` lists every checkout.
 /// Outside any checkout, the repos are listed and the gems counted. A checkout
 /// nobody indexed is `not_indexed`, exit 2, as a query from it would be.
-fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<ExitCode> {
+fn cmd_status(
+    out: Output,
+    all: bool,
+    context: Option<&Path>,
+    retention: Option<Retention>,
+) -> anyhow::Result<ExitCode> {
+    let retention = configured_retention(retention)?;
     let store = open_store()?;
     let checkouts = store.status()?;
     let totals = store.totals()?;
@@ -2673,7 +2696,7 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
     if let Some(root) = &asked
         && !store.has_checkout(root)?
     {
-        return status_not_indexed(out, Path::new(root), &store, &checkouts, &totals);
+        return status_not_indexed(out, Path::new(root), &store, &checkouts, &totals, retention);
     }
     let here = asked;
     let shown: Vec<&crate::store::Checkout> = checkouts
@@ -2770,7 +2793,7 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
             "checkouts": rows,
             "others": others,
             "totals": totals,
-            "storage": storage(&store)?,
+            "storage": storage(&store, retention)?,
             "kept": kept,
         });
         if let Some(reason) = &reason {
@@ -2874,17 +2897,24 @@ fn cmd_status(out: Output, all: bool, context: Option<&Path>) -> anyhow::Result<
         "\nshared: {} blobs, {} defs, {} const refs, {} calls",
         totals.blobs, totals.defs, totals.const_refs, totals.calls
     );
-    println!("{}", storage_line(&storage(&store)?));
+    println!("{}", storage_line(&storage(&store, retention)?));
     print_kept(&kept);
     Ok(ExitCode::SUCCESS)
 }
 
 /// The store's size on disk, what it could give back, and when the
 /// background cleanup last did (DEC-650).
-fn storage(store: &Store) -> anyhow::Result<serde_json::Value> {
+/// The retention `--retention` gives, else `TREKR_RETENTION`, else the
+/// default; a value neither can read is a usage error.
+fn configured_retention(flag: Option<Retention>) -> anyhow::Result<Retention> {
+    Retention::configured(flag).map_err(|why| Failure::Usage.error(why))
+}
+
+fn storage(store: &Store, retention: Retention) -> anyhow::Result<serde_json::Value> {
     // The store first, in one snapshot, and the snapshot files after: a
     // cleanup records its run last, so a run read here has already swept.
     let storage = store.storage()?;
+    let retained = store.retained(retention.before(crate::cleanup::now()))?;
     let snapshots = crate::tree::sweep_snapshots(store, &[], crate::tree::Overlays::Keep, true)?;
     Ok(serde_json::json!({
         "bytes": storage.bytes,
@@ -2892,6 +2922,12 @@ fn storage(store: &Store) -> anyhow::Result<serde_json::Value> {
         "stale_snapshots": snapshots,
         "reclaimable_bytes": storage.free_bytes + snapshots.bytes as i64,
         "cleanup": storage.cleanup,
+        "retained": {
+            "blobs": retained.blobs,
+            "lines": retained.lines,
+            "expired": retained.expired,
+            "retention": retention.seconds(),
+        },
     }))
 }
 
@@ -2906,6 +2942,18 @@ fn storage_line(storage: &serde_json::Value) -> String {
             mb(&storage["reclaimable_bytes"]),
             mb(&storage["free_bytes"]),
             if snapshots == 1 { "" } else { "s" }
+        ));
+    }
+    let retained = &storage["retained"];
+    let versions = retained["blobs"].as_u64().unwrap_or(0);
+    if versions > 0 {
+        line.push_str(&format!(
+            "; {versions} replaced version{} kept {}",
+            if versions == 1 { "" } else { "s" },
+            match retained["retention"].as_u64() {
+                Some(seconds) => format!("for {}", age_words(seconds)),
+                None => "forever".to_string(),
+            }
         ));
     }
     match storage["cleanup"]["skipped"].as_str() {
@@ -2930,6 +2978,16 @@ fn storage_line(storage: &serde_json::Value) -> String {
         ));
     }
     line
+}
+
+/// A retention as it would be written: `14d`, `36h`, `90m`.
+fn age_words(seconds: u64) -> String {
+    [(86_400, "d"), (3600, "h"), (60, "m")]
+        .into_iter()
+        .find(|(unit, _)| seconds >= *unit && seconds.is_multiple_of(*unit))
+        .map_or(format!("{seconds}s"), |(unit, name)| {
+            format!("{}{name}", seconds / unit)
+        })
 }
 
 /// `40 s`, `12 min`, `3 h`, `5 d`: as precise as a glance needs.
@@ -3014,6 +3072,7 @@ fn status_not_indexed(
     store: &Store,
     checkouts: &[crate::store::Checkout],
     totals: &crate::store::Totals,
+    retention: Retention,
 ) -> anyhow::Result<ExitCode> {
     crate::usage::outcome(Outcome::NotIndexed);
     let root = root.to_string_lossy().into_owned();
@@ -3037,7 +3096,7 @@ fn status_not_indexed(
                 "checkouts": [],
                 "others": { "repos": repos, "gems": gems },
                 "totals": totals,
-                "storage": storage(store)?,
+                "storage": storage(store, retention)?,
             }),
         )?;
         return Ok(ExitCode::from(2));
@@ -3060,7 +3119,7 @@ fn status_not_indexed(
             plural(gems, "gem")
         );
     }
-    println!("\n{}", storage_line(&storage(store)?));
+    println!("\n{}", storage_line(&storage(store, retention)?));
     Ok(ExitCode::from(2))
 }
 
@@ -5627,7 +5686,7 @@ fn report(
 }
 
 fn cmd_drop(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
-    let store = open_store()?;
+    let mut store = open_store()?;
     store.wait_as_writer(writer_waiting)?;
     // A gem is no git checkout, and is dropped by the directory it was
     // indexed under; the next index of an app that uses it reads it again.
@@ -5657,29 +5716,14 @@ fn cmd_drop(out: Output, path: &Path) -> anyhow::Result<ExitCode> {
     Ok(exit_on(dropped > 0))
 }
 
-/// `36h`, `7d`, `2w` — or `0`. A bare number is refused: minutes and days
-/// are both plausible readings, and guessing wrong deletes the wrong thing.
-fn parse_age(text: &str) -> Result<u64, String> {
-    if text == "0" {
-        return Ok(0);
-    }
-    let split = text.len() - text.chars().last().map_or(0, char::len_utf8);
-    let (count, unit) = text.split_at(split);
-    let count: u64 = count
-        .parse()
-        .map_err(|_| format!("`{text}` is not an age like 36h, 7d or 2w"))?;
-    let unit = match unit {
-        "s" => 1,
-        "m" => 60,
-        "h" => 3600,
-        "d" => 86_400,
-        "w" => 7 * 86_400,
-        _ => return Err(format!("`{text}`: the unit is one of s, m, h, d, w")),
-    };
-    Ok(count * unit)
-}
-
-fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::Result<ExitCode> {
+fn cmd_gc(
+    out: Output,
+    older_than: u64,
+    retention: Option<Retention>,
+    dry_run: bool,
+    vacuum: bool,
+) -> anyhow::Result<ExitCode> {
+    let retention = configured_retention(retention)?;
     let mut store = open_store()?;
     store.wait_as_writer(writer_waiting)?;
     let now = std::time::SystemTime::now()
@@ -5693,8 +5737,12 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
     // collection rolled back: it changes no answer, and without it each blob
     // collected scanned a table (DEC-650).
     let indexes = store.add_missing_indexes()?;
+    // What a store left unmapped before the stamps, as of now (DEC-651):
+    // like the index, it removes nothing, so a dry run does it too.
+    store.stamp_unmapped()?;
     let garbage = store.collect(
         now - older_than as i64,
+        retention.before(now),
         |root| Path::new(root).is_dir(),
         dry_run,
     )?;
@@ -5745,10 +5793,12 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
             &serde_json::json!({
                 "dry_run": dry_run,
                 "older_than": older_than,
+                "retention": retention.seconds(),
                 "indexes": indexes,
                 "checkouts": garbage.checkouts,
                 "files": garbage.files,
                 "blobs": garbage.blobs,
+                "expired": garbage.expired,
                 "facts": garbage.facts,
                 "freed_bytes": garbage.freed_bytes,
                 "free_bytes": free_bytes,
@@ -5799,8 +5849,10 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
         );
     } else if garbage.blobs > 0 {
         println!(
-            "{verb} {} blobs only a query had read: {} facts, {:.1} MB inside the index",
+            "{verb} {} versions of files nothing has mapped for {}: {} facts, {:.1} MB inside \
+             the index",
             garbage.blobs,
+            age_words(retention.seconds().unwrap_or(0)),
             garbage.facts,
             mb(garbage.freed_bytes)
         );

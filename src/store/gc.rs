@@ -4,8 +4,9 @@
 //! maps its own blobs — so "blobs no file references" finds nothing (DEC-030)
 //! while every version any project ever resolved is kept forever. The unit of
 //! collection is therefore the checkout, and a blob goes only when the last
-//! checkout mapping it does. A blob a query recorded and no index mapped
-//! (DEC-035) was never any checkout's, so it goes once nothing maps it.
+//! checkout mapping it does. A version no checkout maps — a query's draft
+//! (DEC-035), one an edit or a drop unmapped — goes once nothing has mapped
+//! it for the retention (DEC-651).
 
 use super::Store;
 use rusqlite::{OptionalExtension, Result, params};
@@ -22,9 +23,12 @@ pub(crate) struct Garbage {
     /// File-map rows: one per path in each collected checkout.
     pub(crate) files: usize,
     /// Blobs no surviving checkout maps: a collected checkout's, and those
-    /// only a query recorded. A blob a checkout still maps is never among
-    /// them.
+    /// unmapped past the retention. A blob a checkout still maps is never
+    /// among them.
     pub(crate) blobs: usize,
+    /// Of `blobs`, those collected for going unmapped longer than the
+    /// retention.
+    pub(crate) expired: usize,
     /// Fact rows (defs, ancestry, constant refs, call sites) those blobs held.
     pub(crate) facts: usize,
     /// Pages the deletion returned to SQLite's free list, which later writes
@@ -49,6 +53,17 @@ pub(crate) struct Collected {
     pub(crate) reason: &'static str,
     /// Unix seconds: when an index last vouched for it.
     pub(crate) last_seen: i64,
+}
+
+/// The versions of files no checkout maps, kept for the retention (DEC-651).
+#[derive(Debug, Default, Clone, Copy, serde::Serialize)]
+pub(crate) struct Retained {
+    pub(crate) blobs: usize,
+    /// The lines of source they were read from.
+    pub(crate) lines: usize,
+    /// Of `blobs`, those unmapped longer than the retention: the next
+    /// collection's.
+    pub(crate) expired: usize,
 }
 
 /// What the background cleanup last did (DEC-650), from `meta`.
@@ -103,6 +118,8 @@ pub(crate) struct Storage {
 pub(super) const CLEANUP_CHECKED: &str = "cleanup checked";
 const CLEANUP_RAN: &str = "cleanup ran";
 const CLEANUP_SKIPPED: &str = "cleanup skipped";
+/// Set once the versions a store already left unmapped are stamped.
+pub(super) const UNMAPPED_STAMPED: &str = "unmapped stamped";
 
 struct Row {
     id: i64,
@@ -125,6 +142,7 @@ impl Store {
     pub(crate) fn collect(
         &mut self,
         cutoff: i64,
+        unmapped_before: Option<i64>,
         on_disk: impl Fn(&str) -> bool,
         dry_run: bool,
     ) -> Result<Garbage> {
@@ -181,7 +199,7 @@ impl Store {
             .collect();
 
         let ids: Vec<i64> = doomed.iter().map(|row| row.id).collect();
-        let mut garbage = drop_blobs(&tx, &ids, cutoff)?;
+        let mut garbage = drop_blobs(&tx, &ids, unmapped_before, i64::MAX)?;
         garbage.checkouts = doomed
             .into_iter()
             .map(|row| Collected {
@@ -203,16 +221,84 @@ impl Store {
         Ok(garbage)
     }
 
-    /// Only the blobs a query recorded and no checkout maps, recorded before
-    /// `cutoff`: what the background cleanup collects, which never judges a
-    /// checkout (DEC-650).
-    pub(crate) fn collect_loose(&mut self, cutoff: i64) -> Result<Garbage> {
+    /// Up to `limit` of the blobs no checkout maps, unmapped at or before
+    /// `before`: what the background cleanup collects, a batch per call, and
+    /// it never judges a checkout (DEC-650, DEC-651).
+    pub(crate) fn collect_unmapped(&mut self, before: i64, limit: usize) -> Result<Garbage> {
         let tx = self
             .conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        let garbage = drop_blobs(&tx, &[], cutoff)?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let garbage = drop_blobs(&tx, &[], Some(before), limit)?;
         tx.commit()?;
         Ok(garbage)
+    }
+
+    /// Stamp, as of now, every blob no file maps and nothing has stamped: what
+    /// a store left unmapped before the stamps existed, when it went being
+    /// unknown (DEC-651). Once per store; `None` when it was done already.
+    pub(crate) fn stamp_unmapped(&mut self) -> Result<Option<usize>> {
+        let tx = self
+            .conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+        if stamped(&tx)? {
+            return Ok(None);
+        }
+        super::loose_blob(&tx)?;
+        let stamped = tx.execute(
+            "INSERT OR IGNORE INTO loose_blob (blob_id, recorded_at)
+             SELECT b.id, unixepoch() FROM blob b
+              WHERE NOT EXISTS (SELECT 1 FROM main.file f WHERE f.blob_id = b.id)",
+            [],
+        )?;
+        set_meta(&tx, UNMAPPED_STAMPED, "1")?;
+        tx.commit()?;
+        Ok(Some(stamped))
+    }
+
+    /// Whether some version no file maps went unmapped at or before
+    /// `before`, and a collection may take it now.
+    pub(crate) fn any_unmapped_before(&self, before: i64) -> Result<bool> {
+        Ok(self.retained(Some(before))?.expired > 0)
+    }
+
+    /// Whether [`Store::stamp_unmapped`] has run on this store.
+    pub(crate) fn unmapped_stamped(&self) -> Result<bool> {
+        stamped(&self.conn)
+    }
+
+    /// The versions no checkout maps, and which of them went unmapped at or
+    /// before `before`; `None` keeps them all. Reads only: a store an older
+    /// trekr laid down without the table holds none it knows of.
+    pub(crate) fn retained(&self, before: Option<i64>) -> Result<Retained> {
+        if !self.has_loose_blob()? {
+            return Ok(Retained::default());
+        }
+        // Lines, not fact rows: counting a version's call sites reads its
+        // `call_name` rows, which on rails was most of `--status`.
+        self.conn.query_row(
+            &format!(
+                "SELECT COUNT(*), COALESCE(SUM(b.lines), 0),
+                        COALESCE(SUM(l.recorded_at <= MIN(?1, unixepoch() - ?2)), 0)
+                   FROM loose_blob l JOIN blob b ON b.id = l.blob_id WHERE {UNMAPPED}"
+            ),
+            params![before.unwrap_or(i64::MIN), READING],
+            |r| {
+                Ok(Retained {
+                    blobs: r.get::<_, i64>(0)? as usize,
+                    lines: r.get::<_, i64>(1)? as usize,
+                    expired: r.get::<_, i64>(2)? as usize,
+                })
+            },
+        )
+    }
+
+    fn has_loose_blob(&self) -> Result<bool> {
+        self.conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'loose_blob')",
+            [],
+            |r| r.get(0),
+        )
     }
 
     /// What the background cleanup last did.
@@ -405,10 +491,27 @@ fn set_meta(conn: &rusqlite::Connection, key: &str, value: &str) -> Result<()> {
     .map(drop)
 }
 
+/// A `loose_blob l` row whose blob no file maps. `main.file`: a query's
+/// overlay shadows `file` with its edits.
+const UNMAPPED: &str = "NOT EXISTS (SELECT 1 FROM main.file f WHERE f.blob_id = l.blob_id)";
+
+fn stamped(conn: &rusqlite::Connection) -> Result<bool> {
+    conn.query_row(
+        "SELECT EXISTS(SELECT 1 FROM meta WHERE key = ?1)",
+        [UNMAPPED_STAMPED],
+        |r| r.get(0),
+    )
+}
+
 /// Forget the checkouts `doomed`, then delete the blobs no surviving
-/// checkout maps among theirs and those only a query recorded, measuring
-/// what went.
-fn drop_blobs(tx: &rusqlite::Transaction, doomed: &[i64], cutoff: i64) -> Result<Garbage> {
+/// checkout maps among theirs, and up to `limit` of those unmapped at or
+/// before `unmapped_before` (none for `None`), measuring what went.
+fn drop_blobs(
+    tx: &rusqlite::Transaction,
+    doomed: &[i64],
+    unmapped_before: Option<i64>,
+    limit: i64,
+) -> Result<Garbage> {
     let mut garbage = Garbage::default();
     let page_size: i64 = tx.query_row("PRAGMA page_size", [], |r| r.get(0))?;
     let free_before: i64 = tx.query_row("PRAGMA freelist_count", [], |r| r.get(0))?;
@@ -424,15 +527,21 @@ fn drop_blobs(tx: &rusqlite::Transaction, doomed: &[i64], cutoff: i64) -> Result
             forget.execute(params![id])?;
         }
     }
-    // What a query recorded and no index mapped (DEC-035): the edits it
-    // read, kept only while a map points at them — and, like a checkout,
-    // until the cutoff, but never while the query may be reading it.
-    super::loose_blob(tx)?;
-    tx.execute(
-        "INSERT OR IGNORE INTO gc_blob
-         SELECT blob_id FROM loose_blob WHERE recorded_at <= MIN(?1, unixepoch() - ?2)",
-        params![cutoff, READING],
-    )?;
+    // Versions nothing maps — a query's draft, an edited-away or dropped
+    // file's — once unmapped past the retention (DEC-651), but never while a
+    // query may be reading one.
+    if let Some(before) = unmapped_before {
+        super::loose_blob(tx)?;
+        garbage.expired = tx.execute(
+            &format!(
+                "INSERT OR IGNORE INTO gc_blob
+                 SELECT blob_id FROM loose_blob l
+                  WHERE recorded_at <= MIN(?1, unixepoch() - ?2) AND {UNMAPPED}
+                  LIMIT ?3"
+            ),
+            params![before, READING, limit],
+        )?;
+    }
     // A blob some surviving checkout maps stays. The foreign key would
     // refuse the delete anyway; this makes the refusal a non-event.
     tx.execute(
@@ -547,7 +656,9 @@ mod tests {
         bundle(&mut store);
         let before = store.totals().unwrap().blobs;
 
-        let garbage = store.collect(now() - 60, |_| true, false).unwrap();
+        let garbage = store
+            .collect(now() - 60, Some(now() - 60), |_| true, false)
+            .unwrap();
         assert_eq!(roots(&garbage), ["/gem-1"]);
         assert_eq!(garbage.checkouts[0].reason, "unclaimed");
         assert_eq!(garbage.checkouts[0].kind, "gem");
@@ -580,15 +691,19 @@ mod tests {
             .unwrap();
         indexed(&mut store, "/app", "kept.rb", "class Kept\nend\n");
         // One an index mapped and then edited away: a branch switch back
-        // wants it (DEC-003), whoever asks.
+        // wants it, for the retention (DEC-651).
         indexed(&mut store, "/app", "kept.rb", "class Before\nend\n");
         let (before, _) = blob("class Before\nend\n");
         indexed(&mut store, "/app", "kept.rb", "class Kept\nend\n");
 
-        let dry = store.collect(now() - 60, |_| true, true).unwrap();
+        let dry = store
+            .collect(now() - 60, Some(now() - 60), |_| true, true)
+            .unwrap();
         assert_eq!(dry.blobs, 1, "a dry run counts it");
         assert!(store.has_blob(&edit).unwrap(), "and keeps it");
-        let garbage = store.collect(now() - 60, |_| true, false).unwrap();
+        let garbage = store
+            .collect(now() - 60, Some(now() - 60), |_| true, false)
+            .unwrap();
         assert!(garbage.checkouts.is_empty());
         assert_eq!(garbage.blobs, 1);
         assert!(garbage.facts > 0);
@@ -610,7 +725,7 @@ mod tests {
             .conn
             .execute("UPDATE loose_blob SET recorded_at = 0", [])
             .unwrap();
-        let garbage = store.collect_loose(now() - 60).unwrap();
+        let garbage = store.collect_unmapped(now() - 60, 100).unwrap();
         assert_eq!(garbage.blobs, 1);
         assert!(garbage.checkouts.is_empty());
         assert!(!store.has_blob(&edit).unwrap());
@@ -682,24 +797,206 @@ mod tests {
         );
     }
 
-    #[test]
-    fn a_blob_an_index_mapped_is_the_indexs_whoever_recorded_it_first() {
-        let mut store = Store::open_in_memory().unwrap();
-        let (draft, edited) = ("class Draft\nend\n", "class Edited\nend\n");
-        let oid = hash_blob(draft.as_bytes());
+    /// Since when nothing has mapped each blob, as the store recorded it.
+    fn unmapped(store: &Store) -> Vec<(String, i64)> {
         store
-            .add_blob(&oid, &crate::extract::extract(draft.as_bytes()))
-            .unwrap();
-        // Mapped, then edited away: what a branch switch back wants (DEC-003).
-        indexed(&mut store, "/app", "a.rb", draft);
-        indexed(&mut store, "/app", "a.rb", edited);
+            .conn
+            .prepare(
+                "SELECT b.oid, l.recorded_at FROM loose_blob l JOIN blob b ON b.id = l.blob_id
+                  ORDER BY b.oid",
+            )
+            .unwrap()
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<Result<_>>()
+            .unwrap()
+    }
+
+    fn oid(src: &str) -> String {
+        hash_blob(src.as_bytes()).0
+    }
+
+    /// As if every version nothing maps had gone unmapped long ago.
+    fn age_unmapped(store: &Store) {
         store
             .conn
             .execute("UPDATE loose_blob SET recorded_at = 0", [])
             .unwrap();
-        let garbage = store.collect(now() - 60, |_| true, false).unwrap();
+    }
+
+    const V1: &str = "class Widget\nend\n";
+    const V2: &str = "class Widget\n  def go; end\nend\n";
+
+    #[test]
+    fn a_replaced_version_is_kept_within_the_retention_and_collected_after() {
+        let mut store = Store::open_in_memory().unwrap();
+        indexed(&mut store, "/app", "widget.rb", V1);
+        assert!(unmapped(&store).is_empty(), "mapped: not stamped");
+        indexed(&mut store, "/app", "widget.rb", V2);
+        let stamped = unmapped(&store);
+        assert_eq!(stamped.len(), 1);
+        assert_eq!(stamped[0].0, oid(V1));
+        assert!(stamped[0].1 >= now() - 5, "stamped as it went: {stamped:?}");
+
+        let garbage = store
+            .collect(now() - 60, Some(now() - 60), |_| true, false)
+            .unwrap();
+        assert_eq!(garbage.blobs, 0, "within the retention");
+        assert!(store.has_blob(&hash_blob(V1.as_bytes())).unwrap());
+
+        age_unmapped(&store);
+        let garbage = store
+            .collect(now() - 60, Some(now() - 60), |_| true, false)
+            .unwrap();
+        assert_eq!((garbage.blobs, garbage.expired), (1, 1));
+        assert!(!store.has_blob(&hash_blob(V1.as_bytes())).unwrap());
+        assert!(store.has_blob(&hash_blob(V2.as_bytes())).unwrap());
+    }
+
+    #[test]
+    fn a_retention_of_never_keeps_every_version() {
+        let mut store = Store::open_in_memory().unwrap();
+        indexed(&mut store, "/app", "widget.rb", V1);
+        indexed(&mut store, "/app", "widget.rb", V2);
+        age_unmapped(&store);
+        let garbage = store.collect(now() - 60, None, |_| true, false).unwrap();
         assert_eq!(garbage.blobs, 0);
-        assert!(store.has_blob(&oid).unwrap());
+        assert_eq!(store.retained(None).unwrap().expired, 0);
+    }
+
+    #[test]
+    fn mapping_a_version_again_clears_its_stamp() {
+        let mut store = Store::open_in_memory().unwrap();
+        indexed(&mut store, "/app", "widget.rb", V1);
+        indexed(&mut store, "/app", "widget.rb", V2);
+        // The branch switch back: V1 again, nothing reparsed.
+        let back = indexed(&mut store, "/app", "widget.rb", V1);
+        assert_eq!(back.parsed, 0, "reused, not reparsed");
+        let stamped = unmapped(&store);
+        assert_eq!(stamped.len(), 1, "{stamped:?}");
+        assert_eq!(stamped[0].0, oid(V2));
+        age_unmapped(&store);
+        store
+            .collect(now() - 60, Some(now() - 60), |_| true, false)
+            .unwrap();
+        assert!(store.has_blob(&hash_blob(V1.as_bytes())).unwrap());
+        assert!(!store.has_blob(&hash_blob(V2.as_bytes())).unwrap());
+    }
+
+    #[test]
+    fn a_version_another_checkout_maps_is_never_collected() {
+        let mut store = Store::open_in_memory().unwrap();
+        // Two worktrees of one repo; one moves on.
+        indexed(&mut store, "/a", "widget.rb", V1);
+        indexed(&mut store, "/b", "widget.rb", V1);
+        indexed(&mut store, "/a", "widget.rb", V2);
+        assert!(unmapped(&store).is_empty(), "/b still maps it");
+        // Stamped by an older build, or by hand: still never collected.
+        store
+            .conn
+            .execute(
+                "INSERT INTO loose_blob SELECT id, 0 FROM blob WHERE oid = ?1",
+                [oid(V1)],
+            )
+            .unwrap();
+        let garbage = store
+            .collect(now() - 60, Some(now() - 60), |_| true, false)
+            .unwrap();
+        assert_eq!(garbage.blobs, 0);
+        store.collect_unmapped(now() - 60, 100).unwrap();
+        assert!(store.has_blob(&hash_blob(V1.as_bytes())).unwrap());
+    }
+
+    #[test]
+    fn a_renamed_file_keeps_its_version_unstamped() {
+        let mut store = Store::open_in_memory().unwrap();
+        indexed(&mut store, "/app", "widget.rb", V1);
+        indexed(&mut store, "/app", "gadget.rb", V1);
+        assert!(unmapped(&store).is_empty(), "{:?}", unmapped(&store));
+    }
+
+    #[test]
+    fn an_editors_save_and_a_drop_stamp_what_they_unmap() {
+        let mut store = Store::open_in_memory().unwrap();
+        indexed(&mut store, "/app", "widget.rb", V1);
+        let v2 = hash_blob(V2.as_bytes());
+        let facts = crate::extract::extract(V2.as_bytes());
+        assert!(
+            store
+                .refresh_file("/app", "widget.rb", &v2, Some(&facts))
+                .unwrap()
+        );
+        assert_eq!(
+            unmapped(&store)
+                .iter()
+                .map(|(o, _)| o.clone())
+                .collect::<Vec<_>>(),
+            [oid(V1)]
+        );
+        store.drop_checkout("/app").unwrap();
+        let mut stamped: Vec<String> = unmapped(&store).into_iter().map(|(o, _)| o).collect();
+        stamped.sort();
+        let mut both = vec![oid(V1), oid(V2)];
+        both.sort();
+        assert_eq!(stamped, both);
+    }
+
+    #[test]
+    fn a_store_from_before_stamps_what_it_already_left_unmapped_as_now() {
+        let mut store = Store::open_in_memory().unwrap();
+        indexed(&mut store, "/app", "widget.rb", V1);
+        indexed(&mut store, "/app", "widget.rb", V2);
+        // As 0.9.5 left it: V1 unmapped, unstamped, and no sweep recorded.
+        store.conn.execute_batch("DELETE FROM loose_blob;").unwrap();
+        store
+            .conn
+            .execute("DELETE FROM meta WHERE key = ?1", [UNMAPPED_STAMPED])
+            .unwrap();
+        assert!(!store.unmapped_stamped().unwrap());
+        assert_eq!(store.stamp_unmapped().unwrap(), Some(1));
+        assert!(store.unmapped_stamped().unwrap());
+        assert_eq!(store.stamp_unmapped().unwrap(), None, "once per store");
+        let garbage = store
+            .collect(now() - 60, Some(now() - 60), |_| true, false)
+            .unwrap();
+        assert_eq!(garbage.blobs, 0, "nothing goes on the first day");
+        assert_eq!(store.retained(Some(now() - 60)).unwrap().blobs, 1);
+    }
+
+    #[test]
+    fn a_new_store_has_nothing_to_stamp() {
+        let store = Store::open_in_memory().unwrap();
+        assert!(store.unmapped_stamped().unwrap());
+    }
+
+    #[test]
+    fn retained_counts_the_versions_nothing_maps_and_their_lines() {
+        let mut store = Store::open_in_memory().unwrap();
+        indexed(&mut store, "/app", "widget.rb", V1);
+        indexed(&mut store, "/app", "widget.rb", V2);
+        let kept = store.retained(Some(now() - 60)).unwrap();
+        assert_eq!((kept.blobs, kept.expired), (1, 0));
+        assert_eq!(kept.lines, 2, "V1's");
+        age_unmapped(&store);
+        assert_eq!(store.retained(Some(now() - 60)).unwrap().expired, 1);
+    }
+
+    #[test]
+    fn the_background_collection_goes_in_batches() {
+        let mut store = Store::open_in_memory().unwrap();
+        for n in 0..5 {
+            indexed(
+                &mut store,
+                "/app",
+                "widget.rb",
+                &format!("class W{n}\nend\n"),
+            );
+        }
+        age_unmapped(&store);
+        assert_eq!(store.collect_unmapped(now() - 60, 3).unwrap().blobs, 3);
+        assert_eq!(store.collect_unmapped(now() - 60, 3).unwrap().blobs, 1);
+        assert_eq!(store.collect_unmapped(now() - 60, 3).unwrap().blobs, 0);
+        assert_eq!(store.totals().unwrap().blobs, 1, "the mapped one stays");
     }
 
     #[test]
@@ -711,14 +1008,18 @@ mod tests {
             .add_blob(&edit, &crate::extract::extract(src.as_bytes()))
             .unwrap();
         // `--older-than 0`, while the query that recorded it answers.
-        let garbage = store.collect(now() + 1, |_| true, false).unwrap();
+        let garbage = store
+            .collect(now() + 1, Some(now() + 1), |_| true, false)
+            .unwrap();
         assert_eq!(garbage.blobs, 0);
         assert!(store.has_blob(&edit).unwrap(), "just recorded: kept");
         store
             .conn
             .execute("UPDATE loose_blob SET recorded_at = 0", [])
             .unwrap();
-        let garbage = store.collect(now() - 60, |_| true, false).unwrap();
+        let garbage = store
+            .collect(now() - 60, Some(now() - 60), |_| true, false)
+            .unwrap();
         assert_eq!(garbage.blobs, 1, "recorded long ago: collected");
     }
 
@@ -753,7 +1054,9 @@ mod tests {
                 .add_blob(&draft, &facts)
                 .expect("a query records its edit");
             assert!(store.has_blob(&draft).unwrap());
-            let garbage = store.collect(now() - 60, |_| true, false).unwrap();
+            let garbage = store
+                .collect(now() - 60, Some(now() - 60), |_| true, false)
+                .unwrap();
             assert_eq!(garbage.blobs, recorded_before, "{shape}");
             assert!(store.has_blob(&draft).unwrap(), "just recorded: kept");
             indexed(&mut store, "/app", "draft.rb", "class Draft\nend\n");
@@ -764,10 +1067,14 @@ mod tests {
     fn a_dry_run_reports_the_same_and_keeps_everything() {
         let mut store = Store::open_in_memory().unwrap();
         bundle(&mut store);
-        let dry = store.collect(now() - 60, |_| true, true).unwrap();
+        let dry = store
+            .collect(now() - 60, Some(now() - 60), |_| true, true)
+            .unwrap();
         assert_eq!(roots(&dry), ["/gem-1"]);
         assert!(store.has_checkout("/gem-1").unwrap(), "rolled back");
-        let real = store.collect(now() - 60, |_| true, false).unwrap();
+        let real = store
+            .collect(now() - 60, Some(now() - 60), |_| true, false)
+            .unwrap();
         assert_eq!(
             (dry.files, dry.blobs, dry.facts, dry.freed_bytes),
             (real.files, real.blobs, real.facts, real.freed_bytes),
@@ -780,7 +1087,7 @@ mod tests {
         let mut store = Store::open_in_memory().unwrap();
         bundle(&mut store);
         // gem-1 was last seen at 0, so a cutoff before that spares it.
-        let garbage = store.collect(-1, |_| false, false).unwrap();
+        let garbage = store.collect(-1, Some(-1), |_| false, false).unwrap();
         assert!(garbage.checkouts.is_empty(), "{:?}", roots(&garbage));
     }
 
@@ -800,7 +1107,9 @@ mod tests {
                 [],
             )
             .unwrap();
-        let garbage = store.collect(now() - 60, |_| true, false).unwrap();
+        let garbage = store
+            .collect(now() - 60, Some(now() - 60), |_| true, false)
+            .unwrap();
         assert_eq!(roots(&garbage), ["/ruby-1"]);
         assert_eq!(garbage.checkouts[0].kind, "stdlib");
     }
@@ -817,7 +1126,9 @@ mod tests {
         store
             .set_gems_used("/app", &[("/gem-2".into(), "gem".into())], None)
             .unwrap();
-        let garbage = store.collect(now() - 60, |_| true, false).unwrap();
+        let garbage = store
+            .collect(now() - 60, Some(now() - 60), |_| true, false)
+            .unwrap();
         assert!(garbage.checkouts.is_empty(), "{:?}", roots(&garbage));
     }
 
@@ -830,7 +1141,7 @@ mod tests {
             .execute("UPDATE checkout SET indexed_at = 0", [])
             .unwrap();
         let garbage = store
-            .collect(now() - 60, |root| root != "/app", false)
+            .collect(now() - 60, Some(now() - 60), |root| root != "/app", false)
             .unwrap();
         let mut got = roots(&garbage);
         got.sort();
@@ -852,7 +1163,7 @@ mod tests {
             )
             .unwrap();
         let garbage = store
-            .collect(now() - 60, |root| root != "/gem-2", false)
+            .collect(now() - 60, Some(now() - 60), |root| root != "/gem-2", false)
             .unwrap();
         let reasons: Vec<(&str, &str)> = garbage
             .checkouts

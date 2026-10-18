@@ -48,6 +48,10 @@ saves. Then the fix is an explicit `--gc`, not an implicit sweep.
 **Revisited by DEC-049:** still true of a blob some checkout maps; a checkout
 nothing can reach any more is collected, blobs only it mapped with it.
 
+**Revisited by DEC-651:** a blob no checkout maps is kept for a retention
+(14 days by default), not forever — a switch back within it still reuses the
+facts — and `--drop`'s blobs are kept the same way.
+
 ## DEC-004 — `private :foo` is a definition row, marked by `via`
 
 **Decided.** A bare visibility call with symbol arguments emits a `def` row with
@@ -1972,6 +1976,8 @@ loose, and went at the first `--gc` after the next edit (0.9.0 hunt #12).
 - **Provenance, not "no file maps it".** A blob an index read and then
   edited away is DEC-003's — a branch switch back wants it — and is
   indistinguishable from a query's by the map alone. Only the writer knows.
+  (Superseded by DEC-651: both are kept for one retention, so the row now
+  records since when nothing maps a blob, whoever wrote it.)
 - **An optional table, no version bump** (DEC-300): nothing reads it to
   answer, `add_blob` and `--gc` create it where an older trekr's store at
   this version lacks it, and that store's earlier query blobs are kept, as
@@ -14614,7 +14620,7 @@ query, and the one way growth is unbounded remains DEC-003's: a version of
 a file an index mapped and an edit replaced is kept for a branch switch
 back, and neither `--gc` nor this pass collects it. A long-lived store in a
 repo edited between many indexes grows by every edited file's facts; that
-is a decision of its own, not this one's. Collecting at that size is slow:
+is a decision of its own, not this one's (DEC-651). Collecting at that size is slow:
 `--gc --older-than 0` removing 240 checkouts and 55,916 blobs from it took
 2,029 s: `body_call` was the one table cascading from `blob` with no index
 on `blob_id`, so each blob's delete scanned it. With `body_call_blob` the
@@ -14643,3 +14649,141 @@ it when it closes (`Drop for Store`, DEC-066), the cleanup's included.
 **Reverses if** a vacuum is measured stalling an index or a query beyond the
 writer's wait on a real store, or the threshold is seen firing on ordinary
 churn — then the share goes up before anything else changes.
+
+## DEC-651 — A version of a file nothing maps is kept for a retention, then collected
+
+**Decided.** A blob no checkout's file maps any more — a version an edit, a
+branch switch or `--drop` left behind, or a query's draft — is kept for the
+**retention**, 14 days by default, and then collected: by the background
+cleanup, in batches, and by `--gc`. Within it, a switch back reuses the
+facts, as DEC-003 wanted; after it, the file is read again. Amends DEC-003,
+which kept such a blob forever, and DEC-650, which named this as the one way
+a store still grew without bound.
+
+**The stamp: `loose_blob`, generalized, not a second table.** The table
+already said "a blob no file maps, since `recorded_at`" for a query's
+draft, and was optional and created on demand (DEC-300). Its meaning is
+widened to every unmapped blob, whoever recorded it, so no version bump and
+no new table:
+
+- A write that unmaps a blob stamps it with the moment, unless some other
+  file still maps it: `--index` (a path edited or gone), the editor's
+  one-file refresh (the save's previous version), `--drop` (the checkout's
+  blobs). Stamped after the whole map is in, so a rename does not stamp the
+  blob it moved. One `INSERT … WHERE NOT EXISTS` per unmapped blob, on
+  `file_blob`: no scan per write, and a no-op index still writes nothing
+  (DEC-035's `map_key` gate is untouched).
+- A write that maps a blob again — the switch back — deletes its stamp, as it
+  already adopted a query's draft. A stamp already there stays: the blob has
+  been unmapped since then.
+- A blob some checkout maps is never collected: the collection's candidate
+  query requires no `file` row, whatever the stamp says (a stamp an older
+  build left, or one written by hand).
+- Never within an hour of the stamp (`READING`), whatever the retention: a
+  query may still be reading a draft it just recorded (DEC-035 addendum).
+
+**One rule, for `--gc` too.** `--older-than` judges checkouts (DEC-049's
+hysteresis over bundles and vanished roots) and nothing else; a version no
+checkout maps goes by the retention, in `--gc` and the background pass
+alike. Before, a query's draft went at `--older-than` (7 days) and an
+edited-away version never; two clocks for the same kind of blob, and a
+`--gc --older-than 0` that deleted drafts but not the far larger set of
+replaced versions. A collected checkout's own blobs still go with it — the
+checkout's age covered them. `--gc --retention 0` is how to collect every
+unmapped version now (past the hour).
+
+**A store from before the stamps** has replaced versions with no row. The
+first background pass (it is due for exactly this, once: `unmapped stamped`
+in `meta`) or `--gc` stamps every unmapped, unstamped blob **as of now**.
+When each went unmapped is unknown, and "now" is the only stamp that never
+deletes on the day of the upgrade something a user might switch back to: the
+oldest of them goes one retention later. A new store is laid down with the
+key set, having nothing to stamp. On rails after a switch to v7.1.0 and back
+(6,165 blobs, 2,611 unmapped) the sweep takes 11 ms.
+
+**The setting: `TREKR_RETENTION`, with `--retention` for one `--gc` or
+`--status`.** An age as `--older-than` reads it (`36h`, `14d`, `2w`), `0`,
+or `never`; the house order, flag then environment then default (cli
+skill), and an empty value is unset. There is no config file and this does
+not start one. The environment is the standing setting because the
+background cleanup is a separate process: it inherits the environment and
+not the flags of the index that spawned it, which is also why the flag is
+refused on `--index` and queries rather than silently not reaching the pass.
+
+- `0`: every unmapped version past the hour a query may be reading it.
+- `never`: DEC-003's old rule, every version kept (drafts too: one rule).
+- `off` is refused: "retention off" reads as both of the above.
+- A value the CLI cannot read is a usage error (exit 64, naming the
+  variable); the background pass, which has nobody to tell, logs
+  `cleanup_retention` and collects nothing: a guess never deletes.
+
+**Why 14 days.** Collecting is undone by reading the file again, and that
+is cheap (below): two seconds for a large switch back. Two weeks covers a
+branch parked for a sprint or a vacation; 30 days was the other candidate
+and doubles what is kept for a saving measured in seconds per old branch.
+
+**Measured** (Apple M2, release, rails `--no-gems`, a fresh store each):
+
+*Growth over 30 simulated days*, 100 activerecord files edited and
+reindexed each day, the stamps aged a day and `--gc` run after each:
+
+| day | 0.9.5 | this |
+| ---: | ---: | ---: |
+| 0 | 32.2 MB | 32.2 MB |
+| 14 | 48.7 MB | 48.5 MB |
+| 30 | 66.4 MB, still +1.1 MB a day | 48.7 MB, flat since day 14 |
+
+Live pages; blobs 3,881 → 6,881 against a steady 5,181 (14 days × 100
+versions kept). Each day's `--gc` collected 100 versions in 0.06–0.08 s,
+0.01 s when there was nothing.
+
+*Branch switch to v7.1.0 and back* (2,611 of main's files unmapped):
+within the retention the switch back parsed 0 files in 0.26–0.41 s (four
+runs); after collection it parsed 2,611 in 2.2–2.5 s (three runs; a first,
+4.9 s, was not repeated). A cold index of main is 1.3 s, being a bulk load
+(DEC-057) into an empty store; the reparse writes into a live one.
+
+*The background pass collecting those 2,611*: 5.6–7.2 s wall, 27 batches of
+100 at ~60 ms each and the 150 ms pause between (`CHUNK_PAUSE`, so a queued
+writer goes first). A small repo's `--index` against the same store, 18 ms
+alone, took 89–98 ms while the pass was mid-batch and 23–30 ms between. At
+DEC-650's 1 GB scale a blob's delete is ~1 ms (55,916 in 56 s), so a batch
+is ~0.1 s there: the size of an incremental-vacuum chunk, chosen to match.
+Afterwards the live pages fell 56.1 → 34.0 MB.
+
+*`--status`* on that store with 2,284 versions kept: 10 ms, as 0.9.5's.
+
+**`--status` reports lines, not bytes.** `storage.retained` gives `blobs`,
+`lines` (the source lines they were read from), `expired` (past the
+retention, the next collection's) and `retention` (seconds, `null` for
+never). A blob's bytes are spread across pages it shares with others; the
+only honest measure is to delete and count the freed pages, which `--gc
+--dry-run` does under the write lock — too much for `--status`. Fact rows
+were tried first: counting call sites reads every retained version's
+`call_name` rows, 120 ms cold on rails' 2,284, growing with what is kept.
+Lines is one probe per blob. `--gc` reports `retention`, and `expired`
+among its `blobs`, with its measured `freed_bytes`.
+
+**What a pass is due for, now.** DEC-650's look (at most every two hours,
+on an index) also starts a pass when a version has gone unmapped past the
+retention, or when the store's unmapped versions are not yet stamped. A
+store edited every day has some expiring every day, so it gets a pass
+whenever it is looked at; the pass then vacuums only on DEC-650's threshold,
+and the pages a collection frees are reused by the next index.
+
+**Limits, stated.**
+
+- The setting is per process. A language server started without the shell's
+  environment — VS Code launched from the Dock — uses the default, and its
+  background passes collect at 14 days even if the shell says `never`.
+  Rejected: storing it in the store (`meta`), which would be a configuration
+  mechanism of its own, for a knob the default should serve.
+- An older trekr (0.9.5) on the same store does not stamp what it unmaps
+  (those versions stay until the next stamp sweep, which runs once — so
+  forever), and its cleanup and `--gc` take every stamped row at its own 7
+  days. Mixed use is a transition, not a design point.
+
+**Reverses if** a store is seen growing past the retention's bound (the
+stamp missed a path that unmaps), or a switch back after collection is
+measured costing more than a reindex is worth — then the default goes up
+before anything else changes.

@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+- **Replaced versions of files are no longer kept forever.** A version an
+  edit, a branch switch or `--drop` left behind was kept so a switch back
+  would not reparse — and never collected, so a store in a repo edited
+  between indexes grew by every edit (rails, 100 files edited a day: +1.1
+  MB a day, without end). It is now kept for 14 days after nothing maps
+  it, then collected by the background cleanup or `--gc`; on rails the
+  same edits level off at day 14. A switch back within the retention still
+  reuses everything; after it, the files are read again (2,611 rails files
+  in about 2 s). An existing index loses nothing on upgrade: what it
+  already holds is counted from then.
+- **`TREKR_RETENTION` sets how long** — `36h`, `14d`, `2w`, `0`, or `never`
+  to keep every version as before — and `--retention` overrides it for one
+  `--gc` or `--status`. Set it where every trekr sees it: the background
+  cleanup reads the environment, not the flag.
+- **`--gc --older-than` now judges checkouts only.** A query's copy of an
+  edit went at `--older-than`; it now goes by the retention, as every
+  unmapped version does. To collect them all now, `trekr --gc --retention 0`.
+- `--status` reports what is kept (`storage.retained`: `blobs`, `lines`,
+  `expired`, `retention`); `--gc` reports `retention` and, among its
+  `blobs`, the `expired` ones.
+
 ## 0.9.5 — 2026-10-17
 
 - **The index cleans up after itself.** An upgrade's rebuild left its old
