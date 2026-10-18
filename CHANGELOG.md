@@ -32,6 +32,10 @@
   said 0 after removing snapshots, since it counted only the pages freed
   inside the file; those are `freed_bytes` now, and `free_bytes` is what is
   left free.
+- **A question that indexes its checkout first no longer sometimes builds
+  the tree twice.** When the index it started finished its rows before the
+  query's first look, the query stopped waiting for it and assembled the
+  tree itself while the index prepared the same one.
 - **Hover at a constant's definition in `class Object` names it `OBJC`**,
   as hover at a mention already did; it said `Object::OBJC`.
 

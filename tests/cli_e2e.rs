@@ -2471,6 +2471,35 @@ fn usage_counts_each_command_by_caller_and_outcome() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A whole question whose index finished its rows before the query first
+/// looked still waits for that index to prepare the tree, and maps it,
+/// rather than assembling a second copy itself — which the usage row said
+/// as `tree-built`, at random, when a fast index beat the first look.
+#[test]
+fn a_query_whose_index_beat_its_first_look_maps_the_tree_that_index_prepared() {
+    let (dir, db) = scratch("index-beat-look");
+    repo(&dir);
+    let out = trekr_env(
+        &db,
+        &dir,
+        &["--refs", "Widget#helper"],
+        &[
+            ("TREKR_TEST_POLL_MS", "1500"),
+            ("TREKR_TEST_STALL_TREE_MS", "3000"),
+        ],
+    );
+    assert!(out.status.success(), "{out:?}");
+    let rows = json(&trekr(&db, &dir, &["--usage", "--json"]));
+    let refs = rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["feature"] == "refs")
+        .unwrap_or_else(|| panic!("{rows}"));
+    assert_eq!(refs["flags"], "indexed", "{rows}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// Asking trekr about itself is not a use of it; a call it could not parse is.
 #[test]
 fn help_and_version_are_not_counted_but_a_malformed_call_is() {

@@ -61,6 +61,18 @@ pub(super) enum Need<'a> {
 const NOTICE_AFTER: Duration = Duration::from_secs(1);
 /// How often the store is read for the child's commits.
 const POLL: Duration = Duration::from_millis(50);
+
+/// `POLL`, or the e2e suite's longer one: a test of what a query does when
+/// its index finished before its first look has to make that look late.
+fn poll() -> Duration {
+    static POLL_FOR_TESTS: std::sync::OnceLock<Duration> = std::sync::OnceLock::new();
+    *POLL_FOR_TESTS.get_or_init(|| {
+        std::env::var("TREKR_TEST_POLL_MS")
+            .ok()
+            .and_then(|ms| ms.parse().ok())
+            .map_or(POLL, Duration::from_millis)
+    })
+}
 /// How often a terminal's progress line is redrawn.
 const REDRAW: Duration = Duration::from_millis(250);
 
@@ -188,11 +200,14 @@ fn wait(
                     let file = file.as_ref().map(|(file, _)| file.as_path());
                     *ours = Some(spawn(root, file, heads.why)?);
                     crate::usage::flag("indexed");
+                    // It fills the checkout this query claimed for it, even
+                    // when it is done before the next look sees it filling.
+                    filled = true;
                 }
                 heads.tick(warming.as_ref());
             }
         }
-        std::thread::sleep(POLL);
+        std::thread::sleep(poll());
         seen = look(store, &root_str, relative)?;
     }
     // The child prepares the tree after its last commit (DEC-192): a whole
@@ -257,7 +272,7 @@ pub(super) fn after_partial(
                 return Ok(Then::Exit(ExitCode::from(2)));
             }
             heads.tick(Some(&warming));
-            std::thread::sleep(POLL);
+            std::thread::sleep(poll());
         }
         heads.clear();
         use std::os::unix::process::CommandExt;

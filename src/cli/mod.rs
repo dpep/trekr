@@ -1328,6 +1328,8 @@ impl std::error::Error for ClaimOutwaited {}
 /// `TREKR_TEST_STALL_MS`: a first index that pauses once the asked file's
 /// part is in, as a large checkout's does reading the rest;
 /// `TREKR_TEST_STALL_BULK_MS`: and once the rest's write holds the store.
+/// `TREKR_TEST_STALL_TREE_MS`: an index whose last rows are in, before it
+/// prepares the tree.
 fn stall_for_tests(var: &str) {
     if let Some(ms) = std::env::var(var).ok().and_then(|ms| ms.parse().ok()) {
         std::thread::sleep(std::time::Duration::from_millis(ms));
@@ -2596,6 +2598,7 @@ fn cmd_index(
     // Every index prepares the tree snapshot the next query would otherwise
     // assemble: the cost is the same either way, and a query's budget is
     // milliseconds where an index's is seconds (DEC-192).
+    stall_for_tests("TREKR_TEST_STALL_TREE_MS");
     profile::timed(&mut profile, "tree", || {
         crate::tree::Tree::prepare(&store, &root_str)
     })?;
