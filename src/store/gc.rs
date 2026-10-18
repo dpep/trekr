@@ -369,7 +369,8 @@ impl Store {
     }
 
     /// Add the indexes [`Store::missing_indexes`] names, and say which. Holds
-    /// the write lock while each is built: about 1.5 s on a 1 GB store.
+    /// the write lock while each is built: a writer behind it waited 2.4 s on
+    /// a 1 GB store.
     pub(crate) fn add_missing_indexes(&self) -> Result<Vec<&'static str>> {
         let missing = self.missing_indexes()?;
         // As a bulk load builds them: the sort spills to a file, not memory.

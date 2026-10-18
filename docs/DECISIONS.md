@@ -14621,10 +14621,12 @@ on `blob_id`, so each blob's delete scanned it. With `body_call_blob` the
 same collection takes 56 s. The index joined the schema without a version
 bump — a rebuild of every store for an index would have cost every user a
 reindex straight after 0.9.4's — as one of `BULK_INDEXES`: a new store has
-it, a store laid down before it is due for a pass that builds it (1.5 s on
-the 1 GB store, holding the write lock, in the background process), and
+it, a store laid down before it is due for a pass that builds it, and
 `--gc` builds it before collecting. A test holds every table that cascades
-from `blob` to a plan that uses an index.
+from `blob` to a plan that uses an index. The build holds the write lock
+once per store: on the 1 GB store `CREATE INDEX` alone took 1.5 s, and the
+0.9.5 re-verify measured an `--index` queued behind the background pass
+that built it waiting 2.4 s — the figure a writer sees.
 
 **`--status` reads the store in one snapshot, then the snapshot files.**
 Read statement by statement, a `--status` racing a pass reported the run's
