@@ -31,6 +31,20 @@ const RETRY: std::time::Duration = std::time::Duration::from_millis(250);
 /// behind a slow one cost a request little.
 const BESIDE: std::time::Duration = std::time::Duration::from_millis(100);
 
+/// `BESIDE`, or a test's multiple of it: "a git that answers at once" is a
+/// race with this wait, which a loaded machine loses with a real git, so a
+/// test of what lands within it widens it rather than racing it — scaled,
+/// so a build that does not wait still waits for nothing.
+fn beside() -> std::time::Duration {
+    static WAIT: std::sync::OnceLock<std::time::Duration> = std::sync::OnceLock::new();
+    *WAIT.get_or_init(|| {
+        std::env::var("TREKR_TEST_BESIDE_TIMES")
+            .ok()
+            .and_then(|times| times.parse().ok())
+            .map_or(BESIDE, |times| BESIDE * times)
+    })
+}
+
 /// How long after an index outwaited another writer's lock it is run again.
 /// The index itself waits for the lock as long as one writer's turn may take
 /// (DEC-139), so this only spaces the attempts; it is never a tight loop.
@@ -328,7 +342,7 @@ impl Indexer {
                 self.deferred.swap_remove(at).admission,
                 std::time::Duration::ZERO,
             ),
-            None if asking => (None, BESIDE.saturating_sub(self.beside)),
+            None if asking => (None, beside().saturating_sub(self.beside)),
             None => (None, wait),
         };
         let started = std::time::Instant::now();

@@ -475,6 +475,16 @@ fn opened_behind_slow_git(
     delay: &str,
     gitignore: &str,
 ) -> (PathBuf, PathBuf, Session) {
+    opened_behind_slow_git_with(label, delay, gitignore, &[])
+}
+
+/// `opened_behind_slow_git`, the server started with `env` besides.
+fn opened_behind_slow_git_with(
+    label: &str,
+    delay: &str,
+    gitignore: &str,
+    env: &[(&str, &str)],
+) -> (PathBuf, PathBuf, Session) {
     let (dir, db) = scratch(label);
     git(&dir, &["init", "-q"]);
     fs::write(dir.join("use.rb"), "Fresh.new\nQuick.new\n").unwrap();
@@ -502,7 +512,9 @@ fn opened_behind_slow_git(
     let text = "class Fresh\nend\n";
     fs::write(dir.join("fresh.rb"), text).unwrap();
     let path = slow_git(&dir, delay).to_string_lossy().into_owned();
-    let mut session = Session::start_with(&db, &dir, &[("PATH", &path)]);
+    let mut vars = vec![("PATH", path.as_str())];
+    vars.extend_from_slice(env);
+    let mut session = Session::start_with(&db, &dir, &vars);
     session.initialize(&dir);
     session.notify(
         "textDocument/didOpen",
@@ -606,27 +618,32 @@ fn files_opened_together_behind_a_slow_git_wait_for_it_once() {
 /// answer is still out: git being slow for one file says nothing of the next.
 #[test]
 fn a_file_git_places_at_once_lands_beside_a_slow_one() {
-    // "At once" is a race with the open's short wait, which a loaded machine
-    // can lose; a build that does not wait loses every time.
-    let landed = (0..5).any(|attempt| {
-        let (dir, _db, mut session) =
-            opened_behind_slow_git(&format!("admit-beside-{attempt}"), "3", "");
-        let text = "class Quick\nend\n";
-        fs::write(dir.join("quick.rb"), text).unwrap();
-        session.notify(
-            "textDocument/didOpen",
-            serde_json::json!({"textDocument": {
-                "uri": uri_of(&dir, "quick.rb"), "languageId": "ruby", "version": 1, "text": text
-            }}),
-        );
-        let landed = finds(&mut session, &dir, 1, "quick.rb");
-        assert!(!finds_fresh(&mut session, &dir), "the slow one still out");
-        session.stop();
-        let _ = fs::remove_dir_all(&dir);
-        let _ = fs::remove_dir_all(dir.with_extension("slow-git"));
-        landed
-    });
-    assert!(landed, "written by its open");
+    // "At once" against a real git is a race with the open's short wait,
+    // which a loaded machine loses: the wait is widened, and the slow git
+    // made slower still, so the open lands its file in that wait or never —
+    // a build that does not wait never does.
+    let (dir, _db, mut session) = opened_behind_slow_git_with(
+        "admit-beside",
+        "20",
+        "",
+        &[("TREKR_TEST_BESIDE_TIMES", "50")],
+    );
+    let text = "class Quick\nend\n";
+    fs::write(dir.join("quick.rb"), text).unwrap();
+    session.notify(
+        "textDocument/didOpen",
+        serde_json::json!({"textDocument": {
+            "uri": uri_of(&dir, "quick.rb"), "languageId": "ruby", "version": 1, "text": text
+        }}),
+    );
+    assert!(
+        finds(&mut session, &dir, 1, "quick.rb"),
+        "written by its open"
+    );
+    assert!(!finds_fresh(&mut session, &dir), "the slow one still out");
+    session.stop();
+    let _ = fs::remove_dir_all(&dir);
+    let _ = fs::remove_dir_all(dir.with_extension("slow-git"));
 }
 
 /// A git that never answers leaves the file unwritten and the server
