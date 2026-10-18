@@ -17,6 +17,11 @@
   for twice its live size), which switches it. It never runs on a query,
   waits for nothing, and skips a store another trekr is writing. Nothing
   to do: a store 0.9.4 rebuilt shrinks after its next index.
+- **`--gc` collecting many checkouts is ~35× faster.** Each blob it
+  deleted scanned a table of class-body calls: removing 240 checkouts from
+  a 1 GB index took 34 minutes, and takes 56 s now. An existing index gains
+  the missing index in the background, or at the start of the next `--gc`;
+  nothing is rebuilt.
 - **`--status` says how big the index is and what it could give back**
   (`storage` in `--json`), and when the background cleanup last ran.
 - **`--gc`'s `reclaimed_bytes` is what left the disk** — the snapshots,

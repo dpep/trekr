@@ -5674,6 +5674,11 @@ fn cmd_gc(out: Output, older_than: u64, dry_run: bool, vacuum: bool) -> anyhow::
     // In pages, as the cleanup counts it: the file itself shrinks only once
     // the log is folded back, which a reader can hold off.
     let pages_before = store.db_bytes()?;
+    // An index the schema gained since this store was laid down, before the
+    // deletes that cascade through it — even on a dry run, which is the real
+    // collection rolled back: it changes no answer, and without it each blob
+    // collected scanned a table (DEC-650).
+    store.add_missing_indexes()?;
     let garbage = store.collect(
         now - older_than as i64,
         |root| Path::new(root).is_dir(),

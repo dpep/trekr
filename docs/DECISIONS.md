@@ -14616,10 +14616,15 @@ back, and neither `--gc` nor this pass collects it. A long-lived store in a
 repo edited between many indexes grows by every edited file's facts; that
 is a decision of its own, not this one's. Collecting at that size is slow:
 `--gc --older-than 0` removing 240 checkouts and 55,916 blobs from it took
-2,029 s, and deleting the same checkouts and their blobs directly in SQL
-took 54 s with an index on `body_call(blob_id)` added first
-— the one fact table whose cascade from `blob` has none, so each blob's
-delete scans it.
+2,029 s: `body_call` was the one table cascading from `blob` with no index
+on `blob_id`, so each blob's delete scanned it. With `body_call_blob` the
+same collection takes 56 s. The index joined the schema without a version
+bump — a rebuild of every store for an index would have cost every user a
+reindex straight after 0.9.4's — as one of `BULK_INDEXES`: a new store has
+it, a store laid down before it is due for a pass that builds it (1.5 s on
+the 1 GB store, holding the write lock, in the background process), and
+`--gc` builds it before collecting. A test holds every table that cascades
+from `blob` to a plan that uses an index.
 
 **`--status` reads the store in one snapshot, then the snapshot files.**
 Read statement by statement, a `--status` racing a pass reported the run's

@@ -581,7 +581,9 @@ hands the free pages back when they alone pass the same threshold: a chunk
 of 1,024 pages per short write transaction on a store in incremental
 auto-vacuum mode — every new store — and by one full rewrite on an older
 store, which switches it (the copy in a temporary file, the disks holding the
-live pages twice). `--status` reports it as `storage`.
+live pages twice). It also builds any fact-table index the schema gained
+since the store was laid down (`body_call_blob`), which `--gc` does first
+too. `--status` reports it as `storage`.
 
 A gem the lockfile names and disk does not have is **reported**, in the text
 output and as `gems.missing` in `--json`; a git or path gem that was not

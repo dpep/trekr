@@ -120,6 +120,11 @@ fn due(store: &Store, now: i64) -> anyhow::Result<bool> {
     if store.any_warming()? {
         return Ok(false);
     }
+    // An index the schema gained since this store was laid down: built here,
+    // off every query's path, rather than by a rebuild.
+    if !store.missing_indexes()?.is_empty() {
+        return Ok(true);
+    }
     if worth(Reclaimable::measure(store)?.bytes(), store.db_bytes()?) {
         return Ok(true);
     }
@@ -154,6 +159,8 @@ pub(crate) struct Done {
     /// Blobs only a query recorded, no checkout maps.
     pub(crate) blobs: usize,
     pub(crate) compacted: Compacted,
+    /// Indexes the schema gained that this store had not got.
+    pub(crate) indexes: Vec<&'static str>,
     /// What left the disk: the files removed and the index file's shrink.
     pub(crate) reclaimed_bytes: i64,
 }
@@ -218,7 +225,10 @@ fn pass(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Skipped>> {
     // In pages: a writer queued behind the vacuum keeps the log from being
     // folded back, so the file may not have shrunk yet when this measures.
     let before = store.db_bytes()?;
+    // First: the collection below deletes blobs, which cascade through them.
+    let indexes = store.add_missing_indexes()?;
     let mut done = Done {
+        indexes,
         blobs: store.collect_loose(now - LOOSE_AGE)?.blobs,
         snapshots: crate::tree::sweep_snapshots(store, &[], Overlays::Keep, false)?,
         ..Done::default()
@@ -612,6 +622,24 @@ mod tests {
         store.clear_warming("/other").unwrap();
         assert!(!start(&mut store, NOW + RETRY - 1).unwrap());
         assert!(start(&mut store, NOW + RETRY).unwrap());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A store laid down before an index joined the schema is due for a
+    /// pass with nothing else to reclaim, and the pass adds it.
+    #[test]
+    fn a_pass_adds_an_index_the_store_lacks() {
+        let (dir, mut store) = store("index");
+        rusqlite::Connection::open(dir.join("t.db"))
+            .unwrap()
+            .execute_batch("DROP INDEX body_call_blob")
+            .unwrap();
+        store.cleanup_checked(0).unwrap();
+        assert!(start(&mut store, NOW).unwrap(), "due for the index alone");
+        let done = run(&mut store, NOW).unwrap().unwrap();
+        assert_eq!(done.indexes, ["body_call_blob"]);
+        assert!(store.missing_indexes().unwrap().is_empty());
+        assert!(!due(&store, NOW + INTERVAL).unwrap(), "and nothing after");
         let _ = std::fs::remove_dir_all(dir);
     }
 

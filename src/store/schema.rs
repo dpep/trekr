@@ -246,12 +246,15 @@ CREATE INDEX const_ref_blob ON const_ref(blob_id);
 CREATE INDEX call_name_name ON call_name(name, blob_id);
 CREATE INDEX call_name_blob ON call_name(blob_id);
 CREATE INDEX body_call_name ON body_call(name);
+CREATE INDEX body_call_blob ON body_call(blob_id);
 CREATE INDEX file_blob      ON file(blob_id);
 "#;
 
 /// The fact tables' secondary indexes: what a bulk load drops and rebuilds
 /// (DEC-057). Each statement is also in `SCHEMA`, and a test holds them equal.
-pub(crate) const BULK_INDEXES: [(&str, &str); 9] = [
+/// One added at this version reaches an existing store through the
+/// background cleanup (`Store::add_missing_indexes`), not a rebuild.
+pub(crate) const BULK_INDEXES: [(&str, &str); 10] = [
     ("def_name", "CREATE INDEX def_name       ON def(name);"),
     ("def_blob", "CREATE INDEX def_blob       ON def(blob_id);"),
     (
@@ -281,6 +284,11 @@ pub(crate) const BULK_INDEXES: [(&str, &str); 9] = [
     (
         "body_call_name",
         "CREATE INDEX body_call_name ON body_call(name);",
+    ),
+    // A blob's delete cascades here; without it each one scanned the table.
+    (
+        "body_call_blob",
+        "CREATE INDEX body_call_blob ON body_call(blob_id);",
     ),
 ];
 

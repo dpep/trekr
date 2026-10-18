@@ -313,6 +313,38 @@ impl Store {
             .query_row("PRAGMA wal_checkpoint(PASSIVE)", [], |_| Ok(()))
     }
 
+    /// The schema's fact-table indexes this store lacks: one added to the
+    /// schema at this version, which a store laid down before it has not got.
+    pub(crate) fn missing_indexes(&self) -> Result<Vec<&'static str>> {
+        let mut have = self
+            .conn
+            .prepare("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1")?;
+        let mut missing = Vec::new();
+        for (name, _) in super::schema::BULK_INDEXES {
+            if !have.exists([name])? {
+                missing.push(name);
+            }
+        }
+        Ok(missing)
+    }
+
+    /// Add the indexes [`Store::missing_indexes`] names, and say which. Holds
+    /// the write lock while each is built: about 1.5 s on a 1 GB store.
+    pub(crate) fn add_missing_indexes(&self) -> Result<Vec<&'static str>> {
+        let missing = self.missing_indexes()?;
+        // As a bulk load builds them: the sort spills to a file, not memory.
+        self.conn.execute_batch("PRAGMA temp_store = FILE;")?;
+        let added = missing.iter().try_for_each(|name| {
+            let (_, create) = super::schema::BULK_INDEXES
+                .iter()
+                .find(|(bulk, _)| bulk == name)
+                .expect("named from the same list");
+            self.conn.execute_batch(create)
+        });
+        self.conn.execute_batch("PRAGMA temp_store = MEMORY;")?;
+        added.map(|()| missing)
+    }
+
     /// The database's size, in bytes, as SQLite counts it.
     pub(crate) fn db_bytes(&self) -> Result<i64> {
         self.conn.query_row(
@@ -542,6 +574,71 @@ mod tests {
         assert!(garbage.checkouts.is_empty());
         assert!(!store.has_blob(&edit).unwrap());
         assert!(store.has_checkout("/gem-1").unwrap(), "unclaimed, but kept");
+    }
+
+    /// How SQLite deletes a blob's rows from each table that cascades from
+    /// `blob`: every one by an index, or each blob collected scans a table.
+    fn cascade_plans(store: &Store) -> Vec<String> {
+        let tables: Vec<String> = store
+            .conn
+            .prepare(
+                "SELECT m.name FROM sqlite_master m, pragma_foreign_key_list(m.name) f
+                  WHERE m.type = 'table' AND f.\"table\" = 'blob' AND f.on_delete = 'CASCADE'",
+            )
+            .unwrap()
+            .query_map([], |r| r.get(0))
+            .unwrap()
+            .collect::<Result<_>>()
+            .unwrap();
+        assert!(tables.contains(&"body_call".to_string()), "{tables:?}");
+        tables
+            .iter()
+            .map(|table| {
+                store
+                    .conn
+                    .query_row(
+                        &format!("EXPLAIN QUERY PLAN DELETE FROM {table} WHERE blob_id = 1"),
+                        [],
+                        |r| r.get::<_, String>(3),
+                    )
+                    .unwrap()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn every_table_that_cascades_from_a_blob_is_reached_by_an_index() {
+        let store = Store::open_in_memory().unwrap();
+        for plan in cascade_plans(&store) {
+            assert!(
+                plan.contains("INDEX") || plan.contains("PRIMARY KEY"),
+                "{plan}"
+            );
+        }
+    }
+
+    /// A store laid down before an index joined the schema at this version
+    /// gains it from the background cleanup, not from a rebuild.
+    #[test]
+    fn an_index_the_schema_gained_is_added_to_a_store_without_it() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .conn
+            .execute_batch("DROP INDEX body_call_blob")
+            .unwrap();
+        assert_eq!(store.missing_indexes().unwrap(), ["body_call_blob"]);
+        assert!(
+            cascade_plans(&store)
+                .iter()
+                .any(|plan| plan.starts_with("SCAN"))
+        );
+        assert_eq!(store.add_missing_indexes().unwrap(), ["body_call_blob"]);
+        assert!(store.missing_indexes().unwrap().is_empty());
+        assert!(
+            cascade_plans(&store)
+                .iter()
+                .all(|plan| !plan.starts_with("SCAN"))
+        );
     }
 
     #[test]
