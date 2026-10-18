@@ -429,7 +429,9 @@ query's tree over its edits is never counted: only `--gc` removes those); and
 `reclaimable_bytes`, the two together — what `--gc --vacuum` would return.
 `cleanup` says what the background cleanup last did: `checked_at`, when it
 last measured the store (a new store is stamped at creation), `ran_at` and
-`reclaimed_bytes`, its last pass and what that returned to the disk — `null`
+`reclaimed_bytes`, its last pass and what that returned to the disk, and
+`skipped`, why the last pass left free pages it meant to hand back —
+`no_room` (a full rewrite would not fit twice on the disk) or `busy` — all `null`
 until there is one.
 
 `--gc` first adds any index this version's schema has and the store lacks —

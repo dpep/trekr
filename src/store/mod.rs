@@ -16,6 +16,7 @@ mod recover;
 mod schema;
 mod warming;
 
+pub(crate) use gc::Held;
 pub(crate) use overlay::Overlays;
 pub(crate) use recover::{Kept, in_use, kept, remove_kept};
 pub(crate) use schema::VERSION;

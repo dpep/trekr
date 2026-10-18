@@ -24,7 +24,9 @@
   — a dry run included, which says so (`indexes`) and removes nothing;
   nothing is rebuilt.
 - **`--status` says how big the index is and what it could give back**
-  (`storage` in `--json`), and when the background cleanup last ran.
+  (`storage` in `--json`), when the background cleanup last ran, and why
+  it left space it meant to give back (`no_room`: the disk lacks room to
+  rewrite the index once).
 - **`--gc`'s `reclaimed_bytes` is what left the disk** — the snapshots,
   copies and stores it removed, and the file's shrink after `--vacuum`. It
   said 0 after removing snapshots, since it counted only the pages freed

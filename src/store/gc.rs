@@ -60,6 +60,33 @@ pub(crate) struct Cleanup {
     pub(crate) ran_at: Option<i64>,
     /// The bytes that run returned to the disk.
     pub(crate) reclaimed_bytes: Option<i64>,
+    /// Why the last pass left free pages it was meant to give back.
+    pub(crate) skipped: Option<Held>,
+}
+
+/// Why a pass that meant to compact the file did not.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Held {
+    /// A full rewrite would not fit on the disk.
+    NoRoom,
+    /// Another writer held the lock past the wait.
+    Busy,
+}
+
+impl Held {
+    fn as_str(self) -> &'static str {
+        match self {
+            Held::NoRoom => "no_room",
+            Held::Busy => "busy",
+        }
+    }
+
+    fn parse(text: &str) -> Option<Held> {
+        [Held::NoRoom, Held::Busy]
+            .into_iter()
+            .find(|held| held.as_str() == text)
+    }
 }
 
 /// The store's size and what the background cleanup did, as of one moment.
@@ -75,6 +102,7 @@ pub(crate) struct Storage {
 /// run that reclaimed anything.
 pub(super) const CLEANUP_CHECKED: &str = "cleanup checked";
 const CLEANUP_RAN: &str = "cleanup ran";
+const CLEANUP_SKIPPED: &str = "cleanup skipped";
 
 struct Row {
     id: i64,
@@ -201,7 +229,19 @@ impl Store {
             checked_at,
             ran_at: ran.next().and_then(|at| at.ok()),
             reclaimed_bytes: ran.next().and_then(|bytes| bytes.ok()),
+            skipped: read(CLEANUP_SKIPPED)?.as_deref().and_then(Held::parse),
         })
+    }
+
+    /// Record why the last pass left the file as it was, or that it did not.
+    pub(crate) fn cleanup_held(&self, held: Option<Held>) -> Result<()> {
+        match held {
+            Some(held) => set_meta(&self.conn, CLEANUP_SKIPPED, held.as_str()),
+            None => self
+                .conn
+                .execute("DELETE FROM meta WHERE key = ?1", [CLEANUP_SKIPPED])
+                .map(drop),
+        }
     }
 
     /// The cleanup record, the free pages and the file's size, read in one

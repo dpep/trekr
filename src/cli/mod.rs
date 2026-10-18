@@ -2905,6 +2905,16 @@ fn storage_line(storage: &serde_json::Value) -> String {
             if snapshots == 1 { "" } else { "s" }
         ));
     }
+    match storage["cleanup"]["skipped"].as_str() {
+        Some("no_room") => line.push_str(
+            "; the last cleanup left it: no room on disk to rewrite the index (it needs twice \
+             the live size free)",
+        ),
+        Some("busy") => {
+            line.push_str("; the last cleanup left it: another trekr held the index, so it retries")
+        }
+        _ => {}
+    }
     if let Some(at) = storage["cleanup"]["ran_at"].as_i64() {
         let ago = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)

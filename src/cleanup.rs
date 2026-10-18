@@ -10,7 +10,7 @@
 //! process's exit, never for this one's. The claim is made before the spawn,
 //! so a pass that fails is not started again by every index after it.
 
-use crate::store::Store;
+use crate::store::{Held, Store};
 use crate::tree::{Overlays, Swept};
 use std::path::Path;
 
@@ -245,11 +245,21 @@ fn pass(store: &mut Store, now: i64) -> anyhow::Result<Result<Done, Skipped>> {
         },
     };
     done.reclaimed_bytes = (before - store.db_bytes()?).max(0) + done.snapshots.bytes as i64;
-    // A run is one that gave something back; why one did not is the log's.
+    record(store, now, &done)?;
+    Ok(Ok(done))
+}
+
+/// What `--status` says of a pass: a run, if it gave something back, and why
+/// it left free pages it meant to hand back, if it did.
+fn record(store: &Store, now: i64, done: &Done) -> rusqlite::Result<()> {
     if done.reclaimed_bytes > 0 {
         store.cleanup_ran(now, done.reclaimed_bytes)?;
     }
-    Ok(Ok(done))
+    store.cleanup_held(match done.compacted {
+        Compacted::NoRoom => Some(Held::NoRoom),
+        Compacted::Busy => Some(Held::Busy),
+        Compacted::NotWorth | Compacted::Incremental | Compacted::Full => None,
+    })
 }
 
 /// Hand every free page back, a chunk per write transaction, pausing between
@@ -640,6 +650,24 @@ mod tests {
         assert_eq!(done.indexes, ["body_call_blob"]);
         assert!(store.missing_indexes().unwrap().is_empty());
         assert!(!due(&store, NOW + INTERVAL).unwrap(), "and nothing after");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A pass that left the free pages for want of room says so to
+    /// `--status`, until a later pass hands them back.
+    #[test]
+    fn why_a_pass_left_the_file_is_kept_until_one_compacts_it() {
+        let (dir, store) = store("held");
+        let mut done = Done {
+            compacted: Compacted::NoRoom,
+            ..Done::default()
+        };
+        record(&store, NOW, &done).unwrap();
+        assert_eq!(store.cleanup().unwrap().skipped, Some(Held::NoRoom));
+        done.compacted = Compacted::Incremental;
+        done.reclaimed_bytes = 1;
+        record(&store, NOW, &done).unwrap();
+        assert_eq!(store.cleanup().unwrap().skipped, None);
         let _ = std::fs::remove_dir_all(dir);
     }
 
