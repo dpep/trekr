@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.7 — 2026-10-18
 
 - A large branch switch holds the write lock about as briefly as 0.9.5 did.
   0.9.6 spent up to twice as long recording which versions it had replaced,
