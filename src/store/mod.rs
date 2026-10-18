@@ -2296,10 +2296,12 @@ impl Store {
                 self.conn
                     .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |r| r.get(0));
             if matches!(done, Ok(0)) {
-                return;
+                break;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
+        // The writes after this one wait as they did before it.
+        let _ = self.conn.busy_timeout(BUSY);
     }
 }
 
@@ -2885,6 +2887,20 @@ mod tests {
         assert!(writer_pause(0, BUSY + past(1)).is_some());
         assert!(writer_pause(500, WRITER_WAIT - past(1)).is_some());
         assert_eq!(writer_pause(500, WRITER_WAIT), None);
+    }
+
+    /// Folding the log back never waits, and leaves the connection waiting
+    /// as before: the cleanup's next write, right after, must not fail at
+    /// once on a writer that holds the lock for a moment.
+    #[test]
+    fn truncating_the_log_leaves_the_busy_wait_as_it_was() {
+        let store = Store::open_in_memory().unwrap();
+        store.truncate_wal();
+        let waits = store
+            .conn
+            .pragma_query_value(None, "busy_timeout", |r| r.get::<_, i64>(0))
+            .unwrap();
+        assert_eq!(waits, BUSY.as_millis() as i64);
     }
 
     #[test]
