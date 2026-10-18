@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.8 — 2026-10-18
 
 - A large branch switch holds the write lock for less time again: recording
   the files the switch changed took 0.2–0.4 s on rails, and now takes tens of
