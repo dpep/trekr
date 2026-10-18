@@ -322,7 +322,6 @@
 --status $.storage.retained: object
 --status $.storage.retained.blobs: int
 --status $.storage.retained.expired: int
---status $.storage.retained.lines: int
 --status $.storage.retained.retention: int
 --status $.storage.stale_snapshots: object
 --status $.storage.stale_snapshots.bytes: int

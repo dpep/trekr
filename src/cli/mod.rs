@@ -2974,7 +2974,6 @@ fn storage(store: &Store, retention: Retention) -> anyhow::Result<serde_json::Va
         "cleanup": storage.cleanup,
         "retained": {
             "blobs": retained.blobs,
-            "lines": retained.lines,
             "expired": retained.expired,
             "retention": retention.seconds(),
         },

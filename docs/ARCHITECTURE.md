@@ -571,9 +571,10 @@ it again (the switch back) clears the stamp, and the facts are reused. A
 query's draft is stamped as it is recorded. Past the retention — 14 days,
 `TREKR_RETENTION` or `--retention` (an age, `0`, or `never`) — the
 background cleanup collects it in batches of 100 per write transaction, and
-`--gc` with the rest. A store from before the stamps has what it already
-left unmapped stamped once, as of then (`unmapped stamped` in `meta`), so
-the upgrade deletes nothing that day.
+`--gc` with the rest. A blob an older trekr unmapped has no stamp; each
+background pass and `--gc` stamp every such blob as of then — once the
+counts show one — so an upgrade, or an older editor's server still writing
+the store, loses nothing that day.
 
 **The store cleans up after itself** (DEC-650, [`cleanup.rs`](../src/cleanup.rs)).
 After an index pass, trekr measures what the store could give back — free

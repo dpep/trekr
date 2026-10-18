@@ -513,11 +513,6 @@ impl Store {
                         params![gc::CLEANUP_CHECKED],
                     )?;
                 }
-                // Empty, so nothing it holds went unmapped before the stamps.
-                tx.execute(
-                    "INSERT INTO meta (key, value) VALUES (?1, '1')",
-                    params![gc::UNMAPPED_STAMPED],
-                )?;
                 tx.pragma_update(None, "user_version", layout.version)
             };
             rebuild().map_err(|e| Refusal::upgrade(version, terse(e)))?;

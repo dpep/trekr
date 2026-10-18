@@ -469,7 +469,6 @@ fn a_replaced_version_is_kept_for_the_retention_then_collected() {
     let retained = &status["storage"]["retained"];
     assert_eq!(retained["blobs"], 1, "{retained}");
     assert_eq!(retained["expired"], 0, "{retained}");
-    assert!(retained["lines"].as_u64().unwrap() > 0, "{retained}");
     assert_eq!(retained["retention"], 14 * 86_400, "the default");
     let text = stdout(&trekr(&db, &dir, &["--status"]));
     assert!(text.contains("1 replaced version kept"), "{text}");

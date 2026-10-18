@@ -435,8 +435,9 @@ last measured the store (a new store is stamped at creation), `ran_at` and
 until there is one.
 `retained` counts the versions of files no checkout maps any more — one an
 edit, a branch switch or `--drop` left, or a query's draft — kept so a switch
-back reuses them (DEC-651): `blobs`; `lines`, the source lines they were read
-from; `expired`, those unmapped longer than the retention, which the next
+back reuses them (DEC-651): `blobs`, stamped or not (one an older trekr
+unmapped is stamped by the next background pass); `expired`, those unmapped
+longer than the retention, which the next
 `--gc` or background cleanup collects; and `retention`, in seconds, `null`
 for `never`.
 

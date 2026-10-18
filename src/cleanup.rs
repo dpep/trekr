@@ -215,8 +215,8 @@ fn due(store: &Store, now: i64, retention: Retention) -> anyhow::Result<bool> {
     if !store.missing_indexes()?.is_empty() {
         return Ok(true);
     }
-    // What a store left unmapped before the stamps: stamped once, here.
-    if !store.unmapped_stamped()? {
+    // What an older trekr unmapped, which it did not stamp.
+    if store.any_unstamped()? {
         return Ok(true);
     }
     if let Some(before) = retention.before(now)
@@ -983,21 +983,26 @@ mod tests {
     }
 
     #[test]
-    fn a_store_from_before_is_due_once_and_loses_nothing_that_day() {
+    fn a_version_an_older_build_unmapped_makes_a_pass_due_and_loses_nothing_that_day() {
         let (dir, mut store) = store("legacy");
         let at = real_now();
-        edit(&dir, &mut store, "class Widget\n  def a; end\nend\n", true);
-        // As 0.9.5 left it: the version unmapped, unstamped, no sweep.
-        sql(
-            &dir,
-            "DELETE FROM loose_blob; DELETE FROM meta WHERE key = 'unmapped stamped';",
-        );
-        store.cleanup_checked(at - INTERVAL).unwrap();
-        assert!(due(&store, at, KEEP).unwrap(), "due to stamp");
-        let done = run(&mut store, at, KEEP).unwrap().unwrap();
-        assert_eq!(done.blobs, 0, "stamped as of now");
-        assert!(store.unmapped_stamped().unwrap());
-        assert_eq!(store.retained(None).unwrap().blobs, 1);
+        for round in ["a", "b"] {
+            edit(
+                &dir,
+                &mut store,
+                &format!("class Widget\n  def {round}; end\nend\n"),
+                true,
+            );
+            // As 0.9.5 leaves what it unmaps: no stamp — before this build
+            // first ran, and again after.
+            sql(&dir, "DELETE FROM loose_blob;");
+            store.cleanup_checked(at - INTERVAL).unwrap();
+            assert!(due(&store, at, KEEP).unwrap(), "due to stamp: {round}");
+            let done = run(&mut store, at, KEEP).unwrap().unwrap();
+            assert_eq!(done.blobs, 0, "stamped as of now: {round}");
+            assert!(!store.any_unstamped().unwrap());
+        }
+        assert_eq!(store.retained(None).unwrap().blobs, 2);
         let _ = std::fs::remove_dir_all(dir);
     }
 }

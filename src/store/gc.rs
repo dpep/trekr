@@ -58,9 +58,9 @@ pub(crate) struct Collected {
 /// The versions of files no checkout maps, kept for the retention (DEC-651).
 #[derive(Debug, Default, Clone, Copy, serde::Serialize)]
 pub(crate) struct Retained {
+    /// Stamped or not: one an older trekr unmapped is stamped by the next
+    /// pass.
     pub(crate) blobs: usize,
-    /// The lines of source they were read from.
-    pub(crate) lines: usize,
     /// Of `blobs`, those unmapped longer than the retention: the next
     /// collection's.
     pub(crate) expired: usize,
@@ -118,8 +118,6 @@ pub(crate) struct Storage {
 pub(super) const CLEANUP_CHECKED: &str = "cleanup checked";
 const CLEANUP_RAN: &str = "cleanup ran";
 const CLEANUP_SKIPPED: &str = "cleanup skipped";
-/// Set once the versions a store already left unmapped are stamped.
-pub(super) const UNMAPPED_STAMPED: &str = "unmapped stamped";
 
 struct Row {
     id: i64,
@@ -234,16 +232,18 @@ impl Store {
         Ok(garbage)
     }
 
-    /// Stamp, as of now, every blob no file maps and nothing has stamped: what
-    /// a store left unmapped before the stamps existed, when it went being
-    /// unknown (DEC-651). Once per store; `None` when it was done already.
-    pub(crate) fn stamp_unmapped(&mut self) -> Result<Option<usize>> {
+    /// Stamp, as of now, every blob no file maps and nothing has stamped:
+    /// one an older trekr unmapped — before this build ran, or since, an
+    /// editor's server still running it — when it went being unknown
+    /// (DEC-651). How many it stamped. The scan runs only when the counts say
+    /// one is there.
+    pub(crate) fn stamp_unmapped(&mut self) -> Result<usize> {
+        if !self.any_unstamped()? {
+            return Ok(0);
+        }
         let tx = self
             .conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-        if stamped(&tx)? {
-            return Ok(None);
-        }
         super::loose_blob(&tx)?;
         let stamped = tx.execute(
             "INSERT OR IGNORE INTO loose_blob (blob_id, recorded_at)
@@ -251,46 +251,51 @@ impl Store {
               WHERE NOT EXISTS (SELECT 1 FROM main.file f WHERE f.blob_id = b.id)",
             [],
         )?;
-        set_meta(&tx, UNMAPPED_STAMPED, "1")?;
         tx.commit()?;
-        Ok(Some(stamped))
+        Ok(stamped)
+    }
+
+    /// Whether some blob no file maps has no stamp.
+    pub(crate) fn any_unstamped(&self) -> Result<bool> {
+        let (unmapped, stamped, _) = self.unmapped(None)?;
+        Ok(unmapped > stamped)
     }
 
     /// Whether some version no file maps went unmapped at or before
     /// `before`, and a collection may take it now.
     pub(crate) fn any_unmapped_before(&self, before: i64) -> Result<bool> {
-        Ok(self.retained(Some(before))?.expired > 0)
+        Ok(self.unmapped(Some(before))?.2 > 0)
     }
 
-    /// Whether [`Store::stamp_unmapped`] has run on this store.
-    pub(crate) fn unmapped_stamped(&self) -> Result<bool> {
-        stamped(&self.conn)
-    }
-
-    /// The versions no checkout maps, and which of them went unmapped at or
-    /// before `before`; `None` keeps them all. Reads only: a store an older
-    /// trekr laid down without the table holds none it knows of.
+    /// The versions no checkout maps, stamped or not, and which of them went
+    /// unmapped at or before `before`; `None` keeps them all. Reads only.
     pub(crate) fn retained(&self, before: Option<i64>) -> Result<Retained> {
+        let (blobs, _, expired) = self.unmapped(before)?;
+        Ok(Retained { blobs, expired })
+    }
+
+    /// Blobs no file maps; those of them stamped; and of those, the ones
+    /// stamped at or before `before` and past a query's reading. The first
+    /// by subtraction, two scans of covering indexes, where probing the map
+    /// per blob took 20× as long (DEC-651): a mapped blob always exists.
+    fn unmapped(&self, before: Option<i64>) -> Result<(usize, usize, usize)> {
+        let unmapped: i64 = self.conn.query_row(
+            "SELECT (SELECT COUNT(*) FROM blob) - (SELECT COUNT(DISTINCT blob_id) FROM main.file)",
+            [],
+            |r| r.get(0),
+        )?;
         if !self.has_loose_blob()? {
-            return Ok(Retained::default());
+            return Ok((unmapped as usize, 0, 0));
         }
-        // Lines, not fact rows: counting a version's call sites reads its
-        // `call_name` rows, which on rails was most of `--status`.
-        self.conn.query_row(
+        let (stamped, expired): (i64, i64) = self.conn.query_row(
             &format!(
-                "SELECT COUNT(*), COALESCE(SUM(b.lines), 0),
-                        COALESCE(SUM(l.recorded_at <= MIN(?1, unixepoch() - ?2)), 0)
-                   FROM loose_blob l JOIN blob b ON b.id = l.blob_id WHERE {UNMAPPED}"
+                "SELECT COUNT(*), COALESCE(SUM(recorded_at <= MIN(?1, unixepoch() - ?2)), 0)
+                   FROM loose_blob l WHERE {UNMAPPED}"
             ),
             params![before.unwrap_or(i64::MIN), READING],
-            |r| {
-                Ok(Retained {
-                    blobs: r.get::<_, i64>(0)? as usize,
-                    lines: r.get::<_, i64>(1)? as usize,
-                    expired: r.get::<_, i64>(2)? as usize,
-                })
-            },
-        )
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        Ok((unmapped as usize, stamped as usize, expired as usize))
     }
 
     fn has_loose_blob(&self) -> Result<bool> {
@@ -494,14 +499,6 @@ fn set_meta(conn: &rusqlite::Connection, key: &str, value: &str) -> Result<()> {
 /// A `loose_blob l` row whose blob no file maps. `main.file`: a query's
 /// overlay shadows `file` with its edits.
 const UNMAPPED: &str = "NOT EXISTS (SELECT 1 FROM main.file f WHERE f.blob_id = l.blob_id)";
-
-fn stamped(conn: &rusqlite::Connection) -> Result<bool> {
-    conn.query_row(
-        "SELECT EXISTS(SELECT 1 FROM meta WHERE key = ?1)",
-        [UNMAPPED_STAMPED],
-        |r| r.get(0),
-    )
-}
 
 /// Forget the checkouts `doomed`, then delete the blobs no surviving
 /// checkout maps among theirs, and up to `limit` of those unmapped at or
@@ -941,42 +938,47 @@ mod tests {
         assert_eq!(stamped, both);
     }
 
+    /// As 0.9.5 leaves a version it unmaps: no stamp. Before this build
+    /// ran, or after it, from an older trekr still writing the store.
+    fn forget_stamps(store: &Store) {
+        store.conn.execute_batch("DELETE FROM loose_blob;").unwrap();
+    }
+
     #[test]
-    fn a_store_from_before_stamps_what_it_already_left_unmapped_as_now() {
+    fn a_version_an_older_build_unmapped_is_stamped_as_now_whenever_found() {
         let mut store = Store::open_in_memory().unwrap();
         indexed(&mut store, "/app", "widget.rb", V1);
         indexed(&mut store, "/app", "widget.rb", V2);
-        // As 0.9.5 left it: V1 unmapped, unstamped, and no sweep recorded.
-        store.conn.execute_batch("DELETE FROM loose_blob;").unwrap();
-        store
-            .conn
-            .execute("DELETE FROM meta WHERE key = ?1", [UNMAPPED_STAMPED])
-            .unwrap();
-        assert!(!store.unmapped_stamped().unwrap());
-        assert_eq!(store.stamp_unmapped().unwrap(), Some(1));
-        assert!(store.unmapped_stamped().unwrap());
-        assert_eq!(store.stamp_unmapped().unwrap(), None, "once per store");
+        forget_stamps(&store);
+        assert_eq!(store.retained(None).unwrap().blobs, 1, "counted unstamped");
+        assert!(store.any_unstamped().unwrap());
+        assert_eq!(store.stamp_unmapped().unwrap(), 1);
+        assert!(!store.any_unstamped().unwrap());
+        assert_eq!(store.stamp_unmapped().unwrap(), 0, "nothing left");
         let garbage = store
             .collect(now() - 60, Some(now() - 60), |_| true, false)
             .unwrap();
-        assert_eq!(garbage.blobs, 0, "nothing goes on the first day");
-        assert_eq!(store.retained(Some(now() - 60)).unwrap().blobs, 1);
+        assert_eq!(garbage.blobs, 0, "nothing goes the day it is found");
+
+        // And again later: an older trekr unmapped another since.
+        indexed(
+            &mut store,
+            "/app",
+            "widget.rb",
+            "class Widget\n  def v3; end\nend\n",
+        );
+        forget_stamps(&store);
+        assert_eq!(store.retained(None).unwrap().blobs, 2);
+        assert_eq!(store.stamp_unmapped().unwrap(), 2);
     }
 
     #[test]
-    fn a_new_store_has_nothing_to_stamp() {
-        let store = Store::open_in_memory().unwrap();
-        assert!(store.unmapped_stamped().unwrap());
-    }
-
-    #[test]
-    fn retained_counts_the_versions_nothing_maps_and_their_lines() {
+    fn retained_counts_the_versions_nothing_maps() {
         let mut store = Store::open_in_memory().unwrap();
         indexed(&mut store, "/app", "widget.rb", V1);
         indexed(&mut store, "/app", "widget.rb", V2);
         let kept = store.retained(Some(now() - 60)).unwrap();
         assert_eq!((kept.blobs, kept.expired), (1, 0));
-        assert_eq!(kept.lines, 2, "V1's");
         age_unmapped(&store);
         assert_eq!(store.retained(Some(now() - 60)).unwrap().expired, 1);
     }

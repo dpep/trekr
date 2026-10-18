@@ -14693,12 +14693,12 @@ checkout's age covered them. `--gc --retention 0` is how to collect every
 unmapped version now (past the hour).
 
 **A store from before the stamps** has replaced versions with no row. The
-first background pass (it is due for exactly this, once: `unmapped stamped`
-in `meta`) or `--gc` stamps every unmapped, unstamped blob **as of now**.
+first background pass (it is due for exactly this) or `--gc` stamps every
+unmapped, unstamped blob **as of now** — on every pass, not once (addendum
+below).
 When each went unmapped is unknown, and "now" is the only stamp that never
 deletes on the day of the upgrade something a user might switch back to: the
-oldest of them goes one retention later. A new store is laid down with the
-key set, having nothing to stamp. On rails after a switch to v7.1.0 and back
+oldest of them goes one retention later. On rails after a switch to v7.1.0 and back
 (6,165 blobs, 2,611 unmapped) the sweep takes 11 ms.
 
 **The setting: `TREKR_RETENTION`, with `--retention` for one `--gc` or
@@ -14753,16 +14753,16 @@ Afterwards the live pages fell 56.1 → 34.0 MB.
 
 *`--status`* on that store with 2,284 versions kept: 10 ms, as 0.9.5's.
 
-**`--status` reports lines, not bytes.** `storage.retained` gives `blobs`,
-`lines` (the source lines they were read from), `expired` (past the
-retention, the next collection's) and `retention` (seconds, `null` for
-never). A blob's bytes are spread across pages it shares with others; the
+**`--status` reports a count, not bytes.** `storage.retained` gives `blobs`,
+`expired` (past the retention, the next collection's) and `retention`
+(seconds, `null` for never). A blob's bytes are spread across pages it shares with others; the
 only honest measure is to delete and count the freed pages, which `--gc
 --dry-run` does under the write lock — too much for `--status`. Fact rows
 were tried first: counting call sites reads every retained version's
-`call_name` rows, 120 ms cold on rails' 2,284, growing with what is kept.
-Lines is one probe per blob. `--gc` reports `retention`, and `expired`
-among its `blobs`, with its measured `freed_bytes`.
+`call_name` rows, 120 ms cold on rails' 2,284, growing with what is kept;
+source lines were shipped to the hunt and dropped (addendum below). `--gc`
+reports `retention`, and `expired` among its `blobs`, with its measured
+`freed_bytes`.
 
 **What a pass is due for, now.** DEC-650's look (at most every two hours,
 on an index) also starts a pass when a version has gone unmapped past the
@@ -14779,9 +14779,9 @@ and the pages a collection frees are reused by the next index.
   Rejected: storing it in the store (`meta`), which would be a configuration
   mechanism of its own, for a knob the default should serve.
 - An older trekr (0.9.5) on the same store does not stamp what it unmaps
-  (those versions stay until the next stamp sweep, which runs once — so
-  forever), and its cleanup and `--gc` take every stamped row at its own 7
-  days. Mixed use is a transition, not a design point.
+  (the next pass does, as of then: addendum below), and its cleanup and
+  `--gc` take every stamped row at its own 7 days. Mixed use is a
+  transition, not a design point.
 
 **Reverses if** a store is seen growing past the retention's bound (the
 stamp missed a path that unmaps), or a switch back after collection is
@@ -14816,3 +14816,27 @@ what wants one, and a pass now runs for seconds.
   `has_blob` and its overlay; a blob gone by then fails the overlay, and the
   query answers from the committed index and says the edits could not be
   read. Disclosed, not wrong, and left as is.
+
+### Addendum (0.9.6 hunt): unstamped versions are stamped on every pass
+
+The sweep that stamps what an older trekr left unmapped ran once per store,
+gated by a `meta` key. Anything a 0.9.5 binary unmapped after it — an
+editor's server still running across `brew upgrade` — had no stamp, so it
+was kept forever, and `--status`, which counted stamps, did not show it (3
+of 6 unmapped blobs in the hunt's repro).
+
+- Each background pass and each `--gc` now stamps every unmapped,
+  unstamped blob, as of then; a look is due when there is one. The `meta`
+  key is gone: the counts answer the question it stood for, and cover any
+  path that unmaps without stamping, not only an older binary.
+- Whether there is one is two counts — blobs, and distinct blobs the map
+  names, both covering-index scans — against the stamped rows that no file
+  maps: 3 ms warm on a 39k-blob store (rails, discourse and mastodon with
+  their gems), where probing the map per blob took 40–50 ms warm and
+  90–270 ms cold. The stamping scan itself runs only when they differ: 51 ms
+  there for 2,538 blobs.
+- `--status` counts every unmapped blob, stamped or not, by the same
+  subtraction: 80–90 ms on that store, the same as 0.9.5's.
+- `storage.retained.lines` is dropped: summing it over unstamped blobs
+  reads every blob row, and a figure over the stamped ones alone is the
+  undercount this fixes. `--gc --dry-run` measures the bytes.

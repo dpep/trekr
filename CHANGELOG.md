@@ -19,9 +19,9 @@
 - **`--gc --older-than` now judges checkouts only.** A query's copy of an
   edit went at `--older-than`; it now goes by the retention, as every
   unmapped version does. To collect them all now, `trekr --gc --retention 0`.
-- `--status` reports what is kept (`storage.retained`: `blobs`, `lines`,
-  `expired`, `retention`); `--gc` reports `retention` and, among its
-  `blobs`, the `expired` ones.
+- `--status` reports what is kept (`storage.retained`: `blobs`, `expired`,
+  `retention`); `--gc` reports `retention` and, among its `blobs`, the
+  `expired` ones.
 - **An index no longer fails when a collection runs beside it.** An index
   that found a file's version known, then waited for the write lock while
   `--gc` or the background cleanup deleted that version, failed "Query
