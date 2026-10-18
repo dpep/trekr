@@ -145,5 +145,8 @@ the line, the duration and how much came back. An `"answered": 0` in well under
 a millisecond means the request was refused before any work, not that the
 engine looked and found nothing.
 
+The server reads its own environment, not your terminal's: a variable such as
+`TREKR_RETENTION` belongs where the editor inherits it too (a shell profile).
+
 `TREKR_LOG` takes a path, `-` for stderr, or `off`. `TREKR_LOG_LEVEL=debug` (or
 running `trekr --lsp --profile` by hand) adds the wire-level params.

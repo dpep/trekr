@@ -342,7 +342,10 @@ it: tree snapshots (`trekr.trees/`), the working tree's edits as the last
 query read them (`trekr.overlays/`), Ruby core as readable stub files
 (`trekr.core/rbs-<version>-<key>/String.rb`, where a core definition lands),
 the language server's `lsp.log`, and the usage counts (`trekr.usage.db`).
-`trekr --help` lists the variables.
+`trekr --help` lists the variables. A version of a file nothing maps any more
+is kept 14 days for a switch back, then collected; `TREKR_RETENTION` (`30d`,
+`never`) changes that — set it where your editor's language server sees it
+too, such as your shell profile, since the server starts cleanups of its own.
 
 ### Usage counts
 
