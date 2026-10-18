@@ -14840,3 +14840,17 @@ of 6 unmapped blobs in the hunt's repro).
 - `storage.retained.lines` is dropped: summing it over unstamped blobs
   reads every blob row, and a figure over the stamped ones alone is the
   undercount this fixes. `--gc --dry-run` measures the bytes.
+
+### Addendum (0.9.7): the write stamps with a one-row insert
+
+A ~2k-file rails switch spent about twice 0.9.5's time in `file-map`, under
+the write lock. Timed inside the write, the stamping was 325–565 ms of it for
+2,033 blobs — not the map, which was 0.9.5's. Its `INSERT … SELECT … WHERE
+NOT EXISTS` may write several rows, so SQLite opened a statement journal for
+each execution (`EXPLAIN` says `usesStmtJournal=1`), and releasing one costs
+in proportion to what the transaction already wrote: DEC-191's trap, where
+the write follows a parse's facts. Probing the map, then a one-row `INSERT OR
+IGNORE … VALUES` (`usesStmtJournal=0`), took 5–9 ms. Six interleaved rounds,
+v8.1.0 → v7.1.0 on a fresh store each, load 7–18, `file-map` medians:
+0.9.5 265 ms, 0.9.6 439 ms, this 218 ms; the switch back 16, 32, 22 ms. The
+stamps and the map after both switches are identical to 0.9.6's.

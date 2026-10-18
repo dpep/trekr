@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- A large branch switch holds the write lock about as briefly as 0.9.5 did.
+  0.9.6 spent up to twice as long recording which versions it had replaced,
+  and editor saves and other indexes waited behind it.
+
 ## 0.9.6 — 2026-10-17
 
 - **Replaced versions of files are no longer kept forever.** A version an

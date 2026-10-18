@@ -52,12 +52,17 @@ fn loose_blob(conn: &Connection) -> Result<()> {
 fn stamp_unmapped(conn: &Connection, blobs: impl IntoIterator<Item = i64>) -> Result<()> {
     loose_blob(conn)?;
     // `main.file`: a query's overlay shadows `file` with its edits.
+    let mut mapped = conn.prepare_cached("SELECT 1 FROM main.file WHERE blob_id = ?1")?;
+    // A one-row `VALUES`, not `INSERT … SELECT`: that may write several rows,
+    // so opens a statement journal, whose release costs in proportion to what
+    // the transaction already wrote (DEC-191).
     let mut stamp = conn.prepare_cached(
-        "INSERT OR IGNORE INTO loose_blob (blob_id, recorded_at)
-         SELECT ?1, unixepoch() WHERE NOT EXISTS (SELECT 1 FROM main.file WHERE blob_id = ?1)",
+        "INSERT OR IGNORE INTO loose_blob (blob_id, recorded_at) VALUES (?1, unixepoch())",
     )?;
     for blob in blobs {
-        stamp.execute(params![blob])?;
+        if !mapped.exists(params![blob])? {
+            stamp.execute(params![blob])?;
+        }
     }
     Ok(())
 }
