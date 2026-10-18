@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.6 — 2026-10-17
 
 - **Replaced versions of files are no longer kept forever.** A version an
   edit, a branch switch or `--drop` left behind was kept so a switch back
