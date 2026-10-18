@@ -409,6 +409,47 @@ fn an_uncommitted_edit_is_indexed_like_any_other_content() {
     let _ = fs::remove_dir_all(&dir);
 }
 
+/// A collection that deletes a blob an index already took for known, while
+/// that index waits for the write lock, does not fail the index: the index
+/// decides what is known once it holds the lock, and reads the file again.
+#[test]
+fn an_index_behind_a_collection_reads_again_what_it_collected() {
+    let (dir, db) = scratch("index-behind-gc");
+    repo(&dir);
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    fs::write(
+        dir.join("widget.rb"),
+        "class Widget\n  def v2\n  end\nend\n",
+    )
+    .unwrap();
+    assert!(trekr(&db, &dir, &["--index"]).status.success());
+    git(&dir, &["checkout", "--", "widget.rb"]);
+
+    // The collector holds the lock while the index starts, then deletes the
+    // version the index is switching back to.
+    let holder = rusqlite::Connection::open(&db).unwrap();
+    holder
+        .execute_batch("PRAGMA foreign_keys = ON; BEGIN IMMEDIATE")
+        .unwrap();
+    let index = spawn_trekr(&db, &dir, &["--index", "--json"]);
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+    let deleted = holder
+        .execute(
+            "DELETE FROM blob WHERE id IN (SELECT blob_id FROM loose_blob)",
+            [],
+        )
+        .unwrap();
+    assert_eq!(deleted, 1);
+    holder.execute_batch("COMMIT").unwrap();
+    let out = index.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    assert_eq!(json(&out)["indexed"]["parsed"], 1, "read again: {stderr}");
+    let value = json(&trekr(&db, &dir, &["--refs", "Widget#helper", "--json"]));
+    assert_eq!(value["definition"][0]["line"], 12, "{value}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
 /// A version an edit replaced is kept for the retention — a switch back
 /// reuses it — and collected once unmapped longer than that.
 #[test]

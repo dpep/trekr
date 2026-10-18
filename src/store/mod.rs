@@ -380,6 +380,16 @@ impl Store {
             .unwrap();
     }
 
+    /// Delete a blob nothing maps, as a collection in another process would.
+    #[cfg(test)]
+    pub(crate) fn delete_blob_for_test(&self, oid: &Oid) {
+        let deleted = self
+            .conn
+            .execute("DELETE FROM blob WHERE oid = ?1", params![oid.0])
+            .unwrap();
+        assert_eq!(deleted, 1, "unmapped, so collectable");
+    }
+
     #[cfg(test)]
     pub(crate) fn open_in_memory() -> Result<Store> {
         match Store::init(Connection::open_in_memory()?, &schema::LAYOUT) {

@@ -1140,10 +1140,67 @@ fn index_files(
     git_state: i64,
     // Some of the checkout's files, added to its map (`Store::write_part`).
     part: bool,
-    known: &mut Option<HashSet<Oid>>,
+    known: &mut Option<Known>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
 ) -> anyhow::Result<crate::store::Indexed> {
+    // Under the write lock from what is known to the write: a collection
+    // that deletes a blob between them would leave the write a blob it
+    // neither has nor parsed (DEC-651).
+    let standalone = store.autocommit();
+    let (counts, received, parse_done) = if standalone {
+        store.batch(|store| {
+            write_files(
+                store, root, files, git_state, part, true, known, pool, profile,
+            )
+        })?
+    } else {
+        write_files(
+            store, root, files, git_state, part, false, known, pool, profile,
+        )?
+    };
+    received.finish(store, profile, known, parse_done);
+    Ok(counts)
+}
+
+/// Every blob the store holds, as of when it was read, for an index to skip
+/// parsing what it has.
+struct Known {
+    oids: HashSet<Oid>,
+    /// `PRAGMA data_version` then: another process has committed since —
+    /// perhaps a collection — when it moves.
+    version: i64,
+}
+
+/// What the store holds now, for a caller holding the write lock: loaded
+/// whole once (`Store::blob_oids`), and again only if another process
+/// committed since — a collection may have deleted what it held.
+fn known_now<'a>(
+    store: &Store,
+    known: &'a mut Option<Known>,
+    profile: &mut Option<profile::Profile>,
+) -> anyhow::Result<&'a Known> {
+    let version = store.data_version()?;
+    if known.as_ref().is_none_or(|k| k.version != version) {
+        let oids = profile::timed(profile, "known-diff", || store.blob_oids())?;
+        *known = Some(Known { oids, version });
+    }
+    Ok(known.as_ref().expect("just loaded"))
+}
+
+/// `index_files`, holding the write lock.
+#[allow(clippy::too_many_arguments)]
+fn write_files(
+    store: &mut Store,
+    root: &Path,
+    files: &scan::Files,
+    git_state: i64,
+    part: bool,
+    standalone: bool,
+    known: &mut Option<Known>,
+    pool: &rayon::ThreadPool,
+    profile: &mut Option<profile::Profile>,
+) -> anyhow::Result<(crate::store::Indexed, Received, std::time::Instant)> {
     let wanted: HashSet<&Oid> = files.values().collect();
 
     // One path per unknown blob: identical content under two names is one
@@ -1152,12 +1209,9 @@ fn index_files(
     // the machine — is loaded only when there may be.
     let mut to_parse: HashMap<&Oid, PathBuf> = HashMap::new();
     if part || !store.map_unchanged(&root.to_string_lossy(), files)? {
-        if known.is_none() {
-            *known = Some(profile::timed(profile, "known-diff", || store.blob_oids())?);
-        }
-        let known = known.as_ref().expect("just loaded");
+        let known = known_now(store, known, profile)?;
         for (rel, oid) in files {
-            if !known.contains(oid) {
+            if !known.oids.contains(oid) {
                 to_parse.entry(oid).or_insert_with(|| root.join(rel));
             }
         }
@@ -1171,10 +1225,10 @@ fn index_files(
     // Never inside a batch: a gem's rows are few, and the bundle's
     // transaction is shared.
     let bulk = !part
-        && store.autocommit()
+        && standalone
         && known
             .as_ref()
-            .is_some_and(|k| bulk_load(to_parse.len(), k.len()));
+            .is_some_and(|k| bulk_load(to_parse.len(), k.oids.len()));
     // Parsing fans out on the pool while this thread writes what has already
     // been parsed: the write is single-threaded and most of the cost, so the
     // parse hides behind it instead of running before it.
@@ -1206,9 +1260,7 @@ fn index_files(
         };
         (counts, parsing.join().expect("the parse does not panic"))
     });
-    let counts = counts?;
-    received.finish(store, profile, known, parse_done);
-    Ok(counts)
+    Ok((counts?, received, parse_done))
 }
 
 /// Write the checkout and its gems: the part of an index that holds the
@@ -1459,7 +1511,7 @@ impl Received {
         self,
         store: &mut Store,
         profile: &mut Option<profile::Profile>,
-        known: &mut Option<HashSet<Oid>>,
+        known: &mut Option<Known>,
         parse_done: std::time::Instant,
     ) {
         let timing = store.take_timing();
@@ -1478,7 +1530,7 @@ impl Received {
         }
         // Written now, so a later gem holding the same bytes does not parse them.
         if let Some(known) = known.as_mut() {
-            known.extend(self.fresh);
+            known.oids.extend(self.fresh);
         }
     }
 }
@@ -1503,7 +1555,7 @@ fn index_first(
     git_state: i64,
     with_gems: bool,
     hints: &crate::background::Hints,
-    known: &mut Option<HashSet<Oid>>,
+    known: &mut Option<Known>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
 ) -> anyhow::Result<(crate::store::Indexed, GemReport)> {
@@ -1669,7 +1721,7 @@ fn index_wanted(
     files: &scan::Files,
     hints: &crate::background::Hints,
     written: &mut HashSet<String>,
-    known: &mut Option<HashSet<Oid>>,
+    known: &mut Option<Known>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
 ) -> anyhow::Result<(crate::store::Indexed, Vec<(String, crate::core::Facts)>)> {
@@ -1834,7 +1886,7 @@ fn gem_batch(
     ruby: Option<(&crate::gems::stdlib::Stdlib, Option<scan::Files>)>,
     gems: Vec<(PathBuf, scan::Files)>,
     used: &[(String, String)],
-    known: &mut Option<HashSet<Oid>>,
+    known: &mut Option<Known>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
     also: impl FnOnce(&mut Store, &mut Option<profile::Profile>) -> anyhow::Result<()>,
@@ -2029,7 +2081,7 @@ fn index_gems(
     store: &mut Store,
     repo: &Path,
     plan: GemPlan,
-    known: &mut Option<HashSet<Oid>>,
+    known: &mut Option<Known>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
 ) -> anyhow::Result<GemReport> {
@@ -2141,27 +2193,25 @@ const BUNDLE_CHUNK: usize = 128;
 fn index_bundle(
     store: &mut Store,
     walked: Vec<(PathBuf, scan::Files)>,
-    known: &mut Option<HashSet<Oid>>,
+    known: &mut Option<Known>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
 ) -> anyhow::Result<Vec<crate::store::Indexed>> {
     if walked.is_empty() {
         return Ok(Vec::new());
     }
-    if known.is_none() {
-        *known = Some(profile::timed(profile, "known-diff", || store.blob_oids())?);
-    }
     // One path per unknown blob, in gem order: a blob two gems share is
     // parsed for the first and known by the time the second is written.
     let mut to_parse: Vec<(usize, Oid, PathBuf)> = Vec::new();
     {
-        let known = known.as_ref().expect("just loaded");
+        // Inside the bundle's transaction (`gem_batch`): under the lock.
+        let known = known_now(store, known, profile)?;
         let mut seen: HashSet<&Oid> = HashSet::new();
         for (at, (root, files)) in walked.iter().enumerate() {
             let wanted: HashSet<&Oid> = files.values().collect();
             let before = to_parse.len();
             for (rel, oid) in files.iter() {
-                if !known.contains(oid) && seen.insert(oid) {
+                if !known.oids.contains(oid) && seen.insert(oid) {
                     to_parse.push((at, oid.clone(), root.join(rel)));
                 }
             }
@@ -2223,7 +2273,7 @@ fn index_stdlib(
     stdlib: &crate::gems::stdlib::Stdlib,
     // `None` when the store holds it already (`plan_gems`).
     files: Option<scan::Files>,
-    known: &mut Option<HashSet<Oid>>,
+    known: &mut Option<Known>,
     pool: &rayon::ThreadPool,
     profile: &mut Option<profile::Profile>,
 ) -> anyhow::Result<StdlibReport> {

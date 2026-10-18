@@ -14787,3 +14787,32 @@ and the pages a collection frees are reused by the next index.
 stamp missed a path that unmaps), or a switch back after collection is
 measured costing more than a reindex is worth — then the default goes up
 before anything else changes.
+
+### Addendum (0.9.6 hunt): an index decides what is known under the write lock
+
+An index read every blob the store held (`blob_oids`) before `write` took
+the write lock. A collection that deleted one of them in between — a
+version the index was switching back to — left the write a blob it had
+neither in the store nor parsed: "Query returned no rows", exit 74
+(reproduced with a held `BEGIN IMMEDIATE` and a delete). Older than this
+decision — a query's draft was collectable — but a retention makes it
+likelier: every version past it is collectable, a switch back is exactly
+what wants one, and a pass now runs for seconds.
+
+- The index takes the lock before it diffs against the known set, so what
+  it skips is what the store holds when it writes. The set is still loaded
+  once per index; under the lock it is reloaded only when `PRAGMA
+  data_version` says another process committed since — a collection, or
+  any writer, this binary or an older one. A bundle's gems already wrote
+  inside one transaction; they check the same way.
+  - Rejected: catching the failed lookup and retrying. The parse streams
+    into the write, so the retry starts over, and nothing stops the next
+    batch of the collection from deleting another known blob meanwhile.
+- The editor's save asked `has_blob`, then wrote without facts; a blob
+  deleted in between made the write a no-op and the editor answered from
+  the previous version. When that write maps nothing and the blob is gone,
+  the save's bytes are parsed and written with their facts.
+- A query's refresh (`cli/fresh.rs`) has the same window between
+  `has_blob` and its overlay; a blob gone by then fails the overlay, and the
+  query answers from the committed index and says the edits could not be
+  read. Disclosed, not wrong, and left as is.

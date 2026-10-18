@@ -109,20 +109,39 @@ fn refresh(
     let Ok(bytes) = crate::scan::read_source(&located.absolute) else {
         return Refreshed::Done;
     };
-    let oid = crate::scan::hash_blob(&bytes);
-    let known = session.store().has_blob(&oid).unwrap_or(false);
-    // Parse only a blob the store has never seen; the common save-after-undo
-    // is bytes it already has, which costs one hash.
-    let facts = (!known).then(|| crate::extract::extract_file(&relative, &bytes));
-    match session
-        .store_mut()
-        .refresh_file(&root, &relative, &oid, facts.as_ref())
-    {
+    let known = session
+        .store()
+        .has_blob(&crate::scan::hash_blob(&bytes))
+        .unwrap_or(false);
+    match save(session.store_mut(), &root, &relative, &bytes, known) {
         Err(error) if crate::store::is_busy(&error) => Refreshed::Busy,
         Err(error) if crate::store::is_schema_mismatch(&error) => {
             Refreshed::Refused(error.to_string())
         }
         Err(_) | Ok(_) => Refreshed::Done,
+    }
+}
+
+/// Map `relative` to `bytes`. Parsed only when the store had not got them as
+/// `known` said; the common save-after-undo is bytes it already has, which
+/// costs one hash. Bytes a collection deleted since `known` was asked are
+/// parsed after all, rather than the old version kept (DEC-651).
+fn save(
+    store: &mut crate::store::Store,
+    root: &str,
+    relative: &str,
+    bytes: &[u8],
+    known: bool,
+) -> rusqlite::Result<bool> {
+    let oid = crate::scan::hash_blob(bytes);
+    let parse = || crate::extract::extract_file(relative, bytes);
+    if !known {
+        return store.refresh_file(root, relative, &oid, Some(&parse()));
+    }
+    // Without facts, a blob gone from the store leaves the map as it was.
+    match store.refresh_file(root, relative, &oid, None)? {
+        false if !store.has_blob(&oid)? => store.refresh_file(root, relative, &oid, Some(&parse())),
+        written => Ok(written),
     }
 }
 
@@ -699,6 +718,33 @@ fn progress(token: &str, value: serde_json::Value) -> Message {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_save_whose_bytes_a_collection_deleted_is_parsed_after_all() {
+        let mut store = crate::store::Store::open_in_memory().unwrap();
+        let (v1, v2) = ("class Widget\nend\n", "class Widget\n  def go; end\nend\n");
+        assert!(save(&mut store, "/app", "w.rb", v1.as_bytes(), false).is_ok());
+        // `/app` has no checkout yet: index it, then save v2 and back.
+        let oid = crate::scan::hash_blob(v1.as_bytes());
+        let files = crate::scan::Files::from([("w.rb".to_string(), oid.clone())]);
+        store
+            .write(
+                "/app",
+                &files,
+                vec![(oid.clone(), crate::extract::extract(v1.as_bytes()))],
+                0,
+            )
+            .unwrap();
+        assert!(save(&mut store, "/app", "w.rb", v2.as_bytes(), false).unwrap());
+        // v1 was known when asked, and collected before the write.
+        store.delete_blob_for_test(&oid);
+        assert!(save(&mut store, "/app", "w.rb", v1.as_bytes(), true).unwrap());
+        assert_eq!(
+            store.file_map("/app").unwrap()["w.rb"],
+            oid.0,
+            "the save's bytes"
+        );
+    }
 
     fn mark(read: u64, of: u64, uncounted: bool) -> crate::store::Warming {
         crate::store::Warming {

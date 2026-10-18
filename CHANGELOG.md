@@ -22,6 +22,13 @@
 - `--status` reports what is kept (`storage.retained`: `blobs`, `lines`,
   `expired`, `retention`); `--gc` reports `retention` and, among its
   `blobs`, the `expired` ones.
+- **An index no longer fails when a collection runs beside it.** An index
+  that found a file's version known, then waited for the write lock while
+  `--gc` or the background cleanup deleted that version, failed "Query
+  returned no rows" (exit 74). It now decides what is known once it holds
+  the lock, and reads such a file again. An editor's save of a version a
+  collection had just deleted kept the file's previous version until the
+  next save; it is now parsed.
 
 ## 0.9.5 — 2026-10-17
 
