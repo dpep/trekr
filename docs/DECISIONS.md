@@ -7213,8 +7213,9 @@ statement. `INSERT OR REPLACE` may delete a row as well as insert one, so
 inside a transaction SQLite opens a statement journal for it, and releasing
 that journal costs in proportion to what the transaction has already written
 — nothing on a fresh store, ~1.8 ms a file after a 50k-file write. A plain
-`INSERT` or single-row `UPDATE` opens none. The write already knew which
-paths were new: it reads the stored map to diff it.
+`INSERT` opens none. (A single-row `UPDATE` of `blob_id` does open one —
+the addendum below; an edited path is now deleted and inserted.) The write
+already knew which paths were new: it reads the stored map to diff it.
 
 A 50k-file load (c100k below, its other 50k already known) into a store of
 50k, a clone of the same store per run, two interleaved rounds, load 7:
@@ -7235,6 +7236,33 @@ index's maps, its gems' included, take 0.11 s. Store size is unchanged
 an edit, a rename and an addition, must equal a fresh write of the second
 map, surface key included. It covers both statements. The gold sets, the
 `--refs` differential, `--dead` and the clicks are unchanged (DEC-192).
+
+### Addendum (0.9.8): an edited path is deleted and inserted, not updated
+
+"A single-row `UPDATE` opens none" was wrong. With `foreign_keys=ON` an
+`UPDATE` of `file.blob_id` checks the key by a counter the statement must be
+able to undo, so `EXPLAIN` says `usesStmtJournal=1`; the `INSERT` and the
+`DELETE` say 0. The 50k-file load above was nearly all inserts, so it never
+showed. A branch switch is nearly all updates, after a parse's facts. Timed
+around the statement (load 20–27): rails v8.1.0 → v7.1.0 updated 1,792 paths
+in 383 ms of a 410 ms map, and v8.1.0 → v5.0.0 1,933 in 614 ms of 660, under
+the write lock. Switching back to versions
+already known writes no facts, and 2,168 updates took 17 ms; a one-file edit's
+single update costs nothing measurable. So the cost is the switch's.
+
+An edited path is now a `DELETE` then an `INSERT`, both journal-free, in the
+same savepoint: a missing blob still fails the write, as the `UPDATE` did.
+Rejected: `PRAGMA defer_foreign_keys` (the `UPDATE` still compiles with a
+journal), an upsert and `INSERT OR REPLACE` (both journal), writing blobs
+first (the flag is decided at compile time, not by whether the key can fail),
+and an `EXPLAIN`-based test (the bundled SQLite has no `EXPLAIN` comments).
+
+Six interleaved rounds, a fresh store each, load 13–18, `file-map` medians
+(range): v8.1.0 → v7.1.0 360 (241–1,553) → **40 ms** (28–90); the switch back
+34 → 27 ms; a one-file edit 5 → 5 ms. Two rounds at load 9, v8.1.0 → v5.0.0:
+`file-map` 197–273 → 24 ms, the whole index 1.14–1.27 → 0.89–0.92 s. The map,
+the keys and the stamped blobs after every step are identical to the previous
+build's.
 
 ## DEC-192 — Every index prepares the tree snapshot (DEC-065 revisited)
 

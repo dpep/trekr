@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- A large branch switch holds the write lock for less time again: recording
+  the files the switch changed took 0.2–0.4 s on rails, and now takes tens of
+  milliseconds, so editor saves and other indexes wait less behind it.
+
 ## 0.9.7 — 2026-10-18
 
 - A large branch switch holds the write lock about as briefly as 0.9.5 did.

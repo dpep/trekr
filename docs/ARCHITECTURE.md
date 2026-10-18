@@ -1750,9 +1750,11 @@ written with `INSERT OR REPLACE`, and inside a transaction SQLite gives any
 statement that may delete as well as insert its own statement journal, whose
 release costs in proportion to what the transaction already wrote. Nothing
 on a fresh store; 1.8 ms a file after a 50k-file write, which made the map
-181 s of a 245 s index. A new path is an `INSERT` and an edited one an
-`UPDATE` now, and neither opens one. `--index --profile` shows the map, the
-index rebuild and the commit as phases of their own for this reason.
+181 s of a 245 s index. An `UPDATE` of `file.blob_id` opens one too — it
+checks the foreign key by a counter — so a new path is an `INSERT`, and an
+edited one a `DELETE` and an `INSERT`; none of those opens one. `--index
+--profile` shows the map, the index rebuild and the commit as phases of their
+own for this reason.
 
 **The query planner needs statistics, and this is not optional.** Without them
 SQLite plans `--refs` as a nested scan of the checkout's files: `--refs new` on

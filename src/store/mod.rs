@@ -789,14 +789,14 @@ impl Store {
             let mut ids: HashMap<&Oid, (i64, Digests)> = HashMap::new();
             let mut lookup =
                 tx.prepare("SELECT id, surface, namespace FROM blob WHERE oid = ?1")?;
-            // An insert for a new path and an update for an edited one, not
-            // `INSERT OR REPLACE`: a statement that may delete as well as
-            // insert opens a statement journal inside the savepoint, and its
-            // cost grows with everything the transaction already wrote (DEC-191).
+            // An edited path is deleted and inserted again, never `UPDATE`d or
+            // `INSERT OR REPLACE`d: either opens a statement journal inside the
+            // savepoint — the update checks `blob_id`'s foreign key by a counter
+            // — and its release costs in proportion to what the transaction
+            // already wrote (DEC-191). `EXPLAIN` shows it as `usesStmtJournal`.
             let mut insert =
                 tx.prepare("INSERT INTO file (checkout_id, path, blob_id) VALUES (?1, ?2, ?3)")?;
-            let mut update =
-                tx.prepare("UPDATE file SET blob_id = ?3 WHERE checkout_id = ?1 AND path = ?2")?;
+            let mut delete = tx.prepare("DELETE FROM file WHERE checkout_id = ?1 AND path = ?2")?;
             // Mapped, a blob is no longer unmapped: its stamp goes, and a
             // later write that unmaps it stamps it afresh (DEC-651).
             loose_blob(&tx)?;
@@ -817,11 +817,10 @@ impl Store {
                                 Ok((r.get::<_, i64>(0)?, Digests(r.get(1)?, r.get(2)?)))
                             })?,
                         };
-                        let row = params![checkout_id, path, found.0];
-                        match was {
-                            Some(_) => update.execute(row)?,
-                            None => insert.execute(row)?,
-                        };
+                        if was.is_some() {
+                            delete.execute(params![checkout_id, path])?;
+                        }
+                        insert.execute(params![checkout_id, path, found.0])?;
                         if loose {
                             adopt.execute(params![found.0])?;
                         }
@@ -844,8 +843,6 @@ impl Store {
                 }
             } else {
                 // What is left was stored and is no longer in the checkout.
-                let mut delete =
-                    tx.prepare("DELETE FROM file WHERE checkout_id = ?1 AND path = ?2")?;
                 for (path, (old, _, _)) in &stored {
                     delete.execute(params![checkout_id, path])?;
                     replaced.push(*old);
