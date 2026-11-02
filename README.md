@@ -90,16 +90,16 @@ it ends. Every status, exit code and JSON field is described in
 ### On rails
 
 A bare name lists every mention — definitions, and calls with the owner they
-resolve to, or the receiver's shape when they don't. `find_each` has 28 in
+resolve to, or the receiver's shape when they don't. `find_each` has 33 in
 rails; five of them:
 
 ```console
 $ trekr --refs find_each
-activerecord/lib/active_record/destroy_association_async_job.rb:28:82  call        other
+activerecord/lib/active_record/destroy_association_async_job.rb:30:82  call        other
 activerecord/lib/active_record/querying.rb:24:14  definition  method
 activerecord/lib/active_record/relation/batches.rb:85:9  definition  method
-activerecord/test/cases/batches_test.rb:20:12  call        ActiveRecord::Querying
-activerecord/test/cases/batches_test.rb:562:33  call        local incorrectly_sorted_orders
+activerecord/lib/active_record/relation/batches.rb:91:19  call        symbol
+activerecord/test/cases/batches_test.rb:25:12  call        ActiveRecord::Querying
 ```
 
 Name the owner and the same sites come back tiered by whether they can reach
@@ -108,11 +108,12 @@ Name the owner and the same sites come back tiered by whether they can reach
 ```console
 $ trekr --refs 'ActiveRecord::Batches#find_each'
 activerecord/lib/active_record/relation/batches.rb:85:9  definition
-activerecord/test/cases/batches_test.rb:20:12  confirmed  the receiver's class delegates this to a value whose type runs it
+activerecord/test/cases/batches_test.rb:25:12  confirmed  the receiver's class delegates this to a value whose type runs it
 ...
-activerecord/lib/active_record/destroy_association_async_job.rb:28:82  possible   untyped receiver, enclosing class shares a namespace with the owner
+activerecord/lib/active_record/destroy_association_async_job.rb:30:82  possible   untyped receiver, enclosing class shares a namespace with the owner
 ...
-13 confirmed, 13 possible, 0 excluded of 26 same-name call sites
+17 confirmed, 10 possible, 2 excluded of 29 same-name call sites
+  excluded: 2 resolve to a different owner, 0 define no such name, 0 wrong arity
 ```
 
 `--def` reparses the one file with Prism, then walks Ruby's own
@@ -120,13 +121,13 @@ constant-lookup ladder — enclosing lexical scopes, then the innermost scope's
 ancestors, then the top level:
 
 ```console
-$ trekr --def activerecord/lib/active_record/relation.rb:68:70
+$ trekr --def activerecord/lib/active_record/relation.rb:69:70
 activerecord/lib/active_record/relation/batches.rb:7:10  ActiveRecord::Batches
 
 $ trekr --ancestors ActiveRecord::Relation | head -3
-ActiveRecord::Relation::RecordFetchWarning
 ActiveRecord::Relation
 ActiveRecord::TokenFor::RelationMethods
+ActiveRecord::SignedId::RelationMethods
 ```
 
 A column on no name — whitespace, punctuation, most strings — answers for the
@@ -255,14 +256,14 @@ site is sorted by whether its receiver can actually reach it:
 
 ```console
 $ trekr --refs 'ActiveRecord::ConnectionHandling#lease_connection'
-activerecord/lib/active_record/connection_handling.rb:269:9  definition
+activerecord/lib/active_record/connection_handling.rb:317:9  definition
 actioncable/test/subscription_adapter/postgresql_test.rb:26:26  confirmed  the receiver's type resolves here
-actioncable/test/subscription_adapter/postgresql_test.rb:71:38  confirmed  the receiver's type resolves here
+actioncable/test/subscription_adapter/postgresql_test.rb:97:38  confirmed  the receiver's type resolves here
 ...
-activerecord/lib/active_record/connection_handling.rb:270:23  possible   untyped receiver, but the enclosing class inherits from the owner
+activerecord/lib/active_record/connection_handling.rb:318:23  possible   untyped receiver, but the enclosing class inherits from the owner
 ...
-1027 confirmed, 81 possible, 87 excluded of 1195 same-name call sites
-  excluded: 56 resolve to a different owner, 31 define no such name, 0 wrong arity
+1088 confirmed, 123 possible, 57 excluded of 1268 same-name call sites
+  excluded: 54 resolve to a different owner, 3 define no such name, 0 wrong arity
 ```
 
 - **Confirmed**: the receiver's type resolves, and Ruby's own lookup from it
@@ -287,7 +288,7 @@ it for, with `from` — `group`, `nested_group`, `enclosing_group`,
 definition or a call of it, the method's references as above. The editor's
 Find References on a `let` gives the same list.
 
-`rg -w lease_connection` returns 1,237 lines in rails — the 1,195 call sites
+`rg -w lease_connection` returns 1,320 lines in rails — the 1,268 call sites
 plus the comments — with no way to tell them apart. `Widget.save` and
 `Widget#save` are different questions and answer differently.
 
