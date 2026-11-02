@@ -287,8 +287,9 @@ measurements behind the grading. Fields per row:
 - `tier`, and a `reason` in words. A `test-only` method's reason counts its
   references, every one written in a test, and names the first.
 - `confidence`: `clear`, or `lower` with a `caveat` naming what may still
-  reach it. Every spec-member row is `lower`; every class, module and
-  constant row is `lower` unless it is `convention-only`.
+  reach it. Every spec-member row is `lower`; a class, module or constant
+  row is `lower` when the checkout looks up a name computed at runtime that
+  could reach it, or a caveat of its own applies (DEC-654).
 - `overridden_by` (`shadowed`), `overrides` (`override`; any other tier that
   overrides a method is graded `lower`), `super_from` (`super-only`),
   `convention.by` (`convention-only`), `caller` with its own `tier`

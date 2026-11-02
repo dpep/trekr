@@ -97,17 +97,18 @@ struct Cli {
     /// evidence of use to the most: `unreferenced` (no call, symbol or
     /// `super` names it), `shadowed` (every call of its name lands on an
     /// override, a subclass's or a nested group's, `overridden_by`),
-    /// `test-only` (a class only tests name), `override` (none
+    /// `test-only` (only tests reach it: a method only they call, a class
+    /// only they name), `override` (none
     /// does, but it overrides an ancestor's method, so a call of that may run
     /// it), `convention-only` (named only by a symbol handed to a macro, a
     /// route, or a name Rails or a library looks a class up by),
     /// `super-only` (reached only by `super` from its overrides), and
     /// `single-caller` (one call: the inlining candidate). Each is `clear`, or
-    /// `lower` confidence — a class, module or constant always, unless a
-    /// convention names it, as one is not reliably unused — or when its
-    /// `caveat` names a caller trekr cannot see —
-    /// the file sends names dynamically, the one caller's receiver is
-    /// untyped, it overrides a method, a view or a gem names it, the checkout
+    /// `lower` confidence when its `caveat` names a way in trekr cannot see
+    /// — for a class, module or constant, a name the checkout computes and
+    /// looks up at runtime; for any row, the file sends names dynamically,
+    /// the one caller's receiver is untyped, it overrides a method, a view, a
+    /// script or a gem names it, the checkout
     /// builds a name of its shape, an ancestor is not indexed. One pass: a
     /// method whose only caller is itself a candidate is `single-caller`, and
     /// its reason says so.
