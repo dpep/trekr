@@ -183,6 +183,17 @@ impl Gems {
         marks
     }
 
+    /// Is the constant assigned at `path:line` a deprecated proxy for a
+    /// class, kept for its old callers (Active Support's
+    /// `DeprecatedConstantProxy.new`)?
+    pub(super) fn deprecated_proxy(&mut self, path: &str, line: u32) -> bool {
+        let lines = self.lines(path);
+        (line as usize)
+            .checked_sub(1)
+            .and_then(|at| lines.get(at))
+            .is_some_and(|text| code(text).contains("DeprecatedConstantProxy.new"))
+    }
+
     /// The bare visibility toggle in force at the `def` at `path:line`: the
     /// nearest `private`, `protected`, `public` or `module_function` line
     /// above it at its own indentation, within its body. Ruby ends

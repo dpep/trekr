@@ -30,7 +30,9 @@
     such as minitest has no gemspec until release), unless its author marks it internal
     (`:nodoc:`, `@api private`, `@private`, `Internal:`, a leading underscore,
     `private_constant`; a YARD tag opening a comment line, a TomDoc status
-    its first). Not a value constant, nor an app's own engine.
+    its first). A constant naming a class or module (`Worker = Job`, a
+    `DeprecatedConstantProxy`) counts; a value constant does not, nor an
+    app's own engine.
     A `:nodoc:` covers its own class and the methods its body defines, as
     RDoc reads it, so Rails' `module ActiveSupport # :nodoc:` hides
     nothing nested in it; `:nodoc: all` and `@api private` cover what

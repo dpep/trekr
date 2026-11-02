@@ -15913,3 +15913,23 @@ extractor's; not fixed here, being a store change). rubocop: 4 rows lose
 `#frozen_heredoc?`, `#frozen_string_literals_disabled?`,
 `Cop::Util#compatible_external_encoding_for?`. Every other corpus: no row
 moves. Testbed 744.
+
+**A constant naming a class or module is API** (the owner's decision).
+DEC-657 dropped value constants as rarely API, and an alias kept for
+compatibility fell with them: rubocop's `IgnoredMethods = AllowedMethods`,
+which custom cops include; Rails' `LoadInterlockAwareMonitor =
+DeprecatedConstantProxy.new(...)`. A user writes such a name as a class's.
+Kept narrow: a constant whose value the tree follows to a class or module
+(`Tree::namespace_named`, the alias chain `Bar = Foo` resolution already
+walks), or whose line calls `DeprecatedConstantProxy.new`; any other value
+stays a value constant. Measured: rails 5 rows gain `api`
+(`ActionDispatch::Response::Header = Headers`,
+`ConnectionAdapters::PostgreSQLTypeMetadata`, `LoadInterlockAwareMonitor`,
+top-level `HashWithIndifferentAccess`, `ActiveSupport::TestCase::Assertion
+= Minitest::Assertion`; 1 `clear` → `lower`), rubocop 2 (`IgnoredMethods`,
+`IgnoredPattern`; 1), sidekiq 2 (`Sidekiq::Worker = Job`, `Workers =
+WorkSet`; 0), rack 4 (`Utils::ParameterTypeError` and its kin, aliases of
+`QueryParser`'s; 0), faraday 1 (`UnprocessableEntityError`; 0): all 14 are
+compatibility names, read by hand. sidekiq's `JobWrapper`, named in the
+hunt, carries `@api private` and stays internal. Every other corpus: no
+row moves. Testbed 745.

@@ -525,8 +525,11 @@ pub(super) fn dead_constants(
                 Some(EntryPoint::Job)
             }
             // A value constant nothing names is rarely another gem's to read:
-            // hand-checked, few were API (DEC-657).
-            _ if *kind != DeadKind::Constant
+            // hand-checked, few were API (DEC-657). One naming a class is a
+            // name kept for its users (`IgnoredMethods = AllowedMethods`).
+            _ if (*kind != DeadKind::Constant
+                || tree.namespace_named(fqn).is_some_and(|named| named != *fqn)
+                || gems.deprecated_proxy(path, *line))
                 && gems.in_gem_lib(root, path)
                 && !gems.internal_constant(tree, &root_str, fqn) =>
             {

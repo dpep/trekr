@@ -1,0 +1,8 @@
+# rubocop keeps `IgnoredMethods = AllowedMethods` for the custom cops that
+# include it, sidekiq `JobWrapper = Sidekiq::ActiveJob::Wrapper` for jobs
+# already queued under it, Rails `LoadInterlockAwareMonitor =
+# DeprecatedConstantProxy.new(...)` for its old callers: public names a
+# user writes, read as value constants and never API. A constant that
+# names a class or module, or a deprecated proxy for one, is API; a value
+# constant still is not (DEC-657).
+dead lib Widget::IgnoredMethods=unreferenced~dependents Widget::LoadMonitor=convention-only~dependents Widget::LIMIT=unreferenced~
