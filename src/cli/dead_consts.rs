@@ -49,12 +49,22 @@ impl Uses {
     }
 }
 
-/// A spec or a test, by a directory on its path.
+/// A spec or a test, by a directory on its path relative to the checkout:
+/// what `--dead` counts as a test's reference, and never as a way in.
 pub(super) fn in_tests(path: &str) -> bool {
-    path.split('/')
-        .rev()
-        .skip(1)
-        .any(|dir| matches!(dir, "spec" | "test" | "tests"))
+    set_apart(path, &["spec", "test", "tests"])
+}
+
+/// A database's migrations and seeds, by a directory on its path relative to
+/// the checkout: run by file name, so no name built there is a way in and no
+/// constant declared there a candidate.
+pub(super) fn in_db(path: &str) -> bool {
+    set_apart(path, &["db"])
+}
+
+/// Whether a directory on `path`, the file's name aside, is one of `dirs`.
+fn set_apart(path: &str, dirs: &[&str]) -> bool {
+    path.split('/').rev().skip(1).any(|dir| dirs.contains(&dir))
 }
 
 /// `A::B::C` and each namespace above it: `A::B`, `A`.
@@ -110,7 +120,7 @@ fn declared_in(
             continue;
         }
         let relative = &site.path[prefix.len()..];
-        if relative.starts_with("db/") || relative.contains("/db/") {
+        if in_db(relative) {
             continue;
         }
         found.push(Declared {
@@ -590,6 +600,9 @@ mod tests {
     fn a_spec_directory_anywhere_makes_a_test() {
         assert!(in_tests("spec/models/widget_spec.rb"));
         assert!(in_tests("plugins/chat/spec/x_spec.rb"));
+        assert!(in_tests("plugins/chat/test/x.rb"));
         assert!(!in_tests("app/models/spec.rb"));
+        assert!(in_db("db/migrate/20240101_add_score.rb"));
+        assert!(!in_db("app/models/db.rb"));
     }
 }

@@ -11,6 +11,7 @@
 //! Evidence of a way in, never of a caller, so a row it touches keeps its
 //! tier and is graded `lower`.
 
+use super::dead_consts::{in_db, in_tests};
 use crate::core::ruby::SENDS;
 use crate::tree::Tree;
 use rayon::prelude::*;
@@ -105,7 +106,9 @@ impl Texts {
             .split(|b| *b == 0)
             .filter(|p| !p.is_empty())
             .map(|path| String::from_utf8_lossy(path).into_owned())
-            .filter(|path| wanted(path) && !is_test(path) && !path.contains("/locales/"))
+            .filter(|path| {
+                wanted(path) && !in_tests(path) && !in_db(path) && !path.contains("/locales/")
+            })
             .collect();
         let files = paths
             .into_par_iter()
@@ -267,16 +270,6 @@ impl Built {
             "its module's methods are listed at runtime ({constant}.{call} at {path}:{line})"
         ))
     }
-}
-
-/// A spec, a test, or a database migration.
-pub(super) fn is_test(path: &str) -> bool {
-    path.starts_with("db/")
-        || path
-            .split('/')
-            .rev()
-            .skip(1)
-            .any(|dir| matches!(dir, "spec" | "test"))
 }
 
 /// The shapes of a line's `:"…#{…}…"` symbols that start with three name
@@ -601,13 +594,5 @@ mod tests {
             "# Mailer.public_send(type)\n  # :\"report_#{type}\"\n  # send(\"list_#{x}\")\n",
         );
         assert!(built.shapes.is_empty() && built.sent_to.is_empty() && sendings.is_empty());
-    }
-
-    #[test]
-    fn a_spec_or_test_directory_is_a_test() {
-        assert!(is_test("spec/models/widget_spec.rb"));
-        assert!(is_test("plugins/chat/test/x.rb"));
-        assert!(is_test("db/migrate/20240101_add_score.rb"));
-        assert!(!is_test("app/models/spec.rb"));
     }
 }

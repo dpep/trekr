@@ -73,7 +73,7 @@ impl Routes {
         for path in out.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
             let path = String::from_utf8_lossy(path).into_owned();
             // A dummy app's routes are a test's (`spec/dummy`, `test/dummy`).
-            if super::built::is_test(&path) {
+            if super::dead_consts::in_tests(&path) {
                 continue;
             }
             routes.concerns.clear();
