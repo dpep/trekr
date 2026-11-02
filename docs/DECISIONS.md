@@ -14975,6 +14975,18 @@ counts (flipper, rspec-core), as an example's reference counts as a use;
 one `Kernel.const_get` of an inspected exception's name lowers 169 of
 rubocop's rows.
 
+### Fix round: what the lookup reader reads
+
+Found by a hunt on the unreleased rule; each testbed case fails without its
+fix. Rows moved are `--dead app lib` on discourse and mastodon and `--dead
+lib` on addressable, connection_pool, redis-client, rack-test, twirp and
+the gems measured above.
+
+- **A namespace bounds a shape however short its name.** `"UI::#{x}".constantize`
+  (`V1::`, `IO::`) was read as a name computed whole, since the shape wrote
+  fewer than three name characters; a whole namespace segment bounds it as
+  `Jobs::*` does. Testbed 680. No row moved on any corpus.
+
 ## DEC-653 — A block evaluated in a class named by a bare constant defines that class's methods, wherever it is written
 
 Amends DEC-086's "a bare, single-segment constant inside another scope is

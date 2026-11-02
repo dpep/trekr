@@ -1,0 +1,4 @@
+# `"UI::#{type}".constantize` reaches UI's constants only: a namespace
+# bounds a shape however short its name. Read as a name computed whole, it
+# lowered Tools::LIMIT too (DEC-654).
+dead lib UI::Button=unreferenced~UI::* Tools::LIMIT=unreferenced~ Runner=unreferenced~

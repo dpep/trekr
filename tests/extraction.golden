@@ -718,6 +718,9 @@ ruby tests/testbed/670-a-super-in-a-define-method-block-is-the-defined-methods/l
 ruby tests/testbed/670-a-super-in-a-define-method-block-is-the-defined-methods/spec/widget_spec.rb bc8208295aa4a514
 ruby tests/testbed/671-a-name-a-ruby-script-writes-is-no-test-only-method/lib/tool/cli.rb 53ac1de763bc3b2a
 ruby tests/testbed/671-a-name-a-ruby-script-writes-is-no-test-only-method/spec/cli_spec.rb a0800e4a7db99a9a
+ruby tests/testbed/680-a-two-letter-namespace-bounds-a-built-shape/lib/runner.rb a8321c0fe36cfe05
+ruby tests/testbed/680-a-two-letter-namespace-bounds-a-built-shape/lib/tools.rb 389eaadcf9746b3c
+ruby tests/testbed/680-a-two-letter-namespace-bounds-a-built-shape/lib/ui.rb ebe80ab5696c396e
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/alias.rb f49a22486d2a111b
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/gem.rb a48ad81018869404
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/inherited.rb 12d09cef784af61a

@@ -462,7 +462,8 @@ fn is_route_path(text: &str) -> bool {
 }
 
 /// The shape a constantized string spells, `*` for each interpolation: none
-/// unless what is written names three characters of a constant.
+/// unless what is written names three characters of a constant, or a whole
+/// namespace (`UI::*`), which bounds it however short.
 fn shape_of(content: &str) -> Option<String> {
     let mut shape = String::new();
     let mut rest = content;
@@ -475,7 +476,10 @@ fn shape_of(content: &str) -> Option<String> {
     shape.push_str(rest);
     let shape = shape.strip_prefix("::").unwrap_or(&shape).to_string();
     let written = shape.chars().filter(|c| c.is_ascii_alphanumeric()).count();
-    (written >= 3
+    let namespace = shape
+        .split_once("::")
+        .is_some_and(|(head, _)| is_constant_path(head));
+    ((written >= 3 || namespace)
         && shape
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == ':' || c == '*'))
@@ -758,10 +762,10 @@ mod tests {
     fn a_constantized_interpolation_is_a_shape() {
         let named = read(
             "a.rb",
-            "\"::Jobs::#{name.camelize}\".constantize\n\"#{x}\".constantize\n",
+            "\"::Jobs::#{name.camelize}\".constantize\n\"#{x}\".constantize\n\"UI::#{x}\".constantize\n",
         );
         let shapes: Vec<&str> = named.shapes.iter().map(|(s, _)| s.as_str()).collect();
-        assert_eq!(shapes, ["Jobs::*"]);
+        assert_eq!(shapes, ["Jobs::*", "UI::*"]);
     }
 
     #[test]

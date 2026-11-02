@@ -117,3 +117,4 @@
 669-a-test-directory-under-lib-or-app-is-production b54dd7c3b7652949
 670-a-super-in-a-define-method-block-is-the-defined-methods 689089ad73529b65
 671-a-name-a-ruby-script-writes-is-no-test-only-method 6f0c306113d94a15
+680-a-two-letter-namespace-bounds-a-built-shape ae8e27f0a29e82ed
