@@ -148,159 +148,30 @@ never a silent guess. Every answer carries `status`, `confidence`, and
 
 ```console
 $ trekr --dead activerecord/lib/active_record/associations
-override         activerecord/lib/active_record/associations/collection_proxy.rb:1123  ActiveRecord::Associations::CollectionProxy#pretty_print  — no call names it, but it overrides ActiveRecord::Relation#pretty_print, so a call of that may run it   (lower confidence: a hook `pp` calls by name)
-single-caller    activerecord/lib/active_record/associations/preloader/association.rb:32  ActiveRecord::Associations::Preloader::Association::LoaderQuery#load_records_in_batch  — one possible call, at activerecord/lib/active_record/associations/preloader/batch.rb:42: its receiver is untyped; its caller, group_and_load_similar, is itself a candidate   (lower confidence: untyped caller)
-convention-only  activerecord/lib/active_record/associations/association.rb:198  ActiveRecord::Associations::Association#marshal_dump  — named only by a symbol handed to a macro (3)   (lower confidence: send, a hook Marshal calls by name)
-super-only       activerecord/lib/active_record/associations/belongs_to_association.rb:76  ActiveRecord::Associations::BelongsToAssociation#target_changed?  — reached only by `super` from ActiveRecord::Associations::BelongsToPolymorphicAssociation   (lower confidence: send, public_send)
+override         activerecord/lib/active_record/associations/collection_proxy.rb:1210  ActiveRecord::Associations::CollectionProxy#pretty_print  — no call names it, but it overrides ActiveRecord::Relation#pretty_print, so a call of that may run it   (lower confidence: a hook `pp` calls by name)
+single-caller    activerecord/lib/active_record/associations/preloader/association.rb:33  ActiveRecord::Associations::Preloader::Association::LoaderQuery#load_records_in_batch  — one possible call, at activerecord/lib/active_record/associations/preloader/batch.rb:49: its receiver is untyped; its caller, group_and_load_similar, is itself a candidate   (lower confidence: untyped caller)
+convention-only  activerecord/lib/active_record/associations/association.rb:212  ActiveRecord::Associations::Association#marshal_dump  — named only by a symbol handed to a macro (1)   (lower confidence: send, a hook Marshal calls by name)
+super-only       activerecord/lib/active_record/associations/belongs_to_association.rb:104  ActiveRecord::Associations::BelongsToAssociation#target_changed?  — reached only by `super` from ActiveRecord::Associations::BelongsToPolymorphicAssociation   (lower confidence: public_send)
 …
 
-136 candidates in 33 file(s): 6 unreferenced, 3 override, 7 convention-only, 2 super-only, 118 single-caller (53 clear, 83 lower)
+149 candidates in 34 file(s): 8 unreferenced, 1 test-only, 3 override, 7 convention-only, 2 super-only, 128 single-caller (50 clear, 99 lower)
 ```
 
-The tiers, from least evidence of use to most:
+It lists methods, then a spec's `let`s, `subject`s, group `def`s and shared
+groups, read the way RSpec runs them, then classes, modules and constants.
+Each row is in one tier, from least evidence of use to most —
+`unreferenced`, `shadowed` (every call lands on an override), `test-only`,
+`override`, `convention-only` (only a macro symbol, a route or a library's
+naming convention reaches it), `super-only`, `single-caller` — and is
+`clear` or `lower` confidence. A `lower` row's `caveat` names the way in
+trekr cannot see: a Haml view, an extensionless script, a name built at
+runtime, a hook Ruby calls by name, an unindexed ancestor, a gem. A row
+reached from outside the repo — a gem's public API, a routed action, a
+job — says so (`entry_point`) and is always `lower`. Every spec-member row
+is `lower` too: run the spec file after deleting one.
 
-- `unreferenced` — nothing names it.
-- `shadowed` — names it, but every such call lands on an override: a
-  subclass's, for a method; a nested group's, for a `let` (`overridden_by`).
-- `test-only` — a method only specs and tests call, or a class, module or
-  constant only they name.
-- `override` — nothing names it, but it overrides an ancestor's method, so
-  whatever calls that one (often the framework) may run it.
-- `convention-only` — named only by a symbol handed to a macro
-  (`before_action :x`, `if: :x`, `with: :x`), a controller action only a
-  route reaches (`config/routes.rb` is read), or a method a library calls by
-  a name it builds: ActiveModel::Serializers' `include_<attr>?`, a Thor
-  command (`convention` in JSON says which).
-- `super-only` — reached only by `super` from its overrides.
-- `single-caller` — one reference: an inlining candidate. `caller` in JSON
-  says where, and whether it certainly reaches the method.
-
-Each row is `clear` or `lower` confidence, and says why in words. It is one
-pass and does not cascade: a method whose only caller is itself a candidate
-is `single-caller`, and its reason says so. Three callers trekr cannot see
-grade a row `lower` and are named in `caveat`: a Haml, Slim, Jbuilder or
-Builder template that writes the name (ERB and RABL templates are read, and
-their calls counted), a Ruby script with no extension that does (`exe/tool`,
-`bin/x`: "named in a script … which is not read"), and Ruby or Rails calling
-a protocol hook by name
-— `marshal_load`, `to_partial_path`, `each`, `perform`, … (DEC-315). So
-does a symbol in the method's own file that trekr does not read as a call
-(`only: [:archive]`), and a controller action when a route is built at
-runtime (DEC-343, DEC-344). And every other way in the row can name: a name
-of its shape the checkout builds (`:"report_#{type}"`, or a string its class
-is sent, `Q.new.public_send("list_#{kind}")`; DEC-655) or a computed name
-sent to its class (`Mailer.public_send(type)`), a writer `assign_attributes` reaches, an
-ancestor trekr has not indexed, a gem of the bundle that calls the name, a
-helper another helper calls (DEC-363–368, DEC-370), a YAML config that
-writes the name (`generator: pay_schedule_resources`,
-`Pkg::Sanitizer.clean_uid`; locale files aside, DEC-402), and a file a
-generator wrote (`linguist-generated`, a `generated/` directory, a "DO NOT
-EDIT" header; DEC-403).
-
-`clear` on an `unreferenced` row means none of those was found. Measured by
-hand on mastodon and discourse (DEC-372), such rows were truly dead 79 % and
-100 % of the time where the rules were fitted, and 89 % on discourse rows
-held out; on forem, an app no rule was fitted on, 55 of 70 (79 %) — a
-Pundit, an algoliasearch callback, a serializer block made most of the
-rest (DEC-450). On code unlike an app's (`lib/`), less — read DEC-372 before
-trusting it on a CLI or a library.
-
-**A method every call, symbol and `super` of which is written in a test**
-is `test-only`, however many there are; the reason says how many and where
-the first is, and `test_refs` in JSON counts them. A test is a file under a
-`spec/`, `test/` or `tests/` directory at the checkout's root or a nested
-package's (`plugins/chat/spec/`), not one inside `lib/` or `app/`
-(rack-test's library is `lib/rack/test/`). A route, a library's convention,
-an override, a `super` into a method trekr has not indexed, a protocol hook,
-or a script that writes the name outranks the tests: such a method keeps the
-tier it would have without them. A spec's own helper is never `test-only`. Graded
-as the other method tiers are: measured by hand on mastodon and discourse
-(DEC-652), a `clear` one was reached only by tests 21 times in 26 (81 %),
-the misses all names built at runtime (`public_send("list_#{action}")`),
-which are now read (DEC-655); a `lower` one 7 in 25. On a library, a
-public `test-only` method is usually its API, so in a gem it is graded
-`lower` as an entry point (below).
-
-**A row reached from outside the repo** keeps its tier, is graded `lower`,
-and says what kind of entry point it is and what would settle it, with
-`entry_point` in JSON (DEC-657): a gem's public API — a public method,
-class or module in `lib/` of a checkout with a root `*.gemspec`, unless
-marked `:nodoc:`, `@api private` or `Internal:`, named with a leading
-underscore, or held by a `private_constant` ("confirm with its dependents
-or usage data"); a routed controller action, or a controller only routes
-name ("request logs or APM (e.g. Datadog)"); a job class nothing outside
-the tests names ("job metrics or logs"). An app's own public methods are
-not entry points: their callers are in the checkout. Hand-checked on six
-gems, 36 of 43 rows it moved from `clear` were API a user could call.
-
-**Classes, modules and constants** are listed after the methods, with
-`kind` in JSON (`class`, `module`, `constant`; a method's row says
-`method`), named by kind in text (`class Admin::Widget`). One is a candidate
-when no constant reference in the checkout resolves to it by Ruby's own
-lookup — the views and executable scripts read too. A reference to
-`Admin::Widget` is a use of `Admin`, which holds it; one inside its own body
-is not a use; a reopened core or gem class is no candidate, nor anything
-under the checkout's or a package's `db/`. A class only tests name is
-`test-only`, unless a test file defines it: then it is test code in use, and
-not listed (DEC-655). One Rails or a library
-finds by name is `convention-only`, `convention.by` saying who: a route, a
-helper, a concern's `ClassMethods`, a Railtie or generator, a policy,
-serializer or validator found by its name, a job built from a symbol
-(`"Jobs::#{name.camelize}".constantize` with `:send_digest`), an
-association, a YAML value or a class-lookup string, a test runner, a
-registry hook (DEC-421). Whatever may still reach it — a constant read on a
-value (`self.class::LIMIT`), a namespace whose constants are listed, a
-factory in an ancestor, an STI subclass, a gem's routes — is a `caveat`, and
-grades it `lower`. So does **a lookup of a name computed whole** anywhere
-in the checkout (`name.constantize`, `Object.const_get(x)`,
-`klass.const_get(x)`), which may return any constant; the caveat names
-where it is. A row with no such evidence is `clear` (DEC-654): on gems held
-out, an `unreferenced`, clear row was truly unused 25 times in 26, a
-`test-only` one 21 in 26. An app nearly always has such a lookup, so its
-rows stay `lower` — forem's were truly unused 19 times in 50 (DEC-450).
-Read a constant row as a lead to check, not a verdict.
-
-**An example group's `let`s, `subject`s and `def`s** are listed after the
-methods (`kind` `let`, `subject` or `method`, with the `group` they are
-written in), read the way RSpec runs them: by the group's examples and its
-nested groups', by a hook or `let` of an enclosing group (which runs for
-them, and reads a nested group's override where one runs), by a shared
-group's body included there — in another file, through `it_behaves_like`,
-`include_examples` or `include_context` — by `super` in an override, by
-`is_expected` and a bare `should` for the `subject`, and by what
-`RSpec.configure` adds — a helper it includes, a shared context it includes
-by metadata (`config.include_context "x", :tag`, or one written
-`shared_context "x", :tag`), a `config.before` hook — whose metadata filter
-is not read, so they may read any group's. `shadowed` is a member every read of whose name an override
-answers where the read runs — an outer `let` each running group redefines;
-`overridden_by` names them. **Every such row is `lower`** (DEC-496), and
-its `caveat` says why: a name sent at runtime in its reach
-(`send("item_#{n}")`), a group macro trekr does not read, a string of code
-it evaluates — or, with none of those, that held-out suites showed `clear`
-is not earned here. `let!` and `subject!` run for every example and are
-never listed.
-A shared group nothing includes by name is a row too (`kind:
-shared_group`), its own `let`s with it. `trekr --refs FILE:LINE` on any of
-them lists each read and where it was found (`from`), from the same reader.
-
-```console
-$ trekr --dead spec/models/public_feed_spec.rb
-shadowed         spec/models/public_feed_spec.rb:47  let(:viewer) in PublicFeed::Get::WithoutLocalOnlyOption  — every call of its name in reach runs an override instead: spec/models/public_feed_spec.rb:55, spec/models/public_feed_spec.rb:65
-…
-
-4 candidates in 1 file(s): 4 shadowed (4 clear, 0 lower); 4 of them example groups' lets, subjects, defs or shared groups
-```
-
-Measured against what ran (DEC-492 to DEC-496): mastodon's suite, with
-every `let`, `subject` and group `def` traced, then scored. Every `let` and
-`subject` row trekr listed never ran in a group that passed an example, and
-trekr listed 86 of the 96 `let`s that never did; 20 of 20 of discourse's
-rows, sampled and read by hand, were unused too. But each suite held out
-from the rules found a way in they did not yet read — a shared context
-included by metadata, a shared group written inside a module, a string
-`eval`ed — and a row with no caveat was truly unused 79 %, 47 % and 0.2 %
-of the time on three such batches before each was read. So every row is
-`lower`: run the spec file after deleting one.
+The tiers, the caveats, and the hand-checked measurements behind the
+grading are in [docs/OUTPUT.md](docs/OUTPUT.md#--dead).
 
 ### In a view
 

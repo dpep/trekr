@@ -304,35 +304,188 @@ locations means the list was cut.
 
 ## `--dead`
 
-Every method defined in scope, checked against references from the whole
+`--dead` grades candidates for deletion; it never calls anything dead. It
+checks every method defined in scope against references from the whole
 checkout (not other indexed repos, so the answer does not depend on them);
 then a spec's `let`s, `subject`s, group `def`s (`kind: let|subject|method`,
 with `group`) and shared groups (`kind: shared_group`); then every class,
 module and constant (`kind: class|module|constant`) no constant reference
-resolves to. The [README](../README.md#on-rails) has the tiers and the
-measurements behind the grading. Fields per row:
+resolves to.
 
-- `tier`, and a `reason` in words. A `test-only` method's reason counts its
-  references, every one written in a test, and names the first.
-- `confidence`: `clear`, or `lower` with a `caveat` naming what may still
-  reach it. Every spec-member row is `lower`; a class, module or constant
-  row is `lower` when the checkout looks up a name computed at runtime that
-  could reach it, or a caveat of its own applies (DEC-654); so is every
-  `entry_point` row.
-- `overridden_by` (`shadowed`), `overrides` (`override`; any other tier that
-  overrides a method is graded `lower`), `super_from` (`super-only`),
-  `convention.by` (`convention-only`), `caller` with its own `tier`
-  (`single-caller`; a `possible` caller grades the row `lower`).
-- `visibility` (`public`, `protected`, `private`): a private candidate's
-  evidence is complete, a public one's is not.
-- `entry_point`, when the row is reached from outside the repo, where no
-  caller can be seen (DEC-657): `api` (a public method, class or module
-  in a gem's `lib/`, the checkout having a root `*.gemspec`), `route` (a
-  routed controller action, or a controller only routes name) or `job` (a
-  job class no code outside the tests names). Absent otherwise. Such a row
-  keeps its tier, is graded `lower`, and its `caveat` names the evidence
-  that would settle it — dependents or usage data, request logs or APM, job
-  metrics or logs.
+Measured against a year of discourse's history, `unreferenced` candidates
+were deleted 19.8 % of the time against a 19.0 % base rate — no lift
+([BASELINE](BASELINE.md)). Hence the grading, and why trekr never says
+"dead".
+
+### Tiers
+
+From least evidence of use to most:
+
+- `unreferenced` — nothing names it.
+- `shadowed` — names it, but every such call lands on an override: a
+  subclass's, for a method; a nested group's, for a `let` (`overridden_by`).
+- `test-only` — a method only specs and tests call, or a class, module or
+  constant only they name.
+- `override` — nothing names it, but it overrides an ancestor's method
+  (`overrides`), so whatever calls that one (often the framework) may run it.
+- `convention-only` — named only by a symbol handed to a macro
+  (`before_action :x`, `if: :x`, `with: :x`), a controller action only a
+  route reaches (`config/routes.rb` is read), or a method a library calls by
+  a name it builds: ActiveModel::Serializers' `include_<attr>?`, a Thor
+  command (`convention.by` says which).
+- `super-only` — reached only by `super` from its overrides (`super_from`).
+- `single-caller` — one reference: an inlining candidate. `caller` says
+  where, with its own `tier`: whether it certainly reaches the method.
+
+One pass, no cascade: a method whose only caller is itself a candidate is
+`single-caller`, and its `reason` says the caller is a candidate. An
+`initialize` is reported only when nothing constructs its class.
+
+### Confidence and caveats
+
+Each row is `clear` or `lower` confidence, and says why in words; a `lower`
+row's `caveat` names what may still reach it. Any tier other than `override`
+that overrides a method is `lower`, and so is a `single-caller` row whose
+caller is `possible`.
+
+Three callers trekr cannot see grade a row `lower`: a Haml, Slim, Jbuilder
+or Builder template that writes the name ("named in a view (…), which is not
+read"; ERB and RABL templates are read, and their calls counted), a Ruby
+script with no extension (`exe/tool`, `bin/x`: "named in a script (…), which
+is not read"), and Ruby or Rails calling a protocol hook by name —
+`marshal_load`, `to_partial_path`, `each`, a job's `perform` ("a hook …
+calls by name"; DEC-315). So does a symbol in the method's own file that
+trekr does not read as a call (`only: [:archive]`), and a controller action
+when a route is built at runtime (DEC-343, DEC-344). And every other way in
+the row can name: a name of its shape the checkout builds
+(`:"report_#{type}"`, or a string its class is sent,
+`Q.new.public_send("list_#{kind}")`; DEC-655) or a computed name sent to its
+class (`Mailer.public_send(type)`), a writer `assign_attributes` reaches, an
+ancestor trekr has not indexed, a gem of the bundle that calls the name, a
+helper another helper calls (DEC-363–368, DEC-370), a YAML config that
+writes the name (`generator: pay_schedule_resources`,
+`Pkg::Sanitizer.clean_uid`; locale files aside, DEC-402), and a file a
+generator wrote (`linguist-generated`, a `generated/` directory, a "DO NOT
+EDIT" header; DEC-403).
+
+`clear` on an `unreferenced` row means none of those was found. Measured by
+hand on mastodon and discourse (DEC-372), such rows were truly dead 79 % and
+100 % of the time where the rules were fitted, and 89 % on discourse rows
+held out; on forem, an app no rule was fitted on, 55 of 70 (79 %) — a
+Pundit, an algoliasearch callback, a serializer block made most of the
+rest (DEC-450). On code unlike an app's (`lib/`), less — read DEC-372 before
+trusting it on a CLI or a library.
+
+`visibility` (`public`, `protected`, `private`) says how complete the
+evidence is: a private candidate's is complete, a public one's is not.
+
+### `test-only`
+
+A method every call, symbol and `super` of which is written in a test is
+`test-only`, however many there are; the `reason` says how many and where
+the first is, and `test_refs` counts them. A test is a file under a
+`spec/`, `test/` or `tests/` directory at the checkout's root or a nested
+package's (`plugins/chat/spec/`), not one inside `lib/` or `app/`
+(rack-test's library is `lib/rack/test/`). A route, a library's convention,
+an override, a `super` into a method trekr has not indexed, a protocol hook,
+or a script that writes the name outranks the tests: such a method keeps the
+tier it would have without them. A spec's own helper is never `test-only`.
+
+Graded as the other method tiers are: measured by hand on mastodon and
+discourse (DEC-652), a `clear` one was reached only by tests 21 times in 26
+(81 %), the misses all names built at runtime
+(`public_send("list_#{action}")`), which are now read (DEC-655); a `lower`
+one 7 in 25. On a library, a public `test-only` method is usually its API,
+so in a gem it is graded `lower` as an entry point (below).
+
+### Entry points
+
+A row reached from outside the repo, where no caller can be seen, keeps its
+tier, is graded `lower`, and carries `entry_point` (DEC-657); absent
+otherwise. Its `caveat` names the evidence that would settle it.
+
+| `entry_point` | what it is | settle it with |
+| --- | --- | --- |
+| `api` | a public method, class or module in `lib/` of a checkout with a root `*.gemspec`, unless marked `:nodoc:`, `@api private` or `Internal:`, named with a leading underscore, or held by a `private_constant` | its dependents, or usage data |
+| `route` | a routed controller action, or a controller only routes name | request logs or APM (e.g. Datadog) |
+| `job` | a job class nothing outside the tests names | job metrics or logs |
+
+An app's own public methods are not entry points: their callers are in the
+checkout. Hand-checked on six gems, 36 of 43 rows it moved from `clear`
+were API a user could call.
+
+### Classes, modules and constants
+
+Listed after the methods, named by kind in text (`class Admin::Widget`). One
+is a candidate when no constant reference in the checkout resolves to it by
+Ruby's own lookup — the views and executable scripts read too. A reference
+to `Admin::Widget` is a use of `Admin`, which holds it; one inside its own
+body is not a use; a reopened core or gem class is no candidate, nor
+anything under the checkout's or a package's `db/`. A class only tests name
+is `test-only`, unless a test file defines it: then it is test code in use,
+and not listed (DEC-655). One Rails or a library finds by name is
+`convention-only`, `convention.by` saying who: a route, a helper, a
+concern's `ClassMethods`, a Railtie or generator, a policy, serializer or
+validator found by its name, a job built from a symbol
+(`"Jobs::#{name.camelize}".constantize` with `:send_digest`), an
+association, a YAML value or a class-lookup string, a test runner, a
+registry hook (DEC-421).
+
+Whatever may still reach it — a constant read on a value
+(`self.class::LIMIT`), a namespace whose constants are listed, a factory in
+an ancestor, an STI subclass, a gem's routes — is a `caveat`, and grades it
+`lower`. So does a lookup of a name computed whole anywhere in the checkout
+(`name.constantize`, `Object.const_get(x)`, `klass.const_get(x)`), which may
+return any constant; the caveat names where it is. A row with no such
+evidence is `clear` (DEC-654): on gems held out, an `unreferenced`, clear
+row was truly unused 25 times in 26, a `test-only` one 21 in 26. An app
+nearly always has such a lookup, so its rows stay `lower` — forem's were
+truly unused 19 times in 50 (DEC-450). Read a constant row as a lead to
+check, not a verdict.
+
+### Example groups' members
+
+A spec's `let`s, `subject`s and group `def`s are read the way RSpec runs
+them: by the group's examples and its nested groups', by a hook or `let` of
+an enclosing group (which runs for them, and reads a nested group's override
+where one runs), by a shared group's body included there — in another file,
+through `it_behaves_like`, `include_examples` or `include_context` — by
+`super` in an override, by `is_expected` and a bare `should` for the
+`subject`, and by what `RSpec.configure` adds — a helper it includes, a
+shared context it includes by metadata (`config.include_context "x", :tag`,
+or one written `shared_context "x", :tag`), a `config.before` hook — whose
+metadata filter is not read, so they may read any group's. `shadowed` is a
+member every read of whose name an override answers where the read runs —
+an outer `let` each running group redefines; `overridden_by` names them.
+`let!` and `subject!` run for every example and are never listed. A shared
+group nothing includes by name is a row too (`kind: shared_group`), its own
+`let`s with it. `trekr --refs FILE:LINE` on any of them lists each read and
+where it was found (`from`), from the same reader.
+
+**Every such row is `lower`** (DEC-496), and its `caveat` says why: a name
+sent at runtime in its reach (`send("item_#{n}")`), a group macro trekr does
+not read, a string of code it evaluates — or, with none of those, that
+held-out suites showed `clear` is not earned here.
+
+Measured against what ran (DEC-492 to DEC-496): mastodon's suite, with
+every `let`, `subject` and group `def` traced, then scored. Every `let` and
+`subject` row trekr listed never ran in a group that passed an example, and
+trekr listed 86 of the 96 `let`s that never did; 20 of 20 of discourse's
+rows, sampled and read by hand, were unused too. But each suite held out
+from the rules found a way in they did not yet read — a shared context
+included by metadata, a shared group written inside a module, a string
+`eval`ed — and a row with no caveat was truly unused 79 %, 47 % and 0.2 %
+of the time on three such batches before each was read. So every row is
+`lower`: run the spec file after deleting one.
+
+### Fields per row
+
+- `tier`, and a `reason` in words.
+- `confidence`: `clear`, or `lower` with a `caveat`.
+- Per tier: `overridden_by` (`shadowed`), `overrides` (`override`),
+  `super_from` (`super-only`), `convention.by` (`convention-only`),
+  `caller` with its own `tier` (`single-caller`).
+- `visibility`, and `entry_point` when there is one.
 - The evidence counted: a method row's `confirmed`/`possible` callers,
   `symbol_refs` (its name as a symbol), `super_refs`, `mentions_by_name`
   (written calls of its name anywhere, capped), `test_refs` (those of its
@@ -342,20 +495,7 @@ measurements behind the grading. Fields per row:
   `test_refs`, its references from tests.
 
 `summary` counts the rows per tier (`tiers`: `unreferenced`, `test-only`,
-`single-caller`, …), per confidence and per kind (`kinds`). One pass, no
-cascade: a method whose only caller is itself a candidate is `single-caller`,
-and its `reason` says the caller is a candidate. An `initialize` is reported
-only when nothing constructs its class. A Haml or Slim template that names a
-row says "named in a view (…), which is not read", and a Ruby script with
-no extension (`exe/tool`) that writes a method's name says "named in a
-script (…), which is not read" and keeps it off `test-only`; a protocol hook Ruby or
-Rails calls by name (`marshal_load`, `to_partial_path`, `each`, a job's
-`perform`) says "a hook … calls by name".
-
-Measured against a year of discourse's history, `unreferenced` candidates
-were deleted 19.8 % of the time against a 19.0 % base rate — no lift
-([BASELINE](BASELINE.md)). Hence the grading, and why trekr never says
-"dead".
+`single-caller`, …), per confidence and per kind (`kinds`).
 
 ## Classes split by their superclass
 
