@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **`--dead` grades a class, module or constant row `clear` again when
+  nothing in the checkout could reach it by a built name**, instead of
+  `lower` on every row. A row is `lower` when the checkout looks up a name
+  computed whole (`name.constantize`, `Object.const_get(x)`,
+  `klass.const_get(x)`) — its caveat says where — or a namespace, shape or
+  listing already caveated reaches it. Apps nearly always have such a
+  lookup, so their rows stay `lower`; a gem without one now reads `clear`.
+
 ## 0.9.8 — 2026-10-18
 
 - A large branch switch holds the write lock for less time again: recording

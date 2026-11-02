@@ -14882,3 +14882,94 @@ IGNORE … VALUES` (`usesStmtJournal=0`), took 5–9 ms. Six interleaved rounds,
 v8.1.0 → v7.1.0 on a fresh store each, load 7–18, `file-map` medians:
 0.9.5 265 ms, 0.9.6 439 ms, this 218 ms; the switch back 16, 32, 22 ms. The
 stamps and the map after both switches are identical to 0.9.6's.
+
+## DEC-654 — A constant row is `lower` on evidence a built name could reach it
+
+**Decided.** DEC-450's blanket `lower` on every class, module and constant
+row not `convention-only` is replaced by evidence. A row is `lower` when a
+caveat DEC-421 already reads applies (a namespace listed or looked up by a
+computed name, a shape a constantized string has, a constant read on a
+value, a factory in an ancestor, …) or, failing those, when the checkout
+looks up **a name computed whole** anywhere in its Ruby (less tests and
+`db/`), which no namespace or written part bounds:
+
+- `x.constantize` / `x.safe_constantize` whose receiver is no literal, or
+  an interpolated string with no shape (`"#{ns}::#{name}"`, forem's
+  `DataUpdateScripts` idiom); `ActiveSupport::Inflector.constantize(x)`;
+- `const_get(x)` with a computed argument, sent to `Object`, `Module`,
+  `Kernel`, a value (`klass.`, `self.class.`, `@mod.`) or `self` (bare).
+
+The caveat names the first such site: "a name computed at runtime is looked
+up by `Object.const_get` at lib/x.rb:3, which may reach any constant". A row
+with neither is `clear`, `test-only` rows included. Not counted: a literal
+or shaped name (the string and shape rules read those), a namespace's own
+computed `const_get` (scoped, DEC-421), `constants.map { |c| const_get(c) }`
+(a listing), `config.constantize('a', :b)` (String#constantize takes no
+argument: another method), a definition, a comment. Testbed 660–663, 461.
+
+**Is the set closed?** Ruby reaches a constant without a reference by
+`const_get` (which `constantize` calls), by listing (`constants`,
+`subclasses`, `ObjectSpace`), by `x::Y` on a value, or by evaluating a
+string. The first three are read (DEC-421 and this). Not evidence:
+`const_defined?` and `const_source_location` (no value), `autoload` (a
+registration), `const_missing` (absent constants only), `Marshal`/YAML
+loads (a class in the data was instantiated, so referenced, first; YAML in
+the checkout is read by DEC-421). **String eval is the open one** — below.
+
+**Measured, held out** (no rule fitted on these; `--dead lib`, gems at
+their bench checkouts; each row read and its name searched across the repo,
+strings, docs, `sig/`, `ext/` and templates; true = nothing outside tests
+uses it, documented public API counted true as DEC-422 does):
+
+| rows | true |
+| --- | ---: |
+| `unreferenced`, new `clear`: dd-trace-rb random 20 of 53, rack 2, mysql2 1, redis-rb 3 | 25/26 = 96 % |
+| `test-only`, new `clear`: dd-trace-rb 13, redis-rb 11, mysql2 2 | 21/26 = 81 % |
+| `unreferenced`, `lower` by a computed-whole lookup alone: graphql all 17, rubocop random 13 of 169, hexapdf 2, sidekiq 3, flipper 5, faraday 1, webmock 2, faker 1, rspec-core 1 | 30/45 = 67 % dead |
+| `test-only`, `lower` by it alone: hexapdf 5, sidekiq 4, flipper 10 | 15/19 test-only |
+
+The misses at `clear`: a dd-trace-rb integration that registers itself
+(`register_as :opensearch`, 2 rows), mysql2's `Result` and `Statement`,
+which its C extension defines and instantiates (2), and two namespace
+modules (`Datadog::AppSec::Contrib::Rails`, `::Sinatra`) whose lib
+references are written inside their own bodies (DEC-420's own-body rule),
+so only a spec counts.
+
+**The lookup cited is never the way in.** Of the 64 rows lowered by a
+computed-whole lookup alone, none could be returned by it: each is fed a
+narrow set of names (hexapdf's config of class-name strings, sidekiq's job
+payloads, faker's `const_missing`, graphql's generator argument, rubocop's
+`rescue` clauses). The 15 unreferenced rows that were live were reached by
+**string eval** — graphql's monitor `module_eval` template
+(`%{monitor_class}.new`, 7), hexapdf's `Style` source strings (3 test-only),
+rubocop's NodePattern `%CONST` (5) and an ERB template's binding (1) — or
+a Rails generator's path, or a rake task's string. So the evidence is a
+repo-level prior for "this code reaches by name", not a row-level cause;
+it is kept because dropping it would put those rows at `clear` at 67 %.
+Reading string eval (the constants a `module_eval`'d template or a
+NodePattern writes) is the next rule, logged, not done: it was found on
+held-out rows and would be fitted.
+
+**Counts**, constant rows (`unreferenced` clear / lower), DEC-450 → this:
+
+| corpus | before | after |
+| --- | ---: | ---: |
+| addressable `lib` (the report) | 0 / 10 | 10 / 0 |
+| dd-trace-rb `lib` | 0 / 91 | 53 / 38 |
+| redis-rb `lib` | 0 / 7 | 3 / 4 |
+| rack `lib` | 0 / 10 | 2 / 8 |
+| mysql2 `lib` | 0 / 1 | 1 / 0 |
+| hexapdf, faker, flipper, faraday, sidekiq, webmock, rspec-core, graphql, rubocop `lib` | all lower | unchanged (each has a computed-whole lookup) |
+| discourse, mastodon, forem (current HEAD, not DEC-450's 8e906bd) `app lib` | all lower | unchanged |
+
+`test-only` clear after: addressable 5, dd-trace-rb 13, redis-rb 11,
+mysql2 2. On the apps the caveat now names a site
+(`app/models/access_control_list.rb:99` on discourse,
+`app/workers/local_notification_worker.rb:8` on mastodon). Timing,
+`--dead app lib --json` on discourse, five interleaved runs on a loaded
+machine: median 7.7 → 7.5 s, inside the noise.
+
+**Over-reach, measured**: a lookup in a gem's `examples/` or `benchmarks/`
+counts (flipper, rspec-core), as an example's reference counts as a use;
+one `Kernel.const_get` of an inspected exception's name lowers 169 of
+rubocop's rows.

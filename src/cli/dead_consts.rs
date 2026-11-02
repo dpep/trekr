@@ -71,10 +71,6 @@ fn within(scope: &str, fqn: &str) -> bool {
 }
 
 /// One declaration `--dead` weighs: its name, kind and first site in scope.
-/// The caveat of a row graded `lower` by DEC-450's blanket rule alone.
-const UNPROVEN: &str = "classes, modules and constants are graded lower unless a convention \
-                        names them: a name built at runtime may reach one (DEC-450)";
-
 struct Declared {
     fqn: String,
     kind: DeadKind,
@@ -482,14 +478,24 @@ pub(super) fn dead_constants(
                 "no constant reference names it".to_string(),
             ),
         };
-        let caveat = match tier {
-            DeadTier::ConventionOnly => String::new(),
-            _ => ways.caveats(fqn).join(", "),
+        let mut caveats = match tier {
+            DeadTier::ConventionOnly => Vec::new(),
+            _ => ways.caveats(fqn),
         };
+        // A name computed whole may be any constant's: what a held-out app's
+        // misses came down to (DEC-654). Said only where nothing nearer is.
+        if caveats.is_empty()
+            && tier != DeadTier::ConventionOnly
+            && let Some((call, (path, line))) = &ways.named.unscoped
+        {
+            caveats.push(format!(
+                "a name computed at runtime is looked up by `{call}` at {path}:{line}, \
+                 which may reach any constant"
+            ));
+        }
+        let caveat = caveats.join(", ");
         let (owner, name) = fqn.rsplit_once("::").unwrap_or(("", fqn));
-        // A class or constant nothing names was dead 19 times in 50 on a
-        // held-out app: `clear` is not earned yet (DEC-450).
-        let confidence = match caveat.is_empty() && tier == DeadTier::ConventionOnly {
+        let confidence = match caveat.is_empty() {
             true => Grade::Clear,
             false => Grade::Lower,
         };
@@ -531,9 +537,6 @@ pub(super) fn dead_constants(
                 "{caveat}in generated code ({how}), which its runtime may load generically"
             );
             row.confidence = Grade::Lower;
-        }
-        if row.confidence == Grade::Lower && row.caveat.is_empty() {
-            row.caveat = UNPROVEN.into();
         }
         rows.push(row);
     }

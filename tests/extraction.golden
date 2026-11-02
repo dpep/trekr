@@ -685,6 +685,17 @@ ruby tests/testbed/657-a-constant-in-class-object-is-a-top-level-one/app.rb 628a
 ruby tests/testbed/658-whole-name-refs-reach-through-ancestors/app.rb 159c4e1746dc2cc7
 ruby tests/testbed/659-dead-reads-each-spelling-of-an-object-constant/app.rb d1027d7b656f8428
 ruby tests/testbed/659-dead-reads-each-spelling-of-an-object-constant/consts.rb 4c8dc23c164ef0d6
+ruby tests/testbed/660-a-constant-no-lookup-can-reach-is-clear/lib/draw.rb 16867aadb7a335e9
+ruby tests/testbed/660-a-constant-no-lookup-can-reach-is-clear/lib/shapes.rb e9948aafbd05afa3
+ruby tests/testbed/660-a-constant-no-lookup-can-reach-is-clear/spec/shapes_spec.rb d4004db3a048b7a2
+ruby tests/testbed/661-a-computed-const-get-lowers-its-namespace-only/lib/levels.rb 24f921a94d2e29e1
+ruby tests/testbed/661-a-computed-const-get-lowers-its-namespace-only/lib/loader.rb a52fd2b66fa39670
+ruby tests/testbed/661-a-computed-const-get-lowers-its-namespace-only/lib/regions.rb 8271a85b65566b5b
+ruby tests/testbed/662-a-built-shape-lowers-what-fits-only/lib/jobs.rb e20381afea379737
+ruby tests/testbed/662-a-built-shape-lowers-what-fits-only/lib/runner.rb a8321c0fe36cfe05
+ruby tests/testbed/662-a-built-shape-lowers-what-fits-only/lib/tools.rb 389eaadcf9746b3c
+ruby tests/testbed/663-a-name-computed-whole-may-reach-any-constant/lib/factory.rb 50bbc7ecbafd4b84
+ruby tests/testbed/663-a-name-computed-whole-may-reach-any-constant/lib/tools.rb 389eaadcf9746b3c
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

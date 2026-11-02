@@ -1,0 +1,3 @@
+# A constantized string with a written part reaches only the names of its
+# shape: `Jobs::*` lowers Jobs::Purge, not Tools::LIMIT (DEC-654).
+dead lib Jobs::Purge=unreferenced~Jobs::* Tools::LIMIT=unreferenced~ Runner=unreferenced~

@@ -1,0 +1,3 @@
+# A name computed whole may be any constant's, so every row nothing nearer
+# explains is lower, and says where the lookup is (DEC-654).
+dead lib Tools::LIMIT=unreferenced~lib/factory.rb:3 Factory=unreferenced~Object.const_get

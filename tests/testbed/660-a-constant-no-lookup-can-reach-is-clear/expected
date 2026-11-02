@@ -1,0 +1,4 @@
+# Every class and constant row was graded lower (DEC-450), so the grade
+# said nothing about the row. With no lookup of a computed name in the
+# checkout, nothing reaches one nothing names: clear, no caveat (DEC-654).
+dead lib Shapes::HOST=unreferenced~ Shapes::SQUARE=test-only~ Draw=unreferenced~ Shapes::CIRCLE=none

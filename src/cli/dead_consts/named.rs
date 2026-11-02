@@ -55,6 +55,11 @@ pub(super) struct Named {
     computed: Option<u32>,
     /// Each file with such a line, and the first.
     pub(super) computed_in: HashMap<String, u32>,
+    /// The first lookup of a name computed whole, which no namespace or
+    /// shape bounds (`name.constantize`, `Object.const_get(x)`,
+    /// `klass.const_get(x)`): the call, and where. Any constant may be its
+    /// answer (DEC-654).
+    pub(super) unscoped: Option<(String, At)>,
     /// The constant paths an executable Ruby script with no `.rb` writes
     /// (`bin/cli`), which the index does not read: each with the script.
     pub(super) script_constants: HashMap<String, String>,
@@ -160,6 +165,9 @@ impl Named {
         }
         for (key, at) in part.computed_in {
             self.computed_in.entry(key).or_insert(at);
+        }
+        if self.unscoped.is_none() {
+            self.unscoped = part.unscoped;
         }
         for (key, at) in part.script_constants {
             self.script_constants.entry(key).or_insert(at);
@@ -344,6 +352,12 @@ impl Named {
             }
             if built && self.computed.is_none() {
                 self.computed = Some(line_no);
+            }
+            if built
+                && self.unscoped.is_none()
+                && let Some(call) = unscoped_lookup(line)
+            {
+                self.unscoped = Some((call, at()));
             }
             for listed in listings(line, &[".descendants", ".subclasses"]) {
                 self.listed.entry(listed).or_insert_with(at);
@@ -557,6 +571,146 @@ fn computed_const_gets(line: &str) -> Vec<String> {
     found
 }
 
+/// The quoted strings of a line, `(open, close)` quote offsets, and where
+/// its code ends: at a trailing comment, or the line's end.
+fn string_spans(line: &str) -> (Vec<(usize, usize)>, usize) {
+    let bytes = line.as_bytes();
+    let mut spans = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c == b'#' && bytes.get(i + 1) != Some(&b'{') {
+            return (spans, i);
+        }
+        if c == b'"' || c == b'\'' {
+            let mut end = i + 1;
+            while end < bytes.len() && bytes[end] != c {
+                end += if bytes[end] == b'\\' { 2 } else { 1 };
+            }
+            if end >= bytes.len() {
+                return (spans, i);
+            }
+            spans.push((i, end));
+            i = end + 1;
+            continue;
+        }
+        i += 1;
+    }
+    (spans, bytes.len())
+}
+
+/// A lookup on `line` of a name computed whole, which neither a namespace
+/// nor a written part of the name bounds: the call as it is cited
+/// (`safe_constantize`, `Object.const_get`, `klass.const_get`).
+///
+/// `"Jobs::#{type}".constantize` has a shape, `Regions.const_get(name)` a
+/// namespace, and `constants.map { |c| const_get(c) }` lists one: each is
+/// read for what it bounds, not here.
+fn unscoped_lookup(line: &str) -> Option<String> {
+    let (spans, code_end) = string_spans(line);
+    let bytes = line.as_bytes();
+    let in_code = |at: usize| at < code_end && !spans.iter().any(|(o, c)| *o < at && at < *c);
+    // Is the value starting (or ending, for a receiver) at a quote one whose
+    // whole name is computed? A literal is a string rule's; a shape bounds it.
+    let computed = |quote: usize, closing: bool| {
+        let Some((open, close)) = spans
+            .iter()
+            .find(|(o, c)| if closing { *c == quote } else { *o == quote })
+        else {
+            return true;
+        };
+        let content = &line[open + 1..*close];
+        bytes[*open] == b'"' && content.contains("#{") && shape_of(content).is_none()
+    };
+    let computed_arg = |from: usize| {
+        let rest = &line[from..];
+        let arg = rest.trim_start_matches(['(', ' ']);
+        let at = from + rest.len() - arg.len();
+        match arg.as_bytes().first() {
+            Some(b'"' | b'\'') => computed(at, false),
+            Some(b':') => match arg.as_bytes().get(1) {
+                Some(b'"') => computed(at + 1, false),
+                // A symbol is a literal name, whatever its case.
+                _ => false,
+            },
+            Some(_) => true,
+            None => false,
+        }
+    };
+    let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    for (at, _) in line.match_indices("constantize") {
+        let after = at + "constantize".len();
+        if !in_code(at) || bytes.get(after).is_some_and(|b| word(*b)) {
+            continue;
+        }
+        let start = if line[..at].ends_with("safe_") {
+            at - 5
+        } else {
+            at
+        };
+        // A definition, a symbol: only a call has a receiver.
+        let Some(dot) = start.checked_sub(1).filter(|d| bytes[*d] == b'.') else {
+            continue;
+        };
+        let defines = line[..start]
+            .trim_start()
+            .strip_prefix("def ")
+            .is_some_and(|owner| !owner.contains([' ', '(']));
+        if defines {
+            continue;
+        }
+        let whole = if line[..dot].ends_with("Inflector") {
+            computed_arg(after)
+        } else if line[after..].starts_with('(') && !line[after..].starts_with("()") {
+            // String#constantize takes no argument: this is another method.
+            false
+        } else {
+            match dot.checked_sub(1).map(|r| bytes[r]) {
+                Some(b'"' | b'\'') => computed(dot - 1, true),
+                _ => true,
+            }
+        };
+        if whole {
+            return Some(line[start..after].to_string());
+        }
+    }
+    for (at, _) in line.match_indices("const_get") {
+        let after = at + "const_get".len();
+        let before = at.checked_sub(1).map(|b| bytes[b]);
+        if !in_code(at)
+            || !matches!(bytes.get(after), Some(b'(' | b' '))
+            || before.is_some_and(|b| word(b) || b == b':')
+            || line[..at].trim_end().ends_with("def")
+            || !computed_arg(after)
+        {
+            continue;
+        }
+        // Each constant a namespace lists, fetched: that listing's to bound.
+        if line.contains("constants") {
+            continue;
+        }
+        let receiver = match before {
+            Some(b'.') => {
+                let head = &line[..at - 1];
+                let from = head
+                    .rfind(|c: char| !(c.is_ascii_alphanumeric() || "_:.@".contains(c)))
+                    .map_or(0, |i| i + 1);
+                &head[from..]
+            }
+            _ => "",
+        };
+        let namespace = receiver.trim_start_matches("::");
+        if is_constant_path(namespace) && !matches!(namespace, "Object" | "Module" | "Kernel") {
+            continue;
+        }
+        return Some(match receiver {
+            "" => "const_get".to_string(),
+            receiver => format!("{receiver}.const_get"),
+        });
+    }
+    None
+}
+
 /// `Widget.descendants`, `Widget.constants`: the constants a line sends one
 /// of `calls` to, which list what they hold or what inherits them.
 fn listings(line: &str, calls: &[&str]) -> Vec<String> {
@@ -653,6 +807,36 @@ mod tests {
         assert_eq!(computed_const_gets("Widgets.const_get(name)"), ["Widgets"]);
         assert!(computed_const_gets("Widgets.const_get(:LIMIT)").is_empty());
         assert!(computed_const_gets("Object.const_get(name)").is_empty());
+    }
+
+    #[test]
+    fn a_name_computed_whole_is_an_unscoped_lookup() {
+        for (line, call) in [
+            ("klass_name.constantize", "constantize"),
+            ("\"#{ns}::#{name}\".safe_constantize", "safe_constantize"),
+            ("ActiveSupport::Inflector.constantize(name)", "constantize"),
+            ("Object.const_get(name)", "Object.const_get"),
+            ("::Object.const_get name", "::Object.const_get"),
+            ("self.class.const_get(\"#{x}\")", "self.class.const_get"),
+            ("const_get(name.upcase)", "const_get"),
+            ("type.to_s.camelize.constantize()", "constantize"),
+        ] {
+            assert_eq!(unscoped_lookup(line).as_deref(), Some(call), "{line}");
+        }
+        for line in [
+            "\"Jobs::#{type.camelize}\".constantize",
+            "'Admin::Widget'.constantize",
+            "Regions.const_get(name)",
+            "Object.const_get(:Widget)",
+            "constants.map { |c| const_get(c) }",
+            "def self.constantize(name)",
+            "config.constantize('filter.map', :Fl)",
+            "respond_to?(:constantize)",
+            "x = 1 # name.constantize",
+            "puts \"name.constantize\"",
+        ] {
+            assert_eq!(unscoped_lookup(line), None, "{line}");
+        }
     }
 
     #[test]

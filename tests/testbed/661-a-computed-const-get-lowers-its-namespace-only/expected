@@ -1,0 +1,3 @@
+# A computed `const_get` on a namespace may reach that namespace's
+# constants, and only those: the rest stay clear (DEC-654).
+dead lib Regions::North=unreferenced~Regions.const_get Levels::LOW=unreferenced~ Loader=unreferenced~

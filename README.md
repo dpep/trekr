@@ -255,12 +255,14 @@ association, a YAML value or a class-lookup string, a test runner, a
 registry hook (DEC-421). Whatever may still reach it — a constant read on a
 value (`self.class::LIMIT`), a namespace whose constants are listed, a
 factory in an ancestor, an STI subclass, a gem's routes — is a `caveat`, and
-grades it `lower`. **Every class, module and constant row that is not
-`convention-only` is `lower`**, caveat or not: measured by hand on forem,
-held out, an `unreferenced` one was truly unused 19 times in 50 (38 %) and a
-`test-only` one 4 in 20 — classes built from file names, constants read
-through a value — so `clear` is not earned there (DEC-450). Read a
-constant row as a lead to check, not a verdict.
+grades it `lower`. So does **a lookup of a name computed whole** anywhere
+in the checkout (`name.constantize`, `Object.const_get(x)`,
+`klass.const_get(x)`), which may return any constant; the caveat names
+where it is. A row with no such evidence is `clear` (DEC-654): on gems held
+out, an `unreferenced`, clear row was truly unused 25 times in 26, a
+`test-only` one 21 in 26. An app nearly always has such a lookup, so its
+rows stay `lower` — forem's were truly unused 19 times in 50 (DEC-450).
+Read a constant row as a lead to check, not a verdict.
 
 **An example group's `let`s, `subject`s and `def`s** are listed after the
 methods (`kind` `let`, `subject` or `method`, with the `group` they are
