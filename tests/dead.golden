@@ -155,3 +155,4 @@
 748-an-engines-namespace-opened-in-lib-is-api 6ec51b0a692b560f
 760-a-gems-demo-config-ru-keeps-its-api 3755a96bd8947b11
 761-a-constant-naming-an-unindexed-class-is-api aa7b5976a8325132
+763-a-doc-line-reopens-a-nodoc-body 6671f4d867ccd9f8

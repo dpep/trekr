@@ -1,0 +1,10 @@
+# Rails' `module Dependencies # :nodoc:` writes an own-line `# :doc:`
+# before `run_interlock` and its kin and an own-line `# :nodoc:` after,
+# and RDoc 8.1 documents exactly those methods: it applies every comment's
+# directives to the body's class as it parses, standalone or above a def.
+# They were graded `clear`, the body read as `:nodoc:` throughout. Now the
+# last own-line `:doc:` or `:nodoc:` at the def's level in a `:nodoc:`
+# body decides; one in a nested body, or trailing a def, does not (DEC-657).
+dead lib Widget::Loader#run_locked=unreferenced~dependents Widget::Loader#unload_locked=unreferenced~dependents Widget::Loader#paths=unreferenced~ Widget::Loader#reset=unreferenced~
+dead lib Widget::Registry#register=unreferenced~dependents Widget::Registry#lookup=unreferenced~dependents
+dead lib Widget::Cache#fetch=unreferenced~ Widget::Cache#store=unreferenced~

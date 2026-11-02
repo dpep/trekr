@@ -263,7 +263,8 @@ impl Gems {
 
     /// Is the method defined at `path:line` in `owner` internal: marked so
     /// itself, written in a body marked `:nodoc:` (RDoc leaves out the
-    /// methods a `:nodoc:` body defines), inside an opening whose mark
+    /// methods a `:nodoc:` body defines) and not `redocumented`, inside an
+    /// opening whose mark
     /// reaches what is nested in it, or held by a `private_constant`?
     pub(super) fn internal_method(
         &mut self,
@@ -291,7 +292,42 @@ impl Gems {
             .into_iter()
             .filter(|site| site.path == path && site.line <= line)
             .max_by_key(|site| site.line);
-        body.is_some_and(|site| self.marks(&site.path, site.line).hidden)
+        body.is_some_and(|site| {
+            self.marks(&site.path, site.line).hidden
+                && !self.redocumented(site.line as usize, path, line)
+        })
+    }
+
+    /// Does an own-line `# :doc:` turn a `:nodoc:` body's documentation back
+    /// on for the def at `path:line`: is it the last own-line `:doc:` or
+    /// `:nodoc:` at the def's indentation between the body's opening line
+    /// `open` and the def? RDoc 8.1 applies every comment's directives to
+    /// the body's class as it parses (`parser/ruby.rb`
+    /// `handle_code_object_directives(@container, …)`), and
+    /// `Context#add_method` keeps a method only while the class is
+    /// documented. A trailing `# :doc:` is the method's own and does not.
+    fn redocumented(&mut self, open: usize, path: &str, line: u32) -> bool {
+        let lines = self.lines(path);
+        let at = (line as usize).saturating_sub(1).min(lines.len());
+        let indent = |text: &str| text.len() - text.trim_start().len();
+        let Some(width) = lines.get(at).map(|text| indent(text)) else {
+            return false;
+        };
+        lines[open.min(at)..at]
+            .iter()
+            .rev()
+            .filter(|text| indent(text) == width && text.trim_start().starts_with('#'))
+            .find_map(|text| {
+                let text = text.trim_start().trim_start_matches('#').trim_start();
+                if text.starts_with(":doc:") {
+                    Some(true)
+                } else if text.starts_with(":nodoc:") {
+                    Some(false)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(false)
     }
 
     /// Is the constant `fqn` internal: marked so on any of its openings

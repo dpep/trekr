@@ -413,7 +413,8 @@ otherwise. Its `caveat` names the evidence that would settle it.
 
 A mark reaches as far as its tool reads it: a `:nodoc:` or TomDoc mark on
 a class hides that class and the methods its body defines, not the classes
-nested in it (RDoc); `:nodoc: all`, YARD's `@api private` and `@private`
+nested in it (RDoc), and in such a body the last own-line `# :doc:` or
+`# :nodoc:` at a method's indentation above it decides for that method; `:nodoc: all`, YARD's `@api private` and `@private`
 hide the class too and everything its marked opening holds, not what
 another opening of it defines; a `private_constant` hides everything
 nested in it, wherever written; a method's own `@api

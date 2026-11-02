@@ -16002,3 +16002,30 @@ VERSION`; 0 `clear` → `lower`); minitest 1 (`Minitest::Unit::VERSION =
 Minitest::VERSION`; 1). Value aliases, then, not class names — public
 names a user may read all the same, and the over-lowering side otherwise.
 Every other corpus: no row moves. Testbed 761.
+
+**An own-line `# :doc:` reopens a `:nodoc:` body.** Rails writes `module
+Dependencies # :nodoc:`, then an own-line `# :doc:` before
+`run_interlock`, `load_interlock` and `unload_interlock`, then an own-line
+`# :nodoc:`, and RDoc 8.1 documents exactly those three; trekr graded them
+`clear`, the body read as `:nodoc:` throughout. RDoc applies every
+comment's directives to the body's class as it parses — a standalone
+comment's and a def's own alike (`parser/ruby.rb`, each `add_*` calls
+`handle_code_object_directives(@container, …)`) — `:doc:` setting the
+class's `document_self`, `:nodoc:` clearing it, and `Context#add_method`
+keeps a method only while it is set. A directive trailing the def's line is
+the method's own (`handle_modifier_directive`) and leaves the class alone.
+Checked by running RDoc 8.1 on each shape: an own-line `# :doc:`, standalone
+or directly above a def, documents that def and those after it; a later
+own-line `# :nodoc:` stops it; `def x # :doc:` in a `:nodoc:` body is not
+documented. Now, in a body marked `:nodoc:`, the last own-line `:doc:` or
+`:nodoc:` at the def's indentation between the body's opening and the def
+decides; one in a nested body, at another indentation, is not read (a miss
+leaves the method internal, as before). Kept to `:nodoc:` bodies, so it
+only ever adds `api`. RDoc reads the off-switch everywhere: an own-line
+`# :nodoc:` above a def in an unmarked body hides that def and every one
+after it in the class (checked). That stays unread — it would take `api`
+away on the strength of one tool version's parse order, the side this
+entry point refuses. The module's own row stays internal, though RDoc
+stores it once it holds a documented method: a second rule, not taken in a
+fix round. Measured: rails 3 rows gain `api`, 3 `clear` → `lower`, the three
+above. Every other corpus: no row moves. Testbed 763.
