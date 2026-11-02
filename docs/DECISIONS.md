@@ -14989,6 +14989,14 @@ the gems measured above.
 - **A heredoc's text and an `=begin` block look nothing up**, as a comment
   does not. A heredoc handed to an eval (`class_eval <<~RUBY`) is code and
   is still read. Testbed 681. No row moved.
+- **`ObjectSpace` is read, as "Is the set closed?" claimed it was.**
+  `ObjectSpace.each_object(Class).select { |k| k < Base }`, the pre-Rails-7
+  `descendants`, and `each_object(Base.singleton_class)` list `Base`'s
+  subclasses as `Base.subclasses` does (DEC-421); `each_object(Class)`
+  compared with no constant on its line may return any class, and is a
+  computed-whole lookup. `each_object(Widget)` lists instances, no class.
+  Testbed 682, 683. No row moved: the corpora's only `each_object` calls
+  list instances (discourse's `MiniRacer::Context`).
 
 ## DEC-653 — A block evaluated in a class named by a bare constant defines that class's methods, wherever it is written
 

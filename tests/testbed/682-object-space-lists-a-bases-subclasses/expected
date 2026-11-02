@@ -1,0 +1,4 @@
+# `ObjectSpace.each_object(Class).select { |k| k < Base }` lists Base's
+# subclasses, as `Base.subclasses` does: Leaf is reached by convention, and
+# Orphan, no subclass, stays clear. Leaf was unreferenced and clear (DEC-654).
+dead lib Leaf=convention-only Orphan=unreferenced~

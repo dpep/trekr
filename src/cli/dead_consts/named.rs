@@ -385,6 +385,15 @@ impl Named {
             for listed in listings(line, &[".descendants", ".subclasses"]) {
                 self.listed.entry(listed).or_insert_with(at);
             }
+            match object_space_listing(line).filter(|_| !text_body) {
+                Some(Some(base)) => {
+                    self.listed.entry(base).or_insert_with(at);
+                }
+                Some(None) if self.unscoped.is_none() => {
+                    self.unscoped = Some(("ObjectSpace.each_object".to_string(), at()));
+                }
+                _ => {}
+            }
             if let Some((name, value)) = trimmed.split_once(" = ")
                 && name
                     .chars()
@@ -767,6 +776,49 @@ fn unscoped_lookup(line: &str) -> Option<String> {
     None
 }
 
+/// `ObjectSpace.each_object(Class).select { |k| k < Base }`: a listing of
+/// every class, which reaches `Base`'s subclasses when the line compares
+/// with it (`Some(Some(base))`, as `Base.subclasses` does), and any class
+/// when it names none (`Some(None)`). `each_object(Widget)` lists instances,
+/// no class: `None`.
+fn object_space_listing(line: &str) -> Option<Option<String>> {
+    let (spans, code_end) = string_spans(line);
+    let call = "ObjectSpace.each_object";
+    let at = line[..code_end]
+        .match_indices(call)
+        .map(|(at, _)| at)
+        .find(|at| !spans.iter().any(|(o, c)| o < at && at < c))?;
+    let rest = &line[at + call.len()..];
+    let arg = rest.strip_prefix('(').unwrap_or("").trim_start();
+    let inner = arg.split(')').next().unwrap_or("").trim_end();
+    // `each_object(Base.singleton_class)`: Base and its subclasses.
+    if let Some(base) = inner
+        .strip_suffix(".singleton_class")
+        .filter(|base| is_constant_path(base))
+    {
+        return Some(Some(base.trim_start_matches("::").to_string()));
+    }
+    if !inner.is_empty() && !matches!(inner, "Class" | "Module" | "::Class" | "::Module") {
+        return None;
+    }
+    // The first constant the rest of the line compares a class with: `k < Base`.
+    let bytes = rest.as_bytes();
+    for (i, _) in rest.match_indices('<') {
+        if bytes.get(i + 1) == Some(&b'<') || i > 0 && bytes[i - 1] == b'<' {
+            continue;
+        }
+        let after = rest[i + 1..].trim_start_matches(['=', ' ']);
+        let base = after
+            .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == ':'))
+            .next()
+            .unwrap_or("");
+        if is_constant_path(base) {
+            return Some(Some(base.trim_start_matches("::").to_string()));
+        }
+    }
+    Some(None)
+}
+
 /// `Widget.descendants`, `Widget.constants`: the constants a line sends one
 /// of `calls` to, which list what they hold or what inherits them.
 fn listings(line: &str, calls: &[&str]) -> Vec<String> {
@@ -907,6 +959,25 @@ mod tests {
             named.unscoped.map(|(call, _)| call).as_deref(),
             Some("constantize")
         );
+    }
+
+    #[test]
+    fn object_space_lists_a_bases_subclasses_or_any_class() {
+        let base = |line| object_space_listing(line);
+        assert_eq!(
+            base("ObjectSpace.each_object(Class).select { |k| k < Base }"),
+            Some(Some("Base".into()))
+        );
+        assert_eq!(
+            base("ObjectSpace.each_object(Jobs::Base.singleton_class).to_a"),
+            Some(Some("Jobs::Base".into()))
+        );
+        assert_eq!(base("ObjectSpace.each_object(Class).to_a"), Some(None));
+        assert_eq!(
+            base("ObjectSpace.each_object(Widget) { |w| w.close }"),
+            None
+        );
+        assert_eq!(base("puts 'ObjectSpace.each_object(Class)'"), None);
     }
 
     #[test]

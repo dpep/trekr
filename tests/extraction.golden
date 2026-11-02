@@ -723,6 +723,11 @@ ruby tests/testbed/680-a-two-letter-namespace-bounds-a-built-shape/lib/tools.rb 
 ruby tests/testbed/680-a-two-letter-namespace-bounds-a-built-shape/lib/ui.rb ebe80ab5696c396e
 ruby tests/testbed/681-a-heredocs-text-looks-nothing-up/lib/docs.rb 82eec79530ed28fa
 ruby tests/testbed/681-a-heredocs-text-looks-nothing-up/lib/orphan.rb d39cf032b4680274
+ruby tests/testbed/682-object-space-lists-a-bases-subclasses/lib/base.rb 306f802951c46238
+ruby tests/testbed/682-object-space-lists-a-bases-subclasses/lib/leaf.rb 5f0f334984fee4d3
+ruby tests/testbed/682-object-space-lists-a-bases-subclasses/lib/orphan.rb d39cf032b4680274
+ruby tests/testbed/683-object-space-lists-any-class/lib/orphan.rb d39cf032b4680274
+ruby tests/testbed/683-object-space-lists-any-class/lib/registry.rb 34fcee52e952bda2
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/alias.rb f49a22486d2a111b
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/gem.rb a48ad81018869404
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/inherited.rb 12d09cef784af61a

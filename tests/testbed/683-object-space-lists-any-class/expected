@@ -1,0 +1,4 @@
+# `ObjectSpace.each_object(Class)` with no class to compare with lists every
+# class, so it may reach any: Orphan is lower and the caveat cites it. It
+# was clear (DEC-654).
+dead lib Orphan=unreferenced~ObjectSpace.each_object
