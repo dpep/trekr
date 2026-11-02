@@ -339,8 +339,8 @@ to surprise you:
 - `X = Class.new(Base) do … end` (and `Struct.new`, `Data.define`,
   `Module.new`) is read as a class body. Right for its methods; a liberty for
   its constants, which Ruby scopes to the enclosing scope and trekr to `X`.
-- `class Foo < Struct.new(:a)` gets no member readers; `Foo = Struct.new(:a)`
-  does.
+- `class Foo < Struct.new(:a)` declares its members on `Foo`, where Ruby
+  puts them on an anonymous class between the two.
 - An `@ivar` receiver is typed by a vote of every write to it in that class
   *in that file* — not only the writes that reach the read, and not the
   class's other files.
@@ -362,8 +362,8 @@ to surprise you:
 ## Development
 
 ```sh
-make check     # the commit gate: fmt, clippy, tests
-make bench     # reproduce every number in docs/ARCHITECTURE.md
+make check     # the commit gate: fmt, clippy, tests, docs, the extension's unit tests
+make bench     # reproduce the corpus benchmarks in docs/ARCHITECTURE.md
 make dogfood REPO=/path/to/rails Q=find_each
 ```
 
