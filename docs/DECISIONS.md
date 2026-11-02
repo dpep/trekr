@@ -15133,6 +15133,36 @@ addressable's 20 rows are true to the checkout (only the specs call
 `Template#expand`) and say nothing about the gem's users, as `unreferenced`
 says nothing about them either (DEC-372). Testbed 665.
 
+### Addendum: where a test is
+
+**Reported** (hunt A): rack-test keeps its whole library in
+`lib/rack/test/`, and `in_tests` matched `spec`, `test` or `tests` at any
+depth, so `Rack::Test::Session#follow_redirect!` was `test-only`, clear,
+"first at lib/rack/test/methods.rb:78" — the public `Methods` module's
+delegation — and `START_BOUNDARY` was `test-only`, clear, though
+`lib/rack/test/utils.rb` reads it. A method defined there was "a spec's own
+helper", and DEC-655 C hid a class there only specs name.
+
+**Decided.** One predicate, `dead_consts::in_tests`, and its sibling
+`in_db`, for every caller (the method and constant passes, the built-name
+reader, the dummy app's routes): a `spec`, `test` or `tests` directory (or
+`db`) counts only at the checkout's root or a nested package's — no `lib`
+or `app` segment before it. `plugins/chat/spec/`, `engines/x/db/` and
+`spec/dummy/app/` stay set apart; `lib/rack/test/`, `app/models/test/` do
+not. A nested package is not recognised by a gemspec or a sibling `lib/`:
+discourse's plugins have neither consistently, and "not under the code's
+own root" needs no file reads. Before this the built-name reader had its
+own `is_test` (`spec`, `test`, a root `db/`) and the constant pass skipped
+a `db` directory anywhere.
+
+**Measured**, `--dead`, the build before → this: rack-test `lib` loses 5
+false rows (`follow_redirect!`, `request`, `basic_authorize`,
+`START_BOUNDARY`, `END_BOUNDARY`; 3 of them clear) and gains 4 from files
+it had set aside, all true to the checkout (`Rack::Test::Methods`,
+`#with_session`, `CookieJar#get_cookie`, `Cookie#to_h`: only specs use
+them, public API as DEC-372 counts it). discourse `app lib`, discourse
+`plugins` and mastodon `app lib`: no row moves. Testbed 669.
+
 ## DEC-655 — Names built where `--dead` did not read them: strings sent by name, and test files
 
 ### A. An interpolated string sent by name is a shape, for the class it is sent to

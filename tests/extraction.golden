@@ -709,6 +709,11 @@ ruby tests/testbed/668-a-test-files-own-module-is-no-test-only-candidate/lib/wid
 ruby tests/testbed/668-a-test-files-own-module-is-no-test-only-candidate/spec/support/widget_helpers.rb b51b1a0338dac5b3
 ruby tests/testbed/668-a-test-files-own-module-is-no-test-only-candidate/spec/widget_spec.rb a721e369e6c24506
 ruby tests/testbed/668-a-test-files-own-module-is-no-test-only-candidate/test/widget_test.rb ea99148878c750b8
+ruby tests/testbed/669-a-test-directory-under-lib-or-app-is-production/app/models/test/result.rb a2455cd0c368a7ff
+ruby tests/testbed/669-a-test-directory-under-lib-or-app-is-production/lib/gadget.rb 3dc433a38e2579d7
+ruby tests/testbed/669-a-test-directory-under-lib-or-app-is-production/lib/gadget/test/helpers.rb bf79137701f60426
+ruby tests/testbed/669-a-test-directory-under-lib-or-app-is-production/plugins/chat/spec/chat_spec.rb 5e681b8ddb152b36
+ruby tests/testbed/669-a-test-directory-under-lib-or-app-is-production/spec/gadget_spec.rb 92244213a0d8263c
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

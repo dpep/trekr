@@ -17,7 +17,9 @@
   lookup, so their rows stay `lower`; a gem without one now reads `clear`.
 - **`--dead` lists a method only specs and tests call as `test-only`**, as
   it does a class, however many calls they write; the reason says how many
-  and where the first is. Such a method was missing when the specs called
+  and where the first is. A test is a file under a `spec/`, `test/` or
+  `tests/` directory at the checkout's root or a nested package's
+  (`plugins/chat/spec/`), not one inside `lib/` or `app/`. Such a method was missing when the specs called
   it more than once, and `single-caller` when once. One that overrides
   another method, or a hook Ruby calls by name, keeps the tier it had, and
   a spec's own helper is never `test-only`. A script
@@ -36,6 +38,9 @@
 - `--dead` no longer says a method "calls `super`, so it overrides a method
   trekr has not indexed" — and grades it `lower` — when the `super` is in a
   `def` nested in its body, which is that method's.
+- `--dead` no longer takes a `test/` or `spec/` directory inside `lib/` or
+  `app/` for tests: rack-test's library is `lib/rack/test/`, so a constant
+  only it used was `test-only`, and a name it builds and sends was not read.
 
 ## 0.9.8 — 2026-10-18
 

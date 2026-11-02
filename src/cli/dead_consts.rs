@@ -62,9 +62,18 @@ pub(super) fn in_db(path: &str) -> bool {
     set_apart(path, &["db"])
 }
 
-/// Whether a directory on `path`, the file's name aside, is one of `dirs`.
+/// Whether a directory on `path`, the file's name aside, is one of `dirs` at
+/// the checkout's root or a nested package's (`plugins/chat/spec/`,
+/// `engines/billing/db/`). One under `lib/` or `app/` is the code's own
+/// namespace: rack-test's whole library is `lib/rack/test/`.
 fn set_apart(path: &str, dirs: &[&str]) -> bool {
-    path.split('/').rev().skip(1).any(|dir| dirs.contains(&dir))
+    let Some((parents, _)) = path.rsplit_once('/') else {
+        return false;
+    };
+    parents
+        .split('/')
+        .take_while(|dir| !matches!(*dir, "lib" | "app"))
+        .any(|dir| dirs.contains(&dir))
 }
 
 /// `A::B::C` and each namespace above it: `A::B`, `A`.
@@ -597,12 +606,18 @@ mod tests {
     }
 
     #[test]
-    fn a_spec_directory_anywhere_makes_a_test() {
+    fn a_spec_directory_at_a_packages_root_makes_a_test() {
         assert!(in_tests("spec/models/widget_spec.rb"));
+        assert!(in_tests("spec/dummy/app/models/widget.rb"));
         assert!(in_tests("plugins/chat/spec/x_spec.rb"));
         assert!(in_tests("plugins/chat/test/x.rb"));
         assert!(!in_tests("app/models/spec.rb"));
+        assert!(!in_tests("lib/rack/test/utils.rb"));
+        assert!(!in_tests("app/models/test/result.rb"));
+        assert!(!in_tests("plugins/chat/lib/chat/test/x.rb"));
         assert!(in_db("db/migrate/20240101_add_score.rb"));
+        assert!(in_db("engines/billing/db/seeds.rb"));
         assert!(!in_db("app/models/db.rb"));
+        assert!(!in_db("lib/store/db/pool.rb"));
     }
 }

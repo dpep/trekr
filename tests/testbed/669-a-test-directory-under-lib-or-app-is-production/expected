@@ -1,0 +1,6 @@
+# A `test` directory under `lib/` or `app/` is the library's own code
+# (rack-test keeps all of it in lib/rack/test/): its calls and constants are
+# production uses, a name it builds is read, and a class there only specs
+# name is test-only. A plugin's own spec/ is still a test.
+dead lib Gadget#from_lib_test=none Gadget#from_app_test=none Gadget::BOUNDARY=none Gadget#handle_ping=unreferenced~handle_* Gadget#from_plugin_spec=test-only
+dead app Test::Result=test-only
