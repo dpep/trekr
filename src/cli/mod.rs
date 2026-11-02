@@ -4734,10 +4734,6 @@ fn mentions(
 /// question about a position is a question about that file, and an agent asks
 /// it from wherever it happens to be standing — which is routinely another
 /// repo, or another language's repo entirely.
-///
-/// The tree is rebuilt from SQL every invocation. PLAN §4 chose that over
-/// incremental machinery, and the measurement in docs/ARCHITECTURE.md is why it
-/// stays chosen.
 /// The checkout a query is about, and an open store — without building the tree.
 ///
 /// Split out because a refresh has to happen *between* those two steps: the
