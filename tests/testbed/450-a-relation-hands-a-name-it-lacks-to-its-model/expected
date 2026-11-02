@@ -10,4 +10,4 @@ def app/use.rb:6:18 status=resolved owner=Part via=relation
 def app/use.rb:7:32 status=resolved owner=Part via=relation
 refs Widget.popular confirmed=2 possible=0 excluded=1
 refs Part.recent confirmed=1 possible=1 excluded=0
-dead app/models Widget.popular=none
+dead app/models Widget#popular=none
