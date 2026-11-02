@@ -406,7 +406,7 @@ otherwise. Its `caveat` names the evidence that would settle it.
 
 | `entry_point` | what it is | settle it with |
 | --- | --- | --- |
-| `api` | a public method, class or module in `lib/` of a checkout with a root `*.gemspec`, unless marked `:nodoc:`, `@api private` or `Internal:`, named with a leading underscore, or held by a `private_constant` | its dependents, or usage data |
+| `api` | a public method, class or module in `lib/` of a checkout with a root `*.gemspec`, unless marked internal (`:nodoc:` on its line; `@api private`, `@private`, `Private:` or `Internal:` in the comment above), named with a leading underscore, or held by a `private_constant` | its dependents, or usage data |
 | `route` | a routed controller action, or a controller only routes name | request logs or APM (e.g. Datadog) |
 | `job` | a job class nothing outside the tests names | job metrics or logs |
 
