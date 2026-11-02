@@ -110,7 +110,9 @@ struct Cli {
     /// looks up at runtime; for any row, the file sends names dynamically,
     /// the one caller's receiver is untyped, it overrides a method, a view, a
     /// script or a gem names it, the checkout
-    /// builds a name of its shape, an ancestor is not indexed. One pass: a
+    /// builds a name of its shape, an ancestor is not indexed, or it is an
+    /// entry point reached from outside the repo (`entry_point`: a gem's
+    /// public API, a routed action, a job). One pass: a
     /// method whose only caller is itself a candidate is `single-caller`, and
     /// its reason says so.
     #[arg(long, value_name = "PATH", num_args = 1..)]
