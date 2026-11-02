@@ -15939,3 +15939,10 @@ app marker the changelog names was untested; testbed 746 is a Rack app
 with one, red with the marker removed. Testbed 702's comment still said a
 checkout without a root gemspec is an app, the rule before the last
 addendum; it names its `config/application.rb` now.
+
+**A symlinked gemspec counts.** `DirEntry::file_type` does not follow a
+link, so a root `widget.gemspec` linked to a generated one was no gemspec,
+and an engine (`app/` beside it) read as an app. The file is now checked
+through the link. Measured: no row moves on any corpus. Unit test
+`a_symlinked_root_gemspec_makes_a_library` (the testbed copies files, not
+links).

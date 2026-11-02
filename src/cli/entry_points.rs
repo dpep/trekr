@@ -126,7 +126,8 @@ impl Gems {
             std::fs::read_dir(dir).is_ok_and(|entries| {
                 entries.flatten().any(|entry| {
                     entry.path().extension().is_some_and(|ext| ext == "gemspec")
-                        && entry.file_type().is_ok_and(|t| t.is_file())
+                        // Through a symlink, which `DirEntry::file_type` is not.
+                        && entry.path().is_file()
                 })
             })
         })
@@ -518,6 +519,23 @@ mod tests {
         assert!(!names("private_constant :Alpha", "A"));
         assert!(!names("# private_constant :A", "A"));
         assert!(!names("FOO = :A", "A"));
+    }
+
+    #[test]
+    fn a_symlinked_root_gemspec_makes_a_library() {
+        let root = std::env::temp_dir().join(format!("trekr-gemspec-link-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(root.join("lib")).unwrap();
+        std::fs::create_dir_all(root.join("app")).unwrap();
+        std::fs::write(root.join("real.gemspec.in"), "").unwrap();
+        std::os::unix::fs::symlink(root.join("real.gemspec.in"), root.join("widget.gemspec"))
+            .unwrap();
+        let in_lib = Gems::default().in_gem_lib(&root, "lib/widget.rb");
+        std::fs::remove_dir_all(&root).unwrap();
+        assert!(
+            in_lib,
+            "an engine's symlinked gemspec still makes a library"
+        );
     }
 
     #[test]
