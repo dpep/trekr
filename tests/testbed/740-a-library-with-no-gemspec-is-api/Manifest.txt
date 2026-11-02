@@ -1,0 +1,4 @@
+Manifest.txt
+Rakefile
+lib/widget/mock.rb
+test/test_mock.rb

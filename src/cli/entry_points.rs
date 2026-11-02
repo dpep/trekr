@@ -85,10 +85,12 @@ pub(super) struct Gems {
 impl Gems {
     /// Is `path` (absolute, or relative to `root`) in a published gem's
     /// `lib/`: the checkout is a library (a `*.gemspec` at its root, or no
-    /// app there), and the file is in a `lib` directory beside a
-    /// `*.gemspec`, the root's or a nested package's (Rails'
-    /// `activerecord/`, protobuf's `ruby/`)? An app's own engines are called
-    /// by the app, which is in the checkout; a test's files are no API.
+    /// app there), and the file is in its root's `lib` or in a `lib`
+    /// directory beside a nested `*.gemspec` (Rails' `activerecord/`,
+    /// protobuf's `ruby/`)? A Hoe gem (minitest) generates its gemspec at
+    /// release, so a library's root `lib/` needs none. An app's own engines
+    /// are called by the app, which is in the checkout; a test's files are no
+    /// API.
     pub(super) fn in_gem_lib(&mut self, root: &Path, path: &str) -> bool {
         let relative = Path::new(path)
             .strip_prefix(root)
@@ -111,7 +113,7 @@ impl Gems {
             if at + 1 == segments.len() {
                 break;
             }
-            if *segment == "lib" && self.has_gemspec(&dir) {
+            if *segment == "lib" && (at == 0 || self.has_gemspec(&dir)) {
                 return true;
             }
             dir.push(segment);

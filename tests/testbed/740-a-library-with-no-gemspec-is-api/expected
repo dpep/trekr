@@ -1,0 +1,7 @@
+# minitest, ruby_parser and flog are Hoe gems: the gemspec is generated at
+# release, so the checkout has a Rakefile and a Manifest.txt but no
+# `*.gemspec` anywhere, and minitest's whole API (`Minitest::Mock`,
+# `#assert_send`) was `test-only`, clear. A checkout that is no app (no
+# `config/application.rb`, `config.ru` or `app/`) counts its own `lib/` as a
+# library's, gemspec or not (DEC-657).
+dead lib Widget::Mock#verify=test-only~dependents Widget::Mock=test-only~dependents

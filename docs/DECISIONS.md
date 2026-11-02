@@ -15798,3 +15798,30 @@ Every other corpus, discourse and mastodon included: no row moves.
 Testbed 725. A Rails engine gem's `app/` (`ActiveStorage::Blob`) is still
 not read as API — declined: not trivially right, as an engine's `app/`
 holds controllers and jobs with entry points of their own.
+
+### DEC-657 addendum: fix round 2
+
+A second hunt (apihunt) found documented API still graded `clear`: a
+library with no gemspec, RDoc's `:doc:` private API, and marks that reached
+further than their tool reads them. The rules stand — public API is never
+graded `clear` in a library, and a mark means what the doc tool does with
+it, read from its source — and where a rule was unsure it errs toward
+`api`. Measured per fix, the build before → after, `--dead` on rails (`lib`
+of activesupport, activerecord, actionview, actionpack, railties,
+activemodel), rspec-expectations, rspec-core, rubocop, sidekiq, minitest,
+rack, faraday, protobuf (`ruby/lib`), addressable, discourse and mastodon
+(`app lib`), one store.
+
+**A library's own `lib/` needs no gemspec.** A Hoe gem (minitest,
+ruby_parser, flog) generates its gemspec at release, so its checkout has a
+Rakefile and a Manifest.txt and no `*.gemspec` anywhere, and minitest's
+whole API was `clear`. Now a checkout that is no app counts its root `lib/`
+as a library's; a nested `lib/` still needs a gemspec beside it. minitest:
+55 rows gain `api`, 22 `clear` → `lower`, all by name documented API
+(`Minitest::Mock`, `Assertions#assert_send`, `#capture_subprocess_io`,
+`#skip_until`, `#fail_after`, `Minitest.register_plugin`, `.after_run`,
+`Guard#windows?` and its kin) or a Hoe plugin's hooks; the 17 left `clear`
+each carry `:nodoc:` on themselves or their body. Every other corpus: no
+row moves. Twelve testbed cases whose `clear` rows assumed no entry point
+(`lib/` alone, no gemspec) gained a `config.ru`, which makes them the apps
+they stood for. Testbed 740.

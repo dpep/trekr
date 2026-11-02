@@ -307,6 +307,7 @@ ruby tests/testbed/351-a-definition-ranks-before-a-declaration-among-equals/app.
 ruby tests/testbed/351-a-definition-ranks-before-a-declaration-among-equals/lib/a_querying.rb 72648e1a20abf63c
 ruby tests/testbed/351-a-definition-ranks-before-a-declaration-among-equals/lib/relation.rb b96208da1808cc4e
 ruby tests/testbed/360-a-haml-comment-or-continued-line-still-names/app/helpers/widget_helper.rb b7ac4e6bf5a33119
+ruby tests/testbed/361-a-module-functions-calls-are-its-own/config.ru cc463c8566791699
 ruby tests/testbed/361-a-module-functions-calls-are-its-own/lib/tally.rb 176fc0d8b14da657
 ruby tests/testbed/362-a-serializer-calls-include-for-its-attributes/app/serializers/concerns/stamped.rb 14b228444cadc2ea
 ruby tests/testbed/362-a-serializer-calls-include-for-its-attributes/app/serializers/gadget_serializer.rb c16ad8e1cb4b707c
@@ -334,6 +335,7 @@ ruby tests/testbed/368-a-helper-calls-another-helper-by-name/app/helpers/labels_
 ruby tests/testbed/369-a-mailer-action-is-called-on-its-class/app/jobs/invite_job.rb 1a787633984ca696
 ruby tests/testbed/369-a-mailer-action-is-called-on-its-class/app/mailers/invite_mailer.rb 930935560e0b5ae0
 ruby tests/testbed/369-a-mailer-action-is-called-on-its-class/lib/action_mailer/base.rb f3b61db948e04902
+ruby tests/testbed/370-methods-listed-at-runtime-are-said/config.ru cc463c8566791699
 ruby tests/testbed/370-methods-listed-at-runtime-are-said/lib/runner.rb 0f0daa0309500860
 ruby tests/testbed/370-methods-listed-at-runtime-are-said/lib/tools.rb b3439b243513c083
 ruby tests/testbed/371-a-thor-command-is-run-by-name/lib/cli/plain.rb d289761eaedc5749
@@ -418,6 +420,7 @@ ruby tests/testbed/427-an-association-names-a-model/app/models/order_search_data
 ruby tests/testbed/427-an-association-names-a-model/app/models/rush_order.rb 3b6d5c8a29f5feee
 ruby tests/testbed/427-an-association-names-a-model/app/services/checkout.rb fbfa4ed997d8f9a4
 ruby tests/testbed/427-an-association-names-a-model/lib/active_record.rb af14db1641cea793
+ruby tests/testbed/428-a-class-an-ancestor-registers/config.ru cc463c8566791699
 ruby tests/testbed/428-a-class-an-ancestor-registers/lib/board.rb 41663af7d2123939
 ruby tests/testbed/428-a-class-an-ancestor-registers/lib/feature.rb 33b20c58bf678f39
 ruby tests/testbed/428-a-class-an-ancestor-registers/lib/likes_scorer.rb 9cda0f2f5bd6c34d
@@ -591,6 +594,7 @@ ruby tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/hel
 ruby tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/models/part.rb ca1bebcedb617b30
 ruby tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/models/widget.rb 48b583c3adf1d958
 ruby tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/serializers/widget_serializer.rb a3ff4bbfdc17e9e7
+ruby tests/testbed/540-ruby-calls-more-hooks-by-name/config.ru cc463c8566791699
 ruby tests/testbed/540-ruby-calls-more-hooks-by-name/lib/widget.rb 4da5c4e8a27c26f9
 ruby tests/testbed/541-new-runs-initialize/lib/widget.rb c7767e66214d11bc
 ruby tests/testbed/541-new-runs-initialize/test/widget_test.rb 1e6a9e62504dd846
@@ -686,12 +690,15 @@ ruby tests/testbed/657-a-constant-in-class-object-is-a-top-level-one/app.rb 628a
 ruby tests/testbed/658-whole-name-refs-reach-through-ancestors/app.rb 159c4e1746dc2cc7
 ruby tests/testbed/659-dead-reads-each-spelling-of-an-object-constant/app.rb d1027d7b656f8428
 ruby tests/testbed/659-dead-reads-each-spelling-of-an-object-constant/consts.rb 4c8dc23c164ef0d6
+ruby tests/testbed/660-a-constant-no-lookup-can-reach-is-clear/config.ru cc463c8566791699
 ruby tests/testbed/660-a-constant-no-lookup-can-reach-is-clear/lib/draw.rb 16867aadb7a335e9
 ruby tests/testbed/660-a-constant-no-lookup-can-reach-is-clear/lib/shapes.rb e9948aafbd05afa3
 ruby tests/testbed/660-a-constant-no-lookup-can-reach-is-clear/spec/shapes_spec.rb d4004db3a048b7a2
+ruby tests/testbed/661-a-computed-const-get-lowers-its-namespace-only/config.ru cc463c8566791699
 ruby tests/testbed/661-a-computed-const-get-lowers-its-namespace-only/lib/levels.rb 24f921a94d2e29e1
 ruby tests/testbed/661-a-computed-const-get-lowers-its-namespace-only/lib/loader.rb a52fd2b66fa39670
 ruby tests/testbed/661-a-computed-const-get-lowers-its-namespace-only/lib/regions.rb 8271a85b65566b5b
+ruby tests/testbed/662-a-built-shape-lowers-what-fits-only/config.ru cc463c8566791699
 ruby tests/testbed/662-a-built-shape-lowers-what-fits-only/lib/jobs.rb e20381afea379737
 ruby tests/testbed/662-a-built-shape-lowers-what-fits-only/lib/runner.rb a8321c0fe36cfe05
 ruby tests/testbed/662-a-built-shape-lowers-what-fits-only/lib/tools.rb 389eaadcf9746b3c
@@ -704,6 +711,7 @@ ruby tests/testbed/665-a-method-only-specs-call-is-test-only/lib/widget.rb 0e2f1
 ruby tests/testbed/665-a-method-only-specs-call-is-test-only/spec/support/widget_helpers.rb 46bd581f949a812e
 ruby tests/testbed/665-a-method-only-specs-call-is-test-only/spec/widget_spec.rb bd9ea7ec831f3f7f
 ruby tests/testbed/666-a-super-in-a-nested-def-is-the-nested-defs/app.rb b36eba928bc0550e
+ruby tests/testbed/667-a-string-sent-by-name-lowers-its-receivers-methods/config.ru cc463c8566791699
 ruby tests/testbed/667-a-string-sent-by-name-lowers-its-receivers-methods/lib/senders.rb ecd678656d25de2b
 ruby tests/testbed/667-a-string-sent-by-name-lowers-its-receivers-methods/lib/targets.rb dda16d9f06b582f9
 ruby tests/testbed/668-a-test-files-own-module-is-no-test-only-candidate/lib/widget.rb c732b49e7a38da14
@@ -717,13 +725,17 @@ ruby tests/testbed/669-a-test-directory-under-lib-or-app-is-production/plugins/c
 ruby tests/testbed/669-a-test-directory-under-lib-or-app-is-production/spec/gadget_spec.rb 92244213a0d8263c
 ruby tests/testbed/670-a-super-in-a-define-method-block-is-the-defined-methods/lib/widget.rb 57b920f92275295f
 ruby tests/testbed/670-a-super-in-a-define-method-block-is-the-defined-methods/spec/widget_spec.rb bc8208295aa4a514
+ruby tests/testbed/671-a-name-a-ruby-script-writes-lowers-its-row/config.ru cc463c8566791699
 ruby tests/testbed/671-a-name-a-ruby-script-writes-lowers-its-row/lib/tool/cli.rb 53ac1de763bc3b2a
 ruby tests/testbed/671-a-name-a-ruby-script-writes-lowers-its-row/spec/cli_spec.rb a0800e4a7db99a9a
+ruby tests/testbed/680-a-two-letter-namespace-bounds-a-built-shape/config.ru cc463c8566791699
 ruby tests/testbed/680-a-two-letter-namespace-bounds-a-built-shape/lib/runner.rb a8321c0fe36cfe05
 ruby tests/testbed/680-a-two-letter-namespace-bounds-a-built-shape/lib/tools.rb 389eaadcf9746b3c
 ruby tests/testbed/680-a-two-letter-namespace-bounds-a-built-shape/lib/ui.rb ebe80ab5696c396e
+ruby tests/testbed/681-a-heredocs-text-looks-nothing-up/config.ru cc463c8566791699
 ruby tests/testbed/681-a-heredocs-text-looks-nothing-up/lib/docs.rb 82eec79530ed28fa
 ruby tests/testbed/681-a-heredocs-text-looks-nothing-up/lib/orphan.rb d39cf032b4680274
+ruby tests/testbed/682-object-space-lists-a-bases-subclasses/config.ru cc463c8566791699
 ruby tests/testbed/682-object-space-lists-a-bases-subclasses/lib/base.rb 306f802951c46238
 ruby tests/testbed/682-object-space-lists-a-bases-subclasses/lib/leaf.rb 5f0f334984fee4d3
 ruby tests/testbed/682-object-space-lists-a-bases-subclasses/lib/orphan.rb d39cf032b4680274
@@ -799,6 +811,9 @@ ruby tests/testbed/724-a-sig-or-a-wrapped-private-constant-keeps-the-mark/widget
 ruby tests/testbed/725-a-library-monorepos-nested-gem-is-api/gem/lib/widget/timestamp.rb d8d8b080da209a25
 ruby tests/testbed/725-a-library-monorepos-nested-gem-is-api/gem/spec/timestamp_spec.rb 1ce30f26fb8eaf99
 ruby tests/testbed/725-a-library-monorepos-nested-gem-is-api/gem/widget.gemspec dea196826b99e33b
+ruby tests/testbed/740-a-library-with-no-gemspec-is-api/Rakefile 42cd902533f66e19
+ruby tests/testbed/740-a-library-with-no-gemspec-is-api/lib/widget/mock.rb be610dc979b43c54
+ruby tests/testbed/740-a-library-with-no-gemspec-is-api/test/test_mock.rb 3e52b89d7df51217
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

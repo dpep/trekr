@@ -1,0 +1,5 @@
+require "hoe"
+
+Hoe.spec "widget" do
+  developer "A", "a@example.com"
+end
