@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- **`--dead` grades a row reached from outside the repo `lower`, keeping
+  its tier, and says what kind of entry point it is**, with `entry_point`
+  in JSON: `gem-api` for a public method, class or module in `lib/` of a
+  checkout with a root `*.gemspec` (not one marked `:nodoc:`, `@api
+  private` or `Internal:`, named with a leading underscore, or under a
+  `private_constant`; not a value constant; not an app's own engine),
+  `route` for a routed controller action or a controller only routes name,
+  `job` for an Active Job or Sidekiq job class nothing outside the tests
+  names. Its caveat names the evidence that would settle it: the gem's
+  dependents or usage data, request logs or APM, job metrics or logs. A
+  routed action was `convention-only`, clear; a gem's documented method
+  only its specs call was `test-only`, clear.
 - **A `def` in `Target.class_eval do … end` inside another class or method
   is `Target`'s**, as it already was at the top level: it was recorded on
   the class around the block, so calls to it were residue and `--refs

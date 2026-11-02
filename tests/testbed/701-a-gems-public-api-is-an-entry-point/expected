@@ -1,0 +1,10 @@
+# A gem's public API was `test-only` or `unreferenced`, clear, because its
+# callers are its users, outside the repo: addressable's README methods and
+# a public exception class users rescue. Such a row keeps its tier, graded
+# lower, saying what would settle it (DEC-657). What the author marks
+# internal is not API — `:nodoc:`, YARD's `@api private`, TomDoc's
+# `Internal:`, a leading underscore, a `private_constant` and what it holds,
+# a private method — nor is a value constant nothing reads.
+dead lib Widget#expand=test-only~dependents Widget#reset=test-only~ Widget#flush=test-only~ Widget#rebuild=test-only~ Widget#_compact=test-only~ Widget#render_parts=single-caller~
+dead lib Widget::Cache#fetch=test-only~ Widget::Store#put=unreferenced~
+dead lib Widget=test-only~public Widget::AbortedError=unreferenced~public Widget::Cache=test-only~ Widget::Store=unreferenced~ Widget::LIMIT=unreferenced~

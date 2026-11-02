@@ -253,6 +253,18 @@ the misses all names built at runtime (`public_send("list_#{action}")`),
 which are now read (DEC-655); a `lower` one 7 in 25. On a library, a public `test-only` method is usually
 its API: the specs are its only callers in the checkout.
 
+**A row reached from outside the repo** keeps its tier, is graded `lower`,
+and says what kind of entry point it is and what would settle it, with
+`entry_point` in JSON (DEC-657): a gem's public API — a public method,
+class or module in `lib/` of a checkout with a root `*.gemspec`, unless
+marked `:nodoc:`, `@api private` or `Internal:`, named with a leading
+underscore, or held by a `private_constant` ("confirm with its dependents
+or usage data"); a routed controller action, or a controller only routes
+name ("request logs or APM (e.g. Datadog)"); a job class nothing outside
+the tests names ("job metrics or logs"). An app's own public methods are
+not entry points: their callers are in the checkout. Hand-checked on six
+gems, 36 of 43 rows it moved from `clear` were API a user could call.
+
 **Classes, modules and constants** are listed after the methods, with
 `kind` in JSON (`class`, `module`, `constant`; a method's row says
 `method`), named by kind in text (`class Admin::Widget`). One is a candidate

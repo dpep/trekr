@@ -15,6 +15,7 @@ mod ways;
 use super::config::Config;
 use super::conventions::Convention;
 use super::dead::{ConstantDetail, ConventionSite, DeadKind, DeadRow, DeadTier, Detail, Grade};
+use super::entry_points::EntryPoint;
 use super::generated::Generated;
 use super::routes::Routes;
 use super::views::Views;
@@ -328,6 +329,7 @@ pub(super) struct Sources<'a> {
     pub(super) views: &'a Views,
     pub(super) config: &'a Config,
     pub(super) texts: &'a super::built::Texts,
+    pub(super) gems: &'a mut super::entry_points::Gems,
 }
 
 /// Pushes a row per class, module or constant in `files` that no reference
@@ -345,6 +347,7 @@ pub(super) fn dead_constants(
         views,
         config,
         texts,
+        gems,
     } = sources;
     let root_str = root.to_string_lossy().into_owned();
     let files: HashSet<String> = files
@@ -515,6 +518,25 @@ pub(super) fn dead_constants(
                  which may reach any constant"
             ));
         }
+        // Reached from outside the repo (DEC-657).
+        let entry_point = match &convention {
+            Some(convention) if convention.by == "routes" => Some(EntryPoint::Route),
+            None if *kind == DeadKind::Class && super::entry_points::is_job(tree, fqn) => {
+                Some(EntryPoint::Job)
+            }
+            // A value constant nothing names is rarely another gem's to read:
+            // hand-checked, few were API (DEC-657).
+            _ if *kind != DeadKind::Constant
+                && gems.in_gem_lib(root, path)
+                && !gems.internal_constant(tree, &root_str, fqn) =>
+            {
+                Some(EntryPoint::GemApi)
+            }
+            _ => None,
+        };
+        if let Some(entry) = entry_point {
+            caveats.push(entry.caveat(false));
+        }
         let caveat = caveats.join(", ");
         let (owner, name) = fqn.rsplit_once("::").unwrap_or(("", fqn));
         let confidence = match caveat.is_empty() {
@@ -536,6 +558,7 @@ pub(super) fn dead_constants(
             detail: Detail::Constant(ConstantDetail {
                 test_refs: tests,
                 convention: convention.as_ref().map(ConventionSite::of),
+                entry_point,
             }),
         });
     }

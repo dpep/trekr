@@ -1,0 +1,6 @@
+# A routed action, and a controller only routes name, were
+# `convention-only`, clear: the route is read, but whether anyone requests
+# it is not something trekr can see. Each keeps its tier, graded lower, and
+# says what would settle it (DEC-657). An action no route reaches, and a
+# private helper, are no entry points.
+dead app WidgetsController#index=convention-only~HTTP WidgetsController#forgotten=unreferenced~ WidgetsController#label=single-caller~ WidgetsController=convention-only~Datadog

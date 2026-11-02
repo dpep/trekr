@@ -170,6 +170,11 @@ found; here is what was checked". Before deleting:
   `let`. (`let!` is never listed.)
 - `visibility: private` means the evidence is complete. A `public` method may
   have callers outside the checkout.
+- **An `entry_point` row is reached from outside the repo**: `gem-api` (a
+  gem's public API), `route` (a routed action or controller), `job` (a job
+  class no code enqueues). It is always `lower`; its callers are invisible to
+  trekr, so settle it with what the caveat names — the gem's dependents,
+  request logs or APM, job metrics — not with trekr.
 - **One pass, no cascade.** A method whose only caller is itself a candidate
   is `single-caller`, and its reason says so. Delete the caller, re-index, and
   ask again.

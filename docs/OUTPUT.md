@@ -289,13 +289,22 @@ measurements behind the grading. Fields per row:
 - `confidence`: `clear`, or `lower` with a `caveat` naming what may still
   reach it. Every spec-member row is `lower`; a class, module or constant
   row is `lower` when the checkout looks up a name computed at runtime that
-  could reach it, or a caveat of its own applies (DEC-654).
+  could reach it, or a caveat of its own applies (DEC-654); so is every
+  `entry_point` row.
 - `overridden_by` (`shadowed`), `overrides` (`override`; any other tier that
   overrides a method is graded `lower`), `super_from` (`super-only`),
   `convention.by` (`convention-only`), `caller` with its own `tier`
   (`single-caller`; a `possible` caller grades the row `lower`).
 - `visibility` (`public`, `protected`, `private`): a private candidate's
   evidence is complete, a public one's is not.
+- `entry_point`, when the row is reached from outside the repo, where no
+  caller can be seen (DEC-657): `gem-api` (a public method, class or module
+  in a gem's `lib/`, the checkout having a root `*.gemspec`), `route` (a
+  routed controller action, or a controller only routes name) or `job` (a
+  job class no code outside the tests names). Absent otherwise. Such a row
+  keeps its tier, is graded `lower`, and its `caveat` names the evidence
+  that would settle it — dependents or usage data, request logs or APM, job
+  metrics or logs.
 - The evidence counted: a method row's `confirmed`/`possible` callers,
   `symbol_refs` (its name as a symbol), `super_refs`, `mentions_by_name`
   (written calls of its name anywhere, capped), `test_refs` (those of its

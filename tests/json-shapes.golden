@@ -39,6 +39,7 @@
 --dead $.candidates[].convention.path: string
 --dead $.candidates[].convention.root: string
 --dead $.candidates[].end_line: int
+--dead $.candidates[].entry_point: string {gem-api,job,route}
 --dead $.candidates[].group: null|string
 --dead $.candidates[].helpers_read: int
 --dead $.candidates[].kind: string {class,constant,let,method,module,shared_group,subject}

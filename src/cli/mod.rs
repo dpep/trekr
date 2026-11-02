@@ -11,6 +11,7 @@ mod config;
 mod conventions;
 mod dead;
 mod dead_consts;
+mod entry_points;
 mod fresh;
 mod generated;
 mod incomplete;

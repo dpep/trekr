@@ -893,7 +893,10 @@ the routes (`routes`), YAML config (`config`), generated files
 as text (`dead_consts::named`) and the conventions that find a class by its
 name (`dead_consts::ways`, DEC-421). Each is evidence of a way in, never of
 a caller: it moves a row to `convention-only` or grades it `lower`, and the
-row says which.
+row says which. Last, `entry_points` (DEC-657) marks a row reached from
+outside the repo — a gem's public API, a routed action or controller, a job
+class — and grades it `lower` whatever its tier, naming the evidence that
+would settle it.
 
 **An example group's members** (`let`, `subject`, a group's `def`) are file
 facts the store never sees (DEC-084), so they are weighed by

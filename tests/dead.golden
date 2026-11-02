@@ -24,7 +24,7 @@
 340-a-symbol-an-option-names-is-a-reference 50b687206cc4bdee
 342-a-block-rails-runs-on-the-instance-calls-the-instance 92ee10a70bfd39e1
 343-a-symbol-read-as-no-name-is-said e4ed82a1f4f996aa
-344-a-route-reaches-a-controller-action f30c8733fc4e116b
+344-a-route-reaches-a-controller-action 537859ccceaa554a
 345-routes-not-all-read-are-said a3d92d55d8d5a4e4
 360-a-haml-comment-or-continued-line-still-names 08c3d9b8879edeb7
 361-a-module-functions-calls-are-its-own e874d4b328539a2a
@@ -38,11 +38,11 @@
 369-a-mailer-action-is-called-on-its-class e83be71db626c10c
 370-methods-listed-at-runtime-are-said e539baf0ca2b3ed8
 371-a-thor-command-is-run-by-name e25950eb7e37b3cd
-380-with-options-scopes-its-routes 429165272020ed24
-381-a-singular-resources-controller-is-its-plural a8f6b401e77d5bc1
-382-a-test-apps-routes-are-not-the-apps 1bb5e37f63623061
-383-a-routed-action-in-a-controller-concern 5978963c2de92f7a
-384-a-routes-concern-reaches-a-drawn-file 6381ad84e1c3ee8a
+380-with-options-scopes-its-routes dc0e85dbb64e661b
+381-a-singular-resources-controller-is-its-plural 2e60ed9d98936e25
+382-a-test-apps-routes-are-not-the-apps 010438ffacda8f23
+383-a-routed-action-in-a-controller-concern 322b15831053fd5f
+384-a-routes-concern-reaches-a-drawn-file 6406a7a1284beebd
 385-thor-runs-no-helper-as-a-command 0398ae87dbb70544
 386-a-lambda-in-a-modules-method-has-no-known-self 9bb126798048fdc7
 390-a-callback-block-in-a-class-methods-method-runs-on-the-includer b9a4467343d37a13
@@ -52,8 +52,8 @@
 402-generated-code-says-so c2416ea7939e97a5
 420-a-constant-nothing-references-is-a-candidate 19f1c66255e985b4
 421-a-class-only-tests-reference-is-test-only a022382ca98395d5
-422-a-routed-controller-is-reached-by-convention 62cebdffa254297b
-423-a-gems-routes-may-reach-a-controller 4796958749ebe397
+422-a-routed-controller-is-reached-by-convention 3d9e2c4c268cb634
+423-a-gems-routes-may-reach-a-controller 466104bcce45227c
 424-concern-class-methods-and-helpers-by-convention a3db597ac54413f4
 425-a-string-or-yaml-value-names-a-class 4ad1a2f4bd9bdd19
 426-a-name-built-from-a-symbol-reaches-a-class 2b5ec26345527ba0
@@ -69,7 +69,7 @@
 450-a-relation-hands-a-name-it-lacks-to-its-model 0b97689d612e319f
 454-a-constant-handed-to-enum-or-attr-is-read 96ea6f1e15cc5aa2
 455-a-constant-spelled-through-an-heir-is-used a8afcb7cc27c2799
-456-two-controllers-one-plain-name-are-both-routed a1898ed21bd5c02f
+456-two-controllers-one-plain-name-are-both-routed ca7b6fd1e1c4ffdd
 457-a-class-named-controller-outside-controllers-is-no-routes 1ffd937c67dfdb0b
 458-libraries-that-find-code-by-a-name b9f8109b50c8135b
 461-a-constant-graded-lower-says-why 1fee8ac4637b240b
@@ -132,3 +132,7 @@
 694-a-string-sent-in-a-class-reaches-its-subclasses-mixins 0069700514b15923
 695-a-string-sent-in-a-mixin-reaches-its-includers-ancestors d9b906336339e065
 696-a-scripts-lookup-may-reach-any-constant a726f02610b6a4d3
+700-a-routed-action-is-an-entry-point 1b8a91a63330aa57
+701-a-gems-public-api-is-an-entry-point dc634a1f582096a8
+702-an-apps-own-engine-is-no-gems-api 1ac8a3c76be874e9
+703-a-background-job-is-an-entry-point a8f355d9d4253a22

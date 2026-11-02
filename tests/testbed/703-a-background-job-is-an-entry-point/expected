@@ -1,0 +1,6 @@
+# A job no code enqueues is reached by whatever does — a schedule in a
+# config the checkout does not hold, another service, a queue still
+# draining — and none of that is in the repo. A job class, Active Job's or
+# Sidekiq's, that nothing outside the tests names keeps its tier, graded
+# lower, saying what would settle it (DEC-657). A plain class does not.
+dead app CleanupJob=test-only~metrics DigestWorker=unreferenced~metrics Report=unreferenced~

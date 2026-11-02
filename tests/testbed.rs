@@ -608,7 +608,14 @@ mod shapes {
     const REGENERATE: &str = "UPDATE_GOLDEN=1 cargo test --test testbed";
 
     /// Fields whose strings are a fixed set a caller matches on, not data.
-    const VOCABULARY: &[&str] = &["status", "resolved_via", "under", "tier", "kind"];
+    const VOCABULARY: &[&str] = &[
+        "status",
+        "resolved_via",
+        "under",
+        "tier",
+        "kind",
+        "entry_point",
+    ];
 
     #[derive(Default)]
     struct Seen {

@@ -4,6 +4,7 @@
 
 use super::*;
 use crate::resolve::refs;
+use entry_points::EntryPoint;
 use serde::Serialize;
 
 /// One `--dead` candidate: what every kind shares, and its own detail
@@ -60,6 +61,9 @@ pub(super) struct MethodDetail {
     pub(super) route: Option<Site>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) convention: Option<ConventionSite>,
+    /// Reached from outside the repo, where no caller can be seen (DEC-657).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) entry_point: Option<EntryPoint>,
 }
 
 #[derive(Serialize)]
@@ -88,6 +92,8 @@ pub(super) struct ConstantDetail {
     pub(super) test_refs: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) convention: Option<ConventionSite>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) entry_point: Option<EntryPoint>,
 }
 
 /// A single caller's one written call.
@@ -691,6 +697,7 @@ fn dead_in(
     let mut thor_blocks = conventions::ThorBlocks::default();
     let mut foreign_sends = conventions::ForeignSends::default();
     let mut parsed = Parsed::default();
+    let mut gems = entry_points::Gems::default();
     for Defined {
         file,
         def,
@@ -1156,6 +1163,21 @@ fn dead_in(
                 if n == 1 { "site" } else { "sites" }
             ));
         }
+        // Reached from outside the repo: kept, graded lower, and said what
+        // would settle it (DEC-657).
+        let entry_point = if route.is_some() {
+            Some(EntryPoint::Route)
+        } else if public
+            && !owner.is_empty()
+            && !entry_points::underscored(&def.name)
+            && gems.in_gem_lib(root, file)
+            && !gems.marked_internal(file, def.pos.line)
+            && !gems.internal_constant(&tree, &root_str, &owner)
+        {
+            Some(EntryPoint::GemApi)
+        } else {
+            None
+        };
         // Callers `--dead` cannot see, named where it can say which (DEC-315).
         if let Some(caller) = refs::protocol_hook(&def.name, def.singleton) {
             if !risky.is_empty() {
@@ -1227,6 +1249,12 @@ fn dead_in(
                 "`:{}` at line {line} is not read as a call",
                 def.name
             ));
+        }
+        if let Some(entry) = entry_point {
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            risky.push_str(&entry.caveat(true));
         }
         let shadowed =
             tier == DeadTier::Unreferenced && unplaced.is_none() && !shadowing.is_empty();
@@ -1332,6 +1360,7 @@ fn dead_in(
                 caller,
                 route: route.cloned().map(|(path, line)| Site { path, line }),
                 convention: convention.as_ref().map(ConventionSite::of),
+                entry_point,
             }),
         };
         rows.push(row);
@@ -1371,6 +1400,7 @@ fn dead_in(
         views: &views,
         config: &config,
         texts: &texts,
+        gems: &mut gems,
     };
     dead_consts::dead_constants(&tree, store, root, &files, sources, rows)?;
     Ok(files.len())

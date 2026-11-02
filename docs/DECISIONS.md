@@ -15474,3 +15474,125 @@ the gems DEC-654 measured.
   Mixin`, for a send in Widget), and a class a module's includer inherits
   (Widget, for a send in Mixin). Both were clear. Testbed 694, 695. No row
   moved on any corpus.
+
+## DEC-657 — A row reached from outside the repo is graded `lower`, and says what kind of entry point it is
+
+**Reported** by two gem testers on 0.9.8: addressable `Template#extract`
+and `#partial_expand` — the README's headline API — were `test-only`,
+clear; connection_pool `ConnectionPool.wrap` and
+`#discard_current_connection`, documented API, `test-only`, clear;
+addressable `TemplateOperatorAbortedError`, a public exception class users
+rescue, `unreferenced`, clear. The owner's decision: public methods, and
+controllers and jobs, "require either user understanding or datadog /
+logs". `clear` there is a claim trekr has no evidence for: static analysis
+cannot see those callers at all.
+
+**Decided.** A row that is an entry point keeps its tier, is graded
+`lower`, and its caveat says what kind and what would settle it, in one
+form, "{what}: {how} — confirm with {evidence}". `entry_point` in JSON
+names the kind — a closed vocabulary, pinned by `tests/json-shapes.golden`
+— so a consumer need not parse the caveat; `convention.by` could not carry
+it, as most such rows are `test-only` or `unreferenced`, which have no
+convention. `cli::entry_points` decides it, after every other caveat:
+
+| `entry_point` | the row | caveat |
+| --- | --- | --- |
+| `gem-api` | a public method, class or module in a `lib/` beside a `*.gemspec`, in a checkout with one at its root | public API of a gem: its callers outside this repo are invisible — confirm with its dependents or usage data |
+| `route` | a method a route reaches (DEC-344), any tier; a class `convention.by: routes` (DEC-421) | a routed controller action (or controller): reached by HTTP requests — confirm with request logs or APM (e.g. Datadog) |
+| `job` | a class with `Sidekiq::Job`, `Sidekiq::Worker`, `ActiveJob::Base` or `ApplicationJob` in its chain (an unresolved one counts), that no convention reaches | a background job: reached by enqueued and scheduled jobs — confirm with job metrics or logs |
+
+**What a gem's author marks internal is not API**, read from the source
+as written: `:nodoc:` on the definition's line (RDoc); `@api private` or
+`@private` (YARD), or `Private:` / `Internal:` (TomDoc), in the comment
+directly above; a leading underscore (`_compress`); a constant made
+`private_constant` in a file that declares it. Each holds for what a marked
+namespace holds (rack-test's `CookieJar # :nodoc:` keeps its methods
+`clear`). A test file, a private or protected method and `initialize` are
+not API.
+
+**The root gemspec is the line between a library and an app.** An app's
+public methods are called from the app, which is in the checkout, so they
+are not entry points; nor are an app's own engines (`engines/billing/
+billing.gemspec`), which the app alone calls. A nested `lib/` counts only
+when the root is a gem too (Rails' `activerecord/`). discourse and
+mastodon have no root gemspec, and no row of theirs is `gem-api`.
+
+**Measured**, `--dead app lib` (gems `--dead lib`), main (dd9ceb0) → this,
+same store; every row that changed has an `entry_point`, and no tier moved:
+
+| corpus | kind | rows | `clear` → `lower` | of those, by tier |
+| --- | --- | ---: | ---: | --- |
+| discourse | `route` | 519 | 342 | 339 `convention-only` (123 controllers), 2 `single-caller`, 1 `super-only` |
+| discourse | `job` | 4 | 0 | — |
+| mastodon | `route` | 501 | 339 | 330 `convention-only` (282 controllers), 9 `super-only` |
+| mastodon | `job` | 18 | 0 | — |
+| addressable | `gem-api` | 28 | 6 | 2 `test-only`, 2 `single-caller`, 1 `unreferenced`, 1 `convention-only` |
+| connection_pool | `gem-api` | 10 | 3 | 2 `test-only`, 1 `single-caller` |
+| redis-client | `gem-api` | 46 | 25 | 10 `test-only`, 6 `single-caller`, 4 `unreferenced`, 4 `convention-only`, 1 `super-only` |
+| rack-test | `gem-api` | 7 | 5 | 5 `test-only` |
+| twirp | `gem-api` | 10 | 2 | 1 `test-only`, 1 `single-caller` |
+| streaming_stats | `gem-api` | 4 | 2 | 2 `unreferenced` |
+
+`clear` / `lower`, before → after: discourse 3418 / 2982 → 3076 / 3324,
+mastodon 2877 / 1171 → 2538 / 1510, addressable 34 / 27 → 28 / 33,
+connection_pool 9 / 7 → 6 / 10, redis-client 47 / 43 → 22 / 68, rack-test
+14 / 10 → 9 / 15, twirp 3 / 11 → 1 / 13, streaming_stats 7 / 2 → 5 / 4.
+
+**Hand-checked: is it an entry point — would deleting it break a caller
+outside the repo?** DEC-631 asks that rows a caveat lowers be live more
+often than rows it leaves alone. For an entry point, liveness is exactly
+what the repo cannot show; what can be checked is whether the row is an
+entry point at all, so that was read.
+
+- `gem-api`, all 43 rows moved: **36 are API** a user can call or rescue —
+  the testers' five; redis-client's README methods (`pubsub`, `scan` and its
+  kin, `RedisClient.sentinel`, `.ring`, `.register`, `config.new_pool`,
+  `nodes_for`, an error's `final?`/`retriable?`) and `Decorator.create`,
+  which redis-rb calls; rack-test's `with_session`, `after_request`,
+  `restore_state` and `Methods`; twirp's `ClientJSON`. The 7 that are not:
+  addressable's native IDNA backend's `punycode_encode`/`_decode`,
+  connection_pool's `TimedStack#decrement_created`, redis-client's
+  `RubyConnection::BufferedIO#with_timeout`, `ConnectionMixin#protocol_error`
+  and `HashRing.digest`, rack-test's `encoding_aware_strings?` — public by
+  Ruby's visibility, internal by use, with no marker to say so. Whether any
+  row is used by the gem's dependents is unknowable here; that is the
+  caveat's point.
+- `route`, 15 at random (seed 657, 7 actions and 8 controllers across both
+  apps), each route line read: 15 of 15 are drawn routes — `put
+  "t/:topic_id/tags" => "topics#update_tags"`, `post :unpublish` in a
+  `resources` block, `collection { post :batch }`. A routed action is an
+  entry point by construction; whether it is requested is what the logs say.
+- `job`, all 22: mastodon's 17 `Scheduler::*` jobs are scheduled by
+  `config/sidekiq.yml` upstream, which the bench checkout lacks — reached
+  only from outside it; mastodon's `RemoveFeaturedTagWorker` and discourse's
+  four (`ToggleTopicClosed` is a deprecated job kept for queued work,
+  `RebakePostsForUpload`, `SendPushNotification`,
+  `UpdatePostUploadsSecureStatus`) have no producer in the checkout: dead,
+  or a queue still draining — which job metrics settle and trekr cannot.
+  All 22 were `lower` already, by DEC-654's computed-name lookup, which
+  DEC-654 found is never the way in; the job caveat is the true one.
+
+**Dropped, measured.**
+
+- *A gem's value constant* (`UNICODE_DATA_CANONICAL = 3`): 2 of 16 that
+  would have moved were plausibly API (addressable's
+  `CharacterClassesRegexps::HOST`, `::RESERVED`, arguments to
+  `encode_component`); the rest were table indexes and regexps the gem
+  itself no longer reads — truly unused, lowered for nothing. A class or
+  module is a name a user writes; a value constant nothing reads rarely is.
+- *A job's `perform`*: never a row on either app — its name is written too
+  often (DEC-652's cheap count) — and already `lower` as a protocol hook
+  (DEC-315) where it is.
+- *Mailer actions*: called in the repo through their class (DEC-369); 2
+  public mailer rows were `clear` across both apps.
+- *GraphQL resolvers, Grape endpoints, Action Cable channels, rake tasks*:
+  none in the corpora (rake files are not Ruby `--dead` reads). Each lands
+  with a corpus that has them.
+
+**Timing**, `--dead app --json` on discourse, five interleaved runs, load
+16–26: median 4.25 s before, 4.33 s after — inside the noise.
+
+**Not done.** A public method of an app's class that another service
+calls over RPC, or a `public_send` from a client library, is invisible as
+a gem's API is, and is not caveated: nothing in the checkout says so.
+Testbed 700–703.
