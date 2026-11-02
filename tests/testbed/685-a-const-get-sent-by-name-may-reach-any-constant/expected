@@ -1,0 +1,4 @@
+# `Object.send(:const_get, name)` is `Object.const_get(name)` written as a
+# send, and may reach any constant: Orphan is lower, citing it. It was clear
+# (DEC-654).
+dead lib Orphan=unreferenced~Object.const_get

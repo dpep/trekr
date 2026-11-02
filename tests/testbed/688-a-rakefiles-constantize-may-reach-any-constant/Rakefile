@@ -1,0 +1,3 @@
+task :load do
+  ENV["KIND"].constantize.new
+end

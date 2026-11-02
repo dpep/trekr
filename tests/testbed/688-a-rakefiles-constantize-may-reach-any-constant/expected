@@ -1,0 +1,4 @@
+# A Rakefile is Ruby, as `lib/tasks/*.rake` is: its `ENV["KIND"].constantize`
+# may reach any constant. With no extension and no shebang it was not read,
+# so Orphan was clear (DEC-654).
+dead lib Orphan=unreferenced~Rakefile:2

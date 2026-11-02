@@ -15002,6 +15002,16 @@ the gems measured above.
   `Object.constants.map { |c| Object.const_get(c) }` (or `Module.`,
   `Kernel.`) fetches every top-level constant, and was read as neither.
   Testbed 684. No row moved.
+- **Lookups written another way are read**: `Object.send(:const_get, x)`
+  (`public_send`, `__send__`) as `Object.const_get(x)`, a namespace's
+  likewise; `ActiveSupport::Dependencies.constantize(x)` as the
+  Inflector's; an ERB tag's or another template's `x.safe_constantize` (an
+  ERB file's text outside its tags is not code); and a `Rakefile`, which
+  is Ruby with no extension or shebang. Testbed 685–688. No row moved: every
+  corpus that writes one already had a lookup cited first. An extensionless
+  script with a Ruby shebang (`exe/tool`) is still read for its constant
+  paths only; its lookups are not. `Object.method(:const_get).call(x)` is
+  not read.
 
 ## DEC-653 — A block evaluated in a class named by a bare constant defines that class's methods, wherever it is written
 

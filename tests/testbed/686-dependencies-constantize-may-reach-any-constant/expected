@@ -1,0 +1,4 @@
+# `ActiveSupport::Dependencies.constantize(name)` takes the name as its
+# argument, as `ActiveSupport::Inflector.constantize` does, and may reach any
+# constant. It was read as String#constantize given an argument: no lookup.
+dead lib Orphan=unreferenced~lib/loader.rb:3

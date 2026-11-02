@@ -122,3 +122,7 @@
 682-object-space-lists-a-bases-subclasses 42b6e3f31e0699bb
 683-object-space-lists-any-class 412d373a65de1563
 684-objects-constants-listing-reaches-any-top-level-constant 5245393dc6b36158
+685-a-const-get-sent-by-name-may-reach-any-constant 3652b0cd867faee5
+686-dependencies-constantize-may-reach-any-constant 4f0984f4f710b42b
+687-a-views-constantize-may-reach-any-constant 7467ea9d435b8c4e
+688-a-rakefiles-constantize-may-reach-any-constant ef837faa4ed287e1

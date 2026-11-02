@@ -1,0 +1,4 @@
+# An ERB tag's `params[:kind].safe_constantize` may reach any constant;
+# the text around the tags is no code. A template was read only for strings
+# and shapes, so Orphan was clear (DEC-654).
+dead lib Orphan=unreferenced~show.html.erb:2

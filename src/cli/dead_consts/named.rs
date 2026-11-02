@@ -87,10 +87,9 @@ impl Named {
             .par_iter()
             .filter_map(|(path, text)| {
                 let mut part = Named::default();
-                let script = !path
-                    .rsplit('/')
-                    .next()
-                    .is_some_and(|name| name.contains('.'));
+                let name = path.rsplit('/').next().unwrap_or(path);
+                // A Rakefile is Ruby, shebang or not.
+                let script = !name.contains('.') && name != "Rakefile";
                 if script {
                     if text.starts_with("#!")
                         && text
@@ -107,6 +106,13 @@ impl Named {
                 } else if TEMPLATES.iter().any(|ext| path.ends_with(ext)) {
                     for (n, line) in text.lines().enumerate() {
                         part.read_dynamic(path, n as u32 + 1, line);
+                        if part.unscoped.is_none()
+                            && let Some(call) = template_code(path, line)
+                                .into_iter()
+                                .find_map(unscoped_lookup)
+                        {
+                            part.unscoped = Some((call, (path.clone(), n as u32 + 1)));
+                        }
                     }
                 } else {
                     part.read_ruby(path, text);
@@ -569,9 +575,10 @@ enum Named_ {
 /// `Regions.const_get(name)`, `Module.const_get("Regions").const_get(name)`:
 /// the namespaces a line looks a constant up in by a name it computes.
 fn computed_const_gets(line: &str) -> Vec<String> {
+    let line = desugared(line);
     let mut found = Vec::new();
     let call = ".const_get(";
-    let mut rest = line;
+    let mut rest = line.as_ref();
     while let Some(at) = rest.find(call) {
         let receiver = &rest[..at];
         let arg = rest[at + call.len()..].trim_start();
@@ -605,6 +612,34 @@ fn computed_const_gets(line: &str) -> Vec<String> {
         }
     }
     found
+}
+
+/// The Ruby of a template's line: an ERB file's `<% … %>` tags, which its
+/// text around them is not; the whole line of any other template.
+fn template_code<'a>(path: &str, line: &'a str) -> Vec<&'a str> {
+    if !path.ends_with(".erb") {
+        return vec![line];
+    }
+    line.split("<%")
+        .skip(1)
+        .map(|tag| {
+            let tag = tag.split("%>").next().unwrap_or(tag);
+            tag.trim_start_matches(['=', '-'])
+        })
+        .collect()
+}
+
+/// `Object.send(:const_get, name)`, `public_send`, `__send__`: the same
+/// lookup as `Object.const_get(name)`, written so it reads as one.
+fn desugared(line: &str) -> std::borrow::Cow<'_, str> {
+    if !line.contains("(:const_get,") {
+        return line.into();
+    }
+    let mut line = line.to_string();
+    for send in ["public_send", "__send__", "send"] {
+        line = line.replace(&format!("{send}(:const_get,"), "const_get(");
+    }
+    line.into()
 }
 
 /// The heredocs a line opens (`<<~SQL`, `<<-'RUBY'`), each with its
@@ -672,6 +707,8 @@ fn string_spans(line: &str) -> (Vec<(usize, usize)>, usize) {
 /// namespace, and `constants.map { |c| const_get(c) }` lists one: each is
 /// read for what it bounds, not here.
 fn unscoped_lookup(line: &str) -> Option<String> {
+    let line = desugared(line);
+    let line = line.as_ref();
     let (spans, code_end) = string_spans(line);
     let bytes = line.as_bytes();
     let in_code = |at: usize| at < code_end && !spans.iter().any(|(o, c)| *o < at && at < *c);
@@ -724,7 +761,7 @@ fn unscoped_lookup(line: &str) -> Option<String> {
         if defines {
             continue;
         }
-        let whole = if line[..dot].ends_with("Inflector") {
+        let whole = if line[..dot].ends_with("Inflector") || line[..dot].ends_with("Dependencies") {
             computed_arg(after)
         } else if line[after..].starts_with('(') && !line[after..].starts_with("()") {
             // String#constantize takes no argument: this is another method.
@@ -917,6 +954,10 @@ mod tests {
             ["Regions"]
         );
         assert_eq!(computed_const_gets("Widgets.const_get(name)"), ["Widgets"]);
+        assert_eq!(
+            computed_const_gets("Widgets.send(:const_get, name)"),
+            ["Widgets"]
+        );
         assert!(computed_const_gets("Widgets.const_get(:LIMIT)").is_empty());
         assert!(computed_const_gets("Object.const_get(name)").is_empty());
     }
@@ -936,6 +977,12 @@ mod tests {
                 "Object.constants.each { |c| Object.const_get(c) }",
                 "Object.const_get",
             ),
+            ("Object.send(:const_get, name)", "Object.const_get"),
+            ("public_send(:const_get, name)", "const_get"),
+            (
+                "ActiveSupport::Dependencies.constantize(name)",
+                "constantize",
+            ),
         ] {
             assert_eq!(unscoped_lookup(line).as_deref(), Some(call), "{line}");
         }
@@ -950,9 +997,25 @@ mod tests {
             "respond_to?(:constantize)",
             "x = 1 # name.constantize",
             "puts \"name.constantize\"",
+            "Regions.send(:const_get, name)",
         ] {
             assert_eq!(unscoped_lookup(line), None, "{line}");
         }
+    }
+
+    #[test]
+    fn an_erb_files_code_is_its_tags() {
+        assert_eq!(
+            template_code(
+                "a.html.erb",
+                "Use name.constantize <%= k.safe_constantize %> x"
+            ),
+            [" k.safe_constantize "]
+        );
+        assert_eq!(
+            template_code("a.haml", "= k.constantize"),
+            ["= k.constantize"]
+        );
     }
 
     #[test]

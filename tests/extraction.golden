@@ -38,6 +38,7 @@ erb tests/testbed/623-a-template-whose-self-is-unnamed-keeps-no-method-alive/lib
 erb tests/testbed/641-a-components-template-runs-on-the-component/app/components/badge_component.html.erb 41fdda4cdbdf6ab8
 erb tests/testbed/641-a-components-template-runs-on-the-component/app/components/card_component/card_component.html.erb d1baad536b6dcb39
 erb tests/testbed/641-a-components-template-runs-on-the-component/app/components/stray.html.erb f1aa91821e966fe9
+erb tests/testbed/687-a-views-constantize-may-reach-any-constant/app/views/widgets/show.html.erb 1c78316ac18f714c
 rabl tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/views/widgets/base.rabl 706223d3bbf4a9f7
 rabl tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/views/widgets/show.rabl e1ce31e3d5212371
 rabl tests/testbed/603-a-templates-bare-ivar-and-local-assigns-are-defined/app/views/widgets/show.json.rabl bfd218e974bc4930
@@ -731,6 +732,13 @@ ruby tests/testbed/683-object-space-lists-any-class/lib/registry.rb 34fcee52e952
 ruby tests/testbed/684-objects-constants-listing-reaches-any-top-level-constant/lib/loader.rb eb198b86e3e6db58
 ruby tests/testbed/684-objects-constants-listing-reaches-any-top-level-constant/lib/ns.rb 1ca65f6fb0d127f4
 ruby tests/testbed/684-objects-constants-listing-reaches-any-top-level-constant/lib/orphan.rb d39cf032b4680274
+ruby tests/testbed/685-a-const-get-sent-by-name-may-reach-any-constant/lib/loader.rb 6bd46c49acc2872a
+ruby tests/testbed/685-a-const-get-sent-by-name-may-reach-any-constant/lib/orphan.rb d39cf032b4680274
+ruby tests/testbed/686-dependencies-constantize-may-reach-any-constant/lib/loader.rb a159872fc97d12b9
+ruby tests/testbed/686-dependencies-constantize-may-reach-any-constant/lib/orphan.rb d39cf032b4680274
+ruby tests/testbed/687-a-views-constantize-may-reach-any-constant/lib/orphan.rb d39cf032b4680274
+ruby tests/testbed/688-a-rakefiles-constantize-may-reach-any-constant/Rakefile 1914f353a1ac3c05
+ruby tests/testbed/688-a-rakefiles-constantize-may-reach-any-constant/lib/orphan.rb d39cf032b4680274
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/alias.rb f49a22486d2a111b
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/gem.rb a48ad81018869404
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/inherited.rb 12d09cef784af61a
