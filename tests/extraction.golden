@@ -772,6 +772,13 @@ ruby tests/testbed/703-a-background-job-is-an-entry-point/app/jobs/cleanup_job.r
 ruby tests/testbed/703-a-background-job-is-an-entry-point/app/models/report.rb 98f40a8d89bb88f6
 ruby tests/testbed/703-a-background-job-is-an-entry-point/app/workers/digest_worker.rb 210f2c16dc725288
 ruby tests/testbed/703-a-background-job-is-an-entry-point/spec/jobs/cleanup_job_spec.rb 98f640fc34acb5a2
+ruby tests/testbed/710-a-constant-in-a-qualified-receivers-block-is-lexical/outer.rb 59ad66a12a24cce8
+ruby tests/testbed/710-a-constant-in-a-qualified-receivers-block-is-lexical/probe.rb d654dc6a9e14020d
+ruby tests/testbed/711-a-route-or-convention-outranks-test-only/app/controllers/widgets_controller.rb 888e8844251c14e9
+ruby tests/testbed/711-a-route-or-convention-outranks-test-only/app/policies/widget_policy.rb e65b5950c393d8c6
+ruby tests/testbed/711-a-route-or-convention-outranks-test-only/config/routes.rb 4e3181e2428bffbb
+ruby tests/testbed/711-a-route-or-convention-outranks-test-only/lib/frameworks.rb 0363ad1229f5b8c2
+ruby tests/testbed/711-a-route-or-convention-outranks-test-only/spec/widgets_spec.rb d26a66549e36ac0f
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

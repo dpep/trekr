@@ -1,0 +1,6 @@
+# What only specs call is `test-only`, unless a route or a library's
+# convention (Pundit asks a policy `publish?`) may reach it in production:
+# those keep the tier they had without the spec's calls (DEC-652) — the
+# routed action's one spec call leaves it `single-caller`, the predicate's
+# two leave it unlisted. A method nothing but a spec reaches is `test-only`.
+dead . WidgetsController#index=single-caller~HTTP WidgetPolicy#publish?=none WidgetPolicy#archive?=test-only

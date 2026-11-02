@@ -1,0 +1,7 @@
+# A constant written in the block of a qualified receiver
+# (`Outer::Target.class_eval do LIMIT = 3 end`) is the enclosing scope's, as
+# in Ruby: `Probe::LIMIT`, and `::X` at the top level — never
+# `Outer::Target::LIMIT` (DEC-653; case 690 is the bare-receiver version).
+def probe.rb:8:23 status=resolved site=outer.rb:3
+def probe.rb:9:5 status=resolved site=probe.rb:3
+def probe.rb:17:1 status=resolved site=probe.rb:14

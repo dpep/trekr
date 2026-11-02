@@ -13,7 +13,8 @@
   under a `spec/`, `test/` or `tests/` directory at the checkout's root or
   a nested package's (`plugins/chat/spec/`), not one inside `lib/` or
   `app/`. A method that overrides another, or a hook Ruby calls by name,
-  keeps the tier it had, and a spec's own helper is never `test-only`.
+  keeps the tier it had, as does one a route or a library's convention
+  reaches (a Pundit predicate), and a spec's own helper is never `test-only`.
 - **`--dead` reads an extensionless Ruby script** (`exe/tool`, `bin/x`),
   which trekr does not index, for the names it writes: a method one names
   is not `test-only`, and its row is `lower`, "named in a script
@@ -55,7 +56,9 @@
   'Target#x'` said `no_such_method`. `Target.instance_eval do def x` makes
   `Target.x`. The `def`'s owner is found as Ruby finds `Target`, through
   the enclosing class's ancestors too, and an alias (`Gizmo = Gadget`) is
-  followed.
+  followed. A constant written in a qualified receiver's block
+  (`Faker::Lorem.instance_eval { X = 1 }`) is scoped like Ruby's: top-level
+  there, not the receiver's.
 - `--dead` no longer lists a class or module that a spec or test file
   defines and the tests use as `test-only`: it is test code in use, as a
   spec's own helper method is. One nothing uses is still `unreferenced`.
