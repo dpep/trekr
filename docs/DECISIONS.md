@@ -15337,7 +15337,8 @@ class it is sent to**, its chain and its subclasses:
   `TypeSupervisor`'s reaches the `Validations` it includes);
 - a chain that starts at a constant, `TopicQuery.new(user, opts).public_send(…)`
   or `AdminMailer.with(…).public_send(…)`: that constant, resolved where it
-  is written;
+  is written, when the chain runs through `new` or ActionMailer's `with`
+  only (the fix round below);
 - a local the method last assigned the string to, whole, before the send
   (`validate_method = "validate_#{name}"; public_send(validate_method, val)`),
   as if the string were written there (the fix round below).
@@ -15454,3 +15455,13 @@ the gems DEC-654 measured.
   assignment replaces the string unless it may not run (a trailing
   `if`/`unless`, or written deeper than the string, inside a branch).
   Testbed 689, 692. No row moved on any corpus.
+- **A chain is the constant's instance only through calls whose answer is
+  known.** `Widget.for(1).public_send("handle_#{x}")` was read as sent to
+  a Widget, whatever `for` answers. Now a chain from a constant counts
+  through `new` and `with` alone: `with` is ActionMailer's, whose answer
+  runs the mailer's actions, which is how mastodon's
+  `AdminMailer.with(…).public_send("end_of_support_#{…}")` reaches
+  `AdminMailer` (kept). A chain from `self` counts through `class` and
+  `new` alone (`self.helper.send(…)` is a value too). Any other chain is a
+  value, whose sends are not read (above). Testbed 693. No row moved: no
+  corpus sends a string through another call of a constant.

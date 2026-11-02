@@ -436,11 +436,15 @@ fn word(c: char) -> bool {
 }
 
 /// What the text before a call writes as its receiver: nothing, `self`, a
-/// chain from a constant (`Q.new(a).with(b)`); `None` for a value.
+/// constant, or a chain from one through calls whose answer is known; `None`
+/// for a value. `new` answers an instance; `with` is ActionMailer's, whose
+/// answer runs the mailer's actions (`AdminMailer.with(…).public_send`). Any
+/// other call may answer anything (`Widget.for(1)`).
 fn receiver(before: &str) -> Option<To> {
     let Some(mut chain) = before.strip_suffix('.') else {
         return Some(To::Own);
     };
+    let mut calls = Vec::new();
     loop {
         if let Some(open) = chain.strip_suffix(')').and_then(opening) {
             chain = &chain[..open];
@@ -451,13 +455,17 @@ fn receiver(before: &str) -> Option<To> {
             .map_or(0, |(at, c)| at + c.len_utf8());
         let (head, segment) = chain.split_at(start);
         if let Some(rest) = head.strip_suffix('.') {
+            calls.push(segment);
             chain = rest;
             continue;
         }
         let segment = segment.trim_start_matches("::");
+        let through = |known: &[&str]| calls.iter().all(|call| known.contains(call));
         return match segment {
-            "self" | "new" => Some(To::Own),
-            _ if constant_before(segment).is_some_and(|c| c == segment) => {
+            "self" | "new" if through(&["class", "new"]) => Some(To::Own),
+            _ if through(&["new", "with"])
+                && constant_before(segment).is_some_and(|c| c == segment) =>
+            {
                 Some(To::Constant(segment.to_string()))
             }
             _ => None,
@@ -680,6 +688,9 @@ mod tests {
             receiver("::Mail::Admin.with(to: user.account)."),
             Some(To::Constant("Mail::Admin".into()))
         );
+        assert_eq!(receiver("self.class."), Some(To::Own));
+        assert_eq!(receiver("Widget.for(1)."), None);
+        assert_eq!(receiver("self.helper."), None);
         assert_eq!(receiver("record."), None);
         assert_eq!(receiver("@q.new."), None);
         assert_eq!(receiver("x&."), None);

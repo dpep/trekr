@@ -1,0 +1,6 @@
+# `Widget.for(1).public_send("handle_#{kind}")` sends to whatever `for`
+# answers, which need not be a Widget: here a Gadget. A chain from a constant
+# is that constant's instance only through `new` (or ActionMailer's `with`);
+# through any other call it is a value, whose sends are not read. Widget's
+# handle_ping was lowered as reached (DEC-655).
+dead lib Widget#handle_ping=unreferenced!~sent

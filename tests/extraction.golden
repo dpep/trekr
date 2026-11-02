@@ -746,6 +746,7 @@ ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/inheri
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/probe.rb 303753f439b130de
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/target.rb eb8b950dfe369aed
 ruby tests/testbed/692-a-sent-local-is-its-methods-as-last-assigned/lib/senders.rb 079a67c9c9873291
+ruby tests/testbed/693-a-chain-through-an-unknown-call-is-a-value/lib/widget.rb 73fd0265f808cfc0
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28
