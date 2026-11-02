@@ -39,8 +39,9 @@
     app's own engine.
     A `:nodoc:` covers its own class and the methods its body defines, as
     RDoc reads it, so Rails' `module ActiveSupport # :nodoc:` hides
-    nothing nested in it, and an own-line `# :doc:` in that body uncovers
-    the methods after it until an own-line `# :nodoc:` (Rails'
+    nothing nested in it, and an own-line `# :doc:` in that body, at a
+    method's indentation, uncovers it unless an own-line `# :nodoc:` at that
+    indentation comes between (Rails'
     `Dependencies.run_interlock`); `:nodoc: all` and `@api private` cover what
     their marked opening holds too, not another opening of the class, and
     `private_constant` covers what is nested anywhere. A method's own `@api
