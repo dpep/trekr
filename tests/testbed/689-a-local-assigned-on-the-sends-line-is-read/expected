@@ -1,0 +1,5 @@
+# `rule = "handle_#{name}"; public_send(rule, val)` on one line, the
+# changelog's own example: the local is assigned in a statement before the
+# send, so handle_ping is lower. Only a line wholly given to the assignment
+# was read, and this one left it clear (DEC-655).
+dead lib Widget#handle_ping=unreferenced~sent

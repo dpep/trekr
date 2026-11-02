@@ -15338,9 +15338,9 @@ class it is sent to**, its chain and its subclasses:
 - a chain that starts at a constant, `TopicQuery.new(user, opts).public_send(…)`
   or `AdminMailer.with(…).public_send(…)`: that constant, resolved where it
   is written;
-- a local the file assigned the string to, whole, earlier
+- a local the method last assigned the string to, whole, before the send
   (`validate_method = "validate_#{name}"; public_send(validate_method, val)`),
-  as if the string were written there.
+  as if the string were written there (the fix round below).
 
 A send to a value (`row.public_send("total_#{kind}")`) is not read: the one
 such site in discourse sends a column's name (`total_input_tokens`), and
@@ -15437,3 +15437,20 @@ constants) and mastodon 36; nothing else moves. Of 23 read at random (seed
 spec builds, helper modules `rails_helper.rb` includes, a spec's constants
 and its stub classes. None was dead. Testbed 668; 492, 605, 606, 620 and
 665 each lose a spec module's `test-only` row.
+
+### D. Fix round: what a string send reaches
+
+Found by a hunt on the unreleased rule; each testbed case fails without its
+fix. Rows moved are `--dead app lib` on discourse and mastodon and `--dead
+lib` on addressable, connection_pool, redis-client, rack-test, twirp and
+the gems DEC-654 measured.
+
+- **A local is read per statement, in its own method, as last assigned.**
+  The example above, written on one line, was not read: a local counted
+  only on a line wholly given to its assignment. And a local was matched
+  by name across the file, so another method's parameter `m` was read as
+  the string, and `m = "other"` before the send did not replace it. Now a
+  line splits at `;`, a `def` starts a new set of locals, and a later
+  assignment replaces the string unless it may not run (a trailing
+  `if`/`unless`, or written deeper than the string, inside a branch).
+  Testbed 689, 692. No row moved on any corpus.

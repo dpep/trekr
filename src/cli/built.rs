@@ -199,14 +199,22 @@ impl Built {
                     self.shapes.push((shape, at.clone()));
                 }
             }
-            held.extend(held_string(line));
-            for (shape, to) in sent_strings(line, &held) {
-                sendings.push(Sending {
-                    shape,
-                    to,
-                    nesting: None,
-                    at: at.clone(),
-                });
+            let indent = line.len() - line.trim_start().len();
+            for statement in statements(line) {
+                // A local is the method's: another method's of the same name
+                // is another local.
+                if statement.trim_start().starts_with("def ") {
+                    held.clear();
+                }
+                hold(&mut held, statement, indent);
+                for (shape, to) in sent_strings(statement, &held) {
+                    sendings.push(Sending {
+                        shape,
+                        to,
+                        nesting: None,
+                        at: at.clone(),
+                    });
+                }
             }
             for constant in computed_sends(line) {
                 if !self.sent_to.iter().any(|(known, _)| *known == constant) {
@@ -297,7 +305,7 @@ fn interpolated_symbols(line: &str) -> Vec<String> {
 /// `public_send("list_#{action}")`, on any receiver or none, under the
 /// symbols' rule, with what it is sent to. A string elsewhere is a key or a
 /// message far more often.
-fn sent_strings(line: &str, held: &[(String, String)]) -> Vec<(String, To)> {
+fn sent_strings(line: &str, held: &[Held]) -> Vec<(String, To)> {
     let mut shapes = Vec::new();
     for send in SENDS {
         let mut rest = line;
@@ -315,13 +323,13 @@ fn sent_strings(line: &str, held: &[(String, String)]) -> Vec<(String, To)> {
             let argument = after.strip_prefix('(').unwrap_or(after).trim_start();
             let shape = match argument.strip_prefix('"') {
                 Some(body) => read_shape(body).0.filter(|shape| named_shape(shape)),
-                // A local the file assigned a string of the shape earlier.
+                // A local the method last assigned a string of the shape.
                 None => {
                     let local: String = argument.chars().take_while(|c| word(*c)).collect();
                     held.iter()
                         .rev()
-                        .find(|(name, _)| *name == local)
-                        .map(|(_, shape)| shape.clone())
+                        .find(|h| h.local == local)
+                        .and_then(|h| h.shape.clone())
                 }
             };
             if let (Some(shape), Some(to)) = (shape, receiver(before)) {
@@ -338,10 +346,74 @@ fn named_shape(shape: &str) -> bool {
     shape.find('*').is_some_and(|prefix| prefix >= 3)
 }
 
-/// `validate_method = "validate_#{name}"`: the local a line assigns an
+/// A local a method assigned: the shape of the string it holds, or `None`
+/// once something else replaced it, and the indentation it was assigned at.
+#[derive(Debug, PartialEq)]
+struct Held {
+    local: String,
+    shape: Option<String>,
+    indent: usize,
+}
+
+/// Records what a statement assigns a local. A string of a shape is held;
+/// anything else replaces it, unless the assignment may not run: a trailing
+/// `if`/`unless`, or written deeper than the string was (inside a branch).
+fn hold(held: &mut Vec<Held>, statement: &str, indent: usize) {
+    if let Some((local, shape)) = held_string(statement) {
+        held.push(Held {
+            local,
+            shape: Some(shape),
+            indent,
+        });
+        return;
+    }
+    let Some((local, value)) = statement.trim_start().split_once(" = ") else {
+        return;
+    };
+    let replaced = held
+        .iter()
+        .rev()
+        .find(|h| h.local == local)
+        .is_some_and(|h| h.shape.is_some() && indent <= h.indent);
+    if replaced && !value.contains(" if ") && !value.contains(" unless ") {
+        held.push(Held {
+            local: local.to_string(),
+            shape: None,
+            indent,
+        });
+    }
+}
+
+/// A line's statements: split at each `;` outside a string, up to a
+/// trailing comment.
+fn statements(line: &str) -> Vec<&str> {
+    let bytes = line.as_bytes();
+    let mut found = Vec::new();
+    let (mut start, mut i, mut quote) = (0, 0, None);
+    while i < bytes.len() {
+        let c = bytes[i];
+        match quote {
+            Some(_) if c == b'\\' => i += 1,
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == b'"' || c == b'\'' => quote = Some(c),
+            None if c == b'#' => break,
+            None if c == b';' => {
+                found.push(&line[start..i]);
+                start = i + 1;
+            }
+            None => {}
+        }
+        i += 1;
+    }
+    found.push(&line[start..i.min(bytes.len())]);
+    found
+}
+
+/// `validate_method = "validate_#{name}"`: the local a statement assigns an
 /// interpolated string of a shape to, whole, and the shape.
-fn held_string(line: &str) -> Option<(String, String)> {
-    let (local, value) = line.trim_start().split_once(" = \"")?;
+fn held_string(statement: &str) -> Option<(String, String)> {
+    let (local, value) = statement.trim_start().split_once(" = \"")?;
     if local.is_empty()
         || !local
             .chars()
@@ -533,8 +605,9 @@ mod tests {
 
     #[test]
     fn a_local_holding_a_shaped_string_sends_its_shape() {
-        let held = [held_string(r##"    check = "validate_#{name}""##).unwrap()];
-        assert_eq!(held[0], ("check".to_string(), "validate_*".to_string()));
+        let mut held = Vec::new();
+        hold(&mut held, r##"    check = "validate_#{name}""##, 4);
+        assert_eq!(held[0].shape.as_deref(), Some("validate_*"));
         assert_eq!(
             sent_strings("public_send(check, val) if respond_to?(check)", &held),
             [("validate_*".to_string(), To::Own)]
@@ -543,6 +616,55 @@ mod tests {
         assert!(held_string(r##"key = "validate_#{name}" + x"##).is_none());
         assert!(held_string(r##"@key = "validate_#{name}""##).is_none());
         assert!(held_string(r##"key = "#{name}_check""##).is_none());
+    }
+
+    /// The shapes `read_file` finds sent, by line.
+    fn sent_lines(text: &str) -> Vec<(String, u32)> {
+        let sendings = Built::default().read_file("lib/x.rb", text);
+        sendings.into_iter().map(|s| (s.shape, s.at.1)).collect()
+    }
+
+    #[test]
+    fn a_local_is_read_in_its_own_method_as_last_assigned() {
+        // Assigned on the send's own line, as one statement before it.
+        assert_eq!(
+            sent_lines(
+                "class W; def go(n, v); rule = \"handle_#{n}\"; public_send(rule, v); end; end\n"
+            ),
+            [("handle_*".to_string(), 1)]
+        );
+        // Another method's parameter of the same name is another local.
+        assert!(
+            sent_lines(
+                "class W\n  def a(x)\n    m = \"handle_#{x}\"\n  end\n\n  def b(m)\n    send(m)\n  end\nend\n"
+            )
+            .is_empty()
+        );
+        // Replaced before the send: not the string any more.
+        assert!(
+            sent_lines(
+                "class W\n  def a(x)\n    m = \"handle_#{x}\"\n    m = \"other\"\n    send(m)\n  end\nend\n"
+            )
+            .is_empty()
+        );
+        // Replaced only on a branch, or under a modifier: may still be.
+        for replaced in [
+            "    if x\n      m = \"other\"\n    end\n",
+            "    m = \"other\" if x\n",
+        ] {
+            let text = format!(
+                "class W\n  def a(x)\n    m = \"handle_#{{x}}\"\n{replaced}    send(m)\n  end\nend\n"
+            );
+            assert_eq!(sent_lines(&text).len(), 1, "{text}");
+        }
+    }
+
+    #[test]
+    fn a_line_splits_into_statements_outside_strings() {
+        assert_eq!(
+            statements(r#"a = "x;y"; b(1) # c; d"#),
+            [r#"a = "x;y""#, " b(1) "]
+        );
     }
 
     #[test]

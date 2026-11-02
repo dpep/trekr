@@ -126,3 +126,5 @@
 686-dependencies-constantize-may-reach-any-constant 4f0984f4f710b42b
 687-a-views-constantize-may-reach-any-constant 7467ea9d435b8c4e
 688-a-rakefiles-constantize-may-reach-any-constant ef837faa4ed287e1
+689-a-local-assigned-on-the-sends-line-is-read 884f8d3397758379
+692-a-sent-local-is-its-methods-as-last-assigned a5880fc012172f7b

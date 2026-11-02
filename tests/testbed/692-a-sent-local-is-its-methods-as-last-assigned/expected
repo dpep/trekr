@@ -1,0 +1,5 @@
+# A local sent by name is read in its own method, as last assigned. Gadget's
+# `send(m)` sends a parameter, not name_for's `m`; Crate's `m` is replaced
+# before the send. Both lowered their rows, citing the wrong line. Shelf's
+# replacement may not run (`if`), so the string may still be sent (DEC-655).
+dead lib Gadget#build_box=unreferenced!~sent Crate#make_lid=unreferenced!~sent Shelf#stack_up=unreferenced~sent

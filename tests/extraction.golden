@@ -739,11 +739,13 @@ ruby tests/testbed/686-dependencies-constantize-may-reach-any-constant/lib/orpha
 ruby tests/testbed/687-a-views-constantize-may-reach-any-constant/lib/orphan.rb d39cf032b4680274
 ruby tests/testbed/688-a-rakefiles-constantize-may-reach-any-constant/Rakefile 1914f353a1ac3c05
 ruby tests/testbed/688-a-rakefiles-constantize-may-reach-any-constant/lib/orphan.rb d39cf032b4680274
+ruby tests/testbed/689-a-local-assigned-on-the-sends-line-is-read/lib/widget.rb e964daa664dd9fbe
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/alias.rb f49a22486d2a111b
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/gem.rb a48ad81018869404
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/inherited.rb 12d09cef784af61a
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/probe.rb 303753f439b130de
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/target.rb eb8b950dfe369aed
+ruby tests/testbed/692-a-sent-local-is-its-methods-as-last-assigned/lib/senders.rb 079a67c9c9873291
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28
