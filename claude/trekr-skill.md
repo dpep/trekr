@@ -28,7 +28,7 @@ brew install dpep/tools/trekr      # or: cargo install trekr
 The LSP comes up at the **next session start**.
 
 **There is no setup step.** The first query in a checkout indexes it, with its
-gems and Ruby's stdlib: seconds, ~20 s at 100k files. A position answers early,
+gems and Ruby's stdlib: about 4 s on discourse, ~17 s at 100k files. A position answers early,
 marked `warming`. Progress goes to stderr, never stdout. `--no-index` (or
 `TREKR_NO_INDEX=1`) never indexes: an unindexed checkout is `not_indexed`,
 exit 2.
@@ -70,7 +70,7 @@ Branch on `status` and the exit code. **No results is not the same as broken.**
 | `residue`, `reason: "no name at this position"`, 1 | `--def` on a blank line, comment, or punctuation | pick another position |
 | `no_such_method`, 1 | the owner resolved; nothing in its ancestors defines the name | certain. `--refs` adds a `hint` for the unnarrowed view |
 | exit 1, "no mention of …" | indexed, and the name isn't there | believe it |
-| `incomplete` / `not_indexed`, 2 | no answer yet | run the `hint`, ask again |
+| `incomplete` / `not_indexed`, 2 | no answer yet (also, with `--no-index`, a miss while `warming`) | run the `hint`, ask again |
 | 64 `usage` | bad command line | fix the command; a retry won't help |
 | 66 `not_found` / `not_a_repo` | a path is missing, or no checkout contains it | fix the path |
 | 69 / 70 / 74 | git failed / trekr bug / index or disk I/O | not an answer about the code |

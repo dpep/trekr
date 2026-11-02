@@ -60,7 +60,6 @@ named `lspServers` that has no `command`, and the whole file is dropped with
 "LSP config validation failed for .lsp.json in plugin trekr".
 
 `claude plugin details trekr@myclaude` confirms it: **LSP servers (1) trekr**.
-Servers are read once at session start; a new session picks up the install.
 
 **`startupTimeout` is safe at the 5 s default.** `--lsp` answers `initialize`
 before touching the store, then builds the root's tree while it has nothing
