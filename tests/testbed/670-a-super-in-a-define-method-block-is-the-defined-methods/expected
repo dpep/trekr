@@ -1,0 +1,6 @@
+# A `super` in a block handed to `define_method` or
+# `define_singleton_method` sent by name is the defined method's: it says
+# nothing of an override by the method around it, which kept that method
+# off `test-only` as one an unindexed ancestor's caller may run. Sibling of
+# 666's nested `def`.
+dead lib Widget#install=test-only!~super Widget#direct=test-only!~super Widget#run=unreferenced~super

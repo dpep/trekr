@@ -37,7 +37,9 @@
   `unreferenced`.
 - `--dead` no longer says a method "calls `super`, so it overrides a method
   trekr has not indexed" — and grades it `lower` — when the `super` is in a
-  `def` nested in its body, which is that method's.
+  `def` nested in its body, or in a block it hands to `define_method` or
+  `define_singleton_method` (`send(:define_method, :x) { super() }`), which
+  is the defined method's.
 - `--dead` no longer takes a `test/` or `spec/` directory inside `lib/` or
   `app/` for tests: rack-test's library is `lib/rack/test/`, so a constant
   only it used was `test-only`, and a name it builds and sends was not read.

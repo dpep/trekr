@@ -714,6 +714,8 @@ ruby tests/testbed/669-a-test-directory-under-lib-or-app-is-production/lib/gadge
 ruby tests/testbed/669-a-test-directory-under-lib-or-app-is-production/lib/gadget/test/helpers.rb bf79137701f60426
 ruby tests/testbed/669-a-test-directory-under-lib-or-app-is-production/plugins/chat/spec/chat_spec.rb 5e681b8ddb152b36
 ruby tests/testbed/669-a-test-directory-under-lib-or-app-is-production/spec/gadget_spec.rb 92244213a0d8263c
+ruby tests/testbed/670-a-super-in-a-define-method-block-is-the-defined-methods/lib/widget.rb 57b920f92275295f
+ruby tests/testbed/670-a-super-in-a-define-method-block-is-the-defined-methods/spec/widget_spec.rb bc8208295aa4a514
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

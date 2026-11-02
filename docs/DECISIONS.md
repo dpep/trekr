@@ -15163,6 +15163,18 @@ it had set aside, all true to the checkout (`Rack::Test::Methods`,
 them, public API as DEC-372 counts it). discourse `app lib`, discourse
 `plugins` and mastodon `app lib`: no row moves. Testbed 669.
 
+### Addendum: a `super` in a block that defines a method
+
+A `super` the method writes says it overrides one, which outranks the
+tests above. One in a `def` nested in its body was already set aside
+(testbed 666); one in a block handed to `define_method` or
+`define_singleton_method` — sent by name too, `self.class.send(:define_method,
+:x) { super() }` — is the defined method's as well, and kept the method
+around it off `test-only` (hunt A). The extractor records no `def` for
+such a block when the receiver is a value, so `--dead` finds the blocks
+itself, with a parse of only the files that write `define_`. discourse and
+mastodon `app lib`: no row moves. Testbed 670.
+
 ## DEC-655 — Names built where `--dead` did not read them: strings sent by name, and test files
 
 ### A. An interpolated string sent by name is a shape, for the class it is sent to

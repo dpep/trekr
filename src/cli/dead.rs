@@ -527,10 +527,11 @@ fn dead_in(
             let source = extract::ruby_source(&file.to_string_lossy(), &raw).into_owned();
             let facts = std::sync::Arc::new(extract::extract(&source));
             let symbols = extract::symbol_literals(&source);
-            Some((file, source, facts, symbols))
+            let method_blocks = method_blocks(&source);
+            Some((file, source, facts, symbols, method_blocks))
         })
         .collect();
-    for (file, source, facts, symbols) in parsed {
+    for (file, source, facts, symbols, method_blocks) in parsed {
         scope_facts.push((file.to_string_lossy().into_owned(), facts.clone()));
         // A dynamic-dispatch marker anywhere in the file lowers confidence for
         // everything in it: these are the shapes that make "no references" a
@@ -638,10 +639,17 @@ fn dead_in(
                         && (other.pos.line..=other.end_line).contains(&line)
                 })
             };
+            let defined_in_block = |at: crate::core::Pos| {
+                method_blocks.iter().any(|(start, end)| {
+                    (start.line, start.col) <= (at.line, at.col)
+                        && (at.line, at.col) < (end.line, end.col)
+                })
+            };
             let calls_super = facts.calls.iter().any(|c| {
                 c.recv == crate::core::RecvShape::Super
                     && own.contains(&c.pos.line)
                     && !nested(c.pos.line)
+                    && !defined_in_block(c.pos)
             });
             defined.push(Defined {
                 file: at.clone(),
@@ -1425,6 +1433,53 @@ fn ruby_files_under(paths: &[PathBuf]) -> Vec<PathBuf> {
         }
     }
     found
+}
+
+/// Where each block handed to `define_method` or `define_singleton_method`
+/// starts and ends, sent by name (`send(:define_method, :x) { … }`) or not:
+/// a `super` in one is the defined method's, not the method around it.
+fn method_blocks(source: &[u8]) -> Vec<(crate::core::Pos, crate::core::Pos)> {
+    use crate::extract::line_index::LineIndex;
+    use ruby_prism::Visit;
+    struct Blocks<'a> {
+        lines: &'a LineIndex,
+        found: Vec<(crate::core::Pos, crate::core::Pos)>,
+    }
+    impl<'pr> Visit<'pr> for Blocks<'_> {
+        fn visit_call_node(&mut self, call: &ruby_prism::CallNode<'pr>) {
+            let defines =
+                |name: &[u8]| matches!(name, b"define_method" | b"define_singleton_method");
+            let sent = matches!(
+                call.name().as_slice(),
+                b"send" | b"public_send" | b"__send__"
+            ) && call
+                .arguments()
+                .and_then(|args| args.arguments().iter().next())
+                .and_then(|first| first.as_symbol_node())
+                .is_some_and(|symbol| defines(symbol.unescaped()));
+            if (sent || defines(call.name().as_slice()))
+                && let Some(block) = call.block().and_then(|b| b.as_block_node())
+            {
+                let span = block.location();
+                self.found.push((
+                    self.lines.pos(span.start_offset()),
+                    self.lines.pos(span.end_offset()),
+                ));
+            }
+            ruby_prism::visit_call_node(self, call);
+        }
+    }
+    if !source.windows(7).any(|w| w == b"define_") {
+        return Vec::new();
+    }
+    let parsed = ruby_prism::parse(source);
+    let lines = LineIndex::new(source);
+    let mut blocks = Blocks {
+        lines: &lines,
+        found: Vec::new(),
+    };
+    blocks.visit(&parsed.node());
+    blocks.found
 }
 
 /// Shapes that make "no references found" a weaker statement, named so the

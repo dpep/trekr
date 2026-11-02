@@ -115,3 +115,4 @@
 667-a-string-sent-by-name-lowers-its-receivers-methods d9cf1757225079fb
 668-a-test-files-own-module-is-no-test-only-candidate 6c840789da0c592d
 669-a-test-directory-under-lib-or-app-is-production 27a23587713c0858
+670-a-super-in-a-define-method-block-is-the-defined-methods 3109c3f28dafcf06
