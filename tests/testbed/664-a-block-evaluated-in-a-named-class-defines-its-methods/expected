@@ -1,8 +1,26 @@
-# A block evaluated in a class named by a constant, inside another scope.
-# A qualified constant was already placed (DEC-086); a block evaluated on
-# `self`, implicitly or not, already defines on the class around it.
+# A `def` in `Target.class_eval { … }` written inside another scope is
+# Target's: it was recorded on that scope, so `Target.new.in_class_eval`
+# was residue and `Target#in_class_eval` had no definition. A bare name is
+# looked up where it is written, so inside `Holder`, which has its own
+# `Target`, it is that one (DEC-653).
+def probe.rb:4:16 status=resolved owner=Target
+def probe.rb:13:16 status=resolved owner=Target
+def probe.rb:42:16 status=resolved owner=Target
+def probe.rb:50:16 status=resolved owner=Holder::Target
+refs Target#in_class_eval confirmed=2
+refs Holder::Target#shadowed confirmed=1
+# A call inside such a method runs on Target too.
+def probe.rb:10:9 status=resolved owner=Target
+# `define_method` there defines on Target, and `def` in `instance_eval` a
+# singleton method of it.
+def probe.rb:28:16 status=resolved owner=Target
+def probe.rb:23:12 status=resolved owner=Target
+# The block's mixin is Target's, and no edge on the scope around it.
+def mixin.rb:12:16 status=resolved owner=Mixin
+ancestors Target Target,Mixin
+ancestors Probe Probe,Object
+# Already right: a qualified receiver (DEC-086), and a block evaluated on
+# `self`, implicitly or not, defines on the class around it.
 def probe.rb:18:22 status=resolved owner=Outer::Inner
 def probe.rb:43:5 status=resolved owner=Probe
 def probe.rb:61:5 status=resolved owner=Probe
-# The block's mixin is no edge on the scope around it.
-ancestors Probe Probe,Object

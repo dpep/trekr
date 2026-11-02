@@ -92,6 +92,9 @@ struct Frame {
     merged: usize,
     /// The body of an RSpec example group (DEC-084).
     group: bool,
+    /// A `Const.instance_eval` body: `self` is the class, as in its own
+    /// body, but a `def` or `alias` there makes a singleton method (DEC-653).
+    defs_singleton: bool,
     /// The block of an example (`it`, `specify`), which runs in its own group
     /// only — unlike a hook's, a `let`'s or a method's, which a nested group
     /// runs too (DEC-096).
@@ -144,6 +147,7 @@ impl Frame {
             blocks: 0,
             merged: 0,
             group: false,
+            defs_singleton: false,
             example: false,
             definer: None,
             const_defaults: Vec::new(),
@@ -596,6 +600,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             blocks: 0,
             merged: 0,
             group: false,
+            defs_singleton: false,
             example: false,
             definer: None,
             const_defaults: Vec::new(),
@@ -767,6 +772,12 @@ impl<'a> Extractor<'a> {
 
     fn in_singleton(&self) -> bool {
         self.frames.last().is_some_and(|f| f.singleton)
+    }
+
+    /// Does `def` or `alias` here make a singleton method? `instance_eval`
+    /// flips only these, not what `self` is (DEC-653).
+    fn defines_singleton(&self) -> bool {
+        self.in_singleton() || self.frames.last().is_some_and(|f| f.defs_singleton)
     }
 
     fn enter(&mut self, name: Option<String>, opens: Opens) {
@@ -1677,8 +1688,8 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         };
         let receiver = node.receiver();
         // Singleton either by writing it (`def self.x`, `def Foo.x`) or by
-        // sitting inside `class << self`.
-        let singleton = receiver.is_some() || self.in_singleton();
+        // sitting inside `class << self` or a constant's `instance_eval`.
+        let singleton = receiver.is_some() || self.defines_singleton();
         let loc = node.location();
         let name_start = node.name_loc().start_offset();
 
@@ -2101,7 +2112,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                         self.leave();
                     }
                     None => match self.evaluated_in(node) {
-                        Some(scope) => {
+                        Some((scope, defs_singleton)) => {
                             // A method handed its host (`def enable(host = ::Host)`)
                             // is an installer, called to define these (DEC-086);
                             // one that reopens a constant it names is a patch
@@ -2112,6 +2123,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                                     .is_some_and(|r| r.as_local_variable_read_node().is_none());
                             let before = self.facts.defs.len();
                             self.enter(Some(scope), Opens::Scope);
+                            self.frame().defs_singleton = defs_singleton;
                             if let Some(body) = block.as_block_node().and_then(|b| b.body()) {
                                 self.visit(&body);
                             }
@@ -2425,7 +2437,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         };
         let loc = node.location();
         let mut def = self.def(name, Kind::Method, loc.start_offset(), loc.end_offset());
-        def.singleton = self.in_singleton();
+        def.singleton = self.defines_singleton();
         def.via = Some("alias".into());
         self.bind_alias(&mut def, &target);
         def.visibility = self.alias_visibility(&def, &target);
@@ -3975,16 +3987,19 @@ impl<'pr> Extractor<'_> {
 
     /// The class a `class_eval`/`module_exec` block is evaluated in, as a
     /// scope to push: the constant it is sent to, or the constant a
-    /// parameter defaults to (`def enable(host = ::Host); host.module_exec do`).
-    /// A bare name inside another scope is left alone, since only a lookup
-    /// could say which constant it is (DEC-086).
-    fn evaluated_in(&self, call: &ruby_prism::CallNode<'pr>) -> Option<String> {
+    /// parameter defaults to (`def enable(host = ::Host); host.module_exec do`)
+    /// — and whether its `def`s are that class's singleton methods, as
+    /// `instance_eval`'s are. A bare name inside another scope is pushed as
+    /// written, as `class Name` would be; the tree looks it up, since only
+    /// a lookup can say which constant it is (DEC-086, DEC-653).
+    fn evaluated_in(&self, call: &ruby_prism::CallNode<'pr>) -> Option<(String, bool)> {
         let name = method_name(call)?;
-        if !matches!(
-            name.as_str(),
-            "class_eval" | "class_exec" | "module_eval" | "module_exec"
-        ) || !arg_nodes(call).is_empty()
-        {
+        let defs_singleton = match name.as_str() {
+            "class_eval" | "class_exec" | "module_eval" | "module_exec" => false,
+            "instance_eval" | "instance_exec" => true,
+            _ => return None,
+        };
+        if !arg_nodes(call).is_empty() {
             return None;
         }
         let receiver = call.receiver()?;
@@ -4000,9 +4015,7 @@ impl<'pr> Extractor<'_> {
             }
             None => const_name(&receiver)?,
         };
-        let placeable =
-            written.starts_with("::") || written.contains("::") || self.nesting.is_empty();
-        placeable.then_some(written)
+        Some((written, defs_singleton))
     }
 
     /// Whether this call's block is RSpec's, and what it runs as (DEC-084).
@@ -7569,6 +7582,24 @@ mod macro_call_tests {
         // After two substitutions on the line, still the file's column.
         assert_eq!(helper.map(|c| (c.pos.line, c.pos.col)), Some((4, 31)));
         assert!(marks(&facts).is_empty());
+    }
+
+    /// A constant's `instance_eval` makes singleton methods with `def` and
+    /// `alias`, but `self` is the class, so `define_method` and a macro
+    /// still make instance methods (DEC-653).
+    #[test]
+    fn a_constants_instance_eval_flips_only_def_and_alias() {
+        let facts = extract(
+            b"module M\n  Base.instance_eval do\n    alias old_t t\n    def t; end\n    define_method(:made) {}\n    attr_reader :r\n  end\nend\n",
+        );
+        let side = |name: &str| {
+            let def = facts.defs.iter().find(|d| d.name == name).unwrap();
+            (def.nesting.join(";"), def.singleton)
+        };
+        assert_eq!(side("t"), ("Base;M".to_string(), true));
+        assert_eq!(side("old_t"), ("Base;M".to_string(), true));
+        assert_eq!(side("made"), ("Base;M".to_string(), false));
+        assert_eq!(side("r"), ("Base;M".to_string(), false));
     }
 
     /// Code the string does not let us render is not read, and says so; code

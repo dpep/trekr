@@ -14973,3 +14973,76 @@ machine: median 7.7 → 7.5 s, inside the noise.
 counts (flipper, rspec-core), as an example's reference counts as a use;
 one `Kernel.const_get` of an inspected exception's name lowers 169 of
 rubocop's rows.
+
+## DEC-653 — A block evaluated in a class named by a bare constant defines that class's methods, wherever it is written
+
+Amends DEC-086's "a bare, single-segment constant inside another scope is
+left as it was".
+
+**Decided.** `Target.class_eval do … end` (`class_exec`, `module_eval`,
+`module_exec`) inside another scope or method is a body of the class
+`Target` names, as it already was at the top level or written `A::Target`
+or `::Target`. The extractor pushes `Target` as written, as `class Target`
+would; the tree places it as `Probe::Target` and, when nothing declares
+that, looks the name up through the enclosing scopes and the top level
+(`Tree::opened`, DEC-241's rule, which singleton methods and a call's
+`self` already used). Instance methods and ancestry edges now go through
+it too, so a method's owner, an edge's owner and the `self` of a call
+written there agree. `Target.instance_eval` / `instance_exec` is the same
+body, except that a `def` or `alias` in it makes a singleton method of
+`Target`, as Ruby's does; `self` is still the class, so `define_method`,
+`attr_*` and other macros there stay instance-side.
+
+**Before.** The `def` was recorded on the scope around the block:
+`Target.class_eval { def m }` in `Probe#run` was `Probe#m`, `Target.new.m`
+was residue, `--refs 'Target#m'` said `no_such_method`, and `--dead`
+caveated it "defined in a block whose `self` trekr cannot pin down".
+regexp_parser writes its `codepoint`s as `module EscapeSequence;
+AsciiEscape.class_eval { def codepoint … }`, so 13 classes' `codepoint`s were
+one module's; rspec-mocks writes `Class.class_exec do def any_instance`
+inside a method, so every `Foo.any_instance` was `no_such_method`.
+
+**Why both tree call sites.** Placing an edge on `Probe::Target` creates
+that name in the namespace, and then `Target` written in `Probe` resolves
+to the phantom: in case 664, with the owner fix alone, every assertion
+failed. `edge_owner` places through `opened` as `owner_in` does.
+
+**Measured** against main + the case (4404d9e), each build on its own store,
+rails, discourse and mastodon with their gems: 159 distinct stored rows
+change (deduplicated across installed copies of a gem; 250 → 290 rows
+before deduplication), all inside an evaluated block — 41 in rails' own
+tests, 3 discourse, 1 mastodon, the rest regexp_parser (47),
+google-protobuf (26, `Any.class_eval` in `module Google::Protobuf`), oj
+(24, `OpenStruct.class_eval` … in `Oj.mimic_loaded`), rspec-mocks (5),
+discourse_dev_assets (7, `Faker::Lorem.instance_eval`), i18n, concurrent-ruby,
+pry, active_model_serializers. 37 rows are new: macros (`has_one_attached`,
+`scope`, `delegate`, `alias_method`) a block in a method used to drop.
+Cards: `Class#any_instance` 496 `no_such_method` exclusions → 497
+confirmed; `Google::Protobuf::Struct#to_h`, `…::Any.pack`,
+`Regexp::Expression::EscapeSequence::Tab#codepoint`,
+`Rails::Generators::ResourceGenerator#add_serializer`,
+`Marshal.dump_with_rspec_mocks`, `Symbol#call` (pry) and
+`Object#translation_metadata` (i18n) were `no_such_method`, now resolved
+at the block's `def`; `Regexp::Expression::Subexpression.terminal?` moved
+from `Shared::ClassMethods`' to its own `instance_eval` one; `OpenStruct#as_json`
+answers oj's conditional definition instead of inheriting `Object#as_json`.
+`--dead` (rails `activerecord activesupport`, discourse and mastodon `app
+lib`): 2 of 26,638 rows move, `clear` → `lower`, both rails tests whose
+body holds `Array.class_eval do def respond_to_missing? … super`: `--dead`
+reads a `super` anywhere in a method's lines as the method's own (one
+more, `Topic`, changes only its count; below). Rails
+index, five interleaved fresh-store rounds at load 8–10: median 3.5 s
+before, 3.9 s after, ranges overlapping (2.9–4.5, 3.1–4.7).
+
+**Left as it was.** A receiver that is a local, a parameter without a
+constant default, or a call (`obj.instance_eval`, `t.extend(Module.new
+{…})`), and an unnamed `Class.new` held in a local, keep DEC-562's
+caveat. A string `class_eval` is DEC-132's. A constant written in the
+block still nests under the receiver, as DEC-086's already did: Ruby's
+lexical scope there is the code around the block, so `NOT_GIVEN = …` in
+discourse_dev_assets' `Faker::Lorem.instance_eval` is stored as
+`Faker::Lorem::NOT_GIVEN` (it was top-level), and one `Topic` mention in
+a `Topic.class_eval` block in rails no longer counts toward `--dead`'s
+`::Topic` row (2,290 → 2,289 test references; its tier is unchanged). A
+receiver nothing in the index declares at either place falls back to the
+placed `Probe::Target`, which no call reaches, as before.

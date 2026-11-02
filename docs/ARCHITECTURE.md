@@ -190,6 +190,12 @@ Two things the blob layer cannot know, resolved here:
   inside `module A; module B`) because that is all the bytes determine. Only a
   namespace can qualify it to `["A::B", "A"]`, since a compact `module A::B`
   inside `module X` may land under `X` or at the top level.
+- **A scope opened by a lookup** (DEC-241, DEC-653). `class << Time` and
+  `Target.class_eval do` (or `instance_eval`) inside another scope push the
+  name as written, as `class Target` would. Placed, it is `Probe::Target`;
+  when nothing declares that, `Tree::opened` looks the name up through the
+  enclosing scopes and the top level instead. A method's owner, an edge's
+  owner and a call's `self` all go through it, so they agree.
 - **Constant aliases.** `Bar = Foo` keeps its own declaration site — that is
   where go-to-definition on `Bar` belongs — but anywhere a *namespace* is
   wanted (`Bar::Baz`, `class Foo < Bar`) the alias is followed through.

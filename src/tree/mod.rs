@@ -1640,7 +1640,7 @@ impl Tree {
     }
 
     /// The scope an edge attaches to, and the nesting its target is written
-    /// in: the body the owner opens, or, for a mixin sent to a constant
+    /// in: the body the owner opens, as [`Tree::opened`] places it, or, for a mixin sent to a constant
     /// (DEC-097), the class that constant names, with the nesting the call
     /// is written in. A receiver the tree does not hold has no chain to join.
     fn edge_owner(&self, owner: &[String]) -> Option<(String, Vec<String>)> {
@@ -1651,7 +1651,7 @@ impl Tree {
             }
             None => {
                 let scopes = self.scopes(owner);
-                Some((scopes.first().cloned().unwrap_or_default(), scopes))
+                Some((self.opened(owner, &scopes).unwrap_or_default(), scopes))
             }
         }
     }
@@ -3230,10 +3230,9 @@ impl Tree {
                 .resolve_lexical(target, &scopes)
                 .map(|fqn| self.namespace_of(&fqn))
                 .unwrap_or_else(|| target.to_string()),
-            // Only a singleton method can be in `class << X`, and a module's
-            // sites are not free to ask of every row.
-            _ if singleton => self.opened(nesting, &scopes).unwrap_or_default(),
-            _ => scopes.first().cloned().unwrap_or_default(),
+            // `class << X` and `X.class_eval do` inside another scope write
+            // `X` where a lookup finds it (DEC-241, DEC-653).
+            _ => self.opened(nesting, &scopes).unwrap_or_default(),
         }
     }
 
