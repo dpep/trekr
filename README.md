@@ -26,7 +26,7 @@ It waits for a background index it started to finish first. If the new
 build's index format changed, the index is rebuilt in the background and
 answers say they are partial until it is done (DEC-275). An older build
 still running beside a newer one's index never writes into it: it keeps its
-own beside it (`trekr.v54.db`) until it is upgraded too (DEC-300).
+own beside it (`trekr.v<version>.db`) until it is upgraded too (DEC-300).
 
 ## Usage
 
@@ -79,51 +79,13 @@ trekr --refs 'Post#publish' -J | jq -c 'select(.answer | not)'   # the sites
 trekr --refs 'Post#publish' -J | tail -1 | jq .answer.counts      # the tally
 ```
 
-Every status and JSON field is described in [docs/OUTPUT.md](docs/OUTPUT.md).
-
-Exit codes mean one thing each:
-
-| Exit | Meaning |
-| --- | --- |
-| `0` | An answer: something matched, was indexed, or was collected. |
-| `1` | Nothing found. `status` says how sure: `no_such_method` is certain, `residue` names what it could not see (an unindexed ancestor, an untyped receiver). |
-| `2` | No answer yet: the index could not finish — another trekr writer held the lock longer than an index waits (10 minutes) — and `status: incomplete` says how far it got; or, with `--no-index`, the checkout is not indexed (`not_indexed`) or its first index is still running and the miss may not hold. Run the `hint` (`trekr --index …`), then ask again. |
-| `64`–`74` | An error, below. |
-
-An answer given while a first index is still running carries `warming` in
-JSON, claims nothing certain, and `--dead` lists nothing until it ends.
-An `--index` stopped by a signal (Ctrl-C, a caller's timeout) says how far
-it got on stderr — and under `--json` as `status: incomplete` — before it
-exits as that signal does (130 for Ctrl-C), never `0`.
-
-### Errors
-
-When a run fails under `--json`/`--ndjson`, stdout carries one object instead
-of an answer:
-
-```json
-{ "error": "cannot read app/gone.rb: No such file or directory (os error 2)", "kind": "not_found", "code": 66 }
-```
-
-`kind` is stable and `code` is the exit code. The message also goes to stderr;
-in text mode stdout stays empty. Codes come from `sysexits(3)`, one per remedy,
-as in [rq](https://github.com/dpep/rq):
-
-| `kind` | Exit | Meaning |
-| --- | --- | --- |
-| `usage` | 64 | The command line is wrong: an unknown flag, a bad value, an input whose shape trekr cannot tell, nothing asked. JSON under `--json` wherever the flag sits. Retrying won't help. |
-| `not_found`, `not_a_repo` | 66 | A path the command names does not exist, or no git checkout contains it. |
-| `git` | 69 | git could not be run. |
-| `internal` | 70 | trekr failed at something that should always work — a bug. |
-| `database`, `io` | 74 | The index, or a file it reads, could not be opened, read or written. |
-
-A damaged index, or one whose upgrade fails, is not an error: trekr moves it
-aside (`trekr.db.broken-<time>`), says where on stderr, and rebuilds it. A
-trekr that finds a newer trekr's index leaves it alone and keeps its own
-beside it (`trekr.v52.db`). An index stopped mid-way may leave the early copy
-it wrote for the editor (`trekr.db.early-<pid>/`). `trekr --status` lists all
-three, and `trekr --gc` removes them: a set-aside copy and an early copy at
-once, another trekr's index once it has been idle for `--older-than`.
+Exit codes mean one thing each: `0` an answer, `1` nothing found (`status`
+says how sure), `2` no answer yet (run the `hint`, then ask again), and
+`64`–`74` an error, which under `--json` is one `{"error", "kind", "code"}`
+object on stdout. An answer given while a first index is still running
+carries `warming`, claims nothing certain, and `--dead` lists nothing until
+it ends. Every status, exit code and JSON field is described in
+[docs/OUTPUT.md](docs/OUTPUT.md).
 
 ### On rails
 
@@ -382,6 +344,14 @@ the language server's `lsp.log`, and the usage counts (`trekr.usage.db`).
 is kept 14 days for a switch back, then collected; `TREKR_RETENTION` (`30d`,
 `never`) changes that — set it where your editor's language server sees it
 too, such as your shell profile, since the server starts cleanups of its own.
+
+A damaged index, or one whose upgrade fails, is not an error: trekr moves it
+aside (`trekr.db.broken-<time>`), says where on stderr, and rebuilds it. A
+trekr that finds a newer trekr's index leaves it alone and keeps its own
+beside it (`trekr.v<version>.db`). An index stopped mid-way may leave the
+early copy it wrote for the editor (`trekr.db.early-<pid>/`). `trekr --status`
+lists all three, and `trekr --gc` removes them: a set-aside copy and an early
+copy at once, another trekr's index once it has been idle for `--older-than`.
 
 ### Usage counts
 

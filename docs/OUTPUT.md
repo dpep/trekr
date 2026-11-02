@@ -17,7 +17,7 @@ is the short version an agent loads; this is where the detail lives.
 | `status: not_indexed`, exit 2 | only with `--no-index`: nobody has indexed this checkout. The answer names the root and the command. |
 | `status: incomplete`, exit 2 | the index this query started could not finish (another writer held the store's lock for 10 minutes). Run the `hint`, then ask again. |
 | exit 2 while `warming` | with `--no-index`, a miss while a first index is still running. Ask again. |
-| exit 64–74, `{"error", "kind", "code"}` | the call failed; see [Errors](../README.md#errors). Not an answer about the code. |
+| exit 64–74, `{"error", "kind", "code"}` | the call failed; see [Errors](#errors). Not an answer about the code. |
 
 | exit | means | do |
 | --- | --- | --- |
@@ -29,6 +29,34 @@ is the short version an agent loads; this is where the detail lives.
 | `69` | `git`: git could not be run | |
 | `70` | `internal`: a trekr bug | |
 | `74` | `database`, `io`: the index or a file could not be read or written | check the disk or `$TREKR_DB` |
+
+An `--index` stopped by a signal (Ctrl-C, a caller's timeout) says how far
+it got on stderr — and under `--json` as `status: incomplete` — then exits
+as that signal does (130 for Ctrl-C), never `0`.
+
+### Errors
+
+When a run fails under `--json`/`--ndjson`, stdout carries one object instead
+of an answer:
+
+```json
+{ "error": "cannot read app/gone.rb: No such file or directory (os error 2)", "kind": "not_found", "code": 66 }
+```
+
+`kind` is stable and `code` is the exit code. The message also goes to stderr;
+in text mode stdout stays empty. Codes come from `sysexits(3)`, one per remedy,
+as in [rq](https://github.com/dpep/rq):
+
+| `kind` | Exit | Meaning |
+| --- | --- | --- |
+| `usage` | 64 | The command line is wrong: an unknown flag, a bad value, an input whose shape trekr cannot tell, nothing asked. JSON under `--json` wherever the flag sits. Retrying won't help. |
+| `not_found`, `not_a_repo` | 66 | A path the command names does not exist, or no git checkout contains it. |
+| `git` | 69 | git could not be run. |
+| `internal` | 70 | trekr failed at something that should always work — a bug. |
+| `database`, `io` | 74 | The index, or a file it reads, could not be opened, read or written. |
+
+A damaged or unusable index is not an error: see
+[where trekr keeps things](../README.md#where-it-keeps-things).
 
 ## Fields shared across commands
 

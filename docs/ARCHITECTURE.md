@@ -918,14 +918,11 @@ answer, and so does every `#save` on every receiver. Each row says what sort of
 mention it is and, for a call, what shape the receiver had — disclosure instead
 of a guess. Narrowing it is layer 3's job.
 
-| exit | meaning |
-|---|---|
-| 0 | something was indexed, or a query matched |
-| 1 | nothing matched, nothing to do — trekr looked; `status` says whether the nothing is certain or a residue |
-| 2 | no answer yet: an index that could not finish (`incomplete`) — a query's own first index (DEC-500) or `--index`; with `--no-index`, a checkout not indexed (`not_indexed`) or a miss from an index still filling it (`warming`) |
-
-Errors exit on sysexits codes (`64` usage, `66` a missing path, `74` the
-store); see DEC-067.
+Exit codes keep every verdict apart from every error: `0` an answer, `1`
+nothing found, `2` no answer yet (an index that could not finish, DEC-500;
+with `--no-index`, `not_indexed` or a miss while `warming`), and sysexits
+codes for errors (DEC-067, DEC-080). The table is in
+[OUTPUT.md](OUTPUT.md#statuses-and-exit-codes).
 
 **A partial index says so** (DEC-320). A checkout's first index marks it in
 `meta` until its gems are in, with how many of the tree's files are read. An
