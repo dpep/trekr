@@ -298,7 +298,7 @@ measurements behind the grading. Fields per row:
 - `visibility` (`public`, `protected`, `private`): a private candidate's
   evidence is complete, a public one's is not.
 - `entry_point`, when the row is reached from outside the repo, where no
-  caller can be seen (DEC-657): `gem-api` (a public method, class or module
+  caller can be seen (DEC-657): `api` (a public method, class or module
   in a gem's `lib/`, the checkout having a root `*.gemspec`), `route` (a
   routed controller action, or a controller only routes name) or `job` (a
   job class no code outside the tests names). Absent otherwise. Such a row

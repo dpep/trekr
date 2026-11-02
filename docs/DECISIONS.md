@@ -15598,3 +15598,11 @@ entry point at all, so that was read.
 calls over RPC, or a `public_send` from a client library, is invisible as
 a gem's API is, and is not caveated: nothing in the checkout says so.
 Testbed 700–703.
+
+### DEC-657 addendum: `gem-api` is `api`
+
+**Decided** before release, by the owner: the `entry_point` value is `api`
+(public API), not `gem-api`, and its caveat reads "public API: …". How
+trekr finds one — a root `*.gemspec` — is detection, not what the row is;
+a later way of finding public API (an app's RPC surface, say) would be the
+same kind. The tables above keep the name they were measured under.

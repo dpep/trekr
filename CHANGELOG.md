@@ -22,7 +22,7 @@
 - **`--dead` grades a row reached from outside the repo `lower`, keeping
   its tier, and says what kind of entry point it is**, with `entry_point`
   in JSON:
-  - `gem-api`: a public method, class or module in `lib/` of a checkout
+  - `api`: a public method, class or module in `lib/` of a checkout
     with a root `*.gemspec`, unless its author marks it internal
     (`:nodoc:`, `@api private`, `Internal:`, a leading underscore,
     `private_constant`). Not a value constant, nor an app's own engine.

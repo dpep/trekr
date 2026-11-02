@@ -133,6 +133,6 @@
 695-a-string-sent-in-a-mixin-reaches-its-includers-ancestors d9b906336339e065
 696-a-scripts-lookup-may-reach-any-constant a726f02610b6a4d3
 700-a-routed-action-is-an-entry-point 1b8a91a63330aa57
-701-a-gems-public-api-is-an-entry-point dc634a1f582096a8
+701-a-gems-public-api-is-an-entry-point b5b69060e09e5ffd
 702-an-apps-own-engine-is-no-gems-api 1ac8a3c76be874e9
 703-a-background-job-is-an-entry-point a8f355d9d4253a22

@@ -1174,7 +1174,7 @@ fn dead_in(
             && !gems.marked_internal(file, def.pos.line)
             && !gems.internal_constant(&tree, &root_str, &owner)
         {
-            Some(EntryPoint::GemApi)
+            Some(EntryPoint::Api)
         } else {
             None
         };

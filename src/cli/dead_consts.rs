@@ -530,7 +530,7 @@ pub(super) fn dead_constants(
                 && gems.in_gem_lib(root, path)
                 && !gems.internal_constant(tree, &root_str, fqn) =>
             {
-                Some(EntryPoint::GemApi)
+                Some(EntryPoint::Api)
             }
             _ => None,
         };

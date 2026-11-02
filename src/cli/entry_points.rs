@@ -12,8 +12,8 @@ use crate::tree::Tree;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(super) enum EntryPoint {
-    /// A public method, class or module under a gem's `lib/`.
-    GemApi,
+    /// Public API: a public method, class or module under a gem's `lib/`.
+    Api,
     /// A controller action a route reaches, or a controller only routes name.
     Route,
     /// A background job's class.
@@ -24,8 +24,8 @@ impl EntryPoint {
     /// What the row is, how it is reached, and what would settle it.
     pub(super) fn caveat(self, method: bool) -> String {
         let (what, how, evidence) = match (self, method) {
-            (Self::GemApi, _) => (
-                "public API of a gem",
+            (Self::Api, _) => (
+                "public API",
                 "its callers outside this repo are invisible",
                 "its dependents or usage data",
             ),

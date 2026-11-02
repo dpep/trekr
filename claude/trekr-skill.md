@@ -174,7 +174,7 @@ found; here is what was checked". Before deleting:
   `let`. (`let!` is never listed.)
 - `visibility: private` means the evidence is complete. A `public` method may
   have callers outside the checkout.
-- **An `entry_point` row is reached from outside the repo**: `gem-api` (a
+- **An `entry_point` row is reached from outside the repo**: `api` (a
   gem's public API), `route` (a routed action or controller), `job` (a job
   class nothing outside the tests names). It is always `lower`, whatever its
   tier; its callers are invisible to trekr, so don't delete it on trekr's
