@@ -1,0 +1,8 @@
+# Rails writes `module ActiveSupport # :nodoc:` on some of the files that
+# reopen it, and every public row under ActiveSupport lost its entry point:
+# a `:nodoc:` anywhere hid everything nested anywhere under it. RDoc's
+# `:nodoc:` hides that constant and the methods its body defines; nested
+# classes stay documented, and only `:nodoc: all` reaches them (DEC-657).
+dead lib Widget::Api#fetch=test-only~dependents Widget#configure=test-only~dependents Widget#helper=test-only~
+dead lib Widget::Version#major=test-only~dependents Widget::Cache::Entry#expire=test-only~
+dead lib Widget::Api=test-only~dependents Widget::Version=test-only~dependents Widget=test-only~ Widget::Cache::Entry=test-only~

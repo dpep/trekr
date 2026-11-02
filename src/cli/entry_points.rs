@@ -78,8 +78,8 @@ pub(super) struct Gems {
     gemspecs: HashMap<PathBuf, bool>,
     /// A file's lines, read once.
     lines: HashMap<String, Vec<String>>,
-    /// A constant's whole name → whether it or a namespace holding it is internal.
-    internal: HashMap<String, bool>,
+    /// A constant's whole name → what its marks and its namespaces' make of it.
+    scopes: HashMap<String, Scope>,
 }
 
 impl Gems {
@@ -128,40 +128,80 @@ impl Gems {
         })
     }
 
-    /// Does the definition at `path:line` say it is no public API: `:nodoc:`
-    /// on its line (RDoc), or in the comment directly above it `@api
-    /// private` / `@private` (YARD) or `Private:` / `Internal:` (TomDoc)?
-    pub(super) fn marked_internal(&mut self, path: &str, line: u32) -> bool {
+    /// What the documentation of the definition at `path:line` marks it:
+    /// `:nodoc:` on its line (RDoc), or in the comment directly above it
+    /// `@api private` / `@private` (YARD) or `Private:` / `Internal:` (TomDoc).
+    fn marks(&mut self, path: &str, line: u32) -> Marks {
         let lines = self.lines(path);
+        let mut marks = Marks::default();
         let Some(at) = (line as usize)
             .checked_sub(1)
             .filter(|at| *at < lines.len())
         else {
-            return false;
+            return marks;
         };
-        let comment = |text: &str| text.split_once('#').map(|(_, c)| c.to_string());
-        if comment(&lines[at]).is_some_and(|c| c.contains(":nodoc:")) {
-            return true;
+        if let Some((_, comment)) = lines[at].split_once('#')
+            && let Some((_, after)) = comment.split_once(":nodoc:")
+        {
+            marks.hidden = true;
+            // RDoc reads `all` after the directive case-blind.
+            marks.all = after.trim_start().to_ascii_lowercase().starts_with("all");
         }
-        lines[..at]
+        for text in lines[..at]
             .iter()
             .rev()
             .map(|text| text.trim_start())
             .take_while(|text| text.starts_with('#'))
             .map(|text| text.trim_start_matches('#').trim_start())
-            .any(|text| {
-                text.contains("@api private")
-                    || text.contains("@private")
-                    || text.starts_with("Private:")
-                    || text.starts_with("Internal:")
-            })
+        {
+            // Both YARD tags are transitive: a namespace's reaches its children.
+            if text.contains("@api private") || text.contains("@private") {
+                marks.all = true;
+            }
+            if text.starts_with("Private:") || text.starts_with("Internal:") {
+                marks.hidden = true;
+            }
+        }
+        marks
     }
 
-    /// Is the constant `fqn`, or a namespace holding it, internal: marked so
-    /// where it is declared, or made a `private_constant` in a file that
-    /// declares it?
+    /// Is the method defined at `path:line` in `owner` internal: marked so
+    /// itself, written in a body marked `:nodoc:` (RDoc leaves out the
+    /// methods a `:nodoc:` body defines), or under a namespace whose mark
+    /// reaches everything nested in it?
+    pub(super) fn internal_method(
+        &mut self,
+        tree: &Tree,
+        root: &str,
+        owner: &str,
+        path: &str,
+        line: u32,
+    ) -> bool {
+        let own = self.marks(path, line);
+        if own.hidden || own.all || self.scope(tree, root, owner).all {
+            return true;
+        }
+        // The body it is written in: its owner's nearest opening above it.
+        let body = tree
+            .sites(owner)
+            .into_iter()
+            .filter(|site| site.path == path && site.line <= line)
+            .max_by_key(|site| site.line);
+        body.is_some_and(|site| self.marks(&site.path, site.line).hidden)
+    }
+
+    /// Is the constant `fqn` internal: marked so on any of its openings
+    /// (RDoc's `:nodoc:` holds for the class wherever it is reopened), made
+    /// a `private_constant`, or nested in a namespace whose mark reaches
+    /// everything under it — `:nodoc: all`, YARD's `@api private` and
+    /// `@private`, a `private_constant`? A plain `:nodoc:` does not: RDoc
+    /// documents the classes nested in one.
     pub(super) fn internal_constant(&mut self, tree: &Tree, root: &str, fqn: &str) -> bool {
-        if let Some(known) = self.internal.get(fqn) {
+        self.scope(tree, root, fqn).internal
+    }
+
+    fn scope(&mut self, tree: &Tree, root: &str, fqn: &str) -> Scope {
+        if let Some(known) = self.scopes.get(fqn) {
             return *known;
         }
         let prefix = format!("{root}/");
@@ -171,20 +211,45 @@ impl Gems {
             .into_iter()
             .filter(|site| site.path.starts_with(&prefix))
             .collect();
-        let own = sites.iter().any(|site| {
-            self.marked_internal(&site.path, site.line)
-                || self
-                    .lines(&site.path)
-                    .iter()
-                    .any(|text| private_constant_names(text, &tail))
-        });
-        let internal = own
-            || fqn
-                .rsplit_once("::")
-                .is_some_and(|(namespace, _)| self.internal_constant(tree, root, namespace));
-        self.internal.insert(fqn.to_string(), internal);
-        internal
+        let mut own = Marks::default();
+        for site in &sites {
+            let marks = self.marks(&site.path, site.line);
+            let private = self
+                .lines(&site.path)
+                .iter()
+                .any(|text| private_constant_names(text, &tail));
+            own.hidden |= marks.hidden;
+            own.all |= marks.all || private;
+        }
+        let outer = fqn
+            .rsplit_once("::")
+            .map(|(namespace, _)| self.scope(tree, root, namespace))
+            .unwrap_or_default();
+        let all = own.all || outer.all;
+        let scope = Scope {
+            internal: own.hidden || all,
+            all,
+        };
+        self.scopes.insert(fqn.to_string(), scope);
+        scope
     }
+}
+
+/// What a definition's documentation marks it.
+#[derive(Clone, Copy, Default)]
+struct Marks {
+    /// No API, nor the methods its body defines: `:nodoc:`, TomDoc's.
+    hidden: bool,
+    /// No API, nor anything nested in it: `:nodoc: all`, YARD's, `private_constant`.
+    all: bool,
+}
+
+/// What a constant's marks and its namespaces' make of it.
+#[derive(Clone, Copy, Default)]
+struct Scope {
+    internal: bool,
+    /// Its marks, or a namespace's, reach everything nested in it.
+    all: bool,
 }
 
 /// Does `line` make `name` a private constant: `private_constant :Name, …`?

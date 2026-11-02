@@ -779,6 +779,11 @@ ruby tests/testbed/711-a-route-or-convention-outranks-test-only/app/policies/wid
 ruby tests/testbed/711-a-route-or-convention-outranks-test-only/config/routes.rb 4e3181e2428bffbb
 ruby tests/testbed/711-a-route-or-convention-outranks-test-only/lib/frameworks.rb 0363ad1229f5b8c2
 ruby tests/testbed/711-a-route-or-convention-outranks-test-only/spec/widgets_spec.rb d26a66549e36ac0f
+ruby tests/testbed/720-a-nodoc-reopening-hides-only-its-own-body/lib/widget.rb f4b9615ca822a62d
+ruby tests/testbed/720-a-nodoc-reopening-hides-only-its-own-body/lib/widget/cache.rb cae4eedb31a48f84
+ruby tests/testbed/720-a-nodoc-reopening-hides-only-its-own-body/lib/widget/version.rb 33a941da0d8145f5
+ruby tests/testbed/720-a-nodoc-reopening-hides-only-its-own-body/spec/widget_spec.rb ca12cc0173d2dc27
+ruby tests/testbed/720-a-nodoc-reopening-hides-only-its-own-body/widget.gemspec dea196826b99e33b
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

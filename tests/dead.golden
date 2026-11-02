@@ -137,3 +137,4 @@
 702-an-apps-own-engine-is-no-gems-api 1ac8a3c76be874e9
 703-a-background-job-is-an-entry-point a8f355d9d4253a22
 711-a-route-or-convention-outranks-test-only 863fa9f3f6dca868
+720-a-nodoc-reopening-hides-only-its-own-body 69b341434eb46b43

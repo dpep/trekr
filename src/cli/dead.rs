@@ -1171,8 +1171,7 @@ fn dead_in(
             && !owner.is_empty()
             && !entry_points::underscored(&def.name)
             && gems.in_gem_lib(root, file)
-            && !gems.marked_internal(file, def.pos.line)
-            && !gems.internal_constant(&tree, &root_str, &owner)
+            && !gems.internal_method(&tree, &root_str, &owner, file, def.pos.line)
         {
             Some(EntryPoint::Api)
         } else {

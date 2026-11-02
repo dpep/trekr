@@ -27,6 +27,10 @@
     with a root `*.gemspec`, unless its author marks it internal
     (`:nodoc:`, `@api private`, `Internal:`, a leading underscore,
     `private_constant`). Not a value constant, nor an app's own engine.
+    A `:nodoc:` covers its own class and the methods its body defines, as
+    RDoc reads it, so Rails' `module ActiveSupport # :nodoc:` hides
+    nothing nested in it; `:nodoc: all`, `@api private` and
+    `private_constant` cover what is nested too.
   - `route`: a routed controller action, or a controller only routes name.
   - `job`: an Active Job or Sidekiq job class nothing outside the tests
     names.

@@ -15647,3 +15647,58 @@ Testbed 700–703.
 trekr finds one — a root `*.gemspec` — is detection, not what the row is;
 a later way of finding public API (an app's RPC surface, say) would be the
 same kind. The tables above keep the name they were measured under.
+
+### DEC-657 addendum: fix round — markers as the documentation tools read them
+
+A re-hunt found documented public API graded `clear` with no entry point,
+on real gems. Each fix below follows what the tool a gem's author writes
+for does with the marker, read from its source, not a looser guess.
+
+**A `:nodoc:` hides its own constant and the methods its body defines, not
+what is nested in it.** Every site's mark was read as transitive: a constant
+was internal when any namespace holding it had a marked site. Rails writes
+`module ActiveSupport # :nodoc:` on some of the files that reopen it, so no
+public row under ActiveRecord, ActiveSupport, ActionView, ActionController,
+ActionDispatch or Rails had an entry point: 721 public rows `clear`
+(rehunt-g2: `module Foo # :nodoc:` in `version.rb` hid `Foo::Api#pub`).
+RDoc 8.1 (`markup/pre_process.rb`, `code_object.rb`, `parser/ruby.rb`):
+`:nodoc:` sets the class's `document_self` to nil and leaves
+`document_children` true unless the directive reads `all`;
+`add_module_or_class` checks only the container's `document_children`, so a
+nested class is documented; `Context#add_method` drops a method added while
+the container's `document_self` is off. `document_self` is the class
+object's, so one marked opening hides the class wherever it is reopened —
+and the methods of the openings RDoc parses after it, an order trekr does
+not reproduce. trekr's rule, `Gems::internal_method` and `internal_constant`:
+
+- a constant any of whose openings is marked (`:nodoc:`, TomDoc's
+  `Private:`/`Internal:`, YARD's tags) is internal, as before;
+- a method is internal when marked itself, or written in a body whose
+  opening line is marked `:nodoc:` (or TomDoc) — the nearest opening of its
+  owner above it in its file;
+- what reaches nested constants and their methods is `:nodoc: all`,
+  YARD's `@api private` and `@private` (both transitive, per YARD's tag
+  library), and `private_constant` (Ruby: nothing reaches a name through a
+  private constant from outside).
+
+A method in an unmarked opening of a `:nodoc:` class is API: RDoc's answer
+there depends on file order, and DEC-657's direction is never to grade API
+`clear`.
+
+**Measured**, `--dead` before → this, same store: rails (`lib` of
+activesupport, activerecord, actionview, actionpack, railties, activemodel)
+973 rows gain `api`, 414 of them `clear` → `lower`; no tier moves, no row
+appears or goes. rspec-expectations, faraday, rack, protobuf, addressable,
+connection_pool, redis-client, rack-test, discourse and mastodon: no row
+moves. Hand-checked, 27 rails rows that moved, sampled (seed 657): 12 carry
+a doc comment and are on the API pages (`ActiveSupport::BacktraceCleaner#
+remove_filters!`, `DatabaseStatements#select_one`, `AssetTagHelper#
+favicon_link_tag`, `Date#beginning_of_week=`, …); 7 are undocumented
+public members of documented classes that users call, route or override
+(`TestProcess#assigns`, `SecureCompareRotator#secure_compare!`,
+`Rails::HealthController#show`, a generator Thor runs by name,
+`PluginBuilder#cifiles`, which a custom builder overrides); 4 are
+`ClassMethods` modules a concern extends; 4 (`TransactionState#rolledback?`,
+`FixtureSet.instantiate_all_loaded_fixtures`, `Rails::Info#value_for`,
+`Paths::Root#all_paths`) are public by Ruby's visibility, internal by use,
+with no marker — DEC-657's known 7-in-43 shape. Of all 973, 496 have a doc comment directly above. Testbed 720.
