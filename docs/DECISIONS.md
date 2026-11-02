@@ -15955,3 +15955,12 @@ else is there; `app/` still yields to a root gemspec, since an engine gem
 keeps an `app/` beside its own. No bench gem has a root `config.ru` or
 `config/application.rb`. Measured: no row moves on any corpus; discourse
 and mastodon stay at 0 `api` (forem is not on disk). Testbed 747.
+
+**A constant opened in a library's `lib/` is API wherever else it is
+opened.** A constant row takes one opening's path, and an engine gem's
+root namespace took its `app/` opening's, which is not read as API, so
+`module Eng` was `clear` though `lib/eng.rb` opens it (apihunt-l-engine).
+Now any of the constant's openings in the checkout being in a library's
+`lib/` counts; `app/`'s own classes still do not. Measured: no row moves
+on any corpus, nor on rails' activestorage and actiontext `app lib`.
+Testbed 748.

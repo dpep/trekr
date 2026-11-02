@@ -1,0 +1,6 @@
+# An engine gem opens its root namespace in `lib/` and in `app/`; the row
+# took the `app/` opening's path, and `app/` is not read as API, so the
+# gem's namespace was graded `clear`. A constant any of whose openings is
+# in a library's `lib/` is API; `app/`'s own classes still are not (DEC-657).
+dead app Eng=unreferenced~dependents Eng::Model=unreferenced~ Eng::Model#pub=unreferenced~
+dead lib Eng#configure=unreferenced~dependents

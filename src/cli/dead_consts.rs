@@ -530,7 +530,10 @@ pub(super) fn dead_constants(
             _ if (*kind != DeadKind::Constant
                 || tree.namespace_named(fqn).is_some_and(|named| named != *fqn)
                 || gems.deprecated_proxy(path, *line))
-                && gems.in_gem_lib(root, path)
+                // Any opening: an engine opens its namespace in `app/` too.
+                && tree.sites(fqn).iter().any(|site| {
+                    site.path.starts_with(&prefix) && gems.in_gem_lib(root, &site.path)
+                })
                 && !gems.internal_constant(tree, &root_str, fqn) =>
             {
                 Some(EntryPoint::Api)
