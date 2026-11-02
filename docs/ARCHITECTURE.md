@@ -850,9 +850,9 @@ index rather than answering from, or writing into, a store that isn't its own.
 
 ## CLI
 
-Operations are flags, not subcommands (rq's convention), so no word is reserved
-and the default action stays free for the query verbs layer 3 will add. Every
-command that prints honors `--json` / `--ndjson`.
+Operations are flags, not subcommands (rq's convention), so no word is
+reserved and the bare input is free for sugar: a position is `--def`, a name
+a card (DEC-036). Every command that prints honors `--json` / `--ndjson`.
 
 Every `path` in a JSON answer is relative to the `root` beside it, the
 absolute root of the checkout holding the file — the app, or the gem a
@@ -913,10 +913,11 @@ nothing reads is `unreferenced`, one only overrides answer is `shadowed`
 (DEC-491); a shared group nothing includes by name is a row of its own
 (DEC-493).
 
-`--refs` is **name-level, not resolved**: two unrelated `Config` classes both
+A bare `--refs NAME` is **name-level**: two unrelated `Config` classes both
 answer, and so does every `#save` on every receiver. Each row says what sort of
-mention it is and, for a call, what shape the receiver had — disclosure instead
-of a guess. Narrowing it is layer 3's job.
+mention it is and, for a call, the owner it resolves to or the shape its
+receiver had — disclosure instead of a guess. `--refs Owner#method` is the
+narrowed question ([`resolve/refs.rs`](#resolverefsrs--references-narrowed-by-receiver)).
 
 Exit codes keep every verdict apart from every error: `0` an answer, `1`
 nothing found, `2` no answer yet (an index that could not finish, DEC-500;
@@ -978,13 +979,14 @@ the writes its read can see, an ivar or cvar with its writes in the file — the
 class's other files are the LSP's to read, and the answer says they were not
 searched.
 
-Every answer carries `status` (`resolved` | `residue`) and `confidence`. For
+Every answer carries `status` (`resolved`, `ambiguous`, `residue`, or why
+there is no answer yet) and `confidence`. For
 constants that confidence is 1 or 0, and **that is not a hedge**: the ladder
 above is Ruby's own algorithm, so within the indexed set a hit is exact rather
 than ranked. The uncertainty that does exist is reported as evidence —
 `scopes_tried`, `unresolved_ancestors` — rather than smeared into a number that
-would look like a measurement (DEC-008). A method call is `residue` carrying its
-receiver shape, which is where layer 3 will start. A residue's confidence is
+would look like a measurement (DEC-008). A method call the ladder cannot type is
+`residue`, carrying its receiver shape and ranked candidates. A residue's confidence is
 how often its first candidate ran, on the gold sets, for residues resting on
 the same evidence (DEC-442); the LSP holds the weak ones back from a
 definition answer unless the client asks for them (DEC-443).
@@ -1841,8 +1843,10 @@ Deliberate, and cheap to close when they earn it:
   tied for nearest. Constant lookup inside a split class's body searches the
   variant its file declares, for `--def` and the LSP. A constant *receiver*
   (`NotFound.new`) is still typed without it.
-- `private_constant` is not read: a private constant lists as public.
-  (`private_class_method` is, DEC-561.)
+- `private_constant` is not extracted: a private constant lists as public
+  (`private_class_method` is, DEC-561). Only `--dead`'s entry-point check
+  reads it, as text, to keep a gem's private constant out of its API
+  (DEC-657).
 - Instance, class, and global variables are not in the index (not in PLAN
   §4's Phase 1 fact set). The LSP answers locals, ivars and cvars from the
   files themselves (DEC-064); globals are not answered anywhere.
