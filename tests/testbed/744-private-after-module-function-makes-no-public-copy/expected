@@ -1,0 +1,8 @@
+# rubocop's `FrozenStringLiteral#uninterpolated_string?`, written after a
+# `private` that follows a bare `module_function`, was graded public API by
+# a singleton copy Ruby never makes: a bare `private`, `protected` or
+# `public` ends `module_function`'s mode. After `public` the method is a
+# public instance method, which is API; `module_function :x` makes its copy
+# wherever it is written (DEC-657).
+dead lib Widget::Util#frozen?=unreferenced~dependents Widget::Util#uninterpolated?=unreferenced~ Widget::Util#literal?=unreferenced~dependents
+dead lib Widget::Named#compatible?=convention-only~dependents

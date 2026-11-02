@@ -1166,14 +1166,31 @@ fn dead_in(
         // would settle it (DEC-657). A `module_function`'s singleton copy is
         // public, whatever the instance copy is (DEC-361); RDoc documents a
         // method marked `:doc:`, private or underscored.
-        let module_function = !def.singleton
+        let mut module_function = !def.singleton
             && aliases
                 .iter()
                 .any(|(name, singleton)| *singleton && *name == def.name);
+        // A bare toggle's copy sits on the def; a later bare `private`,
+        // `protected` or `public` ended that mode, which the extractor
+        // does not know, and after `public` the instance copy is public.
+        let mut toggled_public = false;
+        if module_function
+            && facts.defs.iter().any(|copy| {
+                copy.via.as_deref() == Some("module_function")
+                    && copy.singleton
+                    && copy.name == def.name
+                    && copy.pos == def.pos
+            })
+            && let Some(toggle @ ("private" | "protected" | "public")) =
+                gems.toggle(file, def.pos.line)
+        {
+            module_function = false;
+            toggled_public = toggle == "public" && !constructor;
+        }
         let documented = !constructor && gems.doc_directive(file, def.pos.line);
         let entry_point = if route.is_some() {
             Some(EntryPoint::Route)
-        } else if (public || module_function || documented)
+        } else if (public || toggled_public || module_function || documented)
             && !owner.is_empty()
             && (documented || !entry_points::underscored(&def.name))
             && gems.in_gem_lib(root, file)

@@ -183,6 +183,37 @@ impl Gems {
         marks
     }
 
+    /// The bare visibility toggle in force at the `def` at `path:line`: the
+    /// nearest `private`, `protected`, `public` or `module_function` line
+    /// above it at its own indentation, within its body. Ruby ends
+    /// `module_function`'s mode at the next bare toggle, which the
+    /// extractor does not, so its singleton copy may be one Ruby never made.
+    pub(super) fn toggle(&mut self, path: &str, line: u32) -> Option<&'static str> {
+        let lines = self.lines(path);
+        let at = (line as usize)
+            .checked_sub(1)
+            .filter(|at| *at < lines.len())?;
+        let indent = |text: &str| text.len() - text.trim_start().len();
+        let width = indent(&lines[at]);
+        for text in lines[..at].iter().rev() {
+            if text.trim().is_empty() || text.trim_start().starts_with('#') {
+                continue;
+            }
+            if indent(text) < width {
+                return None;
+            }
+            if indent(text) == width {
+                let toggle = ["private", "protected", "public", "module_function"]
+                    .into_iter()
+                    .find(|toggle| code(text) == *toggle);
+                if toggle.is_some() {
+                    return toggle;
+                }
+            }
+        }
+        None
+    }
+
     /// Does RDoc's `:doc:` make the method at `path:line` documented API,
     /// private or not? RDoc 8.1 (`parser/ruby.rb`, `comment.rb`) reads a
     /// directive opening a line of the comment above the def (blank lines

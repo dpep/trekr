@@ -418,7 +418,9 @@ hide the class too and everything its marked opening holds, not what
 another opening of it defines; a `private_constant` hides everything
 nested in it, wherever written; a method's own `@api
 public` overrides its class's `@api private` (YARD). A method under
-`module_function` is public by its singleton copy. A private, protected or
+`module_function` is public by its singleton copy, until a bare
+`private`, `protected` or `public` ends that mode (after `public` it is a
+public instance method). A private, protected or
 underscored method marked RDoc's `:doc:` (opening its line's comment, or a
 line of the comment above) is API, as RDoc documents it.
 

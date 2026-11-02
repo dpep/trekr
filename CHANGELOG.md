@@ -38,7 +38,8 @@
     `private_constant` covers what is nested anywhere. A method's own `@api
     public` overrides its class's `@api private`, as YARD reads it. A
     method under a bare `module_function` is public API by its public
-    singleton copy, as one named by `module_function :x` was. A private
+    singleton copy, as one named by `module_function :x` was, until a
+    bare `private` or `protected` ends that mode. A private
     or underscored method marked `:doc:` is public API, as RDoc
     documents it (Rails' `RequestForgeryProtection#verified_request?`).
   - `route`: a routed controller action, or a controller only routes name.

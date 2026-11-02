@@ -15893,3 +15893,23 @@ example's text — checked by running YARD's parser on each shape. RDoc's
 TomDoc reads the status at the comment's start, `\A(\s*# |)(Public|
 Internal|Deprecated):` (`tom_doc.rb`). trekr now reads both so. Measured:
 no row moves on any corpus. Testbed 743.
+
+**A bare `private` ends `module_function`'s mode.** Ruby makes no public
+singleton copy of a method written after a bare `private`, `protected` or
+`public` that follows a bare `module_function` (checked: `module M;
+module_function; def a; end; private; def b; end; public; def c; end;
+end` has singleton method `a` only, and `c` public). The extractor keeps
+the mode to the body's end, recording a copy for each, so rubocop's
+`FrozenStringLiteral#uninterpolated_string?` was graded public API by a
+copy that does not exist. `--dead` now reads the bare toggle in force at
+the def — the nearest at its indentation, within its body — and drops a
+toggle's copy (the one sitting on the def; `module_function :x`'s sits on
+its argument and stays) when that toggle is `private`, `protected` or
+`public`; after `public` the method counts as public, the visibility
+Ruby gives it, though the row's `visibility` still says `private` (the
+extractor's; not fixed here, being a store change). rubocop: 4 rows lose
+`api`, 4 `lower` → `clear`, each after a `private` that follows
+`module_function`: `FrozenStringLiteral#uninterpolated_string?`,
+`#frozen_heredoc?`, `#frozen_string_literals_disabled?`,
+`Cop::Util#compatible_external_encoding_for?`. Every other corpus: no row
+moves. Testbed 744.
