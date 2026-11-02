@@ -15878,3 +15878,18 @@ tagged `@api private` in `variable_force.rb` and reopened unmarked in
 `variable_force.rb` sorting ahead of its directory: over-lowering, the
 side this rule errs to. Every other corpus: no row moves (Arel's unmarked
 `arel.rb` holds no row). Testbed 742.
+
+**A YARD tag or TomDoc status counts only where its tool reads one.**
+`@private` and `@api ` were matched anywhere in the comment, and TomDoc's
+`Private:`/`Internal:` on any line: "the key in @private_key", a
+backticked `"@private"`, an `# @api private` written inside an
+`@example`, and `Internal:` opening a later paragraph each hid public API
+(apihunt-p3). YARD 0.9.45 strips a comment line's `#`s and at most one
+space (`parser/ruby/ruby_parser.rb`), then reads a tag only where the line
+matches `META_MATCH`, `^@(!)?((?:\w\.?)+)(?:\s+(.*))?$`
+(`docstring_parser.rb`): `@` first, the whole name (`@private_key` is a
+tag of its own, unknown), so a line indented under `@example` is the
+example's text — checked by running YARD's parser on each shape. RDoc's
+TomDoc reads the status at the comment's start, `\A(\s*# |)(Public|
+Internal|Deprecated):` (`tom_doc.rb`). trekr now reads both so. Measured:
+no row moves on any corpus. Testbed 743.

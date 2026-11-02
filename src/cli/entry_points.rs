@@ -141,8 +141,9 @@ impl Gems {
     }
 
     /// What the documentation of the definition at `path:line` marks it:
-    /// `:nodoc:` on its line (RDoc), or in the comment directly above it
-    /// `@api private` / `@private` (YARD) or `Private:` / `Internal:` (TomDoc).
+    /// `:nodoc:` on its line (RDoc), or in the comment directly above it a
+    /// line opening with `@api private` / `@private` (YARD), or a first line
+    /// opening with `Private:` / `Internal:` (TomDoc).
     fn marks(&mut self, path: &str, line: u32) -> Marks {
         let lines = self.lines(path);
         let mut marks = Marks::default();
@@ -159,21 +160,23 @@ impl Gems {
             // RDoc reads `all` after the directive case-blind.
             marks.all = after.trim_start().to_ascii_lowercase().starts_with("all");
         }
-        for text in lines[..doc_end(lines, at)]
-            .iter()
+        let end = doc_end(lines, at);
+        let start = (0..end)
             .rev()
-            .map(|text| text.trim_start())
-            .take_while(|text| text.starts_with('#'))
-            .map(|text| text.trim_start_matches('#').trim_start())
-        {
+            .take_while(|&n| lines[n].trim_start().starts_with('#'))
+            .last()
+            .unwrap_or(end);
+        for (n, text) in lines[start..end].iter().map(|l| docstring(l)).enumerate() {
             // Both YARD tags are transitive: a namespace's reaches its children.
-            if let Some((_, api)) = text.split_once("@api ") {
-                marks.api_private = Some(api.split_whitespace().next() == Some("private"));
+            match yard_tag(text) {
+                Some(("private", _)) => marks.all = true,
+                Some(("api", text)) => {
+                    marks.api_private = Some(text.split_whitespace().next() == Some("private"));
+                }
+                _ => {}
             }
-            if text.contains("@private") {
-                marks.all = true;
-            }
-            if text.starts_with("Private:") || text.starts_with("Internal:") {
+            // RDoc's TomDoc reads the status at the comment's start (`tom_doc.rb`).
+            if n == 0 && (text.starts_with("Private:") || text.starts_with("Internal:")) {
                 marks.hidden = true;
             }
         }
@@ -402,6 +405,26 @@ fn doc_end(lines: &[String], at: usize) -> usize {
     at
 }
 
+/// A comment line as YARD's docstring holds it: its `#`s and at most one
+/// space after them dropped (`parser/ruby/ruby_parser.rb`), so a line
+/// indented past that is a tag's body or prose, never a tag.
+fn docstring(line: &str) -> &str {
+    let text = line.trim_start().trim_start_matches('#');
+    text.strip_prefix([' ', '\t']).unwrap_or(text)
+}
+
+/// The YARD tag a docstring line opens, and its text: YARD's `META_MATCH`
+/// wants `@` first, then the whole name (`@private_key` is no `@private`).
+fn yard_tag(text: &str) -> Option<(&str, &str)> {
+    let rest = text.strip_prefix('@')?;
+    let end = rest
+        .find(|c: char| !(c.is_alphanumeric() || c == '_' || c == '.'))
+        .unwrap_or(rest.len());
+    let (name, text) = rest.split_at(end);
+    (!name.is_empty() && (text.is_empty() || text.starts_with(char::is_whitespace)))
+        .then_some((name, text))
+}
+
 fn code(line: &str) -> &str {
     line.split_once('#').map_or(line, |(code, _)| code).trim()
 }
@@ -465,6 +488,23 @@ mod tests {
         let source = "module A\n  class C\n    def a; end\n  private\n    def m\n";
         assert_eq!(openings_around(&lines(source), 4), vec![1, 0]);
         assert!(openings_around(&lines("module A; end\ndef m"), 1).is_empty());
+    }
+
+    #[test]
+    fn a_yard_tag_opens_its_docstring_line() {
+        fn tag(line: &str) -> Option<(&str, &str)> {
+            yard_tag(docstring(line))
+        }
+        assert_eq!(tag("  # @api private"), Some(("api", " private")));
+        assert_eq!(tag("#@private"), Some(("private", "")));
+        assert_eq!(
+            tag("# @private_key holds it"),
+            Some(("private_key", " holds it"))
+        );
+        assert_eq!(tag("#   # @api private"), None);
+        assert_eq!(tag("#  @api private"), None);
+        assert_eq!(tag("# Signs with `@private`."), None);
+        assert_eq!(tag("# @private: no"), None);
     }
 
     #[test]

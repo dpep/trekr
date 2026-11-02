@@ -147,3 +147,4 @@
 740-a-library-with-no-gemspec-is-api ffcee5ee4e4a4bde
 741-a-private-method-marked-doc-is-api 5944f38864a53e09
 742-a-transitive-mark-reaches-its-own-opening 62f3dde2bb07d37f
+743-a-doc-tag-counts-only-where-its-tool-reads-one 09a1d84d7621600a

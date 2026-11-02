@@ -29,7 +29,8 @@
     app there (no `config/application.rb`, `config.ru` or `app/`; a Hoe gem
     such as minitest has no gemspec until release), unless its author marks it internal
     (`:nodoc:`, `@api private`, `@private`, `Internal:`, a leading underscore,
-    `private_constant`). Not a value constant, nor an app's own engine.
+    `private_constant`; a YARD tag opening a comment line, a TomDoc status
+    its first). Not a value constant, nor an app's own engine.
     A `:nodoc:` covers its own class and the methods its body defines, as
     RDoc reads it, so Rails' `module ActiveSupport # :nodoc:` hides
     nothing nested in it; `:nodoc: all` and `@api private` cover what

@@ -1,0 +1,10 @@
+# A YARD tag or TomDoc status was read anywhere in a comment: prose naming
+# `@private_key`, a backticked "@private", an `# @api private` inside an
+# `@example`, and `Internal:` opening the comment's third line each hid
+# public API, and `@private` everything nested in it. YARD reads a tag only
+# where a line of the docstring starts with it, outside a tag's indented
+# body; TomDoc's status opens the comment's first line (DEC-657).
+dead lib Widget::Signer#sign=unreferenced~dependents Widget::Signer=unreferenced~dependents
+dead lib Widget::Directives#parse=unreferenced~dependents Widget::Client#call=unreferenced~dependents Widget::Client=unreferenced~dependents
+dead lib Widget#fetch=unreferenced~dependents Widget#cache_key=unreferenced~
+dead lib Widget::Pool#checkout=unreferenced~ Widget::Pool=unreferenced~
