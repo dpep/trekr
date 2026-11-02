@@ -15946,3 +15946,12 @@ and an engine (`app/` beside it) read as an app. The file is now checked
 through the link. Measured: no row moves on any corpus. Unit test
 `a_symlinked_root_gemspec_makes_a_library` (the testbed copies files, not
 links).
+
+**An app packaged as a gem is an app.** A root gemspec was checked first,
+so an app shipping one beside its `config/application.rb` read as a
+library and its public methods as API (apihunt-l-appgem). Now
+`config/application.rb` and `config.ru` make the checkout an app whatever
+else is there; `app/` still yields to a root gemspec, since an engine gem
+keeps an `app/` beside its own. No bench gem has a root `config.ru` or
+`config/application.rb`. Measured: no row moves on any corpus; discourse
+and mastodon stay at 0 `api` (forem is not on disk). Testbed 747.

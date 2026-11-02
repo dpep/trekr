@@ -151,3 +151,4 @@
 744-private-after-module-function-makes-no-public-copy 76d189f9115247ae
 745-a-constant-naming-a-class-is-api ae0bf173a86f292b
 746-a-rack-app-is-no-library 034aa40417c29df3
+747-an-app-packaged-as-a-gem-is-an-app 789396927e515e03

@@ -95,14 +95,13 @@ impl Gems {
         let relative = Path::new(path)
             .strip_prefix(root)
             .unwrap_or(Path::new(path));
-        // A gem with an `app/` (an engine) has a root gemspec, checked first.
-        let app = || {
-            ["config/application.rb", "config.ru"]
-                .iter()
-                .any(|f| root.join(f).is_file())
-                || root.join("app").is_dir()
-        };
-        if (!self.has_gemspec(root) && app())
+        // An app packaged as a gem is still an app; but an engine gem keeps
+        // an `app/` beside its root gemspec, so that marker yields to it.
+        let app = ["config/application.rb", "config.ru"]
+            .iter()
+            .any(|f| root.join(f).is_file());
+        if app
+            || (!self.has_gemspec(root) && root.join("app").is_dir())
             || super::dead_consts::in_tests(&relative.to_string_lossy())
         {
             return false;

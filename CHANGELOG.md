@@ -25,9 +25,10 @@
   in JSON:
   - `api`: a public method, class or module in a library's `lib/` — the
     checkout's own, or one beside a nested `*.gemspec` (protobuf's
-    `ruby/`) — in a checkout with a root `*.gemspec`, or with none and no
-    app there (no `config/application.rb`, `config.ru` or `app/`; a Hoe gem
-    such as minitest has no gemspec until release), unless its author marks it internal
+    `ruby/`) — in a checkout that is no app: no `config/application.rb` or
+    `config.ru` at its root, gemspec or not, nor an `app/` without a root
+    `*.gemspec` (an engine gem's); a Hoe gem such as minitest has no
+    gemspec until release. Unless its author marks it internal
     (`:nodoc:`, `@api private`, `@private`, `Internal:`, a leading underscore,
     `private_constant`; a YARD tag opening a comment line, a TomDoc status
     its first). A constant naming a class or module (`Worker = Job`, a

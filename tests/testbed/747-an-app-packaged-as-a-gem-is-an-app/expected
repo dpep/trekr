@@ -1,0 +1,6 @@
+# A Rails app that also ships a gemspec at its root (to package or deploy
+# itself) was read as a library, its public methods graded public API. An
+# app packaged as a gem is still an app: `config/application.rb` or
+# `config.ru` outranks a root gemspec. An engine's `app/` does not, as
+# engine gems keep one beside their gemspec (DEC-657).
+dead lib Report#summary=unreferenced~ Report=unreferenced~

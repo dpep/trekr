@@ -407,7 +407,7 @@ otherwise. Its `caveat` names the evidence that would settle it.
 
 | `entry_point` | what it is | settle it with |
 | --- | --- | --- |
-| `api` | a public method, class or module, or a constant naming one (`Worker = Job`, a `DeprecatedConstantProxy`), in a library's `lib/`: the checkout's own `lib/`, or one beside a nested `*.gemspec`, in a checkout with a root `*.gemspec`, or with none and no `config/application.rb`, `config.ru` or `app/` (a Hoe gem has no gemspec until release), unless marked internal (`:nodoc:` on its line; in the comment above, `@api private` or `@private` opening a line, as YARD reads a tag, or `Private:` or `Internal:` opening its first, as TomDoc), named with a leading underscore, or held by a `private_constant` | its dependents, or usage data |
+| `api` | a public method, class or module, or a constant naming one (`Worker = Job`, a `DeprecatedConstantProxy`), in a library's `lib/`: the checkout's own `lib/`, or one beside a nested `*.gemspec`, in a checkout that is no app — no `config/application.rb` or `config.ru` at its root, gemspec or not, nor an `app/` without a root `*.gemspec` (an engine gem's) — (a Hoe gem has no gemspec until release), unless marked internal (`:nodoc:` on its line; in the comment above, `@api private` or `@private` opening a line, as YARD reads a tag, or `Private:` or `Internal:` opening its first, as TomDoc), named with a leading underscore, or held by a `private_constant` | its dependents, or usage data |
 | `route` | a routed controller action, or a controller only routes name | request logs or APM (e.g. Datadog) |
 | `job` | a job class nothing outside the tests names | job metrics or logs |
 

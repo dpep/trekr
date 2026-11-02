@@ -827,6 +827,9 @@ ruby tests/testbed/745-a-constant-naming-a-class-is-api/lib/widget.rb 72819d2b9a
 ruby tests/testbed/745-a-constant-naming-a-class-is-api/widget.gemspec dea196826b99e33b
 ruby tests/testbed/746-a-rack-app-is-no-library/config.ru f5768b6416a9f715
 ruby tests/testbed/746-a-rack-app-is-no-library/lib/report.rb ec5324df7ad6aaf1
+ruby tests/testbed/747-an-app-packaged-as-a-gem-is-an-app/config/application.rb 7d8bdc0e08467646
+ruby tests/testbed/747-an-app-packaged-as-a-gem-is-an-app/lib/report.rb 82b23cd1c1910be8
+ruby tests/testbed/747-an-app-packaged-as-a-gem-is-an-app/widget_shop.gemspec dea196826b99e33b
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28
