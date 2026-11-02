@@ -469,6 +469,9 @@ pub(super) fn dead_constants(
         let convention = conventions.remove(fqn.as_str()).flatten();
         let (tier, reason) = match (&convention, used.and_then(|u| u.first_test.as_ref())) {
             (Some(convention), _) => (DeadTier::ConventionOnly, convention.reason.clone()),
+            // A test file's own module the tests use is test code in use, as
+            // a spec's own helper method is (DEC-652).
+            (None, Some(_)) if in_tests(&path[prefix.len()..]) => continue,
             (None, Some((at, line))) => (
                 DeadTier::TestOnly,
                 format!("referenced only from tests ({tests}, first at {at}:{line})"),

@@ -1,0 +1,6 @@
+# A module or class a test file defines and the tests use is test code in
+# use, not a test-only candidate, as a spec's own helper method is not.
+# Widget, which lib defines and only tests use, is test-only still; a spec
+# module nothing uses is unreferenced, and a test case keeps its runner's
+# convention.
+dead . Widget=test-only WidgetHelpers=none WidgetHelpers::Builder=none StaleHelpers=unreferenced WidgetTest=convention-only

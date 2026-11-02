@@ -260,7 +260,8 @@ when no constant reference in the checkout resolves to it by Ruby's own
 lookup — the views and executable scripts read too. A reference to
 `Admin::Widget` is a use of `Admin`, which holds it; one inside its own body
 is not a use; a reopened core or gem class is no candidate, nor anything
-under `db/`. A class only tests name is `test-only`. One Rails or a library
+under `db/`. A class only tests name is `test-only`, unless a test file
+defines it: then it is test code in use, and not listed (DEC-655). One Rails or a library
 finds by name is `convention-only`, `convention.by` saying who: a route, a
 helper, a concern's `ClassMethods`, a Railtie or generator, a policy,
 serializer or validator found by its name, a job built from a symbol

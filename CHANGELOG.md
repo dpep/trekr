@@ -29,6 +29,10 @@
   fits says "a name of its shape is sent at runtime" and is graded `lower`.
   A string sent to a variable (`row.public_send("total_#{kind}")`) is left
   alone.
+- `--dead` no longer lists a class or module that a spec or test
+  file defines and the tests use as `test-only`: it is test code in use, as
+  a spec's own helper method already was. One nothing uses is still
+  `unreferenced`.
 - `--dead` no longer says a method "calls `super`, so it overrides a method
   trekr has not indexed" — and grades it `lower` — when the `super` is in a
   `def` nested in its body, which is that method's.

@@ -705,6 +705,10 @@ ruby tests/testbed/665-a-method-only-specs-call-is-test-only/spec/widget_spec.rb
 ruby tests/testbed/666-a-super-in-a-nested-def-is-the-nested-defs/app.rb b36eba928bc0550e
 ruby tests/testbed/667-a-string-sent-by-name-lowers-its-receivers-methods/lib/senders.rb ecd678656d25de2b
 ruby tests/testbed/667-a-string-sent-by-name-lowers-its-receivers-methods/lib/targets.rb dda16d9f06b582f9
+ruby tests/testbed/668-a-test-files-own-module-is-no-test-only-candidate/lib/widget.rb c732b49e7a38da14
+ruby tests/testbed/668-a-test-files-own-module-is-no-test-only-candidate/spec/support/widget_helpers.rb b51b1a0338dac5b3
+ruby tests/testbed/668-a-test-files-own-module-is-no-test-only-candidate/spec/widget_spec.rb a721e369e6c24506
+ruby tests/testbed/668-a-test-files-own-module-is-no-test-only-candidate/test/widget_test.rb ea99148878c750b8
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

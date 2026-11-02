@@ -4,8 +4,8 @@
 # constant names it: the edge is the reference. A receiver the index does
 # not hold (`Missing::Thing`, a gem's class) still takes the module. A
 # module's own `extend self` hands it to nothing. One a spec mixes in is
-# used by the tests (#12).
+# used by the tests (#12), and test code in use is no candidate (DEC-655).
 dead lib Disabling=none Naming=none Remote=none Outer::Inner=none Outer=none Helpful=unreferenced Orphan=unreferenced
-dead spec Stubbing=test-only
+dead spec Stubbing=none
 ancestors Widget Stubbing,Disabling,Widget,Outer::Inner
 def lib/patches.rb:3:5 status=resolved owner=Widget via=super

@@ -15235,3 +15235,20 @@ DEC-631's grep), so the rule would only have cited the shape there.
 own helper methods, measured against rows whose grade it moves. A rule
 scoped to the building file would move none of the rows above, and none on
 either corpus, so it is not added for the probe alone.
+
+### C. A module a test file defines is no `test-only` candidate
+
+**Decided.** A class, module or constant declared in a test file (DEC-652's
+`in_tests`) whose references are all tests' is test code in use, and is not
+listed — as a method a test file defines is never `test-only` (DEC-652). One
+nothing references stays `unreferenced`: that is the dead test code a reaper
+wants. A test case keeps DEC-421's `test runner` row, which is decided
+first, so nothing is handled twice.
+
+**Measured**, `--dead spec`, the build before → this: every `test-only`
+constant row there goes, discourse 477 (274 classes, 55 modules, 148
+constants) and mastodon 36; nothing else moves. Of 23 read at random (seed
+655; 15 discourse, 8 mastodon), all 23 are in use: page objects a system
+spec builds, helper modules `rails_helper.rb` includes, a spec's constants
+and its stub classes. None was dead. Testbed 668; 492, 605, 606, 620 and
+665 each lose a spec module's `test-only` row.

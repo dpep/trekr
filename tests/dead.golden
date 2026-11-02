@@ -76,7 +76,7 @@
 462-pundit-credits-the-policy-an-authorizing-action-asks 10de1d965fdde199
 490-a-let-nothing-reads-is-a-dead-candidate a131f0dd50f7db8b
 491-an-outer-let-every-running-group-overrides-is-shadowed 06da88d83d5b1e05
-492-a-helper-or-a-sent-name-may-read-a-let 1206f46a28fa83e5
+492-a-helper-or-a-sent-name-may-read-a-let aaf8f03f871f595a
 493-a-subject-is-read-by-is-expected-and-should dd2c5b3d0fb2d73f
 494-a-shared-groups-body-reads-its-includers-let 55fa8e7da30468dc
 495-a-shared-group-nothing-includes-is-a-dead-candidate bee643d62f0caa13
@@ -95,9 +95,9 @@
 563-a-def-on-an-object-is-that-objects 6d3a6a6cfc01500b
 580-dead-initialize-weighs-no-unplaced-super f3a20cdbbc0fdd5b
 604-a-let-read-through-an-alias-of-self ac7e6977bba7002b
-605-a-nested-let-read-by-an-outer-def-whose-examples-an-include-writes 8ce5a749c1921916
-606-a-shared-groups-call-reaches-a-helper-its-includer-mixes-in d1e78c12e826e17b
-620-a-module-that-mixes-itself-in-is-used 23ff878d6eaab0bb
+605-a-nested-let-read-by-an-outer-def-whose-examples-an-include-writes 651522696702f2ce
+606-a-shared-groups-call-reaches-a-helper-its-includer-mixes-in cbc4a6a4d5d82a3d
+620-a-module-that-mixes-itself-in-is-used ac4822657633521f
 621-a-module-trekr-makes-is-not-dead c16d5dd6be6b57c8
 623-a-template-whose-self-is-unnamed-keeps-no-method-alive ebb6eb573a304604
 626-an-initialize-whose-super-lands-says-so 5a3e78ea886ed9dd
@@ -110,6 +110,7 @@
 661-a-computed-const-get-lowers-its-namespace-only 9247420a5fbb97cf
 662-a-built-shape-lowers-what-fits-only 9632db8e314246bf
 663-a-name-computed-whole-may-reach-any-constant 3017116613328305
-665-a-method-only-specs-call-is-test-only c207725af2600b4a
+665-a-method-only-specs-call-is-test-only 8cfcf056c60ede0b
 666-a-super-in-a-nested-def-is-the-nested-defs ca7fae28dbf93949
 667-a-string-sent-by-name-lowers-its-receivers-methods d9cf1757225079fb
+668-a-test-files-own-module-is-no-test-only-candidate 6c840789da0c592d
