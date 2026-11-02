@@ -1457,24 +1457,16 @@ output identical.
 edit keeps it, and call sites are a posting list. On 85k distinct real Ruby
 files plus 15k variants (DEC-195), one quiet run: cold `--index` 42–44 →
 19–21 s, the first `--ancestors` after it 2.4 → 0.03 s, the store 1.5 →
-0.6 GB. The paragraph below is the state before.
-
-A query now pays for the tree only after the index under it moved, and then
-once: on a miss the build is the old assembly (1 s at 10×; 10–12 s at 30×
-straight after an index, when the declaration rows are no longer cached, and
-3.5 s warm) plus ~0.4 s to encode and 0.07 s to write. What an LSP session
-still holds privately is completion's member listing — the next lever. The
-30× one-file reindex was mostly git walking a worktree whose caches had not
-been primed; with them, a no-op is dominated by trekr reading `git ls-files`
-into the file map.
+0.6 GB.
 
 Cold time is the noisiest figure here — one run, and CRuby has swung between
 2.3 s and 3.9 s across runs on page-cache state alone. Treat it as one
 significant figure.
 
 - **A no-op reindex parses nothing** — the property the whole design exists for.
-  About 40 ms of rails' 61 ms is the three `git` calls (`ls-files -s` 7 ms,
-  `diff-files` 9 ms, `ls-files -o` 24 ms); the rest is rewriting the file map.
+  Its time is the `git` calls and rewriting the file map: of rails' 61 ms
+  when last broken down, 40 ms was the three `git` calls (`ls-files -s`
+  7 ms, `diff-files` 9 ms, `ls-files -o` 24 ms).
   Rubydex pays 177 ms on rails and 845 ms on GitLab for the same no-op (PLAN
   §8), *and* pays it again on every process boot.
 - **A second worktree costs ~0.2 s and zero parses.** A `--shared` clone of
@@ -1487,13 +1479,6 @@ significant figure.
 - **The no-op scan is git's untracked-file walk**, and `git status` skips most
   of it when `core.untrackedCache` is on: discourse no-op 165 → 86 ms, rails
   64 → 41 ms. With the cache off it is the same walk as before (DEC-043).
-- Cold time is not the headline and is not uniformly better than Rubydex's
-  (rails 1.5 s vs their 1.35 s index+resolve; discourse 3.2 s vs their 2.4 s).
-  About 0.3 s of ours is the `ANALYZE` that keeps queries fast — a cost paid at
-  write time so it is not paid at read time.
-  The difference is that ours happens once per machine and theirs happens once
-  per process, and ours ends with the facts on disk rather than in RAM. It is
-  also not yet a like-for-like comparison: they resolve, and this layer does not.
 
 Fact shape across all three corpora (2.2 M call sites):
 
@@ -1515,48 +1500,6 @@ Sorbet `sig` extraction is exercised at scale on `graph_weaver`: 3,757 of its
 methods get a concrete return class. None of the three corpora above use
 Sorbet, so the sig path contributes nothing to their numbers.
 
-**What receiver narrowing is worth.** Twelve method names on rails chosen for
-heavy collision — each defined 5+ times and among the most-called in the repo —
-querying the owner that the most call sites actually resolve to, before and
-after Rails DSL modelling:
-
-| | before | after |
-|---|---:|---:|
-| **confirmed** | 8 168 (32 %) | **11 919 (47 %)** |
-| **possible** | 10 933 (43 %) | 10 740 (42 %) |
-| **excluded** | 6 196 (24 %) | 2 634 (10 %) |
-| — of which positive evidence | 795 | 1 012 |
-| — of which "no such name" | 5 072 (82 %) | **1 104 (42 %)** |
-| — of which arity | 329 | 518 |
-
-`rg -w` returns all 25 293 undifferentiated, and Ruby LSP returns them by bare
-name.
-
-The DSL work moved two things at once. Confirmed rose 15 points because a
-`delegate`d method on a *constant* receiver — `Topic.where` — goes straight from
-"nothing defines this" to "confirmed here". And the weak exclusion reason fell
-by 78 %, which is DEC-021's demoted claim becoming sound: `ActiveRecord::Querying#where`
-alone went from 26 confirmed to **1 197**.
-
-Note for comparability: the harness picks the owner that the most call sites
-resolve to, so the owner it asks about *changed* as resolution improved —
-`Arel::SelectManager#where` became `ActiveRecord::Querying#where`. The twelve
-names are the same; the twelve queries are not, and that is the harness working
-rather than drifting.
-
-**Hand-checked precision**, 22 samples read against their source: 12 of 12
-`confirmed` were genuinely calls to the queried method, and 10 of 10
-positive-evidence exclusions genuinely went elsewhere (`String#size` ruled out
-of `Array#size`, `Integer#to_s` out of `Kernel#to_s`). A sample that small
-bounds nothing tightly; it is a check that the mechanism is not systematically
-wrong, not a precision figure.
-
-**Cost.** A refs query pays the tree build plus a reparse of every file that
-mentions the name: 360–400 ms on rails against a 210 ms tree build, so the scan
-itself is 150–190 ms even for 6 820 sites. Whole-index queries are therefore
-squarely in the territory where a resident front would pay for itself twice —
-once for the tree, once for the parse cache.
-
 **What the resident front is worth.** `trekr --lsp` against rails, driving
 the built binary over stdio:
 
@@ -1565,27 +1508,28 @@ the built binary over stdio:
 | `textDocument/definition` | 463 ms | **0–1 ms** |
 | `textDocument/documentSymbol` | 1 ms | **0 ms** |
 | `textDocument/hover` | 1 ms | **0 ms** |
+| `textDocument/references` (`each`) | 257 ms | **25 ms** |
 
 Reading the definition's file for its doc (DEC-052) adds 0.3–1.3 ms to a hover
 whose definition file the session has not read yet, and 0.2–0.45 ms once it
 has. Measured on discourse and rails, median of five, OS page cache warm. The
 largest was `has_many`, a 1,909-line file.
-| `textDocument/references` (`each`) | 257 ms | **25 ms** |
 
-The first call pays the 210 ms tree build; every one after it pays nothing. A
+These predate the tree snapshot (DEC-060, DEC-065), which took a first
+answer to 0.03 s (above). The first call paid the 210 ms tree build; every
+one after it paid nothing. A
 references query drops from ~245 ms on the CLI (34 ms of scan behind a 210 ms
 rebuild) to 25 ms — the scan alone, which is exactly what the economics
 predicted. Go-to-definition goes from a fifth of a second to under a
 millisecond, because a resolved position needs only the cached tree and the
 cached parse of the open buffer.
 
-This is the whole argument for the front, and it is now measured rather than
-projected. The engine stays daemon-free either way: everything here the CLI
-also answers, from the same store, without a process running.
+The engine stays daemon-free either way: everything here the CLI also
+answers, from the same store, without a process running.
 
-**The tree layer is rebuilt on every invocation, and that is the design.**
-`--refs` needs no tree; `--ancestors` needs a whole one. The gap between them is
-what a full rebuild from SQL costs:
+**What a whole rebuild from SQL costs**, when no snapshot fits the key (2026-09-27).
+`--refs` needs no tree; `--ancestors` needs a whole one, so the gap between
+them is the rebuild:
 
 | corpus | rebuild | total for `--ancestors` |
 |---|---:|---:|
@@ -1594,34 +1538,6 @@ what a full rebuild from SQL costs:
 | CRuby | 30 ms | 39 ms |
 | mastodon | 146 ms | 154 ms |
 | graph_weaver | 55 ms | 65 ms |
-
-*(2026-09-27. The paragraphs below are history: the 202 / 309 / 116 ms they
-discuss were this table's earlier values.)*
-
-**This has now crossed DEC-007's threshold and the decision needs revisiting.**
-The progression is instructive: 43 ms with constants alone, 120 ms once method
-tables arrived, 202 ms once gems did. CRuby stayed at 116 ms because it has no
-gems, which confirms where the cost is — assembling a bigger namespace, not
-querying it. Batching the per-gem queries from 258 down to 3 moved it 233 → 221
-ms, so the round trips were never the problem.
-
-The indicated move is the one DEC-007 named: cache one built tree **per
-process**. That pays for a resident LSP front (PLAN Phase 4) and does nothing
-for a one-shot CLI invocation, which builds it once regardless. So the CLI's
-honest cost for a resolved answer is now ~200–300 ms, and driving it lower is
-Phase 4's problem, not a reason to make the tree incremental.
-
-PLAN §4 said keep the tree cheap to rebuild rather than clever to patch, and
-gated that on a measurement. At well under 100 ms for 11k files there is nothing to
-invalidate incrementally — memoizing per namespace on contributing blob OIDs
-would be paying interest on a debt we do not have (DEC-007). Linearization *is*
-memoized within a single build, because a file's every constant reference asks
-for the chain of the same enclosing class.
-
-Sanity on real code: `--ancestors ActiveRecord::Base` in rails linearizes 40+
-concerns with **nothing unresolved**; `--ancestors Topic` in discourse gets its
-concerns in order and honestly reports `ActiveRecord::Base` unresolved, because
-gems are not indexed yet.
 
 **How much of real code resolves.** 120 constant references sampled per corpus
 (excluding tests), each asked through `--def` exactly as a caller would, at
@@ -1639,136 +1555,8 @@ Rails' remaining residue is a single name (`::Rack::Cache::MetaStore`, an
 optional adapter not installed). CRuby did not move on the last step because it
 has no `Gemfile.lock`, and its residue is CRuby-internal (`Primitive`,
 `TOPLEVEL_BINDING`, `WIN32OLE::ARGV`) — things no gem index would supply.
-
-`mastodon` and `CRuby` are the two low numbers and they are low for different
-reasons. Mastodon has only 75 of its 344 locked gems on disk; its figure also
-**predates** the implied-namespace fix below, which was prompted by exactly this
-measurement and is not yet re-run. CRuby's residue is internal
-(`Primitive`, `TOPLEVEL_BINDING`, `WIN32OLE::ARGV`) — nothing a gem index would
-supply — and it moved 84 → 80 % only because excluding `sorbet/` changed which
-rows the sample draws from.
-
-**Discourse is a weak test of the gem step and should be read as one**: its
-bundle was never installed on this machine, so 238 of its gems — the entire
-Rails stack included — are named by the lockfile and absent from disk. The
-index says so (`gems.missing`), and `ActiveRecord::Base` is still in its
-residue.
-
-The resolver did not change across those three columns. The index did — which
-was the whole prediction, and it held.
-
-**How much of real code's method dispatch resolves.** 120 call sites sampled
-per corpus, each asked through `--def`:
-
-| corpus | resolved | chain **complete** | chain **truncated** |
-|---|---:|---:|---:|
-| graph_weaver | 50 % | 50 % (60/120) | — (none) |
-| rails | 39 % | 40 % (47/118) | 0 % (0/2) |
-| CRuby | 33 % | 35 % (40/115) | 0 % (0/5) |
-| discourse | 24 % | 30 % (29/96) | **0 % (0/24)** |
-| mastodon | 20 % | 30 % (24/80) | **0 % (0/40)** |
-
-**The gem hypothesis is confirmed, and no installed bundle was needed to do it.**
-Split every sample by whether the ancestor chain the lookup walked was complete
-— an unresolved ancestor means something the chain needed is not indexed — and
-the result is unambiguous: **0 of 71 chain-truncated call sites resolved, across
-every corpus.** Not one. Mastodon's blended 20 % is a third truncated samples
-and discourse's 24 % a fifth; their chain-complete rates of 30 % are the honest
-comparison, and the blend is exactly the flattering denominator this split
-exists to avoid.
-
-What that leaves is the real ceiling. On rails, where the index is essentially
-complete (2 truncated samples out of 120), resolution is **40 %**. The residue
-there is receiver shapes the ladder cannot type: `local` 28 % and `other` 16 %
-of all samples. Rung contributions on rails: `self` 31 %, `const` 3 %,
-`local:new` 3 %, `includer` 1 %, `literal` 1 %.
-
-**The prediction on record was refuted.** graph_weaver — a Sorbet repo with
-3 620 indexed sig returns — was predicted to move far more than rails on sig
-strength. It is the best corpus at 50 %, but the sig rungs fired **once in 600
-samples** (`sig:param` 1, `sig:step` 0). Its lead comes from `const` receivers
-(18 % — it is a code generator, full of `Foo.bar`) and from having its gems
-installed. DEC-018 records why: those sigs describe its *dependencies*, and its
-own `lib/` has 570 defs with 36 sigs. rwr's 64 % is a property of signatures,
-not coverage of call sites.
-
-The three rungs added this session — `sig:param`, `literal`, `sig:step` —
-contributed 1–4 points each, dominated by `literal`. Useful, and much smaller
-than the diagnosis suggested; the diagnosis found that half of untyped local
-receivers were method parameters, but most of those parameters have no `sig`
-either.
-
-**The gem hypothesis, confirmed positively (2026-08-25).** Session 5 could only
-confirm it negatively: 0 of 71 chain-truncated call sites resolved, across every
-corpus. discourse's bundle is now installed — 300 of its 349 locked gems are on
-disk, and `--index` finds and indexes 281 of them (10,711 files); the 49 absent
-are platform variants (`ffi` for linux, aarch64 builds) legitimately missing on
-macOS.
-
-Re-measuring discourse with those gems present, 60 stable-keyed positions:
-
-| | bundle-less | bundled |
-|---|---:|---:|
-| ancestor chain **truncated** | 24 of 120 (0 % resolved) | **0 of 60** |
-| `self` inside a class | 52 % | **83 %** |
-| overall resolved | 31 % | **43 %** |
-
-**The truncated bucket did not shrink — it disappeared.** Every sampled call
-site's ancestor chain is now complete, which is what "0 of 71 resolved" was
-evidence *for*: those sites were unresolvable because the index was missing an
-ancestor, not because the ladder failed. `self`-inside-a-class closed most of
-the distance to rails' 89 %.
-
-Predictions held: 75–85 % was predicted for the class rate (83 %), "in the 40s"
-for overall (43 %). At n=60 that is ±6 points, so read the last row as "rose by
-about ten".
-
-*Mastodon remains bundle-less and its columns above are unchanged.*
-
-**Rails DSL modelling moved it again**, though a caveat first: the runs below
-use a different sample seed from the table above, so at n=120 a swing under ~5
-points is noise. rails went 39 % → 42 % (inside that band, so treat it as
-unmoved); discourse went 24 % → **32 %**, which is outside it. The `includer`
-rung tripled on rails (0.8 % → 2.5 %) as concerns' `ClassMethods` became
-reachable. The prediction was "+2–5 points on AR-heavy corpora, not more";
-discourse beat it and rails did not move, which is the right shape — an app
-uses the DSLs, a framework defines them.
-
-**Index time is dominated by the store write, not by parsing.** `--profile` on
-discourse: scan 80 ms, parse 270 ms across 8 workers, **store-write 2 660 ms**.
-Roughly 1.5 M row inserts through one SQLite connection at ~575k/s. Parse
-speeds up 5× from one worker to four and then plateaus, because it was never
-the majority. Anything that wants to make indexing faster should start here —
-batched or multi-row inserts, or relaxing durability for the bulk load — and
-not with the worker count (DEC-014). The shape differs from rq's, which is why
-the same "more workers" advice reproduces there and flattens here: rq overlaps
-its single writer with the parse so workers keep feeding it. trekr collected
-every fact and wrote at the end until DEC-047; it now streams parsed files to
-the writer too, so `--profile`'s `parse` is wall time that overlaps the write,
-and its throughput line is per worker.
-
-**With gems, the cost was the number of commits, not the rows** (DEC-041).
-A cold discourse index is its own 11k files plus 297 gems, and each gem was its
-own transaction. A commit writes every page the transaction dirtied, and the
-name indexes are keyed randomly, so each small gem rewrote most of them: 2.8 M
-rows took 10.1 s of store-write at 280k rows/s, against 750k rows/s for the
-app's single write. Writing a bundle's gems as one transaction took the cold
-index from **12.7 s to 7.6 s** (store-write 10.1 → 5.3 s, median of five,
-interleaved) and rails' from 2.7 s to 1.6 s. Same rows, byte for byte.
-The new gems are also walked together on the pool and parsed as one
-stream, in gem order, each written as its files arrive — one gem at a time
-left the pool idle between small gems (DEC-232).
-
-**A statement that may delete opens a journal** (DEC-191). The file map was
-written with `INSERT OR REPLACE`, and inside a transaction SQLite gives any
-statement that may delete as well as insert its own statement journal, whose
-release costs in proportion to what the transaction already wrote. Nothing
-on a fresh store; 1.8 ms a file after a 50k-file write, which made the map
-181 s of a 245 s index. An `UPDATE` of `file.blob_id` opens one too — it
-checks the foreign key by a counter — so a new path is an `INSERT`, and an
-edited one a `DELETE` and an `INSERT`; none of those opens one. `--index
---profile` shows the map, the index rebuild and the commit as phases of their
-own for this reason.
+mastodon's figure was measured with 75 of its 344 locked gems on disk, and
+before the implied-namespace fix it prompted; it has not been re-run.
 
 **The query planner needs statistics, and this is not optional.** Without them
 SQLite plans `--refs` as a nested scan of the checkout's files: `--refs new` on
@@ -1791,32 +1579,12 @@ These were 9–89 ms when a bare name was a single query. It now names, for each
 call site, the owner the call reaches, which builds the tree and walks each
 site's receiver — the cost is that, not the query.
 
-**Where the bytes go.** 291 MB for the three corpora *and their gems*, up from
-236 MB without them. Gems cost about what the code they contain suggests —
-rails alone went 47 → 65 MB for 86 gems / 1 916 blobs, the same ~9.4 KB per
-blob as a checkout — so the watch-item resolves benignly, and the sharing means
-a second project with the same lockfile adds nothing. The shape below is from
-the pre-gem measurement and has not changed:
-
-| | MB | share |
-|---|---:|---:|
-| `call_site` + its two indexes | 171 | **72.5 %** |
-| `const_ref` + indexes | 37 | 15.8 % |
-| `def` + indexes | 21 | 8.9 % |
-| `file`, `blob`, everything else | 7 | 2.8 % |
-
-Call sites are the index. Extrapolating linearly to a 100k-file repo gives
-~1 GB. Two things that would move the number are recorded but **not** acted on
-until there is a reason: the `other` receiver shape is 26 % of call-site rows
-(so ~19 % of the whole database) and may not earn its bytes once the resolve
-layer says what it can do with it; and `call_site_blob` / `const_ref_blob`
-(34 MB, 14 %) exist for a foreign-key cascade that DEC-003 means never fires. Not
-optimized, deliberately: the encoding is boring on purpose and there is no
-measurement yet saying it needs to be otherwise.
-
 **Since DEC-193 call sites are a posting list**, one row per name a blob
 calls: discourse with its gems went 329 → 121 MB, and 100k files 1.5 →
-0.6 GB. The table above is the store before it.
+0.6 GB.
+
+Older figures, and how they moved as the layers were built, are in
+[BASELINE.md](BASELINE.md#engine-measurements-as-architecture-recorded-them-2026-08-23-to-2026-09-28).
 
 *Provenance: the local `discourse` and `mastodon` checkouts carry no `.git`, so
 discourse was staged into a scratch git repo to be measured. That is DEC-001
