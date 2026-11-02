@@ -174,7 +174,50 @@ is `lower` too: run the spec file after deleting one.
 The tiers, the caveats, and the hand-checked measurements behind the
 grading are in [docs/OUTPUT.md](docs/OUTPUT.md#--dead).
 
-### In a view
+## References to a *method*, not a name
+
+This is the one no other Ruby tool has. Ask about a *method*, and every call
+site is sorted by whether its receiver can actually reach it:
+
+```console
+$ trekr --refs 'ActiveRecord::ConnectionHandling#lease_connection'
+activerecord/lib/active_record/connection_handling.rb:317:9  definition
+actioncable/test/subscription_adapter/postgresql_test.rb:26:26  confirmed  the receiver's type resolves here
+actioncable/test/subscription_adapter/postgresql_test.rb:97:38  confirmed  the receiver's type resolves here
+...
+activerecord/lib/active_record/connection_handling.rb:318:23  possible   untyped receiver, but the enclosing class inherits from the owner
+...
+1088 confirmed, 123 possible, 57 excluded of 1268 same-name call sites
+  excluded: 54 resolve to a different owner, 3 define no such name, 0 wrong arity
+```
+
+- **Confirmed**: the receiver's type resolves, and Ruby's own lookup from it
+  lands here — for a method the owner inherits, from the owner or a subclass.
+- **Possible**: the receiver is untyped and nothing rules the site out. Ranked
+  by proximity, never dropped.
+- **Excluded**: not listed, but counted, because that count is the difference
+  between this and a grep. `--include-excluded` lists them with their reason,
+  so the claim is auditable rather than asserted.
+
+An `initialize` is called as `new`: `--refs 'Widget#initialize'` lists each
+`X.new` whose class runs it — `Widget`'s, or a subclass's that inherits it —
+with `"called_as": "new"`, beside the `super`s that reach it. A class whose
+own `def self.new` returns another class's `new` is ruled out; one whose
+`new` returns nothing trekr reads (Active Record's ends in an `if`) leaves its
+sites possible. `--def` on a plain `X.new` goes to the `initialize` it runs.
+
+A position asks about what is there: `trekr --refs spec/widget_spec.rb:12`
+on a `let`, a `subject` or a group's `def` lists every read RSpec would run
+it for, with `from` — `group`, `nested_group`, `enclosing_group`,
+`shared_group`, `includer`, `helper`, `super`, `subject` — and on a method's
+definition or a call of it, the method's references as above. The editor's
+Find References on a `let` gives the same list.
+
+`rg -w lease_connection` returns 1,320 lines in rails — the 1,268 call sites
+plus the comments — with no way to tell them apart. `Widget.save` and
+`Widget#save` are different questions and answer differently.
+
+## In a view
 
 ERB (`*.erb`) and RABL (`*.rabl`) templates are indexed like Ruby files, at
 their own lines and columns, so `--def`, `--refs`, `--dead` and the editor
@@ -203,6 +246,46 @@ answer in them, and a helper or model method a view calls has that call.
 Route helpers (`posts_path`) are residue, and Haml and Slim are not read
 (`--dead` says when one names a row). Measured against a runtime trace of
 mastodon's mailer templates, DEC-523.
+
+## In Claude Code
+
+`trekr --lsp` speaks LSP: definition, declaration (a Sorbet `.rbi`
+signature), references, hover, document and workspace symbols,
+implementation, call hierarchy, `require` strings as links, and Prism syntax
+diagnostics. It answers on methods and constants, and on
+locals, parameters and instance variables — whose other mentions it also
+highlights. Hover on a model shows its table's columns and indexes, and on a
+column's attribute (`post.title`) the column's type, null and default — read
+from `db/schema.rb`, or `db/structure.sql` for an app that dumps SQL, without
+booting the app. It keeps the index current as files are saved, and indexes an
+unindexed checkout in the background, the files you have open first.
+
+[claude/INSTALL.md](claude/INSTALL.md) wires up the skill and the server.
+
+## In VS Code
+
+The same server, plus receiver-aware completion. Install
+[trekr from the Marketplace](https://marketplace.visualstudio.com/items?itemName=dpep.trekr)
+— search "trekr" in the Extensions view, or:
+
+```sh
+code --install-extension dpep.trekr
+```
+
+It finds the `trekr` binary on your `PATH`. To build the extension from
+source, see [its README](editors/vscode/README.md).
+
+It is meant to *replace* Ruby LSP and Sorbet as the Ruby language server, not
+run beside them — two servers answer every request twice. What you gain:
+definitions and references that follow the receiver instead of the bare name,
+completion from the receiver's real ancestors, one index shared by every
+worktree, and nothing to boot. What you give up: rename, formatting, semantic
+highlighting, signature help, inlay hints, test code lenses, Sorbet's type
+errors and ruby-lsp-rails' routes. Most have a standalone extension;
+[the extension's README](editors/vscode/README.md#replacing-ruby-lsp-and-sorbet)
+says which.
+
+## Running it
 
 ### Where it keeps things
 
@@ -248,87 +331,6 @@ reason. They are read from `lsp.log`, so `TREKR_LOG=off` turns them off too.
   while it runs: the checkout's files land in one transaction, and the WAL
   holds all of it until the commit. At 336k files the store is 4.4 GB and the
   first index takes about four minutes.
-
-## References to a *method*, not a name
-
-This is the one no other Ruby tool has. Ask about a *method*, and every call
-site is sorted by whether its receiver can actually reach it:
-
-```console
-$ trekr --refs 'ActiveRecord::ConnectionHandling#lease_connection'
-activerecord/lib/active_record/connection_handling.rb:317:9  definition
-actioncable/test/subscription_adapter/postgresql_test.rb:26:26  confirmed  the receiver's type resolves here
-actioncable/test/subscription_adapter/postgresql_test.rb:97:38  confirmed  the receiver's type resolves here
-...
-activerecord/lib/active_record/connection_handling.rb:318:23  possible   untyped receiver, but the enclosing class inherits from the owner
-...
-1088 confirmed, 123 possible, 57 excluded of 1268 same-name call sites
-  excluded: 54 resolve to a different owner, 3 define no such name, 0 wrong arity
-```
-
-- **Confirmed**: the receiver's type resolves, and Ruby's own lookup from it
-  lands here — for a method the owner inherits, from the owner or a subclass.
-- **Possible**: the receiver is untyped and nothing rules the site out. Ranked
-  by proximity, never dropped.
-- **Excluded**: not listed, but counted, because that count is the difference
-  between this and a grep. `--include-excluded` lists them with their reason,
-  so the claim is auditable rather than asserted.
-
-An `initialize` is called as `new`: `--refs 'Widget#initialize'` lists each
-`X.new` whose class runs it — `Widget`'s, or a subclass's that inherits it —
-with `"called_as": "new"`, beside the `super`s that reach it. A class whose
-own `def self.new` returns another class's `new` is ruled out; one whose
-`new` returns nothing trekr reads (Active Record's ends in an `if`) leaves its
-sites possible. `--def` on a plain `X.new` goes to the `initialize` it runs.
-
-A position asks about what is there: `trekr --refs spec/widget_spec.rb:12`
-on a `let`, a `subject` or a group's `def` lists every read RSpec would run
-it for, with `from` — `group`, `nested_group`, `enclosing_group`,
-`shared_group`, `includer`, `helper`, `super`, `subject` — and on a method's
-definition or a call of it, the method's references as above. The editor's
-Find References on a `let` gives the same list.
-
-`rg -w lease_connection` returns 1,320 lines in rails — the 1,268 call sites
-plus the comments — with no way to tell them apart. `Widget.save` and
-`Widget#save` are different questions and answer differently.
-
-## In Claude Code
-
-`trekr --lsp` speaks LSP: definition, declaration (a Sorbet `.rbi`
-signature), references, hover, document and workspace symbols,
-implementation, call hierarchy, `require` strings as links, and Prism syntax
-diagnostics. It answers on methods and constants, and on
-locals, parameters and instance variables — whose other mentions it also
-highlights. Hover on a model shows its table's columns and indexes, and on a
-column's attribute (`post.title`) the column's type, null and default — read
-from `db/schema.rb`, or `db/structure.sql` for an app that dumps SQL, without
-booting the app. It keeps the index current as files are saved, and indexes an
-unindexed checkout in the background, the files you have open first.
-
-[claude/INSTALL.md](claude/INSTALL.md) wires up the skill and the server.
-
-## In VS Code
-
-The same server, plus receiver-aware completion. Install
-[trekr from the Marketplace](https://marketplace.visualstudio.com/items?itemName=dpep.trekr)
-— search "trekr" in the Extensions view, or:
-
-```sh
-code --install-extension dpep.trekr
-```
-
-It finds the `trekr` binary on your `PATH`. To build the extension from
-source, see [its README](editors/vscode/README.md).
-
-It is meant to *replace* Ruby LSP and Sorbet as the Ruby language server, not
-run beside them — two servers answer every request twice. What you gain:
-definitions and references that follow the receiver instead of the bare name,
-completion from the receiver's real ancestors, one index shared by every
-worktree, and nothing to boot. What you give up: rename, formatting, semantic
-highlighting, signature help, inlay hints, test code lenses, Sorbet's type
-errors and ruby-lsp-rails' routes. Most have a standalone extension;
-[the extension's README](editors/vscode/README.md#replacing-ruby-lsp-and-sorbet)
-says which.
 
 ## Known limits
 
