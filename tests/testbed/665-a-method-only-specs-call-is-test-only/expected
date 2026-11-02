@@ -1,0 +1,9 @@
+# A method only specs call is test-only, however many calls they write: a
+# name the tests alone call is searched, though its count says plainly used.
+# One the code calls too is live, and a name plainly used by its count keeps
+# its old answer unless the tests are all that use it — by name: Other#lone
+# is only specs', but the code calls a `lone` too, so it is not searched. An override and a
+# protocol hook keep their tier, since what calls the method overridden, or
+# Ruby, may run them; a spec's own helper is no candidate for it.
+dead lib Widget#twice=test-only Widget#once=test-only Widget#many=test-only Widget#hidden=test-only Widget#live=none Widget#lone=none Other#lone=none Widget#run=single-caller~overrides Widget#ping=none Widget#each=single-caller~hook Other#ping=test-only
+dead spec WidgetHelpers#build_widget=single-caller

@@ -200,7 +200,8 @@ The tiers, from least evidence of use to most:
 - `unreferenced` — nothing names it.
 - `shadowed` — names it, but every such call lands on an override: a
   subclass's, for a method; a nested group's, for a `let` (`overridden_by`).
-- `test-only` — a class, module or constant only specs and tests name.
+- `test-only` — a method only specs and tests call, or a class, module or
+  constant only they name.
 - `override` — nothing names it, but it overrides an ancestor's method, so
   whatever calls that one (often the framework) may run it.
 - `convention-only` — named only by a symbol handed to a macro
@@ -238,6 +239,18 @@ held out; on forem, an app no rule was fitted on, 55 of 70 (79 %) — a
 Pundit, an algoliasearch callback, a serializer block made most of the
 rest (DEC-450). On code unlike an app's (`lib/`), less — read DEC-372 before
 trusting it on a CLI or a library.
+
+**A method every call, symbol and `super` of which is written in a test**
+(under a `spec`, `test` or `tests` directory) is `test-only`, however many
+there are; the reason says how many and where the first is. A route, a
+library's convention, an override, a `super` into a method trekr has not
+indexed, or a protocol hook outranks the tests: such a method keeps the tier
+it would have without them. A spec's own helper is never `test-only`. Graded
+as the other method tiers are: measured by hand on mastodon and discourse
+(DEC-652), a `clear` one was reached only by tests 21 times in 26 (81 %),
+the misses all names built at runtime (`public_send("list_#{action}")`); a
+`lower` one 7 in 25. On a library, a public `test-only` method is usually
+its API: the specs are its only callers in the checkout.
 
 **Classes, modules and constants** are listed after the methods, with
 `kind` in JSON (`class`, `module`, `constant`; a method's row says

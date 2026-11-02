@@ -699,6 +699,9 @@ ruby tests/testbed/663-a-name-computed-whole-may-reach-any-constant/lib/tools.rb
 ruby tests/testbed/664-a-block-evaluated-in-a-named-class-defines-its-methods/mixin.rb c9f8063be9b015ae
 ruby tests/testbed/664-a-block-evaluated-in-a-named-class-defines-its-methods/probe.rb 8d0dc3929b8dbbfe
 ruby tests/testbed/664-a-block-evaluated-in-a-named-class-defines-its-methods/target.rb db797a9f78012801
+ruby tests/testbed/665-a-method-only-specs-call-is-test-only/lib/widget.rb 0e2f1dcac959ebed
+ruby tests/testbed/665-a-method-only-specs-call-is-test-only/spec/support/widget_helpers.rb 46bd581f949a812e
+ruby tests/testbed/665-a-method-only-specs-call-is-test-only/spec/widget_spec.rb bd9ea7ec831f3f7f
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

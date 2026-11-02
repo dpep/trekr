@@ -15046,3 +15046,88 @@ a `Topic.class_eval` block in rails no longer counts toward `--dead`'s
 `::Topic` row (2,290 → 2,289 test references; its tier is unchanged). A
 receiver nothing in the index declares at either place falls back to the
 placed `Probe::Target`, which no call reaches, as before.
+
+## DEC-652 — A method only tests reach is `test-only`, as a class is
+
+**Reported** on 0.9.8: `--dead lib` on addressable never listed
+`Addressable::URI.form_encode`, which `--refs` finds 9 confirmed calls of,
+every one in `spec/addressable/uri_spec.rb`. Two written calls make a method
+"plainly used" to `refs::liveness`, wherever they are; one made it
+`single-caller` (`URI#hostname`, its one call a spec's). And a name written
+more than eight times was never searched at all, spec calls counted.
+
+**Decided.** A method every surviving reference of which — confirmed or
+possible call, symbol, `super`; not an excluded one — is in a file under a
+`spec`, `test` or `tests` directory is `test-only`, with the reason "referenced
+only from tests (N, first at PATH:LINE)". The predicate is
+`dead_consts::in_tests`, the one DEC-420 tiers constants by, now shared;
+`built::is_test` also counts `db/`, and a migration is production code.
+
+- **Precedence: a way in production may take outranks the tests.** A route
+  or a library's convention (DEC-344, DEC-362, DEC-450), an override
+  (DEC-121), a `super` into a method trekr has not indexed (DEC-365), a
+  protocol hook (DEC-315): the row keeps the tier it would have without
+  this rule — `single-caller` with its caveat for one spec call, unlisted for
+  more. Each says something outside the checkout's calls may run the method,
+  which is exactly the claim `test-only` denies. `super-only` needs no rule:
+  a `super` is counted where it is written, so supers from production
+  overrides are not tests'.
+- **A spec's own helper is never `test-only`**: a method defined in a test
+  file and called by tests is used.
+- **What may call it outside the tests is weighed as for `unreferenced`**:
+  an unseen ancestor, a gem of the bundle calling the name, a helper's
+  unplaced call, an unread symbol in its file, a routes file not read. A
+  `test-only` row claims no production caller, the same claim with tests
+  set aside.
+- **The cheap count** (`Store::written_calls`) now also counts the calls
+  outside the tests. A name written more than eight times is searched only
+  when the tests write every one; any answer other than `test-only` for it
+  is dropped, as the count had it.
+- **Grade**: as the other method tiers, `clear` unless a caveat is found.
+
+**Why not every name the specs call heavily.** Searching each name written
+more than eight times with at most eight calls outside the tests found 15
+more discourse rows (of 290) — names the code calls on other receivers — and
+cost `--dead app --json` +40 % CPU on mastodon (4.0 → 5.8 s) and +65 % on
+discourse (7.9 → 13.0 s), five interleaved rounds. Searching only names the
+tests alone write costs nothing measurable (three rounds, mastodon 5.0 →
+5.2 s, discourse 10.2 → 9.8 s CPU, load 12–36). Logged, not done.
+
+**Measured.** Rows moved, `--dead app lib` (addressable `lib`), main →
+this; every move is into `test-only`, no other row changed but a reason now
+naming a `test-only` caller as a candidate:
+
+| corpus | new rows | from `single-caller` | from `convention-only` | `test-only` methods clear / lower |
+| --- | ---: | ---: | ---: | ---: |
+| addressable | 19 | 1 | 0 | 2 / 18 |
+| mastodon | 27 | 47 | 6 | 8 / 72 |
+| discourse | 186 | 83 | 6 | 139 / 136 |
+
+Hand-checked (the name searched across the repo, views, YAML, JavaScript and
+strings, tests aside; true = nothing outside tests reaches it): mastodon all
+8 clear rows and 15 lower at random, discourse 20 clear and 10 lower at
+random (seed 652) from the build before the cheap count was narrowed; 2 of
+those discourse rows (one true, one false) are not listed now.
+
+| sample | true |
+| --- | ---: |
+| mastodon, clear | 6/8 |
+| discourse, clear | 15/18 |
+| clear, both | 21/26 = 81 % |
+| mastodon, lower | 0/15 |
+| discourse, lower | 7/10 |
+
+`clear` holds as `unreferenced`, clear methods do held out (79 %, DEC-450)
+and as `test-only` constants do (21 of 26, DEC-654), so it is earned. Every
+false clear row is a name built at runtime and sent: `public_send("end_of_support_#{type}")`
+on a mailer (mastodon, 2), `public_send("list_#{action}")` (2) and
+`"validate_#{name}"` (discourse). `built` reads interpolated symbols, not
+strings handed to `send`/`public_send`; reading those would catch all of
+them, and is `built.rs`'s change to make. Mastodon's lower rows are
+helpers and presenters a Haml view calls, which the caveat says; discourse's
+are mostly lowered by a file-wide `public_send`.
+
+**On a library** a public `test-only` method is usually its API:
+addressable's 20 rows are true to the checkout (only the specs call
+`Template#expand`) and say nothing about the gem's users, as `unreferenced`
+says nothing about them either (DEC-372). Testbed 665.

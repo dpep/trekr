@@ -151,7 +151,7 @@ often a `caveat`.
 | --- | --- |
 | `unreferenced` | nothing names it |
 | `shadowed` | every call lands on an override (`overridden_by`), so this one never runs |
-| `test-only` | a class or constant only specs name |
+| `test-only` | a method only specs call, or a class or constant only specs name. On a gem, a public one is usually its API |
 | `override` | nothing names it, but it overrides an ancestor method (`overrides`) a framework may call |
 | `convention-only` | reached only by a macro symbol, a route, or a by-name lookup (`convention.by`). Usually means it *is* used |
 | `super-only` | reached only by `super` from `super_from`. It's live exactly when they are |

@@ -3,9 +3,9 @@
 022-super-follows-the-ancestor-chain 4e39474a81ef326e
 029-dead-asks-about-the-qualified-owner 05c34ce195287393
 031-super-never-lands-on-its-own-method a06f72d750143311
-035-an-engine-reopens-the-apps-split-class 31da12162430c209
+035-an-engine-reopens-the-apps-split-class 75e9ce0e53480e6c
 036-an-unseen-mixin-never-hides-a-class 62d2e5bcdf7030a2
-042-an-engines-reopen-skips-another-programs-own-class 4d50ca534912a883
+042-an-engines-reopen-skips-another-programs-own-class 8b59c5547d2a6666
 043-a-self-call-reaches-a-subclass-override 083c8ddf2a83d604
 070-a-mixin-sent-to-a-class-is-its-ancestor d9446cdd3ea21206
 093-a-self-call-in-a-module-reaches-its-includers-other-modules c70c09c82147dae0
@@ -17,7 +17,7 @@
 136-a-bound-call-reaches-a-module-a-subclass-mixes-in ac091093d0a30d68
 260-a-block-a-macro-makes-a-method-of-runs-on-an-instance 4cc43ebf89cdd565
 261-a-method-missing-that-sends-a-name-on-may-run-it 0d08f24b819bee0a
-311-a-top-level-def-is-called-by-an-implicit-call 22632e6033a934bd
+311-a-top-level-def-is-called-by-an-implicit-call c9cbf658dfdf02f0
 312-a-symbol-a-macro-defines-is-no-call 4aa47f295c7f222b
 315-dead-says-what-it-cannot-see 8a87968afce8a1cb
 316-an-aliases-calls-reach-its-target f530e8184a80be98
@@ -110,3 +110,4 @@
 661-a-computed-const-get-lowers-its-namespace-only 9247420a5fbb97cf
 662-a-built-shape-lowers-what-fits-only 9632db8e314246bf
 663-a-name-computed-whole-may-reach-any-constant 3017116613328305
+665-a-method-only-specs-call-is-test-only c207725af2600b4a

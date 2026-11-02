@@ -1487,26 +1487,44 @@ impl Store {
     ///
     /// Capped because the only question is "more than a few?": counting every
     /// call of a name like `id` to answer it was a third of a `--dead` run.
+    ///
+    /// Each name's count is `(all, outside)`: every file's, and only those
+    /// `aside` does not set apart, so a name only the specs call is told
+    /// from one the code calls too (DEC-652).
     pub(crate) fn written_calls(
         &self,
         root: &str,
         names: &[String],
         cap: i64,
-    ) -> Result<HashMap<String, i64>> {
+        aside: &dyn Fn(&str) -> bool,
+    ) -> Result<HashMap<String, (i64, i64)>> {
         let mut stmt = self.conn.prepare_cached(
-            "SELECT MIN(?3, COALESCE(SUM(s.calls - s.symbols), 0))
+            "SELECT f.path, s.calls - s.symbols
                FROM call_name s INDEXED BY call_name_name
                CROSS JOIN file f
               WHERE s.name = ?1
+                AND s.calls > s.symbols
                 AND f.blob_id = s.blob_id
                 AND f.checkout_id = (SELECT id FROM checkout WHERE root = ?2)",
         )?;
         let mut found = HashMap::new();
         for name in names {
-            if !found.contains_key(name) {
-                let count: i64 = stmt.query_row(params![name, root, cap], |r| r.get(0))?;
-                found.insert(name.clone(), count);
+            if found.contains_key(name) {
+                continue;
             }
+            let (mut all, mut outside) = (0, 0);
+            let mut rows = stmt.query(params![name, root])?;
+            while outside < cap
+                && let Some(row) = rows.next()?
+            {
+                let path: String = row.get(0)?;
+                let calls: i64 = row.get(1)?;
+                all += calls;
+                if !aside(&path) {
+                    outside += calls;
+                }
+            }
+            found.insert(name.clone(), (all.min(cap), outside.min(cap)));
         }
         Ok(found)
     }
@@ -3101,13 +3119,35 @@ mod tests {
         let src = "class W\n  before_save :go\n  def a\n    go\n    go\n    go\n  end\nend\n";
         indexed(&mut store, "/a", "w.rb", src);
         let names = ["go", "go", "absent"].map(String::from);
-        let counts = store.written_calls("/a", &names, 2).unwrap();
-        assert_eq!(counts["go"], 2, "three written calls, capped");
-        assert_eq!(counts["absent"], 0);
+        let none = |_: &str| false;
+        let counts = store.written_calls("/a", &names, 2, &none).unwrap();
+        assert_eq!(counts["go"], (2, 2), "three written calls, capped");
+        assert_eq!(counts["absent"], (0, 0));
         assert_eq!(
-            store.written_calls("/a", &names, 10).unwrap()["go"],
-            3,
+            store.written_calls("/a", &names, 10, &none).unwrap()["go"],
+            (3, 3),
             "the symbol is not a call"
+        );
+    }
+
+    #[test]
+    fn written_calls_count_apart_the_files_set_aside() {
+        let mut store = Store::open_in_memory().unwrap();
+        let (lib, spec) = ("go\n".to_string(), "go\n".repeat(5));
+        let mut files = Files::new();
+        let mut facts = Vec::new();
+        for (path, src) in [("lib/w.rb", &lib), ("spec/w_spec.rb", &spec)] {
+            let oid = crate::scan::hash_blob(src.as_bytes());
+            files.insert(path.to_string(), oid.clone());
+            facts.push((oid, crate::extract::extract(src.as_bytes())));
+        }
+        store.write("/a", &files, facts, 0).unwrap();
+        let names = ["go".to_string()];
+        let specs = |path: &str| path.starts_with("spec/");
+        assert_eq!(
+            store.written_calls("/a", &names, 3, &specs).unwrap()["go"],
+            (3, 1),
+            "the spec's five are all calls, capped, and none outside"
         );
     }
 
@@ -3117,7 +3157,10 @@ mod tests {
         indexed(&mut store, "/a", "a.rb", "x.go\n");
         indexed(&mut store, "/other", "b.rb", &"y.go\n".repeat(5));
         let names = ["go".to_string()];
-        assert_eq!(store.written_calls("/a", &names, 10).unwrap()["go"], 1);
+        assert_eq!(
+            store.written_calls("/a", &names, 10, &|_| false).unwrap()["go"],
+            (1, 1)
+        );
     }
 
     #[test]

@@ -15,6 +15,13 @@
   `klass.const_get(x)`) — its caveat says where — or a namespace, shape or
   listing already caveated reaches it. Apps nearly always have such a
   lookup, so their rows stay `lower`; a gem without one now reads `clear`.
+- **`--dead` lists a method only specs and tests call as `test-only`**, as
+  it does a class, however many calls they write; the reason says how many
+  and where the first is. Such a method was missing when the specs called
+  it more than once, and `single-caller` when once. One that overrides
+  another method, or a hook Ruby calls by name, keeps the tier it had, and
+  a spec's own helper is never `test-only`. A script
+  reading `summary.tiers` sees methods in `test-only` now.
 
 ## 0.9.8 — 2026-10-18
 

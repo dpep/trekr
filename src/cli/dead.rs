@@ -645,9 +645,16 @@ fn dead_in(
     }
 
     let names: Vec<String> = defined.iter().map(|d| d.def.name.clone()).collect();
-    // More written calls than this and a name is plainly used.
+    // More written calls than this and a name is plainly used — unless the
+    // tests write every one, when it may be test-only (DEC-652).
     const PLAINLY_USED: i64 = 8;
-    let written_calls = store.written_calls(&root_str, &names, PLAINLY_USED + 1)?;
+    let written_calls =
+        store.written_calls(&root_str, &names, PLAINLY_USED + 1, &dead_consts::in_tests)?;
+    let relative = |file: &str| {
+        Path::new(file)
+            .strip_prefix(root)
+            .map_or(file.to_string(), |p| p.to_string_lossy().into_owned())
+    };
 
     // The expensive pass, only for names the cheap one could not clear.
     let tree = build_tree(store, &root_str)?;
@@ -685,8 +692,8 @@ fn dead_in(
         };
         // `initialize` is written by its every subclass's `super`, which
         // says nothing about this one: its `X.new`s are what count (DEC-541).
-        let written = written_calls.get(&def.name).copied().unwrap_or(0);
-        if written > PLAINLY_USED && refs::constructor_of(&query).is_none() {
+        let (written, outside) = written_calls.get(&def.name).copied().unwrap_or((0, 0));
+        if written > PLAINLY_USED && outside > 0 && refs::constructor_of(&query).is_none() {
             continue; // not worth a narrowed search
         }
         let (mut found, mut counts) = gather_refs(
@@ -806,13 +813,27 @@ fn dead_in(
             }
         }
         let live = refs::liveness(&found, &counts);
-        let Some(tier) = live.tier.map(DeadTier::from) else {
+        // Every way in — call, symbol, `super` — is written in a test, and
+        // the method is not a test's own helper: it runs in the suite and
+        // nowhere else (DEC-652).
+        let ways_in: Vec<&refs::Reference> = found
+            .iter()
+            .filter(|r| r.tier != refs::Tier::Excluded)
+            .collect();
+        let tests_only = !ways_in.is_empty()
+            && ways_in.iter().all(|r| dead_consts::in_tests(&r.path))
+            && !dead_consts::in_tests(&relative(file));
+        let seen = live.tier.map(DeadTier::from);
+        // A name plainly used by its count was searched only in case the
+        // tests are all that use it: any other answer stays as the count had it.
+        let plainly_used = written > PLAINLY_USED && !constructor;
+        if (seen.is_none() || plainly_used) && !tests_only {
             continue;
-        };
+        }
         // An `initialize` one `X.new` reaches is how a class is built, not a
         // method to inline; one only subclasses' `super`s reach belongs to an
         // abstract class. Only one nothing reaches is a candidate.
-        if constructor && tier != DeadTier::Unreferenced {
+        if constructor && seen != Some(DeadTier::Unreferenced) {
             continue;
         }
         // Whoever calls the method this overrides may run it instead, and
@@ -827,9 +848,11 @@ fn dead_in(
                 .unwrap_or_default(),
             _ => crate::resolve::overridden(&tree, def, file),
         };
-        let tier = match tier {
-            DeadTier::Unreferenced if !overrides.is_empty() && !constructor => DeadTier::Override,
-            tier => tier,
+        let seen = match seen {
+            Some(DeadTier::Unreferenced) if !overrides.is_empty() && !constructor => {
+                Some(DeadTier::Override)
+            }
+            seen => seen,
         };
         // A controller's public action a route reaches is reached by
         // convention, as a symbol handed to a macro is (DEC-344); so is a
@@ -842,7 +865,8 @@ fn dead_in(
             .then(|| routed.get(&(owner.clone(), def.name.clone())))
             .flatten();
         // A library that calls it by a name it builds (DEC-362, DEC-371).
-        let convention = (matches!(tier, DeadTier::Unreferenced | DeadTier::Override)
+        let convention = ((matches!(seen, Some(DeadTier::Unreferenced | DeadTier::Override))
+            || tests_only)
             && !def.singleton)
             .then(|| {
                 conventions::serializer_include(&tree, &owner, &def.name, &mut symbols).or_else(
@@ -858,14 +882,28 @@ fn dead_in(
                 )
             })
             .flatten();
-        let tier = match tier {
-            DeadTier::Unreferenced | DeadTier::Override
+        // A way in production may take — a route, a library's convention,
+        // the method it overrides, a `super` into one not indexed, Ruby's
+        // protocol — outranks the tests: the row keeps the tier it had
+        // without them (DEC-652).
+        let reached_otherwise = route.is_some()
+            || convention.is_some()
+            || !overrides.is_empty()
+            || *calls_super
+            || refs::protocol_hook(&def.name, def.singleton).is_some();
+        let tier = match seen {
+            _ if tests_only && !reached_otherwise => DeadTier::TestOnly,
+            Some(DeadTier::Unreferenced | DeadTier::Override)
                 if route.is_some() || convention.is_some() =>
             {
                 DeadTier::ConventionOnly
             }
-            tier => tier,
+            _ if plainly_used => continue,
+            Some(tier) => tier,
+            None => continue,
         };
+        let convention = convention
+            .filter(|_| matches!(seen, Some(DeadTier::Unreferenced | DeadTier::Override)));
         // The one written call a single caller has: whether it certainly
         // reaches this method is the difference between inlining it and
         // checking an untyped receiver first.
@@ -943,8 +981,10 @@ fn dead_in(
             risky.push_str(&elsewhere);
         }
         // An ancestor not indexed may call it, and a `super` says one is
-        // there (DEC-365).
-        if tier == DeadTier::Unreferenced {
+        // there (DEC-365). A test-only row claims no caller outside the
+        // tests, so what may call it outside them is weighed as for none.
+        let uncalled = matches!(tier, DeadTier::Unreferenced | DeadTier::TestOnly);
+        if uncalled {
             // A name the tree knows is no unseen ancestor: two declarations
             // of the owner (`User = Data.define` in a script) leave the
             // other's superclass unresolved, though it is indexed.
@@ -995,7 +1035,7 @@ fn dead_in(
         // `initialize`'s: a subclass's own calls `super`, and nothing calls
         // one with no receiver.
         let mut shadowing: Vec<String> = Vec::new();
-        if tier == DeadTier::Unreferenced && !def.singleton && !constructor && counts.excluded > 0 {
+        if uncalled && !def.singleton && !constructor && counts.excluded > 0 {
             let (all, _) = gather_refs(
                 &tree,
                 store,
@@ -1012,7 +1052,8 @@ fn dead_in(
                 .iter()
                 .filter(|r| r.ruling == Some(refs::Ruling::DifferentOwner))
             {
-                if let Some(landed) = call.owner.as_deref()
+                if tier == DeadTier::Unreferenced
+                    && let Some(landed) = call.owner.as_deref()
                     && tree.inherits(landed, &owner)
                 {
                     let at = format!("{landed}#{}", def.name);
@@ -1074,7 +1115,7 @@ fn dead_in(
         }
         // A gem of the bundle calls the name on an object it is handed: an
         // instance's method, since such a call's receiver is a value (DEC-367).
-        if tier == DeadTier::Unreferenced
+        if uncalled
             && !def.singleton
             && let Some((gem, n)) = store.bundle_calls(&root_str, &def.name)?
         {
@@ -1130,11 +1171,10 @@ fn dead_in(
         }
         // A symbol in its own file that no rule reads as its name may still
         // be how it is reached: say so, rather than that no symbol names it.
-        let unread_symbol =
-            unread_symbol.filter(|_| matches!(tier, DeadTier::Unreferenced | DeadTier::Override));
+        let uncalled_or_override = uncalled || tier == DeadTier::Override;
+        let unread_symbol = unread_symbol.filter(|_| uncalled_or_override);
         // An action no route read reaches may be reached by one not read.
-        if action && route.is_none() && matches!(tier, DeadTier::Unreferenced | DeadTier::Override)
-        {
+        if action && route.is_none() && uncalled_or_override {
             let unread = match routes.unread.first() {
                 _ if routes.files == 0 => Some("no routes file read".to_string()),
                 Some(((path, line), why)) => Some(format!("{why} at {path}:{line}")),
@@ -1174,6 +1214,18 @@ fn dead_in(
                 "no call, symbol, `super` or route names it".to_string()
             }
             (DeadTier::Unreferenced, _) => "no call, symbol or `super` names it".to_string(),
+            (DeadTier::TestOnly, _) => {
+                let first = ways_in
+                    .iter()
+                    .min_by_key(|r| (&r.path, r.line))
+                    .expect("a test-only row has a reference");
+                format!(
+                    "referenced only from tests ({}, first at {}:{})",
+                    ways_in.len(),
+                    first.path,
+                    first.line
+                )
+            }
             (DeadTier::Override, _) => format!(
                 "no call names it, but it overrides {}, so a call of that may run it",
                 overrides.join(", ")
@@ -1249,11 +1301,6 @@ fn dead_in(
         rows.push(row);
     }
     let checkout_files = crate::query::members::CheckoutFiles::new(store, root, &root_str);
-    let relative = |file: &str| {
-        Path::new(file)
-            .strip_prefix(root)
-            .map_or(file.to_string(), |p| p.to_string_lossy().into_owned())
-    };
     for (file, facts) in scope_facts {
         checkout_files.hold(&relative(&file), facts);
     }

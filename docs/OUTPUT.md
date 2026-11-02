@@ -284,7 +284,8 @@ module and constant (`kind: class|module|constant`) no constant reference
 resolves to. The [README](../README.md#on-rails) has the tiers and the
 measurements behind the grading. Fields per row:
 
-- `tier`, and a `reason` in words.
+- `tier`, and a `reason` in words. A `test-only` method's reason counts its
+  references, every one written in a test, and names the first.
 - `confidence`: `clear`, or `lower` with a `caveat` naming what may still
   reach it. Every spec-member row is `lower`; every class, module and
   constant row is `lower` unless it is `convention-only`.
