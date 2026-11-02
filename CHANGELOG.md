@@ -19,7 +19,11 @@
   it does a class, however many calls they write; the reason says how many
   and where the first is. A test is a file under a `spec/`, `test/` or
   `tests/` directory at the checkout's root or a nested package's
-  (`plugins/chat/spec/`), not one inside `lib/` or `app/`. Such a method was missing when the specs called
+  (`plugins/chat/spec/`), not one inside `lib/` or `app/`. A Ruby script
+  with no extension (`exe/tool`, `bin/x`), which trekr does not index, is
+  read for the names it writes: one keeps a method off `test-only`, and
+  any method row it names is `lower`, "named in a script (exe/tool), which
+  is not read". Such a method was missing when the specs called
   it more than once, and `single-caller` when once. One that overrides
   another method, or a hook Ruby calls by name, keeps the tier it had, and
   a spec's own helper is never `test-only`. A script

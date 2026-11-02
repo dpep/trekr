@@ -15175,6 +15175,38 @@ such a block when the receiver is a value, so `--dead` finds the blocks
 itself, with a parse of only the files that write `define_`. discourse and
 mastodon `app lib`: no row moves. Testbed 670.
 
+### Addendum: a name a script writes
+
+**Reported** (hunt A): a gem's CLI entry point was `test-only`, clear, as
+the index reads no extensionless script: `Tool::CLI.start`, called by
+`exe/tool`; streaming_stats' `#insert`, `#stddev`, `#quantile`, called by
+`bin/streaming_stats`; iriq's `Iriq::CLI#run`, called by `exe/iriq`.
+`--dead`'s constants already read such scripts' constant paths
+(`script_constants`), so the class was used while its entry method was not.
+
+**Decided**, in `--dead`'s layer, no extraction change: a Ruby script with
+no extension (`views::ruby_script`: a shebang naming ruby) is read as a
+view is (DEC-315), for the words its code writes — no comment, no
+heredoc's text, no name it `def`s. A word that is a method's name is a way
+in outside the tests, untyped as a `possible` call is: the method is not
+`test-only` (its tier is what its calls say), and any row it names is
+graded `lower`, "named in a script (exe/tool), which is not read". Not a
+caller: the word has no receiver, so it could be any method of the name.
+
+Indexing the scripts would make these calls, typed, and is the right end
+state; it is an extraction change (the walker's Ruby set and the store),
+left for that area's owner.
+
+**Measured**, the build before → this, `--dead lib` (apps `app lib`):
+streaming_stats' three rows leave `test-only` and `#max` (called by the
+script) is graded `lower`; iriq's `CLI#run` leaves `test-only`; mastodon
+and rack-test: no row moves. discourse: 8 rows, 7 graded `clear` →
+`lower` and one `test-only` → `single-caller` (`Scheduler::Defer#pause`,
+named by Thor's `option :pause` in `script/discourse`). Of the 8, 2 are
+calls of the method (`ImportExport.export_topics`, `.export_categories`
+in `script/discourse`); the rest are a local, a keyword or a symbol of the
+name — the views' noise, at the views' grade. Testbed 671.
+
 ## DEC-655 — Names built where `--dead` did not read them: strings sent by name, and test files
 
 ### A. An interpolated string sent by name is a shape, for the class it is sent to

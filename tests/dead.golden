@@ -60,7 +60,7 @@
 427-an-association-names-a-model a6d1b948d4d1bb73
 428-a-class-an-ancestor-registers eda61e626c55902e
 429-a-constant-read-at-runtime-says-so 7d2d22d541b36e8d
-430-a-view-or-a-script-references-a-constant 032a2e106812016d
+430-a-view-or-a-script-references-a-constant 9eda9dffacb53b9c
 431-a-test-case-is-run-by-its-runner aa90a5e03d1c7efa
 432-rails-makes-and-runs-classes-by-name bfb3721d861ced71
 433-a-library-finds-a-class-by-a-name-it-builds 11d73d2627566020
@@ -116,3 +116,4 @@
 668-a-test-files-own-module-is-no-test-only-candidate 6c840789da0c592d
 669-a-test-directory-under-lib-or-app-is-production 27a23587713c0858
 670-a-super-in-a-define-method-block-is-the-defined-methods 3109c3f28dafcf06
+671-a-name-a-ruby-script-writes-is-no-test-only-method 8aa6e0726552a620

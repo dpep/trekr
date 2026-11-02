@@ -1,0 +1,5 @@
+# A Ruby script with no extension (a gem's exe/, an app's bin/) is not
+# indexed, so the CLI entry point it calls was `test-only`, clear. A name
+# its code writes is a way in: not `test-only`, and a row it names says so.
+# Its comments and heredoc text name nothing.
+dead lib Tool::CLI#start=none Tool::CLI#banner=unreferenced~exe/tool Tool::CLI#usage=test-only~

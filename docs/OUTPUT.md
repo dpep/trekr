@@ -306,7 +306,9 @@ measurements behind the grading. Fields per row:
 cascade: a method whose only caller is itself a candidate is `single-caller`,
 and its `reason` says the caller is a candidate. An `initialize` is reported
 only when nothing constructs its class. A Haml or Slim template that names a
-row says "named in a view (…), which is not read"; a protocol hook Ruby or
+row says "named in a view (…), which is not read", and a Ruby script with
+no extension (`exe/tool`) that writes a method's name says "named in a
+script (…), which is not read" and keeps it off `test-only`; a protocol hook Ruby or
 Rails calls by name (`marshal_load`, `to_partial_path`, `each`, a job's
 `perform`) says "a hook … calls by name".
 

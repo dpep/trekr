@@ -682,6 +682,7 @@ fn dead_in(
     let generated = generated::Generated::read(root, defined.iter().map(|d| d.file.as_str()));
     let texts = built::Texts::read(root);
     let built = built::Built::read(&texts, &tree);
+    let scripts = views::Scripts::read(&texts);
     let routes = routes::Routes::read(root);
     let routed = routed_actions(&tree, &routes);
     let mut symbols = conventions::Symbols::default();
@@ -839,9 +840,12 @@ fn dead_in(
             .iter()
             .filter(|r| r.tier != refs::Tier::Excluded)
             .collect();
+        // A Ruby script the index does not read (`exe/tool`) writing its
+        // name is a way in outside the tests, untyped as a possible call is.
         let tests_only = !ways_in.is_empty()
             && ways_in.iter().all(|r| dead_consts::in_tests(&r.path))
-            && !dead_consts::in_tests(&relative(file));
+            && !dead_consts::in_tests(&relative(file))
+            && scripts.naming(&def.name).is_none();
         let seen = live.tier.map(DeadTier::from);
         // A name plainly used by its count was searched only in case the
         // tests are all that use it: any other answer stays as the count had it.
@@ -1162,6 +1166,12 @@ fn dead_in(
                 risky.push_str(", ");
             }
             risky.push_str(&format!("named in a view ({template}), which is not read"));
+        }
+        if let Some(script) = scripts.naming(&def.name) {
+            if !risky.is_empty() {
+                risky.push_str(", ");
+            }
+            risky.push_str(&format!("named in a script ({script}), which is not read"));
         }
         if let Some(at) = config.naming(&def.name) {
             if !risky.is_empty() {

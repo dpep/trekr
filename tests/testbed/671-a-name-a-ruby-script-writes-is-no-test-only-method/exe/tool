@@ -1,0 +1,9 @@
+#!/usr/bin/env ruby
+# Prints the usage when asked.
+require "tool/cli"
+
+warn <<~TEXT if ARGV.empty?
+  usage: see the README
+TEXT
+puts Tool::CLI.new.banner # then the usage
+Tool::CLI.start(ARGV)

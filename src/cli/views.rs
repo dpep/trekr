@@ -76,6 +76,110 @@ impl Views {
     }
 }
 
+/// Whether a file with no extension is a Ruby script (`exe/tool`, `bin/setup`):
+/// its first line a shebang that names ruby. The index reads none of them.
+pub(super) fn ruby_script(path: &str, text: &str) -> bool {
+    !path.rsplit('/').next().unwrap_or(path).contains('.')
+        && text.starts_with("#!")
+        && text
+            .lines()
+            .next()
+            .is_some_and(|first| first.contains("ruby"))
+}
+
+/// The method names the checkout's Ruby scripts write, each with the first
+/// script that does: as views' names are, evidence of a way in that no call
+/// site records.
+#[derive(Default)]
+pub(super) struct Scripts {
+    names: HashMap<String, String>,
+}
+
+impl Scripts {
+    pub(super) fn read(texts: &super::built::Texts) -> Scripts {
+        let mut scripts = Scripts::default();
+        for (path, text) in texts
+            .files
+            .iter()
+            .filter(|(path, text)| ruby_script(path, text))
+        {
+            for name in script_names(text) {
+                scripts.names.entry(name).or_insert_with(|| path.clone());
+            }
+        }
+        scripts
+    }
+
+    /// The first script that writes `name`, if one does.
+    pub(super) fn naming(&self, name: &str) -> Option<&str> {
+        self.names.get(name).map(String::as_str)
+    }
+}
+
+/// The names a script's code writes, less those it defines (`def run`,
+/// `def self.run`): its own methods, not calls of the checkout's.
+fn script_names(text: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for line in script_code(text) {
+        let words = words(line);
+        for (at, name) in words.iter().enumerate() {
+            let before: Vec<&str> = words[at.saturating_sub(2)..at]
+                .iter()
+                .map(String::as_str)
+                .collect();
+            let defined = before.last() == Some(&"def") || before == ["def", "self"];
+            if !defined {
+                names.push(name.clone());
+            }
+        }
+    }
+    names
+}
+
+/// A script's lines of code: no comment, and no heredoc's text, which is
+/// prose (a `--help` message) far more often than Ruby.
+fn script_code(text: &str) -> Vec<&str> {
+    let mut code = Vec::new();
+    let mut heredoc: Option<String> = None;
+    for line in text.lines() {
+        if let Some(end) = &heredoc {
+            if line.trim() == end {
+                heredoc = None;
+            }
+            continue;
+        }
+        let line = uncommented(line);
+        heredoc = line.find("<<").and_then(|at| {
+            let tag = line[at + 2..].trim_start_matches(['~', '-']);
+            let tag = tag.trim_start_matches(['\'', '"']);
+            let end = tag
+                .find(|c: char| !(c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_'))
+                .unwrap_or(tag.len());
+            (end > 0).then(|| tag[..end].to_string())
+        });
+        code.push(line);
+    }
+    code
+}
+
+/// A line up to a `#` comment outside its strings (`#{…}` is no comment).
+fn uncommented(line: &str) -> &str {
+    let bytes = line.as_bytes();
+    let mut quote = None;
+    let mut at = 0;
+    while at < bytes.len() {
+        match (quote, bytes[at]) {
+            (Some(_), b'\\') => at += 1,
+            (Some(q), b) if b == q => quote = None,
+            (None, b @ (b'"' | b'\'')) => quote = Some(b),
+            (None, b'#') if bytes.get(at + 1) != Some(&b'{') => return &line[..at],
+            _ => {}
+        }
+        at += 1;
+    }
+    line
+}
+
 /// The constant paths in a line of a template's Ruby, outside its strings:
 /// `Widget`, `Admin::Widget::LIMIT`, `::Widget`.
 pub(super) fn constant_paths(ruby: &str) -> Vec<String> {
@@ -262,6 +366,21 @@ mod tests {
         let found =
             constant_paths("Widget::LIMIT.each { |x| t('Gadget') } + ::Alpha + w.Beta + w::Gamma");
         assert_eq!(found, ["Widget::LIMIT", "::Alpha"]);
+    }
+
+    #[test]
+    fn a_scripts_comments_and_heredocs_name_nothing() {
+        let text = "#!/usr/bin/env ruby\n# prints usage\nwarn <<~TEXT\n  usage here\nTEXT\nputs cli.banner # then usage\nlist << \"#{cli.run}\"\ndef self.setup; end\ndef initialize; end\n";
+        assert!(ruby_script("exe/tool", text));
+        assert!(!ruby_script("exe/tool.sh", text));
+        assert!(!ruby_script("bin/setup", "#!/bin/sh\necho\n"));
+        let names = script_names(text);
+        for name in ["banner", "run", "warn", "list"] {
+            assert!(names.iter().any(|n| n == name), "{name}");
+        }
+        for name in ["usage", "prints", "here", "env", "setup", "initialize"] {
+            assert!(!names.iter().any(|n| n == name), "{name}");
+        }
     }
 
     #[test]
