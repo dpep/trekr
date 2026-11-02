@@ -193,9 +193,12 @@ Two things the blob layer cannot know, resolved here:
 - **A scope opened by a lookup** (DEC-241, DEC-653). `class << Time` and
   `Target.class_eval do` (or `instance_eval`) inside another scope push the
   name as written, as `class Target` would. Placed, it is `Probe::Target`;
-  when nothing declares that, `Tree::opened` looks the name up through the
-  enclosing scopes and the top level instead. A method's owner, an edge's
-  owner and a call's `self` all go through it, so they agree.
+  when nothing declares that, `Tree::opened` looks the name up as Ruby
+  would: the enclosing scopes, their ancestors, the top level. A method's
+  owner and a call's `self` go through it, so they agree. A mixin there is
+  sent to the name (as `Target.include(M)` is), so a lookup that finds
+  nothing makes no edge and no name; and a constant written in the block
+  is the enclosing scope's, since a block opens no lexical scope.
 - **Constant aliases.** `Bar = Foo` keeps its own declaration site — that is
   where go-to-definition on `Bar` belongs — but anywhere a *namespace* is
   wanted (`Bar::Baz`, `class Foo < Bar`) the alias is followed through.

@@ -15046,7 +15046,65 @@ discourse_dev_assets' `Faker::Lorem.instance_eval` is stored as
 a `Topic.class_eval` block in rails no longer counts toward `--dead`'s
 `::Topic` row (2,290 → 2,289 test references; its tier is unchanged). A
 receiver nothing in the index declares at either place falls back to the
-placed `Probe::Target`, which no call reaches, as before.
+placed `Probe::Target` for its `def`s, which no call reaches; its mixins
+make no name (addendum below).
+
+**Addendum (fix round, store v68).** Hunt B found the owner and the
+receiver disagreeing three ways, two of them fabricating a type:
+
+- *A constant written in the block nested under the receiver*, as DEC-086's
+  had, and the paragraph above accepted. With a bare receiver now pushed,
+  `DEFAULT_LIMIT = 3` in `module Probe; Target.class_eval do` implied a
+  `Probe::Target` module, every `Target` written in Probe resolved to it,
+  and `--dead` called the real `class Target` and its methods unreferenced
+  `clear`. A block opens no lexical scope, so a constant written or read
+  in it — and a `class` opened there — is now the code around the block's
+  (`Frame::evaluated`, `scope_nesting`), for every receiver, qualified or
+  not: `Faker::Lorem.instance_eval { NOT_GIVEN = … }` is top-level again.
+- *A mixin in the block, for a receiver found through the enclosing class's
+  ancestors or not at all*. `Tree::opened` looked only lexically and at the
+  top level, fell back to the placed name, and the edge made it:
+  `class Child < Parent; Helper.class_eval { include Extras }` made a
+  `Child::Helper` that shadowed `Parent::Helper`; `GemThing.class_eval {
+  include Extras }` in `MyApp`, with the gem unindexed, made
+  `MyApp::GemThing` a known type. A mixin in a block sent to a bare name
+  inside another scope is now recorded as sent to it (`(sent Helper)`,
+  DEC-097's `Helper.include(Extras)`): looked up where the block is written,
+  and no edge when nothing declared is found. It stays an edge when the
+  block runs in a method, as before. Edges are attached before any chain
+  exists, so the ancestor rung cannot be asked there: `Parent::Helper`
+  does not gain `Extras` — unknown, not wrong.
+- *A `def` there, for a receiver found through ancestors*, landed on the
+  orphan `Child::Helper` while `--def` on `Helper` said `Parent::Helper`.
+  `opened` now asks the enclosing scope's ancestors between the lexical
+  scopes and the top level, as Ruby's lookup does, where chains exist (a
+  method's owner, a call's `self`); and an alias it lands on is followed,
+  so `Gizmo = Gadget; Gizmo.class_eval { def x }` is `Gadget#x`.
+
+*Declined*: telling, in the tree, an edge on a guessed placement from one
+on a written name by whether anything declares the owner. Dropping those
+broke RSpec's `config.include` (an edge on an unindexed
+`RSpec::Core::ExampleGroup`, testbed 606) and 7 rails `super`s
+(`actionmailbox/…/mailgun/inbound_emails_controller.rb:59`), where a class
+nested in a compact `class Ingresses::Mailgun::…` is placed differently by
+the edge pass than by its declaration and only its superclass edge made the
+name `super` finds. The extractor knows which receivers were bare; the tree
+does not.
+
+*Measured* against main (3f1f761), each build on its own store, rails,
+discourse and mastodon with their gems: stored rows that change are 2
+declarations (`NOT_GIVEN` above; rails' `::BadFailLayout` in
+`Object.class_eval`, whose recorded nesting loses `Object` and whose
+placement does not move), 577 constant references read in an evaluated
+block (bullet's `::ActiveRecord::Relation` patches inside `module Bullet;
+module ActiveRecord` the most, 397), `::BadFailLayout`'s superclass edge
+the same way, and 3 edges now recorded as sent (google-protobuf's
+`ListValue` include, in both installed copies, and rspec-core's
+`ExposeCurrentExample` extend), whose chains do not move. `--dead` (rails `activerecord
+activesupport`, discourse and mastodon `app lib`): one row changes,
+`::Topic`'s test references 2,289 → 2,290, the mention the paragraph above
+lost. Rails index, fresh stores interleaved at load 22–27: 3.3 and 3.9 s
+before, 3.1 and 3.2 s after, past one cold round each. Testbed 690.
 
 ## DEC-652 — A method only tests reach is `test-only`, as a class is
 

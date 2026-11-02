@@ -6,8 +6,12 @@
   is `Target`'s**, as it already was at the top level: it was recorded on
   the class around the block, so calls to it were residue and `--refs
   'Target#x'` said `no_such_method`. `Target.instance_eval do def x`
-  makes `Target.x`. This changes what an index records (store v67): trekr
-  reindexes once after upgrading.
+  makes `Target.x`. `Target` is found as Ruby finds it, through the
+  enclosing class's ancestors too, and an alias (`Gizmo = Gadget`) is
+  followed. A constant written in such a block is the enclosing scope's,
+  as in Ruby, for any receiver (`Faker::Lorem.instance_eval { X = 1 }`
+  defined `Faker::Lorem::X`). This changes what an index records (store
+  v68): trekr reindexes once after upgrading.
 - **`--dead` grades a class, module or constant row `clear` again when
   nothing in the checkout could reach it by a built name**, instead of
   `lower` on every row. A row is `lower` when the checkout looks up a name

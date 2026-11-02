@@ -1640,9 +1640,10 @@ impl Tree {
     }
 
     /// The scope an edge attaches to, and the nesting its target is written
-    /// in: the body the owner opens, as [`Tree::opened`] places it, or, for a mixin sent to a constant
-    /// (DEC-097), the class that constant names, with the nesting the call
-    /// is written in. A receiver the tree does not hold has no chain to join.
+    /// in: the body the owner opens, as [`Tree::opened`] places it, or, for a
+    /// mixin sent to a constant (DEC-097, and DEC-653's `Const.class_eval`
+    /// body), the class that constant names, with the nesting the call is
+    /// written in. A receiver the tree does not hold has no chain to join.
     fn edge_owner(&self, owner: &[String]) -> Option<(String, Vec<String>)> {
         match owner.first().and_then(|s| runtime::sent_to(s)) {
             Some(receiver) => {
@@ -1651,7 +1652,12 @@ impl Tree {
             }
             None => {
                 let scopes = self.scopes(owner);
-                Some((self.opened(owner, &scopes).unwrap_or_default(), scopes))
+                // No chain is built yet to search for the name.
+                let opened = self.looked_up(owner, &scopes, false);
+                Some((
+                    opened.unwrap_or_else(|| scopes.first().cloned().unwrap_or_default()),
+                    scopes,
+                ))
             }
         }
     }
@@ -4419,26 +4425,50 @@ impl Tree {
     /// opens. `class << Time` inside `class Time` opens the Time that name
     /// finds, not a `Time::Time` the placing would make: a scope that is no
     /// declared class or module — a constant in its body implies it as a
-    /// module with no site — is looked up instead (DEC-241).
+    /// module with no site — is looked up instead (DEC-241), as a
+    /// `Helper.class_eval` receiver is (DEC-653). One the lookup does not find
+    /// stays where it was placed, a name no call reaches.
     fn opened(&self, written: &[String], scopes: &[String]) -> Option<String> {
-        let innermost = scopes.first()?.clone();
+        let innermost = scopes.first()?;
+        Some(
+            self.looked_up(written, scopes, true)
+                .unwrap_or_else(|| innermost.clone()),
+        )
+    }
+
+    /// [`Tree::opened`]'s class, when a declared one is found: the innermost
+    /// scope, else its name looked up as Ruby looks up a constant from the
+    /// scope around it — lexical scopes, that scope's ancestors when
+    /// `inherited`, the top level — skipping names that nothing declares.
+    fn looked_up(&self, written: &[String], scopes: &[String], inherited: bool) -> Option<String> {
+        let innermost = scopes.first()?;
         let declared = |fqn: &str| match self.kind_of(fqn) {
             None => false,
             Some("module") => !self.sites(fqn).is_empty(),
             Some(_) => true,
         };
-        if declared(&innermost) {
-            return Some(innermost);
+        if declared(innermost) {
+            return Some(self.namespace_of(innermost));
         }
         let name = written.first().map_or("", String::as_str);
-        let found = scopes[1..]
+        let name = name.trim_start_matches("::");
+        let around = &scopes[1..];
+        let ancestors: Vec<String> = match around.first().filter(|_| inherited) {
+            Some(enclosing) => self
+                .ancestors(enclosing)
+                .chain
+                .iter()
+                .map(|ancestor| qualify(public_name(ancestor), name))
+                .collect(),
+            None => Vec::new(),
+        };
+        around
             .iter()
-            .map(String::as_str)
-            .chain([""])
-            .map(|scope| qualify(scope, name.trim_start_matches("::")))
+            .map(|scope| qualify(scope, name))
+            .chain(ancestors)
+            .chain([name.to_string()])
             .find(|candidate| declared(candidate))
-            .map(|fqn| self.namespace_of(&fqn));
-        Some(found.unwrap_or(innermost))
+            .map(|fqn| self.namespace_of(&fqn))
     }
 
     /// The classes that mix in this module, directly or through another module.

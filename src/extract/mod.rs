@@ -57,11 +57,18 @@ enum Opens {
 }
 
 struct Frame {
-    /// How many names this frame pushed onto the nesting stack. `class <<
-    /// self` pushes none — it renames nothing, it only flips what `def`
-    /// means — and a scope opened inside one pushes
+    /// The nesting to restore when this frame closes, if it pushed a name.
+    /// `class << self` pushes none — it renames nothing, it only flips what
+    /// `def` means — and a scope opened inside one pushes
     /// [`crate::core::SINGLETON_CLASS`] too.
-    pushed: usize,
+    outer: Option<Vec<String>>,
+    /// The name it pushed is a `Const.class_eval` receiver: its methods are
+    /// that class's, but a constant written there is the code around the
+    /// block's, as Ruby's lexical scope is (DEC-653).
+    evaluated: bool,
+    /// That receiver is a bare name inside another scope, which only a
+    /// lookup where the block is written can place (DEC-653).
+    looked_up: bool,
     /// Constants written here are a singleton class's: inside `class << x`,
     /// the `def`s and blocks in it, until a class or module opens.
     in_singleton_class: bool,
@@ -129,9 +136,11 @@ struct Mixed {
 }
 
 impl Frame {
-    fn new(pushed: usize, opens: Opens, in_singleton_class: bool) -> Frame {
+    fn new(outer: Option<Vec<String>>, opens: Opens, in_singleton_class: bool) -> Frame {
         Frame {
-            pushed,
+            outer,
+            evaluated: false,
+            looked_up: false,
             in_singleton_class,
             // A class or module body starts public; only the file scope is
             // private (Ruby's rule for top-level `def`).
@@ -588,7 +597,9 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         nesting: Vec::new(),
         // The file scope: top-level `def` is private in Ruby.
         frames: vec![Frame {
-            pushed: 0,
+            outer: None,
+            evaluated: false,
+            looked_up: false,
             in_singleton_class: false,
             visibility: Visibility::Private,
             singleton: false,
@@ -786,18 +797,13 @@ impl<'a> Extractor<'a> {
             (_, Some(_)) => false,
             _ => self.in_singleton_class(),
         };
-        let pushed = match name {
-            Some(name) => {
-                let outer = self.scope_nesting();
-                let pushed = outer.len() - self.nesting.len() + 1;
-                self.nesting = outer;
-                self.nesting.insert(0, name);
-                pushed
-            }
-            None => 0,
-        };
+        let outer = name.map(|name| {
+            let mut nesting = self.scope_nesting();
+            nesting.insert(0, name);
+            std::mem::replace(&mut self.nesting, nesting)
+        });
         self.frames
-            .push(Frame::new(pushed, opens, in_singleton_class));
+            .push(Frame::new(outer, opens, in_singleton_class));
         // A frame's `self` is known, whatever block it sits in.
         self.open_blocks.push(None);
     }
@@ -996,8 +1002,8 @@ impl<'a> Extractor<'a> {
 
     fn leave(&mut self) {
         self.open_blocks.pop();
-        if let Some(frame) = self.frames.pop() {
-            self.nesting.drain(..frame.pushed);
+        if let Some(outer) = self.frames.pop().and_then(|frame| frame.outer) {
+            self.nesting = outer;
         }
     }
 
@@ -1008,13 +1014,27 @@ impl<'a> Extractor<'a> {
     /// The nesting a constant written here is defined in and looked up from:
     /// the singleton class first inside `class << x`, where Ruby's lexical
     /// scope is that class — `LIMIT = 1` there is no constant of the class
-    /// around it, and the class's own `LIMIT` lookups never see it.
+    /// around it, and the class's own `LIMIT` lookups never see it. In a
+    /// `Const.class_eval` block it is the code around the block, without
+    /// `Const`: a block opens no lexical scope.
     fn scope_nesting(&self) -> Vec<String> {
         let mut nesting = self.nesting.clone();
         if self.in_singleton_class() {
             nesting.insert(0, crate::core::SINGLETON_CLASS.to_string());
+        } else if self.evaluated_frame().is_some() {
+            nesting.remove(0);
         }
         nesting
+    }
+
+    /// The frame of the `Const.class_eval` block this is written in, if the
+    /// innermost name pushed is its receiver.
+    fn evaluated_frame(&self) -> Option<&Frame> {
+        self.frames
+            .iter()
+            .rev()
+            .find(|frame| frame.outer.is_some())
+            .filter(|frame| frame.evaluated)
     }
 
     fn push_def(&mut self, mut def: Def) {
@@ -2122,7 +2142,10 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                                     .receiver()
                                     .is_some_and(|r| r.as_local_variable_read_node().is_none());
                             let before = self.facts.defs.len();
+                            let looked_up = !scope.contains("::") && !self.nesting.is_empty();
                             self.enter(Some(scope), Opens::Scope);
+                            self.frame().evaluated = true;
+                            self.frame().looked_up = looked_up;
                             self.frame().defs_singleton = defs_singleton;
                             if let Some(body) = block.as_block_node().and_then(|b| b.body()) {
                                 self.visit(&body);
@@ -2899,6 +2922,13 @@ impl<'pr> Extractor<'_> {
         // it would land on the constant scope around it.
         if self.in_group_body() {
             return None;
+        }
+        // Sent where the block is written, as `Target.include(M)` is
+        // (DEC-097): placed there, a name nothing declares would be made.
+        if self.evaluated_frame().is_some_and(|frame| frame.looked_up) {
+            let mut owner = vec![crate::core::runtime::sent(&self.nesting[0])];
+            owner.extend(self.nesting[1..].iter().cloned());
+            return Some(owner);
         }
         Some(self.nesting.clone())
     }

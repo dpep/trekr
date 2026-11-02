@@ -1,6 +1,6 @@
 # Each testbed input's stored facts, hashed, at the store version below.
 # Regenerate: UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden
-version 67
+version 68
 erb tests/testbed/315-dead-says-what-it-cannot-see/app/views/widgets/index.html.erb fb6993b57ce1afc0
 erb tests/testbed/430-a-view-or-a-script-references-a-constant/app/views/widgets/index.html.erb df75e9ccc30b1507
 erb tests/testbed/520-an-erb-templates-calls-are-call-sites/app/views/widgets/show.html.erb 7d61239ea66915a3
@@ -136,7 +136,7 @@ ruby tests/testbed/051-rspec-wires-its-dsl-at-runtime/minitest/lib/minitest/spec
 ruby tests/testbed/051-rspec-wires-its-dsl-at-runtime/rspec-core/lib/rspec/core/example_group.rb 83b2200a73ff080d
 ruby tests/testbed/051-rspec-wires-its-dsl-at-runtime/rspec-core/lib/rspec/core/mocking_adapters/rspec.rb c4c51623b66c66f2
 ruby tests/testbed/051-rspec-wires-its-dsl-at-runtime/rspec-expectations/lib/rspec/expectations/expectation_target.rb b1fe4ca7aca8c281
-ruby tests/testbed/051-rspec-wires-its-dsl-at-runtime/rspec-expectations/lib/rspec/expectations/syntax.rb 53ed63ecd7d58773
+ruby tests/testbed/051-rspec-wires-its-dsl-at-runtime/rspec-expectations/lib/rspec/expectations/syntax.rb daadef81a2cc5ca2
 ruby tests/testbed/051-rspec-wires-its-dsl-at-runtime/rspec-mocks/lib/rspec/mocks/example_methods.rb d0d3a697f3b9eefa
 ruby tests/testbed/051-rspec-wires-its-dsl-at-runtime/spec/widget_spec.rb c2fa9346ba1a3e06
 ruby tests/testbed/052-rspec-configure-includes-into-every-group/rspec-core/lib/rspec/core/example_group.rb e89a69dbf5b60149
@@ -149,7 +149,7 @@ ruby tests/testbed/055-a-rescued-variable-is-its-exception/app.rb b03f67237da4c9
 ruby tests/testbed/056-a-predicate-matcher-asks-the-subject/lib/widget.rb 68be77df6fa09b2f
 ruby tests/testbed/056-a-predicate-matcher-asks-the-subject/rspec-core/lib/rspec/core/example_group.rb d88eafe305e0fd5d
 ruby tests/testbed/056-a-predicate-matcher-asks-the-subject/rspec-expectations/lib/rspec/expectations/expectation_target.rb b1fe4ca7aca8c281
-ruby tests/testbed/056-a-predicate-matcher-asks-the-subject/rspec-expectations/lib/rspec/expectations/syntax.rb cf76fbbd8b9f10c2
+ruby tests/testbed/056-a-predicate-matcher-asks-the-subject/rspec-expectations/lib/rspec/expectations/syntax.rb 239a5775c154560d
 ruby tests/testbed/056-a-predicate-matcher-asks-the-subject/spec/widget_spec.rb 070827fba1b28763
 ruby tests/testbed/057-a-custom-matcher-is-a-method-of-the-matchers/rspec-core/lib/rspec/core/example_group.rb 83b2200a73ff080d
 ruby tests/testbed/057-a-custom-matcher-is-a-method-of-the-matchers/rspec-expectations/lib/rspec/matchers/dsl.rb c3e6564bcca227e4
@@ -169,7 +169,7 @@ ruby tests/testbed/061-a-minitest-spec-is-not-rspec/test/widget_test.rb 283b6959
 ruby tests/testbed/062-a-let-is-typed-by-what-its-block-returns/lib/widget.rb e989f69598786a3f
 ruby tests/testbed/062-a-let-is-typed-by-what-its-block-returns/rspec-core/lib/rspec/core/example_group.rb 83b2200a73ff080d
 ruby tests/testbed/062-a-let-is-typed-by-what-its-block-returns/rspec-expectations/lib/rspec/expectations/expectation_target.rb b1fe4ca7aca8c281
-ruby tests/testbed/062-a-let-is-typed-by-what-its-block-returns/rspec-expectations/lib/rspec/expectations/syntax.rb cf76fbbd8b9f10c2
+ruby tests/testbed/062-a-let-is-typed-by-what-its-block-returns/rspec-expectations/lib/rspec/expectations/syntax.rb 239a5775c154560d
 ruby tests/testbed/062-a-let-is-typed-by-what-its-block-returns/spec/widget_spec.rb ace304aa8b47682d
 ruby tests/testbed/070-a-mixin-sent-to-a-class-is-its-ancestor/app.rb be77bd3dd743d782
 ruby tests/testbed/071-an-on-load-block-mixes-into-the-class-that-runs-the-hook/app.rb 936394682398ba3b
@@ -188,13 +188,13 @@ ruby tests/testbed/084-a-shared-groups-helper-block-sees-its-siblings/spec/widge
 ruby tests/testbed/085-an-implicit-subject-is-the-described-class/lib/widget.rb e989f69598786a3f
 ruby tests/testbed/085-an-implicit-subject-is-the-described-class/rspec-core/lib/rspec/core/example_group.rb 83b2200a73ff080d
 ruby tests/testbed/085-an-implicit-subject-is-the-described-class/rspec-expectations/lib/rspec/expectations/expectation_target.rb b1fe4ca7aca8c281
-ruby tests/testbed/085-an-implicit-subject-is-the-described-class/rspec-expectations/lib/rspec/expectations/syntax.rb cf76fbbd8b9f10c2
+ruby tests/testbed/085-an-implicit-subject-is-the-described-class/rspec-expectations/lib/rspec/expectations/syntax.rb 239a5775c154560d
 ruby tests/testbed/085-an-implicit-subject-is-the-described-class/spec/widget_spec.rb bf89068f4ebae99e
 ruby tests/testbed/086-a-bare-describe-is-sent-from-main/minitest/lib/minitest/spec.rb f0239cbc094188e5
 ruby tests/testbed/086-a-bare-describe-is-sent-from-main/rspec-core/lib/rspec/core/example_group.rb 83b2200a73ff080d
 ruby tests/testbed/086-a-bare-describe-is-sent-from-main/rspec-core/lib/rspec/core/mocking_adapters/rspec.rb c4c51623b66c66f2
 ruby tests/testbed/086-a-bare-describe-is-sent-from-main/rspec-expectations/lib/rspec/expectations/expectation_target.rb b1fe4ca7aca8c281
-ruby tests/testbed/086-a-bare-describe-is-sent-from-main/rspec-expectations/lib/rspec/expectations/syntax.rb 53ed63ecd7d58773
+ruby tests/testbed/086-a-bare-describe-is-sent-from-main/rspec-expectations/lib/rspec/expectations/syntax.rb daadef81a2cc5ca2
 ruby tests/testbed/086-a-bare-describe-is-sent-from-main/rspec-mocks/lib/rspec/mocks/example_methods.rb d0d3a697f3b9eefa
 ruby tests/testbed/086-a-bare-describe-is-sent-from-main/spec/widget_spec.rb 2dbdbe11ec0372b6
 ruby tests/testbed/086-a-bare-describe-is-sent-from-main/test/gadget_test.rb c168ec708f8c97b6
@@ -216,7 +216,7 @@ ruby tests/testbed/098-a-minitest-word-in-a-string-is-not-minitest/minitest/lib/
 ruby tests/testbed/098-a-minitest-word-in-a-string-is-not-minitest/rspec-core/lib/rspec/core/example_group.rb 83b2200a73ff080d
 ruby tests/testbed/098-a-minitest-word-in-a-string-is-not-minitest/rspec-core/lib/rspec/core/mocking_adapters/rspec.rb c4c51623b66c66f2
 ruby tests/testbed/098-a-minitest-word-in-a-string-is-not-minitest/rspec-expectations/lib/rspec/expectations/expectation_target.rb b1fe4ca7aca8c281
-ruby tests/testbed/098-a-minitest-word-in-a-string-is-not-minitest/rspec-expectations/lib/rspec/expectations/syntax.rb 53ed63ecd7d58773
+ruby tests/testbed/098-a-minitest-word-in-a-string-is-not-minitest/rspec-expectations/lib/rspec/expectations/syntax.rb daadef81a2cc5ca2
 ruby tests/testbed/098-a-minitest-word-in-a-string-is-not-minitest/rspec-mocks/lib/rspec/mocks/example_methods.rb d0d3a697f3b9eefa
 ruby tests/testbed/098-a-minitest-word-in-a-string-is-not-minitest/spec/widget_spec.rb 4d1e0c5fdfec4fb6
 ruby tests/testbed/098-a-minitest-word-in-a-string-is-not-minitest/test/gadget_test.rb c168ec708f8c97b6
@@ -696,7 +696,7 @@ ruby tests/testbed/662-a-built-shape-lowers-what-fits-only/lib/runner.rb a8321c0
 ruby tests/testbed/662-a-built-shape-lowers-what-fits-only/lib/tools.rb 389eaadcf9746b3c
 ruby tests/testbed/663-a-name-computed-whole-may-reach-any-constant/lib/factory.rb 50bbc7ecbafd4b84
 ruby tests/testbed/663-a-name-computed-whole-may-reach-any-constant/lib/tools.rb 389eaadcf9746b3c
-ruby tests/testbed/664-a-block-evaluated-in-a-named-class-defines-its-methods/mixin.rb c9f8063be9b015ae
+ruby tests/testbed/664-a-block-evaluated-in-a-named-class-defines-its-methods/mixin.rb 76a0584accc06129
 ruby tests/testbed/664-a-block-evaluated-in-a-named-class-defines-its-methods/probe.rb 8d0dc3929b8dbbfe
 ruby tests/testbed/664-a-block-evaluated-in-a-named-class-defines-its-methods/target.rb db797a9f78012801
 ruby tests/testbed/665-a-method-only-specs-call-is-test-only/lib/widget.rb 0e2f1dcac959ebed
@@ -719,9 +719,9 @@ ruby tests/testbed/670-a-super-in-a-define-method-block-is-the-defined-methods/s
 ruby tests/testbed/671-a-name-a-ruby-script-writes-is-no-test-only-method/lib/tool/cli.rb 53ac1de763bc3b2a
 ruby tests/testbed/671-a-name-a-ruby-script-writes-is-no-test-only-method/spec/cli_spec.rb a0800e4a7db99a9a
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/alias.rb f49a22486d2a111b
-ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/gem.rb 8199e059bdaeae3d
-ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/inherited.rb d99cc1fad62d5680
-ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/probe.rb 04b71330bae0cfff
+ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/gem.rb a48ad81018869404
+ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/inherited.rb 12d09cef784af61a
+ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/probe.rb 303753f439b130de
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/target.rb eb8b950dfe369aed
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd

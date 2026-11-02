@@ -1,5 +1,26 @@
 # `X.class_eval do` inside another scope: Ruby finds `X` by a lookup —
 # lexical scopes, the enclosing class's ancestors, the top level — and a
-# constant written in the block is the enclosing scope's, not X's. Case
-# input; the fix's commit adds what it changes.
+# constant written in the block is the enclosing scope's, not X's
+# (DEC-653).
+#
+# A constant in the block nested under `Target` made a `Probe::Target`
+# that every `Target` written in Probe then resolved to.
+def probe.rb:8:5 status=resolved site=target.rb:1
+def probe.rb:8:16 status=resolved owner=Target
+def probe.rb:9:5 status=resolved site=probe.rb:3
+refs Target#real confirmed=1
+# `Helper` found through Child's superclass: the def is Parent::Helper's,
+# and the mixin, which no chain is built yet to place, makes no
+# `Child::Helper` to shadow it.
+def inherited.rb:20:5 status=resolved site=inherited.rb:6
+def inherited.rb:20:16 status=resolved owner=Parent::Helper
+def inherited.rb:21:16 status=resolved owner=Parent::Helper
+refs Parent::Helper#ph confirmed=1
 ancestors Parent::Helper Parent::Helper,Object
+# A receiver nothing declares stays unknown: its mixin makes no
+# `MyApp::GemThing` type.
+def gem.rb:9:5 status=residue
+def gem.rb:9:18 status=residue
+refs Extras#extra confirmed=0
+# A receiver that is an alias defines on the class it names.
+def alias.rb:10:12 status=resolved owner=Gadget
