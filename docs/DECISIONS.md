@@ -14986,6 +14986,9 @@ the gems measured above.
   (`V1::`, `IO::`) was read as a name computed whole, since the shape wrote
   fewer than three name characters; a whole namespace segment bounds it as
   `Jobs::*` does. Testbed 680. No row moved on any corpus.
+- **A heredoc's text and an `=begin` block look nothing up**, as a comment
+  does not. A heredoc handed to an eval (`class_eval <<~RUBY`) is code and
+  is still read. Testbed 681. No row moved.
 
 ## DEC-653 — A block evaluated in a class named by a bare constant defines that class's methods, wherever it is written
 

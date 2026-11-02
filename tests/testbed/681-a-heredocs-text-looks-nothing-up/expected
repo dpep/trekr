@@ -1,0 +1,4 @@
+# A heredoc's text and an `=begin` block are no code, so a
+# `name.constantize` written in them is no lookup: Orphan stays clear. Both
+# lowered every constant row "a name computed at runtime" (DEC-654).
+dead lib Orphan=unreferenced~ Docs=unreferenced~

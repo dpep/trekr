@@ -247,7 +247,30 @@ impl Named {
         }
         // A word each file writes many times is looked up once.
         let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        let mut block_comment = false;
+        // The heredocs opened and not yet closed: each one's terminator, and
+        // whether its body is code (handed to an eval) rather than text.
+        let mut heredocs: Vec<(&str, bool)> = Vec::new();
         for (n, line) in text.lines().enumerate() {
+            if block_comment {
+                block_comment = !line.starts_with("=end");
+                continue;
+            }
+            if line.starts_with("=begin") {
+                block_comment = true;
+                continue;
+            }
+            let text_body = match heredocs.first() {
+                Some((end, _)) if line.trim() == *end => {
+                    heredocs.remove(0);
+                    continue;
+                }
+                Some((_, code)) => !code,
+                None => false,
+            };
+            if heredocs.is_empty() {
+                heredocs.extend(heredoc_openers(line));
+            }
             let trimmed = line.trim_start();
             if trimmed.starts_with('#') {
                 continue;
@@ -268,7 +291,7 @@ impl Named {
             {
                 self.gem_routes.push((call.to_string(), at()));
             }
-            let built = line.contains("constantize") || line.contains("const_get");
+            let built = !text_body && (line.contains("constantize") || line.contains("const_get"));
             let bytes = line.as_bytes();
             let mut i = 0;
             while i < bytes.len() {
@@ -396,7 +419,7 @@ impl Named {
             if !trimmed.is_empty() {
                 previous = trimmed.trim_end();
             }
-            for namespace in computed_const_gets(line) {
+            for namespace in computed_const_gets(line).into_iter().filter(|_| built) {
                 self.constants_listed
                     .entry(namespace)
                     .or_insert_with(|| ("const_get".to_string(), at()));
@@ -570,6 +593,35 @@ fn computed_const_gets(line: &str) -> Vec<String> {
             && namespace != "Kernel"
         {
             found.push(namespace.trim_start_matches("::").to_string());
+        }
+    }
+    found
+}
+
+/// The heredocs a line opens (`<<~SQL`, `<<-'RUBY'`), each with its
+/// terminator and whether its body is code: one handed to an eval
+/// (`class_eval <<~RUBY`) is, any other is a string's text.
+fn heredoc_openers(line: &str) -> Vec<(&str, bool)> {
+    let (spans, code_end) = string_spans(line);
+    let code = line.contains("eval");
+    let mut found = Vec::new();
+    for (at, _) in line[..code_end].match_indices("<<") {
+        if spans.iter().any(|(o, c)| *o < at && at < *c) {
+            continue;
+        }
+        let rest = &line[at + 2..];
+        let (squiggly, rest) = match rest.strip_prefix(['~', '-']) {
+            Some(r) => (true, r),
+            None => (false, rest),
+        };
+        let quoted = rest.starts_with(['\'', '"']);
+        let name = word_at(rest.trim_start_matches(['\'', '"']), 0);
+        // `list <<item` is a push; a bare heredoc name is capitalised.
+        if !name.is_empty()
+            && !name.starts_with(|c: char| c.is_ascii_digit())
+            && (squiggly || quoted || name.starts_with(|c: char| c.is_ascii_uppercase()))
+        {
+            found.push((name, code));
         }
     }
     found
@@ -841,6 +893,20 @@ mod tests {
         ] {
             assert_eq!(unscoped_lookup(line), None, "{line}");
         }
+    }
+
+    #[test]
+    fn a_heredocs_text_and_a_block_comment_look_nothing_up() {
+        let named = read(
+            "a.rb",
+            "X = <<~R\n  name.constantize\nR\n=begin\nname.constantize\n=end\nlist <<item\n",
+        );
+        assert!(named.unscoped.is_none() && named.computed.is_none());
+        let named = read("a.rb", "class_eval <<~RUBY\n  name.constantize\nRUBY\n");
+        assert_eq!(
+            named.unscoped.map(|(call, _)| call).as_deref(),
+            Some("constantize")
+        );
     }
 
     #[test]
