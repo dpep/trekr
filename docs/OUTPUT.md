@@ -297,9 +297,11 @@ measurements behind the grading. Fields per row:
   evidence is complete, a public one's is not.
 - The evidence counted: a method row's `confirmed`/`possible` callers,
   `symbol_refs` (its name as a symbol), `super_refs`, `mentions_by_name`
-  (written calls of its name anywhere, capped) and, when a route reaches
-  it, `route` (`path`, `line`); a spec member's `shared_groups_read` and
-  `helpers_read`; a constant's `test_refs`, its references from tests.
+  (written calls of its name anywhere, capped), `test_refs` (those of its
+  calls, symbols and `super`s written in a test; a `test-only` row's are
+  all of them) and, when a route reaches it, `route` (`path`, `line`); a
+  spec member's `shared_groups_read` and `helpers_read`; a constant's
+  `test_refs`, its references from tests.
 
 `summary` counts the rows per tier (`tiers`: `unreferenced`, `test-only`,
 `single-caller`, …), per confidence and per kind (`kinds`). One pass, no

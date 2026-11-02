@@ -48,6 +48,8 @@ pub(super) struct MethodDetail {
     pub(super) symbol_refs: usize,
     pub(super) super_refs: usize,
     pub(super) super_from: Vec<String>,
+    /// Its calls, symbols and `super`s written in a test, as a constant's.
+    pub(super) test_refs: usize,
     /// Written calls of its name anywhere in the checkout, capped.
     pub(super) mentions_by_name: i64,
     pub(super) overrides: Vec<String>,
@@ -1320,6 +1322,10 @@ fn dead_in(
                 symbol_refs: live.by_symbol,
                 super_refs: live.by_super,
                 super_from: live.super_from,
+                test_refs: ways_in
+                    .iter()
+                    .filter(|r| dead_consts::in_tests(&r.path))
+                    .count(),
                 mentions_by_name: written,
                 overrides,
                 overridden_by: shadowing,

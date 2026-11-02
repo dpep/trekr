@@ -17,7 +17,8 @@
   lookup, so their rows stay `lower`; a gem without one now reads `clear`.
 - **`--dead` lists a method only specs and tests call as `test-only`**, as
   it does a class, however many calls they write; the reason says how many
-  and where the first is. A test is a file under a `spec/`, `test/` or
+  and where the first is, and a method row's `test_refs` counts them, as a
+  constant row's does. A test is a file under a `spec/`, `test/` or
   `tests/` directory at the checkout's root or a nested package's
   (`plugins/chat/spec/`), not one inside `lib/` or `app/`. A Ruby script
   with no extension (`exe/tool`, `bin/x`), which trekr does not index, is
