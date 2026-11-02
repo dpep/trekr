@@ -1,11 +1,29 @@
-# trekr vs ruby-lsp — a measured head-to-head
+# trekr measurement log
+
+Every measurement run against trekr, oldest first: the first head-to-head
+with ruby-lsp, then the TracePoint gold set (from session 12) and each change
+scored against it, then the engine measurements ARCHITECTURE kept while the
+layers were built. It is a log, not a summary: a later section may correct
+an earlier one, and each number is its day's.
+
+For the current state, go elsewhere:
+
+- trekr against the other engines: [COMPARISON.md](COMPARISON.md).
+- Speed, memory and size: [ARCHITECTURE.md](ARCHITECTURE.md#measurements).
+- The gold set itself, and how a site is scored:
+  [Runtime truth](#runtime-truth-the-tracepoint-gold-set-session-12); run
+  `script/gold.py`.
+- `--dead` against the repo's history:
+  [Dead-code candidates](#dead-code-candidates-validated-against-git-history-session-36).
+
+## The first head-to-head: trekr vs ruby-lsp (2026-08-25)
 
 The comparison PLAN §5 promised. Everything here is a run on this machine, and
 the conditions matter more than the numbers, so they come first.
 
-Reproduce with `script/baseline.py` (see the bottom of this file).
+Reproduce with `script/baseline.py` (see [Reproducing](#reproducing)).
 
-## Conditions
+### Conditions
 
 | | |
 |---|---|
@@ -28,7 +46,7 @@ indexes gems, and serves completion, formatting and rename that trekr refuses to
 implement. Where a number is a consequence of that scope rather than of quality,
 it is said so.
 
-## Startup and memory
+### Startup and memory
 
 | | trekr | ruby-lsp 0.26.11 |
 |---|---:|---:|
@@ -51,7 +69,7 @@ paid that inside its 96 s. After the first query trekr is **~10× faster per
 answer** and uses **3.6× less memory**, while ruby-lsp is also serving
 completion and formatting that trekr does not implement.
 
-## Answer quality — 45 goToDefinition positions
+### Answer quality — 45 goToDefinition positions
 
 Positions chosen by stable content key from rails' call sites: 30 whose receiver
 has a shape trekr's ladder can attempt, and 15 chained (`other`) receivers that
@@ -104,7 +122,7 @@ core stub, which is not a real file, so `location()` drops them and the answer i
 empty. ruby-lsp returns the RBS declaration. Returning *something* — the stub's
 own line, marked as such — would be better than silence.
 
-## findReferences
+### findReferences
 
 Same positions — each server asked at the method's own definition line.
 
@@ -133,7 +151,7 @@ Two caveats, both against trekr:
   now resolves the position to its owner, as the CLI always did), so re-running
   will give different — smaller and more accurate — counts for trekr.
 
-## Verdict, and what it says to do next
+### Verdict, and what it says to do next
 
 | | winner | margin |
 |---|---|---|
@@ -171,7 +189,7 @@ What this says to improve, in order:
    was confidently wrong — but "we decline 1 in 3 positions" is the honest
    statement of its cost.
 
-## Reproducing
+### Reproducing
 
 The harness is scripted LSP sessions over stdio against both servers; the
 scripts live under `/tmp` in the session that produced this and are not

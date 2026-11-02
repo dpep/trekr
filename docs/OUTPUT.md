@@ -314,7 +314,7 @@ resolves to.
 
 Measured against a year of discourse's history, `unreferenced` candidates
 were deleted 19.8 % of the time against a 19.0 % base rate — no lift
-([BASELINE](BASELINE.md)). Hence the grading, and why trekr never says
+([BASELINE](BASELINE.md#dead-code-candidates-validated-against-git-history-session-36)). Hence the grading, and why trekr never says
 "dead".
 
 ### Tiers

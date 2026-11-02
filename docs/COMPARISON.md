@@ -2,9 +2,10 @@
 
 Each engine is asked `textDocument/definition` over LSP at call sites whose
 answer Ruby itself recorded: the TracePoint gold set
-([BASELINE.md](BASELINE.md)). `script/compare.py` produces every row. Latest
-run: **2026-10-02**, trekr after 0.8.4 (unreleased: DEC-440–445); the other
-engines' rows are the 2026-10-01 run's.
+([BASELINE.md](BASELINE.md#runtime-truth-the-tracepoint-gold-set-session-12)). `script/compare.py` produces every row. Latest
+run: **2026-10-02**, trekr after 0.8.4 (then unreleased: DEC-440–445); the other
+engines' rows are the 2026-10-01 run's. Not re-run since, so trekr's rows are
+that build's, not the current release's.
 
 **correct@1** means the first location returned is the file and line Ruby ran
 (±1). **wrong@1** means the engine answered and the first location is
