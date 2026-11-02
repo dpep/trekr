@@ -1164,16 +1164,18 @@ fn dead_in(
         }
         // Reached from outside the repo: kept, graded lower, and said what
         // would settle it (DEC-657). A `module_function`'s singleton copy is
-        // public, whatever the instance copy is (DEC-361).
+        // public, whatever the instance copy is (DEC-361); RDoc documents a
+        // method marked `:doc:`, private or underscored.
         let module_function = !def.singleton
             && aliases
                 .iter()
                 .any(|(name, singleton)| *singleton && *name == def.name);
+        let documented = !constructor && gems.doc_directive(file, def.pos.line);
         let entry_point = if route.is_some() {
             Some(EntryPoint::Route)
-        } else if (public || module_function)
+        } else if (public || module_function || documented)
             && !owner.is_empty()
-            && !entry_points::underscored(&def.name)
+            && (documented || !entry_points::underscored(&def.name))
             && gems.in_gem_lib(root, file)
             && !gems.internal_method(&tree, &root_str, &owner, file, def.pos.line)
         {

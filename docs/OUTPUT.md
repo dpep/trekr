@@ -416,7 +416,9 @@ a class hides that class and the methods its body defines, not the classes
 nested in it (RDoc); `:nodoc: all`, YARD's `@api private` and `@private`,
 and a `private_constant` hide everything nested too; a method's own `@api
 public` overrides its class's `@api private` (YARD). A method under
-`module_function` is public by its singleton copy.
+`module_function` is public by its singleton copy. A private, protected or
+underscored method marked RDoc's `:doc:` (opening its line's comment, or a
+line of the comment above) is API, as RDoc documents it.
 
 An app's own public methods are not entry points: their callers are in the
 checkout. Hand-checked on six gems, 36 of 43 rows it moved from `clear`

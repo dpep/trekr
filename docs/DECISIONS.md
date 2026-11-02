@@ -15825,3 +15825,25 @@ each carry `:nodoc:` on themselves or their body. Every other corpus: no
 row moves. Twelve testbed cases whose `clear` rows assumed no entry point
 (`lib/` alone, no gemspec) gained a `config.ru`, which makes them the apps
 they stood for. Testbed 740.
+
+**A method marked `:doc:` is API, private or not** (the owner's decision).
+Rails marks with RDoc's `:doc:` the private methods an app overrides or
+calls — `RequestForgeryProtection#verified_request?`,
+`Instrumentation#append_info_to_payload`, which the guides say to override
+and call `super` from — and RDoc documents them: `handle_directive` sets
+`force_documentation`, which `Context#remove_invisible_in` honours below
+the minimum visibility (RDoc 8.1 `markup/pre_process.rb`,
+`code_object/context.rb`). Where the mark may sit is RDoc's too: a line of
+the comment above the def, blank lines between allowed, or a comment
+trailing the def's line, the directive opening that line
+(`parser/ruby.rb` `prepare_comments`, `comment.rb` `Comment.parse`). The
+author's mark outranks the leading-underscore convention
+(`AbstractController::Rendering#_normalize_args # :doc:`); the directive
+is looked for after every `#` of the def's line, as the first may open an
+interpolation (`def show_helper(arg = "@#{name}") # :doc:`). It does not
+outrank a `:nodoc:` body, from which RDoc's `Context#add_method` drops the
+method, so the other internal marks still apply. rails: 65 rows gain
+`api`, 32 `clear` → `lower`, each with `:doc:` on its def line (checked by
+script); 21 `:doc:` rows stay without, in `:nodoc:` bodies
+(`Rails::Generators::AppBase`, `Rails::MailersController`). Every other
+corpus: no row moves. Testbed 741.

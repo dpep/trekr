@@ -1,0 +1,10 @@
+# Rails marks a private method an app overrides or calls with RDoc's
+# `:doc:` (`RequestForgeryProtection#verified_request?`,
+# `Instrumentation#append_info_to_payload`), and RDoc documents it; it was
+# graded `clear`, as private. `:doc:` on the def's line, or a line of the
+# comment above it, makes it public API (DEC-657), a leading underscore
+# too (`AbstractController::Rendering#_normalize_args`); a `:doc:` that
+# does not open the comment's line is no directive.
+dead lib Widget::Controller#verified_request?=unreferenced~dependents Widget::Controller#append_info_to_payload=unreferenced~dependents
+dead lib Widget::Controller#form_token=unreferenced~dependents Widget::Controller#helper=unreferenced~
+dead lib Widget::Controller#_normalize_args=unreferenced~dependents Widget::Controller#show_helper=unreferenced~dependents

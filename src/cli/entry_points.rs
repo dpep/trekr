@@ -180,6 +180,43 @@ impl Gems {
         marks
     }
 
+    /// Does RDoc's `:doc:` make the method at `path:line` documented API,
+    /// private or not? RDoc 8.1 (`parser/ruby.rb`, `comment.rb`) reads a
+    /// directive opening a line of the comment above the def (blank lines
+    /// between allowed) or of a comment trailing the def's line.
+    pub(super) fn doc_directive(&mut self, path: &str, line: u32) -> bool {
+        let lines = self.lines(path);
+        let Some(at) = (line as usize)
+            .checked_sub(1)
+            .filter(|at| *at < lines.len())
+        else {
+            return false;
+        };
+        let directive = |text: &str| {
+            text.trim_start_matches('#')
+                .trim_start()
+                .starts_with(":doc:")
+        };
+        // Any `#`, as the first may open an interpolation (`"@#{name}"`).
+        let def_line = &lines[at];
+        if def_line
+            .match_indices('#')
+            .any(|(at, _)| directive(&def_line[at..]))
+        {
+            return true;
+        }
+        let mut end = doc_end(lines, at);
+        while end > 0 && lines[end - 1].trim().is_empty() {
+            end -= 1;
+        }
+        lines[..end]
+            .iter()
+            .rev()
+            .map(|text| text.trim_start())
+            .take_while(|text| text.starts_with('#'))
+            .any(directive)
+    }
+
     /// Is the method defined at `path:line` in `owner` internal: marked so
     /// itself, written in a body marked `:nodoc:` (RDoc leaves out the
     /// methods a `:nodoc:` body defines), or under a namespace whose mark

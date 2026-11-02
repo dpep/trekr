@@ -145,3 +145,4 @@
 724-a-sig-or-a-wrapped-private-constant-keeps-the-mark bb4b37fac6723cfb
 725-a-library-monorepos-nested-gem-is-api eca551e4329404a0
 740-a-library-with-no-gemspec-is-api ffcee5ee4e4a4bde
+741-a-private-method-marked-doc-is-api 5944f38864a53e09

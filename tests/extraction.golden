@@ -814,6 +814,8 @@ ruby tests/testbed/725-a-library-monorepos-nested-gem-is-api/gem/widget.gemspec 
 ruby tests/testbed/740-a-library-with-no-gemspec-is-api/Rakefile 42cd902533f66e19
 ruby tests/testbed/740-a-library-with-no-gemspec-is-api/lib/widget/mock.rb be610dc979b43c54
 ruby tests/testbed/740-a-library-with-no-gemspec-is-api/test/test_mock.rb 3e52b89d7df51217
+ruby tests/testbed/741-a-private-method-marked-doc-is-api/lib/widget.rb 05fb061b59db4617
+ruby tests/testbed/741-a-private-method-marked-doc-is-api/widget.gemspec dea196826b99e33b
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28
