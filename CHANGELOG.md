@@ -22,6 +22,9 @@
   another method, or a hook Ruby calls by name, keeps the tier it had, and
   a spec's own helper is never `test-only`. A script
   reading `summary.tiers` sees methods in `test-only` now.
+- `--dead` no longer says a method "calls `super`, so it overrides a method
+  trekr has not indexed" — and grades it `lower` — when the `super` is in a
+  `def` nested in its body, which is that method's.
 
 ## 0.9.8 — 2026-10-18
 

@@ -1,0 +1,4 @@
+# A `super` in a `def` nested in a method's block is the nested method's:
+# it says nothing of an override by the method around it, which kept the
+# "calls `super`" caveat and was graded lower for it.
+dead app.rb Widget#patch_arrays=unreferenced~ Widget#run=unreferenced~super

@@ -702,6 +702,7 @@ ruby tests/testbed/664-a-block-evaluated-in-a-named-class-defines-its-methods/ta
 ruby tests/testbed/665-a-method-only-specs-call-is-test-only/lib/widget.rb 0e2f1dcac959ebed
 ruby tests/testbed/665-a-method-only-specs-call-is-test-only/spec/support/widget_helpers.rb 46bd581f949a812e
 ruby tests/testbed/665-a-method-only-specs-call-is-test-only/spec/widget_spec.rb bd9ea7ec831f3f7f
+ruby tests/testbed/666-a-super-in-a-nested-def-is-the-nested-defs/app.rb b36eba928bc0550e
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

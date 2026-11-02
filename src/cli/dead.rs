@@ -628,10 +628,21 @@ fn dead_in(
                 .iter()
                 .find(|(name, line)| *name == def.name && !own.contains(line))
                 .map(|(_, line)| *line);
-            let calls_super = facts
-                .calls
-                .iter()
-                .any(|c| c.recv == crate::core::RecvShape::Super && own.contains(&c.pos.line));
+            // A `super` in a `def` nested in its body is that method's.
+            let nested = |line: u32| {
+                facts.defs.iter().any(|other| {
+                    other.kind == crate::core::Kind::Method
+                        && (other.pos.line, other.end_line) != (def.pos.line, def.end_line)
+                        && own.contains(&other.pos.line)
+                        && own.contains(&other.end_line)
+                        && (other.pos.line..=other.end_line).contains(&line)
+                })
+            };
+            let calls_super = facts.calls.iter().any(|c| {
+                c.recv == crate::core::RecvShape::Super
+                    && own.contains(&c.pos.line)
+                    && !nested(c.pos.line)
+            });
             defined.push(Defined {
                 file: at.clone(),
                 def: def.clone(),
