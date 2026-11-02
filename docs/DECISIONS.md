@@ -3,6 +3,35 @@
 ADR-lite: what was decided, why, and what would reverse it. Check this before
 proposing an alternative — the rejections carry the reasoning that settled them.
 
+## Finding a decision
+
+Entries are numbered in blocks as they were written, not by area, and each
+stays as decided; a later one that changes it says so, and the earlier one
+points forward ("Revisited by", "Superseded by", "Reversed by"). Search for
+`## DEC-` and the number. Each is listed once, under the area it mostly
+belongs to:
+
+| area | DEC- |
+| --- | --- |
+| Store and schema | 001, 002, 003, 004, 005, 006, 009, 012, 013, 026, 042, 051, 057, 058, 061, 079, 190, 191, 193, 234, 300, 622, 650, 651 |
+| Indexing and freshness | 014, 035, 041, 043, 046, 047, 048, 049, 055, 066, 139, 171, 195, 232, 320, 400, 500, 501, 512 |
+| Extraction: macros, made methods, schema | 022, 033, 069, 070, 085, 086, 094, 110, 111, 130, 131, 132, 160, 161, 162, 163, 164, 212, 310, 312, 480, 561, 643, 645 |
+| Tree: namespace, ancestry, snapshots | 007, 025, 054, 060, 065, 072, 075, 097, 098, 099, 100, 101, 102, 103, 104, 105, 138, 192, 194, 200, 201, 202, 203, 210, 231, 235, 241, 251, 252, 313, 560, 647, 648, 653 |
+| Resolve: the receiver ladder, confidence, residue | 008, 010, 011, 019, 020, 027, 028, 031, 068, 071, 077, 081, 082, 089, 093, 112, 116, 126, 127, 133, 136, 137, 140, 165, 166, 172, 211, 213, 214, 260, 261, 280, 311, 314, 340, 341, 342, 350, 351, 380, 390, 391, 392, 401, 440, 441, 442, 444, 445, 541 |
+| Core, stdlib, gems, the checkout's Ruby | 015, 016, 017, 018, 023, 029, 078, 134, 150, 151, 152, 153, 180, 181, 182, 220, 240, 242, 262, 263, 265, 270, 271, 272, 273, 274, 276, 291, 292, 293, 610 |
+| RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499 |
+| Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644 |
+| `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563 |
+| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657 |
+| LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646 |
+| Scope and housekeeping | 030, 063, 640 |
+
+A few revisits are subsections filed under a neighbouring entry, as they
+were appended: DEC-022's (session 35) and DEC-033's (session 30) under
+DEC-034; DEC-025's (sessions 18 and 19) under DEC-027; DEC-027's
+(session 26) under DEC-032; DEC-028's and DEC-029's (sessions 23 and 24)
+under DEC-030; DEC-480's addendum under DEC-481.
+
 ## DEC-001 — A git repository is required
 
 **Decided.** `--index` refuses a directory that is not a git checkout.
@@ -690,6 +719,9 @@ disagree about the same absolute path — which git worktrees do not do, since
 each has its own root.
 
 ## DEC-025 — The assembled tree is not persisted
+
+*Reversed by DEC-065:* the tree is persisted, as one mapped snapshot per
+checkout beside the store (DEC-060's layout).
 
 **Decided.** The tree stays an in-memory artifact, rebuilt from the store by
 whichever process needs it and cached for that process's lifetime (DEC-007). It
@@ -1529,6 +1561,8 @@ and the spec suite hold them, and until those are indexed, "no references found"
 in a Rails app says as much about trekr's inputs as about the user's code.
 
 ## DEC-035 — Freshness is a probe and a budget, not a daemon
+
+*Revisited by DEC-048:* the file map is written as a delta.
 
 **Decided (design; `not_indexed` shipped, the rest specified).** A query never
 blocks on an index and never spawns one. Three layers:
@@ -3293,6 +3327,8 @@ agent gets exactly `referenceLimit` locations with no sign they were cut.
 
 ## DEC-057 — A load that doubles the store rebuilds the fact indexes by sorting
 
+*Revisited by DEC-234:* a load of half the store rebuilds them.
+
 **Decided.** When an index is about to parse more blobs than the store already
 knows — a first index, above all — `Store::write_bulk` drops the fact tables'
 seven secondary indexes (`schema::BULK_INDEXES`), inserts the rows, and
@@ -3711,6 +3747,8 @@ tree the session builds once for every operation. Spot-checked on `User` and
 most — then a module with exactly one includer (`Tree::includers_of`) is a
 determinate answer and earns its keep.
 ## DEC-065 — Tree snapshots live beside the store, one per checkout, keyed by their inputs
+
+*Revisited by DEC-192:* every index prepares the snapshot.
 
 **Decided.** DEC-060's snapshot is persisted as `trekr.trees/<checkout>-<key>.tree`
 next to the database, mapped read-only by every `Tree::build` whose key it
@@ -8230,6 +8268,9 @@ file another gem already parsed between two gems, and requires three gems
 indexed and the shared blob parsed once.
 
 ## DEC-233 — Tiering on every worker, measured and not taken
+
+*Revisited by DEC-250:* one tree, shared by every worker, and `--refs` tiers
+on all of them.
 
 **Not done.** DEC-205's next lever: tier `--refs` on every worker, each
 against a tree of its own over the shared snapshot, since every answer is a
