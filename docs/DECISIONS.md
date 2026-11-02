@@ -15204,3 +15204,34 @@ against a counterexample.
 **DEC-631's grep stays.** This reads a string sent by name, not a computed
 name held in any local (`send(process_method_name, …)`, `send(@operation[:type])`);
 the grep's reverses-if is not met.
+
+### B. Rejected, measured: a name a test builds, for a test file's methods
+
+**Proposed.** DEC-363 skips names built in `spec/`, `test/` and `db/`. A
+probe (`t.send(:"handle_#{kind}")` in a minitest file beside `def
+handle_ping`) gave `handle_ping` no shape caveat, so the proposal was: a
+shape or send built in a test file counts for candidates in test files
+(spec helpers, what the dead-test-code reaper targets), never for
+production ones, and `db/` stays out.
+
+**Measured**, built (the test files' Ruby read only when a test file's
+method is weighed) and run against `--dead spec` (neither corpus has Ruby under `test/`):
+
+| corpus | rows gaining a caveat | grade moved | reached by what it cites |
+| --- | ---: | ---: | ---: |
+| discourse | 17 | 15 (`clear` → `lower`) | 0 |
+| mastodon | 0 | 0 | — |
+
+discourse's 17 are page objects: 15 `PageObjects::Pages::User` methods,
+caveated by `User.public_send(method, username)` in `spec/models/user_spec.rb`
+(a send to the model, matched by its last segment), and 2 by
+`user = :"user_#{i}"`, a `let`'s name. The 10 interpolated names discourse's
+tests write, and mastodon's 2, are `let` and `fab!` names, hash keys,
+stubbed settings and route helpers; none names a method a test file
+defines. The probe's own row was already `lower` (its file spells `send(`,
+DEC-631's grep), so the rule would only have cited the shape there.
+
+**Reverses if** a checkout's test files are found building names for their
+own helper methods, measured against rows whose grade it moves. A rule
+scoped to the building file would move none of the rows above, and none on
+either corpus, so it is not added for the probe alone.
