@@ -84,15 +84,25 @@ pub(super) struct Gems {
 
 impl Gems {
     /// Is `path` (absolute, or relative to `root`) in a published gem's
-    /// `lib/`: the checkout is a gem (a `*.gemspec` at its root), and the
-    /// file is in a `lib` directory beside a `*.gemspec`, the root's or a
-    /// nested package's (Rails' `activerecord/`)? An app's own engines are
-    /// called by the app, which is in the checkout; a test's files are no API.
+    /// `lib/`: the checkout is a library (a `*.gemspec` at its root, or no
+    /// app there), and the file is in a `lib` directory beside a
+    /// `*.gemspec`, the root's or a nested package's (Rails'
+    /// `activerecord/`, protobuf's `ruby/`)? An app's own engines are called
+    /// by the app, which is in the checkout; a test's files are no API.
     pub(super) fn in_gem_lib(&mut self, root: &Path, path: &str) -> bool {
         let relative = Path::new(path)
             .strip_prefix(root)
             .unwrap_or(Path::new(path));
-        if !self.has_gemspec(root) || super::dead_consts::in_tests(&relative.to_string_lossy()) {
+        // A gem with an `app/` (an engine) has a root gemspec, checked first.
+        let app = || {
+            ["config/application.rb", "config.ru"]
+                .iter()
+                .any(|f| root.join(f).is_file())
+                || root.join("app").is_dir()
+        };
+        if (!self.has_gemspec(root) && app())
+            || super::dead_consts::in_tests(&relative.to_string_lossy())
+        {
             return false;
         }
         let segments: Vec<_> = relative.iter().collect();

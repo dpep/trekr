@@ -23,8 +23,10 @@
 - **`--dead` grades a row reached from outside the repo `lower`, keeping
   its tier, and says what kind of entry point it is**, with `entry_point`
   in JSON:
-  - `api`: a public method, class or module in `lib/` of a checkout
-    with a root `*.gemspec`, unless its author marks it internal
+  - `api`: a public method, class or module in a gem's `lib/` (beside a
+    `*.gemspec`) in a checkout with a root `*.gemspec`, or with none and no
+    app there (no `config/application.rb`, `config.ru` or `app/`; protobuf's
+    `ruby/`), unless its author marks it internal
     (`:nodoc:`, `@api private`, `@private`, `Internal:`, a leading underscore,
     `private_constant`). Not a value constant, nor an app's own engine.
     A `:nodoc:` covers its own class and the methods its body defines, as

@@ -135,7 +135,7 @@
 696-a-scripts-lookup-may-reach-any-constant a726f02610b6a4d3
 700-a-routed-action-is-an-entry-point 1b8a91a63330aa57
 701-a-gems-public-api-is-an-entry-point b5b69060e09e5ffd
-702-an-apps-own-engine-is-no-gems-api 1ac8a3c76be874e9
+702-an-apps-own-engine-is-no-gems-api 30700bc9d5c3b3f4
 703-a-background-job-is-an-entry-point a8f355d9d4253a22
 711-a-route-or-convention-outranks-test-only 863fa9f3f6dca868
 720-a-nodoc-reopening-hides-only-its-own-body 69b341434eb46b43
@@ -143,3 +143,4 @@
 722-a-module-functions-public-copy-is-api e7f172254b1f1343
 723-a-name-a-script-writes-lowers-a-test-only-row 3ca3273b7e12cb53
 724-a-sig-or-a-wrapped-private-constant-keeps-the-mark bb4b37fac6723cfb
+725-a-library-monorepos-nested-gem-is-api eca551e4329404a0

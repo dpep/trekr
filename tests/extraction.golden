@@ -762,6 +762,7 @@ ruby tests/testbed/700-a-routed-action-is-an-entry-point/config/routes.rb 4e3181
 ruby tests/testbed/701-a-gems-public-api-is-an-entry-point/lib/widget.rb e0db6bef0e280db6
 ruby tests/testbed/701-a-gems-public-api-is-an-entry-point/spec/widget_spec.rb a73f986dc5c56e55
 ruby tests/testbed/701-a-gems-public-api-is-an-entry-point/widget.gemspec d4dc9ace3b2e9cbf
+ruby tests/testbed/702-an-apps-own-engine-is-no-gems-api/config/application.rb 14e263845d0dc81d
 ruby tests/testbed/702-an-apps-own-engine-is-no-gems-api/engines/billing/billing.gemspec d4dc9ace3b2e9cbf
 ruby tests/testbed/702-an-apps-own-engine-is-no-gems-api/engines/billing/lib/billing/invoice.rb 4ca93ba1beac7261
 ruby tests/testbed/702-an-apps-own-engine-is-no-gems-api/engines/billing/spec/invoice_spec.rb bb7655c17649e004
@@ -795,6 +796,9 @@ ruby tests/testbed/723-a-name-a-script-writes-lowers-a-test-only-row/spec/job_sp
 ruby tests/testbed/724-a-sig-or-a-wrapped-private-constant-keeps-the-mark/lib/widget.rb ba4a4e2f2725e1f0
 ruby tests/testbed/724-a-sig-or-a-wrapped-private-constant-keeps-the-mark/spec/widget_spec.rb 7910f2d848bc0631
 ruby tests/testbed/724-a-sig-or-a-wrapped-private-constant-keeps-the-mark/widget.gemspec dea196826b99e33b
+ruby tests/testbed/725-a-library-monorepos-nested-gem-is-api/gem/lib/widget/timestamp.rb d8d8b080da209a25
+ruby tests/testbed/725-a-library-monorepos-nested-gem-is-api/gem/spec/timestamp_spec.rb 1ce30f26fb8eaf99
+ruby tests/testbed/725-a-library-monorepos-nested-gem-is-api/gem/widget.gemspec dea196826b99e33b
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

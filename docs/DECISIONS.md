@@ -15767,3 +15767,34 @@ its symbol on the next line was not read. Now the doc comment ends above a
 nearest above its closing one indented no deeper — and a `private_constant`
 call's arguments run on while its parentheses are open or a line ends in a
 comma. Measured: no row moves on any corpus above. Testbed 724.
+
+**A checkout with no root gemspec is a library unless it is an app.** "The
+root gemspec is the line between a library and an app" missed library
+monorepos: protobuf publishes its gem from `ruby/`
+(`ruby/google-protobuf.gemspec`, `ruby/lib`), and `Google::Protobuf::
+Timestamp#to_time` was `test-only`, clear. Now the root is an app when it
+holds `config/application.rb`, `config.ru` or an `app/` directory (a gem
+engine's `app/` sits beside its root gemspec, which settles it first);
+otherwise, with or without a
+root gemspec, a nested gemspec's `lib/` counts. Across the bench checkouts
+without a root gemspec, only protobuf and CRuby's source (whose `ext/*/`
+default gems are API) have a nested gemspec beside a `lib/` and no app
+marker; testbeds 035 and 042, apps with `app/` and an engine, kept their
+answers only with `app/` among the markers; discourse's `migrations/*/` gemspecs sit under its
+`config/application.rb`, and mastodon has one too. An app with neither file
+and gems of its own would have them graded `api` — `lower`, the
+conservative direction. Testbed 702 gained the `config/application.rb` a
+Rails app with engines has.
+
+**Measured**, the build before → this: protobuf (`--dead ruby/lib`) 58
+rows gain `api`, 6 `clear` → `lower`. By name, 19 of the 58 are API
+(`Timestamp#to_time`, `Map#keys`, `EnumDescriptor#lookup_name`,
+`FieldDescriptor#json_name`, …) and 39 are the FFI backend's plumbing,
+public by Ruby's visibility with no marker (`Internal::Arena#to_native`,
+`#private_constructor`, `#deep_copy`); of the 6 that changed grade, only
+`to_time` is API. That is the known no-marker shape, worse here than
+DEC-657's 7 in 43, and the price of never grading `to_time` `clear`.
+Every other corpus, discourse and mastodon included: no row moves.
+Testbed 725. A Rails engine gem's `app/` (`ActiveStorage::Blob`) is still
+not read as API — declined: not trivially right, as an engine's `app/`
+holds controllers and jobs with entry points of their own.

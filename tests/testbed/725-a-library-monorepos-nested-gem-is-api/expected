@@ -1,0 +1,6 @@
+# protobuf publishes its gem from `ruby/` (`ruby/google-protobuf.gemspec`,
+# `ruby/lib`) with no gemspec at the checkout's root, so its public API was
+# `test-only`, clear: the root gemspec alone said "library". A checkout that
+# is no app (no `config/application.rb`, `config.ru` or `app/`) counts a nested
+# gemspec's `lib/` too; an app's own engines stay out (case 702, DEC-657).
+dead gem/lib Widget::Timestamp#to_time=test-only~dependents Widget::Timestamp=test-only~dependents
