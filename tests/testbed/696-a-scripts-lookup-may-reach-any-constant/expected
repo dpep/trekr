@@ -1,0 +1,5 @@
+# An executable Ruby script's `Object.const_get(ARGV[0])` may reach any
+# constant, as the same line in lib/ does; its comment is no lookup. The
+# index does not read the script, and only its constant paths were read, so
+# Orphan was clear (DEC-654).
+dead lib Orphan=unreferenced~exe/tool:3

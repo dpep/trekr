@@ -1,0 +1,3 @@
+#!/usr/bin/env ruby
+# Usage: tool NAME (looked up with Object.const_get)
+Object.const_get(ARGV[0]).new

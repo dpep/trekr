@@ -91,17 +91,17 @@ impl Named {
                 // A Rakefile is Ruby, shebang or not.
                 let script = !name.contains('.') && name != "Rakefile";
                 if script {
-                    if text.starts_with("#!")
-                        && text
-                            .lines()
-                            .next()
-                            .is_some_and(|first| first.contains("ruby"))
-                    {
+                    if super::super::views::ruby_script(path, text) {
                         for constant in text.lines().flat_map(super::super::views::constant_paths) {
                             part.script_constants
                                 .entry(constant)
                                 .or_insert_with(|| path.clone());
                         }
+                        // Its lookups too: the index does not read it.
+                        part.unscoped = text.lines().enumerate().find_map(|(n, line)| {
+                            let call = unscoped_lookup(line)?;
+                            Some((call, (path.clone(), n as u32 + 1)))
+                        });
                     }
                 } else if TEMPLATES.iter().any(|ext| path.ends_with(ext)) {
                     for (n, line) in text.lines().enumerate() {

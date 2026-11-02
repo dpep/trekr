@@ -131,3 +131,4 @@
 693-a-chain-through-an-unknown-call-is-a-value f5da5dc1f875aab6
 694-a-string-sent-in-a-class-reaches-its-subclasses-mixins 0069700514b15923
 695-a-string-sent-in-a-mixin-reaches-its-includers-ancestors d9b906336339e065
+696-a-scripts-lookup-may-reach-any-constant a726f02610b6a4d3

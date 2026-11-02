@@ -755,6 +755,7 @@ ruby tests/testbed/695-a-string-sent-in-a-mixin-reaches-its-includers-ancestors/
 ruby tests/testbed/695-a-string-sent-in-a-mixin-reaches-its-includers-ancestors/lib/mixin.rb 6018f157fdddadb8
 ruby tests/testbed/695-a-string-sent-in-a-mixin-reaches-its-includers-ancestors/lib/sub.rb fbee2bfca6764b74
 ruby tests/testbed/695-a-string-sent-in-a-mixin-reaches-its-includers-ancestors/lib/widget.rb d99aea2a585f1f44
+ruby tests/testbed/696-a-scripts-lookup-may-reach-any-constant/lib/orphan.rb d39cf032b4680274
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

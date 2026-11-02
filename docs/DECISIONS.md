@@ -15010,9 +15010,10 @@ the gems measured above.
   ERB file's text outside its tags is not code); and a `Rakefile`, which
   is Ruby with no extension or shebang. Testbed 685–688. No row moved: every
   corpus that writes one already had a lookup cited first. An extensionless
-  script with a Ruby shebang (`exe/tool`) is still read for its constant
-  paths only; its lookups are not. `Object.method(:const_get).call(x)` is
-  not read.
+  script with a Ruby shebang (`exe/tool`, which the index does not read)
+  has its computed-whole lookups read as well as its constant paths
+  (testbed 696; no row moved on 69 gem checkouts).
+  `Object.method(:const_get).call(x)` is not read.
 - **A namespace's computed `const_get` is scoped by a heuristic, not by
   Ruby.** `Ns.const_get(x)` with inherit (the default) searches Ns's
   ancestors and then `Object`, so `Ns.const_get("Orphan")` returns the
