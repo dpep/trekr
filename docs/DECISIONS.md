@@ -10533,7 +10533,8 @@ than a method's; counted, `*_score` from a migration and `*_count` from a
 serializer caveated two of the hand-checked true candidates
 (`spam_silence_score`, `update_distinct_badge_count`) and no false one.
 Nor a string, which is a key or a message more often than a name, except as
-the computed argument of a send. Nor a name built in a spec, a test or a
+the computed argument of a send (and, since DEC-655, as the string a send
+names its method by, for the receiver's class). Nor a name built in a spec, a test or a
 migration.
 
 **Over-reach, measured.** A shape caveats every method of its shape in the
@@ -15131,3 +15132,75 @@ are mostly lowered by a file-wide `public_send`.
 addressable's 20 rows are true to the checkout (only the specs call
 `Template#expand`) and say nothing about the gem's users, as `unreferenced`
 says nothing about them either (DEC-372). Testbed 665.
+
+## DEC-655 — Names built where `--dead` did not read them: strings sent by name, and test files
+
+### A. An interpolated string sent by name is a shape, for the class it is sent to
+
+**Decided.** DEC-363 reads an interpolated *symbol* as a shape. An
+interpolated *string* handed to `send`, `public_send`, `__send__` or `try`
+as the method's name is one too, under the same rule (three name
+characters or more written before the first interpolation;
+`send("#{x}_check")` is no shape), with the same grade: a caveat, "a name
+of its shape is sent at runtime (`list_*` at app/x.rb:68)", graded
+`lower`, the tier kept. Unlike a symbol's, the shape reaches only **the
+class it is sent to**, its chain and its subclasses:
+
+- no receiver, `self.`, or a bare `new(…).`: the class the send is
+  written in (from the file's parse, so `BaseTimer`'s
+  `send("schedule_auto_#{x}_job")` reaches `TopicTimer`'s and
+  `TypeSupervisor`'s reaches the `Validations` it includes);
+- a chain that starts at a constant, `TopicQuery.new(user, opts).public_send(…)`
+  or `AdminMailer.with(…).public_send(…)`: that constant, resolved where it
+  is written;
+- a local the file assigned the string to, whole, earlier
+  (`validate_method = "validate_#{name}"; public_send(validate_method, val)`),
+  as if the string were written there.
+
+A send to a value (`row.public_send("total_#{kind}")`) is not read: the one
+such site in discourse sends a column's name (`total_input_tokens`), and
+unscoped it caveated 5 methods it never reaches. A send at the top level,
+whose class the tree cannot place, is not read either.
+
+**Why scoped.** Unscoped, as DEC-363's symbols are, the first cut caveated
+189 discourse rows (`--dead app lib`): `public_send("is_#{type}?")` in
+`PostAction` lowered every `is_*?` in the app (46 rows), `validate_*` from
+`EmailSettingsValidator` 69. Scoped, 76 rows change, 74 of them reached by
+the send cited (read at the call and its list of names); the other 2,
+`PostAction#is_private_message?` and `EmailSettingsValidator#validate_as_user`,
+were already `lower` and keep their grade.
+
+**Measured**, `--dead app lib`, main (9b146f0) → this, every changed row
+read:
+
+| corpus | rows with the caveat | grade moved, `clear` → `lower` | of those moved, live |
+| --- | ---: | ---: | ---: |
+| discourse | 76 | 43 (29 `test-only`, 14 `unreferenced`) | 43 |
+| mastodon | 3 | 2 (`test-only`) | 2 |
+
+The 43: `TopicQuery`'s 19 `list_*` (Discourse's filters and
+`generate_list_for`'s actions) and `SiteSettings::Validations`' 24
+`validate_<setting>` (each a setting in `config/site_settings.yml`). Of the
+79 caveated rows, 77 are reached by the send cited and all 45 whose grade
+moved; the `test-only`, clear rows left are 81 % dead (DEC-652's sample),
+so the caveat beats that base rate rather than adding noise to it (DEC-631). DEC-652's five false `test-only`, clear
+rows are all `lower` now: mastodon's `AdminMailer#end_of_support_*_warning`
+(2), discourse's `TopicQuery#list_private_messages_group_new` and `…_unread`,
+and `SiteSettings::Validations#validate_enable_page_publishing` (by the
+local, which a string-at-the-send rule alone missed). The other rows that
+gain the caveat (`HtmlToMarkdown#visit_*`, `TopTopic#update_*_count_for`,
+`UpcomingChanges::ConditionalDisplay#should_display_*?`, the timers) were
+already `lower` by DEC-631's file-wide grep, and are now cited at the send.
+Timing, `--dead app --json` on discourse, five interleaved runs, load
+2.5–3.5: median 3.79 s before, 3.81 s after.
+
+**Not done: a suffix shape** (`send("#{check}_check")`). discourse writes two
+such sends to self (`UploadSecurity`, `Search`), none to a constant, and
+mastodon none; each one's methods are in the sending file, which DEC-631's
+grep already lowers, so no row's grade would move. DEC-363's reason (a
+leading interpolation is an attribute's name more often) stands untested
+against a counterexample.
+
+**DEC-631's grep stays.** This reads a string sent by name, not a computed
+name held in any local (`send(process_method_name, …)`, `send(@operation[:type])`);
+the grep's reverses-if is not met.

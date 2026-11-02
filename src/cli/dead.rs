@@ -673,7 +673,7 @@ fn dead_in(
     let config = config::Config::read(root);
     let generated = generated::Generated::read(root, defined.iter().map(|d| d.file.as_str()));
     let texts = built::Texts::read(root);
-    let built = built::Built::read(&texts);
+    let built = built::Built::read(&texts, &tree);
     let routes = routes::Routes::read(root);
     let routed = routed_actions(&tree, &routes);
     let mut symbols = conventions::Symbols::default();
@@ -1175,7 +1175,7 @@ fn dead_in(
             }
             risky.push_str("a writer Active Model's `assign_attributes` calls by name");
         }
-        if let Some(why) = built.reaching(&owner, &def.name) {
+        if let Some(why) = built.reaching(&tree, &owner, &def.name) {
             if !risky.is_empty() {
                 risky.push_str(", ");
             }

@@ -112,3 +112,4 @@
 663-a-name-computed-whole-may-reach-any-constant 3017116613328305
 665-a-method-only-specs-call-is-test-only c207725af2600b4a
 666-a-super-in-a-nested-def-is-the-nested-defs ca7fae28dbf93949
+667-a-string-sent-by-name-lowers-its-receivers-methods d9cf1757225079fb

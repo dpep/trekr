@@ -223,8 +223,9 @@ calls counted), and Ruby or Rails calling a protocol hook by name
 does a symbol in the method's own file that trekr does not read as a call
 (`only: [:archive]`), and a controller action when a route is built at
 runtime (DEC-343, DEC-344). And every other way in the row can name: a name
-of its shape the checkout builds (`:"report_#{type}"`) or sends to its class
-(`Mailer.public_send(type)`), a writer `assign_attributes` reaches, an
+of its shape the checkout builds (`:"report_#{type}"`, or a string its class
+is sent, `Q.new.public_send("list_#{kind}")`; DEC-655) or a computed name
+sent to its class (`Mailer.public_send(type)`), a writer `assign_attributes` reaches, an
 ancestor trekr has not indexed, a gem of the bundle that calls the name, a
 helper another helper calls (DEC-363–368, DEC-370), a YAML config that
 writes the name (`generator: pay_schedule_resources`,
@@ -248,8 +249,8 @@ indexed, or a protocol hook outranks the tests: such a method keeps the tier
 it would have without them. A spec's own helper is never `test-only`. Graded
 as the other method tiers are: measured by hand on mastodon and discourse
 (DEC-652), a `clear` one was reached only by tests 21 times in 26 (81 %),
-the misses all names built at runtime (`public_send("list_#{action}")`); a
-`lower` one 7 in 25. On a library, a public `test-only` method is usually
+the misses all names built at runtime (`public_send("list_#{action}")`),
+which are now read (DEC-655); a `lower` one 7 in 25. On a library, a public `test-only` method is usually
 its API: the specs are its only callers in the checkout.
 
 **Classes, modules and constants** are listed after the methods, with

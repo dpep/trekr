@@ -1,0 +1,7 @@
+# An interpolated string sent by name is a shape, as an interpolated symbol
+# is, but it reaches only the class it is sent to, its chain and its
+# subclasses: Query's list_open, not Other's list_closed. A local holding the
+# string is read where it is sent (Base#check, reaching Rules it includes); a
+# string sent to a value (`record.public_send`) is an attribute's name, and
+# lowers nothing.
+dead lib Query#list_open=unreferenced~sent Other#list_closed=unreferenced~ Mailer#notify_late=unreferenced~sent Rules#validate_size=unreferenced~sent Totals#total_count=unreferenced~

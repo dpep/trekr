@@ -22,6 +22,13 @@
   another method, or a hook Ruby calls by name, keeps the tier it had, and
   a spec's own helper is never `test-only`. A script
   reading `summary.tiers` sees methods in `test-only` now.
+- **`--dead` reads an interpolated string sent by name**,
+  `TopicQuery.new(opts).public_send("list_#{filter}")` or `rule =
+  "validate_#{name}"; public_send(rule)`, as it reads `:"list_#{filter}"`:
+  a method of the receiver's class, its ancestors or subclasses whose name
+  fits says "a name of its shape is sent at runtime" and is graded `lower`.
+  A string sent to a variable (`row.public_send("total_#{kind}")`) is left
+  alone.
 - `--dead` no longer says a method "calls `super`, so it overrides a method
   trekr has not indexed" — and grades it `lower` — when the `super` is in a
   `def` nested in its body, which is that method's.
