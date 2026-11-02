@@ -15985,3 +15985,20 @@ engine's `app/` already did. An app packaged as a gem keeps its
 gemspec stays one (746). Measured: browser 67 rows gain `api` (37 `clear`
 → `lower`), sdoc 21 (18), the counts the build before the last round gave;
 every corpus: no row moves. Testbed 760.
+
+**A constant bound to a constant path is API, resolved or not.** Fix round
+2 counted a constant as an alias only when the tree followed its value to a
+class or module, so `Vendored = SomeOtherGem::Client`, naming a class of a
+gem trekr has not indexed, stayed a value constant and came out `clear`
+(apihunt3-p2), while `X = ::Timeout::Error` was API by the stdlib's index.
+Now the value's shape decides: a bare constant path (`A`, `A::B`, `::A::B`,
+what the extractor already records as the constant's target) is an alias,
+whatever the constant's name or the path's case. The rule subsumes the
+resolved one. Measured: rubocop 8 rows gain `api`, each a cop's
+`RESTRICT_ON_SEND = ADD_DEPENDENCY_METHODS` or
+`RuboCop::AST::Node::COMPARISON_OPERATORS`, already `lower`; rack 3
+(`Utils::DEFAULT_SEP = QueryParser::DEFAULT_SEP`, `COMMON_SEP`, `RELEASE =
+VERSION`; 0 `clear` → `lower`); minitest 1 (`Minitest::Unit::VERSION =
+Minitest::VERSION`; 1). Value aliases, then, not class names — public
+names a user may read all the same, and the over-lowering side otherwise.
+Every other corpus: no row moves. Testbed 761.

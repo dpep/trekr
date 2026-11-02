@@ -4577,6 +4577,12 @@ impl Tree {
         (self.kind_of(&namespace) != Some("constant")).then_some(namespace)
     }
 
+    /// Is the constant `fqn` bound to a bare constant path (`Bar = Foo::Baz`),
+    /// whether or not the path resolves?
+    pub(crate) fn is_alias(&self, fqn: &str) -> bool {
+        self.names.get(fqn).and_then(EntryRef::alias_of).is_some()
+    }
+
     pub(crate) fn is_known(&self, fqn: &str) -> bool {
         self.names.contains(fqn)
     }

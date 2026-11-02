@@ -1,0 +1,7 @@
+# A constant naming a class was API only when the tree followed it to one,
+# so `Vendored = OtherGem::Client`, naming a gem's class trekr has not
+# indexed, stayed a value constant and came out `clear`. A constant whose
+# value is a bare constant path is an alias, and API, resolved or not; the
+# value's shape decides, not the name's case. A value constant still is
+# not (DEC-657).
+dead lib Widget::Vendored=unreferenced~dependents Widget::Rooted=unreferenced~dependents Widget::DEFAULT_ERROR=unreferenced~dependents Widget::LIMIT=unreferenced~

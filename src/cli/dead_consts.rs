@@ -525,10 +525,11 @@ pub(super) fn dead_constants(
                 Some(EntryPoint::Job)
             }
             // A value constant nothing names is rarely another gem's to read:
-            // hand-checked, few were API (DEC-657). One naming a class is a
-            // name kept for its users (`IgnoredMethods = AllowedMethods`).
+            // hand-checked, few were API (DEC-657). One bound to a constant
+            // path is a name kept for its users (`IgnoredMethods =
+            // AllowedMethods`), though the path be another gem's, unindexed.
             _ if (*kind != DeadKind::Constant
-                || tree.namespace_named(fqn).is_some_and(|named| named != *fqn)
+                || tree.is_alias(fqn)
                 || gems.deprecated_proxy(path, *line))
                 // Any opening: an engine opens its namespace in `app/` too.
                 && tree.sites(fqn).iter().any(|site| {

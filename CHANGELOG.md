@@ -32,8 +32,9 @@
     gemspec until release. Unless its author marks it internal
     (`:nodoc:`, `@api private`, `@private`, `Internal:`, a leading underscore,
     `private_constant`; a YARD tag opening a comment line, a TomDoc status
-    its first). A constant naming a class or module (`Worker = Job`, a
-    `DeprecatedConstantProxy`) counts; a value constant does not, nor an
+    its first). A constant bound to a constant path, resolved or not (`Worker =
+    Job`, `Client = OtherGem::Client`), or to a `DeprecatedConstantProxy`
+    counts; any other value constant does not, nor an
     app's own engine.
     A `:nodoc:` covers its own class and the methods its body defines, as
     RDoc reads it, so Rails' `module ActiveSupport # :nodoc:` hides
