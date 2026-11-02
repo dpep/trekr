@@ -1,3 +1,4 @@
-# A computed `const_get` on a namespace may reach that namespace's
-# constants, and only those: the rest stay clear (DEC-654).
+# A computed `const_get` on a namespace is read as reaching that namespace's
+# constants: the rest stay clear (DEC-654). A heuristic: Ruby's const_get
+# falls back to Object, but the argument is idiomatically a name under it.
 dead lib Regions::North=unreferenced~Regions.const_get Levels::LOW=unreferenced~ Loader=unreferenced~

@@ -14904,7 +14904,8 @@ The caveat names the first such site: "a name computed at runtime is looked
 up by `Object.const_get` at lib/x.rb:3, which may reach any constant". A row
 with neither is `clear`, `test-only` rows included. Not counted: a literal
 or shaped name (the string and shape rules read those), a namespace's own
-computed `const_get` (scoped, DEC-421), `constants.map { |c| const_get(c) }`
+computed `const_get` (scoped to it by a heuristic, DEC-421; Ruby's is not:
+see the fix round below), `constants.map { |c| const_get(c) }`
 (a listing), `config.constantize('a', :b)` (String#constantize takes no
 argument: another method), a definition, a comment. Testbed 660–663, 461.
 
@@ -15012,6 +15013,20 @@ the gems measured above.
   script with a Ruby shebang (`exe/tool`) is still read for its constant
   paths only; its lookups are not. `Object.method(:const_get).call(x)` is
   not read.
+- **A namespace's computed `const_get` is scoped by a heuristic, not by
+  Ruby.** `Ns.const_get(x)` with inherit (the default) searches Ns's
+  ancestors and then `Object`, so `Ns.const_get("Orphan")` returns the
+  top-level `Orphan`, and `"A::B"` reaches anything. trekr still reads it
+  as reaching Ns's constants only, because the argument is idiomatically a
+  name under Ns. Measured: read as a computed-whole lookup instead, 70
+  `clear` rows would turn `lower` in 3 of 69 gem checkouts (`--dead lib`,
+  every checkout under the bench directory but the apps): dd-trace-rb 66,
+  mysql2 3, ruby-pg 1. All three sites are fed names under the namespace:
+  dd-trace-rb's `::Aws.const_get(service, false)` over `Aws.constants`
+  (`false` is Ruby's scoping, exactly), mysql2's `SSL_MODE_*` behind
+  `const_defined?`, and ruby-pg's `PG.constants.grep(…)`. None could return
+  a row it would lower. **Reverses if** a checkout is found passing a
+  namespace's `const_get` a name that is not under it.
 
 ## DEC-653 — A block evaluated in a class named by a bare constant defines that class's methods, wherever it is written
 

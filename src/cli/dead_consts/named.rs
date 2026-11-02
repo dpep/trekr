@@ -574,6 +574,8 @@ enum Named_ {
 
 /// `Regions.const_get(name)`, `Module.const_get("Regions").const_get(name)`:
 /// the namespaces a line looks a constant up in by a name it computes.
+/// Ruby's lookup falls back to `Object`; reading it as the namespace's alone
+/// is a measured heuristic (DEC-654).
 fn computed_const_gets(line: &str) -> Vec<String> {
     let line = desugared(line);
     let mut found = Vec::new();
