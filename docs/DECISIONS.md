@@ -15721,3 +15721,23 @@ and is a documented chain method (`of`, `percent_of`, `at_most`,
 `at_least`, `with_message`, `inclusive`, `once`, `with_keywords`,
 `to_stdout_from_any_process`, …). Every other corpus: no row moves.
 Testbed 721.
+
+**A `module_function`'s public singleton copy makes its row API.** Under a
+bare `module_function` toggle the extractor records the instance copy
+`private`, as Ruby makes it, and the public singleton copy as a
+`module_function` def `--dead` reads only as another name of the body
+(DEC-361) — so the row was never an entry point, while `module_function :x`
+(whose instance copy the extractor leaves public) was. rack's
+`Rack::Utils.secure_compare` and `.status_code`, faraday's
+`Faraday::Utils.default_uri_parser=`: private, no entry point. Now a method
+with a singleton copy counts as public for the entry point, in `--dead`'s
+layer; no extraction change. The row's `visibility` stays the instance
+copy's.
+
+**Measured**, the build before → this: rails 3 rows gain `api` (2 `clear`
+→ `lower`: `Kernel#concern`, `#enable_warnings`, documented core
+extensions), faraday 8 (4: `Faraday::Utils.default_uri_parser=`, `.escape`,
+`.default_space_encoding`, `.sort_query_params`), rack 9 (0: all were
+`lower` by a file-wide caveat), redis-client 15 (0: `RedisClient::RESP3`'s
+parser and dumper, public by Ruby's visibility, internal by use, no marker).
+Every other corpus: no row moves. Testbed 722.

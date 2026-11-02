@@ -1164,10 +1164,15 @@ fn dead_in(
             ));
         }
         // Reached from outside the repo: kept, graded lower, and said what
-        // would settle it (DEC-657).
+        // would settle it (DEC-657). A `module_function`'s singleton copy is
+        // public, whatever the instance copy is (DEC-361).
+        let module_function = !def.singleton
+            && aliases
+                .iter()
+                .any(|(name, singleton)| *singleton && *name == def.name);
         let entry_point = if route.is_some() {
             Some(EntryPoint::Route)
-        } else if public
+        } else if (public || module_function)
             && !owner.is_empty()
             && !entry_points::underscored(&def.name)
             && gems.in_gem_lib(root, file)

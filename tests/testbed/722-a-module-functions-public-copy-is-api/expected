@@ -1,0 +1,5 @@
+# rack's `Rack::Utils.secure_compare`, written under a bare
+# `module_function`, was graded as its private instance copy and never an
+# entry point, while `module_function :x` made one: the toggle makes a
+# public singleton copy too, which is what a gem's users call (DEC-657).
+dead lib Widget::Util#secure_compare=test-only~dependents Widget::Plain#helper=test-only~

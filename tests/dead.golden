@@ -139,3 +139,4 @@
 711-a-route-or-convention-outranks-test-only 863fa9f3f6dca868
 720-a-nodoc-reopening-hides-only-its-own-body 69b341434eb46b43
 721-a-methods-own-api-tag-overrides-its-classes c4d6ae77ffe8564b
+722-a-module-functions-public-copy-is-api e7f172254b1f1343

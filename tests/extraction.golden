@@ -787,6 +787,9 @@ ruby tests/testbed/720-a-nodoc-reopening-hides-only-its-own-body/widget.gemspec 
 ruby tests/testbed/721-a-methods-own-api-tag-overrides-its-classes/lib/widget.rb 82dc911dfb6c7c48
 ruby tests/testbed/721-a-methods-own-api-tag-overrides-its-classes/spec/widget_spec.rb 08c7613cf284b58f
 ruby tests/testbed/721-a-methods-own-api-tag-overrides-its-classes/widget.gemspec dea196826b99e33b
+ruby tests/testbed/722-a-module-functions-public-copy-is-api/lib/widget.rb f90c187e3788517e
+ruby tests/testbed/722-a-module-functions-public-copy-is-api/spec/widget_spec.rb e27f21dd65a627c1
+ruby tests/testbed/722-a-module-functions-public-copy-is-api/widget.gemspec dea196826b99e33b
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28
