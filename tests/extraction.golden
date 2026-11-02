@@ -718,6 +718,11 @@ ruby tests/testbed/670-a-super-in-a-define-method-block-is-the-defined-methods/l
 ruby tests/testbed/670-a-super-in-a-define-method-block-is-the-defined-methods/spec/widget_spec.rb bc8208295aa4a514
 ruby tests/testbed/671-a-name-a-ruby-script-writes-is-no-test-only-method/lib/tool/cli.rb 53ac1de763bc3b2a
 ruby tests/testbed/671-a-name-a-ruby-script-writes-is-no-test-only-method/spec/cli_spec.rb a0800e4a7db99a9a
+ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/alias.rb f49a22486d2a111b
+ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/gem.rb 8199e059bdaeae3d
+ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/inherited.rb d99cc1fad62d5680
+ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/probe.rb 04b71330bae0cfff
+ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/target.rb eb8b950dfe369aed
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

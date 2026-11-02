@@ -1,0 +1,5 @@
+# `X.class_eval do` inside another scope: Ruby finds `X` by a lookup —
+# lexical scopes, the enclosing class's ancestors, the top level — and a
+# constant written in the block is the enclosing scope's, not X's. Case
+# input; the fix's commit adds what it changes.
+ancestors Parent::Helper Parent::Helper,Object
