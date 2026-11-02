@@ -1,0 +1,6 @@
+# A Sorbet `sig` between a method's doc comment and its `def` hid the
+# comment's `@api private` or `Internal:`, and a `private_constant` whose
+# argument sits on the next line was not read: each such row was public
+# API. The mark is read past the sig, and across the call's lines (DEC-657).
+dead lib Widget#reset=test-only~ Widget#rebuild=test-only~ Widget#flush=test-only~ Widget#expand=test-only~dependents
+dead lib Widget::Store#put=test-only~

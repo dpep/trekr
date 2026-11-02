@@ -142,3 +142,4 @@
 721-a-methods-own-api-tag-overrides-its-classes c4d6ae77ffe8564b
 722-a-module-functions-public-copy-is-api e7f172254b1f1343
 723-a-name-a-script-writes-lowers-a-test-only-row 3ca3273b7e12cb53
+724-a-sig-or-a-wrapped-private-constant-keeps-the-mark bb4b37fac6723cfb

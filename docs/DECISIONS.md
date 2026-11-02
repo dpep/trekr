@@ -15757,3 +15757,13 @@ extensions), faraday 8 (4: `Faraday::Utils.default_uri_parser=`, `.escape`,
 `lower` by a file-wide caveat), redis-client 15 (0: `RedisClient::RESP3`'s
 parser and dumper, public by Ruby's visibility, internal by use, no marker).
 Every other corpus: no row moves. Testbed 722.
+
+**A mark is read past a Sorbet `sig`, and across a wrapped
+`private_constant`.** The comment above a `def` was taken only from the
+lines directly over it, so a `sig { … }` (or a `sig do … end` block)
+between them hid `@api private` and `Internal:`; and `private_constant(` with
+its symbol on the next line was not read. Now the doc comment ends above a
+`sig` written between it and the `def` — a block's opening line is the
+nearest above its closing one indented no deeper — and a `private_constant`
+call's arguments run on while its parentheses are open or a line ends in a
+comma. Measured: no row moves on any corpus above. Testbed 724.

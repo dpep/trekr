@@ -147,7 +147,7 @@ impl Gems {
             // RDoc reads `all` after the directive case-blind.
             marks.all = after.trim_start().to_ascii_lowercase().starts_with("all");
         }
-        for text in lines[..at]
+        for text in lines[..doc_end(lines, at)]
             .iter()
             .rev()
             .map(|text| text.trim_start())
@@ -220,10 +220,7 @@ impl Gems {
         let mut own = Marks::default();
         for site in &sites {
             let marks = self.marks(&site.path, site.line);
-            let private = self
-                .lines(&site.path)
-                .iter()
-                .any(|text| private_constant_names(text, &tail));
+            let private = private_constant_names(self.lines(&site.path), &tail);
             own.hidden |= marks.hidden;
             own.all |= marks.all || private;
             // Openings that disagree: private wins.
@@ -267,15 +264,60 @@ struct Scope {
     api_private: Option<bool>,
 }
 
-/// Does `line` make `name` a private constant: `private_constant :Name, …`?
-fn private_constant_names(line: &str, name: &str) -> bool {
-    let code = line.split_once('#').map_or(line, |(code, _)| code).trim();
-    let Some(args) = code.strip_prefix("private_constant") else {
-        return false;
+/// Where the doc comment of the definition at `at` ends: directly above it,
+/// or above a Sorbet `sig` written between them, on one line or a block.
+fn doc_end(lines: &[String], at: usize) -> usize {
+    let indent = |text: &str| text.len() - text.trim_start().len();
+    let sig = |text: &str| {
+        let text = text.trim_start();
+        text.strip_prefix("sig")
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with([' ', '{', '(']))
     };
-    args.split(|c: char| c == ',' || c == '(' || c == ')' || c.is_whitespace())
-        .filter_map(|arg| arg.strip_prefix(':'))
-        .any(|arg| arg == name)
+    let Some(above) = at.checked_sub(1) else {
+        return at;
+    };
+    if sig(&lines[above]) {
+        return above;
+    }
+    let close = lines[above].trim_start();
+    if close == "end" || close.starts_with('}') {
+        // The block's opening line is the nearest one indented no deeper.
+        let width = indent(&lines[above]);
+        let open = (0..above)
+            .rev()
+            .find(|&n| !lines[n].trim().is_empty() && indent(&lines[n]) <= width);
+        if let Some(open) = open.filter(|&n| sig(&lines[n])) {
+            return open;
+        }
+    }
+    at
+}
+
+fn code(line: &str) -> &str {
+    line.split_once('#').map_or(line, |(code, _)| code).trim()
+}
+
+/// Do these lines make `name` a private constant: `private_constant :Name,
+/// …`, its arguments on as many lines as its parentheses or commas carry?
+fn private_constant_names(lines: &[String], name: &str) -> bool {
+    lines.iter().enumerate().any(|(at, line)| {
+        let Some(first) = code(line).strip_prefix("private_constant") else {
+            return false;
+        };
+        let mut args = first.to_string();
+        let mut next = at + 1;
+        while (args.matches('(').count() > args.matches(')').count()
+            || args.trim_end().ends_with(','))
+            && next < lines.len()
+        {
+            args.push(' ');
+            args.push_str(code(&lines[next]));
+            next += 1;
+        }
+        args.split(|c: char| c == ',' || c == '(' || c == ')' || c.is_whitespace())
+            .filter_map(|arg| arg.strip_prefix(':'))
+            .any(|arg| arg == name)
+    })
 }
 
 /// Does a Ruby name say it is internal by convention: a leading underscore?
@@ -287,15 +329,29 @@ pub(super) fn underscored(name: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn names(source: &str, name: &str) -> bool {
+        let lines: Vec<String> = source.lines().map(str::to_string).collect();
+        private_constant_names(&lines, name)
+    }
+
     #[test]
-    fn a_private_constant_line_names_each_of_its_symbols() {
-        assert!(private_constant_names(
-            "  private_constant :A, :Beta",
-            "Beta"
-        ));
-        assert!(private_constant_names("private_constant(:A)", "A"));
-        assert!(!private_constant_names("private_constant :Alpha", "A"));
-        assert!(!private_constant_names("# private_constant :A", "A"));
-        assert!(!private_constant_names("FOO = :A", "A"));
+    fn a_private_constant_call_names_each_of_its_symbols() {
+        assert!(names("  private_constant :A, :Beta", "Beta"));
+        assert!(names("private_constant(:A)", "A"));
+        assert!(names("private_constant(\n  :A\n)", "A"));
+        assert!(names("private_constant :A,\n  :B", "B"));
+        assert!(!names("private_constant :A\n:B", "B"));
+        assert!(!names("private_constant :Alpha", "A"));
+        assert!(!names("# private_constant :A", "A"));
+        assert!(!names("FOO = :A", "A"));
+    }
+
+    #[test]
+    fn a_doc_comment_ends_above_a_sig() {
+        let lines = |source: &str| source.lines().map(str::to_string).collect::<Vec<_>>();
+        assert_eq!(doc_end(&lines("# x\nsig { void }\ndef a"), 2), 1);
+        assert_eq!(doc_end(&lines("# x\nsig do\n  void\nend\ndef a"), 4), 1);
+        assert_eq!(doc_end(&lines("# x\ndef a\nend\ndef b"), 3), 3);
+        assert_eq!(doc_end(&lines("# x\ndef a"), 1), 1);
     }
 }
