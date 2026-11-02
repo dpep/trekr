@@ -410,6 +410,13 @@ otherwise. Its `caveat` names the evidence that would settle it.
 | `route` | a routed controller action, or a controller only routes name | request logs or APM (e.g. Datadog) |
 | `job` | a job class nothing outside the tests names | job metrics or logs |
 
+A mark reaches as far as its tool reads it: a `:nodoc:` or TomDoc mark on
+a class hides that class and the methods its body defines, not the classes
+nested in it (RDoc); `:nodoc: all`, YARD's `@api private` and `@private`,
+and a `private_constant` hide everything nested too; a method's own `@api
+public` overrides its class's `@api private` (YARD). A method under
+`module_function` is public by its singleton copy.
+
 An app's own public methods are not entry points: their callers are in the
 checkout. Hand-checked on six gems, 36 of 43 rows it moved from `clear`
 were API a user could call.
