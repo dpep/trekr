@@ -1,0 +1,3 @@
+# A Rack app (a `config.ru` at its root, no gemspec) is an app: its public
+# methods' callers are in the checkout, so none is public API (DEC-657).
+dead lib Report#summary=unreferenced~

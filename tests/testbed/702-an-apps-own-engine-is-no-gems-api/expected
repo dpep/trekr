@@ -1,5 +1,5 @@
-# A checkout with no gemspec at its root is an app: its public methods'
-# callers are in the checkout, and so are its own engines', whose gemspec
+# An app (here a `config/application.rb` at its root) has its public
+# methods' callers in the checkout, and so do its own engines, whose gemspec
 # packages them for the app alone. Neither is a gem's public API (DEC-657).
 dead lib Report#render=test-only~ Report=test-only~
 dead engines/billing/lib Billing::Invoice#total=test-only~ Billing::Invoice=test-only~

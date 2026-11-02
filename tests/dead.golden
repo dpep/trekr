@@ -150,3 +150,4 @@
 743-a-doc-tag-counts-only-where-its-tool-reads-one 09a1d84d7621600a
 744-private-after-module-function-makes-no-public-copy 76d189f9115247ae
 745-a-constant-naming-a-class-is-api ae0bf173a86f292b
+746-a-rack-app-is-no-library 034aa40417c29df3

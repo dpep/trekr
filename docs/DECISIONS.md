@@ -15933,3 +15933,9 @@ WorkSet`; 0), rack 4 (`Utils::ParameterTypeError` and its kin, aliases of
 compatibility names, read by hand. sidekiq's `JobWrapper`, named in the
 hunt, carries `@api private` and stays internal. Every other corpus: no
 row moves. Testbed 745.
+
+**The `config.ru` marker is pinned.** No case held a `config.ru`, so the
+app marker the changelog names was untested; testbed 746 is a Rack app
+with one, red with the marker removed. Testbed 702's comment still said a
+checkout without a root gemspec is an app, the rule before the last
+addendum; it names its `config/application.rb` now.
