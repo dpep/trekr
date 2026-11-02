@@ -95,13 +95,12 @@ impl Gems {
         let relative = Path::new(path)
             .strip_prefix(root)
             .unwrap_or(Path::new(path));
-        // An app packaged as a gem is still an app; but an engine gem keeps
-        // an `app/` beside its root gemspec, so that marker yields to it.
-        let app = ["config/application.rb", "config.ru"]
-            .iter()
-            .any(|f| root.join(f).is_file());
-        if app
-            || (!self.has_gemspec(root) && root.join("app").is_dir())
+        // A Rails app packaged as a gem is still an app; but an engine gem
+        // keeps an `app/`, and a gem a demo `config.ru` (sdoc), beside its
+        // root gemspec, so those markers yield to it.
+        if root.join("config/application.rb").is_file()
+            || (!self.has_gemspec(root)
+                && (root.join("app").is_dir() || root.join("config.ru").is_file()))
             || super::dead_consts::in_tests(&relative.to_string_lossy())
         {
             return false;

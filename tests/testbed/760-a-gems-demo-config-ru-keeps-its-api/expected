@@ -1,0 +1,5 @@
+# A gem that ships a demo or docs `config.ru` beside its root gemspec
+# (sdoc, browser) was read as a Rack app, and every public method and
+# module came out `clear`. A `config.ru` yields to a root gemspec, as an
+# engine's `app/` does; `config/application.rb` still outranks one (DEC-657).
+dead lib Widget#render=unreferenced~dependents Widget=unreferenced~dependents

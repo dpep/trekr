@@ -15964,3 +15964,24 @@ Now any of the constant's openings in the checkout being in a library's
 `lib/` counts; `app/`'s own classes still do not. Measured: no row moves
 on any corpus, nor on rails' activestorage and actiontext `app lib`.
 Testbed 748.
+
+### DEC-657 addendum: fix round 3
+
+A third hunt (apihunt3) found documented API still graded `clear`. The
+stance is unchanged: public surface gets more caution, since its use outside
+the repo cannot be seen, so a documented public method graded `clear` is the
+failure that matters and over-lowering an internal one is the tolerable
+side. Measured per fix as fix round 2 was, the build before → after, on the
+same corpora.
+
+**A `config.ru` yields to a root gemspec.** The last round made
+`config/application.rb` and `config.ru` outrank a root gemspec, and a gem
+shipping a demo or docs `config.ru` beside its gemspec lost all its API
+(sdoc 2.6.5, browser 6.2.0; apihunt3-p4). A Rails app's
+`config/application.rb` names an app with no other reading; a `config.ru`
+is as often a gem's demo server, so it now yields to a root gemspec, as an
+engine's `app/` already did. An app packaged as a gem keeps its
+`config/application.rb` and stays an app (testbed 747); a Rack app with no
+gemspec stays one (746). Measured: browser 67 rows gain `api` (37 `clear`
+→ `lower`), sdoc 21 (18), the counts the build before the last round gave;
+every corpus: no row moves. Testbed 760.

@@ -833,6 +833,9 @@ ruby tests/testbed/747-an-app-packaged-as-a-gem-is-an-app/widget_shop.gemspec de
 ruby tests/testbed/748-an-engines-namespace-opened-in-lib-is-api/app/models/eng/model.rb 29c4a93fc9d732c9
 ruby tests/testbed/748-an-engines-namespace-opened-in-lib-is-api/eng.gemspec dea196826b99e33b
 ruby tests/testbed/748-an-engines-namespace-opened-in-lib-is-api/lib/eng.rb 10886934e9c973df
+ruby tests/testbed/760-a-gems-demo-config-ru-keeps-its-api/config.ru 704934d7032791a9
+ruby tests/testbed/760-a-gems-demo-config-ru-keeps-its-api/lib/widget.rb 084ed6bb0cbcbb58
+ruby tests/testbed/760-a-gems-demo-config-ru-keeps-its-api/widget.gemspec dea196826b99e33b
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28
