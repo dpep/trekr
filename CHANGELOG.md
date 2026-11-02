@@ -30,7 +30,8 @@
     A `:nodoc:` covers its own class and the methods its body defines, as
     RDoc reads it, so Rails' `module ActiveSupport # :nodoc:` hides
     nothing nested in it; `:nodoc: all`, `@api private` and
-    `private_constant` cover what is nested too.
+    `private_constant` cover what is nested too. A method's own `@api
+    public` overrides its class's `@api private`, as YARD reads it.
   - `route`: a routed controller action, or a controller only routes name.
   - `job`: an Active Job or Sidekiq job class nothing outside the tests
     names.

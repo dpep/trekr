@@ -155,7 +155,10 @@ impl Gems {
             .map(|text| text.trim_start_matches('#').trim_start())
         {
             // Both YARD tags are transitive: a namespace's reaches its children.
-            if text.contains("@api private") || text.contains("@private") {
+            if let Some((_, api)) = text.split_once("@api ") {
+                marks.api_private = Some(api.split_whitespace().next() == Some("private"));
+            }
+            if text.contains("@private") {
                 marks.all = true;
             }
             if text.starts_with("Private:") || text.starts_with("Internal:") {
@@ -178,7 +181,10 @@ impl Gems {
         line: u32,
     ) -> bool {
         let own = self.marks(path, line);
-        if own.hidden || own.all || self.scope(tree, root, owner).all {
+        let scope = self.scope(tree, root, owner);
+        // YARD: an `@api` tag written on the method overrides its class's.
+        let api_private = own.api_private.or(scope.api_private);
+        if own.hidden || own.all || scope.all || api_private == Some(true) {
             return true;
         }
         // The body it is written in: its owner's nearest opening above it.
@@ -220,15 +226,19 @@ impl Gems {
                 .any(|text| private_constant_names(text, &tail));
             own.hidden |= marks.hidden;
             own.all |= marks.all || private;
+            // Openings that disagree: private wins.
+            own.api_private = own.api_private.max(marks.api_private);
         }
         let outer = fqn
             .rsplit_once("::")
             .map(|(namespace, _)| self.scope(tree, root, namespace))
             .unwrap_or_default();
         let all = own.all || outer.all;
+        let api_private = own.api_private.or(outer.api_private);
         let scope = Scope {
-            internal: own.hidden || all,
+            internal: own.hidden || all || api_private == Some(true),
             all,
+            api_private,
         };
         self.scopes.insert(fqn.to_string(), scope);
         scope
@@ -240,8 +250,11 @@ impl Gems {
 struct Marks {
     /// No API, nor the methods its body defines: `:nodoc:`, TomDoc's.
     hidden: bool,
-    /// No API, nor anything nested in it: `:nodoc: all`, YARD's, `private_constant`.
+    /// No API, nor anything nested in it: `:nodoc: all`, YARD's `@private`,
+    /// `private_constant`.
     all: bool,
+    /// YARD's `@api` tag, if written: whether it says `private`.
+    api_private: Option<bool>,
 }
 
 /// What a constant's marks and its namespaces' make of it.
@@ -250,6 +263,8 @@ struct Scope {
     internal: bool,
     /// Its marks, or a namespace's, reach everything nested in it.
     all: bool,
+    /// The nearest `@api` tag, its own or a namespace's.
+    api_private: Option<bool>,
 }
 
 /// Does `line` make `name` a private constant: `private_constant :Name, …`?

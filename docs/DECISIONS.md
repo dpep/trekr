@@ -15702,3 +15702,22 @@ public members of documented classes that users call, route or override
 `FixtureSet.instantiate_all_loaded_fixtures`, `Rails::Info#value_for`,
 `Paths::Root#all_paths`) are public by Ruby's visibility, internal by use,
 with no marker — DEC-657's known 7-in-43 shape. Of all 973, 496 have a doc comment directly above. Testbed 720.
+
+**A definition's own `@api` tag overrides the one it inherits.** YARD's tag
+library (`yard/tags/library.rb`, 0.9.45) defines `@api` as transitive —
+applied to a namespace's children "unless it is redefined on the child
+object". trekr let a class's `@api private` win over a method's own `@api
+public`, so rspec-expectations' chain methods (`BeWithin#of`,
+`CountExpectation#at_most`, `RaiseError#with_message`), each tagged `@api
+public` in a class tagged `@api private`, were `test-only`, clear. Now the
+nearest `@api` tag decides, the definition's own first, then its class's
+and namespaces' (rehunt-g3). `@private` has no such override: YARD defines
+no tag that lifts it. `Match#with_captures`, named in the re-hunt, carries
+no tag of its own and stays internal, as YARD would document it.
+
+**Measured**, the build before → this: rspec-expectations 15 rows gain
+`api`, 6 `clear` → `lower`; every one has `@api public` directly above it
+and is a documented chain method (`of`, `percent_of`, `at_most`,
+`at_least`, `with_message`, `inclusive`, `once`, `with_keywords`,
+`to_stdout_from_any_process`, …). Every other corpus: no row moves.
+Testbed 721.

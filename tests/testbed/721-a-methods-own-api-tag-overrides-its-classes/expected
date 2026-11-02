@@ -1,0 +1,8 @@
+# rspec-expectations writes `@api public` above each chain method
+# (`be_within(0.1).of(x)`) of a matcher class it marks `@api private`, and
+# those methods were `test-only`, clear: the class's tag hid them. YARD's
+# `@api` is transitive, and a tag written on the child overrides the one it
+# inherits; `@private` is transitive with nothing to override it (DEC-657).
+dead lib Widget::Matcher#of=test-only~dependents Widget::Matcher#reset=test-only~ Widget::Matcher::Step#advance=test-only~
+dead lib Widget::Hidden::Shown#show=test-only~dependents Widget::Hidden::Shown=test-only~dependents Widget::Matcher=test-only~
+dead lib Widget::Legacy#run=test-only~ Widget::Legacy=test-only~
