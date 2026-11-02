@@ -50,7 +50,7 @@ impl Uses {
 }
 
 /// A spec or a test, by a directory on its path.
-fn in_tests(path: &str) -> bool {
+pub(super) fn in_tests(path: &str) -> bool {
     path.split('/')
         .rev()
         .skip(1)
