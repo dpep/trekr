@@ -219,8 +219,8 @@ impl Gems {
 
     /// Is the method defined at `path:line` in `owner` internal: marked so
     /// itself, written in a body marked `:nodoc:` (RDoc leaves out the
-    /// methods a `:nodoc:` body defines), or under a namespace whose mark
-    /// reaches everything nested in it?
+    /// methods a `:nodoc:` body defines), inside an opening whose mark
+    /// reaches what is nested in it, or held by a `private_constant`?
     pub(super) fn internal_method(
         &mut self,
         tree: &Tree,
@@ -230,10 +230,15 @@ impl Gems {
         line: u32,
     ) -> bool {
         let own = self.marks(path, line);
-        let scope = self.scope(tree, root, owner);
+        let around = self.enclosing(path, line);
         // YARD: an `@api` tag written on the method overrides its class's.
-        let api_private = own.api_private.or(scope.api_private);
-        if own.hidden || own.all || scope.all || api_private == Some(true) {
+        let api_private = own.api_private.or(around.api_private);
+        if own.hidden
+            || own.all
+            || around.all
+            || api_private == Some(true)
+            || self.scope(tree, root, owner).private
+        {
             return true;
         }
         // The body it is written in: its owner's nearest opening above it.
@@ -246,11 +251,11 @@ impl Gems {
     }
 
     /// Is the constant `fqn` internal: marked so on any of its openings
-    /// (RDoc's `:nodoc:` holds for the class wherever it is reopened), made
-    /// a `private_constant`, or nested in a namespace whose mark reaches
-    /// everything under it — `:nodoc: all`, YARD's `@api private` and
-    /// `@private`, a `private_constant`? A plain `:nodoc:` does not: RDoc
-    /// documents the classes nested in one.
+    /// (RDoc's `:nodoc:` holds for the class wherever it is reopened), held
+    /// by a `private_constant`, its own or a namespace's, or written only
+    /// inside openings whose mark reaches what is nested in them —
+    /// `:nodoc: all`, YARD's `@api private` and `@private`? A plain
+    /// `:nodoc:` reaches nothing nested: RDoc documents the classes in one.
     pub(super) fn internal_constant(&mut self, tree: &Tree, root: &str, fqn: &str) -> bool {
         self.scope(tree, root, fqn).internal
     }
@@ -266,28 +271,50 @@ impl Gems {
             .into_iter()
             .filter(|site| site.path.starts_with(&prefix))
             .collect();
-        let mut own = Marks::default();
+        let mut marked = false;
+        let mut private = false;
+        let mut api_private = None;
+        let mut nested = !sites.is_empty();
         for site in &sites {
             let marks = self.marks(&site.path, site.line);
-            let private = private_constant_names(self.lines(&site.path), &tail);
-            own.hidden |= marks.hidden;
-            own.all |= marks.all || private;
+            marked |= marks.hidden || marks.all;
+            private |= private_constant_names(self.lines(&site.path), &tail);
             // Openings that disagree: private wins.
-            own.api_private = own.api_private.max(marks.api_private);
+            api_private = api_private.max(marks.api_private);
+            let around = self.enclosing(&site.path, site.line);
+            nested &= around.all || marks.api_private.or(around.api_private) == Some(true);
         }
-        let outer = fqn
-            .rsplit_once("::")
-            .map(|(namespace, _)| self.scope(tree, root, namespace))
-            .unwrap_or_default();
-        let all = own.all || outer.all;
-        let api_private = own.api_private.or(outer.api_private);
+        // Ruby: nothing outside reaches a name through a private constant.
+        let private = private
+            || fqn
+                .rsplit_once("::")
+                .is_some_and(|(namespace, _)| self.scope(tree, root, namespace).private);
         let scope = Scope {
-            internal: own.hidden || all || api_private == Some(true),
-            all,
-            api_private,
+            internal: marked || private || nested || api_private == Some(true),
+            private,
         };
         self.scopes.insert(fqn.to_string(), scope);
         scope
+    }
+
+    /// What the openings lexically around `path:line` (`openings_around`)
+    /// pass down to it: RDoc's `:nodoc: all` and YARD's `@private` reach
+    /// what they hold, and the nearest `@api` tag decides. RDoc and YARD
+    /// pass a mark down as they parse, so a reopening elsewhere gets it or
+    /// not by file order; only the marked opening's own body is reached.
+    fn enclosing(&mut self, path: &str, line: u32) -> Marks {
+        let lines = self.lines(path);
+        let openings = match (line as usize).checked_sub(1) {
+            Some(at) if at < lines.len() => openings_around(lines, at),
+            _ => Vec::new(),
+        };
+        let mut around = Marks::default();
+        for at in openings {
+            let marks = self.marks(path, at as u32 + 1);
+            around.all |= marks.all;
+            around.api_private = around.api_private.or(marks.api_private);
+        }
+        around
     }
 }
 
@@ -296,8 +323,8 @@ impl Gems {
 struct Marks {
     /// No API, nor the methods its body defines: `:nodoc:`, TomDoc's.
     hidden: bool,
-    /// No API, nor anything nested in it: `:nodoc: all`, YARD's `@private`,
-    /// `private_constant`.
+    /// No API, nor anything its opening holds: `:nodoc: all`, YARD's
+    /// `@private`.
     all: bool,
     /// YARD's `@api` tag, if written: whether it says `private`.
     api_private: Option<bool>,
@@ -307,10 +334,43 @@ struct Marks {
 #[derive(Clone, Copy, Default)]
 struct Scope {
     internal: bool,
-    /// Its marks, or a namespace's, reach everything nested in it.
-    all: bool,
-    /// The nearest `@api` tag, its own or a namespace's.
-    api_private: Option<bool>,
+    /// A `private_constant`, its own or a namespace's.
+    private: bool,
+}
+
+/// The `class`, `module` and constant lines lexically around line `at`, innermost
+/// first, by indentation: each is the nearest code line above indented
+/// less than the last. A line out of step (a heredoc's) ends the walk
+/// early, which reaches less.
+fn openings_around(lines: &[String], at: usize) -> Vec<usize> {
+    let indent = |text: &str| text.len() - text.trim_start().len();
+    let mut width = indent(&lines[at]);
+    let mut found = Vec::new();
+    for n in (0..at).rev() {
+        if width == 0 {
+            break;
+        }
+        let text = lines[n].trim_start();
+        // An outdented `private` sits at its class's own indentation.
+        let modifier = matches!(
+            code(text),
+            "private" | "protected" | "public" | "module_function"
+        );
+        if text.is_empty() || text.starts_with('#') || modifier || indent(&lines[n]) >= width {
+            continue;
+        }
+        width = indent(&lines[n]);
+        // A constant's block opens a class too: `Item = Struct.new(:a) do`.
+        let constant =
+            text.starts_with(|c: char| c.is_ascii_uppercase()) && code(text).contains(" = ");
+        if constant
+            || text.starts_with("module ")
+            || (text.starts_with("class ") && !text.starts_with("class <<"))
+        {
+            found.push(n);
+        }
+    }
+    found
 }
 
 /// Where the doc comment of the definition at `at` ends: directly above it,
@@ -393,6 +453,18 @@ mod tests {
         assert!(!names("private_constant :Alpha", "A"));
         assert!(!names("# private_constant :A", "A"));
         assert!(!names("FOO = :A", "A"));
+    }
+
+    #[test]
+    fn the_openings_around_a_line_are_its_lexical_class_and_modules() {
+        let lines = |source: &str| source.lines().map(str::to_string).collect::<Vec<_>>();
+        let source = "module A\n  module B # :nodoc: all\n  end\n  X = Struct.new do\n    class << self\n      def m\n";
+        assert_eq!(openings_around(&lines(source), 5), vec![3, 0]);
+        let source = "module A\n  class C\n    # note\n\n    def m\n";
+        assert_eq!(openings_around(&lines(source), 4), vec![1, 0]);
+        let source = "module A\n  class C\n    def a; end\n  private\n    def m\n";
+        assert_eq!(openings_around(&lines(source), 4), vec![1, 0]);
+        assert!(openings_around(&lines("module A; end\ndef m"), 1).is_empty());
     }
 
     #[test]

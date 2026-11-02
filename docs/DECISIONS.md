@@ -15847,3 +15847,34 @@ method, so the other internal marks still apply. rails: 65 rows gain
 script); 21 `:doc:` rows stay without, in `:nodoc:` bodies
 (`Rails::Generators::AppBase`, `Rails::MailersController`). Every other
 corpus: no row moves. Testbed 741.
+
+**A transitive mark reaches its own opening, not the constant's other
+openings.** A constant's marks were ORed across all its openings and passed
+to everything nested, so `module Arel # :nodoc: all` in one file hid what
+another unmarked opening defined (apihunt-p4: `Qux.sql`, `Qux::Table`).
+Neither tool reads it so. RDoc's `:nodoc: all` sets the class object's
+`document_children` false, which `should_document?` consults as each child
+is added (RDoc 8.1 `markup/pre_process.rb`, `parser/ruby.rb`); YARD copies
+a transitive `@api` from a namespace to a child as the child is registered
+(`handlers/base.rb` `register_transitive_tags`). Both act as they parse, so
+a reopening elsewhere gets the mark or not by file order — the same file
+order the last addendum declined to reproduce for plain `:nodoc:` methods.
+Now `:nodoc: all`, `@private` and `@api private` reach what is written
+inside the marked opening, read lexically: the `class`, `module` and
+constant (`Row = Struct.new do`) lines around a definition, found by
+indentation — each the nearest code line above indented less than the
+last, an outdented `private` passed over. A line out of step (a heredoc's)
+ends the walk early, which reaches less. The constant itself stays internal
+when any opening is marked: RDoc's `:nodoc: all` sets the class object's
+`document_self` as plain `:nodoc:` does, and YARD keeps one opening's tags
+unless a later opening brings a docstring of its own (`register_docstring`).
+A nested constant is internal when every one of its openings sits inside a
+marked one. A `private_constant` stays global: Ruby lets nothing outside
+reach a name through it, wherever the name is reopened. rubocop: 34 rows
+gain `api`, 15 `clear` → `lower`, all under `RuboCop::Cop::VariableForce`,
+tagged `@api private` in `variable_force.rb` and reopened unmarked in
+`variable_force/branch.rb`, `assignment.rb`, `variable.rb` and others
+(`Branch::If`, `Variable#capture_with_block!`). YARD would hide them,
+`variable_force.rb` sorting ahead of its directory: over-lowering, the
+side this rule errs to. Every other corpus: no row moves (Arel's unmarked
+`arel.rb` holds no row). Testbed 742.

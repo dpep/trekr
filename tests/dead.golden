@@ -146,3 +146,4 @@
 725-a-library-monorepos-nested-gem-is-api eca551e4329404a0
 740-a-library-with-no-gemspec-is-api ffcee5ee4e4a4bde
 741-a-private-method-marked-doc-is-api 5944f38864a53e09
+742-a-transitive-mark-reaches-its-own-opening 62f3dde2bb07d37f

@@ -32,8 +32,9 @@
     `private_constant`). Not a value constant, nor an app's own engine.
     A `:nodoc:` covers its own class and the methods its body defines, as
     RDoc reads it, so Rails' `module ActiveSupport # :nodoc:` hides
-    nothing nested in it; `:nodoc: all`, `@api private` and
-    `private_constant` cover what is nested too. A method's own `@api
+    nothing nested in it; `:nodoc: all` and `@api private` cover what
+    their marked opening holds too, not another opening of the class, and
+    `private_constant` covers what is nested anywhere. A method's own `@api
     public` overrides its class's `@api private`, as YARD reads it. A
     method under a bare `module_function` is public API by its public
     singleton copy, as one named by `module_function :x` was. A private

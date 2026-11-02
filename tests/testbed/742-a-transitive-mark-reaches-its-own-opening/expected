@@ -1,0 +1,11 @@
+# Arel writes `module Arel # :nodoc: all` in most of its files and not in
+# arel.rb, and one such opening hid everything under the namespace,
+# wherever it was written: a `:nodoc: all`, or YARD's `@api private`, on
+# one opening read as the whole constant's. RDoc and YARD apply what such
+# a mark passes down as they parse, so in another opening the answer
+# depends on file order; the mark now reaches its own opening's body and
+# what is nested in it, and the marked constant itself (DEC-657).
+dead lib Widget#sql=unreferenced~dependents Widget::Table#project=unreferenced~dependents Widget::Node#walk=unreferenced~
+dead lib Widget::Table=unreferenced~dependents Widget::Node=unreferenced~ Widget=unreferenced~
+dead lib Widget::Table::Row#width=unreferenced~
+dead lib Tools#run=unreferenced~dependents Tools::Helper#assist=unreferenced~ Tools::Helper=unreferenced~ Tools=unreferenced~
