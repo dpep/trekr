@@ -883,11 +883,13 @@ holding the rest of the `--json` answer and `rows`, the count (DEC-290).
 **`--dead` weighs a definition against the whole checkout** (DEC-038,
 DEC-074). Methods (`cli::dead::dead_in`) are tiered by their receiver-narrowed
 references, and by where they are written: a method every reference of which
-is in a test is `test-only`, as a class is (DEC-652); classes, modules and
+is in a test is `test-only`, as a class is (DEC-652; a test is under a
+`spec`, `test` or `tests` directory at the checkout's or a package's root,
+`dead_consts::in_tests`); classes, modules and
 constants (`cli::dead_consts`, DEC-420) by the `const_ref` rows that
 resolve to them through Ruby's lookup, a namespace by what it holds. Around both, readers of what the index does not hold, each
-a module of `cli`: the Haml, Slim, Jbuilder and Builder views (`views`;
-ERB and RABL are indexed, DEC-520), names the checkout builds (`built`),
+a module of `cli`: the Haml, Slim, Jbuilder and Builder views and the
+extensionless Ruby scripts (`views`; ERB and RABL are indexed, DEC-520), names the checkout builds (`built`),
 the routes (`routes`), YAML config (`config`), generated files
 (`generated`), and for constants the checkout's Ruby, templates and scripts
 as text (`dead_consts::named`) and the conventions that find a class by its

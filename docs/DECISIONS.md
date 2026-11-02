@@ -15175,6 +15175,8 @@ possible call, symbol, `super`; not an excluded one — is in a file under a
 only from tests (N, first at PATH:LINE)". The predicate is
 `dead_consts::in_tests`, the one DEC-420 tiers constants by, now shared;
 `built::is_test` also counts `db/`, and a migration is production code.
+(Superseded: `built::is_test` is gone, and `in_tests` now matches only at a
+package's root — "Addendum: where a test is" below.)
 
 - **Precedence: a way in production may take outranks the tests.** A route
   or a library's convention (DEC-344, DEC-362, DEC-450), an override

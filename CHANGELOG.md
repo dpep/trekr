@@ -2,66 +2,67 @@
 
 ## Unreleased
 
+- **Upgrading reindexes once** (store v68): the first command after
+  upgrading rebuilds the index, with nothing to run. A script reading
+  `--dead`'s `summary.tiers` sees methods under `test-only` now (below).
+- **`--dead` lists a method only specs and tests call as `test-only`**, as
+  it already did a class, however many calls they write. Such a method was
+  missing when the specs called it more than once, and `single-caller` when
+  once. The reason says how many calls and where the first is, and a method
+  row's `test_refs` counts them, as a constant row's does. A test is a file
+  under a `spec/`, `test/` or `tests/` directory at the checkout's root or
+  a nested package's (`plugins/chat/spec/`), not one inside `lib/` or
+  `app/`. A method that overrides another, or a hook Ruby calls by name,
+  keeps the tier it had, and a spec's own helper is never `test-only`.
+- **`--dead` reads an extensionless Ruby script** (`exe/tool`, `bin/x`),
+  which trekr does not index, for the names it writes: a method one names
+  is not `test-only`, and its row is `lower`, "named in a script
+  (exe/tool), which is not read". A gem's CLI entry method was `test-only`,
+  clear.
 - **`--dead` grades a row reached from outside the repo `lower`, keeping
   its tier, and says what kind of entry point it is**, with `entry_point`
-  in JSON: `gem-api` for a public method, class or module in `lib/` of a
-  checkout with a root `*.gemspec` (not one marked `:nodoc:`, `@api
-  private` or `Internal:`, named with a leading underscore, or under a
-  `private_constant`; not a value constant; not an app's own engine),
-  `route` for a routed controller action or a controller only routes name,
-  `job` for an Active Job or Sidekiq job class nothing outside the tests
-  names. Its caveat names the evidence that would settle it: the gem's
-  dependents or usage data, request logs or APM, job metrics or logs. A
-  routed action was `convention-only`, clear; a gem's documented method
-  only its specs call was `test-only`, clear.
-- **A `def` in `Target.class_eval do … end` inside another class or method
-  is `Target`'s**, as it already was at the top level: it was recorded on
-  the class around the block, so calls to it were residue and `--refs
-  'Target#x'` said `no_such_method`. `Target.instance_eval do def x`
-  makes `Target.x`. `Target` is found as Ruby finds it, through the
-  enclosing class's ancestors too, and an alias (`Gizmo = Gadget`) is
-  followed. A constant written in such a block is the enclosing scope's,
-  as in Ruby, for any receiver (`Faker::Lorem.instance_eval { X = 1 }`
-  defined `Faker::Lorem::X`). This changes what an index records (store
-  v68): trekr reindexes once after upgrading.
+  in JSON:
+  - `gem-api`: a public method, class or module in `lib/` of a checkout
+    with a root `*.gemspec`, unless its author marks it internal
+    (`:nodoc:`, `@api private`, `Internal:`, a leading underscore,
+    `private_constant`). Not a value constant, nor an app's own engine.
+  - `route`: a routed controller action, or a controller only routes name.
+  - `job`: an Active Job or Sidekiq job class nothing outside the tests
+    names.
+
+  The caveat names the evidence that settles it: the gem's dependents or
+  usage data, request logs or APM, job metrics or logs. A routed action was
+  `convention-only`, clear; a gem's documented method only its specs call
+  was `test-only`, clear.
 - **`--dead` grades a class, module or constant row `clear` again when
   nothing in the checkout could reach it by a built name**, instead of
   `lower` on every row. A row is `lower` when the checkout looks up a name
   computed whole (`name.constantize`, `Object.const_get(x)`,
-  `klass.const_get(x)`) — its caveat says where — or a namespace, shape or
-  listing already caveated reaches it. Apps nearly always have such a
-  lookup, so their rows stay `lower`; a gem without one now reads `clear`.
-- **`--dead` lists a method only specs and tests call as `test-only`**, as
-  it does a class, however many calls they write; the reason says how many
-  and where the first is, and a method row's `test_refs` counts them, as a
-  constant row's does. A test is a file under a `spec/`, `test/` or
-  `tests/` directory at the checkout's root or a nested package's
-  (`plugins/chat/spec/`), not one inside `lib/` or `app/`. A Ruby script
-  with no extension (`exe/tool`, `bin/x`), which trekr does not index, is
-  read for the names it writes: one keeps a method off `test-only`, and
-  any method row it names is `lower`, "named in a script (exe/tool), which
-  is not read". Such a method was missing when the specs called
-  it more than once, and `single-caller` when once. One that overrides
-  another method, or a hook Ruby calls by name, keeps the tier it had, and
-  a spec's own helper is never `test-only`. A script
-  reading `summary.tiers` sees methods in `test-only` now.
+  `klass.const_get(x)`), and its caveat says where, or when a namespace,
+  shape or listing already caveated reaches it. Apps nearly always have
+  such a lookup, so their rows stay `lower`; a gem without one now reads
+  `clear`.
 - **`--dead` reads an interpolated string sent by name**,
   `TopicQuery.new(opts).public_send("list_#{filter}")` or `rule =
-  "validate_#{name}"; public_send(rule)`, as it reads `:"list_#{filter}"`:
-  a method of the receiver's class, its ancestors, its subclasses or
-  theirs, whose name fits says "a name of its shape is sent at runtime"
-  and is graded `lower`.
-  A string sent to a variable (`row.public_send("total_#{kind}")`) is left
-  alone.
-- `--dead` no longer lists a class or module that a spec or test
-  file defines and the tests use as `test-only`: it is test code in use, as
-  a spec's own helper method already was. One nothing uses is still
-  `unreferenced`.
+  "validate_#{name}"; public_send(rule)`, as it reads `:"list_#{filter}"`.
+  A method whose name fits, in the receiver's class, its ancestors, its
+  subclasses or theirs, says "a name of its shape is sent at runtime" and
+  is graded `lower`. A string sent to a variable
+  (`row.public_send("total_#{kind}")`) is left alone.
+- **A `def` in `Target.class_eval do … end` inside another class or method
+  is `Target`'s**, as it already was at the top level. It was recorded on
+  the class around the block, so calls to it were residue and `--refs
+  'Target#x'` said `no_such_method`. `Target.instance_eval do def x` makes
+  `Target.x`. The `def`'s owner is found as Ruby finds `Target`, through
+  the enclosing class's ancestors too, and an alias (`Gizmo = Gadget`) is
+  followed.
+- `--dead` no longer lists a class or module that a spec or test file
+  defines and the tests use as `test-only`: it is test code in use, as a
+  spec's own helper method is. One nothing uses is still `unreferenced`.
 - `--dead` no longer says a method "calls `super`, so it overrides a method
-  trekr has not indexed" — and grades it `lower` — when the `super` is in a
-  `def` nested in its body, or in a block it hands to `define_method` or
-  `define_singleton_method` (`send(:define_method, :x) { super() }`), which
-  is the defined method's.
+  trekr has not indexed", and grades it `lower`, when the `super` belongs
+  to a `def` nested in its body or to a block it hands to `define_method`
+  or `define_singleton_method` (`send(:define_method, :x) { super() }`).
 - `--dead` no longer takes a `test/` or `spec/` directory inside `lib/` or
   `app/` for tests: rack-test's library is `lib/rack/test/`, so a constant
   only it used was `test-only`, and a name it builds and sends was not read.

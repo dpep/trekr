@@ -104,7 +104,7 @@ brew unlink trekr   # …verify…   then:   brew link trekr
 - **`tests/json-shapes.golden` pins the `--json` output's shape**: every
   field path the testbed's answers reach, per command, the JSON types seen
   there, and the values of a closed vocabulary (`status`, `resolved_via`,
-  `under`, `tier`, `kind`). A field that changes type or vanishes, or a
+  `under`, `tier`, `kind`, `entry_point`). A field that changes type or vanishes, or a
   value renamed or added, fails the testbed; when
   the change is meant (or only adds fields), regenerate with
   `UPDATE_GOLDEN=1 cargo test --test testbed` — and update

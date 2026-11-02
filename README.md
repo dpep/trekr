@@ -215,10 +215,12 @@ The tiers, from least evidence of use to most:
 
 Each row is `clear` or `lower` confidence, and says why in words. It is one
 pass and does not cascade: a method whose only caller is itself a candidate
-is `single-caller`, and its reason says so. Two callers trekr cannot see grade
-a row `lower` and are named in `caveat`: a Haml, Slim, Jbuilder or Builder
-template that writes the name (ERB and RABL templates are read, and their
-calls counted), and Ruby or Rails calling a protocol hook by name
+is `single-caller`, and its reason says so. Three callers trekr cannot see
+grade a row `lower` and are named in `caveat`: a Haml, Slim, Jbuilder or
+Builder template that writes the name (ERB and RABL templates are read, and
+their calls counted), a Ruby script with no extension that does (`exe/tool`,
+`bin/x`: "named in a script … which is not read"), and Ruby or Rails calling
+a protocol hook by name
 — `marshal_load`, `to_partial_path`, `each`, `perform`, … (DEC-315). So
 does a symbol in the method's own file that trekr does not read as a call
 (`only: [:archive]`), and a controller action when a route is built at
@@ -242,16 +244,20 @@ rest (DEC-450). On code unlike an app's (`lib/`), less — read DEC-372 before
 trusting it on a CLI or a library.
 
 **A method every call, symbol and `super` of which is written in a test**
-(under a `spec`, `test` or `tests` directory) is `test-only`, however many
-there are; the reason says how many and where the first is. A route, a
-library's convention, an override, a `super` into a method trekr has not
-indexed, or a protocol hook outranks the tests: such a method keeps the tier
-it would have without them. A spec's own helper is never `test-only`. Graded
+is `test-only`, however many there are; the reason says how many and where
+the first is, and `test_refs` in JSON counts them. A test is a file under a
+`spec/`, `test/` or `tests/` directory at the checkout's root or a nested
+package's (`plugins/chat/spec/`), not one inside `lib/` or `app/`
+(rack-test's library is `lib/rack/test/`). A route, a library's convention,
+an override, a `super` into a method trekr has not indexed, a protocol hook,
+or a script that writes the name outranks the tests: such a method keeps the
+tier it would have without them. A spec's own helper is never `test-only`. Graded
 as the other method tiers are: measured by hand on mastodon and discourse
 (DEC-652), a `clear` one was reached only by tests 21 times in 26 (81 %),
 the misses all names built at runtime (`public_send("list_#{action}")`),
-which are now read (DEC-655); a `lower` one 7 in 25. On a library, a public `test-only` method is usually
-its API: the specs are its only callers in the checkout.
+which are now read (DEC-655); a `lower` one 7 in 25. On a library, a
+public `test-only` method is usually its API, so in a gem it is graded
+`lower` as an entry point (below).
 
 **A row reached from outside the repo** keeps its tier, is graded `lower`,
 and says what kind of entry point it is and what would settle it, with
@@ -272,8 +278,9 @@ when no constant reference in the checkout resolves to it by Ruby's own
 lookup — the views and executable scripts read too. A reference to
 `Admin::Widget` is a use of `Admin`, which holds it; one inside its own body
 is not a use; a reopened core or gem class is no candidate, nor anything
-under `db/`. A class only tests name is `test-only`, unless a test file
-defines it: then it is test code in use, and not listed (DEC-655). One Rails or a library
+under the checkout's or a package's `db/`. A class only tests name is
+`test-only`, unless a test file defines it: then it is test code in use, and
+not listed (DEC-655). One Rails or a library
 finds by name is `convention-only`, `convention.by` saying who: a route, a
 helper, a concern's `ClassMethods`, a Railtie or generator, a policy,
 serializer or validator found by its name, a job built from a symbol

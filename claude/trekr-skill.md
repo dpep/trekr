@@ -151,7 +151,7 @@ often a `caveat`.
 | --- | --- |
 | `unreferenced` | nothing names it |
 | `shadowed` | every call lands on an override (`overridden_by`), so this one never runs |
-| `test-only` | a method only specs call, or a class or constant only specs name. On a gem, a public one is usually its API |
+| `test-only` | a method only tests call, or a class or constant only tests name (`test_refs` counts them). A test is under a root or package `spec/`, `test/`, `tests/`, not one in `lib/` or `app/` |
 | `override` | nothing names it, but it overrides an ancestor method (`overrides`) a framework may call |
 | `convention-only` | reached only by a macro symbol, a route, or a by-name lookup (`convention.by`). Usually means it *is* used |
 | `super-only` | reached only by `super` from `super_from`. It's live exactly when they are |
@@ -162,19 +162,24 @@ found; here is what was checked". Before deleting:
 
 - Read `confidence` and `caveat`. A `caveat` names a way in trekr can't see:
   `send`/`method_missing`, a computed name, a Haml or Slim view (ERB and RABL
-  are read), a hook Ruby calls by name (`marshal_load`, `perform`), an
-  unindexed ancestor, or a gem.
-- **Every class, module and constant row is `lower`** unless a convention
-  names it. Treat it as a lead, not a verdict.
+  are read), an extensionless script (`exe/tool`), a hook Ruby calls by name
+  (`marshal_load`, `perform`), an unindexed ancestor, or a gem.
+- **`test-only`, `clear`, no `entry_point`:** nothing but tests was found
+  to use it. Deleting it means deleting the tests that exercise it too.
+- **A class, module or constant row is `lower`** when the checkout looks up
+  a name computed at runtime (`x.constantize`, `Object.const_get(x)`) —
+  nearly every app does, and the caveat names the site — and `clear`
+  otherwise. Either way, a lead, not a verdict.
 - **Every spec-member row is `lower`.** Run the spec file after deleting a
   `let`. (`let!` is never listed.)
 - `visibility: private` means the evidence is complete. A `public` method may
   have callers outside the checkout.
 - **An `entry_point` row is reached from outside the repo**: `gem-api` (a
   gem's public API), `route` (a routed action or controller), `job` (a job
-  class no code enqueues). It is always `lower`; its callers are invisible to
-  trekr, so settle it with what the caveat names — the gem's dependents,
-  request logs or APM, job metrics — not with trekr.
+  class nothing outside the tests names). It is always `lower`, whatever its
+  tier; its callers are invisible to trekr, so don't delete it on trekr's
+  word. Settle it with what the caveat names — the gem's dependents, request
+  logs or APM, job metrics.
 - **One pass, no cascade.** A method whose only caller is itself a candidate
   is `single-caller`, and its reason says so. Delete the caller, re-index, and
   ask again.
