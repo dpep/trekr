@@ -387,9 +387,10 @@ the first is, and `test_refs` counts them. A test is a file under a
 `spec/`, `test/` or `tests/` directory at the checkout's root or a nested
 package's (`plugins/chat/spec/`), not one inside `lib/` or `app/`
 (rack-test's library is `lib/rack/test/`). A route, a library's convention,
-an override, a `super` into a method trekr has not indexed, a protocol hook,
-or a script that writes the name outranks the tests: such a method keeps the
-tier it would have without them. A spec's own helper is never `test-only`.
+an override, a `super` into a method trekr has not indexed, or a protocol
+hook outranks the tests: such a method keeps the tier it would have without
+them. A script or a view that writes the name does not: the row stays
+`test-only`, graded `lower`, and says so. A spec's own helper is never `test-only`.
 
 Graded as the other method tiers are: measured by hand on mastodon and
 discourse (DEC-652), a `clear` one was reached only by tests 21 times in 26

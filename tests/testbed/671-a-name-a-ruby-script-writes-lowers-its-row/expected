@@ -1,0 +1,5 @@
+# A Ruby script with no extension (a gem's exe/, an app's bin/) is not
+# indexed, so the CLI entry point it calls was `test-only`, clear. A row
+# whose name its code writes keeps its tier and says so, graded `lower`.
+# Its comments and heredoc text name nothing.
+dead lib Tool::CLI#start=test-only~exe/tool Tool::CLI#banner=unreferenced~exe/tool Tool::CLI#usage=test-only~

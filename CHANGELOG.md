@@ -16,10 +16,10 @@
   keeps the tier it had, as does one a route or a library's convention
   reaches (a Pundit predicate), and a spec's own helper is never `test-only`.
 - **`--dead` reads an extensionless Ruby script** (`exe/tool`, `bin/x`),
-  which trekr does not index, for the names it writes: a method one names
-  is not `test-only`, and its row is `lower`, "named in a script
-  (exe/tool), which is not read". A gem's CLI entry method was `test-only`,
-  clear.
+  which trekr does not index, for the names it writes: a row one names
+  keeps its tier and is `lower`, "named in a script (exe/tool), which is
+  not read", as a Haml view's word grades it. A gem's CLI entry method was
+  `test-only`, clear.
 - **`--dead` grades a row reached from outside the repo `lower`, keeping
   its tier, and says what kind of entry point it is**, with `entry_point`
   in JSON:

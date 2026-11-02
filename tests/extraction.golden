@@ -717,8 +717,8 @@ ruby tests/testbed/669-a-test-directory-under-lib-or-app-is-production/plugins/c
 ruby tests/testbed/669-a-test-directory-under-lib-or-app-is-production/spec/gadget_spec.rb 92244213a0d8263c
 ruby tests/testbed/670-a-super-in-a-define-method-block-is-the-defined-methods/lib/widget.rb 57b920f92275295f
 ruby tests/testbed/670-a-super-in-a-define-method-block-is-the-defined-methods/spec/widget_spec.rb bc8208295aa4a514
-ruby tests/testbed/671-a-name-a-ruby-script-writes-is-no-test-only-method/lib/tool/cli.rb 53ac1de763bc3b2a
-ruby tests/testbed/671-a-name-a-ruby-script-writes-is-no-test-only-method/spec/cli_spec.rb a0800e4a7db99a9a
+ruby tests/testbed/671-a-name-a-ruby-script-writes-lowers-its-row/lib/tool/cli.rb 53ac1de763bc3b2a
+ruby tests/testbed/671-a-name-a-ruby-script-writes-lowers-its-row/spec/cli_spec.rb a0800e4a7db99a9a
 ruby tests/testbed/680-a-two-letter-namespace-bounds-a-built-shape/lib/runner.rb a8321c0fe36cfe05
 ruby tests/testbed/680-a-two-letter-namespace-bounds-a-built-shape/lib/tools.rb 389eaadcf9746b3c
 ruby tests/testbed/680-a-two-letter-namespace-bounds-a-built-shape/lib/ui.rb ebe80ab5696c396e
@@ -790,6 +790,8 @@ ruby tests/testbed/721-a-methods-own-api-tag-overrides-its-classes/widget.gemspe
 ruby tests/testbed/722-a-module-functions-public-copy-is-api/lib/widget.rb f90c187e3788517e
 ruby tests/testbed/722-a-module-functions-public-copy-is-api/spec/widget_spec.rb e27f21dd65a627c1
 ruby tests/testbed/722-a-module-functions-public-copy-is-api/widget.gemspec dea196826b99e33b
+ruby tests/testbed/723-a-name-a-script-writes-lowers-a-test-only-row/app/models/job.rb 9ca3a0c2d9ed6f11
+ruby tests/testbed/723-a-name-a-script-writes-lowers-a-test-only-row/spec/job_spec.rb 70454fe2ec7576ad
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

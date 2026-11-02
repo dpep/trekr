@@ -850,11 +850,10 @@ fn dead_in(
             .filter(|r| r.tier != refs::Tier::Excluded)
             .collect();
         // A Ruby script the index does not read (`exe/tool`) writing its
-        // name is a way in outside the tests, untyped as a possible call is.
+        // name is untyped, as a view's word is: a caveat below, not a way in.
         let tests_only = !ways_in.is_empty()
             && ways_in.iter().all(|r| dead_consts::in_tests(&r.path))
-            && !dead_consts::in_tests(&relative(file))
-            && scripts.naming(&def.name).is_none();
+            && !dead_consts::in_tests(&relative(file));
         let seen = live.tier.map(DeadTier::from);
         // A name plainly used by its count was searched only in case the
         // tests are all that use it: any other answer stays as the count had it.

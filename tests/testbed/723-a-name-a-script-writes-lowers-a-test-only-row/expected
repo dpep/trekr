@@ -1,0 +1,6 @@
+# A Rails-standard `bin/setup` writes `File.expand_path`, and a model's
+# `#expand_path`, which only specs call, vanished from `--dead`: a word a
+# script writes took it off `test-only`, and the specs' calls then made it
+# used. A script's word is untyped, as a view's is: the row stays
+# `test-only` and is graded `lower`, saying so (DEC-652).
+dead app Job#expand_path=test-only~bin/setup Job#restart=test-only~

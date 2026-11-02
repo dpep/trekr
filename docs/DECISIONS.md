@@ -15362,6 +15362,22 @@ calls of the method (`ImportExport.export_topics`, `.export_categories`
 in `script/discourse`); the rest are a local, a keyword or a symbol of the
 name — the views' noise, at the views' grade. Testbed 671.
 
+**Revised** (re-hunt, F5): a script's word no longer takes a method off
+`test-only`. As decided above, a method a script named stopped being
+`test-only`, and then the specs' own calls made it used: a model's
+`#expand_path`, which only specs call, vanished from `--dead` because a
+Rails-standard `bin/setup` writes `File.expand_path`. A script's word is
+untyped, as a view's is, and a view's word keeps the row `test-only` and
+graded `lower`; a script's now does the same, with the same "named in a
+script (…), which is not read" caveat. The gem CLI entry points above stay
+listed — `test-only`, `lower`, naming the script — where they had left the
+list. Measured, the build before → this: streaming_stats' `#insert`,
+`#stddev`, `#quantile` and iriq's `CLI#run` come back as `test-only`,
+`lower` (and public API, DEC-657); discourse's `Scheduler::Deferrable#pause`
+`single-caller` → `test-only`, `lower` either way (its single caller was the
+Thor `option :pause` word); rails, mastodon and the gems of DEC-657's fix
+round: no row moves. Testbed 671 (revised), 723.
+
 ## DEC-655 — Names built where `--dead` did not read them: strings sent by name, and test files
 
 ### A. An interpolated string sent by name is a shape, for the class it is sent to
