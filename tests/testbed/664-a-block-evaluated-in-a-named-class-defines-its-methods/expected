@@ -1,0 +1,8 @@
+# A block evaluated in a class named by a constant, inside another scope.
+# A qualified constant was already placed (DEC-086); a block evaluated on
+# `self`, implicitly or not, already defines on the class around it.
+def probe.rb:18:22 status=resolved owner=Outer::Inner
+def probe.rb:43:5 status=resolved owner=Probe
+def probe.rb:61:5 status=resolved owner=Probe
+# The block's mixin is no edge on the scope around it.
+ancestors Probe Probe,Object
