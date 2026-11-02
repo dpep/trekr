@@ -14997,6 +14997,11 @@ the gems measured above.
   computed-whole lookup. `each_object(Widget)` lists instances, no class.
   Testbed 682, 683. No row moved: the corpora's only `each_object` calls
   list instances (discourse's `MiniRacer::Context`).
+- **`Object.constants` fetched is a computed-whole lookup.** A namespace's
+  own listing (`constants.map { |c| const_get(c) }`) stays scoped to it, but
+  `Object.constants.map { |c| Object.const_get(c) }` (or `Module.`,
+  `Kernel.`) fetches every top-level constant, and was read as neither.
+  Testbed 684. No row moved.
 
 ## DEC-653 — A block evaluated in a class named by a bare constant defines that class's methods, wherever it is written
 

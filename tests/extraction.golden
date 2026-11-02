@@ -728,6 +728,9 @@ ruby tests/testbed/682-object-space-lists-a-bases-subclasses/lib/leaf.rb 5f0f334
 ruby tests/testbed/682-object-space-lists-a-bases-subclasses/lib/orphan.rb d39cf032b4680274
 ruby tests/testbed/683-object-space-lists-any-class/lib/orphan.rb d39cf032b4680274
 ruby tests/testbed/683-object-space-lists-any-class/lib/registry.rb 34fcee52e952bda2
+ruby tests/testbed/684-objects-constants-listing-reaches-any-top-level-constant/lib/loader.rb eb198b86e3e6db58
+ruby tests/testbed/684-objects-constants-listing-reaches-any-top-level-constant/lib/ns.rb 1ca65f6fb0d127f4
+ruby tests/testbed/684-objects-constants-listing-reaches-any-top-level-constant/lib/orphan.rb d39cf032b4680274
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/alias.rb f49a22486d2a111b
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/gem.rb a48ad81018869404
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/inherited.rb 12d09cef784af61a

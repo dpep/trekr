@@ -121,3 +121,4 @@
 681-a-heredocs-text-looks-nothing-up 849030f9633afbe7
 682-object-space-lists-a-bases-subclasses 42b6e3f31e0699bb
 683-object-space-lists-any-class 412d373a65de1563
+684-objects-constants-listing-reaches-any-top-level-constant 5245393dc6b36158

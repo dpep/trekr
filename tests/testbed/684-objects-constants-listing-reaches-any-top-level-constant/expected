@@ -1,0 +1,5 @@
+# `Object.constants.map { |c| Object.const_get(c) }` fetches every top-level
+# constant, which nothing bounds: Orphan is lower and the caveat cites the
+# lookup. A namespace's own listing stays scoped to it (Ns::Inner). Orphan
+# was clear (DEC-654).
+dead lib Orphan=unreferenced~Object.const_get Ns::Inner=unreferenced~namespace

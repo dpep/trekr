@@ -751,7 +751,11 @@ fn unscoped_lookup(line: &str) -> Option<String> {
             continue;
         }
         // Each constant a namespace lists, fetched: that listing's to bound.
-        if line.contains("constants") {
+        // Object's lists every top-level constant, which nothing bounds.
+        let top_level = listings(line, &[".constants"])
+            .iter()
+            .any(|listed| matches!(listed.as_str(), "Object" | "Module" | "Kernel"));
+        if line.contains("constants") && !top_level {
             continue;
         }
         let receiver = match before {
@@ -928,6 +932,10 @@ mod tests {
             ("self.class.const_get(\"#{x}\")", "self.class.const_get"),
             ("const_get(name.upcase)", "const_get"),
             ("type.to_s.camelize.constantize()", "constantize"),
+            (
+                "Object.constants.each { |c| Object.const_get(c) }",
+                "Object.const_get",
+            ),
         ] {
             assert_eq!(unscoped_lookup(line).as_deref(), Some(call), "{line}");
         }
