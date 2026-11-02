@@ -920,7 +920,8 @@ fn dead_in(
         // that is weaker than a clear single caller, and says why.
         let mut risky = risky.clone();
         // Nothing seen constructs it, and a class is constructed wherever it
-        // is handed, by name: graded lower as a class is (DEC-450, DEC-541).
+        // is handed, by name: always graded lower (DEC-541). A class row is
+        // lower only on evidence now (DEC-654); this is not re-measured.
         if constructor {
             let ancestors = tree.ancestors(&owner);
             let exception = |name: &String| matches!(name.as_str(), "Exception" | "StandardError");
