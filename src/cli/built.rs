@@ -255,9 +255,18 @@ impl Built {
             ));
         }
         let names = |constant: &str| owner == constant || owner.ends_with(&format!("::{constant}"));
-        // A string sent to a class reaches its chain, and its subclasses'.
+        // A string sent to a class reaches its chain, and its subclasses'
+        // whole chains: the receiver may be any of them, and so reach a
+        // module only a subclass includes, or a class a module's includer
+        // inherits.
         let related = |class: &str| {
-            names(class) || tree.inherits(class, owner) || tree.inherits(owner, class)
+            names(class)
+                || tree.inherits(class, owner)
+                || tree.inherits(owner, class)
+                || tree
+                    .includers_of(class)
+                    .iter()
+                    .any(|sub| tree.inherits(sub, owner))
         };
         if let Some((shape, _, (path, line))) = self
             .sent

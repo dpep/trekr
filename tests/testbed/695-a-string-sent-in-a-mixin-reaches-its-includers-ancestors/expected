@@ -1,0 +1,5 @@
+# A string Mixin sends to self is sent to a Sub that includes it, whose
+# chain holds the Widget it inherits: Widget#handle_ping is lower. Gadget,
+# in no includer's chain, stays clear. Only Mixin and its includers' own
+# methods were reached (DEC-655).
+dead lib Mixin#handle_mix=unreferenced~sent Widget#handle_ping=unreferenced~sent Gadget#handle_ping=unreferenced!~sent

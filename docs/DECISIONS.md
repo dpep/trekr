@@ -15329,7 +15329,8 @@ characters or more written before the first interpolation;
 `send("#{x}_check")` is no shape), with the same grade: a caveat, "a name
 of its shape is sent at runtime (`list_*` at app/x.rb:68)", graded
 `lower`, the tier kept. Unlike a symbol's, the shape reaches only **the
-class it is sent to**, its chain and its subclasses:
+class it is sent to**, its chain, its subclasses and their chains (the
+fix round below):
 
 - no receiver, `self.`, or a bare `new(…).`: the class the send is
   written in (from the file's parse, so `BaseTimer`'s
@@ -15465,3 +15466,10 @@ the gems DEC-654 measured.
   `new` alone (`self.helper.send(…)` is a value too). Any other chain is a
   value, whose sends are not read (above). Testbed 693. No row moved: no
   corpus sends a string through another call of a constant.
+- **A send reaches every chain its receiver may have.** The receiver of a
+  send written in a class may be any subclass, and one written in a module
+  any includer, so a shape reaches the methods of every class and module in
+  those chains: a module only a subclass includes (`Sub < Widget; include
+  Mixin`, for a send in Widget), and a class a module's includer inherits
+  (Widget, for a send in Mixin). Both were clear. Testbed 694, 695. No row
+  moved on any corpus.

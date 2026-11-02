@@ -129,3 +129,5 @@
 689-a-local-assigned-on-the-sends-line-is-read 884f8d3397758379
 692-a-sent-local-is-its-methods-as-last-assigned a5880fc012172f7b
 693-a-chain-through-an-unknown-call-is-a-value f5da5dc1f875aab6
+694-a-string-sent-in-a-class-reaches-its-subclasses-mixins 0069700514b15923
+695-a-string-sent-in-a-mixin-reaches-its-includers-ancestors d9b906336339e065

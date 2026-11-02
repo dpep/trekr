@@ -747,6 +747,14 @@ ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/probe.
 ruby tests/testbed/690-an-evaluated-block-places-only-what-a-lookup-finds/target.rb eb8b950dfe369aed
 ruby tests/testbed/692-a-sent-local-is-its-methods-as-last-assigned/lib/senders.rb 079a67c9c9873291
 ruby tests/testbed/693-a-chain-through-an-unknown-call-is-a-value/lib/widget.rb 73fd0265f808cfc0
+ruby tests/testbed/694-a-string-sent-in-a-class-reaches-its-subclasses-mixins/lib/dispatch.rb 277be5d80982e27c
+ruby tests/testbed/694-a-string-sent-in-a-class-reaches-its-subclasses-mixins/lib/mixin.rb e9debc125f0000c7
+ruby tests/testbed/694-a-string-sent-in-a-class-reaches-its-subclasses-mixins/lib/sub.rb fbee2bfca6764b74
+ruby tests/testbed/694-a-string-sent-in-a-class-reaches-its-subclasses-mixins/lib/widget.rb d99aea2a585f1f44
+ruby tests/testbed/695-a-string-sent-in-a-mixin-reaches-its-includers-ancestors/lib/dispatch.rb 88fa81cf66053fc8
+ruby tests/testbed/695-a-string-sent-in-a-mixin-reaches-its-includers-ancestors/lib/mixin.rb 6018f157fdddadb8
+ruby tests/testbed/695-a-string-sent-in-a-mixin-reaches-its-includers-ancestors/lib/sub.rb fbee2bfca6764b74
+ruby tests/testbed/695-a-string-sent-in-a-mixin-reaches-its-includers-ancestors/lib/widget.rb d99aea2a585f1f44
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

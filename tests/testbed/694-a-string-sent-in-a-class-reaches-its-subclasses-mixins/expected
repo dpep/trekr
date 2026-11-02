@@ -1,0 +1,5 @@
+# A string Widget sends to self may be sent to a Sub, whose chain holds the
+# Mixin it includes: Mixin#handle_mix is lower. Other, in no subclass's
+# chain, stays clear. Only Widget's chain and its subclasses' own methods
+# were reached (DEC-655).
+dead lib Widget#handle_ping=unreferenced~sent Mixin#handle_mix=unreferenced~sent Other#handle_other=unreferenced!~sent

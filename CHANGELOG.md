@@ -36,8 +36,9 @@
 - **`--dead` reads an interpolated string sent by name**,
   `TopicQuery.new(opts).public_send("list_#{filter}")` or `rule =
   "validate_#{name}"; public_send(rule)`, as it reads `:"list_#{filter}"`:
-  a method of the receiver's class, its ancestors or subclasses whose name
-  fits says "a name of its shape is sent at runtime" and is graded `lower`.
+  a method of the receiver's class, its ancestors, its subclasses or
+  theirs, whose name fits says "a name of its shape is sent at runtime"
+  and is graded `lower`.
   A string sent to a variable (`row.public_send("total_#{kind}")`) is left
   alone.
 - `--dead` no longer lists a class or module that a spec or test
