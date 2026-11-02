@@ -12,7 +12,8 @@ use crate::tree::Tree;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(super) enum EntryPoint {
-    /// Public API: a public method, class or module under a gem's `lib/`.
+    /// Public API: a public or protected method, class or module under a
+    /// gem's `lib/`.
     Api,
     /// A controller action a route reaches, or a controller only routes name.
     Route,

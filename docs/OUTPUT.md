@@ -407,7 +407,7 @@ otherwise. Its `caveat` names the evidence that would settle it.
 
 | `entry_point` | what it is | settle it with |
 | --- | --- | --- |
-| `api` | a public method, class or module, or a constant bound to a constant path, resolved or not (`Worker = Job`, `Client = OtherGem::Client`), or to a `DeprecatedConstantProxy`, in a library's `lib/`: the checkout's own `lib/`, or one beside a nested `*.gemspec`, in a checkout that is no app — no `config/application.rb` at its root, gemspec or not, nor a `config.ru` or an `app/` without a root `*.gemspec` (an engine gem's `app/`, a gem's demo `config.ru`) — (a Hoe gem has no gemspec until release), unless marked internal (`:nodoc:` on its line; in the comment above, `@api private` or `@private` opening a line, as YARD reads a tag, or `Private:` or `Internal:` opening its first, as TomDoc), named with a leading underscore, or held by a `private_constant` | its dependents, or usage data |
+| `api` | a public or protected method (RDoc documents protected ones), a class or module, or a constant bound to a constant path, resolved or not (`Worker = Job`, `Client = OtherGem::Client`), or to a `DeprecatedConstantProxy`, in a library's `lib/`: the checkout's own `lib/`, or one beside a nested `*.gemspec`, in a checkout that is no app — no `config/application.rb` at its root, gemspec or not, nor a `config.ru` or an `app/` without a root `*.gemspec` (an engine gem's `app/`, a gem's demo `config.ru`) — (a Hoe gem has no gemspec until release), unless marked internal (`:nodoc:` on its line; in the comment above, `@api private` or `@private` opening a line, as YARD reads a tag, or `Private:` or `Internal:` opening its first, as TomDoc), named with a leading underscore, or held by a `private_constant` | its dependents, or usage data |
 | `route` | a routed controller action, or a controller only routes name | request logs or APM (e.g. Datadog) |
 | `job` | a job class nothing outside the tests names | job metrics or logs |
 
@@ -420,8 +420,8 @@ another opening of it defines; a `private_constant` hides everything
 nested in it, wherever written; a method's own `@api
 public` overrides its class's `@api private` (YARD). A method under
 `module_function` is public by its singleton copy, until a bare
-`private`, `protected` or `public` ends that mode (after `public` it is a
-public instance method). A private, protected or
+`private`, `protected` or `public` ends that mode (after `public` or
+`protected` it is an instance method that is API). A private or
 underscored method marked RDoc's `:doc:` (opening its line's comment, or a
 line of the comment above) is API, as RDoc documents it.
 

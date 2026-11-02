@@ -16029,3 +16029,19 @@ entry point refuses. The module's own row stays internal, though RDoc
 stores it once it holds a documented method: a second rule, not taken in a
 fix round. Measured: rails 3 rows gain `api`, 3 `clear` → `lower`, the three
 above. Every other corpus: no row moves. Testbed 763.
+
+**A protected method is API** (the lead's decision, toward caution; its own
+commit, to revert alone). DEC-657 counted public methods only, but RDoc's
+default visibility is `:protected` (`RDoc::Options.new.visibility`), so
+RDoc documents a library's protected methods, and a subclass outside the
+repo calls them. A protected method in a library's `lib/` now counts as a
+public one does, under the same marks; after a bare `module_function`, a
+bare `protected` leaves an instance method that is API, as `public` does.
+`initialize` stays out, private wherever written. Measured: faraday 9 rows
+gain `api`, 9 `clear` → `lower` (`EncodeMethods#encode_hash`,
+`DecodeMethods#decode_pair` and their kin, `Error#exc_msg_and_response`);
+rails 5, all already `lower` (`ActionController::Parameters#nested_attributes?`,
+`Railtie#increment_load_index`); rack 1, 1 (`Response::Helpers#append`);
+sdoc 15, 15 (`RDoc::Generator::SDoc#generate_index_file`,
+`SDoc::GitHub#repository_url`). Every other corpus: no row moves. Testbed
+762.

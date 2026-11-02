@@ -23,7 +23,8 @@
 - **`--dead` grades a row reached from outside the repo `lower`, keeping
   its tier, and says what kind of entry point it is**, with `entry_point`
   in JSON:
-  - `api`: a public method, class or module in a library's `lib/` — the
+  - `api`: a public or protected method (RDoc documents protected ones),
+    a class or module in a library's `lib/` — the
     checkout's own, or one beside a nested `*.gemspec` (protobuf's
     `ruby/`) — in a checkout that is no app: no `config/application.rb`
     at its root, gemspec or not, nor a `config.ru` or an `app/` without a
@@ -46,7 +47,7 @@
     public` overrides its class's `@api private`, as YARD reads it. A
     method under a bare `module_function` is public API by its public
     singleton copy, as one named by `module_function :x` was, until a
-    bare `private` or `protected` ends that mode. A private
+    bare `private` ends that mode. A private
     or underscored method marked `:doc:` is public API, as RDoc
     documents it (Rails' `RequestForgeryProtection#verified_request?`).
   - `route`: a routed controller action, or a controller only routes name.

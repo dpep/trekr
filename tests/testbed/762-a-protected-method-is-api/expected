@@ -1,0 +1,8 @@
+# RDoc's default visibility is `:protected` (`RDoc::Options#visibility`),
+# so it documents a library's protected methods, and a subclass outside
+# the repo may call them; trekr graded them as private, `clear`. A
+# protected method is public API as a public one is, under the same marks;
+# a private one still is not, and after `module_function` a bare
+# `protected` leaves an instance method that is API (DEC-657).
+dead lib Widget::Request#merge_params=unreferenced~dependents Widget::Request#scratch=unreferenced~ Widget::Request#helper=unreferenced~
+dead lib Widget::Util#literal?=unreferenced~dependents

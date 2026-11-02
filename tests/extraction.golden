@@ -838,6 +838,8 @@ ruby tests/testbed/760-a-gems-demo-config-ru-keeps-its-api/lib/widget.rb 084ed6b
 ruby tests/testbed/760-a-gems-demo-config-ru-keeps-its-api/widget.gemspec dea196826b99e33b
 ruby tests/testbed/761-a-constant-naming-an-unindexed-class-is-api/lib/widget.rb 0ef20cee50fb4e30
 ruby tests/testbed/761-a-constant-naming-an-unindexed-class-is-api/widget.gemspec dea196826b99e33b
+ruby tests/testbed/762-a-protected-method-is-api/lib/widget.rb 7677759510058ce3
+ruby tests/testbed/762-a-protected-method-is-api/widget.gemspec dea196826b99e33b
 ruby tests/testbed/763-a-doc-line-reopens-a-nodoc-body/lib/widget.rb eb341ccef1e68b55
 ruby tests/testbed/763-a-doc-line-reopens-a-nodoc-body/widget.gemspec dea196826b99e33b
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
