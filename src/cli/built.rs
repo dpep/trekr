@@ -200,6 +200,8 @@ impl Built {
                 }
             }
             let indent = line.len() - line.trim_start().len();
+            // Every name in `SENDS` spells one of these, and most lines neither.
+            let sends = line.contains("send") || line.contains("try");
             for statement in statements(line) {
                 // A local is the method's: another method's of the same name
                 // is another local.
@@ -207,6 +209,9 @@ impl Built {
                     held.clear();
                 }
                 hold(&mut held, statement, indent);
+                if !sends {
+                    continue;
+                }
                 for (shape, to) in sent_strings(statement, &held) {
                     sendings.push(Sending {
                         shape,
@@ -216,7 +221,11 @@ impl Built {
                     });
                 }
             }
-            for constant in computed_sends(line) {
+            let computed = match sends {
+                true => computed_sends(line),
+                false => Vec::new(),
+            };
+            for constant in computed {
                 if !self.sent_to.iter().any(|(known, _)| *known == constant) {
                     self.sent_to.push((constant, at.clone()));
                 }
@@ -591,6 +600,16 @@ fn constant_before(text: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn every_send_passes_the_line_gate() {
+        for send in SENDS {
+            assert!(
+                send.contains("send") || send.contains("try"),
+                "`read_file` skips a line naming `{send}`"
+            );
+        }
+    }
 
     #[test]
     fn an_interpolated_symbol_is_a_shape_when_it_spells_enough() {
