@@ -1,0 +1,8 @@
+# Script lines Ruby allows: a `do |item|` with a comment after it,
+# `while x do`, and `rescue => e`. Input for the reader's fix; what passes
+# today.
+def app/views/widgets/comment.html.haml:2:5 variable=parameter
+def app/views/widgets/loop.html.haml:1:9 status=resolved via=view owner=WidgetsHelper
+def app/views/widgets/loop.html.haml:2:5 status=resolved via=view owner=WidgetsHelper
+def app/views/widgets/rescued.html.haml:2:5 status=resolved via=view owner=WidgetsHelper
+dead app/helpers/widgets_helper.rb WidgetsHelper#in_while=single-caller~

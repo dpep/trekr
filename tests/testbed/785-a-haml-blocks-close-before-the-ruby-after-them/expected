@@ -1,0 +1,7 @@
+# Haml blocks ending where the markup before the next Ruby has too few bytes
+# for their closes: two at the left margin at once, and a `#{}` at the left
+# margin after one. Input for the reader's fix; what passes today.
+def app/views/widgets/nested.html.haml:3:7 variable=parameter
+def app/views/widgets/index.html.haml:4:9 status=resolved via=view owner=WidgetsHelper
+def app/views/widgets/interpolated.html.haml:2:5 variable=parameter
+dead app/helpers/widgets_helper.rb WidgetsHelper#heading=single-caller~

@@ -158,3 +158,6 @@
 762-a-protected-method-is-api 8fdaea8b119c644e
 763-a-doc-line-reopens-a-nodoc-body 6671f4d867ccd9f8
 780-a-haml-templates-ruby-is-read-in-place f4fdae49d340edac
+785-a-haml-blocks-close-before-the-ruby-after-them e4950f479df9d926
+786-a-haml-ruby-filter-is-one-ruby-run 2f47258bef631f41
+787-a-haml-scripts-comment-while-do-and-rescue 5e74c48ca96d765f

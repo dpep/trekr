@@ -1,0 +1,6 @@
+# A `:ruby` filter whose statements continue over lines: a hash literal and
+# a chain on a leading dot. Input for the reader's fix; what passes today.
+def app/views/widgets/index.html.haml:4:8 status=resolved via=view owner=WidgetsHelper
+def app/views/widgets/index.html.haml:7:12 status=resolved via=view owner=WidgetsHelper
+def app/views/widgets/index.html.haml:8:4 status=resolved via=view owner=WidgetsHelper
+dead app/helpers/widgets_helper.rb WidgetsHelper#rubyml_b=single-caller~ WidgetsHelper#rubyml_chain=single-caller~

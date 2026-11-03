@@ -42,6 +42,13 @@ erb tests/testbed/687-a-views-constantize-may-reach-any-constant/app/views/widge
 haml tests/testbed/360-a-haml-comment-or-continued-line-still-names/app/views/layouts/application.html.haml a99365b5e0f700c8
 haml tests/testbed/360-a-haml-comment-or-continued-line-still-names/app/views/widgets/_form.html.haml 5ded4755938eab19
 haml tests/testbed/780-a-haml-templates-ruby-is-read-in-place/app/views/widgets/index.html.haml ec20929844423274
+haml tests/testbed/785-a-haml-blocks-close-before-the-ruby-after-them/app/views/widgets/index.html.haml 24e38acc0eef91b5
+haml tests/testbed/785-a-haml-blocks-close-before-the-ruby-after-them/app/views/widgets/interpolated.html.haml 728ad0b1851b0398
+haml tests/testbed/785-a-haml-blocks-close-before-the-ruby-after-them/app/views/widgets/nested.html.haml d33a8e8dcb632b03
+haml tests/testbed/786-a-haml-ruby-filter-is-one-ruby-run/app/views/widgets/index.html.haml 59a73d2d1b137dcd
+haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/comment.html.haml e95642a67c3af64f
+haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/loop.html.haml 53241e6e18c53a65
+haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/rescued.html.haml 1fa2205568aba6a4
 rabl tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/views/widgets/base.rabl 706223d3bbf4a9f7
 rabl tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/views/widgets/show.rabl e1ce31e3d5212371
 rabl tests/testbed/603-a-templates-bare-ivar-and-local-assigns-are-defined/app/views/widgets/show.json.rabl bfd218e974bc4930
@@ -850,6 +857,11 @@ ruby tests/testbed/764-a-bare-toggle-ends-module-function/util.rb d384bc06960f20
 ruby tests/testbed/780-a-haml-templates-ruby-is-read-in-place/app/controllers/application_controller.rb 382381aab952b556
 ruby tests/testbed/780-a-haml-templates-ruby-is-read-in-place/app/helpers/widgets_helper.rb e8d9b3b16400f357
 ruby tests/testbed/780-a-haml-templates-ruby-is-read-in-place/lib/action_view/base.rb c0772a1f742fb5f9
+ruby tests/testbed/785-a-haml-blocks-close-before-the-ruby-after-them/app/helpers/widgets_helper.rb 1fd662783040cbb2
+ruby tests/testbed/786-a-haml-ruby-filter-is-one-ruby-run/app/helpers/widgets_helper.rb cdf0fa5dcb2d7aaa
+ruby tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/helpers/widgets_helper.rb aaa9c0b2aa1ea318
+ruby tests/testbed/788-a-visibility-def-after-module-function-keeps-its-copy/app.rb 2cbe0d1cac82e96b
+ruby tests/testbed/788-a-visibility-def-after-module-function-keeps-its-copy/lib/util.rb a4771aff1fe4f0c4
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

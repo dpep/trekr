@@ -1,0 +1,8 @@
+:ruby
+  opts = {
+    a: rubyml_a,
+    b: rubyml_b
+  }
+  list = @widgets
+    .order(rubyml_chain)
+%p= rubyml_c(opts, list)
