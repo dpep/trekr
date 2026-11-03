@@ -279,7 +279,8 @@ pub(crate) fn names_it(call: &Call, query: &Query) -> bool {
 
 /// The predicate `call` sends that is the queried method, when `call` is a
 /// predicate matcher in an example (DEC-090): `have_x` sends `has_x?`, and
-/// `be_x` sends `x?`, or `xs?` to a subject with no `x?` (DEC-659). Only for
+/// `be_x` sends `x?`, or `xs?` to a subject with no `x?` (DEC-659) — a site
+/// of both here, which `tier_matcher` narrows by the subject's type. Only for
 /// an owned query: a bare name's mentions are the calls that write it.
 fn matcher_predicate(call: &Call, query: &Query) -> Option<Call> {
     let predicate = call.stands_for.as_deref()?;
@@ -366,7 +367,23 @@ fn tier_matcher(
             .map(|found| found.owner),
     };
     let Some(owner) = defined else {
-        return tier(tree, facts, predicate, path, query, target);
+        return match subject_has_root(tree, facts, matcher, predicate, path) {
+            Some((receiver, found)) => Reference {
+                path: path.to_string(),
+                line: matcher.pos.line,
+                col: matcher.pos.col,
+                tier: Tier::Excluded,
+                receiver: predicate.recv.as_str(),
+                receiver_type: Some(receiver),
+                owner: Some(found),
+                why: "the subject has the matcher's own predicate, which RSpec calls instead",
+                ruling: Some(Ruling::DifferentOwner),
+                proximity: 0,
+                from: None,
+                called_as: None,
+            },
+            None => tier(tree, facts, predicate, path, query, target),
+        };
     };
     Reference {
         path: path.to_string(),
@@ -382,6 +399,25 @@ fn tier_matcher(
         from: None,
         called_as: None,
     }
+}
+
+/// For `be_x` asked as `xs?`: the typed subject and the owner of its `x?`,
+/// when it has one. BePredicate calls `x?` whenever the subject responds to
+/// it, and `xs?` only otherwise (rspec-expectations `predicate_method_name`).
+fn subject_has_root(
+    tree: &Tree,
+    facts: &Facts,
+    matcher: &Call,
+    predicate: &Call,
+    path: &str,
+) -> Option<(String, String)> {
+    let root = matcher.stands_for.as_deref()?;
+    if root.name == predicate.name {
+        return None;
+    }
+    let receiver = super::receiver_of(tree, facts, root, path)?;
+    let found = super::lookup_on(tree, root, &receiver)?;
+    Some((receiver.fqn, found.owner))
 }
 
 fn tier(

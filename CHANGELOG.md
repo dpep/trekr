@@ -8,12 +8,14 @@
   tests (N, …)" reason.
 - **An RSpec predicate matcher is a reference to the predicate it calls.**
   `expect(page).to have_event_count(1)` calls `has_event_count?`, and
-  `be_visible`, `be_an_admin` and `be_exist` call `visible?`, `admin?` and
-  `exists?`, as RSpec's `method_missing` does: `--refs` lists each such
+  `be_visible` and `be_an_admin` call `visible?` and `admin?`, and
+  `be_exist` calls `exist?` when the subject has it, else `exists?`, as
+  RSpec's `method_missing` does: `--refs` lists each such
   call (`called_as` names the matcher), the editor's Find References
   lists it too, and `--dead` counts it, so a page object's predicate a
   spec asserts this way is no longer `unreferenced`. Confirmed where
-  `expect(x)` types its subject, possible where it does not; a matcher
+  `expect(x)` types its subject, possible where it does not (`be_exist`
+  then for both `exist?` and `exists?`); a matcher
   RSpec or the spec defines (`be_within`) calls no predicate.
 - **`--dead` lists a Minitest or Test::Unit test as `convention-only`**,
   by the test runner, rather than `unreferenced`: a public `test_` method

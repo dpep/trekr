@@ -301,9 +301,12 @@ a subclass that inherits it), each marked `"called_as": "new"`. An untyped
 A predicate's references include the RSpec predicate matchers in examples
 that call it, each marked `called_as` with the matcher's name:
 `have_event_count` for `has_event_count?`, `be_visible`, `be_a_visible` or
-`be_an_visible` for `visible?`, and `be_exist` for `exists?`, which RSpec
-tries when the subject has no `exist?`. Each is tiered by the expectation's
-subject (`expect(x).to`), so it is possible when that is untyped. A matcher
+`be_an_visible` for `visible?`, and `be_exist` for `exist?` or `exists?`:
+RSpec calls `exist?` when the subject has it and `exists?` only when it
+does not. Each is tiered by the expectation's subject (`expect(x).to`):
+where that is typed, `be_exist` is a call of whichever of the two its type
+answers and is excluded for the other; where it is untyped, it is possible
+for both. A matcher
 the group, RSpec or a gem defines (`be_within`) runs that method instead,
 and is excluded. `--dead` and the editor's Find References count them the
 same way.

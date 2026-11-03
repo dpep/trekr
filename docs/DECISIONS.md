@@ -16243,6 +16243,21 @@ bare top-level `describe`, which the extractor does not read as an example
 group, so its matchers carry no predicate (an extraction fact, not done
 here). Testbed 800.
 
+**Addendum — the subject picks `x?` or `xs?`.** `be_exist` was a site of
+`exists?` tiered on its own, so a subject whose type has both `exist?` and
+`exists?` confirmed it as a call of `exists?`, which RSpec never sends:
+`predicate_method_name` sends `x?` whenever the subject responds to it.
+Now, where the subject is typed and its type (ancestors included) has
+`x?`, `be_x` is excluded for `xs?` (`different_owner`, owner the `x?`'s);
+where it lacks `x?`, `xs?` is looked up as before, and `x?` is excluded
+(`no_such_method`). An untyped subject keeps the old reading, a possible
+call of both `x?` and `xs?`. In `refs::tier_matcher`, since
+`matcher_predicate` has no tree to type the subject and stays the
+syntactic superset `names_it` needs. **Measured**, `--dead`, the build
+before → this: discourse `app lib plugins` and `spec/system`, mastodon
+`app lib`, rails `actionpack/test activemodel/test`: no row moves — no
+measured subject has both forms. Testbed 806.
+
 ## DEC-660 — A test case's `test_` method is run by its runner
 
 **Reported** (accuracy pass on `--dead`): 375 `unreferenced`, clear rows

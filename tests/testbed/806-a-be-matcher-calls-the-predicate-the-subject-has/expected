@@ -1,0 +1,8 @@
+# RSpec's `be_exist` calls `exist?` whenever the subject responds to it, and
+# `exists?` only when it does not (BePredicate's `predicate_method_name`),
+# but `--refs` confirmed `be_exist` as a call of `exists?` on a subject that
+# has both. Typed, the subject decides which one runs; untyped (`thing`), the
+# matcher is a possible call of both.
+refs Store#exists? confirmed=0 possible=1 excluded=2
+refs Store#exist? confirmed=1 possible=1 excluded=1
+refs Shelf#exists? confirmed=1 possible=1 excluded=1
