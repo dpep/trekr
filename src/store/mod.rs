@@ -432,6 +432,13 @@ impl Store {
             "PRAGMA foreign_keys=ON; PRAGMA synchronous=NORMAL; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-32768; \
              PRAGMA mmap_size=1073741824;",
         )?;
+        // With `sqlite_stat4` present, a statement whose bound value could
+        // move its plan is recompiled for every new value — most of a
+        // per-name lookup's cost. Plan once, from the statistics alone.
+        conn.set_db_config(
+            rusqlite::config::DbConfig::SQLITE_DBCONFIG_ENABLE_QPSG,
+            true,
+        )?;
         let mut store = Store {
             conn,
             path: None,
