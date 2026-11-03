@@ -19,10 +19,10 @@ belongs to:
 | Tree: namespace, ancestry, snapshots | 007, 025, 054, 060, 065, 072, 075, 097, 098, 099, 100, 101, 102, 103, 104, 105, 138, 192, 194, 200, 201, 202, 203, 210, 231, 235, 241, 251, 252, 313, 560, 647, 648, 653 |
 | Resolve: the receiver ladder, confidence, residue | 008, 010, 011, 019, 020, 027, 028, 031, 068, 071, 077, 081, 082, 089, 093, 112, 116, 126, 127, 133, 136, 137, 140, 165, 166, 172, 211, 213, 214, 260, 261, 280, 311, 314, 340, 341, 342, 350, 351, 380, 390, 391, 392, 401, 440, 441, 442, 444, 445, 541 |
 | Core, stdlib, gems, the checkout's Ruby | 015, 016, 017, 018, 023, 029, 078, 134, 150, 151, 152, 153, 180, 181, 182, 220, 240, 242, 262, 263, 265, 270, 271, 272, 273, 274, 276, 291, 292, 293, 610 |
-| RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499 |
+| RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
 | Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
 | `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563 |
-| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657 |
+| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661 |
 | LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646 |
 | Scope and housekeeping | 030, 063, 640 |
 
@@ -15017,7 +15017,7 @@ counts (flipper, rspec-core), as an example's reference counts as a use;
 one `Kernel.const_get` of an inspected exception's name lowers 169 of
 rubocop's rows.
 
-### Fix round: what the lookup reader reads
+### Addendum (fix round): what the lookup reader reads
 
 Found by a hunt on the unreleased rule; each testbed case fails without its
 fix. Rows moved are `--dead app lib` on discourse and mastodon and `--dead
@@ -15500,7 +15500,7 @@ spec builds, helper modules `rails_helper.rb` includes, a spec's constants
 and its stub classes. None was dead. Testbed 668; 492, 605, 606, 620 and
 665 each lose a spec module's `test-only` row.
 
-### D. Fix round: what a string send reaches
+### D. Addendum (fix round): what a string send reaches
 
 Found by a hunt on the unreleased rule; each testbed case fails without its
 fix. Rows moved are `--dead app lib` on discourse and mastodon and `--dead
@@ -15656,7 +15656,7 @@ calls over RPC, or a `public_send` from a client library, is invisible as
 a gem's API is, and is not caveated: nothing in the checkout says so.
 Testbed 700–703.
 
-### DEC-657 addendum: `gem-api` is `api`
+### Addendum: `gem-api` is `api`
 
 **Decided** before release, by the owner: the `entry_point` value is `api`
 (public API), not `gem-api`, and its caveat reads "public API: …". How
@@ -15664,7 +15664,7 @@ trekr finds one — a root `*.gemspec` — is detection, not what the row is;
 a later way of finding public API (an app's RPC surface, say) would be the
 same kind. The tables above keep the name they were measured under.
 
-### DEC-657 addendum: fix round — markers as the documentation tools read them
+### Addendum (fix round): markers as the documentation tools read them
 
 A re-hunt found documented public API graded `clear` with no entry point,
 on real gems. Each fix below follows what the tool a gem's author writes
@@ -15799,7 +15799,7 @@ Testbed 725. A Rails engine gem's `app/` (`ActiveStorage::Blob`) is still
 not read as API — declined: not trivially right, as an engine's `app/`
 holds controllers and jobs with entry points of their own.
 
-### DEC-657 addendum: fix round 2
+### Addendum (fix round 2): a library without a gemspec, `:doc:`, and how far a mark reaches
 
 A second hunt (apihunt) found documented API still graded `clear`: a
 library with no gemspec, RDoc's `:doc:` private API, and marks that reached
@@ -15976,7 +15976,7 @@ Now any of the constant's openings in the checkout being in a library's
 on any corpus, nor on rails' activestorage and actiontext `app lib`.
 Testbed 748.
 
-### DEC-657 addendum: fix round 3
+### Addendum (fix round 3): a demo `config.ru`, constant paths, `# :doc:` lines, protected methods
 
 A third hunt (apihunt3) found documented API still graded `clear`. The
 stance is unchanged: public surface gets more caution, since its use outside
