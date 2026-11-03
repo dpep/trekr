@@ -16228,3 +16228,38 @@ object's duplicate whose matcher lands on its own class
 bare top-level `describe`, which the extractor does not read as an example
 group, so its matchers carry no predicate (an extraction fact, not done
 here). Testbed 800.
+
+## DEC-660 — A test case's `test_` method is run by its runner
+
+**Reported** (accuracy pass on `--dead`): 375 `unreferenced`, clear rows
+in discourse's `plugins/discourse-events/vendor/holidays/test/` and 290 in
+rails' `activemodel/test` were tests — `def test_ae` in `class
+AeDefinitionTests < Test::Unit::TestCase`. Minitest and Test::Unit run
+every public method whose name starts `test_` (`public_instance_methods`,
+grepped), and no call site writes it, so each was a candidate, and the
+worst kind: deleting a test fails nothing.
+
+**Decided.** A public `test_` instance method of a class that `--dead`
+already calls a test case — in a test directory, and inheriting
+`Minitest::Test`, `Test::Unit::TestCase`, `ActiveSupport::TestCase` or
+`Minitest::Spec`, or written in a file named as a test (DEC-421's rule,
+now `dead_consts::test_case`, shared by the constant and method passes) —
+is `convention-only`, `convention.by` "test runner", "a test case's
+`test_` method, which its runner runs by name". A private one is not run
+and stays a candidate. Rails' `test "name" do` defines its method at
+runtime and is not extracted as one, so it was never a row.
+
+**Not done.** A `test_` method of a module a test case includes
+(`ActiveModel::Lint::Tests`) is run too; none showed up in the measured
+rows, so it is left until one does.
+
+**Measured**, `--dead`, the build before → this: discourse `app lib
+plugins` 375 `unreferenced`, clear and 84 lower → `convention-only`
+(clear and lower as before); rails `activemodel/test` 290 and 239 the
+same; discourse `spec/system`, mastodon, rubocop, sidekiq, rack, faraday:
+no row moves. Every moved row is a `def test_` in a test case by
+construction; hand-read: `AeDefinitionTests#test_ae`,
+`CallbacksWithMethodNamesShouldBeCalled#test_before_validation_and_after_validation_callbacks_should_be_called_in_declared_order`,
+`ActiveModel::Type::DecimalTest#test_changed?`, `BinaryTest#test_cast_binary_data_returns_the_underlying_string`,
+`LengthValidationTest#test_validates_length_of_custom_errors_for_minimum_with_message`
+— each a test its runner runs. Testbed 801.

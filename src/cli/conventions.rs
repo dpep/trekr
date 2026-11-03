@@ -219,6 +219,26 @@ pub(super) fn thor_command(
     })
 }
 
+/// A test case's public `test_` method, which Minitest and Test::Unit run
+/// by its name (DEC-660). `relative` is the method's file, in the checkout.
+pub(super) fn test_method(
+    tree: &Tree,
+    owner: &str,
+    name: &str,
+    public: bool,
+    relative: &str,
+) -> Option<Convention> {
+    let test = public
+        && name.starts_with("test_")
+        && tree.kind_of(owner) == Some("class")
+        && super::dead_consts::test_case(tree, owner, relative);
+    test.then(|| Convention {
+        by: "test runner",
+        reason: "a test case's `test_` method, which its runner runs by name".to_string(),
+        at: None,
+    })
+}
+
 /// Where a controller action named as a policy's predicate is: Pundit's
 /// `authorize record` asks the record's policy `"#{action_name}?"`, so
 /// `WidgetPolicy#publish?` is called for every controller's `publish` that

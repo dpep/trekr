@@ -1,0 +1,9 @@
+# Minitest and Test::Unit run every public `test_` method of a test case
+# by its name, which no call site writes, so a test was `unreferenced`,
+# clear: deleting it fails nothing. In a class `--dead` already calls a test
+# case (in a test directory, inheriting one or in a file named as a test),
+# such a method is `convention-only`, by the test runner. A private one is
+# not run, a class in a test directory that is no test case runs nothing,
+# and neither does a `test_` method in the library.
+dead test WidgetTest#test_builds=convention-only WidgetTest#unused_helper=unreferenced WidgetTest#test_hidden=unreferenced FakeClock#test_mode=unreferenced ClockCase#test_ticks=convention-only
+dead lib Widget#test_connection=unreferenced

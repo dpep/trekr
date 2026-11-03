@@ -15,6 +15,10 @@
   spec asserts this way is no longer `unreferenced`. Confirmed where
   `expect(x)` types its subject, possible where it does not; a matcher
   RSpec or the spec defines (`be_within`) calls no predicate.
+- **`--dead` lists a Minitest or Test::Unit test as `convention-only`**,
+  by the test runner, rather than `unreferenced`: a public `test_` method
+  of a class `--dead` already calls a test case (under a test directory,
+  inheriting `Minitest::Test` or its kin, or in a file named as a test).
 - **Upgrading reindexes once** (store v74): the first command after
   upgrading rebuilds the index, with nothing to run. A script reading
   `--dead`'s `summary.tiers` sees methods under `test-only` now (below).

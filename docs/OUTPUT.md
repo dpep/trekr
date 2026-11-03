@@ -342,7 +342,8 @@ From least evidence of use to most:
   (`before_action :x`, `if: :x`, `with: :x`), a controller action only a
   route reaches (`config/routes.rb` is read), or a method a library calls by
   a name it builds: ActiveModel::Serializers' `include_<attr>?`, a Thor
-  command (`convention.by` says which).
+  command, a test case's public `test_` method, which Minitest or
+  Test::Unit runs (`convention.by` says which).
 - `super-only` — reached only by `super` from its overrides (`super_from`).
 - `single-caller` — one reference: an inlining candidate. `caller` says
   where, with its own `tier`: whether it certainly reaches the method.

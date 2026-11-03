@@ -909,6 +909,10 @@ fn dead_in(
                                     &tree, &owner, &def.name, public, &root_str,
                                 )
                             })
+                            .or_else(|| {
+                                let at = relative(file);
+                                conventions::test_method(&tree, &owner, &def.name, public, &at)
+                            })
                     },
                 )
             })
