@@ -6,7 +6,7 @@
   with a compact namespace nothing else defines (`class Scheduler::X`) had
   each reference counted twice in `test_refs` and its "referenced only from
   tests (N, …)" reason.
-- **Upgrading reindexes once** (store v72): the first command after
+- **Upgrading reindexes once** (store v73): the first command after
   upgrading rebuilds the index, with nothing to run. A script reading
   `--dead`'s `summary.tiers` sees methods under `test-only` now (below).
 - **Haml templates are read.** Every `*.haml` in a checkout is indexed for

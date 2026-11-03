@@ -16147,3 +16147,12 @@ A `:ruby` filter's body was written a line at a time, each after a `;`,
 which split a hash literal or a leading-dot chain spread over lines into
 syntax errors; it is one run now, from its first line's Ruby to its last
 (testbed 786).
+
+Three script lines Ruby allows were misread: a `do |x|` with a comment
+after it was tested for its `do` with the comment on, so it opened no
+block and its parameter stayed in scope to the end of the file; `while x
+do` (and `until`) kept the loop's `do`, and `rescue => e` its `=>`, both
+syntax errors with `e` a call. A trailing comment is left out of the
+test (Prism finds it), a loop's `do` is blanked, and `rescue => e` reads
+`$! => e`, which binds `e` as Ruby does (`rescue Oops => e` already read
+`Oops => e`). Testbed 787.

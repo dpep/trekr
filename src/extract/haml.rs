@@ -181,6 +181,20 @@ impl Haml<'_> {
         self.write(start, end);
         if let Some(keyword) = FLAT.iter().find(|k| starts_with_word(&s[start..end], k)) {
             self.out[start..start + keyword.len()].fill(b' ');
+            let code = &s[start..self.code_end(start, end)];
+            let rest = trim_start(&code[keyword.len()..]);
+            match *keyword {
+                // `while x do`: the loop's `do`, with nothing to close.
+                "while" | "until" if rest.len() > 2 && ends_with_word(rest, "do") => {
+                    let at = start + code.len() - 2;
+                    self.out[at..at + 2].fill(b' ');
+                }
+                // `rescue => e` binds `e` to the error, as `$! => e` does.
+                "rescue" if rest.starts_with(b"=>") => {
+                    self.out[start..start + 2].copy_from_slice(b"$!");
+                }
+                _ => {}
+            }
         } else if self.braces(start, end) {
             self.blocks.push(Block {
                 indent,
@@ -332,7 +346,7 @@ impl Haml<'_> {
     /// one byte: `do` becomes `{`, and a command's arguments are wrapped in
     /// the spaces around them, so the brace binds to the call `do` did.
     fn braces(&mut self, start: usize, end: usize) -> bool {
-        let code = trim_end(&self.src[start..end]);
+        let code = &self.src[start..self.code_end(start, end)];
         if !(code.ends_with(b"do") || code.ends_with(b"|")) {
             return false;
         }
@@ -402,6 +416,24 @@ impl Haml<'_> {
                 .extend(std::iter::repeat_n(b'}', self.blocks.len()));
         }
         self.out
+    }
+
+    /// Where a script's Ruby from `start` to `end` ends, less a comment
+    /// after it and the spaces before that.
+    fn code_end(&self, start: usize, end: usize) -> usize {
+        let code = &self.src[start..end];
+        let mut cut = code.len();
+        if code.contains(&b'#') {
+            let parsed = ruby_prism::parse(code);
+            let trailing = parsed
+                .comments()
+                .map(|c| c.location())
+                .find(|l| l.end_offset() >= trim_end(code).len());
+            if let Some(comment) = trailing {
+                cut = comment.start_offset();
+            }
+        }
+        start + trim_end(&code[..cut]).len()
     }
 
     fn line_end(&self, from: usize) -> usize {
@@ -514,6 +546,19 @@ fn trim_end(bytes: &[u8]) -> &[u8] {
     &bytes[..kept]
 }
 
+fn trim_start(bytes: &[u8]) -> &[u8] {
+    &bytes[bytes.iter().take_while(|b| b.is_ascii_whitespace()).count()..]
+}
+
+/// `code` ends with `word`, after a space.
+fn ends_with_word(code: &[u8], word: &str) -> bool {
+    code.ends_with(word.as_bytes())
+        && code
+            .len()
+            .checked_sub(word.len() + 1)
+            .is_some_and(|at| code[at].is_ascii_whitespace())
+}
+
 fn starts_with_word(code: &[u8], word: &str) -> bool {
     code.starts_with(word.as_bytes())
         && !code
@@ -619,6 +664,24 @@ mod tests {
         assert_eq!(
             out.split_whitespace().collect::<Vec<_>>().join(" "),
             "; a? ;b ; c ;d ; ;e ; f ;g",
+        );
+    }
+
+    #[test]
+    fn a_do_with_a_comment_after_it_opens_a_block() {
+        let src = "- @items.each do |item| # each row\n  = item\n%p= item\n";
+        let out = parses(src);
+        assert!(out.find('}').unwrap() < src.rfind("item").unwrap(), "{out}");
+    }
+
+    #[test]
+    fn a_while_do_and_a_rescue_into_a_name_are_read_flat() {
+        let out = parses("- while waiting? do\n  = in_while\n- until x.undo\n  = y\n");
+        assert!(!out.contains(" do") && out.contains("x.undo"), "{out}");
+        let out = parses("- begin\n  = risky\n- rescue => e\n  = e.message\n- rescue Oops => f\n");
+        assert!(
+            out.contains("$!     => e") && out.contains("Oops => f"),
+            "{out}"
         );
     }
 

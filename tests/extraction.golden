@@ -1,6 +1,6 @@
 # Each testbed input's stored facts, hashed, at the store version below.
 # Regenerate: UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden
-version 72
+version 73
 erb tests/testbed/315-dead-says-what-it-cannot-see/app/views/widgets/index.html.erb fb6993b57ce1afc0
 erb tests/testbed/430-a-view-or-a-script-references-a-constant/app/views/widgets/index.html.erb df75e9ccc30b1507
 erb tests/testbed/520-an-erb-templates-calls-are-call-sites/app/views/widgets/show.html.erb 7d61239ea66915a3
@@ -46,9 +46,9 @@ haml tests/testbed/785-a-haml-blocks-close-before-the-ruby-after-them/app/views/
 haml tests/testbed/785-a-haml-blocks-close-before-the-ruby-after-them/app/views/widgets/interpolated.html.haml 84ed879001676bf3
 haml tests/testbed/785-a-haml-blocks-close-before-the-ruby-after-them/app/views/widgets/nested.html.haml b5d5484283d84e0a
 haml tests/testbed/786-a-haml-ruby-filter-is-one-ruby-run/app/views/widgets/index.html.haml 7025fea2c39866c1
-haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/comment.html.haml e95642a67c3af64f
-haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/loop.html.haml 53241e6e18c53a65
-haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/rescued.html.haml 1fa2205568aba6a4
+haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/comment.html.haml fa48b4d5da23e184
+haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/loop.html.haml 672a1b539e7bbcab
+haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/rescued.html.haml 6b8dad9b92715e2b
 rabl tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/views/widgets/base.rabl 706223d3bbf4a9f7
 rabl tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/views/widgets/show.rabl e1ce31e3d5212371
 rabl tests/testbed/603-a-templates-bare-ivar-and-local-assigns-are-defined/app/views/widgets/show.json.rabl bfd218e974bc4930

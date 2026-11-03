@@ -117,7 +117,7 @@
 --def $.definition: array
 --def $.definition[]: object
 --def $.definition[].col: int
---def $.definition[].kind: string {assigned,block parameter,class,constant,file,local,method,module,parameter,template}
+--def $.definition[].kind: string {assigned,block parameter,bound by a pattern,class,constant,file,local,method,module,parameter,template}
 --def $.definition[].line: int
 --def $.definition[].path: string
 --def $.definition[].root: string
