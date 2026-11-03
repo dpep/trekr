@@ -56,6 +56,28 @@ pub(super) fn in_tests(path: &str) -> bool {
     set_apart(path, &["spec", "test", "tests"])
 }
 
+/// The classes a test case inherits, whose runner finds it.
+const TEST_CASES: [&str; 4] = [
+    "Minitest::Test",
+    "Test::Unit::TestCase",
+    "ActiveSupport::TestCase",
+    "Minitest::Spec",
+];
+
+/// Whether the class `fqn`, defined at `relative`, is a test case its
+/// runner loads by file and runs: in a test directory, and inheriting a test
+/// case or written in a file named as a test.
+pub(super) fn test_case(tree: &Tree, fqn: &str, relative: &str) -> bool {
+    if !in_tests(relative) {
+        return false;
+    }
+    let file = relative.rsplit('/').next().unwrap_or(relative);
+    TEST_CASES.iter().any(|base| tree.inherits(fqn, base))
+        || file.starts_with("test_")
+        || file.ends_with("_test.rb")
+        || file.ends_with("_spec.rb")
+}
+
 /// A database's migrations and seeds, by a directory on its path relative to
 /// the checkout: run by file name, so no name built there is a way in and no
 /// constant declared there a candidate.

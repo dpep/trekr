@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use super::named::{self, Named, plain};
-use super::{in_tests, spellings};
+use super::spellings;
 use crate::cli::conventions::Convention;
 use crate::cli::routes::{self, Routes};
 use crate::cli::views::Views;
@@ -153,14 +153,6 @@ const RELATIONS: [&str; 3] = [
     "ActiveRecord_Relation",
     "ActiveRecord_AssociationRelation",
     "ActiveRecord_Associations_CollectionProxy",
-];
-
-/// The classes a test case inherits, whose runner finds it.
-const TEST_CASES: [&str; 4] = [
-    "Minitest::Test",
-    "Test::Unit::TestCase",
-    "ActiveSupport::TestCase",
-    "Minitest::Spec",
 ];
 
 /// What reaches a constant by its name rather than by a reference, and the
@@ -375,20 +367,12 @@ impl Ways<'_> {
         }
         // A test framework loads a test by its file and runs its cases by
         // what they inherit.
-        if kind == "class" && in_tests(relative) {
-            let file = relative.rsplit('/').next().unwrap_or(relative);
-            let base = TEST_CASES.iter().find(|base| self.inherits(fqn, base));
-            if base.is_some()
-                || file.starts_with("test_")
-                || file.ends_with("_test.rb")
-                || file.ends_with("_spec.rb")
-            {
-                return convention(
-                    "test runner",
-                    "a test case, which its runner loads by file and runs".to_string(),
-                    None,
-                );
-            }
+        if kind == "class" && super::test_case(self.tree, fqn, relative) {
+            return convention(
+                "test runner",
+                "a test case, which its runner loads by file and runs".to_string(),
+                None,
+            );
         }
         // A class an ancestor registers as it is defined or mixed in: an
         // `inherited` or `included` hook written in the checkout that keeps
