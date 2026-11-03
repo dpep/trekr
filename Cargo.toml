@@ -1,6 +1,6 @@
 [package]
 name = "trekr"
-version = "0.9.8"
+version = "0.10.0"
 edition = "2024"
 description = "Ruby code intelligence: position→meaning, definition→references."
 license = "MIT"

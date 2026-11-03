@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.0 — 2026-11-02
 
 - **Upgrading reindexes once** (store v75): the first command after
   upgrading rebuilds the index, with nothing to run. A script reading
