@@ -97,8 +97,8 @@ pub(crate) fn under<'a>(path: &'a str, dir: &str) -> Option<&'a str> {
 /// something else.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ViewTemplate {
-    /// ERB, run on a view context.
-    Erb,
+    /// Markup with Ruby in it, run on a view context.
+    View,
     /// RABL, run on its engine.
     Rabl,
 }
@@ -108,7 +108,7 @@ impl ViewTemplate {
         use crate::scan::Reader;
         under(path, "views")?;
         match Reader::of(path) {
-            Reader::Erb => Some(ViewTemplate::Erb),
+            Reader::Erb => Some(ViewTemplate::View),
             Reader::Rabl => Some(ViewTemplate::Rabl),
             Reader::Ruby | Reader::StructureSql => None,
         }
@@ -541,7 +541,7 @@ mod tests {
         );
         assert_eq!(under("lib/templates/x.erb", "views"), None);
         for (path, kind) in [
-            ("app/views/a/b.html.erb", Some(ViewTemplate::Erb)),
+            ("app/views/a/b.html.erb", Some(ViewTemplate::View)),
             (
                 "engines/e/app/views/a/b.json.rabl",
                 Some(ViewTemplate::Rabl),

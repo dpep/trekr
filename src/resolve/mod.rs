@@ -3365,7 +3365,7 @@ fn view_receiver(tree: &Tree, call: &Call, path: &str) -> Option<Receiver> {
         });
     }
     let (fqn, via) = match crate::tree::views::ViewTemplate::of(path)? {
-        crate::tree::views::ViewTemplate::Erb => (crate::tree::views::ACTION_VIEW, "view"),
+        crate::tree::views::ViewTemplate::View => (crate::tree::views::ACTION_VIEW, "view"),
         crate::tree::views::ViewTemplate::Rabl => (rabl::ENGINE, "rabl"),
     };
     let engine_has_it = via == "rabl" && tree.lookup(rabl::ENGINE, false, &call.name).is_some();

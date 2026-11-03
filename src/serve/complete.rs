@@ -570,7 +570,7 @@ fn add_methods(
 fn view_self(relative: &str) -> Option<&'static str> {
     use crate::tree::views::ViewTemplate;
     Some(match ViewTemplate::of(relative)? {
-        ViewTemplate::Erb => crate::tree::views::ACTION_VIEW,
+        ViewTemplate::View => crate::tree::views::ACTION_VIEW,
         ViewTemplate::Rabl => crate::resolve::RABL_ENGINE,
     })
 }
