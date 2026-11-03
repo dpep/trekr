@@ -6,6 +6,11 @@ it runs, whose own changelog is in the
 
 ## Unreleased
 
+- Haml templates are served: go to definition, hover, references and
+  completion in a `.haml`, under a Haml extension's `haml` language id or
+  none. Needs a trekr that says it reads Haml; an older one is never sent
+  a `.haml`, as with ERB.
+
 - `trekr.features` gains `declaration`: Go to Declaration, which trekr
   0.8.9 answers (the Sorbet `.rbi` signature, else the definition). Leave it
   out to give Go to Declaration to another extension. A `trekr.features`

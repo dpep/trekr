@@ -7,7 +7,7 @@
 // about one is held back unless the server's `initialize` result lists its
 // kind under `experimental.trekr.templates`.
 
-export type TemplateKind = "erb" | "rabl";
+export type TemplateKind = "erb" | "haml" | "rabl";
 
 /** The parts of a `TextDocument` (or a bare `Uri`) the gate reads. */
 interface DocumentLike {
@@ -20,6 +20,7 @@ interface DocumentLike {
 export function templateKind(document: DocumentLike): TemplateKind | undefined {
   const path = document.uri?.path ?? document.path ?? "";
   if (path.endsWith(".rabl")) return "rabl";
+  if (path.endsWith(".haml")) return "haml";
   if (path.endsWith(".erb")) return "erb";
   // Selected by an ERB language id on a file not named `.erb`.
   if (document.languageId !== undefined && document.languageId !== "ruby") return "erb";

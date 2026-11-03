@@ -38,6 +38,7 @@
     "onLanguage:ruby",
     "onLanguage:erb",
     "onLanguage:html.erb",
+    "onLanguage:haml",
     "workspaceContains:Gemfile"
   ],
   "contributes": {

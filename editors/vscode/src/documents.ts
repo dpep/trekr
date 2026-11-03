@@ -1,12 +1,14 @@
 // The documents the server answers: Ruby, and the view templates whose Ruby
 // it reads — ERB under whichever language id an ERB extension gives it, or
-// plain HTML for a `.erb` with none, and RABL, which no common extension
-// names.
+// plain HTML for a `.erb` with none, Haml, and RABL, which no common
+// extension names.
 // Templates reach only a server that says it reads them (`templateGate`).
 export const DOCUMENTS = [
   { scheme: "file", language: "ruby" },
   { scheme: "file", language: "erb" },
   { scheme: "file", language: "html.erb" },
+  { scheme: "file", language: "haml" },
   { scheme: "file", pattern: "**/*.erb" },
+  { scheme: "file", pattern: "**/*.haml" },
   { scheme: "file", pattern: "**/*.rabl" },
 ];
