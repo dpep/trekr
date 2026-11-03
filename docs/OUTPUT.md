@@ -362,30 +362,36 @@ row's `caveat` names what may still reach it. Any tier other than `override`
 that overrides a method is `lower`, and so is a `single-caller` row whose
 caller is `possible`.
 
-Three callers trekr cannot see grade a row `lower`: a Slim, Jbuilder or
-Builder template that writes the name ("named in a view (…), which is not
-read"; ERB, Haml and RABL templates are read, and their calls counted), a Ruby
-script with no extension (`exe/tool`, `bin/x`: "named in a script (…), which
-is not read"), and Ruby or Rails calling a protocol hook by name —
-`marshal_load`, `to_partial_path`, `each`, a job's `perform` ("a hook …
-calls by name"; DEC-315). So does a symbol in the method's own file that
-trekr does not read as a call (`only: [:archive]`), and a controller action
-when a route is built at runtime (DEC-343, DEC-344). And every other way in
-the row can name: a name of its shape the checkout builds
-(`:"report_#{type}"`, or a string its class is sent,
-`Q.new.public_send("list_#{kind}")`; DEC-655) or a computed name sent to its
-class (`Mailer.public_send(type)`), a writer `assign_attributes` reaches, an
-ancestor trekr has not indexed, a gem of the bundle that calls the name, a
-helper another helper calls (DEC-363–368, DEC-370), a YAML config that
-writes the name (`generator: pay_schedule_resources`,
-`Pkg::Sanitizer.clean_uid`; locale files aside, DEC-402), and a file a
-generator wrote (`linguist-generated`, a `generated/` directory, a "DO NOT
-EDIT" header; DEC-403). A module's method, `unreferenced` or `test-only`,
-whose name is called on a typed receiver with no such method is `lower` too
-("called on TopicQuery (…), where trekr finds no such method; a module
-mixed in at runtime may supply it"): a module mixed in from a block — a
-plugin's `after_initialize` — is no edge the index records (DEC-097,
-DEC-661).
+A row is `lower` when one of these may reach it, and its caveat
+names which:
+
+- a Slim, Jbuilder or Builder template that writes the name ("named in a
+  view (…), which is not read"; ERB, Haml and RABL templates are read, and
+  their calls counted);
+- a Ruby script with no extension (`exe/tool`, `bin/x`: "named in a script
+  (…), which is not read");
+- Ruby or Rails calling a protocol hook by name — `marshal_load`,
+  `to_partial_path`, `each`, a job's `perform` ("a hook … calls by name";
+  DEC-315);
+- a symbol in the method's own file that trekr does not read as a call
+  (`only: [:archive]`), or, for a controller action, a route built at
+  runtime (DEC-343, DEC-344);
+- a name of its shape the checkout builds (`:"report_#{type}"`, or a string
+  its class is sent, `Q.new.public_send("list_#{kind}")`; DEC-655), or a
+  computed name sent to its class (`Mailer.public_send(type)`);
+- a writer `assign_attributes` reaches, an ancestor trekr has not indexed,
+  a gem of the bundle that calls the name, a helper another helper calls
+  (DEC-363–368, DEC-370);
+- a YAML config that writes the name (`generator: pay_schedule_resources`,
+  `Pkg::Sanitizer.clean_uid`; locale files aside, DEC-402);
+- a file a generator wrote (`linguist-generated`, a `generated/` directory,
+  a "DO NOT EDIT" header; DEC-403);
+- for a module's method, `unreferenced` or `test-only`, a call of its name
+  on a typed receiver with no such method ("called on TopicQuery (…), where
+  trekr finds no such method; a module mixed in at runtime may supply it"):
+  a module mixed in from a block — a plugin's `after_initialize` — is no
+  edge the index records (DEC-097, DEC-661);
+- an entry point ([below](#entry-points)).
 
 `clear` on an `unreferenced` row means none of those was found. Measured by
 hand on mastodon and discourse (DEC-372), such rows were truly dead 79 % and
@@ -415,8 +421,8 @@ Graded as the other method tiers are: measured by hand on mastodon and
 discourse (DEC-652), a `clear` one was reached only by tests 21 times in 26
 (81 %), the misses all names built at runtime
 (`public_send("list_#{action}")`), which are now read (DEC-655); a `lower`
-one 7 in 25. On a library, a public `test-only` method is usually its API,
-so in a gem it is graded `lower` as an entry point (below).
+one 7 in 25. A public `test-only` method in a library's `lib/` is usually
+its API, so it is graded `lower` as an entry point (below).
 
 ### Entry points
 
@@ -426,23 +432,49 @@ otherwise. Its `caveat` names the evidence that would settle it.
 
 | `entry_point` | what it is | settle it with |
 | --- | --- | --- |
-| `api` | a public or protected method (RDoc documents protected ones), a class or module, or a constant bound to a constant path, resolved or not (`Worker = Job`, `Client = OtherGem::Client`), or to a `DeprecatedConstantProxy`, in a library's `lib/`: the checkout's own `lib/`, or one beside a nested `*.gemspec`, in a checkout that is no app — no `config/application.rb` at its root, gemspec or not, nor a `config.ru` or an `app/` without a root `*.gemspec` (an engine gem's `app/`, a gem's demo `config.ru`) — (a Hoe gem has no gemspec until release), unless marked internal (`:nodoc:` on its line; in the comment above, `@api private` or `@private` opening a line, as YARD reads a tag, or `Private:` or `Internal:` opening its first, as TomDoc), named with a leading underscore, or held by a `private_constant` | its dependents, or usage data |
+| `api` | a library's public API, unless marked internal (below) | its dependents, or usage data |
 | `route` | a routed controller action, or a controller only routes name | request logs or APM (e.g. Datadog) |
-| `job` | a job class nothing outside the tests names | job metrics or logs |
+| `job` | an Active Job or Sidekiq job class nothing outside the tests names | job metrics or logs |
 
-A mark reaches as far as its tool reads it: a `:nodoc:` or TomDoc mark on
-a class hides that class and the methods its body defines, not the classes
-nested in it (RDoc), and in such a body the last own-line `# :doc:` or
-`# :nodoc:` at a method's indentation above it decides for that method; `:nodoc: all`, YARD's `@api private` and `@private`
-hide the class too and everything its marked opening holds, not what
-another opening of it defines; a `private_constant` hides everything
-nested in it, wherever written; a method's own `@api
-public` overrides its class's `@api private` (YARD). A method under
-`module_function` is public by its singleton copy, until a bare
-`private`, `protected` or `public` ends that mode (after `public` or
-`protected` it is an instance method that is API). A private or
-underscored method marked RDoc's `:doc:` (opening its line's comment, or a
-line of the comment above) is API, as RDoc documents it.
+**`api`** is a public or protected method (RDoc documents protected ones), a
+class or module, or a constant bound to a constant path, resolved or not
+(`Worker = Job`, `Client = OtherGem::Client`), or to a
+`DeprecatedConstantProxy`, in a library's `lib/`. Any other value constant
+is not API.
+
+A library's `lib/` is the checkout's own, or one beside a nested
+`*.gemspec`, in a checkout that is no app. An app has a
+`config/application.rb` at its root, gemspec or not, or a `config.ru` or an
+`app/` without a root `*.gemspec` — so an engine gem's `app/` or a gem's
+demo `config.ru` does not make one. A library needs no gemspec: a Hoe gem
+has none until release. An app's own engine is not a library.
+
+A row is not API when its author marks it internal:
+
+- `:nodoc:` on its line (RDoc);
+- in the comment above, `@api private` or `@private` opening a line (YARD
+  reads a tag only there), or `Private:` or `Internal:` opening the first
+  (TomDoc);
+- a name with a leading underscore;
+- a `private_constant` holding it.
+
+A mark reaches as far as its tool reads it:
+
+- A `:nodoc:` or TomDoc mark on a class hides that class and the methods
+  its body defines, not the classes nested in it (RDoc). In such a body,
+  the last own-line `# :doc:` or `# :nodoc:` above a method, at its
+  indentation, decides for that method.
+- `:nodoc: all`, `@api private` and `@private` hide the class and
+  everything its marked opening holds, not what another opening of it
+  defines.
+- A `private_constant` hides everything nested in it, wherever written.
+- A method's own `@api public` overrides its class's `@api private` (YARD).
+- A private or underscored method marked RDoc's `:doc:` (opening its
+  line's comment, or a line of the comment above) is API, as RDoc
+  documents it.
+- A method under a bare `module_function` is API by its public singleton
+  copy, until a bare `private`, `protected` or `public` ends that mode;
+  after `public` or `protected` it is an instance method that is API.
 
 An app's own public methods are not entry points: their callers are in the
 checkout. Hand-checked on six gems, 36 of 43 rows it moved from `clear`
