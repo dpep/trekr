@@ -1,0 +1,6 @@
+# A Haml template's Ruby was not read: a helper only a Haml view called
+# was "named in a view, which is not read", and no position in one had an
+# answer. Haml closes a block by indentation, so a `do` block's parameter
+# must be bound inside it and not after it.
+refs WidgetsHelper#badge confirmed=0
+dead app/helpers/widgets_helper.rb WidgetsHelper#badge=unreferenced~view WidgetsHelper#greeting=unreferenced~view WidgetsHelper#lonely=unreferenced~

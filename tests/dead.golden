@@ -19,7 +19,7 @@
 261-a-method-missing-that-sends-a-name-on-may-run-it c9d285dbd3b26c49
 311-a-top-level-def-is-called-by-an-implicit-call b67f50fb2c73071c
 312-a-symbol-a-macro-defines-is-no-call 0b3dac5746dc3d36
-315-dead-says-what-it-cannot-see cfb0fc995498bea8
+315-dead-says-what-it-cannot-see b33e15b4d6454ae1
 316-an-aliases-calls-reach-its-target 23a4138469eb4187
 340-a-symbol-an-option-names-is-a-reference 50b687206cc4bdee
 342-a-block-rails-runs-on-the-instance-calls-the-instance 92ee10a70bfd39e1
@@ -157,3 +157,4 @@
 761-a-constant-naming-an-unindexed-class-is-api aa7b5976a8325132
 762-a-protected-method-is-api 8fdaea8b119c644e
 763-a-doc-line-reopens-a-nodoc-body 6671f4d867ccd9f8
+780-a-haml-templates-ruby-is-read-in-place 9a4c46a787129b51

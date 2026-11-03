@@ -1,0 +1,11 @@
+-# lonely is only in a comment
+- content_for :title do
+  = heading
+%ul
+  - @widgets.each do |widget|
+    %li{ class: badge_class(widget) }= badge(widget)
+%p= widget
+- if current_account
+  %p Hi #{greeting}
+- else
+  = link_to "x", "/x"
