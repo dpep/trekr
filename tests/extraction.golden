@@ -1,6 +1,6 @@
 # Each testbed input's stored facts, hashed, at the store version below.
 # Regenerate: UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden
-version 73
+version 74
 erb tests/testbed/315-dead-says-what-it-cannot-see/app/views/widgets/index.html.erb fb6993b57ce1afc0
 erb tests/testbed/430-a-view-or-a-script-references-a-constant/app/views/widgets/index.html.erb df75e9ccc30b1507
 erb tests/testbed/520-an-erb-templates-calls-are-call-sites/app/views/widgets/show.html.erb 7d61239ea66915a3
@@ -861,7 +861,7 @@ ruby tests/testbed/785-a-haml-blocks-close-before-the-ruby-after-them/app/helper
 ruby tests/testbed/786-a-haml-ruby-filter-is-one-ruby-run/app/helpers/widgets_helper.rb cdf0fa5dcb2d7aaa
 ruby tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/helpers/widgets_helper.rb aaa9c0b2aa1ea318
 ruby tests/testbed/788-a-visibility-def-after-module-function-keeps-its-copy/app.rb 2cbe0d1cac82e96b
-ruby tests/testbed/788-a-visibility-def-after-module-function-keeps-its-copy/lib/util.rb a4771aff1fe4f0c4
+ruby tests/testbed/788-a-visibility-def-after-module-function-keeps-its-copy/lib/util.rb f72546b679efbc96
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

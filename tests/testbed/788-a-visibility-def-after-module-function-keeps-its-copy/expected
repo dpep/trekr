@@ -1,3 +1,9 @@
 # `private def x`, `public def x` and `protected def x` after a bare
-# `module_function`. Input for the extractor's fix; what passes today.
+# `module_function` still get its public singleton copy, as Ruby 3.4 gives
+# it: only the instance method takes the toggle's visibility, and the mode
+# goes on after them. The extractor ended the mode for the def it wrapped.
+def app.rb:1:6 status=resolved owner=Util
+def app.rb:2:6 status=resolved owner=Util
+def app.rb:3:6 status=resolved owner=Util
 def app.rb:4:6 status=resolved owner=Util
+symbols lib/util.rb Util,hidden,hidden,shown,shown,guarded,guarded,after,after private=hidden,after

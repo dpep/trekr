@@ -15918,6 +15918,13 @@ moves. Testbed 744.
 toggle, so no copy is recorded and the instance method carries its
 toggle's visibility; `--dead`'s toggle reading went with it. Testbed 764.
 
+*Later (store v74, release hunt 1):* the argument form is no toggle. Under
+a bare `module_function`, `private def x`, `public def x` and `protected
+def x` still get the public singleton copy (checked on Ruby 3.4: `M.x` for
+each), and the mode goes on after them; only the instance method takes the
+written visibility. The extractor ended the mode while visiting the def.
+Testbed 788.
+
 **A constant naming a class or module is API** (the owner's decision).
 DEC-657 dropped value constants as rarely API, and an alias kept for
 compatibility fell with them: rubocop's `IgnoredMethods = AllowedMethods`,

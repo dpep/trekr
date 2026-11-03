@@ -6,7 +6,7 @@
   with a compact namespace nothing else defines (`class Scheduler::X`) had
   each reference counted twice in `test_refs` and its "referenced only from
   tests (N, …)" reason.
-- **Upgrading reindexes once** (store v73): the first command after
+- **Upgrading reindexes once** (store v74): the first command after
   upgrading rebuilds the index, with nothing to run. A script reading
   `--dead`'s `summary.tiers` sees methods under `test-only` now (below).
 - **Haml templates are read.** Every `*.haml` in a checkout is indexed for
@@ -45,6 +45,10 @@
   singleton copy plus a private instance method, so `--symbols` and
   `--def` give it the visibility its toggle says, and no singleton method
   Ruby never defines.
+- **`private def x`, `public def x` and `protected def x` after a bare
+  `module_function` keep its public singleton copy**, as in Ruby: `M.x`
+  resolves, and `--symbols` lists both methods, the instance one with the
+  visibility written. The copy was missing.
 - **`--dead` grades a row reached from outside the repo `lower`, keeping
   its tier, and says what kind of entry point it is**, with `entry_point`
   in JSON:

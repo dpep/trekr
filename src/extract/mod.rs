@@ -1797,14 +1797,14 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         let module_function = self.frames.last().is_some_and(|f| f.module_function);
         if module_function && !singleton {
             // `module_function` makes one `def` into two methods: a public
-            // singleton copy and a private instance one. Emitting both here
+            // singleton copy and an instance one, private unless a
+            // `public`/`protected def` says otherwise. Emitting both here
             // means no later layer has to know the macro exists.
             let mut copy = def.clone();
             copy.singleton = true;
             copy.visibility = Visibility::Public;
             copy.via = Some("module_function".into());
             self.push_def(copy);
-            def.visibility = Visibility::Private;
         }
         self.push_def(def);
 
@@ -5052,9 +5052,11 @@ impl<'pr> Extractor<'_> {
             let saved = self.visibility();
             let saved_mf = self.frames.last().is_some_and(|f| f.module_function);
             {
+                // `private def x` under a bare `module_function` still gets
+                // its copy: only a bare toggle ends the mode.
                 let frame = self.frame();
                 frame.visibility = visibility;
-                frame.module_function = macro_name == "module_function";
+                frame.module_function = saved_mf || macro_name == "module_function";
             }
             for arg in args {
                 self.visit(arg);
