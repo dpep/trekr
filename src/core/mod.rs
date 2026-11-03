@@ -1371,6 +1371,27 @@ pub(crate) mod rspec {
         predicate.strip_suffix('?').map(|root| format!("{root}s?"))
     }
 
+    /// The dynamic matcher names that may call `predicate`, the inverse of
+    /// [`predicate`] and [`present_tense`]: a superset, for finding the files
+    /// that write one; [`predicate`] then says which really do.
+    pub(crate) fn matchers_for(predicate: &str) -> Vec<String> {
+        let Some(root) = predicate.strip_suffix('?').filter(|r| !r.is_empty()) else {
+            return Vec::new();
+        };
+        let mut roots = vec![root];
+        roots.extend(root.strip_suffix('s').filter(|r| !r.is_empty()));
+        let mut names: Vec<String> = roots
+            .iter()
+            .flat_map(|root| ["be_", "be_a_", "be_an_"].map(|prefix| format!("{prefix}{root}")))
+            .collect();
+        names.extend(
+            root.strip_prefix("has_")
+                .filter(|r| !r.is_empty())
+                .map(|r| format!("have_{r}")),
+        );
+        names
+    }
+
     /// RSpec's `base_name_for`: a description as a constant name.
     pub(crate) fn base_name(description: &str) -> String {
         let mut name = String::new();

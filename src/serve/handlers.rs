@@ -914,7 +914,7 @@ fn asked_method(
 fn site_len(reference: &refs::Reference, name: &str) -> usize {
     match reference.receiver {
         "super" => "super".len(),
-        _ => reference.called_as.unwrap_or(name).len(),
+        _ => reference.called_as.as_deref().unwrap_or(name).len(),
     }
 }
 
@@ -1279,7 +1279,11 @@ fn scan_files(
     let mut seen = HashSet::new();
     let mut open: Vec<String> = overlay
         .iter()
-        .filter(|(_, text)| refs::called_as(query).iter().any(|n| text.contains(n)))
+        .filter(|(_, text)| {
+            refs::called_as(query)
+                .iter()
+                .any(|n| text.contains(n.as_str()))
+        })
         .map(|(path, _)| path.clone())
         .collect();
     open.sort();

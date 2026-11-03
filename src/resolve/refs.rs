@@ -90,9 +90,10 @@ pub(crate) struct Reference {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) from: Option<&'static str>,
     /// The name the site writes, when it is not the queried one: `new`, for
-    /// a construction that runs `initialize` (DEC-541).
+    /// a construction that runs `initialize` (DEC-541); a predicate
+    /// matcher, `have_x` for `has_x?` (DEC-659).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub(crate) called_as: Option<&'static str>,
+    pub(crate) called_as: Option<String>,
 }
 
 const SUPER_UNPLACED: &str = "`super` from a method whose owner the index cannot place";
@@ -135,7 +136,9 @@ impl Reference {
             return None;
         }
         match self.why {
-            _ if self.called_as.is_some() && self.receiver_type.is_none() => Some(Unplaced::New),
+            _ if self.called_as.as_deref() == Some("new") && self.receiver_type.is_none() => {
+                Some(Unplaced::New)
+            }
             SUPER_UNPLACED | SUPER_UNINDEXED => Some(Unplaced::Super),
             BY_SYMBOL => Some(Unplaced::Symbol),
             IN_A_TEMPLATE => Some(Unplaced::Template),
@@ -252,20 +255,46 @@ pub(crate) fn constructor_of(query: &Query) -> Option<&'static str> {
     (query.owner.is_some() && !query.singleton && query.name == "initialize").then_some("new")
 }
 
-/// The names a call of the queried method is written as.
-pub(crate) fn called_as(query: &Query) -> Vec<&str> {
-    let mut names = vec![query.name.as_str()];
-    names.extend(constructor_of(query));
+/// The names a call of the queried method is written as: its own, `new`
+/// for an `initialize`, and the RSpec predicate matchers that may call it.
+pub(crate) fn called_as(query: &Query) -> Vec<String> {
+    let mut names = vec![query.name.clone()];
+    names.extend(constructor_of(query).map(str::to_string));
+    if query.owner.is_some() {
+        names.extend(crate::core::rspec::matchers_for(&query.name));
+    }
     names
 }
 
-/// Is this call a site of the queried method: one of its name, or an `X.new`
-/// that may run it. A `super` in a custom `new` is not one — the `X.new`
-/// that runs that `new` already is (DEC-541).
+/// Is this call a site of the queried method: one of its name, an `X.new`
+/// that may run it, or a predicate matcher that may call it. A `super` in a
+/// custom `new` is not one — the `X.new` that runs that `new` already is
+/// (DEC-541).
 pub(crate) fn names_it(call: &Call, query: &Query) -> bool {
     call.name == query.name
         || constructor_of(query) == Some(call.name.as_str())
             && call.recv != crate::core::RecvShape::Super
+        || matcher_predicate(call, query).is_some()
+}
+
+/// The predicate `call` sends that is the queried method, when `call` is a
+/// predicate matcher in an example (DEC-090): `have_x` sends `has_x?`, and
+/// `be_x` sends `x?`, or `xs?` to a subject with no `x?` (DEC-659). Only for
+/// an owned query: a bare name's mentions are the calls that write it.
+fn matcher_predicate(call: &Call, query: &Query) -> Option<Call> {
+    let predicate = call.stands_for.as_deref()?;
+    if query.owner.is_none()
+        || call.recv != crate::core::RecvShape::Implicit
+        || call.name == query.name
+    {
+        return None;
+    }
+    let present = call.name.starts_with("be_")
+        && crate::core::rspec::present_tense(&predicate.name).as_deref() == Some(&query.name);
+    (predicate.name == query.name || present).then(|| Call {
+        name: query.name.clone(),
+        ..predicate.clone()
+    })
 }
 
 /// One call site, tiered against the query.
@@ -296,6 +325,9 @@ pub(crate) fn tier_call_with(
 ) -> Reference {
     let mut reference = match made {
         _ if call.name == query.name => tier(tree, facts, call, path, query, target),
+        _ if let Some(predicate) = matcher_predicate(call, query) => {
+            tier_matcher(tree, facts, call, &predicate, path, query, target)
+        }
         Some(made) => tier_construct(tree, made, call, path, query, target),
         None => {
             let made = construct(tree, facts, call, path);
@@ -307,9 +339,49 @@ pub(crate) fn tier_call_with(
     reference.receiver_type.as_mut().map(public);
     reference.owner.as_mut().map(public);
     if call.name != query.name {
-        reference.called_as = constructor_of(query);
+        reference.called_as = Some(call.name.clone());
     }
     reference
+}
+
+/// A predicate matcher, tiered as the predicate it sends the expectation's
+/// subject — unless the group, RSpec or a gem defines the matcher's name,
+/// when that method runs instead and RSpec's `method_missing` never does
+/// (DEC-090, DEC-659).
+fn tier_matcher(
+    tree: &Tree,
+    facts: &Facts,
+    matcher: &Call,
+    predicate: &Call,
+    path: &str,
+    query: &Query,
+    target: Option<&str>,
+) -> Reference {
+    let receiver = super::receiver_of(tree, facts, matcher, path);
+    let defined = match super::example_member(tree, facts, matcher, path) {
+        Some(member) => Some(member.owner()),
+        None => receiver
+            .as_ref()
+            .and_then(|receiver| super::lookup_on(tree, matcher, receiver))
+            .map(|found| found.owner),
+    };
+    let Some(owner) = defined else {
+        return tier(tree, facts, predicate, path, query, target);
+    };
+    Reference {
+        path: path.to_string(),
+        line: matcher.pos.line,
+        col: matcher.pos.col,
+        tier: Tier::Excluded,
+        receiver: matcher.recv.as_str(),
+        receiver_type: receiver.map(|receiver| receiver.fqn),
+        owner: Some(owner),
+        why: "a matcher of this name is defined, so RSpec sends no predicate",
+        ruling: Some(Ruling::DifferentOwner),
+        proximity: 0,
+        from: None,
+        called_as: None,
+    }
 }
 
 fn tier(
@@ -1374,7 +1446,7 @@ pub(crate) fn untyped_construction(
         ruling: (!fits).then_some(Ruling::Arity),
         proximity: 3,
         from: None,
-        called_as: Some("new"),
+        called_as: Some("new".to_string()),
     }
 }
 

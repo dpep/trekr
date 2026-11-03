@@ -161,3 +161,4 @@
 785-a-haml-blocks-close-before-the-ruby-after-them c51c863e5ae60d90
 786-a-haml-ruby-filter-is-one-ruby-run f2dbf1f916adf74d
 787-a-haml-scripts-comment-while-do-and-rescue 6e3aebb1592700b8
+800-a-predicate-matcher-references-its-predicate 6c09ee4ac3a01bc4

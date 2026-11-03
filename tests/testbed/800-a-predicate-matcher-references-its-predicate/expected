@@ -1,0 +1,16 @@
+# `expect(x).to have_event_count(1)` is RSpec's predicate matcher: its
+# `method_missing` calls `has_event_count?` on the subject (DEC-090), and
+# `--def` said so, but `--refs` and `--dead` counted no such call, so a page
+# object's predicate a system spec asserts was `unreferenced`, clear. The
+# matcher is a reference to the predicate it calls: confirmed where the
+# subject is typed, possible where it is not (`page`), with the present
+# tense (`be_exist` → `exists?`) and `be_an_` read as RSpec reads them. A
+# matcher RSpec defines (`be_within`) calls no `within?`, and a `have_` call
+# outside an example group is no matcher.
+refs PageObjects::EventsPage#has_event_count? confirmed=1 possible=0
+refs PageObjects::EventsPage#visible? confirmed=0 possible=1
+refs PageObjects::EventsPage#exists? confirmed=1 possible=0
+refs PageObjects::EventsPage#within? confirmed=0 possible=0
+refs spec/system/page_objects/events_page.rb:3:9 confirmed=1
+dead spec PageObjects::EventsPage#has_event_count?=single-caller PageObjects::EventsPage#has_no_banner?=single-caller PageObjects::EventsPage#visible?=single-caller~untyped PageObjects::EventsPage#exists?=single-caller PageObjects::EventsPage#admin?=single-caller PageObjects::EventsPage#within?=unreferenced PageObjects::EventsPage#has_other?=unreferenced
+dead lib Gate#has_key_card?=unreferenced

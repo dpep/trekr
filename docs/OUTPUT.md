@@ -298,6 +298,16 @@ however it is written.
 a subclass that inherits it), each marked `"called_as": "new"`. An untyped
 `klass.new` is possible for every `initialize` it fits.
 
+A predicate's references include the RSpec predicate matchers in examples
+that call it, each marked `called_as` with the matcher's name:
+`have_event_count` for `has_event_count?`, `be_visible`, `be_a_visible` or
+`be_an_visible` for `visible?`, and `be_exist` for `exists?`, which RSpec
+tries when the subject has no `exist?`. Each is tiered by the expectation's
+subject (`expect(x).to`), so it is possible when that is untyped. A matcher
+the group, RSpec or a gem defines (`be_within`) runs that method instead,
+and is excluded. `--dead` and the editor's Find References count them the
+same way.
+
 Through the LSP, findReferences is capped (1,000 by default, confirmed
 callers first) and the cut is only announced to editors. Exactly that many
 locations means the list was cut.

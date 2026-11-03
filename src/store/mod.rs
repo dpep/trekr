@@ -1427,7 +1427,7 @@ impl Store {
     }
 
     /// The files calling any of `names`, sorted and deduplicated.
-    pub(crate) fn files_calling_any(&self, root: &str, names: &[&str]) -> Result<Vec<String>> {
+    pub(crate) fn files_calling_any(&self, root: &str, names: &[String]) -> Result<Vec<String>> {
         let mut paths = Vec::new();
         for name in names {
             paths.extend(self.files_calling(root, name)?);

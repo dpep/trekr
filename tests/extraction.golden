@@ -862,6 +862,12 @@ ruby tests/testbed/786-a-haml-ruby-filter-is-one-ruby-run/app/helpers/widgets_he
 ruby tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/helpers/widgets_helper.rb aaa9c0b2aa1ea318
 ruby tests/testbed/788-a-visibility-def-after-module-function-keeps-its-copy/app.rb 2cbe0d1cac82e96b
 ruby tests/testbed/788-a-visibility-def-after-module-function-keeps-its-copy/lib/util.rb f72546b679efbc96
+ruby tests/testbed/800-a-predicate-matcher-references-its-predicate/lib/gate.rb 0d07bcce57e15fdf
+ruby tests/testbed/800-a-predicate-matcher-references-its-predicate/rspec-core/lib/rspec/core/example_group.rb d88eafe305e0fd5d
+ruby tests/testbed/800-a-predicate-matcher-references-its-predicate/rspec-expectations/lib/rspec/expectations/expectation_target.rb b1fe4ca7aca8c281
+ruby tests/testbed/800-a-predicate-matcher-references-its-predicate/rspec-expectations/lib/rspec/expectations/syntax.rb 239a5775c154560d
+ruby tests/testbed/800-a-predicate-matcher-references-its-predicate/spec/system/events_spec.rb 60e3c83eb661bb86
+ruby tests/testbed/800-a-predicate-matcher-references-its-predicate/spec/system/page_objects/events_page.rb 862b0192ca667668
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

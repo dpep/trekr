@@ -5086,7 +5086,7 @@ fired in no real spec. Without RSpec::Matchers' in the chain —
 a checkout that indexes no rspec-expectations — `be_nil` could be a real
 matcher the index cannot see, and reading it as `nil?` would be a guess. The
 matcher's call is resolve-time only: nothing is stored, so `--refs
-Widget#empty?` does not count `be_empty`.
+Widget#empty?` does not count `be_empty`. (Superseded: it does, DEC-659.)
 
 ## DEC-091 — A custom matcher is a method its DSL call declares
 
@@ -16163,3 +16163,68 @@ syntax errors with `e` a call. A trailing comment is left out of the
 test (Prism finds it), a loop's `do` is blanked, and `rescue => e` reads
 `$! => e`, which binds `e` as Ruby does (`rescue Oops => e` already read
 `Oops => e`). Testbed 787.
+
+## DEC-659 — A predicate matcher is a reference to the predicate it calls
+
+**Reported** (accuracy pass on `--dead`): discourse's
+`PageObjects::Pages::DiscourseCalendar::UpcomingEvents#has_event_count?`
+was `unreferenced`, clear, though `upcoming_events_spec.rb:96` says
+`expect(upcoming_events).to have_event_count(1)`. `--def` on the matcher
+already answered the predicate (DEC-090); `--refs`, `--dead` and the
+editor's Find References looked only for calls written with the method's
+name, so every page-object predicate a system spec asserts through a
+matcher was a deletion candidate — 409 such rows in the evaluation's
+discourse sample, all false.
+
+**Decided.** For an owned query, a predicate matcher in an example is a
+site of the predicate RSpec's `method_missing` sends it, read as DEC-090
+reads it (`RSpec::Matchers::BuiltIn::Has` and `BePredicate` in
+rspec-expectations): `have_x` calls `has_x?`; `be_x`, `be_a_x` and
+`be_an_x` call `x?`, or `xs?` when the subject has no `x?`
+(`present_tense_predicate`). There is no `have_no_` rule in RSpec: its
+regex makes `have_no_banner` call `has_no_banner?`, and so does this. The
+site is tiered as the predicate call on the expectation's subject, which
+the extractor already records (`stands_for`): confirmed where the
+subject's type lands on the method, possible where it is untyped
+(`expect(page)`), excluded where it lands elsewhere. `called_as` names the
+matcher. A matcher the group, RSpec or a gem defines (`be_within`,
+`have_attributes`, a `RSpec::Matchers.define`) is found first, as Ruby
+finds it before `method_missing`, and the site is excluded (different
+owner). It lives in `refs::names_it` and `tier_call_with`, which the CLI
+and the language server share, so all three agree; the store is asked for
+the files calling any matcher name that could reach the predicate
+(`rspec::matchers_for`, a superset `names_it` narrows).
+
+**Not for a bare name.** `--refs has_x?` lists the calls that write the
+name, as `initialize`'s `new`s are listed only for an owned query.
+
+**Measured**, `--dead`, 41cfeef → this, the evaluation's corpora:
+
+| corpus | `unreferenced`, clear → gone | → `single-caller`, clear | → `single-caller`, lower | other moves |
+| --- | ---: | ---: | ---: | ---: |
+| discourse `app lib plugins` | 218 | 177 | 4 | 34 |
+| discourse `spec/system` | 457 | 435 | 51 | 92 |
+| mastodon `app lib` | — | — | — | 7 `single-caller` gone |
+| rubocop, sidekiq, rack, faraday `lib`; rails `activemodel/test` | — | — | — | none |
+
+Every move is toward use, and no `unreferenced` row appeared. Two rows
+became `clear` (`Automation#has_name?`, `AdminApiKeys#has_scope?`): each
+was `unreferenced`, lower only for a gem's call of the same name, which is
+weighed for an uncalled row, and is now `single-caller` with its matcher a
+confirmed caller. Hand-checked, each a real call:
+`SolvedTopic#has_unaccepted_solution?` (`solved_spec.rb:33`),
+`Rewind#has_rewind_loaded?`, `UpcomingEvents#has_event_height?`,
+`ChatSidePanel#has_no_open_thread_list?` (`have_no_` as RSpec reads it),
+`QuoteComparer#missing?` (`expect(QuoteComparer.new(…)).to be_missing`),
+`ProblemCheck#scheduled?`. An untyped subject is possible for every
+predicate of its name, as an untyped call is: `expect(step).to be_running`
+gives `Autospec::BaseRunner#running?` a possible caller it does not have.
+
+**What remains.** discourse `spec/system` keeps 306 `unreferenced`, clear
+methods; 12 at random (seed 659): 10 named nowhere, one a sibling page
+object's duplicate whose matcher lands on its own class
+(`AdminFontsForm#has_form_field?`), and one false —
+`Review::TopicLink#has_tag_link?`, asserted in a file whose group is a
+bare top-level `describe`, which the extractor does not read as an example
+group, so its matchers carry no predicate (an extraction fact, not done
+here). Testbed 800.
