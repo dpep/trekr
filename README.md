@@ -161,9 +161,10 @@ super-only       activerecord/lib/active_record/associations/belongs_to_associat
 It lists methods, then a spec's `let`s, `subject`s, group `def`s and shared
 groups, read the way RSpec runs them, then classes, modules and constants.
 Each row is in one tier, from least evidence of use to most —
-`unreferenced`, `shadowed` (every call lands on an override), `test-only`,
-`override`, `convention-only` (only a macro symbol, a route or a library's
-naming convention reaches it), `super-only`, `single-caller` — and is
+`unreferenced`, `shadowed` (every call lands on an override), `test-only`
+(only specs and tests call or name it), `override`, `convention-only` (only
+a macro symbol, a route, a test runner or a library's naming convention
+reaches it), `super-only`, `single-caller` — and is
 `clear` or `lower` confidence. A `lower` row's `caveat` names the way in
 trekr cannot see: a Slim view, an extensionless script, a name built at
 runtime, a hook Ruby calls by name, an unindexed ancestor, a gem. A row
@@ -206,6 +207,11 @@ own `def self.new` returns another class's `new` is ruled out; one whose
 `new` returns nothing trekr reads (Active Record's ends in an `if`) leaves its
 sites possible. `--def` on a plain `X.new` goes to the `initialize` it runs.
 
+An RSpec predicate matcher is a call of the predicate it runs:
+`expect(page).to have_event_count(1)` is listed under `has_event_count?`, and
+`be_visible` under `visible?`, with `called_as` naming the matcher — so
+`--dead` counts it too.
+
 A position asks about what is there: `trekr --refs spec/widget_spec.rb:12`
 on a `let`, a `subject` or a group's `def` lists every read RSpec would run
 it for, with `from` — `group`, `nested_group`, `enclosing_group`,
@@ -244,7 +250,7 @@ answer in them, and a helper or model method a view calls has that call.
   template that `extends` another lends it its object.
 
 A Haml template's `if`/`else` chain is read flat — each condition and
-branch a statement — and a `do` block keeps its parameters. Route helpers
+branch a statement — and a `do` block binds its parameters inside it. Route helpers
 (`posts_path`) are residue, and Slim is not read (`--dead` says when a Slim
 view names a row). Measured against a runtime trace of
 mastodon's mailer templates, DEC-523.
