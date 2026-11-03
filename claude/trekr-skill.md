@@ -161,7 +161,7 @@ often a `caveat`.
 found; here is what was checked". Before deleting:
 
 - Read `confidence` and `caveat`. A `caveat` names a way in trekr can't see:
-  `send`/`method_missing`, a computed name, a Haml or Slim view (ERB and RABL
+  `send`/`method_missing`, a computed name, a Slim view (ERB, Haml and RABL
   are read), an extensionless script (`exe/tool`), a hook Ruby calls by name
   (`marshal_load`, `perform`), an unindexed ancestor, or a gem.
 - **`test-only`, `clear`, no `entry_point`:** nothing but tests was found
@@ -197,7 +197,7 @@ found; here is what was checked". Before deleting:
   `variants`.
 - **No Ruby (or no `rbs`) for the checkout means no core**: `"x".upcase` is
   `residue`, and the reason says so. `trekr --index` names the Ruby picked.
-- **Views**: ERB and RABL are read. Route helpers (`posts_path`) are
-  `residue`. Haml and Slim aren't read.
+- **Views**: ERB, Haml and RABL are read. Route helpers (`posts_path`) are
+  `residue`. Slim isn't read.
 
 Every field, explained: <https://github.com/dpep/trekr/blob/main/docs/OUTPUT.md>.
