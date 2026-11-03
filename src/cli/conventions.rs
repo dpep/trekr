@@ -231,7 +231,7 @@ pub(super) fn test_method(
     let test = public
         && name.starts_with("test_")
         && tree.kind_of(owner) == Some("class")
-        && super::dead_consts::test_case(tree, owner, relative);
+        && super::dead_consts::runs_test_methods(tree, owner, relative);
     test.then(|| Convention {
         by: "test runner",
         reason: "a test case's `test_` method, which its runner runs by name".to_string(),

@@ -16278,6 +16278,24 @@ construction; hand-read: `AeDefinitionTests#test_ae`,
 `LengthValidationTest#test_validates_length_of_custom_errors_for_minimum_with_message`
 — each a test its runner runs. Testbed 801.
 
+**Addendum — only a test case's.** The class rule's file-name fallback
+(the runner loads a test-named file) does not carry to methods: Minitest
+and Test::Unit run `test_` methods only on a Runnable subclass, so a fake
+in `client_test.rb`, a class in `test_helper.rb` or a stub in a spec had
+its `test_` method `convention-only`. Now a public `test_` method is run
+only when its class inherits one of the test cases above — indexed, or
+written as one where it resolves to nothing — or its chain reaches what is
+not indexed and its file is a test file (`test_*.rb`, `*_test.rb`) under
+`test/` (`dead_consts::runs_test_methods`). **Measured**, `--dead`,
+d1b1e3f → this: rails `actionpack/test activemodel/test` 7 rows
+`convention-only` → `unreferenced`, the controllers in test files that
+inherit `ActionController::Base`: `RenderToStringTest::TestController#test_render_json_render_to_string`
+(clear, truly unused) and 6 lower — `test_html_output` and `test_send_file`
+(`test_case_test.rb`) and four `test_send_file_headers_*`
+(`send_file_test.rb`), actions their tests reach by `get __method__`,
+which trekr does not model. discourse `app lib plugins`: no row moves (the
+holidays tests keep their 375). Testbed 805.
+
 ## DEC-661 — A call ruled out on a class a module may join lowers the module's method
 
 **Reported** (accuracy pass on `--dead`): 15 discourse rows, `clear`, had

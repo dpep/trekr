@@ -1,0 +1,9 @@
+# Minitest and Test::Unit run `test_` methods only on a test case (a
+# Runnable subclass), but DEC-660 credited the runner for any class in a
+# file named as a test: a fake in `client_test.rb`, a helper class in
+# `test_helper.rb`, a stub in a spec. A `test_` method is run only when its
+# class inherits a test case (indexed, or written as one where it is not),
+# or its chain reaches what is not indexed and it is in a test file under
+# `test/`.
+dead test FakeClient#test_connection=unreferenced Builder#test_build=unreferenced ClientTest#test_one=convention-only GemTest#test_runs=convention-only UnitCase#test_shared=convention-only
+dead spec Dummy#test_value=unreferenced GemSpec#test_runs=unreferenced

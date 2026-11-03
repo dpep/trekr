@@ -17,8 +17,10 @@
   RSpec or the spec defines (`be_within`) calls no predicate.
 - **`--dead` lists a Minitest or Test::Unit test as `convention-only`**,
   by the test runner, rather than `unreferenced`: a public `test_` method
-  of a class `--dead` already calls a test case (under a test directory,
-  inheriting `Minitest::Test` or its kin, or in a file named as a test).
+  of a class under a test directory that inherits `Minitest::Test` or its
+  kin, or, where its ancestors are not all indexed, is in a test file
+  (`test_*.rb`, `*_test.rb`) under `test/`. A class in a test file that is
+  no test case (a fake, a stub controller) runs no `test_` method.
 - **`--dead` grades a module's method `lower` when its name is called on a
   class that lacks it**, naming the call: "called on TopicQuery (…), where
   trekr finds no such method; a module mixed in at runtime may supply it".

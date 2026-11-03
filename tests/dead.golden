@@ -144,7 +144,7 @@
 723-a-name-a-script-writes-lowers-a-test-only-row 3ca3273b7e12cb53
 724-a-sig-or-a-wrapped-private-constant-keeps-the-mark bb4b37fac6723cfb
 725-a-library-monorepos-nested-gem-is-api eca551e4329404a0
-740-a-library-with-no-gemspec-is-api ee15ee28416bedd4
+740-a-library-with-no-gemspec-is-api ffcee5ee4e4a4bde
 741-a-private-method-marked-doc-is-api 5944f38864a53e09
 742-a-transitive-mark-reaches-its-own-opening 62f3dde2bb07d37f
 743-a-doc-tag-counts-only-where-its-tool-reads-one 09a1d84d7621600a
@@ -165,3 +165,4 @@
 800-a-predicate-matcher-references-its-predicate 6c09ee4ac3a01bc4
 801-a-test-cases-test-method-is-run-by-its-runner cc91a1a99e1df15d
 802-a-call-ruled-out-on-a-class-a-module-may-join-lowers-it b7fae01938694bf2
+805-a-test-method-runs-only-in-a-test-case c291c6afa6b672b1

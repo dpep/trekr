@@ -78,6 +78,26 @@ pub(super) fn test_case(tree: &Tree, fqn: &str, relative: &str) -> bool {
         || file.ends_with("_spec.rb")
 }
 
+/// Whether Minitest or Test::Unit runs the `test_` methods of the class
+/// `fqn`, defined at `relative`: only a test case's (a Runnable), so one in
+/// its chain, or, where the chain reaches what is not indexed, a test file
+/// under `test/` vouching for it (DEC-660). A file name alone is not enough:
+/// a test file defines fakes and stubs too.
+pub(super) fn runs_test_methods(tree: &Tree, fqn: &str, relative: &str) -> bool {
+    if !in_tests(relative) {
+        return false;
+    }
+    let unresolved = &tree.ancestors(fqn).unresolved;
+    let file = relative.rsplit('/').next().unwrap_or(relative);
+    TEST_CASES.iter().any(|base| tree.inherits(fqn, base))
+        || unresolved
+            .iter()
+            .any(|written| TEST_CASES.contains(&written.trim_start_matches("::")))
+        || !unresolved.is_empty()
+            && set_apart(relative, &["test", "tests"])
+            && (file.starts_with("test_") || file.ends_with("_test.rb"))
+}
+
 /// A database's migrations and seeds, by a directory on its path relative to
 /// the checkout: run by file name, so no name built there is a way in and no
 /// constant declared there a candidate.

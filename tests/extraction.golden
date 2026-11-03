@@ -876,6 +876,12 @@ ruby tests/testbed/801-a-test-cases-test-method-is-run-by-its-runner/test/widget
 ruby tests/testbed/801-a-test-cases-test-method-is-run-by-its-runner/vendor/minitest/test.rb 55ef1f469f353d3a
 ruby tests/testbed/802-a-call-ruled-out-on-a-class-a-module-may-join-lowers-it/app/models/topic_query.rb c19f05c410e5ebb9
 ruby tests/testbed/802-a-call-ruled-out-on-a-class-a-module-may-join-lowers-it/config/application.rb 20ee429834700754
+ruby tests/testbed/805-a-test-method-runs-only-in-a-test-case/spec/widget_spec.rb 690d3cff349f744b
+ruby tests/testbed/805-a-test-method-runs-only-in-a-test-case/test/client_test.rb 9c89bb80be6e8c58
+ruby tests/testbed/805-a-test-method-runs-only-in-a-test-case/test/gem_test.rb 2eb5c79adab67ce2
+ruby tests/testbed/805-a-test-method-runs-only-in-a-test-case/test/support/unit_case.rb f4ef909ac66c38bb
+ruby tests/testbed/805-a-test-method-runs-only-in-a-test-case/test/test_helper.rb 2a9691704ca73bcb
+ruby tests/testbed/805-a-test-method-runs-only-in-a-test-case/vendor/minitest/test.rb 55ef1f469f353d3a
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28
