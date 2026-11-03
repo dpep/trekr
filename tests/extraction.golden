@@ -49,6 +49,7 @@ haml tests/testbed/786-a-haml-ruby-filter-is-one-ruby-run/app/views/widgets/inde
 haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/comment.html.haml fa48b4d5da23e184
 haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/loop.html.haml 672a1b539e7bbcab
 haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/rescued.html.haml 6b8dad9b92715e2b
+haml tests/testbed/790-a-crlf-haml-blank-line-is-blank/app/views/widgets/index.html.haml 969f5ada77ae516f
 rabl tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/views/widgets/base.rabl 706223d3bbf4a9f7
 rabl tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/views/widgets/show.rabl e1ce31e3d5212371
 rabl tests/testbed/603-a-templates-bare-ivar-and-local-assigns-are-defined/app/views/widgets/show.json.rabl bfd218e974bc4930
@@ -862,6 +863,7 @@ ruby tests/testbed/786-a-haml-ruby-filter-is-one-ruby-run/app/helpers/widgets_he
 ruby tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/helpers/widgets_helper.rb aaa9c0b2aa1ea318
 ruby tests/testbed/788-a-visibility-def-after-module-function-keeps-its-copy/app.rb 2cbe0d1cac82e96b
 ruby tests/testbed/788-a-visibility-def-after-module-function-keeps-its-copy/lib/util.rb f72546b679efbc96
+ruby tests/testbed/790-a-crlf-haml-blank-line-is-blank/app/helpers/widgets_helper.rb 98fd8461a0084030
 ruby tests/testbed/800-a-predicate-matcher-references-its-predicate/lib/gate.rb 0d07bcce57e15fdf
 ruby tests/testbed/800-a-predicate-matcher-references-its-predicate/rspec-core/lib/rspec/core/example_group.rb d88eafe305e0fd5d
 ruby tests/testbed/800-a-predicate-matcher-references-its-predicate/rspec-expectations/lib/rspec/expectations/expectation_target.rb b1fe4ca7aca8c281

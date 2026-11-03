@@ -1,0 +1,4 @@
+# A CRLF Haml template, its blank lines each the single byte `\r`. What
+# the reader gets right today; the next commit adds what it does not.
+def app/views/widgets/index.html.haml:13:3 status=resolved via=view owner=WidgetsHelper
+dead app/helpers/widgets_helper.rb WidgetsHelper#three=single-caller~
