@@ -147,9 +147,10 @@ for an `end`, so an `if`/`unless`/`case` chain is read flat (its keywords
 blanked) and a `do` block is rewritten to braces — Prism finds the call the
 `do` belongs to, and its unparenthesized arguments get the parentheses that
 keep the brace on it — so its close is one `}` in the markup before the next
-Ruby. Where that markup has too few bytes the innermost close there, and the
-rest after the next block opened since closes, never inside it. The buffer is longer than the
-template only by the `}`s of blocks open at its end, after its last line.
+Ruby. Where that markup has room for fewer closes than are due, the
+innermost blocks close there and the rest close after the next block opened
+since, never inside it. The buffer is longer than the template only by the
+`}`s of blocks open at its end, after its last line.
 
 ### `tree/` — a checkout's namespace, rebuilt not patched
 
@@ -731,6 +732,12 @@ and lands there; a class outside the owner's subtree that inherits the same
 method is `different_owner`, and a naming-rung guess that only inherits it
 is `possible` (DEC-280).
 
+An RSpec predicate matcher in an example (`have_event_count`, `be_visible`)
+is a site of the predicate it calls (`has_event_count?`, `visible?`),
+marked `called_as` and tiered by its expectation's subject; `be_exist`
+calls `exist?` when the subject has it, else `exists?`, and an untyped
+subject makes it possible for both (DEC-659).
+
 A `super` site is confirmed when every class that can run it lands on the
 queried method, possible when only some do or an ancestor after its owner is
 not indexed, and excluded when it lands elsewhere. It is always excluded
@@ -908,10 +915,13 @@ the routes (`routes`), YAML config (`config`), generated files
 as text (`dead_consts::named`) and the conventions that find a class by its
 name (`dead_consts::ways`, DEC-421). Each is evidence of a way in, never of
 a caller: it moves a row to `convention-only` or grades it `lower`, and the
-row says which. Last, `entry_points` (DEC-657) marks a row reached from
-outside the repo — a gem's public API, a routed action or controller, a job
-class — and grades it `lower` whatever its tier, naming the evidence that
-would settle it.
+row says which. A test case's public `test_` method is `convention-only`,
+run by its test runner (DEC-660), and a module's method whose name is
+called on a typed receiver that lacks it is `lower`, since a module mixed
+in at runtime may supply it (DEC-661). Last, `entry_points` (DEC-657) marks
+a row reached from outside the repo — a library's public API, a routed
+action or controller, a job class — and grades it `lower` whatever its
+tier, naming the evidence that would settle it.
 
 **An example group's members** (`let`, `subject`, a group's `def`) are file
 facts the store never sees (DEC-084), so they are weighed by
@@ -1627,7 +1637,7 @@ Deliberate, and cheap to close when they earn it:
   (`NotFound.new`) is still typed without it.
 - `private_constant` is not extracted: a private constant lists as public
   (`private_class_method` is, DEC-561). Only `--dead`'s entry-point check
-  reads it, as text, to keep a gem's private constant out of its API
+  reads it, as text, to keep a library's private constant out of its API
   (DEC-657).
 - Instance, class, and global variables are not in the index (not in PLAN
   §4's Phase 1 fact set). The LSP answers locals, ivars and cvars from the
