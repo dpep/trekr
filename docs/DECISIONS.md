@@ -20,7 +20,7 @@ belongs to:
 | Resolve: the receiver ladder, confidence, residue | 008, 010, 011, 019, 020, 027, 028, 031, 068, 071, 077, 081, 082, 089, 093, 112, 116, 126, 127, 133, 136, 137, 140, 165, 166, 172, 211, 213, 214, 260, 261, 280, 311, 314, 340, 341, 342, 350, 351, 380, 390, 391, 392, 401, 440, 441, 442, 444, 445, 541 |
 | Core, stdlib, gems, the checkout's Ruby | 015, 016, 017, 018, 023, 029, 078, 134, 150, 151, 152, 153, 180, 181, 182, 220, 240, 242, 262, 263, 265, 270, 271, 272, 273, 274, 276, 291, 292, 293, 610 |
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499 |
-| Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644 |
+| Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
 | `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563 |
 | `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657 |
 | LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646 |
@@ -16049,3 +16049,78 @@ rails 5, all already `lower` (`ActionController::Parameters#nested_attributes?`,
 sdoc 15, 15 (`RDoc::Generator::SDoc#generate_index_file`,
 `SDoc::GitHub#repository_url`). Every other corpus: no row moves. Testbed
 762.
+
+## DEC-658 — A Haml template's Ruby is read in place, its blocks closed in the markup
+
+**Decided.** A checkout's `*.haml` files are in its file map
+(`scan::Reader::Haml`), and `extract::haml::haml_ruby` reads one as
+`erb_ruby` reads ERB (DEC-520): a buffer in which every byte that is not
+Ruby is a space and every newline stays, so a fact's line, column and byte
+offset are the template's own. The Ruby is a script line's code (`-`, `=`,
+`~`, `!=`, `&=`, a tag's `=`) with the lines a trailing comma continues it
+onto; a tag's attribute hash `{…}` (braces around a call, `%html{
+html_attributes }`, are read as parentheses), object reference `[…]` and
+`(name=value)` values; each `#{…}` in text, a quoted attribute value and a
+filter's body, as `;(…)`; and a `:ruby` filter's body. A `;` goes in the
+markup byte before each piece. A `-#` comment and the lines under it are
+nothing; `==`, `!==`, `! x`, `& x` and `\` are text. A template under
+`app/views/` runs on the view context, as an ERB one does (DEC-521:
+`ViewTemplate::View`, renamed from `Erb`).
+
+**Blocks.** Haml closes a block by indentation and Haml's compiler writes
+the `end`; blanking leaves no room for one — a block at the left margin
+followed by another has two bytes (`- `) before the next Ruby. So:
+
+- An `if`/`elsif`/`else`/`unless`/`case`/`when`/`while`/`until`/`begin`/
+  `rescue`/`ensure` line is read **flat**: the keyword is blanked, the
+  condition is a statement, the branches follow as statements. Nothing a
+  call site needs is lost: `self` is the view either way and a condition's
+  assignment still binds.
+- A script ending in `do` opens a block whose parameters must stay bound,
+  so it is rewritten to **braces**, whose close is one byte: Prism parses
+  the script with an `end` after it to find the call (or lambda) the `do`
+  belongs to, `do` becomes `{ `, and a command's unparenthesized arguments
+  get `(`/`)` in the spaces around them, so the brace binds where `do` did
+  (`f.input :x do |y|` → `f.input(:x){  |y|`). A line indented no deeper
+  than the opener closes it; its `}` is written in the first blank byte
+  between the block's last Ruby and the next, before that Ruby's `;`.
+  Where there is no byte (two blocks closing at the left margin at once),
+  the `}` goes at the next blank byte, so the block ends late — its
+  parameter is in scope a little longer, which only matters to a bare name
+  that matches it. Blocks open at the end are closed after the last line,
+  the one way the buffer is longer than the template.
+
+**Rejected:** a buffer with `end`s inserted and an offset map back to the
+template — every consumer of `ruby_source` maps positions through the
+buffer's own lines (`variable_at`, the LSP's `reads`), so a map would be a
+second seam to keep in step; and leaving blocks unclosed for Prism to
+recover, which publishes syntax errors in valid templates and lets an
+`else` after an unclosed `do` land in the block.
+
+**Not read:** Haml's `|` multiline syntax, a `case`'s `when a, b` with
+several values (a syntax error the parse recovers from), an assigned
+conditional (`- x = if y`), `for`, `:erb` filters, and an object reference
+after an attribute hash, which reads as indexing it. A Slim template is
+still not read; DEC-315's caveat keeps it, Jbuilder and Builder.
+
+**Measured** on mastodon, the only corpus on disk with Haml (310 files,
+none in discourse or rails). Prism parses 301 of the 310 buffers with no
+error; the other 9 report only `Invalid yield` (a layout's `= yield`),
+which the language server drops for a template as it does for ERB.
+`--dead app`, a build with the reader turned off → this, each on a fresh
+store: candidates 3,826 → 3,663 (111 rows gain a second caller and leave
+the list), clear / lower 2,381 / 1,445 → 2,447 / 1,216, `unreferenced`
+171 → 96. Of the 70 rows that moved, every one moved toward use: 30
+`unreferenced`, lower → `single-caller`, clear, 14 to `single-caller`,
+lower (a call with an untyped receiver, `possible`), 6 `convention-only`
+to `single-caller`, 2 `unreferenced` to `convention-only` (a form
+field's symbol), and 9 `single-caller` and 9 `convention-only` only lose
+the "named in a view" caveat, lower → clear. Each hand-read
+caller is a real call (`relevant_account_ip(account, params[:ip])`,
+`privilege_label` in a continued `label_method:` lambda, `log_target`
+inside a `content_tag` argument). `--refs 'ThemeHelper#custom_stylesheet'`
+confirmed 0 → 1 (DEC-360's motivating call), and `--def` on it in
+`layouts/application.html.haml` answers `ThemeHelper`, `view`, 1.0. A
+fresh `--index`, three interleaved rounds, release builds: 3.56 / 3.74 /
+3.54 s → 3.50 / 3.66 / 3.52 s — within the noise. Testbed 780; 360 pins
+DEC-360's shapes as calls now.

@@ -2,9 +2,23 @@
 
 ## Unreleased
 
-- **Upgrading reindexes once** (store v69): the first command after
+- **Upgrading reindexes once** (store v70): the first command after
   upgrading rebuilds the index, with nothing to run. A script reading
   `--dead`'s `summary.tiers` sees methods under `test-only` now (below).
+- **Haml templates are read.** Every `*.haml` in a checkout is indexed for
+  the Ruby it runs, at the template's own lines and columns, as an ERB
+  template is: a script line's code (`- x`, `= x`, `!= x`, `&= x`, `~ x`, a
+  tag's `= x`, and the lines a trailing comma continues it onto), a tag's
+  attribute hash and `(name=value)` values, each `#{…}` in text and in a
+  filter, and a `:ruby` filter's body. A call in one under `app/views/` runs
+  on the view context (`resolved_via: view`), so `--def` and `--refs`
+  answer there, and `--dead` counts it as a call rather than "named in a
+  view (…), which is not read" — that caveat stays for Slim, Jbuilder and
+  Builder. An `if`/`elsif`/`else`/`unless` chain is read flat, its
+  conditions and branches each a statement; a `do` block keeps its
+  parameters inside it and not after it. The language server reads `.haml`
+  documents and says so (`experimental.trekr.templates` now lists
+  `"haml"`), and the Claude Code plugin starts it for `.haml` files.
 - **`--dead` lists a method only specs and tests call as `test-only`**, as
   it already did a class, however many calls they write. Such a method was
   missing when the specs called it more than once, and `single-caller` when
@@ -18,7 +32,7 @@
 - **`--dead` reads an extensionless Ruby script** (`exe/tool`, `bin/x`),
   which trekr does not index, for the names it writes: a row one names
   keeps its tier and is `lower`, "named in a script (exe/tool), which is
-  not read", as a Haml view's word grades it. A gem's CLI entry method was
+  not read", as a Slim view's word grades it. A gem's CLI entry method was
   `test-only`, clear.
 - **A bare `private`, `protected` or `public` ends `module_function`'s
   mode**, as in Ruby: a method after one is no longer recorded as a public

@@ -108,7 +108,7 @@ impl ViewTemplate {
         use crate::scan::Reader;
         under(path, "views")?;
         match Reader::of(path) {
-            Reader::Erb => Some(ViewTemplate::View),
+            Reader::Erb | Reader::Haml => Some(ViewTemplate::View),
             Reader::Rabl => Some(ViewTemplate::Rabl),
             Reader::Ruby | Reader::StructureSql => None,
         }
@@ -547,7 +547,7 @@ mod tests {
                 Some(ViewTemplate::Rabl),
             ),
             ("lib/generators/x/templates/migration.erb", None),
-            ("app/views/a/b.html.haml", None),
+            ("app/views/a/b.html.haml", Some(ViewTemplate::View)),
             ("app/models/a.rb", None),
         ] {
             assert_eq!(ViewTemplate::of(path), kind, "{path}");

@@ -2,17 +2,17 @@
 //! cannot see calls from, and says so per row (DEC-315).
 //!
 //! Not a reading of the templates. A name here is a word that appears where
-//! a template runs Ruby — a Haml or Slim line, a Jbuilder file — with no
-//! receiver typed and no scope known, which is evidence enough for a caveat
-//! and never for a caller. ERB and RABL templates are not among them: the
-//! index reads those, and their calls are call sites (DEC-520).
+//! a template runs Ruby — a Slim line, a Jbuilder file — with no receiver
+//! typed and no scope known, which is evidence enough for a caveat and never
+//! for a caller. ERB, Haml and RABL templates are not among them: the index
+//! reads those, and their calls are call sites (DEC-520, DEC-658).
 
 use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 
 /// Template extensions whose Ruby a view runs, and the index does not read.
-const TEMPLATES: [&str; 4] = ["haml", "slim", "jbuilder", "builder"];
+const TEMPLATES: [&str; 3] = ["slim", "jbuilder", "builder"];
 
 #[derive(Default)]
 pub(super) struct Views {
@@ -43,7 +43,7 @@ impl Views {
             let Some(text) = template_text(&bytes) else {
                 continue;
             };
-            let ruby = if path.ends_with(".haml") || path.ends_with(".slim") {
+            let ruby = if path.ends_with(".slim") {
                 indented_ruby(text)
             } else {
                 text.to_string()
@@ -245,9 +245,10 @@ fn template_text(bytes: &[u8]) -> Option<&str> {
         .filter(|text| !text.contains('\0'))
 }
 
-/// The Ruby a Haml or Slim template runs: a line that starts with `-` or
-/// `=`, what follows a tag's `=`, `{` or `(`, every `#{…}`, and the lines a
-/// Ruby line ending in a comma continues onto. Not a `-#` comment.
+/// The Ruby a Slim template runs: a line that starts with `-` or `=`, what
+/// follows a tag's `=`, `{` or `(`, every `#{…}`, and the lines a Ruby line
+/// ending in a comma continues onto. Not a `-#` comment (Haml's, from when
+/// this read Haml too).
 fn indented_ruby(text: &str) -> String {
     let mut ruby = String::new();
     let mut continued = false;
@@ -391,9 +392,8 @@ mod tests {
     }
 
     #[test]
-    fn a_haml_template_names_what_its_ruby_lines_run() {
-        let ruby =
-            indented_ruby("%h1= w.title\n%p lonely words\n- if w.shown?\n%a{ href: w.link }\n");
+    fn a_slim_template_names_what_its_ruby_lines_run() {
+        let ruby = indented_ruby("h1= w.title\np lonely words\n- if w.shown?\na{ href: w.link }\n");
         let names = words(&ruby);
         for name in ["title", "shown?", "link"] {
             assert!(names.iter().any(|n| n == name), "{name}");

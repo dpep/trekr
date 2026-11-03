@@ -121,7 +121,7 @@ pub(crate) fn tables_in(path: &str, src: &[u8]) -> Vec<Table> {
     use crate::scan::Reader;
     match Reader::of(path) {
         Reader::StructureSql => sql::tables(src),
-        Reader::Ruby | Reader::Erb | Reader::Rabl => ruby::tables(src),
+        Reader::Ruby | Reader::Erb | Reader::Haml | Reader::Rabl => ruby::tables(src),
     }
 }
 

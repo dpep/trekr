@@ -26,7 +26,7 @@
 343-a-symbol-read-as-no-name-is-said e4ed82a1f4f996aa
 344-a-route-reaches-a-controller-action 537859ccceaa554a
 345-routes-not-all-read-are-said a3d92d55d8d5a4e4
-360-a-haml-comment-or-continued-line-still-names 08c3d9b8879edeb7
+360-a-haml-comment-or-continued-line-still-names cdfdf47de375a97c
 361-a-module-functions-calls-are-its-own e874d4b328539a2a
 362-a-serializer-calls-include-for-its-attributes 74aa2fcba2982f2e
 363-a-serializer-without-include-methods-calls-none b223be408f7f4130
@@ -157,4 +157,4 @@
 761-a-constant-naming-an-unindexed-class-is-api aa7b5976a8325132
 762-a-protected-method-is-api 8fdaea8b119c644e
 763-a-doc-line-reopens-a-nodoc-body 6671f4d867ccd9f8
-780-a-haml-templates-ruby-is-read-in-place 9a4c46a787129b51
+780-a-haml-templates-ruby-is-read-in-place f4fdae49d340edac

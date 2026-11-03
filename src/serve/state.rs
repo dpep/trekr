@@ -236,7 +236,10 @@ impl Document {
         let mut errors = crate::extract::syntax_errors(&self.ruby());
         // A template is compiled into a method, where `yield` is the
         // layout's way to its content.
-        if crate::scan::Reader::of(&self.path) == crate::scan::Reader::Erb {
+        if matches!(
+            crate::scan::Reader::of(&self.path),
+            crate::scan::Reader::Erb | crate::scan::Reader::Haml
+        ) {
             errors.retain(|(_, _, message)| message != "Invalid yield");
         }
         errors

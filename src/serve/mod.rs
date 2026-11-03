@@ -83,7 +83,9 @@ fn capabilities() -> ServerCapabilities {
         // The view templates whose Ruby this server reads (DEC-520, DEC-526).
         // A client selects them only on seeing this: an older trekr parses a
         // `.erb` as Ruby, and every tag's markup is a syntax error to it.
-        experimental: Some(serde_json::json!({ "trekr": { "templates": ["erb", "rabl"] } })),
+        experimental: Some(
+            serde_json::json!({ "trekr": { "templates": ["erb", "haml", "rabl"] } }),
+        ),
         ..Default::default()
     }
 }
@@ -1295,7 +1297,7 @@ fn watch_request() -> Message {
                 "method": "workspace/didChangeWatchedFiles",
                 "registerOptions": {
                     "watchers": [
-                        { "globPattern": "**/*.{rb,rake,ru,gemspec,rbi,jbuilder,erb,rabl}" },
+                        { "globPattern": "**/*.{rb,rake,ru,gemspec,rbi,jbuilder,erb,haml,rabl}" },
                         // A migration rewrites the app's SQL dump (DEC-480).
                         { "globPattern": "**/db/*structure.sql" },
                     ],

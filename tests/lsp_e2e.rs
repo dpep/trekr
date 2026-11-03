@@ -280,7 +280,7 @@ fn the_server_announces_only_what_it_answers() {
     // a `.erb` as Ruby, and would flood it with syntax errors.
     assert_eq!(
         caps["experimental"]["trekr"]["templates"],
-        serde_json::json!(["erb", "rabl"])
+        serde_json::json!(["erb", "haml", "rabl"])
     );
     assert_eq!(result["result"]["serverInfo"]["name"], "trekr");
     assert_eq!(

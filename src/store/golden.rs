@@ -28,6 +28,7 @@ fn kind(path: &str) -> Option<&'static str> {
     crate::scan::is_indexed(path).then(|| match Reader::of(path) {
         Reader::Ruby => "ruby",
         Reader::Erb => "erb",
+        Reader::Haml => "haml",
         Reader::Rabl => "rabl",
         Reader::StructureSql => "sql",
     })

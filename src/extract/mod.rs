@@ -12,6 +12,7 @@
 //! trees; one-way extraction does not.
 
 mod enums;
+mod haml;
 pub(crate) mod line_index;
 mod macros;
 
@@ -494,15 +495,19 @@ pub(crate) fn read_file(root: &std::path::Path, path: &str) -> Option<Facts> {
 pub(crate) fn extract_file(path: &str, src: &[u8]) -> Facts {
     match Reader::of(path) {
         Reader::StructureSql => extract_sql(src),
-        Reader::Ruby | Reader::Erb | Reader::Rabl => extract(&ruby_source(path, src)),
+        Reader::Ruby | Reader::Erb | Reader::Haml | Reader::Rabl => {
+            extract(&ruby_source(path, src))
+        }
     }
 }
 
 /// The Ruby a file runs, at the file's own offsets: an ERB template's tags
-/// with everything else blanked (DEC-520), or the file itself.
+/// with everything else blanked (DEC-520), a Haml template's Ruby (DEC-658),
+/// or the file itself.
 pub(crate) fn ruby_source<'a>(path: &str, src: &'a [u8]) -> std::borrow::Cow<'a, [u8]> {
     match Reader::of(path) {
         Reader::Erb => template::erb_ruby(src).unwrap_or_default().into(),
+        Reader::Haml => haml::haml_ruby(src).unwrap_or_default().into(),
         Reader::Ruby | Reader::Rabl | Reader::StructureSql => src.into(),
     }
 }

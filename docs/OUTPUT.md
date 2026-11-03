@@ -348,9 +348,9 @@ row's `caveat` names what may still reach it. Any tier other than `override`
 that overrides a method is `lower`, and so is a `single-caller` row whose
 caller is `possible`.
 
-Three callers trekr cannot see grade a row `lower`: a Haml, Slim, Jbuilder
-or Builder template that writes the name ("named in a view (…), which is not
-read"; ERB and RABL templates are read, and their calls counted), a Ruby
+Three callers trekr cannot see grade a row `lower`: a Slim, Jbuilder or
+Builder template that writes the name ("named in a view (…), which is not
+read"; ERB, Haml and RABL templates are read, and their calls counted), a Ruby
 script with no extension (`exe/tool`, `bin/x`: "named in a script (…), which
 is not read"), and Ruby or Rails calling a protocol hook by name —
 `marshal_load`, `to_partial_path`, `each`, a job's `perform` ("a hook …

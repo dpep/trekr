@@ -1,5 +1,7 @@
 # `--dead` read a Haml template's Ruby as one run of text, so a `-#` comment's
 # apostrophe ("it's") opened a string that swallowed the lines after it, and
 # `= custom_banner` in a layout was never seen. And an `=` line ending in a
-# comma continues on the next, whose names were not read at all.
-dead app/helpers/widget_helper.rb WidgetHelper#custom_banner=unreferenced~view WidgetHelper#hint_text=unreferenced~view WidgetHelper#label_for=unreferenced~view WidgetHelper#lonely=unreferenced~
+# comma continues on the next, whose names were not read at all. The index
+# reads Haml now (DEC-658), and each is a call: the comment skipped, the
+# continuation read.
+dead app/helpers/widget_helper.rb WidgetHelper#custom_banner=single-caller~ WidgetHelper#hint_text=single-caller~ WidgetHelper#label_for=single-caller~ WidgetHelper#lonely=unreferenced~

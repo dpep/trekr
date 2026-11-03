@@ -165,7 +165,7 @@ Each row is in one tier, from least evidence of use to most —
 `override`, `convention-only` (only a macro symbol, a route or a library's
 naming convention reaches it), `super-only`, `single-caller` — and is
 `clear` or `lower` confidence. A `lower` row's `caveat` names the way in
-trekr cannot see: a Haml view, an extensionless script, a name built at
+trekr cannot see: a Slim view, an extensionless script, a name built at
 runtime, a hook Ruby calls by name, an unindexed ancestor, a gem. A row
 reached from outside the repo — a gem's public API, a routed action, a
 job — says so (`entry_point`) and is always `lower`. Every spec-member row
@@ -219,7 +219,7 @@ plus the comments — with no way to tell them apart. `Widget.save` and
 
 ## In a view
 
-ERB (`*.erb`) and RABL (`*.rabl`) templates are indexed like Ruby files, at
+ERB (`*.erb`), Haml (`*.haml`) and RABL (`*.rabl`) templates are indexed like Ruby files, at
 their own lines and columns, so `--def`, `--refs`, `--dead` and the editor
 answer in them, and a helper or model method a view calls has that call.
 
@@ -243,8 +243,10 @@ answer in them, and a helper or model method a view calls has that call.
   block's parameter resolve on the object of their scope (`rabl:object`); a
   template that `extends` another lends it its object.
 
-Route helpers (`posts_path`) are residue, and Haml and Slim are not read
-(`--dead` says when one names a row). Measured against a runtime trace of
+A Haml template's `if`/`else` chain is read flat — each condition and
+branch a statement — and a `do` block keeps its parameters. Route helpers
+(`posts_path`) are residue, and Slim is not read (`--dead` says when a Slim
+view names a row). Measured against a runtime trace of
 mastodon's mailer templates, DEC-523.
 
 ## In Claude Code
@@ -356,7 +358,7 @@ to surprise you:
   (`METHODS_WITH_QUERY.each { class_eval "def #{m}…" }`) is not named. Its
   class answers `residue` for such a name, never "no such method", and the
   string's own calls are still read.
-- Haml and Slim templates are not read (ERB and RABL are), and `refine` is
+- Slim templates are not read (ERB, Haml and RABL are), and `refine` is
   not modeled. In a view, route helpers (`posts_path`) are residue, and
   every template sees every helper: `clear_helpers` and a controller's own
   `helper` list are not modeled.

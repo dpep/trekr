@@ -12,6 +12,7 @@
       ".rbi": "ruby",
       ".jbuilder": "ruby",
       ".erb": "erb",
+      ".haml": "haml",
       ".rabl": "ruby"
     },
     "startupTimeout": 5000,

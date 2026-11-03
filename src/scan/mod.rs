@@ -53,6 +53,9 @@ pub(crate) enum Reader {
     Ruby,
     /// An ERB template: its tags' Ruby, the rest blanked (DEC-520).
     Erb,
+    /// A Haml template: its scripts', attributes' and interpolations' Ruby,
+    /// the rest blanked (DEC-658).
+    Haml,
     /// A RABL template, which is Ruby.
     Rabl,
     /// An app's schema dumped as SQL, read for its tables (DEC-480).
@@ -65,6 +68,8 @@ impl Reader {
             Reader::StructureSql
         } else if is_erb(path) {
             Reader::Erb
+        } else if path.ends_with(".haml") {
+            Reader::Haml
         } else if path.ends_with(".rabl") {
             Reader::Rabl
         } else {
@@ -74,9 +79,9 @@ impl Reader {
 }
 
 /// A view template whose Ruby the index reads (DEC-520): ERB, read through
-/// its tags, and RABL, which is Ruby.
+/// its tags, Haml through its scripts (DEC-658), and RABL, which is Ruby.
 pub(crate) fn is_template(path: &str) -> bool {
-    matches!(Reader::of(path), Reader::Erb | Reader::Rabl)
+    matches!(Reader::of(path), Reader::Erb | Reader::Haml | Reader::Rabl)
 }
 
 /// A file whose text is read as Ruby: Ruby by its name, a template's tags,
@@ -910,6 +915,7 @@ mod tests {
             ("app/models/widget.rb", Reader::Ruby),
             ("bin/rails", Reader::Ruby),
             ("app/views/a/show.html.erb", Reader::Erb),
+            ("app/views/a/show.html.haml", Reader::Haml),
             ("app/views/a/show.json.rabl", Reader::Rabl),
             ("db/structure.sql", Reader::StructureSql),
             ("db/seeds.sql", Reader::Ruby),

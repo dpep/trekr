@@ -65,7 +65,8 @@ keeps one current, and only the one Rails loads is in the map: `schema.rb`,
 unless `config/application.rb` sets `schema_format = :sql`.
 
 A checkout's view templates are in the map too: ERB (`*.erb`), read for
-the Ruby its tags run, and RABL (`*.rabl`), which is Ruby (DEC-520). A gem's
+the Ruby its tags run, Haml (`*.haml`), read for its scripts, attributes and
+interpolations (DEC-658), and RABL (`*.rabl`), which is Ruby (DEC-520). A gem's
 are not.
 
 `scan/near.rs` guesses which files a few files most likely need — a
@@ -137,6 +138,17 @@ code. Each template a call names — `render "row"`, `partial:`, `render
 (`Facts::templates`, resolve-time), which go to definition on the name
 answers with the files Rails' naming rules reach (DEC-524), and which type
 a partial's locals (DEC-525).
+
+**A Haml template is read in place too** (DEC-658, `extract::haml`): a
+script's code, an attribute hash, a `(name=value)` value and a `#{…}` keep
+their bytes, a `;` goes in the markup byte before each, and the rest is
+blank. Haml closes a block by indentation, where blanking leaves no room
+for an `end`, so an `if`/`unless`/`case` chain is read flat (its keywords
+blanked) and a `do` block is rewritten to braces — Prism finds the call the
+`do` belongs to, and its unparenthesized arguments get the parentheses that
+keep the brace on it — so its close is one `}` in the markup before the next
+Ruby, or later where there is no room. The buffer is longer than the
+template only by the `}`s of blocks open at its end, after its last line.
 
 ### `tree/` — a checkout's namespace, rebuilt not patched
 
@@ -368,7 +380,7 @@ The ladder, tried in order, stopping at the first rung that names a type:
 | `implicit_subject` | `subject` or `is_expected` with no `subject` written in reach: an instance of the class the group describes (DEC-114) | 1.0 |
 | `main` | a bare top-level `describe` in a spec: `main`'s method sends it to `RSpec` (DEC-115) | 1.0 |
 | `main` | a call at the top of a plain script: `main`, an Object, whose top-level `def`s outside a block are its own; in a Rake file `Rake::DSL` first. Not in a Gemfile, `config.ru` or Jbuilder view, nor a file with a top-level call `main` does not answer — another object evaluates those (DEC-445) | 1.0 |
-| `view` | a call in an ERB template under `app/views/`, outside any class it writes: Rails' view context — a name `helper_method` exposes from a controller, then the checkout's `app/helpers` modules (`helper :all`, the last by path first), then `ActionView::Base`'s chain (`Tree::lookup_in_view`, DEC-521) | 1.0 |
+| `view` | a call in an ERB or Haml template under `app/views/`, outside any class it writes: Rails' view context — a name `helper_method` exposes from a controller, then the checkout's `app/helpers` modules (`helper :all`, the last by path first), then `ActionView::Base`'s chain (`Tree::lookup_in_view`, DEC-521) | 1.0 |
 | `on_load` | a call directly in `ActiveSupport.on_load(:x) do`: the class that runs the hook, on its class side; in a `def` there, its instances; two such classes are one's reading and the other's rival (DEC-214) | 1 / classes |
 | `symbol` | `send(:x)`, `obj.respond_to?(:x)`, `before_action :x`, `alias_method :a, :x`, an option naming a method (`if: :x`, `with: :x`, DEC-340): `x` on the receiver of the reflective call, or on `self`'s instances for a class-level macro (DEC-093) | the receiver's |
 | `predicate_matcher` | `be_empty` / `have_key` in a spec: the subject's `empty?` / `has_key?`, the subject typed by the rest of the ladder (DEC-090) | the subject's |
@@ -888,8 +900,8 @@ is in a test is `test-only`, as a class is (DEC-652; a test is under a
 `dead_consts::in_tests`); classes, modules and
 constants (`cli::dead_consts`, DEC-420) by the `const_ref` rows that
 resolve to them through Ruby's lookup, a namespace by what it holds. Around both, readers of what the index does not hold, each
-a module of `cli`: the Haml, Slim, Jbuilder and Builder views and the
-extensionless Ruby scripts (`views`; ERB and RABL are indexed, DEC-520), names the checkout builds (`built`),
+a module of `cli`: the Slim, Jbuilder and Builder views and the
+extensionless Ruby scripts (`views`; ERB, Haml and RABL are indexed, DEC-520, DEC-658), names the checkout builds (`built`),
 the routes (`routes`), YAML config (`config`), generated files
 (`generated`), and for constants the checkout's Ruby, templates and scripts
 as text (`dead_consts::named`) and the conventions that find a class by its
@@ -1056,7 +1068,8 @@ the new binary in place (DEC-050).
 
 **A view template is a document like a Ruby file** (DEC-520): its facts,
 variables, requires and syntax errors are read from its Ruby (an ERB
-template's tags, blanked around at the same byte offsets) while its own
+template's tags or a Haml template's scripts, blanked around at the same
+byte offsets) while its own
 text converts columns, a layout's `yield` is no syntax error, and
 definition on a `render`'s name opens the template it names (DEC-524).
 
