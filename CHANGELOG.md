@@ -2,36 +2,12 @@
 
 ## Unreleased
 
-- **`--dead` counts a test's reference to a class once.** A class written
-  with a compact namespace nothing else defines (`class Scheduler::X`) had
-  each reference counted twice in `test_refs` and its "referenced only from
-  tests (N, …)" reason.
-- **An RSpec predicate matcher is a reference to the predicate it calls.**
-  `expect(page).to have_event_count(1)` calls `has_event_count?`, and
-  `be_visible` and `be_an_admin` call `visible?` and `admin?`, and
-  `be_exist` calls `exist?` when the subject has it, else `exists?`, as
-  RSpec's `method_missing` does: `--refs` lists each such
-  call (`called_as` names the matcher), the editor's Find References
-  lists it too, and `--dead` counts it, so a page object's predicate a
-  spec asserts this way is no longer `unreferenced`. Confirmed where
-  `expect(x)` types its subject, possible where it does not (`be_exist`
-  then for both `exist?` and `exists?`); a matcher
-  RSpec or the spec defines (`be_within`) calls no predicate.
-- **`--dead` lists a Minitest or Test::Unit test as `convention-only`**,
-  by the test runner, rather than `unreferenced`: a public `test_` method
-  of a class under a test directory that inherits `Minitest::Test` or its
-  kin, or, where its ancestors are not all indexed, is in a test file
-  (`test_*.rb`, `*_test.rb`) under `test/`. A class in a test file that is
-  no test case (a fake, a stub controller) runs no `test_` method.
-- **`--dead` grades a module's method `lower` when its name is called on a
-  class that lacks it**, naming the call: "called on TopicQuery (…), where
-  trekr finds no such method; a module mixed in at runtime may supply it".
-  A module prepended from a block (a plugin's `after_initialize`) is no
-  edge trekr records, so such a method was `unreferenced`, clear, though
-  that call runs it.
 - **Upgrading reindexes once** (store v75): the first command after
   upgrading rebuilds the index, with nothing to run. A script reading
-  `--dead`'s `summary.tiers` sees methods under `test-only` now (below).
+  `--dead`'s `summary.tiers` now sees methods under `test-only` (below).
+
+### Added
+
 - **Haml templates are read.** Every `*.haml` in a checkout is indexed for
   the Ruby it runs, at the template's own lines and columns, as an ERB
   template is: a script line's code (`- x`, `= x`, `!= x`, `&= x`, `~ x`, a
@@ -42,12 +18,14 @@
   answer there, and `--dead` counts it as a call rather than "named in a
   view (…), which is not read" — that caveat stays for Slim, Jbuilder and
   Builder. An `if`/`elsif`/`else`/`unless` chain is read flat, its
-  conditions and branches each a statement; a `do` block keeps its
-  parameters inside it and not after it, but where two blocks end at the
-  left margin at once, which leaves room to close only one, the outer
-  block's parameters stay in scope over the Ruby up to its close. The language server reads `.haml`
-  documents and says so (`experimental.trekr.templates` now lists
-  `"haml"`), and the Claude Code plugin starts it for `.haml` files.
+  conditions and branches each a statement. A `do` block's parameters are
+  in scope inside it and not after it, except where two blocks end at the
+  left margin at once, which leaves room to close only one: there the
+  outer block's parameters stay in scope over the Ruby up to its close.
+  The language server reads `.haml` documents and says so
+  (`experimental.trekr.templates` lists `"haml"`), and the Claude Code
+  plugin starts it for `.haml` files. The VS Code extension's Haml support
+  ships separately (see its changelog).
 - **`--dead` lists a method only specs and tests call as `test-only`**, as
   it already did a class, however many calls they write. Such a method was
   missing when the specs called it more than once, and `single-caller` when
@@ -56,69 +34,72 @@
   under a `spec/`, `test/` or `tests/` directory at the checkout's root or
   a nested package's (`plugins/chat/spec/`), not one inside `lib/` or
   `app/`. A method that overrides another, or a hook Ruby calls by name,
-  keeps the tier it had, as does one a route or a library's convention
-  reaches (a Pundit predicate), and a spec's own helper is never `test-only`.
+  keeps the tier it would have without the tests, as does one a route or a
+  library's convention reaches (a Pundit predicate), and a spec's own
+  helper is never `test-only`.
+- **`--dead` says when a row is reached from outside the repo.** Such a row
+  keeps its tier, is graded `lower`, and names its kind of entry point
+  (`entry_point` in JSON); its caveat names the evidence that settles it.
+  - `route`: a routed controller action, or a controller only routes name
+    (these were `convention-only`, clear). Settle it with request logs or
+    APM.
+  - `job`: an Active Job or Sidekiq job class nothing outside the tests
+    names. Settle it with job metrics or logs.
+  - `api`: a library's public API — a public or protected method (RDoc
+    documents protected ones), a class or module, or a constant bound to a
+    constant path, resolved or not (`Worker = Job`, `Client =
+    OtherGem::Client`), or to a `DeprecatedConstantProxy`, in a library's
+    `lib/`. Any other value constant is not API. Settle it with the gem's
+    dependents or usage data.
+
+  A library's `lib/` is the checkout's own, or one beside a nested
+  `*.gemspec` (protobuf's `ruby/`), in a checkout that is no app. An app has
+  a `config/application.rb` at its root, gemspec or not, or a `config.ru`
+  or an `app/` without a root `*.gemspec` — so an engine gem's `app/` or a
+  gem's demo `config.ru` does not make one. A library needs no gemspec: a
+  Hoe gem such as minitest has none until release. An app's own engine is
+  not a library.
+
+  What its author marks internal is not API: `:nodoc:`, `@api private`,
+  `@private` (a YARD tag opening a comment line), `Internal:` (a TomDoc
+  status opening the comment's first line), a leading underscore, or
+  `private_constant`. Each mark reaches as far as its tool reads it:
+  - A `:nodoc:` covers its own class and the methods its body defines, as
+    RDoc reads it, so Rails' `module ActiveSupport # :nodoc:` hides nothing
+    nested in it. In that body, an own-line `# :doc:` at a method's
+    indentation uncovers the method, unless an own-line `# :nodoc:` at that
+    indentation comes between (Rails' `Dependencies.run_interlock`).
+  - `:nodoc: all` and `@api private` also cover what their marked opening
+    holds, but not another opening of the class; `private_constant` covers
+    what is nested anywhere.
+  - A method's own `@api public` overrides its class's `@api private`, as
+    YARD reads it.
+  - A private or underscored method marked `:doc:` is API, as RDoc
+    documents it (Rails' `RequestForgeryProtection#verified_request?`).
+  - A method under a bare `module_function` is API by its public singleton
+    copy, as one named by `module_function :x` is, until a bare `private`
+    ends that mode.
+- **An RSpec predicate matcher is a reference to the predicate it calls.**
+  `expect(page).to have_event_count(1)` calls `has_event_count?`, and
+  `be_visible` and `be_an_admin` call `visible?` and `admin?`. `be_exist`
+  calls `exist?` when the subject has it, else `exists?`, as RSpec's
+  `method_missing` does. `--refs` lists each such call (`called_as` names
+  the matcher), the editor's Find References lists it too, and `--dead`
+  counts it, so a page object's predicate a spec asserts this way is no
+  longer `unreferenced`. Confirmed where `expect(x)` types its subject,
+  possible where it does not (`be_exist` then for both `exist?` and
+  `exists?`); a matcher RSpec or the spec defines (`be_within`) calls no
+  predicate.
+- **`--dead` lists a Minitest or Test::Unit test as `convention-only`**,
+  by the test runner, rather than `unreferenced`: a public `test_` method
+  of a class under a test directory that inherits `Minitest::Test` or its
+  kin, or, where its ancestors are not all indexed, is in a test file
+  (`test_*.rb`, `*_test.rb`) under `test/`. A class in a test file that is
+  no test case (a fake, a stub controller) runs no `test_` method.
 - **`--dead` reads an extensionless Ruby script** (`exe/tool`, `bin/x`),
   which trekr does not index, for the names it writes: a row one names
   keeps its tier and is `lower`, "named in a script (exe/tool), which is
-  not read", as a Slim view's word grades it. A gem's CLI entry method was
-  `test-only`, clear.
-- **A bare `private`, `protected` or `public` ends `module_function`'s
-  mode**, as in Ruby: a method after one is no longer recorded as a public
-  singleton copy plus a private instance method, so `--symbols` and
-  `--def` give it the visibility its toggle says, and no singleton method
-  Ruby never defines.
-- **`private def x`, `public def x` and `protected def x` after a bare
-  `module_function` keep its public singleton copy**, as in Ruby: `M.x`
-  resolves, and `--symbols` lists both methods, the instance one with the
-  visibility written. The copy was missing.
-- **`--dead` grades a row reached from outside the repo `lower`, keeping
-  its tier, and says what kind of entry point it is**, with `entry_point`
-  in JSON:
-  - `api`: a public or protected method (RDoc documents protected ones),
-    a class or module in a library's `lib/` — the
-    checkout's own, or one beside a nested `*.gemspec` (protobuf's
-    `ruby/`) — in a checkout that is no app: no `config/application.rb`
-    at its root, gemspec or not, nor a `config.ru` or an `app/` without a
-    root `*.gemspec` (an engine gem's `app/`, a gem's demo `config.ru`); a
-    Hoe gem such as minitest has no
-    gemspec until release. Unless its author marks it internal
-    (`:nodoc:`, `@api private`, `@private`, `Internal:`, a leading underscore,
-    `private_constant`; a YARD tag opening a comment line, a TomDoc status
-    its first). A constant bound to a constant path, resolved or not (`Worker =
-    Job`, `Client = OtherGem::Client`), or to a `DeprecatedConstantProxy`
-    counts; any other value constant does not, nor an
-    app's own engine.
-    A `:nodoc:` covers its own class and the methods its body defines, as
-    RDoc reads it, so Rails' `module ActiveSupport # :nodoc:` hides
-    nothing nested in it, and an own-line `# :doc:` in that body, at a
-    method's indentation, uncovers it unless an own-line `# :nodoc:` at that
-    indentation comes between (Rails'
-    `Dependencies.run_interlock`); `:nodoc: all` and `@api private` cover what
-    their marked opening holds too, not another opening of the class, and
-    `private_constant` covers what is nested anywhere. A method's own `@api
-    public` overrides its class's `@api private`, as YARD reads it. A
-    method under a bare `module_function` is public API by its public
-    singleton copy, as one named by `module_function :x` was, until a
-    bare `private` ends that mode. A private
-    or underscored method marked `:doc:` is public API, as RDoc
-    documents it (Rails' `RequestForgeryProtection#verified_request?`).
-  - `route`: a routed controller action, or a controller only routes name.
-  - `job`: an Active Job or Sidekiq job class nothing outside the tests
-    names.
-
-  The caveat names the evidence that settles it: the gem's dependents or
-  usage data, request logs or APM, job metrics or logs. A routed action was
-  `convention-only`, clear; a gem's documented method only its specs call
-  was `test-only`, clear.
-- **`--dead` grades a class, module or constant row `clear` again when
-  nothing in the checkout could reach it by a built name**, instead of
-  `lower` on every row. A row is `lower` when the checkout looks up a name
-  computed whole (`name.constantize`, `Object.const_get(x)`,
-  `klass.const_get(x)`), and its caveat says where, or when a namespace,
-  shape or listing already caveated reaches it. Apps nearly always have
-  such a lookup, so their rows stay `lower`; a gem without one now reads
-  `clear`.
+  not read", as a Slim view's word grades it.
 - **`--dead` reads an interpolated string sent by name**,
   `TopicQuery.new(opts).public_send("list_#{filter}")` or `rule =
   "validate_#{name}"; public_send(rule)`, as it reads `:"list_#{filter}"`.
@@ -126,6 +107,32 @@
   subclasses or theirs, says "a name of its shape is sent at runtime" and
   is graded `lower`. A string sent to a variable
   (`row.public_send("total_#{kind}")`) is left alone.
+
+### Changed
+
+- **`--dead` grades a class, module or constant row `clear` when nothing in
+  the checkout could reach it by a built name**, instead of `lower` on
+  every row. A row is `lower` when the checkout looks up a name computed
+  whole (`name.constantize`, `Object.const_get(x)`, `klass.const_get(x)`),
+  and its caveat says where, or when a namespace, shape or listing already
+  caveated reaches it. Apps nearly always have such a lookup, so their rows
+  stay `lower`; a gem without one now reads `clear`.
+- **`--dead` grades a module's method `lower` when its name is called on a
+  class that lacks it**, naming the call: "called on TopicQuery (…), where
+  trekr finds no such method; a module mixed in at runtime may supply it".
+  A module prepended from a block (a plugin's `after_initialize`) is no
+  edge trekr records, so such a method was `unreferenced`, clear, though
+  that call runs it.
+
+### Fixed
+
+- **A bare `private`, `protected` or `public` ends `module_function`'s
+  mode**, as in Ruby: a method after one is no longer recorded as a public
+  singleton copy plus a private instance method, so `--symbols` and
+  `--def` give it the visibility its toggle says, and no singleton method
+  Ruby never defines. `private def x`, `public def x` and `protected def
+  x` are no toggle: they keep the mode's public singleton copy, and the
+  instance method takes the visibility written.
 - **A `def` in `Target.class_eval do … end` inside another class or method
   is `Target`'s**, as it already was at the top level. It was recorded on
   the class around the block, so calls to it were residue and `--refs
@@ -138,13 +145,17 @@
 - `--dead` no longer lists a class or module that a spec or test file
   defines and the tests use as `test-only`: it is test code in use, as a
   spec's own helper method is. One nothing uses is still `unreferenced`.
+- `--dead` no longer takes a `test/` or `spec/` directory inside `lib/` or
+  `app/` for tests: rack-test's library is `lib/rack/test/`, so a constant
+  only it used was `test-only`, and a name it builds and sends was not read.
 - `--dead` no longer says a method "calls `super`, so it overrides a method
   trekr has not indexed", and grades it `lower`, when the `super` belongs
   to a `def` nested in its body or to a block it hands to `define_method`
   or `define_singleton_method` (`send(:define_method, :x) { super() }`).
-- `--dead` no longer takes a `test/` or `spec/` directory inside `lib/` or
-  `app/` for tests: rack-test's library is `lib/rack/test/`, so a constant
-  only it used was `test-only`, and a name it builds and sends was not read.
+- `--dead` counts a test's reference to a class once. A class written with
+  a compact namespace nothing else defines (`class Scheduler::X`) had each
+  reference counted twice in `test_refs` and its "referenced only from
+  tests (N, …)" reason.
 
 ## 0.9.8 — 2026-10-18
 
