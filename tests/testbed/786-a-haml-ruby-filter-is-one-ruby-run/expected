@@ -1,6 +1,9 @@
-# A `:ruby` filter whose statements continue over lines: a hash literal and
-# a chain on a leading dot. Input for the reader's fix; what passes today.
+# A `:ruby` filter's body is one run of Ruby: a statement continued over
+# lines (a hash literal, a chain on a leading dot) parses as written. Each
+# line was read as its own statement, so a `;` landed inside the hash and
+# the chain: a syntax error, and the hash's first helper no call (3:8).
+def app/views/widgets/index.html.haml:3:8 status=resolved via=view owner=WidgetsHelper
 def app/views/widgets/index.html.haml:4:8 status=resolved via=view owner=WidgetsHelper
 def app/views/widgets/index.html.haml:7:12 status=resolved via=view owner=WidgetsHelper
 def app/views/widgets/index.html.haml:8:4 status=resolved via=view owner=WidgetsHelper
-dead app/helpers/widgets_helper.rb WidgetsHelper#rubyml_b=single-caller~ WidgetsHelper#rubyml_chain=single-caller~
+dead app/helpers/widgets_helper.rb WidgetsHelper#rubyml_a=single-caller~ WidgetsHelper#rubyml_b=single-caller~ WidgetsHelper#rubyml_chain=single-caller~

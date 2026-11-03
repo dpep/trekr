@@ -159,5 +159,5 @@
 763-a-doc-line-reopens-a-nodoc-body 6671f4d867ccd9f8
 780-a-haml-templates-ruby-is-read-in-place f4fdae49d340edac
 785-a-haml-blocks-close-before-the-ruby-after-them c51c863e5ae60d90
-786-a-haml-ruby-filter-is-one-ruby-run 2f47258bef631f41
+786-a-haml-ruby-filter-is-one-ruby-run f2dbf1f916adf74d
 787-a-haml-scripts-comment-while-do-and-rescue 5e74c48ca96d765f

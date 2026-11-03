@@ -16142,3 +16142,8 @@ margin under `= ` have one byte for a `}` and one for the `;`, and every
 byte of the buffer is the template's. The late close stays, narrowed: in
 mastodon's 310 templates it happens at two lines of that one file, over
 Ruby naming neither parameter. Testbed 785.
+
+A `:ruby` filter's body was written a line at a time, each after a `;`,
+which split a hash literal or a leading-dot chain spread over lines into
+syntax errors; it is one run now, from its first line's Ruby to its last
+(testbed 786).

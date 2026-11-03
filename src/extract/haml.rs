@@ -51,8 +51,6 @@ const FLAT: [&str; 11] = [
 enum Body {
     /// A `-#` comment's: nothing.
     Comment,
-    /// A `:ruby` filter's: Ruby.
-    Ruby,
     /// Any other filter's: text, read for its `#{…}`.
     Text,
 }
@@ -93,7 +91,6 @@ impl Haml<'_> {
                 if indent > depth {
                     match kind {
                         Body::Comment => {}
-                        Body::Ruby => self.write(p, end),
                         Body::Text => self.interpolations(p, end),
                     }
                     at = end + 1;
@@ -129,7 +126,10 @@ impl Haml<'_> {
             b':' => {
                 let ruby = s[p + 1..end].starts_with(b"ruby")
                     && !s.get(p + 5).is_some_and(|b| b.is_ascii_alphanumeric());
-                *body = Some((indent, if ruby { Body::Ruby } else { Body::Text }));
+                if ruby {
+                    return self.ruby_filter(end, indent);
+                }
+                *body = Some((indent, Body::Text));
             }
             b'\\' => self.interpolations(p + 1, end),
             b'%' | b'.' if next(1).is_some_and(name_byte) => return self.tag(p, indent),
@@ -188,6 +188,33 @@ impl Haml<'_> {
             });
         }
         end + 1
+    }
+
+    /// A `:ruby` filter's body, the lines indented under the filter's line
+    /// ending at `from`: one run of Ruby, so a statement may span lines.
+    /// Where the next line starts.
+    fn ruby_filter(&mut self, from: usize, indent: usize) -> usize {
+        let s = self.src;
+        let mut run: Option<(usize, usize)> = None;
+        let mut at = from + 1;
+        while at < s.len() {
+            let end = self.line_end(at);
+            let depth = s[at..end]
+                .iter()
+                .take_while(|b| matches!(b, b' ' | b'\t'))
+                .count();
+            if at + depth < end {
+                if depth <= indent {
+                    break;
+                }
+                run = Some((run.map_or(at + depth, |(lo, _)| lo), end));
+            }
+            at = end + 1;
+        }
+        if let Some((lo, hi)) = run {
+            self.write(lo, hi);
+        }
+        at
     }
 
     /// A tag at `p` — `%name`, `.class`, `#id` — its attributes, and what
@@ -642,6 +669,14 @@ mod tests {
         );
         assert!(!out.contains("var a") && !out.contains("not_code"), "{out}");
         kept(src, &["js_value", "x = compute", "y = x"]);
+    }
+
+    #[test]
+    fn a_ruby_filter_is_one_run_of_ruby() {
+        let src = ":ruby\n  opts = {\n    a: one,\n\n    b: two\n  }\n  list = x\n    .order(three)\n%p= opts\n";
+        let out = parses(src);
+        assert_eq!(out.matches(';').count(), 2, "{out}");
+        kept(src, &["a: one,\n\n    b: two\n  }", "x\n    .order(three)"]);
     }
 
     #[test]
