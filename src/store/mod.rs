@@ -1067,6 +1067,14 @@ impl Store {
         root: &str,
         names: &[String],
     ) -> Result<Vec<ConstRefRow>> {
+        // A name asked twice must not return its rows twice, whichever
+        // chunks its copies land in.
+        let names: Vec<&str> = names
+            .iter()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
         let mut found = Vec::new();
         for chunk in names.chunks(500) {
             let mut stmt = self.conn.prepare(&format!(
@@ -1081,7 +1089,7 @@ impl Store {
                     .collect::<Vec<_>>()
                     .join(",")
             ))?;
-            let params = std::iter::once(root).chain(chunk.iter().map(String::as_str));
+            let params = std::iter::once(root).chain(chunk.iter().copied());
             let rows = stmt.query_map(rusqlite::params_from_iter(params), |r| {
                 Ok(ConstRefRow {
                     path: r.get(0)?,
@@ -3111,6 +3119,17 @@ mod tests {
             "past a tenth, measured from the last analysis"
         );
         assert!(!store.analyze_if_outgrown());
+    }
+
+    #[test]
+    fn const_refs_named_answers_a_name_asked_twice_once() {
+        let mut store = Store::open_in_memory().unwrap();
+        indexed(&mut store, "/a", "a.rb", "Widget.new\n");
+        let mut names = vec!["Widget".to_string()];
+        names.extend((0..600).map(|i| format!("Other{i}")));
+        names.push("Widget".to_string());
+        let rows = store.const_refs_named("/a", &names).unwrap();
+        assert_eq!(rows.iter().filter(|r| r.name == "Widget").count(), 1);
     }
 
     #[test]
