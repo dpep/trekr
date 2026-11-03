@@ -15,8 +15,9 @@
 //! call site needs — and a `do` block, whose parameters must stay bound, is
 //! rewritten to braces (`f.input :x do |y|` reads `f.input(:x){  |y|`), so its
 //! close is one `}` written in the markup before the next Ruby. Where that
-//! markup has no byte to spare, the `}` is written at the next that does; past
-//! the last Ruby, after the file.
+//! markup has too few bytes, the innermost blocks close there and the rest
+//! wait for the next room outside any block opened since — never inside one,
+//! where a `}` would close it instead; past the last Ruby, after the file.
 
 use ruby_prism::Visit;
 
@@ -34,7 +35,6 @@ pub(crate) fn haml_ruby(src: &[u8]) -> Option<Vec<u8>> {
             .map(|&b| if b == b'\n' { b'\n' } else { b' ' })
             .collect(),
         blocks: Vec::new(),
-        unclosed: 0,
         code_end: 0,
     };
     haml.read();
@@ -57,13 +57,18 @@ enum Body {
     Text,
 }
 
+/// A `do` block whose `{` is written and whose `}` is not.
+struct Block {
+    indent: usize,
+    /// A line indented no deeper than the opener has ended it.
+    ended: bool,
+}
+
 struct Haml<'a> {
     src: &'a [u8],
     out: Vec<u8>,
-    /// The indentation of each `do` block still open, innermost last.
-    blocks: Vec<usize>,
-    /// Blocks closed by indentation whose `}` is not written yet.
-    unclosed: usize,
+    /// Innermost last.
+    blocks: Vec<Block>,
     /// Just past the last Ruby written.
     code_end: usize,
 }
@@ -96,10 +101,12 @@ impl Haml<'_> {
                 }
                 body = None;
             }
-            // A line closes every block opened at its depth or deeper.
-            while self.blocks.last().is_some_and(|&depth| depth >= indent) {
-                self.blocks.pop();
-                self.unclosed += 1;
+            // A line ends every block opened at its depth or deeper.
+            for block in self.blocks.iter_mut().rev() {
+                if !block.ended && block.indent < indent {
+                    break;
+                }
+                block.ended = true;
             }
             at = self.line(p, end, indent, &mut body);
         }
@@ -175,7 +182,10 @@ impl Haml<'_> {
         if let Some(keyword) = FLAT.iter().find(|k| starts_with_word(&s[start..end], k)) {
             self.out[start..start + keyword.len()].fill(b' ');
         } else if self.braces(start, end) {
-            self.blocks.push(indent);
+            self.blocks.push(Block {
+                indent,
+                ended: false,
+            });
         }
         end + 1
     }
@@ -269,7 +279,8 @@ impl Haml<'_> {
         }
     }
 
-    /// Each `#{…}` in text from `lo` to `hi`, read as `;(…)`.
+    /// Each `#{…}` in text from `lo` to `hi`: its Ruby, after a `;` in its
+    /// `{`, so that its `#` is room for a close.
     fn interpolations(&mut self, lo: usize, hi: usize) {
         let s = self.src;
         let mut q = lo;
@@ -285,9 +296,7 @@ impl Haml<'_> {
             let Some(close) = self.balanced(q + 1, hi) else {
                 return;
             };
-            self.write(q + 1, close + 1);
-            self.out[q + 1] = b'(';
-            self.out[close] = b')';
+            self.write(q + 2, close);
             q = close + 1;
         }
     }
@@ -339,13 +348,15 @@ impl Haml<'_> {
         self.code_end = self.code_end.max(hi);
     }
 
-    /// Write each pending `}` in a blank byte between the last Ruby and `hi`.
+    /// Write the `}` of each ended block, innermost first, in a blank byte
+    /// between the last Ruby and `hi`. One under a block still open waits
+    /// for that to end: a `}` written now would close the open one.
     fn close_blocks(&mut self, hi: usize) {
         let mut p = self.code_end;
-        while self.unclosed > 0 && p < hi {
+        while p < hi && self.blocks.last().is_some_and(|b| b.ended) {
             if self.out[p] == b' ' {
                 self.out[p] = b'}';
-                self.unclosed -= 1;
+                self.blocks.pop();
             }
             p += 1;
         }
@@ -354,13 +365,14 @@ impl Haml<'_> {
     /// The buffer, every block closed: those open at the end in the blank
     /// bytes after the last Ruby, and any left over on a line after the file.
     fn finish(mut self) -> Vec<u8> {
-        self.unclosed += self.blocks.len();
+        self.blocks.iter_mut().for_each(|b| b.ended = true);
         self.close_blocks(self.out.len());
-        if self.unclosed > 0 {
+        if !self.blocks.is_empty() {
             if self.out.last() != Some(&b'\n') {
                 self.out.push(b'\n');
             }
-            self.out.extend(std::iter::repeat_n(b'}', self.unclosed));
+            self.out
+                .extend(std::iter::repeat_n(b'}', self.blocks.len()));
         }
         self.out
     }
@@ -538,6 +550,25 @@ mod tests {
         let close = out.find('}').unwrap();
         assert!(close < src.rfind("post").unwrap(), "{out}");
         assert!(close > src.find("post.title").unwrap(), "{out}");
+    }
+
+    #[test]
+    fn a_close_without_room_never_closes_the_next_block() {
+        // Two blocks end at the left margin, which has a byte for one `}`:
+        // the inner closes there, and the outer after the new block, which
+        // keeps its body.
+        let src = "= form_for a do |f|\n  = f.fields_for :b do |ff|\n    = ff.text_field :c\n= form_for d do |g|\n  = g.text_field :e\n";
+        let out = parses(src);
+        assert_eq!(out.find('}'), src.find("= form_for d"), "{out}");
+        assert!(out.ends_with("\n}}"), "{out}");
+    }
+
+    #[test]
+    fn an_interpolation_at_the_margin_closes_the_block_before_it() {
+        let src = "- items.each do |g|\n  = g\n#{g} items\n";
+        let out = parses(src);
+        assert_eq!(out.find('}'), src.find("#{"), "{out}");
+        assert!(out.contains("};g "), "{out}");
     }
 
     #[test]

@@ -16083,12 +16083,15 @@ followed by another has two bytes (`- `) before the next Ruby. So:
   get `(`/`)` in the spaces around them, so the brace binds where `do` did
   (`f.input :x do |y|` → `f.input(:x){  |y|`). A line indented no deeper
   than the opener closes it; its `}` is written in the first blank byte
-  between the block's last Ruby and the next, before that Ruby's `;`.
-  Where there is no byte (two blocks closing at the left margin at once),
-  the `}` goes at the next blank byte, so the block ends late — its
-  parameter is in scope a little longer, which only matters to a bare name
-  that matches it. Blocks open at the end are closed after the last line,
-  the one way the buffer is longer than the template.
+  between the block's last Ruby and the next, before that Ruby's `;`; a
+  `#{…}` is written as its Ruby after a `;` in its `{`, so its `#` is a
+  byte for one. Where there are too few bytes (two blocks closing at the
+  left margin at once), the innermost close there and the rest end late:
+  their `}` waits for the next room outside any block opened since, never
+  inside one, where it would close that block instead. A late block's
+  parameter is in scope over the Ruby before its `}`, which only matters
+  to a bare name there that matches it. Blocks open at the end are closed
+  after the last line, the one way the buffer is longer than the template.
 
 **Rejected:** a buffer with `end`s inserted and an offset map back to the
 template — every consumer of `ruby_source` maps positions through the
@@ -16124,3 +16127,18 @@ confirmed 0 → 1 (DEC-360's motivating call), and `--def` on it in
 fresh `--index`, three interleaved rounds, release builds: 3.56 / 3.74 /
 3.54 s → 3.50 / 3.66 / 3.52 s — within the noise. Testbed 780; 360 pins
 DEC-360's shapes as calls now.
+
+**Fix round 1** (release hunt 1). A close that found no byte before the
+next Ruby was written at the next blank byte even when that Ruby opened a
+block, so it closed the new block at its body and left the old one open:
+mastodon's `admin/trends/links/index.html.haml` read five `f.button`
+receivers as bare calls. Ended blocks are now a stack entry each, closed
+innermost first and only from the top, so a close that waits never lands
+inside a block opened since; and a `#{…}` lends its `#` (its Ruby is
+written after a `;` in its `{`, without the parentheses it had), so one at
+the left margin closes the block before it rather than reading its
+parameter. Room cannot always be made: two blocks ending at the left
+margin under `= ` have one byte for a `}` and one for the `;`, and every
+byte of the buffer is the template's. The late close stays, narrowed: in
+mastodon's 310 templates it happens at two lines of that one file, over
+Ruby naming neither parameter. Testbed 785.

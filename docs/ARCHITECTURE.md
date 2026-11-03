@@ -147,7 +147,8 @@ for an `end`, so an `if`/`unless`/`case` chain is read flat (its keywords
 blanked) and a `do` block is rewritten to braces — Prism finds the call the
 `do` belongs to, and its unparenthesized arguments get the parentheses that
 keep the brace on it — so its close is one `}` in the markup before the next
-Ruby, or later where there is no room. The buffer is longer than the
+Ruby. Where that markup has too few bytes the innermost close there, and the
+rest after the next block opened since closes, never inside it. The buffer is longer than the
 template only by the `}`s of blocks open at its end, after its last line.
 
 ### `tree/` — a checkout's namespace, rebuilt not patched

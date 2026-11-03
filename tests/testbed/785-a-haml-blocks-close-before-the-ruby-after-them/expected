@@ -1,7 +1,15 @@
-# Haml blocks ending where the markup before the next Ruby has too few bytes
-# for their closes: two at the left margin at once, and a `#{}` at the left
-# margin after one. Input for the reader's fix; what passes today.
+# Haml closes blocks by indentation, and the reader writes each close as a
+# `}` in the markup before the next Ruby. Where that markup had too few
+# bytes, the close spilled into the next block and closed it instead: two
+# blocks ending at the left margin left the new `do |g|` closed at its body
+# (5:5 a helper call, resolved, 1.0) and the old ones open. A `#{}` at the
+# left margin had no byte at all, so the block before it stayed open over it
+# and its parameter hid a helper call from --dead. With room for one close,
+# the inner block closes there, and the outer (`f`) after the new block.
 def app/views/widgets/nested.html.haml:3:7 variable=parameter
+def app/views/widgets/nested.html.haml:5:5 variable=parameter
 def app/views/widgets/index.html.haml:4:9 status=resolved via=view owner=WidgetsHelper
+def app/views/widgets/index.html.haml:7:5 variable=parameter
 def app/views/widgets/interpolated.html.haml:2:5 variable=parameter
-dead app/helpers/widgets_helper.rb WidgetsHelper#heading=single-caller~
+def app/views/widgets/interpolated.html.haml:3:3 status=resolved via=view owner=WidgetsHelper
+dead app/helpers/widgets_helper.rb WidgetsHelper#g=unreferenced~ WidgetsHelper#badge=single-caller~ WidgetsHelper#heading=single-caller~

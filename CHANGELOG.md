@@ -6,7 +6,7 @@
   with a compact namespace nothing else defines (`class Scheduler::X`) had
   each reference counted twice in `test_refs` and its "referenced only from
   tests (N, …)" reason.
-- **Upgrading reindexes once** (store v70): the first command after
+- **Upgrading reindexes once** (store v71): the first command after
   upgrading rebuilds the index, with nothing to run. A script reading
   `--dead`'s `summary.tiers` sees methods under `test-only` now (below).
 - **Haml templates are read.** Every `*.haml` in a checkout is indexed for
@@ -20,7 +20,9 @@
   view (…), which is not read" — that caveat stays for Slim, Jbuilder and
   Builder. An `if`/`elsif`/`else`/`unless` chain is read flat, its
   conditions and branches each a statement; a `do` block keeps its
-  parameters inside it and not after it. The language server reads `.haml`
+  parameters inside it and not after it, but where two blocks end at the
+  left margin at once, which leaves room to close only one, the outer
+  block's parameters stay in scope over the Ruby up to its close. The language server reads `.haml`
   documents and says so (`experimental.trekr.templates` now lists
   `"haml"`), and the Claude Code plugin starts it for `.haml` files.
 - **`--dead` lists a method only specs and tests call as `test-only`**, as

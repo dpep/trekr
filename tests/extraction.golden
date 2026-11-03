@@ -1,6 +1,6 @@
 # Each testbed input's stored facts, hashed, at the store version below.
 # Regenerate: UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden
-version 70
+version 71
 erb tests/testbed/315-dead-says-what-it-cannot-see/app/views/widgets/index.html.erb fb6993b57ce1afc0
 erb tests/testbed/430-a-view-or-a-script-references-a-constant/app/views/widgets/index.html.erb df75e9ccc30b1507
 erb tests/testbed/520-an-erb-templates-calls-are-call-sites/app/views/widgets/show.html.erb 7d61239ea66915a3
@@ -42,9 +42,9 @@ erb tests/testbed/687-a-views-constantize-may-reach-any-constant/app/views/widge
 haml tests/testbed/360-a-haml-comment-or-continued-line-still-names/app/views/layouts/application.html.haml a99365b5e0f700c8
 haml tests/testbed/360-a-haml-comment-or-continued-line-still-names/app/views/widgets/_form.html.haml 5ded4755938eab19
 haml tests/testbed/780-a-haml-templates-ruby-is-read-in-place/app/views/widgets/index.html.haml ec20929844423274
-haml tests/testbed/785-a-haml-blocks-close-before-the-ruby-after-them/app/views/widgets/index.html.haml 24e38acc0eef91b5
-haml tests/testbed/785-a-haml-blocks-close-before-the-ruby-after-them/app/views/widgets/interpolated.html.haml 728ad0b1851b0398
-haml tests/testbed/785-a-haml-blocks-close-before-the-ruby-after-them/app/views/widgets/nested.html.haml d33a8e8dcb632b03
+haml tests/testbed/785-a-haml-blocks-close-before-the-ruby-after-them/app/views/widgets/index.html.haml 34c8c0017fa1be73
+haml tests/testbed/785-a-haml-blocks-close-before-the-ruby-after-them/app/views/widgets/interpolated.html.haml 84ed879001676bf3
+haml tests/testbed/785-a-haml-blocks-close-before-the-ruby-after-them/app/views/widgets/nested.html.haml b5d5484283d84e0a
 haml tests/testbed/786-a-haml-ruby-filter-is-one-ruby-run/app/views/widgets/index.html.haml 59a73d2d1b137dcd
 haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/comment.html.haml e95642a67c3af64f
 haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/loop.html.haml 53241e6e18c53a65
