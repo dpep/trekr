@@ -1,0 +1,6 @@
+# A bare `private`, `protected` or `public` ends `module_function`'s mode,
+# as Ruby 3.4 gives it: `hidden` is a private instance method only and
+# `shown` a public one, with no singleton copy; a later bare
+# `module_function` starts the mode again.
+def app.rb:1:6 status=resolved owner=Util
+def app.rb:2:6 status=resolved owner=Util
