@@ -1,4 +1,10 @@
-# A CRLF Haml template, its blank lines each the single byte `\r`. What
-# the reader gets right today; the next commit adds what it does not.
+# A CRLF Haml template's blank line is the single byte `\r`, which the
+# reader counted as a line at the left margin: it ended the `do` block
+# before it, so the block's parameter after the blank (4:5) read as a
+# helper call; it ended a `-#` comment, so the comment's body was read as
+# Ruby and credited `noted` with a call; and it ended a `:ruby` filter, so
+# the filter's next line was text and `two` lost its call.
+def app/views/widgets/index.html.haml:4:5 variable=parameter
+def app/views/widgets/index.html.haml:11:7 status=resolved via=view owner=WidgetsHelper
 def app/views/widgets/index.html.haml:13:3 status=resolved via=view owner=WidgetsHelper
-dead app/helpers/widgets_helper.rb WidgetsHelper#three=single-caller~
+dead app/helpers/widgets_helper.rb WidgetsHelper#item=unreferenced~ WidgetsHelper#noted=unreferenced~ WidgetsHelper#two=single-caller~ WidgetsHelper#three=single-caller~

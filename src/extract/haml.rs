@@ -30,9 +30,15 @@ pub(crate) fn haml_ruby(src: &[u8]) -> Option<Vec<u8>> {
     }
     let mut haml = Haml {
         src,
+        // A CRLF's `\r` stays, as its `\n` does: no room for a close.
         out: src
             .iter()
-            .map(|&b| if b == b'\n' { b'\n' } else { b' ' })
+            .enumerate()
+            .map(|(i, &b)| match b {
+                b'\n' => b'\n',
+                b'\r' if src.get(i + 1) == Some(&b'\n') => b'\r',
+                _ => b' ',
+            })
             .collect(),
         blocks: Vec::new(),
         code_end: 0,
@@ -83,7 +89,7 @@ impl Haml<'_> {
                 .take_while(|b| matches!(b, b' ' | b'\t'))
                 .count();
             let p = at + indent;
-            if p == end {
+            if p == self.text_end(end) {
                 at = end + 1;
                 continue;
             }
@@ -217,7 +223,7 @@ impl Haml<'_> {
                 .iter()
                 .take_while(|b| matches!(b, b' ' | b'\t'))
                 .count();
-            if at + depth < end {
+            if at + depth < self.text_end(end) {
                 if depth <= indent {
                     break;
                 }
@@ -434,6 +440,16 @@ impl Haml<'_> {
             }
         }
         start + trim_end(&code[..cut]).len()
+    }
+
+    /// Where the text of the line ending at `end` ends: before a CRLF's
+    /// `\r`, which Haml reads as part of the line break.
+    fn text_end(&self, end: usize) -> usize {
+        if end > 0 && self.src[end - 1] == b'\r' {
+            end - 1
+        } else {
+            end
+        }
     }
 
     fn line_end(&self, from: usize) -> usize {
@@ -750,6 +766,23 @@ mod tests {
             src,
             &["raw_html", "escaped", "preserved", "tag_raw", "interp"],
         );
+    }
+
+    #[test]
+    fn a_crlf_template_reads_as_its_lf_twin() {
+        for src in [
+            "- @a.each do |x|\n  = x\n\n  = x\n= x\n",
+            "-# note\n\n  = hidden\n= shown\n",
+            ":ruby\n  x = 1\n\n  y = two(x)\n= y\n",
+            ":javascript\n  a\n\n  #{b}\n= c\n",
+            "= link_to a,\n  b\n- f do |y| # c\n  = y\n\n= y\n",
+            "- if a\n  = b\n\n- else\n  = c\n%p{ a: b,\n  c: d }= e\n",
+        ] {
+            let crlf = src.replace('\n', "\r\n");
+            let out = String::from_utf8(haml_ruby(crlf.as_bytes()).unwrap()).unwrap();
+            assert_eq!(out.len(), crlf.len(), "{out:?}");
+            assert_eq!(out.replace("\r\n", "\n"), ruby(src), "{crlf:?}");
+        }
     }
 
     #[test]

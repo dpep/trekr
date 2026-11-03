@@ -16164,6 +16164,20 @@ test (Prism finds it), a loop's `do` is blanked, and `rescue => e` reads
 `$! => e`, which binds `e` as Ruby does (`rescue Oops => e` already read
 `Oops => e`). Testbed 787.
 
+*Later (store v75):* a CRLF template's blank line is the single byte
+`\r`, and the reader took it for a line at the left margin: it ended
+every open `do` block (a parameter used after the blank read as a helper
+call), a `-#` comment (its body read as Ruby, crediting a helper with a
+call) and a `:ruby` filter (its next line read as text, hiding one). A
+line's text now ends before a CRLF's `\r`, and the buffer keeps that `\r`
+as it keeps the `\n`, so no close lands in it and a CRLF template's buffer
+is its LF twin's with each `\n` a `\r\n`: so across a CRLF copy of
+mastodon's 310 templates (307 differed before), and 40,000 fuzzed inputs
+each read both ways. Haml also reads a lone `\r` as a line break; the
+reader does not, and Prism would not see one in the buffer either.
+Testbed 790; the ERB reader measures no line, so CRLF already reads as LF
+there.
+
 ## DEC-659 — A predicate matcher is a reference to the predicate it calls
 
 **Reported** (accuracy pass on `--dead`): discourse's

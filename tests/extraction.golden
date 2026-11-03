@@ -1,6 +1,6 @@
 # Each testbed input's stored facts, hashed, at the store version below.
 # Regenerate: UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden
-version 74
+version 75
 erb tests/testbed/315-dead-says-what-it-cannot-see/app/views/widgets/index.html.erb fb6993b57ce1afc0
 erb tests/testbed/430-a-view-or-a-script-references-a-constant/app/views/widgets/index.html.erb df75e9ccc30b1507
 erb tests/testbed/520-an-erb-templates-calls-are-call-sites/app/views/widgets/show.html.erb 7d61239ea66915a3
@@ -49,7 +49,7 @@ haml tests/testbed/786-a-haml-ruby-filter-is-one-ruby-run/app/views/widgets/inde
 haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/comment.html.haml fa48b4d5da23e184
 haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/loop.html.haml 672a1b539e7bbcab
 haml tests/testbed/787-a-haml-scripts-comment-while-do-and-rescue/app/views/widgets/rescued.html.haml 6b8dad9b92715e2b
-haml tests/testbed/790-a-crlf-haml-blank-line-is-blank/app/views/widgets/index.html.haml 969f5ada77ae516f
+haml tests/testbed/790-a-crlf-haml-blank-line-is-blank/app/views/widgets/index.html.haml c1b2873aec452f52
 rabl tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/views/widgets/base.rabl 706223d3bbf4a9f7
 rabl tests/testbed/524-a-rabl-templates-symbols-name-its-objects-methods/app/views/widgets/show.rabl e1ce31e3d5212371
 rabl tests/testbed/603-a-templates-bare-ivar-and-local-assigns-are-defined/app/views/widgets/show.json.rabl bfd218e974bc4930
