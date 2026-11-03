@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- **Upgrading reindexes once** (store v68): the first command after
+- **Upgrading reindexes once** (store v69): the first command after
   upgrading rebuilds the index, with nothing to run. A script reading
   `--dead`'s `summary.tiers` sees methods under `test-only` now (below).
 - **`--dead` lists a method only specs and tests call as `test-only`**, as
@@ -20,6 +20,11 @@
   keeps its tier and is `lower`, "named in a script (exe/tool), which is
   not read", as a Haml view's word grades it. A gem's CLI entry method was
   `test-only`, clear.
+- **A bare `private`, `protected` or `public` ends `module_function`'s
+  mode**, as in Ruby: a method after one is no longer recorded as a public
+  singleton copy plus a private instance method, so `--symbols` and
+  `--def` give it the visibility its toggle says, and no singleton method
+  Ruby never defines.
 - **`--dead` grades a row reached from outside the repo `lower`, keeping
   its tier, and says what kind of entry point it is**, with `entry_point`
   in JSON:

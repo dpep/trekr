@@ -1,6 +1,6 @@
 # Each testbed input's stored facts, hashed, at the store version below.
 # Regenerate: UPDATE_GOLDEN=1 cargo test --lib extraction_matches_its_golden
-version 68
+version 69
 erb tests/testbed/315-dead-says-what-it-cannot-see/app/views/widgets/index.html.erb fb6993b57ce1afc0
 erb tests/testbed/430-a-view-or-a-script-references-a-constant/app/views/widgets/index.html.erb df75e9ccc30b1507
 erb tests/testbed/520-an-erb-templates-calls-are-call-sites/app/views/widgets/show.html.erb 7d61239ea66915a3
@@ -821,7 +821,7 @@ ruby tests/testbed/742-a-transitive-mark-reaches-its-own-opening/lib/widget/node
 ruby tests/testbed/742-a-transitive-mark-reaches-its-own-opening/widget.gemspec dea196826b99e33b
 ruby tests/testbed/743-a-doc-tag-counts-only-where-its-tool-reads-one/lib/widget.rb 2dcba77dbc5dbcc8
 ruby tests/testbed/743-a-doc-tag-counts-only-where-its-tool-reads-one/widget.gemspec dea196826b99e33b
-ruby tests/testbed/744-private-after-module-function-makes-no-public-copy/lib/widget.rb 9cbce567c7511e81
+ruby tests/testbed/744-private-after-module-function-makes-no-public-copy/lib/widget.rb 93ef46fb038990e6
 ruby tests/testbed/744-private-after-module-function-makes-no-public-copy/widget.gemspec dea196826b99e33b
 ruby tests/testbed/745-a-constant-naming-a-class-is-api/lib/widget.rb 72819d2b9a10e27d
 ruby tests/testbed/745-a-constant-naming-a-class-is-api/widget.gemspec dea196826b99e33b
@@ -838,12 +838,12 @@ ruby tests/testbed/760-a-gems-demo-config-ru-keeps-its-api/lib/widget.rb 084ed6b
 ruby tests/testbed/760-a-gems-demo-config-ru-keeps-its-api/widget.gemspec dea196826b99e33b
 ruby tests/testbed/761-a-constant-naming-an-unindexed-class-is-api/lib/widget.rb 0ef20cee50fb4e30
 ruby tests/testbed/761-a-constant-naming-an-unindexed-class-is-api/widget.gemspec dea196826b99e33b
-ruby tests/testbed/762-a-protected-method-is-api/lib/widget.rb 7677759510058ce3
+ruby tests/testbed/762-a-protected-method-is-api/lib/widget.rb e75dc8218e17450f
 ruby tests/testbed/762-a-protected-method-is-api/widget.gemspec dea196826b99e33b
 ruby tests/testbed/763-a-doc-line-reopens-a-nodoc-body/lib/widget.rb eb341ccef1e68b55
 ruby tests/testbed/763-a-doc-line-reopens-a-nodoc-body/widget.gemspec dea196826b99e33b
 ruby tests/testbed/764-a-bare-toggle-ends-module-function/app.rb 6f4cd28edfdb4b4a
-ruby tests/testbed/764-a-bare-toggle-ends-module-function/util.rb 50500017b5706728
+ruby tests/testbed/764-a-bare-toggle-ends-module-function/util.rb d384bc06960f2088
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

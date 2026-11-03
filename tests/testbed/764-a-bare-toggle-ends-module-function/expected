@@ -4,3 +4,4 @@
 # `module_function` starts the mode again.
 def app.rb:1:6 status=resolved owner=Util
 def app.rb:2:6 status=resolved owner=Util
+symbols util.rb Util,both,both,hidden,shown,again,again private=both,hidden,again

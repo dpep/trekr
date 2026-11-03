@@ -5030,12 +5030,11 @@ impl<'pr> Extractor<'_> {
 
         if args.is_empty() {
             // Bare modifier: flip the state for the rest of this body. It does
-            // not leak out, because the frame is popped with the scope.
+            // not leak out, because the frame is popped with the scope. Any
+            // other bare toggle ends `module_function`'s mode, as in Ruby.
             let frame = self.frame();
             frame.visibility = visibility;
-            if macro_name == "module_function" {
-                frame.module_function = true;
-            }
+            frame.module_function = macro_name == "module_function";
             return true;
         }
 

@@ -15914,6 +15914,10 @@ extractor's; not fixed here, being a store change). rubocop: 4 rows lose
 `Cop::Util#compatible_external_encoding_for?`. Every other corpus: no row
 moves. Testbed 744.
 
+*Later (store v69):* the extractor now ends the mode at any other bare
+toggle, so no copy is recorded and the instance method carries its
+toggle's visibility; `--dead`'s toggle reading went with it. Testbed 764.
+
 **A constant naming a class or module is API** (the owner's decision).
 DEC-657 dropped value constants as rarely API, and an alias kept for
 compatibility fell with them: rubocop's `IgnoredMethods = AllowedMethods`,
