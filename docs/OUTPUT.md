@@ -377,7 +377,12 @@ helper another helper calls (DEC-363–368, DEC-370), a YAML config that
 writes the name (`generator: pay_schedule_resources`,
 `Pkg::Sanitizer.clean_uid`; locale files aside, DEC-402), and a file a
 generator wrote (`linguist-generated`, a `generated/` directory, a "DO NOT
-EDIT" header; DEC-403).
+EDIT" header; DEC-403). A module's method, `unreferenced` or `test-only`,
+whose name is called on a typed receiver with no such method is `lower` too
+("called on TopicQuery (…), where trekr finds no such method; a module
+mixed in at runtime may supply it"): a module mixed in from a block — a
+plugin's `after_initialize` — is no edge the index records (DEC-097,
+DEC-661).
 
 `clear` on an `unreferenced` row means none of those was found. Measured by
 hand on mastodon and discourse (DEC-372), such rows were truly dead 79 % and

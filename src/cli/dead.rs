@@ -1141,6 +1141,8 @@ fn dead_in(
                      so its `self` is not known",
                     caller.path, caller.line
                 ));
+            } else if let Some(caveat) = mixed_in_at_runtime(&tree, &owner, &all) {
+                unplaced = Some(caveat);
             }
         }
         if let Some(unplaced) = &unplaced {
@@ -1559,6 +1561,31 @@ fn dynamic_markers(source: &[u8]) -> String {
         .map(|(marker, _)| *marker)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// A module's method whose name is called on a typed receiver that has no
+/// such method: a module mixed into that class at runtime — in a block, a
+/// hook, a plugin's `after_initialize` — is no edge the index records
+/// (DEC-097), and would supply it (DEC-661). The first such call, named.
+fn mixed_in_at_runtime(
+    tree: &Tree,
+    owner: &str,
+    all: &[crate::resolve::refs::Reference],
+) -> Option<String> {
+    if tree.kind_of(owner) != Some("module") {
+        return None;
+    }
+    let call = all
+        .iter()
+        .filter(|r| r.ruling == Some(crate::resolve::refs::Ruling::NoSuchMethod))
+        .filter(|r| r.receiver_type.is_some())
+        .min_by_key(|r| (&r.path, r.line))?;
+    Some(format!(
+        "called on {} ({}:{}), where trekr finds no such method; a module mixed in at runtime may supply it",
+        call.receiver_type.as_deref().unwrap_or_default(),
+        call.path,
+        call.line
+    ))
 }
 
 /// Takes the sites that name no class they would run in out of a method's

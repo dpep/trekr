@@ -872,6 +872,8 @@ ruby tests/testbed/801-a-test-cases-test-method-is-run-by-its-runner/lib/widget.
 ruby tests/testbed/801-a-test-cases-test-method-is-run-by-its-runner/test/support.rb 292fc34d42aea06c
 ruby tests/testbed/801-a-test-cases-test-method-is-run-by-its-runner/test/widget_test.rb ab2ff94499b13237
 ruby tests/testbed/801-a-test-cases-test-method-is-run-by-its-runner/vendor/minitest/test.rb 55ef1f469f353d3a
+ruby tests/testbed/802-a-call-ruled-out-on-a-class-a-module-may-join-lowers-it/app/models/topic_query.rb c19f05c410e5ebb9
+ruby tests/testbed/802-a-call-ruled-out-on-a-class-a-module-may-join-lowers-it/config/application.rb 20ee429834700754
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

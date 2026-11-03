@@ -1,0 +1,9 @@
+# A module prepended in a block (a plugin's `after_initialize`) is no edge
+# the index records (DEC-097), so `TopicQuery.new.list_votes` was ruled
+# out — "nothing indexed defines this name" — and the module's method was
+# `unreferenced`, clear, though that call runs it. A call of a module
+# method's name ruled out that way now grades the row lower, naming the
+# site. A method of a class cannot be mixed in, so `Helper#tidy` stays
+# clear; a module method no call names stays clear too.
+refs VotingExtension#list_votes confirmed=0 possible=0 excluded_no_such_method=1
+dead app VotingExtension#list_votes=unreferenced~mixed VotingExtension#list_unvoted=unreferenced~ Helper#tidy=unreferenced~

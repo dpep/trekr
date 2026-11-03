@@ -19,6 +19,12 @@
   by the test runner, rather than `unreferenced`: a public `test_` method
   of a class `--dead` already calls a test case (under a test directory,
   inheriting `Minitest::Test` or its kin, or in a file named as a test).
+- **`--dead` grades a module's method `lower` when its name is called on a
+  class that lacks it**, naming the call: "called on TopicQuery (…), where
+  trekr finds no such method; a module mixed in at runtime may supply it".
+  A module prepended from a block (a plugin's `after_initialize`) is no
+  edge trekr records, so such a method was `unreferenced`, clear, though
+  that call runs it.
 - **Upgrading reindexes once** (store v74): the first command after
   upgrading rebuilds the index, with nothing to run. A script reading
   `--dead`'s `summary.tiers` sees methods under `test-only` now (below).

@@ -16263,3 +16263,45 @@ construction; hand-read: `AeDefinitionTests#test_ae`,
 `ActiveModel::Type::DecimalTest#test_changed?`, `BinaryTest#test_cast_binary_data_returns_the_underlying_string`,
 `LengthValidationTest#test_validates_length_of_custom_errors_for_minimum_with_message`
 — each a test its runner runs. Testbed 801.
+
+## DEC-661 — A call ruled out on a class a module may join lowers the module's method
+
+**Reported** (accuracy pass on `--dead`): 15 discourse rows, `clear`, had
+a call of their name that `--refs` excluded as `no_such_method`, and all
+15 were in use. 13 are a plugin's extension module mixed in from a block —
+`reloadable_patch { TopicQuery.prepend(TopicQueryExtension) }` inside
+`after_initialize`, `WebHook.prepend`/`extend` likewise — which DEC-097
+deliberately does not record (a block runs when its receiver decides), so
+`TopicQuery.new.list_votes` found "nothing indexed defines this name" and
+the module's `list_votes` was `unreferenced`, clear.
+
+**Decided.** A module's instance method, `unreferenced` or `test-only`,
+with a call of its name ruled out on a typed receiver that has no such
+method, is graded `lower`, the caveat naming the first such call: "called
+on TopicQuery (path:line), where trekr finds no such method; a module
+mixed in at runtime may supply it". Only a module can be mixed in, so a
+class's method keeps its grade; an excluded call that lands on another
+method (`different_owner`) is positive evidence and moves nothing. It is
+a caveat, not a reference: the edge is a guess, and recording it would be
+the mixin DEC-097 declined. The reason reads as the other unplaced calls'
+do: "no call trekr can place on it, nor a symbol or `super`, names it".
+
+**Not done.** The other 2 of the 15: `NodeType.provides_current_user?`, a
+class method called with no receiver from a module (`NodeTypeDescriptor`)
+that classes extend, and `TopicExtensions.ai_conversation_custom_field_join_sql`,
+a `def self.` inside a concern's `prepended do` block, so `Topic`'s,
+placed on the module. Each is a different shape and a rule of its own.
+
+**Measured**, `--dead`, the build before → this: discourse `app lib
+plugins` 9 `unreferenced` and 4 `test-only` rows clear → lower, every one
+of them among the 15 hand-checked in use (`TopicQueryExtension#list_votes`,
+the four plugins' `WebHookExtension::ClassMethods#enqueue_*_hooks`,
+`CategoryExtension#notify_on_staff_accept_solved?`,
+`Chat::Chatable#create_chat_channel!`, …); `empty_box_on_unsolved=`'s
+named call is `SiteSetting.empty_box_on_unsolved =`, a site setting of
+the same name, so its caveat names a coincidence while the row is in use
+through the category's own writer. discourse `spec/system`, mastodon,
+rubocop, sidekiq, rack, faraday, rails `activemodel/test`: no row moves.
+Testbed 802; in testbed 093, `Palette#palette`, called with no receiver in
+a module whose includer lacks it, is now `lower` the same way — a module
+mixed into `Page` at runtime would supply it.

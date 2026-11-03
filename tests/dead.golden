@@ -8,7 +8,7 @@
 042-an-engines-reopen-skips-another-programs-own-class 33247c03f9bbe6e3
 043-a-self-call-reaches-a-subclass-override 700cce3054c80528
 070-a-mixin-sent-to-a-class-is-its-ancestor 2894a67750646e64
-093-a-self-call-in-a-module-reaches-its-includers-other-modules 348eda2e94094a38
+093-a-self-call-in-a-module-reaches-its-includers-other-modules 9a61e72c41957df0
 096-an-override-is-reached-through-its-ancestor 458064ac1484eaae
 097-a-module-self-call-skips-a-shadowed-includer-module 01d186787093a8d9
 122-a-class-eval-string-is-read-as-code 3977f0a5676a712e
@@ -163,3 +163,4 @@
 787-a-haml-scripts-comment-while-do-and-rescue 6e3aebb1592700b8
 800-a-predicate-matcher-references-its-predicate 6c09ee4ac3a01bc4
 801-a-test-cases-test-method-is-run-by-its-runner cc91a1a99e1df15d
+802-a-call-ruled-out-on-a-class-a-module-may-join-lowers-it b7fae01938694bf2
