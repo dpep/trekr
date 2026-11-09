@@ -4,19 +4,17 @@ The extension is a thin client: what it answers comes from the `trekr` binary
 it runs, whose own changelog is in the
 [trekr repo](https://github.com/dpep/trekr/blob/main/CHANGELOG.md).
 
-## Unreleased
+## 0.6.0
 
 - Haml templates are served: go to definition, hover, references and
   completion in a `.haml`, under a Haml extension's `haml` language id or
-  none. Needs a trekr that says it reads Haml; an older one is never sent
-  a `.haml`, as with ERB.
+  none. Needs trekr 0.10.0 or newer, which says it reads Haml; an older
+  one is never sent a `.haml`, as with ERB.
 
 - `trekr.features` gains `declaration`: Go to Declaration, which trekr
   0.8.9 answers (the Sorbet `.rbi` signature, else the definition). Leave it
   out to give Go to Declaration to another extension. A `trekr.features`
   you have set by hand does not list it, so add it there to keep it on.
-
-## 0.5.1
 
 - ERB and RABL templates are served: go to definition, hover, references
   and completion in a `.erb` (whatever language id an ERB extension gives
