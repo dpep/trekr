@@ -170,4 +170,4 @@
 808-a-suffix-shape-sent-by-name-lowers-its-receivers-methods 21294aca190ae33f
 809-a-symbol-sent-from-another-file-is-a-call 4ee11c337b2db1cc
 810-a-send-read-from-the-parse-keeps-what-text-read c282e312a24d0320
-811-what-a-send-names-reaches-its-receiver 6b171d54e33359fd
+811-what-a-send-names-reaches-its-receiver 0ea5b48c77eefc66

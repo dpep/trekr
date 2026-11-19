@@ -16684,6 +16684,9 @@ again by the query for the singleton copy, whose side never matched the
 as (itself, an alias, the copy), and a reference both queries find is
 counted once, which also halves mastodon's `Mastodon::Version` symbol
 counts.
+And the third hunt's caveat for a name sent twice was dropped where both
+sends share a line (`send(:b2) || list.each(&method(:b2))`): the names
+read as calls were kept by line. They are kept by position now.
 
 ## DEC-665 — `--dead` weighs its candidates in parallel, over one parse cache
 

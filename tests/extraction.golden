@@ -935,6 +935,7 @@ ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/hinges.rb c372
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/knobs.rb 48a9989fce053a94
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/levers.rb 253f808a0d68d1d5
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/loader.rb afe29ddef9f5de2d
+ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/one_line.rb 70bdc941bcb17cbd
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/short.rb d668a7b6001d5140
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/unbracketed.rb 678cf252fb081c11
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/user.rb 76380caca1915000

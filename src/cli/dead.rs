@@ -505,8 +505,8 @@ struct Defined {
     /// of it (DEC-316), and a `module_function`'s singleton copy (DEC-361).
     aliases: Vec<(String, bool)>,
     /// A name of it in its file that no rule reads as a call of it: its
-    /// line, as written, and whether a send hands it (DEC-343, DEC-662).
-    unread_symbol: Vec<(u32, String, bool)>,
+    /// position, as written, and whether a send hands it (DEC-343, DEC-662).
+    unread_symbol: Vec<(crate::core::Pos, String, bool)>,
     /// Whether its body calls `super`: it overrides something (DEC-365).
     calls_super: bool,
     /// Its file's facts, for what a `def` its scope may not own is on.
@@ -583,7 +583,7 @@ fn dead_in(
                     .map(|(name, pos, _)| Unread {
                         written: format!(":{name}"),
                         name,
-                        line: pos.line,
+                        pos,
                         sent: false,
                     }),
             )
@@ -651,12 +651,12 @@ fn dead_in(
             let names_it = |u: &&Unread| {
                 // A send of an alias runs this body (DEC-316).
                 (u.name == def.name || u.sent && aliases.iter().any(|(alias, _)| *alias == u.name))
-                    && !own.contains(&u.line)
+                    && !own.contains(&u.pos.line)
             };
-            let mut unread_symbol: Vec<(u32, String, bool)> = unread_symbols
+            let mut unread_symbol: Vec<(crate::core::Pos, String, bool)> = unread_symbols
                 .iter()
                 .filter(names_it)
-                .map(|u| (u.line, u.written.clone(), u.sent))
+                .map(|u| (u.pos, u.written.clone(), u.sent))
                 .collect();
             unread_symbol.sort_by_key(|(.., sent)| !sent);
             // A `super` in a `def` nested in its body is that method's.
@@ -889,7 +889,11 @@ fn dead_in(
         }
         // A symbol a send is handed runs the method: a call, where a
         // macro's symbol is only its name (DEC-664).
-        let mut sent_here: Vec<(String, u32)> = Vec::new();
+        let mut sent_here: Vec<(String, crate::core::Pos)> = Vec::new();
+        let at = |r: &refs::Reference| crate::core::Pos {
+            line: r.line,
+            col: r.col,
+        };
         // Its body runs as itself, or as an alias or a `module_function`'s
         // copy, whose references are among these.
         let runs_as: Vec<(&str, bool)> = std::iter::once((def.name.as_str(), def.singleton))
@@ -902,10 +906,10 @@ fn dead_in(
             match sent_symbol(&tree, &facts, reference, &owner, &runs_as) {
                 Some(Ran::Untyped) => {
                     reference.receiver = "send";
-                    sent_here.push((reference.path.clone(), reference.line));
+                    sent_here.push((reference.path.clone(), at(reference)));
                 }
                 Some(Ran::Typed(class)) => {
-                    sent_here.push((reference.path.clone(), reference.line));
+                    sent_here.push((reference.path.clone(), at(reference)));
                     reference.receiver = "send";
                     reference.receiver_type = Some(class);
                     reference.tier = refs::Tier::Confirmed;
@@ -1287,7 +1291,7 @@ fn dead_in(
             .iter()
             .filter(|(.., sent)| uncalled_or_override || *sent)
             // Not one read as a call of it after all (DEC-664).
-            .find(|(line, ..)| !sent_here.contains(&(relative(file), *line)));
+            .find(|(pos, ..)| !sent_here.contains(&(relative(file), *pos)));
         // An action no route read reaches may be reached by one not read.
         if action && route.is_none() && uncalled_or_override {
             let unread = match routes.unread.first() {
@@ -1302,10 +1306,10 @@ fn dead_in(
                 );
             }
         }
-        if let Some((line, written, _)) = unread_symbol {
+        if let Some((pos, written, _)) = unread_symbol {
             also(
                 &mut risky,
-                &format!("`{written}` at line {line} is not read as a call"),
+                &format!("`{written}` at line {} is not read as a call", pos.line),
             );
         }
         if let Some(entry) = entry_point {
@@ -1649,7 +1653,7 @@ fn dynamic_markers(source: &[u8], facts: &crate::core::Facts) -> (String, Vec<Un
         };
         named.push(Unread {
             name: name.clone(),
-            line: send.pos.line,
+            pos: send.pos,
             written,
             sent: true,
         });
@@ -1730,7 +1734,7 @@ fn run_by_index(send: &crate::core::Dispatch) -> bool {
 /// A name in a file that no rule reads as a call of the method it names.
 struct Unread {
     name: String,
-    line: u32,
+    pos: crate::core::Pos,
     /// As written: `:name` or `"name"`.
     written: String,
     /// Handed to a send (DEC-662), so it speaks beside a call; a symbol
@@ -1881,7 +1885,7 @@ mod tests {
         assert_eq!(said, "");
         let named: Vec<(&str, u32, &str)> = named
             .iter()
-            .map(|u| (u.name.as_str(), u.line, u.written.as_str()))
+            .map(|u| (u.name.as_str(), u.pos.line, u.written.as_str()))
             .collect();
         assert_eq!(
             named,

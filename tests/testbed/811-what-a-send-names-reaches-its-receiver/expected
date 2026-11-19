@@ -5,5 +5,6 @@
 # it in a file with no interpolation (Lever, Crank, Pulley), and so does a
 # shape too short to cite fits the methods of the class it is sent to
 # (Hinge, Latch), and a `method(n)` handle run names its receiver (Bolt,
-# Rivet, Screw).
-dead app Knob#level=unreferenced~Knob Spool#level=unreferenced~Spool Dial#level=unreferenced~Dial Util#helper=single-caller Lever#level=unreferenced~Lever Crank#level=unreferenced~Crank Pulley#level=unreferenced~Pulley Hinge#level==unreferenced~sent Hinge#other=unreferenced~ Latch#ready?=unreferenced~sent Latch#plain=unreferenced~ Bolt#one=unreferenced~Bolt Rivet#one=unreferenced~Rivet Screw#one=unreferenced~Screw
+# Rivet, Screw). A name sent twice on one line, once read as a call, says
+# so of the other (OneLine).
+dead app Knob#level=unreferenced~Knob Spool#level=unreferenced~Spool Dial#level=unreferenced~Dial Util#helper=single-caller Lever#level=unreferenced~Lever Crank#level=unreferenced~Crank Pulley#level=unreferenced~Pulley Hinge#level==unreferenced~sent Hinge#other=unreferenced~ Latch#ready?=unreferenced~sent Latch#plain=unreferenced~ Bolt#one=unreferenced~Bolt Rivet#one=unreferenced~Rivet Screw#one=unreferenced~Screw OneLine#b2=single-caller~:b2
