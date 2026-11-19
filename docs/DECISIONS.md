@@ -16616,6 +16616,15 @@ where it was pinned `clear`; `small_other` stays `clear`). A `method(n)`
 handle run on a constant (`Bolt.method(n).call`, `&Screw.method(n)`) names
 it, as a send does. No corpus row moved.
 
+**Not done, found by the same hunt, each as in 0.10.0:** a computed
+`public_send(n)` in a mixin or a base class lowers only its own file, not
+the includer's or subclass's methods, though a shape sent there reaches
+them; a held local is misread where a block parameter shadows it
+(`names.each { |m| … public_send(m) }` after `m = "handle_#{k}"`) or where
+its only shaped write is conditional after an unshaped one; and an operator
+or a relayed name sent from another file (`send(:[], 1)`,
+`send(:public_send, :x)`) is still read as a macro's symbol.
+
 ## DEC-664 — A symbol handed to a send is a call in `--dead`
 
 **Decided.** `--dead` counts the first symbol handed to a call in

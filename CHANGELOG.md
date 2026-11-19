@@ -5,14 +5,15 @@
 ### Fixed
 
 - **`--dead` lowers a file that sends a computed name with `__send__`,
-  `try`, `try!`, `method(…).call` or `public_method`**, as it did for
-  `send(` and `public_send(`, and with or without parentheses
-  (`send name`); in a string of code (`class_eval <<~RUBY`, or after
-  `__END__`) when it is spelled `send(`, `.send name` or `__send__ name`. Such a
-  file's methods came out `clear`. A literal name (`send(:x)`,
-  `send("x")`, `&method(:x)`) no longer lowers its file; it lowers the
-  method it names, or the method an alias of that name runs, even beside a
-  call, where such a method reached only by
+  `try`, `try!`, or a `method(…)` or `public_method(…)` handle it runs**
+  (`.call`, `&`), as it did for `send(` and `public_send(`, and with or
+  without parentheses (`send name`); in a string of code
+  (`class_eval <<~RUBY`, or after `__END__`) when it is spelled `send(`,
+  `.send name` or `__send__ name`. Such a file's methods came out `clear`.
+  A literal name (`send(:x)`, `send("x")`, `&method(:x)`) no longer lowers
+  its file. `send(:x)` is a call of `x` (below); `send("x")` and
+  `&method(:x)` lower the method they name, or the method an alias of that
+  name runs, even beside a call, where such a method reached only by
   `&method(:x)` was `convention-only`, `clear`. A constant handed to `try`
   (a service DSL's error class) lowers nothing.
 - **`--dead` reads a name sent by a string or symbol that starts with its
@@ -21,13 +22,14 @@
   `Target#small_attrs` is `lower`, "a name of its shape is sent at
   runtime", and an unrelated `Target#small_other` stays `clear`. `*?` and
   `*=` are read only where sent to a constant, for its methods
-  (`Target.new.public_send("#{kind}?")` lowers `Target#tiny?`). A local holding the symbol (`name = :"#{kind}_attrs"`,
-  or a string's `.to_sym`) is read where it is sent. Sends are read from
-  the parse, so one split over lines or written with a leading dot
-  (`Emoji` ⏎ `.public_send(key)`) counts, and a computed name sent through
-  `new` or `with` (`Mailer.with(…).public_send(type)`) lowers that class's
-  methods, as does a `method(name)` handle run (`Widget.method(n).call`). A shape sent to a value (`user.public_send(…)`) is still not
-  read.
+  (`Target.new.public_send("#{kind}?")` lowers `Target#tiny?`). A local
+  holding the symbol (`name = :"#{kind}_attrs"`, or a string's `.to_sym`)
+  is read where it is sent. Sends are read from the parse, so one split
+  over lines or written with a leading dot (`Emoji` ⏎ `.public_send(key)`)
+  counts, and a computed name sent through `new` or `with`
+  (`Mailer.with(…).public_send(type)`) lowers that class's methods, as
+  does a `method(name)` handle run (`Widget.method(n).call`). A shape sent
+  to a value (`user.public_send(…)`) is still not read.
 - **`--dead` counts `send(:x)`, `obj.public_send(:x)` and `try(:x)` as a
   call of `x`** wherever it is written. A method sent from another file
   (a subclass's `send(:hook)`, `record.send(:private_thing)`) came out
