@@ -1194,6 +1194,13 @@ pub(crate) struct Dispatch {
     pub(crate) to: SentTo,
     /// Handed on by a literal send of a send (`send(:public_send, x)`).
     pub(crate) relayed: bool,
+    /// Runs the method here: a `method(x)` handle runs only where it is
+    /// called (`.call`, `&`), and may be kept to run later.
+    pub(crate) run: bool,
+    /// Where the call is written.
+    pub(crate) call: Pos,
+    /// The name is read through a local the method assigned.
+    pub(crate) held: bool,
     pub(crate) nesting: Vec<String>,
     /// Where the name is written: a symbol's after its colon.
     pub(crate) pos: Pos,
@@ -1216,9 +1223,11 @@ pub(crate) enum SentTo {
     /// No receiver, `self`, `self.class`, or a bare `new(…)`: the class the
     /// send is in.
     Own,
-    /// A constant, or a chain from one through `new` or `with`, whose answer
-    /// runs its methods: `TopicQuery.new(user).public_send`.
+    /// A constant: `Mailer.public_send`.
     Constant(String),
+    /// A chain from a constant through `new` or `with`, whose answer runs
+    /// its methods: `TopicQuery.new(user).public_send`.
+    Made(String),
     /// Anything else: a record, a local, another call's answer.
     Value,
 }

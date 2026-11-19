@@ -1589,6 +1589,22 @@ fn params_of(node: Option<ruby_prism::ParametersNode<'_>>) -> Vec<Param> {
 }
 
 impl<'pr> Visit<'pr> for Extractor<'_> {
+    // `a, b = …` and `m += …` replace what a local held (`sends`).
+    fn visit_local_variable_target_node(
+        &mut self,
+        node: &ruby_prism::LocalVariableTargetNode<'pr>,
+    ) {
+        self.hold(&String::from_utf8_lossy(node.name().as_slice()), None);
+    }
+
+    fn visit_local_variable_operator_write_node(
+        &mut self,
+        node: &ruby_prism::LocalVariableOperatorWriteNode<'pr>,
+    ) {
+        self.hold(&String::from_utf8_lossy(node.name().as_slice()), None);
+        ruby_prism::visit_local_variable_operator_write_node(self, node);
+    }
+
     fn visit_string_node(&mut self, node: &ruby_prism::StringNode<'pr>) {
         self.spell_sends(node.unescaped());
     }
@@ -2258,7 +2274,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                 let site = self.self_site();
                 self.self_writes.push((self.pos(offset), site));
             }
-            self.hold(&name, &node.value());
+            self.hold(&name, Some(&node.value()));
             self.record_assign(name, &node.value(), offset);
         }
         self.visit(&node.value());
@@ -2270,6 +2286,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         node: &ruby_prism::LocalVariableOrWriteNode<'pr>,
     ) {
         if let Ok(name) = String::from_utf8(node.name().as_slice().to_vec()) {
+            self.hold(&name, None);
             self.record_assign(name, &node.value(), node.location().start_offset());
         }
         self.visit(&node.value());

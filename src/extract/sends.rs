@@ -26,32 +26,43 @@ impl Extractor<'_> {
                 .filter(|c| matches!(c.name().as_slice(), b"method" | b"public_method"))
         }
         match call.name().as_slice() {
-            b"method" | b"public_method" => {}
+            b"method" | b"public_method" => self.push_send(call, false),
             b"call" | b"to_proc" => {
                 if let Some(handle) = handle(call.receiver()) {
-                    self.push_send(&handle);
+                    self.push_send(&handle, true);
                 }
             }
-            _ => self.push_send(call),
+            _ => self.push_send(call, true),
         }
         let passed = call
             .block()
             .and_then(|b| b.as_block_argument_node())
             .and_then(|b| b.expression());
         if let Some(handle) = handle(passed) {
-            self.push_send(&handle);
+            self.push_send(&handle, true);
         }
     }
 
     /// What a call in `BY_NAME` hands as the name: its first argument, or
     /// the next when the first names another send (`send(:public_send, x)`).
-    fn push_send(&mut self, call: &ruby_prism::CallNode<'_>) {
+    fn push_send(&mut self, call: &ruby_prism::CallNode<'_>, run: bool) {
         let Some(by) = BY_NAME
             .iter()
             .find(|k| k.as_bytes() == call.name().as_slice())
         else {
             return;
         };
+        // A `method(x)` handle is one send, run or not, however it is visited.
+        let call_at = self.pos(call.location().start_offset());
+        if let Some(known) = self
+            .facts
+            .sends
+            .iter_mut()
+            .find(|s| s.by == *by && s.call == call_at)
+        {
+            known.run |= run;
+            return;
+        }
         let Some(arguments) = call.arguments() else {
             return;
         };
@@ -81,8 +92,11 @@ impl Extractor<'_> {
         let send = Dispatch {
             by,
             name: self.sent_name(&first),
+            held: first.as_local_variable_read_node().is_some(),
             to: sent_to(call),
             relayed,
+            run,
+            call: call_at,
             nesting: self.nesting.clone(),
             pos: self.pos(at.start_offset()),
         };
@@ -90,6 +104,13 @@ impl Extractor<'_> {
     }
 
     fn sent_name(&self, node: &Node<'_>) -> SentName {
+        // A literal in a string of code that an interpolation spells part
+        // of (`"list_#{kind}"` in a `class_eval <<~RUBY`) is computed.
+        let at = node.location();
+        let literal = node.as_symbol_node().is_some() || node.as_string_node().is_some();
+        if literal && self.written(at.start_offset(), at.end_offset()).is_some() {
+            return SentName::Computed;
+        }
         if let Some(symbol) = node.as_symbol_node() {
             return SentName::Symbol(String::from_utf8_lossy(symbol.unescaped()).into_owned());
         }
@@ -125,10 +146,10 @@ impl Extractor<'_> {
 
     /// Records what a method assigns a local: an interpolated name is held;
     /// anything else replaces it, unless written under a conditional the
-    /// name was not, which may not run.
-    pub(super) fn hold(&mut self, local: &str, value: &Node<'_>) {
+    /// name was not, which may not run (DEC-655).
+    pub(super) fn hold(&mut self, local: &str, value: Option<&Node<'_>>) {
         let conditional = self.conditional;
-        let shape = held_shape(value).flatten();
+        let shape = value.and_then(|value| held_shape(value).flatten());
         let held = &mut self.frame().held;
         let replaced = held
             .iter()
@@ -229,7 +250,11 @@ fn sent_to(call: &ruby_prism::CallNode<'_>) -> SentTo {
         }
         return match receiver_shape(&node) {
             (RecvShape::Const, Some(written)) if only(&[b"new", b"with"]) => {
-                SentTo::Constant(written.trim_start_matches("::").to_string())
+                let written = written.trim_start_matches("::").to_string();
+                match through.is_empty() {
+                    true => SentTo::Constant(written),
+                    false => SentTo::Made(written),
+                }
             }
             _ => SentTo::Value,
         };
@@ -291,19 +316,20 @@ mod tests {
     #[test]
     fn a_send_is_read_with_its_name_and_receiver() {
         use SentName::{Computed, String as Str, Symbol};
-        use SentTo::{Constant, Own, Value};
+        use SentTo::{Constant, Made, Own, Value};
         let constant = |c: &str| Constant(c.to_string());
+        let made = |c: &str| Made(c.to_string());
         for (source, said) in [
             ("send(:x)", vec![("send", Symbol("x".into()), Own)]),
             ("record.try(\"x\")", vec![("try", Str("x".into()), Value)]),
             ("send(name)", vec![("send", Computed, Own)]),
             (
                 r##"Q.new(u).public_send("list_#{f}", u)"##,
-                vec![("public_send", shape("list_*"), constant("Q"))],
+                vec![("public_send", shape("list_*"), made("Q"))],
             ),
             (
                 r##"::Mail::Admin.with(to: x).public_send(:"#{k}_attrs")"##,
-                vec![("public_send", shape("*_attrs"), constant("Mail::Admin"))],
+                vec![("public_send", shape("*_attrs"), made("Mail::Admin"))],
             ),
             (
                 r##"self.class.send("to_#{k}")"##,
@@ -335,7 +361,11 @@ mod tests {
                 "list.map(&public_method(:x))",
                 vec![("public_method", Symbol("x".into()), Own)],
             ),
-            ("Report.method(n).source_location", vec![]),
+            // Recorded unrun: its shape may still be sent later.
+            (
+                "Report.method(n).source_location",
+                vec![("method", Computed, constant("Report"))],
+            ),
             (
                 "send(:method, :x)",
                 vec![("send", Symbol("method".into()), Own)],
@@ -345,7 +375,7 @@ mod tests {
             // Split over lines.
             (
                 "Q.new\n  .public_send(\n    \"list_#{f}\")",
-                vec![("public_send", shape("list_*"), constant("Q"))],
+                vec![("public_send", shape("list_*"), made("Q"))],
             ),
         ] {
             assert_eq!(sends(source), said, "{source}");
@@ -364,6 +394,15 @@ mod tests {
             held("    m = \"handle_#{x}\"\n    m = \"other\"\n    send(m)\n"),
             vec![("send", SentName::Computed, SentTo::Own)]
         );
+        // Replaced by a multiple assignment or in place: not the name.
+        for replaced in ["    m, n = x\n", "    m += x\n"] {
+            let body = format!("    m = \"handle_#{{x}}\"\n{replaced}    send(m)\n");
+            assert_eq!(
+                held(&body),
+                vec![("send", SentName::Computed, SentTo::Own)],
+                "{body}"
+            );
+        }
         // Replaced only on a branch, or under a modifier: may still be.
         for replaced in [
             "    if x\n      m = \"other\"\n    end\n",

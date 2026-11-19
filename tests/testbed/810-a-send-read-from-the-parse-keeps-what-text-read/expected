@@ -1,0 +1,8 @@
+# What the line reader saw and the parse must too. A held name sent to a
+# constant names the constant, whatever its shape (Settings, a writer;
+# Widget, held then maybe replaced). An unrun `method("on_#{e}")` sends a
+# shape (Bus). A literal in a string of code that an interpolation spells
+# part of is computed (Target). A symbol sent where the typing finds no
+# call keeps saying it is not read as one (Host, sent from a module), and
+# `public_send` runs no private method (Secret).
+dead app Settings#timeout==unreferenced~Settings Widget#other_b=unreferenced~Widget Bus#on_start=unreferenced~on_* Target#list_a=unreferenced~Target Host#hook=convention-only~:hook Secret#hidden=convention-only~:hidden

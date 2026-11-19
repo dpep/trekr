@@ -918,6 +918,15 @@ ruby tests/testbed/809-a-symbol-sent-from-another-file-is-a-call/app/narrow.rb 1
 ruby tests/testbed/809-a-symbol-sent-from-another-file-is-a-call/app/other.rb 2a214171a3892496
 ruby tests/testbed/809-a-symbol-sent-from-another-file-is-a-call/app/sub.rb 2a2daa46d4abcdf7
 ruby tests/testbed/809-a-symbol-sent-from-another-file-is-a-call/spec/hooked_spec.rb 31ef4169083a31be
+ruby tests/testbed/810-a-send-read-from-the-parse-keeps-what-text-read/app/bus.rb 27bb7ac3c9646406
+ruby tests/testbed/810-a-send-read-from-the-parse-keeps-what-text-read/app/dispatcher.rb 8c5d68d6432007c2
+ruby tests/testbed/810-a-send-read-from-the-parse-keeps-what-text-read/app/hooky.rb 5f8ce42347a85555
+ruby tests/testbed/810-a-send-read-from-the-parse-keeps-what-text-read/app/loader.rb cbe3569d218add6d
+ruby tests/testbed/810-a-send-read-from-the-parse-keeps-what-text-read/app/maker.rb 918e206ffb478acd
+ruby tests/testbed/810-a-send-read-from-the-parse-keeps-what-text-read/app/secret.rb 8481bd24694b311e
+ruby tests/testbed/810-a-send-read-from-the-parse-keeps-what-text-read/app/settings.rb 10eefe684e9a02c2
+ruby tests/testbed/810-a-send-read-from-the-parse-keeps-what-text-read/app/target.rb 7583d65025803179
+ruby tests/testbed/810-a-send-read-from-the-parse-keeps-what-text-read/app/widget.rb cf4531e737c474d9
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

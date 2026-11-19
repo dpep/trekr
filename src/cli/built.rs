@@ -53,7 +53,7 @@ impl Sending {
         let nesting = &self.nesting;
         match &self.to {
             SentTo::Own => tree.scope_fqn(nesting),
-            SentTo::Constant(written) => tree
+            SentTo::Constant(written) | SentTo::Made(written) => tree
                 .resolve(written, nesting)
                 .fqn
                 .or_else(|| Some(written.clone())),
@@ -204,6 +204,21 @@ impl Built {
         let mut sendings = Vec::new();
         for send in facts.sends {
             let at = (path.to_string(), send.pos.line);
+            // A name computed sent to a constant or what it makes
+            // (`Mailer.public_send(type)`), or a local sent to the constant
+            // itself, whose last write the parse may misjudge
+            // (`k = "#{k}="; Settings.public_send(k, v)`).
+            let constant = match (&send.name, &send.to) {
+                (SentName::Computed, SentTo::Constant(c) | SentTo::Made(c)) => Some(c),
+                (SentName::Shape(_), SentTo::Constant(c)) if send.held => Some(c),
+                _ => None,
+            };
+            if SENDS.contains(&send.by)
+                && let Some(constant) = constant
+                && !self.sent_to.iter().any(|(known, _)| known == constant)
+            {
+                self.sent_to.push((constant.clone(), at.clone()));
+            }
             match send.name {
                 // A string sent to a record (`row.public_send("total_#{kind}")`)
                 // is an attribute's name far more often than a method's.
@@ -214,14 +229,6 @@ impl Built {
                     nesting: send.nesting,
                     at,
                 }),
-                // A computed name sent to a constant (`Mailer.public_send(type)`).
-                SentName::Computed if SENDS.contains(&send.by) => {
-                    if let SentTo::Constant(constant) = send.to
-                        && !self.sent_to.iter().any(|(known, _)| *known == constant)
-                    {
-                        self.sent_to.push((constant, at));
-                    }
-                }
                 _ => {}
             }
         }

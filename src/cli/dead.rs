@@ -861,13 +861,18 @@ fn dead_in(
         }
         // A symbol a send is handed runs the method: a call, where a
         // macro's symbol is only its name (DEC-664).
+        let mut sent_here: Vec<(String, u32)> = Vec::new();
         for reference in found.iter_mut().filter(|r| r.receiver == "symbol") {
             let Some(facts) = parsed.facts.get(&reference.path).and_then(Option::as_ref) else {
                 continue;
             };
             match sent_symbol(&tree, facts, reference, (&owner, def.singleton)) {
-                Some(Ran::Untyped) => reference.receiver = "send",
+                Some(Ran::Untyped) => {
+                    reference.receiver = "send";
+                    sent_here.push((reference.path.clone(), reference.line));
+                }
                 Some(Ran::Typed(class)) => {
+                    sent_here.push((reference.path.clone(), reference.line));
                     reference.receiver = "send";
                     reference.receiver_type = Some(class);
                     reference.tier = refs::Tier::Confirmed;
@@ -1252,7 +1257,9 @@ fn dead_in(
         // A sent name runs it, so it says so even beside one call.
         let unread_symbol = unread_symbol
             .as_ref()
-            .filter(|(.., sent)| uncalled_or_override || *sent);
+            .filter(|(.., sent)| uncalled_or_override || *sent)
+            // Read as a call of it after all (DEC-664).
+            .filter(|(line, ..)| !sent_here.contains(&(relative(file), *line)));
         // An action no route read reaches may be reached by one not read.
         if action && route.is_none() && uncalled_or_override {
             let unread = match routes.unread.first() {
@@ -1558,22 +1565,23 @@ fn also(caveat: &mut String, more: &str) {
 
 /// Shapes that make "no references found" a weaker statement, named so the
 /// answer can say which one it saw rather than hedging in general.
-/// With the markers, each literal name a send hands that the index does not
-/// read as a call of it.
+/// With the markers, each literal name a send hands.
 fn dynamic_markers(source: &[u8], facts: &crate::core::Facts) -> (String, Vec<Unread>) {
     use crate::core::SentName;
     let text = String::from_utf8_lossy(source);
     let mut computed: Vec<&str> = facts.spelled_sends.clone();
     let mut named = Vec::new();
-    for send in &facts.sends {
+    // A `method(x)` handle kept to run later runs nothing here.
+    for send in facts.sends.iter().filter(|send| send.run) {
         let (name, written) = match &send.name {
             SentName::Computed | SentName::Shape(_) => {
                 computed.push(send.by);
                 continue;
             }
-            SentName::Symbol(name) if !run_by_index(send) => (name, format!(":{name}")),
+            // One the index reads as a call says so only where `--dead`
+            // finds no call of it there (DEC-664).
+            SentName::Symbol(name) => (name, format!(":{name}")),
             SentName::String(name) => (name, format!("\"{name}\"")),
-            SentName::Symbol(_) => continue,
         };
         named.push(Unread {
             name: name.clone(),
@@ -1616,13 +1624,10 @@ fn sent_symbol(
         line: reference.line,
         col: reference.col,
     };
-    if !facts
+    let send = facts
         .sends
         .iter()
-        .any(|send| send.pos == at && run_by_index(send))
-    {
-        return None;
-    }
+        .find(|send| send.pos == at && run_by_index(send))?;
     let symbol = facts
         .calls
         .iter()
@@ -1634,6 +1639,10 @@ fn sent_symbol(
         return Some(Ran::Untyped);
     };
     let runs = tree.lookup_self(&class.fqn, class.singleton, &symbol.name)?;
+    // `public_send` and ActiveSupport's `try` run no private method.
+    if runs.visibility == "private" && send.by != "send" && send.by != "__send__" {
+        return None;
+    }
     match (
         runs.owner == owner && runs.singleton == singleton,
         class.ambiguous,

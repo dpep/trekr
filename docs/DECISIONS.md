@@ -16580,6 +16580,17 @@ mailer's callbacks beside a computed action sent through `with`. Wall
 time unchanged; about 0.25 s more CPU on discourse, for the files parsed.
 Still not done: a shape matching instance and singleton methods alike.
 
+**Its hunt** found four wrong `clear`s against the text reader, pinned in
+testbed 810, none in either corpus: a local holding a shape too short to
+cite (`k = "#{k}="; Settings.public_send(k, v)`, the idiom of rails'
+`ActiveSupport` railtie) sent to a constant now names the constant, as the
+text reader did for any local sent to one (written straight before the
+send, not through `new`); an unrun `method("on_#{e}")` is recorded, so its
+shape is cited, though the file-wide marker still counts only one that
+runs (DEC-662); a literal in a string of code that an interpolation spells
+part of is computed; and a local replaced by `a, b =` or `+=` is no longer
+held. Not done: a local changed in place (`m.sub!(…)`) is still held.
+
 ## DEC-664 — A symbol handed to a send is a call in `--dead`
 
 **Decided.** `--dead` counts the first symbol handed to a call in
@@ -16622,3 +16633,11 @@ column, another class's `before_action`); it waits on narrowing those. An
 override whose only other reference is a spec takes `single-caller` from
 it, against DEC-652 (`TopicTimer#schedule_auto_open_job`). `&method(:x)`
 from another file is still a macro's symbol.
+
+**Its second hunt** (on the shared reader) found the caveat for a sent
+symbol dropped wherever the typing found no call of it — sent from a module
+its includer defines the method for, to a `module_function`'s copy, or a
+name extraction records no symbol for (`send(:+, o)`) — leaving the row
+`clear`. The caveat now goes only where this row's reference was read as a
+call. And `public_send(:x)` or `try(:x)` of a private method is no call of
+it.
