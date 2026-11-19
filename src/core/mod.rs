@@ -205,10 +205,12 @@ pub(crate) struct Facts {
     /// Each template a `render`, `extends` or `partial` names, where it is
     /// named (DEC-524). Resolve-time, never stored.
     pub(crate) templates: Vec<TemplateRef>,
-    /// Where each symbol a call runs the method of is written: the first
-    /// one handed to `send`, `try` and the rest of `ruby::SENDS`, a call
-    /// where a macro's symbol is only a name. Resolve-time, never stored.
-    pub(crate) sent_symbols: Vec<Pos>,
+    /// Each call that runs a method by a name it is handed, as written.
+    /// Resolve-time, never stored.
+    pub(crate) sends: Vec<Dispatch>,
+    /// Each call in `ruby::BY_NAME` a string's text spells as called, or
+    /// the code after `__END__`: code it may evaluate. Resolve-time.
+    pub(crate) spelled_sends: Vec<&'static str>,
     /// Prism reported syntax errors; the facts above are what survived.
     pub(crate) parse_errors: usize,
     pub(crate) lines: usize,
@@ -1180,6 +1182,45 @@ pub(crate) enum RecvShape {
     /// can only ever be a *possible* reference — but leaving it unrecorded is
     /// what makes a callback-registered method look unused (DEC-037).
     Symbol,
+}
+
+/// A call that runs a method by a name it is handed (`ruby::BY_NAME`):
+/// `send(:x)`, `Q.new.public_send("list_#{k}")`, `&method(:x)`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Dispatch {
+    /// The call, as `ruby::BY_NAME` spells it.
+    pub(crate) by: &'static str,
+    pub(crate) name: SentName,
+    pub(crate) to: SentTo,
+    /// Handed on by a literal send of a send (`send(:public_send, x)`).
+    pub(crate) relayed: bool,
+    pub(crate) nesting: Vec<String>,
+    /// Where the name is written: a symbol's after its colon.
+    pub(crate) pos: Pos,
+}
+
+/// The name a send hands, as written.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum SentName {
+    Symbol(String),
+    String(String),
+    /// An interpolated string or symbol whose literal text is a name's,
+    /// `*` for each interpolation (`list_*`), or a local last assigned one.
+    Shape(String),
+    Computed,
+}
+
+/// What a send is written to, as far as the source says without a type.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum SentTo {
+    /// No receiver, `self`, `self.class`, or a bare `new(…)`: the class the
+    /// send is in.
+    Own,
+    /// A constant, or a chain from one through `new` or `with`, whose answer
+    /// runs its methods: `TopicQuery.new(user).public_send`.
+    Constant(String),
+    /// Anything else: a record, a local, another call's answer.
+    Value,
 }
 
 impl RecvShape {

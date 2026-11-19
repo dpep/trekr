@@ -17,6 +17,7 @@ pub(crate) mod line_index;
 mod macros;
 
 pub(crate) use macros::{camelize, table_to_class};
+mod sends;
 mod sig;
 pub(crate) mod template;
 
@@ -122,6 +123,8 @@ struct Frame {
     /// body inside one: code that runs on whatever mixes the module in
     /// (DEC-102).
     mixed: Option<Mixed>,
+    /// The locals a method assigned an interpolated name (`sends`).
+    held: Vec<sends::Held>,
 }
 
 /// Code that runs on whatever mixes its module in (DEC-102).
@@ -164,6 +167,7 @@ impl Frame {
             handed: Vec::new(),
             block_param: None,
             mixed: None,
+            held: Vec::new(),
         }
     }
 }
@@ -623,6 +627,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
             handed: Vec::new(),
             block_param: None,
             mixed: None,
+            held: Vec::new(),
         }],
         pending_sigs: Vec::new(),
         pending_sig_params: Vec::new(),
@@ -665,6 +670,10 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         self_writes: Vec::new(),
     };
     ex.visit(&parsed.node());
+    // Code after `__END__` is a string too, read through `DATA`.
+    if let Some(data) = parsed.data_loc() {
+        ex.spell_sends(&src[data.start_offset()..data.end_offset()]);
+    }
     ex.shape_pending();
     ex.type_readers();
     ex.bind_self_aliases();
@@ -1580,6 +1589,10 @@ fn params_of(node: Option<ruby_prism::ParametersNode<'_>>) -> Vec<Param> {
 }
 
 impl<'pr> Visit<'pr> for Extractor<'_> {
+    fn visit_string_node(&mut self, node: &ruby_prism::StringNode<'pr>) {
+        self.spell_sends(node.unescaped());
+    }
+
     /// Ruby's statement sequence is also where a Sorbet `sig` finds the thing
     /// it describes: the two are always adjacent statements. Walking the list
     /// here — rather than descending blindly — is what makes the pairing free.
@@ -2245,6 +2258,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
                 let site = self.self_site();
                 self.self_writes.push((self.pos(offset), site));
             }
+            self.hold(&name, &node.value());
             self.record_assign(name, &node.value(), offset);
         }
         self.visit(&node.value());
@@ -5325,6 +5339,7 @@ impl<'pr> Extractor<'_> {
             written,
         });
         self.record_symbol_arguments(call);
+        self.record_send(call);
         self.record_template(call);
         self.record_block_pass(call);
         self.record_body_call(call);
@@ -5725,13 +5740,6 @@ impl<'pr> Extractor<'_> {
                 continue;
             };
             let to = self.symbol_receiver(call, index);
-            if index == 0
-                && ruby::SENDS.contains(&macro_name.as_str())
-                && let Some(loc) = symbol.value_loc()
-            {
-                let pos = self.pos(loc.start_offset());
-                self.facts.sent_symbols.push(pos);
-            }
             self.record_symbol(&symbol, to);
         }
     }
