@@ -931,9 +931,11 @@ ruby tests/testbed/810-a-send-read-from-the-parse-keeps-what-text-read/app/targe
 ruby tests/testbed/810-a-send-read-from-the-parse-keeps-what-text-read/app/twice.rb 7925bf5986e1abee
 ruby tests/testbed/810-a-send-read-from-the-parse-keeps-what-text-read/app/widget.rb cf4531e737c474d9
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/concern.rb 6bdef4276be2164e
+ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/hinges.rb c37234ff575c13d0
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/knobs.rb 48a9989fce053a94
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/levers.rb 253f808a0d68d1d5
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/loader.rb afe29ddef9f5de2d
+ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/short.rb d668a7b6001d5140
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/unbracketed.rb 678cf252fb081c11
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/user.rb 76380caca1915000
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/util.rb 76d84c6618ae2207

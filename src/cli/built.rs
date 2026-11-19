@@ -13,7 +13,7 @@
 //! tier and is graded `lower`.
 
 use super::dead_consts::{in_db, in_tests};
-use crate::core::ruby::{BY_NAME, SENDS};
+use crate::core::ruby::BY_NAME;
 use crate::core::{SentName, SentTo};
 use crate::tree::Tree;
 use rayon::prelude::*;
@@ -215,7 +215,8 @@ impl Built {
                 (SentName::Shape(_), SentTo::Constant(c)) if send.held => Some(c),
                 _ => None,
             };
-            if SENDS.contains(&send.by)
+            // A `method(n)` handle sends only where it is run.
+            if send.run
                 && let Some(constant) = constant
                 && !self.sent_to.iter().any(|(known, _)| known == constant)
             {
@@ -225,12 +226,19 @@ impl Built {
                 // A string sent to a record (`row.public_send("total_#{kind}")`)
                 // is an attribute's name far more often than a method's.
                 SentName::Shape(_) if send.to == SentTo::Value => {}
-                SentName::Shape(shape) if sent_shape(&shape) => sendings.push(Sending {
-                    shape,
-                    to: send.to,
-                    nesting: send.nesting,
-                    at,
-                }),
+                // One too short to cite anywhere (`"#{k}?"`) still fits the
+                // methods of the class it is sent to.
+                SentName::Shape(shape)
+                    if sent_shape(&shape)
+                        || matches!(send.to, SentTo::Constant(_) | SentTo::Made(_)) =>
+                {
+                    sendings.push(Sending {
+                        shape,
+                        to: send.to,
+                        nesting: send.nesting,
+                        at,
+                    })
+                }
                 _ => {}
             }
         }

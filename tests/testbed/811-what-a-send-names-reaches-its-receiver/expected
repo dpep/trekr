@@ -2,5 +2,8 @@
 # as code (`eval`, a value's `class_eval`, after `__END__`) still names the
 # constant. A `module_function`'s method sent to its module is a call of
 # it (Util). A computed name sent to a constant without parentheses names
-# it in a file with no interpolation (Lever, Crank, Pulley).
-dead app Knob#level=unreferenced~Knob Spool#level=unreferenced~Spool Dial#level=unreferenced~Dial Util#helper=single-caller Lever#level=unreferenced~Lever Crank#level=unreferenced~Crank Pulley#level=unreferenced~Pulley
+# it in a file with no interpolation (Lever, Crank, Pulley), and so does a
+# shape too short to cite fits the methods of the class it is sent to
+# (Hinge, Latch), and a `method(n)` handle run names its receiver (Bolt,
+# Rivet, Screw).
+dead app Knob#level=unreferenced~Knob Spool#level=unreferenced~Spool Dial#level=unreferenced~Dial Util#helper=single-caller Lever#level=unreferenced~Lever Crank#level=unreferenced~Crank Pulley#level=unreferenced~Pulley Hinge#level==unreferenced~sent Hinge#other=unreferenced~ Latch#ready?=unreferenced~sent Latch#plain=unreferenced~ Bolt#one=unreferenced~Bolt Rivet#one=unreferenced~Rivet Screw#one=unreferenced~Screw

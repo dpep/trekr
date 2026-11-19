@@ -16608,6 +16608,14 @@ named nothing. The filter is now the one the file-wide marker reads
 about 0.15 s more CPU. Not done: templates are not read for sends here
 (`%p= Widget.new.public_send(params[:m])` in a Haml view).
 
+And a shape too short to cite (`"#{k}="`, `"#{k}?"`, `"#{k}"`) sent to a
+constant or what it makes named nothing at all, though it can reach only
+that class's methods of its shape: it now fits those, as a longer shape
+does, and still nothing file-wide (`Target#tiny?` in testbed 808 is lowered
+where it was pinned `clear`; `small_other` stays `clear`). A `method(n)`
+handle run on a constant (`Bolt.method(n).call`, `&Screw.method(n)`) names
+it, as a send does. No corpus row moved.
+
 ## DEC-664 — A symbol handed to a send is a call in `--dead`
 
 **Decided.** `--dead` counts the first symbol handed to a call in

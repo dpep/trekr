@@ -167,7 +167,7 @@
 802-a-call-ruled-out-on-a-class-a-module-may-join-lowers-it b7fae01938694bf2
 805-a-test-method-runs-only-in-a-test-case c291c6afa6b672b1
 807-every-dispatch-by-name-lowers-its-file f5bd639f391d80ae
-808-a-suffix-shape-sent-by-name-lowers-its-receivers-methods 3c34ed9e6f822504
+808-a-suffix-shape-sent-by-name-lowers-its-receivers-methods 21294aca190ae33f
 809-a-symbol-sent-from-another-file-is-a-call 4ee11c337b2db1cc
-810-a-send-read-from-the-parse-keeps-what-text-read 91933249ac9ee18f
-811-what-a-send-names-reaches-its-receiver f3aa4c5e2bb6fb21
+810-a-send-read-from-the-parse-keeps-what-text-read c282e312a24d0320
+811-what-a-send-names-reaches-its-receiver 6b171d54e33359fd

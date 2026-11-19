@@ -7,4 +7,4 @@
 # `public_send` runs no private or protected method (Secret, Guarded).
 # Each send of a chain is its own (Chained), and a name sent twice says so
 # of the one not read as a call (Twice).
-dead app Settings#timeout==unreferenced~Settings Widget#other_b=unreferenced~Widget Bus#on_start=unreferenced~on_* Target#list_a=unreferenced~Target Host#hook=convention-only~:hook Secret#hidden=convention-only~:hidden Chained#aaa=single-caller Twice#b1=single-caller~:b1 Guarded#shielded=convention-only~:shielded
+dead app Settings#timeout==unreferenced~sent Widget#other_b=unreferenced~Widget Bus#on_start=unreferenced~on_* Target#list_a=unreferenced~Target Host#hook=convention-only~:hook Secret#hidden=convention-only~:hidden Chained#aaa=single-caller Twice#b1=single-caller~:b1 Guarded#shielded=convention-only~:shielded
