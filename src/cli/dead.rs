@@ -1404,8 +1404,12 @@ fn dead_in(
         };
         Ok(Some(row))
     };
-    let mut gems = match store.reopener() {
-        // An in-memory store has one connection, and so one worker.
+    let first = store
+        .reopener()
+        .and_then(|open| open().ok().map(|worker| (open, worker)));
+    let mut gems = match first {
+        // An in-memory store has one connection, and so one worker; so does
+        // a store that refuses a second, which answers the same, only slower.
         None => {
             let mut memo = Memo::default();
             for candidate in &defined {
@@ -1413,8 +1417,8 @@ fn dead_in(
             }
             memo.gems
         }
-        Some(open) => {
-            let idle: std::sync::Mutex<Vec<(Store, Memo)>> = Default::default();
+        Some((open, worker)) => {
+            let idle = std::sync::Mutex::new(vec![(worker, Memo::default())]);
             let weighed: Vec<Option<DeadRow>> = defined
                 .par_iter()
                 .map(|candidate| {

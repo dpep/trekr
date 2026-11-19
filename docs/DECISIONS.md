@@ -16666,6 +16666,12 @@ worker waiting inside a `par_iter` may pick up another candidate, which
 takes the same lock — so a `OnceLock` is set by a helper that tolerates
 the race, never `get_or_init`.
 
+The first worker connection is opened before the loop; a store that
+refuses it is weighed serially on the connection already held, since the
+answer is the same. A later worker's refusal still fails the run: waiting
+for an idle connection instead could deadlock, as a worker waiting inside
+a `par_iter` holds its own while it picks up another candidate.
+
 **Measured**, `--dead app lib`, 5 interleaved runs each, load 9–12:
 discourse wall 5.3 → 3.1 s (−41%), user 7.8 → 9.2 s; mastodon 3.2 → 1.75 s
 (−46%), user 3.4 → 3.8 s; every pair faster. Output byte-identical to the
