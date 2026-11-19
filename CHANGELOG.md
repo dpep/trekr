@@ -21,8 +21,12 @@
   `Target#small_attrs` is `lower`, "a name of its shape is sent at
   runtime", and an unrelated `Target#small_other` stays `clear`. `*?` and
   `*=` stay unread. A local holding the symbol (`name = :"#{kind}_attrs"`,
-  or a string's `.to_sym`) is read where it is sent. A shape sent to a
-  value (`user.public_send(…)`) is still not read.
+  or a string's `.to_sym`) is read where it is sent. Sends are read from
+  the parse, so one split over lines or written with a leading dot
+  (`Emoji` ⏎ `.public_send(key)`) counts, and a computed name sent through
+  `new` or `with` (`Mailer.with(…).public_send(type)`) lowers that class's
+  methods. A shape sent to a value (`user.public_send(…)`) is still not
+  read.
 - **`--dead` counts `send(:x)`, `obj.public_send(:x)` and `try(:x)` as a
   call of `x`** wherever it is written. A method sent from another file
   (a subclass's `send(:hook)`, `record.send(:private_thing)`) came out

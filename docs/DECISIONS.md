@@ -16564,6 +16564,22 @@ and a shape matching instance and singleton methods alike. Most would go
 by reading the sends from the parse, which `read_file` already does for a
 file with one; that is a reader rewrite, with its own hunt.
 
+**Revisited: the sends are read from the parse.** `read_file` now takes
+its sends from extraction (`Facts::sends`, which `--dead`'s file-wide
+marker reads too, DEC-662), so a send split over lines or written with a
+leading dot, `%()` strings, `public_send ("…")`, `self&.` and a regex are
+read as Ruby reads them, and a computed name sent through `new` or `with`
+(`PostActionTypeView.new.send(name)`, `NotificationMailer.with(…).public_send(type)`)
+names its constant. A held local is followed by the parse, a write under a
+conditional the name was not under leaving it held, as before. Measured,
+`--dead app lib`, against the text reader: discourse 32 rows gain a
+citation, one `clear` → `lower` (`PostActionTypeView#public_type_ids`,
+reached by that `new.send`), each a send the text reader missed (most
+`Emoji` ⏎ `.public_send(list_key)`); mastodon 7 `clear` → `lower`, the
+mailer's callbacks beside a computed action sent through `with`. Wall
+time unchanged; about 0.25 s more CPU on discourse, for the files parsed.
+Still not done: a shape matching instance and singleton methods alike.
+
 ## DEC-664 — A symbol handed to a send is a call in `--dead`
 
 **Decided.** `--dead` counts the first symbol handed to a call in

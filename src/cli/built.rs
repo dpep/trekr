@@ -2,17 +2,19 @@
 //! and no index records: what `--dead` cannot see a caller in, and says so
 //! per row (DEC-363).
 //!
-//! Read from the checkout's Ruby as text, like the views (DEC-315): an
-//! interpolated symbol `:"report_#{type}"` is a name of the shape `report_*`,
-//! as is a string sent by name, `Q.new.public_send("report_#{type}")`, for
-//! `Q`'s methods only (DEC-655), `Mailer.public_send(type, …)` sends a
-//! computed name to `Mailer`, and
-//! `Tools.instance_methods` lists `Tools`' methods to call by name (DEC-370).
+//! An interpolated symbol `:"report_#{type}"`, read from the checkout's Ruby
+//! as text like the views (DEC-315), is a name of the shape `report_*`; a
+//! string sent by name, `Q.new.public_send("report_#{type}")`, is one for
+//! `Q`'s methods only (DEC-655); `Mailer.public_send(type, …)` sends a
+//! computed name to `Mailer` — the sends as extraction reads them
+//! (`Facts::sends`); and `Tools.instance_methods` lists `Tools`' methods to
+//! call by name (DEC-370).
 //! Evidence of a way in, never of a caller, so a row it touches keeps its
 //! tier and is graded `lower`.
 
 use super::dead_consts::{in_db, in_tests};
 use crate::core::ruby::{BY_NAME, SENDS};
+use crate::core::{SentName, SentTo};
 use crate::tree::Tree;
 use rayon::prelude::*;
 use std::path::Path;
@@ -39,35 +41,25 @@ pub(super) struct Built {
 /// An interpolated name sent, before its receiver is placed.
 struct Sending {
     shape: String,
-    to: To,
+    to: SentTo,
     /// The nesting of the send, as the parse records it.
-    nesting: Option<Vec<String>>,
+    nesting: Vec<String>,
     at: At,
 }
 
 impl Sending {
     /// The class it is sent to, if the tree can place it.
     fn class(&self, tree: &Tree) -> Option<String> {
-        let nesting = self.nesting.as_deref().unwrap_or_default();
+        let nesting = &self.nesting;
         match &self.to {
-            To::Own => tree.scope_fqn(nesting),
-            To::Constant(written) => tree
+            SentTo::Own => tree.scope_fqn(nesting),
+            SentTo::Constant(written) => tree
                 .resolve(written, nesting)
                 .fqn
                 .or_else(|| Some(written.clone())),
+            SentTo::Value => None,
         }
     }
-}
-
-/// What a sent string's receiver is, as written. A value's is not read: a
-/// string sent to a record (`row.public_send("total_#{kind}")`) is an
-/// attribute's name far more often than a method's.
-#[derive(Debug, PartialEq)]
-enum To {
-    /// No receiver, `self`, or a bare `new(…)`: the class the send is in.
-    Own,
-    /// A chain that starts at a constant: `TopicQuery.new(…).public_send`.
-    Constant(String),
 }
 
 /// The calls that list a module's methods, for a caller to call by name.
@@ -187,8 +179,6 @@ impl Built {
     /// A file's finds, and its sent names, whose receiver is placed once
     /// the files are merged.
     fn read_file(&mut self, path: &str, text: &str) -> Vec<Sending> {
-        let mut sendings = Vec::new();
-        let mut held = Vec::new();
         for (at, line) in text.lines().enumerate() {
             // A comment's example is no name the code builds.
             if line.trim_start().starts_with('#') {
@@ -200,53 +190,39 @@ impl Built {
                     self.shapes.push((shape, at.clone()));
                 }
             }
-            let indent = line.len() - line.trim_start().len();
-            // Every name in `BY_NAME` spells one of these, and most lines none.
-            let sends = ["send", "try", "method"].iter().any(|n| line.contains(n));
-            for statement in statements(line) {
-                // A local is the method's: another method's of the same name
-                // is another local.
-                if statement.trim_start().starts_with("def ") {
-                    held.clear();
-                }
-                hold(&mut held, statement, indent);
-                if !sends {
-                    continue;
-                }
-                for (shape, to) in sent_names(statement, &held) {
-                    sendings.push(Sending {
-                        shape,
-                        to,
-                        nesting: None,
-                        at: at.clone(),
-                    });
-                }
-            }
-            let computed = match sends {
-                true => computed_sends(line),
-                false => Vec::new(),
-            };
-            for constant in computed {
-                if !self.sent_to.iter().any(|(known, _)| *known == constant) {
-                    self.sent_to.push((constant, at.clone()));
-                }
-            }
             for (constant, call) in listings(line) {
                 if !self.listed.iter().any(|(known, _, _)| *known == constant) {
                     self.listed.push((constant, call, at.clone()));
                 }
             }
         }
-        // The class a send is written in, from the parse: few files send a
-        // string, so few pay for it.
-        if !sendings.is_empty() {
-            let facts = crate::extract::extract(text.as_bytes());
-            for sending in &mut sendings {
-                sending.nesting = facts
-                    .calls
-                    .iter()
-                    .find(|c| c.pos.line == sending.at.1 && BY_NAME.contains(&c.name.as_str()))
-                    .map(|c| c.nesting.clone());
+        // The sends, as extraction reads them; few files have one.
+        if !BY_NAME.iter().any(|name| text.contains(name)) {
+            return Vec::new();
+        }
+        let facts = crate::extract::extract(text.as_bytes());
+        let mut sendings = Vec::new();
+        for send in facts.sends {
+            let at = (path.to_string(), send.pos.line);
+            match send.name {
+                // A string sent to a record (`row.public_send("total_#{kind}")`)
+                // is an attribute's name far more often than a method's.
+                SentName::Shape(_) if send.to == SentTo::Value => {}
+                SentName::Shape(shape) if sent_shape(&shape) => sendings.push(Sending {
+                    shape,
+                    to: send.to,
+                    nesting: send.nesting,
+                    at,
+                }),
+                // A computed name sent to a constant (`Mailer.public_send(type)`).
+                SentName::Computed if SENDS.contains(&send.by) => {
+                    if let SentTo::Constant(constant) = send.to
+                        && !self.sent_to.iter().any(|(known, _)| *known == constant)
+                    {
+                        self.sent_to.push((constant, at));
+                    }
+                }
+                _ => {}
             }
         }
         sendings
@@ -318,46 +294,6 @@ fn interpolated_symbols(line: &str) -> Vec<String> {
     shapes
 }
 
-/// The shapes of a line's interpolated strings and symbols handed to a send
-/// as the name: `public_send("list_#{action}")`, `__send__(:"#{kind}_attrs")`,
-/// on any receiver or none, with what it is sent to. A string elsewhere is a
-/// key or a message far more often.
-fn sent_names(line: &str, held: &[Held]) -> Vec<(String, To)> {
-    let mut shapes = Vec::new();
-    for send in BY_NAME {
-        let mut rest = line;
-        let mut offset = 0;
-        while let Some(found) = rest.find(send) {
-            let at = offset + found;
-            let before = &line[..at];
-            let after = &line[at + send.len()..];
-            rest = after;
-            offset = at + send.len();
-            // `resend(` and `try_send(` are other methods.
-            if before.ends_with(word) || after.starts_with(word) {
-                continue;
-            }
-            let argument = after.strip_prefix('(').unwrap_or(after).trim_start();
-            let quoted = argument.strip_prefix(":\"").or(argument.strip_prefix('"'));
-            let shape = match quoted {
-                Some(body) => read_shape(body).0.filter(|shape| sent_shape(shape)),
-                // A local the method last assigned a string of the shape.
-                None => {
-                    let local: String = argument.chars().take_while(|c| word(*c)).collect();
-                    held.iter()
-                        .rev()
-                        .find(|h| h.local == local)
-                        .and_then(|h| h.shape.clone())
-                }
-            };
-            if let (Some(shape), Some(to)) = (shape, receiver(before)) {
-                shapes.push((shape, to));
-            }
-        }
-    }
-    shapes
-}
-
 /// A shape that spells three name characters or more before its first
 /// interpolation, as DEC-363 counts a symbol's.
 fn named_shape(shape: &str) -> bool {
@@ -370,151 +306,6 @@ fn named_shape(shape: &str) -> bool {
 /// `*=` would make nearly every predicate and writer a candidate.
 fn sent_shape(shape: &str) -> bool {
     named_shape(shape) || (shape.contains('*') && shape.len() - shape.matches('*').count() >= 4)
-}
-
-/// A local a method assigned: the shape of the string it holds, or `None`
-/// once something else replaced it, and the indentation it was assigned at.
-#[derive(Debug, PartialEq)]
-struct Held {
-    local: String,
-    shape: Option<String>,
-    indent: usize,
-}
-
-/// Records what a statement assigns a local. A string of a shape is held;
-/// anything else replaces it, unless the assignment may not run: a trailing
-/// `if`/`unless`, or written deeper than the string was (inside a branch).
-fn hold(held: &mut Vec<Held>, statement: &str, indent: usize) {
-    if let Some((local, shape)) = held_string(statement) {
-        held.push(Held {
-            local,
-            shape: Some(shape),
-            indent,
-        });
-        return;
-    }
-    let Some((local, value)) = statement.trim_start().split_once(" = ") else {
-        return;
-    };
-    let replaced = held
-        .iter()
-        .rev()
-        .find(|h| h.local == local)
-        .is_some_and(|h| h.shape.is_some() && indent <= h.indent);
-    if replaced && !value.contains(" if ") && !value.contains(" unless ") {
-        held.push(Held {
-            local: local.to_string(),
-            shape: None,
-            indent,
-        });
-    }
-}
-
-/// A line's statements: split at each `;` outside a string, up to a
-/// trailing comment.
-fn statements(line: &str) -> Vec<&str> {
-    let bytes = line.as_bytes();
-    let mut found = Vec::new();
-    let (mut start, mut i, mut quote) = (0, 0, None);
-    while i < bytes.len() {
-        let c = bytes[i];
-        match quote {
-            Some(_) if c == b'\\' => i += 1,
-            Some(q) if c == q => quote = None,
-            Some(_) => {}
-            None if c == b'"' || c == b'\'' => quote = Some(c),
-            None if c == b'#' => break,
-            None if c == b';' => {
-                found.push(&line[start..i]);
-                start = i + 1;
-            }
-            None => {}
-        }
-        i += 1;
-    }
-    found.push(&line[start..i.min(bytes.len())]);
-    found
-}
-
-/// `validate_method = "validate_#{name}"`: the local a statement assigns an
-/// interpolated string or symbol of a shape to, whole, and the shape.
-fn held_string(statement: &str) -> Option<(String, String)> {
-    let (local, value) = statement.trim_start().split_once(" = ")?;
-    let value = value.strip_prefix(":\"").or(value.strip_prefix('"'))?;
-    if local.is_empty()
-        || !local
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-    {
-        return None;
-    }
-    let (shape, used) = read_shape(value);
-    let rest = &value[used..];
-    let rest = rest.strip_prefix(".to_sym").unwrap_or(rest).trim_start();
-    (rest.is_empty() || rest.starts_with('#'))
-        .then_some(shape)
-        .flatten()
-        .filter(|shape| sent_shape(shape))
-        .map(|shape| (local.to_string(), shape))
-}
-
-/// A character of a method's name.
-fn word(c: char) -> bool {
-    c.is_ascii_alphanumeric() || "_?!".contains(c)
-}
-
-/// What the text before a call writes as its receiver: nothing, `self`, a
-/// constant, or a chain from one through calls whose answer is known; `None`
-/// for a value. `new` answers an instance; `with` is ActionMailer's, whose
-/// answer runs the mailer's actions (`AdminMailer.with(…).public_send`). Any
-/// other call may answer anything (`Widget.for(1)`).
-fn receiver(before: &str) -> Option<To> {
-    let Some(mut chain) = before.strip_suffix('.') else {
-        return Some(To::Own);
-    };
-    let mut calls = Vec::new();
-    loop {
-        if let Some(open) = chain.strip_suffix(')').and_then(opening) {
-            chain = &chain[..open];
-        }
-        let start = chain
-            .char_indices()
-            .rfind(|(_, c)| !(word(*c) || *c == ':'))
-            .map_or(0, |(at, c)| at + c.len_utf8());
-        let (head, segment) = chain.split_at(start);
-        if let Some(rest) = head.strip_suffix('.') {
-            calls.push(segment);
-            chain = rest;
-            continue;
-        }
-        let segment = segment.trim_start_matches("::");
-        let through = |known: &[&str]| calls.iter().all(|call| known.contains(call));
-        return match segment {
-            "self" | "new" if through(&["class", "new"]) => Some(To::Own),
-            _ if through(&["new", "with"])
-                && constant_before(segment).is_some_and(|c| c == segment) =>
-            {
-                Some(To::Constant(segment.to_string()))
-            }
-            _ => None,
-        };
-    }
-}
-
-/// Where the `(` opens whose `)` ends `text` (already stripped), if it does.
-fn opening(text: &str) -> Option<usize> {
-    let mut depth = 1;
-    for (at, c) in text.char_indices().rev() {
-        match c {
-            ')' => depth += 1,
-            '(' => depth -= 1,
-            _ => {}
-        }
-        if depth == 0 {
-            return Some(at);
-        }
-    }
-    None
 }
 
 /// A double-quoted literal's body as a shape, up to its closing quote, and
@@ -554,27 +345,6 @@ fn read_shape(body: &str) -> (Option<String>, usize) {
     (None, body.len())
 }
 
-/// The constants a line sends a computed name to: `Const.public_send(type`,
-/// `Const.try(type` and the like (`core::ruby::SENDS`), whose first
-/// argument is no literal.
-fn computed_sends(line: &str) -> Vec<String> {
-    let mut found = Vec::new();
-    for send in SENDS {
-        let call = format!(".{send}(");
-        let mut rest = line;
-        while let Some(at) = rest.find(&call) {
-            let receiver = constant_before(&rest[..at]);
-            let argument = rest[at + call.len()..].trim_start();
-            rest = &rest[at + call.len()..];
-            let literal = argument.starts_with([':', '"', '\'', ')']) || argument.is_empty();
-            if let Some(receiver) = receiver.filter(|_| !literal) {
-                found.push(receiver);
-            }
-        }
-    }
-    found
-}
-
 /// The constants a line lists the instance methods of: `Tools.instance_methods`.
 fn listings(line: &str) -> Vec<(String, String)> {
     let mut found = Vec::new();
@@ -612,16 +382,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn every_send_passes_the_line_gate() {
-        for send in BY_NAME {
-            assert!(
-                ["send", "try", "method"].iter().any(|n| send.contains(n)),
-                "`read_file` skips a line naming `{send}`"
-            );
-        }
-    }
-
-    #[test]
     fn an_interpolated_symbol_is_a_shape_when_it_spells_enough() {
         assert_eq!(
             interpolated_symbols(r##"m = :"report_#{type}""##),
@@ -632,136 +392,52 @@ mod tests {
         assert!(interpolated_symbols(r##":"a b #{c}""##).is_empty());
     }
 
+    /// The shapes `read_file` finds sent, by line, and the constants it
+    /// finds a computed name sent to.
+    fn read(text: &str) -> (Vec<(String, u32)>, Vec<String>) {
+        let mut built = Built::default();
+        let sendings = built.read_file("lib/x.rb", text);
+        let shapes = sendings.into_iter().map(|s| (s.shape, s.at.1)).collect();
+        (shapes, built.sent_to.into_iter().map(|(c, _)| c).collect())
+    }
+
     #[test]
-    fn an_interpolated_string_sent_by_name_is_a_shape() {
+    fn a_shape_sent_by_name_is_one_a_method_may_have() {
         let shapes =
-            |line| -> Vec<String> { sent_names(line, &[]).into_iter().map(|s| s.0).collect() };
+            |text: &str| -> Vec<String> { read(text).0.into_iter().map(|s| s.0).collect() };
         assert_eq!(
             shapes(r##"Q.new.public_send("list_#{filter}", user)"##),
             ["list_*"]
         );
-        assert_eq!(shapes(r##"send "validate_#{name}""##), ["validate_*"]);
-        assert_eq!(shapes(r##"self.try("to_#{kind}")"##), ["to_*"]);
-        assert!(shapes(r##"try("to#{kind}")"##).is_empty());
-        assert!(shapes(r##"row.public_send("total_#{kind}")"##).is_empty());
         assert_eq!(shapes(r##"send("#{name}_handler")"##), ["*_handler"]);
-        assert_eq!(
-            shapes(r##"Target.new.public_send(:"#{kind}_attrs")"##),
-            ["*_attrs"]
-        );
-        assert_eq!(
-            shapes(r##"__send__ "#{KINDS.key(kind)}_attrs".to_sym, kind"##),
-            ["*_attrs"]
-        );
-        assert_eq!(shapes(r##"method(:"#{kind}_attrs").call"##), ["*_attrs"]);
+        assert!(shapes(r##"try("to#{kind}")"##).is_empty());
         assert!(shapes(r##"public_send("#{key}=", value)"##).is_empty());
         assert!(shapes(r##"send(:"#{name}?")"##).is_empty());
-        assert!(shapes(r##"define_method("#{name}_attrs")"##).is_empty());
-        assert!(shapes(r##"resend("list_#{a}")"##).is_empty());
-        assert!(shapes(r##"log("list_#{a}")"##).is_empty());
-    }
-
-    #[test]
-    fn a_local_holding_a_shaped_string_sends_its_shape() {
-        let mut held = Vec::new();
-        hold(&mut held, r##"    check = "validate_#{name}""##, 4);
-        assert_eq!(held[0].shape.as_deref(), Some("validate_*"));
+        assert!(shapes(r##"define_method("#{name}_attrs") {}"##).is_empty());
+        // Sent to a value: an attribute's name far more often.
+        assert!(shapes(r##"row.public_send("total_#{kind}")"##).is_empty());
+        // Written over lines, by the parse.
         assert_eq!(
-            sent_names("public_send(check, val) if respond_to?(check)", &held),
-            [("validate_*".to_string(), To::Own)]
+            read("Q.new\n  .public_send(\n    \"list_#{f}\")\n").0,
+            [("list_*".to_string(), 3)]
         );
-        assert!(sent_names("public_send(checked)", &held).is_empty());
-        assert!(held_string(r##"key = "validate_#{name}" + x"##).is_none());
-        assert!(held_string(r##"@key = "validate_#{name}""##).is_none());
-        assert!(held_string(r##"key = "#{name}?""##).is_none());
-        for held in [
-            r##"name = :"#{kind}_attrs""##,
-            r##"name = "#{kind}_attrs".to_sym"##,
-        ] {
-            assert_eq!(held_string(held).unwrap().1, "*_attrs", "{held}");
-        }
-    }
-
-    /// The shapes `read_file` finds sent, by line.
-    fn sent_lines(text: &str) -> Vec<(String, u32)> {
-        let sendings = Built::default().read_file("lib/x.rb", text);
-        sendings.into_iter().map(|s| (s.shape, s.at.1)).collect()
-    }
-
-    #[test]
-    fn a_local_is_read_in_its_own_method_as_last_assigned() {
-        // Assigned on the send's own line, as one statement before it.
-        assert_eq!(
-            sent_lines(
-                "class W; def go(n, v); rule = \"handle_#{n}\"; public_send(rule, v); end; end\n"
-            ),
-            [("handle_*".to_string(), 1)]
-        );
-        // Another method's parameter of the same name is another local.
-        assert!(
-            sent_lines(
-                "class W\n  def a(x)\n    m = \"handle_#{x}\"\n  end\n\n  def b(m)\n    send(m)\n  end\nend\n"
-            )
-            .is_empty()
-        );
-        // Replaced before the send: not the string any more.
-        assert!(
-            sent_lines(
-                "class W\n  def a(x)\n    m = \"handle_#{x}\"\n    m = \"other\"\n    send(m)\n  end\nend\n"
-            )
-            .is_empty()
-        );
-        // Replaced only on a branch, or under a modifier: may still be.
-        for replaced in [
-            "    if x\n      m = \"other\"\n    end\n",
-            "    m = \"other\" if x\n",
-        ] {
-            let text = format!(
-                "class W\n  def a(x)\n    m = \"handle_#{{x}}\"\n{replaced}    send(m)\n  end\nend\n"
-            );
-            assert_eq!(sent_lines(&text).len(), 1, "{text}");
-        }
-    }
-
-    #[test]
-    fn a_line_splits_into_statements_outside_strings() {
-        assert_eq!(
-            statements(r#"a = "x;y"; b(1) # c; d"#),
-            [r#"a = "x;y""#, " b(1) "]
-        );
-    }
-
-    #[test]
-    fn a_sent_names_receiver_is_read_from_its_chain() {
-        assert_eq!(receiver("    if "), Some(To::Own));
-        assert_eq!(receiver("x = self."), Some(To::Own));
-        assert_eq!(receiver("  new(result, opts)."), Some(To::Own));
-        assert_eq!(
-            receiver("@list = TopicQuery.new(user, f(opts))."),
-            Some(To::Constant("TopicQuery".into()))
-        );
-        assert_eq!(
-            receiver("::Mail::Admin.with(to: user.account)."),
-            Some(To::Constant("Mail::Admin".into()))
-        );
-        assert_eq!(receiver("self.class."), Some(To::Own));
-        assert_eq!(receiver("Widget.for(1)."), None);
-        assert_eq!(receiver("self.helper."), None);
-        assert_eq!(receiver("record."), None);
-        assert_eq!(receiver("@q.new."), None);
-        assert_eq!(receiver("x&."), None);
     }
 
     #[test]
     fn a_computed_name_sent_to_a_constant_names_the_constant() {
         assert_eq!(
-            computed_sends("Mail::Notifier.public_send(type, user)"),
+            read("Mail::Notifier.public_send(type, user)").1,
             ["Mail::Notifier"]
         );
-        assert!(computed_sends("Notifier.public_send(:welcome, user)").is_empty());
-        assert!(computed_sends("record.send(name)").is_empty());
-        assert_eq!(computed_sends("Notifier.try(kind, user)"), ["Notifier"]);
-        assert_eq!(computed_sends("Notifier.try!(kind)"), ["Notifier"]);
+        assert!(read("Notifier.public_send(:welcome, user)").1.is_empty());
+        assert!(read("record.send(name)").1.is_empty());
+        assert_eq!(read("Notifier.try(kind, user)").1, ["Notifier"]);
+        assert_eq!(read("Notifier.try!(kind)").1, ["Notifier"]);
+        assert_eq!(
+            read("Notifier.with(to: x)\n  .public_send(type)").1,
+            ["Notifier"]
+        );
+        assert_eq!(read("View.new.send(name, *args)").1, ["View"]);
     }
 
     #[test]
