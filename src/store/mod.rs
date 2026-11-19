@@ -349,14 +349,23 @@ impl Store {
     /// caller that needs its own handle has to fall back to reading everything
     /// through the one it already holds.
     pub(crate) fn reopen(&self) -> Result<Option<Store>> {
-        let mut store = match &self.path {
-            Some(path) if self.existing => Store::open_existing(path)?,
-            Some(path) => Store::open(path)?,
-            None => return Ok(None),
-        };
-        // A second connection answers as this one does.
-        store.adopt(self.overlays())?;
-        Ok(Some(store))
+        self.reopener().map(|open| open()).transpose()
+    }
+
+    /// `reopen`, from any thread, as often as asked.
+    pub(crate) fn reopener(&self) -> Option<impl Fn() -> Result<Store> + Send + Sync + 'static> {
+        let path = self.path.clone()?;
+        let existing = self.existing;
+        let overlays = self.overlays();
+        Some(move || {
+            let mut store = match existing {
+                true => Store::open_existing(&path)?,
+                false => Store::open(&path)?,
+            };
+            // A second connection answers as this one does.
+            store.adopt(overlays.clone())?;
+            Ok(store)
+        })
     }
 
     /// How to open another connection to this store later, on any thread —

@@ -41,6 +41,7 @@ use std::io::Write;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::{Arc, OnceLock, RwLock};
 
 #[derive(Parser)]
 #[command(
@@ -3245,7 +3246,7 @@ fn gather_refs(
     target: Option<&str>,
     // Keep the excluded sites too, so `--include-excluded` can show them.
     keep_all: bool,
-    mut parsed: Option<&mut Parsed>,
+    parsed: Option<&Parsed>,
     // Every call of the name as a row of its own, for the bare-name listing:
     // the index keeps which files call a name, not where (DEC-193).
     mut sites: Option<&mut Vec<crate::store::Ref>>,
@@ -3259,7 +3260,7 @@ fn gather_refs(
     let partial = warming().is_some();
     // `--dead` asks about every `initialize`, and each would tier every
     // `X.new` in the checkout: those are worked out once instead (DEC-541).
-    if let Some(parsed) = parsed.as_deref_mut()
+    if let Some(parsed) = parsed
         && !keep_all
         && !listing
         && !partial
@@ -3298,17 +3299,11 @@ fn gather_refs(
     let tiered: Vec<Tiered> = match parsed {
         // Held across queries by the caller: parse what it lacks, then tier.
         Some(parsed) => {
-            let fresh: Vec<_> = files
-                .par_iter()
-                .filter(|path| !parsed.facts.contains_key(*path))
-                .map(|path| (path.clone(), read(path)))
-                .collect();
-            parsed.facts.extend(fresh);
-            let parsed = &*parsed;
+            parsed.read(root, &files);
             files
                 .par_iter()
-                .filter_map(|path| Some((path, parsed.facts.get(path)?.as_ref()?)))
-                .map(|(path, facts)| tier(path, facts))
+                .filter_map(|path| Some((path, parsed.get(path)?)))
+                .map(|(path, facts)| tier(path, &facts))
                 .collect()
         }
         // One query: each file is parsed and tiered on the worker that takes
@@ -3356,66 +3351,105 @@ struct Tiered {
 /// Files held across queries, by checkout-relative path: each one's facts,
 /// `None` when it could not be read; and what `--dead`'s `initialize`
 /// queries share (DEC-541), each worked out the first time one needs it.
+/// Shared by threads: every entry is a pure function of the checkout, so
+/// which thread fills one changes no answer. No lock is held across a
+/// rayon call — a worker waiting in one runs other queries, which take it.
 #[derive(Default)]
 struct Parsed {
-    facts: HashMap<String, Option<crate::core::Facts>>,
+    facts: RwLock<HashMap<String, Option<Arc<crate::core::Facts>>>>,
     /// Every call named `initialize` — a subclass's `super`, mostly.
-    callers: Option<Vec<Caller>>,
+    callers: OnceLock<Vec<Caller>>,
     /// The files that call `new`, by each capitalized word their text holds.
-    naming: Option<HashMap<u64, Vec<u32>>>,
+    naming: OnceLock<HashMap<u64, Vec<u32>>>,
     /// What an `X.new` site constructs, by file and call index.
-    made: HashMap<(String, usize), crate::resolve::refs::Construct>,
+    made: RwLock<HashMap<(String, usize), crate::resolve::refs::Construct>>,
     /// The files that call `new`, by path.
-    calling_new: Option<Vec<String>>,
+    calling_new: OnceLock<Vec<String>>,
+}
+
+/// `cell`'s value, worked out by `make` if it has none. Not `get_or_init`:
+/// `make` may wait in a rayon call, whose worker may come back here.
+fn once<T>(cell: &OnceLock<T>, make: impl FnOnce() -> T) -> &T {
+    if cell.get().is_none() {
+        let _ = cell.set(make());
+    }
+    cell.get().expect("just set")
 }
 
 impl Parsed {
     /// Holds a file's facts, parsed elsewhere.
-    fn hold(&mut self, path: String, facts: crate::core::Facts) {
-        self.facts.insert(path, Some(facts));
+    fn hold(&self, path: String, facts: Arc<crate::core::Facts>) {
+        self.facts
+            .write()
+            .expect("unpoisoned")
+            .insert(path, Some(facts));
+    }
+
+    /// A file's facts, if it has been read and could be.
+    fn get(&self, path: &str) -> Option<Arc<crate::core::Facts>> {
+        self.facts.read().expect("unpoisoned").get(path)?.clone()
     }
 
     /// Parse the files not held yet.
-    fn read(&mut self, root: &Path, files: &[String]) {
+    fn read(&self, root: &Path, files: &[String]) {
         let fresh: Vec<_> = files
             .par_iter()
-            .filter(|path| !self.facts.contains_key(*path))
-            .map(|path| (path.clone(), extract::read_file(root, path)))
+            .filter(|path| !self.facts.read().expect("unpoisoned").contains_key(*path))
+            .map(|path| (path.clone(), extract::read_file(root, path).map(Arc::new)))
             .collect();
-        self.facts.extend(fresh);
+        let mut facts = self.facts.write().expect("unpoisoned");
+        for (path, read) in fresh {
+            facts.entry(path).or_insert(read);
+        }
+    }
+
+    /// What `new` call `at` of `path` constructs, once `construct` has
+    /// worked it out.
+    fn made(&self, path: &str, at: usize) -> crate::resolve::refs::Construct {
+        self.made.read().expect("unpoisoned")[&(path.to_string(), at)].clone()
     }
 
     /// What each `new` call of these files constructs, worked out for the
     /// ones not known yet.
-    fn construct(&mut self, tree: &Tree, files: &[String]) {
+    fn construct(&self, tree: &Tree, files: &[String]) {
         use crate::resolve::refs;
-        let made = &self.made;
         let fresh: Vec<_> = files
             .par_iter()
-            .filter_map(|path| Some((path, self.facts.get(path)?.as_ref()?)))
+            .filter_map(|path| Some((path, self.get(path)?)))
             .flat_map_iter(|(path, facts)| {
-                new_calls(facts)
+                let made = self.made.read().expect("unpoisoned");
+                let fresh: Vec<_> = new_calls(&facts)
                     .filter(|(at, _)| !made.contains_key(&(path.clone(), *at)))
+                    .map(|(at, call)| (at, call.clone()))
+                    .collect();
+                drop(made);
+                fresh
+                    .into_iter()
                     .map(|(at, call)| {
-                        ((path.clone(), at), refs::construct(tree, facts, call, path))
+                        (
+                            (path.clone(), at),
+                            refs::construct(tree, &facts, &call, path),
+                        )
                     })
                     .collect::<Vec<_>>()
             })
             .collect();
-        self.made.extend(fresh);
+        let mut made = self.made.write().expect("unpoisoned");
+        for (at, construct) in fresh {
+            made.entry(at).or_insert(construct);
+        }
     }
 
-    /// Read the checkout's calls named `initialize`, once.
-    fn read_callers(&mut self, tree: &Tree, store: &Store, root: &Path, root_str: &str) {
-        if self.callers.is_none() {
+    /// The checkout's calls named `initialize`, read once.
+    fn callers(&self, tree: &Tree, store: &Store, root: &Path, root_str: &str) -> &[Caller] {
+        once(&self.callers, || {
             let files = store
                 .files_calling(root_str, "initialize")
                 .unwrap_or_default();
             self.read(root, &files);
-            let held = &self.facts;
-            let callers = files
+            files
                 .par_iter()
-                .filter_map(|path| Some((path, held.get(path)?.as_ref()?)))
+                .filter_map(|path| Some((path, self.get(path)?)))
                 .flat_map_iter(|(path, facts)| {
                     facts
                         .calls
@@ -3429,13 +3463,12 @@ impl Parsed {
                         })
                         .collect::<Vec<_>>()
                 })
-                .collect();
-            self.callers = Some(callers);
-        }
+                .collect()
+        })
     }
 
-    fn calling_new(&mut self, store: &Store, root_str: &str) -> &[String] {
-        self.calling_new.get_or_insert_with(|| {
+    fn calling_new(&self, store: &Store, root_str: &str) -> &[String] {
+        once(&self.calling_new, || {
             let mut files = store.files_calling(root_str, "new").unwrap_or_default();
             files.sort();
             files
@@ -3443,9 +3476,9 @@ impl Parsed {
     }
 
     /// The files calling `new` whose text names `word`.
-    fn naming(&mut self, store: &Store, root: &Path, root_str: &str, word: &str) -> Vec<String> {
-        let files = self.calling_new(store, root_str).to_vec();
-        let naming = self.naming.get_or_insert_with(|| {
+    fn naming(&self, store: &Store, root: &Path, root_str: &str, word: &str) -> Vec<String> {
+        let files = self.calling_new(store, root_str);
+        let naming = once(&self.naming, || {
             let words: Vec<HashSet<u64>> = files
                 .par_iter()
                 .map(|path| {
@@ -3573,7 +3606,7 @@ fn gather_constructions(
     query: &crate::resolve::refs::Query,
     target: Option<&str>,
     own: &crate::tree::MethodDef,
-    parsed: &mut Parsed,
+    parsed: &Parsed,
 ) -> anyhow::Result<(
     Vec<crate::resolve::refs::Reference>,
     crate::resolve::refs::Counts,
@@ -3639,23 +3672,23 @@ fn gather_constructions(
     parsed.read(root, &files);
     parsed.construct(tree, &files);
     for path in &files {
-        let Some(facts) = parsed.facts.get(path).and_then(Option::as_ref) else {
+        let Some(facts) = parsed.get(path) else {
             continue;
         };
         for call in facts.calls.iter().filter(|c| c.name == "initialize") {
-            let reference = refs::tier_call(tree, facts, call, path, query, target);
+            let reference = refs::tier_call(tree, &facts, call, path, query, target);
             if reference.tier != refs::Tier::Excluded && reference.unplaced().is_none() {
                 keep(&mut counts, &mut found, reference);
                 return Ok((found, counts));
             }
         }
-        for (at, call) in new_calls(facts) {
-            let construct = &parsed.made[&(path.clone(), at)];
-            if !refs::may_run(construct, own) {
+        for (at, call) in new_calls(&facts) {
+            let construct = parsed.made(path, at);
+            if !refs::may_run(&construct, own) {
                 continue;
             }
             let reference =
-                refs::tier_call_with(tree, facts, call, path, query, target, Some(construct));
+                refs::tier_call_with(tree, &facts, call, path, query, target, Some(&construct));
             if reference.tier != refs::Tier::Excluded && reference.unplaced().is_none() {
                 keep(&mut counts, &mut found, reference);
                 return Ok((found, counts));
@@ -3664,8 +3697,7 @@ fn gather_constructions(
     }
     // Then every call of its name: a subclass's `super` may be in a file
     // that calls no `new`.
-    parsed.read_callers(tree, store, root, root_str);
-    for caller in parsed.callers.as_deref().unwrap_or_default() {
+    for caller in parsed.callers(tree, store, root, root_str) {
         // Every subclass's `initialize` calls `super`; one in a class whose
         // whole chain is known and does not hold the owner lands elsewhere,
         // which is all `tier_super` would find, at length.
@@ -3677,11 +3709,11 @@ fn gather_constructions(
             counts.excluded_different_owner += 1;
             continue;
         }
-        let Some(facts) = parsed.facts.get(&caller.path).and_then(Option::as_ref) else {
+        let Some(facts) = parsed.get(&caller.path) else {
             continue;
         };
         let call = &facts.calls[caller.at];
-        let reference = refs::tier_call(tree, facts, call, &caller.path, query, target);
+        let reference = refs::tier_call(tree, &facts, call, &caller.path, query, target);
         keep(&mut counts, &mut found, reference);
     }
     if reaches(&found) {
@@ -3694,13 +3726,12 @@ fn gather_constructions(
         let one = std::slice::from_ref(path);
         parsed.read(root, one);
         parsed.construct(tree, one);
-        let Some(facts) = parsed.facts.get(path).and_then(Option::as_ref) else {
+        let Some(facts) = parsed.get(path) else {
             continue;
         };
-        let first = new_calls(facts)
+        let first = new_calls(&facts)
             .filter(|(at, call)| {
-                matches!(parsed.made[&(path.clone(), *at)], refs::Construct::Untyped)
-                    && own.accepts(call.argc)
+                matches!(parsed.made(path, *at), refs::Construct::Untyped) && own.accepts(call.argc)
             })
             .min_by_key(|(_, call)| call.pos.line);
         if let Some((_, call)) = first {
@@ -6521,7 +6552,7 @@ mod tests {
                 // A connection stays on the thread that opened it.
                 let store = Store::open(&db).unwrap();
                 let tree = Tree::build(&store, &root).unwrap();
-                let mut parsed = Parsed::default();
+                let parsed = Parsed::default();
                 let mut sites = Vec::new();
                 let (found, counts) = gather_refs(
                     &tree,
@@ -6531,7 +6562,7 @@ mod tests {
                     &query,
                     Some("Widget"),
                     true,
-                    keep.then_some(&mut parsed),
+                    keep.then_some(&parsed),
                     Some(&mut sites),
                 )
                 .unwrap();

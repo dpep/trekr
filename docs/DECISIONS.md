@@ -22,7 +22,7 @@ belongs to:
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
 | Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
 | `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563 |
-| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664 |
+| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665 |
 | LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646 |
 | Scope and housekeeping | 030, 063, 640 |
 
@@ -16641,3 +16641,28 @@ name extraction records no symbol for (`send(:+, o)`) — leaving the row
 `clear`. The caveat now goes only where this row's reference was read as a
 call. And `public_send(:x)` or `try(:x)` of a private method is no call of
 it.
+
+## DEC-665 — `--dead` weighs its candidates in parallel, over one parse cache
+
+**Decided.** The candidate loop, about 80% of `--dead`'s time, runs under
+`par_iter`. Its only order-dependent state was the order rows are pushed
+in, which an indexed `collect` keeps. `Parsed`, the parse-once cache of
+caller files and the whole-checkout `initialize` scans (DEC-541), is
+shared by every worker (a `RwLock` over `Arc`'d facts, `OnceLock`s for
+what is computed once); each worker has its own store connection
+(`Store::reopener`, since a SQLite connection is not `Sync`) and its own
+memo of the four per-file caches. No lock is held across a rayon call: a
+worker waiting inside a `par_iter` may pick up another candidate, which
+takes the same lock — so a `OnceLock` is set by a helper that tolerates
+the race, never `get_or_init`.
+
+**Measured**, `--dead app lib`, 5 interleaved runs each, load 9–12:
+discourse wall 5.3 → 3.1 s (−41%), user 7.8 → 9.2 s; mastodon 3.2 → 1.75 s
+(−46%), user 3.4 → 3.8 s; every pair faster. Output byte-identical to the
+serial build on both corpora, in four repeated runs and at 1 and 2
+threads.
+
+**Rejected: a parse cache per worker.** Simpler, no interior locking, but
+each of nine workers parsed about 2,900 of discourse's files against the
+serial run's 3,567 in all, and redid the `initialize` scans: discourse −7%
+wall at double the CPU (7.5 → 14.6 s user), mastodon −45%.

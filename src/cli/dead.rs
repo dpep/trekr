@@ -513,6 +513,15 @@ struct Defined {
     facts: std::sync::Arc<crate::core::Facts>,
 }
 
+/// What weighing a candidate reads of files once and keeps: one per worker.
+#[derive(Default)]
+struct Memo {
+    symbols: conventions::Symbols,
+    thor_blocks: conventions::ThorBlocks,
+    foreign_sends: conventions::ForeignSends,
+    gems: entry_points::Gems,
+}
+
 /// `--dead` over the scopes in one checkout, weighed against that checkout:
 /// pushes a row per candidate and returns how many files were in scope.
 fn dead_in(
@@ -706,26 +715,34 @@ fn dead_in(
     let scripts = views::Scripts::read(&texts);
     let routes = routes::Routes::read(root);
     let routed = routed_actions(&tree, &routes);
-    let mut symbols = conventions::Symbols::default();
-    let mut thor_blocks = conventions::ThorBlocks::default();
-    let mut foreign_sends = conventions::ForeignSends::default();
-    let mut parsed = Parsed::default();
+    let parsed = Parsed::default();
     // The scope's files are parsed already: the callers among them aren't
     // read again.
     for (file, facts) in &scope_facts {
-        parsed.hold(relative(file), (**facts).clone());
+        parsed.hold(relative(file), facts.clone());
     }
-    let mut gems = entry_points::Gems::default();
-    for Defined {
-        file,
-        def,
-        caveat: risky,
-        aliases,
-        unread_symbol,
-        calls_super,
-        facts,
-    } in &defined
-    {
+    let parsed = &parsed;
+    // Candidates are weighed in parallel, each worker with a connection and
+    // memos of its own; rows come back in order.
+    let weigh = |store: &Store,
+                 memo: &mut Memo,
+                 candidate: &Defined|
+     -> anyhow::Result<Option<DeadRow>> {
+        let Memo {
+            symbols,
+            thor_blocks,
+            foreign_sends,
+            gems,
+        } = memo;
+        let Defined {
+            file,
+            def,
+            caveat: risky,
+            aliases,
+            unread_symbol,
+            calls_super,
+            facts,
+        } = candidate;
         // The class it is, not the name as written: `Helpers` inside `module
         // Alpha` is `Alpha::Helpers`, and that is what a resolved call names.
         let owner = tree
@@ -741,7 +758,7 @@ fn dead_in(
         // says nothing about this one: its `X.new`s are what count (DEC-541).
         let (written, outside) = written_calls.get(&def.name).copied().unwrap_or((0, 0));
         if written > PLAINLY_USED && outside > 0 && refs::constructor_of(&query).is_none() {
-            continue; // not worth a narrowed search
+            return Ok(None); // not worth a narrowed search
         }
         let (mut found, mut counts) = gather_refs(
             &tree,
@@ -751,7 +768,7 @@ fn dead_in(
             &query,
             Some(&owner),
             false,
-            Some(&mut parsed),
+            Some(parsed),
             None,
         )
         .unwrap_or_default();
@@ -769,7 +786,7 @@ fn dead_in(
                 &query,
                 Some(&owner),
                 false,
-                Some(&mut parsed),
+                Some(parsed),
                 None,
             )
             .unwrap_or_default();
@@ -795,7 +812,7 @@ fn dead_in(
                 &query,
                 Some(&owner),
                 true,
-                Some(&mut parsed),
+                Some(parsed),
                 None,
             )
             .unwrap_or_default();
@@ -828,7 +845,7 @@ fn dead_in(
         // anonymous class's (`Class.new do`), built through whatever holds
         // it: nothing typed can say it is unused.
         if constructor && defined_on.is_some() {
-            continue;
+            return Ok(None);
         }
         if let Some(on) = &defined_on {
             let (all, _) = gather_refs(
@@ -839,7 +856,7 @@ fn dead_in(
                 &query,
                 Some(&owner),
                 true,
-                Some(&mut parsed),
+                Some(parsed),
                 None,
             )
             .unwrap_or_default();
@@ -863,10 +880,10 @@ fn dead_in(
         // macro's symbol is only its name (DEC-664).
         let mut sent_here: Vec<(String, u32)> = Vec::new();
         for reference in found.iter_mut().filter(|r| r.receiver == "symbol") {
-            let Some(facts) = parsed.facts.get(&reference.path).and_then(Option::as_ref) else {
+            let Some(facts) = parsed.get(&reference.path) else {
                 continue;
             };
-            match sent_symbol(&tree, facts, reference, (&owner, def.singleton)) {
+            match sent_symbol(&tree, &facts, reference, (&owner, def.singleton)) {
                 Some(Ran::Untyped) => {
                     reference.receiver = "send";
                     sent_here.push((reference.path.clone(), reference.line));
@@ -900,13 +917,13 @@ fn dead_in(
         // tests are all that use it: any other answer stays as the count had it.
         let plainly_used = written > PLAINLY_USED && !constructor;
         if (seen.is_none() || plainly_used) && !tests_only {
-            continue;
+            return Ok(None);
         }
         // An `initialize` one `X.new` reaches is how a class is built, not a
         // method to inline; one only subclasses' `super`s reach belongs to an
         // abstract class. Only one nothing reaches is a candidate.
         if constructor && seen != Some(DeadTier::Unreferenced) {
-            continue;
+            return Ok(None);
         }
         // Whoever calls the method this overrides may run it instead, and
         // that is often a framework the checkout never names (DEC-121) —
@@ -937,27 +954,26 @@ fn dead_in(
             .then(|| routed.get(&(owner.clone(), def.name.clone())))
             .flatten();
         // A library that calls it by a name it builds (DEC-362, DEC-371).
-        let convention = ((matches!(seen, Some(DeadTier::Unreferenced | DeadTier::Override))
-            || tests_only)
-            && !def.singleton)
-            .then(|| {
-                conventions::serializer_include(&tree, &owner, &def.name, &mut symbols).or_else(
-                    || {
-                        let at = (file.as_str(), def.pos.line);
-                        conventions::thor_command(&tree, &owner, public, at, &mut thor_blocks)
-                            .or_else(|| {
-                                conventions::pundit_predicate(
-                                    &tree, &owner, &def.name, public, &root_str,
-                                )
-                            })
-                            .or_else(|| {
-                                let at = relative(file);
-                                conventions::test_method(&tree, &owner, &def.name, public, &at)
-                            })
-                    },
-                )
-            })
-            .flatten();
+        let convention =
+            ((matches!(seen, Some(DeadTier::Unreferenced | DeadTier::Override)) || tests_only)
+                && !def.singleton)
+                .then(|| {
+                    conventions::serializer_include(&tree, &owner, &def.name, &mut *symbols)
+                        .or_else(|| {
+                            let at = (file.as_str(), def.pos.line);
+                            conventions::thor_command(&tree, &owner, public, at, &mut *thor_blocks)
+                                .or_else(|| {
+                                    conventions::pundit_predicate(
+                                        &tree, &owner, &def.name, public, &root_str,
+                                    )
+                                })
+                                .or_else(|| {
+                                    let at = relative(file);
+                                    conventions::test_method(&tree, &owner, &def.name, public, &at)
+                                })
+                        })
+                })
+                .flatten();
         // A way in production may take — a route, a library's convention,
         // the method it overrides, a `super` into one not indexed, Ruby's
         // protocol — outranks the tests: the row keeps the tier it had
@@ -974,9 +990,9 @@ fn dead_in(
             {
                 DeadTier::ConventionOnly
             }
-            _ if plainly_used => continue,
+            _ if plainly_used => return Ok(None),
             Some(tier) => tier,
-            None => continue,
+            None => return Ok(None),
         };
         let convention = convention
             .filter(|_| matches!(seen, Some(DeadTier::Unreferenced | DeadTier::Override)));
@@ -1106,7 +1122,7 @@ fn dead_in(
                 &query,
                 Some(&owner),
                 true,
-                Some(&mut parsed),
+                Some(parsed),
                 None,
             )
             .unwrap_or_default();
@@ -1133,17 +1149,13 @@ fn dead_in(
             });
             // An instance's `self`: a module's own `def self.` knows its.
             let on_instance = |r: &refs::Reference| {
-                parsed
-                    .facts
-                    .get(&r.path)
-                    .and_then(Option::as_ref)
-                    .and_then(|facts| {
-                        facts
-                            .calls
-                            .iter()
-                            .find(|c| c.pos.line == r.line && c.pos.col == r.col)
-                    })
-                    .is_some_and(|call| !call.singleton)
+                parsed.get(&r.path).is_some_and(|facts| {
+                    facts
+                        .calls
+                        .iter()
+                        .find(|c| c.pos.line == r.line && c.pos.col == r.col)
+                        .is_some_and(|call| !call.singleton)
+                })
             };
             let unknown_self = || {
                 all.iter().find(|r| {
@@ -1390,8 +1402,40 @@ fn dead_in(
                 entry_point,
             }),
         };
-        rows.push(row);
-    }
+        Ok(Some(row))
+    };
+    let mut gems = match store.reopener() {
+        // An in-memory store has one connection, and so one worker.
+        None => {
+            let mut memo = Memo::default();
+            for candidate in &defined {
+                rows.extend(weigh(store, &mut memo, candidate)?);
+            }
+            memo.gems
+        }
+        Some(open) => {
+            let idle: std::sync::Mutex<Vec<(Store, Memo)>> = Default::default();
+            let weighed: Vec<Option<DeadRow>> = defined
+                .par_iter()
+                .map(|candidate| {
+                    let taken = idle.lock().expect("unpoisoned").pop();
+                    let (store, mut memo) = match taken {
+                        Some(worker) => worker,
+                        None => (open()?, Memo::default()),
+                    };
+                    let row = weigh(&store, &mut memo, candidate);
+                    idle.lock().expect("unpoisoned").push((store, memo));
+                    row
+                })
+                .collect::<anyhow::Result<_>>()?;
+            rows.extend(weighed.into_iter().flatten());
+            idle.into_inner()
+                .expect("unpoisoned")
+                .pop()
+                .map(|(_, memo)| memo.gems)
+                .unwrap_or_default()
+        }
+    };
     let checkout_files = crate::query::members::CheckoutFiles::new(store, root, &root_str);
     for (file, facts) in scope_facts {
         checkout_files.hold(&relative(&file), facts);
