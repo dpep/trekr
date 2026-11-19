@@ -1247,7 +1247,10 @@ fn dead_in(
         // A symbol in its own file that no rule reads as its name may still
         // be how it is reached: say so, rather than that no symbol names it.
         let uncalled_or_override = uncalled || tier == DeadTier::Override;
-        let unread_symbol = unread_symbol.as_ref().filter(|_| uncalled_or_override);
+        // A string is no reference, so it says so even beside one call.
+        let unread_symbol = unread_symbol
+            .as_ref()
+            .filter(|(_, written)| uncalled_or_override || written.starts_with('"'));
         // An action no route read reaches may be reached by one not read.
         if action && route.is_none() && uncalled_or_override {
             let unread = match routes.unread.first() {
@@ -1716,7 +1719,8 @@ fn evaluated_code(call: &ruby_prism::CallNode<'_>, source: &[u8]) -> Option<(Vec
     if !evaluates {
         return None;
     }
-    let code = call.arguments()?.arguments().iter().next()?;
+    // As extraction reads it (`<<~RUBY.strip`), or a send it reads is missed.
+    let code = extract::spelled_code(call.arguments()?.arguments().iter().next()?)?;
     if let Some(string) = code.as_string_node() {
         let content = string.content_loc();
         let code = source[content.start_offset()..content.end_offset()].to_vec();
@@ -1730,7 +1734,8 @@ fn evaluated_code(call: &ruby_prism::CallNode<'_>, source: &[u8]) -> Option<(Vec
         let bytes = &source[span.start_offset()..span.end_offset()];
         match part.as_string_node() {
             Some(_) => text.extend_from_slice(bytes),
-            None => text.extend(std::iter::repeat_n(b'x', bytes.len())),
+            // Its newlines kept, so the lines after it count as written.
+            None => text.extend(bytes.iter().map(|b| if *b == b'\n' { b'\n' } else { b'x' })),
         }
     }
     Some((text, start?))
@@ -1873,6 +1878,14 @@ mod tests {
         assert_eq!(markers, "");
         let named: Vec<(&str, u32)> = named.iter().map(|(n, l)| (n.as_str(), *l)).collect();
         assert_eq!(named, [("foo", 1), (">", 2), ("bar", 4), ("baz", 6)]);
+    }
+
+    #[test]
+    fn a_string_of_code_is_read_as_extraction_reads_it() {
+        let source = "class_eval <<~CODE.strip\n  def go_#{\n    name\n  }\n    send(\"foo\")\n    public_send(k)\n  end\nCODE\n";
+        let (markers, named) = dynamic_markers(source.as_bytes());
+        assert_eq!(markers, "public_send");
+        assert_eq!(named, [("foo".to_string(), 5)]);
     }
 
     #[test]

@@ -16423,6 +16423,30 @@ made, each now pinned in testbed 807:
 - **A literal send of a send** (`send(:public_send, name)`) reads the next
   argument.
 
+**Second fix round** (a hunt on the first). Two more wrong `clear`s it had
+made, pinned in testbed 807:
+
+- **A string says so beside one call.** DEC-343's unread symbol speaks
+  only for a row with no caller, since a symbol sent by name is itself a
+  recorded call; a string is not, so `foo` called once and sent as
+  `send("foo")` was `single-caller`, `clear` — the inlining candidate.
+  A string's caveat now holds whatever the tier.
+- **A string of code is read as extraction reads it**, through
+  `extract::spelled_code` (`<<~RUBY.strip`, `.squish`, `.freeze`), not
+  only bare. An interpolation in it keeps its newlines, so a caveat's line
+  after a multi-line `#{…}` is the line written.
+
+No discourse or mastodon row moves. The hunt also ran rails
+(activerecord, actionpack and activesupport `lib`): 0.10.0 → this, 67
+rows `lower` → `clear` and 15 `clear` → `lower`, each `lower` → `clear`
+file scanned for a string send of the row's name or a wrapped code
+string and none found; not read row by row.
+
+**Not done** (as in 0.10.0): `method(:send).call(x)` and
+`&method(:public_send)` hand the name to the call, which `sent_name` does
+not read; and a held shape is dropped when its local is reassigned from
+itself (`name = name.to_sym`), as any reassignment drops it.
+
 ## DEC-663 — A suffix shape sent by name is a shape
 
 **Decided.** DEC-655's "not done": an interpolated string *or symbol*
