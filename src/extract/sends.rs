@@ -139,11 +139,40 @@ impl Extractor<'_> {
 
     /// A string may be code evaluated at runtime, built in ways no parse
     /// here follows: each send its text spells.
-    pub(super) fn spell_sends(&mut self, text: &[u8]) {
+    /// Its computed names are read from its own parse, as far as one goes,
+    /// for the constants they are sent to (`eval("Knob.public_send(k)")`).
+    pub(super) fn spell_sends(&mut self, text: &[u8], at: usize) {
+        let mut spelled = false;
         for by in sends_in_text(text) {
+            spelled = true;
             if !self.facts.spelled_sends.contains(&by) {
                 self.facts.spelled_sends.push(by);
             }
+        }
+        thread_local!(static SPELLING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+        // One level: a string's own strings are not parsed again.
+        if !spelled || SPELLING.get() {
+            return;
+        }
+        SPELLING.set(true);
+        let sends = super::extract(text).sends;
+        SPELLING.set(false);
+        let line = self.pos(at).line;
+        let rebase = |pos: crate::core::Pos| crate::core::Pos {
+            line: line + pos.line - 1,
+            col: pos.col,
+        };
+        for send in sends {
+            // A literal name in a string is no call the index reads.
+            if matches!(send.name, SentName::Symbol(_) | SentName::String(_)) {
+                continue;
+            }
+            self.facts.sends.push(Dispatch {
+                call: rebase(send.call),
+                pos: rebase(send.pos),
+                nesting: self.nesting.clone(),
+                ..send
+            });
         }
     }
 

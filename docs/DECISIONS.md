@@ -16591,6 +16591,15 @@ runs (DEC-662); a literal in a string of code that an interpolation spells
 part of is computed; and a local replaced by `a, b =` or `+=` is no longer
 held. Not done: a local changed in place (`m.sub!(…)`) is still held.
 
+**The pre-release hunt** found what the text reader read and the parse
+lost: a computed name sent to a constant in a string extraction does not
+read as code (`eval("Knob.public_send(k)")`, a value's `class_eval`, an
+ERB template after `__END__`) named nothing, where 0.10.0 lowered the
+constant. A string that spells a send is now parsed on its own, one level
+deep, and its computed sends kept at its line; `__END__`'s ERB tags are
+blanked first. Its literal names are not kept: they are no call the index
+reads. No corpus row moved.
+
 ## DEC-664 — A symbol handed to a send is a call in `--dead`
 
 **Decided.** `--dead` counts the first symbol handed to a call in

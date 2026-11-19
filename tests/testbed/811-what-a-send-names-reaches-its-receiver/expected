@@ -1,0 +1,4 @@
+# A computed name sent to a constant in a string extraction does not parse
+# as code (`eval`, a value's `class_eval`, after `__END__`) still names the
+# constant.
+dead app Knob#level=unreferenced~Knob Spool#level=unreferenced~Spool Dial#level=unreferenced~Dial

@@ -670,9 +670,24 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         self_writes: Vec::new(),
     };
     ex.visit(&parsed.node());
-    // Code after `__END__` is a string too, read through `DATA`.
+    // Code after `__END__` is a string too, read through `DATA`, often an
+    // inline ERB template: its tags are blanked so its Ruby parses.
     if let Some(data) = parsed.data_loc() {
-        ex.spell_sends(&src[data.start_offset()..data.end_offset()]);
+        // Past the `__END__` line, which would end the parse again.
+        let (from, to) = (data.start_offset(), data.end_offset());
+        let start = src[from..to]
+            .iter()
+            .position(|b| *b == b'\n')
+            .map_or(to, |n| from + n + 1);
+        let mut text = src[start..to].to_vec();
+        for at in 0..text.len().saturating_sub(2) {
+            match &text[at..at + 3] {
+                b"<%=" | b"<%-" | b"-%>" => text[at..at + 3].fill(b' '),
+                [b'<', b'%', _] | [b'%', b'>', _] => text[at..at + 2].fill(b' '),
+                _ => {}
+            }
+        }
+        ex.spell_sends(&text, start);
     }
     ex.shape_pending();
     ex.type_readers();
@@ -1606,7 +1621,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
     }
 
     fn visit_string_node(&mut self, node: &ruby_prism::StringNode<'pr>) {
-        self.spell_sends(node.unescaped());
+        self.spell_sends(node.unescaped(), node.content_loc().start_offset());
     }
 
     /// Ruby's statement sequence is also where a Sorbet `sig` finds the thing
