@@ -16497,6 +16497,30 @@ another class's file lowers that file, not `W`'s (as in 0.10.0); and a
 string of another language handed to an `eval` (`ctx.eval("helpers.method(n).call()")`)
 lowers its file, noise rather than a wrong `clear`.
 
+**Fifth fix round.** One wrong `clear` from the text scan and older ones
+it reached, pinned in testbed 807:
+
+- **A send without parentheses in a string** (`__send__ n` in a
+  `class_eval <<~RUBY`) was unread; `__send__ ` and `public_send ` after a
+  space now count. `send ` and `try ` do not: allowed, they lowered 26
+  discourse rows, every one on prose ("try again", "send notification").
+  A bare `send n` in a code string is unread, as in 0.10.0 (`Bare`).
+- **Code after `__END__`**, run through `DATA` (an ERB template), is
+  scanned as a string, as 0.10.0's grep scanned it.
+- **A literal name sent that is an alias** (`send(:other_name)` for
+  `alias_method :other_name, :target`) names its target. The third round's
+  "not done" for the string form goes with it.
+- **`send(:method, :x)`** returns a `Method` and runs nothing: `:x` is no
+  longer read as sent.
+
+No discourse or mastodon row moves. **Not done**: a literal send from
+another file (`send(:hook)` in a subclass, `record.send(:private_thing)`)
+leaves its target `convention-only`, `clear`, as in 0.10.0; the index
+knows which call a symbol was handed to, so `--dead` could tell a send's
+symbol from a macro's, but that is a new path for its own branch and
+hunt. Send text in a symbol or a regex (`:"public_send(name)"`) is not
+scanned.
+
 ## DEC-663 — A suffix shape sent by name is a shape
 
 **Decided.** DEC-655's "not done": an interpolated string *or symbol*

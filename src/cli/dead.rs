@@ -639,7 +639,11 @@ fn dead_in(
             // Its own body's `:name` is a value it uses, not a way in.
             let own = def.pos.line..=def.end_line;
             // A sent name first: it speaks beside a call, where a symbol does not.
-            let names_it = |u: &&Unread| u.name == def.name && !own.contains(&u.line);
+            let names_it = |u: &&Unread| {
+                // A send of an alias runs this body (DEC-316).
+                (u.name == def.name || u.sent && aliases.iter().any(|(alias, _)| *alias == u.name))
+                    && !own.contains(&u.line)
+            };
             let unread_symbol = unread_symbols
                 .iter()
                 .filter(|u| u.sent)
@@ -1651,14 +1655,20 @@ fn computed_dispatches(source: &[u8]) -> Sends {
         sends: Sends::default(),
     };
     visitor.visit(&parsed.node());
+    // Code after `__END__` is a string too, read through `DATA`.
+    if let Some(data) = parsed.data_loc() {
+        for name in sends_in_text(&source[data.start_offset()..data.end_offset()]) {
+            visitor.saw(name);
+        }
+    }
     let order = |name: &&str| BY_NAME.iter().position(|n| n == name);
     visitor.sends.computed.sort_by_key(order);
     visitor.sends
 }
 
 /// The calls in `BY_NAME` a string's text spells as called: `send(`, or
-/// `.send ` without parentheses; `method` only where it is run, as the parse
-/// counts it.
+/// `.send ` and `__send__ ` without parentheses; `method` only where it is
+/// run, as the parse counts it.
 fn sends_in_text(text: &[u8]) -> impl Iterator<Item = &'static str> + '_ {
     let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
     let contains = |needle: &[u8]| text.windows(needle.len()).any(|w| w == needle);
@@ -1674,7 +1684,14 @@ fn sends_in_text(text: &[u8]) -> impl Iterator<Item = &'static str> + '_ {
             if before.is_some_and(ident) {
                 return false;
             }
-            let called = after == Some(b'(') || (before == Some(b'.') && after == Some(b' '));
+            let opens = matches!(
+                before,
+                None | Some(b' ' | b'\t' | b'\n' | b';' | b'(' | b'=' | b'{' | b'|')
+            );
+            // `send ` and `try ` after a space are English as often as code.
+            let unworded = opens && (name == b"__send__" || name == b"public_send");
+            let called =
+                after == Some(b'(') || (after == Some(b' ') && (before == Some(b'.') || unworded));
             match name.ends_with(b"method") {
                 true => called && (run || before == Some(b'&')),
                 false => called,
@@ -1714,8 +1731,10 @@ fn sent_name(call: &ruby_prism::CallNode<'_>) -> Sent {
     };
     let mut arguments = arguments.arguments().iter();
     let mut first = arguments.next();
+    // `send(:method, x)` returns a `Method`, which runs nothing.
     while let Some((name, _)) = first.as_ref().and_then(literal)
         && BY_NAME.iter().any(|k| k.as_bytes() == name)
+        && !name.ends_with(b"method")
     {
         first = arguments.next();
     }
@@ -1902,7 +1921,8 @@ mod tests {
             ("def go = send(:x)", vec!["send"]),
             ("o.public_send \\#{k}", vec!["public_send"]),
             ("x.try!(y)", vec!["try!"]),
-            ("please send it; resend(x)", vec![]),
+            ("please send it; try again; resend(x)", vec![]),
+            ("  __send__ n", vec!["__send__"]),
             ("public_send", vec![]),
             ("the payment method(s)", vec![]),
             ("helpers.method(name).call()", vec!["method"]),

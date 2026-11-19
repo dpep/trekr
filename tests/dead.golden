@@ -166,5 +166,5 @@
 801-a-test-cases-test-method-is-run-by-its-runner cc91a1a99e1df15d
 802-a-call-ruled-out-on-a-class-a-module-may-join-lowers-it b7fae01938694bf2
 805-a-test-method-runs-only-in-a-test-case c291c6afa6b672b1
-807-every-dispatch-by-name-lowers-its-file d4573ca7fbc10d96
+807-every-dispatch-by-name-lowers-its-file 1b8426ac041eb9ca
 808-a-suffix-shape-sent-by-name-lowers-its-receivers-methods 3c34ed9e6f822504

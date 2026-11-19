@@ -7,10 +7,12 @@
 - **`--dead` lowers a file that sends a computed name with `__send__`,
   `try`, `try!`, `method(…).call` or `public_method`**, as it did for
   `send(` and `public_send(`, and with or without parentheses
-  (`send name`), and in any string of code (`class_eval <<~RUBY`). Such a
+  (`send name`); in a string of code (`class_eval <<~RUBY`, or after
+  `__END__`) when it is spelled `send(`, `.send name` or `__send__ name`. Such a
   file's methods came out `clear`. A literal name (`send(:x)`,
   `send("x")`, `&method(:x)`) no longer lowers its file; it lowers the
-  method it names, even beside a call, where such a method reached only by
+  method it names, or the method an alias of that name runs, even beside a
+  call, where such a method reached only by
   `&method(:x)` was `convention-only`, `clear`. A constant handed to `try`
   (a service DSL's error class) lowers nothing.
 - **`--dead` reads a name sent by a string or symbol that starts with its
