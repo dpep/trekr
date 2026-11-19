@@ -16447,3 +16447,21 @@ value receiver DEC-655 does not read. Read as reaching every class, one
 discourse site (`*_settings`, `Admin::EmbeddingController`) lowered 17
 unrelated rows `clear` → `lower`; mastodon moved nothing. A value's
 shape stays unread until its receiver can be typed.
+
+**Fix round** (the hunt on the above). A local holding the symbol
+(`name = :"#{k}_attrs"`, or the string `.to_sym`) is read where it is
+sent, as a held string was; the symbol sent directly was read and the held
+one was not. discourse: 1 row gains the caveat,
+`Jobs::ExportUserArchive#preferences_filetype`, reached by the
+`filetype_method = :"#{name}_filetype"` it cites (already `lower`).
+
+**Not done, found by the same hunt, each as before this change** (the
+text reader's own limits, not this change's): a send whose name is on the
+next line (`public_send(` ⏎ `"#{k}_attrs")`) or whose receiver chain is
+(leading-dot `.public_send`); `%()` and `%Q{}` strings; a space before the
+parenthesis (`public_send ("…")`); `self&.public_send`; a regex's `"`
+taken for a string's opening by `statements`; a computed name sent through
+`new` (`Mod::Target.new.public_send(k)`, read only as `Mod::Target.public_send(k)`);
+and a shape matching instance and singleton methods alike. Most would go
+by reading the sends from the parse, which `read_file` already does for a
+file with one; that is a reader rewrite, with its own hunt.

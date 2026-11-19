@@ -3,4 +3,5 @@ class Target
   def small_other = 1
   def large_opts = 1
   def tiny? = true
+  def wide_rows = 1
 end

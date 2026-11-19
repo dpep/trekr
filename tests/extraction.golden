@@ -893,7 +893,8 @@ ruby tests/testbed/807-every-dispatch-by-name-lowers-its-file/app/literal.rb e46
 ruby tests/testbed/807-every-dispatch-by-name-lowers-its-file/app/meta.rb 6a516ae855efff00
 ruby tests/testbed/807-every-dispatch-by-name-lowers-its-file/app/stringed.rb c24c7354ed1c8a0a
 ruby tests/testbed/808-a-suffix-shape-sent-by-name-lowers-its-receivers-methods/app/caller.rb 7c7b4aa74dace1e6
-ruby tests/testbed/808-a-suffix-shape-sent-by-name-lowers-its-receivers-methods/app/target.rb 064c92a41abbfae3
+ruby tests/testbed/808-a-suffix-shape-sent-by-name-lowers-its-receivers-methods/app/holder.rb aa334b642de1ad19
+ruby tests/testbed/808-a-suffix-shape-sent-by-name-lowers-its-receivers-methods/app/target.rb 837d4de6cfe0482a
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

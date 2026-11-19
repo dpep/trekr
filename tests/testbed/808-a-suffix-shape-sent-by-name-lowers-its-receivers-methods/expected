@@ -2,5 +2,6 @@
 # shape when it spells four characters or more (`*_attrs`): sent, it is a
 # method's name. It once lowered nothing, so Target's small_attrs and
 # large_opts came out clear beside small_other, which nothing reaches. `*?`
-# spells too little, and would lower every predicate.
-dead app/target.rb Target#small_attrs=unreferenced~sent Target#large_opts=unreferenced~sent Target#small_other=unreferenced~ Target#tiny?=unreferenced~
+# spells too little, and would lower every predicate. A symbol held in a
+# local is read where it is sent, as a string is (Target#wide_rows).
+dead app/target.rb Target#small_attrs=unreferenced~sent Target#large_opts=unreferenced~sent Target#small_other=unreferenced~ Target#tiny?=unreferenced~ Target#wide_rows=unreferenced~sent

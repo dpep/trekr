@@ -438,9 +438,10 @@ fn statements(line: &str) -> Vec<&str> {
 }
 
 /// `validate_method = "validate_#{name}"`: the local a statement assigns an
-/// interpolated string of a shape to, whole, and the shape.
+/// interpolated string or symbol of a shape to, whole, and the shape.
 fn held_string(statement: &str) -> Option<(String, String)> {
-    let (local, value) = statement.trim_start().split_once(" = \"")?;
+    let (local, value) = statement.trim_start().split_once(" = ")?;
+    let value = value.strip_prefix(":\"").or(value.strip_prefix('"'))?;
     if local.is_empty()
         || !local
             .chars()
@@ -449,7 +450,8 @@ fn held_string(statement: &str) -> Option<(String, String)> {
         return None;
     }
     let (shape, used) = read_shape(value);
-    let rest = value[used..].trim_start();
+    let rest = &value[used..];
+    let rest = rest.strip_prefix(".to_sym").unwrap_or(rest).trim_start();
     (rest.is_empty() || rest.starts_with('#'))
         .then_some(shape)
         .flatten()
@@ -673,6 +675,12 @@ mod tests {
         assert!(held_string(r##"key = "validate_#{name}" + x"##).is_none());
         assert!(held_string(r##"@key = "validate_#{name}""##).is_none());
         assert!(held_string(r##"key = "#{name}?""##).is_none());
+        for held in [
+            r##"name = :"#{kind}_attrs""##,
+            r##"name = "#{kind}_attrs".to_sym"##,
+        ] {
+            assert_eq!(held_string(held).unwrap().1, "*_attrs", "{held}");
+        }
     }
 
     /// The shapes `read_file` finds sent, by line.

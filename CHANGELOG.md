@@ -17,8 +17,9 @@
   `__send__(:"#{kind}_attrs")`) when it spells four characters or more:
   `Target#small_attrs` is `lower`, "a name of its shape is sent at
   runtime", and an unrelated `Target#small_other` stays `clear`. `*?` and
-  `*=` stay unread. A shape sent to a value (`user.public_send(…)`) is
-  still not read.
+  `*=` stay unread. A local holding the symbol (`name = :"#{kind}_attrs"`,
+  or a string's `.to_sym`) is read where it is sent. A shape sent to a
+  value (`user.public_send(…)`) is still not read.
 
 ## 0.10.0 — 2026-11-02
 
