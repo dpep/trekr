@@ -504,10 +504,9 @@ struct Defined {
     /// Other names its body is called by, and on which side: an `alias`
     /// of it (DEC-316), and a `module_function`'s singleton copy (DEC-361).
     aliases: Vec<(String, bool)>,
-    /// The first line of its file with a symbol of its name that no rule
-    /// reads as a call of it (DEC-343).
-    /// The line a name it is not read as a call of is written on, as written.
-    unread_symbol: Option<(u32, String)>,
+    /// A name of it in its file that no rule reads as a call of it: its
+    /// line, as written, and whether a send hands it (DEC-343, DEC-662).
+    unread_symbol: Option<(u32, String, bool)>,
     /// Whether its body calls `super`: it overrides something (DEC-365).
     calls_super: bool,
     /// Its file's facts, for what a `def` its scope may not own is on.
@@ -546,7 +545,7 @@ fn dead_in(
         // A dynamic-dispatch marker anywhere in the file lowers confidence for
         // everything in it: these are the shapes that make "no references" a
         // weaker statement, and they are file-wide by nature.
-        let (mut risky, sent_strings) = dynamic_markers(&source);
+        let (mut risky, sent_names) = dynamic_markers(&source);
         // A string of code not read: its calls are not in the index (DEC-132).
         let unread = facts.ancestry.iter().any(|edge| {
             edge.relation == crate::core::Relation::Dynamic
@@ -568,15 +567,19 @@ fn dead_in(
             .filter(|c| c.recv == crate::core::RecvShape::Symbol)
             .map(|c| c.pos)
             .collect();
-        // And the strings sent as a name, which none records (DEC-662).
-        let unread_symbols: Vec<(String, u32, String)> = symbols
+        // And the literal names sent, which none reads as a call (DEC-662).
+        let unread_symbols: Vec<Unread> = sent_names
             .into_iter()
-            .filter(|(_, pos, _)| !recorded.contains(pos))
-            .map(|(name, pos, _)| (name.clone(), pos.line, format!(":{name}")))
             .chain(
-                sent_strings
+                symbols
                     .into_iter()
-                    .map(|(name, line)| (name.clone(), line, format!("\"{name}\""))),
+                    .filter(|(_, pos, _)| !recorded.contains(pos))
+                    .map(|(name, pos, _)| Unread {
+                        written: format!(":{name}"),
+                        name,
+                        line: pos.line,
+                        sent: false,
+                    }),
             )
             .collect();
         let unread_calls = &facts.unread_calls;
@@ -641,15 +644,14 @@ fn dead_in(
             let aliases = aliases_of(def);
             // Its own body's `:name` is a value it uses, not a way in.
             let own = def.pos.line..=def.end_line;
-            // A string first: it speaks beside a call, where a symbol does not.
-            let names_it =
-                |(name, line, _): &&(String, u32, String)| *name == def.name && !own.contains(line);
+            // A sent name first: it speaks beside a call, where a symbol does not.
+            let names_it = |u: &&Unread| u.name == def.name && !own.contains(&u.line);
             let unread_symbol = unread_symbols
                 .iter()
-                .filter(|(.., written)| written.starts_with('"'))
+                .filter(|u| u.sent)
                 .find(names_it)
                 .or_else(|| unread_symbols.iter().find(names_it))
-                .map(|(_, line, written)| (*line, written.clone()));
+                .map(|u| (u.line, u.written.clone(), u.sent));
             // A `super` in a `def` nested in its body is that method's.
             let nested = |line: u32| {
                 facts.defs.iter().any(|other| {
@@ -1252,10 +1254,10 @@ fn dead_in(
         // A symbol in its own file that no rule reads as its name may still
         // be how it is reached: say so, rather than that no symbol names it.
         let uncalled_or_override = uncalled || tier == DeadTier::Override;
-        // A string is no reference, so it says so even beside one call.
+        // A sent name runs it, so it says so even beside one call.
         let unread_symbol = unread_symbol
             .as_ref()
-            .filter(|(_, written)| uncalled_or_override || written.starts_with('"'));
+            .filter(|(.., sent)| uncalled_or_override || *sent);
         // An action no route read reaches may be reached by one not read.
         if action && route.is_none() && uncalled_or_override {
             let unread = match routes.unread.first() {
@@ -1270,7 +1272,7 @@ fn dead_in(
                 risky.push_str(&format!("a public action routes may reach ({unread})"));
             }
         }
-        if let Some((line, written)) = unread_symbol {
+        if let Some((line, written, _)) = unread_symbol {
             if !risky.is_empty() {
                 risky.push_str(", ");
             }
@@ -1556,10 +1558,10 @@ fn method_blocks(source: &[u8]) -> Vec<(crate::core::Pos, crate::core::Pos)> {
 
 /// Shapes that make "no references found" a weaker statement, named so the
 /// answer can say which one it saw rather than hedging in general.
-/// With the markers, each string a send names its method by, and its line.
-fn dynamic_markers(source: &[u8]) -> (String, Vec<(String, u32)>) {
+/// With the markers, each literal name a send hands.
+fn dynamic_markers(source: &[u8]) -> (String, Vec<Unread>) {
     let text = String::from_utf8_lossy(source);
-    let sends = computed_dispatches(source, 1, &[]);
+    let sends = computed_dispatches(source);
     let mut seen: Vec<(&str, bool)> = sends.computed.iter().map(|name| (*name, true)).collect();
     seen.extend([
         ("method_missing", text.contains("method_missing")),
@@ -1575,49 +1577,58 @@ fn dynamic_markers(source: &[u8]) -> (String, Vec<(String, u32)>) {
     (markers, sends.named)
 }
 
+/// A name in a file that no rule reads as a call of the method it names.
+struct Unread {
+    name: String,
+    line: u32,
+    /// As written: `:name` or `"name"`.
+    written: String,
+    /// Handed to a send (DEC-662), so it speaks beside a call; a symbol
+    /// written anywhere else does not (DEC-343).
+    sent: bool,
+}
+
 /// What a file's sends by name hand them.
 #[derive(Default)]
 struct Sends {
     /// The calls in `core::ruby::BY_NAME` handed a computed name, each once,
     /// in that order.
     computed: Vec<&'static str>,
-    /// The strings handed one as the name, and their lines: a symbol is a
-    /// reference the index records (DEC-093), a string names a method it
-    /// does not.
-    named: Vec<(String, u32)>,
+    /// The literal names handed one.
+    named: Vec<Unread>,
 }
 
-/// The file's sends by name, its lines counted from `first_line`; `holes`
-/// are the spans an interpolation of the code string around it stood in.
-fn computed_dispatches(source: &[u8], first_line: u32, holes: &[(usize, usize)]) -> Sends {
+/// The file's sends by name.
+fn computed_dispatches(source: &[u8]) -> Sends {
     use crate::extract::line_index::LineIndex;
     use ruby_prism::Visit;
     struct Visitor<'a> {
         source: &'a [u8],
         lines: LineIndex,
-        first_line: u32,
-        holes: &'a [(usize, usize)],
         sends: Sends,
     }
     impl Visitor<'_> {
-        fn saw(&mut self, name: Option<&'static str>) {
-            if let Some(name) = name.filter(|n| !self.sends.computed.contains(n)) {
+        fn saw(&mut self, name: &'static str) {
+            if !self.sends.computed.contains(&name) {
                 self.sends.computed.push(name);
             }
         }
 
         fn handed(&mut self, handle: Option<&ruby_prism::CallNode<'_>>) {
             match handle.map(sent_name) {
-                Some(Sent::Computed(name)) => self.saw(Some(name)),
-                // A string an interpolation spelled part of is computed.
-                Some(Sent::Named(_, (start, end), known))
-                    if self.holes.iter().any(|(s, e)| *s < end && start < *e) =>
-                {
-                    self.saw(Some(known))
-                }
-                Some(Sent::Named(name, (start, _), _)) => {
-                    let line = self.first_line + self.lines.pos(start).line - 1;
-                    self.sends.named.push((name, line));
+                Some(Sent::Computed(name)) => self.saw(name),
+                Some(Sent::Named { name, at, string }) => {
+                    let written = match string {
+                        true => format!("\"{name}\""),
+                        false => format!(":{name}"),
+                    };
+                    let line = self.lines.pos(at).line;
+                    self.sends.named.push(Unread {
+                        name,
+                        line,
+                        written,
+                        sent: true,
+                    });
                 }
                 _ => {}
             }
@@ -1627,21 +1638,11 @@ fn computed_dispatches(source: &[u8], first_line: u32, holes: &[(usize, usize)])
         fn visit_call_node(&mut self, call: &ruby_prism::CallNode<'pr>) {
             // `method`'s answer counts only when it is run: one asked for its
             // `source_location`, or handed to another runtime, runs nothing here.
-            let handle = call.name().as_slice().ends_with(b"method");
-            if !handle {
+            if !matches!(call.name().as_slice(), b"method" | b"public_method") {
                 self.handed(Some(call));
             }
             if matches!(call.name().as_slice(), b"call" | b"to_proc") {
                 self.handed(call.receiver().and_then(|r| r.as_call_node()).as_ref());
-            }
-            // A string of code extraction reads (DEC-132) sends as the file does.
-            if let Some((code, start, holes)) = evaluated_code(call, self.source) {
-                let line = self.first_line + self.lines.pos(start).line - 1;
-                let inner = computed_dispatches(&code, line, &holes);
-                for name in inner.computed {
-                    self.saw(Some(name));
-                }
-                self.sends.named.extend(inner.named);
             }
             ruby_prism::visit_call_node(self, call);
         }
@@ -1649,6 +1650,16 @@ fn computed_dispatches(source: &[u8], first_line: u32, holes: &[(usize, usize)])
         fn visit_block_argument_node(&mut self, node: &ruby_prism::BlockArgumentNode<'pr>) {
             self.handed(node.expression().and_then(|e| e.as_call_node()).as_ref());
             ruby_prism::visit_block_argument_node(self, node);
+        }
+
+        // A string may be code evaluated at runtime, built in ways no parse
+        // here follows: any send it spells counts as computed.
+        fn visit_string_node(&mut self, node: &ruby_prism::StringNode<'pr>) {
+            let content = node.content_loc();
+            let text = &self.source[content.start_offset()..content.end_offset()];
+            for name in sends_in_text(text) {
+                self.saw(name);
+            }
         }
     }
     let text = String::from_utf8_lossy(source);
@@ -1659,8 +1670,6 @@ fn computed_dispatches(source: &[u8], first_line: u32, holes: &[(usize, usize)])
     let mut visitor = Visitor {
         source,
         lines: LineIndex::new(source),
-        first_line,
-        holes,
         sends: Sends::default(),
     };
     visitor.visit(&parsed.node());
@@ -1669,12 +1678,43 @@ fn computed_dispatches(source: &[u8], first_line: u32, holes: &[(usize, usize)])
     visitor.sends
 }
 
+/// The calls in `BY_NAME` a string's text spells as called: `send(`, or
+/// `.send ` without parentheses; `method` only where it is run, as the parse
+/// counts it.
+fn sends_in_text(text: &[u8]) -> impl Iterator<Item = &'static str> + '_ {
+    let ident = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    let contains = |needle: &[u8]| text.windows(needle.len()).any(|w| w == needle);
+    let run = contains(b".call") || contains(b".to_proc");
+    BY_NAME.iter().copied().filter(move |name| {
+        let name = name.as_bytes();
+        (0..text.len().saturating_sub(name.len() - 1)).any(|at| {
+            if &text[at..at + name.len()] != name {
+                return false;
+            }
+            let before = at.checked_sub(1).map(|b| text[b]);
+            let after = text.get(at + name.len()).copied();
+            if before.is_some_and(ident) {
+                return false;
+            }
+            let called = after == Some(b'(') || (before == Some(b'.') && after == Some(b' '));
+            match name.ends_with(b"method") {
+                true => called && (run || before == Some(b'&')),
+                false => called,
+            }
+        })
+    })
+}
+
 /// What a call hands as a method's name.
 enum Sent {
-    /// None, or no call in `BY_NAME`; or a symbol, which the index records.
-    Recorded,
-    /// A string, where it is written, by the call's name.
-    Named(String, (usize, usize), &'static str),
+    /// None, or no call in `BY_NAME`.
+    Nothing,
+    /// A literal symbol or string, and where it is written.
+    Named {
+        name: String,
+        at: usize,
+        string: bool,
+    },
     /// Anything else, by the call's name.
     Computed(&'static str),
 }
@@ -1684,28 +1724,32 @@ enum Sent {
 fn sent_name(call: &ruby_prism::CallNode<'_>) -> Sent {
     let name = call.name();
     let Some(known) = BY_NAME.iter().find(|k| k.as_bytes() == name.as_slice()) else {
-        return Sent::Recorded;
+        return Sent::Nothing;
     };
     let Some(arguments) = call.arguments() else {
-        return Sent::Recorded;
+        return Sent::Nothing;
+    };
+    let literal = |arg: &ruby_prism::Node<'_>| match (arg.as_symbol_node(), arg.as_string_node()) {
+        (Some(symbol), _) => Some((symbol.unescaped().to_vec(), false)),
+        (_, Some(string)) => Some((string.unescaped().to_vec(), true)),
+        _ => None,
     };
     let mut arguments = arguments.arguments().iter();
     let mut first = arguments.next();
-    while let Some(symbol) = first.as_ref().and_then(|f| f.as_symbol_node())
-        && BY_NAME.iter().any(|k| k.as_bytes() == symbol.unescaped())
+    while let Some((name, _)) = first.as_ref().and_then(literal)
+        && BY_NAME.iter().any(|k| k.as_bytes() == name)
     {
         first = arguments.next();
     }
     let Some(first) = first else {
-        return Sent::Recorded;
+        return Sent::Nothing;
     };
-    if first.as_symbol_node().is_some() {
-        return Sent::Recorded;
-    }
-    if let Some(string) = first.as_string_node() {
-        let text = String::from_utf8_lossy(string.unescaped()).into_owned();
-        let at = first.location();
-        return Sent::Named(text, (at.start_offset(), at.end_offset()), known);
+    if let Some((name, string)) = literal(&first) {
+        return Sent::Named {
+            name: String::from_utf8_lossy(&name).into_owned(),
+            at: first.location().start_offset(),
+            string,
+        };
     }
     let constant = |arg: &ruby_prism::Node<'_>| {
         arg.as_constant_read_node().is_some() || arg.as_constant_path_node().is_some()
@@ -1718,49 +1762,9 @@ fn sent_name(call: &ruby_prism::CallNode<'_>) -> Sent {
             .and_then(|splat| splat.expression())
             .is_some_and(|splatted| constant(&splatted));
     match known.starts_with("try") && errors {
-        true => Sent::Recorded,
+        true => Sent::Nothing,
         false => Sent::Computed(known),
     }
-}
-
-/// The string of code an `*_eval` or `eval` call is handed, heredoc or
-/// not, each interpolation spelled as a name of its length so the rest
-/// parses as written.
-/// Where it starts in the source, and each interpolation's span in it.
-type Code = (Vec<u8>, usize, Vec<(usize, usize)>);
-
-fn evaluated_code(call: &ruby_prism::CallNode<'_>, source: &[u8]) -> Option<Code> {
-    let evaluates = matches!(
-        call.name().as_slice(),
-        b"class_eval" | b"module_eval" | b"instance_eval" | b"eval"
-    );
-    if !evaluates {
-        return None;
-    }
-    // As extraction reads it (`<<~RUBY.strip`), or a send it reads is missed.
-    let code = extract::spelled_code(call.arguments()?.arguments().iter().next()?)?;
-    if let Some(string) = code.as_string_node() {
-        let content = string.content_loc();
-        let code = source[content.start_offset()..content.end_offset()].to_vec();
-        return Some((code, content.start_offset(), Vec::new()));
-    }
-    let mut text = Vec::new();
-    let mut holes = Vec::new();
-    let mut start = None;
-    for part in code.as_interpolated_string_node()?.parts().iter() {
-        let span = part.location();
-        start.get_or_insert(span.start_offset());
-        let bytes = &source[span.start_offset()..span.end_offset()];
-        match part.as_string_node() {
-            Some(_) => text.extend_from_slice(bytes),
-            // Its newlines kept, so the lines after it count as written.
-            None => {
-                holes.push((text.len(), text.len() + bytes.len()));
-                text.extend(bytes.iter().map(|b| if *b == b'\n' { b'\n' } else { b'x' }));
-            }
-        }
-    }
-    Some((text, start?, holes))
 }
 
 /// A module's method whose name is called on a typed receiver that has no
@@ -1894,28 +1898,44 @@ mod tests {
     }
 
     #[test]
-    fn a_string_sent_as_a_name_names_that_method() {
-        let source = "send(\"foo\")\nx.try(\">\", 0)\nclass_eval <<~R\n  public_send('bar')\nR\nsend(:send, \"baz\")\n";
+    fn a_literal_name_sent_names_that_method() {
+        let source =
+            "send(\"foo\")\nx.try(\">\", 0)\nsend(:send, :bar)\nsend(\"public_send\", \"baz\")\n";
         let (markers, named) = dynamic_markers(source.as_bytes());
         assert_eq!(markers, "");
-        let named: Vec<(&str, u32)> = named.iter().map(|(n, l)| (n.as_str(), *l)).collect();
-        assert_eq!(named, [("foo", 1), (">", 2), ("bar", 4), ("baz", 6)]);
+        let named: Vec<(&str, u32, &str)> = named
+            .iter()
+            .map(|u| (u.name.as_str(), u.line, u.written.as_str()))
+            .collect();
+        assert_eq!(
+            named,
+            [
+                ("foo", 1, "\"foo\""),
+                (">", 2, "\">\""),
+                ("bar", 3, ":bar"),
+                ("baz", 4, "\"baz\"")
+            ]
+        );
     }
 
     #[test]
-    fn a_string_of_code_is_read_as_extraction_reads_it() {
-        let source = "class_eval <<~CODE.strip\n  def go_#{\n    name\n  }\n    send(\"foo\")\n    public_send(k)\n  end\nCODE\n";
-        let (markers, named) = dynamic_markers(source.as_bytes());
-        assert_eq!(markers, "public_send");
-        assert_eq!(named, [("foo".to_string(), 5)]);
-    }
-
-    #[test]
-    fn a_string_an_interpolation_spells_part_of_is_computed() {
-        let source = "class_eval <<~RUBY\n  def run_#{n}(o) = o.send(\"foo_#{n}\")\nRUBY\n";
-        let (markers, named) = dynamic_markers(source.as_bytes());
-        assert_eq!(markers, "send");
-        assert!(named.is_empty());
+    fn a_send_a_string_spells_is_computed() {
+        for (text, said) in [
+            ("def go = send(:x)", vec!["send"]),
+            ("o.public_send \\#{k}", vec!["public_send"]),
+            ("x.try!(y)", vec!["try!"]),
+            ("please send it; resend(x)", vec![]),
+            ("public_send", vec![]),
+            ("the payment method(s)", vec![]),
+            ("helpers.method(name).call()", vec!["method"]),
+            ("map(&method(:x))", vec!["method"]),
+        ] {
+            assert_eq!(
+                sends_in_text(text.as_bytes()).collect::<Vec<_>>(),
+                said,
+                "{text}"
+            );
+        }
     }
 
     #[test]

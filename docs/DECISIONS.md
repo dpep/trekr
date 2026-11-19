@@ -14346,6 +14346,8 @@ their own; folding them in is the follow-up, and adds `try` to each.
 
 ## DEC-631 — `--dead`'s scope is frozen, and its text grep for dispatch stays
 
+*Revisited by DEC-662: the grep is now the parse, and reads only strings as text.*
+
 **Decided.** `--dead` takes no new tier, and a new source of "a caller
 trekr cannot see" lands only if it moves held-out precision against a
 base-rate control: the rows it lowers or moves must be live more often
@@ -16457,6 +16459,43 @@ such a string is computed. No discourse or mastodon row moves. **Not
 done**, as in 0.10.0: a string naming an alias (`send("qux")` for
 `alias_method :qux, :foo`) does not lower `foo`, and one sent from another
 file lowers nothing.
+
+**Fourth fix round.** Seven more wrong `clear`s, every one `lower` in
+0.10.0, pinned in testbed 807, and the rate was rising: each round's fix
+widened a reader of code strings that copied extraction's model of them
+without sharing its code. Five came from that reader:
+
+- a symbol an interpolation spells (`send(:#{name})`) read as recorded,
+  where only a string's holes were checked;
+- a literal symbol in a string extraction never reads (`base.class_eval`
+  in an `included` hook, `b.eval`, `o.instance_eval`) taken for a
+  recorded reference;
+- an escaped `\#{k}` read from the raw bytes as a literal name;
+- code built in a way `spelled_code` cannot spell
+  (`<<~RUBY.lines.map(&:strip).join(";")`) on a value receiver, read by
+  nothing;
+- a nested `instance_eval "send('foo_#{n}')"` that lost the outer holes.
+
+So the reader is gone. **A string's text is read as 0.10.0's grep read
+the file**: a call in `BY_NAME` spelled as called in any string (`send(`,
+`.send ` without parentheses; `method` only beside `&`, `.call` or
+`.to_proc`) lowers its file. A literal send in a string of code lowers it
+too, as in 0.10.0, but no string goes unread. The other two:
+
+- **A literal symbol sent says so beside a call**, as a string does: it
+  runs the method, where DEC-343's symbol may be a value. In discourse
+  seven methods reached only by `&method(:name)` were `convention-only`,
+  `clear` — the macro-symbol tier, inviting deletion — and one more
+  `single-caller`; all ten moved rows are such calls.
+- **A string naming another send** (`send("public_send", name)`) reads
+  the next argument, as a symbol does.
+
+Measured, `--dead app lib`, round three → this: discourse the 10 rows
+above, all `&method(:x)`; mastodon none. The string scan moved no row in
+either. **Not done**: `W.class_eval "def go = send(:foo)"` written in
+another class's file lowers that file, not `W`'s (as in 0.10.0); and a
+string of another language handed to an `eval` (`ctx.eval("helpers.method(n).call()")`)
+lowers its file, noise rather than a wrong `clear`.
 
 ## DEC-663 — A suffix shape sent by name is a shape
 

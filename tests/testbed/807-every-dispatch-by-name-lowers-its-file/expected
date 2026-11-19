@@ -1,12 +1,11 @@
 # Every call that runs a method by a name it is handed lowers its file when
 # the name is computed, not only `send` and `public_send`: `__send__`, `try`
-# and `method` once came out clear. A literal name is a reference the index
-# records, so it lowers nothing. A string names a method the index does not
-# record: it lowers that method, not its file (Stringed#named came out clear). A send in a string of code
-# (Evaluated) or behind a literal send of a send (Meta) once escaped the
-# parse, and so did one through `.strip` (Stripped), which extraction reads.
-# A string says so beside one call too: Inlined#named is no inlining
-# candidate while `send("named")` reaches it, nor is Labeled#named, whose
-# keyword `named:` once hid the string. A string in a string of code that an
-# interpolation spells part of is computed (Spelled#foo_a).
-dead app Underscored#small_attrs=unreferenced~__send__ Tried#small_attrs=unreferenced~try Handled#small_attrs=unreferenced~method Literal#unused=unreferenced~ Stringed#named=unreferenced~"named" Stringed#other=unreferenced~ Evaluated#small_attrs=unreferenced~public_send Meta#small_attrs=unreferenced~send Stripped#small_attrs=unreferenced~public_send Inlined#named=single-caller~"named" Labeled#named=single-caller~"named" Spelled#foo_a=unreferenced~send
+# and `method` once came out clear. A literal name lowers the method it
+# names, not its file, and says so beside a call too (Stringed, Inlined,
+# Labeled, whose `named:` once hid the string; Called, a symbol). A send
+# behind a literal send of a send is read (Meta, Restrung). Any string's
+# text that spells a send lowers its file: code strings read by a parse
+# came out clear when an interpolation spelled the name (Spelled, Holed,
+# Nested), when the code was escaped (Escaped) or built (Joined), or on a
+# receiver extraction does not read (Tracking).
+dead app Underscored#small_attrs=unreferenced~__send__ Tried#small_attrs=unreferenced~try Handled#small_attrs=unreferenced~method Literal#unused=unreferenced~ Stringed#named=unreferenced~"named" Stringed#other=unreferenced~ Evaluated#small_attrs=unreferenced~public_send Meta#small_attrs=unreferenced~send Stripped#small_attrs=unreferenced~public_send Inlined#named=single-caller~"named" Labeled#named=single-caller~"named" Spelled#foo_a=unreferenced~send Holed#compute=unreferenced~send Tracking#track_change=unreferenced~send Escaped#small_attrs=unreferenced~public_send Joined#small_attrs=unreferenced~public_send Nested#foo_a=unreferenced~send Called#foo=single-caller~:foo Restrung#small_attrs=unreferenced~send

@@ -6248,7 +6248,7 @@ fn is_self_class(node: &Node<'_>) -> bool {
 
 /// The string an evaluator is handed, when the source spells it: a string,
 /// or one through a method that leaves code as it is (`<<~RUBY.strip`).
-pub(crate) fn spelled_code(arg: Node<'_>) -> Option<Node<'_>> {
+fn spelled_code(arg: Node<'_>) -> Option<Node<'_>> {
     if arg.as_string_node().is_some() || arg.as_interpolated_string_node().is_some() {
         return Some(arg);
     }

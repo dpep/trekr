@@ -378,8 +378,10 @@ names which:
   runtime (DEC-343, DEC-344);
 - a computed name sent anywhere in its file (`send(name)`, `__send__`,
   `public_send`, `try`, or `method(name).call`; a symbol is a reference
-  instead), the caveat naming the call (DEC-631, DEC-662), or its own name
-  sent there as a string (`send("archive")`);
+  instead), or spelled in any string of the file (code it may evaluate),
+  the caveat naming the call (DEC-631, DEC-662); or its own name sent there,
+  as a string or symbol (`send("archive")`, `&method(:archive)`), which
+  says so beside a call too;
 - a name of its shape the checkout builds (`:"report_#{type}"`, or a string
   or symbol its class is sent, `Q.new.public_send("list_#{kind}")`,
   `"#{kind}_attrs"`; DEC-655, DEC-663), or a computed name sent to its
