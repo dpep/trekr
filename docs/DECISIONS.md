@@ -16600,6 +16600,14 @@ deep, and its computed sends kept at its line; `__END__`'s ERB tags are
 blanked first. Its literal names are not kept: they are no call the index
 reads. No corpus row moved.
 
+It found too that a file was read for its sends only where it held a
+`#{` or a `.send(` with the parenthesis attached, so `Lever.public_send k, v`,
+`Crank.new.try k` and `Pulley.public_send (k)` in a file with neither
+named nothing. The filter is now the one the file-wide marker reads
+(`sends_in_text`). No corpus row moved; discourse wall time unchanged,
+about 0.15 s more CPU. Not done: templates are not read for sends here
+(`%p= Widget.new.public_send(params[:m])` in a Haml view).
+
 ## DEC-664 — A symbol handed to a send is a call in `--dead`
 
 **Decided.** `--dead` counts the first symbol handed to a call in

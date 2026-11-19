@@ -25,6 +25,7 @@ use crate::core::*;
 use crate::scan::Reader;
 pub(crate) use line_index::LineIndex;
 use ruby_prism::{Node, Visit};
+pub(crate) use sends::sends_in_text;
 use std::collections::{HashMap, HashSet};
 
 /// An `ActiveSupport.on_load` block being read (DEC-098).

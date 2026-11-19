@@ -127,8 +127,10 @@ impl Built {
             .filter(|(path, _)| path.ends_with(".rb") || path.ends_with(".rake"))
             .filter_map(|(path, text)| {
                 if !text.contains("#{")
-                    && !SENDS.iter().any(|s| text.contains(&format!(".{s}(")))
                     && !text.contains("instance_methods")
+                    && crate::extract::sends_in_text(text.as_bytes())
+                        .next()
+                        .is_none()
                 {
                     return None;
                 }
