@@ -22,7 +22,7 @@ belongs to:
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
 | Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
 | `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563 |
-| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662 |
+| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663 |
 | LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646 |
 | Scope and housekeeping | 030, 063, 640 |
 
@@ -15441,7 +15441,7 @@ already `lower` by DEC-631's file-wide grep, and are now cited at the send.
 Timing, `--dead app --json` on discourse, five interleaved runs, load
 2.5–3.5: median 3.79 s before, 3.81 s after.
 
-**Not done: a suffix shape** (`send("#{check}_check")`). discourse writes two
+**Not done: a suffix shape** (`send("#{check}_check")`; revisited by DEC-663, which reads one). discourse writes two
 such sends to self (`UploadSecurity`, `Search`), none to a constant, and
 mastodon none; each one's methods are in the sending file, which DEC-631's
 grep already lowers, so no row's grade would move. DEC-363's reason (a
@@ -16405,3 +16405,28 @@ and to a constant's keys (`"#{KINDS.key(k)}_attrs"` with `KINDS` a literal
 hash). Both trade a safe over-caveat for a row that comes out `clear`
 when the shape read and the parse disagree; each is a new code path that
 needs its own hunt.
+
+## DEC-663 — A suffix shape sent by name is a shape
+
+**Decided.** DEC-655's "not done": an interpolated string *or symbol*
+handed to one of `core::ruby::BY_NAME` as the method's name is read when
+it spells three name characters before its first interpolation, as
+before, or four anywhere: `Target.new.public_send("#{kind}_attrs")` and
+`__send__(:"#{kind}_attrs")` are `*_attrs`. Sent, a leading
+interpolation is a method's name, not the attribute DEC-363 guards
+against. `*?` and `*=` spell too little and would lower every predicate
+and writer. Scoped as DEC-655's are, to the class sent to. Reported with
+DEC-662: such a send in another file left `Target#small_attrs` as clear as
+`Target#small_other`, which nothing reaches.
+
+**Measured**, `--dead app lib`, DEC-662's build → this: discourse 14 rows
+gain the caveat, all `UploadSecurity#*_check` and `Search#*_search`, each
+reached by the send cited and already `lower` by DEC-662's marker, as
+DEC-655 predicted; no grade moves. mastodon: no row changes.
+
+**Rejected, measured: a shape sent to a value, checkout-wide.** The
+reporter's real case is `user.public_send(:"#{role}_in_company")`, a
+value receiver DEC-655 does not read. Read as reaching every class, one
+discourse site (`*_settings`, `Admin::EmbeddingController`) lowered 17
+unrelated rows `clear` → `lower`; mastodon moved nothing. A value's
+shape stays unread until its receiver can be typed.

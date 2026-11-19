@@ -10,6 +10,13 @@
   (`send name`). Such a file's methods came out `clear`. A literal name
   (`send(:x)`) no longer lowers its file: it is already a reference. A
   constant handed to `try` (a service DSL's error class) lowers nothing.
+- **`--dead` reads a name sent by a string or symbol that starts with its
+  interpolation** (`Target.new.public_send("#{kind}_attrs")`,
+  `__send__(:"#{kind}_attrs")`) when it spells four characters or more:
+  `Target#small_attrs` is `lower`, "a name of its shape is sent at
+  runtime", and an unrelated `Target#small_other` stays `clear`. `*?` and
+  `*=` stay unread. A shape sent to a value (`user.public_send(…)`) is
+  still not read.
 
 ## 0.10.0 — 2026-11-02
 

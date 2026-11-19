@@ -380,8 +380,9 @@ names which:
   `public_send`, `try`, or `method(name).call`; a literal name is a
   reference instead), the caveat naming the call (DEC-631, DEC-662);
 - a name of its shape the checkout builds (`:"report_#{type}"`, or a string
-  its class is sent, `Q.new.public_send("list_#{kind}")`; DEC-655), or a
-  computed name sent to its class (`Mailer.public_send(type)`);
+  or symbol its class is sent, `Q.new.public_send("list_#{kind}")`,
+  `"#{kind}_attrs"`; DEC-655, DEC-663), or a computed name sent to its
+  class (`Mailer.public_send(type)`);
 - a writer `assign_attributes` reaches, an ancestor trekr has not indexed,
   a gem of the bundle that calls the name, a helper another helper calls
   (DEC-363–368, DEC-370);

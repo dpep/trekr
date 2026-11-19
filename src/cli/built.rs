@@ -12,7 +12,7 @@
 //! tier and is graded `lower`.
 
 use super::dead_consts::{in_db, in_tests};
-use crate::core::ruby::SENDS;
+use crate::core::ruby::{BY_NAME, SENDS};
 use crate::tree::Tree;
 use rayon::prelude::*;
 use std::path::Path;
@@ -200,8 +200,8 @@ impl Built {
                 }
             }
             let indent = line.len() - line.trim_start().len();
-            // Every name in `SENDS` spells one of these, and most lines neither.
-            let sends = line.contains("send") || line.contains("try");
+            // Every name in `BY_NAME` spells one of these, and most lines none.
+            let sends = ["send", "try", "method"].iter().any(|n| line.contains(n));
             for statement in statements(line) {
                 // A local is the method's: another method's of the same name
                 // is another local.
@@ -244,7 +244,7 @@ impl Built {
                 sending.nesting = facts
                     .calls
                     .iter()
-                    .find(|c| c.pos.line == sending.at.1 && SENDS.contains(&c.name.as_str()))
+                    .find(|c| c.pos.line == sending.at.1 && BY_NAME.contains(&c.name.as_str()))
                     .map(|c| c.nesting.clone());
             }
         }
@@ -319,13 +319,13 @@ fn interpolated_symbols(line: &str) -> Vec<String> {
     shapes
 }
 
-/// The shapes of a line's interpolated strings handed to a send as the name:
-/// `public_send("list_#{action}")`, on any receiver or none, under the
-/// symbols' rule, with what it is sent to. A string elsewhere is a key or a
-/// message far more often.
+/// The shapes of a line's interpolated strings and symbols handed to a send
+/// as the name: `public_send("list_#{action}")`, `__send__(:"#{kind}_attrs")`,
+/// on any receiver or none, with what it is sent to. A string elsewhere is a
+/// key or a message far more often.
 fn sent_strings(line: &str, held: &[Held]) -> Vec<(String, To)> {
     let mut shapes = Vec::new();
-    for send in SENDS {
+    for send in BY_NAME {
         let mut rest = line;
         let mut offset = 0;
         while let Some(found) = rest.find(send) {
@@ -339,8 +339,9 @@ fn sent_strings(line: &str, held: &[Held]) -> Vec<(String, To)> {
                 continue;
             }
             let argument = after.strip_prefix('(').unwrap_or(after).trim_start();
-            let shape = match argument.strip_prefix('"') {
-                Some(body) => read_shape(body).0.filter(|shape| named_shape(shape)),
+            let quoted = argument.strip_prefix(":\"").or(argument.strip_prefix('"'));
+            let shape = match quoted {
+                Some(body) => read_shape(body).0.filter(|shape| sent_shape(shape)),
                 // A local the method last assigned a string of the shape.
                 None => {
                     let local: String = argument.chars().take_while(|c| word(*c)).collect();
@@ -362,6 +363,14 @@ fn sent_strings(line: &str, held: &[Held]) -> Vec<(String, To)> {
 /// interpolation, as DEC-363 counts a symbol's.
 fn named_shape(shape: &str) -> bool {
     shape.find('*').is_some_and(|prefix| prefix >= 3)
+}
+
+/// A shape sent as a method's name: a named one, or one that spells four
+/// characters or more anywhere (`*_attrs`). Sent, a leading interpolation is
+/// a method's name, not the attribute's DEC-363 guards against; `*?` and
+/// `*=` would make nearly every predicate and writer a candidate.
+fn sent_shape(shape: &str) -> bool {
+    named_shape(shape) || (shape.contains('*') && shape.len() - shape.matches('*').count() >= 4)
 }
 
 /// A local a method assigned: the shape of the string it holds, or `None`
@@ -444,7 +453,7 @@ fn held_string(statement: &str) -> Option<(String, String)> {
     (rest.is_empty() || rest.starts_with('#'))
         .then_some(shape)
         .flatten()
-        .filter(|shape| named_shape(shape))
+        .filter(|shape| sent_shape(shape))
         .map(|shape| (local.to_string(), shape))
 }
 
@@ -603,9 +612,9 @@ mod tests {
 
     #[test]
     fn every_send_passes_the_line_gate() {
-        for send in SENDS {
+        for send in BY_NAME {
             assert!(
-                send.contains("send") || send.contains("try"),
+                ["send", "try", "method"].iter().any(|n| send.contains(n)),
                 "`read_file` skips a line naming `{send}`"
             );
         }
@@ -634,7 +643,19 @@ mod tests {
         assert_eq!(shapes(r##"self.try("to_#{kind}")"##), ["to_*"]);
         assert!(shapes(r##"try("to#{kind}")"##).is_empty());
         assert!(shapes(r##"row.public_send("total_#{kind}")"##).is_empty());
-        assert!(shapes(r##"send("#{name}_handler")"##).is_empty());
+        assert_eq!(shapes(r##"send("#{name}_handler")"##), ["*_handler"]);
+        assert_eq!(
+            shapes(r##"Target.new.public_send(:"#{kind}_attrs")"##),
+            ["*_attrs"]
+        );
+        assert_eq!(
+            shapes(r##"__send__ "#{KINDS.key(kind)}_attrs".to_sym, kind"##),
+            ["*_attrs"]
+        );
+        assert_eq!(shapes(r##"method(:"#{kind}_attrs").call"##), ["*_attrs"]);
+        assert!(shapes(r##"public_send("#{key}=", value)"##).is_empty());
+        assert!(shapes(r##"send(:"#{name}?")"##).is_empty());
+        assert!(shapes(r##"define_method("#{name}_attrs")"##).is_empty());
         assert!(shapes(r##"resend("list_#{a}")"##).is_empty());
         assert!(shapes(r##"log("list_#{a}")"##).is_empty());
     }
@@ -651,7 +672,7 @@ mod tests {
         assert!(sent_strings("public_send(checked)", &held).is_empty());
         assert!(held_string(r##"key = "validate_#{name}" + x"##).is_none());
         assert!(held_string(r##"@key = "validate_#{name}""##).is_none());
-        assert!(held_string(r##"key = "#{name}_check""##).is_none());
+        assert!(held_string(r##"key = "#{name}?""##).is_none());
     }
 
     /// The shapes `read_file` finds sent, by line.
