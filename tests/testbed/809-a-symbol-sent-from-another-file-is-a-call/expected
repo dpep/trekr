@@ -1,5 +1,9 @@
 # A symbol handed to `send` from another file runs the method, as a call
 # does: Base#hook_a and Base#guarded came out `convention-only`, "named
-# only by a symbol handed to a macro", which a macro's symbol is
-# (Hooked#on_save) and a send's is not.
-dead app Base#hook_a=single-caller Base#guarded=single-caller Hooked#on_save=convention-only
+# only by a symbol handed to a macro", which a macro's symbol is and a
+# send's is not. Typed, it runs the method its receiver's lookup finds:
+# `Other.new.send(:b1)` is no call of Foo#b1 (which stays as it was, named
+# by the symbol), and `send(:a2)` in a class body is the singleton's.
+# Hooked#on_save, a macro's and sent by a spec, is single-caller: the
+# macro's symbol goes unsaid beside a call (DEC-664, not done).
+dead app Base#hook_a=single-caller Base#guarded=single-caller Other#b1=single-caller~ Foo#b1=convention-only Level#a2=convention-only Hooked#on_save=single-caller

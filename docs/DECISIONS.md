@@ -16576,23 +16576,33 @@ wherever it is written, so `Base#hook_a` sent from a subclass's file, or
 `record.send(:private_thing)` from another class, was `convention-only`,
 `clear`, "named only by a symbol handed to a macro".
 
-**How.** Extraction lists where each such symbol is written
-(`Facts::sent_symbols`, resolve-time and never stored, so no store
-version moves), and `--dead` relabels the symbol references found there
-before tiering. DEC-662's per-method caveat for a literal symbol sent now
-speaks only where the index does not read it as a call: `&method(:x)`,
-and a send of a send (`send(:public_send, :x)`).
+**How.** Extraction reads each send (`Facts::sends`, resolve-time and
+never stored, so no store version moves), and `--dead` relabels a symbol
+reference found at one before tiering. Typed through the call the symbol
+stands for (DEC-093), it counts only when the receiver's lookup finds this
+method, on this side: `Other.new.send(:b1)` is no call of `Foo#b1`, and
+`send(:a2)` in a class body runs the singleton's. Untyped, it is a
+possible call, as an untyped written call is. DEC-662's per-method caveat
+for a literal symbol sent now speaks only where the index does not read
+it as a call: `&method(:x)`, and a send of a send (`send(:public_send, :x)`).
 
-**Measured**, `--dead app lib`, DEC-662's fifth round → this: discourse 24
-rows leave the list and 1 `convention-only` `clear` row is `lower`
-("untyped caller", a real send from another file); mastodon 19 rows
-leave. 40 of the 43 that leave were a production call plus a spec's
-`send(:private_method)`, now two calls, as a spec's ordinary call already
-counts; inlining such a method breaks its spec. The other 3 are sent in
-production code (`post_action_creator.rb`, a plugin, the method's own
-file).
+**Measured**, `--dead app lib`, DEC-662's fifth round → this, tier
+compared (a first draft's diff compared only confidence and caveat, and
+missed both the moves and an unnarrowed first cut that dropped 16
+mastodon rows): discourse 24 rows leave and 3 move from
+`convention-only` to `single-caller`; mastodon 7 leave. Of the 31 that
+leave, most are a production call plus a spec's `send(:private_method)`,
+now two calls, as a spec's ordinary call already counts; 3 are sent in
+production code. Mastodon's four `QueryBuilder#must_clauses` rows leave on
+a spec's `subject.send(:must_clauses)` whose `subject` is untyped, as an
+untyped written `subject.must_clauses` would make them.
 
-**Not done.** A sent symbol is never `confirmed`, even on `self`
-(`send(:x)` in its own class), since `--refs` types no symbol; such a row
-is `single-caller`, `lower`, "untyped caller". `&method(:x)` from another
-file is still a macro's symbol.
+**Not done.** A macro's symbol beside one call goes unsaid:
+`after_update :x` plus a spec's `send(:x)` is `single-caller`, `lower`
+("untyped caller"), the macro not named, as a spec's written call already
+made it. A caveat naming the macro was tried and lowered 301 discourse
+rows, since a macro's symbol is matched by name alone (a migration's
+column, another class's `before_action`); it waits on narrowing those. An
+override whose only other reference is a spec takes `single-caller` from
+it, against DEC-652 (`TopicTimer#schedule_auto_open_job`). `&method(:x)`
+from another file is still a macro's symbol.

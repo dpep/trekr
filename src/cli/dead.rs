@@ -860,24 +860,21 @@ fn dead_in(
             }
         }
         // A symbol a send is handed runs the method: a call, where a
-        // macro's symbol is only its name.
+        // macro's symbol is only its name (DEC-664).
         for reference in found.iter_mut().filter(|r| r.receiver == "symbol") {
-            let at = crate::core::Pos {
-                line: reference.line,
-                col: reference.col,
+            let Some(facts) = parsed.facts.get(&reference.path).and_then(Option::as_ref) else {
+                continue;
             };
-            if parsed
-                .facts
-                .get(&reference.path)
-                .and_then(Option::as_ref)
-                .is_some_and(|facts| {
-                    facts
-                        .sends
-                        .iter()
-                        .any(|send| send.pos == at && run_by_index(send))
-                })
-            {
-                reference.receiver = "send";
+            match sent_symbol(&tree, facts, reference, (&owner, def.singleton)) {
+                Some(Ran::Untyped) => reference.receiver = "send",
+                Some(Ran::Typed(class)) => {
+                    reference.receiver = "send";
+                    reference.receiver_type = Some(class);
+                    reference.tier = refs::Tier::Confirmed;
+                    counts.possible = counts.possible.saturating_sub(1);
+                    counts.confirmed += 1;
+                }
+                None => {}
             }
         }
         let live = refs::liveness(&found, &counts);
@@ -1596,6 +1593,55 @@ fn dynamic_markers(source: &[u8], facts: &crate::core::Facts) -> (String, Vec<Un
             .filter(|marker| text.contains(marker)),
     );
     (markers.join(", "), named)
+}
+
+/// What a symbol reference sent by name runs, if it runs `owner`'s method.
+enum Ran {
+    /// Sent to a receiver no rung types: possibly this one.
+    Untyped,
+    /// Sent to this class, whose lookup finds `owner`'s method.
+    Typed(String),
+}
+
+/// Whether a symbol reference is a send's (DEC-664), and what it runs: not
+/// `owner`'s method when sent to a class whose lookup finds another, nor a
+/// singleton's when sent on the class (`send(:x)` in its body).
+fn sent_symbol(
+    tree: &Tree,
+    facts: &crate::core::Facts,
+    reference: &crate::resolve::refs::Reference,
+    (owner, singleton): (&str, bool),
+) -> Option<Ran> {
+    let at = crate::core::Pos {
+        line: reference.line,
+        col: reference.col,
+    };
+    if !facts
+        .sends
+        .iter()
+        .any(|send| send.pos == at && run_by_index(send))
+    {
+        return None;
+    }
+    let symbol = facts
+        .calls
+        .iter()
+        .find(|c| c.pos == at && c.recv == crate::core::RecvShape::Symbol)?;
+    let Some(sent) = symbol.stands_for.as_deref() else {
+        return Some(Ran::Untyped);
+    };
+    let Some(class) = crate::resolve::receiver_type(tree, facts, sent, &reference.path) else {
+        return Some(Ran::Untyped);
+    };
+    let runs = tree.lookup_self(&class.fqn, class.singleton, &symbol.name)?;
+    match (
+        runs.owner == owner && runs.singleton == singleton,
+        class.ambiguous,
+    ) {
+        (true, false) => Some(Ran::Typed(class.fqn)),
+        (true, true) => Some(Ran::Untyped),
+        (false, _) => None,
+    }
 }
 
 /// A literal symbol the index reads as a call of the method it names

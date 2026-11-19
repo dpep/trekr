@@ -110,7 +110,7 @@
 661-a-computed-const-get-lowers-its-namespace-only d248769384b47062
 662-a-built-shape-lowers-what-fits-only 287a6e2a782e0e56
 663-a-name-computed-whole-may-reach-any-constant 5cedee073415c3d2
-665-a-method-only-specs-call-is-test-only 69e2cacdf146c76c
+665-a-method-only-specs-call-is-test-only f41af883294d46c4
 666-a-super-in-a-nested-def-is-the-nested-defs af69418d3f28af9f
 667-a-string-sent-by-name-lowers-its-receivers-methods 1e0c5eaf1b1d716a
 668-a-test-files-own-module-is-no-test-only-candidate 2cc4d17474dbc976
@@ -166,6 +166,6 @@
 801-a-test-cases-test-method-is-run-by-its-runner cc91a1a99e1df15d
 802-a-call-ruled-out-on-a-class-a-module-may-join-lowers-it b7fae01938694bf2
 805-a-test-method-runs-only-in-a-test-case c291c6afa6b672b1
-807-every-dispatch-by-name-lowers-its-file bef1f41e235ca4af
+807-every-dispatch-by-name-lowers-its-file 1053b2479bf8a9a1
 808-a-suffix-shape-sent-by-name-lowers-its-receivers-methods 3c34ed9e6f822504
-809-a-symbol-sent-from-another-file-is-a-call 0ff1084e9a810bba
+809-a-symbol-sent-from-another-file-is-a-call 7989a364ecd40c37

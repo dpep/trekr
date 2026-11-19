@@ -27,7 +27,8 @@
   call of `x`** wherever it is written. A method sent from another file
   (a subclass's `send(:hook)`, `record.send(:private_thing)`) came out
   `convention-only`, "named only by a symbol handed to a macro"; it is
-  `single-caller` now, and one with a call besides is not listed.
+  `single-caller` now, and one with a call besides is not listed. A send
+  to a typed receiver counts only for the method its lookup finds.
 
 ## 0.10.0 — 2026-11-02
 
