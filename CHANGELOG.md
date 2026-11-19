@@ -31,8 +31,11 @@
   call of `x`** wherever it is written. A method sent from another file
   (a subclass's `send(:hook)`, `record.send(:private_thing)`) came out
   `convention-only`, "named only by a symbol handed to a macro"; it is
-  `single-caller` now, and one with a call besides is not listed. A send
-  to a typed receiver counts only for the method its lookup finds.
+  `single-caller` now, and one with a call besides is not listed, a
+  `module_function`'s method sent to its module too. A send to a typed
+  receiver counts only for the method its lookup finds. A
+  `module_function`'s symbol is no longer counted twice in `symbol_refs`
+  and the reason's "(2)".
 
 ## 0.10.0 — 2026-11-02
 

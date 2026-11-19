@@ -1,4 +1,5 @@
 # A computed name sent to a constant in a string extraction does not parse
 # as code (`eval`, a value's `class_eval`, after `__END__`) still names the
-# constant.
-dead app Knob#level=unreferenced~Knob Spool#level=unreferenced~Spool Dial#level=unreferenced~Dial
+# constant. A `module_function`'s method sent to its module is a call of
+# it (Util).
+dead app Knob#level=unreferenced~Knob Spool#level=unreferenced~Spool Dial#level=unreferenced~Dial Util#helper=single-caller

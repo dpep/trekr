@@ -790,8 +790,19 @@ fn dead_in(
                 None,
             )
             .unwrap_or_default();
-            found.extend(more);
             counts.add(&tally);
+            // A symbol names the body under either side's name: a
+            // `module_function`'s `:x` is found by both queries.
+            for reference in more {
+                let same = |r: &&refs::Reference| {
+                    (&r.path, r.line, r.col) == (&reference.path, reference.line, reference.col)
+                };
+                if found.iter().any(|r| same(&r)) {
+                    counts.unrecord(&reference);
+                } else {
+                    found.push(reference);
+                }
+            }
         }
         // Action Mailer runs an action through its class, whose
         // `method_missing` the index finds nothing behind (DEC-369).
@@ -879,11 +890,16 @@ fn dead_in(
         // A symbol a send is handed runs the method: a call, where a
         // macro's symbol is only its name (DEC-664).
         let mut sent_here: Vec<(String, u32)> = Vec::new();
+        // Its body runs as itself, or as an alias or a `module_function`'s
+        // copy, whose references are among these.
+        let runs_as: Vec<(&str, bool)> = std::iter::once((def.name.as_str(), def.singleton))
+            .chain(aliases.iter().map(|(name, side)| (name.as_str(), *side)))
+            .collect();
         for reference in found.iter_mut().filter(|r| r.receiver == "symbol") {
             let Some(facts) = parsed.get(&reference.path) else {
                 continue;
             };
-            match sent_symbol(&tree, &facts, reference, (&owner, def.singleton)) {
+            match sent_symbol(&tree, &facts, reference, &owner, &runs_as) {
                 Some(Ran::Untyped) => {
                     reference.receiver = "send";
                     sent_here.push((reference.path.clone(), reference.line));
@@ -1666,7 +1682,8 @@ fn sent_symbol(
     tree: &Tree,
     facts: &crate::core::Facts,
     reference: &crate::resolve::refs::Reference,
-    (owner, singleton): (&str, bool),
+    owner: &str,
+    runs_as: &[(&str, bool)],
 ) -> Option<Ran> {
     let at = crate::core::Pos {
         line: reference.line,
@@ -1693,7 +1710,7 @@ fn sent_symbol(
         return None;
     }
     match (
-        runs.owner == owner && runs.singleton == singleton,
+        runs.owner == owner && runs_as.contains(&(symbol.name.as_str(), runs.singleton)),
         class.ambiguous,
     ) {
         (true, false) => Some(Ran::Typed(class.fqn)),

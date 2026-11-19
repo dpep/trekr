@@ -175,6 +175,18 @@ impl Counts {
         }
     }
 
+    /// A reference another run counted too, taken back out.
+    pub(crate) fn unrecord(&mut self, reference: &Reference) {
+        let mut one = Counts::default();
+        one.record(reference);
+        self.confirmed -= one.confirmed;
+        self.possible -= one.possible;
+        self.excluded -= one.excluded;
+        self.excluded_different_owner -= one.excluded_different_owner;
+        self.excluded_no_such_method -= one.excluded_no_such_method;
+        self.excluded_arity -= one.excluded_arity;
+    }
+
     /// Another run's counts, added to these.
     pub(crate) fn add(&mut self, other: &Counts) {
         self.confirmed += other.confirmed;

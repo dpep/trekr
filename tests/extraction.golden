@@ -933,6 +933,8 @@ ruby tests/testbed/810-a-send-read-from-the-parse-keeps-what-text-read/app/widge
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/concern.rb 6bdef4276be2164e
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/knobs.rb 48a9989fce053a94
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/loader.rb afe29ddef9f5de2d
+ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/user.rb 76380caca1915000
+ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/util.rb 76d84c6618ae2207
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

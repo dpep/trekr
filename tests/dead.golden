@@ -148,7 +148,7 @@
 741-a-private-method-marked-doc-is-api 5944f38864a53e09
 742-a-transitive-mark-reaches-its-own-opening 62f3dde2bb07d37f
 743-a-doc-tag-counts-only-where-its-tool-reads-one 09a1d84d7621600a
-744-private-after-module-function-makes-no-public-copy 57e01cec90ce5bee
+744-private-after-module-function-makes-no-public-copy f59730ba170d1763
 745-a-constant-naming-a-class-is-api ae0bf173a86f292b
 746-a-rack-app-is-no-library 034aa40417c29df3
 747-an-app-packaged-as-a-gem-is-an-app 789396927e515e03
@@ -170,4 +170,4 @@
 808-a-suffix-shape-sent-by-name-lowers-its-receivers-methods 3c34ed9e6f822504
 809-a-symbol-sent-from-another-file-is-a-call 4ee11c337b2db1cc
 810-a-send-read-from-the-parse-keeps-what-text-read 91933249ac9ee18f
-811-what-a-send-names-reaches-its-receiver 709548f238318b9c
+811-what-a-send-names-reaches-its-receiver 7b7f482e8ce3e235

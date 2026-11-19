@@ -16661,6 +16661,14 @@ of saying it of the second. **Not done**, as on main: a literal in a
 string of code whose interpolation is exactly as long as extraction's
 stand-in for it reads as that stand-in, not as computed.
 
+**The pre-release hunt** found a `module_function`'s method sent to its
+module (`Util.send(:helper)`) still `convention-only`: the symbol is found
+again by the query for the singleton copy, whose side never matched the
+`def`'s. A send counts now when its lookup lands on any name the body runs
+as (itself, an alias, the copy), and a reference both queries find is
+counted once, which also halves mastodon's `Mastodon::Version` symbol
+counts.
+
 ## DEC-665 — `--dead` weighs its candidates in parallel, over one parse cache
 
 **Decided.** The candidate loop, about 80% of `--dead`'s time, runs under
