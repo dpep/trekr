@@ -169,4 +169,4 @@
 807-every-dispatch-by-name-lowers-its-file f5bd639f391d80ae
 808-a-suffix-shape-sent-by-name-lowers-its-receivers-methods 3c34ed9e6f822504
 809-a-symbol-sent-from-another-file-is-a-call 4ee11c337b2db1cc
-810-a-send-read-from-the-parse-keeps-what-text-read 5a9f672dfb12073c
+810-a-send-read-from-the-parse-keeps-what-text-read 91933249ac9ee18f

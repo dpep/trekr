@@ -52,13 +52,16 @@ impl Extractor<'_> {
         else {
             return;
         };
-        // A `method(x)` handle is one send, run or not, however it is visited.
-        let call_at = self.pos(call.location().start_offset());
-        if let Some(known) = self
-            .facts
-            .sends
-            .iter_mut()
-            .find(|s| s.by == *by && s.call == call_at)
+        // A `method(x)` handle is one send, run or not, however it is
+        // visited; at its name, since a chain's calls all start together.
+        let named = call.message_loc().unwrap_or_else(|| call.location());
+        let call_at = self.pos(named.start_offset());
+        if by.ends_with("method")
+            && let Some(known) = self
+                .facts
+                .sends
+                .iter_mut()
+                .find(|s| s.by == *by && s.call == call_at)
         {
             known.run |= run;
             return;

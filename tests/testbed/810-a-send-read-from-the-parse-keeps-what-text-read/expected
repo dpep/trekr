@@ -4,5 +4,7 @@
 # shape (Bus). A literal in a string of code that an interpolation spells
 # part of is computed (Target). A symbol sent where the typing finds no
 # call keeps saying it is not read as one (Host, sent from a module), and
-# `public_send` runs no private method (Secret).
-dead app Settings#timeout==unreferenced~Settings Widget#other_b=unreferenced~Widget Bus#on_start=unreferenced~on_* Target#list_a=unreferenced~Target Host#hook=convention-only~:hook Secret#hidden=convention-only~:hidden
+# `public_send` runs no private or protected method (Secret, Guarded).
+# Each send of a chain is its own (Chained), and a name sent twice says so
+# of the one not read as a call (Twice).
+dead app Settings#timeout==unreferenced~Settings Widget#other_b=unreferenced~Widget Bus#on_start=unreferenced~on_* Target#list_a=unreferenced~Target Host#hook=convention-only~:hook Secret#hidden=convention-only~:hidden Chained#aaa=single-caller Twice#b1=single-caller~:b1 Guarded#shielded=convention-only~:shielded

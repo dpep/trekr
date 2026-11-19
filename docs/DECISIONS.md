@@ -16639,8 +16639,18 @@ symbol dropped wherever the typing found no call of it — sent from a module
 its includer defines the method for, to a `module_function`'s copy, or a
 name extraction records no symbol for (`send(:+, o)`) — leaving the row
 `clear`. The caveat now goes only where this row's reference was read as a
-call. And `public_send(:x)` or `try(:x)` of a private method is no call of
-it.
+call. And `public_send(:x)` or `try(:x)` of a private or protected method
+is no call of it.
+
+**Its third hunt** found two more wrong `clear`s that round's own fixes
+made, pinned in testbed 810: the dedupe that keeps a `method(x)` handle one
+send keyed on where the call starts, which every call of a chain shares, so
+`send(:aaa).send(:bbb)` lost `:aaa` (keyed on the name now, and for
+handles only); and a name sent twice, once read as a call and once not
+(`send(:b1)` and `&method(:b1)`), dropped the caveat with the first instead
+of saying it of the second. **Not done**, as on main: a literal in a
+string of code whose interpolation is exactly as long as extraction's
+stand-in for it reads as that stand-in, not as computed.
 
 ## DEC-665 — `--dead` weighs its candidates in parallel, over one parse cache
 

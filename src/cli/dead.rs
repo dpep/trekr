@@ -506,7 +506,7 @@ struct Defined {
     aliases: Vec<(String, bool)>,
     /// A name of it in its file that no rule reads as a call of it: its
     /// line, as written, and whether a send hands it (DEC-343, DEC-662).
-    unread_symbol: Option<(u32, String, bool)>,
+    unread_symbol: Vec<(u32, String, bool)>,
     /// Whether its body calls `super`: it overrides something (DEC-365).
     calls_super: bool,
     /// Its file's facts, for what a `def` its scope may not own is on.
@@ -653,12 +653,12 @@ fn dead_in(
                 (u.name == def.name || u.sent && aliases.iter().any(|(alias, _)| *alias == u.name))
                     && !own.contains(&u.line)
             };
-            let unread_symbol = unread_symbols
+            let mut unread_symbol: Vec<(u32, String, bool)> = unread_symbols
                 .iter()
-                .filter(|u| u.sent)
-                .find(names_it)
-                .or_else(|| unread_symbols.iter().find(names_it))
-                .map(|u| (u.line, u.written.clone(), u.sent));
+                .filter(names_it)
+                .map(|u| (u.line, u.written.clone(), u.sent))
+                .collect();
+            unread_symbol.sort_by_key(|(.., sent)| !sent);
             // A `super` in a `def` nested in its body is that method's.
             let nested = |line: u32| {
                 facts.defs.iter().any(|other| {
@@ -1268,10 +1268,10 @@ fn dead_in(
         let uncalled_or_override = uncalled || tier == DeadTier::Override;
         // A sent name runs it, so it says so even beside one call.
         let unread_symbol = unread_symbol
-            .as_ref()
+            .iter()
             .filter(|(.., sent)| uncalled_or_override || *sent)
-            // Read as a call of it after all (DEC-664).
-            .filter(|(line, ..)| !sent_here.contains(&(relative(file), *line)));
+            // Not one read as a call of it after all (DEC-664).
+            .find(|(line, ..)| !sent_here.contains(&(relative(file), *line)));
         // An action no route read reaches may be reached by one not read.
         if action && route.is_none() && uncalled_or_override {
             let unread = match routes.unread.first() {
@@ -1683,8 +1683,9 @@ fn sent_symbol(
         return Some(Ran::Untyped);
     };
     let runs = tree.lookup_self(&class.fqn, class.singleton, &symbol.name)?;
-    // `public_send` and ActiveSupport's `try` run no private method.
-    if runs.visibility == "private" && send.by != "send" && send.by != "__send__" {
+    // `public_send` and ActiveSupport's `try` run no private or protected
+    // method.
+    if runs.visibility != "public" && send.by != "send" && send.by != "__send__" {
         return None;
     }
     match (
