@@ -6,5 +6,7 @@
 # (Evaluated) or behind a literal send of a send (Meta) once escaped the
 # parse, and so did one through `.strip` (Stripped), which extraction reads.
 # A string says so beside one call too: Inlined#named is no inlining
-# candidate while `send("named")` reaches it.
-dead app Underscored#small_attrs=unreferenced~__send__ Tried#small_attrs=unreferenced~try Handled#small_attrs=unreferenced~method Literal#unused=unreferenced~ Stringed#named=unreferenced~"named" Stringed#other=unreferenced~ Evaluated#small_attrs=unreferenced~public_send Meta#small_attrs=unreferenced~send Stripped#small_attrs=unreferenced~public_send Inlined#named=single-caller~"named"
+# candidate while `send("named")` reaches it, nor is Labeled#named, whose
+# keyword `named:` once hid the string. A string in a string of code that an
+# interpolation spells part of is computed (Spelled#foo_a).
+dead app Underscored#small_attrs=unreferenced~__send__ Tried#small_attrs=unreferenced~try Handled#small_attrs=unreferenced~method Literal#unused=unreferenced~ Stringed#named=unreferenced~"named" Stringed#other=unreferenced~ Evaluated#small_attrs=unreferenced~public_send Meta#small_attrs=unreferenced~send Stripped#small_attrs=unreferenced~public_send Inlined#named=single-caller~"named" Labeled#named=single-caller~"named" Spelled#foo_a=unreferenced~send

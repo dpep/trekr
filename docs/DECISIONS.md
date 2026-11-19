@@ -16447,6 +16447,17 @@ string and none found; not read row by row.
 not read; and a held shape is dropped when its local is reassigned from
 itself (`name = name.to_sym`), as any reassignment drops it.
 
+**Third fix round.** Two more, pinned in testbed 807: a string's caveat
+was looked up after the file's unread symbols, so any `:named` or `named:`
+in the file hid it beside a call (strings are looked up first now); and a
+string inside a string of code that an interpolation spells part of
+(`class_eval <<~RUBY` … `o.send("foo_#{n}")`) read as a literal once the
+interpolation was spelled as a name, where 0.10.0's grep lowered its file —
+such a string is computed. No discourse or mastodon row moves. **Not
+done**, as in 0.10.0: a string naming an alias (`send("qux")` for
+`alias_method :qux, :foo`) does not lower `foo`, and one sent from another
+file lowers nothing.
+
 ## DEC-663 — A suffix shape sent by name is a shape
 
 **Decided.** DEC-655's "not done": an interpolated string *or symbol*
