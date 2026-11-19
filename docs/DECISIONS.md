@@ -22,7 +22,7 @@ belongs to:
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
 | Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
 | `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563 |
-| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663 |
+| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664 |
 | LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646 |
 | Scope and housekeeping | 030, 063, 640 |
 
@@ -16563,3 +16563,36 @@ taken for a string's opening by `statements`; a computed name sent through
 and a shape matching instance and singleton methods alike. Most would go
 by reading the sends from the parse, which `read_file` already does for a
 file with one; that is a reader rewrite, with its own hunt.
+
+## DEC-664 — A symbol handed to a send is a call in `--dead`
+
+**Decided.** `--dead` counts the first symbol handed to a call in
+`ruby::SENDS` (`send(:x)`, `obj.public_send(:x)`, `try(:x)`) as a call of
+`x`, a possible one, as it counts an untyped written call. A symbol handed
+to a macro (`before_action :x`) stays what makes a row `convention-only`.
+DEC-093 reads both as the same `symbol` reference, and `--refs` still does;
+the difference is what `--dead` makes of it: a send runs the method
+wherever it is written, so `Base#hook_a` sent from a subclass's file, or
+`record.send(:private_thing)` from another class, was `convention-only`,
+`clear`, "named only by a symbol handed to a macro".
+
+**How.** Extraction lists where each such symbol is written
+(`Facts::sent_symbols`, resolve-time and never stored, so no store
+version moves), and `--dead` relabels the symbol references found there
+before tiering. DEC-662's per-method caveat for a literal symbol sent now
+speaks only where the index does not read it as a call: `&method(:x)`,
+and a send of a send (`send(:public_send, :x)`).
+
+**Measured**, `--dead app lib`, DEC-662's fifth round → this: discourse 24
+rows leave the list and 1 `convention-only` `clear` row is `lower`
+("untyped caller", a real send from another file); mastodon 19 rows
+leave. 40 of the 43 that leave were a production call plus a spec's
+`send(:private_method)`, now two calls, as a spec's ordinary call already
+counts; inlining such a method breaks its spec. The other 3 are sent in
+production code (`post_action_creator.rb`, a plugin, the method's own
+file).
+
+**Not done.** A sent symbol is never `confirmed`, even on `self`
+(`send(:x)` in its own class), since `--refs` types no symbol; such a row
+is `single-caller`, `lower`, "untyped caller". `&method(:x)` from another
+file is still a macro's symbol.

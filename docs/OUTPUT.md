@@ -342,7 +342,8 @@ From least evidence of use to most:
 - `override` — nothing names it, but it overrides an ancestor's method
   (`overrides`), so whatever calls that one (often the framework) may run it.
 - `convention-only` — named only by a symbol handed to a macro
-  (`before_action :x`, `if: :x`, `with: :x`), a controller action only a
+  (`before_action :x`, `if: :x`, `with: :x`; a symbol handed to `send` or
+  `try` is a call instead, DEC-664), a controller action only a
   route reaches (`config/routes.rb` is read), or a method a library calls by
   a name it builds: ActiveModel::Serializers' `include_<attr>?`, a Thor
   command, a test case's public `test_` method, which Minitest or

@@ -1,0 +1,5 @@
+# A symbol handed to `send` from another file runs the method, as a call
+# does: Base#hook_a and Base#guarded came out `convention-only`, "named
+# only by a symbol handed to a macro", which a macro's symbol is
+# (Hooked#on_save) and a send's is not.
+dead app Base#hook_a=single-caller Base#guarded=single-caller Hooked#on_save=convention-only

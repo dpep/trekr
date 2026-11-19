@@ -205,6 +205,10 @@ pub(crate) struct Facts {
     /// Each template a `render`, `extends` or `partial` names, where it is
     /// named (DEC-524). Resolve-time, never stored.
     pub(crate) templates: Vec<TemplateRef>,
+    /// Where each symbol a call runs the method of is written: the first
+    /// one handed to `send`, `try` and the rest of `ruby::SENDS`, a call
+    /// where a macro's symbol is only a name. Resolve-time, never stored.
+    pub(crate) sent_symbols: Vec<Pos>,
     /// Prism reported syntax errors; the facts above are what survived.
     pub(crate) parse_errors: usize,
     pub(crate) lines: usize,

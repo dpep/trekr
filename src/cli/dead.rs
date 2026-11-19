@@ -3,7 +3,7 @@
 //! classes, modules and constants in `dead_consts`.
 
 use super::*;
-use crate::core::ruby::BY_NAME;
+use crate::core::ruby::{BY_NAME, SENDS};
 use crate::resolve::refs;
 use entry_points::EntryPoint;
 use serde::Serialize;
@@ -857,6 +857,22 @@ fn dead_in(
                 call.why = "the method is defined on an object the receiver may be";
                 counts.possible += 1;
                 found.push(call);
+            }
+        }
+        // A symbol a send is handed runs the method: a call, where a
+        // macro's symbol is only its name.
+        for reference in found.iter_mut().filter(|r| r.receiver == "symbol") {
+            let at = crate::core::Pos {
+                line: reference.line,
+                col: reference.col,
+            };
+            if parsed
+                .facts
+                .get(&reference.path)
+                .and_then(Option::as_ref)
+                .is_some_and(|facts| facts.sent_symbols.contains(&at))
+            {
+                reference.receiver = "send";
             }
         }
         let live = refs::liveness(&found, &counts);
@@ -1731,17 +1747,23 @@ fn sent_name(call: &ruby_prism::CallNode<'_>) -> Sent {
     };
     let mut arguments = arguments.arguments().iter();
     let mut first = arguments.next();
+    let mut meta = false;
     // `send(:method, x)` returns a `Method`, which runs nothing.
     while let Some((name, _)) = first.as_ref().and_then(literal)
         && BY_NAME.iter().any(|k| k.as_bytes() == name)
         && !name.ends_with(b"method")
     {
         first = arguments.next();
+        meta = true;
     }
     let Some(first) = first else {
         return Sent::Nothing;
     };
     if let Some((name, string)) = literal(&first) {
+        // The index reads `send(:x)` as a call of `x` (`Facts::sent_symbols`).
+        if !string && !meta && SENDS.contains(known) {
+            return Sent::Nothing;
+        }
         return Sent::Named {
             name: String::from_utf8_lossy(&name).into_owned(),
             at: first.location().start_offset(),

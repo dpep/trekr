@@ -5725,6 +5725,13 @@ impl<'pr> Extractor<'_> {
                 continue;
             };
             let to = self.symbol_receiver(call, index);
+            if index == 0
+                && ruby::SENDS.contains(&macro_name.as_str())
+                && let Some(loc) = symbol.value_loc()
+            {
+                let pos = self.pos(loc.start_offset());
+                self.facts.sent_symbols.push(pos);
+            }
             self.record_symbol(&symbol, to);
         }
     }

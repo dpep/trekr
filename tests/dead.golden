@@ -110,7 +110,7 @@
 661-a-computed-const-get-lowers-its-namespace-only d248769384b47062
 662-a-built-shape-lowers-what-fits-only 287a6e2a782e0e56
 663-a-name-computed-whole-may-reach-any-constant 5cedee073415c3d2
-665-a-method-only-specs-call-is-test-only 242868bf5aa31961
+665-a-method-only-specs-call-is-test-only 69e2cacdf146c76c
 666-a-super-in-a-nested-def-is-the-nested-defs af69418d3f28af9f
 667-a-string-sent-by-name-lowers-its-receivers-methods 1e0c5eaf1b1d716a
 668-a-test-files-own-module-is-no-test-only-candidate 2cc4d17474dbc976
@@ -140,7 +140,7 @@
 711-a-route-or-convention-outranks-test-only 863fa9f3f6dca868
 720-a-nodoc-reopening-hides-only-its-own-body 69b341434eb46b43
 721-a-methods-own-api-tag-overrides-its-classes c4d6ae77ffe8564b
-722-a-module-functions-public-copy-is-api e7f172254b1f1343
+722-a-module-functions-public-copy-is-api 646f40af888b541c
 723-a-name-a-script-writes-lowers-a-test-only-row 3ca3273b7e12cb53
 724-a-sig-or-a-wrapped-private-constant-keeps-the-mark bb4b37fac6723cfb
 725-a-library-monorepos-nested-gem-is-api eca551e4329404a0
@@ -166,5 +166,6 @@
 801-a-test-cases-test-method-is-run-by-its-runner cc91a1a99e1df15d
 802-a-call-ruled-out-on-a-class-a-module-may-join-lowers-it b7fae01938694bf2
 805-a-test-method-runs-only-in-a-test-case c291c6afa6b672b1
-807-every-dispatch-by-name-lowers-its-file 1b8426ac041eb9ca
+807-every-dispatch-by-name-lowers-its-file c212f10b94f64292
 808-a-suffix-shape-sent-by-name-lowers-its-receivers-methods 3c34ed9e6f822504
+809-a-symbol-sent-from-another-file-is-a-call 0ff1084e9a810bba

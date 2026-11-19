@@ -23,6 +23,11 @@
   `*=` stay unread. A local holding the symbol (`name = :"#{kind}_attrs"`,
   or a string's `.to_sym`) is read where it is sent. A shape sent to a
   value (`user.public_send(…)`) is still not read.
+- **`--dead` counts `send(:x)`, `obj.public_send(:x)` and `try(:x)` as a
+  call of `x`** wherever it is written. A method sent from another file
+  (a subclass's `send(:hook)`, `record.send(:private_thing)`) came out
+  `convention-only`, "named only by a symbol handed to a macro"; it is
+  `single-caller` now, and one with a call besides is not listed.
 
 ## 0.10.0 — 2026-11-02
 
