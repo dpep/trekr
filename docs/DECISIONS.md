@@ -16406,6 +16406,23 @@ hash). Both trade a safe over-caveat for a row that comes out `clear`
 when the shape read and the parse disagree; each is a new code path that
 needs its own hunt.
 
+**Fix round** (the hunt on the above). Three silent wrong `clear`s it had
+made, each now pinned in testbed 807:
+
+- **A string is no recorded reference.** The index records a symbol sent
+  by name, not a string (`send("foo")` gave `--refs` 0 sites), so treating
+  a string as literal left `foo` `clear`. A string now lowers the method it
+  names, as DEC-343's unread symbols do ("`\"foo\"` at line 3 is not read
+  as a call"), not its file: discourse's `try(">", 0)` would otherwise lower
+  every method of `FilterBestPosts`. The measured rows above stand —
+  `public_send("can_edit?", post)` names `Guardian`'s method, not the
+  controller's.
+- **A send in a string of code** extraction reads (`class_eval <<~RUBY`,
+  `instance_eval "…"`) is parsed too, each interpolation spelled as a name
+  of its length; the text grep had seen it, the parse had not.
+- **A literal send of a send** (`send(:public_send, name)`) reads the next
+  argument.
+
 ## DEC-663 — A suffix shape sent by name is a shape
 
 **Decided.** DEC-655's "not done": an interpolated string *or symbol*

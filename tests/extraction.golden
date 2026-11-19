@@ -887,8 +887,11 @@ ruby tests/testbed/806-a-be-matcher-calls-the-predicate-the-subject-has/rspec-co
 ruby tests/testbed/806-a-be-matcher-calls-the-predicate-the-subject-has/rspec-expectations/lib/rspec/expectations/expectation_target.rb b1fe4ca7aca8c281
 ruby tests/testbed/806-a-be-matcher-calls-the-predicate-the-subject-has/rspec-expectations/lib/rspec/expectations/syntax.rb 239a5775c154560d
 ruby tests/testbed/806-a-be-matcher-calls-the-predicate-the-subject-has/spec/store_spec.rb 5e89e82147096415
+ruby tests/testbed/807-every-dispatch-by-name-lowers-its-file/app/evaluated.rb 2a611d6c3ecce2aa
 ruby tests/testbed/807-every-dispatch-by-name-lowers-its-file/app/forms.rb 465021a55cf21a12
 ruby tests/testbed/807-every-dispatch-by-name-lowers-its-file/app/literal.rb e46220eda2ddd8d1
+ruby tests/testbed/807-every-dispatch-by-name-lowers-its-file/app/meta.rb 6a516ae855efff00
+ruby tests/testbed/807-every-dispatch-by-name-lowers-its-file/app/stringed.rb c24c7354ed1c8a0a
 ruby tests/testbed/808-a-suffix-shape-sent-by-name-lowers-its-receivers-methods/app/caller.rb 7c7b4aa74dace1e6
 ruby tests/testbed/808-a-suffix-shape-sent-by-name-lowers-its-receivers-methods/app/target.rb 064c92a41abbfae3
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57

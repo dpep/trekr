@@ -1,5 +1,8 @@
 # Every call that runs a method by a name it is handed lowers its file when
 # the name is computed, not only `send` and `public_send`: `__send__`, `try`
 # and `method` once came out clear. A literal name is a reference the index
-# records, so it lowers nothing.
-dead app Underscored#small_attrs=unreferenced~__send__ Tried#small_attrs=unreferenced~try Handled#small_attrs=unreferenced~method Literal#unused=unreferenced~
+# records, so it lowers nothing. A string names a method the index does not
+# record: it lowers that method, not its file (Stringed#named came out clear). A send in a string of code
+# (Evaluated) or behind a literal send of a send (Meta) once escaped the
+# parse.
+dead app Underscored#small_attrs=unreferenced~__send__ Tried#small_attrs=unreferenced~try Handled#small_attrs=unreferenced~method Literal#unused=unreferenced~ Stringed#named=unreferenced~"named" Stringed#other=unreferenced~ Evaluated#small_attrs=unreferenced~public_send Meta#small_attrs=unreferenced~send
