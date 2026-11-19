@@ -554,10 +554,7 @@ fn dead_in(
                     .ends_with(" string")
         });
         if unread {
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
-            risky.push_str("class_eval string");
+            also(&mut risky, "class_eval string");
         }
         let at = file.to_string_lossy().into_owned();
         // The file's symbols no rule reads as a method's name (DEC-343).
@@ -636,10 +633,7 @@ fn dead_in(
                 .iter()
                 .find(|shape| crate::core::shape_matches(shape, &def.name))
             {
-                if !caveat.is_empty() {
-                    caveat.push_str(", ");
-                }
-                caveat.push_str(&format!("a string of code calls `{shape}`"));
+                also(&mut caveat, &format!("a string of code calls `{shape}`"));
             }
             let aliases = aliases_of(def);
             // Its own body's `:name` is a value it uses, not a way in.
@@ -989,31 +983,19 @@ fn dead_in(
             } else {
                 "a class may be constructed by whatever it is handed to — a library, a registry"
             };
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
-            risky.push_str(how);
+            also(&mut risky, how);
         }
         if let Some(unplaced) = &unplaced_sites {
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
-            risky.push_str(unplaced);
+            also(&mut risky, unplaced);
         }
         if caller
             .as_ref()
             .is_some_and(|c| c.tier == refs::Tier::Possible)
         {
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
-            risky.push_str("untyped caller");
+            also(&mut risky, "untyped caller");
         }
         if tier != DeadTier::Override && !constructor && !overrides.is_empty() {
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
-            risky.push_str(&format!("overrides {}", overrides.join(", ")));
+            also(&mut risky, &format!("overrides {}", overrides.join(", ")));
         }
         let elsewhere = match (&defined_on, &def.unsettled) {
             (Some(DefinedOn::Object(of)), _) => Some(format!("defined on one `{of}` object")),
@@ -1026,10 +1008,7 @@ fn dead_in(
             (None, _) => None,
         };
         if let Some(elsewhere) = elsewhere {
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
-            risky.push_str(&elsewhere);
+            also(&mut risky, &elsewhere);
         }
         // An ancestor not indexed may call it, and a `super` says one is
         // there (DEC-365). A test-only row claims no caller outside the
@@ -1047,31 +1026,31 @@ fn dead_in(
                 .cloned()
                 .collect();
             if !unseen.is_empty() {
-                if !risky.is_empty() {
-                    risky.push_str(", ");
-                }
-                risky.push_str(&format!(
-                    "an ancestor trekr has not indexed ({}) may call it",
-                    unseen.join(", ")
-                ));
+                also(
+                    &mut risky,
+                    &format!(
+                        "an ancestor trekr has not indexed ({}) may call it",
+                        unseen.join(", ")
+                    ),
+                );
             }
             // A `super` that lands on an indexed method says nothing unseen.
             if *calls_super && overrides.is_empty() {
-                if !risky.is_empty() {
-                    risky.push_str(", ");
-                }
-                risky.push_str("it calls `super`, so it overrides a method trekr has not indexed");
+                also(
+                    &mut risky,
+                    "it calls `super`, so it overrides a method trekr has not indexed",
+                );
             }
             if public
                 && !def.singleton
                 && let Some((path, line)) = foreign_sends.of(&tree, &owner)
             {
-                if !risky.is_empty() {
-                    risky.push_str(", ");
-                }
-                risky.push_str(&format!(
-                    "an ancestor outside the checkout sends `self` a name it computes ({path}:{line})"
-                ));
+                also(
+                    &mut risky,
+                    &format!(
+                        "an ancestor outside the checkout sends `self` a name it computes ({path}:{line})"
+                    ),
+                );
             }
         }
         // A call of its name ruled out on a `self` trekr cannot name may be
@@ -1161,10 +1140,7 @@ fn dead_in(
             }
         }
         if let Some(unplaced) = &unplaced {
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
-            risky.push_str(unplaced);
+            also(&mut risky, unplaced);
         }
         // A gem of the bundle calls the name on an object it is handed: an
         // instance's method, since such a call's receiver is a value (DEC-367).
@@ -1172,16 +1148,16 @@ fn dead_in(
             && !def.singleton
             && let Some((gem, n)) = store.bundle_calls(&root_str, &def.name)?
         {
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
             let gem = Path::new(&gem)
                 .file_name()
                 .map_or(gem.clone(), |name| name.to_string_lossy().into_owned());
-            risky.push_str(&format!(
-                "a gem in the bundle calls a method of this name ({gem}, {n} {})",
-                if n == 1 { "site" } else { "sites" }
-            ));
+            also(
+                &mut risky,
+                &format!(
+                    "a gem in the bundle calls a method of this name ({gem}, {n} {})",
+                    if n == 1 { "site" } else { "sites" }
+                ),
+            );
         }
         // Reached from outside the repo: kept, graded lower, and said what
         // would settle it (DEC-657). A `module_function`'s singleton copy is
@@ -1208,48 +1184,40 @@ fn dead_in(
         };
         // Callers `--dead` cannot see, named where it can say which (DEC-315).
         if let Some(caller) = refs::protocol_hook(&def.name, def.singleton) {
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
-            risky.push_str(&format!("a hook {caller} calls by name"));
+            also(&mut risky, &format!("a hook {caller} calls by name"));
         }
         if let Some(template) = views.naming(&def.name) {
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
-            risky.push_str(&format!("named in a view ({template}), which is not read"));
+            also(
+                &mut risky,
+                &format!("named in a view ({template}), which is not read"),
+            );
         }
         if let Some(script) = scripts.naming(&def.name) {
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
-            risky.push_str(&format!("named in a script ({script}), which is not read"));
+            also(
+                &mut risky,
+                &format!("named in a script ({script}), which is not read"),
+            );
         }
         if let Some(at) = config.naming(&def.name) {
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
-            risky.push_str(&format!("named in config ({at}), which is not read"));
+            also(
+                &mut risky,
+                &format!("named in config ({at}), which is not read"),
+            );
         }
         if let Some(how) = generated.why(file) {
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
-            risky.push_str(&format!(
-                "in generated code ({how}), which its runtime may call generically"
-            ));
+            also(
+                &mut risky,
+                &format!("in generated code ({how}), which its runtime may call generically"),
+            );
         }
         if !def.singleton && conventions::assigned_writer(&tree, &owner, &def.name, public) {
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
-            risky.push_str("a writer Active Model's `assign_attributes` calls by name");
+            also(
+                &mut risky,
+                "a writer Active Model's `assign_attributes` calls by name",
+            );
         }
         if let Some(why) = built.reaching(&tree, &owner, &def.name) {
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
-            risky.push_str(&why);
+            also(&mut risky, &why);
         }
         // A symbol in its own file that no rule reads as its name may still
         // be how it is reached: say so, rather than that no symbol names it.
@@ -1266,23 +1234,20 @@ fn dead_in(
                 None => None,
             };
             if let Some(unread) = unread {
-                if !risky.is_empty() {
-                    risky.push_str(", ");
-                }
-                risky.push_str(&format!("a public action routes may reach ({unread})"));
+                also(
+                    &mut risky,
+                    &format!("a public action routes may reach ({unread})"),
+                );
             }
         }
         if let Some((line, written, _)) = unread_symbol {
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
-            risky.push_str(&format!("`{written}` at line {line} is not read as a call"));
+            also(
+                &mut risky,
+                &format!("`{written}` at line {line} is not read as a call"),
+            );
         }
         if let Some(entry) = entry_point {
-            if !risky.is_empty() {
-                risky.push_str(", ");
-            }
-            risky.push_str(&entry.caveat(true));
+            also(&mut risky, &entry.caveat(true));
         }
         let shadowed =
             tier == DeadTier::Unreferenced && unplaced.is_none() && !shadowing.is_empty();
@@ -1554,6 +1519,14 @@ fn method_blocks(source: &[u8]) -> Vec<(crate::core::Pos, crate::core::Pos)> {
     };
     blocks.visit(&parsed.node());
     blocks.found
+}
+
+/// Adds one reason to a caveat's list.
+fn also(caveat: &mut String, more: &str) {
+    if !caveat.is_empty() {
+        caveat.push_str(", ");
+    }
+    caveat.push_str(more);
 }
 
 /// Shapes that make "no references found" a weaker statement, named so the

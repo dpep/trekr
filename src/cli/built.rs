@@ -30,12 +30,13 @@ pub(super) struct Built {
     /// Each constant whose methods are listed, by the listing call, where
     /// first listed.
     listed: Vec<(String, String, At)>,
-    /// Each interpolated string sent as a name (`public_send("list_#{x}")`):
-    /// its shape, the class it is sent to, and where.
+    /// Each interpolated string or symbol sent as a name
+    /// (`public_send("list_#{x}")`, `__send__(:"#{k}_attrs")`): its shape,
+    /// the class it is sent to, and where.
     sent: Vec<(String, String, At)>,
 }
 
-/// An interpolated string sent as a name, before its receiver is placed.
+/// An interpolated name sent, before its receiver is placed.
 struct Sending {
     shape: String,
     to: To,
@@ -183,7 +184,7 @@ impl Built {
         }
     }
 
-    /// A file's finds, and its sent strings, whose receiver is placed once
+    /// A file's finds, and its sent names, whose receiver is placed once
     /// the files are merged.
     fn read_file(&mut self, path: &str, text: &str) -> Vec<Sending> {
         let mut sendings = Vec::new();
@@ -212,7 +213,7 @@ impl Built {
                 if !sends {
                     continue;
                 }
-                for (shape, to) in sent_strings(statement, &held) {
+                for (shape, to) in sent_names(statement, &held) {
                     sendings.push(Sending {
                         shape,
                         to,
@@ -310,9 +311,7 @@ fn interpolated_symbols(line: &str) -> Vec<String> {
         let after = &rest[open + 2..];
         let (shape, used) = read_shape(after);
         rest = &after[used..];
-        let Some(shape) = shape else { continue };
-        let prefix = shape.find('*').unwrap_or(shape.len());
-        if shape.contains('*') && prefix >= 3 {
+        if let Some(shape) = shape.filter(|shape| named_shape(shape)) {
             shapes.push(shape);
         }
     }
@@ -323,7 +322,7 @@ fn interpolated_symbols(line: &str) -> Vec<String> {
 /// as the name: `public_send("list_#{action}")`, `__send__(:"#{kind}_attrs")`,
 /// on any receiver or none, with what it is sent to. A string elsewhere is a
 /// key or a message far more often.
-fn sent_strings(line: &str, held: &[Held]) -> Vec<(String, To)> {
+fn sent_names(line: &str, held: &[Held]) -> Vec<(String, To)> {
     let mut shapes = Vec::new();
     for send in BY_NAME {
         let mut rest = line;
@@ -636,7 +635,7 @@ mod tests {
     #[test]
     fn an_interpolated_string_sent_by_name_is_a_shape() {
         let shapes =
-            |line| -> Vec<String> { sent_strings(line, &[]).into_iter().map(|s| s.0).collect() };
+            |line| -> Vec<String> { sent_names(line, &[]).into_iter().map(|s| s.0).collect() };
         assert_eq!(
             shapes(r##"Q.new.public_send("list_#{filter}", user)"##),
             ["list_*"]
@@ -668,10 +667,10 @@ mod tests {
         hold(&mut held, r##"    check = "validate_#{name}""##, 4);
         assert_eq!(held[0].shape.as_deref(), Some("validate_*"));
         assert_eq!(
-            sent_strings("public_send(check, val) if respond_to?(check)", &held),
+            sent_names("public_send(check, val) if respond_to?(check)", &held),
             [("validate_*".to_string(), To::Own)]
         );
-        assert!(sent_strings("public_send(checked)", &held).is_empty());
+        assert!(sent_names("public_send(checked)", &held).is_empty());
         assert!(held_string(r##"key = "validate_#{name}" + x"##).is_none());
         assert!(held_string(r##"@key = "validate_#{name}""##).is_none());
         assert!(held_string(r##"key = "#{name}?""##).is_none());
@@ -733,7 +732,7 @@ mod tests {
     }
 
     #[test]
-    fn a_sent_strings_receiver_is_read_from_its_chain() {
+    fn a_sent_names_receiver_is_read_from_its_chain() {
         assert_eq!(receiver("    if "), Some(To::Own));
         assert_eq!(receiver("x = self."), Some(To::Own));
         assert_eq!(receiver("  new(result, opts)."), Some(To::Own));
