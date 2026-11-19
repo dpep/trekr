@@ -3370,6 +3370,11 @@ struct Parsed {
 }
 
 impl Parsed {
+    /// Holds a file's facts, parsed elsewhere.
+    fn hold(&mut self, path: String, facts: crate::core::Facts) {
+        self.facts.insert(path, Some(facts));
+    }
+
     /// Parse the files not held yet.
     fn read(&mut self, root: &Path, files: &[String]) {
         let fresh: Vec<_> = files

@@ -537,15 +537,15 @@ fn dead_in(
             let facts = std::sync::Arc::new(extract::extract(&source));
             let symbols = extract::symbol_literals(&source);
             let method_blocks = method_blocks(&source);
-            Some((file, source, facts, symbols, method_blocks))
+            // A dynamic-dispatch marker anywhere in the file lowers confidence
+            // for everything in it: these are the shapes that make "no
+            // references" a weaker statement, and they are file-wide by nature.
+            let markers = dynamic_markers(&source);
+            Some((file, facts, symbols, method_blocks, markers))
         })
         .collect();
-    for (file, source, facts, symbols, method_blocks) in parsed {
+    for (file, facts, symbols, method_blocks, (mut risky, sent_names)) in parsed {
         scope_facts.push((file.to_string_lossy().into_owned(), facts.clone()));
-        // A dynamic-dispatch marker anywhere in the file lowers confidence for
-        // everything in it: these are the shapes that make "no references" a
-        // weaker statement, and they are file-wide by nature.
-        let (mut risky, sent_names) = dynamic_markers(&source);
         // A string of code not read: its calls are not in the index (DEC-132).
         let unread = facts.ancestry.iter().any(|edge| {
             edge.relation == crate::core::Relation::Dynamic
@@ -706,6 +706,11 @@ fn dead_in(
     let mut thor_blocks = conventions::ThorBlocks::default();
     let mut foreign_sends = conventions::ForeignSends::default();
     let mut parsed = Parsed::default();
+    // The scope's files are parsed already: the callers among them aren't
+    // read again.
+    for (file, facts) in &scope_facts {
+        parsed.hold(relative(file), (**facts).clone());
+    }
     let mut gems = entry_points::Gems::default();
     for Defined {
         file,
