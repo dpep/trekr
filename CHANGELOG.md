@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **`--dead` lowers a file that sends a computed name with `__send__`,
+  `try`, `try!`, `method(…).call` or `public_method`**, as it did for
+  `send(` and `public_send(`, and with or without parentheses
+  (`send name`). Such a file's methods came out `clear`. A literal name
+  (`send(:x)`) no longer lowers its file: it is already a reference. A
+  constant handed to `try` (a service DSL's error class) lowers nothing.
+
 ## 0.10.0 — 2026-11-02
 
 - **Upgrading reindexes once** (store v75): the first command after

@@ -22,7 +22,7 @@ belongs to:
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
 | Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
 | `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563 |
-| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661 |
+| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662 |
 | LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646 |
 | Scope and housekeeping | 030, 063, 640 |
 
@@ -16352,3 +16352,56 @@ rubocop, sidekiq, rack, faraday, rails `activemodel/test`: no row moves.
 Testbed 802; in testbed 093, `Palette#palette`, called with no receiver in
 a module whose includer lacks it, is now `lower` the same way — a module
 mixed into `Page` at runtime would supply it.
+
+
+## DEC-662 — Every send by a computed name lowers its file; a literal one does not
+
+**Reported** (a user's dead-code comparison on a large Rails app, 0.10.0):
+two methods reached only by `__send__ "#{CONST.key(x)}_suffix".to_sym`
+came out `unreferenced`, `clear`, which another tool and a manual review
+both kept alive. Reproduced on made-up code: DEC-631's grep matched only
+the text `send(` and `public_send(`, so `__send__(name)`, `send name` (no
+parentheses), `try(name)` and `method(name).call` lowered nothing.
+
+**Decided.** The file-wide marker reads the parse, not the text. A call in
+`core::ruby::BY_NAME` (`send`, `public_send`, `__send__`, `try`, `try!`,
+`method`, `public_method`) whose first argument is no literal symbol or
+string lowers the file, the caveat naming the call as written. A literal
+name no longer does: it is a reference the index records (DEC-093), and
+the crudeness DEC-631 names. Two exceptions, each measured below:
+
+- a constant, or a splatted one, handed to `try` is the error class a
+  service DSL's `try` rescues (discourse's
+  `try(ActiveRecord::RecordInvalid) { step … }`), not a name;
+- `method`'s answer counts only when run in the same expression (`.call`,
+  `.to_proc`, `&method(x)`), not when asked for its `source_location` or
+  handed to another runtime.
+
+**Measured**, `--dead app lib`, 0.10.0 (abd6d31) → this, every row whose
+grade moved read:
+
+| corpus | `lower` → `clear` | `clear` → `lower` | caveat reworded only |
+| --- | ---: | ---: | ---: |
+| discourse | 17 | 2 | 103 |
+| mastodon | 0 | 0 | 5 |
+
+The 17 were lowered by coincidence: a literal send (`public_send("can_edit?",
+post)`, `MessageBus.send(:pub_redis)`) or the text `send(` inside
+`WebPush.payload_send(`. The 2 are reached by a computed send in their own
+file (`public_send "#{key}=", value` in `Auth::AuthProvider`,
+`params.try(key)` in `Service::Base::LockStep`).
+
+**Rejected, measured: `method` whenever handed a computed name.** The
+first cut lowered 34 more discourse rows: `PrettyText`'s 20 by
+`Helpers.method(m)` handed to a JavaScript context, `SafeMigrate`'s 5
+and `Reports::ListQuery`'s 3 by `method(x).source_location`. All 5 of
+them with no caller were dead (no reference outside specs), so it failed
+DEC-631's base-rate test; `try`'s constants added 13 more, all false.
+Run-only loses `Service::Base::Step`'s `method = instance.method(name)`
+then `&method`, whose rows have a caller.
+
+**Not done: narrowing the file-wide marker to the names a shape fits**,
+and to a constant's keys (`"#{KINDS.key(k)}_attrs"` with `KINDS` a literal
+hash). Both trade a safe over-caveat for a row that comes out `clear`
+when the shape read and the parse disagree; each is a new code path that
+needs its own hunt.

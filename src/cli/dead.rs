@@ -3,6 +3,7 @@
 //! classes, modules and constants in `dead_consts`.
 
 use super::*;
+use crate::core::ruby::BY_NAME;
 use crate::resolve::refs;
 use entry_points::EntryPoint;
 use serde::Serialize;
@@ -1542,25 +1543,88 @@ fn method_blocks(source: &[u8]) -> Vec<(crate::core::Pos, crate::core::Pos)> {
 }
 
 /// Shapes that make "no references found" a weaker statement, named so the
-/// answer can say which one it saw rather than hedging in general. Each is
-/// named once: a `public_send(` is not also a `send(`.
+/// answer can say which one it saw rather than hedging in general.
 fn dynamic_markers(source: &[u8]) -> String {
     let text = String::from_utf8_lossy(source);
-    let plain_send = text
-        .match_indices("send(")
-        .any(|(at, _)| !text[..at].ends_with("public_"));
-    let seen = [
-        ("send", plain_send),
-        ("public_send", text.contains("public_send(")),
+    let mut seen: Vec<(&str, bool)> = computed_dispatches(source)
+        .into_iter()
+        .map(|name| (name, true))
+        .collect();
+    seen.extend([
         ("method_missing", text.contains("method_missing")),
         ("define_method", text.contains("define_method")),
         ("const_get", text.contains("const_get")),
-    ];
+    ]);
     seen.iter()
         .filter(|(_, found)| *found)
         .map(|(marker, _)| *marker)
         .collect::<Vec<_>>()
         .join(", ")
+}
+
+/// The calls that run a method by a name they are handed (`core::ruby::BY_NAME`),
+/// each named once, in that order, when the file hands one a computed name.
+/// A literal name is a reference the index already records (DEC-093).
+fn computed_dispatches(source: &[u8]) -> Vec<&'static str> {
+    use ruby_prism::Visit;
+    struct Dispatches(Vec<&'static str>);
+    impl Dispatches {
+        fn saw(&mut self, name: Option<&'static str>) {
+            if let Some(name) = name.filter(|n| !self.0.contains(n)) {
+                self.0.push(name);
+            }
+        }
+    }
+    impl<'pr> Visit<'pr> for Dispatches {
+        fn visit_call_node(&mut self, call: &ruby_prism::CallNode<'pr>) {
+            // `method`'s answer counts only when it is run: one asked for its
+            // `source_location`, or handed to another runtime, runs nothing here.
+            match computed_name(call) {
+                Some(handle) if handle.ends_with("method") => {}
+                found => self.saw(found),
+            }
+            if matches!(call.name().as_slice(), b"call" | b"to_proc") {
+                let handle = call.receiver().and_then(|r| r.as_call_node());
+                self.saw(handle.as_ref().and_then(computed_name));
+            }
+            ruby_prism::visit_call_node(self, call);
+        }
+
+        fn visit_block_argument_node(&mut self, node: &ruby_prism::BlockArgumentNode<'pr>) {
+            let handle = node.expression().and_then(|e| e.as_call_node());
+            self.saw(handle.as_ref().and_then(computed_name));
+            ruby_prism::visit_block_argument_node(self, node);
+        }
+    }
+    let text = String::from_utf8_lossy(source);
+    if !BY_NAME.iter().any(|name| text.contains(name)) {
+        return Vec::new();
+    }
+    let parsed = ruby_prism::parse(source);
+    let mut found = Dispatches(Vec::new());
+    found.visit(&parsed.node());
+    let order = |name: &&str| BY_NAME.iter().position(|n| n == name);
+    found.0.sort_by_key(order);
+    found.0
+}
+
+/// The name of a call in `BY_NAME` whose first argument is no literal name.
+fn computed_name(call: &ruby_prism::CallNode<'_>) -> Option<&'static str> {
+    let name = call.name();
+    let known = *BY_NAME.iter().find(|k| k.as_bytes() == name.as_slice())?;
+    let first = call.arguments()?.arguments().iter().next()?;
+    let constant = |arg: &ruby_prism::Node<'_>| {
+        arg.as_constant_read_node().is_some() || arg.as_constant_path_node().is_some()
+    };
+    // A constant handed to `try` is the error class a service DSL's `try`
+    // rescues, not a name.
+    let errors = constant(&first)
+        || first
+            .as_splat_node()
+            .and_then(|splat| splat.expression())
+            .is_some_and(|splatted| constant(&splatted));
+    let literal = first.as_symbol_node().is_some() || first.as_string_node().is_some();
+    (!literal && !(known.starts_with("try") && errors)).then_some(known)
 }
 
 /// A module's method whose name is called on a typed receiver that has no
@@ -1660,8 +1724,20 @@ mod tests {
         for (source, said) in [
             ("x.public_send(name)", "public_send"),
             ("send(name)", "send"),
-            ("send(a); public_send(b)", "send, public_send"),
+            ("public_send(b); send(a)", "send, public_send"),
             ("x.send_query(sql)", ""),
+            ("send(:literal); try(\"literal\"); method(:x)", ""),
+            (r##"__send__ "#{k}_attrs".to_sym, k"##, "__send__"),
+            (r##"try(:"#{k}_attrs"); x.try!(name)"##, "try, try!"),
+            (r##"method(:"#{k}_attrs").call"##, "method"),
+            ("list.map(&public_method(name))", "public_method"),
+            (
+                "Report.method(n).source_location; ctx.attach(method(n))",
+                "",
+            ),
+            ("try(ActiveRecord::RecordInvalid) { step :x }", ""),
+            ("try(*ERRORS) { step :x }; x.try(*names)", "try"),
+            ("request.method; define_method(name) {}", "define_method"),
             (
                 "define_method(:a) { const_get(n) }",
                 "define_method, const_get",

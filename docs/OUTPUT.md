@@ -376,6 +376,9 @@ names which:
 - a symbol in the method's own file that trekr does not read as a call
   (`only: [:archive]`), or, for a controller action, a route built at
   runtime (DEC-343, DEC-344);
+- a computed name sent anywhere in its file (`send(name)`, `__send__`,
+  `public_send`, `try`, or `method(name).call`; a literal name is a
+  reference instead), the caveat naming the call (DEC-631, DEC-662);
 - a name of its shape the checkout builds (`:"report_#{type}"`, or a string
   its class is sent, `Q.new.public_send("list_#{kind}")`; DEC-655), or a
   computed name sent to its class (`Mailer.public_send(type)`);

@@ -107,7 +107,7 @@ struct Cli {
     /// `single-caller` (one call: the inlining candidate). Each is `clear`, or
     /// `lower` confidence when its `caveat` names a way in trekr cannot see
     /// — for a class, module or constant, a name the checkout computes and
-    /// looks up at runtime; for any row, the file sends names dynamically,
+    /// looks up at runtime; for any row, the file sends a computed name,
     /// the one caller's receiver is untyped, it overrides a method, a view, a
     /// script or a gem names it, the checkout
     /// builds a name of its shape, an ancestor is not indexed, or it is an

@@ -17,6 +17,18 @@ const EVALUATES: [&str; 6] = [
 /// ActiveSupport's `try(:x)`, which a `nil` receiver skips.
 pub(crate) const SENDS: [&str; 5] = ["send", "public_send", "__send__", "try", "try!"];
 
+/// Run a method by the name they are handed, now or later: `SENDS`, and
+/// `method`, whose answer is called.
+pub(crate) const BY_NAME: [&str; 7] = [
+    "send",
+    "public_send",
+    "__send__",
+    "try",
+    "try!",
+    "method",
+    "public_method",
+];
+
 /// Name a method of their receiver without running it.
 const NAMES: [&str; 3] = ["method", "public_method", "respond_to?"];
 

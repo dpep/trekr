@@ -1,0 +1,5 @@
+# Every call that runs a method by a name it is handed lowers its file when
+# the name is computed, not only `send` and `public_send`: `__send__`, `try`
+# and `method` once came out clear. A literal name is a reference the index
+# records, so it lowers nothing.
+dead app Underscored#small_attrs=unreferenced~__send__ Tried#small_attrs=unreferenced~try Handled#small_attrs=unreferenced~method Literal#unused=unreferenced~
