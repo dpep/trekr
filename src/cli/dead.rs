@@ -1724,11 +1724,10 @@ fn sent_symbol(
 }
 
 /// A literal symbol the index reads as a call of the method it names
-/// (DEC-664): the first one handed to a send in `ruby::SENDS`.
+/// (DEC-664): the first one handed to a send in `ruby::SENDS`, or the
+/// one a send of a send hands on (`send(:public_send, :x)`).
 fn run_by_index(send: &crate::core::Dispatch) -> bool {
-    matches!(send.name, crate::core::SentName::Symbol(_))
-        && SENDS.contains(&send.by)
-        && !send.relayed
+    matches!(send.name, crate::core::SentName::Symbol(_)) && SENDS.contains(&send.by)
 }
 
 /// A name in a file that no rule reads as a call of the method it names.

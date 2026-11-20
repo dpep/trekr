@@ -36,11 +36,18 @@ pub(super) struct Built {
     /// (`public_send("list_#{x}")`, `__send__(:"#{k}_attrs")`): its shape,
     /// the class it is sent to, and where.
     sent: Vec<(String, String, At)>,
+    /// Each literal name sent that the index records no symbol for (a
+    /// string, an operator): the name, as written, the class it is sent
+    /// to if placed, and where, per file.
+    named: Vec<(String, String, Option<String>, At)>,
 }
 
 /// An interpolated name sent, before its receiver is placed.
 struct Sending {
     shape: String,
+    /// A literal name, as written, that the index reads no call of: the
+    /// shape is then the name itself.
+    written: Option<String>,
     to: SentTo,
     /// The nesting of the send, as the parse records it.
     nesting: Vec<String>,
@@ -143,7 +150,19 @@ impl Built {
         for (part, sendings) in parts {
             built.absorb(part);
             for sending in sendings {
-                let Some(class) = sending.class(tree) else {
+                let class = sending.class(tree);
+                if let Some(written) = sending.written {
+                    let known = |(n, _, c, (path, _)): &(String, String, Option<String>, At)| {
+                        *n == sending.shape && *c == class && *path == sending.at.0
+                    };
+                    if !built.named.iter().any(known) {
+                        built
+                            .named
+                            .push((sending.shape, written, class, sending.at));
+                    }
+                    continue;
+                }
+                let Some(class) = class else {
                     continue;
                 };
                 let (shape, at) = (sending.shape, sending.at);
@@ -222,6 +241,18 @@ impl Built {
             {
                 self.sent_to.push((constant.clone(), at.clone()));
             }
+            if let Some(written) = unrecorded(&send.name)
+                && send.run
+                && let SentName::Symbol(name) | SentName::String(name) = &send.name
+            {
+                sendings.push(Sending {
+                    shape: name.clone(),
+                    written: Some(written),
+                    to: send.to.clone(),
+                    nesting: send.nesting.clone(),
+                    at: at.clone(),
+                });
+            }
             match send.name {
                 // A string sent to a record (`row.public_send("total_#{kind}")`)
                 // is an attribute's name far more often than a method's.
@@ -234,6 +265,7 @@ impl Built {
                 {
                     sendings.push(Sending {
                         shape,
+                        written: None,
                         to: send.to,
                         nesting: send.nesting,
                         at,
@@ -244,6 +276,7 @@ impl Built {
                 SentName::Computed if send.to == SentTo::Own && send.run => {
                     sendings.push(Sending {
                         shape: "*".to_string(),
+                        written: None,
                         to: send.to,
                         nesting: send.nesting,
                         at,
@@ -309,10 +342,35 @@ impl Built {
                 "a name computed at runtime is sent to {constant} at {path}:{line}"
             ));
         }
+        // Its own file's says so already (DEC-662).
+        if let Some((_, written, _, (path, line))) =
+            self.named.iter().find(|(sent, _, class, (path, _))| {
+                sent == name && path != file && class.as_deref().is_none_or(related)
+            })
+        {
+            return Some(format!(
+                "`{written}` is sent by name at {path}:{line}, which is not read as a call"
+            ));
+        }
         let (constant, call, (path, line)) = self.listed.iter().find(|(c, _, _)| names(c))?;
         Some(format!(
             "its module's methods are listed at runtime ({constant}.{call} at {path}:{line})"
         ))
+    }
+}
+
+/// A literal name a send hands that extraction records no symbol for, so
+/// nothing reads it as a call (DEC-664): a string, or a symbol that is no
+/// plain method name (`:[]`, `:+`). As written.
+fn unrecorded(name: &SentName) -> Option<String> {
+    match name {
+        SentName::String(name) => Some(format!("\"{name}\"")),
+        SentName::Symbol(name)
+            if !name.starts_with(|c: char| c.is_ascii_lowercase() || c == '_') =>
+        {
+            Some(format!(":{name}"))
+        }
+        _ => None,
     }
 }
 

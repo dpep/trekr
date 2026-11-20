@@ -16624,7 +16624,8 @@ them (done by DEC-666); a held local is misread where a block parameter shadows 
 its only shaped write is conditional after an unshaped one (both done by
 DEC-666); and an operator
 or a relayed name sent from another file (`send(:[], 1)`,
-`send(:public_send, :x)`) is still read as a macro's symbol.
+`send(:public_send, :x)`) is still read as a macro's symbol (done by
+DEC-666).
 
 ## DEC-664 — A symbol handed to a send is a call in `--dead`
 
@@ -16766,3 +16767,13 @@ shape written under a condition the name was not (`n = params[:action];
 n = "handle_#{k}" if k`) leaves the unshaped name standing, as DEC-655
 already left a shape standing under an unshaped conditional write. No
 corpus row moved.
+
+**And literal names sent from another file** that DEC-664 left to the
+macro rule: a name a send of a send hands on (`send(:public_send, :x)`) is
+a call of `x`, untyped, as the first symbol is; and a literal name the
+index records no symbol for — a string (`send("spelled")`), or an operator
+(`send(:[], 1)`, `public_send(:+, 1)`) — lowers the method of its name on
+the class it is sent to and its relatives, or on any class when sent to a
+value: "`:[]` is sent by name at app/poker.rb:2, which is not read as a
+call". The sender's own file says so already (DEC-662). No corpus row
+moved.

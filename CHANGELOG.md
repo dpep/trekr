@@ -15,6 +15,11 @@
   (`n = params[:action]; n = "handle_#{k}" if k`): each sends a computed
   name, which lowers `Panel`'s and `Socket`'s methods, where only those
   fitting `handle_*` were.
+- **`--dead` reads a literal name sent from another file that it read as
+  nothing**: `Valve.new.send(:public_send, :relayed)` is a call of
+  `Valve#relayed` (it was `convention-only`), and `Grid.new.send(:[], 1)`,
+  `public_send(:+, 1)` or `send("spelled")` lowers `Grid`'s method of that
+  name, "`:[]` is sent by name at …", where it came out `clear`.
 
 ## 0.10.1 — 2026-11-19
 
