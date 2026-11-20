@@ -386,7 +386,15 @@ names which:
 - a name of its shape the checkout builds (`:"report_#{type}"`, or a string
   or symbol its class is sent, `Q.new.public_send("list_#{kind}")`,
   `"#{kind}_attrs"`; DEC-655, DEC-663), or a computed name sent to its
-  class (`Mailer.public_send(type)`);
+  class (`Mailer.public_send(type)`), in a Ruby file or an ERB or Haml
+  template;
+- its name, or an alias's, sent from another file as a string or an
+  operator, which trekr records no symbol for (`send("archive")`,
+  `send(:[], 1)`: "… is sent by name at …"; DEC-666), on its class or its
+  relatives, or on any class when sent to a value;
+- for a `single-caller` row, a macro of its own class that names it
+  (`before_action :x`, `validate :x`, a serializer's `attributes :x`: "a
+  macro names it too, at …"; DEC-666);
 - a writer `assign_attributes` reaches, an ancestor trekr has not indexed,
   a gem of the bundle that calls the name, a helper another helper calls
   (DEC-363–368, DEC-370);
