@@ -2432,6 +2432,34 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.looping -= 1;
     }
 
+    fn visit_for_node(&mut self, node: &ruby_prism::ForNode<'pr>) {
+        self.looping += 1;
+        ruby_prism::visit_for_node(self, node);
+        self.looping -= 1;
+    }
+
+    /// A body with a `rescue` may stop at any call in it.
+    fn visit_begin_node(&mut self, node: &ruby_prism::BeginNode<'pr>) {
+        let rescued = usize::from(node.rescue_clause().is_some());
+        self.looping += rescued;
+        ruby_prism::visit_begin_node(self, node);
+        self.looping -= rescued;
+    }
+
+    /// `x &&= y` writes only when `x` is set.
+    fn visit_local_variable_and_write_node(
+        &mut self,
+        node: &ruby_prism::LocalVariableAndWriteNode<'pr>,
+    ) {
+        self.looping += 1;
+        self.hold(
+            &String::from_utf8_lossy(node.name().as_slice()),
+            Some(&node.value()),
+        );
+        self.looping -= 1;
+        ruby_prism::visit_local_variable_and_write_node(self, node);
+    }
+
     fn visit_block_node(&mut self, node: &ruby_prism::BlockNode<'pr>) {
         let merged = usize::from(self.merging.contains(&node.location().start_offset()));
         let callback = self

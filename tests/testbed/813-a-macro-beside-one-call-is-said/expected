@@ -2,5 +2,5 @@
 # single-caller and clear: inlining that call and deleting it breaks the
 # callback (Signup). A macro symbol of another class, which names it only
 # by its name, says nothing (Helper), nor does one that only hides or
-# unhooks it (Quiet).
-dead app Signup#set_invite=single-caller~macro Helper#prepare=single-caller~ Quiet#hidden=single-caller~ Quiet#unhooked=single-caller~
+# unhooks it (Quiet), its symbols perhaps spanning lines (Spread).
+dead app Signup#set_invite=single-caller~macro Helper#prepare=single-caller~ Quiet#hidden=single-caller~ Quiet#unhooked=single-caller~ Spread#aa=single-caller~ Spread#bb=single-caller~ Spread#cc=single-caller~ Spread#rm=single-caller~

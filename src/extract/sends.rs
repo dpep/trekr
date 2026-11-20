@@ -13,6 +13,9 @@ pub(super) struct Held {
     local: String,
     /// The shape of the interpolated name it holds, `None` once replaced.
     shape: Option<String>,
+    /// Literal names written where they may not run, which it may hold
+    /// instead of its shape.
+    beside: Vec<String>,
     conditional: usize,
 }
 
@@ -103,6 +106,21 @@ impl Extractor<'_> {
             nesting: self.nesting.clone(),
             pos: self.pos(at.start_offset()),
         };
+        // A literal the local may hold instead of its shape is sent too.
+        let beside = first
+            .as_local_variable_read_node()
+            .and_then(|read| {
+                let local = String::from_utf8_lossy(read.name().as_slice());
+                let held = &self.frames.last()?.held;
+                Some(held.iter().rev().find(|h| h.local == local)?.beside.clone())
+            })
+            .unwrap_or_default();
+        for name in beside {
+            self.facts.sends.push(Dispatch {
+                name: SentName::String(name),
+                ..send.clone()
+            });
+        }
         self.facts.sends.push(send);
     }
 
@@ -182,28 +200,35 @@ impl Extractor<'_> {
     pub(super) fn hold(&mut self, local: &str, value: Option<&Node<'_>>) {
         let conditional = self.uncertain();
         let shape = value.and_then(|value| held_shape(value).flatten());
-        // A literal name is one more the local may hold beside a shape;
-        // anything else may be any name.
-        let unknown = shape.is_none()
-            && value.is_none_or(|v| v.as_string_node().is_none() && v.as_symbol_node().is_none());
+        // A literal name is one more the local may hold beside a shape, and
+        // `nil` is none; anything else may be any name.
+        let literal = value.and_then(literal_text);
+        let unknown =
+            shape.is_none() && literal.is_none() && value.is_none_or(|v| v.as_nil_node().is_none());
         let held = &mut self.frame().held;
+        let last = held.iter_mut().rev().find(|h| h.local == local);
+        // `nil` over nothing holds nothing a later write must displace.
+        if last.is_none() && value.is_some_and(|v| v.as_nil_node().is_some()) {
+            return;
+        }
         // A write where it may not run leaves what was there standing: a
         // shape beside an unknown name is as good as computed.
-        let replaces = held
-            .iter()
-            .rev()
-            .find(|h| h.local == local)
-            .is_none_or(|h| {
-                conditional <= h.conditional
-                    || (shape.is_some() && h.shape.is_some())
-                    || (unknown && h.shape.is_some())
-            });
+        let replaces = last.as_ref().is_none_or(|h| {
+            conditional <= h.conditional
+                || (shape.is_some() && h.shape.is_some())
+                || (unknown && h.shape.is_some())
+        });
         if replaces {
             held.push(Held {
                 local: local.to_string(),
                 shape,
+                beside: Vec::new(),
                 conditional,
             });
+        } else if let (Some(last), Some(literal)) = (last, literal)
+            && last.shape.is_some()
+        {
+            last.beside.push(literal);
         }
     }
 
@@ -226,6 +251,7 @@ impl Extractor<'_> {
         held.extend(names.iter().map(|local| Held {
             local: local.clone(),
             shape: None,
+            beside: Vec::new(),
             conditional,
         }));
         (start, names)
@@ -477,13 +503,18 @@ mod tests {
                 "{body}"
             );
         }
-        // Replaced only on a branch, or under a modifier: may still be.
+        // Replaced only on a branch, or under a modifier: may still be, and
+        // the literal is sent too.
         for replaced in [
             "    if x\n      m = \"other\"\n    end\n",
             "    m = \"other\" if x\n",
         ] {
             let body = format!("    m = \"handle_#{{x}}\"\n{replaced}    send(m)\n");
-            assert_eq!(held(&body), sent, "{body}");
+            let both = vec![
+                ("send", SentName::String("other".into()), SentTo::Own),
+                ("send", shape("handle_*"), SentTo::Own),
+            ];
+            assert_eq!(held(&body), both, "{body}");
         }
         // Another method's local of the same name is another local.
         assert_eq!(

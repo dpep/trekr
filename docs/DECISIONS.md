@@ -16764,7 +16764,14 @@ match (`case … in`) or a block, as well as a conditional — counted apart
 from the conditionals stored facts read (DEC-097), so no store version
 moves — and an unknown value written under one over a shape (`n =
 "handle_#{k}"; n = params[:x] if k`), which leaves a name computed where
-DEC-655 kept the shape. No corpus row moved.
+DEC-655 kept the shape. No corpus row moved. Its second hunt found a
+literal written so over a shape dropped (`m = "handle_#{k}"; [1].each {
+m = "fallback" }`, which 0.10.1 lowered): it is kept beside the shape and
+sent as a string too. A `for`, an `&&=` and a body with a `rescue` may not
+run either, and `nil` over nothing holds nothing (so a shape written after
+it in a block is read). Not done: sibling conditionals (`if a; m = x; end;
+if b; m = "handle_#{k}"; end`) read the second as replacing; a local
+changed in place (`m.sub!`) is still held.
 
 **Literal names sent from another file** that DEC-664 left to the
 macro rule: a name a send of a send hands on (`send(:public_send, :x)`) is
@@ -16803,3 +16810,11 @@ runs nothing. Measured against the branch before it: discourse 22 rows
 and mastodon 20 `clear` → `lower`, every one a callback, a validation, an
 Active Model Serializer attribute or association, a `helper_method`, or a
 `memoize_for_posts`; 98 rows already lower gain the reason. Testbed 813.
+The naming macro is the last call before the symbol, so a list that spans
+lines is one (`private :a,` ⏎ `:b`); `remove_method` and `ruby2_keywords`
+name only. Not done: an `if:`/`unless:` symbol on a naming macro
+(`skip_before_action :x, if: :y?`) is excluded with it, though Rails runs
+it; a macro in a concern's `included do` naming a method its includer
+defines is typed to the concern, where it finds none; a defining macro's
+symbol (`delegate :x`, a model's `has_many :x`) reads as running it, as
+DEC-312 has it for Active Model Serializers.

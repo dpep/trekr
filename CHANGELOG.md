@@ -12,8 +12,9 @@
   `private` or `skip_before_action`.
 - **`--dead` reads a block's parameter as hiding a local of its name**
   (`m = "handle_#{k}"; names.each { |m| Panel.new.public_send(m) }`), and
-  a shape assigned under a condition, in a loop, a `case … in` or a block
-  as leaving the name before it (`n = params[:action]; n = "handle_#{k}"
+  a shape assigned under a condition, in a loop (`while`, `until`, `for`),
+  a `case … in`, a block, an `&&=` or a body with a `rescue` as leaving the
+  name before it (`n = params[:action]; n = "handle_#{k}"
   if k`), and an unknown value assigned so over a shape as making the name
   computed (`n = "handle_#{k}"; n = params[:x] if k`): each sends a
   computed name, which lowers the receiver's methods, where only those

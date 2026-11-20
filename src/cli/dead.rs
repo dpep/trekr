@@ -1776,8 +1776,10 @@ fn typed_symbol(
     runs_as: &[(&str, bool)],
 ) -> bool {
     // These name a method to make, hide, show or unhook it, and run nothing.
-    const NAMING: [&str; 11] = [
+    const NAMING: [&str; 13] = [
         "alias_method",
+        "remove_method",
+        "ruby2_keywords",
         "private",
         "public",
         "protected",
@@ -1797,12 +1799,14 @@ fn typed_symbol(
     if facts.sends.iter().any(|send| send.pos == at) {
         return false;
     }
+    // The call the symbol is handed to is the last before it, its list of
+    // symbols perhaps spanning lines (`private :a,` ⏎ `:b`).
     let handed_to = facts
         .calls
         .iter()
-        .filter(|c| c.pos.line == at.line && c.pos.col < at.col)
+        .filter(|c| (c.pos.line, c.pos.col) < (at.line, at.col))
         .filter(|c| c.recv != crate::core::RecvShape::Symbol)
-        .max_by_key(|c| c.pos.col);
+        .max_by_key(|c| (c.pos.line, c.pos.col));
     if handed_to.is_some_and(|macro_call| NAMING.contains(&macro_call.name.as_str())) {
         return false;
     }

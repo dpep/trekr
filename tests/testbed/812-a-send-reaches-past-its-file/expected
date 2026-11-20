@@ -7,6 +7,9 @@
 # (Socket), and so does one in a loop, a pattern match or a block (PumpA,
 # PumpB, PumpC); an unknown value written under a condition over a shape
 # leaves a name computed (PumpD): each is a name computed, not the shape.
+# A literal written where it may not run is sent besides the shape (TapA);
+# a `for`, an `&&=` and a body with a `rescue` may not run either (TapB,
+# TapC, TapD); `nil` is no name, so a shape after it is read (TapE).
 # A name a send of a send hands on is a call of the method its receiver
 # finds, from any file (Valve#relayed), not of another class's (Bystander),
 # nor of a private one `public_send` cannot run (Valve#hidden).
@@ -15,4 +18,4 @@
 # A computed name sent to a constant in a Haml or ERB template names it
 # (Gauge, Dial); its interpolated symbols, mostly translation keys, and
 # its method listings are not read (Meter).
-dead app Host#plain=unreferenced~ Sub#other=unreferenced~ Unrelated#lonely=unreferenced~ Panel#other_w=unreferenced~Panel Socket#other_g=unreferenced~Socket Valve#relayed=none Bystander#relayed=convention-only Valve#hidden=convention-only Grid#%=unreferenced~:% Grid#+=unreferenced~:+ Grid#spelled=unreferenced~spelled Grid#unsent=unreferenced~ Gauge#reading=unreferenced~Gauge Dial#reading=unreferenced~Dial Spout#pour=convention-only~tip PumpA#other=unreferenced~PumpA PumpB#other=unreferenced~PumpB PumpC#other=unreferenced~PumpC PumpD#other=unreferenced~PumpD Meter#label_x=unreferenced~
+dead app Host#plain=unreferenced~ Sub#other=unreferenced~ Unrelated#lonely=unreferenced~ Panel#other_w=unreferenced~Panel Socket#other_g=unreferenced~Socket Valve#relayed=none Bystander#relayed=convention-only Valve#hidden=convention-only Grid#%=unreferenced~:% Grid#+=unreferenced~:+ Grid#spelled=unreferenced~spelled Grid#unsent=unreferenced~ Gauge#reading=unreferenced~Gauge Dial#reading=unreferenced~Dial Spout#pour=convention-only~tip PumpA#other=unreferenced~PumpA PumpB#other=unreferenced~PumpB PumpC#other=unreferenced~PumpC PumpD#other=unreferenced~PumpD Meter#label_x=unreferenced~ TapA#fallback_t=unreferenced~fallback_t TapB#other=unreferenced~TapB TapC#other=unreferenced~TapC TapD#other=unreferenced~TapD TapE#handle_e=unreferenced~sent TapE#other=unreferenced~

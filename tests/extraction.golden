@@ -944,6 +944,7 @@ ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/unbracketed.rb
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/user.rb 76380caca1915000
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/util.rb 76d84c6618ae2207
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/base.rb a28f4365bd3b23de
+ruby tests/testbed/812-a-send-reaches-past-its-file/app/fallback.rb ff83595421eb49b5
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/gauges.rb 25f5b9e5cf3e287b
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/grid.rb 6a6606cb3b9e053c
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/host.rb 3a4327ad6351a25e
@@ -958,10 +959,12 @@ ruby tests/testbed/812-a-send-reaches-past-its-file/app/relay.rb e6ed9ec99b1be35
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/router.rb bda4ffbe4b32e4ad
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/spout.rb 302fe65ed78e88d4
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/sub.rb 6ada34c5a1a36db7
+ruby tests/testbed/812-a-send-reaches-past-its-file/app/taps.rb 54d84377e818169c
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/valve.rb c58b4e92d5c95d05
 ruby tests/testbed/813-a-macro-beside-one-call-is-said/app/other.rb b178afa2cdbdf00c
 ruby tests/testbed/813-a-macro-beside-one-call-is-said/app/quiet.rb 474d12c8c60bbeb7
 ruby tests/testbed/813-a-macro-beside-one-call-is-said/app/signup.rb 58f6e0b5a409ac0f
+ruby tests/testbed/813-a-macro-beside-one-call-is-said/app/spread.rb 6a877b036358c5ca
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28
