@@ -1192,8 +1192,9 @@ pub(crate) struct Dispatch {
     pub(crate) by: &'static str,
     pub(crate) name: SentName,
     pub(crate) to: SentTo,
-    /// Handed on by a literal send of a send (`send(:public_send, x)`).
-    pub(crate) relayed: bool,
+    /// Handed on by a literal send of a send (`send(:public_send, x)`):
+    /// the send it is handed on to, which is the one that runs it.
+    pub(crate) relayed: Option<&'static str>,
     /// Runs the method here: a `method(x)` handle runs only where it is
     /// called (`.call`, `&`), and may be kept to run later.
     pub(crate) run: bool,

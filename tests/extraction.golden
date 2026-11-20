@@ -949,10 +949,10 @@ ruby tests/testbed/812-a-send-reaches-past-its-file/app/host.rb 3a4327ad6351a25e
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/mixin.rb d60586d20bac40af
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/panels.rb 7d3205189bc5c3f6
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/poker.rb 4ce6bc4187a12a60
-ruby tests/testbed/812-a-send-reaches-past-its-file/app/relay.rb 0ed251fe81eea55f
+ruby tests/testbed/812-a-send-reaches-past-its-file/app/relay.rb e6ed9ec99b1be35b
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/router.rb bda4ffbe4b32e4ad
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/sub.rb 6ada34c5a1a36db7
-ruby tests/testbed/812-a-send-reaches-past-its-file/app/valve.rb c9e570cac26384cb
+ruby tests/testbed/812-a-send-reaches-past-its-file/app/valve.rb c58b4e92d5c95d05
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

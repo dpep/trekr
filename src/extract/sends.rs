@@ -71,14 +71,14 @@ impl Extractor<'_> {
         };
         let mut arguments = arguments.arguments().iter();
         let mut first = arguments.next();
-        let mut relayed = false;
+        let mut relayed = None;
         // `send(:method, x)` answers a `Method`, which runs nothing.
         while let Some(text) = first.as_ref().and_then(literal_text)
-            && BY_NAME.contains(&text.as_str())
+            && let Some(by) = BY_NAME.iter().find(|by| **by == text)
             && !text.ends_with("method")
         {
             first = arguments.next();
-            relayed = true;
+            relayed = Some(*by);
         }
         let Some(first) = first else {
             return;

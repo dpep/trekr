@@ -12,7 +12,8 @@
   fitting `handle_*` were.
 - **`--dead` reads a literal name sent from another file that it read as
   nothing**: `Valve.new.send(:public_send, :relayed)` is a call of
-  `Valve#relayed` (it was `convention-only`), and `Grid.new.send(:[], 1)`,
+  `Valve#relayed` (it was `convention-only`), not of another class's
+  `relayed`, nor of a private one `public_send` cannot run; and `Grid.new.send(:[], 1)`,
   `public_send(:+, 1)` or `send("spelled")` lowers `Grid`'s method of that
   name, "`:[]` is sent by name at …", where it came out `clear`.
 - **`--dead` reads an ERB or Haml template's sends**: `%p=

@@ -16762,7 +16762,10 @@ corpus row moved.
 
 **Literal names sent from another file** that DEC-664 left to the
 macro rule: a name a send of a send hands on (`send(:public_send, :x)`) is
-a call of `x`, untyped, as the first symbol is; and a literal name the
+a call of the `x` its receiver finds, typed by the outer send's receiver as
+written (a constant, what it makes, `self`'s class on either side; a value
+is untyped), and run by the inner send, so `public_send` runs no private
+`x` (its hunt: counted untyped, two relays hid every dead `x`); and a literal name the
 index records no symbol for — a string (`send("spelled")`), or an operator
 (`send(:[], 1)`, `public_send(:+, 1)`) — lowers the method of its name on
 the class it is sent to and its relatives, or on any class when sent to a

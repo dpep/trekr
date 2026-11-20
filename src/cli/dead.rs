@@ -1701,20 +1701,49 @@ fn sent_symbol(
         .calls
         .iter()
         .find(|c| c.pos == at && c.recv == crate::core::RecvShape::Symbol)?;
+    let name = symbol.name.as_str();
+    // `public_send` and ActiveSupport's `try` run no private or protected
+    // method; a send of a send runs it by the inner one.
+    let by = send.relayed.unwrap_or(send.by);
+    let runs_here = |runs: &crate::tree::MethodDef| {
+        (runs.visibility == "public" || by == "send" || by == "__send__")
+            && runs.owner == owner
+            && runs_as.contains(&(name, runs.singleton))
+    };
+    // A name handed on carries no typed call of its own (DEC-093): its
+    // receiver is the outer send's, as written.
+    if send.relayed.is_some() {
+        use crate::core::SentTo;
+        return match &send.to {
+            SentTo::Value => Some(Ran::Untyped),
+            SentTo::Own => {
+                let scope = tree.scope_fqn(&send.nesting)?;
+                [false, true]
+                    .into_iter()
+                    .filter_map(|side| tree.lookup_self(&scope, side, name))
+                    .any(|runs| runs_here(&runs))
+                    .then_some(Ran::Untyped)
+            }
+            SentTo::Constant(written) | SentTo::Made(written) => {
+                let class = tree.resolve(written, &send.nesting).fqn?;
+                let singleton = matches!(send.to, SentTo::Constant(_));
+                let runs = tree.lookup_self(&class, singleton, name)?;
+                runs_here(&runs).then_some(Ran::Typed(class))
+            }
+        };
+    }
     let Some(sent) = symbol.stands_for.as_deref() else {
         return Some(Ran::Untyped);
     };
     let Some(class) = crate::resolve::receiver_type(tree, facts, sent, &reference.path) else {
         return Some(Ran::Untyped);
     };
-    let runs = tree.lookup_self(&class.fqn, class.singleton, &symbol.name)?;
-    // `public_send` and ActiveSupport's `try` run no private or protected
-    // method.
-    if runs.visibility != "public" && send.by != "send" && send.by != "__send__" {
+    let runs = tree.lookup_self(&class.fqn, class.singleton, name)?;
+    if runs.visibility != "public" && by != "send" && by != "__send__" {
         return None;
     }
     match (
-        runs.owner == owner && runs_as.contains(&(symbol.name.as_str(), runs.singleton)),
+        runs.owner == owner && runs_as.contains(&(name, runs.singleton)),
         class.ambiguous,
     ) {
         (true, false) => Some(Ran::Typed(class.fqn)),
