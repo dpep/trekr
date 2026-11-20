@@ -946,10 +946,12 @@ ruby tests/testbed/812-a-send-reaches-past-its-file/app/base.rb a28f4365bd3b23de
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/gauges.rb 25f5b9e5cf3e287b
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/grid.rb 6a6606cb3b9e053c
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/host.rb 3a4327ad6351a25e
+ruby tests/testbed/812-a-send-reaches-past-its-file/app/maybe.rb 138dc39568adcd39
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/mixin.rb d60586d20bac40af
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/panels.rb 7d3205189bc5c3f6
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/poker.rb 4ce6bc4187a12a60
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/pourer.rb d74cbe7e53ff6d11
+ruby tests/testbed/812-a-send-reaches-past-its-file/app/pumps.rb d23562bb2e94fb2d
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/relay.rb e6ed9ec99b1be35b
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/router.rb bda4ffbe4b32e4ad
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/spout.rb 302fe65ed78e88d4

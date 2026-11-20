@@ -6,9 +6,11 @@
 
 - **`--dead` reads a block's parameter as hiding a local of its name**
   (`m = "handle_#{k}"; names.each { |m| Panel.new.public_send(m) }`), and
-  a shape assigned under a condition as leaving the name before it
-  (`n = params[:action]; n = "handle_#{k}" if k`): each sends a computed
-  name, which lowers `Panel`'s and `Socket`'s methods, where only those
+  a shape assigned under a condition, in a loop, a `case … in` or a block
+  as leaving the name before it (`n = params[:action]; n = "handle_#{k}"
+  if k`), and an unknown value assigned so over a shape as making the name
+  computed (`n = "handle_#{k}"; n = params[:x] if k`): each sends a
+  computed name, which lowers the receiver's methods, where only those
   fitting `handle_*` were.
 - **`--dead` reads a literal name sent from another file that it read as
   nothing**: `Valve.new.send(:public_send, :relayed)` is a call of

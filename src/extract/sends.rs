@@ -177,19 +177,27 @@ impl Extractor<'_> {
     }
 
     /// Records what a method assigns a local: an interpolated name is held;
-    /// anything else replaces it, unless written under a conditional the
-    /// name was not, which may not run (DEC-655).
+    /// anything else replaces it, unless written where the name was not and
+    /// which may not run (DEC-655, DEC-666).
     pub(super) fn hold(&mut self, local: &str, value: Option<&Node<'_>>) {
-        let conditional = self.conditional;
+        let conditional = self.uncertain();
         let shape = value.and_then(|value| held_shape(value).flatten());
+        // A literal name is one more the local may hold beside a shape;
+        // anything else may be any name.
+        let unknown = shape.is_none()
+            && value.is_none_or(|v| v.as_string_node().is_none() && v.as_symbol_node().is_none());
         let held = &mut self.frame().held;
-        // A shape written where it may not run leaves an unshaped name
-        // standing, which may still be sent.
+        // A write where it may not run leaves what was there standing: a
+        // shape beside an unknown name is as good as computed.
         let replaces = held
             .iter()
             .rev()
             .find(|h| h.local == local)
-            .is_none_or(|h| conditional <= h.conditional || (shape.is_some() && h.shape.is_some()));
+            .is_none_or(|h| {
+                conditional <= h.conditional
+                    || (shape.is_some() && h.shape.is_some())
+                    || (unknown && h.shape.is_some())
+            });
         if replaces {
             held.push(Held {
                 local: local.to_string(),
@@ -199,10 +207,16 @@ impl Extractor<'_> {
         }
     }
 
+    /// How deep in code that may not run a write is: a conditional, a
+    /// loop or pattern match, or a block, which may never be called.
+    fn uncertain(&mut self) -> usize {
+        self.conditional + self.looping + self.frame().blocks
+    }
+
     /// A block's own locals (its parameters, and what it first assigns)
     /// hide a method's locals of their names until it ends.
     pub(super) fn shadow(&mut self, locals: &ruby_prism::ConstantList<'_>) -> (usize, Vec<String>) {
-        let conditional = self.conditional;
+        let conditional = self.uncertain();
         let names: Vec<String> = locals
             .iter()
             .map(|name| String::from_utf8_lossy(name.as_slice()).into_owned())

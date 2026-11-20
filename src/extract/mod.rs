@@ -234,6 +234,10 @@ struct Extractor<'a> {
     /// How many conditionals we are inside — `if`, `unless`, `case`, `&&`,
     /// `||`. A mixin sent from one may never run (DEC-097).
     conditional: usize,
+    /// The loops and pattern matches we are inside, which a local's write
+    /// may not run in either (`sends::hold`); kept apart from
+    /// `conditional`, which stored facts read.
+    looping: usize,
     /// The `ActiveSupport.on_load` blocks we are in (DEC-098).
     load_hooks: Vec<LoadHook>,
     /// The blocks we are in, innermost last: the call each is handed to, or
@@ -648,6 +652,7 @@ pub(crate) fn extract(src: &[u8]) -> Facts {
         configure_params: Vec::new(),
         load_hooks: Vec::new(),
         conditional: 0,
+        looping: 0,
         open_blocks: Vec::new(),
         matcher_subjects: HashMap::new(),
         minitest: minitest_spec(src, &parsed.node()),
@@ -2407,6 +2412,24 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.conditional += 1;
         ruby_prism::visit_or_node(self, node);
         self.conditional -= 1;
+    }
+
+    fn visit_while_node(&mut self, node: &ruby_prism::WhileNode<'pr>) {
+        self.looping += 1;
+        ruby_prism::visit_while_node(self, node);
+        self.looping -= 1;
+    }
+
+    fn visit_until_node(&mut self, node: &ruby_prism::UntilNode<'pr>) {
+        self.looping += 1;
+        ruby_prism::visit_until_node(self, node);
+        self.looping -= 1;
+    }
+
+    fn visit_case_match_node(&mut self, node: &ruby_prism::CaseMatchNode<'pr>) {
+        self.looping += 1;
+        ruby_prism::visit_case_match_node(self, node);
+        self.looping -= 1;
     }
 
     fn visit_block_node(&mut self, node: &ruby_prism::BlockNode<'pr>) {

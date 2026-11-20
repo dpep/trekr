@@ -16757,8 +16757,13 @@ their names until it ends (`m = "handle_#{k}"; names.each { |m|
 Panel.new.public_send(m) }` sends a computed name, not `handle_*`); and a
 shape written under a condition the name was not (`n = params[:action];
 n = "handle_#{k}" if k`) leaves the unshaped name standing, as DEC-655
-already left a shape standing under an unshaped conditional write. No
-corpus row moved.
+already left a shape standing under a conditional literal (testbed 692).
+Its hunt found the rest of what "may not run" means: a loop, a pattern
+match (`case … in`) or a block, as well as a conditional — counted apart
+from the conditionals stored facts read (DEC-097), so no store version
+moves — and an unknown value written under one over a shape (`n =
+"handle_#{k}"; n = params[:x] if k`), which leaves a name computed where
+DEC-655 kept the shape. No corpus row moved.
 
 **Literal names sent from another file** that DEC-664 left to the
 macro rule: a name a send of a send hands on (`send(:public_send, :x)`) is
