@@ -1312,6 +1312,20 @@ fn dead_in(
                 &format!("`{written}` at line {} is not read as a call", pos.line),
             );
         }
+        // A macro's symbol typed to this very method runs it besides its one
+        // call; one matched by name alone says too little (DEC-664).
+        if tier == DeadTier::SingleCaller
+            && let Some(symbol) = found.iter().filter(|r| r.receiver == "symbol").find(|r| {
+                parsed
+                    .get(&r.path)
+                    .is_some_and(|facts| typed_symbol(&tree, &facts, r, &owner, &runs_as))
+            })
+        {
+            also(
+                &mut risky,
+                &format!("a macro names it too, at {}:{}", symbol.path, symbol.line),
+            );
+        }
         if let Some(entry) = entry_point {
             also(&mut risky, &entry.caveat(true));
         }
@@ -1750,6 +1764,60 @@ fn sent_symbol(
         (true, true) => Some(Ran::Untyped),
         (false, _) => None,
     }
+}
+
+/// Whether a symbol stands for a call that lands on this method, typed
+/// (DEC-093): a macro's in its own class (`before_action :x`).
+fn typed_symbol(
+    tree: &Tree,
+    facts: &crate::core::Facts,
+    reference: &crate::resolve::refs::Reference,
+    owner: &str,
+    runs_as: &[(&str, bool)],
+) -> bool {
+    // These name a method to make, hide, show or unhook it, and run nothing.
+    const NAMING: [&str; 11] = [
+        "alias_method",
+        "private",
+        "public",
+        "protected",
+        "module_function",
+        "private_class_method",
+        "public_class_method",
+        "undef_method",
+        "skip_before_action",
+        "skip_after_action",
+        "skip_around_action",
+    ];
+    let at = crate::core::Pos {
+        line: reference.line,
+        col: reference.col,
+    };
+    // A send's symbol is the send's to tell (DEC-662, DEC-664).
+    if facts.sends.iter().any(|send| send.pos == at) {
+        return false;
+    }
+    let handed_to = facts
+        .calls
+        .iter()
+        .filter(|c| c.pos.line == at.line && c.pos.col < at.col)
+        .filter(|c| c.recv != crate::core::RecvShape::Symbol)
+        .max_by_key(|c| c.pos.col);
+    if handed_to.is_some_and(|macro_call| NAMING.contains(&macro_call.name.as_str())) {
+        return false;
+    }
+    facts
+        .calls
+        .iter()
+        .find(|c| c.pos == at && c.recv == crate::core::RecvShape::Symbol)
+        .and_then(|symbol| {
+            let sent = symbol.stands_for.as_deref()?;
+            let class = crate::resolve::receiver_type(tree, facts, sent, &reference.path)
+                .filter(|class| !class.ambiguous)?;
+            let runs = tree.lookup_self(&class.fqn, class.singleton, &symbol.name)?;
+            Some(runs.owner == owner && runs_as.contains(&(symbol.name.as_str(), runs.singleton)))
+        })
+        .unwrap_or(false)
 }
 
 /// A literal symbol the index reads as a call of the method it names

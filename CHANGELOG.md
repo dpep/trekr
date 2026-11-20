@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- **`--dead` says when a macro of its own class names a method called once
+  besides**: `before_action :set_invite` plus one call of `set_invite` was
+  `single-caller`, `clear`; it is `lower`, "a macro names it too, at …".
+  Only a macro typed to the method counts, so another class's
+  `before_action` naming the same method does not, nor does `alias_method`,
+  `private` or `skip_before_action`.
 - **`--dead` reads a block's parameter as hiding a local of its name**
   (`m = "handle_#{k}"; names.each { |m| Panel.new.public_send(m) }`), and
   a shape assigned under a condition, in a loop, a `case … in` or a block

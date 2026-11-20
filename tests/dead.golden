@@ -157,7 +157,7 @@
 761-a-constant-naming-an-unindexed-class-is-api aa7b5976a8325132
 762-a-protected-method-is-api 8fdaea8b119c644e
 763-a-doc-line-reopens-a-nodoc-body 6671f4d867ccd9f8
-780-a-haml-templates-ruby-is-read-in-place f4fdae49d340edac
+780-a-haml-templates-ruby-is-read-in-place c599b2299899c318
 785-a-haml-blocks-close-before-the-ruby-after-them c51c863e5ae60d90
 786-a-haml-ruby-filter-is-one-ruby-run f2dbf1f916adf74d
 787-a-haml-scripts-comment-while-do-and-rescue 6e3aebb1592700b8
@@ -168,7 +168,8 @@
 805-a-test-method-runs-only-in-a-test-case c291c6afa6b672b1
 807-every-dispatch-by-name-lowers-its-file 3d3a8c90f43bb32a
 808-a-suffix-shape-sent-by-name-lowers-its-receivers-methods 21294aca190ae33f
-809-a-symbol-sent-from-another-file-is-a-call 4ee11c337b2db1cc
+809-a-symbol-sent-from-another-file-is-a-call 7fb1a22c225766d8
 810-a-send-read-from-the-parse-keeps-what-text-read c282e312a24d0320
 811-what-a-send-names-reaches-its-receiver 0ea5b48c77eefc66
 812-a-send-reaches-past-its-file 5eee4ffdb1909467
+813-a-macro-beside-one-call-is-said cd3effefd14ad46a

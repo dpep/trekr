@@ -16666,7 +16666,8 @@ untyped written `subject.must_clauses` would make them.
 ("untyped caller"), the macro not named, as a spec's written call already
 made it. A caveat naming the macro was tried and lowered 301 discourse
 rows, since a macro's symbol is matched by name alone (a migration's
-column, another class's `before_action`); it waits on narrowing those. An
+column, another class's `before_action`); it waits on narrowing those
+(done by DEC-666, typed). An
 override whose only other reference is a spec takes `single-caller` from
 it, against DEC-652 (`TopicTimer#schedule_auto_open_job`). `&method(:x)`
 from another file is still a macro's symbol.
@@ -16787,3 +16788,18 @@ translation keys (`t(:"label_#{k}")`), which would lower every method of
 their shape checkout-wide, and its hunt found the first cut reading those
 and its method listings too. No corpus row moved; discourse wall time
 unchanged.
+
+**A macro's symbol beside one call** (DEC-664's "Not done", found again
+by a precision review of the corpora): `before_action :set_invite` plus
+one written call of `set_invite` came out `single-caller`, `clear`, though
+inlining the call and deleting the method breaks the callback. The caveat
+"a macro names it too, at …" now goes on a `single-caller` row whose
+symbol stands for a call typed to this very method (DEC-093: a class-level
+macro's symbol is `self`'s), which is the narrowing the name-matched
+attempt lacked; a symbol handed to a send is the send's to tell, and one
+handed to a macro that only makes, hides or unhooks a method
+(`alias_method`, `private`, `module_function`, `skip_before_action`, …)
+runs nothing. Measured against the branch before it: discourse 22 rows
+and mastodon 20 `clear` → `lower`, every one a callback, a validation, an
+Active Model Serializer attribute or association, a `helper_method`, or a
+`memoize_for_posts`; 98 rows already lower gain the reason. Testbed 813.
