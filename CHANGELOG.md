@@ -18,7 +18,9 @@
   if k`), and an unknown value assigned so over a shape as making the name
   computed (`n = "handle_#{k}"; n = params[:x] if k`): each sends a
   computed name, which lowers the receiver's methods, where only those
-  fitting `handle_*` were.
+  fitting `handle_*` were. A method's parameter is such a name too. A
+  string or another shape assigned so is sent besides the shape
+  (`m = "other" if c` lowers the receiver's `other`).
 - **`--dead` reads a literal name sent from another file that it read as
   nothing**: `Valve.new.send(:public_send, :relayed)` is a call of
   `Valve#relayed` (it was `convention-only`), not of another class's

@@ -16766,12 +16766,16 @@ moves — and an unknown value written under one over a shape (`n =
 "handle_#{k}"; n = params[:x] if k`), which leaves a name computed where
 DEC-655 kept the shape. No corpus row moved. Its second hunt found a
 literal written so over a shape dropped (`m = "handle_#{k}"; [1].each {
-m = "fallback" }`, which 0.10.1 lowered): it is kept beside the shape and
-sent as a string too. A `for`, an `&&=` and a body with a `rescue` may not
-run either, and `nil` over nothing holds nothing (so a shape written after
-it in a block is read). Not done: sibling conditionals (`if a; m = x; end;
-if b; m = "handle_#{k}"; end`) read the second as replacing; a local
-changed in place (`m.sub!`) is still held.
+m = "fallback" }`, which 0.10.1 lowered): a string, or another shape,
+written where it may not run is kept beside the shape, where it is
+written, and sent too (a symbol is cited where it is written, as before).
+A `for`, an `&&=` and a body with a `rescue` may not run either; `nil`
+holds no name, so a shape after it is read; and a method's parameters hold
+whatever names its callers pass, so a shape written over one under a
+condition leaves it computed. Not done: sibling conditionals (`if a; m =
+x; end; if b; m = "handle_#{k}"; end`) and a `rescue` clause beside its
+body read the second as replacing; a write after the send in a loop is
+not sent; a local changed in place (`m.sub!`) is still held.
 
 **Literal names sent from another file** that DEC-664 left to the
 macro rule: a name a send of a send hands on (`send(:public_send, :x)`) is

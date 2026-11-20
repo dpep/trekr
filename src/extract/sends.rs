@@ -13,9 +13,11 @@ pub(super) struct Held {
     local: String,
     /// The shape of the interpolated name it holds, `None` once replaced.
     shape: Option<String>,
-    /// Literal names written where they may not run, which it may hold
-    /// instead of its shape.
-    beside: Vec<String>,
+    /// The names written where they may not run, which it may hold
+    /// instead of its shape: a string, or another shape, and where.
+    beside: Vec<(SentName, crate::core::Pos)>,
+    /// Written `nil`: no name a later write leaves standing.
+    nothing: bool,
     conditional: usize,
 }
 
@@ -106,7 +108,8 @@ impl Extractor<'_> {
             nesting: self.nesting.clone(),
             pos: self.pos(at.start_offset()),
         };
-        // A literal the local may hold instead of its shape is sent too.
+        // A name the local may hold instead of its shape is sent too, cited
+        // where it is written.
         let beside = first
             .as_local_variable_read_node()
             .and_then(|read| {
@@ -115,9 +118,10 @@ impl Extractor<'_> {
                 Some(held.iter().rev().find(|h| h.local == local)?.beside.clone())
             })
             .unwrap_or_default();
-        for name in beside {
+        for (name, pos) in beside {
             self.facts.sends.push(Dispatch {
-                name: SentName::String(name),
+                name,
+                pos,
                 ..send.clone()
             });
         }
@@ -200,36 +204,61 @@ impl Extractor<'_> {
     pub(super) fn hold(&mut self, local: &str, value: Option<&Node<'_>>) {
         let conditional = self.uncertain();
         let shape = value.and_then(|value| held_shape(value).flatten());
-        // A literal name is one more the local may hold beside a shape, and
-        // `nil` is none; anything else may be any name.
-        let literal = value.and_then(literal_text);
-        let unknown =
-            shape.is_none() && literal.is_none() && value.is_none_or(|v| v.as_nil_node().is_none());
+        let nil = value.is_some_and(|v| v.as_nil_node().is_some());
+        // A string is one more name the local may hold beside a shape (a
+        // symbol is read where it is written); `nil` is none; anything else
+        // may be any name.
+        let string = value.and_then(|v| {
+            let name = String::from_utf8_lossy(v.as_string_node()?.unescaped()).into_owned();
+            Some((
+                SentName::String(name),
+                self.pos(v.location().start_offset()),
+            ))
+        });
+        let unknown = shape.is_none()
+            && !nil
+            && value.is_none_or(|v| v.as_string_node().is_none() && v.as_symbol_node().is_none());
+        let at = value.map(|v| self.pos(v.location().start_offset()));
         let held = &mut self.frame().held;
         let last = held.iter_mut().rev().find(|h| h.local == local);
         // `nil` over nothing holds nothing a later write must displace.
-        if last.is_none() && value.is_some_and(|v| v.as_nil_node().is_some()) {
+        if last.is_none() && nil {
             return;
         }
         // A write where it may not run leaves what was there standing: a
         // shape beside an unknown name is as good as computed.
         let replaces = last.as_ref().is_none_or(|h| {
-            conditional <= h.conditional
-                || (shape.is_some() && h.shape.is_some())
-                || (unknown && h.shape.is_some())
+            h.nothing || conditional <= h.conditional || (unknown && h.shape.is_some())
         });
         if replaces {
             held.push(Held {
                 local: local.to_string(),
                 shape,
                 beside: Vec::new(),
+                nothing: nil,
                 conditional,
             });
-        } else if let (Some(last), Some(literal)) = (last, literal)
+        } else if let Some(last) = last
             && last.shape.is_some()
         {
-            last.beside.push(literal);
+            match (shape, at) {
+                (Some(shape), Some(at)) => last.beside.push((SentName::Shape(shape), at)),
+                _ => last.beside.extend(string),
+            }
         }
+    }
+
+    /// A method's parameters hold whatever names its callers pass.
+    pub(super) fn hold_params(&mut self, names: impl Iterator<Item = String>) {
+        let conditional = self.uncertain();
+        let held = &mut self.frame().held;
+        held.extend(names.map(|local| Held {
+            local,
+            shape: None,
+            beside: Vec::new(),
+            nothing: false,
+            conditional,
+        }));
     }
 
     /// How deep in code that may not run a write is: a conditional, a
@@ -252,6 +281,7 @@ impl Extractor<'_> {
             local: local.clone(),
             shape: None,
             beside: Vec::new(),
+            nothing: false,
             conditional,
         }));
         (start, names)

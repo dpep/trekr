@@ -1902,6 +1902,7 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         self.frame().const_defaults = const_defaults(node);
         let params = params_of(node.parameters());
         self.frame().handed = handed_params(&params);
+        self.hold_params(params.iter().map(|p| p.name.clone()));
         self.frame().block_param = params
             .into_iter()
             .find(|p| p.kind == ParamKind::Block)
