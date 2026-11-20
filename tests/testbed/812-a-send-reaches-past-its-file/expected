@@ -1,0 +1,4 @@
+# A name computed sent to `self` in a module or a base class reaches the
+# methods of every class that includes or inherits it, in any file; it
+# lowered only its own file, so Host#plain and Sub#other came out clear.
+dead app Host#plain=unreferenced~Mixin Sub#other=unreferenced~Base Unrelated#lonely=unreferenced~

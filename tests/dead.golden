@@ -28,7 +28,7 @@
 345-routes-not-all-read-are-said a3d92d55d8d5a4e4
 360-a-haml-comment-or-continued-line-still-names cdfdf47de375a97c
 361-a-module-functions-calls-are-its-own e874d4b328539a2a
-362-a-serializer-calls-include-for-its-attributes fb4c9d049365c96c
+362-a-serializer-calls-include-for-its-attributes 05fe893baba43536
 363-a-serializer-without-include-methods-calls-none b223be408f7f4130
 364-a-name-built-at-runtime-is-said 7a79d24d53ebdf0b
 365-a-writer-assign-attributes-reaches d455e2c496ea07e4
@@ -37,13 +37,13 @@
 368-a-helper-calls-another-helper-by-name 015f7e36053ad86f
 369-a-mailer-action-is-called-on-its-class e83be71db626c10c
 370-methods-listed-at-runtime-are-said e539baf0ca2b3ed8
-371-a-thor-command-is-run-by-name 009b2c6507dea0db
+371-a-thor-command-is-run-by-name f68d07777c1271e4
 380-with-options-scopes-its-routes dc0e85dbb64e661b
 381-a-singular-resources-controller-is-its-plural 2e60ed9d98936e25
 382-a-test-apps-routes-are-not-the-apps 010438ffacda8f23
 383-a-routed-action-in-a-controller-concern 322b15831053fd5f
 384-a-routes-concern-reaches-a-drawn-file 6406a7a1284beebd
-385-thor-runs-no-helper-as-a-command 17afe683010af1e5
+385-thor-runs-no-helper-as-a-command 87054ba81543bae9
 386-a-lambda-in-a-modules-method-has-no-known-self 9bb126798048fdc7
 390-a-callback-block-in-a-class-methods-method-runs-on-the-includer b9a4467343d37a13
 391-a-block-whose-self-is-not-known-rules-nothing-out 3cfe55f8a5caedda
@@ -171,3 +171,4 @@
 809-a-symbol-sent-from-another-file-is-a-call 4ee11c337b2db1cc
 810-a-send-read-from-the-parse-keeps-what-text-read c282e312a24d0320
 811-what-a-send-names-reaches-its-receiver 0ea5b48c77eefc66
+812-a-send-reaches-past-its-file 2fc2018300fcf645

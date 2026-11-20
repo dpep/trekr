@@ -147,11 +147,11 @@ impl Built {
                     continue;
                 };
                 let (shape, at) = (sending.shape, sending.at);
-                if !built
-                    .sent
-                    .iter()
-                    .any(|(s, c, _)| *s == shape && *c == class)
-                {
+                // A computed name is kept per file too: its own file is
+                // left to the file-wide marker.
+                if !built.sent.iter().any(|(s, c, (path, _))| {
+                    *s == shape && *c == class && (shape != "*" || *path == at.0)
+                }) {
                     built.sent.push((shape, class, at));
                 }
             }
@@ -239,6 +239,16 @@ impl Built {
                         at,
                     })
                 }
+                // A name computed sent to `self` in a module or a base class
+                // reaches its includers' and subclasses' methods too.
+                SentName::Computed if send.to == SentTo::Own && send.run => {
+                    sendings.push(Sending {
+                        shape: "*".to_string(),
+                        to: send.to,
+                        nesting: send.nesting,
+                        at,
+                    })
+                }
                 _ => {}
             }
         }
@@ -247,7 +257,13 @@ impl Built {
 
     /// Why a method of this name, on this owner, may be reached by a name
     /// built at runtime: the shape or the constant, and where.
-    pub(super) fn reaching(&self, tree: &Tree, owner: &str, name: &str) -> Option<String> {
+    pub(super) fn reaching(
+        &self,
+        tree: &Tree,
+        owner: &str,
+        name: &str,
+        file: &str,
+    ) -> Option<String> {
         if let Some((shape, (path, line))) = self
             .shapes
             .iter()
@@ -271,11 +287,19 @@ impl Built {
                     .iter()
                     .any(|sub| tree.inherits(sub, owner))
         };
-        if let Some((shape, _, (path, line))) = self
-            .sent
-            .iter()
-            .find(|(shape, class, _)| crate::core::shape_matches(shape, name) && related(class))
+        if let Some((shape, class, (path, line))) =
+            self.sent.iter().find(|(shape, class, (path, _))| {
+                // A computed name's own file says so already (DEC-662).
+                crate::core::shape_matches(shape, name)
+                    && related(class)
+                    && (shape != "*" || path != file)
+            })
         {
+            if shape == "*" {
+                return Some(format!(
+                    "a name computed at runtime is sent in {class} at {path}:{line}"
+                ));
+            }
             return Some(format!(
                 "a name of its shape is sent at runtime (`{shape}` at {path}:{line})"
             ));

@@ -940,6 +940,10 @@ ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/short.rb d668a
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/unbracketed.rb 678cf252fb081c11
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/user.rb 76380caca1915000
 ruby tests/testbed/811-what-a-send-names-reaches-its-receiver/app/util.rb 76d84c6618ae2207
+ruby tests/testbed/812-a-send-reaches-past-its-file/app/base.rb a28f4365bd3b23de
+ruby tests/testbed/812-a-send-reaches-past-its-file/app/host.rb 3a4327ad6351a25e
+ruby tests/testbed/812-a-send-reaches-past-its-file/app/mixin.rb d60586d20bac40af
+ruby tests/testbed/812-a-send-reaches-past-its-file/app/sub.rb 6ada34c5a1a36db7
 sql tests/testbed/470-a-structure-sql-types-its-columns/db/structure.sql 121fe72afbd45f57
 sql tests/testbed/471-an-app-with-both-dumps-reads-the-one-rails-loads/db/structure.sql fc0ca4a71fde61bd
 sql tests/testbed/510-a-table-in-another-schema-is-not-the-models/db/structure.sql 8dd0bd18fc4abf28

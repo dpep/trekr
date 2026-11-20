@@ -22,7 +22,7 @@ belongs to:
 | RSpec | 084, 087, 088, 090, 091, 092, 095, 096, 113, 114, 115, 120, 123, 124, 490, 491, 495, 497, 498, 499, 659 |
 | Views and templates | 360, 520, 521, 522, 523, 524, 525, 526, 630, 644, 658 |
 | `--refs` and the CLI's contract | 021, 024, 036, 059, 067, 073, 076, 080, 121, 122, 125, 135, 170, 204, 205, 230, 233, 250, 290, 563 |
-| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665 |
+| `--dead` | 037, 038, 074, 315, 316, 343, 344, 361, 362, 363, 364, 365, 366, 367, 368, 369, 370, 371, 372, 402, 403, 420, 421, 422, 450, 492, 493, 494, 496, 510, 540, 562, 620, 621, 631, 652, 654, 655, 657, 660, 661, 662, 663, 664, 665, 666 |
 | LSP and editors | 032, 034, 039, 040, 044, 045, 050, 052, 053, 056, 062, 064, 083, 167, 264, 275, 321, 322, 323, 330, 331, 332, 333, 443, 481, 511, 646 |
 | Scope and housekeeping | 030, 063, 640 |
 
@@ -16619,7 +16619,7 @@ it, as a send does. No corpus row moved.
 **Not done, found by the same hunt, each as in 0.10.0:** a computed
 `public_send(n)` in a mixin or a base class lowers only its own file, not
 the includer's or subclass's methods, though a shape sent there reaches
-them; a held local is misread where a block parameter shadows it
+them (done by DEC-666); a held local is misread where a block parameter shadows it
 (`names.each { |m| … public_send(m) }` after `m = "handle_#{k}"`) or where
 its only shaped write is conditional after an unshaped one; and an operator
 or a relayed name sent from another file (`send(:[], 1)`,
@@ -16727,3 +16727,32 @@ threads.
 each of nine workers parsed about 2,900 of discourse's files against the
 serial run's 3,567 in all, and redid the `initialize` scans: discourse −7%
 wall at double the CPU (7.5 → 14.6 s user), mastodon −45%.
+
+## DEC-666 — A computed send to `self` reaches its includers and subclasses
+
+**Decided.** A name computed and sent to `self` (`public_send(n)`,
+`send(options[:json])`) in a module or a class lowers, besides its own file
+(DEC-662), every method of a class that includes or inherits it, in any
+file: "a name computed at runtime is sent in Mixin at app/mixin.rb:2". A
+shape sent there already reached them (DEC-663), so the fully computed
+name, which reaches more, reached less. Recorded per class and file; the
+sender's own file is left to the file-wide marker, which says so already.
+
+**Measured**, `--dead app lib`, against 0.10.1: discourse 113 rows `clear`
+→ `lower` (most `UserCardSerializer`'s `public_send(attr)`,
+`ApplicationHelper`'s `public_send(color_method, …)`, `ListController`),
+88 more lowered rows gain the reason; mastodon 649 `clear` → `lower`, 596
+of them from `CacheConcern#render_with_cache`'s `send(options[:json])`,
+which `ApplicationController` includes into every controller — and which
+`render_with_cache json: :activity` uses to reach
+`Instances::ActivityController#activity`. Each is a send that can reach
+the row; a wrong `clear` invites a deletion, a wrong `lower` asks a look.
+
+**Not done: narrowing a computed name by what its callers pass.**
+`CacheConcern`'s name is a parameter, and most callers pass a record, one
+a symbol; reading that needs the call graph, not the send. A local
+assigned only literals (`color_method = dark ? :a : :b`) is computed too.
+Testbed fixtures that keep a gem's stand-in in the checkout (Thor's
+`new.public_send(argv.first)`, 371 and 385; ActiveModel::Serializer's
+`send`, 362) now lower their subclasses' rows, as such a gem vendored into
+a checkout would. Testbed 812.
