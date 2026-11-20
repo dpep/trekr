@@ -285,14 +285,16 @@ impl Built {
     }
 
     /// Why a method of this name, on this owner, may be reached by a name
-    /// built at runtime: the shape or the constant, and where.
+    /// built at runtime: the shape or the constant, and where. `runs_as`
+    /// is its name first, then the aliases that run its body.
     pub(super) fn reaching(
         &self,
         tree: &Tree,
         owner: &str,
-        name: &str,
+        runs_as: &[(&str, bool)],
         file: &str,
     ) -> Option<String> {
+        let name = runs_as.first().map_or("", |(name, _)| *name);
         if let Some((shape, (path, line))) = self
             .shapes
             .iter()
@@ -333,7 +335,9 @@ impl Built {
         // Its own file's says so already (DEC-662).
         if let Some((_, written, _, (path, line))) =
             self.named.iter().find(|(sent, _, class, (path, _))| {
-                sent == name && path != file && class.as_deref().is_none_or(related)
+                runs_as.iter().any(|(name, _)| sent == name)
+                    && path != file
+                    && class.as_deref().is_none_or(related)
             })
         {
             return Some(format!(

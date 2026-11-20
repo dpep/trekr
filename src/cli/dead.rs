@@ -1280,7 +1280,7 @@ fn dead_in(
                 "a writer Active Model's `assign_attributes` calls by name",
             );
         }
-        if let Some(why) = built.reaching(&tree, &owner, &def.name, &relative(file)) {
+        if let Some(why) = built.reaching(&tree, &owner, &runs_as, &relative(file)) {
             also(&mut risky, &why);
         }
         // A symbol in its own file that no rule reads as its name may still

@@ -16770,7 +16770,7 @@ index records no symbol for — a string (`send("spelled")`), or an operator
 (`send(:[], 1)`, `public_send(:+, 1)`) — lowers the method of its name on
 the class it is sent to and its relatives, or on any class when sent to a
 value: "`:[]` is sent by name at app/poker.rb:2, which is not read as a
-call". The sender's own file says so already (DEC-662). No corpus row
+call", and an alias's name sent so lowers the body it runs. The sender's own file says so already (DEC-662). No corpus row
 moved.
 
 **Templates**: an ERB or Haml template's Ruby is read for its sends as
