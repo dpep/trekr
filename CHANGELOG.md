@@ -4,11 +4,6 @@
 
 ### Fixed
 
-- **`--dead` lowers the methods a module's or base class's computed send
-  reaches**: `public_send(n)` in `Mixin` lowers `Host#plain` where `Host`
-  includes it, and `send(n)` in `Base` lowers `Sub#other`, in any file,
-  "a name computed at runtime is sent in Mixin at …". It lowered only its
-  own file, and such methods elsewhere came out `clear`.
 - **`--dead` reads a block's parameter as hiding a local of its name**
   (`m = "handle_#{k}"; names.each { |m| Panel.new.public_send(m) }`), and
   a shape assigned under a condition as leaving the name before it

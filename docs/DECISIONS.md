@@ -16620,7 +16620,7 @@ it, as a send does. No corpus row moved.
 **Not done, found by the same hunt, each as in 0.10.0:** a computed
 `public_send(n)` in a mixin or a base class lowers only its own file, not
 the includer's or subclass's methods, though a shape sent there reaches
-them (done by DEC-666); a held local is misread where a block parameter shadows it
+them (tried and rejected by DEC-666, for its false rate); a held local is misread where a block parameter shadows it
 (`names.each { |m| … public_send(m) }` after `m = "handle_#{k}"`) or where
 its only shaped write is conditional after an unshaped one (both done by
 DEC-666); and an operator
@@ -16731,36 +16731,27 @@ each of nine workers parsed about 2,900 of discourse's files against the
 serial run's 3,567 in all, and redid the `initialize` scans: discourse −7%
 wall at double the CPU (7.5 → 14.6 s user), mastodon −45%.
 
-## DEC-666 — A computed send to `self` reaches its includers and subclasses
+## DEC-666 — What a send hands on is read further: block locals, relayed and unread names, templates
 
-**Decided.** A name computed and sent to `self` (`public_send(n)`,
-`send(options[:json])`) in a module or a class lowers, besides its own file
-(DEC-662), every method of a class that includes or inherits it, in any
-file: "a name computed at runtime is sent in Mixin at app/mixin.rb:2". A
-shape sent there already reached them (DEC-663), so the fully computed
-name, which reaches more, reached less. Recorded per class and file; the
-sender's own file is left to the file-wide marker, which says so already.
+**Rejected first: a computed send to `self` reaching its includers and
+subclasses.** A name computed and sent to `self` in a module or base class
+(`send(options[:json])`, `public_send(attr)`) lowered every method of
+every class including or inheriting it, in any file, since a shape sent
+there already reached them (DEC-663). Measured, `--dead app lib` against
+0.10.1: discourse 113 rows and mastodon 649 went `clear` → `lower`, 596 of
+them from `CacheConcern#render_with_cache`, which `ApplicationController`
+includes into every controller. A review of every cause against the
+corpus source found 1 of the 762 reachable (`UserCardSerializer`'s
+`profile_background_upload_url`, already reached by its own symbol): each
+cause's names form a closed set a reader can list — the literal its
+callers pass (`json: :activity`, the only symbol of 17 call sites), a
+macro's literal arguments, a constant's list, a local assigned two
+literals, a serializer's `attributes` — and 11 rows were singleton methods
+lowered by a send in an instance method. Reverted. It comes back only with
+the narrowing that keeps what is reachable: a parameter's literal at its
+call sites, a loop over a literal list, a local of literals, the side.
 
-**Measured**, `--dead app lib`, against 0.10.1: discourse 113 rows `clear`
-→ `lower` (most `UserCardSerializer`'s `public_send(attr)`,
-`ApplicationHelper`'s `public_send(color_method, …)`, `ListController`),
-88 more lowered rows gain the reason; mastodon 649 `clear` → `lower`, 596
-of them from `CacheConcern#render_with_cache`'s `send(options[:json])`,
-which `ApplicationController` includes into every controller — and which
-`render_with_cache json: :activity` uses to reach
-`Instances::ActivityController#activity`. Each is a send that can reach
-the row; a wrong `clear` invites a deletion, a wrong `lower` asks a look.
-
-**Not done: narrowing a computed name by what its callers pass.**
-`CacheConcern`'s name is a parameter, and most callers pass a record, one
-a symbol; reading that needs the call graph, not the send. A local
-assigned only literals (`color_method = dark ? :a : :b`) is computed too.
-Testbed fixtures that keep a gem's stand-in in the checkout (Thor's
-`new.public_send(argv.first)`, 371 and 385; ActiveModel::Serializer's
-`send`, 362) now lower their subclasses' rows, as such a gem vendored into
-a checkout would. Testbed 812.
-
-**Also, the locals a send is handed** (DEC-663's last hunt): a block's own
+**The locals a send is handed** (DEC-663's last hunt): a block's own
 locals — its parameters, and what it first assigns — hide the method's of
 their names until it ends (`m = "handle_#{k}"; names.each { |m|
 Panel.new.public_send(m) }` sends a computed name, not `handle_*`); and a
@@ -16769,7 +16760,7 @@ n = "handle_#{k}" if k`) leaves the unshaped name standing, as DEC-655
 already left a shape standing under an unshaped conditional write. No
 corpus row moved.
 
-**And literal names sent from another file** that DEC-664 left to the
+**Literal names sent from another file** that DEC-664 left to the
 macro rule: a name a send of a send hands on (`send(:public_send, :x)`) is
 a call of `x`, untyped, as the first symbol is; and a literal name the
 index records no symbol for — a string (`send("spelled")`), or an operator
@@ -16779,7 +16770,7 @@ value: "`:[]` is sent by name at app/poker.rb:2, which is not read as a
 call". The sender's own file says so already (DEC-662). No corpus row
 moved.
 
-**And templates**: an ERB or Haml template's Ruby is read for its sends as
+**Templates**: an ERB or Haml template's Ruby is read for its sends as
 a Ruby file's is, at the template's lines (`%p=
 Gauge.new.public_send(params[:m])` lowers `Gauge`'s methods). Slim,
 Jbuilder and Builder are still not read, as `--dead` reads none of them

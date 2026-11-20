@@ -1,6 +1,7 @@
-# A name computed sent to `self` in a module or a base class reaches the
-# methods of every class that includes or inherits it, in any file; it
-# lowered only its own file, so Host#plain and Sub#other came out clear.
+# A name computed sent to `self` in a module or a base class lowers only
+# its own file: reaching every includer's and subclass's methods was tried
+# and lowered hundreds of rows no send reaches (DEC-666), so Host#plain and
+# Sub#other stay clear.
 # A block's parameter hides the method's local of its name (Panel), and a
 # shape written under a condition leaves the name it may not replace
 # (Socket): each is a name computed, not the shape.
@@ -9,4 +10,4 @@
 # method of its name from any file (Grid).
 # A computed name sent to a constant in a Haml or ERB template names it
 # (Gauge, Dial).
-dead app Host#plain=unreferenced~Mixin Sub#other=unreferenced~Base Unrelated#lonely=unreferenced~ Panel#other_w=unreferenced~Panel Socket#other_g=unreferenced~Socket Valve#relayed=single-caller Grid#%=unreferenced~:% Grid#+=unreferenced~:+ Grid#spelled=unreferenced~spelled Grid#unsent=unreferenced~ Gauge#reading=unreferenced~Gauge Dial#reading=unreferenced~Dial
+dead app Host#plain=unreferenced~ Sub#other=unreferenced~ Unrelated#lonely=unreferenced~ Panel#other_w=unreferenced~Panel Socket#other_g=unreferenced~Socket Valve#relayed=single-caller Grid#%=unreferenced~:% Grid#+=unreferenced~:+ Grid#spelled=unreferenced~spelled Grid#unsent=unreferenced~ Gauge#reading=unreferenced~Gauge Dial#reading=unreferenced~Dial
