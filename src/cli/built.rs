@@ -131,8 +131,15 @@ impl Built {
         let parts: Vec<(Built, Vec<Sending>)> = texts
             .files
             .par_iter()
-            .filter(|(path, _)| path.ends_with(".rb") || path.ends_with(".rake"))
+            .filter(|(path, _)| {
+                [".rb", ".rake", ".erb", ".haml"]
+                    .iter()
+                    .any(|ext| path.ends_with(ext))
+            })
             .filter_map(|(path, text)| {
+                // A template's Ruby, at the template's own lines.
+                let source = crate::extract::ruby_source(path, text.as_bytes());
+                let text = &*String::from_utf8_lossy(&source);
                 if !text.contains("#{")
                     && !text.contains("instance_methods")
                     && crate::extract::sends_in_text(text.as_bytes())

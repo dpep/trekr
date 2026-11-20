@@ -20,6 +20,9 @@
   `Valve#relayed` (it was `convention-only`), and `Grid.new.send(:[], 1)`,
   `public_send(:+, 1)` or `send("spelled")` lowers `Grid`'s method of that
   name, "`:[]` is sent by name at …", where it came out `clear`.
+- **`--dead` reads an ERB or Haml template's sends**: `%p=
+  Gauge.new.public_send(params[:m])` in a view lowers `Gauge`'s methods,
+  as the same send in a Ruby file did.
 
 ## 0.10.1 — 2026-11-19
 

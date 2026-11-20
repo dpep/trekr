@@ -7,4 +7,6 @@
 # A name a send of a send hands on is a call of it from any file (Valve).
 # One the index records no symbol for, an operator or a string, lowers the
 # method of its name from any file (Grid).
-dead app Host#plain=unreferenced~Mixin Sub#other=unreferenced~Base Unrelated#lonely=unreferenced~ Panel#other_w=unreferenced~Panel Socket#other_g=unreferenced~Socket Valve#relayed=single-caller Grid#[]=single-caller~:[] Grid#+=unreferenced~:+ Grid#spelled=unreferenced~spelled Grid#unsent=unreferenced~
+# A computed name sent to a constant in a Haml or ERB template names it
+# (Gauge, Dial).
+dead app Host#plain=unreferenced~Mixin Sub#other=unreferenced~Base Unrelated#lonely=unreferenced~ Panel#other_w=unreferenced~Panel Socket#other_g=unreferenced~Socket Valve#relayed=single-caller Grid#%=unreferenced~:% Grid#+=unreferenced~:+ Grid#spelled=unreferenced~spelled Grid#unsent=unreferenced~ Gauge#reading=unreferenced~Gauge Dial#reading=unreferenced~Dial

@@ -16606,7 +16606,8 @@ It found too that a file was read for its sends only where it held a
 named nothing. The filter is now the one the file-wide marker reads
 (`sends_in_text`). No corpus row moved; discourse wall time unchanged,
 about 0.15 s more CPU. Not done: templates are not read for sends here
-(`%p= Widget.new.public_send(params[:m])` in a Haml view).
+(`%p= Widget.new.public_send(params[:m])` in a Haml view; done by
+DEC-666 for ERB and Haml).
 
 And a shape too short to cite (`"#{k}="`, `"#{k}?"`, `"#{k}"`) sent to a
 constant or what it makes named nothing at all, though it can reach only
@@ -16777,3 +16778,9 @@ the class it is sent to and its relatives, or on any class when sent to a
 value: "`:[]` is sent by name at app/poker.rb:2, which is not read as a
 call". The sender's own file says so already (DEC-662). No corpus row
 moved.
+
+**And templates**: an ERB or Haml template's Ruby is read for its sends as
+a Ruby file's is, at the template's lines (`%p=
+Gauge.new.public_send(params[:m])` lowers `Gauge`'s methods). Slim,
+Jbuilder and Builder are still not read, as `--dead` reads none of them
+for calls. No corpus row moved; discourse wall time unchanged.
