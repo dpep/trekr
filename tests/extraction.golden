@@ -39,6 +39,7 @@ erb tests/testbed/641-a-components-template-runs-on-the-component/app/components
 erb tests/testbed/641-a-components-template-runs-on-the-component/app/components/card_component/card_component.html.erb d1baad536b6dcb39
 erb tests/testbed/641-a-components-template-runs-on-the-component/app/components/stray.html.erb f1aa91821e966fe9
 erb tests/testbed/687-a-views-constantize-may-reach-any-constant/app/views/widgets/show.html.erb 1c78316ac18f714c
+erb tests/testbed/812-a-send-reaches-past-its-file/app/views/gauges/edit.html.erb 8548ec366813e8c6
 erb tests/testbed/812-a-send-reaches-past-its-file/app/views/gauges/index.html.erb e80c5022f17e1f30
 haml tests/testbed/360-a-haml-comment-or-continued-line-still-names/app/views/layouts/application.html.haml a99365b5e0f700c8
 haml tests/testbed/360-a-haml-comment-or-continued-line-still-names/app/views/widgets/_form.html.haml 5ded4755938eab19
@@ -947,6 +948,7 @@ ruby tests/testbed/812-a-send-reaches-past-its-file/app/gauges.rb 25f5b9e5cf3e28
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/grid.rb 6a6606cb3b9e053c
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/host.rb 3a4327ad6351a25e
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/maybe.rb 138dc39568adcd39
+ruby tests/testbed/812-a-send-reaches-past-its-file/app/meter.rb 6e2126add6d200fd
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/mixin.rb d60586d20bac40af
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/panels.rb 7d3205189bc5c3f6
 ruby tests/testbed/812-a-send-reaches-past-its-file/app/poker.rb 4ce6bc4187a12a60

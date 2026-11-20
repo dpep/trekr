@@ -13,5 +13,6 @@
 # One the index records no symbol for, an operator or a string, lowers the
 # method of its name from any file (Grid), or of an alias of it (Spout).
 # A computed name sent to a constant in a Haml or ERB template names it
-# (Gauge, Dial).
-dead app Host#plain=unreferenced~ Sub#other=unreferenced~ Unrelated#lonely=unreferenced~ Panel#other_w=unreferenced~Panel Socket#other_g=unreferenced~Socket Valve#relayed=none Bystander#relayed=convention-only Valve#hidden=convention-only Grid#%=unreferenced~:% Grid#+=unreferenced~:+ Grid#spelled=unreferenced~spelled Grid#unsent=unreferenced~ Gauge#reading=unreferenced~Gauge Dial#reading=unreferenced~Dial Spout#pour=convention-only~tip PumpA#other=unreferenced~PumpA PumpB#other=unreferenced~PumpB PumpC#other=unreferenced~PumpC PumpD#other=unreferenced~PumpD
+# (Gauge, Dial); its interpolated symbols, mostly translation keys, and
+# its method listings are not read (Meter).
+dead app Host#plain=unreferenced~ Sub#other=unreferenced~ Unrelated#lonely=unreferenced~ Panel#other_w=unreferenced~Panel Socket#other_g=unreferenced~Socket Valve#relayed=none Bystander#relayed=convention-only Valve#hidden=convention-only Grid#%=unreferenced~:% Grid#+=unreferenced~:+ Grid#spelled=unreferenced~spelled Grid#unsent=unreferenced~ Gauge#reading=unreferenced~Gauge Dial#reading=unreferenced~Dial Spout#pour=convention-only~tip PumpA#other=unreferenced~PumpA PumpB#other=unreferenced~PumpB PumpC#other=unreferenced~PumpC PumpD#other=unreferenced~PumpD Meter#label_x=unreferenced~

@@ -16775,11 +16775,15 @@ index records no symbol for — a string (`send("spelled")`), or an operator
 (`send(:[], 1)`, `public_send(:+, 1)`) — lowers the method of its name on
 the class it is sent to and its relatives, or on any class when sent to a
 value: "`:[]` is sent by name at app/poker.rb:2, which is not read as a
-call", and an alias's name sent so lowers the body it runs. The sender's own file says so already (DEC-662). No corpus row
-moved.
+call", and an alias's name sent so lowers the body it runs. The
+sender's own file says so already (DEC-662). No corpus row moved.
 
 **Templates**: an ERB or Haml template's Ruby is read for its sends as
 a Ruby file's is, at the template's lines (`%p=
 Gauge.new.public_send(params[:m])` lowers `Gauge`'s methods). Slim,
 Jbuilder and Builder are still not read, as `--dead` reads none of them
-for calls. No corpus row moved; discourse wall time unchanged.
+for calls. Only their sends: a template's interpolated symbols are mostly
+translation keys (`t(:"label_#{k}")`), which would lower every method of
+their shape checkout-wide, and its hunt found the first cut reading those
+and its method listings too. No corpus row moved; discourse wall time
+unchanged.

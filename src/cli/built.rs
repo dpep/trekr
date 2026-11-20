@@ -149,7 +149,10 @@ impl Built {
                     return None;
                 }
                 let mut part = Built::default();
-                let sendings = part.read_file(path, text);
+                // A template's sends only: its interpolated symbols are
+                // mostly translation keys (`t(:"label_#{k}")`).
+                let template = !path.ends_with(".rb") && !path.ends_with(".rake");
+                let sendings = part.read_file(path, text, template);
                 Some((part, sendings))
             })
             .collect();
@@ -206,8 +209,8 @@ impl Built {
 
     /// A file's finds, and its sent names, whose receiver is placed once
     /// the files are merged.
-    fn read_file(&mut self, path: &str, text: &str) -> Vec<Sending> {
-        for (at, line) in text.lines().enumerate() {
+    fn read_file(&mut self, path: &str, text: &str, template: bool) -> Vec<Sending> {
+        for (at, line) in text.lines().enumerate().filter(|_| !template) {
             // A comment's example is no name the code builds.
             if line.trim_start().starts_with('#') {
                 continue;
@@ -487,7 +490,7 @@ mod tests {
     /// finds a computed name sent to.
     fn read(text: &str) -> (Vec<(String, u32)>, Vec<String>) {
         let mut built = Built::default();
-        let sendings = built.read_file("lib/x.rb", text);
+        let sendings = built.read_file("lib/x.rb", text, false);
         let shapes = sendings.into_iter().map(|s| (s.shape, s.at.1)).collect();
         (shapes, built.sent_to.into_iter().map(|(c, _)| c).collect())
     }
@@ -548,6 +551,7 @@ mod tests {
         let sendings = built.read_file(
             "app/x.rb",
             "# Mailer.public_send(type)\n  # :\"report_#{type}\"\n  # send(\"list_#{x}\")\n",
+            false,
         );
         assert!(built.shapes.is_empty() && built.sent_to.is_empty() && sendings.is_empty());
     }
