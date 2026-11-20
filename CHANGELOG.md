@@ -10,24 +10,23 @@
   Only a macro typed to the method counts, so another class's
   `before_action` naming the same method does not, nor does `alias_method`,
   `private` or `skip_before_action`.
-- **`--dead` reads a block's parameter as hiding a local of its name**
-  (`m = "handle_#{k}"; names.each { |m| Panel.new.public_send(m) }`), and
-  a shape assigned under a condition, in a loop (`while`, `until`, `for`),
-  a `case … in`, a block, an `&&=` or a body with a `rescue` as leaving the
-  name before it (`n = params[:action]; n = "handle_#{k}"
-  if k`), and an unknown value assigned so over a shape as making the name
-  computed (`n = "handle_#{k}"; n = params[:x] if k`): each sends a
-  computed name, which lowers the receiver's methods, where only those
-  fitting `handle_*` were. A method's parameter is such a name too. A
-  string or another shape assigned so is sent besides the shape
+- **`--dead` follows a local sent by name further**, so a send it read
+  as one shape (`handle_*`) lowers the receiver's other methods where the
+  local may hold another name: a block parameter of its name hides it
+  (`names.each { |m| Panel.new.public_send(m) }`); a shape assigned where
+  it may not run (under a condition, in `while`, `until` or `for`, a
+  `case … in`, a block, an `&&=`, or a body with a `rescue`) leaves the
+  name before it, and an unknown value assigned so
+  (`m = params[:x] if k`) makes it computed; a method's parameter holds
+  any name. A string or another shape assigned so is sent too
   (`m = "other" if c` lowers the receiver's `other`).
 - **`--dead` reads a literal name sent from another file that it read as
   nothing**: `Valve.new.send(:public_send, :relayed)` is a call of
   `Valve#relayed` (it was `convention-only`), not of another class's
-  `relayed`, nor of a private one `public_send` cannot run; and `Grid.new.send(:[], 1)`,
-  `public_send(:+, 1)` or `send("spelled")` lowers `Grid`'s method of that
-  name, or the method an alias of that name runs, "`:[]` is sent by name
-  at …", where it came out `clear`.
+  `relayed`, nor of a private one `public_send` cannot run; and
+  `Grid.new.send(:[], 1)`, `public_send(:+, 1)` or `send("spelled")`
+  lowers `Grid`'s method of that name, or the method an alias of that name
+  runs, "`:[]` is sent by name at …", where it came out `clear`.
 - **`--dead` reads an ERB or Haml template's sends**: `%p=
   Gauge.new.public_send(params[:m])` in a view lowers `Gauge`'s methods,
   as the same send in a Ruby file did.
