@@ -9,6 +9,12 @@
   includes it, and `send(n)` in `Base` lowers `Sub#other`, in any file,
   "a name computed at runtime is sent in Mixin at …". It lowered only its
   own file, and such methods elsewhere came out `clear`.
+- **`--dead` reads a block's parameter as hiding a local of its name**
+  (`m = "handle_#{k}"; names.each { |m| Panel.new.public_send(m) }`), and
+  a shape assigned under a condition as leaving the name before it
+  (`n = params[:action]; n = "handle_#{k}" if k`): each sends a computed
+  name, which lowers `Panel`'s and `Socket`'s methods, where only those
+  fitting `handle_*` were.
 
 ## 0.10.1 — 2026-11-19
 

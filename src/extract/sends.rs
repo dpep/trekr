@@ -183,18 +183,46 @@ impl Extractor<'_> {
         let conditional = self.conditional;
         let shape = value.and_then(|value| held_shape(value).flatten());
         let held = &mut self.frame().held;
-        let replaced = held
+        // A shape written where it may not run leaves an unshaped name
+        // standing, which may still be sent.
+        let replaces = held
             .iter()
             .rev()
             .find(|h| h.local == local)
-            .is_some_and(|h| h.shape.is_some() && conditional <= h.conditional);
-        if shape.is_some() || replaced {
+            .is_none_or(|h| conditional <= h.conditional || (shape.is_some() && h.shape.is_some()));
+        if replaces {
             held.push(Held {
                 local: local.to_string(),
                 shape,
                 conditional,
             });
         }
+    }
+
+    /// A block's own locals (its parameters, and what it first assigns)
+    /// hide a method's locals of their names until it ends.
+    pub(super) fn shadow(&mut self, locals: &ruby_prism::ConstantList<'_>) -> (usize, Vec<String>) {
+        let conditional = self.conditional;
+        let names: Vec<String> = locals
+            .iter()
+            .map(|name| String::from_utf8_lossy(name.as_slice()).into_owned())
+            .collect();
+        let held = &mut self.frame().held;
+        let start = held.len();
+        held.extend(names.iter().map(|local| Held {
+            local: local.clone(),
+            shape: None,
+            conditional,
+        }));
+        (start, names)
+    }
+
+    pub(super) fn unshadow(&mut self, (start, names): (usize, Vec<String>)) {
+        let mut at = 0;
+        self.frame().held.retain(|h| {
+            at += 1;
+            at <= start || !names.contains(&h.local)
+        });
     }
 }
 

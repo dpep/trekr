@@ -1,4 +1,7 @@
 # A name computed sent to `self` in a module or a base class reaches the
 # methods of every class that includes or inherits it, in any file; it
 # lowered only its own file, so Host#plain and Sub#other came out clear.
-dead app Host#plain=unreferenced~Mixin Sub#other=unreferenced~Base Unrelated#lonely=unreferenced~
+# A block's parameter hides the method's local of its name (Panel), and a
+# shape written under a condition leaves the name it may not replace
+# (Socket): each is a name computed, not the shape.
+dead app Host#plain=unreferenced~Mixin Sub#other=unreferenced~Base Unrelated#lonely=unreferenced~ Panel#other_w=unreferenced~Panel Socket#other_g=unreferenced~Socket

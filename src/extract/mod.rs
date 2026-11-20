@@ -2420,7 +2420,9 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
         }
         self.frame().blocks += 1;
         self.frame().merged += merged;
+        let shadowed = self.shadow(&node.locals());
         ruby_prism::visit_block_node(self, node);
+        self.unshadow(shadowed);
         self.frame().merged -= merged;
         self.frame().blocks -= 1;
         if pushed {
@@ -2437,7 +2439,9 @@ impl<'pr> Visit<'pr> for Extractor<'_> {
             self.instance_lambdas.push(instance);
         }
         self.frame().blocks += 1;
+        let shadowed = self.shadow(&node.locals());
         ruby_prism::visit_lambda_node(self, node);
+        self.unshadow(shadowed);
         self.frame().blocks -= 1;
         if pushed {
             self.instance_lambdas.pop();

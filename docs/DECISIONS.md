@@ -16621,7 +16621,8 @@ it, as a send does. No corpus row moved.
 the includer's or subclass's methods, though a shape sent there reaches
 them (done by DEC-666); a held local is misread where a block parameter shadows it
 (`names.each { |m| … public_send(m) }` after `m = "handle_#{k}"`) or where
-its only shaped write is conditional after an unshaped one; and an operator
+its only shaped write is conditional after an unshaped one (both done by
+DEC-666); and an operator
 or a relayed name sent from another file (`send(:[], 1)`,
 `send(:public_send, :x)`) is still read as a macro's symbol.
 
@@ -16756,3 +16757,12 @@ Testbed fixtures that keep a gem's stand-in in the checkout (Thor's
 `new.public_send(argv.first)`, 371 and 385; ActiveModel::Serializer's
 `send`, 362) now lower their subclasses' rows, as such a gem vendored into
 a checkout would. Testbed 812.
+
+**Also, the locals a send is handed** (DEC-663's last hunt): a block's own
+locals — its parameters, and what it first assigns — hide the method's of
+their names until it ends (`m = "handle_#{k}"; names.each { |m|
+Panel.new.public_send(m) }` sends a computed name, not `handle_*`); and a
+shape written under a condition the name was not (`n = params[:action];
+n = "handle_#{k}" if k`) leaves the unshaped name standing, as DEC-655
+already left a shape standing under an unshaped conditional write. No
+corpus row moved.
